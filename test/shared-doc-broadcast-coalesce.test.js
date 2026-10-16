@@ -32,6 +32,7 @@ const { setLevel } = require('../lib/logger');
 setLevel('error');
 
 const store = require('../lib/store');
+const sharedDocRecord = require('../lib/shared-docs');
 const medusa = require('../lib/medusa');
 const { createServer } = require('../server');
 const { operatorHeaders } = require('./_shared-docs-callers');
@@ -194,6 +195,19 @@ describe('a reader gets one shared-doc notice per quiet period (#1108)', () => {
       'and the cost is per participant — the multiplier is the whole defect');
     assert.equal(sent.length, 2,
       'exactly one send per reader left the process; the other eight never reached the Bridge');
+  });
+
+  it('the same bytes notified again are one recorded revision, and coalescing is unchanged (#2389)', async () => {
+    const drain = () => sharedDocRecord.serialize(docId, async () => {});
+    await post(server, `/api/shared-docs/${docId}/notify`);
+    await drain();
+    const before = store.sharedDocEvents.latest(docId);
+    for (let i = 0; i < 5; i++) await post(server, `/api/shared-docs/${docId}/notify`);
+    await drain();
+    const after = store.sharedDocEvents.latest(docId);
+    assert.equal(after.seq, before.seq, 'unchanged bytes are a duplicate observation, never a new revision');
+    assert.equal(after.duplicateObservations - before.duplicateObservations, 5);
+    assert.equal(sent.length, 2, 'one send per reader, exactly as before the record existed');
   });
 
   it('each reader gets its own notice — coalescing is per reader, not global', async () => {

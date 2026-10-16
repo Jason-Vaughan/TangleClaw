@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-15 — #2389 (refs): an exact record of every shared-doc revision, with attested authorship; delivery unchanged
+
+<!-- prawduct: type=feature | scope=w2-a1-shared-doc-notices-2389 -->
+
+v5.34.0 Wave 2 chunk W2-A1 part A1a, the first of two (A1b, row-aware delivery with mute and subscribe, is not released). Branch `feat/2389-shared-doc-event-record`. References #2389 without closing it. Governance class: notification and wake routing; the design is the Architect's A79 to A81 (plan rev 3 `a4c6b94f…`), and the code is read by the Architect at its exact head before the suite. Schema v67, allocated by the PM.
+
+**Why.** A shared-doc change wakes every member session, whoever's row it touched, and nothing records which rows changed or who changed them. Row-aware delivery needs both, and needs them recorded exactly before any notice is withheld on their strength.
+
+**What changed.** `lib/shared-docs.js` (new): each distinct digest observed of a doc is one revision, classified against a persisted baseline as `row` (every changed member project, by id), `unknown`, `formatting` or `first-seen`; the watcher, notify, a base capture and an attestation observe through one serializer per doc. Over the 8 MB baseline cap, or compared with such a baseline, a revision is digest-only: `unknown`, `attribution: incomplete`, no rows claimed. `lib/store.js`: v67 `shared_doc_events` and `shared_doc_baselines`, both cascading from the doc, with a postcondition; seqs are never reused. `server.js`: `POST /api/shared-docs/:id/attest` (`{"base": true}` captures a base; `{baseSha256, sha256}` attests; project callers only, 1 KB cap) re-reads the registration, access and the lock after its file read (a doc re-pointed or unregistered meanwhile records nothing, `DOC_CHANGED`; a base capture is re-authorized the same way) and binds the session and project in one statement; notify records without delaying its notice; `GET /api/shared-docs/:id/events` with `latest`, `oldestRetainedSeq` and `gap`. `lib/tc-verbs.js`: `tc docs base` and `tc docs attest` (no fetched base, no retry). Each revision carries a SHADOW `shadowWouldSelect`; the broadcast is untouched and sends what it always sent. Labelled ATTESTED authorship throughout: lock-holder attestation in a cooperative-writer model, not proof of who wrote the bytes. Docs: `data/shared-docs-guide.md`, `docs/medusa-delivery.md`.
+
+**Tests.** `test/shared-docs-events.test.js` (classification, the shadow rule, restart baseline, the cap both ways, serialized concurrent observations, retention), `test/shared-docs-attest-route.test.js` (the plan's A1a criteria through the route with bound callers, every refusal leaving the binding unchanged, the stated unobserved-overwrite limit, the events route, and the CLI), `test/store-shared-doc-events-migration.test.js`; one case each added to the two broadcast tests (payload byte-identical; a failed record never stops a notice) and one to `test/launch-binding-routes.test.js`.
+
 ## 2026-10-15 — #2361 and #2366: Project Settings fits a phone; the wrap drawer says who merges a coordinated wrap PR
 
 <!-- prawduct: type=bugfix | scope=w2b1-settings-narrow-and-wrap-drawer-merge-authority -->

@@ -125,6 +125,11 @@ describe('launch-binding guard: every mutating route is guarded or listed (#2233
     for (const overrideRoute of overrideRoutes) assert.ok(!admitted.includes(overrideRoute), `${overrideRoute} must not be reachable unidentified`);
   });
 
+  it('guards the shared-doc attestation route: an unidentified caller can neither capture a base nor attest (#2389)', () => {
+    assert.ok(MUTATING.some((r) => key(r) === 'POST /api/shared-docs/:id/attest'), 'the attest route is registered as mutating');
+    assert.ok(!admitted.includes('POST /api/shared-docs/:id/attest'), 'the attest route must not be reachable unidentified');
+  });
+
   it('keeps the audit heartbeat guarded: it has no credential of its own', () => {
     assert.ok(MUTATING.some((r) => key(r) === 'POST /api/audit/heartbeat'));
     assert.ok(!admitted.includes('POST /api/audit/heartbeat'));
