@@ -23,6 +23,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- A session's stored launch blocker that cannot be read (not JSON, or no `code`) is now logged once per session and value, with its length but never its contents, instead of reading as "no blocker" silently (#2201).
 - **The host check no longer prints raw config or command values, or error messages.** `ingressMode`, the topology marker, Tailscale state and error codes pass through closed sets, and an unexpected value prints fixed safe fallback text, never the value itself. `--reveal` shows a failed row's error class, never its message. (#1380, #2142)
 - **The host check prints an error code only if it is a known one.** `node scripts/host-check.js` no longer passes an unlisted error code into a reason, the `--reveal` diagnostic or its failure line, however code-like it is spelled; such errors read `internal-error` or `lookup-failed`. Normal output is unchanged.
 - A checkout fingerprint whose deadline ends now stops and reaps the git it started, so no git is left running in a live checkout to hold `index.lock` after a rotation's fingerprint times out (#2304). Test-only: the wedged-tmux read test counts children from the spawn (#2408).
@@ -33,6 +34,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- The #812 tmux draft-text test now waits for bash's prompt and checks what ran, so a loaded host no longer fails it (#2152). The last 19 test files that made git repos on their own now use the shared temp-repo helpers, and the guard catches the wrapper shapes they used (#831).
+- The startup-dialog classifier reads a pane once: `detect`, `assessBoot` and `classify` share one internal reading, and every dialog's last marker row comes from a single pass. `_plain` spells its non-breaking space as an escape, and a source guard keeps it that way (#2202, #2203).
 - `docs/releases/v5.33.1-status.md` now says what is true after the release: v5.33.1 is tagged, published and running on the live install, with the backups and recovery evidence of the deploy. Two checks stay owed: the #2403 fix's own boot case (the Master survived the restart) and reachability from off the host.
 - Docs: the operator bridge pages now say it shipped in v5.31.0, is off by default and is cut over per install; README, setup and user guides link to it; the merge queue page names `CANDIDATE_CONFLICT` and `NOTHING_TO_MERGE`; a user-guide link to the engine guide is fixed (#2417, #2365, #2312).
 - #2371: the CI-as-suite governance packet. The upstream Prawduct report is drafted as one scrubbed block, NOT SENT. The lane-rule proposal is brought to the current rules with Prawduct's own acceptance as its first condition, NOT IN FORCE. Nothing changes for the lanes yet.
