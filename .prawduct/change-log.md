@@ -35,6 +35,19 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-17 — #2184, #2200 (refs): the READY-wait test measures from the launch's recorded start; failures name their cause
+
+<!-- prawduct: type=bugfix | scope=w4a2-load-determinism -->
+
+v5.34.0 Wave 4 chunk W4-A2, its one build chunk. Branch `fix/w4a2-load-determinism` from `94e48d31`. Refs #2184, #2200; both stay OPEN. Plan: `.tangleclaw/plans/w4-a2-load-determinism-plan.md` (rev 8, sha256 `98071e10…a34c`; charter v2.11, sha256 `eb4aff36…41fc`; TC-Lane-INT rulings `80870fc2`, `67a69941`). Exactly the 3 locked files.
+
+**Why (#2184, the READY-wait case).** The gateway stamps a launch's `startedAt` with the real clock in the first tick and fails it once more than `READY_WAIT_MS` has passed since. The test's `later(ms)` pins the clock to real-now + ms at the moment it is called, so the wall time between the stamp and the call counted against the wait: over 1000 ms of it (a loaded host) put the "inside the wait" check, at `READY_WAIT_MS - 1000`, past the deadline, and the launch read `'failed'`, as recorded three times.
+
+**What.** `test/api-bridge-gateway.test.js`: a `sinceLaunch(routeId, ms, fn)` helper beside `later` pins the clock to the launch's recorded `startedAt` + ms; the never-READY case uses it for both its in-window (`- 1000`) and past-window (`+ 5000`) checks. `call()` rethrows `fetch failed` as `<method> <path>: fetch failed: <cause.code || cause.message>`, keeping `cause`. `test/medusa-wake-async.test.js`: the "thirty wedged" case's messages name the sessions not judged unreadable with their reasons, the time spawning took and the time in all. No assertion's condition or expected value changed.
+
+**Proof.** A scratch copy holding the event loop 2 s (`Atomics.wait`) between the first tick and the in-window check: before, `expected 'waiting-ready', actual 'failed'`; after, pass. The cause capture read `POST /api/x: fetch failed: ECONNREFUSED` against a closed port; the wedged messages were read with their bounds forced in scratch. Both files pass alone.
+
+**Not fixed.** #2184's `fetch failed` failures: an in-process scratch reproduction gave `ECONNRESET` after a forced 7 s stall past the server's keep-alive, but no recorded occurrence has a cause or a measured stall, so the keep-alive change is excluded and the capture is there to tell the next one apart. #2200: not reproduced (20/20 at up to 1.5x cores), diagnostics only.
 ## 2026-10-16 — #2223, #2142: the Codex folder-trust timeout route is driven end to end; a missed local trust anchor says what was wrong with each directory
 
 <!-- prawduct: type=bugfix | scope=w4b1-codex-timeout-route-and-trust-anchor-reasons -->
