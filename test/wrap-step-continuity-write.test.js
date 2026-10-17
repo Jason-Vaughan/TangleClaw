@@ -488,6 +488,125 @@ describe('continuity-write wrap step (CC-1)', () => {
       ['.tangleclaw/project.json', 'lib/real.js', 'node_modules/pkg/index.js'].sort());
   });
 
+  // ── #1280: earlier wrap commits are subtracted from the session's set ──
+
+  // Subjects the commit step writes, the squash-merged form, and near misses.
+  const WRAP_SUBJECTS = [
+    ['Session wrap', true],
+    ['Session wrap (chunk 3)', true],
+    ['Session wrap on feat/x', true],
+    ['Session wrap — release 4.30.0 (…) (#658)', true],
+    ['Session wrapper', false],
+    ['Fix session wrap', false],
+    ['', false],
+    [null, false]
+  ];
+
+  it('isWrapSubject accepts every wrap subject the commit step writes, and nothing else', () => {
+    const gitRange = require('../lib/wrap-steps/_git-range');
+    for (const [subject, expected] of WRAP_SUBJECTS) {
+      assert.equal(gitRange.isWrapSubject(subject), expected, `subject ${JSON.stringify(subject)}`);
+    }
+    assert.ok(gitRange.WRAP_SUBJECT_RE instanceof RegExp);
+  });
+
+  it('isWrapSubject agrees with changelog-coverage, so the two copies cannot drift apart', () => {
+    const gitRange = require('../lib/wrap-steps/_git-range');
+    const coverage = require('../lib/wrap-steps/changelog-coverage');
+    for (const [subject] of WRAP_SUBJECTS) {
+      assert.equal(gitRange.isWrapSubject(subject), coverage._isWrapCommit(subject),
+        `the two rules disagree on ${JSON.stringify(subject)}`);
+    }
+  });
+
+  /** The recorded boundary these cases measure from, so the range is the session's. */
+  const BOUNDARY = 'bbbb0000';
+
+  /**
+   * A stub whose subject probe answers as given, over a linear session range
+   * (the recorded boundary resolves and is an ancestor) with a diff.
+   * @param {object|null} subjectAnswer - The exec result for the subject probe.
+   * @param {string[]} [seen] - Collects each command's argv, joined.
+   * @returns {Function} An `_internal.exec` stub.
+   */
+  function gitStubWithSubjects(subjectAnswer, seen = []) {
+    const diff = gitStubWithDiff('M\tlib/from-diff.js\n');
+    return async (file, args) => {
+      seen.push(args.join(' '));
+      if (args[0] === 'log' && args.some((a) => a.startsWith('--format=%H%x1f%s'))) return subjectAnswer;
+      if (args[0] === 'rev-list') return { exitCode: 0, stdout: '', stderr: '' };
+      // The boundary resolves and is an ancestor of the tip.
+      if (args.includes(`${BOUNDARY}^{commit}`) || (args.includes('--is-ancestor') && args.includes(BOUNDARY))) {
+        return { exitCode: 0, stdout: `${BOUNDARY}\n`, stderr: '' };
+      }
+      return diff(file, args);
+    };
+  }
+
+  it('hasEarlierWrapCommitsAsync finds an earlier wrap commit and exempts this wrap\'s own', async () => {
+    const gitRange = require('../lib/wrap-steps/_git-range');
+    const stdout = 'bbbb2222\x1fSession wrap on feat/x\nwork1111\x1fsession work\naaaa1111\x1fSession wrap\n';
+    const exec = async () => ({ exitCode: 0, stdout, stderr: '', error: null, timedOut: false });
+    assert.equal(await gitRange.hasEarlierWrapCommitsAsync('/x', 'a..b', { exec, ownSha: 'bbbb2222' }), true,
+      'the older wrap commit is not this wrap\'s');
+    const onlyOwn = async () => ({ exitCode: 0, stdout: 'bbbb2222\x1fSession wrap\nwork1111\x1fwork\n', stderr: '', error: null, timedOut: false });
+    assert.equal(await gitRange.hasEarlierWrapCommitsAsync('/x', 'a..b', { exec: onlyOwn, ownSha: 'bbbb2222' }), false,
+      'this wrap\'s own commit always counts');
+    assert.equal(await gitRange.hasEarlierWrapCommitsAsync('/x', 'a..b', { exec: onlyOwn, ownSha: null }), true,
+      'with no commit of its own, every wrap commit in range is earlier');
+  });
+
+  it('_sessionDelta keeps the plain diff when the subject probe is refused', async () => {
+    const seen = [];
+    step._internal.exec = gitStubWithSubjects(
+      { exitCode: 128, stdout: '', stderr: 'fatal', error: null, timedOut: false }, seen);
+    const delta = await step._sessionDelta(project.path, { previousWrapSha: BOUNDARY });
+    assert.equal(delta.kind, 'session', 'the fixture must reach a session range, or the probe is never asked');
+    assert.deepEqual(delta.touched, ['lib/from-diff.js']);
+    assert.deepEqual(delta.stopped, [], 'a refusal is an answer, not a stopped probe');
+    assert.ok(seen.some((s) => s.startsWith('diff --name-status')), 'the diff answered');
+  });
+
+  it('_sessionDelta names a killed subject probe and still answers from the diff', async () => {
+    step._internal.exec = gitStubWithSubjects(
+      { exitCode: 124, stdout: '', stderr: '', error: 'timed out', timedOut: true });
+    const delta = await step._sessionDelta(project.path, { previousWrapSha: BOUNDARY });
+    assert.deepEqual(delta.touched, ['lib/from-diff.js'],
+      'it over-reports as before rather than dropping the session\'s work');
+    assert.ok(delta.stopped.some((c) => c.includes('--format=%H%x1f%s')),
+      'so `_stampDecision` can say the answer may rest on an unknown');
+  });
+
+  it('_sessionDelta walks and subtracts when the subject probe finds an earlier wrap commit', async () => {
+    const seen = [];
+    const subjects = { exitCode: 0, stdout: 'aaaa1111\x1fSession wrap\n', stderr: '', error: null, timedOut: false };
+    const stub = gitStubWithSubjects(subjects, seen);
+    step._internal.exec = async (file, args) => {
+      if (args[0] === 'log' && args.includes('--name-status')) {
+        return {
+          exitCode: 0,
+          stdout: '\x1ework2222\x1faaaa1111\x1fsession work\nM\tlib/mine.js\n'
+            + '\x1eaaaa1111\x1fbase0000\x1fSession wrap\nM\t.tangleclaw/memories/MEMORY.md\n',
+          stderr: '', error: null, timedOut: false
+        };
+      }
+      return stub(file, args);
+    };
+    const delta = await step._sessionDelta(project.path, { previousWrapSha: BOUNDARY });
+    assert.deepEqual(delta.touched, ['lib/mine.js'], 'the earlier wrap commit\'s path is gone');
+    assert.ok(!seen.some((s) => s.startsWith('diff --name-status')), 'the walk answered, not the diff');
+  });
+
+  it('_sessionDelta leaves the trunk fallback as it stands: no wrap has stamped there', async () => {
+    const seen = [];
+    step._internal.exec = gitStubWithSubjects(
+      { exitCode: 0, stdout: 'aaaa1111\x1fSession wrap\n', stderr: '', error: null, timedOut: false }, seen);
+    const delta = await step._sessionDelta(project.path);
+    assert.equal(delta.kind, 'branch');
+    assert.deepEqual(delta.touched, ['lib/from-diff.js']);
+    assert.ok(!seen.some((s) => s.includes('--format=%H%x1f%s')), 'the subject probe is not asked');
+  });
+
   // ── #467: anchor git facts + Map delta to the wrap commit, not HEAD ──
   // The commit step's auto-PR close-loop may return the checkout to the
   // original branch before continuity-write runs; without the anchor the
