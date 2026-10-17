@@ -41,6 +41,20 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-17 — #2008, #2155: the wrap's commit step skips a folder that is not a git repository, and records the Include / Leave answers it ran with
+
+<!-- prawduct: type=bugfix | scope=w10b1-commit-non-git-skip-and-answers-audit -->
+
+v5.34.0 Wave 10 chunk W10-B1, chunk 1 of 1. Branch `fix/w10b1-commit-non-git-skip-and-answers-audit` from `origin/main` `0eb92b05`. Closes #2008 and #2155. Plan: `.tangleclaw/plans/build-plan-w10b1-commit-non-git-skip-and-answers-audit.md` (rev 1, sha256 `97becd6e…5456`, approved by INT and Architect A228); charter v2.32 (sha256 `57e66a84…d5fe025`).
+
+**#2008.** On a project whose folder is not a git repository, `commit` blocked at `git status` (exit 128), so `continuity-write`, `apply-pr-resolutions` and `handoff-stage` never ran. The step now skips there, after flushing the staged writes (so the wrap's files are written in place) and before any git command, with a reason saying the project gets no commit or PR history. The scope tells the two null-toplevel cases apart: no `workTreeProblem` is no repository and skips; a `workTreeProblem` is git failing to answer and still blocks. That guard moved up from below `git status` with the skip, unchanged in text, so a git failure is never read as no repository. A missing scope reads as no repository; production always passes one.
+
+**#2155.** Each commit and each skip writes one `wrap.commit_answers` activity row: `outcome`, the `reason` (skipped) or `commitSha` (committed), the paths answered Include and Leave as given, and `committedOwn`, the session's own paths that were committed. Path names only. A blocked commit writes none. A new event type on the existing table: no schema change.
+
+**Limits.** A non-git project still gets no commit or PR history, by design. The answers are those the wrap's request carried; an answer the drawer never sent is absent. Path lists are uncapped (D4).
+
+**Tests.** `test/wrap-pipeline.test.js`: T1 a real non-repository skips with its staged file on disk and no git call; T2 no scope does the same; T3 `workTreeProblem` still blocks after the flush; T5 a pipeline run on a non-repository reaches `continuity-write`, `apply-pr-resolutions` and `handoff-stage`. `test/wrap-step-commit-autopr.test.js`: T6 a commit's row (answers as given, committed own paths, no file content); T7 the clean-tree, all-Left and non-repository skips; T8 no row when blocked; T9 one row per run, with the session. Seven of the eight were red against `main`'s `commit.js`; T8 holds on both. The existing non-repo `git status` case (T4) is unchanged and passing.
+
 ## 2026-10-17 — W9-REC: the v5.34.0 Wave 9 combined records
 
 <!-- prawduct: type=chore | scope=w9-rec-records -->
