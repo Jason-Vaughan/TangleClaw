@@ -305,6 +305,17 @@ html[data-tc-keyboard] body {
   color: #fff;
 }
 .isolation-override-banner.isolation-override-banner-unread .orphan-banner-text { color: inherit; }
+/* No-login notice (#2378). The base amber: no login is the install's own
+   standing setting, reported rather than alarmed. The text is long, so on a
+   narrow screen the button drops below it instead of squeezing it to a column,
+   and the button meets the 44px touch floor. */
+.no-login-banner { align-items: flex-start; flex-wrap: wrap; }
+.no-login-banner .orphan-banner-text { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+.no-login-banner-open {
+  min-height: 44px;
+  min-width: 44px;
+  white-space: nowrap;
+}
 /* Settings-save warnings (#1148): one warning per line, and a plist path must
    wrap rather than push the Dismiss button off a phone screen. */
 .settings-warnings-text { white-space: pre-line; overflow-wrap: anywhere; }

@@ -590,6 +590,80 @@ function renderAuthStatus(authStatus) {
     el.textContent = '';
     el.classList.add('hidden');
   }
+  // The chip stays silent for `open`; the standing notice says it instead. It
+  // is drawn from here rather than from loadServerInfo so the poll's one call
+  // carries both, and every caller that stubs this render by name still does.
+  renderNoLoginBanner(authStatus);
+}
+
+/**
+ * The no-login notice's opening sentence and its body (#2378). The body names
+ * categories of action rather than routes, because a route list on the landing
+ * page would go stale with every route added; the docs carry the list.
+ * @type {{lead: string, body: string}}
+ */
+const NO_LOGIN_NOTICE = {
+  lead: 'No login is in force on this install.',
+  body: ' TangleClaw is not requiring a sign-in credential here: open-mode operator actions on this page rely on '
+    + 'request shape rather than a login, while actions that grant or widen authority over sessions (approving '
+    + 'session rules, changing the global rules, granting coordinator roles, releasing a HOLD, choosing a '
+    + 'project\'s recovery mode, changing the startup prompt, and the others listed in the docs) are refused '
+    + 'until a login is enabled and you are signed in.'
+};
+
+/**
+ * Show or hide the notice that no login is in force on this install (#2378).
+ *
+ * It shows only when the server reads `authStatus: 'open'`, the install with no
+ * login. Every other state hides it: a closed or armed login has one, the
+ * fallback has Caddy's password in front of the page and the chip's own
+ * warning, and an older server that omits the field, or a poll that did not
+ * answer, cannot say. It mirrors the latest poll, with no dismiss and no timer,
+ * because the condition only ends when a login is added. Its text is set as
+ * text, never as markup, and its button leads to "Your account", where "Add a
+ * login" already explains and confirms the change.
+ * @param {string|null|undefined} authStatus - The login gate's state from `/api/server-info`
+ * @returns {void}
+ */
+function renderNoLoginBanner(authStatus) {
+  const banner = document.getElementById('noLoginBanner');
+  const textEl = document.getElementById('noLoginBannerText');
+  if (!banner || !textEl) return;
+  if (authStatus !== 'open') {
+    textEl.replaceChildren();
+    banner.classList.add('hidden');
+    return;
+  }
+  const strong = document.createElement('strong');
+  strong.textContent = NO_LOGIN_NOTICE.lead;
+  textEl.replaceChildren(strong, document.createTextNode(NO_LOGIN_NOTICE.body));
+  const btn = document.getElementById('noLoginBannerBtn');
+  if (btn) {
+    // A page with no Global Settings to open offers no button that does nothing.
+    const canOpen = typeof openGlobalSettings === 'function';
+    btn.classList.toggle('hidden', !canOpen);
+    if (canOpen && btn.dataset.wired !== '1') {
+      btn.dataset.wired = '1';
+      btn.addEventListener('click', openAddLoginSettings);
+    }
+  }
+  banner.classList.remove('hidden');
+}
+
+/**
+ * Open Global Settings at "Your account": where the no-login notice leads
+ * (#2378). The section fills when its own read of `/api/auth/me` answers, so
+ * the focus goes to the section, which is there at once: a keyboard or screen
+ * reader starts at the account, and the next Tab reaches "Add a login".
+ * @returns {void}
+ */
+function openAddLoginSettings() {
+  openGlobalSettings();
+  const section = document.getElementById('gsAccountSection');
+  if (!section) return;
+  if (typeof section.scrollIntoView === 'function') section.scrollIntoView({ block: 'center' });
+  section.setAttribute('tabindex', '-1');
+  section.focus();
 }
 
 /**
