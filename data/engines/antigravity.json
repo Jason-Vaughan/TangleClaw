@@ -73,7 +73,7 @@
         },
         "idleMarker": {
           "verifiedOn": "2026-07-14",
-          "source": "#560 live spike: `? for shortcuts` is present at rest and absent during both generation and any dialog/menu. Required here because the bare prompt persists mid-turn, so the busy marker is never the only thing between a nudge and a busy pane; it also makes the permission-dialog case fail-safe by construction, since a dialog drops the hint."
+          "source": "#560 live spike: `? for shortcuts` is present at rest and absent during both generation and any dialog/menu. Required here because the bare prompt persists mid-turn, so the busy marker is never the only thing between a nudge and a busy pane; it also makes the permission-dialog case fail-safe by construction, since a dialog drops the hint. The hint is also absent while the composer holds text (live capture 2026-10-17, pane 167x27, #2358), and the hint slot at the left of the status row is then empty. So the wake gate excuses the marker's absence for one case only: the composer holds exactly the switchboard's own stranded nudge, seen whole between its borders, with no glyph-led row below it and nothing in the hint slot. A dialog that fills the slot with its key help is still refused. The at-rest reading was not re-measured, so verifiedOn is unchanged."
         },
         "pasteRejectedMarker": {
           "verifiedOn": "2026-09-01",

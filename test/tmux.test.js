@@ -891,9 +891,65 @@ describe('tmux', () => {
     });
   });
 
+  // The shell-typing helpers the two groups below share.
+  const { execSync } = require('node:child_process');
+
+  // bash's bare prompt under --norc: `bash-3.2$` on macOS, `bash-5.2$` on Linux.
+  // `capturePane` trims tmux's output, so the prompt's trailing space is gone.
+  const BASH_PROMPT = /^bash-[\d.]+\$$/;
+
+  /**
+   * Poll a pane until `predicate` holds for its captured lines, so a test acts
+   * on what the shell has drawn rather than on a guessed delay. A timeout
+   * fails the test with the last capture, never passes it.
+   * @param {string} session - tmux session name
+   * @param {(lines: string[]) => boolean} predicate - receives right-trimmed lines
+   * @param {string} what - what is awaited, for the failure message
+   * @returns {string[]} the right-trimmed lines that satisfied `predicate`
+   */
+  function waitForPane(session, predicate, what) {
+    const deadline = Date.now() + 10000;
+    let lines = [];
+    for (;;) {
+      lines = tmux.capturePane(session, { full: true }).lines.map((l) => l.trimEnd());
+      if (predicate(lines)) return lines;
+      if (Date.now() >= deadline) {
+        assert.fail(`timed out after 10s waiting for ${what}; last lines:\n${lines.slice(-10).join('\n')}`);
+      }
+      execSync('sleep 0.1');
+    }
+  }
+
+  /**
+   * The last non-blank line of a capture, trimmed.
+   * @param {string[]} lines - captured lines
+   * @returns {string} the line, or '' when the pane is blank
+   */
+  function lastLine(lines) {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].trim()) return lines[i].trim();
+    }
+    return '';
+  }
+
+  /** The command that starts a bare bash, whose prompt `BASH_PROMPT` matches. */
+  const BARE_BASH = 'exec bash --norc --noprofile';
+
+  /**
+   * Wait until a bare bash has drawn its prompt. Text typed before the prompt
+   * is echoed by the tty above it and never reaches readline, so a test that
+   * types sooner scores pane echo rather than what ran (#2447). Each test
+   * starts its own session, so the name it passes tmux stays one the session
+   * name guard can trace to `uniqueSessionName`.
+   * @param {string} session - tmux session name
+   * @returns {string[]} the right-trimmed lines once the prompt is drawn
+   */
+  function awaitBashPrompt(session) {
+    return waitForPane(session, (lines) => BASH_PROMPT.test(lastLine(lines)), "bash's prompt");
+  }
+
   describe('sendKeys - behavioral', () => {
     const testSession = uniqueSessionName('sendkeys');
-    const { execSync } = require('node:child_process');
 
     function captureContent(session) {
       // Small delay so the shell finishes processing before we capture
@@ -902,47 +958,10 @@ describe('tmux', () => {
       return cap.lines.join('\n');
     }
 
-    // bash's bare prompt under --norc: `bash-3.2$` on macOS, `bash-5.2$` on Linux.
-    // `capturePane` trims tmux's output, so the prompt's trailing space is gone.
-    const BASH_PROMPT = /^bash-[\d.]+\$$/;
-
-    /**
-     * Poll a pane until `predicate` holds for its captured lines, so a test acts
-     * on what the shell has drawn rather than on a guessed delay. A timeout
-     * fails the test with the last capture, never passes it.
-     * @param {string} session - tmux session name
-     * @param {(lines: string[]) => boolean} predicate - receives right-trimmed lines
-     * @param {string} what - what is awaited, for the failure message
-     * @returns {string[]} the right-trimmed lines that satisfied `predicate`
-     */
-    function waitForPane(session, predicate, what) {
-      const deadline = Date.now() + 10000;
-      let lines = [];
-      for (;;) {
-        lines = tmux.capturePane(session, { full: true }).lines.map((l) => l.trimEnd());
-        if (predicate(lines)) return lines;
-        if (Date.now() >= deadline) {
-          assert.fail(`timed out after 10s waiting for ${what}; last lines:\n${lines.slice(-10).join('\n')}`);
-        }
-        execSync('sleep 0.1');
-      }
-    }
-
-    /**
-     * The last non-blank line of a capture, trimmed.
-     * @param {string[]} lines - captured lines
-     * @returns {string} the line, or '' when the pane is blank
-     */
-    function lastLine(lines) {
-      for (let i = lines.length - 1; i >= 0; i--) {
-        if (lines[i].trim()) return lines[i].trim();
-      }
-      return '';
-    }
-
     it('should deliver simple text and execute it when enter:true (default)', () => {
       try {
-        tmux.createSession(testSession, { command: 'exec bash --norc --noprofile' });
+        tmux.createSession(testSession, { command: BARE_BASH });
+        awaitBashPrompt(testSession);
         tmux.sendKeys(testSession, 'echo hello-from-send-keys');
         const content = captureContent(testSession);
         assert.ok(
@@ -960,11 +979,8 @@ describe('tmux', () => {
       // for, with both instructions corrupted. Exercised against a real pane
       // because the defect lives in what tmux does, not in the command string.
       try {
-        tmux.createSession(testSession, { command: 'exec bash --norc --noprofile' });
-        // Typed before bash draws its prompt, the draft is echoed by the tty above
-        // the prompt and never reaches readline, so the test would score pane text
-        // rather than what ran.
-        waitForPane(testSession, (lines) => BASH_PROMPT.test(lastLine(lines)), "bash's prompt");
+        tmux.createSession(testSession, { command: BARE_BASH });
+        awaitBashPrompt(testSession);
         // The operator's half-typed line: delivered literally, deliberately NOT submitted.
         execSync(`tmux send-keys -t '=${testSession}:' -l 'echo DRAFTRAN'`);
         waitForPane(testSession, (lines) => /^bash-[\d.]+\$ echo DRAFTRAN$/.test(lastLine(lines)),
@@ -994,17 +1010,22 @@ describe('tmux', () => {
 
     it('leaves the draft alone when clearPrompt is false (explicit opt-out)', () => {
       try {
-        tmux.createSession(testSession, { command: 'exec bash --norc --noprofile' });
+        tmux.createSession(testSession, { command: BARE_BASH });
+        awaitBashPrompt(testSession);
         execSync(`tmux send-keys -t '=${testSession}:' -l 'echo DRAFTKEPT'`);
-        execSync('sleep 0.3');
+        waitForPane(testSession, (lines) => /^bash-[\d.]+\$ echo DRAFTKEPT$/.test(lastLine(lines)),
+          'the draft on the prompt line');
 
         tmux.sendKeys(testSession, ' && echo APPENDED', { clearPrompt: false });
-        const content = captureContent(testSession);
+        // The kept draft and the appended text run as one line, so both print.
+        // Had the draft been cleared, ` && echo APPENDED` alone is a syntax
+        // error and no APPENDED line is ever printed.
+        const lines = waitForPane(testSession, (ls) => BASH_PROMPT.test(lastLine(ls)) && ls.includes('APPENDED'),
+          'the kept draft and the appended command to finish');
+        const tail = lines.slice(-10).join('\n');
 
-        assert.ok(
-          content.includes('DRAFTKEPT'),
-          `opting out must preserve the prompt contents, got: ${content.slice(-300)}`
-        );
+        assert.ok(lines.includes('DRAFTKEPT'), `opting out must keep and submit the prompt contents, got:\n${tail}`);
+        assert.ok(lines.includes('APPENDED'), `the appended text must run after the kept draft, got:\n${tail}`);
       } finally {
         try { tmux.killSession(testSession); } catch (_) {}
       }
@@ -1012,17 +1033,18 @@ describe('tmux', () => {
 
     it('should NOT execute the line when enter:false', () => {
       try {
-        tmux.createSession(testSession, { command: 'exec bash --norc --noprofile' });
-        // Use a marker that would only appear in OUTPUT (not the prompt) if executed
+        tmux.createSession(testSession, { command: BARE_BASH });
+        awaitBashPrompt(testSession);
         tmux.sendKeys(testSession, 'echo not-executed-marker', { enter: false });
+        const STAGED = /^bash-[\d.]+\$ echo not-executed-marker$/;
+        waitForPane(testSession, (lines) => STAGED.test(lastLine(lines)), 'the command on the prompt line');
+        // Absence needs a bounded settle. It starts from a drawn prompt, so the
+        // tty cannot have echoed the command a second time above it.
         execSync('sleep 0.4');
-        const cap = tmux.capturePane(testSession, { full: true });
-        const content = cap.lines.join('\n');
-        // The text is on the prompt line; with no Enter, only the literal command appears once.
-        // After Enter we'd see two occurrences (command + echoed output).
-        const occurrences = (content.match(/not-executed-marker/g) || []).length;
-        assert.equal(occurrences, 1,
-          `Expected exactly 1 occurrence of marker (command on prompt only, not executed), got ${occurrences}: ${content.slice(0, 200)}`);
+        const lines = tmux.capturePane(testSession, { full: true }).lines.map((l) => l.trimEnd());
+        const tail = lines.slice(-10).join('\n');
+        assert.match(lastLine(lines), STAGED, `the command must still sit unsubmitted on the prompt line, got:\n${tail}`);
+        assert.ok(!lines.includes('not-executed-marker'), `the command must not have run, got:\n${tail}`);
       } finally {
         try { tmux.killSession(testSession); } catch (_) {}
       }
@@ -1030,7 +1052,8 @@ describe('tmux', () => {
 
     it('should preserve single quotes in delivered text', () => {
       try {
-        tmux.createSession(testSession, { command: 'exec bash --norc --noprofile' });
+        tmux.createSession(testSession, { command: BARE_BASH });
+        awaitBashPrompt(testSession);
         // Single quotes are the trickiest case for shell escaping
         tmux.sendKeys(testSession, `echo "it's working"`);
         const content = captureContent(testSession);
@@ -1045,7 +1068,8 @@ describe('tmux', () => {
 
     it('should preserve special shell characters ($, `, \\)', () => {
       try {
-        tmux.createSession(testSession, { command: 'exec bash --norc --noprofile' });
+        tmux.createSession(testSession, { command: BARE_BASH });
+        awaitBashPrompt(testSession);
         // Send a literal string with characters that would normally be interpreted
         tmux.sendKeys(testSession, `echo 'a$b\`c\\d'`);
         const content = captureContent(testSession);
@@ -1060,7 +1084,8 @@ describe('tmux', () => {
 
     it('should deliver large multi-line payloads (>4KB) intact', () => {
       try {
-        tmux.createSession(testSession, { command: 'exec bash --norc --noprofile' });
+        tmux.createSession(testSession, { command: BARE_BASH });
+        awaitBashPrompt(testSession);
         // Build a heredoc that echoes a large unique marker after a long preamble
         // This catches the original 3.11.0 regression where large payloads truncated.
         const filler = 'x'.repeat(4500);
@@ -1101,7 +1126,6 @@ describe('tmux', () => {
 
   describe('sendRawKey', () => {
     const testSession = uniqueSessionName('rawkey');
-    const { execSync } = require('node:child_process');
 
     it('should throw for non-existent session', () => {
       assert.throws(
@@ -1112,19 +1136,17 @@ describe('tmux', () => {
 
     it('should send Enter as a raw key (executes pending command)', () => {
       try {
-        tmux.createSession(testSession, { command: 'exec bash --norc --noprofile' });
+        tmux.createSession(testSession, { command: BARE_BASH });
+        awaitBashPrompt(testSession);
         // Stage a command without executing it
         tmux.sendKeys(testSession, 'echo raw-enter-marker', { enter: false });
-        execSync('sleep 0.3');
-        // Now send Enter via sendRawKey to execute it
+        waitForPane(testSession, (lines) => /^bash-[\d.]+\$ echo raw-enter-marker$/.test(lastLine(lines)),
+          'the command on the prompt line');
+        // Now send Enter via sendRawKey to execute it: done when the marker is a
+        // line of output and a fresh prompt follows it.
         tmux.sendRawKey(testSession, 'Enter');
-        execSync('sleep 0.4');
-        const cap = tmux.capturePane(testSession, { full: true });
-        const content = cap.lines.join('\n');
-        // After Enter, the marker should appear at least twice (typed + echoed output)
-        const occurrences = (content.match(/raw-enter-marker/g) || []).length;
-        assert.ok(occurrences >= 2,
-          `Expected marker to appear at least twice after Enter, got ${occurrences}: ${content.slice(0, 200)}`);
+        waitForPane(testSession, (lines) => BASH_PROMPT.test(lastLine(lines)) && lines.includes('raw-enter-marker'),
+          'the marker as output and a fresh prompt');
       } finally {
         try { tmux.killSession(testSession); } catch (_) {}
       }
