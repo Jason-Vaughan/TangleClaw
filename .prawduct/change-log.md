@@ -41,6 +41,35 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-17 — #2164, #2036, #1640, #1998: the savepoint helper is named for what it does, the absent-Bridge test no longer borrows an ephemeral port, review ids leave test names, and the create routing test stops racing a real child
+
+<!-- prawduct: type=chore | scope=w11b1-savepoint-rename-port-and-test-hygiene -->
+
+v5.34.0 Wave 11 chunk W11-B1, chunk 1 of 1. Branch `fix/w11b1-savepoint-rename-port-and-test-hygiene` from `origin/main` `1a70ccd5`. Closes #2164, #2036, #1640, #1998. Plan: `.tangleclaw/plans/build-plan-w11b1-savepoint-rename-port-and-test-hygiene.md` (rev3 sha256 `a9e16605…50fe`, approved by INT and Architect A239-r3); charter v2.33 (sha256 `59b2d3e4…7d46`).
+
+**#2164.** `lib/store.js` `_startupControlAtomic` is now `_withSavepoint`, and its savepoint `startup_control_atomic` is now `with_savepoint`, at the definition and all five call sites. Its JSDoc names both kinds of caller: the startup-control trims and the session-rule replacement paths. No behaviour change.
+
+**#2036.** The "toggle {enabled:true} does NOT refuse when the Bridge is absent" test pointed the Bridge at 59991, in macOS's ephemeral range. The preflight also probes the derived WebSocket port, 59992, so a process holding either turned `BRIDGE_ABSENT` into another code. The test now binds an OS-chosen port and its +1 neighbour, releases both, and points the Bridge there.
+
+**#1640.** Twelve review ids deleted: ten test names in `test/master.test.js`, `test/master-control-bar.test.js` and `test/master-guard-source.test.js`; one assertion message in `test/api-medusa.test.js`; and the same defect in `test/release-certification-host-publish.test.js`, which is #1640's failure family under charter §1.4(h). Per-file test counts are unchanged. #2469 stays open for INT to reconcile.
+
+**#1998.** "runs on the scanner the background poll cannot kill underneath it" (`createProjectsDir`) stubbed only `dirScanner.request`, so the create ran a real child under the 5 s deadline. Both entry points are now stubbed and counted, as #1993 did for the wizard scan. The wizard-scan `withScanner` `@param` now names `interactiveRequest`. The audit the issue asks for: five other `createProjectsDir` tests run a real child, and they stay real, because the child's filesystem result is what they assert; the four refusal tests return before any child runs.
+
+**Limits.** #2036: another process can still take the port pair between its release and the preflight. #1998: the five filesystem `createProjectsDir` tests can still overrun 5 s on a heavily loaded host.
+
+**Tests.** Red-first: with 59991 and 59992 held, the old Bridge test failed (`BRIDGE_UNHEALTHY`), and the new one passed. Pointing `createProjectsDir` at `dirScanner.request` turned the create routing test red, and so did removing its interactive stub. Narrow ring: the 48 test files that touch the tables the five savepoint callers write, plus the six edited test files. All green.
+
+**Review.** Cumulative Critic `rev-20261017T221318Z-c7a99cb1`: 0 blocking.
+
+**rev-20261017T221318Z-c7a99cb1** — 2026-10-17T22:14:02Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | accepted | The declared suite runs once on the frozen head in the Integrator's suite slot (charter v2.33 order, after the Architect's pre-suite read) and is recorded as test evidence before the ready report. Narrow runs on 4232dbae: 48-file store-caller ring 3662/0, api-medusa 206/0, projects 226/0/1 host skip, the five #1640 files with unchanged counts. |
+| R-2 | note | accepted | The four items are GitHub issues, not local backlog entries; the PR body carries Closes #2164, #2036, #1640 and #1998, and they close at merge. |
+
+**2 findings** (1 warning, 1 note) — accepted: 2.
+
 ## 2026-10-17 — W10-REC: the v5.34.0 Wave 10 combined records
 
 <!-- prawduct: type=chore | scope=w10-rec-records -->
