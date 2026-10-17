@@ -59,6 +59,17 @@ v5.34.0 Wave 11 chunk W11-B1, chunk 1 of 1. Branch `fix/w11b1-savepoint-rename-p
 
 **Tests.** Red-first: with 59991 and 59992 held, the old Bridge test failed (`BRIDGE_UNHEALTHY`), and the new one passed. Pointing `createProjectsDir` at `dirScanner.request` turned the create routing test red, and so did removing its interactive stub. Narrow ring: the 48 test files that touch the tables the five savepoint callers write, plus the six edited test files. All green.
 
+**Review.** Cumulative Critic `rev-20261017T221318Z-c7a99cb1`: 0 blocking.
+
+**rev-20261017T221318Z-c7a99cb1** — 2026-10-17T22:14:02Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | accepted | The declared suite runs once on the frozen head in the Integrator's suite slot (charter v2.33 order, after the Architect's pre-suite read) and is recorded as test evidence before the ready report. Narrow runs on 4232dbae: 48-file store-caller ring 3662/0, api-medusa 206/0, projects 226/0/1 host skip, the five #1640 files with unchanged counts. |
+| R-2 | note | accepted | The four items are GitHub issues, not local backlog entries; the PR body carries Closes #2164, #2036, #1640 and #1998, and they close at merge. |
+
+**2 findings** (1 warning, 1 note) — accepted: 2.
+
 ## 2026-10-17 — W10-REC: the v5.34.0 Wave 10 combined records
 
 <!-- prawduct: type=chore | scope=w10-rec-records -->
