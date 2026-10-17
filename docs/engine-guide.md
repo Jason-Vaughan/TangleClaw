@@ -911,9 +911,16 @@ profile names an adapter that can observe it (`declaresObserver`; today, Codex):
     names no dialog. A composer holding typed text below a stale bare row is refused by it too; when
     the cursor is on that text the hold keeps its own code, `pane-composer-has-input`. One composer
     is excused: the switchboard's own nudge left unsubmitted by a lost Enter, and only when the
-    composer is seen whole to its lower border, holds exactly that nudge, and no other row that
-    starts with the glyph is below the last bare prompt. Codex's composer draws no border, so that
-    recovery does not apply there, with or without this rule.
+    composer is seen whole to its lower border, holds exactly that nudge, and no row that starts
+    with the glyph is drawn below the composer, whether or not an older bare prompt row is in the
+    read (#2452). The same exception also excuses a missing at-rest marker (Antigravity hides
+    `? for shortcuts` while its composer holds text), but only for that exact nudge seen whole, with
+    nothing glyph-led below it and an empty hint slot in the status row; the busy marker and an
+    agent fleet are never excused (#2358). A boxed composer, a border above the cursor and one
+    below it, is anchored on its upper border, so a wrapped continuation row that starts with the
+    glyph does not cut off its head; with no box in view, the nearest glyph-led row still decides
+    (#2358). Codex's composer draws no border, so that recovery does not apply there, with or
+    without this rule.
     **A known limit, kept on purpose:** a usable composer whose own row is not bare, because the
     engine has drawn a pending suggestion on it (Claude Code), is refused as `pane-no-prompt` when an
     older bare prompt row is still in the read above it. The cursor says that composer is empty, but

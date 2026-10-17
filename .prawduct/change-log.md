@@ -63,6 +63,18 @@ v5.34.0 Wave 8 chunk W8-B1, chunks 01 and 02 of 2 on one branch. Branch `fix/w8b
 
 **3 findings** (1 warning, 2 note) — accepted: 3.
 
+## 2026-10-17 — #2452, #2453: the switchboard's own nudge is refused with a dialog's selector below its composer, and the docs describe the own-nudge rules
+
+<!-- prawduct: type=bugfix | scope=w8-a1-own-nudge-below-composer -->
+
+v5.34.0 Wave 8 chunk W8-A1, chunk 1 of 1. Branch `fix/2452-2453-w8-a1` from `origin/main` `dd055aed`. Closes #2452 and #2453. Plan: `.tangleclaw/plans/w8-a1-own-nudge-below-composer-2452-2453.md` (rev 1, sha256 `413c1db9…7740d`, approved by INT and Architect A211); charter v2.30 (sha256 `02fa43c3…0892`).
+
+**#2452.** A Claude Code composer holding exactly the switchboard's own stranded nudge, with a dialog's selector (`❯ 1. Yes`) drawn below it and no older bare `❯` row in the read, was judged `at-prompt`: `_glyphRowBelowPrompt` anchors on the last bare row and there was none, and Claude declares no at-rest marker, so W7-A1's below-composer guard (inside the missing-marker excuse) never ran. The next wake would have cleared the composer and typed into a dialog. `_glyphRowBelowComposer(rows, profile, region)` now holds that check, and the excuse calls it with its verdict unchanged (`not-at-rest` stays pinned, ruling D1). The refusal branch of `_glyphRowBelowPrompt` also asks it whenever the own nudge is excused, with the same reason mapping (`composer-has-input` when the cursor shows input, else `no-prompt`; ruling D2). The same hole for Antigravity at rest, with its marker drawn, closes with it (ruling D3). Tests came first: the issue's repro, every profile drawing Claude's glyph without a marker, and Antigravity with its marker present were red (`at-prompt`) before the fix. Two positive pins (footer only below; a glyph-led transcript row above) stay `at-prompt`. Three mutations (no refusal; scan from the composer's first row; scan the whole read) each turn the expected tests red.
+
+**#2453.** `docs/engine-guide.md` said the own nudge was excused while nothing glyph-led was below the last bare prompt; it now says below the composer, with or without a bare row. It and `docs/medusa-delivery.md` now describe W7-A1's missing-marker excuse for that nudge, and the engine guide also describes the boxed-composer anchor (#2358).
+
+**Limits.** The Claude frame is constructed, not captured live. The fix only adds a refusal, so the risk is a held nudge, never a mistyped one. Codex's unbordered composer still never qualifies. The plan named three Claude profiles. The test store derives only `claude`, so the test loops over every profile with Claude's glyph and no marker, and asserts there is at least one.
+
 ## 2026-10-17 — W7-REC: the v5.34.0 Wave 7 combined records
 
 <!-- prawduct: type=chore | scope=w7-rec-records -->

@@ -718,6 +718,62 @@ describe('medusa-wake — _assessPane: a row that starts with the prompt glyph b
       assert.deepEqual(wake._assessPane([CX_EMPTY, '', ...live], CODEX, held.cursor), { idle: false, reason: 'no-prompt' });
     });
   });
+
+  describe('the switchboard\'s own stranded nudge with no stale bare row in the read (#2452)', () => {
+    // With text in the composer and no older bare prompt row in the read, the
+    // last-bare-row check has nothing to anchor on. What is drawn below the
+    // composer still decides: a dialog's selector there is a dialog.
+    const DIALOG = ['', '  Do you want to proceed?', '❯ 1. Yes', '  2. No'];
+
+    /** A Claude pane whose bordered composer holds `text`, with no bare prompt row anywhere. */
+    const claudePane = (text, above = ['⏺ Done.'], below = []) => {
+      const held = composerHolding('❯', ' ', text);
+      return { lines: [...above, RULE, ...held.rows, RULE, CLAUDE_FOOTER, ...below], cursor: held.cursor };
+    };
+
+    it('is the case under test: no bare prompt row in the read', () => {
+      const { lines } = claudePane(NUDGE, ['⏺ Done.'], DIALOG);
+      assert.ok(!lines.some((row) => CLAUDE.promptRe.test(row)), 'no bare row');
+    });
+
+    it('the issue\'s repro: a selector drawn below the nudge\'s composer is refused', () => {
+      // Verbatim from the issue: the nudge cut at 76 columns, the glyph on the
+      // first row and two columns of indent on the rest.
+      const rows = [];
+      for (let i = 0; i < NUDGE.length; i += 76) rows.push((i ? '  ' : '❯ ') + NUDGE.slice(i, i + 76));
+      const pane = ['⏺ Done.', RULE, ...rows, RULE, CLAUDE_FOOTER, '', '  Do you want to proceed?', '❯ 1. Yes', '  2. No'];
+      const last = rows[rows.length - 1];
+      assert.deepEqual(wake._assessPane(pane, CLAUDE, { x: [...last].length, line: last }), { idle: false, reason: 'no-prompt' });
+    });
+
+    it('every profile that draws Claude\'s glyph and declares no at-rest marker refuses it', () => {
+      const claudeLike = Object.entries(wake.ENGINE_WAKE_PROFILES)
+        .filter(([, profile]) => profile.promptGlyph === '❯' && !profile.idleMarker);
+      assert.ok(claudeLike.length >= 1, 'at least the claude profile');
+      const { lines, cursor } = claudePane(NUDGE, ['⏺ Done.'], DIALOG);
+      for (const [id, profile] of claudeLike) {
+        assert.deepEqual(wake._assessPane(lines, profile, cursor), { idle: false, reason: 'no-prompt' }, id);
+      }
+    });
+
+    it('Antigravity at rest, its marker present: a selector below the nudge\'s composer is refused', () => {
+      const held = composerHolding('>', ' ', NUDGE);
+      const lines = ['  DONE', RULE, ...held.rows, RULE, AG_FOOTER, '', '  Apply this change?', '> Yes', '  No', AG_FOOTER];
+      assert.ok(lines.some((row) => row.includes(ANTIGRAVITY.idleMarker)), 'the at-rest marker is drawn, so no excuse is involved');
+      assert.ok(!lines.some((row) => ANTIGRAVITY.promptRe.test(row)), 'no bare row');
+      assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, held.cursor), { idle: false, reason: 'no-prompt' });
+    });
+
+    it('with only the footer below the composer it is still at-prompt, so the next nudge can replace it', () => {
+      const { lines, cursor } = claudePane(NUDGE);
+      assert.deepEqual(wake._assessPane(lines, CLAUDE, cursor), { idle: true, reason: 'at-prompt' });
+    });
+
+    it('a glyph-led row above the composer, in the transcript, refuses nothing', () => {
+      const { lines, cursor } = claudePane(NUDGE, ['❯ 1. an earlier selector, answered', '⏺ Done.']);
+      assert.deepEqual(wake._assessPane(lines, CLAUDE, cursor), { idle: true, reason: 'at-prompt' });
+    });
+  });
 });
 
 describe('medusa-wake — a measured Antigravity pane holding a stranded nudge (#2358)', () => {
