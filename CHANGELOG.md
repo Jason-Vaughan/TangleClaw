@@ -12,11 +12,14 @@ All notable changes to TangleClaw are documented in this file.
 - The Operator can settle a merge queue entry stuck in `landing` (`POST /api/merge-queue/entries/:id/settle-landing`): `landed` on a commit proved reachable from the base tip, or `failed`, which halts the queue for reconciliation unless the merge request is disposed of as unsuccessful (#2364).
 - Shared documents keep a record of every observed revision (`GET /api/shared-docs/:id/events`): which member rows changed (a row moved between tables counts), and who attested the edit (`tc docs base` / `tc docs attest`, lock holder only). Attested authorship is not proof of who wrote the bytes (#2389).
 - Turning a launch-isolation override on asks first, naming whom it covers and the risk; the dashboard's main view says while one is on, naming each, with a button to its switch (#2393).
+- **The landing page says so when no login is in force (#2378).** A standing notice explains that actions granting authority over sessions are refused until a login is on and you are signed in, with an **Add a login** button that opens Global Settings at Your account. It has no dismiss; it goes once the login is in force.
 
 ### Changed
 
 - The wrap drawer's commit row says who merges a wrap PR left for a coordinator, name first, with nothing under *How to fix this*; other auto-PR failures now show their fix there (#2366).
 - Shared-doc change notices go only to the owners of rows an attested author changed and to subscribers, never the author; `tc docs mute|subscribe|default` and the `notices` routes set it per doc or group. A notify of unchanged bytes notifies nobody (#2389).
+- **A refused launch's message stays until you dismiss it** (#2339): the dashboard no longer hides it after 6 s or under another message's timer. Dismiss it with its button, or Escape on its buttons; a newer one replaces it. Long paths wrap at 320 px. **Bridge Discord times in local time** (#2313): the panel and `tc bridge status` show them in the host's zone; the status JSON keeps ISO.
+- With no login in force, operator routes that grant or approve authority refuse until the operator signs in (403 LOGIN_GATE_REQUIRED; 409 GATE_FALLBACK while stood down): session-rule approval, global/Master rules, learning tiers, coordinator grants, releasing a HOLD, merge-queue creation and gates, shared-doc registration, group membership, recovery mode, the startup prompt (#2378).
 
 ### Fixed
 
@@ -25,6 +28,8 @@ All notable changes to TangleClaw are documented in this file.
 - A checkout fingerprint whose deadline ends now stops and reaps the git it started, so no git is left running in a live checkout to hold `index.lock` after a rotation's fingerprint times out (#2304). Test-only: the wedged-tmux read test counts children from the spawn (#2408).
 - Project Settings no longer scrolls sideways on a narrow phone: the settings grids' columns shrink to the modal instead of holding a fixed minimum width (#2361).
 - The host check reads a direct-mode HTTPS install's served certificate: names, dates, coverage, whether the local root issued it, and whether that root is in the check's own Node CA set, with a qualified lead for `tls-unverified` (#2414).
+- After a clear or compaction, the launch prime no longer states a rule count that can disagree with the Project Rules block beside it: it names that block as the authority on which rules are in force, and a launch with no rules says none were active when it launched (#2317).
+- A governed hook that refuses an untrusted HTTPS certificate now points at a server log line that names each CAROOT directory tried and what was wrong with it. A public or custom certificate warns once per server process, not on every launch. A hook at `https://[::1]` no longer refuses an mkcert certificate on Node 22.23. (#2142)
 
 ### Internal
 
@@ -32,6 +37,12 @@ All notable changes to TangleClaw are documented in this file.
 - Docs: the operator bridge pages now say it shipped in v5.31.0, is off by default and is cut over per install; README, setup and user guides link to it; the merge queue page names `CANDIDATE_CONFLICT` and `NOTHING_TO_MERGE`; a user-guide link to the engine guide is fixed (#2417, #2365, #2312).
 - #2371: the CI-as-suite governance packet. The upstream Prawduct report is drafted as one scrubbed block, NOT SENT. The lane-rule proposal is brought to the current rules with Prawduct's own acceptance as its first condition, NOT IN FORCE. Nothing changes for the lanes yet.
 - #2358 (refs): a measured Antigravity pane is now a wake-gate test. A live capture (agy 1.3.6, 179x44) shows the engine word-wraps, so no row started with `>`. Its composer is recognised as the monitor's nudge; on the REDACTED fixture, which has no idle marker, the pane gate refuses it as `not-at-rest`. This does not establish the original live pane's verdict. Test-only; #2358 stays open.
+- Two test fixes. `test/checkout-freshness.test.js` no longer flakes when a wall-clock second ticks between its two summary renders: the case pins one clock. The `#831` temp-repo guard now also catches `git init`/`git clone` run through a wrapper that is returned by a call and called at once (`at(dir)('init', …)`). (#2175, #2349)
+- **A `tc` command reference** (#2299): `docs/tc-cli-reference.md` describes every verb `tc --help` lists, linked from the user guide's Sessions chapter; `test/tc-cli-reference.test.js` fails when a verb has no row. FEATURES.md's sixteen auto-stubbed files are described or removed with their reason (#2384).
+- The recorded-launch-command judgment moved into the store-free `lib/recorded-launch-command.js`, which `tc` now requires directly; its PATH-floor copy and the warning-hiding wrapper are gone (#2375).
+- The Codex folder-trust readiness-timeout route is tested end to end at production timing. (#2223)
+- Bridge gateway test: the READY-wait case measures from the launch's recorded start, so a loaded host no longer fails it; `fetch failed` and the wedged-reads case now report their cause and timings (refs #2184, #2200).
+- The test suite's git-template guard now also catches `git -C <dir> init` argv and named git wrappers; the sixteen inits of those shapes use `initRepo` (a `git(cwd, ...args)` helper is not yet covered). A skipped `describe` is pinned against the real junit reporter and the shipped skip ledger (#2349, #2438, #1413).
 
 ## [5.33.1] - 2026-10-14
 
