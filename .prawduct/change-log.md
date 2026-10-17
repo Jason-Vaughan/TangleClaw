@@ -49,6 +49,8 @@ v5.34.0 chunk W6-A2 (charter v2.26, Architect A192; plan rev 3 approved by INT).
 
 **Not covered.** The guard still cannot see a subcommand held in a variable, a wrapper whose body does work before `return exec*('git', …)`, a wrapper imported from another module, an argv the wrapper spreads from an array it was given, a leading argument with nested calls, or a call split across lines. None of these is in `test/` today; the list lives beside the guard's SHAPES.
 
+**Review.** Cumulative Critic `rev-20261017T104048Z-7d244602`: 0 blocking; 2 warnings and 3 notes, all accepted. The warnings (the #2152 race in the other `sendKeys - behavioral` tests) are outside the chartered scope and filed as #2447. The `_temp-repo.js` header note is left so the carried content stays identical to `be288eab`.
+
 ## 2026-10-17 — #2201: a damaged launch blocker is logged once instead of dropped silently
 
 <!-- prawduct: type=bugfix | scope=w6b1-dialog-classifier-and-launch-blocker -->
