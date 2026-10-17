@@ -632,8 +632,13 @@ function renderNoLoginBanner(authStatus) {
   if (authStatus !== 'open') {
     textEl.replaceChildren();
     banner.classList.add('hidden');
+    banner.dataset.painted = '';
     return;
   }
+  // Painted once while it stays up: a live region whose text is replaced on
+  // every poll is re-announced each time, and this one shows by default.
+  if (banner.dataset.painted === '1') return;
+  banner.dataset.painted = '1';
   const strong = document.createElement('strong');
   strong.textContent = NO_LOGIN_NOTICE.lead;
   textEl.replaceChildren(strong, document.createTextNode(NO_LOGIN_NOTICE.body));

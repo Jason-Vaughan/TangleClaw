@@ -637,6 +637,19 @@ describe('The landing notice that no login is in force: when it shows (#2378)', 
     assert.equal(s.textEl.text, NO_LOGIN_TEXT, 'painted once, not appended to');
   });
 
+  it('is not repainted by a poll that reads open again, so a screen reader does not re-announce it', () => {
+    const s = noLoginSandbox({ openGlobalSettings: () => {} });
+    s.ctx.renderAuthStatus('open');
+    const painted = [...s.textEl.childNodes];
+    s.ctx.renderAuthStatus('open');
+    assert.equal(s.textEl.childNodes.length, painted.length);
+    s.textEl.childNodes.forEach((node, i) => assert.equal(node, painted[i], 'the same nodes stay in place'));
+    s.ctx.renderAuthStatus('armed');
+    s.ctx.renderAuthStatus('open');
+    assert.notEqual(s.textEl.childNodes[0], painted[0], 'painted afresh once it has been down');
+    assert.equal(s.textEl.text, NO_LOGIN_TEXT);
+  });
+
   it('leaves the login chip silent for open, and its warnings as they were', () => {
     const s = noLoginSandbox({ openGlobalSettings: () => {} });
     s.ctx.renderAuthStatus('open');
