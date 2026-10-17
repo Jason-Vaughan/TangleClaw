@@ -1263,3 +1263,99 @@ describe('#2154: a file answered Leave is never committed by that wrap', () => {
     assert.deepEqual(git(repo, 'show', '--name-only', '--format=', 'HEAD').split('\n'), ['CLAUDE.md']);
   });
 });
+
+describe('#2160: the classification derives the two path lists its consumers used to rebuild by hand', () => {
+  const engines = require('../lib/engines');
+  const MD = engines._managedBlockMarkers('markdown');
+  const guide = (body) => `# Project\n\nOperator notes.\n\n${MD.begin}\n${body}\n${MD.end}\n`;
+  const UPSTREAM = { state: 'established', ref: 'origin/main', paths: { 'up.md': { verdict: 'already-upstream', upstream: 'equal' } } };
+  const DECISIONS = { 'shared.js': 'include', 'work.js': 'leave', 'README.md': 'leave' };
+
+  /**
+   * A tree with a path in every bucket `classify` sorts into: TangleClaw
+   * maintenance and state, an included, a left and an undecided foreign file
+   * (all uncommitted at launch), then the session's own edit, a session file
+   * answered Leave, a dormant methodology's state, a protected database and a
+   * file upstream already holds.
+   * @returns {Promise<{repo:string, scope:object, dirty:Array<object>, c:object}>}
+   */
+  async function everyBucket() {
+    const repo = makeRepo();
+    fs.mkdirSync(path.join(repo, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'CLAUDE.md'), guide('guide v1'));
+    fs.writeFileSync(path.join(repo, '.tangleclaw', 'session-prime.md'), 'prime v1\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'track tangleclaw files');
+    fs.writeFileSync(path.join(repo, 'CLAUDE.md'), guide('guide v2'));
+    fs.writeFileSync(path.join(repo, '.tangleclaw', 'session-prime.md'), 'prime v2\n');
+    for (const f of ['shared.js', 'work.js', 'feature.js']) fs.writeFileSync(path.join(repo, f), 'operator edit\n');
+    const scope = await scopeFor(repo, launchBaseline.capture(repo));
+    fs.writeFileSync(path.join(repo, 'mine.js'), 'session work\n');
+    fs.writeFileSync(path.join(repo, 'README.md'), 'session edit, answered Leave\n');
+    fs.mkdirSync(path.join(repo, '.prawduct'), { recursive: true });
+    fs.writeFileSync(path.join(repo, '.prawduct', 'state.md'), 'dormant methodology state\n');
+    fs.mkdirSync(path.join(repo, 'fixtures'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'fixtures', 'seed.db'), 'not text\n');
+    fs.writeFileSync(path.join(repo, 'up.md'), 'merged upstream already\n');
+    // Untrimmed: a leading space is part of the first entry's status code.
+    const dirty = ownership.parseStatus(execFileSync('git', ownership.statusArgs(), { cwd: repo, encoding: 'utf8' }));
+    const c = ownership.classify(scope, dirty, { decisions: DECISIONS, withheldPrefixes: ['.prawduct/'], provenance: UPSTREAM });
+    return { repo, scope, dirty, c };
+  }
+
+  it('notCommitted is every dirty path not in stageable, whichever bucket holds it', async () => {
+    const { dirty, c } = await everyBucket();
+    // Fixture precondition: each bucket the classifier has is occupied.
+    assert.deepEqual(c.owned, ['mine.js']);
+    assert.deepEqual(c.included, ['shared.js']);
+    assert.deepEqual(c.left.sort(), ['README.md', 'work.js']);
+    assert.deepEqual(c.leftSessionFiles, ['README.md']);
+    assert.deepEqual(c.undecided.map((f) => f.path), ['feature.js']);
+    assert.deepEqual(c.tangleclawMaintenance, ['CLAUDE.md']);
+    assert.deepEqual(c.tangleclawState, ['.tangleclaw/session-prime.md']);
+    assert.deepEqual(c.methodologyWithheld, ['.prawduct/state.md']);
+    assert.deepEqual(c.safetyWithheld, ['fixtures/seed.db']);
+    assert.deepEqual(c.alreadyUpstream, ['up.md']);
+
+    const stageable = new Set(c.stageable);
+    assert.deepEqual(c.notCommitted, dirty.map((f) => f.path).filter((p) => !stageable.has(p)),
+      'every dirty path the commit will not stage, in status order');
+    for (const p of ['work.js', 'feature.js', 'README.md', '.tangleclaw/session-prime.md', '.prawduct/state.md', 'fixtures/seed.db', 'up.md']) {
+      assert.ok(c.notCommitted.includes(p), `${p} will not ship, so it is in notCommitted`);
+    }
+    for (const p of ['mine.js', 'shared.js', 'CLAUDE.md']) {
+      assert.ok(!c.notCommitted.includes(p), `${p} is staged, so it is not in notCommitted`);
+    }
+  });
+
+  it('committableOrAsked is stageable, then the foreign paths, then the session files left, without repeats', async () => {
+    const { c } = await everyBucket();
+    // The secret scan's read budget skips candidates from the end, so the order is part of the contract.
+    assert.deepEqual(c.foreign.map((f) => f.path), ['feature.js', 'shared.js', 'work.js'],
+      'fixture precondition: status order, and the Include is foreign as well as staged, so it must not repeat');
+    assert.deepEqual(c.committableOrAsked, ['mine.js', 'shared.js', 'CLAUDE.md', 'feature.js', 'work.js', 'README.md']);
+    assert.deepEqual(c.committableOrAsked.slice(0, c.stageable.length), c.stageable);
+  });
+
+  it('reclassify keeps both lists consistent with the narrowed buckets', async () => {
+    const { dirty, c } = await everyBucket();
+    const narrowed = ownership.reclassify(c, { owned: [], included: c.included, tangleclawMaintenance: c.tangleclawMaintenance });
+    assert.deepEqual(narrowed.stageable, ['shared.js', 'CLAUDE.md']);
+    assert.ok(narrowed.notCommitted.includes('mine.js'), 'a path narrowed out of the commit joins notCommitted');
+    assert.ok(!narrowed.committableOrAsked.includes('mine.js'), 'it is neither foreign nor left, so it is not asked about');
+    const stageable = new Set(narrowed.stageable);
+    assert.deepEqual(narrowed.notCommitted, dirty.map((f) => f.path).filter((p) => !stageable.has(p)));
+    assert.deepEqual(narrowed.committableOrAsked, ['shared.js', 'CLAUDE.md', 'feature.js', 'work.js', 'README.md']);
+  });
+
+  it('the lists cover a bucket no consumer names, with no consumer change', () => {
+    const scope = { snapshotApplies: true, baseline: { dirty: { paths: [] } }, startedAtMs: 0, workToplevel: null };
+    const c = ownership.classify(scope, [
+      { path: '.prawduct/change-log.md', deleted: false, indexRemoved: false, renamePair: null, newToRepo: false },
+      { path: 'mine.js', deleted: false, indexRemoved: false, renamePair: null, newToRepo: false }
+    ], { withheldPrefixes: ['.prawduct/'] });
+    assert.deepEqual(c.methodologyWithheld, ['.prawduct/change-log.md']);
+    assert.deepEqual(c.notCommitted, ['.prawduct/change-log.md']);
+    assert.deepEqual(c.committableOrAsked, ['mine.js']);
+  });
+});

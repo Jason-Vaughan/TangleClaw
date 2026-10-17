@@ -41,6 +41,48 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-17 — #2160, #2465: the wrap's file classifier derives the not-committed and scan lists itself, and the changelog gate uses the one wrap-subject rule
+
+<!-- prawduct: type=refactor | scope=w11-a1-wrap-subject-import-and-derived-path-lists -->
+
+v5.34.0 Wave 11 chunk W11-A1, chunk 1 of 1. Branch `fix/2465-2160-w11-a1` from `origin/main` `1a70ccd5`. Closes #2160 (items 1 and 3; item 2 shipped in PR #2161) and #2465. Plan: `.tangleclaw/plans/w11-a1-wrap-subject-import-and-derived-path-lists-2465-2160.md` (rev1 sha256 `dd64e2d9…358a2`, INT `e34a1490` and Architect A238; rev2 `e8bd8e87…cbb5d`, Architect A240); charter v2.33 (sha256 `59b2d3e4…7d46`).
+
+**#2160.** Two consumers rebuilt lists from the classifier's buckets by hand, so each new bucket had to be added to both, and a miss failed silently (#2154 missed the secret check). `classify` now returns `notCommitted`, every dirty path not in `stageable` in status order, and `committableOrAsked`, built by the exported `committableOrAskedOf`: `stageable`, then the foreign paths, then the session files left, without repeats. It also carries `paths`, so `reclassify` keeps both lists consistent. `_secret-check.js#check` scans `committableOrAsked` with no fallback. `changelog-coverage.js#_sortForCommit`'s `excluded` is `notCommitted` made project-relative, and `_excludedFromCommit`'s JSDoc says so relationally. Relational `notCommitted` differs from coverage's old five-bucket list only by `methodologyWithheld`, which is always empty there (O1 below), so no gate output changes.
+
+**#2465.** `changelog-coverage.js` drops its own `WRAP_SUBJECT_RE` and `_isWrapCommit` body; the `_isWrapCommit` export is `gitRange.isWrapSubject` itself. The W10-A1 parity case becomes an identity case.
+
+**Plan delta (rev2).** The plan missed that `test/wrap-secret-check.test.js`'s helper `classification()` hand-builds classifications without the new list, which would leave five existing cases scanning nothing. Option A (INT, Architect A240): the helper derives `committableOrAsked` through `committableOrAskedOf`; no assertion changed. D6 (PM charter v2.34, Architect A240, INT bound a ninth file): `_git-range.js`'s JSDoc no longer says `changelog-coverage` keeps its own copy; a comment-only change.
+
+**Observation O1 (not fixed here).** `_sortForCommit` calls `classify` without `withheldPrefixes`, while `commit.js` passes them, so a dormant methodology's state file is owned work to the coverage gate but withheld from the commit. Tracked as #2470 (open).
+
+**Tests.** `test/wrap-file-ownership.test.js`: `notCommitted` over a real tree with a path in every bucket; `committableOrAsked` order and dedup; `reclassify` consistency; an unnamed bucket covered. `test/wrap-secret-check.test.js`: the scan set and its budget order, observed through the report. `test/wrap-changelog-coverage.test.js`: `excluded` equals `notCommitted` for a project below the repo root; `_isWrapCommit` is the shared function and the source has no local regex. Red first on `main`; mutations (no `leftSessionFiles`, an enumerated `notCommitted`, `reclassify` without facts, a local regex) each went red.
+
+**Review.** Cumulative Critic `rev-20261017T221556Z-5b23afdc` on `000bd9b4`: 0 blocking. `verify-resolutions` `rev-20261017T221927Z-e7b39c4f` on `e9492cf0`: no findings.
+
+**rev-20261017T221556Z-5b23afdc** — 2026-10-17T22:17:55Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | accepted | The declared suite runs once on the final tree in the Integrator's suite slot (charter order, after the Architect's pre-suite read) and is recorded as test evidence before the ready report. The narrow ring on head 000bd9b4 (26 files: every test naming _file-ownership, _secret-check, changelog-coverage, selectionOf, reclassify or classify(, plus wrap-methodology-authority and wrap-step-commit-autopr) passed 1644/0. |
+| R-2 | warning | fixed | fixed in `.prawduct/change-log.md` |
+| R-3 | note | accepted | Addressed in e9492cf0 (D6, bound ninth file): the stale sentence is replaced with a true one; verify-resolutions rev-20261017T221927Z-e7b39c4f reviewed that edit and demoted its remaining point to O-1 (accepted). A FIXED is refused for a judgeable path, so this records the outcome as an accept citing that review. |
+| R-4 | note | accepted | Plan residual risk R1, by design: after reclassify, committableOrAsked is rebuilt from the narrowed buckets and the classification's own foreign/leftSessionFiles facts, so a session file the secret check withheld is in notCommitted, not committableOrAsked. Nothing reads committableOrAsked after narrowing: check() reads it from the classify() output, and the coverage gate classifies on its own. |
+
+**4 findings** (2 warning, 2 note) — accepted: 3, fixed: 1.
+
+**rev-20261017T221927Z-e7b39c4f** — 2026-10-17T22:19:50Z
+
+_No findings._
+
+_Observations — read, not owed. Answering one is optional._
+
+| Observation | State | Detail |
+|---|---|---|
+| O-1 | accepted | The reworded JSDoc is true now and the identity test in wrap-changelog-coverage and wrap-step-continuity-write pins it (_isWrapCommit === isWrapSubject), so it cannot go silently false while that test holds. INT bound this file for a two-line comment correction (D6), which a deletion would also have satisfied; the sentence states where the rule lives, which a reader of _git-range needs. |
+
+**No findings** — a clean pass.
+**1 observation demoted** — 1 answered. An observation gates nothing; answering one is optional.
+
 ## 2026-10-17 — #2164, #2036, #1640, #1998: the savepoint helper is named for what it does, the absent-Bridge test no longer borrows an ephemeral port, review ids leave test names, and the create routing test stops racing a real child
 
 <!-- prawduct: type=chore | scope=w11b1-savepoint-rename-port-and-test-hygiene -->

@@ -510,13 +510,10 @@ describe('continuity-write wrap step (CC-1)', () => {
     assert.ok(gitRange.WRAP_SUBJECT_RE instanceof RegExp);
   });
 
-  it('isWrapSubject agrees with changelog-coverage, so the two copies cannot drift apart', () => {
+  it('changelog-coverage uses isWrapSubject itself, so there is one rule to drift', () => {
     const gitRange = require('../lib/wrap-steps/_git-range');
     const coverage = require('../lib/wrap-steps/changelog-coverage');
-    for (const [subject] of WRAP_SUBJECTS) {
-      assert.equal(gitRange.isWrapSubject(subject), coverage._isWrapCommit(subject),
-        `the two rules disagree on ${JSON.stringify(subject)}`);
-    }
+    assert.equal(coverage._isWrapCommit, gitRange.isWrapSubject);
   });
 
   /** The recorded boundary these cases measure from, so the range is the session's. */
