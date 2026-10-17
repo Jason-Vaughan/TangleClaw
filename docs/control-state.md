@@ -216,7 +216,10 @@ HTTPS install, below) and is never committed.
     connection is made;
   - connects to the literal loopback address, so no DNS answer can move the request off this
     machine, and verifies the chain and the hostname in full, trusting **only** `caFile` for that one
-    request. TLS is never relaxed;
+    request. TLS is never relaxed. For `[::1]` the hostname check is an exact address match against the
+    certificate's IP SANs, made after the chain verifies, so it gives the same answer on every Node
+    version (#2142: Node 22.23.3's own check refuses a SAN naming `::1` as `0:0:0:0:0:0:0:1`). A DNS
+    name or the CN never counts as the address, and a certificate that cannot be read is refused;
   - with no `caFile` (a plain `http:` origin, or a certificate TangleClaw cannot tie to the local
     root), uses Node's default verification, as before.
 

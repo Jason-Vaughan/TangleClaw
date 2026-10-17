@@ -284,6 +284,10 @@ describe('control hooks over direct-mode HTTPS (#1947)', () => {
       // A failure to bind ::1 fails these cases: the [::1] arm is never skipped.
       stubs.v6 = await startStub(pki.leaf, '::1');
       stubs.v6DnsOnly = await startStub(dnsOnly, '::1');
+      // Leaves that put `::1` everywhere except an IP SAN: the CN, and a DNS
+      // SAN spelled like the address. Neither may stand in for it.
+      stubs.v6Ipv4Only = await startStub(makeLeaf(pki.ca, path.join(tmpDir, 'leaf-v4-cn-v6'), 'IP:127.0.0.1', '::1'), '::1');
+      stubs.v6DnsLoopback = await startStub(makeLeaf(pki.ca, path.join(tmpDir, 'leaf-dns-loopback'), 'DNS:::1', '::1'), '::1');
     });
 
     after(() => {
@@ -332,6 +336,30 @@ describe('control hooks over direct-mode HTTPS (#1947)', () => {
       const r = tryCommit(dir);
       assert.equal(r.ok, false);
       assert.match(r.stderr, /is not trusted \(ERR_TLS_CERT_ALTNAME_INVALID\)/);
+    });
+
+    it('https://[::1] matches ::1 itself: a leaf whose only IP is 127.0.0.1, with CN ::1, is refused', () => {
+      const dir = governed('v6-v4-only', `https://[::1]:${stubs.v6Ipv4Only.port}`, pki.ca.cert);
+      setState('asg_v6-v4-only', 'active');
+      const r = tryCommit(dir);
+      assert.equal(r.ok, false);
+      assert.match(r.stderr, /is not trusted \(ERR_TLS_CERT_ALTNAME_INVALID\)/);
+    });
+
+    it('https://[::1] needs an IP SAN: a trusted leaf naming ::1 only as a DNS name and its CN is refused', () => {
+      const dir = governed('v6-dns-loopback', `https://[::1]:${stubs.v6DnsLoopback.port}`, pki.ca.cert);
+      setState('asg_v6-dns-loopback', 'active');
+      const r = tryCommit(dir);
+      assert.equal(r.ok, false);
+      assert.match(r.stderr, /is not trusted \(ERR_TLS_CERT_ALTNAME_INVALID\)/);
+    });
+
+    it('https://[::1] still verifies the chain first: the right name under a root that did not issue it is refused', () => {
+      const dir = governed('v6-wrong-ca', `https://[::1]:${stubs.v6.port}`, pki.other.cert);
+      setState('asg_v6-wrong-ca', 'active');
+      const r = tryCommit(dir);
+      assert.equal(r.ok, false);
+      assert.match(r.stderr, /is not trusted \((?!ERR_TLS_CERT_ALTNAME_INVALID)[A-Z_]+\)/, 'refused by the chain, not by the name');
     });
   });
 
