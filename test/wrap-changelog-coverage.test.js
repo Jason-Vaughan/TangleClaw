@@ -122,6 +122,14 @@ describe('changelog-coverage — wrap-commit exclusion', () => {
   it('does not match on a prefix that only shares a word boundary', () => {
     assert.equal(cov._isWrapCommit('Session wrapper cleanup'), false);
   });
+
+  it('is the shared rule from _git-range, not a copy of it (#2465)', () => {
+    const fs = require('node:fs');
+    const gitRange = require('../lib/wrap-steps/_git-range');
+    assert.equal(cov._isWrapCommit, gitRange.isWrapSubject, 'one function, so the two cannot drift apart');
+    const source = fs.readFileSync(require.resolve('../lib/wrap-steps/changelog-coverage'), 'utf8');
+    assert.doesNotMatch(source, /\/\^?Session wrap/, 'no local regex literal for the wrap subject');
+  });
 });
 
 describe('changelog-coverage — log range resolution', () => {
@@ -650,6 +658,51 @@ describe('changelog-coverage — against this repository\'s real history', () =>
         'the post-squash form is the one that matters — it carries a #N that is never in the changelog');
       assert.ok(!excluded.includes('Stop the wrap reporting success it never verified (#641)'),
         'an ordinary commit mentioning the wrap must not be excluded');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('changelog-coverage — what the wrap will not commit (#2160)', () => {
+  it('excluded is the classifier\'s notCommitted, made relative to a project below the repo root', () => {
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const nodePath = require('node:path');
+    const { execSync, execFileSync } = require('node:child_process');
+    const ownership = require('../lib/wrap-steps/_file-ownership');
+
+    const root = fs.realpathSync(fs.mkdtempSync(nodePath.join(os.tmpdir(), 'tc-excluded-')));
+    try {
+      const git = (cmd) => execSync(`git -c user.email=t@t -c user.name=t ${cmd}`, { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] });
+      initRepo(root);
+      fs.mkdirSync(nodePath.join(root, 'pkg'));
+      fs.mkdirSync(nodePath.join(root, 'other'));
+      for (const f of ['pkg/mine.js', 'pkg/op.js', 'pkg/kept.js', 'pkg/README.md', 'other/outside.js']) {
+        fs.writeFileSync(nodePath.join(root, f), 'v0\n');
+      }
+      git('add -A');
+      git('commit -q -m init');
+      for (const f of ['pkg/mine.js', 'pkg/op.js', 'pkg/kept.js', 'pkg/README.md', 'other/outside.js']) {
+        fs.writeFileSync(nodePath.join(root, f), 'v1\n');
+      }
+      fs.writeFileSync(nodePath.join(root, 'pkg', 'app.db'), 'not text\n');
+      const scope = {
+        snapshotApplies: true,
+        baseline: { dirty: { paths: ['pkg/op.js', 'pkg/kept.js', 'other/outside.js'] } },
+        startedAtMs: 0,
+        workToplevel: root
+      };
+      const decisions = { 'pkg/kept.js': 'include', 'pkg/README.md': 'leave' };
+      const project = nodePath.join(root, 'pkg');
+
+      const excluded = cov._sortForCommit(project, scope, decisions).excluded;
+      const status = execFileSync('git', ownership.statusArgs(), { cwd: root, encoding: 'utf8' });
+      const notCommitted = ownership.classify(scope, ownership.parseStatus(status), { decisions }).notCommitted;
+      assert.deepEqual([...excluded].sort(),
+        notCommitted.filter((p) => p.startsWith('pkg/')).map((p) => p.slice('pkg/'.length)).sort());
+      assert.deepEqual([...excluded].sort(), ['README.md', 'app.db', 'op.js'],
+        'the undecided, the left and the protected file; never the session\'s edit, the Include, or a path outside the project');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
