@@ -199,14 +199,19 @@ describe('test/ — every `git init` and `git clone` goes through the helper (th
   function argvParameter(params, argv) {
     const names = params.split(',').map((p) => p.trim()).filter(Boolean)
       .map((p) => ({ rest: p.startsWith('...'), name: p.replace(/^\.\.\./, '').split('=')[0].trim() }));
-    const spread = /^\[/.test(argv) ? (argv.match(/\.\.\.\s*([A-Za-z_$][\w$]*)/) || [])[1] : null;
-    const target = spread || argv;
-    const position = names.findIndex((p) => p.name === target);
+    if (/^\[/.test(argv)) {
+      // An array argv may spread several things — ['-C', dir, ...extra, ...args]
+      // — so look at every spread, not the first: the one that is the
+      // wrapper's rest parameter is where the call's subcommand lands.
+      const spreads = [...argv.matchAll(/\.\.\.\s*([A-Za-z_$][\w$]*)/g)].map((m) => m[1]);
+      const position = names.findIndex((p) => p.rest && spreads.includes(p.name));
+      return position < 0 ? null : { position, rest: true };
+    }
+    const position = names.findIndex((p) => p.name === argv);
     if (position < 0) return null;
-    // A rest parameter is called bare whether argv is the rest itself or an
-    // array spreading it; a plain parameter must be handed over whole.
-    if (names[position].rest) return { position, rest: true };
-    return spread ? null : { position, rest: false };
+    // A rest parameter handed over as argv is called bare; a plain one is
+    // called with an array.
+    return { position, rest: names[position].rest };
   }
 
   /**
@@ -370,6 +375,13 @@ describe('test/ — every `git init` and `git clone` goes through the helper (th
         '}',
         "const g2 = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' });",
         "const run = (args) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });",
+        // more than one spread: the rest parameter is not the first of them
+        "const runE = (...args) => execFileSync('git', ['-C', dir, ...extra, ...args], { cwd });",
+        'function gitE(dir, ...args) {',
+        "  return execFileSync('git', ['-C', dir, ...EXTRA_ARGS, ...args], { encoding: 'utf8' });",
+        '}',
+        // spreads nothing it was given, so it is not a call-through wrapper
+        "const runN = (...args) => execFileSync('git', [...EXTRA_ARGS], { cwd });",
         "const npm = (cwd, ...a) => execFileSync('npm', a, { cwd });",
         'const git2 = fakeGit({ status: \'\' });'
       ];
@@ -385,7 +397,11 @@ describe('test/ — every `git init` and `git clone` goes through the helper (th
         "gitA(root, ['clone', '-q', src, dest]);",
         "g2(path.join(root, 'w'), 'init', '-q');",
         "run(['init', '-q', '-b', 'main']);",
-        "run(['clone', src, dest]);"
+        "run(['clone', src, dest]);",
+        "runE('init', '-q', '-b', 'main');",
+        "runE('clone', src, dest);",
+        "gitE(dir, 'init', '--bare', origin);",
+        "gitE(root, 'clone', '-q', origin, a);"
       ];
       const clean = [
         "git(dir, 'commit', '-q', '-m', 'init');",
@@ -396,7 +412,10 @@ describe('test/ — every `git init` and `git clone` goes through the helper (th
         "npm(dir, 'init', '-y');",
         "git2(dir, 'init');",
         "helper.run(['init']);",
-        "other.git(dir, 'init');"
+        "other.git(dir, 'init');",
+        "runE('commit', '-q', '-m', 'init');",
+        "gitE(dir, 'status');",
+        "runN('init');"
       ];
       fs.writeFileSync(f, [...definitions, ...ignored, ...matches, ...clean].join('\n'));
       assert.deepEqual(gitInitInvocations(f), matches);
