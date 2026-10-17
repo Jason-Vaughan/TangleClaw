@@ -3027,6 +3027,87 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
     assert.match(result.blockers[0], /not a git repository/);
   });
 
+  describe('#2008 — a project that is not a git repository', () => {
+    const wrapScope = require('../lib/wrap-scope');
+
+    /**
+     * A folder with no `.git`, a staged priming write into it, and an exec seam
+     * that records every command and passes it through.
+     * @returns {{dir: string, primingPath: string, staged: object, calls: Array<{file: string, args: string[]}>}}
+     */
+    function nonRepoSandbox() {
+      const dir = fs.mkdtempSync(path.join(tmpDir, 'plain-'));
+      const primingPath = path.join(dir, '.claude', 'priming', 'build-session.md');
+      const staged = {
+        'next-session-prime': {
+          primingPath,
+          newContent: 'primed for the next session\n',
+          changed: true,
+          pointer: { current: { id: '1', title: 'x', blockedOn: null }, next: null, allDone: false }
+        }
+      };
+      const calls = [];
+      commitStep._internal.exec = async (file, args, opts) => {
+        calls.push({ file, args });
+        return originals.exec(file, args, opts);
+      };
+      return { dir, primingPath, staged, calls };
+    }
+
+    it('skips after writing the staged files, and runs no git command (T1)', async () => {
+      const { dir, primingPath, staged, calls } = nonRepoSandbox();
+      const project = { name: 'plain', path: dir, id: 1 };
+      const scope = await wrapScope.resolve(project, null);
+      assert.equal(scope.workToplevel, null, 'precondition: the folder reads as no repository');
+      assert.equal(scope.workTreeProblem, null, 'precondition: and not as git failing to answer');
+
+      const result = await commitStep.run({
+        project, session: null, step: { id: 'commit', kind: 'commit', blocker: true },
+        previousResults: [], staged, options: {}, scope
+      });
+      assert.equal(result.ok, true);
+      assert.equal(result.status, 'skipped');
+      assert.match(result.output.reason, /not a git repository/);
+      assert.equal(result.output.commitSha, null);
+      assert.deepEqual(result.blockers, []);
+      assert.equal(fs.readFileSync(primingPath, 'utf8'), 'primed for the next session\n',
+        'the wrap\'s own files are written in place before the skip');
+      assert.deepEqual(result.output.flushed.map((f) => f.path), [primingPath]);
+      assert.deepEqual(calls.filter((c) => c.file === 'git'), [],
+        'no git command runs on a folder that has no repository');
+    });
+
+    it('reads a missing scope as no repository too (T2)', async () => {
+      const { dir, primingPath, staged, calls } = nonRepoSandbox();
+      const result = await commitStep.run({
+        project: { name: 'plain', path: dir, id: 1 },
+        session: null, step: { id: 'commit', kind: 'commit', blocker: true },
+        previousResults: [], staged, options: {}
+      });
+      assert.equal(result.status, 'skipped');
+      assert.match(result.output.reason, /not a git repository/);
+      assert.ok(fs.existsSync(primingPath));
+      assert.deepEqual(calls.filter((c) => c.file === 'git'), []);
+    });
+
+    it('still blocks when git could not be read, after the flush (T3)', async () => {
+      const { dir, primingPath, staged, calls } = nonRepoSandbox();
+      const scope = cleanLaunchScope(dir, { workToplevel: null, workTreeProblem: 'git timed out' });
+      const result = await commitStep.run({
+        project: { name: 'plain', path: dir, id: 1 },
+        session: null, step: { id: 'commit', kind: 'commit', blocker: true },
+        previousResults: [], staged, options: {}, scope
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.status, 'blocked');
+      assert.deepEqual(result.blockers, ['git could not be read: git timed out']);
+      assert.match(result.output.remediation, /could not read this project's git repository.*: git timed out\./);
+      assert.ok(fs.existsSync(primingPath), 'the flush runs before the scope is judged');
+      assert.deepEqual(calls.filter((c) => c.file === 'git'), [],
+        'an unreadable repository is not asked again with `git status`');
+    });
+  });
+
   it('surfaces flush errors as blockers, never as runner exceptions', async () => {
     commitStep._internal.writeFileSync = () => { throw new Error('EROFS'); };
     const ctx = buildContext({
@@ -3358,6 +3439,56 @@ describe('runWrapPipeline — commitSha threading (#139 Chunk 9)', () => {
     } finally {
       wrapPipelineMod.STEP_DISPATCH['ai-content'] = origAiContent;
       wrapPipelineMod.STEP_DISPATCH['commit'] = origCommit;
+    }
+  });
+});
+
+describe('runWrapPipeline — a project that is not a git repository (#2008)', () => {
+  const wrapPipelineMod = require('../lib/wrap-pipeline');
+  let tmpDir;
+  let projectPath;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pipeline-nonrepo-'));
+    store._setBasePath(path.join(tmpDir, 'store'));
+    store.init();
+    projectPath = path.join(tmpDir, 'project');
+    fs.mkdirSync(projectPath, { recursive: true });
+    store.projects.create({ name: 'nonrepo-test', path: projectPath });
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('runs on past a skipped commit to the steps after it (T5)', async () => {
+    // Real handlers for the commit and every step after it; the rest are stubbed.
+    const realKinds = ['commit', 'continuity-write', 'pr-merge', 'handoff-stage'];
+    const restoreHandlers = stubRealHandlers(wrapPipelineMod, [...realKinds, 'priming-roll']);
+    const origPriming = wrapPipelineMod.STEP_DISPATCH['priming-roll'];
+    const primingPath = path.join(projectPath, '.claude', 'priming', 'build-session.md');
+    // A content step's staged write, so the run shows it landing before the skip.
+    wrapPipelineMod.STEP_DISPATCH['priming-roll'] = {
+      run: async (ctx) => {
+        ctx.staged[ctx.step.id] = { primingPath, newContent: 'primed\n', changed: true };
+        return { ok: true, status: 'done', output: null, blockers: [] };
+      }
+    };
+    try {
+      const result = await wrapPipelineMod.runWrapPipeline('nonrepo-test');
+      assert.equal(result.blockedAt, null);
+      const byId = Object.fromEntries(result.results.map((r) => [r.stepId, r]));
+      assert.equal(byId.commit.status, 'skipped');
+      assert.match(byId.commit.output.reason, /not a git repository/);
+      for (const id of ['continuity-write', 'apply-pr-resolutions', 'handoff-stage']) {
+        assert.ok(byId[id], `${id} is in the run`);
+        assert.notEqual(byId[id].status, 'pending', `${id} ran rather than waiting behind a halt`);
+      }
+      assert.equal(fs.readFileSync(primingPath, 'utf8'), 'primed\n');
+    } finally {
+      restoreHandlers();
+      wrapPipelineMod.STEP_DISPATCH['priming-roll'] = origPriming;
     }
   });
 });
