@@ -19,6 +19,7 @@ const lockfile = require('../lib/handoff-lockfile.js');
 const { publishHandoff, abandonHandoff } = require('../lib/handoff-publish.js');
 const stageStep = require('../lib/wrap-steps/handoff-stage.js');
 const { buildHandoffDocument, newPublicationId } = require('../lib/handoff-publication.js');
+const { initRepo } = require('./_temp-repo');
 
 const tmpDirs = [];
 let project;
@@ -451,7 +452,7 @@ describe('the handoff-stage wrap step', () => {
     tmpDirs.push(repo);
     const { execFileSync } = require('node:child_process');
     const run = (args) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
-    run(['init', '-q', '-b', 'trunk-under-test']);
+    initRepo(repo, ['-b', 'trunk-under-test']);
     run(['config', 'user.email', 't@e.st']);
     run(['config', 'user.name', 'T']);
     fs.writeFileSync(path.join(repo, 'f.txt'), 'x');

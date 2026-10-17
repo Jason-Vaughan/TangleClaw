@@ -24,6 +24,7 @@ const doubles = require('./_exec-results');
 const store = require('../lib/store');
 const leftovers = require('../lib/session-leftovers');
 const launchBaseline = require('../lib/launch-baseline');
+const { initRepo } = require('./_temp-repo');
 
 const SHA = 'a'.repeat(40);
 
@@ -430,8 +431,8 @@ describe('session leftovers (#1544)', () => {
     function realRepo() {
       const repo = fs.realpathSync(project.path);
       const origin = fs.mkdtempSync(path.join(storeDir, 'origin-'));
-      git(origin, 'init', '--bare', '-q');
-      git(repo, 'init', '-q', '-b', 'main');
+      initRepo(origin, ['--bare']);
+      initRepo(repo, ['-b', 'main']);
       git(repo, 'config', 'user.email', 't@example.com');
       git(repo, 'config', 'user.name', 'T');
       git(repo, 'config', 'commit.gpgsign', 'false');

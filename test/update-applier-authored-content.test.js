@@ -23,6 +23,7 @@ const { setLevel } = require('../lib/logger');
 setLevel('error');
 
 const applier = require('../lib/update-applier');
+const { initRepo, cloneRepo } = require('./_temp-repo');
 
 const GIT_ENV = {
   ...process.env,
@@ -51,8 +52,8 @@ describe('the self-updater preserves authored content in a real repository (#153
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-1537-'));
     const origin = path.join(root, 'origin.git');
     work = path.join(root, 'work');
-    git(root, ['init', '-q', '--bare', '-b', 'main', origin]);
-    git(root, ['init', '-q', '-b', 'main', work]);
+    initRepo(root, ['--bare', '-b', 'main', origin], { env: GIT_ENV });
+    initRepo(root, ['-b', 'main', work], { env: GIT_ENV });
     // The same ignore shape this repository ships: machine state ignored,
     // authored plans and priming re-included.
     fs.writeFileSync(path.join(work, '.gitignore'), '.tangleclaw/*\n!.tangleclaw/plans/\n!.tangleclaw/priming/\n');
@@ -68,7 +69,7 @@ describe('the self-updater preserves authored content in a real repository (#153
     git(work, ['push', '-q', 'origin', 'main', '--tags']);
     // A newer release on origin, cut from a scratch clone so `work` stays at v1.
     const cutter = path.join(root, 'cutter');
-    git(root, ['clone', '-q', origin, cutter]);
+    cloneRepo(origin, cutter, [], { cwd: root, env: GIT_ENV });
     fs.writeFileSync(path.join(cutter, 'server.js'), '// v9\n');
     git(cutter, ['add', '-A']);
     git(cutter, ['commit', '-qm', 'v9']);

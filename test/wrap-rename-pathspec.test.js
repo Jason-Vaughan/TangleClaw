@@ -25,6 +25,7 @@ const commitStep = require('../lib/wrap-steps/commit');
 const launchBaseline = require('../lib/launch-baseline');
 const wrapScope = require('../lib/wrap-scope');
 const { execFileArgs } = require('../lib/exec');
+const { initRepo } = require('./_temp-repo');
 
 const dirs = [];
 after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
@@ -46,7 +47,7 @@ function git(cwd, ...args) {
 function makeRepo() {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-1629-')));
   dirs.push(dir);
-  git(dir, 'init', '-q', '-b', 'main');
+  initRepo(dir, ['-b', 'main']);
   git(dir, 'config', 'user.email', 't@t');
   git(dir, 'config', 'user.name', 't');
   // Distinct contents: identical files let git's rename detection pair them

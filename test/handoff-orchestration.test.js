@@ -22,6 +22,7 @@ const store = require('../lib/store.js');
 const sessions = require('../lib/sessions.js');
 const lockfile = require('../lib/handoff-lockfile.js');
 const stageStep = require('../lib/wrap-steps/handoff-stage.js');
+const { initRepo } = require('./_temp-repo');
 
 const tmpDirs = [];
 let project;
@@ -197,7 +198,7 @@ describe('the step reads only what wrap-scope actually produces', () => {
     tmpDirs.push(repo);
     const { execFileSync } = require('node:child_process');
     const run = (args) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
-    run(['init', '-q', '-b', 'main']);
+    initRepo(repo, ['-b', 'main']);
     run(['config', 'user.email', 't@example.com']);
     run(['config', 'user.name', 'Test']);
     fs.writeFileSync(path.join(repo, 'f.txt'), 'x\n');
@@ -255,7 +256,7 @@ describe('the step reads only what wrap-scope actually produces', () => {
     tmpDirs.push(repo);
     const { execFileSync } = require('node:child_process');
     const run = (args) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
-    run(['init', '-q', '-b', 'main']);
+    initRepo(repo, ['-b', 'main']);
     run(['config', 'user.email', 't@example.com']);
     run(['config', 'user.name', 'Test']);
     fs.writeFileSync(path.join(repo, 'f.txt'), 'x\n');
@@ -345,7 +346,7 @@ describe('a probe failure and a non-git root are different handoffs (#1649)', ()
     tmpDirs.push(repo);
     const { execFileSync } = require('node:child_process');
     const run = (args) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
-    run(['init', '-q', '-b', 'main']);
+    initRepo(repo, ['-b', 'main']);
     run(['config', 'user.email', 't@example.com']);
     run(['config', 'user.name', 'Test']);
     fs.writeFileSync(path.join(repo, 'f.txt'), 'x\n');

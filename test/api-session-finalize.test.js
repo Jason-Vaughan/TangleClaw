@@ -33,6 +33,7 @@ const lockfile = require('../lib/handoff-lockfile');
 const tcOwned = require('../lib/wrap-steps/_tc-owned-paths');
 const serverModule = require('../server');
 const { operatorHeaders } = require('./_shared-docs-callers');
+const { initRepo } = require('./_temp-repo');
 
 const { createServer } = serverModule;
 
@@ -117,7 +118,7 @@ describe('POST /api/sessions/:project/finalize (#2027)', () => {
     const name = `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
     const dir = path.join(tmpDir, name);
     fs.mkdirSync(dir);
-    git(dir, ['init', '-q', '-b', 'main']);
+    initRepo(dir, ['-b', 'main']);
     git(dir, ['config', 'user.email', 't@example.com']);
     git(dir, ['config', 'user.name', 'T']);
     fs.writeFileSync(path.join(dir, 'tracked.txt'), 'committed\n');
@@ -712,7 +713,7 @@ describe('POST /api/sessions/:project/finalize (#2027)', () => {
   it('a commit since launch that a freshly fetched remote has is not owned work', async () => {
     const lane = launched('pushed');
     const bare = path.join(tmpDir, `${lane.project.name}.git`);
-    git(tmpDir, ['init', '-q', '--bare', bare]);
+    initRepo(tmpDir, ['--bare', bare]);
     git(lane.dir, ['remote', 'add', 'origin', bare]);
     git(lane.dir, ['push', '-q', 'origin', 'main']);
     await receipt(lane);
@@ -1142,7 +1143,7 @@ describe('POST /api/sessions/:project/finalize (#2027)', () => {
     async function detachedFromOrigin(prefix) {
       const base = launched(prefix);
       const bare = path.join(tmpDir, `${base.project.name}.git`);
-      git(tmpDir, ['init', '-q', '--bare', bare]);
+      initRepo(tmpDir, ['--bare', bare]);
       git(base.dir, ['remote', 'add', 'origin', bare]);
       git(base.dir, ['push', '-q', 'origin', 'main']);
       store.sessions.kill(base.sessionId, 'test: relaunch with a pane');
