@@ -735,6 +735,16 @@ describe('reading a stored launch blocker (#2201)', () => {
     assert.equal(warnings().length, 2);
   });
 
+  it('forgets what it warned about when the store closes, so a reopened database warns for its own rows', () => {
+    writeRaw('damaged before close');
+    store.sessions.get(session.id);
+    assert.equal(warnings().length, 1);
+    store.close();
+    store.init();
+    assert.equal(store.sessions.get(session.id).launchBlocker, null);
+    assert.equal(warnings().length, 2, 'the same session id and value warn again after close and reopen');
+  });
+
   it('bounds its memory: when the cap is reached it is cleared, so an early value warns again', () => {
     const cap = store._LAUNCH_BLOCKER_WARN_CAP;
     assert.ok(Number.isInteger(cap) && cap > 0, 'the cap is a documented positive integer');
