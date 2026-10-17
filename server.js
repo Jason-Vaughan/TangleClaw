@@ -13565,6 +13565,7 @@ if (require.main === module) {
     // behind the same idle gate the wake monitor uses. It records and reminds;
     // it gates nothing.
     launchUnready.start();
+    sessions.startLaunchBlockerSweep();
     // Start the workload nudge monitor (#2262): types one line into a session
     // whose workload report expired, for projects that turned it on. It reads
     // engine activity from the observer above and types only into a pane seen
@@ -13637,6 +13638,7 @@ if (require.main === module) {
     activityObserver.stop();
     medusaWatchdog.stop();
     launchUnready.stop();
+    sessions.stopLaunchBlockerSweep();
     workloadNudge.stop();
     checkWatch.stop();
     // Each startupControl adapter's reaper timer (#1825): the timers are unref'd,

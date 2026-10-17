@@ -1348,6 +1348,123 @@ describe('the session keeps its blocker (#2128)', () => {
       startupDialog.reset();
     });
 
+    describe('an answered dialog whose record cannot be cleared still lets the pane decide (#2450)', () => {
+      let out;
+      let rows;
+      const realClear = store.sessions.clearLaunchBlocker;
+      const realGet = store.sessions.get;
+      const realRecord = store.sessionRuleDeliveries.record;
+
+      beforeEach(() => {
+        out = '';
+        rows = [];
+        setConsoleStream({ write: (chunk) => { out += chunk; } });
+        setLevel('warn');
+        store.sessionRuleDeliveries.record = (entry) => { rows.push(entry); return entry; };
+      });
+
+      afterEach(() => {
+        store.sessions.clearLaunchBlocker = realClear;
+        store.sessions.get = realGet;
+        store.sessionRuleDeliveries.record = realRecord;
+        setLevel('error');
+        setConsoleStream(null);
+      });
+
+      /**
+       * Launch with a delivery ledger, so a withheld paste would leave a row.
+       * A launch that gave up never reaches its bootstrap, so the wait for it
+       * is bounded: the assertions then say what was not sent.
+       * @param {object} s - The session row
+       * @param {object} profile - The engine profile
+       * @returns {Promise<void>}
+       */
+      const launchedWithLedger = async (s, profile) => {
+        let limit;
+        const done = new Promise((resolve) => {
+          launchFinished = resolve;
+          limit = setTimeout(resolve, 3000);
+        });
+        sessions._deferEngineInit(
+          s.tmuxSession, project.name, 'claude', profile, 'the prime', null, false,
+          { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' },
+          { sessionId: s.id, projectId: project.id, hasSequence: true }
+        );
+        await done;
+        clearTimeout(limit);
+        await new Promise((resolve) => setTimeout(resolve, profile.launch.startupDelay + 2));
+        await turns();
+      };
+
+      it('a clear that throws once: warned, the launch types its pre-key, prime and kickoff, and the send-time look clears the record', async () => {
+        const s = start();
+        watchAnswers('answered', DIALOG);
+        let clears = 0;
+        store.sessions.clearLaunchBlocker = (id) => {
+          clears += 1;
+          if (clears === 1) throw new Error('database is locked');
+          return realClear(id);
+        };
+        await launchedWithLedger(s, WITH_PREKEY);
+        assert.match(out, /Could not clear a session's launch blocker; the send-time look still decides/);
+        assert.match(out, /database is locked/);
+        assert.doesNotMatch(out, /Launch boot watch failed/);
+        assert.equal(rows.filter((r) => r.channel === 'prime-paste' && r.outcome === 'skipped').length, 0, 'no withheld-paste row');
+        assert.ok(typed.some((t) => t.key === 'Enter'), 'the declared pre-key');
+        assert.ok(typed.some((t) => t.text === 'the prime'), 'the prime was pasted');
+        assert.equal(kicked.length, 1, 'the kickoff was asked');
+        assert.ok(clears >= 2, 'a send-time look cleared it again');
+        assert.equal(store.sessions.get(s.id).launchBlocker, null);
+      });
+
+      it('a clear that always throws: the launch still types at the prompt, and the record stands until a clear succeeds', async () => {
+        const s = start();
+        watchAnswers('answered', DIALOG);
+        store.sessions.clearLaunchBlocker = () => { throw new Error('database is locked'); };
+        await launchedWithLedger(s, PROFILE);
+        assert.doesNotMatch(out, /Launch boot watch failed/);
+        assert.ok(typed.some((t) => t.text === 'the prime'));
+        assert.equal(kicked.length, 1);
+        assert.equal(store.sessions.get(s.id).launchBlocker.code, 'trust_required');
+      });
+
+      it('the same throw with the dialog still up at send time: nothing is typed, and a launch send is refused', async () => {
+        const s = start();
+        watchAnswers('answered', DIALOG);
+        store.sessions.clearLaunchBlocker = () => { throw new Error('database is locked'); };
+        tmux.capturePane = () => served(TRUST_DIALOG);
+        await launchedWithLedger(s, WITH_PREKEY);
+        assert.doesNotMatch(out, /Launch boot watch failed/);
+        assert.deepEqual(typed, [], 'neither the pre-key nor the prime was typed');
+        // The kickoff is stubbed here; what it would send goes through the
+        // same look, which refuses while the dialog is up.
+        const refused = sessions.injectCommand(project.name, 'kickoff', { sessionId: s.id, launchSend: true });
+        assert.equal(refused.ok, false);
+        assert.equal(refused.startupDialog.code, 'trust_required');
+        assert.deepEqual(typed, []);
+      });
+
+      it('a throw elsewhere after the watch still withholds every send, and says so', async () => {
+        const s = start();
+        watchAnswers('answered', DIALOG);
+        store.sessions.get = () => { throw new Error('store gone'); };
+        sessions._deferEngineInit(
+          s.tmuxSession, project.name, 'claude', PROFILE, 'the prime', null, false,
+          { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' },
+          { sessionId: s.id, projectId: project.id, hasSequence: true }
+        );
+        await turns();
+        await new Promise((resolve) => setTimeout(resolve, PROFILE.launch.startupDelay + 20));
+        await turns();
+        assert.match(out, /Launch boot watch failed; no further launch sends will be made/);
+        assert.deepEqual(typed, []);
+        assert.deepEqual(kicked, []);
+        const skipped = rows.filter((r) => r.channel === 'prime-paste' && r.outcome === 'skipped');
+        assert.equal(skipped.length, 1);
+        assert.match(skipped[0].skipReason, /store gone/);
+      });
+    });
+
     it('a session that ended while its boot was watched types nothing into the pane that reused its name', async () => {
       // Kill and relaunch inside the answer window: the old watch then reads
       // the NEW session's pane, sees its prompt, and reports `answered`.
