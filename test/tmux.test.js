@@ -902,6 +902,44 @@ describe('tmux', () => {
       return cap.lines.join('\n');
     }
 
+    // bash's bare prompt under --norc: `bash-3.2$` on macOS, `bash-5.2$` on Linux.
+    // `capturePane` trims tmux's output, so the prompt's trailing space is gone.
+    const BASH_PROMPT = /^bash-[\d.]+\$$/;
+
+    /**
+     * Poll a pane until `predicate` holds for its captured lines, so a test acts
+     * on what the shell has drawn rather than on a guessed delay. A timeout
+     * fails the test with the last capture, never passes it.
+     * @param {string} session - tmux session name
+     * @param {(lines: string[]) => boolean} predicate - receives right-trimmed lines
+     * @param {string} what - what is awaited, for the failure message
+     * @returns {string[]} the right-trimmed lines that satisfied `predicate`
+     */
+    function waitForPane(session, predicate, what) {
+      const deadline = Date.now() + 10000;
+      let lines = [];
+      for (;;) {
+        lines = tmux.capturePane(session, { full: true }).lines.map((l) => l.trimEnd());
+        if (predicate(lines)) return lines;
+        if (Date.now() >= deadline) {
+          assert.fail(`timed out after 10s waiting for ${what}; last lines:\n${lines.slice(-10).join('\n')}`);
+        }
+        execSync('sleep 0.1');
+      }
+    }
+
+    /**
+     * The last non-blank line of a capture, trimmed.
+     * @param {string[]} lines - captured lines
+     * @returns {string} the line, or '' when the pane is blank
+     */
+    function lastLine(lines) {
+      for (let i = lines.length - 1; i >= 0; i--) {
+        if (lines[i].trim()) return lines[i].trim();
+      }
+      return '';
+    }
+
     it('should deliver simple text and execute it when enter:true (default)', () => {
       try {
         tmux.createSession(testSession, { command: 'exec bash --norc --noprofile' });
@@ -923,20 +961,31 @@ describe('tmux', () => {
       // because the defect lives in what tmux does, not in the command string.
       try {
         tmux.createSession(testSession, { command: 'exec bash --norc --noprofile' });
+        // Typed before bash draws its prompt, the draft is echoed by the tty above
+        // the prompt and never reaches readline, so the test would score pane text
+        // rather than what ran.
+        waitForPane(testSession, (lines) => BASH_PROMPT.test(lastLine(lines)), "bash's prompt");
         // The operator's half-typed line: delivered literally, deliberately NOT submitted.
         execSync(`tmux send-keys -t '=${testSession}:' -l 'echo DRAFTRAN'`);
-        execSync('sleep 0.3');
+        waitForPane(testSession, (lines) => /^bash-[\d.]+\$ echo DRAFTRAN$/.test(lastLine(lines)),
+          'the draft on the prompt line');
 
         tmux.sendKeys(testSession, 'echo INJECTEDOK');
-        const content = captureContent(testSession);
+        // Done when a line of output (not a prompt line) names INJECTEDOK and a fresh
+        // prompt follows it; a concatenated submission satisfies this too, so the
+        // assertions below are what tell the two apart.
+        const lines = waitForPane(testSession, (ls) => BASH_PROMPT.test(lastLine(ls)) &&
+          ls.some((l) => !l.startsWith('bash-') && l.includes('INJECTEDOK')),
+        'the injected command to finish');
+        const tail = lines.slice(-10).join('\n');
 
         assert.ok(
-          content.includes('INJECTEDOK'),
-          `the injected command must still run, got: ${content.slice(-300)}`
+          lines.some((l) => l === 'INJECTEDOK'),
+          `the injected command must run on its own, got:\n${tail}`
         );
         assert.ok(
-          !content.includes('DRAFTRAN'),
-          `the operator's unsent draft must not be submitted, got: ${content.slice(-300)}`
+          !lines.some((l) => l.startsWith('DRAFTRAN')),
+          `the operator's unsent draft must not be submitted or prefixed to ours, got:\n${tail}`
         );
       } finally {
         try { tmux.killSession(testSession); } catch (_) {}
