@@ -18,6 +18,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { initRepo } = require('./_temp-repo');
 const { setLevel } = require('../lib/logger');
 setLevel('error');
 const store = require('../lib/store');
@@ -50,7 +51,7 @@ describe('provenance on whole-file engine carriers', () => {
   function makeRepo(engineId) {
     const name = `prov-carrier-${++seq}`;
     const dir = fs.mkdtempSync(path.join(tmpDir, `${name}-`));
-    execFileSync('git', ['-C', dir, 'init', '-q']);
+    initRepo(dir);
     fs.writeFileSync(path.join(dir, '.gitignore'), '.codex.yaml\n.aider.conf.yml\n');
     store.projects.create({ name, path: dir, engine: engineId });
     return { name, dir };

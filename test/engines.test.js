@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const { initRepo } = require('./_temp-repo');
 const store = require('../lib/store');
 const engines = require('../lib/engines');
 const portScanner = require('../lib/port-scanner');
@@ -1220,7 +1221,7 @@ describe('engines', () => {
       // #1619 the classifier asks git, and an unknown tracking state means
       // COMMITTED, so a bare temp dir would classify every carrier as shared
       // and these assertions would be testing the wrong branch.
-      require('node:child_process').execFileSync('git', ['-C', projPath, 'init', '-q']);
+      initRepo(projPath);
       fs.writeFileSync(path.join(projPath, '.gitignore'), '.codex.yaml\n.aider.conf.yml\n');
       projName = `Switchboard Guide ${Date.now() % 100000}`;
       store.projects.create({ name: projName, path: projPath, engine: 'claude' });

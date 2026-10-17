@@ -24,6 +24,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { initRepo } = require('./_temp-repo');
 const store = require('../lib/store');
 const engines = require('../lib/engines');
 
@@ -40,7 +41,7 @@ describe('#1619 — five checkouts, identical tracked bytes', () => {
       // classifier these were bare directories, and the private-carrier
       // assertions below passed on the conventional list rather than on any
       // project's real state.
-      require('node:child_process').execFileSync('git', ['-C', p, 'init', '-q']);
+      initRepo(p);
       fs.writeFileSync(path.join(p, '.gitignore'), '.codex.yaml\n.aider.conf.yml\n');
       const name = `TangleClaw-Builder${i}-${Date.now() % 100000}`;
       const project = store.projects.create({ name, path: p, engine: 'claude' });
@@ -325,7 +326,7 @@ describe('#1619 chunk 04 — the carrier a project actually tracks', () => {
    */
   function repoWithIgnore(ignoreBody) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-carrier-'));
-    execFileSync('git', ['-C', dir, 'init', '-q']);
+    initRepo(dir);
     fs.writeFileSync(path.join(dir, '.gitignore'), ignoreBody);
     return dir;
   }
@@ -370,7 +371,7 @@ describe('#1619 chunk 04 — the carrier a project actually tracks', () => {
     // lands on committed — verified here rather than assumed, because the
     // whole classifier rests on that behaviour.
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-indexed-'));
-    execFileSync('git', ['-C', dir, 'init', '-q']);
+    initRepo(dir);
     fs.writeFileSync(path.join(dir, '.codex.yaml'), 'seed\n');
     execFileSync('git', ['-C', dir, 'add', '.codex.yaml']);
     execFileSync('git', ['-C', dir, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'seed']);
@@ -388,7 +389,7 @@ describe('#1619 chunk 04 — a nested worktree', () => {
     // another checkout, and `git -C <worktree> check-ignore` must answer for
     // the worktree's own ignore rules rather than the parent's.
     const main = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-wt-main-'));
-    execFileSync('git', ['-C', main, 'init', '-q']);
+    initRepo(main);
     fs.writeFileSync(path.join(main, '.gitignore'), '.codex.yaml\n');
     fs.writeFileSync(path.join(main, 'seed.txt'), 'seed\n');
     execFileSync('git', ['-C', main, 'add', '-A']);
@@ -644,7 +645,7 @@ describe('#1240 — the ungoverned write path keeps the live token out of a trac
     // trigger: governance detection fails closed to ungoverned, which routes
     // the write through `_generateClaudeMd` rather than the operational block.
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-1240-repo-'));
-    execFileSync('git', ['-C', dir, 'init', '-q']);
+    initRepo(dir);
     fs.writeFileSync(path.join(dir, '.gitignore'), 'node_modules/\n');
     fs.mkdirSync(path.join(dir, '.claude'));
     fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), '{ not valid json');
