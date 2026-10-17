@@ -1,1 +1,7 @@
-.prawduct/change-log.md merge=union
+# The change log merges as ordinary text, on purpose. A `merge=union` driver
+# never reports a conflict: when two branches edit the same entry it keeps
+# both sides' lines, so the log silently gained duplicated and mis-attributed
+# entries (#2042). A conflict at the top of the file is the expected cost of
+# every branch prepending; how to resolve it is in the file's header comment.
+# Do not re-add union, even where a tool recommends it.
+.prawduct/change-log.md merge=text

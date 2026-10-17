@@ -2,6 +2,11 @@
 
 <!-- Append new entries at the top.
 
+Merge conflicts: a conflict at the top of this file is expected, because every branch
+prepends here. Keep both entries, newest first. In a lane, rebuild the file as origin/main's
+copy plus your own entry. `.gitattributes` deliberately does not union this file (#2042):
+union kept both sides' lines without a conflict and silently corrupted entries.
+
 Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 - scope=  : ONE scope per unit of work. Work done under an ACTIVE build plan uses that
   plan's frontmatter scope (its ## Status roster derives checkbox flips from these tags).
