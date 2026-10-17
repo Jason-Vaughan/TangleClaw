@@ -678,6 +678,14 @@ describe('medusa-wake — _assessPane: a row that starts with the prompt glyph b
         const located = wake.locateComposer(rows, { x: 6, line: '  tail' }, ANTIGRAVITY);
         assert.deepEqual(located.rows, ['> first', '  tail']);
       });
+
+      it('a divider above with none below the cursor is not a box: Codex, a rule over a submitted message', () => {
+        // Codex draws no composer border. A rule row directly above a message it
+        // drew with its glyph must not make that message the composer's head.
+        const rows = [RULE, '› submitted earlier', '', '• Done.', '', '› live draft', '  continues', '', CX_STATUS];
+        const located = wake.locateComposer(rows, { x: 11, line: '  continues' }, CODEX);
+        assert.deepEqual(located.rows.slice(0, 2), ['› live draft', '  continues']);
+      });
     });
 
     it('a selector row outside the nudge\'s composer still refuses', () => {
@@ -870,6 +878,23 @@ describe('medusa-wake — a live 167x27 Antigravity pane whose composer hides th
 
     it('a selector row drawn below the composer', () => {
       const lines = [...LINES.slice(3), '', '> Yes', '  No'];
+      assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, CURSOR), { idle: false, reason: 'not-at-rest' });
+    });
+
+    it('a dialog drawn above the composer, its key help in the status row\'s hint slot', () => {
+      // The recorded dialog analog's own rows around the nudge's composer: no
+      // row below the composer is glyph-led, and none says `esc to cancel`.
+      const [question, , , , keyHelp] = AG_DIALOG_PANE;
+      const lines = ['', question, ...LINES.slice(UPPER, -1), keyHelp];
+      const below = lines.slice(lines.lastIndexOf(RULE));
+      assert.equal(below.length, 2, 'the lower border and the status row');
+      assert.ok(!below.some((row) => row.trimStart().startsWith('>')), 'nothing glyph-led below the composer');
+      assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, CURSOR), { idle: false, reason: 'not-at-rest' });
+    });
+
+    it('any text in the status row\'s hint slot, whatever it says', () => {
+      const status = LINES[LINES.length - 1];
+      const lines = [...LINES.slice(0, -1), `tab to cycle${status.slice(12)}`];
       assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, CURSOR), { idle: false, reason: 'not-at-rest' });
     });
 

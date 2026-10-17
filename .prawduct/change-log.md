@@ -35,6 +35,30 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-17 — #2358 + #2447: a stranded nudge in an Antigravity composer is recognised; the sibling tmux tests wait for bash
+
+<!-- prawduct: type=fix | scope=w7-a1-antigravity-wake-at-rest -->
+
+v5.34.0 chunk W7-A1 (charter v2.27, Architect A198; plan rev 2 `dc9466b1` approved by INT and the Architect). Branch `fix/2358-2447-w7-a1` from `origin/main` `474a6824`.
+
+**#2358 (a).** Antigravity hides its `? for shortcuts` hint while its composer holds text. A switchboard nudge that missed its Enter therefore removed the marker the wake gate required, and every later wake refused it as `not-at-rest` until it escalated. This was captured live at 167x27; one Enter submitted the nudge. `_assessPane` now excuses the missing marker only when all of these hold:
+
+- the composer holds exactly the monitor's own nudge, seen whole between its borders;
+- no glyph-led row is drawn below the composer;
+- the hint slot at the left of the status row is empty (`_hintSlotEmpty`).
+
+The last two conditions were not in the plan. The marker's absence is also what refused a dialog. agy draws no bare prompt row while its composer holds text, so `_glyphRowBelowPrompt` had nothing to anchor on, and a selector below the nudge read `at-prompt`. INT accepted the below-composer condition as a routed safety choice. The cumulative Critic then showed that the recorded dialog analog (`AG_DIALOG_PANE`), drawn above the composer, also got through. Both measured own-nudge captures leave the hint slot empty, and that dialog fills it with its key help, so any text in the slot now refuses. The busy marker and an agent fleet are never excused.
+
+**#2358 (b).** A wrap that starts a continuation row with `>` made `locateComposer` take that row as the composer's first, so the gate and the prompt clear's residue check both missed the nudge. With a box in view, meaning a border above the cursor and one below it, the first row is now the glyph-led row directly under its upper border. The lower border is required so that a rule row in Codex's transcript cannot make the message under it the composer's head. With no box in view, the nearest glyph-led row decides, as before.
+
+**#2447.** The sibling `sendKeys`/`sendRawKey` tests typed into bash before its prompt was drawn. On a loaded host they scored tty echo rather than what ran. One `startBash` helper now waits for the prompt. The clearPrompt-false, enter:false and raw-Enter tests assert on output lines and fail when mutated; four more tests gain only the wait. The `paste-buffer -p (#75)` test that the plan listed reads the source and starts no bash, so it is unchanged.
+
+**Tests flipped, not weakened.** Two pins that recorded the known-bug verdicts now record the fixed ones, as the issue's Expected asks: the measured M1 capture's `(b) CHARACTERIZATION` (`not-at-rest` → `at-prompt`) and the `>`-wrap case (`no-prompt` → `at-prompt`). The M1 "diagnostic only" test now asserts that the channel's idle answer makes no difference.
+
+**Not covered.** The live check is owed after deploy: the first `pane-not-at-rest` episode on an Antigravity pane should end with the nudge cleared and replaced. The 167x27 fixture's cursor position is an assumption, because the capture did not record it. A real agy dialog has never been captured: one drawn above the composer that left the hint slot empty would still pass the excuse while our nudge sat below it. Claude Code has the same selector-below-own-nudge shape when no stale bare row is in the read; that predates this change and is filed separately.
+
+**Review.** Inner verify-resolutions `rev-20261017T123118Z-dcd953d7`: 0 findings; its 3 observations were accepted (D3 kept those assertions; the out-of-scope full-bash tests; the suite runs in the slot). That mode was inferred from the old W6-A2 findings, so cumulative `rev-20261017T123313Z-0d5609a9` was run as the plan's boundary review. It found 1 blocking issue (the dialog above the composer) and 1 note (Codex rule row); both are fixed here, with tests shown red before. The stale-evidence warning was accepted: the full suite runs in the Integrator's slot. The change-log note is fixed by this entry.
+
 ## 2026-10-17 — W6-REC: the v5.34.0 Wave 6 combined records
 
 <!-- prawduct: type=chore | scope=w6-rec-records -->
