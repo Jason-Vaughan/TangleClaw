@@ -4833,6 +4833,27 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
     assert.equal(store.sessions.get(broken.session.id).launchBlocker.code, 'trust_required');
   });
 
+  it('a clear that fails is not counted as cleared: the blocker stands, and the next sweep clears it', () => {
+    const { session } = live();
+    const realClear = store.sessions.clearLaunchBlocker;
+    let clears = 0;
+    store.sessions.clearLaunchBlocker = (id) => {
+      clears += 1;
+      if (clears === 1) throw new Error('database is locked');
+      return realClear(id);
+    };
+    try {
+      assert.deepEqual(sessions.reconcileStoredLaunchBlockers(), { checked: 1, cleared: 0, kept: 1 }, 'the first sweep claims nothing it did not do');
+      assert.equal(store.sessions.get(session.id).launchBlocker.code, 'trust_required');
+      assert.deepEqual(sessions.reconcileStoredLaunchBlockers(), { checked: 1, cleared: 1, kept: 0 });
+    } finally {
+      store.sessions.clearLaunchBlocker = realClear;
+    }
+    assert.equal(clears, 2);
+    assert.equal(store.sessions.get(session.id).launchBlocker, null);
+    assert.equal(crashCause(session.id), undefined);
+  });
+
   describe('on a timer', () => {
     const realSetInterval = global.setInterval;
     const realClearInterval = global.clearInterval;
