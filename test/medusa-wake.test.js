@@ -631,16 +631,61 @@ describe('medusa-wake — _assessPane: a row that starts with the prompt glyph b
       assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, cursor), { idle: true, reason: 'at-prompt' });
     });
 
-    it('Antigravity: a wrap that starts a row with the glyph hides the composer\'s first row, stale row or none', () => {
+    describe('Antigravity: a wrap that starts a continuation row with the glyph', () => {
       // The nudge text holds `>`. Cut there, a continuation row starts with the
-      // glyph, the composer's first row is taken to be that row, and the nudge
-      // is not recognised. That is the composer reading's own limit: the pane
-      // is refused the same way with no stale row above it.
+      // glyph. The composer's border, not the nearest glyph, marks its first row.
       const held = composerHolding('>', ' ', NUDGE, NUDGE.indexOf('>'));
-      assert.ok(held.rows.slice(1).some((row) => row.trimStart().startsWith('>')), 'a continuation row starts with the glyph');
       const live = ['  DONE', RULE, ...held.rows, RULE, AG_FOOTER];
-      assert.deepEqual(wake._assessPane(live, ANTIGRAVITY, held.cursor), { idle: false, reason: 'no-prompt' });
-      assert.deepEqual(wake._assessPane(['>', '', ...live], ANTIGRAVITY, held.cursor), { idle: false, reason: 'no-prompt' });
+      /** The text as the reader returns it: one row per line, glyph, indent and trailing blanks removed. */
+      const asRead = (rows) => rows.map((row) => row.slice(2).trimEnd()).join('\n');
+
+      it('is the case under test', () => {
+        assert.ok(held.rows.slice(1).some((row) => row.trimStart().startsWith('>')), 'a continuation row starts with the glyph');
+      });
+
+      it('the nudge is still recognised whole, stale row or none', () => {
+        assert.deepEqual(wake._assessPane(live, ANTIGRAVITY, held.cursor), { idle: true, reason: 'at-prompt' });
+        assert.deepEqual(wake._assessPane(['>', '', ...live], ANTIGRAVITY, held.cursor), { idle: true, reason: 'at-prompt' });
+      });
+
+      it('the prompt clear reads the same whole nudge, which is what arms its residue check', () => {
+        const draft = wake.readComposerDraft(live, held.cursor, ANTIGRAVITY);
+        assert.deepEqual({ state: draft.state, rows: draft.rows, complete: draft.complete }, { state: 'draft', rows: held.rows.length, complete: true });
+        assert.equal(draft.text, asRead(held.rows));
+        assert.equal(wake.isOwnNudge(draft.text), true);
+      });
+
+      it('an operator draft wrapped the same way is read whole and still refused', () => {
+        const text = 'compare a > b please, then reply with the result';
+        const typed = composerHolding('>', ' ', text, text.indexOf('>'));
+        assert.ok(typed.rows.slice(1, -1).some((row) => row.trimStart().startsWith('>')), 'a continuation row above the cursor starts with the glyph');
+        const pane = ['  DONE', RULE, ...typed.rows, RULE, AG_FOOTER];
+        const draft = wake.readComposerDraft(pane, typed.cursor, ANTIGRAVITY);
+        assert.deepEqual({ state: draft.state, complete: draft.complete, text: draft.text }, { state: 'draft', complete: true, text: asRead(typed.rows) });
+        assert.deepEqual(wake._assessPane(pane, ANTIGRAVITY, typed.cursor), { idle: false, reason: 'no-prompt' });
+      });
+    });
+
+    describe('where no composer border anchors the first row, the nearest glyph-led row still does', () => {
+      it('no divider in the read', () => {
+        const rows = ['> first', '  > second', '  tail'];
+        const located = wake.locateComposer(rows, { x: 6, line: '  tail' }, ANTIGRAVITY);
+        assert.deepEqual(located.rows, ['  > second', '  tail']);
+      });
+
+      it('a divider whose next row is not glyph-led', () => {
+        const rows = [RULE, '  transcript', '> first', '  tail'];
+        const located = wake.locateComposer(rows, { x: 6, line: '  tail' }, ANTIGRAVITY);
+        assert.deepEqual(located.rows, ['> first', '  tail']);
+      });
+
+      it('a divider above with none below the cursor is not a box: Codex, a rule over a submitted message', () => {
+        // Codex draws no composer border. A rule row directly above a message it
+        // drew with its glyph must not make that message the composer's head.
+        const rows = [RULE, '› submitted earlier', '', '• Done.', '', '› live draft', '  continues', '', CX_STATUS];
+        const located = wake.locateComposer(rows, { x: 11, line: '  continues' }, CODEX);
+        assert.deepEqual(located.rows.slice(0, 2), ['› live draft', '  continues']);
+      });
     });
 
     it('a selector row outside the nudge\'s composer still refuses', () => {
@@ -725,19 +770,141 @@ describe('medusa-wake — a measured Antigravity pane holding a stranded nudge (
     assert.equal(wake.isOwnNudge(draft.text), true);
   });
 
-  it('(b) CHARACTERIZATION, not the desired behaviour: the production pane gate refuses it as not-at-rest', () => {
-    // What the live Antigravity path answers today for this input. That path has
-    // no engine channel, so no `engineIdle` is passed, and the profile's at-rest
-    // marker is not on any row of this capture. This pins current conservative
-    // behaviour and marks a lead to investigate. It is not evidence the engine
-    // was working. It does not say why the marker is absent (version, draft,
-    // task or something else), nor what any earlier live tick saw.
+  it('(b) the production pane gate judges it at-prompt, so the next wake clears and replaces the nudge', () => {
+    // The live Antigravity path has no engine channel, so no `engineIdle` is
+    // passed, and the profile's at-rest marker is on no row of this capture:
+    // agy hides it while its composer holds text. The composer holds exactly
+    // the monitor's own nudge, seen whole, which is the one case the missing
+    // marker is excused for. The status row's queued `1 task(s)` is not a turn
+    // in flight; the busy marker and an agent fleet would still refuse.
     assert.ok(!lines.some((row) => row.includes(ANTIGRAVITY.idleMarker)), 'the idle marker is absent');
-    assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, cursor), { idle: false, reason: 'not-at-rest' });
+    assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, cursor), { idle: true, reason: 'at-prompt' });
   });
 
-  it('diagnostic only: excusing the marker is the whole difference, which no live Antigravity path does', () => {
-    assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, cursor, true), { idle: true, reason: 'at-prompt' });
+  it('the channel\'s idle answer makes no difference to it any more', () => {
+    assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, cursor, true), wake._assessPane(lines, ANTIGRAVITY, cursor));
+  });
+});
+
+describe('medusa-wake — a live 167x27 Antigravity pane whose composer hides the at-rest hint (#2358)', () => {
+  // MEASURED: `tmux capture-pane -p` of a live agy session (Gemini 3.8 Flash,
+  // pane 167x27, not in copy-mode) on 2026-10-17, its bottom rows copied
+  // verbatim from the issue. The Master's switchboard nudge sat unsubmitted in
+  // the composer and agy drew no `? for shortcuts` hint, because it hides the
+  // hint while its composer holds text. The monitor refused every tick as
+  // `not-at-rest` until it escalated; one Enter submitted the nudge.
+  const RULE = '─'.repeat(167);
+  const CAPTURE = [
+    '      • Event-driven triage of Medusa switchboard exchanges and the Operator Bridge (tc bridge), handling inbound routes and verifying/releasing session milestone',
+    '      and operator-action-required candidates to Discord.',
+    '      • No self-directed project lifecycle mutations (no session launches, kills, wraps, clears, config changes, or rule modifications).',
+    '      • Durable state and history maintained exclusively under  (MEMORY.md and CHANGELOG.md).',
+    '',
+    '',
+    RULE,
+    '> [TangleClaw Switchboard] You have 1 unread Medusa message(s). Fetch them from the TangleClaw API at http://localhost:3102: GET /api/master/medusa/messages — act on',
+    '  them as appropriate. Reply to each one that needs an answer BEFORE marking it handled: POST /api/master/medusa/send',
+    '  {"to":"<sender-workspace-id>","message":"<reply>"}; then mark it handled: POST /api/master/medusa/read {"ids":[...]}. Both POSTs need the headers',
+    '  x-tangleclaw-role: master and x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID. The initiator closes the exchange, so a message you do not answer leaves them blocked.',
+    '  Never use /clear as an acknowledgement. (wake ref abd48653f687)',
+    RULE,
+    `${' '.repeat(142)}Gemini 3.8 Flash · medium`,
+  ];
+  const PANE_HEIGHT = 27;
+  const LINES = [...Array(PANE_HEIGHT - CAPTURE.length).fill(''), ...CAPTURE];
+  const LOWER = LINES.lastIndexOf(RULE);
+  const UPPER = LINES.lastIndexOf(RULE, LOWER - 1);
+  /**
+   * The cursor at the end of a row's text.
+   * [ASSUMPTION A1] The capture did not record the cursor. After a paste agy
+   * leaves it after the last character, which is where the measured 179x44
+   * capture has it; this placement is an assumption, not live proof.
+   * @param {string} row - The cursor's row
+   * @returns {{x: number, line: string}}
+   */
+  const cursorAtEnd = (row) => ({ x: [...row].length, line: row });
+  const CURSOR = cursorAtEnd(LINES[LOWER - 1]);
+  /**
+   * The capture with its composer rows replaced.
+   * @param {string[]} composer - Rows between the two rules
+   * @returns {{lines: string[], cursor: {x: number, line: string}}}
+   */
+  const holding = (composer) => ({
+    lines: [...LINES.slice(0, UPPER + 1), ...composer, ...LINES.slice(LOWER)],
+    cursor: cursorAtEnd(composer[composer.length - 1])
+  });
+
+  it('is the shape the issue reports: no at-rest hint, no busy marker, the own nudge whole between two rules', () => {
+    assert.equal(LINES.length, PANE_HEIGHT);
+    assert.ok(!LINES.some((row) => row.includes(ANTIGRAVITY.idleMarker)), 'the idle marker is absent');
+    assert.ok(!LINES.some((row) => row.includes(ANTIGRAVITY.busyMarker)), 'the busy marker is absent');
+    assert.equal(LOWER - UPPER - 1, 5, 'five composer rows');
+    const draft = wake.readComposerDraft(LINES, CURSOR, ANTIGRAVITY);
+    assert.deepEqual({ state: draft.state, rows: draft.rows, complete: draft.complete }, { state: 'draft', rows: 5, complete: true });
+    assert.equal(wake.isOwnNudge(draft.text), true);
+  });
+
+  it('is judged at-prompt, so the next wake clears and replaces the nudge', () => {
+    assert.deepEqual(wake._assessPane(LINES, ANTIGRAVITY, CURSOR), { idle: true, reason: 'at-prompt' });
+  });
+
+  describe('every other refusal still holds', () => {
+    it('the busy marker', () => {
+      const lines = [...LINES.slice(0, -1), `esc to cancel${LINES[LINES.length - 1].slice(13)}`];
+      assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, CURSOR), { idle: false, reason: 'turn-in-flight' });
+    });
+
+    it('a running agent fleet', () => {
+      const lines = [...LINES.slice(1, UPPER - 1), '  ◯ builder  Working', ...LINES.slice(UPPER - 1)];
+      assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, CURSOR), { idle: false, reason: 'agents-running' });
+    });
+
+    it('the nudge with operator text after it', () => {
+      const composer = LINES.slice(UPPER + 1, LOWER);
+      composer[composer.length - 1] += ' and also rebase first';
+      const { lines, cursor } = holding(composer);
+      assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, cursor), { idle: false, reason: 'not-at-rest' });
+    });
+
+    it('a draft that is not the nudge', () => {
+      const { lines, cursor } = holding(['> please look at the failing test before you reply']);
+      assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, cursor), { idle: false, reason: 'not-at-rest' });
+    });
+
+    it('a composer whose lower border was not seen', () => {
+      const lines = ['', '', ...LINES.slice(0, LOWER)];
+      assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, CURSOR), { idle: false, reason: 'not-at-rest' });
+    });
+
+    it('a selector row drawn below the composer', () => {
+      const lines = [...LINES.slice(3), '', '> Yes', '  No'];
+      assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, CURSOR), { idle: false, reason: 'not-at-rest' });
+    });
+
+    it('a dialog drawn above the composer, its key help in the status row\'s hint slot', () => {
+      // The recorded dialog analog's own rows around the nudge's composer: no
+      // row below the composer is glyph-led, and none says `esc to cancel`.
+      const [question, , , , keyHelp] = AG_DIALOG_PANE;
+      const lines = ['', question, ...LINES.slice(UPPER, -1), keyHelp];
+      const below = lines.slice(lines.lastIndexOf(RULE));
+      assert.equal(below.length, 2, 'the lower border and the status row');
+      assert.ok(!below.some((row) => row.trimStart().startsWith('>')), 'nothing glyph-led below the composer');
+      assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, CURSOR), { idle: false, reason: 'not-at-rest' });
+    });
+
+    it('any text in the status row\'s hint slot, whatever it says', () => {
+      const status = LINES[LINES.length - 1];
+      const lines = [...LINES.slice(0, -1), `tab to cycle${status.slice(12)}`];
+      assert.deepEqual(wake._assessPane(lines, ANTIGRAVITY, CURSOR), { idle: false, reason: 'not-at-rest' });
+    });
+
+    it('a header that says the engine is still starting, for a profile that declares one', () => {
+      const declaring = { ...ANTIGRAVITY, headerRe: /^\s*Antigravity CLI · model:/, startingRe: /model: loading/ };
+      const starting = ['Antigravity CLI · model: loading', ...LINES.slice(1)];
+      assert.deepEqual(wake._assessPane(starting, declaring, CURSOR), { idle: false, reason: 'engine-starting' });
+      const named = ['Antigravity CLI · model: Gemini 3.8 Flash', ...LINES.slice(1)];
+      assert.deepEqual(wake._assessPane(named, declaring, CURSOR), { idle: true, reason: 'at-prompt' });
+    });
   });
 });
 
