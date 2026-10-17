@@ -23,7 +23,7 @@ const store = require('../lib/store');
 const projects = require('../lib/projects');
 const { createServer } = require('../server');
 const { setLevel } = require('../lib/logger');
-const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
+const { bindProject, signInOperator } = require('./_shared-docs-callers');
 
 setLevel('error');
 
@@ -123,9 +123,13 @@ describe('api/session-rules caller gate (#2013)', () => {
     for (const name of ['own-proj', 'other-proj']) fs.mkdirSync(path.join(tmpDir, name), { recursive: true });
     own = store.projects.create({ name: 'own-proj', path: path.join(tmpDir, 'own-proj'), engine: 'claude' });
     other = store.projects.create({ name: 'other-proj', path: path.join(tmpDir, 'other-proj'), engine: 'claude' });
+    // The operator's rule decisions need the operator signed in (#2378), so the
+    // login is on and the operator is a signed-in session. The other callers
+    // carry no browser's shape, so they meet the same refusals either way.
+    store.config.save({ ...store.config.load(), authEnabled: true, basicAuthUser: null, basicAuthHash: null });
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-    asOperator = operatorHeaders(server);
+    asOperator = await signInOperator(server);
     asOwn = bindProject(own).headers;
     asOther = bindProject(other).headers;
   });

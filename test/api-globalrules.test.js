@@ -9,7 +9,11 @@ const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const { createServer } = require('../server');
-const { operatorHeaders } = require('./_shared-docs-callers');
+const { operatorOf } = require('./_shared-docs-callers');
+
+// Changing the global rules needs a signed-in operator (#2378), so this suite
+// runs with the login on and sends the operator's session.
+let operator;
 
 setLevel('error');
 
@@ -21,7 +25,8 @@ setLevel('error');
  * @param {object} [body]
  * @returns {Promise<{ status: number, data: object }>}
  */
-function request(server, method, urlPath, body) {
+async function request(server, method, urlPath, body) {
+  const operatorWrite = await operator();
   return new Promise((resolve, reject) => {
     const addr = server.address();
     const options = {
@@ -31,7 +36,7 @@ function request(server, method, urlPath, body) {
       method,
       // The landing-page editor is the operator's surface; caller classes are
       // covered in test/api-session-rules-authz.test.js.
-      headers: { 'Content-Type': 'application/json', ...operatorHeaders(server) }
+      headers: { 'Content-Type': 'application/json', ...operatorWrite }
     };
 
     const req = http.request(options, (res) => {
@@ -74,8 +79,11 @@ describe('API /api/rules/global', () => {
     fs.writeFileSync(tempRulesPath, '# Global Rules\n\n- Seed baseline for API test\n');
     store.globalRules._setBundledGlobalRulesPath(tempRulesPath);
 
+    store.config.save({ ...store.config.load(), authEnabled: true, basicAuthUser: null, basicAuthHash: null });
+
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    operator = operatorOf(server);
   });
 
   after(async () => {

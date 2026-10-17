@@ -142,3 +142,71 @@ describe('launch-binding guard: every mutating route is guarded or listed (#2233
     assert.ok(!admitted.includes('POST /api/audit/heartbeat'));
   });
 });
+
+// The operator routes that grant or approve authority over sessions, each of
+// which needs the operator signed in (#2378). On an install with no login the
+// operator is recognised by a request's shape, which any process on the host
+// can send; these routes refuse that. Adding a route here, or taking one off,
+// is a decision about what that shape may authorize. It is made here, in
+// review, and not by registering a route.
+const SIGNED_IN_OPERATOR = Object.freeze([
+  'DELETE /api/session-rules/:id',
+  'POST /api/control/assignments/:id/close',
+  'POST /api/control/assignments/:id/release',
+  'POST /api/coordinator-roles',
+  'POST /api/groups/:id/members',
+  'POST /api/master/rules/restore-defaults',
+  'POST /api/merge-queue',
+  'POST /api/merge-queue/:id/clear-halt',
+  'POST /api/merge-queue/entries/:id/operator-gate',
+  'POST /api/merge-queue/entries/:id/settle-landing',
+  'POST /api/rules/global/reset',
+  'POST /api/session-rules',
+  'POST /api/session-rules/:id/restore',
+  'POST /api/session-rules/promote',
+  'PUT /api/launch/isolation-overrides/install',
+  'PUT /api/launch/isolation-overrides/projects/:id',
+  'PUT /api/learnings/:id/tier',
+  'PUT /api/rules/global',
+  'PUT /api/session-rules/:id',
+  'PUT /api/session-rules/:id/status',
+  'PUT /api/shared-docs/:id',
+  'PUT /api/startup-prompt'
+]);
+
+// The route that needs a signed-in operator on one branch only (choosing a
+// project's launch recovery mode); its handler asks, so it carries no option.
+const SIGNED_IN_OPERATOR_BRANCH = Object.freeze(['PATCH /api/projects/:name']);
+
+describe('signed-in operator routes: the reviewed list is the route table (#2378)', () => {
+  const marked = ROUTES.filter((r) => r.options && r.options.signedInOperator);
+
+  it('marks exactly the reviewed routes', () => {
+    assert.deepEqual(marked.map(key).sort(), [...SIGNED_IN_OPERATOR].sort());
+  });
+
+  it('marks only mutating routes, none of which the guard admits without the operator being judged', () => {
+    const skipping = new Set([...Object.keys(guard.EXCEPTIONS), ...guard.SERVICE_TOKEN_ROUTES, ...guard.ENDED_LAUNCH_ROUTES]);
+    for (const r of marked) {
+      assert.ok(guard.isMutating(r.method), `${key(r)} is marked and is not mutating`);
+      assert.ok(!skipping.has(key(r)), `${key(r)} is marked and sits on a guard exception list`);
+      assert.notEqual(r.options.ownPrincipal, true, `${key(r)} is marked and proves its own principal`);
+    }
+  });
+
+  it('gives every marked route the action its refusal names', () => {
+    for (const r of marked) {
+      const action = r.options.signedInOperator.action;
+      assert.equal(typeof action, 'string', key(r));
+      assert.ok(action.trim().length > 0, key(r));
+    }
+  });
+
+  it('keeps the branch-level route registered, mutating and unmarked', () => {
+    for (const listed of SIGNED_IN_OPERATOR_BRANCH) {
+      const r = MUTATING.find((x) => key(x) === listed);
+      assert.ok(r, `${listed} is not a registered mutating route`);
+      assert.ok(!r.options.signedInOperator, `${listed} would refuse every branch if it were marked`);
+    }
+  });
+});

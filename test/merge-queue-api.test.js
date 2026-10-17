@@ -220,9 +220,12 @@ describe('/api/merge-queue (#2322)', () => {
     bOwner = bindProject(owner);
     bNeighbour = bindProject(neighbour);
     bOutsider = bindProject(outsider);
+    // Making a queue and the Operator's queue decisions need the operator
+    // signed in (#2378), so the login is on and the operator is a session.
+    store.config.save({ ...store.config.load(), authEnabled: true, basicAuthUser: null, basicAuthHash: null });
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-    op = operatorHeaders(server);
+    op = await signInOperator(server);
     const made = await sendAs(server, 'POST', '/api/merge-queue', { repo: REPO, baseBranch: 'main', ownerProjectId: owner.id }, op);
     assert.equal(made.status, 201, JSON.stringify(made.data));
     queueId = made.data.queue.queueId;
@@ -261,7 +264,9 @@ describe('/api/merge-queue (#2322)', () => {
     it('the Operator made it, the owner is named, and the proof tier is on record', () => {
       const queue = queueStore.getQueue(queueId);
       assert.equal(queue.ownerProjectId, owner.id);
-      assert.equal(queue.createdBy.operatorProof, 'ambient-open');
+      // Making a queue needs the operator signed in (#2378), so the proof on
+      // record is the session's.
+      assert.equal(queue.createdBy.operatorProof, 'verified-session');
     });
 
     it('no project launch makes a queue, the owner-to-be included', async () => {
@@ -669,7 +674,9 @@ describe('/api/merge-queue (#2322)', () => {
       const res = await sendAs(server, 'POST', `/api/merge-queue/entries/${entry.entryId}/operator-gate`, { reference: 'pane, 03:40' }, op);
       assert.equal(res.status, 200);
       assert.equal(res.data.entry.gates.operator.status, 'recorded');
-      assert.equal(res.data.entry.gates.operator.operatorProof, 'ambient-open');
+      // Recording the gate needs the operator signed in (#2378), so the proof
+      // on record is the session's.
+      assert.equal(res.data.entry.gates.operator.operatorProof, 'verified-session');
       assert.deepEqual(res.data.entry.openGates, []);
       const twice = await sendAs(server, 'POST', `/api/merge-queue/entries/${entry.entryId}/operator-gate`, { reference: 'again' }, op);
       assert.equal(twice.status, 409);

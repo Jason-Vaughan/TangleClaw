@@ -2637,7 +2637,7 @@ async function refreshProjectLaunchSequences(projectId) {
     projectRecoveryMode: data.projectRecoveryMode
   });
   if (modeBox) {
-    const offer = recoveryModeControlOffer(me);
+    const offer = recoveryModeChoiceOffer(me);
     modeBox.innerHTML = projectRecoveryNoticeHtml(projectId)
       + projectRecoveryReadoutHtml(data, offer) + projectRecoveryControlHtml(data, offer);
     wireProjectRecoveryMode(modeBox);
@@ -2762,8 +2762,9 @@ function recoveryGatePhrase(gateState) {
  * `PATCH /api/projects/:name` takes the mode from the operator alone. While
  * the gate enforces, that is a signed-in session, so a page with none would be
  * refused and is shown the reason in place of the control. Where the gate
- * stands down the server takes the request from the dashboard itself, with
- * nobody identified.
+ * stands down the page is offered the control: the launch-isolation override
+ * reads this answer too, and turning an override off needs no sign-in. Choosing
+ * the recovery mode does (#2378); `recoveryModeChoiceOffer` says so.
  *
  * `readback` is whether a signed-in operator is behind this page, which is the
  * one caller the server lets read a session's reconciliation afterwards.
@@ -2787,6 +2788,25 @@ function recoveryModeControlOffer(me) {
     };
   }
   return { offered: true, readback: false, loginInForce: false, why: null };
+}
+
+/**
+ * Whether the panel offers the recovery-mode choice: `recoveryModeControlOffer`,
+ * except that with no login in force (`open`, `fallback`) the choice is not
+ * offered, because the server takes it only from a signed-in operator (#2378).
+ * The readback and login fields are unchanged.
+ * @param {object|null} me - The answer of `GET /api/auth/me`, or null when the read failed
+ * @returns {{offered: boolean, readback: (boolean|null), loginInForce: (boolean|null), why: (string|null)}}
+ */
+function recoveryModeChoiceOffer(me) {
+  const offer = recoveryModeControlOffer(me);
+  if (offer.loginInForce !== false) return offer;
+  return {
+    ...offer,
+    offered: false,
+    why: 'The recovery mode cannot be chosen from this page: TangleClaw\'s login is not in force, and the server '
+      + 'takes this choice only from a signed-in operator. Turn the login on, sign in, then reopen Settings.'
+  };
 }
 
 /**
