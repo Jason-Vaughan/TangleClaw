@@ -2,6 +2,12 @@
 
 <!-- Append new entries at the top.
 
+Merge conflicts: a conflict at the top of this file is expected, because every branch
+prepends here. Keep both entries, newest first. In a lane, rebuild the file as origin/main's
+copy plus your own entry. `.gitattributes` deliberately does not union this file (#2042):
+union kept both sides' lines without a conflict and silently corrupted entries.
+
+
 Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 - scope=  : ONE scope per unit of work. Work done under an ACTIVE build plan uses that
   plan's frontmatter scope (its ## Status roster derives checkbox flips from these tags).
@@ -34,6 +40,33 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
+
+## 2026-10-17 — #2042, #2059: the change log merges as text so conflicting edits stop corrupting it, and A123 is recorded as ADR 0025
+
+<!-- prawduct: type=bugfix | scope=w9-a1-change-log-merge-and-a123-adr -->
+
+v5.34.0 Wave 9 chunk W9-A1, chunk 1 of 1. Branch `fix/2042-2059-w9-a1` from `origin/main` `d06cd1e1`. Closes #2042; refs #2059. Plan: `.tangleclaw/plans/w9-a1-change-log-merge-and-a123-adr-2042-2059.md` (rev1-r2, sha256 `53a86ae8…4b26`, approved by INT and Architect A219); charter v2.31 (sha256 `9918cf38…532f`).
+
+**#2042.** `.gitattributes` marked this file `merge=union`. Union never reports a conflict: two edits to one entry survived as two copies of it, one a heading with no body, and the merge exited 0. The file now merges as `merge=text`, with a comment saying why union must not return. The header above says a conflict at the top of the file is expected and how to resolve it.
+
+**#2059 (A123 slice).** `docs/adr/0025-codex-cold-start-wake-and-pane-refusal.md` records Architect ruling A123 (2026-10-07): D1–D5, the #2177 containment, the D3/D4 merge gate, the original order, the two Operator-reserved decisions and the A175/A168 amendments, verbatim from the ruling page, plus file-level code pointers read on `main`. It cites no private path or tailnet URL. The rest of #2059 stays open.
+
+**Limits.** Every branch sync that brings in new entries now conflicts at the top of this file, on purpose. Whether GitHub's server-side merge honours the attribute was not checked. A clone's own `.git/info/attributes` can still set union. Prawduct's advisory recommending union is parked for the Operator, not dismissed.
+
+**Tests.** New `test/change-log-merge.test.js`: real merges in sandboxed temp repos. A union control reproduces the corruption; the shipped attribute conflicts on the same edit and on two independent prepends, beside the header guidance, which resolves them; edits far apart merge cleanly to a fixed result; the repo's attribute reads `text`. Tests 2, 3 and 5 were red on union, and three mutations each turned the intended test red.
+
+**Review.** Cumulative Critic `rev-20261017T174307Z-4ee22d79`: 0 blocking.
+
+**rev-20261017T174307Z-4ee22d79** — 2026-10-17T17:44:11Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | accepted | The declared suite runs once on the final tree in the Integrator's suite slot (charter v2.31 order, after the Architect's pre-suite read) and is recorded as test evidence before the ready report. The narrow ring on this head (the new file, temp-repo.test.js and every test naming .gitattributes, change-log.md or docs/adr) passed 854/0. |
+| R-2 | warning | fixed-unreviewed | fixed in `.prawduct/change-log.md` |
+| R-3 | warning | accepted | Parked by INT ruling D3 (b337caaf): the advisory's disposition (dismiss per clone, or an upstream report via /prawduct:report-bug, which publishes outbound text and needs the Operator's approval of the bytes) is a separate PM/Operator decision. W9-A1 neither dismisses it nor reports it. The .gitattributes comment is the in-repo guard. |
+| R-4 | note | accepted | Deliberate: the approved plan requires each amendment line to say it does not relax the separate launch/readiness proof, and the section lead states it once for both. The line break is source wrapping inside a list item and renders as one paragraph. |
+
+**4 findings** (3 warning, 1 note) — accepted: 3, fixed-unreviewed: 1.
 
 ## 2026-10-17 — #2206: a locked store gets one bounded retry and one diagnostic at the stored launch-blocker lookup, and a failed lookup is still never "no blocker"
 
