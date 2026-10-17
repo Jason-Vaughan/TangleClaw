@@ -4697,3 +4697,205 @@ describe('private temp root in the pane environment (#1904)', () => {
     });
   });
 });
+
+describe('stored launch blockers are kept true when nothing reads them (#2451)', () => {
+  const sessions = require('../lib/sessions');
+  const tmux = require('../lib/tmux');
+  const startupDialog = require('../lib/startup-dialog');
+  const { setConsoleStream } = require('../lib/logger');
+  const realProbe = tmux.probeSession;
+  const realLook = startupDialog.look;
+  const BLOCKER = Object.freeze({ code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it in the pane.', engineId: 'claude' });
+  // What one look at a pane answers. How a frame is read as each of these is
+  // the subject of test/startup-dialog.test.js; here only the answer matters.
+  const AT_PROMPT = Object.freeze({ declared: true, dialog: null, suspect: null, clear: true, noncomposer: false, unread: null, promptKnown: true, unreadable: null, unresolved: null });
+  const AT_DIALOG = Object.freeze({ ...AT_PROMPT, clear: false, dialog: { code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it in the pane.' } });
+  const UNREAD = Object.freeze({ ...AT_PROMPT, clear: false, unread: 'the pane read came back empty' });
+  let base;
+  let counter = 0;
+  let looks;
+  let probes;
+
+  before(() => {
+    base = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-blocker-sweep-'));
+    store._setBasePath(base);
+    store.init();
+  });
+
+  after(() => {
+    try { store.close(); } catch { /* already closed */ }
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    looks = [];
+    probes = [];
+    tmux.probeSession = (name) => { probes.push(name); return { answered: true, live: true, cause: null }; };
+    startupDialog.look = (name) => { looks.push(name); return AT_PROMPT; };
+  });
+
+  afterEach(() => {
+    tmux.probeSession = realProbe;
+    startupDialog.look = realLook;
+    sessions.stopLaunchBlockerSweep();
+    for (const project of store.projects.list()) {
+      const active = store.sessions.getActive(project.id);
+      if (active) store.sessions.markCrashed(active.id, 'test cleanup');
+    }
+  });
+
+  /**
+   * A project with a live session, optionally carrying a stored blocker.
+   * @param {{blocker?: boolean}} [opts] - Whether to store a blocker
+   * @returns {{project: object, session: object}}
+   */
+  const live = ({ blocker = true } = {}) => {
+    counter += 1;
+    const name = `sweep-proj-${counter}`;
+    const project = store.projects.create({ name, path: path.join(base, name), engine: 'claude' });
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: `sweep-${counter}` });
+    if (blocker) store.sessions.setLaunchBlocker(session.id, BLOCKER);
+    return { project, session };
+  };
+  const crashCause = (sessionId) => {
+    store.sessions.markCrashed(sessionId, 'tmux session died');
+    const [event] = store.activity.query({ sessionId, eventType: 'session.crashed' });
+    return event.detail.cause;
+  };
+
+  it('the issue\'s case: answered and unread, the sweep clears it, and a later death names no dialog', () => {
+    const { session } = live();
+    assert.deepEqual(sessions.reconcileStoredLaunchBlockers(), { checked: 1, cleared: 1, kept: 0 });
+    assert.equal(store.sessions.get(session.id).launchBlocker, null);
+    assert.equal(crashCause(session.id), undefined);
+  });
+
+  it('a dialog still on the pane keeps its blocker, and a death then names it', () => {
+    const { session } = live();
+    startupDialog.look = (name) => { looks.push(name); return AT_DIALOG; };
+    assert.deepEqual(sessions.reconcileStoredLaunchBlockers(), { checked: 1, cleared: 0, kept: 1 });
+    assert.equal(store.sessions.get(session.id).launchBlocker.code, 'trust_required');
+    assert.equal(crashCause(session.id), 'trust_required');
+  });
+
+  it('an empty or unreadable pane changes nothing: unread is not answered', () => {
+    const { session } = live();
+    const before = store.sessions.get(session.id).launchBlocker;
+    startupDialog.look = (name) => { looks.push(name); return UNREAD; };
+    assert.deepEqual(sessions.reconcileStoredLaunchBlockers(), { checked: 1, cleared: 0, kept: 1 });
+    assert.deepEqual(store.sessions.get(session.id).launchBlocker, before, 'the row was not rewritten');
+  });
+
+  it('a pane tmux says is dead is not read, not written, and not marked crashed by the sweep', () => {
+    const { session } = live();
+    tmux.probeSession = (name) => { probes.push(name); return { answered: true, live: false, cause: null }; };
+    assert.deepEqual(sessions.reconcileStoredLaunchBlockers(), { checked: 0, cleared: 0, kept: 0 });
+    assert.deepEqual(looks, []);
+    const row = store.sessions.get(session.id);
+    assert.equal(row.status, 'active', 'recording a death stays with the paths that do it');
+    assert.equal(row.launchBlocker.code, 'trust_required');
+  });
+
+  it('a pane tmux did not answer for is not read, and its blocker stands', () => {
+    const { session } = live();
+    tmux.probeSession = (name) => { probes.push(name); return { answered: false, live: false, cause: 'timeout' }; };
+    sessions.reconcileStoredLaunchBlockers();
+    assert.deepEqual(looks, []);
+    assert.equal(store.sessions.get(session.id).launchBlocker.code, 'trust_required');
+  });
+
+  it('a session with no stored blocker costs no tmux call and no pane read', () => {
+    live({ blocker: false });
+    assert.deepEqual(sessions.reconcileStoredLaunchBlockers(), { checked: 0, cleared: 0, kept: 0 });
+    assert.deepEqual(probes, []);
+    assert.deepEqual(looks, []);
+  });
+
+  it('one project that cannot be checked is logged, and the next is still swept', () => {
+    const broken = live();
+    const fine = live();
+    tmux.probeSession = (name) => {
+      if (name === broken.session.tmuxSession) throw new Error('tmux exploded');
+      return { answered: true, live: true, cause: null };
+    };
+    let out = '';
+    setConsoleStream({ write: (chunk) => { out += chunk; } });
+    setLevel('warn');
+    try {
+      assert.deepEqual(sessions.reconcileStoredLaunchBlockers(), { checked: 1, cleared: 1, kept: 0 });
+    } finally {
+      setLevel('error');
+      setConsoleStream(null);
+    }
+    assert.match(out, /Could not check a session's stored launch blocker/);
+    assert.match(out, /tmux exploded/);
+    assert.equal(store.sessions.get(fine.session.id).launchBlocker, null);
+    assert.equal(store.sessions.get(broken.session.id).launchBlocker.code, 'trust_required');
+  });
+
+  describe('on a timer', () => {
+    const realSetInterval = global.setInterval;
+    const realClearInterval = global.clearInterval;
+    let armed;
+    let cleared;
+
+    beforeEach(() => {
+      armed = [];
+      cleared = [];
+      global.setInterval = (fn, ms) => {
+        const timer = { fn, ms, unrefed: false, unref() { this.unrefed = true; return this; } };
+        armed.push(timer);
+        return timer;
+      };
+      global.clearInterval = (timer) => { cleared.push(timer); };
+    });
+
+    afterEach(() => {
+      sessions.stopLaunchBlockerSweep();
+      global.setInterval = realSetInterval;
+      global.clearInterval = realClearInterval;
+    });
+
+    it('start arms one unref\'d timer at the monitors\' cadence, a second start does nothing, and stop clears it', () => {
+      sessions.startLaunchBlockerSweep();
+      sessions.startLaunchBlockerSweep();
+      assert.equal(armed.length, 1);
+      assert.equal(armed[0].ms, sessions.LAUNCH_BLOCKER_SWEEP_MS);
+      assert.equal(armed[0].ms, 15_000);
+      assert.equal(armed[0].unrefed, true, 'never holds the process open');
+      sessions.stopLaunchBlockerSweep();
+      assert.deepEqual(cleared, [armed[0]]);
+      sessions.stopLaunchBlockerSweep();
+      assert.equal(cleared.length, 1, 'a stop with nothing running does nothing');
+      sessions.startLaunchBlockerSweep({ intervalMs: 50 });
+      assert.equal(armed.length, 2, 'a stopped sweep can be started again');
+      assert.equal(armed[1].ms, 50);
+    });
+
+    it('a tick runs the sweep', () => {
+      const { session } = live();
+      sessions.startLaunchBlockerSweep();
+      armed[0].fn();
+      assert.equal(store.sessions.get(session.id).launchBlocker, null);
+    });
+
+    it('a blocker stored before a restart is still there until the first tick, which clears it with no reader', () => {
+      const { session } = live();
+      sessions.startLaunchBlockerSweep();
+      assert.equal(store.sessions.get(session.id).launchBlocker.code, 'trust_required', 'nothing runs at start');
+      assert.deepEqual(looks, []);
+      armed[0].fn();
+      assert.equal(store.sessions.get(session.id).launchBlocker, null);
+      assert.equal(crashCause(session.id), undefined);
+    });
+
+    it('the same, with the dialog still up after the restart: the first tick keeps it', () => {
+      const { session } = live();
+      startupDialog.look = (name) => { looks.push(name); return AT_DIALOG; };
+      sessions.startLaunchBlockerSweep();
+      armed[0].fn();
+      assert.equal(store.sessions.get(session.id).launchBlocker.code, 'trust_required');
+      assert.equal(crashCause(session.id), 'trust_required');
+    });
+  });
+});
