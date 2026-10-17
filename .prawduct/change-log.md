@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-17 — W5-REC: the v5.34.0 Wave 3, 4 and 5 records
+
+<!-- prawduct: type=chore | scope=w5-rec-records -->
+
+v5.34.0 records chunk W5-REC (charter v2.21 §3; Architect A180 accepted plan rev 1). Branch `docs/w5-rec-records` from `origin/main` `9273fe67`.
+
+**Why.** Lane Builders do not edit `CHANGELOG.md` or `FEATURES.md`; each of the nine PRs merged since the Wave 1+2 records PR #2429 left its entries in its description. This brings both files level with `main`.
+
+**What changed.** `CHANGELOG.md` `[Unreleased]`: eleven entries from #2430, #2431, #2432, #2434, #2435, #2436, #2437, #2440 and #2441, pasted as each merged description has them, in the subsection it names (#2441 named none; it is a new screen element, so Added). `FEATURES.md`: the five feature entries those descriptions give (#2437's with a bold label added, #2434's label set in bold), the "Launch isolation inventory" citations moved to `lib/recorded-launch-command.js` where #2375 put the definitions, and a Tests-map line for each of the seven test files the PRs added, so no wrap stubs them. This file: a blank line restored before five headings that had none (the one #2436 noted and four more like it); no entry's text changed.
+
+**Not covered.** #2435's owed learning needs `.claude/rules/learnings/`, outside this chunk's lock. No version bump, tag, release or deploy.
+
 ## 2026-10-17 — #2378: the landing page says so when no login is in force
 
 <!-- prawduct: type=feature | scope=w5b1-no-login-landing-notice -->
@@ -77,6 +89,7 @@ _Observations — read, not owed. Answering one is optional._
 
 **5 findings** (2 warning, 3 note) — accepted: 4, fixed: 1.
 **3 observations demoted** — 3 answered. An observation gates nothing; answering one is optional.
+
 ## 2026-10-17 — #2349, #2438, #1413: the temp-repo guard sees `-C` argv and named git wrappers; a skipped describe is pinned against the real reporter
 
 <!-- prawduct: type=bugfix | scope=w5a1-temp-repo-guard-survivors -->
@@ -132,6 +145,7 @@ v5.34.0 Wave 4 chunk W4-A2, its one build chunk. Branch `fix/w4a2-load-determini
 **Proof.** A scratch copy holding the event loop 2 s (`Atomics.wait`) between the first tick and the in-window check: before, `expected 'waiting-ready', actual 'failed'`; after, pass. The cause capture read `POST /api/x: fetch failed: ECONNREFUSED` against a closed port; the wedged messages were read with their bounds forced in scratch. Both files pass alone.
 
 **Not fixed.** #2184's `fetch failed` failures: an in-process scratch reproduction gave `ECONNRESET` after a forced 7 s stall past the server's keep-alive, but no recorded occurrence has a cause or a measured stall, so the keep-alive change is excluded and the capture is there to tell the next one apart. #2200: not reproduced (20/20 at up to 1.5x cores), diagnostics only.
+
 ## 2026-10-16 — #2223, #2142: the Codex folder-trust timeout route is driven end to end; a missed local trust anchor says what was wrong with each directory
 
 <!-- prawduct: type=bugfix | scope=w4b1-codex-timeout-route-and-trust-anchor-reasons -->
@@ -185,6 +199,7 @@ v5.34.0 Wave 3 chunk W3-B1, its one chunk. Branch `fix/w3b1-refused-launch-toast
 **Deferred, not a blocker (the PM's approval, rule 264.3).** The signed-in Operator Bridge panel's Discord line in host-local time was not seen on screen: the scratch server's bridge routes need a signed-in account and no credential is entered on a non-local host. Before the merge it is held by tests (the real panel against the real status route, and the real `tc bridge status`, zone pinned). Owed after the next deploy, owner TC-Lane-B, in LANE_QUEUE "Waiting on the next deploy".
 
 **Tests.** New: `test/launch-refusal-toast.test.js` (the real functions with held timers: both branches stay, Dismiss and Escape, the overlap case, replacement, the source layout) and `test/bridge-status-timestamps.test.js` (the formatter, the real `bin/tc` against a stub server, the ISO fallback). Changed only as the plan's exact list says: sandboxes or pins that gain the owner (`launch-isolation-override-ui`, `landing-unreachable-state`, `error-string-parity`, `account-self-service-ui`, `orphan-hooks-banner`, `stranded-wraps-ui`), and bridge tests that expect the text fields with a pinned zone (`operator-bridge-panel`, `api-bridge-gateway`, `api-bridge`). `import-banner-buttons` and `port-owner-kind-panel` pass unchanged.
+
 ## 2026-10-16 — #2299, #2384 (refs): a `tc` command reference, and the sixteen auto-stubbed FEATURES.md files described
 
 <!-- prawduct: type=docs | scope=w3-a2-tc-reference-and-features-stubs-2299-2384 -->
@@ -288,6 +303,7 @@ v5.34.0 Wave 2 chunk W2-B2 chunk 02 of 2. Branch `feat/w2b2b-isolation-override-
 **What changed.** `public/ui.js`: `wireIsolationOverride` asks with a native `confirm()` before turning either override on. The question names the scope (the project by name, or every project and the Project Master) and carries the shared risk sentence. Cancel puts the switch back and sends nothing. Turning one off asks nothing. After every write, refused and unanswered ones included, the dashboard notice is re-read after the switch's own re-read, so it is never older than the switch beside it. It is re-read even when Settings has moved to another project. `public/landing.js`: `refreshIsolationOverrideBanner` reads `GET /api/launch/isolation-overrides` at load and after each change. Each read is numbered and only the latest paints, so a late older answer cannot overwrite a newer one, or put back names after a refusal. Each read also gets its own `api()` from the page's factory (same dashboard marker, sign-in and CSRF handling), so its failure is its own: the page's shared `api.lastError` / `lastErrorCode`, which every other request writes or clears, is never read, and an unrelated request finishing at the same moment cannot turn a refusal into a failure or hide a failure behind another refusal. `renderIsolationOverrideBanner` lists the install-wide override and each project with an override on, one row each. Each row's button opens that project's Settings at its switch (`openIsolationOverrideSettings`), or Global Settings at the install-wide switch. Names are text nodes. A project the install no longer has is named by its id, with no button. A refused read (`OPERATOR_ONLY`) hides the notice and takes down any names. Any other failure, or an answer without the settings, says the overrides could not be read, in the info tone. `public/index.html`: the slot, `role="status"`, beside the other main-view banners. `public/style.css`: one row per override, wrapping, with 44px buttons. `docs/user-guide.md` (added to the chunk by the Integrator's file-scope ruling, that one paragraph only): the override bullet under Session Won't Launch says turning one on asks first and describes the notice.
 
 **Tests.** New `test/isolation-override-banner.test.js` runs the shipped functions: what the notice says (none, install-wide, projects, both, a name with markup set as text, a project with no name, a row not on); refused, failed, answered-without-settings, and recovery from each; the race in three orders (older last over a newer none, older last over a newer refusal, newer last); each button's target and label; switches and notice run together (on puts it up, off takes it down, Cancel sends no request at all); the slot, the load-time read, and the read route only. `test/launch-isolation-override-ui.test.js`: the sandbox's `confirm()` now answers yes by default, so the existing cases test a confirmed change, and new cases cover asking on ON in both scopes, Cancel, no question on OFF, and the notice re-read after success, refusal and no answer, and after Settings moved on. The routes test now allows `landing.js`, which may name only the one read call. Three concurrency cases run the real `public/api-helper.js` with the notice's read and an unrelated page request answered together: a refusal still hides when the unrelated request fails or succeeds, and a genuine failure still shows when another read is refused; all three fail against the shared-slot read. Eight mutations, each caught: the read number, the question, Cancel leaving the switch on, the notice re-read, a parallel re-read, a failure that hides, a name through `innerHTML`, and a refusal leaving names up. `test/version-visibility.test.js` pins `loadServerInfo()` as the last load-time read, so the new read sits earlier in that list.
+
 ## 2026-10-15 — #2389 (refs): shared-doc notices are delivered by the rule, with mute and subscribe
 
 <!-- prawduct: type=feature | scope=w2-a1-shared-doc-notices-2389 -->
@@ -389,6 +405,7 @@ v5.34.0 Wave 1, chunk W1-B1, its one chunk. Branch `fix/w1b1-fingerprint-orphan-
 **What changed.** `lib/checkout-fingerprint.js`: a git call the deadline ends is aborted; `_runGit` sends SIGTERM (git removes its own lock files on it), then SIGKILL after `KILL_GRACE_MS` (1000 ms), and settles only once the child has exited. `fingerprint()` waits for that, bounded by the grace plus `REAP_MARGIN_MS` (500 ms) so a runner that ignores the abort cannot hold it; a timeout is still told by the `DEADLINE` sentinel, never by the clock. The program run is a seam (`_seams.bin`). No caller changes: they only await the result, which can now come up to 1.5 s after the deadline.
 
 **Tests.** `test/checkout-fingerprint.test.js`: four new cases through the real runner and a stand-in git (hang, deaf to SIGTERM, writing inside `.git`) and a runner that ignores the abort: each ends as `deadline`, with the child gone at return, the repository removable at once without retries, and the return bounded. The stalled runners in the two existing deadline cases now settle on abort, as the real runner does. `test/tmux-read-pane-async.test.js`: the two wedged-read cases count children from the spawn, through the `tmux._async.execFile` seam, not from the stand-in's log; the stand-in logs its pid first. The reads in that file whose assertions are about what is answered, not how fast, now share one generous named timeout (`ANSWER_TIMEOUT`, 60 s): on a run beside a full suite (load 13) two of them hit the 5 s default on the first session probe; the four timeout cases keep their own short bounds. No assertion was weakened.
+
 ## 2026-10-15 — #2417, #2365, #2312: the bridge's status pages say what shipped, and three doc pointers are corrected
 
 <!-- prawduct: type=docs | scope=w1-a1-docs-2417-2365-2312 -->
