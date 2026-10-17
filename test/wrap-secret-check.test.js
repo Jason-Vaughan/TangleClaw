@@ -42,14 +42,18 @@ const TOKEN = ['gh', 'p_'].join('') + 'Ab12Cd34Ef'.repeat(3) + 'Gh56Ij';
  * A classification with only the fields `check` reads. The one builder for
  * both shapes: pass field overrides here, or use `classificationFor` for the
  * common case of "these paths are the session's own and all stageable".
+ * `committableOrAsked` is derived the way the classifier derives it, unless
+ * an override supplies it.
  * @param {object} [over] - Field overrides.
  * @returns {object} The shape `ownership.classify` returns.
  */
 function classification(over) {
-  return {
+  const merged = {
     owned: [], foreign: [], included: [], left: [], undecided: [],
     tangleclawMaintenance: [], tangleclawState: [], stageable: [], ...over
   };
+  const { committableOrAskedOf } = require('../lib/wrap-steps/_file-ownership');
+  return { committableOrAsked: committableOrAskedOf(merged), ...merged };
 }
 
 /**
@@ -533,5 +537,58 @@ describe('looksLikeText', () => {
     assert.equal(secretScan.looksLikeText(Buffer.from([0x41, 0x00, 0x42])), false);
     assert.equal(secretScan.looksLikeText(Buffer.from([0x01, 0x02, 0x03, 0x41])), false);
     assert.equal(secretScan.looksLikeText(Buffer.alloc(0)), false);
+  });
+});
+
+describe('#2160: the check scans exactly the classifier\'s committableOrAsked', () => {
+  const ownership = require('../lib/wrap-steps/_file-ownership');
+
+  /**
+   * A real tree where every path holds a secret: the session's edit, an
+   * included, an undecided and a left foreign file, a session file answered
+   * Leave, and three that will never ship (a dormant methodology's state, a
+   * protected database, a file upstream already holds). Classified by
+   * `classify`, never by hand.
+   * @returns {{repo:string, c:object, decisions:object}}
+   */
+  function everyPathHoldsASecret() {
+    const repo = makeRepo();
+    for (const f of ['mine.js', 'shared.js', 'config.js', 'notes.md', 'README.md', 'up.md', 'seed.db']) {
+      fs.writeFileSync(path.join(repo, f), `key = "${TOKEN}"\n`);
+    }
+    fs.mkdirSync(path.join(repo, '.prawduct'), { recursive: true });
+    fs.writeFileSync(path.join(repo, '.prawduct', 's.md'), `key = "${TOKEN}"\n`);
+    const decisions = { 'shared.js': 'include', 'notes.md': 'leave', 'README.md': 'leave' };
+    const scope = {
+      snapshotApplies: true,
+      baseline: { dirty: { paths: ['shared.js', 'config.js', 'notes.md'], truncated: false } },
+      startedAtMs: 0,
+      workToplevel: repo
+    };
+    const status = execFileSync('git', ownership.statusArgs(), { cwd: repo, encoding: 'utf8' });
+    const c = ownership.classify(scope, ownership.parseStatus(status), {
+      decisions,
+      withheldPrefixes: ['.prawduct/'],
+      provenance: { state: 'established', ref: 'origin/main', paths: { 'up.md': { verdict: 'already-upstream', upstream: 'equal' } } }
+    });
+    return { repo, c, decisions };
+  }
+
+  it('flags every path in the list, in its order, and nothing that will never ship', () => {
+    const { repo, c, decisions } = everyPathHoldsASecret();
+    assert.deepEqual(c.committableOrAsked, ['mine.js', 'shared.js', 'config.js', 'notes.md', 'README.md'],
+      'fixture precondition: the session\'s, the included, the undecided, the left, then the session file left');
+    const res = secretCheck.check(repo, c, decisions);
+    assert.deepEqual(res.report.flagged.map((f) => f.path), c.committableOrAsked);
+    for (const p of ['.prawduct/s.md', 'seed.db', 'up.md']) {
+      assert.ok(!res.report.flagged.some((f) => f.path === p), `${p} will not ship, so it is not read`);
+    }
+  });
+
+  it('a read budget skips the end of the list, so its order decides what goes unscanned', () => {
+    const { repo, c, decisions } = everyPathHoldsASecret();
+    const res = secretCheck.check(repo, c, decisions, { maxFiles: 2 });
+    assert.deepEqual(res.report.flagged.map((f) => f.path), c.committableOrAsked.slice(0, 2));
+    assert.deepEqual(res.report.skipped.map((s) => s.path), c.committableOrAsked.slice(2));
   });
 });
