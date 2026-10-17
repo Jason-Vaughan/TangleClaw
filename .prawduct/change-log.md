@@ -57,6 +57,32 @@ v5.34.0 Wave 11 chunk W11-A1, chunk 1 of 1. Branch `fix/2465-2160-w11-a1` from `
 
 **Tests.** `test/wrap-file-ownership.test.js`: `notCommitted` over a real tree with a path in every bucket; `committableOrAsked` order and dedup; `reclassify` consistency; an unnamed bucket covered. `test/wrap-secret-check.test.js`: the scan set and its budget order, observed through the report. `test/wrap-changelog-coverage.test.js`: `excluded` equals `notCommitted` for a project below the repo root; `_isWrapCommit` is the shared function and the source has no local regex. Red first on `main`; mutations (no `leftSessionFiles`, an enumerated `notCommitted`, `reclassify` without facts, a local regex) each went red.
 
+**Review.** Cumulative Critic `rev-20261017T221556Z-5b23afdc` on `000bd9b4`: 0 blocking. `verify-resolutions` `rev-20261017T221927Z-e7b39c4f` on `e9492cf0`: no findings.
+
+**rev-20261017T221556Z-5b23afdc** — 2026-10-17T22:17:55Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | accepted | The declared suite runs once on the final tree in the Integrator's suite slot (charter order, after the Architect's pre-suite read) and is recorded as test evidence before the ready report. The narrow ring on head 000bd9b4 (26 files: every test naming _file-ownership, _secret-check, changelog-coverage, selectionOf, reclassify or classify(, plus wrap-methodology-authority and wrap-step-commit-autopr) passed 1644/0. |
+| R-2 | warning | fixed | fixed in `.prawduct/change-log.md` |
+| R-3 | note | accepted | Addressed in e9492cf0 (D6, bound ninth file): the stale sentence is replaced with a true one; verify-resolutions rev-20261017T221927Z-e7b39c4f reviewed that edit and demoted its remaining point to O-1 (accepted). A FIXED is refused for a judgeable path, so this records the outcome as an accept citing that review. |
+| R-4 | note | accepted | Plan residual risk R1, by design: after reclassify, committableOrAsked is rebuilt from the narrowed buckets and the classification's own foreign/leftSessionFiles facts, so a session file the secret check withheld is in notCommitted, not committableOrAsked. Nothing reads committableOrAsked after narrowing: check() reads it from the classify() output, and the coverage gate classifies on its own. |
+
+**4 findings** (2 warning, 2 note) — accepted: 3, fixed: 1.
+
+**rev-20261017T221927Z-e7b39c4f** — 2026-10-17T22:19:50Z
+
+_No findings._
+
+_Observations — read, not owed. Answering one is optional._
+
+| Observation | State | Detail |
+|---|---|---|
+| O-1 | accepted | The reworded JSDoc is true now and the identity test in wrap-changelog-coverage and wrap-step-continuity-write pins it (_isWrapCommit === isWrapSubject), so it cannot go silently false while that test holds. INT bound this file for a two-line comment correction (D6), which a deletion would also have satisfied; the sentence states where the rule lives, which a reader of _git-range needs. |
+
+**No findings** — a clean pass.
+**1 observation demoted** — 1 answered. An observation gates nothing; answering one is optional.
+
 ## 2026-10-17 — W10-REC: the v5.34.0 Wave 10 combined records
 
 <!-- prawduct: type=chore | scope=w10-rec-records -->
