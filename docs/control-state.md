@@ -225,7 +225,8 @@ HTTPS install, below) and is never committed.
 
   When an `https:` origin has no anchor, the server log names each CAROOT directory tried and what
   was wrong with it (#2142): not set, no `rootCA.pem`, `rootCA.pem` unreadable, not a certificate,
-  did not issue the served certificate, the same directory as an earlier source, or mkcert not found.
+  did not issue the served certificate, the same directory as an earlier source, mkcert not found,
+  mkcert unusable (with its error), or `mkcert -CAROOT` failed.
   A hook refusing an untrusted certificate points the operator at this line. It is logged at `warn`
   the first time a given served certificate and set of reasons is seen by this server process, and
   at `debug` on every later launch. A different certificate or a changed reason warns again. The

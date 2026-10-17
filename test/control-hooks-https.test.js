@@ -486,6 +486,38 @@ describe('control hooks over direct-mode HTTPS (#1947)', () => {
       }
     });
 
+    it('tells an mkcert that cannot run from one that is missing, and from one whose -CAROOT fails', () => {
+      const bin = path.join(tmpDir, 'broken-mkcert-bin');
+      fs.mkdirSync(bin, { recursive: true });
+      const env = { CAROOT: pki.other.dir };
+      const savedPath = process.env.PATH;
+      /**
+       * Search once with a stand-in mkcert first on PATH, from a fresh memo.
+       * @param {string} script - The stand-in's shell body
+       * @returns {{source: string, dir: string|null, reason: string|null}} The fallback's entry
+       */
+      const fallbackWith = (script) => {
+        fs.writeFileSync(path.join(bin, 'mkcert'), `#!/bin/sh\n${script}\n`, { mode: 0o755 });
+        httpsSetup._resetMkcertCarootMemo();
+        process.env.PATH = `${bin}${path.delimiter}${savedPath}`;
+        try {
+          return httpsSetup.localTrustAnchorSearch(httpsConfig(), { env }).tried.at(-1);
+        } finally {
+          process.env.PATH = savedPath;
+          httpsSetup._resetMkcertCarootMemo();
+        }
+      };
+      // Installed but unable to run: the cause is kept, not reported as absent.
+      const unusable = fallbackWith('echo broken >&2; exit 3');
+      assert.equal(unusable.source, '`mkcert -CAROOT`');
+      assert.equal(unusable.dir, null);
+      assert.match(unusable.reason, /^mkcert unusable \(.*broken.*\)$/, 'the cause is kept, on one line');
+      assert.doesNotMatch(unusable.reason, /not found/);
+      // Runs, but cannot say where its root CA is.
+      const noCaroot = fallbackWith('[ "$1" = "-CAROOT" ] && exit 1; exit 0');
+      assert.deepEqual(noCaroot, { source: '`mkcert -CAROOT`', dir: null, reason: '`mkcert -CAROOT` failed' });
+    });
+
     it('gives localTrustAnchor its answer', () => {
       const opts = { caroots: [pki.other.dir, pki.ca.dir] };
       assert.equal(httpsSetup.localTrustAnchor(httpsConfig(), opts), httpsSetup.localTrustAnchorSearch(httpsConfig(), opts).caFile);
