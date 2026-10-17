@@ -9,6 +9,17 @@ const path = require('node:path');
 
 const repos = require('../lib/soak/repos');
 const cli = require('../scripts/soak');
+const { initRepo } = require('./_temp-repo');
+
+/**
+ * The environment every git call in this file runs under, the
+ * repository-making ones included, built fresh at each call.
+ *
+ * @returns {object} Environment for the git child
+ */
+function gitEnv() {
+  return { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+}
 
 /**
  * Run git outside the module, with the caller's environment, for assertions.
@@ -17,7 +28,7 @@ const cli = require('../scripts/soak');
  * @returns {string} Trimmed stdout
  */
 function git(cwd, args) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } }).trim();
+  return execFileSync('git', args, { cwd, encoding: 'utf8', env: gitEnv() }).trim();
 }
 
 /**
@@ -192,7 +203,7 @@ describe('soak repos: ensureRepos', () => {
   });
 
   it('refuses a plain directory that only looks like a repo because the root sits inside another repo', () => {
-    git(tmp, ['init', '-q']);
+    initRepo(tmp, [], { env: gitEnv() });
     fs.mkdirSync(path.join(root, 'soak-a'), { recursive: true });
     assert.throws(() => repos.ensureRepos({ root, origins }), (e) => e.code === repos.REFUSAL.NOT_OWNED);
   });
@@ -220,7 +231,7 @@ describe('soak repos: ensureRepos', () => {
   it('refuses a marked repo that does not contain the seed commit', () => {
     const work = path.join(root, 'soak-a');
     fs.mkdirSync(work, { recursive: true });
-    git(work, ['init', '-q', '-b', 'main']);
+    initRepo(work, ['-b', 'main'], { env: gitEnv() });
     git(work, ['config', 'soak.owner', `${repos.SCHEMA}:soak-a`]);
     assert.throws(() => repos.ensureRepos({ root, origins, projects: ['soak-a'] }), (e) => e.code === repos.REFUSAL.NOT_OWNED);
   });

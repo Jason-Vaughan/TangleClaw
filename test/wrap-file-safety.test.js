@@ -27,6 +27,7 @@ const coverage = require('../lib/wrap-steps/changelog-coverage');
 const launchBaseline = require('../lib/launch-baseline');
 const wrapScope = require('../lib/wrap-scope');
 const { execFileArgs } = require('../lib/exec');
+const { initRepo } = require('./_temp-repo');
 
 const ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 const dirs = [];
@@ -74,7 +75,7 @@ function put(root, rel, content) {
  */
 function makeRepo() {
   const dir = tmp('tc-safe-');
-  git(dir, 'init', '-q', '-b', 'main');
+  initRepo(dir, ['-b', 'main'], { env: ENV });
   git(dir, 'config', 'user.email', 't@t');
   git(dir, 'config', 'user.name', 't');
   put(dir, 'README.md', 'init\n');

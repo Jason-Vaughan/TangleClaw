@@ -15,6 +15,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const fp = require('../lib/checkout-fingerprint');
+const { initRepo } = require('./_temp-repo');
 
 /**
  * Run git in a directory.
@@ -31,7 +32,7 @@ describe('checkout fingerprint (#2032 A7a)', () => {
 
   beforeEach(() => {
     dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fp-')));
-    git(dir, 'init', '-q', '-b', 'main');
+    initRepo(dir, ['-b', 'main']);
     git(dir, 'config', 'user.email', 't@example.test');
     git(dir, 'config', 'user.name', 'T');
     fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
@@ -207,7 +208,7 @@ exec git "$@"
 `, { mode: 0o755 });
     fp._seams.bin = path.join(tools, 'git');
     dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fp-')));
-    git(dir, 'init', '-q', '-b', 'main');
+    initRepo(dir, ['-b', 'main']);
     git(dir, 'config', 'user.email', 't@example.test');
     git(dir, 'config', 'user.name', 'T');
     fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');

@@ -22,6 +22,7 @@ setLevel('error');
 const heal = require('../lib/project-heal');
 const wrapState = require('../lib/wrap-state');
 const tcOwned = require('../lib/wrap-steps/_tc-owned-paths');
+const { initRepo } = require('./_temp-repo');
 
 const ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 const dirs = [];
@@ -57,7 +58,7 @@ function write(root, rel, text) {
 function makeRepo(files = { 'README.md': 'x\n' }) {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-heal-')));
   dirs.push(dir);
-  git(dir, 'init', '-q', '-b', 'main');
+  initRepo(dir, ['-b', 'main'], { env: ENV });
   for (const [rel, text] of Object.entries(files)) write(dir, rel, text);
   git(dir, 'add', '-A');
   git(dir, 'commit', '-q', '-m', 'init');

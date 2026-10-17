@@ -61,7 +61,7 @@ function porcelain(cwd) {
 function makeRepo() {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-own-')));
   dirs.push(dir);
-  git(dir, 'init', '-q', '-b', 'main');
+  initRepo(dir, ['-b', 'main'], { env: ENV });
   git(dir, 'config', 'user.email', 't@t');
   git(dir, 'config', 'user.name', 't');
   fs.writeFileSync(path.join(dir, 'README.md'), 'init\n');
