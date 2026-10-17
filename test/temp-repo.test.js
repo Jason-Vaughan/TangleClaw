@@ -149,37 +149,25 @@ describe('test/ — every `git init` and `git clone` goes through the helper (th
     // at(dir)('init', '--bare', remote)
     // A wrapper called directly by its name — run('init'), git(dir, 'init'),
     // git(dir, ['clone', …]), run(['init', …]) — is found by the per-file
-    // passes below, keyed on the wrapper's definition; matching every call
+    // pass below, keyed on the wrapper's definition; matching every call
     // whose argument is 'init' would also hit a temp directory named 'clone',
     // so that shape stays out of this list. Still invisible to this scanner:
     // a subcommand held in a variable (git(dir, sub)); a wrapper whose body
     // does anything before `return exec*('git', …)`; a wrapper imported from
-    // another module; and a call split across lines.
+    // another module; an argv the wrapper spreads from an array it was given;
+    // a leading argument with nested calls (path.join(a, b(c))); and a call
+    // split across lines.
     /\)\s*\(\s*['"`](init|clone)(\s|['"`])/,
     // the workaround the helper replaces: a second isolation path is a second
     // place to forget
     /init\.templateDir=/
   ];
 
-  // A named git wrapper: `NAME = (...args) => exec*('git', <argv>)` where the
-  // argv is the rest parameter itself or an array spreading it. Only a name
-  // defined this way in the same file is treated as git, so `mk('clone')`
-  // or a wrapper around another program called with 'init' is not a match.
-  const GIT_WRAPPER_DEF = /(?<![\w$.])([A-Za-z_$][\w$]*)\s*=\s*\(\s*\.\.\.([A-Za-z_$][\w$]*)\s*\)\s*=>\s*exec\w*\(\s*['"`]git['"`]\s*,\s*(?:\[[^\]]*\.\.\.\2\b|\2\b)/;
-
-  /**
-   * The shape that matches a call of one named git wrapper with `init` or
-   * `clone` as its first argument: `run('init', '-q')`.
-   *
-   * @param {string} name - Wrapper identifier, as defined in the file
-   * @returns {RegExp} Pattern for a direct call of that wrapper
-   */
-  function wrapperCallShape(name) {
-    const escaped = name.replace(/\$/g, '\\$');
-    return new RegExp(`(?<![\\w$.])${escaped}\\s*\\(\\s*['"\`](init|clone)(\\s|['"\`])`);
-  }
-
-  // A git wrapper whose argv is one of several parameters, wherever it sits:
+  // A git wrapper, keyed on its definition: only a name defined in the same
+  // file as `exec*('git', <argv>)` with argv built from a parameter is treated
+  // as git, so `mk('clone')` or a wrapper around another program called with
+  // 'init' is not a match. The argv may be any of its parameters:
+  //   run = (...args) => execFileSync('git', ['-C', dir, ...args], …
   //   function git(cwd, ...args) { return execFileSync('git', args, …
   //   function git(dir, ...args) { return execFileSync('git', ['-C', dir, ...args], …
   //   function git(cwd, args, env = {}) { return execFileSync('git', args, …
@@ -189,7 +177,7 @@ describe('test/ — every `git init` and `git clone` goes through the helper (th
   // Groups: function name, function params, arrow name, arrow params, argv.
   const GIT_PARAM_WRAPPER_DEF = new RegExp(
     '(?<![\\w$.])(?:function\\s+([A-Za-z_$][\\w$]*)\\s*\\(([^()]*)\\)\\s*\\{\\s*return\\s+'
-    + '|(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*\\(([^()]*)\\)\\s*=>\\s*(?:\\{\\s*return\\s+)?)'
+    + '|(?:(?:const|let|var)\\s+)?([A-Za-z_$][\\w$]*)\\s*=\\s*\\(([^()]*)\\)\\s*=>\\s*(?:\\{\\s*return\\s+)?)'
     + '(?:[A-Za-z_$][\\w$]*\\.)*exec\\w*\\(\\s*[\'"`]git[\'"`]\\s*,\\s*(\\[[^\\]]*\\]|[A-Za-z_$][\\w$]*)',
     'g'
   );
@@ -253,12 +241,7 @@ describe('test/ — every `git init` and `git clone` goes through the helper (th
       .map((l) => l.trim())
       .filter((l) => !l.startsWith('//') && !l.startsWith('*') && !l.startsWith('/*'))
       .filter((l) => !/^(describe|it|test)\(/.test(l));
-    const wrappers = new Set();
-    for (const l of lines) {
-      const m = GIT_WRAPPER_DEF.exec(l);
-      if (m) wrappers.add(m[1]);
-    }
-    const shapes = [...SHAPES, ...[...wrappers].map(wrapperCallShape)];
+    const shapes = [...SHAPES];
     for (const m of lines.join('\n').matchAll(GIT_PARAM_WRAPPER_DEF)) {
       const where = argvParameter(m[2] ?? m[4], m[5]);
       if (where) shapes.push(paramWrapperCallShape(m[1] ?? m[3], where));
