@@ -23,6 +23,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- A stored launch-blocker lookup retries `SQLITE_BUSY` once after 50 ms and logs one condition-only diagnostic if it still fails; a failed read never counts as no blocker (#2206).
+- Change-log branch merges now stop at a visible conflict instead of silently combining overlapping entries; the file header explains how to keep both (#2042).
 - The switchboard refuses to replace its own stranded nudge when a dialog choice appears below the composer, even without an older prompt row (#2452). The engine and delivery guides now describe that rule and the missing-idle-marker exception (#2453).
 - A failed write while clearing an answered startup dialog no longer stops the launch; each send still checks the pane first (#2450). A 15 s sweep clears stored blockers on unread live sessions after the dialog is answered, preventing later crashes from being blamed on it; crashes within that interval can still carry the old cause (#2451).
 - **A wake nudge stuck in an Antigravity composer is cleared and resent instead of escalating.** agy hides `? for shortcuts` while its composer holds text, so the wake gate refused its own unsubmitted nudge until it escalated, and a nudge wrapped at a `>` was not recognised. The excuse holds only for the exact nudge with no dialog in view (#2358).
@@ -38,6 +40,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- ADR 0025 records the A123 Codex cold-start wake and pane-refusal ruling; #2059 remains open for its unfinished work.
 - The `sendKeys`/`sendRawKey` tmux tests wait for bash's prompt and assert on output lines, so a loaded host no longer scores tty echo (#2447).
 - Antigravity’s profile now records that `? for shortcuts` disappears while its composer holds text; the wake gate permits only its exact stranded nudge with an empty hint slot (#2358).
 - The #812 tmux draft-text test now waits for bash's prompt and checks what ran, so a loaded host no longer fails it (#2152). The last 19 test files that made git repos on their own now use the shared temp-repo helpers, and the guard catches the wrapper shapes they used (#831).
