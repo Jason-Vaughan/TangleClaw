@@ -7,6 +7,7 @@ prepends here. Keep both entries, newest first. In a lane, rebuild the file as o
 copy plus your own entry. `.gitattributes` deliberately does not union this file (#2042):
 union kept both sides' lines without a conflict and silently corrupted entries.
 
+
 Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 - scope=  : ONE scope per unit of work. Work done under an ACTIVE build plan uses that
   plan's frontmatter scope (its ## Status roster derives checkbox flips from these tags).
@@ -66,6 +67,36 @@ v5.34.0 Wave 9 chunk W9-A1, chunk 1 of 1. Branch `fix/2042-2059-w9-a1` from `ori
 | R-4 | note | accepted | Deliberate: the approved plan requires each amendment line to say it does not relax the separate launch/readiness proof, and the section lead states it once for both. The line break is source wrapping inside a list item and renders as one paragraph. |
 
 **4 findings** (3 warning, 1 note) — accepted: 3, fixed-unreviewed: 1.
+
+## 2026-10-17 — #2206: a locked store gets one bounded retry and one diagnostic at the stored launch-blocker lookup, and a failed lookup is still never "no blocker"
+
+<!-- prawduct: type=bugfix | scope=w9b1-stored-blocker-lookup-retry -->
+
+v5.34.0 Wave 9 chunk W9-B1, one chunk. Branch `fix/w9b1-stored-blocker-lookup-retry` from `origin/main` `d06cd1e1`. Closes #2206. Plan: `.tangleclaw/plans/build-plan-w9b1-stored-blocker-lookup-retry.md` (rev 3, sha256 `b723c01e…fc9`, accepted by INT and Architect A220); charter v2.31 (sha256 `9918cf38…b532f`). Lock: `lib/tmux.js`, `lib/sessions.js`, `test/startup-dialog.test.js`, `test/sessions.test.js` (headroom, not touched), this file.
+
+**The change.** Both send gates (`_startupDialogOn` in `lib/tmux.js`, and `_startupDialogAtSend`'s no-row path in `lib/sessions.js`) read the pane's stored launch blocker through one new exported `tmux.readStoredLaunchBlocker(tmuxName)`. A lock held by another connection (`SQLITE_BUSY`: `errcode` 5, or SQLite's busy message) is retried once after `STORED_BLOCKER_RETRY_WAIT_MS` (50 ms, a synchronous `Atomics.wait`, as the workload append's retry). No other failure is retried. A throw that remains is still carried as unknown, never as "no blocker", so a send goes through only on a positive prompt reading (A146). The per-send `warn` is replaced by a condition log keyed `stored-launch-blocker-unreadable:<class>`, with the class from a fixed list (`SQLITE_BUSY`, `SQLITE_IOERR`, `SQLITE_CORRUPT`, `SQLITE_FULL`, `SQLITE_ERROR`, `unknown`; extended codes map to their primary code; a thrown `code` is never a class): one `warn` per class per incident, `debug` while it persists, and a lookup that answers resolves every class. `_startupDialogOn` keeps its no-store-open guard; the launch path still has none, so a closed store is unknown there, not retried.
+
+**Decisions (INT, as recommended).** D1 one retry after 50 ms; D2 no connection-wide `busy_timeout` (it would touch every store call); D3 the launch path's `store.sessions.get(sessionId)` read is not retried (a throw there already falls to the retried lookup).
+
+**Residual.** A lock held past the retry still refuses sends to panes not at the prompt, by A146's rule; the diagnostic now names it once. While another connection holds the lock, each text send waits at most 50 ms more.
+
+**Tests.** New cases only in `test/startup-dialog.test.js`; no existing assertion changed. T1 busy then answer (both callers), T2 busy twice (prompt sends; empty, undecided and unreadable panes, unnamed and non-declaring engines refuse; a dialog keeps its name), T3 a disk error and an uninitialised store are not retried, T4 a real `BEGIN EXCLUSIVE` on the test store's file (two lookups, refused, one `SQLITE_BUSY` warn; resolved after `ROLLBACK`), T5 one warn per class per incident and a fixed class list, T6 the wait is the constant and once per lookup, T7 the launch path's answers, T8 the launch path with no store open. The existing always-busy stubs now take one 50 ms wait longer each. The narrow run covered every test file that loads or reads `lib/tmux.js` or `lib/sessions.js` (108 files): green.
+
+**Review.** Cumulative Critic `rev-20261017T174340Z-ece49f19` on `746ea62e`: 0 findings, 2 observations accepted.
+
+**rev-20261017T174340Z-ece49f19** — 2026-10-17T17:44:14Z
+
+_No findings._
+
+_Observations — read, not owed. Answering one is optional._
+
+| Observation | State | Detail |
+|---|---|---|
+| O-1 | accepted | The full suite runs once on the frozen head in INT's suite slot (charter 1.5, plan freeze step 3) and is recorded as test evidence before the ready report; the narrow run on 746ea62e (108 files that load or read lib/tmux.js or lib/sessions.js) is green, rc 0. |
+| O-2 | accepted | Prepended at freeze step 2 in the commit after this review, carrying this review's id. |
+
+**No findings** — a clean pass.
+**2 observations demoted** — 2 answered. An observation gates nothing; answering one is optional.
 
 ## 2026-10-17 — W8-REC: the v5.34.0 Wave 8 combined records
 
