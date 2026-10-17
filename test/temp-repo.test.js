@@ -153,8 +153,8 @@ describe('test/ — every `git init` and `git clone` goes through the helper (th
     // whose argument is 'init' would also hit a temp directory named 'clone',
     // so that shape stays out of this list. Still invisible to this scanner:
     // a subcommand held in a variable (git(dir, sub)); a wrapper whose body
-    // does anything before `return exec*('git', …)`; and a wrapper imported
-    // from another module.
+    // does anything before `return exec*('git', …)`; a wrapper imported from
+    // another module; and a call split across lines.
     /\)\s*\(\s*['"`](init|clone)(\s|['"`])/,
     // the workaround the helper replaces: a second isolation path is a second
     // place to forget

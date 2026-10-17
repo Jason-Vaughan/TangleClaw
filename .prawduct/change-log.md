@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-17 — #831: the last test files that made repos on their own, and a guard that sees them
+
+<!-- prawduct: type=fix | scope=w6-a1-temp-repo-family -->
+
+v5.34.0 chunk W6-A1 (charter v2.24, Architect A184; plan rev 1 approved by INT). Branch `fix/831-temp-repo-family` from `origin/main` `896f6f72`.
+
+**Why.** 38 `git init`/`git clone` calls in 19 test files went through a local `git(cwd, ...args)`, `git(cwd, args)` or `run(args)` helper, so each one copied the machine's global `init.templateDir`, which a running TangleClaw rewrites under the suite. The family guard in `test/temp-repo.test.js` could not see those shapes.
+
+**What changed.** The guard gains a pass keyed on a git wrapper's definition, matched over the file's text so a `return` on the line after the signature counts. It knows which parameter carries the argv, so `git(dir, 'init')`, `git(dir, ['clone', …])` and `run(['init', …])` are caught and a non-git helper such as `mk(dir, 'clone')` or `npm(dir, 'init')` is not. New positive and negative scanner tests cover it. With only the guard applied it failed on exactly those 38 calls. All 38 now call `initRepo`/`cloneRepo` with their own arguments, cwd and env. Five helpers built their env inline; it is hoisted into a `gitEnv()` the helper shares. No assertion changed. The `_temp-repo.js` header and the SHAPES comment now say what the guard catches and what it still cannot see.
+
+**Not covered.** The guard still cannot see a subcommand held in a variable, a wrapper whose body does work before `return exec*('git', …)`, a wrapper imported from another module, or a call split across lines. None of these is in `test/` today.
+
 ## 2026-10-17 — #2201: a damaged launch blocker is logged once instead of dropped silently
 
 <!-- prawduct: type=bugfix | scope=w6b1-dialog-classifier-and-launch-blocker -->
