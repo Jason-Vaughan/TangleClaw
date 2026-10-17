@@ -2052,6 +2052,259 @@ describe('the session keeps its blocker (#2128)', () => {
         });
       });
 
+      describe('a locked store gets one bounded retry and one diagnostic, and a failed lookup is still never "none" (#2206)', () => {
+        // The shapes node:sqlite throws, as measured on Node v22: a second
+        // connection holding an exclusive lock gives errcode 5.
+        const sqliteError = (errcode, message) => Object.assign(new Error(message), { code: 'ERR_SQLITE_ERROR', errcode, errstr: message });
+        const busy = () => sqliteError(5, 'database is locked');
+        const ioerr = () => sqliteError(10, 'disk I/O error');
+        const realLookup = store.sessions.getActiveByTmuxSession;
+        const realWait = tmux._storedBlockerSeams.wait;
+        let calls;
+        let waits;
+        let out;
+
+        /** Stub the lookup with a script: each entry is thrown (an Error) or answered (anything else). */
+        const scripted = (...steps) => {
+          store.sessions.getActiveByTmuxSession = (name) => {
+            const step = steps[Math.min(calls, steps.length - 1)];
+            calls += 1;
+            if (step instanceof Error) throw step;
+            return step === REAL ? realLookup.call(store.sessions, name) : step;
+          };
+        };
+        const REAL = Symbol('real lookup');
+        const lines = (level) => out.split('\n').filter((l) => l.includes('Could not read the stored launch blocker') && l.includes(`[${level}]`));
+
+        beforeEach(() => {
+          calls = 0;
+          waits = [];
+          out = '';
+          tmux._storedBlockerSeams.wait = (ms) => { waits.push(ms); };
+          // A lookup that answers ends every condition an earlier test left open.
+          tmux.readStoredLaunchBlocker('no-pane-at-all');
+          assert.equal(tmux._storedBlockerConditionLog._size(), 0);
+          setConsoleStream({ write: (chunk) => { out += chunk; } });
+          setLevel('debug');
+        });
+
+        afterEach(() => {
+          store.sessions.getActiveByTmuxSession = realLookup;
+          tmux._storedBlockerSeams.wait = realWait;
+          setLevel('error');
+          setConsoleStream(null);
+        });
+
+        describe('T1: busy once, then the lookup answers', () => {
+          it('the send gate gets the answer, after exactly two lookups, with no warning', () => {
+            const s = start();
+            scripted(busy(), null);
+            tmux.capturePane = () => served(COMPOSER);
+            assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude'), null);
+            assert.equal(calls, 2);
+            assert.deepEqual(waits, [tmux.STORED_BLOCKER_RETRY_WAIT_MS]);
+            assert.equal(lines('WARN').length, 0);
+          });
+
+          it('a stored blocker found on the retry stands', () => {
+            const s = start();
+            scripted(busy(), { launchBlocker: BLOCKER });
+            tmux.capturePane = () => served([]);
+            assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'trust_required');
+            assert.equal(calls, 2);
+          });
+
+          it('the same on the launch path with no row to ask', () => {
+            scripted(busy(), null);
+            tmux.capturePane = () => served(COMPOSER);
+            assert.equal(sessions._startupDialogAtSend('some-pane', CLAUDE, 'claude', project.name, null), null);
+            assert.equal(calls, 2);
+            calls = 0;
+            scripted(busy(), { launchBlocker: BLOCKER });
+            tmux.capturePane = () => served([]);
+            assert.equal(sessions._startupDialogAtSend('some-pane', CLAUDE, 'claude', project.name, null).code, 'trust_required');
+            assert.equal(calls, 2);
+            assert.equal(lines('WARN').length, 0);
+          });
+        });
+
+        describe('T2: busy twice, the retry is spent, and the answer is unknown, never "none"', () => {
+          it('only a positive prompt reading sends; anything short of it refuses', () => {
+            const s = start();
+            scripted(busy());
+            tmux.capturePane = () => served(COMPOSER);
+            assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude'), null, 'A146: the prompt on screen is positive evidence');
+            assert.equal(calls, 2, 'one try and one retry, no more');
+            for (const pane of [[], ['  Verifying your account…']]) {
+              tmux.capturePane = () => served(pane);
+              const refusal = tmux._startupDialogOn(s.tmuxSession, 'claude');
+              assert.equal(refusal.code, 'launch_blocker_unreadable');
+              assert.match(refusal.why, /database is locked/);
+            }
+            tmux.capturePane = () => { throw new Error('tmux did not answer'); };
+            assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'launch_blocker_unreadable');
+            tmux.capturePane = () => served(TRUST_DIALOG);
+            assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'trust_required');
+            tmux.capturePane = () => served(COMPOSER);
+            assert.equal(tmux._startupDialogOn(s.tmuxSession, null).code, 'launch_blocker_unreadable', 'an unnamed engine');
+            assert.equal(tmux._startupDialogOn(s.tmuxSession, 'aider').code, 'launch_blocker_unreadable', 'an engine that declares no dialog');
+          });
+        });
+
+        describe('T3: a failure that is not a lock is not retried', () => {
+          for (const [name, make] of [['an SQLITE_IOERR', ioerr], ['a store that is not initialized', () => new Error('Store not initialized')]]) {
+            it(`${name}: one lookup, no wait, and the same unknown answers`, () => {
+              const s = start();
+              scripted(make());
+              tmux.capturePane = () => served([]);
+              assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'launch_blocker_unreadable');
+              assert.equal(calls, 1);
+              assert.deepEqual(waits, []);
+              tmux.capturePane = () => served(COMPOSER);
+              assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude'), null);
+              tmux.capturePane = () => served(TRUST_DIALOG);
+              assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'trust_required');
+            });
+          }
+        });
+
+        it('T4: a real exclusive lock on the store file is retried, refused while held, and resolved once released', () => {
+          const s = start();
+          tmux._storedBlockerSeams.wait = (ms) => { waits.push(ms); realWait(ms); };
+          scripted(REAL);
+          const holder = new DatabaseSync(path.join(base, 'tangleclaw.db'));
+          try {
+            holder.exec('BEGIN EXCLUSIVE');
+            tmux.capturePane = () => served([]);
+            const refusal = tmux._startupDialogOn(s.tmuxSession, 'claude');
+            assert.equal(refusal.code, 'launch_blocker_unreadable');
+            assert.match(refusal.why, /database is locked/);
+            assert.equal(calls, 2);
+            assert.deepEqual(waits, [tmux.STORED_BLOCKER_RETRY_WAIT_MS]);
+            assert.equal(lines('WARN').length, 1);
+            assert.match(lines('WARN')[0], /errorClass=SQLITE_BUSY/);
+            assert.equal(tmux._storedBlockerConditionLog._size(), 1);
+            holder.exec('ROLLBACK');
+            assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude'), null, 'the lock is gone, no blocker is stored, so the send goes through');
+            assert.equal(tmux._storedBlockerConditionLog._size(), 0, 'the answered lookup resolved the condition');
+          } finally {
+            try { holder.exec('ROLLBACK'); } catch { /* already rolled back */ }
+            holder.close();
+          }
+        });
+
+        describe('T5: one diagnostic per incident and per error class', () => {
+          it('repeated locked sends warn once, then debug; another class warns on its own; an answer re-arms both', () => {
+            const s = start();
+            tmux.capturePane = () => served([]);
+            scripted(busy());
+            for (let i = 0; i < 3; i++) tmux._startupDialogOn(s.tmuxSession, 'claude');
+            assert.equal(lines('WARN').length, 1);
+            assert.match(lines('WARN')[0], /errorClass=SQLITE_BUSY/);
+            assert.match(lines('WARN')[0], /attempts=2/);
+            assert.match(lines('WARN')[0], /pane=t-/);
+            assert.equal(lines('DEBUG').length, 2);
+            calls = 0;
+            scripted(ioerr());
+            tmux._startupDialogOn(s.tmuxSession, 'claude');
+            assert.equal(lines('WARN').length, 2, 'a disk error during a lock is a new fault, not a repeat');
+            assert.match(lines('WARN')[1], /errorClass=SQLITE_IOERR/);
+            assert.match(lines('WARN')[1], /attempts=1/);
+            assert.equal(tmux._storedBlockerConditionLog._size(), 2);
+            store.sessions.getActiveByTmuxSession = realLookup;
+            tmux._startupDialogOn(s.tmuxSession, 'claude');
+            assert.equal(tmux._storedBlockerConditionLog._size(), 0);
+            scripted(busy());
+            tmux._startupDialogOn(s.tmuxSession, 'claude');
+            assert.equal(lines('WARN').length, 3, 'the next incident is loud again');
+          });
+
+          it('the classes are a fixed list: anything else is "unknown", under one key', () => {
+            const s = start();
+            tmux.capturePane = () => served([]);
+            const odd = [
+              Object.assign(new Error('odd one'), { code: 'EWHATEVER1' }),
+              Object.assign(new Error('odd two'), { code: 'EWHATEVER2' }),
+              sqliteError(14, 'unable to open database file'),
+              new Error('Store not initialized')
+            ];
+            for (const err of odd) {
+              scripted(err);
+              tmux._startupDialogOn(s.tmuxSession, 'claude');
+              assert.ok(tmux._storedBlockerConditionLog._size() <= 1);
+            }
+            assert.equal(lines('WARN').length, 1);
+            assert.match(lines('WARN')[0], /errorClass=unknown/);
+            assert.equal(lines('DEBUG').length, 3);
+            assert.ok(lines('DEBUG').every((l) => /errorClass=unknown/.test(l)));
+            assert.ok(!/EWHATEVER/.test(lines('WARN')[0].replace(/error=.*$/, '')), 'a thrown code is never a class');
+            calls = 0;
+            scripted(sqliteError(10 | (3 << 8), 'disk I/O error'));
+            tmux._startupDialogOn(s.tmuxSession, 'claude');
+            assert.match(lines('WARN')[1], /errorClass=SQLITE_IOERR/, 'an extended code maps to its primary class');
+            assert.equal(tmux._storedBlockerConditionLog._size(), 2);
+          });
+        });
+
+        it('T6: the wait is the constant, and happens at most once per lookup', () => {
+          const s = start();
+          tmux.capturePane = () => served([]);
+          assert.equal(tmux.STORED_BLOCKER_RETRY_WAIT_MS, 50);
+          scripted(busy());
+          tmux._startupDialogOn(s.tmuxSession, 'claude');
+          assert.deepEqual(waits, [50]);
+          tmux._startupDialogOn(s.tmuxSession, 'claude');
+          assert.deepEqual(waits, [50, 50], 'one per lookup, never more');
+          assert.equal(calls, 4);
+        });
+
+        describe('T7: the launch path with no row to ask gives the same answers', () => {
+          it('busy twice: two lookups, unknown, and only a positive reading sends', () => {
+            scripted(busy());
+            tmux.capturePane = () => served([]);
+            assert.equal(sessions._startupDialogAtSend('some-pane', CLAUDE, 'claude', project.name, null).code, 'launch_blocker_unreadable');
+            assert.equal(calls, 2);
+            tmux.capturePane = () => served(COMPOSER);
+            assert.equal(sessions._startupDialogAtSend('some-pane', CLAUDE, 'claude', project.name, null), null);
+            tmux.capturePane = () => served(TRUST_DIALOG);
+            assert.equal(sessions._startupDialogAtSend('some-pane', CLAUDE, 'claude', project.name, null).code, 'trust_required');
+          });
+
+          it('a disk error: one lookup, unknown, the same answers', () => {
+            scripted(ioerr());
+            tmux.capturePane = () => served([]);
+            assert.equal(sessions._startupDialogAtSend('some-pane', CLAUDE, 'claude', project.name, null).code, 'launch_blocker_unreadable');
+            assert.equal(calls, 1);
+            assert.deepEqual(waits, []);
+            tmux.capturePane = () => served(COMPOSER);
+            assert.equal(sessions._startupDialogAtSend('some-pane', CLAUDE, 'claude', project.name, null), null);
+          });
+
+          it('an id the store does not hold falls to the same lookup', () => {
+            scripted(busy());
+            tmux.capturePane = () => served([]);
+            assert.equal(sessions._startupDialogAtSend('some-pane', CLAUDE, 'claude', project.name, { sessionId: 987654 }).code, 'launch_blocker_unreadable');
+            assert.equal(calls, 2);
+          });
+        });
+
+        it('T8: with no store open, the launch path still asks, is not retried, and withholds unless the prompt shows', () => {
+          const realGetDb = store.getDb;
+          store.getDb = () => null;
+          try {
+            scripted(new Error('Store not initialized'));
+            tmux.capturePane = () => served([]);
+            assert.equal(sessions._startupDialogAtSend('standalone-pane', CLAUDE, 'claude', project.name, null).code, 'launch_blocker_unreadable');
+            assert.equal(calls, 1);
+            assert.deepEqual(waits, []);
+            tmux.capturePane = () => served(COMPOSER);
+            assert.equal(sessions._startupDialogAtSend('standalone-pane', CLAUDE, 'claude', project.name, null), null);
+          } finally {
+            store.getDb = realGetDb;
+          }
+        });
+      });
+
       it('the positive reading clears it and the send goes through', () => {
         const s = start();
         store.sessions.setLaunchBlocker(s.id, BLOCKER);
