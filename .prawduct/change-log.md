@@ -55,6 +55,16 @@ v5.34.0 Wave 10 chunk W10-B1, chunk 1 of 1. Branch `fix/w10b1-commit-non-git-ski
 
 **Tests.** `test/wrap-pipeline.test.js`: T1 a real non-repository skips with its staged file on disk and no git call; T2 no scope does the same; T3 `workTreeProblem` still blocks after the flush; T5 a pipeline run on a non-repository reaches `continuity-write`, `apply-pr-resolutions` and `handoff-stage`. `test/wrap-step-commit-autopr.test.js`: T6 a commit's row (answers as given, committed own paths, no file content); T7 the clean-tree, all-Left and non-repository skips; T8 no row when blocked; T9 one row per run, with the session. Seven of the eight were red against `main`'s `commit.js`; T8 holds on both. The existing non-repo `git status` case (T4) is unchanged and passing.
 
+**Review.** Cumulative Critic `rev-20261017T194956Z-49ac92f3`: 0 blocking.
+
+**rev-20261017T194956Z-49ac92f3** — 2026-10-17T19:51:36Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | accepted | The declared full suite runs once on the frozen head in the Integrator's slot (charter v2.32 freeze order, after the Architect's pre-suite read) and is recorded as test evidence before the ready report; the W9-B1 evidence is not cited for W10-B1. Narrow ring on this head: 40 files, 1965 pass / 0 fail. |
+
+**1 finding** (1 warning) — accepted: 1.
+
 ## 2026-10-17 — W9-REC: the v5.34.0 Wave 9 combined records
 
 <!-- prawduct: type=chore | scope=w9-rec-records -->
