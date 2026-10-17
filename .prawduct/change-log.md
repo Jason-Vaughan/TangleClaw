@@ -35,6 +35,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-17 — W8-REC: the v5.34.0 Wave 8 combined records
+
+<!-- prawduct: type=chore | scope=w8-rec-records -->
+
+v5.34.0 records chunk W8-REC (charter v2.30 §3). Branch `docs/w8-rec-records` from `origin/main` `afbe5895`, after W8-A1 PR #2459 (`4051fc6d`) and W8-B1 PR #2460 (`afbe5895`) merged. The Integrator authors this records-only PR under A172.1.
+
+**What changed.** `CHANGELOG.md` `[Unreleased]` receives two source-checked Fixed entries for #2452/#2453 and #2450/#2451, each under 400 UTF-8 bytes. `FEATURES.md` describes the cross-engine below-composer refusal, boot-watch clear failure handling, and the 15 s stored-blocker sweep. The archive dry-run moves no entries, so `.prawduct/change-log-archive/2026-10.md` stays unchanged.
+
+**Limits.** A's Antigravity live check and B's 15 s sweep live check remain owed after an authorized deploy. The Claude dialog frame is constructed, not a live capture. A crash before the sweep's next tick may retain the old blocker cause. This PR does not release, tag, bump a version, or deploy.
+
 ## 2026-10-17 — #2450 + #2451: a failed boot-watch clear no longer stops a launch, and a stored launch blocker nobody reads is still kept current
 
 <!-- prawduct: type=bugfix | scope=w8b1-launch-blocker-clear-and-sweep -->

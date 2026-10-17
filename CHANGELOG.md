@@ -23,6 +23,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- The switchboard refuses to replace its own stranded nudge when a dialog choice appears below the composer, even without an older prompt row (#2452). The engine and delivery guides now describe that rule and the missing-idle-marker exception (#2453).
+- A failed write while clearing an answered startup dialog no longer stops the launch; each send still checks the pane first (#2450). A 15 s sweep clears stored blockers on unread live sessions after the dialog is answered, preventing later crashes from being blamed on it; crashes within that interval can still carry the old cause (#2451).
 - **A wake nudge stuck in an Antigravity composer is cleared and resent instead of escalating.** agy hides `? for shortcuts` while its composer holds text, so the wake gate refused its own unsubmitted nudge until it escalated, and a nudge wrapped at a `>` was not recognised. The excuse holds only for the exact nudge with no dialog in view (#2358).
 - **A launch blocker can no longer stall a launch, a status poll or the card** (#2204, #2194, #2196). A failed store write is logged and the pane decides, so a launch still records a withheld prime. A status read no longer sleeps 250 ms on a half-drawn dialog. The project card clears a dialog answered in the pane.
 - A session's stored launch blocker that cannot be read (not JSON, or no `code`) is now logged once per session and value, with its length but never its contents, instead of reading as "no blocker" silently (#2201).
