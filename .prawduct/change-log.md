@@ -41,6 +41,22 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-17 — #2160, #2465: the wrap's file classifier derives the not-committed and scan lists itself, and the changelog gate uses the one wrap-subject rule
+
+<!-- prawduct: type=refactor | scope=w11-a1-wrap-subject-import-and-derived-path-lists -->
+
+v5.34.0 Wave 11 chunk W11-A1, chunk 1 of 1. Branch `fix/2465-2160-w11-a1` from `origin/main` `1a70ccd5`. Closes #2160 (items 1 and 3; item 2 shipped in PR #2161) and #2465. Plan: `.tangleclaw/plans/w11-a1-wrap-subject-import-and-derived-path-lists-2465-2160.md` (rev1 sha256 `dd64e2d9…358a2`, INT `e34a1490` and Architect A238; rev2 `e8bd8e87…cbb5d`, Architect A240); charter v2.33 (sha256 `59b2d3e4…7d46`).
+
+**#2160.** Two consumers rebuilt lists from the classifier's buckets by hand, so each new bucket had to be added to both, and a miss failed silently (#2154 missed the secret check). `classify` now returns `notCommitted`, every dirty path not in `stageable` in status order, and `committableOrAsked`, built by the exported `committableOrAskedOf`: `stageable`, then the foreign paths, then the session files left, without repeats. It also carries `paths`, so `reclassify` keeps both lists consistent. `_secret-check.js#check` scans `committableOrAsked` with no fallback. `changelog-coverage.js#_sortForCommit`'s `excluded` is `notCommitted` made project-relative, and `_excludedFromCommit`'s JSDoc says so relationally. Relational `notCommitted` differs from coverage's old five-bucket list only by `methodologyWithheld`, which is always empty there (O1 below), so no gate output changes.
+
+**#2465.** `changelog-coverage.js` drops its own `WRAP_SUBJECT_RE` and `_isWrapCommit` body; the `_isWrapCommit` export is `gitRange.isWrapSubject` itself. The W10-A1 parity case becomes an identity case.
+
+**Plan delta (rev2).** The plan missed that `test/wrap-secret-check.test.js`'s helper `classification()` hand-builds classifications without the new list, which would leave five existing cases scanning nothing. Option A (INT, Architect A240): the helper derives `committableOrAsked` through `committableOrAskedOf`; no assertion changed. D6 (PM charter v2.34, Architect A240, INT bound a ninth file): `_git-range.js`'s JSDoc no longer says `changelog-coverage` keeps its own copy; a comment-only change.
+
+**Observation O1 (not fixed here).** `_sortForCommit` calls `classify` without `withheldPrefixes`, while `commit.js` passes them, so a dormant methodology's state file is owned work to the coverage gate but withheld from the commit. Tracked as #2470 (open).
+
+**Tests.** `test/wrap-file-ownership.test.js`: `notCommitted` over a real tree with a path in every bucket; `committableOrAsked` order and dedup; `reclassify` consistency; an unnamed bucket covered. `test/wrap-secret-check.test.js`: the scan set and its budget order, observed through the report. `test/wrap-changelog-coverage.test.js`: `excluded` equals `notCommitted` for a project below the repo root; `_isWrapCommit` is the shared function and the source has no local regex. Red first on `main`; mutations (no `leftSessionFiles`, an enumerated `notCommitted`, `reclassify` without facts, a local regex) each went red.
+
 ## 2026-10-17 — W10-REC: the v5.34.0 Wave 10 combined records
 
 <!-- prawduct: type=chore | scope=w10-rec-records -->
