@@ -605,8 +605,9 @@ any dialog text (see "What counts as positive evidence" above). A menu's selecte
 clear it. A pane that could not be read, a read that came back empty, or a screen showing neither
 changes nothing, because "no dialog was matched" is not evidence that it was answered. A session
 whose status is read after the operator answers therefore does not have a later, unrelated death
-recorded as caused by the dialog. The project list serves the stored record without reading the
-pane, so a card can lag until the session's status is next read. While it stands, the project card shows a "needs you" badge and the session page a
+recorded as caused by the dialog. The project list checks a stored blocker against the pane the
+same way whenever tmux has confirmed the pane, and a pane tmux could not answer for keeps the
+record. While it stands, the project card shows a "needs you" badge and the session page a
 banner.
 
 **TangleClaw never answers the dialog.** Accepting a trust prompt lets the folder's own hooks, MCP

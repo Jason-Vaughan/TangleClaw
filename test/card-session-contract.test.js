@@ -14,7 +14,7 @@
  * projection, and guards the whole read surface rather than one field.
  */
 
-const { describe, it, before, after } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -199,6 +199,68 @@ describe('the card session contract (#1311)', () => {
       store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'tc-unknown-card' });
       const unknown = projects._unknownSession(store.sessions.getActive(project.id), 'read-timed-out', false);
       assert.equal(unknown.sessionMode, 'tmux');
+    });
+  });
+
+  describe('the launch blocker a card serves is checked against the pane (#2196)', () => {
+    const tmux = require('../lib/tmux');
+    const BLOCKER = Object.freeze({ code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it in the pane.', engineId: 'claude' });
+    // Claude Code's composer with nothing typed: the positive reading that a
+    // dialog has been answered.
+    const COMPOSER = Object.freeze(['──────────', '❯ ', '──────────', '  ? for shortcuts']);
+    let real;
+    let reads;
+
+    beforeEach(() => {
+      real = { capturePane: tmux.capturePane, cursorInfo: tmux.cursorInfo };
+      reads = 0;
+      tmux.capturePane = () => { reads += 1; return { lines: COMPOSER, alternateScreen: false }; };
+      tmux.cursorInfo = () => null;
+    });
+
+    afterEach(() => { Object.assign(tmux, real); });
+
+    /**
+     * A project whose live session has a stored blocker.
+     * @param {string} name - Project name, also its tmux session's suffix
+     * @returns {{project: object, session: object}}
+     */
+    function blockedProject(name) {
+      const dir = path.join(tmpDir, 'projects', name);
+      fs.mkdirSync(dir, { recursive: true });
+      const project = store.projects.create({ name, path: dir, engine: 'claude' });
+      const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: `tc-${name}` });
+      store.sessions.setLaunchBlocker(session.id, BLOCKER);
+      return { project: store.projects.get(project.id), session };
+    }
+
+    /**
+     * A tmux session-name snapshot giving one answer.
+     * @param {boolean} answered - Whether tmux answered
+     * @param {string[]} names - The live session names
+     * @returns {{get: () => Promise<object>}}
+     */
+    const snapshot = (answered, names) => ({ get: async () => ({ answered, names: new Set(names), cause: answered ? null : 'tmux-unreachable' }) });
+
+    it('a dialog answered in the pane: the card serves null, and the record is cleared', async () => {
+      const { project, session } = blockedProject('blocker-answered');
+      const enriched = await projects.enrichProject(project, {}, { tmuxSessionNames: snapshot(true, [session.tmuxSession]) });
+      assert.equal(enriched.session.active, true);
+      assert.equal(enriched.session.launchBlocker, null);
+      assert.equal(store.sessions.get(session.id).launchBlocker, null);
+      store.sessions.kill(session.id, 'fixture teardown');
+    });
+
+    it('a pane tmux did not confirm is not read, and the record is served as stored', async () => {
+      const { project, session } = blockedProject('blocker-unconfirmed');
+      const enriched = await projects.enrichProject(project, {}, { tmuxSessionNames: snapshot(false, []) });
+      assert.equal(enriched.session.active, null);
+      assert.equal(reads, 0);
+      assert.equal(store.sessions.get(session.id).launchBlocker.code, 'trust_required');
+      const gone = await projects.enrichProject(project, {}, { tmuxSessionNames: snapshot(true, []) });
+      assert.equal(gone.session, null);
+      assert.equal(reads, 0);
+      store.sessions.kill(session.id, 'fixture teardown');
     });
   });
 

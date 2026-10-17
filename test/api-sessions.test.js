@@ -232,6 +232,39 @@ describe('api-sessions', () => {
     });
   });
 
+  describe('GET /api/sessions/:project/status', () => {
+    it('a stored blocker on a half-drawn frame is served as stored, with no sleep on the server (#2194)', async () => {
+      const tmux = require('../lib/tmux');
+      const startupDialog = require('../lib/startup-dialog');
+      const real = { hasSession: tmux.hasSession, capturePane: tmux.capturePane, probeSession: tmux.probeSession, cursorInfo: tmux.cursorInfo };
+      const realSettle = startupDialog._internal.settleSync;
+      const project = store.projects.getByName('api-sess-test');
+      const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'api-sess-half-drawn' });
+      store.sessions.setLaunchBlocker(session.id, { code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it in the pane.', engineId: 'claude' });
+      let settles = 0;
+      tmux.hasSession = () => true;
+      tmux.probeSession = () => ({ answered: true, live: true, cause: null });
+      tmux.cursorInfo = () => null;
+      // One of the dialog's two markers drawn, and no prompt below it yet.
+      tmux.capturePane = () => ({ lines: [' Accessing workspace:', '', ' ❯ No, exit'], alternateScreen: false });
+      startupDialog._internal.settleSync = () => { settles += 1; };
+      try {
+        startupDialog.check('api-sess-half-drawn', store.engines.get('claude'));
+        assert.equal(settles, 1, 'the frame is one a sender would read again');
+        settles = 0;
+        const status = await operatorRequest(server, 'GET', '/api/sessions/api-sess-test/status');
+        assert.equal(status.status, 200);
+        assert.equal(status.body.launchBlocker.code, 'trust_required');
+        assert.equal(settles, 0);
+        assert.equal(store.sessions.get(session.id).launchBlocker.code, 'trust_required');
+      } finally {
+        Object.assign(tmux, real);
+        startupDialog._internal.settleSync = realSettle;
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+  });
+
   describe('POST /api/sessions/:project/wrap', () => {
     it('returns 404 when no active session', async () => {
       const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/wrap', {});

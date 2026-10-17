@@ -406,6 +406,33 @@ describe('one look before a send (#2128)', () => {
     assert.deepEqual(res.suspect, { code: 'trust_required', label: DIALOGS[0].label, meaning: DIALOGS[0].meaning });
   });
 
+  describe('a reader that types nothing does not wait for a half-drawn frame (#2194)', () => {
+    it('with settle off, the first frame is the answer: no sleep, one read, and still suspect', () => {
+      frames = [TRUST_DIALOG.slice(0, 13), TRUST_DIALOG];
+      let reads = 0;
+      const capture = startupDialog._internal.capturePaneSync;
+      startupDialog._internal.capturePaneSync = (...args) => { reads += 1; return capture(...args); };
+      const res = startupDialog.check('t', CLAUDE, { settle: false });
+      assert.equal(settles, 0);
+      assert.equal(reads, 1, 'the finished frame behind it was never read');
+      assert.equal(res.dialog, null);
+      assert.equal(res.clear, false);
+      assert.deepEqual(res.suspect, { code: 'trust_required', label: DIALOGS[0].label, meaning: DIALOGS[0].meaning });
+    });
+
+    it('look and checkEngine carry the option through, and without it each still settles', () => {
+      startupDialog._internal.engineProfile = () => CLAUDE;
+      frames = [TRUST_DIALOG.slice(0, 13)];
+      startupDialog.checkEngine('t', 'claude', { settle: false });
+      startupDialog.look('t', { engineId: 'claude', settle: false });
+      startupDialog.look('t', { engineProfile: CLAUDE, settle: false });
+      assert.equal(settles, 0);
+      startupDialog.look('t', { engineId: 'claude' });
+      startupDialog.look('t', { engineProfile: CLAUDE });
+      assert.equal(settles, 2);
+    });
+  });
+
   describe('a prompt is evidence only below the last marker', () => {
     it('a stale composer ABOVE a half-drawn dialog is not clear: the minimal case', () => {
       frames = [['❯', 'No, exit']];
@@ -1057,6 +1084,124 @@ describe('the session keeps its blocker (#2128)', () => {
         }
         assert.equal(reads, 0);
       });
+
+      describe('a status read never sleeps on a half-drawn frame; a sender still reads it again (#2194)', () => {
+        const HALF_DRAWN = TRUST_DIALOG.slice(0, 13);
+        let settles;
+
+        beforeEach(() => {
+          settles = 0;
+          startupDialog._internal.settleSync = () => { settles += 1; };
+          tmux.capturePane = () => served(HALF_DRAWN);
+        });
+
+        it('the status read answers from its one frame, and the stored blocker stands', () => {
+          const s = start();
+          store.sessions.setLaunchBlocker(s.id, BLOCKER);
+          assert.equal(sessions.getSessionStatus(project.name).launchBlocker.code, 'trust_required');
+          assert.equal(settles, 0);
+          assert.equal(store.sessions.get(s.id).launchBlocker.code, 'trust_required');
+        });
+
+        it('an injection on the same frame reads it once more before refusing', () => {
+          const s = start();
+          store.sessions.setLaunchBlocker(s.id, BLOCKER);
+          const res = sessions.injectCommand(project.name, 'tc start next');
+          assert.equal(res.ok, false);
+          assert.deepEqual(typed, []);
+          assert.equal(settles, 1);
+        });
+
+        it('a launch send on the same frame reads it once more before withholding', () => {
+          const s = start();
+          store.sessions.setLaunchBlocker(s.id, BLOCKER);
+          const withhold = sessions._startupDialogAtSend(s.tmuxSession, CLAUDE, 'claude', project.name, { sessionId: s.id });
+          assert.equal(withhold.code, 'trust_required');
+          assert.equal(settles, 1);
+        });
+      });
+
+      describe('a store write that fails is logged, and the pane read still decides (#2204)', () => {
+        let out;
+        const realSet = store.sessions.setLaunchBlocker;
+        const realClear = store.sessions.clearLaunchBlocker;
+        const failing = () => { throw new Error('database is locked'); };
+
+        beforeEach(() => {
+          out = '';
+          setConsoleStream({ write: (chunk) => { out += chunk; } });
+          setLevel('warn');
+        });
+
+        afterEach(() => {
+          store.sessions.setLaunchBlocker = realSet;
+          store.sessions.clearLaunchBlocker = realClear;
+          setLevel('error');
+          setConsoleStream(null);
+        });
+
+        it('a failed set: no throw, a warning, the stored value kept, and a send still withheld', () => {
+          const s = start();
+          tmux.capturePane = () => served(TRUST_DIALOG);
+          store.sessions.setLaunchBlocker = failing;
+          const res = sessions._reconcileLaunchBlocker(store.sessions.get(s.id), 'claude');
+          assert.equal(res.dialog.code, 'trust_required');
+          assert.equal(res.launchBlocker, null, 'nothing was stored, and nothing is claimed as stored');
+          assert.equal(res.withhold.code, 'trust_required');
+          assert.match(out, /database is locked/);
+        });
+
+        it('a failed clear: no throw, a warning, and the prompt on the pane still clears the answer', () => {
+          const s = start();
+          realSet(s.id, BLOCKER);
+          tmux.capturePane = () => served(COMPOSER);
+          store.sessions.clearLaunchBlocker = failing;
+          const res = sessions._reconcileLaunchBlocker(store.sessions.get(s.id), 'claude');
+          assert.equal(res.launchBlocker, null);
+          assert.equal(res.withhold, null);
+          assert.equal(store.sessions.get(s.id).launchBlocker.code, 'trust_required', 'the row stays as it was until a later reader writes it');
+          assert.match(out, /database is locked/);
+        });
+
+        it('the status read survives a failed clear and serves what the pane showed', () => {
+          const s = start();
+          realSet(s.id, BLOCKER);
+          tmux.capturePane = () => served(COMPOSER);
+          store.sessions.clearLaunchBlocker = failing;
+          assert.equal(sessions.getSessionStatus(project.name).launchBlocker, null);
+        });
+      });
+
+      describe('one reader\'s view of a live session\'s blocker, shared by the status read and the card (#2196)', () => {
+        let reads;
+
+        beforeEach(() => {
+          reads = 0;
+        });
+
+        it('with no blocker stored, the pane is not read', () => {
+          const s = start();
+          tmux.capturePane = () => { reads += 1; return served(COMPOSER); };
+          assert.equal(sessions.liveLaunchBlocker(store.sessions.get(s.id), store.projects.get(project.id)), null);
+          assert.equal(reads, 0);
+        });
+
+        it('a stored blocker whose dialog was answered is cleared, and null is served', () => {
+          const s = start();
+          store.sessions.setLaunchBlocker(s.id, BLOCKER);
+          tmux.capturePane = () => { reads += 1; return served(COMPOSER); };
+          assert.equal(sessions.liveLaunchBlocker(store.sessions.get(s.id), store.projects.get(project.id)), null);
+          assert.equal(reads, 1);
+          assert.equal(store.sessions.get(s.id).launchBlocker, null);
+        });
+
+        it('a stored blocker whose dialog is still up is served as stored', () => {
+          const s = start();
+          store.sessions.setLaunchBlocker(s.id, BLOCKER);
+          tmux.capturePane = () => served(TRUST_DIALOG);
+          assert.equal(sessions.liveLaunchBlocker(store.sessions.get(s.id), store.projects.get(project.id)).code, 'trust_required');
+        });
+      });
     });
 
     it('the project list\'s last-session answer carries it too', () => {
@@ -1395,6 +1540,36 @@ describe('the session keeps its blocker (#2128)', () => {
       assert.equal(store.sessions.get(s.id).launchBlocker, null, 'the blocker recorded at the dialog is cleared');
       assert.equal(store.activity.query({ sessionId: s.id, eventType: 'session.launch_blocked' }).length, 1);
       assert.equal(store.activity.query({ sessionId: s.id, eventType: 'session.launch_unblocked' }).length, 1);
+    });
+
+    it('a dialog the store cannot record at the paste still withholds it, and the ledger says why (#2204)', async () => {
+      const s = start();
+      watchAnswers('timeout');
+      tmux.capturePane = () => served(TRUST_DIALOG);
+      const rows = [];
+      const realRecord = store.sessionRuleDeliveries.record;
+      const realSet = store.sessions.setLaunchBlocker;
+      store.sessionRuleDeliveries.record = (entry) => { rows.push(entry); return entry; };
+      store.sessions.setLaunchBlocker = () => { throw new Error('database is locked'); };
+      try {
+        const done = new Promise((resolve) => { launchFinished = resolve; });
+        sessions._deferEngineInit(
+          s.tmuxSession, project.name, 'claude', PROFILE, 'the prime', null, false,
+          { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' },
+          { sessionId: s.id, projectId: project.id, hasSequence: true }
+        );
+        await done;
+        await new Promise((resolve) => setTimeout(resolve, PROFILE.launch.startupDelay + 2));
+        await turns();
+      } finally {
+        store.sessionRuleDeliveries.record = realRecord;
+        store.sessions.setLaunchBlocker = realSet;
+      }
+      assert.deepEqual(typed, []);
+      const pastes = rows.filter((row) => row.channel === 'prime-paste');
+      assert.equal(pastes.length, 1, 'the paste was reached and its row written, not lost to a throw');
+      assert.equal(pastes[0].outcome, 'skipped');
+      assert.match(pastes[0].skipReason, /^trust_required: nothing was typed when the prime was due, because of the engine's folder trust dialog/);
     });
 
     it('a withheld launch says why in the log even when no prime was owed', async () => {
