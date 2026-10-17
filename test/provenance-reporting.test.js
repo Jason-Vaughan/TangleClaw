@@ -16,7 +16,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
-const { execFileSync } = require('node:child_process');
+const { initRepo } = require('./_temp-repo');
 const { setLevel } = require('../lib/logger');
 setLevel('error');
 const store = require('../lib/store');
@@ -85,7 +85,7 @@ describe('provenance reporting', () => {
   function makeRepo(ignoreCarriers) {
     const dir = path.join(projectsDir, `repo-${++seq}`);
     fs.mkdirSync(dir, { recursive: true });
-    execFileSync('git', ['-C', dir, 'init', '-q']);
+    initRepo(dir);
     if (ignoreCarriers) fs.writeFileSync(path.join(dir, '.gitignore'), '.codex.yaml\n.aider.conf.yml\n');
     return dir;
   }

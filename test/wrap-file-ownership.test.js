@@ -14,6 +14,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
+const { initRepo } = require('./_temp-repo');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -816,7 +817,7 @@ describe('#1619 — an identity-carrying carrier is asked about, not staged', ()
    */
   function repoWithCarrier(head, work) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-own-id-'));
-    execFileSync('git', ['-C', dir, 'init', '-q']);
+    initRepo(dir);
     fs.writeFileSync(path.join(dir, 'CLAUDE.md'), carrier(head));
     execFileSync('git', ['-C', dir, 'add', 'CLAUDE.md']);
     execFileSync('git', ['-C', dir, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'seed']);
@@ -903,7 +904,7 @@ describe('#1619 — the refusal survives every route into a null verdict', () =>
    */
   function repo(head, workFile) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-route-'));
-    execFileSync('git', ['-C', dir, 'init', '-q']);
+    initRepo(dir);
     fs.writeFileSync(path.join(dir, 'seed.txt'), 'seed\n');
     if (head !== null) fs.writeFileSync(path.join(dir, 'CLAUDE.md'), carrier(head));
     execFileSync('git', ['-C', dir, 'add', '-A']);

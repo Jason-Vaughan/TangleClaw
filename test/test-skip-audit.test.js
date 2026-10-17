@@ -384,6 +384,55 @@ describe('scripts/test-skip-audit — against the real producer', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  // A skipped DESCRIBE is the shape the caddy tiers use, and the reporter
+  // does not emit it the way a skipped `it` is emitted: the describe itself
+  // is ONE skipped testcase at its own path and its children are not listed.
+  // The shipped ledger's `caddy-adapt-absent` pattern is anchored on that
+  // describe path alone, so if the reporter began listing the children — or
+  // stopped listing the describe — the tier would go unknown (or silently
+  // empty) on the first CI run without caddy.
+  it('a skipped describe is ONE skipped path, and the shipped ledger groups it with its tier', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'skip-audit-describe-'));
+    try {
+      const fixture = path.join(dir, 'fixture.test.js');
+      fs.writeFileSync(fixture, [
+        "const { describe, it } = require('node:test');",
+        "describe('caddy-drift — against real caddy', { skip: 'caddy is not installed' }, () => {",
+        "  it('re-derives the adapt fixtures', () => {});",
+        "  describe('end to end', () => {",
+        "    it('reads the hand-edited fixture', () => {});",
+        "  });",
+        "});",
+        "describe('caddy-drift — credentials never reach a report', () => {",
+        "  it('redacts the bcrypt hash out of an adapt failure', (t) => { t.skip('caddy is not installed'); });",
+        "  it('redacts findings on the way out', () => {});",
+        "});"
+      ].join('\n'));
+      const report = path.join(dir, 'r.xml');
+      // Same reason as the case above: a nested run that inherits
+      // NODE_TEST_CONTEXT ignores the reporter flags.
+      const env = { ...process.env };
+      delete env.NODE_TEST_CONTEXT;
+      execFileSync(process.execPath, [
+        '--test', '--test-reporter=junit', `--test-reporter-destination=${report}`, fixture
+      ], { stdio: 'pipe', env });
+      const run = skipAudit.parseJunit(fs.readFileSync(report, 'utf8'));
+      assert.deepEqual(run.skipped.map((s) => s.path), [
+        'caddy-drift — against real caddy',
+        'caddy-drift — credentials never reach a report > redacts the bcrypt hash out of an adapt failure'
+      ]);
+
+      const ledger = JSON.parse(fs.readFileSync(skipAudit.DEFAULT_LEDGER, 'utf8'));
+      const result = skipAudit.audit(run, skipAudit.compileLedger(ledger));
+      const groups = [...result.expected].filter(([, hits]) => hits.length > 0).map(([id]) => id);
+      assert.deepEqual(groups, ['caddy-adapt-absent', 'caddy-adapt-absent-redaction']);
+      assert.deepEqual(result.unknown, []);
+      assert.equal(result.ok, true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('test/skip-ledger.json — the shipped ledger', () => {
@@ -408,6 +457,8 @@ describe('test/skip-ledger.json — the shipped ledger', () => {
     'engine launch flags exist in the installed CLI (#731) > actually probed something, or says plainly that it did not',
     'C1 — per-project plugin migration (#262) > engines.PRAWDUCT_INSTALL_REFERENCE > matches the installed plugin’s INSTALL_REFERENCE (skipped when not installed)',
     'classifyIngressState > classifies THIS machine\'s live Caddyfile as protected, when one is present',
+    'caddy-drift — against real caddy',
+    'caddy-drift — credentials never reach a report > redacts the bcrypt hash out of an adapt failure',
     'ttyd-watcher > production output shapes (darwin only) > _parseChildren reads the real `ps -A -o pid=,ppid=,stat=,etime=` output',
     'ttyd-watcher > production output shapes (darwin only) > _poolFromCounts classifies the real sysctl and /dev/ttys* counts',
     'lib/wrap-steps/_date.todayIsoLocal (shared helper extraction) > local vs UTC behavior > returns LOCAL date (not UTC) when the host is in a non-UTC zone',

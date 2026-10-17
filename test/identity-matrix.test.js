@@ -21,6 +21,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { initRepo } = require('./_temp-repo');
 
 const store = require('../lib/store');
 const engines = require('../lib/engines');
@@ -112,7 +113,7 @@ function repoWith(spec) {
   const file = spec.file || 'CLAUDE.md';
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-matrix-'));
   TEMP_ROOTS.push(dir);
-  execFileSync('git', ['-C', dir, 'init', '-q']);
+  initRepo(dir);
   fs.writeFileSync(path.join(dir, 'seed.txt'), 'seed\n');
   if (spec.head !== null) fs.writeFileSync(path.join(dir, file), spec.head);
   execFileSync('git', ['-C', dir, 'add', '-A']);
@@ -402,7 +403,7 @@ describe('#1619 — actual final generated files, across every supported syntax'
     seq += 1;
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ser-'));
     OWN_TEMP.push(root);
-    execFileSync('git', ['-C', root, 'init', '-q']);
+    initRepo(root);
     fs.writeFileSync(path.join(root, '.gitignore'), '.codex.yaml\n.aider.conf.yml\n');
     const project = store.projects.create({ name: `Ser ${Date.now() % 100000} ${seq}`, path: root, engine: 'codex' });
     const group = store.projectGroups.create({ name: `SerG ${Date.now() % 100000} ${seq}` });
@@ -497,7 +498,7 @@ describe('#1619 — actual final generated files, across every supported syntax'
       // guard must still recognise the document path on its own.
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-direct-'));
       OWN_TEMP.push(root);
-      execFileSync('git', ['-C', root, 'init', '-q']);
+      initRepo(root);
       fs.writeFileSync(path.join(root, '.gitignore'), '.codex.yaml\n.aider.conf.yml\n');
       seq += 1;
       const project = store.projects.create({ name: `Direct ${Date.now() % 100000} ${seq}`, path: root, engine: 'codex' });
@@ -553,7 +554,7 @@ describe('#1619 — actual final generated files, across every supported syntax'
       // on real neutral output; it does not pin the regex's tightness.
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ser-neutral2-'));
       OWN_TEMP.push(root);
-      execFileSync('git', ['-C', root, 'init', '-q']);
+      initRepo(root);
       seq += 1;
       const project = store.projects.create({ name: `SerNeutral ${Date.now() % 100000} ${seq}`, path: root, engine: 'codex' });
       const group = store.projectGroups.create({ name: `SerNeutralG ${Date.now() % 100000} ${seq}` });
@@ -592,7 +593,7 @@ describe('#1619 — actual final generated files, across every supported syntax'
     // side above is real private output, and this is the real committed block.
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ser-neutral-'));
     OWN_TEMP.push(root);
-    execFileSync('git', ['-C', root, 'init', '-q']);
+    initRepo(root);
     const project = store.projects.create({ name: `SerN ${Date.now() % 100000}`, path: root, engine: 'claude' });
     const cfg = { id: project.id, medusaEnabled: true, rules: { core: { porthubRegistration: true } } };
     const block = engines._generateOperationalBlock(cfg, root, 'CLAUDE.md');
