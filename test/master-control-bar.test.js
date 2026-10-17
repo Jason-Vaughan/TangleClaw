@@ -473,7 +473,7 @@ describe('#755 the access toggle is live, and paints only from server state', ()
     assert.match(el('Enforce').title, /every tool call/);
   });
 
-  it('a degraded guard is stated in words, on its own line (R-15)', () => {
+  it('a degraded guard is stated in words, on its own line', () => {
     // THE MUTATION THIS CATCHES: marking the toggle with a class and no
     // sentence. `nonfunctional-requirements.md` forbids communicating an error
     // by colour alone, and "the border went amber" does not tell an operator
@@ -494,7 +494,7 @@ describe('#755 the access toggle is live, and paints only from server state', ()
     assert.equal(el('Access').classList.contains('is-degraded'), false);
   });
 
-  it('every degradation code the server can send has a label on BOTH surfaces (R-21)', () => {
+  it('every degradation code the server can send has a label on BOTH surfaces', () => {
     // `guardDegradedCode` exists so neither surface has to regex the reason
     // sentence to tell "the guard is gone" from "the level disagrees". A
     // discriminator nothing reads is just a longer payload, so this pins that it
@@ -512,7 +512,7 @@ describe('#755 the access toggle is live, and paints only from server state', ()
     }
   });
 
-  it('an unreadable status says so, instead of a bare dimmed pair (R-22)', () => {
+  it('an unreadable status says so, instead of a bare dimmed pair', () => {
     // Two unpressed segments and no sentence is the operator reading "broken" or
     // "read-only" at random — a control saying nothing, which is this chunk's own
     // subject matter turned on itself.
@@ -526,7 +526,7 @@ describe('#755 the access toggle is live, and paints only from server state', ()
     assert.match(el('Warn').textContent, /could not be read/i);
   });
 
-  it('an instructional master shows its level as PENDING, not in force (R-11)', () => {
+  it('an instructional master shows its level as PENDING, not in force', () => {
     // On that engine the level travels in the regenerated identity, so a flip
     // does not bind until the next ensure. Going back to read-only is where it
     // bites: READ paints as pressed while the identity still grants write.
@@ -670,7 +670,7 @@ describe('#755 the access toggle is live, and paints only from server state', ()
     assert.match(el('Warn').textContent, /NOT ENFORCED/, 'and it carries the code\'s label');
   });
 
-  it('the gear renders the degraded readback too — it is the complete control (R-12)', () => {
+  it('the gear renders the degraded readback too — it is the complete control', () => {
     // The plan calls the modal the complete access-level control and the bar the
     // fast path. A boundary flagged on the fast path and silent on the complete
     // one makes the fuller surface the less honest of the two.

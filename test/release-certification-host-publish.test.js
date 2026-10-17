@@ -274,7 +274,7 @@ describe('rc-cert: the guest publishes locally with no git identity, and the hos
     assert.equal(JSON.parse(relayed.out).oid, tip(pub));
   });
 
-  it('starts a run that withholds the operator id and pins its remote without reading any git config (R-4)', async () => {
+  it('starts a run that withholds the operator id and pins its remote without reading any git config', async () => {
     const wt = path.join(tmp, 'wt');
     fs.mkdirSync(wt);
     fs.writeFileSync(path.join(wt, 'version.json'), '{"version":"5.30.0"}');

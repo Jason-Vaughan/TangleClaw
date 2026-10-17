@@ -58,7 +58,7 @@ function readbackRecognizedTokens() {
 }
 
 describe('the generated write guard, scanned as source', () => {
-  it('the status readback recognizes exactly the tokens the guard does (R-14)', () => {
+  it('the status readback recognizes exactly the tokens the guard does', () => {
     // `readMasterGuardPosture` duplicates the guard's recognition rule ON
     // PURPOSE — the guard is a standalone script with no access to the module,
     // so the module can only MODEL it. That duplication is safe only if

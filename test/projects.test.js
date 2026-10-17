@@ -2446,18 +2446,39 @@ describe('projects', () => {
     });
 
     it('runs on the scanner the background poll cannot kill underneath it', async () => {
-      // Same separation the scan route has. Patching only the background entry
-      // point proves it: if create still used it, the stub would be reached and
-      // the folder would not appear.
+      // Same separation the scan route has. The background entry point rejects
+      // and counts its callers; the interactive one answers at once and counts
+      // its own. If create still used the poll, the first count would move and
+      // the create would fail.
+      //
+      // Both are stubs, so nothing here spawns a child or touches the disk. A
+      // real create races the 5 s deadline on a loaded host, and a red then
+      // says "the host was busy", not "the routes crossed".
       const dirScanner = require('../lib/dir-scanner');
+      const target = path.join(home, 'Projects');
       const realBackground = dirScanner.request;
-      dirScanner.request = () => Promise.reject(new Error('the poll must not be consulted here'));
+      const realInteractive = dirScanner.interactiveRequest;
+      const backgroundCalls = [];
+      const interactiveCalls = [];
+      dirScanner.request = (...args) => {
+        backgroundCalls.push(args);
+        return Promise.reject(new Error('the poll must not be consulted here'));
+      };
+      dirScanner.interactiveRequest = (...args) => {
+        interactiveCalls.push(args);
+        return Promise.resolve({ status: 'created' });
+      };
       try {
-        const result = await projects.createProjectsDir(path.join(home, 'Projects'));
+        const result = await projects.createProjectsDir(target);
         assert.equal(result.ok, true, 'create must be independent of the polled route');
-        assert.equal(result.created, true);
+        assert.equal(result.created, true, 'the answer must be the one the interactive scanner gave');
+        assert.equal(backgroundCalls.length, 0, 'the polled entry point must never be reached');
+        assert.equal(interactiveCalls.length, 1, 'exactly one interactive create');
+        assert.equal(interactiveCalls[0][0], 'createDir');
+        assert.equal(fs.existsSync(target), false, 'no child ran, so nothing was made');
       } finally {
         dirScanner.request = realBackground;
+        dirScanner.interactiveRequest = realInteractive;
       }
     });
   });
@@ -2474,7 +2495,7 @@ describe('projects', () => {
      * not come back; that the scanner really kills a hung child is asserted
      * against a genuinely blocked syscall in test/dir-scanner.test.js.
      *
-     * @param {Function} fakeRequest - Stand-in for dirScanner.request.
+     * @param {Function} fakeRequest - Stand-in for dirScanner.interactiveRequest.
      * @param {Function} fn - Test body.
      * @returns {Promise<any>}
      */
