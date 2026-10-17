@@ -43,6 +43,9 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- The wrap file classifier now supplies the not-committed and secret-scan lists to its consumers, so a new bucket cannot be missed by a hand-built list; no operator-visible change (#2160).
+- The changelog coverage gate imports the shared wrap-subject rule from `_git-range` instead of keeping a second copy (#2465).
+- The store's savepoint helper is named for its mechanism; the absent-Bridge test picks a free port pair; stale review IDs leave test names; and the create-project routing test stubs both scanner paths (#2164, #2036, #1640, #1998).
 - Shared `test/helpers/lift.js` pins declaration/body extraction and the shipped `esc`/`jsArg` loaders; existing tests have not migrated to it yet (#1903, Chunk 01).
 - ADR 0025 records the A123 Codex cold-start wake and pane-refusal ruling; #2059 remains open for its unfinished work.
 - The `sendKeys`/`sendRawKey` tmux tests wait for bash's prompt and assert on output lines, so a loaded host no longer scores tty echo (#2447).
