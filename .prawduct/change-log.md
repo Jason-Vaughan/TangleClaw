@@ -47,6 +47,18 @@ v5.34.0 chunk W6-A1 (charter v2.24, Architect A184; plan rev 1 approved by INT).
 
 **Not covered.** The guard still cannot see a subcommand held in a variable, a wrapper whose body does work before `return exec*('git', …)`, a wrapper imported from another module, an argv the wrapper spreads from an array it was given, a leading argument with nested calls, or a call split across lines. None of these is in `test/` today; the list lives beside the guard's SHAPES.
 
+## 2026-10-17 — #2202, #2203: the startup-dialog classifier reads a pane once; its non-breaking space is spelled as an escape
+
+<!-- prawduct: type=bugfix | scope=w6b1-dialog-classifier-and-launch-blocker -->
+
+v5.34.0 Wave 6 chunk W6-B1 01 of 2. Branch `fix/w6b1-01-dialog-classifier` from `896f6f72`. Closes #2202 and #2203. Plan: `.tangleclaw/plans/build-plan-w6b1-dialog-classifier-and-launch-blocker.md` (approved rev 2a, sha256 `f93d2dd8…2376`); charter v2.24 (sha256 `08269a39…c875f`, Architect A184). Chunk 02 (#2201) is a later session; #2195 is parked (`2195WAIT`).
+
+**Why.** `detect`, `assessBoot` and `classify` in `lib/startup-dialog.js` decide whether a send's Enter could land in an engine's startup dialog. Each re-derived the same reading of a frame (plain text, prompt row, last marker row), `assessBoot` and `classify` did it twice per call by calling `detect` first, and a fourth scan found a partial marker's owner (#2202). Three copies of one reading can drift apart. Separately, `_plain`'s blank-collapsing class held a literal U+00A0, which looks like a space; an editor that normalised it would silently stop NBSP-padded marker words from matching (#2203).
+
+**What.** One internal `_read(lines, dialogs, wake, cursor)` returns `{text, rows, prompt, lastMarker, dialog, owner}`; the three public functions are projections of it and keep their signatures, return shapes and the deliberate boot-vs-answer difference. Every dialog's last marker row comes from one pass up the rows (`_markerRows`, replacing `_lastMarkerRow`), so each check makes one marker scan however many dialogs are declared, keeping each dialog's own last-marker rule and the declaration order. `_read` treats a missing dialog list as empty, so `assessBoot`/`classify` no longer throw a TypeError on one (INT ruling; every caller passes `declared()`'s array); tests pin it for null and undefined. `_read` is not exported and there is no spy test: the helpers are called only inside `_read` (INT ruling). `_plain` spells the character as an escape, as `_norm` already did. The docstring half of #2202 was already fixed on main by `cdba432b`; the charter's `_assessEnginePane` is `assessBoot`.
+
+**Evidence.** A behaviour pin (every named pane fixture in the test file, with and without its cursor and the prompt signature, against Claude's dialogs and a list adding a second dialog sharing a marker) was committed green on the unchanged lib (`6cd4b1fb`) and is unchanged and green after the refactor. A fixture pads the trust dialog's marker words with U+00A0; a source guard fails on a literal U+00A0 in `lib/startup-dialog.js` (checked by reintroducing it: 1 fail; restored). No existing assertion changed.
+
 ## 2026-10-17 — W5-REC: the v5.34.0 Wave 3, 4 and 5 records
 
 <!-- prawduct: type=chore | scope=w5-rec-records -->

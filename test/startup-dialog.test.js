@@ -2529,6 +2529,304 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
     });
   });
 
+  describe('every frame reads as it did before the one-reading refactor (#2202)', () => {
+    // A behaviour pin: what `detect`, `assessBoot` and `classify` answered for
+    // every pane fixture in this file, recorded on the code before the three
+    // were re-expressed over one reading. Each frame is read with its own
+    // cursor and with none, with Claude's measured prompt signature and with
+    // none, and against Claude's declared dialogs and a list that adds a second
+    // dialog sharing the "No, exit" marker, so the per-dialog marker rule in
+    // `detect` and the owner a `partial` names are pinned too.
+    const SECOND = Object.freeze({ code: 'bypass_confirm', label: 'bypass confirmation', meaning: 'pinned only', markers: ['Yes, I accept', 'No, exit'] });
+    const LISTS = Object.freeze({ claude: DIALOGS, 'claude+second': [...DIALOGS, SECOND] });
+    const FRAMES = Object.freeze({
+      'trust dialog': TRUST_DIALOG,
+      'trust dialog, half drawn': TRUST_DIALOG.slice(0, 13),
+      'trust dialog, history then the composer': [...TRUST_DIALOG, ...COMPOSER],
+      'trust dialog, history then fresh': [...TRUST_DIALOG, ...FRESH],
+      composer: COMPOSER,
+      'quoting session': QUOTING_SESSION,
+      fresh: FRESH,
+      draft: DRAFT,
+      'model menu': MODEL_MENU,
+      'model menu, next option': MODEL_MENU_DOWN,
+      'after the menu': AFTER_MENU,
+      'bypass 1': BYPASS_1,
+      'bypass 2': BYPASS_2,
+      'stale then option': [...FRESH, ...BYPASS_2],
+      'theme picker': THEME_PICKER,
+      'login method': LOGIN_METHOD,
+      'menu 1': MENU_1,
+      'menu 2': MENU_2,
+      'codex at rest': ['', '› Ask Codex to do anything', '', '  gpt-6-sol high · 100% left'],
+      'update prompt': ['  Update available · 1 → 2', '  1. Update now', '  enter continue · esc skip'],
+      empty: [],
+      blank: ['', '   ', '']
+    });
+    const CURSOR_FOR = Object.freeze({ 'trust dialog': TRUST_CURSOR });
+
+    /**
+     * One frame's three answers, as one comparable string.
+     * @param {string[]} lines - The frame
+     * @param {Array<object>} dialogs - The declared list
+     * @param {object|null} wake - A prompt signature, or null
+     * @param {object|null} cursor - The cursor reading, or null
+     * @returns {string}
+     */
+    const read = (lines, dialogs, wake, cursor) => {
+      const hit = startupDialog.detect(lines, dialogs, wake, cursor);
+      const boot = startupDialog.assessBoot(lines, dialogs, wake, cursor);
+      const seen = startupDialog.classify(lines, dialogs, wake, cursor);
+      const named = seen.dialog || seen.partial;
+      return `detect=${hit ? hit.code : null} boot=${boot.state}${boot.dialog ? `:${boot.dialog.code}` : ''} classify=${seen.state}${named ? `:${named.code}` : ''}`;
+    };
+
+    const EXPECTED = Object.freeze({
+      'claude | trust dialog | wake | cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
+      'claude | trust dialog | wake | no cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
+      'claude | trust dialog | no wake | cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
+      'claude | trust dialog | no wake | no cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
+      'claude | trust dialog, half drawn | wake | cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude | trust dialog, half drawn | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude | trust dialog, half drawn | no wake | cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude | trust dialog, half drawn | no wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude | trust dialog, history then the composer | wake | cursor': 'detect=null boot=undecided classify=clear',
+      'claude | trust dialog, history then the composer | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude | trust dialog, history then the composer | no wake | cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
+      'claude | trust dialog, history then the composer | no wake | no cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
+      'claude | trust dialog, history then fresh | wake | cursor': 'detect=null boot=undecided classify=clear',
+      'claude | trust dialog, history then fresh | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude | trust dialog, history then fresh | no wake | cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
+      'claude | trust dialog, history then fresh | no wake | no cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
+      'claude | composer | wake | cursor': 'detect=null boot=clear classify=clear',
+      'claude | composer | wake | no cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude | composer | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | composer | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | quoting session | wake | cursor': 'detect=null boot=undecided classify=clear',
+      'claude | quoting session | wake | no cursor': 'detect=null boot=undecided classify=clear',
+      'claude | quoting session | no wake | cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
+      'claude | quoting session | no wake | no cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
+      'claude | fresh | wake | cursor': 'detect=null boot=clear classify=clear',
+      'claude | fresh | wake | no cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude | fresh | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | fresh | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | draft | wake | cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude | draft | wake | no cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude | draft | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | draft | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | model menu | wake | cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude | model menu | wake | no cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude | model menu | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | model menu | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | model menu, next option | wake | cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude | model menu, next option | wake | no cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude | model menu, next option | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | model menu, next option | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | after the menu | wake | cursor': 'detect=null boot=clear classify=clear',
+      'claude | after the menu | wake | no cursor': 'detect=null boot=clear classify=clear',
+      'claude | after the menu | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | after the menu | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | bypass 1 | wake | cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude | bypass 1 | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude | bypass 1 | no wake | cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude | bypass 1 | no wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude | bypass 2 | wake | cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude | bypass 2 | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude | bypass 2 | no wake | cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude | bypass 2 | no wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude | stale then option | wake | cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude | stale then option | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude | stale then option | no wake | cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude | stale then option | no wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude | theme picker | wake | cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude | theme picker | wake | no cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude | theme picker | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | theme picker | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | login method | wake | cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude | login method | wake | no cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude | login method | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | login method | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | menu 1 | wake | cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude | menu 1 | wake | no cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude | menu 1 | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | menu 1 | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | menu 2 | wake | cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude | menu 2 | wake | no cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude | menu 2 | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | menu 2 | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | codex at rest | wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | codex at rest | wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | codex at rest | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | codex at rest | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | update prompt | wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | update prompt | wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | update prompt | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | update prompt | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude | empty | wake | cursor': 'detect=null boot=undecided classify=empty',
+      'claude | empty | wake | no cursor': 'detect=null boot=undecided classify=empty',
+      'claude | empty | no wake | cursor': 'detect=null boot=undecided classify=empty',
+      'claude | empty | no wake | no cursor': 'detect=null boot=undecided classify=empty',
+      'claude | blank | wake | cursor': 'detect=null boot=undecided classify=empty',
+      'claude | blank | wake | no cursor': 'detect=null boot=undecided classify=empty',
+      'claude | blank | no wake | cursor': 'detect=null boot=undecided classify=empty',
+      'claude | blank | no wake | no cursor': 'detect=null boot=undecided classify=empty',
+      'claude+second | trust dialog | wake | cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
+      'claude+second | trust dialog | wake | no cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
+      'claude+second | trust dialog | no wake | cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
+      'claude+second | trust dialog | no wake | no cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
+      'claude+second | trust dialog, half drawn | wake | cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude+second | trust dialog, half drawn | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude+second | trust dialog, half drawn | no wake | cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude+second | trust dialog, half drawn | no wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude+second | trust dialog, history then the composer | wake | cursor': 'detect=null boot=undecided classify=clear',
+      'claude+second | trust dialog, history then the composer | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude+second | trust dialog, history then the composer | no wake | cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
+      'claude+second | trust dialog, history then the composer | no wake | no cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
+      'claude+second | trust dialog, history then fresh | wake | cursor': 'detect=null boot=undecided classify=clear',
+      'claude+second | trust dialog, history then fresh | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude+second | trust dialog, history then fresh | no wake | cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
+      'claude+second | trust dialog, history then fresh | no wake | no cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
+      'claude+second | composer | wake | cursor': 'detect=null boot=clear classify=clear',
+      'claude+second | composer | wake | no cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude+second | composer | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | composer | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | quoting session | wake | cursor': 'detect=null boot=undecided classify=clear',
+      'claude+second | quoting session | wake | no cursor': 'detect=null boot=undecided classify=clear',
+      'claude+second | quoting session | no wake | cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
+      'claude+second | quoting session | no wake | no cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
+      'claude+second | fresh | wake | cursor': 'detect=null boot=clear classify=clear',
+      'claude+second | fresh | wake | no cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude+second | fresh | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | fresh | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | draft | wake | cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude+second | draft | wake | no cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude+second | draft | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | draft | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | model menu | wake | cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude+second | model menu | wake | no cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude+second | model menu | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | model menu | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | model menu, next option | wake | cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude+second | model menu, next option | wake | no cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude+second | model menu, next option | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | model menu, next option | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | after the menu | wake | cursor': 'detect=null boot=clear classify=clear',
+      'claude+second | after the menu | wake | no cursor': 'detect=null boot=clear classify=clear',
+      'claude+second | after the menu | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | after the menu | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | bypass 1 | wake | cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
+      'claude+second | bypass 1 | wake | no cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
+      'claude+second | bypass 1 | no wake | cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
+      'claude+second | bypass 1 | no wake | no cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
+      'claude+second | bypass 2 | wake | cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
+      'claude+second | bypass 2 | wake | no cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
+      'claude+second | bypass 2 | no wake | cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
+      'claude+second | bypass 2 | no wake | no cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
+      'claude+second | stale then option | wake | cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
+      'claude+second | stale then option | wake | no cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
+      'claude+second | stale then option | no wake | cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
+      'claude+second | stale then option | no wake | no cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
+      'claude+second | theme picker | wake | cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude+second | theme picker | wake | no cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude+second | theme picker | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | theme picker | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | login method | wake | cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude+second | login method | wake | no cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude+second | login method | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | login method | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | menu 1 | wake | cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude+second | menu 1 | wake | no cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude+second | menu 1 | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | menu 1 | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | menu 2 | wake | cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude+second | menu 2 | wake | no cursor': 'detect=null boot=undecided classify=noncomposer',
+      'claude+second | menu 2 | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | menu 2 | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | codex at rest | wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | codex at rest | wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | codex at rest | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | codex at rest | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | update prompt | wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | update prompt | wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | update prompt | no wake | cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | update prompt | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
+      'claude+second | empty | wake | cursor': 'detect=null boot=undecided classify=empty',
+      'claude+second | empty | wake | no cursor': 'detect=null boot=undecided classify=empty',
+      'claude+second | empty | no wake | cursor': 'detect=null boot=undecided classify=empty',
+      'claude+second | empty | no wake | no cursor': 'detect=null boot=undecided classify=empty',
+      'claude+second | blank | wake | cursor': 'detect=null boot=undecided classify=empty',
+      'claude+second | blank | wake | no cursor': 'detect=null boot=undecided classify=empty',
+      'claude+second | blank | no wake | cursor': 'detect=null boot=undecided classify=empty',
+      'claude+second | blank | no wake | no cursor': 'detect=null boot=undecided classify=empty'
+    });
+
+    it('detect, assessBoot and classify answer every frame exactly as recorded', () => {
+      const actual = {};
+      for (const [list, dialogs] of Object.entries(LISTS)) {
+        for (const [name, lines] of Object.entries(FRAMES)) {
+          const own = CURSOR_FOR[name] || cursorOf(lines);
+          for (const [wakeName, wake] of [['wake', WAKE], ['no wake', null]]) {
+            for (const [cursorName, cursor] of [['cursor', own], ['no cursor', null]]) {
+              actual[`${list} | ${name} | ${wakeName} | ${cursorName}`] = read(lines, dialogs, wake, cursor);
+            }
+          }
+        }
+      }
+      assert.deepEqual(actual, EXPECTED);
+    });
+  });
+
+  describe('a non-breaking space between marker words (#2203)', () => {
+    // An engine may pad a dialog's words with U+00A0. `_plain` collapses it, so
+    // the marker still matches; the escape is spelled out in the source because
+    // a literal U+00A0 looks like a space and an editor or formatter can turn
+    // it into one, which would silently stop the collapse.
+    const NBSP = '\u00a0';
+    const PADDED = Object.freeze(TRUST_DIALOG.map((row) => row.replace('Yes, I trust', `Yes,${NBSP}I${NBSP}trust`)));
+
+    it('the trust dialog is still seen when its marker words are separated by a non-breaking space', () => {
+      assert.ok(PADDED.some((row) => row.includes(NBSP)), 'precondition: the fixture carries the character');
+      assert.equal(startupDialog.detect(PADDED, DIALOGS, WAKE, TRUST_CURSOR).code, 'trust_required');
+      assert.equal(startupDialog.classify(PADDED, DIALOGS, WAKE, TRUST_CURSOR).state, 'dialog');
+      assert.equal(startupDialog.assessBoot(PADDED, DIALOGS, WAKE, TRUST_CURSOR).state, 'dialog');
+    });
+
+    it('and with an ordinary space, as captured', () => {
+      assert.equal(startupDialog.detect(TRUST_DIALOG, DIALOGS, WAKE, TRUST_CURSOR).code, 'trust_required');
+    });
+
+    it('lib/startup-dialog.js holds no literal non-breaking space', () => {
+      const source = fs.readFileSync(path.join(__dirname, '..', 'lib', 'startup-dialog.js'), 'utf8');
+      assert.equal(source.includes(NBSP), false, 'spell it as an escape, never the character');
+    });
+  });
+
+  describe('a missing list of dialogs reads as none (#2202)', () => {
+    // No production caller passes one: `declared` always answers with an
+    // array. These pin that a null or undefined list is read as an empty one
+    // rather than thrown on, in all three readings.
+    for (const missing of [null, undefined]) {
+      it(`${missing} on a composer: clear, and no dialog`, () => {
+        const cursor = cursorOf(COMPOSER);
+        assert.equal(startupDialog.detect(COMPOSER, missing, WAKE, cursor), null);
+        assert.equal(startupDialog.assessBoot(COMPOSER, missing, WAKE, cursor).state, 'clear');
+        assert.equal(startupDialog.classify(COMPOSER, missing, WAKE, cursor).state, 'clear');
+      });
+
+      it(`${missing} on the trust dialog: its selected option is not a prompt, and nothing is named`, () => {
+        assert.equal(startupDialog.detect(TRUST_DIALOG, missing, WAKE, TRUST_CURSOR), null);
+        assert.deepEqual(startupDialog.assessBoot(TRUST_DIALOG, missing, WAKE, TRUST_CURSOR).state, 'undecided');
+        const seen = startupDialog.classify(TRUST_DIALOG, missing, WAKE, TRUST_CURSOR);
+        assert.equal(seen.state, 'noncomposer');
+        assert.equal(seen.partial, undefined);
+      });
+
+      it(`${missing} on an empty capture: empty`, () => {
+        assert.equal(startupDialog.classify([], missing, WAKE, null).state, 'empty');
+      });
+    }
+  });
+
   describe('the watch', () => {
     let clock;
     let frames;
