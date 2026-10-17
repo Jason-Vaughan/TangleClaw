@@ -867,4 +867,117 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
         'a deliberate opt-out must not warn, or the warning stops meaning anything');
     });
   });
+
+  describe('#2155 — the Include / Leave answers each commit ran with', () => {
+    const DETAIL_KEYS_COMMITTED = ['commitSha', 'committedOwn', 'include', 'leave', 'outcome'];
+    const DETAIL_KEYS_SKIPPED = ['committedOwn', 'include', 'leave', 'outcome', 'reason'];
+
+    /**
+     * The `wrap.commit_answers` rows this case produced, scoped to its project.
+     * @returns {object[]}
+     */
+    function answerRows() {
+      return store.activity.query({ projectId, eventType: 'wrap.commit_answers', limit: 50 });
+    }
+
+    /**
+     * `buildContext()` with the drawer's answers attached.
+     * @param {Object<string,string>} pathDecisions
+     * @returns {object}
+     */
+    function answeredContext(pathDecisions) {
+      const ctx = buildContext();
+      ctx.options = { pathDecisions };
+      return ctx;
+    }
+
+    it('a commit writes one row: the answers as given and the session\'s own committed paths (T6)', async () => {
+      // A tracked file the session also changed, answered Leave: the session's
+      // own work, so only the answer as given can show it was kept out.
+      fs.writeFileSync(path.join(projectPath, 'notes.txt'), 'n0\n');
+      execSync('git add notes.txt && git commit --quiet -m notes', { cwd: projectPath, shell: '/bin/sh' });
+      fs.writeFileSync(path.join(projectPath, 'notes.txt'), 'n1\n');
+      // A file new to the repository, answered Include.
+      const secretish = 'UNIQUE-CONTENT-7f3a9c-never-in-the-row';
+      fs.writeFileSync(path.join(projectPath, 'extra.txt'), `${secretish}\n`);
+      interceptExec();
+
+      const result = await commitStep.run(answeredContext({ 'extra.txt': 'include', 'notes.txt': 'leave' }));
+      assert.equal(result.status, 'done');
+
+      const rows = answerRows();
+      assert.equal(rows.length, 1);
+      assert.deepEqual(Object.keys(rows[0].detail).sort(), DETAIL_KEYS_COMMITTED);
+      assert.deepEqual(rows[0].detail, {
+        outcome: 'committed',
+        commitSha: result.output.commitSha,
+        include: ['extra.txt'],
+        leave: ['notes.txt'],
+        committedOwn: ['work.txt']
+      });
+      assert.ok(!JSON.stringify(rows[0]).includes(secretish), 'path names only, never file content');
+      const committed = execSync(`git show --name-only --format= ${result.output.commitSha}`, { cwd: projectPath })
+        .toString().trim().split('\n').sort();
+      assert.deepEqual(committed, ['extra.txt', 'work.txt'], 'precondition: the row describes the commit made');
+    });
+
+    it('a clean tree, an all-Left tree and a non-repository each write one skipped row (T7)', async () => {
+      // Clean: the session's edit undone.
+      fs.writeFileSync(path.join(projectPath, 'work.txt'), 'v0\n');
+      let result = await commitStep.run(answeredContext({ 'gone.txt': 'include' }));
+      assert.equal(result.status, 'skipped');
+      let rows = answerRows();
+      assert.equal(rows.length, 1);
+      assert.deepEqual(Object.keys(rows[0].detail).sort(), DETAIL_KEYS_SKIPPED);
+      assert.deepEqual(rows[0].detail, {
+        outcome: 'skipped', reason: 'no changes to commit', include: ['gone.txt'], leave: [], committedOwn: []
+      });
+
+      // Everything left out.
+      fs.writeFileSync(path.join(projectPath, 'work.txt'), 'work\n');
+      result = await commitStep.run(answeredContext({ 'work.txt': 'leave' }));
+      assert.equal(result.status, 'skipped');
+      rows = answerRows();
+      assert.equal(rows.length, 2);
+      const allLeft = rows.find((r) => r.detail.leave.length > 0);
+      assert.deepEqual(allLeft.detail, {
+        outcome: 'skipped', reason: result.output.reason, include: [], leave: ['work.txt'], committedOwn: []
+      });
+
+      // Not a repository.
+      const plain = fs.mkdtempSync(path.join(tmpDir, 'plain-'));
+      result = await commitStep.run({
+        project: { name: 'plain', path: plain, id: projectId },
+        session: null, step: { id: 'commit', kind: 'commit', blocker: true },
+        previousResults: [], staged: {}, options: { pathDecisions: { 'b.txt': 'leave', 'a.txt': 'leave' } }
+      });
+      assert.equal(result.status, 'skipped');
+      rows = answerRows();
+      assert.equal(rows.length, 3);
+      const nonRepo = rows.find((r) => /not a git repository/.test(r.detail.reason));
+      assert.deepEqual(nonRepo.detail, {
+        outcome: 'skipped', reason: result.output.reason, include: [], leave: ['a.txt', 'b.txt'], committedOwn: []
+      });
+    });
+
+    it('a blocked commit writes no row: it neither committed nor skipped (T8)', async () => {
+      // A file new to the repository with no answer: the commit waits for one.
+      fs.writeFileSync(path.join(projectPath, 'undecided.txt'), 'x\n');
+      const result = await commitStep.run(answeredContext({ 'other.txt': 'include' }));
+      assert.equal(result.status, 'blocked');
+      assert.deepEqual(answerRows(), []);
+    });
+
+    it('writes exactly one row per run, attributed to the session (T9)', async () => {
+      interceptExec();
+      const ctx = answeredContext({});
+      const sessionId = store.sessions.start({ projectId, engineId: 'claude' }).id;
+      ctx.session = { id: sessionId };
+      await commitStep.run(ctx);
+      const rows = answerRows();
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].sessionId, sessionId);
+      assert.deepEqual(rows[0].detail.committedOwn, ['work.txt']);
+    });
+  });
 });
