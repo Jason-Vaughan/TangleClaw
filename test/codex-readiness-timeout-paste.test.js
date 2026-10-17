@@ -24,6 +24,11 @@ const { CODEX_VISIBLE_PANES } = require('./_codex-visible-pane-fixtures');
 
 const CODEX_PROFILE = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8'));
 const GUARDED_DIALOG_WARNING = 'Engine is waiting at a guarded dialog that TangleClaw does not answer';
+// The gate's shipped timing, written out rather than read back from the
+// module, so a change to either constant fails here instead of moving the
+// expectation with it.
+const PRODUCTION_TIMEOUT_MS = 90_000;
+const PRODUCTION_POLL_MS = 750;
 
 let sessions;
 let storeDir;
@@ -69,7 +74,7 @@ async function launchCodex(t, panes) {
     // One production poll interval per tick, so the row's fake time is known
     // to within one poll of when the gate gave up.
     for (let i = 0; i < 400 && rows.length === 0; i++) {
-      t.mock.timers.tick(sessions.PANE_READY_POLL_MS);
+      t.mock.timers.tick(PRODUCTION_POLL_MS);
       for (let j = 0; j < 6; j++) await Promise.resolve();
     }
   } finally {
@@ -90,6 +95,12 @@ describe('Codex readiness-timeout paste on the folder-trust dialog (#2223)', () 
   after(() => {
     store.close();
     fs.rmSync(storeDir, { recursive: true, force: true });
+  });
+
+  it('runs the gate at its shipped timing: 750 ms polls, a 90 s horizon', () => {
+    // The launch path passes no timing, so these defaults are what it uses.
+    assert.equal(sessions.PANE_READY_TIMEOUT_MS, PRODUCTION_TIMEOUT_MS);
+    assert.equal(sessions.PANE_READY_POLL_MS, PRODUCTION_POLL_MS);
   });
 
   it('takes the route this file drives: Codex declares no startup dialogs, but guards its folder-trust prompt', () => {
@@ -114,10 +125,10 @@ describe('Codex readiness-timeout paste on the folder-trust dialog (#2223)', () 
     // The row is written when the PRODUCTION gate gives up: not before its
     // horizon, and within one poll (plus this loop's one-poll tick) after it.
     const elapsed = r.rowAt - r.startedAt;
-    assert.ok(elapsed >= sessions.PANE_READY_TIMEOUT_MS, `row written at ${elapsed} ms, before the ${sessions.PANE_READY_TIMEOUT_MS} ms horizon`);
-    assert.ok(elapsed < sessions.PANE_READY_TIMEOUT_MS + 2 * sessions.PANE_READY_POLL_MS, `row written at ${elapsed} ms, long after the horizon`);
+    assert.ok(elapsed >= PRODUCTION_TIMEOUT_MS, `row written at ${elapsed} ms, before the ${PRODUCTION_TIMEOUT_MS} ms horizon`);
+    assert.ok(elapsed < PRODUCTION_TIMEOUT_MS + 2 * PRODUCTION_POLL_MS, `row written at ${elapsed} ms, long after the horizon`);
     // Supporting only: the gate kept polling for the whole wait.
-    assert.ok(r.captures >= sessions.PANE_READY_TIMEOUT_MS / sessions.PANE_READY_POLL_MS, `${r.captures} captures`);
+    assert.ok(r.captures >= PRODUCTION_TIMEOUT_MS / PRODUCTION_POLL_MS, `${r.captures} captures`);
 
     // The dialog is logged when the wait FIRST sees it, once — not when the
     // wait ends, and not on every poll.
@@ -125,7 +136,7 @@ describe('Codex readiness-timeout paste on the folder-trust dialog (#2223)', () 
     assert.match(r.warnings[0].line, /folder-trust/);
     assert.equal(r.warnings[0].capture, 1, 'logged at the first capture');
     assert.equal(r.warnings[0].at, r.firstCaptureAt, 'logged at the fake time of the first capture');
-    assert.ok(r.warnings[0].at - r.startedAt <= sessions.PANE_READY_POLL_MS, `logged at ${r.warnings[0].at - r.startedAt} ms, not at the start of the wait`);
+    assert.ok(r.warnings[0].at - r.startedAt <= PRODUCTION_POLL_MS, `logged at ${r.warnings[0].at - r.startedAt} ms, not at the start of the wait`);
   });
 
   it('a folder-trust dialog that is answered: the prime is pasted once at the composer, and the dialog was logged once', async (t) => {
@@ -136,7 +147,7 @@ describe('Codex readiness-timeout paste on the folder-trust dialog (#2223)', () 
     assert.equal(r.rows.length, 1);
     assert.equal(r.rows[0].channel, 'prime-paste');
     assert.equal(r.rows[0].outcome, 'delivered');
-    assert.ok(r.rowAt - r.startedAt < sessions.PANE_READY_TIMEOUT_MS, 'delivered before the horizon, not by timing out');
+    assert.ok(r.rowAt - r.startedAt < PRODUCTION_TIMEOUT_MS, 'delivered before the horizon, not by timing out');
     assert.equal(r.warnings.length, 1);
     assert.equal(r.warnings[0].capture, 1, 'logged at the first capture');
   });
