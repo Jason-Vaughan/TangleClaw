@@ -150,8 +150,10 @@ describe('test/ — every `git init` and `git clone` goes through the helper (th
     // A wrapper with another name called directly (run('init')) is found by
     // the per-file pass below, keyed on the wrapper's definition; matching
     // every call whose first argument is 'init' would also hit a temp
-    // directory named 'clone', so that shape stays out of this list. A
-    // subcommand held in a variable is still invisible to a line scanner.
+    // directory named 'clone', so that shape stays out of this list. Still
+    // invisible to this scanner: a helper that takes the directory first,
+    // `function git(cwd, ...args)` called as git(dir, 'init'), and a
+    // subcommand held in a variable.
     /\)\s*\(\s*['"`](init|clone)(\s|['"`])/,
     // the workaround the helper replaces: a second isolation path is a second
     // place to forget
