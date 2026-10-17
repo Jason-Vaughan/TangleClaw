@@ -2776,6 +2776,31 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
     });
   });
 
+  describe('a non-breaking space between marker words (#2203)', () => {
+    // An engine may pad a dialog's words with U+00A0. `_plain` collapses it, so
+    // the marker still matches; the escape is spelled out in the source because
+    // a literal U+00A0 looks like a space and an editor or formatter can turn
+    // it into one, which would silently stop the collapse.
+    const NBSP = '\u00a0';
+    const PADDED = Object.freeze(TRUST_DIALOG.map((row) => row.replace('Yes, I trust', `Yes,${NBSP}I${NBSP}trust`)));
+
+    it('the trust dialog is still seen when its marker words are separated by a non-breaking space', () => {
+      assert.ok(PADDED.some((row) => row.includes(NBSP)), 'precondition: the fixture carries the character');
+      assert.equal(startupDialog.detect(PADDED, DIALOGS, WAKE, TRUST_CURSOR).code, 'trust_required');
+      assert.equal(startupDialog.classify(PADDED, DIALOGS, WAKE, TRUST_CURSOR).state, 'dialog');
+      assert.equal(startupDialog.assessBoot(PADDED, DIALOGS, WAKE, TRUST_CURSOR).state, 'dialog');
+    });
+
+    it('and with an ordinary space, as captured', () => {
+      assert.equal(startupDialog.detect(TRUST_DIALOG, DIALOGS, WAKE, TRUST_CURSOR).code, 'trust_required');
+    });
+
+    it('lib/startup-dialog.js holds no literal non-breaking space', () => {
+      const source = fs.readFileSync(path.join(__dirname, '..', 'lib', 'startup-dialog.js'), 'utf8');
+      assert.equal(source.includes(NBSP), false, 'spell it as an escape, never the character');
+    });
+  });
+
   describe('the watch', () => {
     let clock;
     let frames;
