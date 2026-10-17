@@ -23,12 +23,17 @@
  * has exactly one way to make a repository — `initRepo` for a fresh one,
  * `cloneRepo` for a clone, because `git clone` runs the same template copy —
  * and `test/temp-repo.test.js` scans `test/` and fails on any other `init` or
- * `clone` invocation, whatever shape it takes: a command string, an argv, a
- * local `git(cmd)` wrapper, or a `-c init.templateDir=` workaround. Joining
- * the family means calling one of these two; the guard is what makes that a
- * rule rather than a convention. (The first version of the guard pinned two
- * textual shapes and was green over four survivors; it now pins the
- * subcommand, not the syntax.)
+ * `clone` invocation: a command string, an argv (with `-c`/`-C` options before
+ * the subcommand), a `-c init.templateDir=` workaround, or a git wrapper the
+ * file defines — called with the subcommand first (`run('init')`), after the
+ * directory (`git(dir, 'init')`), or as an argv array (`git(dir, ['clone', …])`,
+ * `run(['init', …])`). Joining the family means calling one of these two; the
+ * guard is what makes that a rule rather than a convention. (The first version
+ * of the guard pinned two textual shapes and was green over four survivors; it
+ * now pins the subcommand, not the syntax.)
+ *
+ * The shapes it still cannot see are listed beside its SHAPES in
+ * `test/temp-repo.test.js`, the one place to extend when a new one appears.
  *
  * The one sanctioned exception is `test/git-template.test.js`'s end-to-end
  * case, which exists to prove the template mechanism works and sandboxes its

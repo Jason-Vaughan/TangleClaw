@@ -21,6 +21,7 @@ const childProcess = require('node:child_process');
 
 const cs = require('../lib/checkout-state');
 const { outsidePane } = require('./_tc-env');
+const { initRepo, cloneRepo } = require('./_temp-repo');
 
 const SHA_A = 'a'.repeat(40);
 const SHA_B = 'b'.repeat(40);
@@ -421,6 +422,16 @@ describe('checkout-state: against real git', () => {
   const realExec = childProcess.execFile;
 
   /**
+   * The environment every git call in this file runs under, the
+   * repository-making ones included, built fresh at each call.
+   *
+   * @returns {object} Environment for the git child
+   */
+  function gitEnv() {
+    return { ...outsidePane(process.env), GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_NOSYSTEM: '1', HOME: root };
+  }
+
+  /**
    * Run git synchronously in a directory with a fixed identity.
    * @param {string} cwd
    * @param {...string} args
@@ -429,7 +440,7 @@ describe('checkout-state: against real git', () => {
   function git(cwd, ...args) {
     return childProcess.execFileSync('git', args, {
       cwd, encoding: 'utf8',
-      env: { ...outsidePane(process.env), GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_NOSYSTEM: '1', HOME: root }
+      env: gitEnv()
     }).trim();
   }
 
@@ -441,7 +452,7 @@ describe('checkout-state: against real git', () => {
   function makeRepo(name) {
     const dir = path.join(root, name);
     fs.mkdirSync(dir);
-    git(dir, 'init', '-q', '-b', 'main');
+    initRepo(dir, ['-b', 'main'], { env: gitEnv() });
     fs.writeFileSync(path.join(dir, 'server.js'), '1\n');
     fs.mkdirSync(path.join(dir, 'docs'));
     fs.writeFileSync(path.join(dir, 'docs', 'a.md'), 'a\n');
@@ -535,11 +546,11 @@ describe('checkout-state: against real git', () => {
     const uo = require('../lib/upstream-observer');
     const seed = makeRepo('seed');
     const bare = path.join(root, 'origin.git');
-    git(root, 'clone', '-q', '--bare', seed, bare);
+    cloneRepo(seed, bare, ['--bare'], { cwd: root, env: gitEnv() });
     const a = path.join(root, 'clone-a');
     const b = path.join(root, 'clone-b');
-    git(root, 'clone', '-q', bare, a);
-    git(root, 'clone', '-q', bare, b);
+    cloneRepo(bare, a, [], { cwd: root, env: gitEnv() });
+    cloneRepo(bare, b, [], { cwd: root, env: gitEnv() });
     fs.writeFileSync(path.join(b, 'server.js'), 'moved upstream\n');
     git(b, 'commit', '-q', '-am', 'upstream moves');
     git(b, 'push', '-q', 'origin', 'main');
@@ -554,7 +565,7 @@ describe('checkout-state: against real git', () => {
     const viaLink = path.join(root, 'origin-link.git');
     fs.symlinkSync(bare, viaLink);
     const c = path.join(root, 'clone-c');
-    git(root, 'clone', '-q', viaLink, c);
+    cloneRepo(viaLink, c, [], { cwd: root, env: gitEnv() });
     assert.equal((await cs.measure(c, { execFile: realExec })).repository.identity, ma.repository.identity);
 
     const savedExec = uo._internal.execFile;

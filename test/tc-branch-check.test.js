@@ -16,6 +16,7 @@ const childProcess = require('node:child_process');
 
 const { VERB_ROSTER, BRANCH_VERDICT_EXIT, receiptVerbLabel, renderUsage } = require('../lib/tc-verbs');
 const { outsidePane } = require('./_tc-env');
+const { initRepo, cloneRepo } = require('./_temp-repo');
 
 const branch = VERB_ROSTER.find((v) => v.id === 'branch');
 const OID = 'a'.repeat(40);
@@ -118,6 +119,16 @@ describe('tc branch check (bin/tc against a real repository)', () => {
   const TC = path.join(__dirname, '..', 'bin', 'tc');
 
   /**
+   * The environment every git call in this file runs under, the
+   * repository-making ones included, built fresh at each call.
+   *
+   * @returns {object} Environment for the git child
+   */
+  function gitEnv() {
+    return { ...outsidePane(process.env), GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_NOSYSTEM: '1', HOME: root };
+  }
+
+  /**
    * Run git synchronously with a fixed identity.
    * @param {string} cwd
    * @param {...string} args
@@ -128,7 +139,7 @@ describe('tc branch check (bin/tc against a real repository)', () => {
       cwd,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...outsidePane(process.env), GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_NOSYSTEM: '1', HOME: root }
+      env: gitEnv()
     }).trim();
   }
 
@@ -137,9 +148,9 @@ describe('tc branch check (bin/tc against a real repository)', () => {
 
   it('the incident shape exits 3 and names the unpushed commit; after pushing it, exits 0', () => {
     const origin = path.join(root, 'origin.git');
-    git(root, 'init', '-q', '--bare', '-b', 'main', origin);
+    initRepo(root, ['--bare', '-b', 'main', origin], { env: gitEnv() });
     const dir = path.join(root, 'work');
-    git(root, 'clone', '-q', origin, dir);
+    cloneRepo(origin, dir, [], { cwd: root, env: gitEnv() });
     git(dir, 'checkout', '-q', '-b', 'main');
     fs.writeFileSync(path.join(dir, 'README.md'), 'x\n');
     git(dir, 'add', '.');

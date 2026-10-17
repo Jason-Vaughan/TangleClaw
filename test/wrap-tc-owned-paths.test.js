@@ -22,6 +22,7 @@ setLevel('error');
 const tcOwned = require('../lib/wrap-steps/_tc-owned-paths');
 const engines = require('../lib/engines');
 const { DEFAULT_PROJECT_CONFIG } = require('../lib/project-config');
+const { initRepo } = require('./_temp-repo');
 
 const ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 const dirs = [];
@@ -56,7 +57,7 @@ function git(cwd, ...args) {
 function repoWith(files, edits = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-owned-')));
   dirs.push(root);
-  git(root, 'init', '-q');
+  initRepo(root, [], { env: ENV });
   const write = (p, c) => { fs.mkdirSync(path.dirname(path.join(root, p)), { recursive: true }); fs.writeFileSync(path.join(root, p), c); };
   for (const [p, c] of Object.entries(files)) write(p, c);
   git(root, 'add', '-A');

@@ -26,6 +26,7 @@ const featuresToc = require('../lib/wrap-steps/features-toc');
 const continuityWrite = require('../lib/wrap-steps/continuity-write');
 const wrapScope = require('../lib/wrap-scope');
 const { execFileArgs } = require('../lib/exec');
+const { initRepo } = require('./_temp-repo');
 
 const ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 const dirs = [];
@@ -63,7 +64,7 @@ function commitFile(cwd, rel, message) {
 function makeRepo() {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-scope-')));
   dirs.push(dir);
-  git(dir, 'init', '-q', '-b', 'main');
+  initRepo(dir, ['-b', 'main'], { env: ENV });
   commitFile(dir, 'README.md', 'init');
   return dir;
 }

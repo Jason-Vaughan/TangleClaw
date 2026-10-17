@@ -35,6 +35,22 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-17 — #2152 + #831: the draft-text tmux test waits for bash, and the last test files that made repos on their own
+
+<!-- prawduct: type=fix | scope=w6-a2-tmux-prompt-and-temp-repo -->
+
+v5.34.0 chunk W6-A2 (charter v2.26, Architect A192; plan rev 3 approved by INT). Branch `fix/2152-831-w6-a2` from `origin/main` `98774fb0`. It carries W6-A1's five reviewed #831 commits as cherry-picks (W6-A1 stopped on the #2152 flake; PR #2443 closed as superseded) and adds the #2152 fix.
+
+**#2152.** The test "does not submit unsent draft text sitting at the prompt (#812)" typed its draft 0.3 s after starting bash. On a loaded host bash had not drawn its prompt yet, so the tty echoed `echo DRAFTRAN` above the banner and `!content.includes('DRAFTRAN')` failed although nothing ran. It now waits, bounded at 10 s and failing with the last pane lines, for bash's prompt, then for the draft on the prompt line, then for the injected command's output and a fresh prompt. The pane-text check is replaced by line checks on what executed: some line is exactly `INJECTEDOK` and no line starts with `DRAFTRAN`. With `clearPrompt: false` (the #812 defect) the test goes red on `DRAFTRANecho INJECTEDOK`.
+
+**#831.** 38 `git init`/`git clone` calls in 19 test files went through a local `git(cwd, ...args)`, `git(cwd, args)` or `run(args)` helper, so each one copied the machine's global `init.templateDir`, which a running TangleClaw rewrites under the suite. The family guard in `test/temp-repo.test.js` could not see those shapes.
+
+**What changed.** The guard gains a pass keyed on a git wrapper's definition, matched over the file's text so a `return` on the line after the signature counts. It knows which parameter carries the argv, even when the argv array spreads several values (`['-C', dir, ...extra, ...args]`), so `git(dir, 'init')`, `git(dir, ['clone', …])` and `run(['init', …])` are caught and a non-git helper such as `mk(dir, 'clone')` or `npm(dir, 'init')` is not. It replaces the earlier rest-parameter-only definition pattern, so wrappers are recognised in one place. New positive and negative scanner tests cover it. With only the guard applied it failed on exactly those 38 calls. All 38 now call `initRepo`/`cloneRepo` with their own arguments, cwd and env. Five helpers built their env inline; it is hoisted into a `gitEnv()` the helper shares. No assertion changed. The `_temp-repo.js` header and the SHAPES comment now say what the guard catches and what it still cannot see.
+
+**Not covered.** The guard still cannot see a subcommand held in a variable, a wrapper whose body does work before `return exec*('git', …)`, a wrapper imported from another module, an argv the wrapper spreads from an array it was given, a leading argument with nested calls, or a call split across lines. None of these is in `test/` today; the list lives beside the guard's SHAPES.
+
+**Review.** Cumulative Critic `rev-20261017T104048Z-7d244602`: 0 blocking; 2 warnings and 3 notes, all accepted. The warnings (the #2152 race in the other `sendKeys - behavioral` tests) are outside the chartered scope and filed as #2447. The `_temp-repo.js` header note is left so the carried content stays identical to `be288eab`.
+
 ## 2026-10-17 — #2201: a damaged launch blocker is logged once instead of dropped silently
 
 <!-- prawduct: type=bugfix | scope=w6b1-dialog-classifier-and-launch-blocker -->

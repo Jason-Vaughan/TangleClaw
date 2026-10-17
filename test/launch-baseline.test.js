@@ -19,6 +19,17 @@ setLevel('error');
 
 const store = require('../lib/store');
 const launchBaseline = require('../lib/launch-baseline');
+const { initRepo } = require('./_temp-repo');
+
+/**
+ * The environment every git call in this file runs under, the
+ * repository-making ones included, built fresh at each call.
+ *
+ * @returns {object} Environment for the git child
+ */
+function gitEnv() {
+  return { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+}
 
 /**
  * Run git in a directory with a fixed identity.
@@ -30,7 +41,7 @@ function git(cwd, ...args) {
   return execFileSync('git', args, {
     cwd,
     encoding: 'utf8',
-    env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' }
+    env: gitEnv()
   }).trim();
 }
 
@@ -40,7 +51,7 @@ function git(cwd, ...args) {
  */
 function makeRepo() {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-launch-baseline-')));
-  git(dir, 'init', '-q', '-b', 'main');
+  initRepo(dir, ['-b', 'main'], { env: gitEnv() });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
   fs.mkdirSync(path.join(dir, 'dir'));
   fs.writeFileSync(path.join(dir, 'dir', 'b.txt'), 'b\n');
@@ -93,7 +104,7 @@ describe('launch-baseline.capture', () => {
     const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-launch-plain-')); dirs.push(plain);
     assert.equal(launchBaseline.capture(plain), null);
     const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-launch-empty-')); dirs.push(empty);
-    git(empty, 'init', '-q');
+    initRepo(empty, [], { env: gitEnv() });
     assert.equal(launchBaseline.capture(empty), null, 'no HEAD means no start point to measure from');
     assert.equal(launchBaseline.capture(null), null);
   });

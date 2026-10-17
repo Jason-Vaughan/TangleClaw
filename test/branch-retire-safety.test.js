@@ -19,6 +19,7 @@ const path = require('node:path');
 const childProcess = require('node:child_process');
 
 const brs = require('../lib/branch-retire-safety');
+const { initRepo, cloneRepo } = require('./_temp-repo');
 
 const { VERDICTS, REASONS } = brs;
 
@@ -68,6 +69,16 @@ describe('branch-retire-safety: against real git', () => {
   const realExec = childProcess.execFile;
 
   /**
+   * The environment every git call in this file runs under, the
+   * repository-making ones included, built fresh at each call.
+   *
+   * @returns {object} Environment for the git child
+   */
+  function gitEnv() {
+    return { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_NOSYSTEM: '1', HOME: root };
+  }
+
+  /**
    * Run git synchronously with a fixed identity.
    * @param {string} cwd
    * @param {...string} args
@@ -78,7 +89,7 @@ describe('branch-retire-safety: against real git', () => {
       cwd,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_NOSYSTEM: '1', HOME: root }
+      env: gitEnv()
     }).trim();
   }
 
@@ -104,9 +115,9 @@ describe('branch-retire-safety: against real git', () => {
     const base = path.join(root, `case${++n}`);
     fs.mkdirSync(base);
     const origin = path.join(base, 'origin.git');
-    git(base, 'init', '-q', '--bare', '-b', 'main', origin);
+    initRepo(base, ['--bare', '-b', 'main', origin], { env: gitEnv() });
     const dir = path.join(base, 'work');
-    git(base, 'clone', '-q', origin, dir);
+    cloneRepo(origin, dir, [], { cwd: base, env: gitEnv() });
     git(dir, 'checkout', '-q', '-b', 'main');
     commit(dir, 'README.md', 'init');
     git(dir, 'push', '-q', '-u', 'origin', 'main');
@@ -307,7 +318,7 @@ describe('branch-retire-safety: against real git', () => {
   it('a repository with no remote is unknown', async () => {
     const dir = path.join(root, `case${++n}`);
     fs.mkdirSync(dir);
-    git(dir, 'init', '-q', '-b', 'main');
+    initRepo(dir, ['-b', 'main'], { env: gitEnv() });
     commit(dir, 'README.md', 'init');
     git(dir, 'branch', 'feat');
 

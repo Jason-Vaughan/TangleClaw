@@ -24,6 +24,7 @@ const { setLevel } = require('../lib/logger');
 setLevel('error');
 
 const applier = require('../lib/update-applier');
+const { initRepo, cloneRepo } = require('./_temp-repo');
 
 const RULES = 'data/global-rules.md';
 const GIT_ENV = {
@@ -69,7 +70,7 @@ describe('operator-edited global rules across an update (#1730)', () => {
    */
   function release(tag, change) {
     const cutter = path.join(root, `cut-${tag}`);
-    git(root, ['clone', '-q', path.join(root, 'origin.git'), cutter]);
+    cloneRepo(path.join(root, 'origin.git'), cutter, [], { cwd: root, env: GIT_ENV });
     change(cutter);
     git(cutter, ['add', '-A']);
     git(cutter, ['commit', '-qm', tag]);
@@ -93,8 +94,8 @@ describe('operator-edited global rules across an update (#1730)', () => {
     const origin = path.join(root, 'origin.git');
     work = path.join(root, 'work');
     backups = path.join(root, 'home', 'backups');
-    git(root, ['init', '-q', '--bare', '-b', 'main', origin]);
-    git(root, ['init', '-q', '-b', 'main', work]);
+    initRepo(root, ['--bare', '-b', 'main', origin], { env: GIT_ENV });
+    initRepo(root, ['-b', 'main', work], { env: GIT_ENV });
     fs.writeFileSync(path.join(work, '.gitignore'), '.tangleclaw/*\n!.tangleclaw/plans/\n');
     fs.mkdirSync(path.join(work, 'data'));
     fs.writeFileSync(path.join(work, RULES), RULES_V1);

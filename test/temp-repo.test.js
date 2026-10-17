@@ -147,41 +147,96 @@ describe('test/ — every `git init` and `git clone` goes through the helper (th
     // a wrapper returned by a call and called at once, whatever its name:
     // const at = (cwd) => (...args) => execFileSync('git', args, { cwd });
     // at(dir)('init', '--bare', remote)
-    // A wrapper with another name called directly (run('init')) is found by
-    // the per-file pass below, keyed on the wrapper's definition; matching
-    // every call whose first argument is 'init' would also hit a temp
-    // directory named 'clone', so that shape stays out of this list. Still
-    // invisible to this scanner: a helper that takes the directory first,
-    // `function git(cwd, ...args)` called as git(dir, 'init'), and a
-    // subcommand held in a variable.
+    // A wrapper called directly by its name — run('init'), git(dir, 'init'),
+    // git(dir, ['clone', …]), run(['init', …]) — is found by the per-file
+    // pass below, keyed on the wrapper's definition; matching every call
+    // whose argument is 'init' would also hit a temp directory named 'clone',
+    // so that shape stays out of this list. Still invisible to this scanner:
+    // a subcommand held in a variable (git(dir, sub)); a wrapper whose body
+    // does anything before `return exec*('git', …)`; a wrapper imported from
+    // another module; an argv the wrapper spreads from an array it was given;
+    // a leading argument with nested calls (path.join(a, b(c))); and a call
+    // split across lines.
     /\)\s*\(\s*['"`](init|clone)(\s|['"`])/,
     // the workaround the helper replaces: a second isolation path is a second
     // place to forget
     /init\.templateDir=/
   ];
 
-  // A named git wrapper: `NAME = (...args) => exec*('git', <argv>)` where the
-  // argv is the rest parameter itself or an array spreading it. Only a name
-  // defined this way in the same file is treated as git, so `mk('clone')`
-  // or a wrapper around another program called with 'init' is not a match.
-  const GIT_WRAPPER_DEF = /(?<![\w$.])([A-Za-z_$][\w$]*)\s*=\s*\(\s*\.\.\.([A-Za-z_$][\w$]*)\s*\)\s*=>\s*exec\w*\(\s*['"`]git['"`]\s*,\s*(?:\[[^\]]*\.\.\.\2\b|\2\b)/;
+  // A git wrapper, keyed on its definition: only a name defined in the same
+  // file as `exec*('git', <argv>)` with argv built from a parameter is treated
+  // as git, so `mk('clone')` or a wrapper around another program called with
+  // 'init' is not a match. The argv may be any of its parameters:
+  //   run = (...args) => execFileSync('git', ['-C', dir, ...args], …
+  //   function git(cwd, ...args) { return execFileSync('git', args, …
+  //   function git(dir, ...args) { return execFileSync('git', ['-C', dir, ...args], …
+  //   function git(cwd, args, env = {}) { return execFileSync('git', args, …
+  //   const run = (args) => execFileSync('git', args, …
+  // Matched over the file's text rather than line by line, because a
+  // function body's `return` usually sits on the line after its signature.
+  // Groups: function name, function params, arrow name, arrow params, argv.
+  const GIT_PARAM_WRAPPER_DEF = new RegExp(
+    '(?<![\\w$.])(?:function\\s+([A-Za-z_$][\\w$]*)\\s*\\(([^()]*)\\)\\s*\\{\\s*return\\s+'
+    + '|(?:(?:const|let|var)\\s+)?([A-Za-z_$][\\w$]*)\\s*=\\s*\\(([^()]*)\\)\\s*=>\\s*(?:\\{\\s*return\\s+)?)'
+    + '(?:[A-Za-z_$][\\w$]*\\.)*exec\\w*\\(\\s*[\'"`]git[\'"`]\\s*,\\s*(\\[[^\\]]*\\]|[A-Za-z_$][\\w$]*)',
+    'g'
+  );
+
+  // One argument expression before the subcommand: a name or member chain,
+  // optionally called with flat arguments, or a string literal.
+  const CALL_ARG = '(?:[A-Za-z_$][\\w$.]*(?:\\([^()]*\\))?|\'[^\']*\'|"[^"]*"|`[^`]*`)';
 
   /**
-   * The shape that matches a call of one named git wrapper with `init` or
-   * `clone` as its first argument: `run('init', '-q')`.
+   * Where a parameterised git wrapper takes its argv: which parameter, and
+   * whether the call passes the subcommand bare (a rest parameter) or as the
+   * first element of an array.
+   *
+   * @param {string} params - The definition's parameter list
+   * @param {string} argv - The expression it hands git as argv
+   * @returns {{position: number, rest: boolean}|null} null when the argv is not
+   *   built from a parameter, so the definition is not a call-through wrapper
+   */
+  function argvParameter(params, argv) {
+    const names = params.split(',').map((p) => p.trim()).filter(Boolean)
+      .map((p) => ({ rest: p.startsWith('...'), name: p.replace(/^\.\.\./, '').split('=')[0].trim() }));
+    if (/^\[/.test(argv)) {
+      // An array argv may spread several things — ['-C', dir, ...extra, ...args]
+      // — so look at every spread, not the first: the one that is the
+      // wrapper's rest parameter is where the call's subcommand lands.
+      const spreads = [...argv.matchAll(/\.\.\.\s*([A-Za-z_$][\w$]*)/g)].map((m) => m[1]);
+      const position = names.findIndex((p) => p.rest && spreads.includes(p.name));
+      return position < 0 ? null : { position, rest: true };
+    }
+    const position = names.findIndex((p) => p.name === argv);
+    if (position < 0) return null;
+    // A rest parameter handed over as argv is called bare; a plain one is
+    // called with an array.
+    return { position, rest: names[position].rest };
+  }
+
+  /**
+   * The shape of a call to a parameterised git wrapper that makes a
+   * repository: the leading arguments, then `'init'`/`'clone'` bare for a rest
+   * parameter or as an array's first element otherwise.
    *
    * @param {string} name - Wrapper identifier, as defined in the file
-   * @returns {RegExp} Pattern for a direct call of that wrapper
+   * @param {{position: number, rest: boolean}} where - From argvParameter
+   * @returns {RegExp} Pattern for a call of that wrapper
    */
-  function wrapperCallShape(name) {
+  function paramWrapperCallShape(name, where) {
     const escaped = name.replace(/\$/g, '\\$');
-    return new RegExp(`(?<![\\w$.])${escaped}\\s*\\(\\s*['"\`](init|clone)(\\s|['"\`])`);
+    const leading = `(?:\\s*${CALL_ARG}\\s*,)`.repeat(where.position);
+    const sub = where.rest
+      ? `\\s*['"\`](init|clone)(\\s|['"\`])`
+      : `\\s*\\[\\s*['"\`](init|clone)['"\`]`;
+    return new RegExp(`(?<![\\w$.])${escaped}\\s*\\(${leading}${sub}`);
   }
 
   /**
    * Count the lines in a file that make a repository — `git init` or
    * `git clone` in any of the shapes above, or through a git wrapper the file
-   * defines by name — ignoring comments and test titles.
+   * defines by name, with or without leading arguments such as the
+   * directory — ignoring comments and test titles.
    *
    * @param {string} file - Absolute path
    * @returns {string[]} The offending lines, trimmed
@@ -191,12 +246,11 @@ describe('test/ — every `git init` and `git clone` goes through the helper (th
       .map((l) => l.trim())
       .filter((l) => !l.startsWith('//') && !l.startsWith('*') && !l.startsWith('/*'))
       .filter((l) => !/^(describe|it|test)\(/.test(l));
-    const wrappers = new Set();
-    for (const l of lines) {
-      const m = GIT_WRAPPER_DEF.exec(l);
-      if (m) wrappers.add(m[1]);
+    const shapes = [...SHAPES];
+    for (const m of lines.join('\n').matchAll(GIT_PARAM_WRAPPER_DEF)) {
+      const where = argvParameter(m[2] ?? m[4], m[5]);
+      if (where) shapes.push(paramWrapperCallShape(m[1] ?? m[3], where));
     }
-    const shapes = [...SHAPES, ...[...wrappers].map(wrapperCallShape)];
     return lines.filter((l) => shapes.some((re) => re.test(l)));
   }
 
@@ -293,6 +347,75 @@ describe('test/ — every `git init` and `git clone` goes through the helper (th
         "npm('init', '-y');",
         "mk('clone');",
         "helper.run('init');"
+      ];
+      fs.writeFileSync(f, [...definitions, ...ignored, ...matches, ...clean].join('\n'));
+      assert.deepEqual(gitInitInvocations(f), matches);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('the scanner sees a git wrapper that takes the directory first or an argv array, keyed on its definition', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-scan-'));
+    try {
+      const f = path.join(dir, 'x.js');
+      // Each wrapper is defined the way the suite defines them, the body's
+      // `return` on the line after the signature included.
+      const definitions = [
+        'function git(cwd, ...args) {',
+        "  return childProcess.execFileSync('git', args, {",
+        '    cwd, encoding: \'utf8\'',
+        '  });',
+        '}',
+        'function gitC(dir, ...args) {',
+        "  return execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' });",
+        '}',
+        'function gitA(cwd, args, env = {}) {',
+        "  return execFileSync('git', args, { cwd, env: { ...process.env, ...env } });",
+        '}',
+        "const g2 = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' });",
+        "const run = (args) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });",
+        // more than one spread: the rest parameter is not the first of them
+        "const runE = (...args) => execFileSync('git', ['-C', dir, ...extra, ...args], { cwd });",
+        'function gitE(dir, ...args) {',
+        "  return execFileSync('git', ['-C', dir, ...EXTRA_ARGS, ...args], { encoding: 'utf8' });",
+        '}',
+        // spreads nothing it was given, so it is not a call-through wrapper
+        "const runN = (...args) => execFileSync('git', [...EXTRA_ARGS], { cwd });",
+        "const npm = (cwd, ...a) => execFileSync('npm', a, { cwd });",
+        'const git2 = fakeGit({ status: \'\' });'
+      ];
+      const ignored = [
+        "// git(dir, 'init') is how this file used to make its repo",
+        "it('git(dir, [\\'clone\\']) makes a clone', () => {"
+      ];
+      const matches = [
+        "git(base, 'init', '-q', '--bare', '-b', 'main', origin);",
+        "git(root, 'clone', '-q', bare, a);",
+        "gitC(dir, 'init');",
+        "gitA(tmpDir, ['init', '-q', '--bare', bare]);",
+        "gitA(root, ['clone', '-q', src, dest]);",
+        "g2(path.join(root, 'w'), 'init', '-q');",
+        "run(['init', '-q', '-b', 'main']);",
+        "run(['clone', src, dest]);",
+        "runE('init', '-q', '-b', 'main');",
+        "runE('clone', src, dest);",
+        "gitE(dir, 'init', '--bare', origin);",
+        "gitE(root, 'clone', '-q', origin, a);"
+      ];
+      const clean = [
+        "git(dir, 'commit', '-q', '-m', 'init');",
+        "gitA(dir, ['commit', '-m', 'init']);",
+        "run(['commit', '-q', '-m', 'init']);",
+        "run(['config', 'user.name', 'init']);",
+        "mk(dir, 'clone');",
+        "npm(dir, 'init', '-y');",
+        "git2(dir, 'init');",
+        "helper.run(['init']);",
+        "other.git(dir, 'init');",
+        "runE('commit', '-q', '-m', 'init');",
+        "gitE(dir, 'status');",
+        "runN('init');"
       ];
       fs.writeFileSync(f, [...definitions, ...ignored, ...matches, ...clean].join('\n'));
       assert.deepEqual(gitInitInvocations(f), matches);
