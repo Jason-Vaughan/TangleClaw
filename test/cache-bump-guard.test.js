@@ -23,6 +23,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { initRepo } = require('./_temp-repo');
 
 const guard = require('../scripts/cache-bump-guard.js');
 
@@ -336,7 +337,7 @@ describe('cache-bump-guard: the CLI over a real git repository', () => {
   function makeRepo(edit, seed) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cache-bump-guard-'));
     const run = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe', env: GIT_ENV });
-    run('init', '-q', '-b', 'main');
+    initRepo(dir, ['-b', 'main'], { env: GIT_ENV });
     run('config', 'user.email', 'guard@test.invalid');
     run('config', 'user.name', 'guard');
     fs.mkdirSync(path.join(dir, 'public'));
