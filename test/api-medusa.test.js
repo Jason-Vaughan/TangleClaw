@@ -26,6 +26,42 @@ const OPEN = 1;
 const CONNECTING = 0;
 const CLOSED = 3;
 
+/**
+ * Bind a TCP server on loopback, resolving to the server or to null when the
+ * port is taken.
+ * @param {number} port - Port to bind; 0 lets the OS choose.
+ * @returns {Promise<import('node:net').Server|null>}
+ */
+function _bindLoopback(port) {
+  const net = require('node:net');
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once('error', () => resolve(null));
+    server.listen(port, '127.0.0.1', () => resolve(server));
+  });
+}
+
+/**
+ * Find an HTTP port that nothing is listening on, and whose WS neighbour
+ * (port + 1, where the Bridge serves its WebSocket) is free too. Both are held
+ * at once and then released, so the pair is free at the moment it is read. A
+ * fixed number cannot promise that: it sits in the ephemeral range, where any
+ * process in a parallel run may be handed it.
+ * @returns {Promise<number>} The HTTP port of a free pair.
+ */
+async function _freeBridgePortPair() {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const httpSide = await _bindLoopback(0);
+    if (!httpSide) continue;
+    const port = httpSide.address().port;
+    const wsSide = port < 65535 ? await _bindLoopback(port + 1) : null;
+    if (wsSide) await new Promise((resolve) => wsSide.close(resolve));
+    await new Promise((resolve) => httpSide.close(resolve));
+    if (wsSide) return port;
+  }
+  throw new Error('no free loopback port pair after 20 attempts');
+}
+
 /** Minimal fake WebSocket matching what MedusaListener drives (test seam). */
 class FakeWS {
   /** @param {string} url - Requested URL. */
@@ -781,7 +817,7 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
     // The operator decision (2026-09-08): a retrying listener registers by itself
     // once the Bridge appears, and a refused toggle starts nothing to retry. What
     // the preflight buys is the diagnosis at the moment of the click, not a veto.
-    medusa._setBridgeHttpUrl('http://127.0.0.1:59991'); // nothing is listening there
+    medusa._setBridgeHttpUrl(`http://127.0.0.1:${await _freeBridgePortPair()}`); // nothing is listening there
     try {
       const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: true }, dashboard());
       assert.equal(status, 200, 'the toggle must not refuse');
