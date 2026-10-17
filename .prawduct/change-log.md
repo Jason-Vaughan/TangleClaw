@@ -51,6 +51,20 @@ v5.34.0 Wave 4 chunk W4-B2, its one build chunk. Branch `fix/w4b2-signed-in-oper
 
 **Tests.** New `test/signed-in-operator-routes.test.js`: every class A route refused under `open` (both shapes, 403) and `fallback` (both shapes, 409), with the whole store (every table, the global rules, the scratch home's files) unchanged; the same requests succeed for a signed-in operator under `armed`; a valid binding plus a browser shape is refused; a session's own proposal, an authority's own release and a port lease are unchanged; the narrowing direction (override off, role revoke, HOLD, STOP, member removal, an ordinary setting, a rename) still needs no sign-in. `test/launch-binding-routes.test.js` gains a `describe` that `deepEqual`s the route table's marked routes to a reviewed list.
 
+**Critic (cumulative, at `ba27cc06`).** 0 blocking.
+
+**rev-20261017T030512Z-9340fa32** — scope `w4b2-signed-in-operator-routes`, 2026-10-17T03:07:47Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | accepted | The host full suite runs once on the final head in the Integrator's serialized slot after Architect pre-suite acceptance (rule 264.4); the 48-file narrow run (1539/1539) covers every file this change touches, and suite evidence is recorded then. |
+| R-2 | warning | fixed-unreviewed | fixed in `docs/configuration-reference.md` |
+| R-3 | note | accepted | public/ui.js is locked to the exact design B hunks (charter v2.18, addendum A rev 7, Architect A162); the branch is unreachable from the recovery panel now and stays correct if the offer ever answers loginInForce false with the control offered. Prune with the D3 landing-page chunk (owner TC-Lane-B). |
+| R-4 | note | accepted | Documented in _requireSignedInOperator's JSDoc; refusal's only user is the launch-isolation PUT pair, whose 403 in fallback is the Architect-ruled KEEP exception (A155). A second option for one caller would add a knob no other route uses. |
+| R-5 | note | accepted | #2378 is OPEN on GitHub (gh issue view, just now); the backlog cache was synced. The cache keys open items it has fetched since its window; the citation is correct. |
+
+**5 findings** (2 warning, 3 note) — accepted: 4, fixed-unreviewed: 1.
+
 ## 2026-10-17 — #2184, #2200 (refs): the READY-wait test measures from the launch's recorded start; failures name their cause
 
 <!-- prawduct: type=bugfix | scope=w4a2-load-determinism -->
