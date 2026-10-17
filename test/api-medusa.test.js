@@ -1677,7 +1677,7 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
       assert.equal(data.local, true);
       assert.equal(data.reason, 'not-observed');
       assert.equal(data.meaning, require('../lib/medusa-wake').PEER_REASON_MEANINGS['not-observed'],
-        'the route carries the declared meaning beside the code (R-7)');
+        'the route carries the declared meaning beside the code');
       assert.equal(data.observedAt, null);
       assert.equal(typeof data.monitorRunning, 'boolean');
     });

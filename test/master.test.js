@@ -1223,7 +1223,7 @@ describe('readMasterGuardPosture — a degraded guard is visible (#755 chunk 3, 
       'and the WORSE of the two findings is the one reported');
   });
 
-  it('a guard that exists but is no longer WIRED is reported (R-1)', () => {
+  it('a guard that exists but is no longer WIRED is reported', () => {
     // Presence was the whole of this check when it shipped, and presence is the
     // weakest of the three ways the boundary goes away. Claude Code only invokes
     // the script because `.claude/settings.json` registers it as a PreToolUse
@@ -1268,7 +1268,7 @@ describe('readMasterGuardPosture — a degraded guard is visible (#755 chunk 3, 
     }
   });
 
-  it('a guard whose SOURCE has been altered is reported (R-1)', () => {
+  it('a guard whose SOURCE has been altered is reported', () => {
     // Blanking the script is the cheap tamper: it stays present, stays wired,
     // and decides nothing. Byte-comparing against what this version generates
     // catches that and every other edit.
@@ -2019,7 +2019,7 @@ describe('access level — the guard reads it per invocation (#755)', () => {
     }
   });
 
-  it('suggest refuses TangleClaw\'s OWN config — the level really lives there (R-2)', () => {
+  it('suggest refuses TangleClaw\'s OWN config — the level really lives there', () => {
     // The other control-surface entries all sit inside the master home. The
     // AUTHORITATIVE copy of the level does not: `~/.tangleclaw/config.json` is
     // the home's sibling, and every ensure copies `master.accessLevel` out of it
@@ -2073,7 +2073,7 @@ describe('access level — the guard reads it per invocation (#755)', () => {
     }
   });
 
-  it('a dangling DIRECTORY link inside the carve-out is refused, like the file one (R-3)', () => {
+  it('a dangling DIRECTORY link inside the carve-out is refused, like the file one', () => {
     // Chunk 2 replaced `existsSync` with `lstat` for LEAF-ness because
     // `existsSync` follows links and answers false for a dangling one. The
     // ancestor climb kept `existsSync`, so the directory-shaped variant of the
