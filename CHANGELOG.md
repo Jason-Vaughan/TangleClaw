@@ -23,6 +23,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **A wake nudge stuck in an Antigravity composer is cleared and resent instead of escalating.** agy hides `? for shortcuts` while its composer holds text, so the wake gate refused its own unsubmitted nudge until it escalated, and a nudge wrapped at a `>` was not recognised. The excuse holds only for the exact nudge with no dialog in view (#2358).
+- **A launch blocker can no longer stall a launch, a status poll or the card** (#2204, #2194, #2196). A failed store write is logged and the pane decides, so a launch still records a withheld prime. A status read no longer sleeps 250 ms on a half-drawn dialog. The project card clears a dialog answered in the pane.
 - A session's stored launch blocker that cannot be read (not JSON, or no `code`) is now logged once per session and value, with its length but never its contents, instead of reading as "no blocker" silently (#2201).
 - **The host check no longer prints raw config or command values, or error messages.** `ingressMode`, the topology marker, Tailscale state and error codes pass through closed sets, and an unexpected value prints fixed safe fallback text, never the value itself. `--reveal` shows a failed row's error class, never its message. (#1380, #2142)
 - **The host check prints an error code only if it is a known one.** `node scripts/host-check.js` no longer passes an unlisted error code into a reason, the `--reveal` diagnostic or its failure line, however code-like it is spelled; such errors read `internal-error` or `lookup-failed`. Normal output is unchanged.
@@ -34,6 +36,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- The `sendKeys`/`sendRawKey` tmux tests wait for bash's prompt and assert on output lines, so a loaded host no longer scores tty echo (#2447).
+- Antigravity’s profile now records that `? for shortcuts` disappears while its composer holds text; the wake gate permits only its exact stranded nudge with an empty hint slot (#2358).
 - The #812 tmux draft-text test now waits for bash's prompt and checks what ran, so a loaded host no longer fails it (#2152). The last 19 test files that made git repos on their own now use the shared temp-repo helpers, and the guard catches the wrapper shapes they used (#831).
 - The startup-dialog classifier reads a pane once: `detect`, `assessBoot` and `classify` share one internal reading, and every dialog's last marker row comes from a single pass. `_plain` spells its non-breaking space as an escape, and a source guard keeps it that way (#2202, #2203).
 - `docs/releases/v5.33.1-status.md` now says what is true after the release: v5.33.1 is tagged, published and running on the live install, with the backups and recovery evidence of the deploy. Two checks stay owed: the #2403 fix's own boot case (the Master survived the restart) and reachability from off the host.

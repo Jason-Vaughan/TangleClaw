@@ -35,6 +35,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-17 — W7-REC: the v5.34.0 Wave 7 combined records
+
+<!-- prawduct: type=chore | scope=w7-rec-records -->
+
+v5.34.0 records chunk W7-REC (charter v2.28 §3). Branch `docs/w7-rec-records` from `origin/main` `40897a65`, after W7-A1 PR #2454 (`81532b76`) and W7-B1 PR #2455 (`40897a65`) merged. The Integrator authors this records-only PR under the charter's narrow records exception.
+
+**What changed.** `CHANGELOG.md` `[Unreleased]` receives the reviewed PR fragments: #2358 and #2204/#2194/#2196 under Fixed, #2447 under Internal, plus the `data/engines/antigravity.json` `idleMarker.source` clarification omitted from A's change log. Each entry stays under 400 UTF-8 bytes; existing entries are unchanged. `FEATURES.md` names the Antigravity own-nudge recovery and live launch-blocker reconcile, and updates the Antigravity engine profile description. The archive dry-run on this base reports 0 entries to move (`live_bytes_before: 28682`), so `.prawduct/change-log-archive/2026-10.md` stays unchanged.
+
+**Source and limits.** The product behavior comes from merged PR #2454 and #2455 and their bodies. A's real Antigravity postdeploy check remains owed; B's no-poll stale-blocker residual remains #2451. This records PR does not claim either live check, release, tag, version bump or deploy. Wave 7 records require current-head source-checked Observer acceptance, exact-head Architect acceptance, green head/main CI and INT final checks.
+
 ## 2026-10-17 — #2204, #2194, #2196: a stored launch blocker is written safely, read without sleeping, and kept current on the card
 
 <!-- prawduct: type=bugfix | scope=w7b1-launch-blocker-status-reconcile -->
