@@ -29,8 +29,8 @@ containment.
 
 ## Context
 
-The A123 decisions are implemented across the wake, launch and engine-profile code, but until now
-the ruling itself existed only outside this repository: in an Architect page and in a gitignored
+The A123 decisions shape the wake, launch and engine-profile code, but until now the ruling itself
+existed only outside this repository: in an Architect page and in a gitignored
 probe file. A reader of the code could see each decision's effect without finding the decision, its
 order, or the limits it set. This ADR puts the record in `docs/adr/`, as the 2026-10-14 owner
 comment on #2059 asked. It changes no behavior, and the remaining wake work stays open on #2059.
