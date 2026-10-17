@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-17 — #2378 (refs): operator routes that grant or approve authority refuse an operator who is not signed in
+
+<!-- prawduct: type=bugfix | scope=w4b2-signed-in-operator-routes -->
+
+v5.34.0 Wave 4 chunk W4-B2, its one build chunk. Branch `fix/w4b2-signed-in-operator-routes` from `231a555b`. Refs #2378, which stays OPEN (the landing-page notice and a separately tracked finding remain). Plan: `.tangleclaw/plans/build-plan-w4b2-signed-in-operator-routes-redacted.md` (rev 3 rebound, sha256 `40515e21…df2e4a`; charter v2.15, sha256 `5367d7aa…e81ee32`; Architect A154 accepted the plan and the five-file lock; the direct Operator transcript verification is A147, steps 2486/2526). Exactly the 5 locked files.
+
+**Why.** With no login in force (`open`, or `fallback` behind Caddy's password) the operator is recognised by a request's shape (a browser's `Origin`/`Sec-Fetch-Site`, or `x-tangleclaw-client: dashboard`), which any process on the host can send, a project session included. The operator-only routes that grant or approve authority over sessions therefore did not keep a session from granting itself something on a default install.
+
+**What.** A route option, `signedInOperator: { action }`, enforced in the dispatcher right after the launch-binding guard admits the request, and only when it admitted the caller as the operator: a project, the Project Master or a service token never meets it. `_requireSignedInOperator` (generalised from the launch-isolation override's helper) refuses an operator with no signed-in session: `open` → `403 LOGIN_GATE_REQUIRED` with a message naming the action and the way through (turn the login on, sign in, send again); `fallback` → `409 GATE_FALLBACK`. Each refusal is logged at warn with `code`, `method`, `path`, `gateState`. Twenty routes carry the option (session rules' six operator routes, the three global/Master rule routes, learning tier, coordinator role grant, control release and close, merge-queue create and its three operator decisions, the startup prompt, shared-doc registration, adding a group member). `PATCH /api/projects/:name` asks in its handler when the body names `launchSequence.recoveryMode`, whichever branch admitted it: a rename that also names the mode is refused too. `controlRoute`, `mergeQueueRoute` and `checkWatchRoute` pass registration options through. The two launch-isolation override PUTs move onto the option with their own refusal, kept byte-identical (status, code, message and log) and answered 403 in `fallback` as before, a bounded exception ruled KEEP by the Integrator and confirmed by Architect A155.
+
+**Tests.** New `test/signed-in-operator-routes.test.js`: every class A route refused under `open` (both shapes, 403) and `fallback` (both shapes, 409), with the whole store (every table, the global rules, the scratch home's files) unchanged; the same requests succeed for a signed-in operator under `armed`; a valid binding plus a browser shape is refused; a session's own proposal, an authority's own release and a port lease are unchanged; the narrowing direction (override off, role revoke, HOLD, STOP, member removal, an ordinary setting, a rename) still needs no sign-in. `test/launch-binding-routes.test.js` gains a `describe` that `deepEqual`s the route table's marked routes to a reviewed list. Existing tests are untouched.
+
 ## 2026-10-17 — #2184, #2200 (refs): the READY-wait test measures from the launch's recorded start; failures name their cause
 
 <!-- prawduct: type=bugfix | scope=w4a2-load-determinism -->

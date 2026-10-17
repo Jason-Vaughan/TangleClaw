@@ -783,6 +783,9 @@ const routes = [];
  * @param {Function} handler - (req, res, params, body) => void
  * @param {object} [options] - Optional route config
  * @param {number} [options.maxBodySize] - Override MAX_BODY_SIZE for this route
+ * @param {{action: string, logLine?: string, refusal?: string}} [options.signedInOperator] - The route
+ *   grants or approves authority over sessions, so the operator must be signed in: the dispatcher
+ *   refuses an operator admitted by shape alone before the handler runs (`_requireSignedInOperator`)
  */
 function route(method, pattern, handler, options) {
   const paramNames = [];
@@ -1472,7 +1475,7 @@ route('POST', '/api/master/rules/restore-defaults', (req, res) => {
   if (!operatorProjectCaller(req, res, 'restore the Project Master\'s default rules')) return;
   const rules = master.restoreDefaultMasterRules();
   jsonResponse(res, 200, { ok: true, rules });
-});
+}, { signedInOperator: { action: 'restore the Project Master\'s default rules' } });
 
 // POST /api/server/restart — kick the TC server via the platform's
 // process manager (#235). 202 Accepted is sent BEFORE the exec so the
@@ -2748,6 +2751,42 @@ function _refuseDuringFallback(res, action) {
   errorResponse(res, 409, `TangleClaw's login is stood down behind Caddy's password (fallback), so it cannot ${action} `
     + 'right now. Fix the login, then run node scripts/gate-fallback.js --undo at a terminal on the machine.',
   'GATE_FALLBACK');
+}
+
+/**
+ * Admit only a signed-in operator to a route that grants or approves authority
+ * over sessions (#2378). The operator checks that guard such routes admit,
+ * while no login is in force (`open`, `fallback`), by the request's shape: a browser's headers or
+ * the dashboard's marker, which any process on the host can send, a project
+ * session included. That cannot authorize a session to be granted something,
+ * so such a route asks for the one thing a shape cannot carry: a session the
+ * login gate issued. Called by the dispatcher for a route registered with
+ * `signedInOperator`, and by a handler for a branch of one that is not wholly
+ * such a route; in both, only once the caller has been admitted as the
+ * operator, so a project or the Project Master never meets it.
+ * @param {http.IncomingMessage} req - The request
+ * @param {http.ServerResponse} res - The response, written only on refusal
+ * @param {{action: string, logLine?: string, refusal?: string}} demand - `action` is
+ *   what was asked, as a verb phrase (`grant a coordinator role`). `refusal`, where a
+ *   route shipped its own, replaces the 403's message and is answered in `fallback`
+ *   too; `logLine` replaces the warn line.
+ * @returns {boolean} true when the request carries the operator's signed-in session
+ */
+function _requireSignedInOperator(req, res, demand) {
+  if (req.tcSession) return true;
+  const stoodDownBehindCaddy = req.tcGateState === authGate.GATE_STATES.FALLBACK && !demand.refusal;
+  const code = stoodDownBehindCaddy ? 'GATE_FALLBACK' : 'LOGIN_GATE_REQUIRED';
+  log.warn(demand.logLine || `A request to ${demand.action} was refused: no signed-in operator`, {
+    code, method: req.method, path: reqUrl(req).pathname, gateState: req.tcGateState || null
+  });
+  if (stoodDownBehindCaddy) {
+    _refuseDuringFallback(res, demand.action);
+    return false;
+  }
+  errorResponse(res, 403, demand.refusal || `Only a signed-in operator can ${demand.action}, and this request `
+    + 'carries no sign-in: with no login in force nothing would establish that the sender is the operator. Turn '
+    + 'TangleClaw\'s login on, sign in, and send the request again. Nothing was changed.', 'LOGIN_GATE_REQUIRED');
+  return false;
 }
 
 /**
@@ -4454,7 +4493,7 @@ route('PUT', '/api/rules/global', (req, res, _params, body) => {
   }
   store.globalRules.save(body.content);
   jsonResponse(res, 200, { ok: true });
-}, { maxBodySize: 256 * 1024 });
+}, { maxBodySize: 256 * 1024, signedInOperator: { action: 'change the global rules' } });
 
 // POST /api/rules/global/reset
 route('POST', '/api/rules/global/reset', (req, res) => {
@@ -4463,7 +4502,7 @@ route('POST', '/api/rules/global/reset', (req, res) => {
   if (!operatorProjectCaller(req, res, 'reset the global rules')) return;
   const content = store.globalRules.reset();
   jsonResponse(res, 200, { content });
-});
+}, { signedInOperator: { action: 'reset the global rules' } });
 
 // ── Session Rules API (#347/D1a) ──
 // Durable operator/AI-authored per-project behavioral directives. 'startup'
@@ -5030,7 +5069,7 @@ route('GET', '/api/coordinator-roles', (req, res) => {
 route('POST', '/api/coordinator-roles', (req, res, _params, body) => {
   const result = coordinatorRotation.grantRole({ caller: resolveControlCaller(req), body });
   return jsonResponse(res, result.status, result.body);
-});
+}, { signedInOperator: { action: 'grant a coordinator role' } });
 
 route('POST', '/api/coordinator-roles/revoke', (req, res, _params, body) => {
   const result = coordinatorRotation.revokeRole({ caller: resolveControlCaller(req), body });
@@ -5666,28 +5705,18 @@ function _launchIsolationOverrideProject(res, segment) {
   return projectId;
 }
 
-/**
- * Admit only a signed-in operator to turning a launch-isolation override on.
- * `operatorProjectCaller` has already admitted the caller, but while no login
- * is enforced it admits by the request's shape (a browser's headers, the
- * dashboard's marker), which any process on the host can send. That is not
- * authorization to allow an unisolated launch, so turning one on asks for the
- * one thing a shape cannot carry: a session the login gate issued.
- * @param {http.IncomingMessage} req - The request
- * @param {http.ServerResponse} res - The response, written only on refusal
- * @returns {boolean} true when the request carries the operator's signed-in session
- */
-function _signedInForIsolationOverride(req, res) {
-  if (req.tcSession) return true;
-  log.warn('Turning a launch-isolation override on was refused: no signed-in operator', {
-    code: 'LOGIN_GATE_REQUIRED', method: req.method, path: reqUrl(req).pathname, gateState: req.tcGateState || null
-  });
-  errorResponse(res, 403, 'A launch-isolation override can be turned on only by a signed-in operator, and this request '
+// Turning a launch-isolation override on allows a launch that may borrow
+// another project's identity, so it asks for a signed-in operator (see
+// `_requireSignedInOperator`). These routes shipped with their own refusal,
+// answered 403 in every no-login state, fallback included, and they keep it.
+const ISOLATION_OVERRIDE_SIGN_IN = Object.freeze({
+  action: 'turn a launch-isolation override on',
+  logLine: 'Turning a launch-isolation override on was refused: no signed-in operator',
+  refusal: 'A launch-isolation override can be turned on only by a signed-in operator, and this request '
     + 'carries no sign-in: with no login in force nothing would establish that the sender is the operator. Turn '
     + 'TangleClaw\'s login on, sign in, and turn the override on again. Nothing was changed. Reading the overrides '
-    + 'and turning one off need no sign-in.', 'LOGIN_GATE_REQUIRED');
-  return false;
-}
+    + 'and turning one off need no sign-in.'
+});
 
 // The launch-isolation overrides (#2229): the operator's allowance to start an
 // engine that could not be shown to be kept off its shared background process,
@@ -5709,9 +5738,8 @@ route('GET', '/api/launch/isolation-overrides', (req, res) => {
 
 route('PUT', '/api/launch/isolation-overrides/install', (req, res) => {
   if (!operatorProjectCaller(req, res, 'turn on the install-wide launch-isolation override')) return;
-  if (!_signedInForIsolationOverride(req, res)) return;
   _writeLaunchIsolationOverride(req, res, null, true);
-});
+}, { signedInOperator: ISOLATION_OVERRIDE_SIGN_IN });
 
 route('DELETE', '/api/launch/isolation-overrides/install', (req, res) => {
   if (!operatorProjectCaller(req, res, 'turn off the install-wide launch-isolation override')) return;
@@ -5720,11 +5748,10 @@ route('DELETE', '/api/launch/isolation-overrides/install', (req, res) => {
 
 route('PUT', '/api/launch/isolation-overrides/projects/:id', (req, res, params) => {
   if (!operatorProjectCaller(req, res, 'turn on a project\'s launch-isolation override')) return;
-  if (!_signedInForIsolationOverride(req, res)) return;
   const projectId = _launchIsolationOverrideProject(res, params.id);
   if (projectId === null) return;
   _writeLaunchIsolationOverride(req, res, projectId, true);
-});
+}, { signedInOperator: ISOLATION_OVERRIDE_SIGN_IN });
 
 route('DELETE', '/api/launch/isolation-overrides/projects/:id', (req, res, params) => {
   if (!operatorProjectCaller(req, res, 'turn off a project\'s launch-isolation override')) return;
@@ -6095,7 +6122,7 @@ route('POST', '/api/session-rules', (req, res, _params, body) => {
     }
     throw err;
   }
-}, { maxBodySize: 256 * 1024 });
+}, { maxBodySize: 256 * 1024, signedInOperator: { action: 'add a session rule as the operator' } });
 
 /**
  * Eyes-open gate for the Project Master's baseline Hard rules: weakening a
@@ -6160,7 +6187,7 @@ route('PUT', '/api/session-rules/:id', (req, res, params, body) => {
     }
     throw err;
   }
-}, { maxBodySize: 256 * 1024 });
+}, { maxBodySize: 256 * 1024, signedInOperator: { action: 'change a session rule' } });
 
 // DELETE /api/session-rules/:id — ?confirm=true required for shipped Master
 // baseline rules (see refuseUnconfirmedBaselineEdit)
@@ -6191,7 +6218,7 @@ route('DELETE', '/api/session-rules/:id', (req, res, params) => {
     }
     throw err;
   }
-});
+}, { signedInOperator: { action: 'remove a session rule' } });
 
 // ── Session Rules self-improvement (D1b) ──
 // Versioning + rollback, learnings→rule promotion, and the non-authoritative
@@ -6242,7 +6269,7 @@ route('POST', '/api/session-rules/promote', (req, res, _params, body) => {
     if (err.code === 'INVALID_PROJECT_ID') return errorResponse(res, 400, err.message, 'INVALID_PROJECT_ID');
     throw err;
   }
-}, { maxBodySize: 256 * 1024 });
+}, { maxBodySize: 256 * 1024, signedInOperator: { action: 'promote a session rule' } });
 
 // PUT /api/session-rules/:id/status — the rule lifecycle's one door (#569,
 // #1696, #1709). Approve ('active') or decline ('rejected') a proposal;
@@ -6341,7 +6368,7 @@ route('PUT', '/api/session-rules/:id/status', (req, res, params, body) => {
     }
     throw err;
   }
-}, { maxBodySize: 256 * 1024 });
+}, { maxBodySize: 256 * 1024, signedInOperator: { action: 'change a session rule\'s status' } });
 
 // ── Learnings (#569) ──
 // Until now there were no learnings routes at all, so the tier a learning sits
@@ -6377,7 +6404,7 @@ route('PUT', '/api/learnings/:id/tier', (req, res, params, body) => {
     if (err.code === 'BAD_REQUEST') return errorResponse(res, 400, err.message, 'BAD_REQUEST');
     throw err;
   }
-}, { maxBodySize: 64 * 1024 });
+}, { maxBodySize: 64 * 1024, signedInOperator: { action: 'change a learning\'s tier' } });
 
 // POST /api/session-rules/conflicts — non-authoritative conflict-candidate signal
 route('POST', '/api/session-rules/conflicts', (_req, res, _params, body) => {
@@ -6460,7 +6487,7 @@ route('POST', '/api/session-rules/:id/restore', (req, res, params, body) => {
     }
     throw err;
   }
-});
+}, { signedInOperator: { action: 'restore a session rule' } });
 
 // GET /api/system
 route('GET', '/api/system', (_req, res) => {
@@ -7394,6 +7421,12 @@ route('PATCH', '/api/projects/:name', async (req, res, params, body) => {
   else if (choosingRecoveryMode) admitted = operatorProjectCaller(req, res, 'choose a project\'s launch recovery mode');
   else admitted = ownProjectCaller(req, res, params.name, projects.getProjectRow);
   if (!admitted) return;
+  // Choosing the mode is granting a session that loosening, so the operator
+  // must be signed in (#2378). Asked on presence whichever branch admitted the
+  // request: a rename that also names the mode carries the same choice. Both
+  // such branches admit the operator alone.
+  if (choosingRecoveryMode
+    && !_requireSignedInOperator(req, res, { action: 'choose a project\'s launch recovery mode' })) return;
   if (!body || typeof body !== 'object') {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
@@ -8365,9 +8398,10 @@ medusa.setArrivalObserver(({ sessionKey, workspaceId, message }) => {
  * @param {string} pattern - Route pattern
  * @param {(req: object, params: object, body: object) => {status: number, body: object, notify: (object|null)}} fn - Handler
  * @param {string|null} [gatedAction] - The coordinator epoch gate action this route is (#2032), or null
+ * @param {object} [options] - The route's registration options, passed to `route`
  * @returns {void}
  */
-function controlRoute(method, pattern, fn, gatedAction = null) {
+function controlRoute(method, pattern, fn, gatedAction = null, options) {
   route(method, pattern, (req, res, params, body) => {
     // #2032: a coordinator bound to a rotation epoch issues control only from
     // its bound replacement thread; while reconciling, only the ack.
@@ -8384,16 +8418,18 @@ function controlRoute(method, pattern, fn, gatedAction = null) {
     }
     jsonResponse(res, out.status, out.body);
     if (out.notify) controlApi.notify(out.notify);
-  });
+  }, options);
 }
 
 controlRoute('GET', '/api/control/assignments', (req) => controlApi.listOpen(req));
 controlRoute('POST', '/api/control/assignments', (req, _params, body) => controlApi.createAssignment(req, body), 'control-mutate');
 controlRoute('GET', '/api/control/assignments/:id', (req, params) => controlApi.getStatus(req, params));
 controlRoute('POST', '/api/control/assignments/:id/hold', (req, params, body) => controlApi.holdAssignment(req, params, body), 'control-mutate');
-controlRoute('POST', '/api/control/assignments/:id/release', (req, params, body) => controlApi.releaseAssignment(req, params, body), 'control-mutate');
+controlRoute('POST', '/api/control/assignments/:id/release', (req, params, body) => controlApi.releaseAssignment(req, params, body), 'control-mutate',
+  { signedInOperator: { action: 'release a HOLD or STOP' } });
 controlRoute('POST', '/api/control/assignments/:id/stop', (req, params, body) => controlApi.stopAssignment(req, params, body), 'control-mutate');
-controlRoute('POST', '/api/control/assignments/:id/close', (req, params, body) => controlApi.closeAssignment(req, params, body), 'control-mutate');
+controlRoute('POST', '/api/control/assignments/:id/close', (req, params, body) => controlApi.closeAssignment(req, params, body), 'control-mutate',
+  { signedInOperator: { action: 'close a control assignment' } });
 controlRoute('POST', '/api/control/assignments/:id/ack', (req, params, body) => controlApi.ackAssignment(req, params, body), 'control-ack');
 controlRoute('POST', '/api/control/assignments/:id/exchange-closed', (req, params, body) => controlApi.closeExchange(req, params, body), 'control-mutate');
 controlRoute('GET', '/api/control/mine', (req) => controlApi.mine(req));
@@ -8408,9 +8444,10 @@ controlRoute('GET', '/api/control/check', (req) => controlApi.check(parseQuery(r
  * @param {string} method - HTTP method
  * @param {string} pattern - Route pattern
  * @param {(req: object, params: object, body: object) => ({status: number, body: object}|Promise<{status: number, body: object}>)} fn - Handler
+ * @param {object} [options] - The route's registration options, passed to `route`
  * @returns {void}
  */
-function mergeQueueRoute(method, pattern, fn) {
+function mergeQueueRoute(method, pattern, fn, options) {
   route(method, pattern, async (req, res, params, body) => {
     let out;
     try {
@@ -8423,18 +8460,22 @@ function mergeQueueRoute(method, pattern, fn) {
       return errorResponse(res, 503, 'The merge queue could not answer. Read the queue again before repeating the request.', 'MERGE_QUEUE_UNAVAILABLE');
     }
     jsonResponse(res, out.status, out.body);
-  });
+  }, options);
 }
 
-mergeQueueRoute('POST', '/api/merge-queue', (req, _params, body) => mergeQueueApi.createQueue(req, body));
+mergeQueueRoute('POST', '/api/merge-queue', (req, _params, body) => mergeQueueApi.createQueue(req, body),
+  { signedInOperator: { action: 'create a merge queue and name its owner' } });
 mergeQueueRoute('GET', '/api/merge-queue', (req) => mergeQueueApi.listQueues(req));
 mergeQueueRoute('GET', '/api/merge-queue/entries/:id', (req, params) => mergeQueueApi.getEntry(req, params));
 mergeQueueRoute('POST', '/api/merge-queue/entries', (req, _params, body) => mergeQueueApi.submit(req, body));
 mergeQueueRoute('POST', '/api/merge-queue/entries/:id/withdraw', (req, params, body) => mergeQueueApi.withdraw(req, params, body));
 mergeQueueRoute('POST', '/api/merge-queue/advance', (req, _params, body) => mergeQueueApi.advance(req, body));
-mergeQueueRoute('POST', '/api/merge-queue/:id/clear-halt', (req, params, body) => mergeQueueApi.clearHalt(req, params, body));
-mergeQueueRoute('POST', '/api/merge-queue/entries/:id/operator-gate', (req, params, body) => mergeQueueApi.recordOperatorGate(req, params, body));
-mergeQueueRoute('POST', '/api/merge-queue/entries/:id/settle-landing', (req, params, body) => mergeQueueApi.settleLanding(req, params, body));
+mergeQueueRoute('POST', '/api/merge-queue/:id/clear-halt', (req, params, body) => mergeQueueApi.clearHalt(req, params, body),
+  { signedInOperator: { action: 'clear a merge queue\'s halt' } });
+mergeQueueRoute('POST', '/api/merge-queue/entries/:id/operator-gate', (req, params, body) => mergeQueueApi.recordOperatorGate(req, params, body),
+  { signedInOperator: { action: 'record the operator\'s merge gate' } });
+mergeQueueRoute('POST', '/api/merge-queue/entries/:id/settle-landing', (req, params, body) => mergeQueueApi.settleLanding(req, params, body),
+  { signedInOperator: { action: 'settle a merge queue landing' } });
 // ── Check watches (#2323): register, read and cancel a watch on a named check ──
 //
 // The handlers live in lib/check-watch-api.js. Nothing here reads GitHub.
@@ -8444,9 +8485,10 @@ mergeQueueRoute('POST', '/api/merge-queue/entries/:id/settle-landing', (req, par
  * @param {string} method - HTTP method
  * @param {string} pattern - Route pattern
  * @param {(req: object, params: object, body: object) => ({status: number, body: object}|Promise<{status: number, body: object}>)} fn - Handler
+ * @param {object} [options] - The route's registration options, passed to `route`
  * @returns {void}
  */
-function checkWatchRoute(method, pattern, fn) {
+function checkWatchRoute(method, pattern, fn, options) {
   route(method, pattern, async (req, res, params, body) => {
     let out;
     try {
@@ -8459,7 +8501,7 @@ function checkWatchRoute(method, pattern, fn) {
       return errorResponse(res, 503, 'Check watches could not answer. Read the watches again before repeating the request.', 'CHECK_WATCH_UNAVAILABLE');
     }
     jsonResponse(res, out.status, out.body);
-  });
+  }, options);
 }
 
 checkWatchRoute('POST', '/api/tc/check-watches', (req, _params, body) => checkWatchApi.register(req, body));
@@ -9041,7 +9083,7 @@ route('PUT', '/api/startup-prompt', (req, res, _params, body) => {
   });
   log.info('Startup prompt updated', { revision: result.body.revision, clearance: proof.clearance, actor: proof.actor });
   jsonResponse(res, 200, result.body);
-}, { maxBodySize: 64 * 1024 });
+}, { maxBodySize: 64 * 1024, signedInOperator: { action: 'change the startup prompt' } });
 
 // POST /api/sessions/:project/startup-prompt/fire — fire the current prompt at
 // one exact launch. Body: {sessionId, sequenceId, expectedRevision,
@@ -10139,7 +10181,7 @@ route('POST', '/api/groups/:id/members', (req, res, params, body) => {
   }
   store.projectGroups.addMember(params.id, body.projectId);
   jsonResponse(res, 200, { ok: true, groupId: params.id, projectId: body.projectId });
-});
+}, { signedInOperator: { action: 'add a project to a group' } });
 
 // DELETE /api/groups/:id/members/:projectId
 route('DELETE', '/api/groups/:id/members/:projectId', (req, res, params) => {
@@ -10237,7 +10279,7 @@ route('PUT', '/api/shared-docs/:id', (req, res, params, body) => {
     }
     throw err;
   }
-});
+}, { signedInOperator: { action: 'change a shared document\'s registration' } });
 
 // POST /api/shared-docs/:id/notify
 route('POST', '/api/shared-docs/:id/notify', async (req, res, params) => {
@@ -12108,6 +12150,14 @@ async function handleRequest(req, res) {
         method, path: pathname, code: binding.code, reason: binding.reason
       });
       return errorResponse(res, binding.status, binding.message, binding.code, { reason: binding.reason });
+    }
+    // A route that grants or approves authority over sessions (#2378) admits the
+    // operator only signed in. Keyed on what admitted the request: a project,
+    // the Project Master or a service token never meets this check, so a
+    // session's own proposal or an authority's own release is unchanged.
+    if (matched.options.signedInOperator && binding.via === sharedDocsAccess.KINDS.OPERATOR
+      && !_requireSignedInOperator(req, res, matched.options.signedInOperator)) {
+      return;
     }
 
     try {
