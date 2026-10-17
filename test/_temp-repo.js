@@ -32,11 +32,8 @@
  * of the guard pinned two textual shapes and was green over four survivors; it
  * now pins the subcommand, not the syntax.)
  *
- * What the guard still cannot see: a subcommand held in a variable
- * (`git(dir, sub)`), a wrapper whose body does anything before
- * `return exec*('git', …)`, a wrapper imported from another module, and a call
- * split across lines. Those shapes are not in `test/` today; a new one belongs
- * in the guard's SHAPES list.
+ * The shapes it still cannot see are listed beside its SHAPES in
+ * `test/temp-repo.test.js`, the one place to extend when a new one appears.
  *
  * The one sanctioned exception is `test/git-template.test.js`'s end-to-end
  * case, which exists to prove the template mechanism works and sandboxes its
