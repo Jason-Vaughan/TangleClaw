@@ -774,7 +774,7 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
     const authGate = require('../lib/auth-gate');
 
     const MODE_FUNCTIONS = [
-      'function recoveryGatePhrase', 'function recoveryModeControlOffer', 'function projectRecoveryReadoutHtml',
+      'function recoveryGatePhrase', 'function recoveryModeControlOffer', 'function recoveryModeChoiceOffer', 'function projectRecoveryReadoutHtml',
       'function projectRecoveryControlHtml', 'function projectRecoveryNoticeHtml', 'function recoveryModeSaveOutcome',
       'function wireProjectRecoveryMode'
     ];

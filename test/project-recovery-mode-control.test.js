@@ -53,13 +53,14 @@ function lift(src, decl) {
 
 /**
  * The panel's decision functions, run as shipped.
- * @returns {{recoveryModeControlOffer: Function, recoveryModeSaveOutcome: Function}}
+ * @returns {{recoveryModeChoiceOffer: Function, recoveryModeSaveOutcome: Function}}
  */
 function panel() {
   const ctx = {};
   vm.createContext(ctx);
   vm.runInContext(`${lift(UI_SRC, 'const RECOVERY_MODE_READOUT')};\n`
-    + `${lift(UI_SRC, 'function recoveryModeControlOffer')}\n${lift(UI_SRC, 'function recoveryModeSaveOutcome')}`, ctx);
+    + `${lift(UI_SRC, 'function recoveryModeControlOffer')}\n${lift(UI_SRC, 'function recoveryModeChoiceOffer')}\n`
+    + `${lift(UI_SRC, 'function recoveryModeSaveOutcome')}`, ctx);
   return ctx;
 }
 
@@ -163,7 +164,7 @@ describe('the recovery-mode control against the real routes (#1937)', () => {
         const headers = await reach[state]();
         const me = json(await send('GET', '/api/auth/me', { headers }));
         assert.equal(me.gateState, state, 'the fixture must reach the state it is named for');
-        const offer = panel().recoveryModeControlOffer(me);
+        const offer = panel().recoveryModeChoiceOffer(me);
         const res = await save(project, 'advisory', headers);
         assert.equal(offer.offered, res.statusCode === 200,
           `${state}: offered ${offer.offered}, and the route answered ${res.statusCode} ${res.body.slice(0, 120)}`);
@@ -179,7 +180,7 @@ describe('the recovery-mode control against the real routes (#1937)', () => {
       client.arm();
       const me = json(await send('GET', '/api/auth/me'));
       assert.equal(me.gateState, states.ARMED);
-      assert.equal(panel().recoveryModeControlOffer(me).offered, false);
+      assert.equal(panel().recoveryModeChoiceOffer(me).offered, false);
       const res = await save(project, 'advisory');
       assert.equal(res.statusCode, 401);
       assert.equal(store.projectRecoveryState.get(project.id), null);
@@ -191,7 +192,7 @@ describe('the recovery-mode control against the real routes (#1937)', () => {
         const { project, binding } = fixture.launchInRecovery(env, 'operator');
         const headers = await reach[state]();
         const me = json(await send('GET', '/api/auth/me', { headers }));
-        const offer = panel().recoveryModeControlOffer(me);
+        const offer = panel().recoveryModeChoiceOffer(me);
         // The page sends everything it could hold, the open install's page
         // token included, so a refusal is about who is asking and nothing else.
         const read = await send('POST', `/api/sessions/${encodeURIComponent(project.name)}/launch/reconciliation`, {
