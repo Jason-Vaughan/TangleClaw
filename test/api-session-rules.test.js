@@ -20,7 +20,24 @@ const { createServer } = require('../server');
 const { setLevel, setConsoleStream } = require('../lib/logger');
 const channel = require('../lib/session-rules-channel');
 const rulesRefresh = require('../lib/session-rules-refresh');
-const { operatorHeaders, bindProject, sendAs } = require('./_shared-docs-callers');
+const { bindProject, sendAs, operatorOf } = require('./_shared-docs-callers');
+
+// The operator routes that grant authority need a signed-in operator (#2378).
+// A suite that calls one turns the login on; this answers the operator's
+// signed-in session there, and the dashboard's own shape wherever the login
+// is still off, so every other request is sent exactly as before.
+const operators = new WeakMap();
+
+/**
+ * The headers the operator's browser sends to this server, in whatever state
+ * its login is in (see `operatorOf`).
+ * @param {import('node:http').Server} server - The listening test server
+ * @returns {Promise<Record<string, string>>}
+ */
+function operatorFor(server) {
+  if (!operators.has(server)) operators.set(server, operatorOf(server));
+  return operators.get(server)();
+}
 
 setLevel('error');
 
@@ -30,7 +47,8 @@ describe('api/session-rules (#347/D1a)', () => {
   let tmpDir;
   let projectId;
 
-  function request(method, urlPath, body) {
+  async function request(method, urlPath, body) {
+    const operatorWrite = await operatorFor(server);
     return new Promise((resolve, reject) => {
       const options = {
         hostname: '127.0.0.1',
@@ -40,7 +58,7 @@ describe('api/session-rules (#347/D1a)', () => {
         // These cases model the dashboard, so they are the operator's requests
         // (#2013 refuses an unnamed caller); caller classes are covered in
         // test/api-session-rules-authz.test.js.
-        headers: { 'Content-Type': 'application/json', ...operatorHeaders(server) }
+        headers: { 'Content-Type': 'application/json', ...operatorWrite }
       };
       const bodyStr = body ? JSON.stringify(body) : null;
       if (bodyStr) options.headers['Content-Length'] = Buffer.byteLength(bodyStr);
@@ -67,6 +85,10 @@ describe('api/session-rules (#347/D1a)', () => {
     const projPath = path.join(tmpDir, 'rules-proj');
     fs.mkdirSync(projPath, { recursive: true });
     projectId = store.projects.create({ name: 'rules-proj', path: projPath, engine: 'claude' }).id;
+    // This suite calls operator routes that grant authority over sessions,
+    // which need the operator signed in (#2378): the login is on, and
+    // `operatorFor` sends the operator's session.
+    store.config.save({ ...store.config.load(), authEnabled: true, basicAuthUser: null, basicAuthHash: null });
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', () => {
       port = server.address().port;

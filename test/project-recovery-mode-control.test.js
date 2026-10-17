@@ -221,13 +221,13 @@ describe('the recovery-mode control against the real routes (#1937)', () => {
     /**
      * What a save from the page is answered in each state, and the proof word
      * recorded where it is taken. `null` is a state whose save is refused.
-     * Who is admitted is not this change's to move: the statuses here are the
-     * ones the route answered before the proof word was kept.
+     * With no login in force (open, fallback) the save is refused: choosing
+     * the mode needs a signed-in operator (#2378).
      */
     const expected = {
-      [states.OPEN]: { status: 200, proof: 'open-install-unverified' },
+      [states.OPEN]: { status: 403, proof: null },
       [states.ARMED]: { status: 200, proof: 'operator-verified' },
-      [states.FALLBACK]: { status: 200, proof: 'open-install-unverified' },
+      [states.FALLBACK]: { status: 409, proof: null },
       [states.ACCOUNT_REQUIRED]: { status: 401, proof: null },
       [states.LOCKED]: { status: 401, proof: null },
       [states.UNREADABLE]: { status: 403, proof: null }
@@ -269,8 +269,18 @@ describe('the recovery-mode control against the real routes (#1937)', () => {
 
     it('the read the panel renders from carries the word', async () => {
       const project = makeProject();
-      assert.equal((await save(project, 'advisory')).statusCode, 200);
-      assert.equal((await readPanel(project)).projectRecoveryDecision.decidedBy, 'open-install-unverified');
+      const headers = await reach[states.ARMED]();
+      assert.equal((await save(project, 'advisory', headers)).statusCode, 200);
+      assert.equal((await readPanel(project, headers)).projectRecoveryDecision.decidedBy, 'operator-verified');
+    });
+
+    it('with no login in force the save is refused, and no word is recorded (#2378)', async () => {
+      const project = makeProject();
+      const res = await save(project, 'advisory');
+      assert.equal(res.statusCode, 403, res.body);
+      assert.equal(json(res).code, 'LOGIN_GATE_REQUIRED');
+      assert.equal(store.projectRecoveryState.get(project.id), null);
+      assert.deepEqual(decisionEvents(project), []);
     });
 
     it('the server log line carries the word', async () => {
@@ -278,20 +288,28 @@ describe('the recovery-mode control against the real routes (#1937)', () => {
       const lines = [];
       setLevel('info');
       setConsoleStream({ write: (line) => { lines.push(String(line)); return true; } });
+      const headers = await reach[states.ARMED]();
       try {
-        assert.equal((await save(project, 'advisory')).statusCode, 200);
+        assert.equal((await save(project, 'advisory', headers)).statusCode, 200);
       } finally {
         setConsoleStream(null);
         setLevel('error');
       }
       const decided = lines.filter((line) => line.includes('Launch recovery mode decided'));
       assert.equal(decided.length, 1, lines.join(''));
-      assert.match(decided[0], new RegExp(`project=${project.name} mode=advisory decidedBy=open-install-unverified`));
+      assert.match(decided[0], new RegExp(`project=${project.name} mode=advisory decidedBy=operator-verified`));
     });
 
     it('a decision made with the login off still reads unverified after the login is turned on', async () => {
       const project = makeProject();
-      assert.equal((await save(project, 'advisory')).statusCode, 200);
+      // Such a decision can no longer be made (#2378); one made before then
+      // is on record as the route recorded it, row and event.
+      const legacy = store.projectRecoveryState.recordDecision(project.id, 'advisory', 'open-install-unverified');
+      store.activity.log({
+        projectId: project.id,
+        eventType: 'project.recovery-mode-decided',
+        detail: { mode: 'advisory', pinnedMode: legacy.pinnedMode, decidedAt: legacy.pinnedAt, decidedBy: legacy.pinnedBy }
+      });
       const headers = await reach[states.ARMED]();
       assert.equal(json(await send('GET', '/api/auth/me', { headers })).gateState, states.ARMED,
         'the login is in force now');
@@ -314,14 +332,22 @@ describe('the recovery-mode control against the real routes (#1937)', () => {
   });
 
   describe('what a save changes, and what it leaves alone', () => {
+    let signedIn;
+
+    // Choosing the mode needs the operator signed in (#2378): each case here
+    // saves, and reads the panel, as the signed-in operator.
+    beforeEach(async () => {
+      signedIn = await reach[states.ARMED]();
+    });
+
     it('answers with the recorded mode, and the panel\'s next read shows the decision', async () => {
       const project = makeProject();
-      const res = await save(project, 'operator');
+      const res = await save(project, 'operator', signedIn);
       assert.equal(res.statusCode, 200, res.body);
       const told = panel().recoveryModeSaveOutcome('operator', json(res), { error: null, code: null });
       assert.equal(told.ok, true);
       assert.match(told.text, /^Recovery mode saved: operator-cleared\./);
-      const now = await readPanel(project);
+      const now = await readPanel(project, signedIn);
       assert.equal(now.projectRecoveryMode, 'operator');
       assert.equal(now.projectRecoverySource, 'pinned');
       assert.equal(now.projectRecoveryDecision.pinnedMode, 'operator');
@@ -331,12 +357,12 @@ describe('the recovery-mode control against the real routes (#1937)', () => {
     it('never changes a launch that already froze a mode: a held launch stays held, and the next one uses the choice', async () => {
       const { project, sequence } = fixture.launchInRecovery(env, 'operator');
       assert.equal(sequence.recoveryMode, 'operator');
-      assert.equal((await save(project, 'advisory')).statusCode, 200);
+      assert.equal((await save(project, 'advisory', signedIn)).statusCode, 200);
 
       const after = store.launchSequences.getBySession(sequence.sessionId);
       assert.equal(after.recovery, 'required', 'the launch is still held');
       assert.equal(after.recoveryMode, 'operator', 'and still in the mode it froze');
-      const now = await readPanel(project);
+      const now = await readPanel(project, signedIn);
       assert.equal(now.projectRecoveryMode, 'advisory', 'while the project reads advisory now');
       assert.equal(now.sequences[0].recoveryMode, 'operator', 'beside a row that still reports what its launch froze');
       const refused = launchSequence.ready({
@@ -356,9 +382,9 @@ describe('the recovery-mode control against the real routes (#1937)', () => {
       const conf = store.projectConfig.load(project.path) || {};
       conf.launchSequence = { ...(conf.launchSequence || {}), recoveryMode: 'bogus' };
       store.projectConfig.save(project.path, conf);
-      assert.equal((await readPanel(project)).projectRecoverySource, 'invalid');
-      assert.equal((await save(project, 'advisory')).statusCode, 200);
-      const now = await readPanel(project);
+      assert.equal((await readPanel(project, signedIn)).projectRecoverySource, 'invalid');
+      assert.equal((await save(project, 'advisory', signedIn)).statusCode, 200);
+      const now = await readPanel(project, signedIn);
       assert.equal(now.projectRecoverySource, 'chosen', 'the readout\'s promise that a save rewrites the value holds');
       assert.equal(now.projectRecoveryDiscrepancy, null);
     });
@@ -369,7 +395,7 @@ describe('the recovery-mode control against the real routes (#1937)', () => {
       store.projectRecoveryState.recordDecision = () => { throw new Error('database is locked'); };
       let res;
       try {
-        res = await save(project, 'advisory');
+        res = await save(project, 'advisory', signedIn);
       } finally {
         store.projectRecoveryState.recordDecision = real;
       }
@@ -387,7 +413,7 @@ describe('the recovery-mode control against the real routes (#1937)', () => {
       store.projectConfig.save = () => { throw new Error('disk full'); };
       let res;
       try {
-        res = await save(project, 'operator');
+        res = await save(project, 'operator', signedIn);
       } finally {
         store.projectConfig.save = real;
       }

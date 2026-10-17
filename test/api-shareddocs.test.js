@@ -8,8 +8,25 @@ const path = require('node:path');
 const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
-const { operatorHeaders } = require('./_shared-docs-callers');
+const { operatorOf } = require('./_shared-docs-callers');
 const { createServer, _sharedDocWatchers, _sharedDocDebounceTimers } = require('../server');
+
+// The operator routes that grant authority need a signed-in operator (#2378).
+// A suite that calls one turns the login on; this answers the operator's
+// signed-in session there, and the dashboard's own shape wherever the login
+// is still off, so every other request is sent exactly as before.
+const operators = new WeakMap();
+
+/**
+ * The headers the operator's browser sends to this server, in whatever state
+ * its login is in (see `operatorOf`).
+ * @param {import('node:http').Server} server - The listening test server
+ * @returns {Promise<Record<string, string>>}
+ */
+function operatorFor(server) {
+  if (!operators.has(server)) operators.set(server, operatorOf(server));
+  return operators.get(server)();
+}
 
 setLevel('error');
 
@@ -21,7 +38,8 @@ setLevel('error');
  * @param {object} [body]
  * @returns {Promise<{ status: number, data: object }>}
  */
-function request(server, method, urlPath, body) {
+async function request(server, method, urlPath, body) {
+  const operatorWrite = await operatorFor(server);
   return new Promise((resolve, reject) => {
     const addr = server.address();
     const options = {
@@ -31,7 +49,7 @@ function request(server, method, urlPath, body) {
       method,
       // These suites exercise the dashboard's group and document management,
       // so every request is the operator's; a bare machine request is refused.
-      headers: { 'Content-Type': 'application/json', ...operatorHeaders(server) }
+      headers: { 'Content-Type': 'application/json', ...operatorWrite }
     };
 
     const req = http.request(options, (res) => {
@@ -72,6 +90,12 @@ describe('API /api/shared-docs', () => {
     const group = store.projectGroups.create({ name: 'DocTestGroup' });
     groupId = group.id;
 
+    // This suite calls operator routes that grant authority over sessions,
+
+    // which need the operator signed in (#2378): the login is on, and
+
+    // `operatorFor` sends the operator's session.
+    store.config.save({ ...store.config.load(), authEnabled: true, basicAuthUser: null, basicAuthHash: null });
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   });

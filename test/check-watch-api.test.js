@@ -21,7 +21,7 @@ const api = require('../lib/check-watch-api');
 const watchStore = require('../lib/check-watch-store');
 const state = require('../lib/check-watch-state');
 const { createServer } = require('../server');
-const { operatorHeaders, bindProject, sendAs: sendRaw } = require('./_shared-docs-callers');
+const { operatorHeaders, bindProject, sendAs: sendRaw, signInOperator } = require('./_shared-docs-callers');
 const { initRepo } = require('./_temp-repo');
 
 /** Every refusal a request in this file was answered with, for the last test to read. */
@@ -516,11 +516,27 @@ describe('/api/tc/check-watches (#2323)', () => {
   });
 
   describe('a held lane', () => {
+    let signedIn;
+    let loginWas;
+
+    // Releasing a HOLD is the operator's, and needs the operator signed in
+    // (#2378): this suite turns the login on, and puts it back as it was.
+    before(async () => {
+      const config = store.config.load();
+      loginWas = { authEnabled: config.authEnabled, basicAuthUser: config.basicAuthUser, basicAuthHash: config.basicAuthHash };
+      store.config.save({ ...config, authEnabled: true, basicAuthUser: null, basicAuthHash: null });
+      signedIn = await signInOperator(server);
+    });
+
+    after(() => {
+      store.config.save({ ...store.config.load(), ...loginWas });
+    });
+
     it('still registers, reads and cancels: a watch changes nothing outside its own record', async () => {
-      const made = await sendAs(server, 'POST', '/api/control/assignments', { projectId: owner.id, requestId: 'cw-asg-1', issueRef: '#2323' }, op);
+      const made = await sendAs(server, 'POST', '/api/control/assignments', { projectId: owner.id, requestId: 'cw-asg-1', issueRef: '#2323' }, signedIn);
       assert.equal(made.status, 201, JSON.stringify(made.data));
       const assignmentId = made.data.assignment.assignmentId;
-      const hold = await sendAs(server, 'POST', `/api/control/assignments/${assignmentId}/hold`, { requestId: 'cw-hold-1', reasonCode: 'boundary' }, op);
+      const hold = await sendAs(server, 'POST', `/api/control/assignments/${assignmentId}/hold`, { requestId: 'cw-hold-1', reasonCode: 'boundary' }, signedIn);
       assert.equal(hold.status, 201, JSON.stringify(hold.data));
       try {
         const watch = await registered();
@@ -529,7 +545,7 @@ describe('/api/tc/check-watches (#2323)', () => {
       } finally {
         const released = await sendAs(server, 'POST', `/api/control/assignments/${assignmentId}/release`, {
           requestId: 'cw-rel-1', reasonCode: 'resolved', holdIds: [hold.data.holdId], expectedGeneration: hold.data.assignment.stateGeneration
-        }, op);
+        }, signedIn);
         assert.equal(released.status, 200, JSON.stringify(released.data));
       }
     });

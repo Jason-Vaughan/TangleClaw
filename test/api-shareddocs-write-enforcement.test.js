@@ -21,7 +21,7 @@ setLevel('error');
 const store = require('../lib/store');
 const master = require('../lib/master');
 const { createServer } = require('../server');
-const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
+const { bindProject, signInOperator } = require('./_shared-docs-callers');
 
 const MASTER_LAUNCH_ID = 'master-live-launch-id';
 const MASTER_HEADERS = { 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': MASTER_LAUNCH_ID };
@@ -332,8 +332,16 @@ describe('#1626 shared-docs and groups writes', () => {
   });
 
   describe('the operator keeps every write', () => {
+    let op;
+
+    // A document's registration and a group's membership are granted only by
+    // a signed-in operator (#2378), so this suite turns the login on.
+    before(async () => {
+      store.config.save({ ...store.config.load(), authEnabled: true, basicAuthUser: null, basicAuthHash: null });
+      op = await signInOperator(server);
+    });
+
     it('edits and locks a document in any group, and manages groups and members', async () => {
-      const op = operatorHeaders(server);
       const put = await send(server, 'PUT', `/api/shared-docs/${docB.id}`, { filePath: path.join(tmpDir, 'b-moved.md') }, op);
       assert.equal(put.status, 200, put.raw);
       assert.equal(store.sharedDocs.get(docB.id).filePath, path.join(tmpDir, 'b-moved.md'));

@@ -206,12 +206,24 @@ describe('startup prompt routes (#1825)', () => {
   }
 
   /**
-   * Write a prompt revision as the operator on an open install.
+   * Write a prompt revision as the operator. Changing the prompt needs the
+   * operator signed in (#2378), so the login is turned on for the write and the
+   * operator signs in; the install is then put back with no login, so every
+   * other request in a test is sent as it was.
    * @param {object} body - PUT body.
    * @returns {Promise<object>} The response.
    */
   async function operatorPut(body) {
-    return send('PUT', '/api/startup-prompt', { body, headers: { 'x-tc-open-token': await pageToken() } });
+    if (!store.users.getByName('rosie')) store.users.create('rosie', PASSWORD);
+    patchConfig({ authEnabled: true });
+    try {
+      const login = await send('POST', '/api/auth/login', { body: { username: 'rosie', password: PASSWORD } });
+      assert.equal(login.statusCode, 200, login.body);
+      const cookie = [].concat(login.headers['set-cookie'] || []).map((c) => String(c).split(';')[0]).join('; ');
+      return await send('PUT', '/api/startup-prompt', { body, headers: { cookie, 'x-csrf-token': json(login).csrfToken } });
+    } finally {
+      patchConfig({ authEnabled: false });
+    }
   }
 
   /**
@@ -259,7 +271,7 @@ describe('startup prompt routes (#1825)', () => {
       const res = await operatorPut({ text: 'read your launch context', firerProjectIds: [], expectedRevision: cur });
       assert.equal(res.statusCode, 200, res.body);
       assert.equal(json(res).revision, cur + 1);
-      assert.equal(json(res).updatedByKind, 'open-install-unverified', 'an open install proves nobody, and the revision says so');
+      assert.equal(json(res).updatedByKind, 'operator-verified', 'the prompt is changed by a signed-in operator (#2378), and the revision says so');
     });
 
     it('a stale revision is refused with the current one', async () => {
@@ -293,7 +305,9 @@ describe('startup prompt routes (#1825)', () => {
     it('an open-install write with no page token is refused', async () => {
       const res = await send('PUT', '/api/startup-prompt', { body: { text: 'x', expectedRevision: 1 } });
       assert.equal(res.statusCode, 403);
-      assert.equal(json(res).code, 'OPEN_INSTALL_TOKEN_INVALID');
+      // An open install's dashboard is refused before its page token is read:
+      // the prompt changes only for a signed-in operator (#2378).
+      assert.equal(json(res).code, 'LOGIN_GATE_REQUIRED');
     });
 
     it('an armed install refuses a caller with no session, rather than treating it as open', async () => {

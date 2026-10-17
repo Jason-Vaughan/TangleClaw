@@ -11,7 +11,7 @@ const os = require('node:os');
 
 const store = require('../lib/store');
 const { createServer } = require('../server');
-const { operatorHeaders } = require('./_shared-docs-callers');
+const { operatorHeaders, operatorOf } = require('./_shared-docs-callers');
 
 let server;
 let baseUrl;
@@ -469,14 +469,30 @@ describe('Landing Page API Integration', () => {
     let testGroupId;
     let testDocId;
     let testProjectId;
+    let operator;
+    let loginWas;
+
+    // Adding a project to a group grants it the group's documents, which needs
+    // the operator signed in (#2378): this suite turns the login on, and puts
+    // it back as it was for the suites after it.
+    before(() => {
+      const config = store.config.load();
+      loginWas = { authEnabled: config.authEnabled, basicAuthUser: config.basicAuthUser, basicAuthHash: config.basicAuthHash };
+      store.config.save({ ...config, authEnabled: true, basicAuthUser: null, basicAuthHash: null });
+      operator = operatorOf(server);
+    });
+
+    after(() => {
+      store.config.save({ ...store.config.load(), ...loginWas });
+    });
 
     /**
-     * The dashboard's request: these routes refuse a caller with no binding.
+     * The operator's request: these routes refuse a caller with no binding.
      * @param {string} urlPath
      * @param {object} [opts]
      * @returns {Promise<{status: number, data: object}>}
      */
-    const asOperator = (urlPath, opts = {}) => request(urlPath, { ...opts, headers: operatorHeaders(server) });
+    const asOperator = async (urlPath, opts = {}) => request(urlPath, { ...opts, headers: await operator() });
 
     it('GET /api/groups should return groups array', async () => {
       const res = await asOperator('/api/groups');
@@ -508,9 +524,8 @@ describe('Landing Page API Integration', () => {
 
     it('POST /api/groups/:id/members should add a project member', async () => {
       // Create a project to add as member
-      const projRes = await request('/api/projects', {
+      const projRes = await asOperator('/api/projects', {
         method: 'POST',
-        headers: operatorHeaders(server),
         body: { name: 'group-member-test', engine: 'claude' }
       });
       testProjectId = projRes.data.id;
@@ -596,8 +611,8 @@ describe('Landing Page API Integration', () => {
       assert.equal(docRes.status, 404);
 
       // Cleanup project
-      await request('/api/projects/group-member-test', {
-        method: 'DELETE', body: { deleteFiles: true }, headers: operatorHeaders(server)
+      await asOperator('/api/projects/group-member-test', {
+        method: 'DELETE', body: { deleteFiles: true }
       });
     });
   });

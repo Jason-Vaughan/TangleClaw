@@ -9,7 +9,7 @@ const os = require('node:os');
 const store = require('../lib/store');
 const projects = require('../lib/projects');
 const { createServer } = require('../server');
-const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
+const { operatorHeaders, bindProject, signInOperator } = require('./_shared-docs-callers');
 const master = require('../lib/master');
 const strandedCheck = require('../lib/stranded-check');
 
@@ -598,6 +598,23 @@ describe('api-projects', () => {
       // its own gate. Presence of the field is what is refused, not a change of
       // value, and the WHOLE request is refused before anything is written.
       describe('the recovery mode is the operator\'s (#1937)', () => {
+        let signedIn;
+        let loginWas;
+        // Choosing the mode needs the operator signed in (#2378): this suite
+        // turns the login on, and the operator here is a signed-in session.
+        const asOperator = () => signedIn;
+
+        before(async () => {
+          const config = store.config.load();
+          loginWas = { authEnabled: config.authEnabled, basicAuthUser: config.basicAuthUser, basicAuthHash: config.basicAuthHash };
+          store.config.save({ ...config, authEnabled: true, basicAuthUser: null, basicAuthHash: null });
+          signedIn = await signInOperator(server);
+        });
+
+        after(() => {
+          store.config.save({ ...store.config.load(), ...loginWas });
+        });
+
         /**
          * The project's stored launch settings, read from its config file.
          * @param {string} name - Project name
@@ -662,9 +679,8 @@ describe('api-projects', () => {
           assert.equal(pin.status, 200);
           assert.equal(pin.data.recoveryMode.mode, 'operator');
           assert.equal(pin.data.recoveryMode.pinnedMode, 'operator');
-          // This install has no login, so the dashboard's request identified
-          // nobody, and the record says so (#2244).
-          assert.equal(pin.data.recoveryMode.decidedBy, 'open-install-unverified');
+          // A signed-in operator decided it, and the record says so (#2244).
+          assert.equal(pin.data.recoveryMode.decidedBy, 'operator-verified');
           assert.equal(pin.data.recoveryMode.fileWritten, true);
           assert.equal(store.projectRecoveryState.get(id).pinnedMode, 'operator');
           const lift = await request('PATCH', '/api/projects/gate-a', { launchSequence: { recoveryMode: 'advisory' } }, asOperator());
@@ -672,7 +688,21 @@ describe('api-projects', () => {
           const row = store.projectRecoveryState.get(id);
           assert.equal(row.pinnedMode, null);
           assert.ok(row.pinnedAt, 'choosing advisory is recorded as a decision');
-          assert.equal(row.pinnedBy, 'open-install-unverified');
+          assert.equal(row.pinnedBy, 'operator-verified');
+        });
+
+        it('refuses the dashboard\'s request on an install with no login, and records no decision (#2378)', async () => {
+          const id = store.projects.getByName('gate-b').id;
+          store.config.save({ ...store.config.load(), authEnabled: false });
+          let answer;
+          try {
+            answer = await request('PATCH', '/api/projects/gate-b', { launchSequence: { recoveryMode: 'operator' } }, operatorHeaders(server));
+          } finally {
+            store.config.save({ ...store.config.load(), authEnabled: true });
+          }
+          assert.equal(answer.status, 403);
+          assert.equal(answer.data.code, 'LOGIN_GATE_REQUIRED');
+          assert.equal(store.projectRecoveryState.get(id), null);
         });
 
         it('a refused session request records no decision', async () => {

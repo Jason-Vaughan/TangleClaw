@@ -2762,8 +2762,9 @@ function recoveryGatePhrase(gateState) {
  * `PATCH /api/projects/:name` takes the mode from the operator alone. While
  * the gate enforces, that is a signed-in session, so a page with none would be
  * refused and is shown the reason in place of the control. Where the gate
- * stands down the server takes the request from the dashboard itself, with
- * nobody identified.
+ * stands down (no login in force, or fallback) the server refuses it too
+ * (#2378): only a signed-in operator may choose the mode, so the page shows
+ * why in place of the control.
  *
  * `readback` is whether a signed-in operator is behind this page, which is the
  * one caller the server lets read a session's reconciliation afterwards.
@@ -2786,7 +2787,13 @@ function recoveryModeControlOffer(me) {
         + 'takes this choice only from a signed-in operator. Sign in, then reopen Settings.'
     };
   }
-  return { offered: true, readback: false, loginInForce: false, why: null };
+  return {
+    offered: false,
+    readback: false,
+    loginInForce: false,
+    why: 'The recovery mode cannot be chosen from this page: TangleClaw\'s login is not in force, and the server '
+      + 'takes this choice only from a signed-in operator. Turn the login on, sign in, then reopen Settings.'
+  };
 }
 
 /**
