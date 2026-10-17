@@ -633,3 +633,125 @@ describe('sessions v20→v21 owner migration (AUTH-3, #1)', () => {
     }
   });
 });
+
+describe('reading a stored launch blocker (#2201)', () => {
+  const { getLevel, setConsoleStream } = require('../lib/logger');
+  let tmpDir;
+  let session;
+  let lines;
+  let priorLevel;
+
+  /**
+   * Write a raw value into the session's launch_blocker column, bypassing
+   * setLaunchBlocker, the way a damaged or hand-edited row would hold it.
+   * @param {string|null} raw - Column value to store
+   */
+  const writeRaw = (raw) => {
+    store.getDb().prepare('UPDATE sessions SET launch_blocker = ? WHERE id = ?').run(raw, session.id);
+  };
+
+  /**
+   * The captured lines that are this module's launch-blocker warning.
+   * @returns {string[]}
+   */
+  const warnings = () => lines.filter((l) => /launch blocker could not be read/.test(l));
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-store-blocker-'));
+    store._setBasePath(tmpDir);
+    store.init();
+    const project = store.projects.create({ name: 'blocker', path: path.join(tmpDir, 'blocker'), engine: 'claude' });
+    session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'blocker' });
+    lines = [];
+    priorLevel = getLevel();
+    setLevel('warn');
+    setConsoleStream({ write: (s) => lines.push(String(s)) });
+  });
+
+  afterEach(() => {
+    setConsoleStream(null);
+    setLevel(priorLevel);
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('reads a missing blocker as null without a log line', () => {
+    assert.equal(store.sessions.get(session.id).launchBlocker, null);
+    assert.deepEqual(warnings(), []);
+  });
+
+  it('reads a valid blocker as parsed without a log line', () => {
+    writeRaw(JSON.stringify({ code: 'trust_prompt', label: 'Trust prompt', meaning: 'm', engineId: 'claude', observedAt: '2026-10-17T00:00:00Z' }));
+    assert.deepEqual(store.sessions.get(session.id).launchBlocker, {
+      code: 'trust_prompt', label: 'Trust prompt', meaning: 'm', engineId: 'claude', observedAt: '2026-10-17T00:00:00Z'
+    });
+    assert.deepEqual(warnings(), []);
+  });
+
+  it('warns once for a value that is not JSON, naming the session, the reason and the length, never the value', () => {
+    const raw = '{"code": "secret-ish not json';
+    writeRaw(raw);
+    assert.equal(store.sessions.get(session.id).launchBlocker, null);
+    const first = warnings();
+    assert.equal(first.length, 1, 'one line on the first read');
+    assert.match(first[0], /not JSON/);
+    assert.match(first[0], new RegExp(`sessionId=${session.id}\\b`));
+    assert.match(first[0], new RegExp(`length=${raw.length}\\b`));
+    assert.doesNotMatch(first[0], /secret-ish/, 'the raw value is never logged');
+
+    assert.equal(store.sessions.get(session.id).launchBlocker, null);
+    assert.equal(warnings().length, 1, 'reading the same damaged row again logs nothing more');
+  });
+
+  it('warns once for parsed JSON that names no code', () => {
+    writeRaw(JSON.stringify({ label: 'no code here' }));
+    assert.equal(store.sessions.get(session.id).launchBlocker, null);
+    assert.equal(store.sessions.get(session.id).launchBlocker, null);
+    const got = warnings();
+    assert.equal(got.length, 1);
+    assert.match(got[0], /no code/);
+    assert.doesNotMatch(got[0], /no code here/, 'the raw value is never logged');
+  });
+
+  it('warns again for a different damaged value on the same session, once', () => {
+    writeRaw('not json one');
+    store.sessions.get(session.id);
+    writeRaw('{"code": 7}');
+    assert.equal(store.sessions.get(session.id).launchBlocker, null);
+    assert.equal(store.sessions.get(session.id).launchBlocker, null);
+    const got = warnings();
+    assert.equal(got.length, 2);
+    assert.match(got[0], /not JSON/);
+    assert.match(got[1], /no code/);
+  });
+
+  it('keys the memory by session: the same damaged value on another session warns for it too', () => {
+    const other = store.sessions.start({ projectId: session.projectId, engineId: 'claude', tmuxSession: 'blocker-2' });
+    writeRaw('broken');
+    store.getDb().prepare('UPDATE sessions SET launch_blocker = ? WHERE id = ?').run('broken', other.id);
+    store.sessions.get(session.id);
+    store.sessions.get(other.id);
+    store.sessions.get(session.id);
+    assert.equal(warnings().length, 2);
+  });
+
+  it('bounds its memory: when the cap is reached it is cleared, so an early value warns again', () => {
+    const cap = store._LAUNCH_BLOCKER_WARN_CAP;
+    assert.ok(Number.isInteger(cap) && cap > 0, 'the cap is a documented positive integer');
+    writeRaw('damaged 0');
+    store.sessions.get(session.id);
+    for (let i = 1; i < cap; i++) {
+      writeRaw(`damaged ${i}`);
+      store.sessions.get(session.id);
+    }
+    assert.equal(warnings().length, cap, 'every distinct value warned once while under the cap');
+    writeRaw('damaged 0');
+    store.sessions.get(session.id);
+    assert.equal(warnings().length, cap, 'at the cap and not yet cleared, a remembered value stays quiet');
+    writeRaw(`damaged ${cap}`);
+    store.sessions.get(session.id);
+    writeRaw('damaged 0');
+    store.sessions.get(session.id);
+    assert.equal(warnings().length, cap + 2, 'the memory was cleared when full, so the first value warns again');
+  });
+});
