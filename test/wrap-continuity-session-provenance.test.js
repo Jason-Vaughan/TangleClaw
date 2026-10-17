@@ -11,10 +11,11 @@
  *
  * These cases run against a REAL git repository with a real multi-session
  * history. A stubbed `git diff` proves the parser, not the range, and the range
- * is the defect: the assertion that matters is set equality against
- * `git diff --name-only` over the session's own commits, which only real history
- * can produce. (Also why the run here is the disjoint-set proof inverted — the
- * predecessor session's paths must be ABSENT.)
+ * is the defect: the assertion that matters is set equality against the paths
+ * the session's own commits changed, read per commit from git, which only real
+ * history can produce. (Also why the run here is the disjoint-set proof
+ * inverted — the predecessor session's paths must be ABSENT, its wrap commit's
+ * included (#1280).)
  */
 
 const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
@@ -32,6 +33,37 @@ setLevel('error');
 const step = require('../lib/wrap-steps/continuity-write');
 const continuity = require('../lib/continuity');
 const transcript = require('../lib/transcript');
+
+/**
+ * What a session's `files:` record should hold, computed straight from git and
+ * independently of the step: the union of the paths each first-parent commit in
+ * `range` touched, skipping every earlier wrap commit (subject `Session wrap…`)
+ * but never the wrap commit this session made (#1280). Deletions are left out,
+ * as the record lists touched paths only; the fixtures here delete nothing.
+ *
+ * @param {string} cwd - The fixture repository.
+ * @param {string} range - A two-dot range.
+ * @param {string|null} ownSha - This wrap's own commit, or null when it made none.
+ * @returns {string[]} Sorted paths.
+ */
+function unionExcludingEarlierWraps(cwd, range, ownSha) {
+  const run = (...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+  const paths = new Set();
+  for (const sha of run('rev-list', '--first-parent', range).split('\n').filter(Boolean)) {
+    const subject = run('log', '-1', '--format=%s', sha);
+    if (subject.startsWith('Session wrap') && sha !== ownSha) continue;
+    const parents = run('log', '-1', '--format=%P', sha).split(' ').filter(Boolean);
+    // A merge counts by what it brought onto the first-parent line.
+    const listed = parents.length > 1
+      ? run('diff', '--name-status', parents[0], sha)
+      : run('diff-tree', '--no-commit-id', '--name-status', '-r', '--root', sha);
+    for (const line of listed.split('\n').filter(Boolean)) {
+      const parts = line.split('\t');
+      if (!parts[0].startsWith('D')) paths.add(parts[parts.length - 1]);
+    }
+  }
+  return [...paths].sort();
+}
 
 describe('continuity-write — the files: stamp is the session\'s own set (#797)', () => {
   let root;
@@ -136,7 +168,7 @@ describe('continuity-write — the files: stamp is the session\'s own set (#797)
     return meta.files ? meta.files.split(',').map((s) => s.trim()).filter(Boolean) : [];
   }
 
-  it('equals `git diff --name-only` over the session\'s own range', async () => {
+  it('equals the per-commit union over the session\'s own range, earlier wrap commits excluded', async () => {
     // What `commit.js` reports on session 2's wrap: the boundary it replaced is
     // session 1's stamp — that wrap commit's parent (#664).
     const res = await step.run(ctx({
@@ -147,10 +179,71 @@ describe('continuity-write — the files: stamp is the session\'s own set (#797)
     }));
     assert.equal(res.ok, true);
 
-    const expected = git('diff', '--name-only', `${sha.session1Work}..${sha.session2Wrap}`)
-      .split('\n').filter(Boolean);
-    assert.deepEqual(recordedFiles().sort(), expected.sort(),
-      'the record is the session range verbatim, not a subset of it');
+    const expected = unionExcludingEarlierWraps(repo, `${sha.session1Work}..${sha.session2Wrap}`, sha.session2Wrap);
+    assert.deepEqual(recordedFiles().sort(), expected,
+      'the record is the session range less the earlier wrap commit, not a subset of it');
+  });
+
+  it('subtracts an earlier wrap commit the range opens with (#1280)', async () => {
+    // The boundary is the previous wrap commit's PARENT (#664), so the range
+    // always opens with that wrap commit, and a wrap commits the whole tree. Its
+    // paths are the predecessor's work, not this session's.
+    await step.run(ctx({
+      commitSha: sha.session2Wrap,
+      branch: 'feat/long-lived',
+      previousWrapSha: sha.session1Work,
+      previousWrapShaRead: 'recorded'
+    }));
+    const files = recordedFiles();
+    assert.ok(!files.includes('.tangleclaw/memories/MEMORY.md'),
+      'a path only `Session wrap 1` changed is not session 2\'s');
+    assert.deepEqual(files.sort(),
+      unionExcludingEarlierWraps(repo, `${sha.session1Work}..${sha.session2Wrap}`, sha.session2Wrap));
+  });
+
+  it('keeps a path an earlier wrap commit and a real commit both changed', async () => {
+    // The subtraction is per commit, then a union — not one diff minus the wrap
+    // commit's paths, which would drop real work that shares a path with it.
+    git('reset', '-q', '--hard', sha.session1Wrap);
+    commit('session 2 work', {
+      'lib/two.js': "'use strict';\n",
+      '.tangleclaw/memories/MEMORY.md': 'session 2 edits it too\n'
+    });
+    const wrap = commit('Session wrap 2', { '.tangleclaw/memories/wrap-log.md': 'session 2\n' });
+    await step.run(ctx({
+      commitSha: wrap,
+      branch: 'feat/long-lived',
+      previousWrapSha: sha.session1Work,
+      previousWrapShaRead: 'recorded'
+    }));
+    assert.ok(recordedFiles().includes('.tangleclaw/memories/MEMORY.md'),
+      'session 2\'s own commit changed it, so it stays');
+    assert.deepEqual(recordedFiles().sort(),
+      unionExcludingEarlierWraps(repo, `${sha.session1Work}..${wrap}`, wrap));
+  });
+
+  it('subtracts an earlier wrap commit on a range the walk measures, beside a trunk sync', async () => {
+    // A trunk sync on the session's line sends the step down the first-parent
+    // walk instead of the plain diff (#1309). The earlier wrap commit is
+    // subtracted there too.
+    git('checkout', '-q', 'main');
+    commit('trunk 2', { 'other.js': 'trunk\n' });
+    git('checkout', '-q', 'feat/long-lived');
+    git('reset', '-q', '--hard', sha.session1Wrap);
+    commit('session 2 work', { 'lib/two.js': "'use strict';\n" });
+    git('merge', '-q', '--no-ff', '--no-edit', 'main');
+    const wrap = commit('Session wrap 2', { '.tangleclaw/memories/wrap-log.md': 'session 2\n' });
+    assert.ok(git('rev-list', '--first-parent', '--merges', `${sha.session1Work}..${wrap}`),
+      'the fixture must put a merge on the first-parent line, or the walk is not exercised');
+
+    await step.run(ctx({
+      commitSha: wrap,
+      branch: 'feat/long-lived',
+      previousWrapSha: sha.session1Work,
+      previousWrapShaRead: 'recorded'
+    }));
+    assert.deepEqual(recordedFiles().sort(), ['.tangleclaw/memories/wrap-log.md', 'lib/two.js'],
+      'neither the trunk\'s file nor the earlier wrap commit\'s');
   });
 
   it('excludes the predecessor session\'s paths — the disjoint-set proof inverted', async () => {
@@ -186,18 +279,18 @@ describe('continuity-write — the files: stamp is the session\'s own set (#797)
     assert.ok(files.includes('lib/two.js'), 'and the session\'s source work is still there');
   });
 
-  it('records the predecessor\'s wrap commit, which the durable boundary includes', async () => {
-    // Not a defect to fix here: `lastWrapSha` records the wrap commit's PARENT
-    // because the wrap commit itself is orphaned by squash-merge (#664), so a
-    // session's range necessarily opens with the previous wrap's commit. Pinned
-    // so the over-report is a known property rather than a surprise.
+  it('does not record the predecessor\'s wrap commit, though the durable boundary includes it', async () => {
+    // `lastWrapSha` records the wrap commit's PARENT because the wrap commit
+    // itself is orphaned by squash-merge (#664), so a session's range still
+    // opens with the previous wrap's commit. The record subtracts that commit
+    // rather than moving the boundary (#1280).
     await step.run(ctx({
       commitSha: sha.session2Wrap,
       branch: 'feat/long-lived',
       previousWrapSha: sha.session1Work,
       previousWrapShaRead: 'recorded'
     }));
-    assert.ok(recordedFiles().includes('.tangleclaw/memories/MEMORY.md'));
+    assert.ok(!recordedFiles().includes('.tangleclaw/memories/MEMORY.md'));
   });
 
   it('still indexes only source files into the Map', async () => {
@@ -326,7 +419,10 @@ describe('continuity-write — the files: stamp is the session\'s own set (#797)
     // committed path returns when `git rev-parse HEAD` fails after the commit
     // landed. Publishing the empty set on either would drop real work from a
     // provenance record — #797's own second half — so every path goes through
-    // `_stampDecision` and the range answers.
+    // `_stampDecision` and the range answers. Session 3 committed by hand here;
+    // `Session wrap 2` in its range is the predecessor's, and with no commit of
+    // its own this wrap subtracts every wrap commit it finds (#1280).
+    const handSha = commit('session 3 hand commit', { 'lib/three.js': "'use strict';\n" });
     const res = await step.run(ctx({
       reason: 'no changes to commit',
       flushed: [],
@@ -336,11 +432,11 @@ describe('continuity-write — the files: stamp is the session\'s own set (#797)
     }, 3));
     assert.equal(res.ok, true);
 
-    // No anchor, so the tip is HEAD — the branch tip in this fixture.
-    const expected = git('diff', '--name-only', `${sha.session2Work}..HEAD`)
-      .split('\n').filter(Boolean);
-    assert.deepEqual(recordedFiles(3).sort(), expected.sort(),
+    // No anchor, so the tip is HEAD — the hand commit in this fixture.
+    const expected = unionExcludingEarlierWraps(repo, `${sha.session2Work}..${handSha}`, null);
+    assert.deepEqual(recordedFiles(3).sort(), expected,
       'the range since the boundary, not a fabricated empty set');
+    assert.deepEqual(expected, ['lib/three.js'], 'the hand commit\'s paths, and none of `Session wrap 2`\'s');
     assert.ok(expected.length > 0, 'the fixture must reach a non-empty range, or this proves nothing');
   });
 
@@ -583,23 +679,20 @@ describe('commit → continuity-write — the two steps agree on the boundary (#
     const files2 = continuity.readWrapSummary(repo, 2).meta.files.split(',').map((f) => f.trim());
     assert.ok(files2.includes('second.js'), 'session 2 records its own work');
 
-    // The record is the boundary handoff's range, verbatim — asserted against
-    // git rather than against a list, so it stays true as the boundary's own
-    // semantics evolve.
-    const expected = execFileSync('git',
-      ['diff', '--name-only', `${stampedBySession1}..${second.output.commitSha}`],
-      { cwd: repo, encoding: 'utf8' }).trim().split('\n').filter(Boolean);
-    assert.deepEqual(files2.sort(), expected.sort());
+    // The record is the boundary handoff's range less the earlier wrap commit —
+    // asserted against git rather than against a list, so it stays true as the
+    // boundary's own semantics evolve.
+    const expected = unionExcludingEarlierWraps(repo,
+      `${stampedBySession1}..${second.output.commitSha}`, second.output.commitSha);
+    assert.deepEqual(files2.sort(), expected);
 
     // And the boundary's reach, named rather than assumed: `lastWrapSha` records
     // the wrap commit's PARENT so it survives squash-merge (#664), so a session
     // whose only commit IS its wrap commit leaves a boundary that precedes its
-    // own work. Session 1 is that shape here, so `first.js` is in range. The
-    // field means "changed since the previous wrap's recorded boundary" — the
-    // same range every other wrap step measures — not "changed by exactly this
-    // session's commits", and #797 is fixed by making it the former instead of
-    // the whole branch.
-    assert.ok(files2.includes('first.js'),
-      'the boundary precedes session 1\'s wrap commit, so its work is in range');
+    // own work. Session 1 is that shape here, so session 1's wrap commit is in
+    // range — and the subjects the real commit step writes are what the record
+    // subtracts it by, so `first.js` is not reported as session 2's (#1280).
+    assert.ok(!files2.includes('first.js'),
+      'session 1\'s wrap commit is in range but is not session 2\'s work');
   });
 });

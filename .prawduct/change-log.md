@@ -41,6 +41,31 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-17 — #1280, #1903: a session's files: stamp no longer carries an earlier wrap commit's paths, and one shared lift helper replaces the private brace-matchers going forward
+
+<!-- prawduct: type=bugfix | scope=w10-a1-wrap-commit-subtraction-and-lift-helper -->
+
+v5.34.0 Wave 10 chunk W10-A1, chunk 1 of 1. Branch `fix/1280-1903-w10-a1` from `origin/main` `0eb92b05`. Closes #1280; refs #1903 (Chunk 01). Plan: `.tangleclaw/plans/w10-a1-wrap-commit-subtraction-and-lift-helper-1280-1903.md` (rev1 sha256 `8c9d6df9…7853`, approved by INT `bdd5fe33` and Architect A229); charter v2.32 (sha256 `57e66a84…d025`).
+
+**#1280.** `continuity-write` records `files:` over the session range, which opens at the previous wrap commit's parent (#664), so it always held that wrap commit, and a wrap commits the whole tree. A session range with an earlier wrap commit in it is now walked commit by commit and every wrap commit is dropped except the one this wrap made (all of them when it made none). A path an earlier wrap commit and a real commit both changed stays. One delta still feeds the Map and the stamp. `_git-range.js` gains `WRAP_SUBJECT_RE`/`isWrapSubject` and `hasEarlierWrapCommitsAsync`; a parity test holds `changelog-coverage`'s copy of the rule to the same answers. Two choices the plan did not settle, both approved by Architect A231 at `00ba23e4`: only a session range subtracts, so the trunk fallback (published only when no wrap has ever stamped) keeps the branch's divergence as measured; and a refused walk logs the diff path's "session delta was refused" line, while a killed one keeps its own line. Follow-up #2465 moves `changelog-coverage` onto the shared rule.
+
+**#1903 Chunk 01.** New `test/helpers/lift.js`: `liftDeclaration`, `liftBody`, `loadEsc`, `loadJsArg`. `test/lift-helper.test.js` pins the copies' exact behaviour, the string/comment brace limitation included, proves the loaders run the shipped `esc`/`jsArg` text from `landing.js` and `session.js`, and freezes the inventory of private copies (90 lifters, 3 named exceptions) as an exact multiset. No existing test file migrates here.
+
+**Limits.** Wrap commits are matched by subject prefix: a hand commit starting `Session wrap` is subtracted too, as `changelog-coverage` already does. A refused probe keeps the plain diff, which over-reports by the earlier wrap commit as before; a killed one is named. `changelog-coverage.js` keeps its own copy of the rule until the follow-up issue lands. The inventory rule finds the `indexOf('{')` brace-matcher shape only.
+
+**Tests.** `test/wrap-continuity-session-provenance.test.js` (real git): new subtraction, shared-path, walk-beside-a-trunk-sync cases; the four D5 assertions re-based. `test/wrap-step-continuity-write.test.js`: subject table, parity, probe refused/killed, walk subtraction, fallback untouched. Mutations: no subtraction, subtracting this wrap's own commit, diff-minus-paths, a re-implemented loader and a new private copy each went red.
+
+**Review.** Cumulative Critic `rev-20261017T200335Z-b77aed4c`: 0 blocking.
+
+**rev-20261017T200335Z-b77aed4c** — 2026-10-17T20:04:55Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | accepted | The declared suite runs once on the final tree in the Integrator's suite slot (charter v2.32 order, after the Architect's pre-suite read) and is recorded as test evidence before the ready report. The narrow ring on head 00ba23e4 (13 files: every test naming _git-range or continuity-write, the named out-of-lock wrap tests, and lift-helper) passed 786/0. |
+| R-2 | note | accepted | By plan: Step C adds the entry after the Critic. It is prepended in the next commit, a records-only change to .prawduct/change-log.md. |
+
+**2 findings** (1 warning, 1 note) — accepted: 2.
+
 ## 2026-10-17 — #2008, #2155: the wrap's commit step skips a folder that is not a git repository, and records the Include / Leave answers it ran with
 
 <!-- prawduct: type=bugfix | scope=w10b1-commit-non-git-skip-and-answers-audit -->
