@@ -216,6 +216,18 @@ describe('operator routes that grant authority need a signed-in operator (#2378)
       assert.equal(me.data.gateState, 'open');
     });
 
+    it('tells the dashboard so, and the notice it draws says what this check does (#2378 D3)', async () => {
+      // The landing page's no-login notice keys on this field and promises that
+      // authority-granting actions are refused until a login is on: the two
+      // are read from the same install so the promise cannot drift from it.
+      const info = await sendAs(server, 'GET', '/api/server-info', undefined, operatorHeaders(server));
+      assert.equal(info.status, 200, JSON.stringify(info.data));
+      assert.equal(info.data.authStatus, 'open');
+      const res = await sendAs(server, 'POST', '/api/merge-queue/mq_missing/clear-halt', {}, operatorHeaders(server));
+      assert.equal(res.status, 403, JSON.stringify(res.data));
+      assert.equal(res.data.code, 'LOGIN_GATE_REQUIRED');
+    });
+
     for (const [shapeName, shape] of Object.entries(SHAPES)) {
       it(`refuses every class A route to ${shapeName} with 403 LOGIN_GATE_REQUIRED, and changes nothing`, async () => {
         for (const req of classA()) {
@@ -355,6 +367,14 @@ describe('operator routes that grant authority need a signed-in operator (#2378)
     it('is the install\'s state', async () => {
       const me = await sendAs(server, 'GET', '/api/auth/me', undefined, session);
       assert.equal(me.data.gateState, 'armed');
+    });
+
+    it('tells the dashboard the login is in force, so no notice shows, and the same route is not refused (#2378 D3)', async () => {
+      const info = await sendAs(server, 'GET', '/api/server-info', undefined, session);
+      assert.equal(info.status, 200, JSON.stringify(info.data));
+      assert.equal(info.data.authStatus, 'armed');
+      const res = await sendAs(server, 'POST', '/api/merge-queue/mq_missing/clear-halt', {}, session);
+      assert.ok(!REFUSED_BY_THIS_CHECK.has(res.data && res.data.code), JSON.stringify(res.data));
     });
 
     it('does the class A actions: each one changes what it names', async () => {

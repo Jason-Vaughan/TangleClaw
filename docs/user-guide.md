@@ -498,6 +498,15 @@ create your account (and are shown its recovery codes) or, if an account was alr
 terminal, sign in with it. From then on every page asks for a password. Turning the login back off is
 not offered from settings.
 
+While no login is in force, the landing page says so in a standing notice under the dashboard bar:
+the actions that grant or widen authority over sessions (approving session rules, changing the global
+rules, granting coordinator roles, releasing a HOLD, choosing a project's recovery mode, changing the
+startup prompt, and the rest of the routes listed in the configuration reference) are refused until a
+login is turned on and you are signed in. Its **Add a login** button opens global settings at **Your
+account**. The notice has no dismiss: it goes away on the page's next check once the login is in
+force. It does not show while TangleClaw's login is stood down behind Caddy's password (fallback);
+the dashboard bar's warning covers that case.
+
 It is refused where the sign-in page could not let you in: every account on the install is disabled,
 or the install once had an account that is now missing and you are not on the machine itself. Each
 refusal names the terminal command that fixes it.

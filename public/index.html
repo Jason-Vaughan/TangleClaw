@@ -458,6 +458,16 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
     <div id="isolationOverrideBanner" class="orphan-banner isolation-override-banner hidden" role="status">
       <span class="orphan-banner-text" id="isolationOverrideBannerText"></span>
     </div>
+    <!-- No-login notice (#2378). Hidden until /api/server-info reads
+         authStatus "open": this install has no login, so the actions that grant
+         authority are refused until one is added. Painted by landing.js with
+         text nodes; the button opens Global Settings at "Your account". It
+         mirrors every poll, with no dismiss: it ends when a login is added.
+         role=status: it reports a standing condition, it is not an alarm. -->
+    <div id="noLoginBanner" class="orphan-banner no-login-banner hidden" role="status">
+      <span class="orphan-banner-text" id="noLoginBannerText"></span>
+      <button type="button" class="orphan-banner-details no-login-banner-open" id="noLoginBannerBtn">Add a login</button>
+    </div>
     <!-- Recovery-code notice (#1420). Hidden until /api/server-info reports a
          recoveryNotice: this account's password was reset with a recovery code.
          It stays until the account acknowledges it or generates new codes — an

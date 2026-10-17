@@ -544,3 +544,194 @@ describe('The dashboard notice is on the main view and read at load (#2393)', ()
     assert.doesNotMatch(body, /\bapi\.last/, 'the page\'s shared failure fields are never read');
   });
 });
+
+/*
+ * The landing page's notice that no login is in force (#2378). It lives beside
+ * the isolation notice and is tested the same way: the shipped functions are
+ * lifted and run. Its signal is the gate state the 60-second server-info poll
+ * already carries, and it is drawn from inside `renderAuthStatus`, so the poll
+ * itself is unchanged and every test that stubs that render by name still
+ * holds.
+ */
+
+const { AUTH_STATUSES } = require('../lib/auth-identity');
+
+/** The notice's exact copy, as the Architect set it. */
+const NO_LOGIN_TEXT = 'No login is in force on this install. TangleClaw is not requiring a sign-in credential '
+  + 'here: open-mode operator actions on this page rely on request shape rather than a login, while actions that '
+  + 'grant or widen authority over sessions (approving session rules, changing the global rules, granting '
+  + 'coordinator roles, releasing a HOLD, choosing a project\'s recovery mode, changing the startup prompt, and '
+  + 'the others listed in the docs) are refused until a login is enabled and you are signed in.';
+
+/**
+ * A sandbox holding the login chip, the no-login notice and the isolation
+ * notice, with the shipped render functions for all three.
+ * @param {object} [extra] - Globals the case supplies (`openGlobalSettings`)
+ * @returns {{ctx: object, doc: object, banner: object, textEl: object, btn: object, chip: object, iso: object}}
+ */
+function noLoginSandbox(extra) {
+  const { doc, ids } = makeDocument(['authStatusWarning', 'noLoginBanner', 'noLoginBannerText',
+    'isolationOverrideBanner', 'isolationOverrideBannerText']);
+  doc.createTextNode = (s) => {
+    const node = doc.createElement('#text');
+    node.textContent = String(s);
+    return node;
+  };
+  for (const id of ['noLoginBannerText', 'isolationOverrideBannerText']) {
+    const el = ids[id];
+    el.replaceChildren = (...nodes) => {
+      for (const child of [...el.childNodes]) child.remove();
+      for (const node of nodes) el.appendChild(node);
+    };
+  }
+  const btn = doc.createElement('button');
+  btn.id = 'noLoginBannerBtn';
+  btn.type = 'button';
+  btn.textContent = 'Add a login';
+  ids.noLoginBanner.appendChild(btn);
+  doc._register(btn);
+  for (const id of ['authStatusWarning', 'noLoginBanner', 'isolationOverrideBanner']) ids[id].classList.add('hidden');
+  const ctx = { document: doc, ...(extra || {}) };
+  vm.createContext(ctx);
+  // A top-level const is not a property of the context, so the copy is
+  // re-exposed for the assertions that read it back.
+  vm.runInContext(`${liftFunction(LANDING_SRC, 'const NO_LOGIN_NOTICE =')};\nthis.NO_LOGIN_NOTICE = NO_LOGIN_NOTICE;`, ctx);
+  for (const decl of ['function _authStatusWarning', 'function renderAuthStatus', 'function renderNoLoginBanner',
+    'function openAddLoginSettings', 'function renderIsolationOverrideBanner', 'function openInstallOverrideSettings']) {
+    vm.runInContext(liftFunction(LANDING_SRC, decl), ctx);
+  }
+  return { ctx, doc, banner: ids.noLoginBanner, textEl: ids.noLoginBannerText, btn, chip: ids.authStatusWarning,
+    iso: ids.isolationOverrideBanner };
+}
+
+describe('The landing notice that no login is in force: when it shows (#2378)', () => {
+  it('shows for an install with no login, with the exact copy', () => {
+    const s = noLoginSandbox({ openGlobalSettings: () => {} });
+    s.ctx.renderAuthStatus('open');
+    assert.equal(s.banner.classList.contains('hidden'), false);
+    assert.equal(s.textEl.text, NO_LOGIN_TEXT);
+    const strong = s.textEl.querySelector('strong');
+    assert.equal(strong.textContent, 'No login is in force on this install.', 'the first sentence leads, in bold');
+  });
+
+  it('hides for every other state the server can send, and for none', () => {
+    const others = AUTH_STATUSES.filter((st) => st !== 'open');
+    assert.ok(others.includes('armed') && others.includes('fallback'), 'the gate states this was written against');
+    for (const status of [...others, undefined, null, '']) {
+      const s = noLoginSandbox({ openGlobalSettings: () => {} });
+      s.ctx.renderAuthStatus(status);
+      assert.equal(s.banner.classList.contains('hidden'), true, String(status));
+      assert.equal(s.textEl.childNodes.length, 0, String(status));
+    }
+  });
+
+  it('follows the poll: up on open, down once a login is in force, up again if it goes', () => {
+    const s = noLoginSandbox({ openGlobalSettings: () => {} });
+    s.ctx.renderAuthStatus('open');
+    assert.equal(s.banner.classList.contains('hidden'), false);
+    s.ctx.renderAuthStatus('armed');
+    assert.equal(s.banner.classList.contains('hidden'), true);
+    assert.equal(s.textEl.text, '');
+    s.ctx.renderAuthStatus('open');
+    assert.equal(s.banner.classList.contains('hidden'), false);
+    assert.equal(s.textEl.text, NO_LOGIN_TEXT, 'painted once, not appended to');
+  });
+
+  it('is not repainted by a poll that reads open again, so a screen reader does not re-announce it', () => {
+    const s = noLoginSandbox({ openGlobalSettings: () => {} });
+    s.ctx.renderAuthStatus('open');
+    const painted = [...s.textEl.childNodes];
+    s.ctx.renderAuthStatus('open');
+    assert.equal(s.textEl.childNodes.length, painted.length);
+    s.textEl.childNodes.forEach((node, i) => assert.equal(node, painted[i], 'the same nodes stay in place'));
+    s.ctx.renderAuthStatus('armed');
+    s.ctx.renderAuthStatus('open');
+    assert.notEqual(s.textEl.childNodes[0], painted[0], 'painted afresh once it has been down');
+    assert.equal(s.textEl.text, NO_LOGIN_TEXT);
+  });
+
+  it('leaves the login chip silent for open, and its warnings as they were', () => {
+    const s = noLoginSandbox({ openGlobalSettings: () => {} });
+    s.ctx.renderAuthStatus('open');
+    assert.equal(s.chip.classList.contains('hidden'), true);
+    assert.equal(s.chip.textContent, '');
+    s.ctx.renderAuthStatus('fallback');
+    assert.equal(s.chip.classList.contains('hidden'), false);
+    assert.match(s.chip.textContent, /gate-fallback\.js --undo/);
+    assert.equal(s.banner.classList.contains('hidden'), true, 'fallback has a credential in front of the page');
+  });
+
+  it('sets its copy as text, never as markup', () => {
+    const body = liftFunction(LANDING_SRC, 'function renderNoLoginBanner')
+      + liftFunction(LANDING_SRC, 'function openAddLoginSettings');
+    assert.doesNotMatch(body, /innerHTML/);
+    assert.doesNotMatch(body, /setTimeout|setInterval/, 'no timer: it ends when a login is added');
+    assert.equal(liftFunction(LANDING_SRC, 'const NO_LOGIN_NOTICE =').includes('<'), false);
+    const s = noLoginSandbox({ openGlobalSettings: () => {} });
+    assert.equal(s.ctx.NO_LOGIN_NOTICE.lead + s.ctx.NO_LOGIN_NOTICE.body, NO_LOGIN_TEXT);
+  });
+
+  it('is drawn from the login render, so the poll is unchanged', () => {
+    assert.match(liftFunction(LANDING_SRC, 'function renderAuthStatus'), /renderNoLoginBanner\(authStatus\);/);
+    assert.doesNotMatch(liftFunction(LANDING_SRC, 'async function loadServerInfo'), /renderNoLoginBanner/);
+  });
+});
+
+describe('The landing notice that no login is in force: its way through (#2378)', () => {
+  it('opens Global Settings at "Your account", with the focus there', () => {
+    let opened = 0;
+    let scrolled = null;
+    const s = noLoginSandbox({ openGlobalSettings: () => { opened++; } });
+    const section = s.doc.createElement('div');
+    section.id = 'gsAccountSection';
+    section.scrollIntoView = (opts) => { scrolled = opts; };
+    s.doc._register(section);
+    s.ctx.renderAuthStatus('open');
+    assert.equal(s.btn.classList.contains('hidden'), false);
+    assert.equal(s.btn.dispatch('click'), true);
+    assert.equal(opened, 1);
+    assert.equal(scrolled && scrolled.block, 'center');
+    assert.equal(s.doc.activeElement, section, 'the focus starts at the account, not at the top of Global Settings');
+    assert.equal(section.getAttribute('tabindex'), '-1');
+  });
+
+  it('wires the button once, however many polls paint the notice', () => {
+    let opened = 0;
+    const s = noLoginSandbox({ openGlobalSettings: () => { opened++; } });
+    for (let i = 0; i < 3; i++) s.ctx.renderAuthStatus('open');
+    s.btn.dispatch('click');
+    assert.equal(opened, 1);
+  });
+
+  it('offers no button on a page that has no Global Settings to open', () => {
+    const s = noLoginSandbox();
+    s.ctx.renderAuthStatus('open');
+    assert.equal(s.banner.classList.contains('hidden'), false, 'the notice still says it');
+    assert.equal(s.btn.classList.contains('hidden'), true);
+    assert.equal(s.btn.dispatch('click'), false);
+  });
+
+  it('shows together with the isolation notice, each in its own slot', () => {
+    const s = noLoginSandbox({ openGlobalSettings: () => {}, openIsolationOverrideSettings: () => {} });
+    s.ctx.renderIsolationOverrideBanner(settings(true), null);
+    s.ctx.renderAuthStatus('open');
+    assert.equal(s.iso.classList.contains('hidden'), false);
+    assert.equal(s.banner.classList.contains('hidden'), false);
+    assert.match(s.ctx.document.getElementById('isolationOverrideBannerText').text, /A launch isolation override is on\./);
+    assert.equal(s.textEl.text, NO_LOGIN_TEXT);
+  });
+});
+
+describe('The landing notice that no login is in force: on the main view (#2378)', () => {
+  it('holds the notice\'s slot, hidden until a poll reads open, as a status, with its button', () => {
+    assert.match(INDEX_SRC, /<div id="noLoginBanner" class="orphan-banner no-login-banner hidden" role="status">\s*<span class="orphan-banner-text" id="noLoginBannerText"><\/span>\s*<button type="button" class="orphan-banner-details no-login-banner-open" id="noLoginBannerBtn">Add a login<\/button>\s*<\/div>/);
+  });
+
+  it('sits after the isolation notice and before the recovery-code notice', () => {
+    const iso = INDEX_SRC.indexOf('id="isolationOverrideBanner"');
+    const notice = INDEX_SRC.indexOf('id="noLoginBanner"');
+    const recovery = INDEX_SRC.indexOf('id="recoveryNoticeBanner"');
+    assert.ok(iso !== -1 && notice !== -1 && recovery !== -1);
+    assert.ok(iso < notice && notice < recovery);
+  });
+});

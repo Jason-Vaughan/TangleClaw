@@ -35,6 +35,48 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-17 — #2378: the landing page says so when no login is in force
+
+<!-- prawduct: type=feature | scope=w5b1-no-login-landing-notice -->
+
+v5.34.0 Wave 5 chunk W5-B1, its one build chunk (#2378 D3). Branch `fix/w5b1-no-login-landing-notice` from `861dbd1f`. Closes #2378. Plan: `.tangleclaw/plans/build-plan-w5b1-no-login-landing-notice.md` (rev 2, sha256 `22c385ca…31aaf2`; charter v2.21, sha256 `d9a9fe5b…1980`; Architect A176 accepted the plan and the nine-file lock; the notice's copy is Architect A175's text verbatim).
+
+**Why.** W4-B2 made the operator routes that grant or widen authority refuse an operator who is not signed in. On an install with no login (`authStatus: 'open'`), the default one, the page said nothing about it: the dashboard bar's login chip is deliberately silent for `open`, so an operator met each refusal one at a time with no standing explanation.
+
+**What.** A persistent notice on the landing page (`#noLoginBanner`, `role="status"`, after the isolation-override notice) shows exactly when `/api/server-info` reads `authStatus: 'open'`. It says that operator actions here rely on request shape rather than a login, and that the authority-granting actions are refused until a login is enabled and you are signed in. Its **Add a login** button opens Global Settings at "Your account" with the focus there. It is drawn by `renderNoLoginBanner`, called from `renderAuthStatus`, so it mirrors the existing 60 s poll with no dismiss and no timer, and `loadServerInfo` is unchanged: two tests outside the lock run it with every render stubbed by name. It is painted once while it stays up, so a screen reader does not re-announce its `role="status"` text on every poll. It hides for `armed`, `account-required`, `locked`, `unreadable`, `fallback` (Caddy's password is in front of the page and the chip already says what to do) and an absent `authStatus`. The copy is set as text nodes. The chip's behaviour is unchanged. `public/ui.js` is untouched: `#gsAccountSection` already exists, and `openAddLoginSettings` gives it `tabindex=-1` and the focus, as `openInstallOverrideSettings` does for its section.
+
+**Docs.** `docs/user-guide.md` ("Adding a login later") describes the notice, when it shows and when it goes; `docs/configuration-reference.md` ("Routes that need a signed-in operator") says the dashboard notices `authStatus: "open"`.
+
+**Tests.** `test/isolation-override-banner.test.js`: the shipped functions lifted and run: the exact copy, shown for `open` only and hidden for every other `AUTH_STATUSES` value and for none; follows the poll down and back up without appending; a repeat `open` poll leaves the same nodes in place; the chip stays silent for `open` and still warns for `fallback`; text, never markup, and no timer; drawn from `renderAuthStatus`, not `loadServerInfo`; the button opens Global Settings at the account with the focus there, is wired once across polls, and is hidden where there is no Global Settings; shows beside the isolation notice; its slot in `index.html`, hidden, between the isolation and recovery-code notices. `test/signed-in-operator-routes.test.js`: on the same scratch install, `open` serves `authStatus: 'open'` and a class A route refuses `LOGIN_GATE_REQUIRED`; signed in under `armed` it serves `armed` and the same route is not refused by the check. Every existing assertion in both files is unchanged. Narrow run: every test file that reads `public/landing.js` or `public/index.html` plus the three out-of-lock tests, green.
+
+**W4-B2 leftovers, recorded and not fixed here (charter §1.3(h), Architect A175; no new issue).** (a) The global-rules and startup-prompt editors on the landing page still show Save to an operator with no login, who then gets the server's refusal; the notice now explains it. (b) `projectRecoveryControlHtml` (`public/ui.js`) keeps a readback branch that the recovery panel can no longer reach. (c) `checkWatchRoute`'s `options` pass-through (`server.js`) has no caller.
+
+**Critic (cumulative at `9797cd75`, then verify-resolutions on the fix).** 0 blocking.
+
+**rev-20261017T051340Z-70ec0354** — scope `w5b1-no-login-landing-notice`, 2026-10-17T05:15:21Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | accepted | Suite evidence is recorded once on the final head, in the Integrator's serialized slot after the Architect's pre-suite review (rule 264.4). The narrow set (every test reading landing.js or index.html plus the three out-of-lock tests) was re-run on the fixed tree: 2338/2338. |
+| R-2 | warning | fixed | The no-login notice's live region is repainted on every 60 s poll, so a screen reader re-announces about 70 words each minute |
+| R-3 | note | accepted | A shared helper would change openInstallOverrideSettings, which test/isolation-override-banner.test.js lifts and runs alone; its sandbox would need the helper too. Two six-line functions with one id apart do not earn a second shape for an existing passing test. |
+| R-4 | note | accepted | Scheduled by the accepted plan after the frozen head and the suite: the isolated Browser VRF (320/375/desktop) runs then and its results go in the PR body. |
+| R-5 | note | accepted | One-chunk plan; the inferred chunk is the only one. Nothing to change. |
+
+**rev-20261017T051811Z-37894aba** — scope `w5b1-no-login-landing-notice`, 2026-10-17T05:18:48Z
+
+_No findings._
+
+_Observations — read, not owed. Answering one is optional._
+
+| Observation | State | Detail |
+|---|---|---|
+| O-1 | accepted | The sibling notices predate this branch and sit outside this chunk's charter row; the PR notes name them for the Integrator to route, since the build release excludes new chore issues. |
+| O-2 | accepted | Same as R-1: suite evidence is recorded once on the final head in the Integrator's serialized slot; the narrow set ran green on this tree (2338/2338). |
+| O-3 | accepted | One-chunk plan; the inference is correct. |
+
+**5 findings** (2 warning, 3 note) — accepted: 4, fixed: 1.
+**3 observations demoted** — 3 answered. An observation gates nothing; answering one is optional.
 ## 2026-10-17 — #2349, #2438, #1413: the temp-repo guard sees `-C` argv and named git wrappers; a skipped describe is pinned against the real reporter
 
 <!-- prawduct: type=bugfix | scope=w5a1-temp-repo-guard-survivors -->
