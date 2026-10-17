@@ -2801,6 +2801,32 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
     });
   });
 
+  describe('a missing list of dialogs reads as none (#2202)', () => {
+    // No production caller passes one: `declared` always answers with an
+    // array. These pin that a null or undefined list is read as an empty one
+    // rather than thrown on, in all three readings.
+    for (const missing of [null, undefined]) {
+      it(`${missing} on a composer: clear, and no dialog`, () => {
+        const cursor = cursorOf(COMPOSER);
+        assert.equal(startupDialog.detect(COMPOSER, missing, WAKE, cursor), null);
+        assert.equal(startupDialog.assessBoot(COMPOSER, missing, WAKE, cursor).state, 'clear');
+        assert.equal(startupDialog.classify(COMPOSER, missing, WAKE, cursor).state, 'clear');
+      });
+
+      it(`${missing} on the trust dialog: its selected option is not a prompt, and nothing is named`, () => {
+        assert.equal(startupDialog.detect(TRUST_DIALOG, missing, WAKE, TRUST_CURSOR), null);
+        assert.deepEqual(startupDialog.assessBoot(TRUST_DIALOG, missing, WAKE, TRUST_CURSOR).state, 'undecided');
+        const seen = startupDialog.classify(TRUST_DIALOG, missing, WAKE, TRUST_CURSOR);
+        assert.equal(seen.state, 'noncomposer');
+        assert.equal(seen.partial, undefined);
+      });
+
+      it(`${missing} on an empty capture: empty`, () => {
+        assert.equal(startupDialog.classify([], missing, WAKE, null).state, 'empty');
+      });
+    }
+  });
+
   describe('the watch', () => {
     let clock;
     let frames;
