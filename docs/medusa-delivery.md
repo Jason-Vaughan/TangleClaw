@@ -195,7 +195,12 @@ removes the stale nudge without filing it in the draft store, and a fresh nudge
 with a new nonce replaces it. The composer is read again after the clear: if any of the
 stale nudge is left, because an engine's line-kill cleared only one wrapped row, the
 injection is refused rather than pasted after the leftover. Operator text before or after the nudge, or a
-composer whose end was not captured, is refused as before. Without the exception
+composer whose end was not captured, is refused as before. So is the nudge when
+anything glyph-led, such as a dialog's selector, is drawn below its composer,
+whether or not an older bare prompt row is in the read (#2452). On an engine that
+hides its at-rest marker while its composer holds text (Antigravity), the exception
+also excuses that marker's absence, under the same conditions and only while the
+status row's hint slot is empty (#2358). Without the exception
 the stranded nudge refused the re-arm it had earned, and every later wake, until
 the exchange escalated. An engine whose composer draws no lower border gets no
 exception, so its stranded nudges still wait for the re-arm budget to run out and
