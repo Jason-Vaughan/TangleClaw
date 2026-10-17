@@ -54,12 +54,20 @@ const AMBIENT = { tcGateActive: false, tcGateState: 'open', headers: { 'sec-fetc
  * @param {object} [options.headers] - Extra headers.
  * @param {object} [options.body] - JSON body.
  * @returns {Promise<{status: number, body: object}>}
+ * @throws {Error} When no response comes, naming the request and the connection's cause.
  */
 async function call(method, apiPath, options = {}) {
-  const res = await fetch(`${origin}${apiPath}`, {
-    method, headers: { 'content-type': 'application/json', ...(options.headers || {}) },
-    body: options.body ? JSON.stringify(options.body) : undefined
-  });
+  let res;
+  try {
+    res = await fetch(`${origin}${apiPath}`, {
+      method, headers: { 'content-type': 'application/json', ...(options.headers || {}) },
+      body: options.body ? JSON.stringify(options.body) : undefined
+    });
+  } catch (err) {
+    // fetch reports only "fetch failed"; why the connection failed (a reset, a refusal, a timeout) is in its cause.
+    if (!err.cause) throw err;
+    throw new Error(`${method} ${apiPath}: ${err.message}: ${err.cause.code || err.cause.message}`, { cause: err.cause });
+  }
   return { status: res.status, body: await res.json() };
 }
 
@@ -1500,6 +1508,21 @@ describe('bridge API: the round trip (#2031)', () => {
       gateway._deps.now = () => at;
       try { return await fn(); } finally { gateway._deps.now = realNow; }
     };
+    /**
+     * Run `fn` with the gateway's clock `ms` after the recorded start of the route's latest launch. The wait is
+     * measured from that recorded time, so a check on either side of the deadline must be too: anchored to the real
+     * clock instead, a slow host's time between the start and the check would count against the wait.
+     * @param {number} routeId - The route whose launch is the base.
+     * @param {number} ms - Milliseconds after the launch started.
+     * @param {Function} fn - Run under the moved clock.
+     * @returns {Promise<*>} What `fn` returns.
+     */
+    const sinceLaunch = async (routeId, ms, fn) => {
+      const realNow = gateway._deps.now;
+      const at = new Date(Date.parse(launchOf(routeId).startedAt) + ms).toISOString();
+      gateway._deps.now = () => at;
+      try { return await fn(); } finally { gateway._deps.now = realNow; }
+    };
 
     it('routing to a project that is not running is refused, the message stays held, and nothing is launched', async () => {
       try {
@@ -1920,11 +1943,11 @@ describe('bridge API: the round trip (#2031)', () => {
         const slow = await consented();
         await gateway.tick();
         const session = store.sessions.getActive(slow.project.id);
-        await later(gateway.READY_WAIT_MS - 1000, async () => {
+        await sinceLaunch(slow.routeId, gateway.READY_WAIT_MS - 1000, async () => {
           await gateway.tick();
           assert.equal(launchOf(slow.routeId).state, 'waiting-ready', 'inside the wait it is still waited for');
         });
-        await later(gateway.READY_WAIT_MS + 5000, async () => {
+        await sinceLaunch(slow.routeId, gateway.READY_WAIT_MS + 5000, async () => {
           await gateway.tick();
           assert.deepEqual([launchOf(slow.routeId).state, launchOf(slow.routeId).failureCode], ['failed', 'ready-timeout']);
           assert.equal(store.sessions.getActive(slow.project.id).id, session.id, 'the session that did start is not ended');

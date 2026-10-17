@@ -465,18 +465,27 @@ describe('async pane reads — judging an answer never blocks on tmux (#2086)', 
         wake._internal.readPaneAsync = (name) => tmux.readPaneAsync(name, { timeout: 500 });
         // The monitor's own clock, so a real timeout is seen as one.
         wake._internal.clock = () => performance.now();
+        const spawnedAt = performance.now();
         wake._internal.tick({ async: true });
+        const tickMs = Math.round(performance.now() - spawnedAt);
         world.phase = 'answer';
         let turns = 0;
         const timer = setInterval(() => { turns += 1; }, 10);
         const settled = () => fleet.every((x) => {
           try { return wake.peerReachability(x.status.workspaceId).reason === 'pane-capture-failed'; } catch { return false; }
         });
+        // For a failure's message only: which sessions were not judged unreadable, and what each read as instead.
+        const unsettled = () => fleet.flatMap((x) => {
+          let reason;
+          try { reason = wake.peerReachability(x.status.workspaceId).reason; } catch (err) { reason = `threw: ${err.message}`; }
+          return reason === 'pane-capture-failed' ? [] : [`${x.status.workspaceId}: ${reason}`];
+        });
         const until = Date.now() + 20000;
         while (!settled() && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 25));
         clearInterval(timer);
-        assert.ok(settled(), 'every wedged read was judged as an unreadable pane');
-        assert.ok(turns >= 10, `the event loop turned ${turns} times while thirty-one reads were wedged`);
+        const waitMs = Math.round(performance.now() - spawnedAt);
+        assert.ok(settled(), `every wedged read was judged as an unreadable pane; after ${waitMs} ms not yet: ${unsettled().join(', ')}`);
+        assert.ok(turns >= 10, `the event loop turned ${turns} times while thirty-one reads were wedged (spawning took ${tickMs} ms, ${waitMs} ms in all)`);
         assert.equal(world.injected.length, 0);
         assert.deepEqual(world.blockingTmux.filter((c) => c.phase === 'answer'), []);
       });
