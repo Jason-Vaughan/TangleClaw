@@ -41,6 +41,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-17 — W10-REC: the v5.34.0 Wave 10 combined records
+
+<!-- prawduct: type=chore | scope=w10-rec-records -->
+
+v5.34.0 records chunk W10-REC (charter v2.32). Branch `docs/w10-rec-records` from `origin/main` `f7eb5439`, after W10-B1 PR #2466 (`1d537f5d`, closes #2008 and #2155) and W10-A1 PR #2467 (`f7eb5439`, closes #1280 and refs open #1903) merged. The Integrator authors this records-only PR under A172.1.
+
+**What changed.** `CHANGELOG.md` `[Unreleased]` receives one Added entry for the ownership-answer activity record, two Fixed entries for session-file provenance and non-git wraps, and one Internal entry for the shared lift helper. Each entry is under 400 UTF-8 bytes. `FEATURES.md` records the behavior, its limits, and stable file pointers. `prawduct-hook archive-change-log` dry run moves zero entries: the live log is below its 40,000-byte threshold, so the archive stays unchanged.
+
+**Limits.** #1903 remains open for migration of existing test helpers; #2465 remains open for importing the shared wrap-subject rule into `changelog-coverage`. A live wrap on a real non-git project remains owed after an authorized deploy. This PR does not release, tag, bump a version or deploy.
+
 ## 2026-10-17 — #1280, #1903: a session's files: stamp no longer carries an earlier wrap commit's paths, and one shared lift helper replaces the private brace-matchers going forward
 
 <!-- prawduct: type=bugfix | scope=w10-a1-wrap-commit-subtraction-and-lift-helper -->

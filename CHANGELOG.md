@@ -6,6 +6,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- Wrap activity now records the paths answered Include and Leave and the paths committed as session-owned, even when the commit step skips (#2155).
 - **Host check** (#1380, #2142): `node scripts/host-check.js` reports whether this machine's tailnet name, configured names, Caddy sites, certificates, serve routes and local trust agree, each row ok/drift/ambiguous/observed/unknown. Read-only; redacted unless `--reveal`. Exit 0, 3 (drift) or 4 (unmeasured).
 - **A guide to moving TangleClaw to another machine** (#1380). `docs/host-migration.md` separates a planned move from recovering a copied machine. It shows how to read the host check, and gives each fix with its trigger, snapshot and exact rollback. It is a checklist: it changes nothing by itself.
 - **The merge queue will not land while its owner has an unhandled message** (#2372). `tc queue advance` refuses with `AUTHORIZER_MESSAGE_UNREAD`, naming each by id and sender; nothing changes. Handle them, then advance again. It refuses with `AUTHORIZER_INBOX_UNREADABLE` when its listener is not listening or its launch was replaced. System notices do not block; a hand merge is not guarded.
@@ -23,6 +24,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- A session continuity `files:` stamp omits paths found only in earlier `Session wrap` commits; paths also changed by session work remain (#1280).
+- In a non-git folder, a wrap now skips the commit step after flushing staged writes, so continuity and handoff steps still run (#2008).
 - A stored launch-blocker lookup retries `SQLITE_BUSY` once after 50 ms and logs one condition-only diagnostic if it still fails; a failed read never counts as no blocker (#2206).
 - Change-log branch merges now stop at a visible conflict instead of silently combining overlapping entries; the file header explains how to keep both (#2042).
 - The switchboard refuses to replace its own stranded nudge when a dialog choice appears below the composer, even without an older prompt row (#2452). The engine and delivery guides now describe that rule and the missing-idle-marker exception (#2453).
@@ -40,6 +43,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- Shared `test/helpers/lift.js` pins declaration/body extraction and the shipped `esc`/`jsArg` loaders; existing tests have not migrated to it yet (#1903, Chunk 01).
 - ADR 0025 records the A123 Codex cold-start wake and pane-refusal ruling; #2059 remains open for its unfinished work.
 - The `sendKeys`/`sendRawKey` tmux tests wait for bash's prompt and assert on output lines, so a loaded host no longer scores tty echo (#2447).
 - Antigravity’s profile now records that `? for shortcuts` disappears while its composer holds text; the wake gate permits only its exact stranded nudge with an empty hint slot (#2358).
