@@ -216,9 +216,24 @@ HTTPS install, below) and is never committed.
     connection is made;
   - connects to the literal loopback address, so no DNS answer can move the request off this
     machine, and verifies the chain and the hostname in full, trusting **only** `caFile` for that one
-    request. TLS is never relaxed;
+    request. TLS is never relaxed. For `[::1]` the hostname check is an exact address match against the
+    certificate's IP SANs, made after the chain verifies, so it gives the same answer on every Node
+    version (#2142: Node 22.23.3's own check refuses a SAN naming `::1` as `0:0:0:0:0:0:0:1`). A DNS
+    name or the CN never counts as the address, and a certificate that cannot be read is refused;
   - with no `caFile` (a plain `http:` origin, or a certificate TangleClaw cannot tie to the local
     root), uses Node's default verification, as before.
+
+  When an `https:` origin has no anchor, the server log names each CAROOT directory tried and what
+  was wrong with it (#2142): not set, no `rootCA.pem`, `rootCA.pem` unreadable, not a certificate,
+  did not issue the served certificate, the same directory as an earlier source, mkcert not found,
+  mkcert unusable (with its error), or `mkcert -CAROOT` failed.
+  A hook refusing an untrusted certificate points the operator at this line. It is logged at `warn`
+  the first time a given served certificate and set of reasons is seen by this server process, and
+  at `debug` on every later launch. A different certificate or a changed reason warns again. The
+  level is the only thing that repeats differently: the search, the marker and the trust decision
+  are computed fresh at every launch. `$CAROOT` and mkcert's default directory are re-read each
+  time. The `mkcert -CAROOT` answer is asked once per server process, so installing mkcert or
+  changing the server's PATH afterwards is seen only after a **server restart**.
 
   *Threat rationale.* This trusts nothing the operator's own browser and `tc` do not already trust,
   and only for a request that cannot leave the machine. It trusts the root rather than pinning the
