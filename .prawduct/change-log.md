@@ -35,6 +35,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-17 — #2201: a damaged launch blocker is logged once instead of dropped silently
+
+<!-- prawduct: type=bugfix | scope=w6b1-dialog-classifier-and-launch-blocker -->
+
+v5.34.0 Wave 6 chunk W6-B1 02 of 2. Branch `fix/w6b1-02-launch-blocker-warn` from `6216a7e5`. Closes #2201. Plan: `.tangleclaw/plans/build-plan-w6b1-dialog-classifier-and-launch-blocker.md` (approved rev 2a, sha256 `f93d2dd8…2376`); charter v2.24 (sha256 `08269a39…c875f`, Architect A184). #2195 stays parked (`2195WAIT`): `setLaunchBlocker` and its docstring are unchanged.
+
+**Why.** `_launchBlockerFromRow` returned `null` without a word for a `sessions.launch_blocker` value that did not parse or named no `code`, so a damaged row read as "nothing is blocking this launch" with no trace of why. It runs on every session read, so an unkeyed warning would repeat on every poll.
+
+**What.** A present but unreadable value now logs one `warn` per (session id, raw value), naming the session id, the reason (`not JSON` / `no code`) and the value's length, never the value itself, and still returns `null`. The memory of what was warned about is a Set keyed by session id and a SHA-256 of the value, capped at `LAUNCH_BLOCKER_WARN_CAP` (1000) and cleared when full, so a long-running server cannot grow it without bound; `close()` clears it too, since another database opened in the same process reuses session ids. The cap is exported for its test as `_LAUNCH_BLOCKER_WARN_CAP`.
+
+**Tests.** `test/store.test.js`, a new `describe` that captures the logger (`setConsoleStream`, `setLevel('warn')`, restored after): missing → `null` with no line; valid → parsed with no line; not JSON → one line naming session, reason and length but not the value, none on a re-read; parsed with no code → one line; a new damaged value on the same session → one more; the same value on another session warns for it; at the cap a remembered value stays quiet, and once cleared it warns again. The five new warning cases fail on the unchanged lib. No existing assertion changed. Narrow run: every test file that reads a launch blocker (six files), green, with no new log line seen by any of them.
+
 ## 2026-10-17 — #2202, #2203: the startup-dialog classifier reads a pane once; its non-breaking space is spelled as an escape
 
 <!-- prawduct: type=bugfix | scope=w6b1-dialog-classifier-and-launch-blocker -->
