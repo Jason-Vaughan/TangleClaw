@@ -932,16 +932,19 @@ describe('tmux', () => {
     return '';
   }
 
+  /** The command that starts a bare bash, whose prompt `BASH_PROMPT` matches. */
+  const BARE_BASH = 'exec bash --norc --noprofile';
+
   /**
-   * Start a bare bash in a new session and wait until its prompt is drawn.
-   * Text typed before the prompt is echoed by the tty above it and never
-   * reaches readline, so a test that types sooner scores pane echo rather than
-   * what ran (#2447).
+   * Wait until a bare bash has drawn its prompt. Text typed before the prompt
+   * is echoed by the tty above it and never reaches readline, so a test that
+   * types sooner scores pane echo rather than what ran (#2447). Each test
+   * starts its own session, so the name it passes tmux stays one the session
+   * name guard can trace to `uniqueSessionName`.
    * @param {string} session - tmux session name
    * @returns {string[]} the right-trimmed lines once the prompt is drawn
    */
-  function startBash(session) {
-    tmux.createSession(session, { command: 'exec bash --norc --noprofile' });
+  function awaitBashPrompt(session) {
     return waitForPane(session, (lines) => BASH_PROMPT.test(lastLine(lines)), "bash's prompt");
   }
 
@@ -957,7 +960,8 @@ describe('tmux', () => {
 
     it('should deliver simple text and execute it when enter:true (default)', () => {
       try {
-        startBash(testSession);
+        tmux.createSession(testSession, { command: BARE_BASH });
+        awaitBashPrompt(testSession);
         tmux.sendKeys(testSession, 'echo hello-from-send-keys');
         const content = captureContent(testSession);
         assert.ok(
@@ -975,7 +979,8 @@ describe('tmux', () => {
       // for, with both instructions corrupted. Exercised against a real pane
       // because the defect lives in what tmux does, not in the command string.
       try {
-        startBash(testSession);
+        tmux.createSession(testSession, { command: BARE_BASH });
+        awaitBashPrompt(testSession);
         // The operator's half-typed line: delivered literally, deliberately NOT submitted.
         execSync(`tmux send-keys -t '=${testSession}:' -l 'echo DRAFTRAN'`);
         waitForPane(testSession, (lines) => /^bash-[\d.]+\$ echo DRAFTRAN$/.test(lastLine(lines)),
@@ -1005,7 +1010,8 @@ describe('tmux', () => {
 
     it('leaves the draft alone when clearPrompt is false (explicit opt-out)', () => {
       try {
-        startBash(testSession);
+        tmux.createSession(testSession, { command: BARE_BASH });
+        awaitBashPrompt(testSession);
         execSync(`tmux send-keys -t '=${testSession}:' -l 'echo DRAFTKEPT'`);
         waitForPane(testSession, (lines) => /^bash-[\d.]+\$ echo DRAFTKEPT$/.test(lastLine(lines)),
           'the draft on the prompt line');
@@ -1027,7 +1033,8 @@ describe('tmux', () => {
 
     it('should NOT execute the line when enter:false', () => {
       try {
-        startBash(testSession);
+        tmux.createSession(testSession, { command: BARE_BASH });
+        awaitBashPrompt(testSession);
         tmux.sendKeys(testSession, 'echo not-executed-marker', { enter: false });
         const STAGED = /^bash-[\d.]+\$ echo not-executed-marker$/;
         waitForPane(testSession, (lines) => STAGED.test(lastLine(lines)), 'the command on the prompt line');
@@ -1045,7 +1052,8 @@ describe('tmux', () => {
 
     it('should preserve single quotes in delivered text', () => {
       try {
-        startBash(testSession);
+        tmux.createSession(testSession, { command: BARE_BASH });
+        awaitBashPrompt(testSession);
         // Single quotes are the trickiest case for shell escaping
         tmux.sendKeys(testSession, `echo "it's working"`);
         const content = captureContent(testSession);
@@ -1060,7 +1068,8 @@ describe('tmux', () => {
 
     it('should preserve special shell characters ($, `, \\)', () => {
       try {
-        startBash(testSession);
+        tmux.createSession(testSession, { command: BARE_BASH });
+        awaitBashPrompt(testSession);
         // Send a literal string with characters that would normally be interpreted
         tmux.sendKeys(testSession, `echo 'a$b\`c\\d'`);
         const content = captureContent(testSession);
@@ -1075,7 +1084,8 @@ describe('tmux', () => {
 
     it('should deliver large multi-line payloads (>4KB) intact', () => {
       try {
-        startBash(testSession);
+        tmux.createSession(testSession, { command: BARE_BASH });
+        awaitBashPrompt(testSession);
         // Build a heredoc that echoes a large unique marker after a long preamble
         // This catches the original 3.11.0 regression where large payloads truncated.
         const filler = 'x'.repeat(4500);
@@ -1126,7 +1136,8 @@ describe('tmux', () => {
 
     it('should send Enter as a raw key (executes pending command)', () => {
       try {
-        startBash(testSession);
+        tmux.createSession(testSession, { command: BARE_BASH });
+        awaitBashPrompt(testSession);
         // Stage a command without executing it
         tmux.sendKeys(testSession, 'echo raw-enter-marker', { enter: false });
         waitForPane(testSession, (lines) => /^bash-[\d.]+\$ echo raw-enter-marker$/.test(lastLine(lines)),
