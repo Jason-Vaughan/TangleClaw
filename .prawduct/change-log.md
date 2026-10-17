@@ -35,6 +35,34 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-17 — #2450 + #2451: a failed boot-watch clear no longer stops a launch, and a stored launch blocker nobody reads is still kept current
+
+<!-- prawduct: type=bugfix | scope=w8b1-launch-blocker-clear-and-sweep -->
+
+v5.34.0 Wave 8 chunk W8-B1, chunks 01 and 02 of 2 on one branch. Branch `fix/w8b1-launch-blocker-clear-and-sweep` from `origin/main` `dd055aed`. Closes #2450 and #2451. Plan: `.tangleclaw/plans/build-plan-w8b1-launch-blocker-clear-and-sweep.md` (rev 2, sha256 `048eee77…0a7d`, accepted by INT); charter v2.30 (sha256 `02fa43c3…0892`, Architect A212). Lock: `lib/sessions.js`, `server.js` (two wiring lines), `test/sessions.test.js`, `test/startup-dialog.test.js`, this file.
+
+**#2450.** In `_deferEngineInit`, the boot watch's `answered` branch called `clearLaunchBlocker` with no catch of its own. A store error there fell into the chain's outer catch, which logs "Launch boot watch failed" and withholds every launch send. The clear now has its own catch and logs a `warn` (`write: 'clear'`), and the launch goes on. Each send already looks at the pane before typing (`_startupDialogAtSend` → `_reconcileLaunchBlocker`): at the prompt that look clears the blocker and sends, and with the dialog still up it withholds. Any other throw after the watch still reaches the outer catch and withholds.
+
+**#2451.** A stored blocker was corrected only by a reader (status read, project card, send). A session nobody read kept it after the dialog was answered, and `markCrashed` then recorded the dialog as the crash's `cause`. The crash cannot be checked when it is recorded, because by then the pane is gone. A new `reconcileStoredLaunchBlockers()` reads each ACTIVE session that has a stored blocker through `liveLaunchBlocker` while its pane is live, so it clears and keeps blockers by every reader's rules. A pane tmux says is dead, or did not answer for, is not read or written, and a session with no blocker costs no tmux call. One project's error is logged and the rest are still swept. `startLaunchBlockerSweep`/`stopLaunchBlockerSweep` run it every 15 s on an `unref`'d timer. `server.js` starts and stops it beside `launchUnready` (two lines), so a blocker persisted across a restart is swept by the first tick. The crash-time re-check, the other shape the issue names, was rejected: the pane is gone at every `markCrashed` call site.
+
+**Residual.** A session whose dialog is answered and which crashes within one interval (≤15 s), before any reader, is still recorded with the stale cause. A pane that cannot be read keeps its blocker, by design. This closes the no-poll residual that W7-B1 (#2455) left open on #2451, down to that interval.
+
+**Tests.** New cases only; no existing assertion changed. `test/startup-dialog.test.js` (#2450, the launch harness): a clear that throws once, so the launch types its pre-key, prime and kickoff, and the send-time look clears the record; a clear that always throws, where the launch types and the record stands; the dialog still up at send time, where nothing is typed and a launch send is refused; a throw elsewhere after the watch, which still withholds and records the skipped paste. Run against the old code, the first three fail and the fourth passes, as it should. `test/sessions.test.js` (#2451): the issue's case; a dialog kept; unread kept with no write; dead and unanswered panes not read; no blocker means no probe; one project failing while the next is swept; the timer lifecycle (one `unref`'d 15 s timer, idempotent start and stop); a tick runs the sweep; a blocker persisted across a restart cleared by the first tick, or kept with the dialog up. The narrow run covered every test file that loads `lib/sessions.js` or reads it or `server.js` as source (132 files): green.
+
+**Not in this PR.** The owed tracked learnings file is outside W8-B1 and W8-REC (INT ruling); the PM schedules it.
+
+**Review.** Cumulative Critic `rev-20261017T152544Z-e66f981e`: 0 blocking.
+
+**rev-20261017T152544Z-e66f981e** — 2026-10-17T15:27:04Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | accepted | The full suite runs once on the frozen head in INT's suite slot (charter 1.5, plan freeze step 3); its run is recorded as test evidence before the ready report. The narrow run on this head (132 source-reading files, 5734 pass, 0 fail) is what the build stage allows. |
+| R-2 | note | accepted | Owed, not dropped: the change-log entry is prepended at freeze step 2 and carries this review's id, so it follows the review. |
+| R-3 | note | accepted | As the plan chose: a synchronous read matches launch-unready's monitor; a session with no stored blocker costs no tmux call, so a healthy fleet pays nothing. The tmux timeout bounds the worst case. |
+
+**3 findings** (1 warning, 2 note) — accepted: 3.
+
 ## 2026-10-17 — W7-REC: the v5.34.0 Wave 7 combined records
 
 <!-- prawduct: type=chore | scope=w7-rec-records -->
