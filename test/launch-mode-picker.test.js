@@ -11,20 +11,9 @@ const { LANDING_JSARG_SRC } = require('./_page-globals');
 const LANDING_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
 const API_HELPER_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
 const engines = require('../lib/engines');
+const { liftDeclaration } = require('./helpers/lift');
 
 const readEngine = (id) => JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', `${id}.json`), 'utf8'));
-
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 function setupLanding(state) {
   const ids = ['launchModeModal', 'launchModeText', 'launchModeList', 'launchModeWarning', 'launchModeConfirmBtn'];
@@ -48,11 +37,11 @@ function setupLanding(state) {
   vm.runInContext(LANDING_JSARG_SRC, ctx);
   // The honored-mode predicate is shared frontend base (`public/api-helper.js`,
   // loaded before every page script), not landing-page code.
-  vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
-  vm.runInContext(liftFunction(LANDING_SRC, 'function preselectedLaunchMode'), ctx);
-  vm.runInContext(liftFunction(LANDING_SRC, 'function updateLaunchModeWarning'), ctx);
-  vm.runInContext(liftFunction(LANDING_SRC, 'function openLaunchModeModal'), ctx);
-  vm.runInContext(liftFunction(LANDING_SRC, 'function proceedWithLaunchModeCheck'), ctx);
+  vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
+  vm.runInContext(liftDeclaration(LANDING_SRC, 'function preselectedLaunchMode'), ctx);
+  vm.runInContext(liftDeclaration(LANDING_SRC, 'function updateLaunchModeWarning'), ctx);
+  vm.runInContext(liftDeclaration(LANDING_SRC, 'function openLaunchModeModal'), ctx);
+  vm.runInContext(liftDeclaration(LANDING_SRC, 'function proceedWithLaunchModeCheck'), ctx);
 
   return { doc, ctx };
 }
@@ -85,8 +74,8 @@ function launchThroughGate(project, engineId = 'claude') {
   ctx.doLaunchProject = async (name, mode, contMode) => {
     Object.assign(launched, { called: true, name, mode, contMode });
   };
-  vm.runInContext(liftFunction(LANDING_SRC, 'function closeLaunchModeModal'), ctx);
-  vm.runInContext(liftFunction(LANDING_SRC, 'async function confirmLaunchMode'), ctx);
+  vm.runInContext(liftDeclaration(LANDING_SRC, 'function closeLaunchModeModal'), ctx);
+  vm.runInContext(liftDeclaration(LANDING_SRC, 'async function confirmLaunchMode'), ctx);
 
   ctx.proceedWithLaunchModeCheck(project ? project.name : 'MyProj', project, null);
   return { doc, ctx, launched };
@@ -171,8 +160,8 @@ describe('Launch Mode picker (#596)', () => {
       launched = { name, mode, contMode };
     };
     // We need to lift closeLaunchModeModal and confirmLaunchMode as well
-    vm.runInContext(liftFunction(LANDING_SRC, 'function closeLaunchModeModal'), ctx);
-    vm.runInContext(liftFunction(LANDING_SRC, 'async function confirmLaunchMode'), ctx);
+    vm.runInContext(liftDeclaration(LANDING_SRC, 'function closeLaunchModeModal'), ctx);
+    vm.runInContext(liftDeclaration(LANDING_SRC, 'async function confirmLaunchMode'), ctx);
 
     ctx.openLaunchModeModal('MyProj', claude);
     ctx.selectedLaunchMode = 'bypassPermissions';

@@ -30,30 +30,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { liftDeclaration } = require('./helpers/lift');
 
 const HELPER_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
 // `esc` is defined in landing.js and shared globally with ui.js — both scripts
 // load on the dashboard. Lifting the REAL one keeps escaping behaviour honest
 // rather than stubbing it into something more forgiving than production.
 const LANDING_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
-
-/**
- * Slice a top-level function (declaration + body) out of source text.
- * @param {string} src - File source text.
- * @param {string} decl - Declaration to find.
- * @returns {string} The declaration plus its balanced body.
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 /** The settings shape `GET /api/master/status` returns, with overrides. */
 function status(over = {}) {
@@ -104,15 +87,15 @@ function render(settings) {
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   vm.runInContext([
-    liftFunction(LANDING_SRC, 'function esc(str)'),
+    liftDeclaration(LANDING_SRC, 'function esc(str)'),
     // The launch-mode control is drawn by one function the body calls, over
     // two pure helpers (#2197). Lifted with it, so every assertion below still
     // runs the modal's own code.
-    liftFunction(HELPER_SRC, 'function tcHonoredLaunchModes(engine)'),
-    liftFunction(HELPER_SRC, 'function tcMasterEngineModes(engines, engineId)'),
-    liftFunction(HELPER_SRC, 'function tcMasterLaunchModeView(settings, engines, pin, defaultEngine)'),
-    liftFunction(HELPER_SRC, 'function masterLaunchModeMarkup(s, pin, notices)'),
-    liftFunction(HELPER_SRC, 'function renderMasterSettingsBody(s, groups)'),
+    liftDeclaration(HELPER_SRC, 'function tcHonoredLaunchModes(engine)'),
+    liftDeclaration(HELPER_SRC, 'function tcMasterEngineModes(engines, engineId)'),
+    liftDeclaration(HELPER_SRC, 'function tcMasterLaunchModeView(settings, engines, pin, defaultEngine)'),
+    liftDeclaration(HELPER_SRC, 'function masterLaunchModeMarkup(s, pin, notices)'),
+    liftDeclaration(HELPER_SRC, 'function renderMasterSettingsBody(s, groups)'),
     'globalThis.renderMasterSettingsBody = renderMasterSettingsBody;'
   ].join('\n'), sandbox);
   sandbox.renderMasterSettingsBody(settings, []);
@@ -161,7 +144,7 @@ async function save(fields) {
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   vm.runInContext([
-    liftFunction(HELPER_SRC, 'async function saveMasterSettings()'),
+    liftDeclaration(HELPER_SRC, 'async function saveMasterSettings()'),
     'globalThis.saveMasterSettings = saveMasterSettings;'
   ].join('\n'), sandbox);
   await sandbox.saveMasterSettings();
