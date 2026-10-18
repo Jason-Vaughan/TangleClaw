@@ -827,7 +827,7 @@ Each `POST` here needs an identified caller (see "Who may write" above). A servi
 | `/api/shared-docs/:id` | DELETE | Delete a shared document |
 | `/api/shared-docs/:id/lock` | GET | Check document lock status |
 | `/api/shared-docs/:id/lock` | POST | Lock a shared document |
-| `/api/shared-docs/:id/lock` | DELETE | Unlock a shared document |
+| `/api/shared-docs/:id/lock` | DELETE | Unlock a shared document. The operator can release any lock. A member session can release only a lock it holds, judged by the session its launch binding verifies, not by anything the request says. Another member's release of a live lock gets **409** `NOT_LOCK_HOLDER` with `holder: {sessionId, project, lockedAt, expiresAt}`, and the lock stays. An expired lock, or no lock, answers **200** to any member. When a session ends, every lock it holds is still released (#2290) |
 
 ### OpenClaw
 

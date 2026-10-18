@@ -92,6 +92,61 @@ describe('store.documentLocks', () => {
     });
   });
 
+  describe('releaseHeld', () => {
+    /**
+     * Start a session for a second project, so a test has a session that does
+     * not hold the lock.
+     * @returns {object} The started session
+     */
+    function otherSession() {
+      const proj2 = store.projects.create({ name: 'Proj2', path: '/tmp/p2' });
+      return store.sessions.start({ projectId: proj2.id, engineId: 'claude', tmuxSession: 'tc-s2' });
+    }
+
+    it('releases the lock for the session that holds it', () => {
+      const s1 = store.sessions.start({ projectId: proj.id, engineId: 'claude', tmuxSession: 'tc-s1' });
+      store.documentLocks.acquire(doc.id, s1.id, 'TestProj');
+      assert.deepEqual(store.documentLocks.releaseHeld(doc.id, s1.id), { released: true, holder: null });
+      assert.equal(store.documentLocks.check(doc.id), null);
+    });
+
+    it('refuses another session, returns the holder, and leaves the lock in place', () => {
+      const s1 = store.sessions.start({ projectId: proj.id, engineId: 'claude', tmuxSession: 'tc-s1' });
+      const s2 = otherSession();
+      const lock = store.documentLocks.acquire(doc.id, s1.id, 'TestProj');
+      const result = store.documentLocks.releaseHeld(doc.id, s2.id);
+      assert.equal(result.released, false);
+      assert.deepEqual(result.holder, lock);
+      assert.deepEqual(store.documentLocks.check(doc.id), lock);
+    });
+
+    it('lets another session release a lock that has expired', () => {
+      const s1 = store.sessions.start({ projectId: proj.id, engineId: 'claude', tmuxSession: 'tc-s1' });
+      const s2 = otherSession();
+      store.documentLocks.acquire(doc.id, s1.id, 'TestProj');
+      store.getDb().prepare('UPDATE document_locks SET expires_at = ? WHERE document_id = ?')
+        .run(new Date(Date.now() - 1000).toISOString(), doc.id);
+      assert.deepEqual(store.documentLocks.releaseHeld(doc.id, s2.id), { released: true, holder: null });
+      assert.equal(store.documentLocks.check(doc.id), null);
+    });
+
+    it('answers released false with no holder when there is no lock', () => {
+      assert.deepEqual(store.documentLocks.releaseHeld(doc.id, 999), { released: false, holder: null });
+    });
+
+    it('leaves releaseBySession releasing every lock the session holds', () => {
+      const s1 = store.sessions.start({ projectId: proj.id, engineId: 'claude', tmuxSession: 'tc-s1' });
+      const s2 = otherSession();
+      const doc2 = store.sharedDocs.create({ groupId: group.id, name: 'SSH', filePath: '/tmp/ssh.md' });
+      store.documentLocks.acquire(doc.id, s1.id, 'TestProj');
+      store.documentLocks.acquire(doc2.id, s1.id, 'TestProj');
+      assert.equal(store.documentLocks.releaseHeld(doc.id, s2.id).released, false);
+      assert.equal(store.documentLocks.releaseBySession(s1.id), 2);
+      assert.equal(store.documentLocks.check(doc.id), null);
+      assert.equal(store.documentLocks.check(doc2.id), null);
+    });
+  });
+
   describe('releaseBySession', () => {
     it('should release all locks held by a session', () => {
       const session = store.sessions.start({ projectId: proj.id, engineId: 'claude', tmuxSession: 'tc-t' });
