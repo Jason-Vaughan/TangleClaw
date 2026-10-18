@@ -455,6 +455,55 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       }
     });
 
+    describe('the restart-button-disabled log (#1563)', () => {
+      /**
+       * Query systemd once per state in order, recording what is logged.
+       * @param {Array<object>} states - The `systemctl show` output for each query
+       * @returns {Promise<Array<{msg: string, data: object}>>} The info lines logged
+       */
+      async function logsFor(states) {
+        serverInfo.__unsafeResetForTest();
+        let current;
+        stubSystemd(() => current);
+        const logged = [];
+        serverInfo._internal.log = { info: (msg, data) => logged.push({ msg, data }) };
+        try {
+          for (const state of states) {
+            current = state;
+            await serverInfo.refreshSystemdMechanism();
+          }
+          return logged;
+        } finally {
+          restoreInternal();
+        }
+      }
+      const RELOAD = { ...SAFE, NeedDaemonReload: 'yes' };
+      const STOPPED = { ...SAFE, MainPID: '0' };
+      const MISSING = { LoadState: 'not-found', MainPID: '0', KillMode: 'control-group', NeedDaemonReload: 'no' };
+
+      it('logs a disqualifying reason once, with the reason', async () => {
+        const logged = await logsFor([RELOAD]);
+        assert.equal(logged.length, 1);
+        assert.equal(logged[0].msg, 'restart button disabled');
+        assert.match(logged[0].data.reason, /daemon-reload/);
+      });
+
+      it('does not log the same reason again on a re-query', async () => {
+        assert.equal((await logsFor([RELOAD, RELOAD, RELOAD])).length, 1);
+      });
+
+      it('logs a reason that changed', async () => {
+        const logged = await logsFor([RELOAD, STOPPED]);
+        assert.equal(logged.length, 2);
+        assert.match(logged[1].data.reason, /is not running this server/);
+      });
+
+      it('logs the first reason again after an ok answer or a missing unit forgot it', async () => {
+        assert.equal((await logsFor([RELOAD, SAFE, RELOAD])).length, 2, 'ok resets the remembered reason');
+        assert.equal((await logsFor([RELOAD, MISSING, RELOAD])).length, 2, 'a missing unit resets it too, and logs nothing itself');
+      });
+    });
+
     it('a "yes" is not re-queried on every read', async () => {
       serverInfo.__unsafeResetForTest();
       const clock = { now: 1_000_000 };
@@ -667,6 +716,8 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       // on a job that needs this very process to exit first.
       assert.equal(serverInfo.buildRestartCommand('systemctl'),
         'systemctl --user --no-block restart tangleclaw.service');
+      assert.ok(serverInfo.buildRestartCommand('systemctl').endsWith(` ${serverInfo.SYSTEMD_USER_UNIT}`),
+        'the command restarts the unit the probe asked about');
     });
 
     it('returns null for an unknown mechanism (defensive — should never reach the exec path)', () => {
