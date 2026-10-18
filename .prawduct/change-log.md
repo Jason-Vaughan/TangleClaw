@@ -41,6 +41,20 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-18 — #2470, #1903 Chunk 02: the changelog gate judges the commit a dormant methodology allows, and five lift copies use the shared helper
+
+<!-- prawduct: type=bugfix | scope=w12-a1-coverage-withheld-prefixes-and-lift-migration -->
+
+v5.34.0 Wave 12 chunk W12-A1, chunk 1 of 1. Branch `fix/2470-1903-w12-a1` from `origin/main` `bdc1a8bb`. Closes #2470; refs #1903 (Chunk 02). Plan: `.tangleclaw/plans/w12-a1-coverage-withheld-prefixes-and-lift-migration-2470-1903.md` (rev1 sha256 `c2ddeb14…e1d1`, INT `67f2f1f8`, Architect A249, PM §1.3(f) `d9c983f3`); charter v2.36 (sha256 `c64b776f…9dc0`).
+
+**#2470.** On an engine that cannot run Prawduct, the commit step and `session-files` withhold `.prawduct/`, but `_sortForCommit` classified with no withheld prefixes, so a withheld edit to a changelog declared under `.prawduct/` could satisfy coverage for source work the commit ships. `evaluate` now takes `options.methodology`, and `_sortForCommit` classifies with `governance.withheldPrefixesFor(extra.methodology || null)`, the commit step's own derivation. `ai-content.js` passes `context.methodology || null` from both `_verifyChangedGate` call sites through `_satisfactionPredicateGate` and `_changelogCoveragePredicate` (one trailing optional parameter each, D2). It is read from the run's context and never from `options`, which a request body supplies. With no methodology nothing is withheld, as before.
+
+**#1903 Chunk 02.** `_page-globals.js` (`liftDeclaration`, still exported as the shared one, D5), `account-self-service-ui`, `awareness-observability`, `behind-origin` and `bind-notice-render` lift through `test/helpers/lift.js`; `INITIAL_INVENTORY` loses exactly those five entries. `account-self-service-ui` keeps the slice's line head and `behind-origin` its optional `async ` through short adapters with no brace counting. A scratch script hashed all 25 lifted strings on `bdc1a8bb` and on the new tree: identical (D6). Failure messages are now the helper's (D7).
+
+**Plan delta.** The plan's parity case put the project below the repo root and the withheld path at the root's `.prawduct/`, which the project-relative offset drops whatever is withheld, so it could not go red. The case now checks parity for a project at the repo root (red before the fix) and below it.
+
+**Tests.** `test/wrap-changelog-coverage.test.js`: a withheld changelog edit leaves `app.js` uncovered; a runnable or absent methodology stays covered; `excluded` equals the commit step's `notCommitted` at both depths. `test/wrap-step-ai-content.test.js`: on both run paths the predicate receives `context.methodology` itself, and `null` when only `options` carries one. Red first on `main`; mutations (no `withheldPrefixes`, a hard-coded dormant capability, reading `context.options`, one call site only, an adapter without the line head) each went red.
+
 ## 2026-10-17 — W11-REC: the v5.34.0 Wave 11 combined records
 
 <!-- prawduct: type=chore | scope=w11-rec-records -->
