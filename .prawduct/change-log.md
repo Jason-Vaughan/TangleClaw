@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-18 — W20-B1: the launch-binding dispatcher test holds every port it leases
+
+<!-- prawduct: type=bugfix | scope=w20b1-launch-binding-port-fixture -->
+
+v5.34.0 Wave 20 chunk W20-B1, chunk 1 of 1, Charter v2.52, Architect A334. Closes #2504. Plan: `.tangleclaw/plans/build-plan-w20b1-launch-binding-port-fixture.md` (rev1 sha256 `fe8c5f59…feb38`, INT `26faad2b`).
+
+**What changed.** `test/launch-binding-dispatch.test.js` leased fixed ports counted up from 39401. In CI run 39170225170, another worker's listener on 39409 made the lease route refuse the "superseded" case's current-launch request as `409 PORT_IN_USE` before the binding verdict was reached. Now each lease binds a loopback port the OS chooses and holds it until `after()`, which closes every reservation even when a test fails. The request says the listener is its own with `adoptListener: true`, which the route reads only after the binding floor admits the caller. A failed bind throws a named fixture error. A new self-test asserts that two leases get distinct ports and that each is still bound (`EADDRINUSE`). No existing assertion changed, and no product file changed. With a stranger on 39409, and with strangers on 39401-39414, the file passes. Dropping `adoptListener` turns all five granted-lease cases red. Restoring only the fixed counter fails the self-test alone, because `adoptListener` would adopt a stranger's listener too. That makes the self-test the guard against losing the hold. Restoring the old fixture in full fails the self-test and, with a stranger on that case's port, the superseded case.
+
 ## 2026-10-18 — W19-REC: combined records for the Wave 19 source merges
 
 <!-- prawduct: type=chore | scope=w19-rec-records -->
