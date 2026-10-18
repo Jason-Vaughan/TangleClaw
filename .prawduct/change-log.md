@@ -41,6 +41,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-18 — #2481, #2171, #1777: a pane-identity test that reads a slow stub, privateTempRoot on every launch 201, and a release-owner check a pane can pass
+
+<!-- prawduct: type=bugfix | scope=w15b1-pane-stub-temp-root-release-owner -->
+
+v5.34.0 Wave 15 chunk W15-B1, chunk 1 of 1. Branch `fix/w15b1-pane-stub-temp-root-release-owner` from `origin/main` `5a359d2c`. Closes #2481, #2171, #1777. Plan: `.tangleclaw/plans/build-plan-w15b1-pane-stub-temp-root-release-owner.md` (rev3 sha256 `ec71421f…a412`, frozen; INT and Architect A279c); charter v2.40 (sha256 `75f1f861…c601`), 8-file lock, of which `lib/tc-verbs.js` is unchanged.
+
+**What changed.** `test/tc-pane-identity.test.js` preloads a shim into each spawned `bin/tc` that gives `tmux` a finite 30 s instead of the product's 1 s, so a stub slowed by a loaded runner is read rather than given up on; a new case with a 1.5 s stub still refuses with `PANE_IDENTITY_MISMATCH`. The product's 1 s give-up and every existing assertion are unchanged. `server.js` adds `privateTempRoot: null` to the web UI launch `201`, which starts no engine on this host; `docs/engine-guide.md` and `docs/configuration-reference.md` say the key is on every launch `201`. New `test/private-temp-root.test.js` checks both `201`s on a real socket with operator headers. `isolationOverride` and `launchMode` parity on that `201` are left to #2484. Step 10a of `docs/runbooks/stand-up-a-new-agent-fleet.md` now checks each member's own `releaseMode` from its own pane (`SELF_OK owner|off`, `SELF_WRONG`), names the rows it cannot read, and rolls the group up from every member's line; an optional one-step check runs only from a verified Project Master pane and stops with `MASTER_NOT_VERIFIED` on any restricted row. The known-defect note is gone.
+
+**Evidence.** Each fix was red first (exit 0 where 2 was expected; the web UI key absent). After: `tc-pane-identity` 115/115 and 3/3 runs under CPU load, `private-temp-root` 2/2, `api-stranded-wraps` 41/41, `sessions-webui` 31/31. The runbook script printed `SELF TC-Lane-B: off` and `SELF_OK off` live from this pane and gave the documented line on eight fixtures. Not covered: a live roll-up across other members' panes or a Master pane.
+
 ## 2026-10-18 — W14-REC: combined records for the Wave 14 source merges
 
 <!-- prawduct: type=chore | scope=w14-rec-records -->
