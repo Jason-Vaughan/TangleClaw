@@ -41,6 +41,26 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-18 — #2469, #2253: the last review id leaves `lib/master.js`, and recovery test files exit when their last test ends
+
+<!-- prawduct: type=bugfix | scope=w12b1-review-id-and-recovery-exit -->
+
+v5.34.0 Wave 12 chunk W12-B1, chunk 1 of 1. Branch `fix/w12b1-review-id-and-recovery-exit` from `origin/main` `bdc1a8bb`. Closes #2469 and #2253. Plan: `.tangleclaw/plans/build-plan-w12b1-review-id-and-recovery-exit.md` (rev2 sha256 `f32d6af1…77e0`, INT and Architect A250); charter v2.36 (sha256 `c64b776f…c0`).
+
+**#2469.** `lib/master.js`'s guard-posture comment loses ` (R-15)`, the only `(R-n)` left in the file; the sentence is otherwise unchanged. `server.js:4690` still carries `(R-13)`; it is outside this chunk's files and reported to INT (D5).
+
+**#2253: cause.** `launchStubbed` stubs tmux and engine detection only for the launch call, but the launch defers a boot watch, a kickoff and a bootstrap past it. The kickoff then polls a pane that never existed every 750 ms until `IDLE_TIMEOUT_MS` (90 s), on a referenced timer, so each file using the fixture waited ~90 s after its last test.
+
+**#2253: fix.** `lib/launch-kickoff.js`'s idle-poll sleep is unref'd: a pending kickoff never holds a process open by itself, and in the server the listener keeps the loop alive, so production behaviour is unchanged. `test/_recovery-fixture.js` holds no-pane stand-ins while a temp store is open: the kickoff answers `not-silent`, the bootstrap `fired`, and the boot watch reads the pane as gone; `restore()` puts all four back.
+
+**Walls** (each file alone, `node --test`, no forced exit, all 8 run in parallel on this host; before from `.tangleclaw/evidence/w12b1/base-walls.txt`): clear-batch 141 → 40 s, held 112 → 19 s, batch-read 100 → 9 s, clearance-audit 99 → 8 s, project-recovery-mode-control 95 → 4 s, fleet-recovery-panel 93 → 2 s, clear-one 4 → 3 s, clear-ended 2 → 2 s. After the fix, each file's wall equals its own `duration_ms` to within a second. With the kickoff unref alone (the fixture reverted) every file also exits when its last test ends, but its tests run longer (held 28.7 s, clear-batch 54.0 s), because the real kickoff and bootstrap still run.
+
+**Tests.** `test/launch-recovery-held.test.js` gains three cases: the 20 s exit bound stays below `IDLE_TIMEOUT_MS`; a child `node` that launches through the fixture, waits until the deferred kickoff and bootstrap have both started, then restores, exits by itself within the bound (measured 0.4 s); and a child that only awaits `_internal.sleep(IDLE_TIMEOUT_MS)` exits within the bound (0.06 s). Red first on the unfixed tree: both child cases were killed at 20 s. With the fixture fixed and the unref reverted, the sleep pin fails and the launch pin passes. With the unref kept and the fixture reverted, both pass. So the launch pin is carried by the unref, and the fixture's stand-ins are measured by the walls above, not by a pin.
+
+**Plan premise corrected (D2).** The plan expected a host with no tmux to leave the boot watch polling its 45 s window, which would have made the fixture's boot-watch stand-in load-bearing for the exit pin. Measured with `tmux` removed from the child's `PATH`: the unfixed fixture's boot watch still ended at `pane-gone` in 6 ms, because `tmux.probeSession` treats any non-timeout failure, including the shell's "command not found", as an answer that the session is gone. The stand-in is kept as approved, because the fixture's premise is that no pane exists.
+
+**Narrow runs** on `15b2e89c`, all passing: the 8 fixture users, `launch-kickoff`, `launch-bootstrap-wiring`, `startup-dialog`, `startup-control-launch`, `master`, `master-control-bar`, `master-guard-source`.
+
 ## 2026-10-17 — W11-REC: the v5.34.0 Wave 11 combined records
 
 <!-- prawduct: type=chore | scope=w11-rec-records -->
