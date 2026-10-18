@@ -44,9 +44,10 @@ function _bindLoopback(port) {
 /**
  * Find an HTTP port that nothing is listening on, and whose WS neighbour
  * (port + 1, where the Bridge serves its WebSocket) is free too. Both are held
- * at once and then released, so the pair is free at the moment it is read. A
- * fixed number cannot promise that: it sits in the ephemeral range, where any
- * process in a parallel run may be handed it.
+ * at once and then released, so the pair is free at the moment it is read,
+ * and only then: any process in a parallel run may be handed it afterwards.
+ * So a test uses it only as somewhere for a started listener to dial instead
+ * of a real Bridge on this host, never as the thing a verdict depends on.
  * @returns {Promise<number>} The HTTP port of a free pair.
  */
 async function _freeBridgePortPair() {
@@ -60,6 +61,57 @@ async function _freeBridgePortPair() {
     if (wsSide) return port;
   }
   throw new Error('no free loopback port pair after 20 attempts');
+}
+
+/**
+ * Transports for the Bridge probe that answer as a host with no Bridge does:
+ * the HTTP request and the WS port both refused at once. The real classifier
+ * still runs on what they answer; only the network is replaced.
+ * @returns {{fetchImpl: Function, connectImpl: Function}}
+ */
+function _refusingBridgeTransports() {
+  const { EventEmitter } = require('node:events');
+  const refused = () => Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+  return {
+    fetchImpl: async () => {
+      throw Object.assign(new TypeError('fetch failed'), { cause: refused() });
+    },
+    connectImpl: () => {
+      const socket = Object.assign(new EventEmitter(), { destroy() {} });
+      process.nextTick(() => socket.emit('error', refused()));
+      return socket;
+    }
+  };
+}
+
+/**
+ * Transports for the Bridge probe that answer as a healthy Bridge does: its
+ * `/health` reports `hissing` and its WS port accepts.
+ * @returns {{fetchImpl: Function, connectImpl: Function}}
+ */
+function _acceptingBridgeTransports() {
+  const { EventEmitter } = require('node:events');
+  return {
+    fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ status: 'hissing' }) }),
+    connectImpl: () => {
+      const socket = Object.assign(new EventEmitter(), { destroy() {} });
+      process.nextTick(() => socket.emit('connect'));
+      return socket;
+    }
+  };
+}
+
+/**
+ * Make every Bridge probe the server runs use the given transports, until the
+ * returned function restores the real probe. The server calls the probe
+ * through the module object, so wrapping the export reaches it.
+ * @param {{fetchImpl: Function, connectImpl: Function}} transports
+ * @returns {() => void} Restores the real probe.
+ */
+function _probeBridgeWith(transports) {
+  const realCheck = medusa.checkBridgeHealth;
+  medusa.checkBridgeHealth = (options = {}) => realCheck({ ...options, ...transports });
+  return () => { medusa.checkBridgeHealth = realCheck; };
 }
 
 /** Minimal fake WebSocket matching what MedusaListener drives (test seam). */
@@ -817,7 +869,13 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
     // The operator decision (2026-09-08): a retrying listener registers by itself
     // once the Bridge appears, and a refused toggle starts nothing to retry. What
     // the preflight buys is the diagnosis at the moment of the click, not a veto.
-    medusa._setBridgeHttpUrl(`http://127.0.0.1:${await _freeBridgePortPair()}`); // nothing is listening there
+    //
+    // The verdict comes from transports that refuse at once, so it cannot hang
+    // on a port another process in a parallel run was handed, or on a probe
+    // deadline missed under load. The URL only gives the started listener
+    // somewhere other than a real Bridge to dial.
+    medusa._setBridgeHttpUrl(`http://127.0.0.1:${await _freeBridgePortPair()}`);
+    const restoreProbe = _probeBridgeWith(_refusingBridgeTransports());
     try {
       const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: true }, dashboard());
       assert.equal(status, 200, 'the toggle must not refuse');
@@ -826,6 +884,25 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
       assert.equal(data.bridge.code, 'BRIDGE_ABSENT');
       assert.ok(data.bridge.hint, 'and the operator is told what to do about it');
     } finally {
+      restoreProbe();
+      medusa._setBridgeHttpUrl();
+      medusa.stopSession(active.id);
+    }
+  });
+
+  it('toggle {enabled:true} takes its Bridge verdict from the probe the test supplies', async () => {
+    // The case above is only as good as this: with transports that answer as a
+    // healthy Bridge, the same toggle reports BRIDGE_OK. So its BRIDGE_ABSENT
+    // came from the refusing transports, not from whatever the network did.
+    medusa._setBridgeHttpUrl(`http://127.0.0.1:${await _freeBridgePortPair()}`);
+    const restoreProbe = _probeBridgeWith(_acceptingBridgeTransports());
+    try {
+      const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: true }, dashboard());
+      assert.equal(status, 200);
+      assert.equal(data.bridge.healthy, true);
+      assert.equal(data.bridge.code, 'BRIDGE_OK');
+    } finally {
+      restoreProbe();
       medusa._setBridgeHttpUrl();
       medusa.stopSession(active.id);
     }

@@ -7628,6 +7628,9 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
           project: params.project,
           engine: webuiResult.session.engineId,
           sessionMode: 'webui',
+          // The session row records the mode that actually took effect: the
+          // requested one only when the ClawBridge pre-create succeeded.
+          launchMode: webuiResult.session.launchMode || null,
           strandedUnchecked: result.strandedUnchecked || null,
           tmuxSession: null,
           primePrompt: null,
@@ -7637,7 +7640,10 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
           // A web UI launch starts no engine process on this host, so it never
           // has a private socket root. Null, as on a tmux launch whose engine
           // declares none: present, so a caller need not tell absent from none.
-          privateTempRoot: null
+          privateTempRoot: null,
+          // No engine starts on this host, so no launch-isolation check runs
+          // and no override can apply. Present for the same reason as above.
+          isolationOverride: null
         });
       })
       .catch((err) => {
@@ -10652,7 +10658,27 @@ route('DELETE', '/api/shared-docs/:id/lock', (req, res, params) => {
   if (!doc || !sharedDocsAccess.canWriteGroup(access, doc.groupId)) {
     return errorResponse(res, 404, `Shared document "${params.id}" not found`, 'NOT_FOUND');
   }
-  store.documentLocks.release(params.id);
+  if (access.kind === sharedDocsAccess.KINDS.OPERATOR) {
+    store.documentLocks.release(params.id);
+    return jsonResponse(res, 200, { ok: true, id: params.id });
+  }
+  // A member session may release only a lock it holds, or one that has
+  // expired. The lock route records whatever session id its body names, so
+  // the comparison is with the session the launch binding verified, never
+  // with anything this request says about itself.
+  const { released, holder } = store.documentLocks.releaseHeld(params.id, access.sessionId);
+  if (!released && holder) {
+    log.warn('Refused shared-doc lock release by a session that does not hold it', {
+      docId: params.id,
+      holderSession: holder.lockedBySession,
+      holderProject: holder.lockedByProject,
+      callerSession: access.sessionId
+    });
+    return errorResponse(res, 409,
+      `Document is locked by ${holder.lockedByProject} (session ${holder.lockedBySession}); only that session or the operator can release it`,
+      'NOT_LOCK_HOLDER',
+      { holder: { sessionId: holder.lockedBySession, project: holder.lockedByProject, lockedAt: holder.lockedAt, expiresAt: holder.expiresAt } });
+  }
   jsonResponse(res, 200, { ok: true, id: params.id });
 });
 

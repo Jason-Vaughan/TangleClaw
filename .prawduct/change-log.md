@@ -51,6 +51,20 @@ v5.34.0 Wave 16 chunk W16-A1, chunk 1 of 1. Branch `fix/1351-1903-w16-a1` from `
 
 **#1903 Chunk 06.** Ten test files drop their private brace matcher for `liftDeclaration` or `liftBody` from `test/helpers/lift.js`, and their ten `INITIAL_INVENTORY` entries go with them (56 → 46). A runtime capture logged the same lifted text for every call before and after, and the same closing-brace index in `openclaw-cache`, which now also asserts that index lands on the brace (an off-by-one either way was green before). Apart from that one added assertion, no assertion, test name or test count changed in the ten files; four copies that previously searched from index 0, sliced to `-1` or returned `''` on a miss now fail with the helper's message, which only an already-broken test sees.
 
+## 2026-10-18 — #2290, #2484, #2485: only the holder or the operator releases a shared-doc lock, both launch 201s carry the same keys, and a Bridge-absent toggle test that no network can flip
+
+<!-- prawduct: type=bugfix | scope=w16b1-doc-lock-holder-webui-201-bridge-seam -->
+
+v5.34.0 Wave 16 chunk W16-B1, chunk 1 of 1. Branch `fix/w16b1-doc-lock-holder-webui-201-bridge-seam` from `origin/main` `0d33fab9`. Closes #2290, #2484, #2485. Plan: `.tangleclaw/plans/build-plan-w16b1-doc-lock-holder-webui-201-bridge-seam.md` (rev1 sha256 `b5583901…c739`, INT `ae55b3a1`, Architect A290); charter v2.43 (sha256 `21ebf9cc…340e`), 10-file lock, of which `docs/engine-guide.md` and `test/master-launch-mode.test.js` are unchanged.
+
+**#2290.** `DELETE /api/shared-docs/:id/lock` let any member session in the group drop any lock. A member session now releases only a lock it holds, judged by the session its launch binding verified, because the lock route records a body-supplied session id. New `documentLocks.releaseHeld` does the holder-or-expired check and the delete in one statement. Another member gets `409 NOT_LOCK_HOLDER`, the code the attest route already uses, with `holder: {sessionId, project, lockedAt, expiresAt}`, and the lock stays. The operator still releases any lock; an expired or absent lock answers `200`; a session's locks are still all released when it ends. The body-trusted `sessionId` on the lock route is #2489.
+
+**#2484.** The web UI launch `201` now carries `launchMode`, the mode its session row records (the requested one only when the ClawBridge pre-create succeeded), and `isolationOverride: null`, because no engine starts on this host. A key-parity case gives the web UI `201` exactly the tmux `201`'s keys, so a key added to one branch alone fails. `docs/configuration-reference.md` documents both keys and the release rule.
+
+**#2485.** The Bridge-absent toggle test pointed the probe at a port pair it had released, which a parallel run could reuse, and a probe deadline missed under load reads `BRIDGE_UNKNOWN`. The probe now runs the real classifier through transports that refuse at once; a second case with transports that answer healthy gets `BRIDGE_OK`, so the verdict comes from the supplied probe. The five original assertions are unchanged. The port pair now only gives the started listener somewhere other than a real Bridge to dial. The recorded failure's own cause stays unknown; its junit was not kept.
+
+**Evidence.** Each new #2290 and #2484 case was red on base `server.js` and green after. Narrow runs: store, route and neighbouring shared-doc suites 104/104; launch `201` and neighbours 129/129; `api-medusa` 207/207; suites that read the configuration reference 136/136. The absent case passed 3 of 3 with ten CPU burners on ten cores. Critic `rev-20261018T101931Z-fff508ba`: 0 blocking. Full suite owed in INT's slot.
+
 ## 2026-10-18 — W15-REC: combined records for the Wave 15 source merges
 
 <!-- prawduct: type=chore | scope=w15-rec-records -->
