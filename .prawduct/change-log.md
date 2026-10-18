@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-18 — W18-REC: combined records for the Wave 18 source merges
+
+<!-- prawduct: type=chore | scope=w18-rec-records -->
+
+v5.34.0 records chunk W18-REC, Charter v2.50, from merged main `a76868ac`. W18-B1 PR #2497 merged as `92858112` (closes #2200, refs #2313); W18-A1 PR #2499 merged as `a76868ac` (closes #2412, refs #1903 Chunk 08). #2313 stays open for its signed-in panel check after the next deploy, owned by TC-Lane-B; #1903 stays open with 26 private lifters. The two source entries below remain intact.
+
+**What changed.** `CHANGELOG.md` adds three Internal `[Unreleased]` entries for the test-only changes. `FEATURES.md` extends the #1903 lift-helper inventory through Chunk 08, from 36 to 26. The archive dry run moves zero entries because the live change log stays below 40,000 bytes, so the October archive is unchanged. These records do not bump a version, release, tag or deploy.
+
 ## 2026-10-18 — #1903 Chunk 08, #2412: ten more lift copies use the shared helper, and the early-timer deadline case no longer depends on host speed
 
 <!-- prawduct: type=refactor | scope=w18-a1-lift-chunk08-fingerprint-timer -->
