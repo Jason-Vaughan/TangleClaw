@@ -41,6 +41,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-18 — #2059: a Codex 0.161/0.162 pane still drawing a turn is held under an idle thread, and the settling hold restarts when a turn ends
+
+<!-- prawduct: type=bugfix | scope=w14b1-2059-04-codex-post-turn-guard -->
+
+v5.34.0 Wave 14 chunk W14-B1, #2059 Chunk 04, chunk 1 of 1. Branch `fix/w14b1-2059-04-codex-post-turn-guard` from `origin/main` `dd8d28f0`. Closes #2059 (PM + Architect A269/A272 ruling D1(b), with the disclosure below). Plan: `.tangleclaw/plans/build-plan-w14b1-2059-04-codex-post-turn-guard.md` (rev1 sha256 `dbadb07c…640a`, frozen); charter v2.39 (sha256 `8b4ebe21…edb9c`), whose 13-file lock adds three files the plan missed: `test/engine-wake-profiles.test.js` and `test/medusa-wake-engine-activity.test.js` pinned the old behaviour, and `docs/configuration-reference.md` described it.
+
+**What changed.** `data/engines/codex.json` gives 0.161.0 and 0.162.0 each its own `restRows.<version>.turnEnd`: a turn row (`^[›•] `), end rows (`^  Worked for \d`, `^■ Conversation interrupted`) and its own evidence. `lib/medusa-wake.js` validates and compiles the member, and `_paneTurnInFlight` makes `_assessPane` answer `turn-in-flight` (`pane-turn-in-flight`) when a turn row is above the last bare composer and the last row above it is not an end row, for the exact version the channel proved. An older empty composer row is not a turn row: found when `test/medusa-wake-engine-activity.test.js`'s stale-opening case went red. The settling hold now also restarts when an idle answer follows a `busy` one on the same channel; an `unknown` in between does not. On 0.156.1 that delays the first nudge after an observed turn by one interval and never types sooner.
+
+**Tests.** The two fixture files carry the whole signed-in watch timeline (every distinct frame once, per run the frame order, the launch thread's status and whether the client was stopped; same-length placeholder for the scratch path; sources by sha256), distilled by a script kept in the gitignored evidence folder. The replay runs every recorded frame through the real scan: nothing is typed into a stopped frame or one still drawing a turn, and the stopped run is next nudged under the drawn end of the turn; with the guard's call removed it types into a stopped frame. The streaming panes leave the known-unsafe list. The pins that described the old behaviour are rewritten to the new one, and nothing is weakened. Stopped records number 48, not the planned 42: 0.161.0's A run writes `SIGCONT` on the `ps` line, and the planning count missed that window. The hazard count (thread idle under a stopped frame) is 28, as planned.
+
+**Limits.** No session of 0.161.0 or 0.162.0 is woken: `startupControl.verifiedVersions` stays `["0.156.1"]`, so the guard is dormant until one is admitted. Admission is tracked under OPEN #2222. The guard reads only the visible pane: an answer long enough to scroll its one opening `• ` row off the screen, then left still, is not refused. The recorded stops came about a dozen rows in, so that case was not measured; #2222's criterion is that a stall deeper than one screen is measured and refused before either version is listed. The re-arm needs mail waiting: a turn seen by nobody does not restart the hold.
+
 ## 2026-10-18 — W13-REC: Wave 13 combined records after source PRs #2478 and #2477
 
 <!-- prawduct: type=chore | scope=w13-rec-records -->
