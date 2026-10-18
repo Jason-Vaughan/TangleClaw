@@ -51,6 +51,18 @@ v5.34.0 Wave 18 chunk W18-A1, chunk 1 of 1. Branch `fix/1903-2412-w18-a1` from `
 
 **#1903 Chunk 08.** `session-update-poll`, `session-wrap-finalize`, `session-wrapper` (five inline loops and a nested `functionBody`), `sessions` and `setting-disposition` drop their private brace-matching copies for `test/helpers/lift.js`. Three `session-wrapper` guards that only checked the old inline loop go with it. A `node --require` capture logged the same 126 lifts, byte for byte, on base and branch, and every file's test count is unchanged. `INITIAL_INVENTORY` goes from 36 to 26.
 
+## 2026-10-18 — W18-B1: the thirty-wedged-reads case proves the loop turns while every read is in flight
+
+<!-- prawduct: type=bugfix | scope=w18b1-wedged-reads-proof-and-bridge-times -->
+
+v5.34.0 Wave 18 chunk W18-B1, Charter v2.50, Architect A316. Closes #2200. Refs #2313.
+
+**What changed.** `test/medusa-wake-async.test.js`'s "thirty wedged reads answering together leave the event loop turning, with real child processes" case counted 10 ms timer turns inside a ~500 ms read timeout, so host load alone could fail it: 2 turns, measured under background QoS with 120 CPU hogs, while every read was still judged. Now each stand-in child records its PID and sleeps past a 60 s guard, the read timeout is 60 s, and the test releases the reads by killing the children. It asserts that no reader has a verdict when the tick returns; that the loop turned at least 10 times with all 31 children started, still alive and unjudged; and, after release, that all 31 (30 sessions and the Master) are judged `pane-capture-failed`, nothing was typed, no blocking tmux call ran on the answer path and every child is gone. Load can now only make it slower. `lib/` is unchanged (no product defect). Node's own `execFile` timeout firing is no longer exercised in this case and stays proven by `test/tmux-read-pane-async.test.js` ("rejects as timed out…", "the timeout bounds the whole read"). The sibling case in that file has the same wall-clock shape and is filed as #2496.
+
+**#2313** shipped in PR #2432 (`fb7f79fa`). No code here. Its signed-in after-deploy panel check stays owed (owner TC-Lane-B).
+
+**Verified.** Case alone 5/5; 5/5 under 30 foreground CPU hogs; file all green; a scratch synchronous `readPaneAsync` (never committed) fails with "a wedged child ended before the test released it"; `sync-claude-md-block.js` compare exit 0.
+
 ## 2026-10-18 — W17-REC: combined records for the Wave 17 source merges
 
 <!-- prawduct: type=chore | scope=w17-rec-records -->
