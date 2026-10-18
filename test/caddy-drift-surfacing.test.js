@@ -22,28 +22,10 @@ setLevel('error');
 
 const drift = require('../lib/caddy-drift');
 const serverInfo = require('../lib/server-info');
+const { liftDeclaration } = require('./helpers/lift');
 
 const LANDING_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
 const SERVER_SRC = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-
-/**
- * Slice a top-level function out of landing.js by brace matching.
- * @param {string} name - Function name.
- * @returns {string} Its source.
- */
-function extract(name) {
-  const start = LANDING_SRC.indexOf(`function ${name}(`);
-  assert.ok(start > -1, `${name} should exist in landing.js`);
-  let depth = 0;
-  for (let i = LANDING_SRC.indexOf('{', start); i < LANDING_SRC.length; i += 1) {
-    if (LANDING_SRC[i] === '{') depth += 1;
-    else if (LANDING_SRC[i] === '}') {
-      depth -= 1;
-      if (depth === 0) return LANDING_SRC.slice(start, i + 1);
-    }
-  }
-  throw new Error(`could not brace-match ${name}`);
-}
 
 /**
  * Run `renderCaddyDriftBanner` against a DOM stub.
@@ -68,7 +50,7 @@ function render(notice) {
     }
   });
   vm.runInContext(
-    `${extract('esc')}\n${extract('renderCaddyDriftBanner')}\n`
+    `${liftDeclaration(LANDING_SRC, 'function esc(')}\n${liftDeclaration(LANDING_SRC, 'function renderCaddyDriftBanner(')}\n`
     + `renderCaddyDriftBanner(${JSON.stringify(notice)});`,
     ctx
   );

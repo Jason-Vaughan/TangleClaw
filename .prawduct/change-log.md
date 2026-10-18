@@ -53,6 +53,32 @@ v5.34.0 Wave 13 chunk W13-B1, chunk 1 of 1. Branch `fix/w13b1-session-active-rea
 
 **#1563.** `buildRestartCommand('systemctl')` builds the command from `SYSTEMD_USER_UNIT`; the exact-string test keeps its literal. The `restart button disabled` log goes through `_internal.log`, and four tests pin it: logged once, not repeated, logged on change, and logged again after an ok answer or a missing unit resets the remembered reason.
 
+## 2026-10-18 — #1903 Chunk 03, #1437, #2234: eight more lift copies use the shared helper, and two doc claims match their ADRs
+
+<!-- prawduct: type=refactor | scope=w13-a1-lift-chunk03-contributing-runbook -->
+
+v5.34.0 Wave 13 chunk W13-A1, chunk 1 of 1. Branch `feat/w13a1-lift-chunk3-and-docs` from `origin/main` `5ccc310e`. Refs #1903 (Chunk 03); closes #1437 and #2234. Plan: `.tangleclaw/plans/w13-a1-lift-chunk03-contributing-runbook-1903-1437-2234.md` (rev3 sha256 `229b201e…63af`, INT `fc515f30`, Architect A259-rev3); charter v2.37 (sha256 `189678a9…8734`).
+
+**#1903 Chunk 03.** `caddy-drift-surfacing`, `card-detail-disclosure`, `card-session-contract`, `create-flow-mode-picker`, `dashboard-boot-beacon`, `degraded-reads-frontend`, `engine-error-ui` and `engine-picker-gating` lift through `test/helpers/lift.js`, importing its own names (`liftDeclaration` / `liftBody`, D1); `INITIAL_INVENTORY` loses exactly those eight entries. The two name-based copies (`extract`, `sliceFunction`) become `liftDeclaration(src, 'function <name>(')`. `card-detail-disclosure` keeps its own `jsArg` construction bound to its local `esc` (D7). Failure messages are now the helper's (D2). No assertion, test name or test count changed.
+
+**#1437.** `CONTRIBUTING.md` §7 cited ADR 0012 for "strictly zero-dependency", the claim that ADR records as false. It now says zero npm dependencies, names the external tools the product runs on, and keeps the rejection of any PR adding a `package.json`, lockfile or `node_modules` reference (A259). The Code Style bullet makes the same correction (D4).
+
+**#2234.** The fleet runbook's merge-authority check asked `mergedBy` to show the merging session, which it cannot when every session acts through one GitHub account (ADR 0014, Amendment 2026-10-07). It now asks for the merging session's own logged report, and says when `mergedBy` can tell sessions apart.
+
+**Tests.** A scratch preload outside the repository logged `file | decl | sha256` for every lift call while the eight files ran: 219 calls on a `git archive` of `5ccc310e` and on the branch, sorted logs identical (D3). Mutations: one `liftDeclaration` switched to `liftBody` changed the log and turned its file red; a private brace loop put back, and one entry left in the inventory, each turned the inventory test red.
+
+**Review.** Cumulative Critic `rev-20261018T031044Z-c36fbf2b` on `599abe4c`: 0 blocking, 3 warnings (2 accepted, 1 fixed by this entry).
+
+**rev-20261018T031044Z-c36fbf2b** — 2026-10-18T03:11:51Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | accepted | The declared suite runs once, detached, on the final tree in the Integrator's sole suite slot after the Architect's pre-suite read (charter order), and is recorded as test evidence before the ready report. Narrow ring on 599abe4c: the 8 migrated files (runtime counts unchanged vs 5ccc310e) plus lift-helper, 5 test-dir meta tests and dependabot-config passed 216/0. |
+| R-2 | warning | accepted | README.md is outside the charter v2.37 12-file lock. The plan records it as residual R1, sent to the PM for triage (INT 1f0ae78f / b4dbcf26: not filed by this lane), with the proposed issue title '[docs] README "Zero dependencies" overstates ADR 0012's zero-npm claim'. |
+| R-3 | warning | fixed-unreviewed | fixed in `.prawduct/change-log.md` |
+
+**3 findings** (3 warning) — accepted: 2, fixed-unreviewed: 1.
+
 ## 2026-10-18 — W12-REC: the v5.34.0 Wave 12 combined records
 
 <!-- prawduct: type=chore | scope=w12-rec-records -->

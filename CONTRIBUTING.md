@@ -193,7 +193,7 @@ Pick by **user-visible impact**, not by how many files changed: a one-line behav
 - Follow the existing code style (no linter configured — match what's there)
 - All functions should have JSDoc comments
 - Write tests alongside implementation
-- Zero external dependencies — use Node.js stdlib only
+- Zero npm dependencies — use the Node.js standard library (rule 7 under Security & Contribution Guidelines)
 
 ## Reporting Issues
 
@@ -275,10 +275,12 @@ or a patch in a comment, is not fetched or run.
    disguised that are the problem, not the non-English.
 
 7. **No new dependencies.** Adding third-party packages introduces supply-chain risk that this
-   project has deliberately designed out. TangleClaw is strictly zero-dependency (ADR 0012): any
-   pull request adding a `package.json`, a lockfile, or a `node_modules` reference is rejected
-   without further review. Solve it with the Node standard library, or open an issue arguing the
-   case before writing code.
+   project has deliberately designed out. TangleClaw has zero npm dependencies: any pull request
+   adding a `package.json`, a lockfile, or a `node_modules` reference is rejected without further
+   review. Solve it with the Node standard library, or open an issue arguing the case before
+   writing code. TangleClaw does run on a few external tools (Node.js, tmux, Caddy and git among
+   them), each because the product cannot work without it. ADR 0012 records that line, and that
+   nothing is installed only so the repository can check itself.
 
 Expect a rigorous review and some back-and-forth. That is not hostility — it is the same bar the
 maintainers hold themselves to, and a contribution that clears it is genuinely valued.

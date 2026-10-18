@@ -25,27 +25,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { renderNextMarkdown } = require('../public/next-markdown');
+const { liftBody } = require('./helpers/lift');
 
 const ui = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
-
-/**
- * Slice out a top-level function body by brace-matching from its declaration.
- *
- * @param {string} src - File source text.
- * @param {string} decl - The declaration to find.
- * @returns {string} The body including its braces.
- */
-function functionBody(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(bodyStart, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 /**
  * Lift a pure renderer out of `ui.js` and run it with its free variables
@@ -58,7 +40,7 @@ function functionBody(src, decl) {
  */
 function lift(decl, name, scope) {
   const names = Object.keys(scope);
-  const factory = new Function(...names, `${decl}${functionBody(ui, decl)}\nreturn ${name};`);
+  const factory = new Function(...names, `${decl}${liftBody(ui, decl)}\nreturn ${name};`);
   return factory(...names.map((k) => scope[k]));
 }
 
@@ -78,7 +60,7 @@ function esc(str) {
 // The production `jsArg`, lifted from `public/landing.js` and bound to the
 // `esc` above, so handler arguments render exactly as they ship.
 const landing = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
-const jsArg = new Function('esc', `function jsArg(value)${functionBody(landing, 'function jsArg(value)')}\nreturn jsArg;`)(esc);
+const jsArg = new Function('esc', `function jsArg(value)${liftBody(landing, 'function jsArg(value)')}\nreturn jsArg;`)(esc);
 
 /**
  * Run the real `renderNextActionRow`.
@@ -338,7 +320,7 @@ describe('open-ness survives a re-render (#1015)', () => {
 
 describe('the toggles flip state rather than editing the DOM (#1015)', () => {
   it('toggleCardDetail re-renders instead of appending to a card', () => {
-    const body = functionBody(ui, 'function toggleCardDetail(name)');
+    const body = liftBody(ui, 'function toggleCardDetail(name)');
     assert.match(body, /openCardDetail = /, 'it must own the state');
     assert.match(body, /renderProjects\(\)/, 'it must re-render');
     assert.doesNotMatch(body, /appendChild|\.remove\(\)/,
@@ -348,14 +330,14 @@ describe('the toggles flip state rather than editing the DOM (#1015)', () => {
   it('toggleCardDetail closes the nested Next with its panel', () => {
     // The Next disclosure lives inside the panel, so it cannot outlive it —
     // otherwise reopening the card would show an action already expanded.
-    const body = functionBody(ui, 'function toggleCardDetail(name)');
+    const body = liftBody(ui, 'function toggleCardDetail(name)');
     assert.match(body, /openNextAction = null/);
   });
 
   it('both toggles restore focus, which the grid re-render destroys', () => {
     // renderProjects replaces the whole grid, so the element the operator was
     // on stops existing. Without this a keyboard user lands on <body>.
-    assert.match(functionBody(ui, 'function toggleCardDetail(name)'), /focusCard\(name\)/);
-    assert.match(functionBody(ui, 'function toggleNextAction(name)'), /focusNextToggle\(name\)/);
+    assert.match(liftBody(ui, 'function toggleCardDetail(name)'), /focusCard\(name\)/);
+    assert.match(liftBody(ui, 'function toggleNextAction(name)'), /focusNextToggle\(name\)/);
   });
 });

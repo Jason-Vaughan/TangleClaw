@@ -13,6 +13,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { makeDocument } = require('./_mini-dom');
+const { liftDeclaration } = require('./helpers/lift');
 
 const PUBLIC = path.join(__dirname, '..', 'public');
 const SESSION_SRC = fs.readFileSync(path.join(PUBLIC, 'session.js'), 'utf8');
@@ -21,25 +22,6 @@ const LANDING_SRC = fs.readFileSync(path.join(PUBLIC, 'landing.js'), 'utf8');
 const SESSION_HTML = fs.readFileSync(path.join(PUBLIC, 'session.html'), 'utf8');
 const SESSION_CSS = fs.readFileSync(path.join(PUBLIC, 'session.css'), 'utf8');
 const STYLE_CSS = fs.readFileSync(path.join(PUBLIC, 'style.css'), 'utf8');
-
-/**
- * Slice a top-level function (declaration + body) out of source text by
- * brace-matching, so the sandbox runs the REAL code rather than a copy.
- * @param {string} src - File source text.
- * @param {string} decl - Declaration to find, e.g. `function esc(str)`.
- * @returns {string} The declaration plus its balanced body.
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 const ERR = {
   type: 'invalid_request_error',
@@ -55,8 +37,8 @@ describe('#261 session page banner', () => {
     const sandbox = { document: doc, sessionState: { project }, Number, Date, console };
     vm.createContext(sandbox);
     vm.runInContext([
-      liftFunction(SESSION_SRC, 'function esc(str)'),
-      liftFunction(SESSION_SRC, 'function renderEngineErrorBanner(err)'),
+      liftDeclaration(SESSION_SRC, 'function esc(str)'),
+      liftDeclaration(SESSION_SRC, 'function renderEngineErrorBanner(err)'),
       'globalThis.renderEngineErrorBanner = renderEngineErrorBanner;'
     ].join('\n'), sandbox);
     return { render: sandbox.renderEngineErrorBanner, el: ids.engineErrorBanner };
@@ -96,7 +78,7 @@ describe('#261 session page banner', () => {
   });
 
   it('the status poll is what drives it', () => {
-    const poll = liftFunction(SESSION_SRC, 'async function pollStatus()');
+    const poll = liftDeclaration(SESSION_SRC, 'async function pollStatus()');
     assert.match(poll, /renderEngineErrorBanner\(data\.lastEngineError\)/,
       'pollStatus must hand the payload to the banner on every tick');
   });
@@ -108,8 +90,8 @@ describe('#261 project card badge', () => {
     const sandbox = { Number, console };
     vm.createContext(sandbox);
     vm.runInContext([
-      liftFunction(LANDING_SRC, 'function esc(str)'),
-      liftFunction(UI_SRC, 'function renderEngineErrorBadge(project)'),
+      liftDeclaration(LANDING_SRC, 'function esc(str)'),
+      liftDeclaration(UI_SRC, 'function renderEngineErrorBadge(project)'),
       'globalThis.renderEngineErrorBadge = renderEngineErrorBadge;'
     ].join('\n'), sandbox);
     return sandbox.renderEngineErrorBadge;
@@ -145,8 +127,8 @@ describe('#2128 a live session waiting at an engine startup dialog', () => {
     const sandbox = { Number, console };
     vm.createContext(sandbox);
     vm.runInContext([
-      liftFunction(LANDING_SRC, 'function esc(str)'),
-      liftFunction(UI_SRC, 'function renderLaunchBlockerBadge(project)'),
+      liftDeclaration(LANDING_SRC, 'function esc(str)'),
+      liftDeclaration(UI_SRC, 'function renderLaunchBlockerBadge(project)'),
       'globalThis.badge = renderLaunchBlockerBadge;'
     ].join('\n'), sandbox);
     const html = sandbox.badge({ session: { active: true, launchBlocker: BLOCKER } });
@@ -164,8 +146,8 @@ describe('#2128 a live session waiting at an engine startup dialog', () => {
     const sandbox = { document: doc, console };
     vm.createContext(sandbox);
     vm.runInContext([
-      liftFunction(SESSION_SRC, 'function esc(str)'),
-      liftFunction(SESSION_SRC, 'function renderLaunchBlockerBanner(blocker)'),
+      liftDeclaration(SESSION_SRC, 'function esc(str)'),
+      liftDeclaration(SESSION_SRC, 'function renderLaunchBlockerBanner(blocker)'),
       'globalThis.render = renderLaunchBlockerBanner;'
     ].join('\n'), sandbox);
     const el = ids.launchBlockerBanner;

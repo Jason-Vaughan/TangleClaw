@@ -27,29 +27,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const dirScanner = require('../lib/dir-scanner');
-
-/**
- * Slice out a top-level function body by brace-matching from its declaration.
- *
- * `public/ui.js` and `public/landing.js` are browser global scripts rather than
- * requireable modules, so their wiring is pinned against source the same way
- * test/landing-wrap-single-flight.test.js pins the dashboard wrap trigger.
- *
- * @param {string} src - File source text.
- * @param {string} decl - The declaration to find, e.g. `function renderCard(project)`.
- * @returns {string} The body including its braces.
- */
-function functionBody(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(bodyStart, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
+const { liftBody } = require('./helpers/lift');
 
 /**
  * Lift a pure renderer out of `ui.js` and RUN it, with the browser globals it
@@ -67,7 +45,7 @@ function functionBody(src, decl) {
  * @returns {Function} The real renderer, callable.
  */
 function liftRenderer(src, decl, name, scope) {
-  const source = decl + functionBody(src, decl);
+  const source = decl + liftBody(src, decl);
   const names = Object.keys(scope);
   const factory = new Function(...names, `${source}\nreturn ${name};`);
   return factory(...names.map((k) => scope[k]));
@@ -491,7 +469,7 @@ describe('the shared record is actually shared (#885)', () => {
     const helper = fs.readFileSync(
       path.resolve(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
     for (const decl of ['function tcScanNotice(scan)', 'function tcUnreadableNotice(project)']) {
-      const body = functionBody(helper, decl);
+      const body = liftBody(helper, decl);
       assert.match(body, /\.\.\.tcDegradedRead\(|return tcDegradedRead\(/,
         `${decl} must spread or return the shared constructor, not rebuild its fields`);
       assert.doesNotMatch(body, /known:\s*false,\s*\n?\s*why:/,
@@ -567,7 +545,7 @@ describe('the dashboard actually consults the helpers (#885)', () => {
   it('landing.js keeps the scan block instead of discarding it', () => {
     // Mutation: drop the assignment. Every guard above still passes and the
     // dashboard renders nothing — the helpers would be dead code.
-    const body = functionBody(landing, 'async function loadProjects()');
+    const body = liftBody(landing, 'async function loadProjects()');
     assert.match(body, /state\.projectsScan\s*=\s*data\.scan/,
       'loadProjects must keep the scan block; the notice cannot render without it');
     assert.match(landing, /projectsScan:\s*null/,
@@ -804,7 +782,7 @@ describe('the dashboard actually consults the helpers (#885)', () => {
   });
 
   it('renderRootPanel consults the shared helper rather than re-deriving completeness', () => {
-    const body = functionBody(ui, 'function renderRootPanel()');
+    const body = liftBody(ui, 'function renderRootPanel()');
     assert.ok(body.includes('tcScanNotice(state.projectsScan)'),
       'the ROOT panel must ask the shared helper');
   });
@@ -813,7 +791,7 @@ describe('the dashboard actually consults the helpers (#885)', () => {
     // The duplicated markup is why a fix to one card left the other drawing an
     // unreadable repository as clean. Mutation: restore either private copy.
     for (const decl of ['function renderCard(project)', 'function renderUnregisteredCard(project)']) {
-      const body = functionBody(ui, decl);
+      const body = liftBody(ui, decl);
       assert.ok(body.includes('renderGitBadge(project)'),
         `${decl} must use the shared git badge`);
       assert.doesNotMatch(body, /project\.git\.dirty\s*\?/,
@@ -872,7 +850,7 @@ describe('the dashboard actually consults the helpers (#885)', () => {
     // #1034) gave it a real precedence rule worth running rather than reading.
     // Every property this guard held still holds, at its new address — and the
     // delegation is now asserted too, so renderCard cannot grow a private copy.
-    const body = functionBody(ui, 'function renderStatusDot(project)');
+    const body = liftBody(ui, 'function renderStatusDot(project)');
     assert.ok(body.includes('tcSessionLiveness(project)'),
       'the dot must classify liveness through the shared helper');
     assert.ok(body.includes("liveness === 'unknown'"),
@@ -880,7 +858,7 @@ describe('the dashboard actually consults the helpers (#885)', () => {
     assert.ok(body.includes('status-dot-glyph'),
       'the unknown dot must carry a glyph — an error is never communicated by colour alone');
 
-    const cardBody = functionBody(ui, 'function renderCard(project)');
+    const cardBody = liftBody(ui, 'function renderCard(project)');
     assert.ok(cardBody.includes('renderStatusDot(project)'),
       'the card must use the shared dot renderer');
     assert.doesNotMatch(cardBody, /status-dot-glyph/,
@@ -892,7 +870,7 @@ describe('the dashboard actually consults the helpers (#885)', () => {
     // `renderGitBadge` exists to remove, one badge over. Mutation: inline the
     // markup into either renderer again.
     for (const decl of ['function renderCard(project)', 'function renderUnregisteredCard(project)']) {
-      const body = functionBody(ui, decl);
+      const body = liftBody(ui, decl);
       assert.ok(body.includes('renderUnreadableBadge(project)'),
         `${decl} must use the shared badge`);
       assert.doesNotMatch(body, /badge-unreadable/,
