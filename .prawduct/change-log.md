@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-18 — W15-REC: combined records for the Wave 15 source merges
+
+<!-- prawduct: type=chore | scope=w15-rec-records -->
+
+v5.34.0 records chunk W15-REC, Charter v2.40, from merged main `9539ba52`. PR #2486 merged `cec4a9e8` (Refs #1903 Chunk 05, Closes #1219); PR #2487 merged `9539ba52` (Closes #2481, #2171, #1777). #1903 remains open with 56 private lifters; #2484 and #2485 remain open.
+
+**What changed.** `CHANGELOG.md` adds two Fixed and three Internal bullets, each under 400 UTF-8 bytes. `FEATURES.md` updates existing references for the launch `201`, fleet runbook, pane test and executed wrap tests. Both source change-log entries remain intact and appear once. `[Unreleased]` totals 15,507 bytes, below 90,000. The archive-hook result and focused records tests are recorded in this PR. No version bump, release, tag or deploy.
+
 ## 2026-10-18 — #2481, #2171, #1777: a pane-identity test that reads a slow stub, privateTempRoot on every launch 201, and a release-owner check a pane can pass
 
 <!-- prawduct: type=bugfix | scope=w15b1-pane-stub-temp-root-release-owner -->
