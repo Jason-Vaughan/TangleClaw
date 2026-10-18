@@ -454,42 +454,103 @@ describe('async pane reads — judging an answer never blocks on tmux (#2086)', 
     const tmux = require('../lib/tmux');
     const logger = require('../lib/logger');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-wedged-'));
+    const pidDir = path.join(dir, 'pids');
+    fs.mkdirSync(pidDir);
     const savedBin = tmux._async.bin;
     const fleet = matrix.buildFleet({ size: 30, fillers: ['busy', 'draft'] });
+    const master = matrix.makeMaster();
+    const readers = [...fleet, master];
+    // Longer than any wait below, so no read can end by itself: each one ends
+    // only when the test kills its child. The proof then rests on what is
+    // counted while every read is certainly in flight, not on how many timer
+    // turns fit in a window, which host load alone can shrink.
+    const READ_TIMEOUT_MS = 60000;
+    const GUARD_MS = 60000;
+    /**
+     * The PIDs the stand-in children recorded, one file per child.
+     * @returns {number[]}
+     */
+    const recorded = () => fs.readdirSync(pidDir).map(Number).filter((pid) => pid > 0);
+    /**
+     * Whether a process still exists.
+     * @param {number} pid - Process id
+     * @returns {boolean}
+     */
+    const alive = (pid) => {
+      try { process.kill(pid, 0); return true; } catch { return false; }
+    };
+    /**
+     * What a session's wake reports, or why it could not say.
+     * @param {object} x - A fleet session or the Master
+     * @returns {string}
+     */
+    const reasonOf = (x) => {
+      try { return wake.peerReachability(x.status.workspaceId).reason; } catch (err) { return `threw: ${err.message}`; }
+    };
+    /**
+     * For a failure's message: each reader whose reason is not `want`, and what it reads as instead.
+     * @param {string} want - The expected reason
+     * @returns {string[]}
+     */
+    const otherThan = (want) => readers.flatMap((x) => {
+      const reason = reasonOf(x);
+      return reason === want ? [] : [`${x.status.workspaceId}: ${reason}`];
+    });
     try {
-      // A stand-in for a wedged tmux: it never answers.
-      fs.writeFileSync(path.join(dir, 'wedged'), '#!/bin/sh\nexec sleep 30\n', { mode: 0o755 });
+      // A stand-in for a wedged tmux: it records its PID, then never answers.
+      // `exec` keeps that PID for the `sleep`, so the file names the child to
+      // release. It sleeps past the guard, so it cannot end by itself mid-proof;
+      // the read's own timeout still kills it if the test never does.
+      fs.writeFileSync(path.join(dir, 'wedged'), `#!/bin/sh\n: > '${pidDir}'/$$\nexec sleep 120\n`, { mode: 0o755 });
       tmux._async.bin = path.join(dir, 'wedged');
       logger.setConsoleStream({ write: () => {} });
-      await withFleet(fleet, { master: matrix.makeMaster(), forbidBlockingOnAnswer: true }, async (world) => {
-        wake._internal.readPaneAsync = (name) => tmux.readPaneAsync(name, { timeout: 500 });
+      await withFleet(fleet, { master, forbidBlockingOnAnswer: true }, async (world) => {
+        wake._internal.readPaneAsync = (name) => tmux.readPaneAsync(name, { timeout: READ_TIMEOUT_MS });
         // The monitor's own clock, so a real timeout is seen as one.
         wake._internal.clock = () => performance.now();
         const spawnedAt = performance.now();
+        // Measured from before the tick, so the guard ends before any read's own timeout could.
+        const guardEnds = spawnedAt + GUARD_MS;
         wake._internal.tick({ async: true });
         const tickMs = Math.round(performance.now() - spawnedAt);
         world.phase = 'answer';
+        // No read has answered yet, so no session has a verdict: a read that
+        // blocked would have been judged inside the tick.
+        assert.deepEqual(otherThan('not-observed'), [], 'every read was still in flight when the tick returned');
+
         let turns = 0;
         const timer = setInterval(() => { turns += 1; }, 10);
-        const settled = () => fleet.every((x) => {
-          try { return wake.peerReachability(x.status.workspaceId).reason === 'pane-capture-failed'; } catch { return false; }
-        });
-        // For a failure's message only: which sessions were not judged unreadable, and what each read as instead.
-        const unsettled = () => fleet.flatMap((x) => {
-          let reason;
-          try { reason = wake.peerReachability(x.status.workspaceId).reason; } catch (err) { reason = `threw: ${err.message}`; }
-          return reason === 'pane-capture-failed' ? [] : [`${x.status.workspaceId}: ${reason}`];
-        });
-        const until = Date.now() + 20000;
-        while (!settled() && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 25));
-        clearInterval(timer);
+        try {
+          while ((turns < 10 || recorded().length < readers.length) && performance.now() < guardEnds) {
+            await new Promise((resolve) => setTimeout(resolve, 25));
+          }
+        } finally {
+          clearInterval(timer);
+        }
         const waitMs = Math.round(performance.now() - spawnedAt);
-        assert.ok(settled(), `every wedged read was judged as an unreadable pane; after ${waitMs} ms not yet: ${unsettled().join(', ')}`);
-        assert.ok(turns >= 10, `the event loop turned ${turns} times while thirty-one reads were wedged (spawning took ${tickMs} ms, ${waitMs} ms in all)`);
+        const pids = recorded();
+        assert.ok(turns >= 10 && pids.length === readers.length,
+          `the event loop turned ${turns} times and ${pids.length} of ${readers.length} wedged children started, within ${waitMs} ms (spawning took ${tickMs} ms)`);
+        // The turns above happened while every one of the thirty-one reads was wedged.
+        assert.deepEqual(pids.filter((pid) => !alive(pid)), [], 'a wedged child ended before the test released it');
+        assert.deepEqual(otherThan('not-observed'), [], 'a read was judged before its child was released');
+
+        for (const pid of pids) {
+          try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+        }
+        while (otherThan('pane-capture-failed').length > 0 && performance.now() < spawnedAt + 2 * GUARD_MS) {
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        const settledMs = Math.round(performance.now() - spawnedAt);
+        assert.deepEqual(otherThan('pane-capture-failed'), [], `every released read was judged as an unreadable pane, after ${settledMs} ms`);
         assert.equal(world.injected.length, 0);
         assert.deepEqual(world.blockingTmux.filter((c) => c.phase === 'answer'), []);
+        assert.deepEqual(pids.filter(alive), [], 'every wedged child is gone');
       });
     } finally {
+      for (const pid of recorded()) {
+        try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+      }
       logger.setConsoleStream(null);
       tmux._async.bin = savedBin;
       fs.rmSync(dir, { recursive: true, force: true });
