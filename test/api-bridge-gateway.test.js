@@ -59,8 +59,9 @@ const AMBIENT = { tcGateActive: false, tcGateState: 'open', headers: { 'sec-fetc
 async function call(method, apiPath, options = {}) {
   let res;
   try {
+    // A fresh connection per request: a pooled keep-alive socket the server is closing reads as ECONNRESET.
     res = await fetch(`${origin}${apiPath}`, {
-      method, headers: { 'content-type': 'application/json', ...(options.headers || {}) },
+      method, headers: { 'content-type': 'application/json', connection: 'close', ...(options.headers || {}) },
       body: options.body ? JSON.stringify(options.body) : undefined
     });
   } catch (err) {
@@ -1072,6 +1073,23 @@ describe('bridge API: the round trip (#2031)', () => {
       gateway._deps.now = () => at;
       try { return await fn(); } finally { gateway._deps.now = realNow; }
     };
+    /**
+     * Run `fn` with the gateway's clock `ms` after the newest question of one held message was asked. A test that
+     * measures a question's own deadline anchors here rather than to `later`: on a slow host a question an earlier
+     * test asked under a moved clock can fall due in real time and become the newest in the database, which would
+     * move `later`'s base past this question's real deadline.
+     * @param {string} routeId - The held message whose question sets the base.
+     * @param {number} ms - How long after that question was asked to run `fn`.
+     * @param {Function} fn - What to run under the moved clock.
+     * @returns {Promise<*>} What `fn` returns.
+     */
+    const questionLater = async (routeId, ms, fn) => {
+      const realNow = gateway._deps.now;
+      const asked = bridgeStore.questions.listFor(routeId).at(-1).askedAt;
+      const at = new Date(Date.parse(asked) + ms).toISOString();
+      gateway._deps.now = () => at;
+      try { return await fn(); } finally { gateway._deps.now = realNow; }
+    };
 
     it('a question goes to the operator as a reply to their message, and the message stays held with nothing sent on', async () => {
       const routeId = await held();
@@ -1221,17 +1239,17 @@ describe('bridge API: the round trip (#2031)', () => {
       const heldVersion = version(routeId);
       // Out of time by the clock, before the gateway's pass has marked it: already unusable.
       const lateReply = await operatorReplies(posted, alpha.project.name);
-      await later(24 * HOUR, async () => {
+      await questionLater(routeId, 24 * HOUR, async () => {
         const before = everything(routeId, lateReply);
         const res = await masterWrites(routeId, 'route', { expectedVersion: version(routeId), to: alpha.project.id, answeredBy: lateReply });
         assert.deepEqual([res.status, res.body.code], [409, 'QUESTION_EXPIRED']);
         assert.equal(everything(routeId, lateReply), before);
       });
-      await later(24 * HOUR - 1, async () => {
+      await questionLater(routeId, 24 * HOUR - 1, async () => {
         await gateway.tick();
         assert.equal(questionsOf(routeId)[0].state, 'open', 'one millisecond inside its time it is still open');
       });
-      await later(24 * HOUR, async () => {
+      await questionLater(routeId, 24 * HOUR, async () => {
         await gateway.tick();
         assert.equal(questionsOf(routeId)[0].state, 'expired');
         const route = bridgeStore.routes.get(routeId);

@@ -1,8 +1,9 @@
 # Governed Session Finalization (Self-Wrap)
 
 A session that has finished its work, reconciled it and drained its mail can be
-retired **headlessly**: no wrap drawer, no wrap pipeline and no git. Either the
-session does it itself, or the coordinator that governs it does. This path is for
+retired **headlessly**: no wrap drawer, no wrap pipeline and no git write. It
+makes no commit, push or working-tree change, though its strict check fetches and
+prunes remote-tracking refs (below). Either the session does it itself, or the coordinator that governs it does. This path is for
 the case where there is nothing left to decide. Whenever something is left to
 decide, it refuses and points to the full wrap: uncommitted work of the session's
 own, commits no remote has, or a wrap already under way.

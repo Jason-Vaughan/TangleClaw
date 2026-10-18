@@ -10371,9 +10371,10 @@ const ATTEST_BODY_LIMIT_BYTES = 1024;
 /**
  * Whether a project caller holds a doc's lock right now: present, unexpired,
  * taken by the caller's own verified session and project, and (when
- * `lockedAt` is given) the same acquisition the caller started with. The
- * lock route records whatever session id its body names, so the comparison
- * is with the session the launch binding verified, never with the body.
+ * `lockedAt` is given) the same acquisition the caller started with. A
+ * member's lock records its verified session, but an operator's lock records
+ * whatever session id the operator names, so the comparison is with the
+ * session the launch binding verified, never with the body.
  * @param {string} docId - Shared doc id
  * @param {{sessionId: number}} access - A project caller
  * @param {string} projectName - The caller's project name
@@ -10613,6 +10614,29 @@ route('POST', '/api/groups/:id/notices', (req, res, params, body) => {
 
 // ── Document Locks API ──
 
+/** @type {number} Shortest lock, in minutes, the lock route grants. */
+const LOCK_TTL_MIN_MINUTES = 1;
+
+/**
+ * @type {number} Longest lock, in minutes, the lock route grants. A lock cannot
+ * be renewed (acquiring one already held is a conflict), so the ceiling sits
+ * well above the 30-minute default to leave room for a long edit.
+ */
+const LOCK_TTL_MAX_MINUTES = 120;
+
+/**
+ * Whether a lock request's `ttlMinutes` is out of range. Omitted means the
+ * store's default; anything present must be a whole number of minutes within
+ * the route's bounds, never coerced. The store itself still accepts any ttl,
+ * so a test can seed an expired lock directly.
+ * @param {*} ttlMinutes - The body's ttlMinutes, as sent
+ * @returns {boolean} True when the request must be refused.
+ */
+function lockTtlRefusal(ttlMinutes) {
+  if (ttlMinutes === undefined) return false;
+  return !Number.isInteger(ttlMinutes) || ttlMinutes < LOCK_TTL_MIN_MINUTES || ttlMinutes > LOCK_TTL_MAX_MINUTES;
+}
+
 // POST /api/shared-docs/:id/lock
 route('POST', '/api/shared-docs/:id/lock', (req, res, params, body) => {
   const access = sharedDocsCaller(req, res, sharedDocsAccess.NEEDS.WRITE);
@@ -10624,8 +10648,29 @@ route('POST', '/api/shared-docs/:id/lock', (req, res, params, body) => {
   if (!body || !body.sessionId || !body.projectName) {
     return errorResponse(res, 400, 'sessionId and projectName are required', 'BAD_REQUEST');
   }
+  if (lockTtlRefusal(body.ttlMinutes)) {
+    return errorResponse(res, 400,
+      `ttlMinutes must be a whole number of minutes from ${LOCK_TTL_MIN_MINUTES} to ${LOCK_TTL_MAX_MINUTES}`, 'BAD_REQUEST');
+  }
+  let sessionId = body.sessionId;
+  let projectName = body.projectName;
+  if (access.kind === sharedDocsAccess.KINDS.PROJECT) {
+    // A member's body names a claim, checked like x-tangleclaw-project-id is
+    // checked against the launch: a lock in another session's or project's
+    // name is refused, never quietly rebound, so the caller learns its claim
+    // was wrong instead of holding a lock it did not ask for.
+    const project = store.projects.get(access.projectId);
+    const verifiedName = project ? project.name : null;
+    if (Number(body.sessionId) !== access.sessionId || verifiedName === null || body.projectName !== verifiedName) {
+      return errorResponse(res, 403,
+        'The lock is taken in the caller\'s own name: sessionId and projectName must be the session and project this launch verified',
+        'LOCK_CALLER_MISMATCH');
+    }
+    sessionId = access.sessionId;
+    projectName = verifiedName;
+  }
   try {
-    const lock = store.documentLocks.acquire(params.id, body.sessionId, body.projectName, body.ttlMinutes);
+    const lock = store.documentLocks.acquire(params.id, sessionId, projectName, body.ttlMinutes);
     jsonResponse(res, 200, lock);
   } catch (err) {
     if (err.code === 'NOT_FOUND') {
@@ -10663,9 +10708,10 @@ route('DELETE', '/api/shared-docs/:id/lock', (req, res, params) => {
     return jsonResponse(res, 200, { ok: true, id: params.id });
   }
   // A member session may release only a lock it holds, or one that has
-  // expired. The lock route records whatever session id its body names, so
-  // the comparison is with the session the launch binding verified, never
-  // with anything this request says about itself.
+  // expired. A member's lock records its verified session, but an operator's
+  // lock records whatever session id the operator names, so the comparison is
+  // with the session the launch binding verified, never with anything this
+  // request says about itself.
   const { released, holder } = store.documentLocks.releaseHeld(params.id, access.sessionId);
   if (!released && holder) {
     log.warn('Refused shared-doc lock release by a session that does not hold it', {

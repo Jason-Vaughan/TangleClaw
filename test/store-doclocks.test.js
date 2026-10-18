@@ -70,6 +70,15 @@ describe('store.documentLocks', () => {
       assert.equal(lock.lockedByProject, 'Proj2');
     });
 
+    it('accepts a ttl of 0 or below, writing an already-expired lock; the HTTP route alone bounds ttlMinutes', () => {
+      const session = store.sessions.start({ projectId: proj.id, engineId: 'claude', tmuxSession: 'tc-ttl' });
+      for (const ttl of [0, -1]) {
+        const lock = store.documentLocks.acquire(doc.id, session.id, 'TestProj', ttl);
+        assert.ok(new Date(lock.expiresAt).getTime() <= Date.now(), `ttl ${ttl} writes a lock already expired`);
+        store.documentLocks.release(doc.id);
+      }
+    });
+
     it('should throw NOT_FOUND for non-existent document', () => {
       const session = store.sessions.start({ projectId: proj.id, engineId: 'claude', tmuxSession: 'tc-t' });
       assert.throws(

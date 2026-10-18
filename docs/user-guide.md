@@ -705,9 +705,14 @@ Before editing a shared document's contents, lock it to prevent conflicts:
 POST /api/shared-docs/<doc-id>/lock
 x-tangleclaw-project-id: $TANGLECLAW_PROJECT_ID
 x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID
-{ "sessionId": <id>, "projectName": "my-project" }
+{ "sessionId": <your-session-id>, "projectName": "my-project", "ttlMinutes": 30 }
 ```
-Locks expire after 30 minutes and are auto-released when sessions wrap or are killed.
+A session locks only in its own name: `sessionId` and `projectName` must be the session and project
+its launch binding verifies (`tc whoami` prints both), or the lock is refused with **403**
+`LOCK_CALLER_MISMATCH` and nothing is written. The operator can name any session. `ttlMinutes` is
+optional, a whole number from 1 to 120 (default 30), or the request is refused with **400**. Locks
+expire when their time runs out and are auto-released when sessions wrap or are killed. A lock cannot
+be renewed: a longer edit unlocks and locks again.
 
 ### Who may change shared documents
 

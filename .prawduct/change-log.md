@@ -41,6 +41,32 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-18 — #2489, #2184, #2046: a member's shared-doc lock is taken in its verified name with a bounded ttl, the bridge-gateway tests stop racing their clock and sockets, and the finalize docs say what shipped
+
+<!-- prawduct: type=bugfix | scope=w17b1-lock-caller-binding-gateway-determinism-finalize-docs -->
+
+v5.34.0 Wave 17 chunk W17-B1, chunk 1 of 1. Branch `fix/w17b1-lock-caller-binding-gateway-determinism-finalize-docs` from `origin/main` `6ae92519`. Closes #2489, #2184, #2046. Plan: `.tangleclaw/plans/build-plan-w17b1-lock-caller-binding-gateway-determinism-finalize-docs.md` (rev2 sha256 `4796821b…61a1`, Architect A302/A304, INT `006884ff`); Charter v2.47 (sha256 `db13f4aaa53cc418318d39a2fc8d3c04301728b4e412127e77430bb0f95f6d04`), 15-file lock, 13 changed.
+
+**#2489.** `POST /api/shared-docs/:id/lock` used to record whatever `sessionId` and `projectName` its body named. It now treats them as a member's claim and checks it against the launch binding: a mismatch is `403 LOCK_CALLER_MISMATCH` and nothing is written; a match records the verified session and project. The operator still names any session. `ttlMinutes` must be a whole number from 1 to 120 for every HTTP caller (`400 BAD_REQUEST`), and defaults to 30 when omitted. `documentLocks.acquire` is unchanged and still takes any ttl, which a new store test pins. The attest-route test that planted a foreign lock over HTTP now seeds it in the store; its assertions are unchanged. The `attestLockRefusal` JSDoc and the DELETE route comment no longer say every lock records the body's session.
+
+**#2184.** The expiry test's "one millisecond inside" check anchored its clock to the newest question in the database, which a question an earlier test asked under a moved clock can become on a slow host. That would push the anchor past this question's real deadline. The test now anchors its three clock moves to its own route's question (`questionLater`). The fetch helpers in `test/api-bridge-gateway.test.js` and `test/api-bridge.test.js` send `connection: close`, so a pooled keep-alive socket the server is closing cannot be reused and read as ECONNRESET. Two named mechanisms are removed; the cause of every recorded failure is not proven. No assertion changed.
+
+**#2046.** `docs/session-finalize.md` now says finalize makes no git *write*: its strict check fetches and prunes. The v5.30 status row for #2027 gives its exact head, `2074e241` (PR #2043). FEATURES.md and the CHANGELOG `[Unreleased]` correction ride W17-REC.
+
+**Guides.** Under Charter v2.46 and v2.47, `data/shared-docs-guide.md` and `docs/user-guide.md` now say a lock's `sessionId` and `projectName` must be the caller's own verified values and give the `ttlMinutes` range, and the tracked `CLAUDE.md` block is regenerated from the guide by `node scripts/sync-claude-md-block.js --write` (inside the markers only), so the guide note that round 1's R-3 routed to PM triage was done in this chunk instead.
+
+**Critic.** Cumulative review, 0 blocking.
+
+**rev-20261018T130705Z-79e55f32** — 2026-10-18T13:08:24Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | accepted | Stale suite evidence: the full suite runs once on the final head in the Integrator's suite slot (rule 264.4) and is recorded then; no slot was granted at review time. (Re-recorded: an earlier record put the change-log reason on this finding by an array-index slip.) |
+| R-2 | warning | accepted | Missing change-log entry: the Integrator serializes .prawduct/change-log.md prepends; the slot was granted 13:12Z and the entry is prepended in this chunk's final head. (Re-recorded: an earlier record put the guide-text reason on this finding by an array-index slip.) |
+| R-3 | note | accepted | Both files sit outside the chartered 12-file lock (the CLAUDE.md block is generated from data/shared-docs-guide.md; docs/user-guide.md is unlocked). Routed to PM triage as plan open item R-1, widened to name docs/user-guide.md and the tc whoami Session id pointer. |
+
+**3 findings** (2 warning, 1 note) — accepted: 3.
+
 ## 2026-10-18 — #1903 Chunk 07, #1399: ten more lift copies use the shared helper, and POSIX single-quote escaping has one owner
 
 <!-- prawduct: type=refactor | scope=w17-a1-lift-chunk07-shell-word-owner -->
