@@ -23,32 +23,12 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { liftDeclaration } = require('./helpers/lift');
 
 const SESSION_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
 const BEACON_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'update-beacon.js'), 'utf8');
-
-/**
- * Slice a top-level function (declaration + body) out of source text by
- * brace-matching, so the sandbox runs the REAL code rather than a copy.
- *
- * @param {string} decl - Declaration to find.
- * @param {string} [src=SESSION_SRC] - Source to slice from.
- * @returns {string} The declaration plus its balanced body.
- */
-function lift(decl, src) {
-  const text = src || SESSION_SRC;
-  const start = text.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = text.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < text.length; i++) {
-    if (text[i] === '{') depth++;
-    else if (text[i] === '}' && --depth === 0) return text.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 /**
  * Read a numeric constant out of session.js rather than restating it.
@@ -110,12 +90,12 @@ function loadTick(clock, replies) {
     // The REAL predicate, lifted from the beacon rather than restated here —
     // the whole point of sharing it is that one rule governs both surfaces, and
     // a restated copy in the test would hide the day they diverge.
-    lift('function tcIsUpdateAnswer(data)', BEACON_SRC),
-    lift('function tcUpdateAnswerState(data)', BEACON_SRC),
+    liftDeclaration(BEACON_SRC, 'function tcIsUpdateAnswer(data)'),
+    liftDeclaration(BEACON_SRC, 'function tcUpdateAnswerState(data)'),
     'window.tcIsUpdateAnswer = tcIsUpdateAnswer;',
-    lift('function updateCheckDue(lastAt, now, intervalMs)'),
-    lift('async function loadUpdateStatus()'),
-    lift('async function pollTick()'),
+    liftDeclaration(SESSION_SRC, 'function updateCheckDue(lastAt, now, intervalMs)'),
+    liftDeclaration(SESSION_SRC, 'async function loadUpdateStatus()'),
+    liftDeclaration(SESSION_SRC, 'async function pollTick()'),
     'globalThis.pollTick = pollTick;',
     'globalThis.updateCheckDue = updateCheckDue;',
     'globalThis.tcIsUpdateAnswer = tcIsUpdateAnswer;',
@@ -337,7 +317,7 @@ describe('#955 one rule decides what counts as an answer', () => {
     // invisible: both render plausibly, and only the reachable-but-rare states
     // disagree — which is exactly the #716 class of bug. So the session must
     // CALL it, not restate it.
-    const body = lift('async function loadUpdateStatus()');
+    const body = liftDeclaration(SESSION_SRC, 'async function loadUpdateStatus()');
     assert.match(body, /window\.tcIsUpdateAnswer\(/,
       'the shared predicate is the one consulted');
     // Comments stripped first. The rule being guarded is "no second
@@ -359,7 +339,7 @@ describe('#955 one rule decides what counts as an answer', () => {
   });
 
   it('the beacon renders through the same predicate it publishes', () => {
-    const render = lift('function render(data)', BEACON_SRC);
+    const render = liftDeclaration(BEACON_SRC, 'function render(data)');
     assert.match(render, /if \(!tcIsUpdateAnswer\(data\)\) return;/,
       'the beacon may not keep an inlined copy of the rule it exports');
   });
@@ -397,7 +377,7 @@ describe('#931 the update read inherits the status chain, not a second timer', (
     // chain calls it cannot be. A second `setTimeout` chain here would lose the
     // visibility skip and the burst protection this file exists to preserve —
     // and would look correct in every behavioral test.
-    const body = lift('function startPolling()');
+    const body = liftDeclaration(SESSION_SRC, 'function startPolling()');
     assert.match(body, /await pollTick\(\);/,
       'the existing chain must be the one that ticks');
     assert.doesNotMatch(body, /await pollStatus\(\);/,
@@ -415,7 +395,7 @@ describe('#931 the update read inherits the status chain, not a second timer', (
     // separately-fetched asset. Guarding the INIT call site (which this bundle
     // also does) does not cover this one, and this is the site that runs every
     // five minutes rather than once.
-    const body = lift('function startPolling()');
+    const body = liftDeclaration(SESSION_SRC, 'function startPolling()');
     assert.match(body, /try \{\s*await pollTick\(\);\s*\} catch/,
       'the tick must be guarded where the chain re-arms');
     assert.match(body, /\} catch \(err\) \{[^\n]*\n\s*console\.error/,

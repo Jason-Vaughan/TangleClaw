@@ -25,6 +25,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { liftDeclaration } = require('./helpers/lift');
 
 const engines = require('../lib/engines');
 const { DEFAULT_PROJECT_CONFIG } = require('../lib/project-config');
@@ -101,24 +102,6 @@ function codeLinesMentioning(src, needle) {
   return src.split('\n')
     .map((line) => line.trim())
     .filter((t) => t.includes(needle) && !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*'));
-}
-
-/**
- * The source of a brace-delimited declaration, declaration through closing brace.
- * @param {string} src - Source text.
- * @param {string} decl - Text that opens the declaration.
- * @returns {string}
- */
-function declarationSource(src, decl) {
-  const start = src.indexOf(decl);
-  assert.ok(start >= 0, `${decl} must exist`);
-  let depth = 0;
-  for (let i = src.indexOf('{', start); i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} must close`);
-  return '';
 }
 
 // Probe values per setting: what the product ships, and a value that is a real
@@ -523,7 +506,7 @@ describe('settingDisposition — the one answer to "does this setting apply here
           `projConfig\\.${toggle} === true\\s*\\n\\s*&& engines\\.silentPrimeDisposition\\(projConfig, engineProfile\\) === 'on'`),
         `the ${toggle} pointer must gate on the disposition the caveat speaks for`);
       }
-      const helper = declarationSource(
+      const helper = liftDeclaration(
         fs.readFileSync(path.join(__dirname, '..', 'lib', 'engines.js'), 'utf8'),
         'function _indexPointerCaveat(');
       assert.match(helper, /silentPrimeDisposition\(projConfig, engineProfile\)/,
@@ -552,7 +535,7 @@ describe('settingDisposition — the one answer to "does this setting apply here
      * @returns {string} The function's source, declaration through closing brace.
      */
     function body(name) {
-      return declarationSource(SRC, `function ${name}(`);
+      return liftDeclaration(SRC, `function ${name}(`);
     }
 
     it('silentPrimeDisposition asks the mechanism rather than restating the capability check', () => {
@@ -586,8 +569,8 @@ describe('settingDisposition — the one answer to "does this setting apply here
       // safe because its own guard pins every value to a string, so no
       // predicate can hide there; the property this case defends is unchanged.
       const homes = [
-        declarationSource(SRC, 'const ENGINE_CONDITIONAL_SETTINGS = {'),
-        declarationSource(SRC, 'const READ_CAPABILITIES = {')
+        liftDeclaration(SRC, 'const ENGINE_CONDITIONAL_SETTINGS = {'),
+        liftDeclaration(SRC, 'const READ_CAPABILITIES = {')
       ];
       for (const line of codeLinesMentioning(SRC, 'supportsSilentPrime')) {
         assert.ok(homes.some((home) => home.includes(line)),
@@ -626,7 +609,7 @@ describe('settingDisposition — the one answer to "does this setting apply here
       assert.deepEqual(capabilityReads(path.join(__dirname, '..', 'public'), 'supportsSilentPrime'),
         ['public/api-helper.js'], 'the modal and the wizard ask the owner, they do not read the flag');
       const helperSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
-      const fn = declarationSource(helperSrc, 'function tcSettingDisposition(');
+      const fn = liftDeclaration(helperSrc, 'function tcSettingDisposition(');
       for (const line of codeLinesMentioning(helperSrc, 'supportsSilentPrime')) {
         assert.ok(fn.includes(line), `a read outside tcSettingDisposition: ${line}`);
       }
@@ -1069,7 +1052,7 @@ describe('an engine with no config file says what it cannot carry (#1251)', () =
       // reintroduces #1251 with the guard green. The obligation is discharged
       // inside `writeEngineConfig` instead, so there is nothing left to pair.
       const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'engines.js'), 'utf8');
-      assert.match(declarationSource(src, 'function writeEngineConfig'),
+      assert.match(liftDeclaration(src, 'function writeEngineConfig'),
         /reportMissingConfigCarrier\(/,
         'the writer must report the missing carrier itself');
       // And nothing outside that module calls it, which would double the line
@@ -1082,7 +1065,7 @@ describe('an engine with no config file says what it cannot carry (#1251)', () =
 
   it('the settings modal renders the reason where the engine is chosen', () => {
     const UI = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
-    const src = declarationSource(UI, 'function renderGeneratedConfigNotice');
+    const src = liftDeclaration(UI, 'function renderGeneratedConfigNotice');
     assert.match(src, /tcSettingDisposition\('generatedConfig'/);
     assert.match(src, /esc\(disposition\.reason\)/, 'the rendered words are the predicate\'s');
     assert.doesNotMatch(src, /configFormat/, 'no second carrier gate in the modal');
@@ -1172,7 +1155,7 @@ describe('the wake nudge says where it cannot reach (#1255)', () => {
     const spec = engines.ENGINE_CONDITIONAL_SETTINGS.medusaWake;
     assert.equal(typeof spec.applies, 'function');
     assert.equal(spec.caveat, undefined);
-    const src = declarationSource(fs.readFileSync(path.join(__dirname, '..', 'lib', 'engines.js'), 'utf8'),
+    const src = liftDeclaration(fs.readFileSync(path.join(__dirname, '..', 'lib', 'engines.js'), 'utf8'),
       'const ENGINE_CONDITIONAL_SETTINGS');
     assert.match(src, /#1252/, 'the partial-application check is recorded at the table');
   });
@@ -1196,11 +1179,11 @@ describe('the wake nudge says where it cannot reach (#1255)', () => {
       const tables = API.match(/const TC_SETTING_\w+ = \{[\s\S]*?\n {2}\};/g) || [];
       assert.ok(tables.length >= 3, `expected the setting tables to lift, found ${tables.length}`);
       for (const table of tables) vm.runInContext(table, vmCtx);
-      vm.runInContext(declarationSource(API, 'function tcHonoredLaunchModes'), vmCtx);
-      vm.runInContext(declarationSource(API, 'function tcEngineDisplayName'), vmCtx);
-      vm.runInContext(declarationSource(API, 'function tcSettingDisposition'), vmCtx);
-      vm.runInContext(declarationSource(API, 'function tcResolveEngineProfile'), vmCtx);
-      vm.runInContext(declarationSource(UI, 'function renderMedusaWakeToggle'), vmCtx);
+      vm.runInContext(liftDeclaration(API, 'function tcHonoredLaunchModes'), vmCtx);
+      vm.runInContext(liftDeclaration(API, 'function tcEngineDisplayName'), vmCtx);
+      vm.runInContext(liftDeclaration(API, 'function tcSettingDisposition'), vmCtx);
+      vm.runInContext(liftDeclaration(API, 'function tcResolveEngineProfile'), vmCtx);
+      vm.runInContext(liftDeclaration(UI, 'function renderMedusaWakeToggle'), vmCtx);
       vmCtx.renderMedusaWakeToggle(opts.engineId, opts.checked === true, opts.projectEngine || null);
       return doc.getElementById('settingsMedusaWakeContainer').innerHTML;
     }
@@ -1230,7 +1213,7 @@ describe('the wake nudge says where it cannot reach (#1255)', () => {
     });
 
     it('the save path reads only the live control', () => {
-      const save = declarationSource(UI, 'async function doSaveSettings');
+      const save = liftDeclaration(UI, 'async function doSaveSettings');
       assert.match(save, /getElementById\('settingsMedusaWake'\)/);
       assert.match(save, /if \(medusaWakeEl\)/,
         'the inert branch renders no such element, and the save must depend on that');
@@ -1259,7 +1242,7 @@ describe('the wake nudge says where it cannot reach (#1255)', () => {
       // Switching to an engine that cannot be nudged costs the setting; the
       // operator must read that while deciding, not after a save.
       assert.match(UI, /renderMedusaWakeToggle\(e\.target\.value/);
-      const src = declarationSource(UI, 'function renderMedusaWakeToggle');
+      const src = liftDeclaration(UI, 'function renderMedusaWakeToggle');
       assert.match(src, /tcSettingDisposition\('medusaWake'/);
       assert.match(src, /esc\(disposition\.reason\)/, 'the rendered words are the predicate\'s');
       assert.doesNotMatch(src, /capabilities\.wake/, 'no second wake gate in the modal');
@@ -1347,7 +1330,7 @@ describe('what the browser is sent is what its predicates may read (#1251)', () 
     // named `engine` elsewhere in the module does not fire this, and so a third
     // legitimate projection does not either — what must not come back is a
     // hand-built literal assigned to the engine this function returns.
-    const enrich = declarationSource(src, 'async function enrichProject');
+    const enrich = liftDeclaration(src, 'async function enrichProject');
     assert.doesNotMatch(enrich, /engine = \{/,
       'enrichProject must not hand-build a client engine beside engineClientPayload');
     assert.ok((enrich.match(/engines\.engineClientPayload\(/g) || []).length >= 2,
@@ -1382,11 +1365,11 @@ describe('what the browser is sent is what its predicates may read (#1251)', () 
       const tables = API_SRC.match(/const TC_SETTING_\w+ = \{[\s\S]*?\n {2}\};/g) || [];
       assert.ok(tables.length >= 3, `expected the setting tables to lift, found ${tables.length}`);
       for (const table of tables) vm.runInContext(table, ctx);
-      vm.runInContext(declarationSource(API_SRC, 'function tcHonoredLaunchModes'), ctx);
-      vm.runInContext(declarationSource(API_SRC, 'function tcEngineDisplayName'), ctx);
-      vm.runInContext(declarationSource(API_SRC, 'function tcSettingDisposition'), ctx);
-      vm.runInContext(declarationSource(API_SRC, 'function tcResolveEngineProfile'), ctx);
-      vm.runInContext(declarationSource(UI_SRC, 'function renderGeneratedConfigNotice'), ctx);
+      vm.runInContext(liftDeclaration(API_SRC, 'function tcHonoredLaunchModes'), ctx);
+      vm.runInContext(liftDeclaration(API_SRC, 'function tcEngineDisplayName'), ctx);
+      vm.runInContext(liftDeclaration(API_SRC, 'function tcSettingDisposition'), ctx);
+      vm.runInContext(liftDeclaration(API_SRC, 'function tcResolveEngineProfile'), ctx);
+      vm.runInContext(liftDeclaration(UI_SRC, 'function renderGeneratedConfigNotice'), ctx);
       ctx.renderGeneratedConfigNotice(opts.engineId, opts.projectEngine || null);
       return doc.getElementById('settingsGeneratedConfigContainer').innerHTML;
     }

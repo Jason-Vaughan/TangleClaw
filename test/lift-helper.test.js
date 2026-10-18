@@ -128,16 +128,6 @@ const EXCEPTIONS = {
  * removes its file's entries here in the same change; a new copy is refused.
  */
 const INITIAL_INVENTORY = [
-  'session-update-poll.test.js :: lift',
-  'session-wrap-finalize.test.js :: lift',
-  'session-wrapper.test.js :: (inline)',
-  'session-wrapper.test.js :: (inline)',
-  'session-wrapper.test.js :: (inline)',
-  'session-wrapper.test.js :: (inline)',
-  'session-wrapper.test.js :: (inline)',
-  'session-wrapper.test.js :: functionBody',
-  'sessions.test.js :: fnBody',
-  'setting-disposition.test.js :: declarationSource',
   'settings-index-toggle-render.test.js :: liftFunction',
   'settings-launch-mode-render.test.js :: liftFunction',
   'settings-modal-silentprime.test.js :: (inline)',

@@ -26,28 +26,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { liftDeclaration } = require('./helpers/lift');
 
 const SESSION_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
-
-/**
- * Slice a top-level function (declaration + body) out of source text by
- * brace-matching, so the sandbox runs the REAL code rather than a copy.
- *
- * @param {string} decl - Declaration to find.
- * @returns {string} The declaration plus its balanced body.
- */
-function lift(decl) {
-  const start = SESSION_SRC.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = SESSION_SRC.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < SESSION_SRC.length; i++) {
-    if (SESSION_SRC[i] === '{') depth++;
-    else if (SESSION_SRC[i] === '}' && --depth === 0) return SESSION_SRC.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 /** A DOM stub that records nothing but never throws — `handleWrapCompleted` touches many nodes. */
 function stubElement() {
@@ -100,7 +82,7 @@ function loadFinalizer(replies) {
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   vm.runInContext([
-    lift('async function finalizeFinishedWrap(sessionId)'),
+    liftDeclaration(SESSION_SRC, 'async function finalizeFinishedWrap(sessionId)'),
     'globalThis.finalizeFinishedWrap = finalizeFinishedWrap;'
   ].join('\n'), sandbox);
   sandbox.calls = calls;
