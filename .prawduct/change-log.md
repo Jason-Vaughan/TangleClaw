@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-18 — #1903 Chunk 09: eleven more lift copies use the shared helper
+
+<!-- prawduct: type=refactor | scope=w19-a1-lift-chunk09 -->
+
+v5.34.0 Wave 19 chunk W19-A1, chunk 1 of 1. Branch `fix/1903-w19-a1` from `origin/main` `408ace25`. Refs #1903 (Chunk 09). Plan: `.tangleclaw/plans/w19-a1-lift-chunk09-1903.md` (rev1 sha256 `7cdbc871…fd53`, INT `90023082`, Architect A325); charter v2.51 (sha256 `029f079b…3dc5`), 12-file lock.
+
+**What changed.** `settings-index-toggle-render`, `settings-launch-mode-render`, `settings-silent-prime-render`, `setup-wizard-git-unknown`, `startup-prompt-editor`, `stranded-wraps-ui` and `tcc-folders` drop identical private `liftFunction` copies for `liftDeclaration`. `settings-modal-silentprime`'s inline brace walk becomes `liftBody`; only the guard on the old loop's brace index goes. `update-prompt-guards`' `functionBody` becomes one `liftDeclaration` call, and the reason it reads the prompt rather than the file moves to a comment there. `version-visibility`'s `lift` and `extract` become `liftDeclaration` calls; `extract` matched `(async )?function name(`, so its two async functions are lifted with an `async function` literal. A `node --require` capture logged the same 619 lifts, byte for byte, on base and branch, and every file's test count is unchanged. `INITIAL_INVENTORY` goes from 26 to 15, all of them `wrap-*` files.
+
 ## 2026-10-18 — W19-B1: the twenty-wedged-reads case proves the loop turns while every read is in flight
 
 <!-- prawduct: type=bugfix | scope=w19b1-twenty-wedged-reads-proof -->
