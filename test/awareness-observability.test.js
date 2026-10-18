@@ -29,6 +29,7 @@ const os = require('node:os');
 const http = require('node:http');
 
 const { setLevel } = require('../lib/logger');
+const { liftBody } = require('./helpers/lift');
 
 setLevel('error');
 
@@ -375,22 +376,13 @@ describe('dashboard awareness rendering (public/ui.js, lifted like card-detail-d
   const uiSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
 
   /**
-   * Slice out a top-level function body by brace-matching (same mechanic as
-   * test/card-detail-disclosure.test.js — a source guard over markup stays
-   * green against a dead branch, so the renderers are RUN).
+   * Slice out a top-level function body (a source guard over markup stays green
+   * against a dead branch, so the renderers are RUN).
    * @param {string} decl - The declaration to find.
    * @returns {string} The body including braces.
    */
   function functionBody(decl) {
-    const start = uiSrc.indexOf(decl);
-    assert.notEqual(start, -1, `${decl} must exist`);
-    const bodyStart = uiSrc.indexOf('{', start);
-    let depth = 0;
-    for (let i = bodyStart; i < uiSrc.length; i++) {
-      if (uiSrc[i] === '{') depth++;
-      else if (uiSrc[i] === '}' && --depth === 0) return uiSrc.slice(bodyStart, i + 1);
-    }
-    assert.fail(`${decl} body must close`);
+    return liftBody(uiSrc, decl);
   }
 
   /**
