@@ -13,29 +13,12 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { liftDeclaration } = require('./helpers/lift');
 
 const PUB = path.join(__dirname, '..', 'public');
 const LANDING_SRC = fs.readFileSync(path.join(PUB, 'landing.js'), 'utf8');
 const UI_SRC = fs.readFileSync(path.join(PUB, 'ui.js'), 'utf8');
 const INDEX = fs.readFileSync(path.join(PUB, 'index.html'), 'utf8');
-
-/**
- * Slice a top-level function out of source text by brace-matching.
- * @param {string} src - Source text.
- * @param {string} decl - Declaration to find.
- * @returns {string}
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  return assert.fail(`${decl} body must close`);
-}
 
 /**
  * A sandbox holding the editor's functions, a fake DOM and a scripted `api`.
@@ -91,9 +74,9 @@ function sandbox(prompt, projects, { putAnswer = null, openToken = 'tok', putRef
   const ctx = { state: {}, api, document, calls, els, JSON, Number, Set, Array, Promise };
   vm.createContext(ctx);
   vm.runInContext([
-    liftFunction(LANDING_SRC, 'function esc('),
-    liftFunction(LANDING_SRC, 'async function loadStartupPrompt('),
-    liftFunction(LANDING_SRC, 'async function saveStartupPrompt(')
+    liftDeclaration(LANDING_SRC, 'function esc('),
+    liftDeclaration(LANDING_SRC, 'async function loadStartupPrompt('),
+    liftDeclaration(LANDING_SRC, 'async function saveStartupPrompt(')
   ].join('\n'), ctx);
   return ctx;
 }

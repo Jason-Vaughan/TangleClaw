@@ -128,17 +128,6 @@ const EXCEPTIONS = {
  * removes its file's entries here in the same change; a new copy is refused.
  */
 const INITIAL_INVENTORY = [
-  'settings-index-toggle-render.test.js :: liftFunction',
-  'settings-launch-mode-render.test.js :: liftFunction',
-  'settings-modal-silentprime.test.js :: (inline)',
-  'settings-silent-prime-render.test.js :: liftFunction',
-  'setup-wizard-git-unknown.test.js :: liftFunction',
-  'startup-prompt-editor.test.js :: liftFunction',
-  'stranded-wraps-ui.test.js :: liftFunction',
-  'tcc-folders.test.js :: liftFunction',
-  'update-prompt-guards.test.js :: functionBody',
-  'version-visibility.test.js :: lift',
-  'version-visibility.test.js :: extract',
   'wrap-bump-level-askmode.test.js :: functionBody',
   'wrap-confirm-calls-defined.test.js :: functionSource',
   'wrap-drawer-select-a11y.test.js :: functionBody',

@@ -23,6 +23,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { makeDocument } = require('./_mini-dom');
 const engines = require('../lib/engines');
+const { liftDeclaration } = require('./helpers/lift');
 
 const PUB = path.join(__dirname, '..', 'public');
 const UI_SRC = fs.readFileSync(path.join(PUB, 'ui.js'), 'utf8');
@@ -30,27 +31,6 @@ const API_HELPER_SRC = fs.readFileSync(path.join(PUB, 'api-helper.js'), 'utf8');
 
 const readEngine = (id) => JSON.parse(
   fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', `${id}.json`), 'utf8'));
-
-/**
- * Slice a top-level function out of source text by brace-matching, so the
- * sandbox runs the REAL code rather than a copy.
- *
- * @param {string} src - File source text.
- * @param {string} decl - Declaration to find.
- * @returns {string} The declaration plus its balanced body.
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-  return '';
-}
 
 /**
  * Run `renderSilentPrimeToggle` and hand back what the container holds.
@@ -69,11 +49,11 @@ function render({ roster = [], engineId = 'claude', preserveChecked = true, proj
   };
   vm.createContext(ctx);
   // The predicate is shared frontend base, loaded before every page script.
-  vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcSettingDisposition'), ctx);
-  vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcEngineDisplayName'), ctx);
-  vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
-  vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcResolveEngineProfile'), ctx);
-  vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcIndexPointerCaveat'), ctx);
+  vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcSettingDisposition'), ctx);
+  vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcEngineDisplayName'), ctx);
+  vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
+  vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcResolveEngineProfile'), ctx);
+  vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcIndexPointerCaveat'), ctx);
   // `tcSettingDisposition` closes over module-level `TC_SETTING_*` tables.
   // Lifted by PATTERN rather than by name: naming them one at a time means the
   // next table added is missing here, and the failure is a ReferenceError from
@@ -83,7 +63,7 @@ function render({ roster = [], engineId = 'claude', preserveChecked = true, proj
   assert.ok(tables.length >= 2,
     `expected the shipped-default and reader tables to lift, found ${tables.length}`);
   for (const table of tables) vm.runInContext(table, ctx);
-  vm.runInContext(liftFunction(UI_SRC, 'function renderSilentPrimeToggle'), ctx);
+  vm.runInContext(liftDeclaration(UI_SRC, 'function renderSilentPrimeToggle'), ctx);
 
   ctx.renderSilentPrimeToggle(engineId, preserveChecked, projectEngine);
   return doc.getElementById('settingsSilentPrimeContainer').innerHTML;

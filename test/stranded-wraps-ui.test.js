@@ -25,6 +25,7 @@ const SESSION_HTML = fs.readFileSync(path.join(PUBLIC, 'session.html'), 'utf8');
 
 const helpers = loadApiHelperGlobals();
 const drawer = require('../public/wrap-drawer');
+const { liftDeclaration } = require('./helpers/lift');
 
 const REMOTE = 'https://github.com/example/sandbox.git';
 const SHA = 'c'.repeat(40);
@@ -33,26 +34,6 @@ const ITEM = {
   sessionId: 7, grandfathered: false, acknowledged: false, acknowledgedBy: null, acknowledgedAt: null
 };
 const KEY = { remote: REMOTE, branch: 'wrap/1-x', headSha: SHA };
-
-/**
- * Slice a top-level function out of source text by brace-matching, so the test
- * runs the real code rather than a copy.
- * @param {string} src - File source text
- * @param {string} decl - Declaration to find
- * @returns {string} The declaration plus its balanced body
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-  return '';
-}
 
 /**
  * A fake element: the handful of properties the stranded surfaces touch.
@@ -117,7 +98,7 @@ function makeDocument() {
 
 // The page's own HTML escape and handler-argument encoder, as landing.js
 // defines them, for sandboxes that render with `esc` and `jsArg`.
-const escSrc = `${liftFunction(LANDING_SRC, 'function esc(')}\n${liftFunction(LANDING_SRC, 'function jsArg(')}`;
+const escSrc = `${liftDeclaration(LANDING_SRC, 'function esc(')}\n${liftDeclaration(LANDING_SRC, 'function jsArg(')}`;
 
 describe('shared stranded-wrap helpers (api-helper.js)', () => {
   it('lists each item with its full head SHA and remote', () => {
@@ -217,11 +198,11 @@ describe('dashboard: acknowledge and launch (#1539)', () => {
     vm.runInContext([
       escSrc,
       'let strandedLaunch = null;',
-      liftFunction(LANDING_SRC, 'async function doLaunchProject('),
-      liftFunction(LANDING_SRC, 'function openStrandedLaunchModal('),
-      liftFunction(LANDING_SRC, 'function closeStrandedLaunchModal('),
-      liftFunction(LANDING_SRC, 'function showStrandedLaunchError('),
-      liftFunction(LANDING_SRC, 'async function confirmStrandedLaunch('),
+      liftDeclaration(LANDING_SRC, 'async function doLaunchProject('),
+      liftDeclaration(LANDING_SRC, 'function openStrandedLaunchModal('),
+      liftDeclaration(LANDING_SRC, 'function closeStrandedLaunchModal('),
+      liftDeclaration(LANDING_SRC, 'function showStrandedLaunchError('),
+      liftDeclaration(LANDING_SRC, 'async function confirmStrandedLaunch('),
       'this.doLaunchProject = doLaunchProject; this.confirmStrandedLaunch = confirmStrandedLaunch;',
       'this.closeStrandedLaunchModal = closeStrandedLaunchModal;'
     ].join('\n'), sandbox);
@@ -233,7 +214,7 @@ describe('dashboard: acknowledge and launch (#1539)', () => {
   it('opens the dialog with the items instead of a failure toast', async () => {
     const sb = sandboxFor([refusal]);
     // The dashboard's one writer of the toast, so a refusal that did reach the toast would show there.
-    vm.runInContext(liftFunction(UI_SRC, 'function showToast('), sb);
+    vm.runInContext(liftDeclaration(UI_SRC, 'function showToast('), sb);
     await sb.doLaunchProject('proj', 'yolo', 'continue');
     assert.ok(sb.els.strandedLaunchModal._classes.has('open'));
     assert.match(sb.els.strandedLaunchList.innerHTML, /wrap\/1-x/);
@@ -320,12 +301,12 @@ describe('dashboard: wrap anyway (#1540)', () => {
     vm.runInContext([
       escSrc,
       'let wrapTarget = null; let wrapInFlight = false;',
-      liftFunction(LANDING_SRC, 'function openWrapModal('),
+      liftDeclaration(LANDING_SRC, 'function openWrapModal('),
       'let wrapStrandedItems = null;',
-      liftFunction(LANDING_SRC, 'function showWrapStranded('),
-      liftFunction(LANDING_SRC, 'function syncWrapConfirmButton('),
-      liftFunction(LANDING_SRC, 'function closeWrapModal('),
-      liftFunction(LANDING_SRC, 'async function confirmWrap('),
+      liftDeclaration(LANDING_SRC, 'function showWrapStranded('),
+      liftDeclaration(LANDING_SRC, 'function syncWrapConfirmButton('),
+      liftDeclaration(LANDING_SRC, 'function closeWrapModal('),
+      liftDeclaration(LANDING_SRC, 'async function confirmWrap('),
       'this.openWrapModal = openWrapModal; this.confirmWrap = confirmWrap;'
     ].join('\n'), sandbox);
     return sandbox;
@@ -402,13 +383,13 @@ describe('session page: wrap anyway, and Retry (#1540)', () => {
       // The page's own initial value (#1708): no keep-running choice made yet.
       'let wrapKeepRunning = null;',
       'let lastRefusedStrandedItems = null; let wrapDrawerStrandedItems = null; let wrapModalStrandedItems = null;',
-      liftFunction(SESSION_SRC, 'function wrapStartInFlight('),
-      liftFunction(SESSION_SRC, 'function showWrapModalStranded('),
-      liftFunction(SESSION_SRC, 'function wrapModalNeedsStrandedConfirm('),
-      liftFunction(SESSION_SRC, 'function syncWrapModalConfirm('),
-      liftFunction(SESSION_SRC, 'function renderWrapDrawerStranded('),
-      liftFunction(SESSION_SRC, 'function adoptWrapRunChoices('),
-      liftFunction(SESSION_SRC, 'async function retryWrap('),
+      liftDeclaration(SESSION_SRC, 'function wrapStartInFlight('),
+      liftDeclaration(SESSION_SRC, 'function showWrapModalStranded('),
+      liftDeclaration(SESSION_SRC, 'function wrapModalNeedsStrandedConfirm('),
+      liftDeclaration(SESSION_SRC, 'function syncWrapModalConfirm('),
+      liftDeclaration(SESSION_SRC, 'function renderWrapDrawerStranded('),
+      liftDeclaration(SESSION_SRC, 'function adoptWrapRunChoices('),
+      liftDeclaration(SESSION_SRC, 'async function retryWrap('),
       'this.get = (name) => eval(name); this.set = (name, v) => eval(`${name} = v`);'
     ].join('\n'), sandbox);
     return sandbox;
@@ -468,11 +449,11 @@ describe('session page: wrap anyway, and Retry (#1540)', () => {
   });
 
   it('carries the choice from the modal into the first POST, and the refusal back into the modal and drawer', () => {
-    const confirm = liftFunction(SESSION_SRC, 'async function confirmWrap(');
+    const confirm = liftDeclaration(SESSION_SRC, 'async function confirmWrap(');
     assert.match(confirm, /proceedPastStranded: \(\) => wrapProceedPastStranded/);
     assert.match(confirm, /wrapProceedPastStranded = Array\.isArray\(wrapModalStrandedItems\)/);
     assert.match(confirm, /showWrapModalStranded\(lastRefusedStrandedItems\)/);
-    const post = liftFunction(SESSION_SRC, 'async function postWrap(');
+    const post = liftDeclaration(SESSION_SRC, 'async function postWrap(');
     assert.match(post, /api\.lastErrorCode === 'STRANDED_WRAPS'/);
     assert.match(SESSION_SRC, /if \(lastRefusedStrandedItems\) renderWrapDrawerStranded\(lastRefusedStrandedItems\)/);
     assert.match(SESSION_HTML, /id="wrapStrandedConfirm"/);
@@ -492,11 +473,11 @@ describe('dashboard card: stranded badge and detail row (#1541)', () => {
     vm.createContext(sandbox);
     vm.runInContext([
       escSrc,
-      liftFunction(UI_SRC, 'function renderStrandedBadge('),
+      liftDeclaration(UI_SRC, 'function renderStrandedBadge('),
       'const strandedItemsCache = {};',
-      liftFunction(UI_SRC, 'function strandedSig('),
-      liftFunction(UI_SRC, 'function strandedItemActions('),
-      liftFunction(UI_SRC, 'function renderStrandedDetail('),
+      liftDeclaration(UI_SRC, 'function strandedSig('),
+      liftDeclaration(UI_SRC, 'function strandedItemActions('),
+      liftDeclaration(UI_SRC, 'function renderStrandedDetail('),
       'this.badge = renderStrandedBadge; this.detail = renderStrandedDetail; this.cache = strandedItemsCache; this.sig = strandedSig;'
     ].join('\n'), sandbox);
     return sandbox;
@@ -561,8 +542,8 @@ describe('dashboard card: stranded badge and detail row (#1541)', () => {
       vm.createContext(sandbox);
       vm.runInContext([
         'const strandedItemsCache = {};',
-        liftFunction(UI_SRC, 'function strandedSig('),
-        liftFunction(UI_SRC, 'async function ensureStrandedItems('),
+        liftDeclaration(UI_SRC, 'function strandedSig('),
+        liftDeclaration(UI_SRC, 'async function ensureStrandedItems('),
         'this.ensure = ensureStrandedItems; this.cache = strandedItemsCache;'
       ].join('\n'), sandbox);
       return sandbox;
@@ -625,8 +606,8 @@ describe('dashboard card: stranded badge and detail row (#1541)', () => {
   });
 
   it('is on the card and in its detail panel', () => {
-    assert.match(liftFunction(UI_SRC, 'function renderCard('), /\$\{strandedBadge\}/);
-    assert.match(liftFunction(UI_SRC, 'function renderCardDetail('), /renderStrandedDetail\(project\)/);
+    assert.match(liftDeclaration(UI_SRC, 'function renderCard('), /\$\{strandedBadge\}/);
+    assert.match(liftDeclaration(UI_SRC, 'function renderCardDetail('), /renderStrandedDetail\(project\)/);
   });
 });
 
@@ -654,14 +635,14 @@ describe('dashboard card: GitHub check badges, row and Check now (#1542, #1543)'
     vm.createContext(sandbox);
     vm.runInContext([
       escSrc,
-      liftFunction(UI_SRC, 'function strandedTime('),
-      liftFunction(UI_SRC, 'function renderStrandedGithubBadge('),
+      liftDeclaration(UI_SRC, 'function strandedTime('),
+      liftDeclaration(UI_SRC, 'function renderStrandedGithubBadge('),
       'const strandedItemsCache = {};',
       'const strandedCheckState = {};',
-      liftFunction(UI_SRC, 'function strandedSig('),
-      liftFunction(UI_SRC, 'function strandedFindingsMarkup('),
-      liftFunction(UI_SRC, 'function renderStrandedGithubDetail('),
-      liftFunction(UI_SRC, 'async function checkStrandedNow('),
+      liftDeclaration(UI_SRC, 'function strandedSig('),
+      liftDeclaration(UI_SRC, 'function strandedFindingsMarkup('),
+      liftDeclaration(UI_SRC, 'function renderStrandedGithubDetail('),
+      liftDeclaration(UI_SRC, 'async function checkStrandedNow('),
       'this.badge = renderStrandedGithubBadge; this.detail = renderStrandedGithubDetail;',
       'this.cache = strandedItemsCache; this.sig = strandedSig; this.checkNow = checkStrandedNow; this.run = strandedCheckState;',
       'this.time = strandedTime;'
@@ -809,8 +790,8 @@ describe('dashboard card: GitHub check badges, row and Check now (#1542, #1543)'
     vm.createContext(sandbox);
     vm.runInContext([
       'const strandedItemsCache = {};',
-      liftFunction(UI_SRC, 'function strandedSig('),
-      liftFunction(UI_SRC, 'async function ensureStrandedItems('),
+      liftDeclaration(UI_SRC, 'function strandedSig('),
+      liftDeclaration(UI_SRC, 'async function ensureStrandedItems('),
       'this.ensure = ensureStrandedItems; this.cache = strandedItemsCache;'
     ].join('\n'), sandbox);
     await sandbox.ensure({ name: 'p', stranded: counts(gh({ noPr: 1 })) });
@@ -821,8 +802,8 @@ describe('dashboard card: GitHub check badges, row and Check now (#1542, #1543)'
   });
 
   it('is on the card and in its detail panel, and styled', () => {
-    assert.match(liftFunction(UI_SRC, 'function renderCard('), /\$\{githubBadge\}/);
-    assert.match(liftFunction(UI_SRC, 'function renderCardDetail('), /renderStrandedGithubDetail\(project\)/);
+    assert.match(liftDeclaration(UI_SRC, 'function renderCard('), /\$\{githubBadge\}/);
+    assert.match(liftDeclaration(UI_SRC, 'function renderCardDetail('), /renderStrandedGithubDetail\(project\)/);
     const css = fs.readFileSync(path.join(PUBLIC, 'style.css'), 'utf8');
     for (const cls of ['badge-github-red', 'badge-github-nopr', 'badge-github-unknown']) {
       assert.match(css, new RegExp(`\\.${cls}\\s*\\{`), `${cls} is styled`);
@@ -857,10 +838,10 @@ describe('dashboard card: per-item actions and their dialog (#1545)', () => {
       escSrc,
       'const strandedItemsCache = {};',
       'let strandedAction = null;',
-      liftFunction(UI_SRC, 'function strandedItemActions('),
-      liftFunction(UI_SRC, 'function openStrandedAction('),
-      liftFunction(UI_SRC, 'function closeStrandedAction('),
-      liftFunction(UI_SRC, 'async function confirmStrandedAction('),
+      liftDeclaration(UI_SRC, 'function strandedItemActions('),
+      liftDeclaration(UI_SRC, 'function openStrandedAction('),
+      liftDeclaration(UI_SRC, 'function closeStrandedAction('),
+      liftDeclaration(UI_SRC, 'async function confirmStrandedAction('),
       'this.actions = strandedItemActions; this.open = openStrandedAction; this.close = closeStrandedAction;',
       'this.confirm = confirmStrandedAction; this.cache = strandedItemsCache; this.held = () => strandedAction;'
     ].join('\n'), sandbox);
@@ -1022,7 +1003,7 @@ describe('dashboard card: per-item actions and their dialog (#1545)', () => {
     }
     assert.match(UI_SRC, /\$\('strandedActionCancelBtn'\)\.addEventListener\('click', closeStrandedAction\)/);
     assert.match(UI_SRC, /\$\('strandedActionConfirmBtn'\)\.addEventListener\('click', confirmStrandedAction\)/);
-    assert.match(liftFunction(UI_SRC, 'function renderStrandedDetail('), /strandedItemActions\(project\.name, cached\.items, item\)/);
+    assert.match(liftDeclaration(UI_SRC, 'function renderStrandedDetail('), /strandedItemActions\(project\.name, cached\.items, item\)/);
   });
 });
 
@@ -1042,11 +1023,11 @@ describe('dashboard card: last session badge and row (#1544)', () => {
     vm.createContext(sandbox);
     vm.runInContext([
       escSrc,
-      liftFunction(UI_SRC, 'function strandedTime('),
-      liftFunction(UI_SRC, 'function sessionEndCause('),
-      liftFunction(UI_SRC, 'function sessionLeftoverSummary('),
-      liftFunction(UI_SRC, 'function renderSessionHealthBadge('),
-      liftFunction(UI_SRC, 'function renderSessionHealthDetail('),
+      liftDeclaration(UI_SRC, 'function strandedTime('),
+      liftDeclaration(UI_SRC, 'function sessionEndCause('),
+      liftDeclaration(UI_SRC, 'function sessionLeftoverSummary('),
+      liftDeclaration(UI_SRC, 'function renderSessionHealthBadge('),
+      liftDeclaration(UI_SRC, 'function renderSessionHealthDetail('),
       'this.badge = renderSessionHealthBadge; this.detail = renderSessionHealthDetail;'
     ].join('\n'), sandbox);
     return sandbox;
@@ -1166,8 +1147,8 @@ describe('dashboard card: last session badge and row (#1544)', () => {
   });
 
   it('is on the card and in its detail panel, and styled', () => {
-    assert.match(liftFunction(UI_SRC, 'function renderCard('), /\$\{sessionHealthBadge\}/);
-    assert.match(liftFunction(UI_SRC, 'function renderCardDetail('), /renderSessionHealthDetail\(project\)/);
+    assert.match(liftDeclaration(UI_SRC, 'function renderCard('), /\$\{sessionHealthBadge\}/);
+    assert.match(liftDeclaration(UI_SRC, 'function renderCardDetail('), /renderSessionHealthDetail\(project\)/);
     const css = fs.readFileSync(path.join(PUBLIC, 'style.css'), 'utf8');
     for (const cls of ['badge-session-crashed', 'badge-session-left']) {
       assert.match(css, new RegExp(`\\.${cls}\\s*\\{`), `${cls} is styled`);

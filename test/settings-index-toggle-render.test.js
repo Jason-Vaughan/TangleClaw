@@ -26,6 +26,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { makeDocument } = require('./_mini-dom');
 const engines = require('../lib/engines');
+const { liftDeclaration } = require('./helpers/lift');
 
 const PUB = path.join(__dirname, '..', 'public');
 const UI_SRC = fs.readFileSync(path.join(PUB, 'ui.js'), 'utf8');
@@ -33,27 +34,6 @@ const API_HELPER_SRC = fs.readFileSync(path.join(PUB, 'api-helper.js'), 'utf8');
 
 const readEngine = (id) => JSON.parse(
   fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', `${id}.json`), 'utf8'));
-
-/**
- * Slice a top-level function out of source text by brace-matching, so the
- * sandbox runs the REAL code rather than a copy.
- *
- * @param {string} src - File source text.
- * @param {string} decl - Declaration to find.
- * @returns {string} The declaration plus its balanced body.
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-  return '';
-}
 
 // The two rows are one render with two labels, so every case runs both: the
 // defect they were filed for was one setting saying nothing, and a fixture
@@ -80,11 +60,11 @@ function render(row, { roster = [], engineId = 'claude', checked = true, silentP
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
   };
   vm.createContext(ctx);
-  vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcSettingDisposition'), ctx);
-  vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcEngineDisplayName'), ctx);
-  vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
-  vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcResolveEngineProfile'), ctx);
-  vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcIndexPointerCaveat'), ctx);
+  vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcSettingDisposition'), ctx);
+  vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcEngineDisplayName'), ctx);
+  vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
+  vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcResolveEngineProfile'), ctx);
+  vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcIndexPointerCaveat'), ctx);
   // Lifted by PATTERN, not by name: the next table added is otherwise missing
   // here, and the failure would be a ReferenceError from inside the lifted
   // function — which is the thing this file exists to catch.
@@ -92,8 +72,8 @@ function render(row, { roster = [], engineId = 'claude', checked = true, silentP
   assert.ok(tables.length >= 3,
     `expected the defaults, reader and caveat tables to lift, found ${tables.length}`);
   for (const table of tables) vm.runInContext(table, ctx);
-  vm.runInContext(liftFunction(UI_SRC, 'function renderIndexToggle'), ctx);
-  vm.runInContext(liftFunction(UI_SRC, `function ${row.fn}`), ctx);
+  vm.runInContext(liftDeclaration(UI_SRC, 'function renderIndexToggle'), ctx);
+  vm.runInContext(liftDeclaration(UI_SRC, `function ${row.fn}`), ctx);
 
   ctx[row.fn](engineId, checked, projectEngine, silentPrime);
   return doc.getElementById(row.container).innerHTML;

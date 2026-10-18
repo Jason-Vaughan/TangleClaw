@@ -36,29 +36,9 @@ const SETUP_JS_SRC = fs.readFileSync(path.join(PUB, 'setup.js'), 'utf8')
   .replace(/^const wizard = /m, 'var wizard = ') + '\n;globalThis.wizard = wizard;\n';
 const API_HELPER_SRC = fs.readFileSync(path.join(PUB, 'api-helper.js'), 'utf8');
 const { LANDING_JSARG_SRC } = require('./_page-globals');
+const { liftDeclaration } = require('./helpers/lift');
 const LANDING_SRC = fs.readFileSync(path.join(PUB, 'landing.js'), 'utf8');
 const UI_SRC = fs.readFileSync(path.join(PUB, 'ui.js'), 'utf8');
-
-/**
- * Slice out a top-level function by brace-matching from its declaration, so the
- * sandbox runs the REAL helper rather than a re-implementation that can drift.
- * Same lift as test/degraded-reads-frontend.test.js.
- *
- * @param {string} src - File source text.
- * @param {string} decl - The declaration to find, e.g. `function esc(str)`.
- * @returns {string} The declaration plus its body.
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 /** Minimal element stub covering what the detect-projects step touches. */
 function makeElement(id) {
@@ -110,9 +90,9 @@ function renderList(scannedProjects) {
   sandbox.location = { href: null };
 
   vm.createContext(sandbox);
-  vm.runInContext(liftFunction(LANDING_SRC, 'function esc(str)'), sandbox);
+  vm.runInContext(liftDeclaration(LANDING_SRC, 'function esc(str)'), sandbox);
   vm.runInContext(LANDING_JSARG_SRC, sandbox);
-  vm.runInContext(liftFunction(UI_SRC, 'function degradedTooltip(record)'), sandbox);
+  vm.runInContext(liftDeclaration(UI_SRC, 'function degradedTooltip(record)'), sandbox);
   vm.runInContext(API_HELPER_SRC, sandbox);
   vm.runInContext(SETUP_JS_SRC, sandbox);
 

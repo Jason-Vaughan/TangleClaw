@@ -21,28 +21,10 @@ const vm = require('node:vm');
 
 const tccFolders = require('../lib/tcc-folders');
 const { DEFAULT_CONFIG } = require('../lib/store');
+const { liftDeclaration } = require('./helpers/lift');
 
 const ROOT = path.join(__dirname, '..');
 const SETUP_SRC = fs.readFileSync(path.join(ROOT, 'public', 'setup.js'), 'utf8');
-
-/**
- * Slice a top-level function out of source text by brace-matching, so the
- * sandbox runs the REAL code rather than a copy.
- * @param {string} src - File source text
- * @param {string} decl - Declaration to find
- * @returns {string} The declaration plus its balanced body
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 /**
  * The wizard's own caution check, fed the roots the server would send.
@@ -52,7 +34,7 @@ function liftFunction(src, decl) {
 function wizardCheck(home) {
   const ctx = { state: { config: { protectedRoots: tccFolders.protectedRootsFor(home) } } };
   vm.createContext(ctx);
-  vm.runInContext(liftFunction(SETUP_SRC, 'function wizardProtectedRootFor'), ctx);
+  vm.runInContext(liftDeclaration(SETUP_SRC, 'function wizardProtectedRootFor'), ctx);
   return (p) => ctx.wizardProtectedRootFor(p);
 }
 
@@ -74,11 +56,11 @@ describe('macOS protected folders, one owner (#880)', () => {
   });
 
   it('every copy that cannot import the list still names every folder in it', () => {
-    const caution = liftFunction(SETUP_SRC, 'function wizardUpdateDirAdvice');
+    const caution = liftDeclaration(SETUP_SRC, 'function wizardUpdateDirAdvice');
     const apiHelper = fs.readFileSync(path.join(ROOT, 'public', 'api-helper.js'), 'utf8');
     const eacces = apiHelper.slice(apiHelper.indexOf('EACCES:'), apiHelper.indexOf('SCAN_FAILED:'));
     const install = fs.readFileSync(path.join(ROOT, 'deploy', 'install.sh'), 'utf8');
-    const tccFn = liftFunction(install, 'tcc_protected_path()');
+    const tccFn = liftDeclaration(install, 'tcc_protected_path()');
     for (const name of tccFolders.TCC_PROTECTED_FOLDERS) {
       assert.ok(caution.includes(`~/${name}`), `the wizard caution names ~/${name}`);
       assert.ok(eacces.includes(`~/${name}`), `the EACCES hint names ~/${name}`);
@@ -108,7 +90,7 @@ describe('the shipped projects directory (#880)', () => {
     assert.ok(SETUP_SRC.includes(`placeholder="${DEFAULT_CONFIG.projectsDir}"`), 'the wizard\'s placeholder');
     const ui = fs.readFileSync(path.join(ROOT, 'public', 'ui.js'), 'utf8');
     assert.ok(ui.includes(`c.projectsDir || ${quoted}`), 'the settings modal\'s fallback');
-    assert.ok(!/Documents\/Projects/.test(liftFunction(SETUP_SRC, 'function showWizard')),
+    assert.ok(!/Documents\/Projects/.test(liftDeclaration(SETUP_SRC, 'function showWizard')),
       'no stale default left in the wizard\'s opening');
   });
 });

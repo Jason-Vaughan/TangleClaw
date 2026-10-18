@@ -22,6 +22,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { makeDocument } = require('./_mini-dom');
+const { liftDeclaration } = require('./helpers/lift');
 
 const PUB = path.join(__dirname, '..', 'public');
 const UI_SRC = fs.readFileSync(path.join(PUB, 'ui.js'), 'utf8');
@@ -29,26 +30,6 @@ const API_HELPER_SRC = fs.readFileSync(path.join(PUB, 'api-helper.js'), 'utf8');
 
 const readEngine = (id) => JSON.parse(
   fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', `${id}.json`), 'utf8'));
-
-/**
- * Slice a top-level function out of source text by brace-matching, so the
- * sandbox runs the REAL code rather than a copy.
- *
- * @param {string} src - File source text.
- * @param {string} decl - Declaration to find.
- * @returns {string} The declaration plus its balanced body.
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 /**
  * Run `renderLaunchModeSettings` against a real bundled profile.
@@ -66,8 +47,8 @@ function render({ engine, engineId = 'claude', preserveMode = 'default', preserv
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
   };
   vm.createContext(ctx);
-  vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
-  vm.runInContext(liftFunction(UI_SRC, 'function renderLaunchModeSettings'), ctx);
+  vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
+  vm.runInContext(liftDeclaration(UI_SRC, 'function renderLaunchModeSettings'), ctx);
 
   ctx.renderLaunchModeSettings(engineId, preserveMode, preserveShow);
   return { html: doc.getElementById('settingsLaunchModeContainer').innerHTML };
