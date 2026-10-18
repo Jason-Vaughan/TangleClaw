@@ -17,27 +17,7 @@ const { describe, it, before } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-
-/**
- * Slice out a top-level function body by brace-matching from its declaration.
- * @param {string} src full source text
- * @param {string} decl the function declaration to find (e.g. `async function confirmWrap()`)
- * @returns {string} the function body including its braces
- */
-function functionBody(src, decl) {
-  const start = src.indexOf(decl);
-  assert.ok(start !== -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}') {
-      depth--;
-      if (depth === 0) return src.slice(bodyStart, i + 1);
-    }
-  }
-  assert.fail(`${decl} body must close`);
-}
+const { liftBody } = require('./helpers/lift');
 
 describe('UI-3B8N dashboard wrap trigger is single-flight', () => {
   let landing;
@@ -53,7 +33,7 @@ describe('UI-3B8N dashboard wrap trigger is single-flight', () => {
   });
 
   it('confirmWrap guards re-entrancy, locks both buttons, and resets in finally', () => {
-    const body = functionBody(landing, 'async function confirmWrap()');
+    const body = liftBody(landing, 'async function confirmWrap()');
     assert.ok(body.includes('if (wrapInFlight) return'),
       'confirmWrap must bail when a wrap is already in flight');
     assert.ok(body.includes('wrapInFlight = true'),
@@ -70,13 +50,13 @@ describe('UI-3B8N dashboard wrap trigger is single-flight', () => {
     assert.ok(landing.includes('if (wrapInFlight && force !== true) return'),
       'closeWrapModal must block Cancel/backdrop closes mid-wrap via a strict force check');
     // The success path must force-close past that guard.
-    const body = functionBody(landing, 'async function confirmWrap()');
+    const body = liftBody(landing, 'async function confirmWrap()');
     assert.ok(body.includes('closeWrapModal(true)'),
       'confirmWrap must force-close the modal on success');
   });
 
   it('has no timer-driven lifecycle (state tracks the request, not a clock)', () => {
-    const body = functionBody(landing, 'async function confirmWrap()');
+    const body = liftBody(landing, 'async function confirmWrap()');
     assert.ok(!/setTimeout|setInterval/.test(body),
       'confirmWrap must not use timers (no timer-driven UI lifecycle)');
   });
@@ -86,7 +66,7 @@ describe('dashboard wrap waits for the run it started and names a failure (POST 
   const vm = require('node:vm');
   const landing = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
   const decl = 'async function awaitDashboardWrapFailure(name, runId)';
-  const fnSrc = `${decl} ${functionBody(landing, decl)}`;
+  const fnSrc = `${decl} ${liftBody(landing, decl)}`;
 
   /**
    * Run the real function against scripted status payloads, one per poll.
@@ -112,7 +92,7 @@ describe('dashboard wrap waits for the run it started and names a failure (POST 
   }
 
   it('the confirm handler waits on the run the 202 names before closing', () => {
-    const body = functionBody(landing, 'async function confirmWrap()');
+    const body = liftBody(landing, 'async function confirmWrap()');
     assert.ok(body.indexOf('awaitDashboardWrapFailure(') < body.indexOf('closeWrapModal(true)'));
   });
 

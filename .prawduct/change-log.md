@@ -41,6 +41,33 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-18 — #1903 Chunk 04, #1049: ten more lift copies use the shared helper, and the stranded-config guard reports the Gemini files
+
+<!-- prawduct: type=refactor | scope=w14-a1-lift-chunk04-gemini-stranded -->
+
+v5.34.0 Wave 14 chunk W14-A1, chunk 1 of 1. Branch `fix/1049-1903-w14-a1` from `origin/main` `dd8d28f0`. Refs #1903 (Chunk 04); closes #1049. Plan: `.tangleclaw/plans/w14-a1-lift-chunk04-gemini-stranded-1903-1049.md` (rev1 sha256 `9860839d…f1e6`, INT `013bf543`, Architect A268); charter v2.38 (sha256 `265f688b…9343`).
+
+**#1903 Chunk 04.** Ten test files drop their private brace matcher and import `liftDeclaration` (or `liftBody`, in `landing-wrap-single-flight`) from `test/helpers/lift.js`; their ten `INITIAL_INVENTORY` entries go with them. `launch-identity-banner`'s name-based `extract` sliced from the start of the declaration's line, so its calls pass the declaration as it begins that line, `async` included for `loadServerInfo`. A runtime capture of every lifted slice while the ten files ran logged the same 1165 `file|decl|sha256` lines before and after. No assertion, test name or test count changed. Two miss messages change wording (`eval-audit-reachable`'s unclosed body, `launch-identity-banner`'s missing or unclosed function); they appear only when a test already fails.
+
+**#1049.** `STRANDED_CONFIG_FILES` also lists `GEMINI.md` and `.gemini/GEMINI.md`, after the Claude files, so existing findings keep their order. Antigravity loads `GEMINI.md` walking up to the repository root; `.gemini/GEMINI.md` is what installs before the Gemini CLI engine's retirement (#461) generated. Six tests: both files flagged, list order, a `.gemini/` holding only `settings.json` not flagged (deliberately: a Gemini settings folder with no `GEMINI.md` carries no instructions to inject), a registered root not flagged, and the fleet scan reporting a stranded `GEMINI.md` with its affected project.
+
+**Limits.** #1903 stays open: 67 inventory entries remain. Antigravity's walk stops at the repository root, so a stranded `GEMINI.md` above a nested project that is its own repository may never be read; the guard reports it anyway, deliberately, because it is presence-based and a stray file is drift worth surfacing either way. `AGENTS.md` and the `server.js` comments that name only the Claude files are left for PM triage.
+
+**Critic.** Cumulative review, 0 blocking.
+
+**rev-20261018T051631Z-25836fa7** — 2026-10-18T05:18:25Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | accepted | Full suite runs once on the final tree in INT's serialized slot after the Architect pre-suite read (plan Verification; rule 262 cl.4); the twelve locked test files ran green this session |
+| R-2 | note | accepted | Intended: this PR closes #1049 (Closes #1049); the issue closes at merge |
+| R-3 | note | accepted | gh issue view 1903 read OPEN ('[chore] Consolidate the per-file liftFunction test helpers into one module') at 05:19:17Z; the local backlog cache is behind, the citation is correct |
+| R-4 | note | accepted | #1374 is untouched by this diff and outside the 14-file lock |
+| R-5 | note | accepted | No learnings rule applies; nothing to cross-check |
+| R-6 | note | accepted | The entry is written after this review (plan gate step 3) and INT serializes the prepend; it records both choices the note names |
+
+**6 findings** (1 warning, 5 note) — accepted: 6.
+
 ## 2026-10-18 — W13-REC: Wave 13 combined records after source PRs #2478 and #2477
 
 <!-- prawduct: type=chore | scope=w13-rec-records -->

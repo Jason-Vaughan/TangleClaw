@@ -128,16 +128,6 @@ const EXCEPTIONS = {
  * removes its file's entries here in the same change; a new copy is refused.
  */
 const INITIAL_INVENTORY = [
-  'error-string-parity.test.js :: functionSource',
-  'esc-contract.test.js :: liftFunction',
-  'eval-audit-reachable.test.js :: lift',
-  'import-banner-buttons.test.js :: liftFunction',
-  'inline-handler-args.test.js :: liftFunction',
-  'isolation-override-banner.test.js :: liftFunction',
-  'landing-unreachable-state.test.js :: liftFunction',
-  'landing-wrap-single-flight.test.js :: functionBody',
-  'launch-identity-banner.test.js :: extract',
-  'launch-isolation-override-ui.test.js :: liftFunction',
   'launch-mode-picker.test.js :: liftFunction',
   'launch-panel-fire.test.js :: liftFunction',
   'launch-readiness-panel.test.js :: liftFunction',

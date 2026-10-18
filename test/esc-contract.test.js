@@ -22,27 +22,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { liftDeclaration } = require('./helpers/lift');
 
 const PUB = path.join(__dirname, '..', 'public');
-
-/**
- * Slice a top-level function out of source text by brace-matching, so the
- * assertions run the shipped code rather than a copy of it.
- * @param {string} src - File source text
- * @param {string} decl - Declaration to find, e.g. `function esc(str)`
- * @returns {string} The declaration plus its balanced body
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 /**
  * Run one lifted escape helper and hand back a callable.
@@ -53,7 +35,7 @@ function liftFunction(src, decl) {
  */
 function liftEscaper(file, decl, name) {
   const ctx = vm.createContext({});
-  vm.runInContext(liftFunction(fs.readFileSync(path.join(PUB, file), 'utf8'), decl), ctx);
+  vm.runInContext(liftDeclaration(fs.readFileSync(path.join(PUB, file), 'utf8'), decl), ctx);
   return ctx[name];
 }
 

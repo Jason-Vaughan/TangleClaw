@@ -19,6 +19,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { liftDeclaration } = require('./helpers/lift');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
 const ui = read('ui.js');
@@ -26,28 +27,9 @@ const landing = read('landing.js');
 const session = read('session.js');
 const PAGE_SCRIPTS = fs.readdirSync(path.join(__dirname, '..', 'public')).filter((f) => f.endsWith('.js')).sort();
 
-/**
- * Slice a function declaration out of source text by brace-matching.
- *
- * @param {string} src - File source text.
- * @param {string} decl - Declaration head, e.g. `function foo(`.
- * @returns {string} The declaration through its balanced closing brace.
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
-
 // The shipped encoders, run as they are rather than copied.
 const { esc, jsArg } = new Function(
-  `${liftFunction(landing, 'function esc(')}\n${liftFunction(landing, 'function jsArg(')}\nreturn { esc, jsArg };`
+  `${liftDeclaration(landing, 'function esc(')}\n${liftDeclaration(landing, 'function jsArg(')}\nreturn { esc, jsArg };`
 )();
 
 /**
@@ -176,7 +158,7 @@ describe('session.js carries its own jsArg (#1902)', () => {
   // session.html does not load landing.js. Until #1605 gives the encoders one
   // owner, the copy must encode exactly as the original does.
   const own = new Function(
-    `${liftFunction(session, 'function esc(')}\n${liftFunction(session, 'function jsArg(')}\nreturn jsArg;`
+    `${liftDeclaration(session, 'function esc(')}\n${liftDeclaration(session, 'function jsArg(')}\nreturn jsArg;`
   )();
 
   it('encodes every awkward value exactly as landing.js does', () => {
@@ -243,7 +225,7 @@ describe('the other page scripts hand values over intact (#1902)', () => {
 describe('public/ui.js handlers (#1384)', () => {
   it('the card detail panel hands O\'Brien to every handler intact', () => {
     const decl = 'function renderCardDetail(project)';
-    const src = liftFunction(ui, decl);
+    const src = liftDeclaration(ui, decl);
     const scope = {
       esc,
       jsArg,

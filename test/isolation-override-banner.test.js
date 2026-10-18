@@ -21,30 +21,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { makeDocument } = require('./_mini-dom');
+const { liftDeclaration } = require('./helpers/lift');
 
 const PUB = path.join(__dirname, '..', 'public');
 const UI_SRC = fs.readFileSync(path.join(PUB, 'ui.js'), 'utf8');
 const LANDING_SRC = fs.readFileSync(path.join(PUB, 'landing.js'), 'utf8');
 const INDEX_SRC = fs.readFileSync(path.join(PUB, 'index.html'), 'utf8');
-
-/**
- * Slice a top-level function out of source text by brace-matching, so the
- * sandbox runs the REAL code rather than a copy.
- * @param {string} src - File source text
- * @param {string} decl - Declaration to find
- * @returns {string} The declaration plus its balanced body
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 /**
  * A document holding the notice's two elements, with the two node calls the
@@ -130,7 +112,7 @@ function sandbox(extra) {
   vm.runInContext('let isolationOverrideBannerRead = 0;', ctx);
   for (const decl of ['async function refreshIsolationOverrideBanner', 'function renderIsolationOverrideBanner',
     'function openInstallOverrideSettings']) {
-    vm.runInContext(liftFunction(LANDING_SRC, decl), ctx);
+    vm.runInContext(liftDeclaration(LANDING_SRC, decl), ctx);
   }
   return { ctx, banner, textEl, doc };
 }
@@ -474,7 +456,7 @@ describe('The dashboard notice and the switches, run together (#2393)', () => {
     for (const decl of ['function recoveryModeControlOffer', 'function isolationOverrideRiskText',
       'function isolationOverrideStands', 'function isolationOverrideHtml', 'function isolationOverrideOutcome',
       'function isolationOverrideConfirmText', 'async function refreshIsolationOverride', 'function wireIsolationOverride']) {
-      vm.runInContext(liftFunction(UI_SRC, decl), s.ctx);
+      vm.runInContext(liftDeclaration(UI_SRC, decl), s.ctx);
     }
     return { ...s, api, asked };
   }
@@ -536,8 +518,8 @@ describe('The dashboard notice is on the main view and read at load (#2393)', ()
   });
 
   it('only the read route is asked: the notice never writes an override', () => {
-    const body = liftFunction(LANDING_SRC, 'async function refreshIsolationOverrideBanner')
-      + liftFunction(LANDING_SRC, 'function renderIsolationOverrideBanner');
+    const body = liftDeclaration(LANDING_SRC, 'async function refreshIsolationOverrideBanner')
+      + liftDeclaration(LANDING_SRC, 'function renderIsolationOverrideBanner');
     assert.deepEqual(body.match(/\/api\/[\w/-]+/g), ['/api/launch/isolation-overrides']);
     assert.doesNotMatch(body, /innerHTML/);
     assert.match(body, /const once = window\.tcCreateApi\(\{ setConnected \}\);/, 'the read has an api() of its own, from the page\'s factory');
@@ -595,10 +577,10 @@ function noLoginSandbox(extra) {
   vm.createContext(ctx);
   // A top-level const is not a property of the context, so the copy is
   // re-exposed for the assertions that read it back.
-  vm.runInContext(`${liftFunction(LANDING_SRC, 'const NO_LOGIN_NOTICE =')};\nthis.NO_LOGIN_NOTICE = NO_LOGIN_NOTICE;`, ctx);
+  vm.runInContext(`${liftDeclaration(LANDING_SRC, 'const NO_LOGIN_NOTICE =')};\nthis.NO_LOGIN_NOTICE = NO_LOGIN_NOTICE;`, ctx);
   for (const decl of ['function _authStatusWarning', 'function renderAuthStatus', 'function renderNoLoginBanner',
     'function openAddLoginSettings', 'function renderIsolationOverrideBanner', 'function openInstallOverrideSettings']) {
-    vm.runInContext(liftFunction(LANDING_SRC, decl), ctx);
+    vm.runInContext(liftDeclaration(LANDING_SRC, decl), ctx);
   }
   return { ctx, doc, banner: ids.noLoginBanner, textEl: ids.noLoginBannerText, btn, chip: ids.authStatusWarning,
     iso: ids.isolationOverrideBanner };
@@ -662,18 +644,18 @@ describe('The landing notice that no login is in force: when it shows (#2378)', 
   });
 
   it('sets its copy as text, never as markup', () => {
-    const body = liftFunction(LANDING_SRC, 'function renderNoLoginBanner')
-      + liftFunction(LANDING_SRC, 'function openAddLoginSettings');
+    const body = liftDeclaration(LANDING_SRC, 'function renderNoLoginBanner')
+      + liftDeclaration(LANDING_SRC, 'function openAddLoginSettings');
     assert.doesNotMatch(body, /innerHTML/);
     assert.doesNotMatch(body, /setTimeout|setInterval/, 'no timer: it ends when a login is added');
-    assert.equal(liftFunction(LANDING_SRC, 'const NO_LOGIN_NOTICE =').includes('<'), false);
+    assert.equal(liftDeclaration(LANDING_SRC, 'const NO_LOGIN_NOTICE =').includes('<'), false);
     const s = noLoginSandbox({ openGlobalSettings: () => {} });
     assert.equal(s.ctx.NO_LOGIN_NOTICE.lead + s.ctx.NO_LOGIN_NOTICE.body, NO_LOGIN_TEXT);
   });
 
   it('is drawn from the login render, so the poll is unchanged', () => {
-    assert.match(liftFunction(LANDING_SRC, 'function renderAuthStatus'), /renderNoLoginBanner\(authStatus\);/);
-    assert.doesNotMatch(liftFunction(LANDING_SRC, 'async function loadServerInfo'), /renderNoLoginBanner/);
+    assert.match(liftDeclaration(LANDING_SRC, 'function renderAuthStatus'), /renderNoLoginBanner\(authStatus\);/);
+    assert.doesNotMatch(liftDeclaration(LANDING_SRC, 'async function loadServerInfo'), /renderNoLoginBanner/);
   });
 });
 

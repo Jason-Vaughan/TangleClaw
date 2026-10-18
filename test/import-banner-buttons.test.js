@@ -21,28 +21,7 @@ const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-
-/**
- * Slice a function declaration out of source text by brace-matching.
- * Same construction as `liftFunction` in test/landing-unreachable-state.test.js —
- * the point is to execute the SHIPPED code rather than a copy of it, so a change
- * to the page cannot leave this suite passing against a stale duplicate.
- *
- * @param {string} src - File source text.
- * @param {string} decl - Declaration head, e.g. `function foo(`.
- * @returns {string} The declaration through its balanced closing brace.
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
+const { liftDeclaration } = require('./helpers/lift');
 
 /** Reverse `esc()` in public/landing.js — what the HTML parser does to an attribute value. */
 function unescapeHtml(s) {
@@ -80,7 +59,7 @@ describe('port-lease import banner buttons (#1383)', () => {
 
   // The shipped `jsArg`, lifted from landing.js and bound to the `esc` above.
   const landingSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
-  const jsArg = new Function('esc', `${liftFunction(landingSrc, 'function jsArg(')}\nreturn jsArg;`)(esc);
+  const jsArg = new Function('esc', `${liftDeclaration(landingSrc, 'function jsArg(')}\nreturn jsArg;`)(esc);
 
   const onclicks = (name) => {
     const html = render([{ name, ports: [{ port: 5432, service: 'postgresql@14' }], conflicts: [] }], esc, jsArg);
@@ -128,10 +107,10 @@ describe('port-lease import banner buttons (#1383)', () => {
     // consumer side reopens #1383 with this suite still green.
     const landing = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
     const src = [
-      liftFunction(landing, 'function _canonicalProjectName('),
-      liftFunction(landing, 'function getIgnoredLeaseProjects('),
-      liftFunction(landing, 'function ignoreLeaseProject('),
-      liftFunction(landing, 'function checkPortImports(')
+      liftDeclaration(landing, 'function _canonicalProjectName('),
+      liftDeclaration(landing, 'function getIgnoredLeaseProjects('),
+      liftDeclaration(landing, 'function ignoreLeaseProject('),
+      liftDeclaration(landing, 'function checkPortImports(')
     ].join('\n');
 
     const make = () => {
@@ -194,7 +173,7 @@ describe('port-lease import banner buttons (#1383)', () => {
     const posts = [];
     const importLeaseProjects = new Function(
       'apiMutate', 'document', 'dismissImportBanner', 'loadProjects', 'checkPortImports',
-      `${liftFunction(ui, 'async function importLeaseProjects(')}\nreturn importLeaseProjects;`
+      `${liftDeclaration(ui, 'async function importLeaseProjects(')}\nreturn importLeaseProjects;`
     )(
       async (url, method, body) => { posts.push({ url, method, body }); return {}; },
       { getElementById: () => null },
@@ -266,10 +245,10 @@ describe('Not a project, traced widget → collector → POST → server (#1381)
     const ui = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
     const landing = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
     const src = [
-      liftFunction(landing, 'function _canonicalProjectName('),
-      liftFunction(landing, 'function getIgnoredLeaseProjects('),
-      liftFunction(landing, 'function checkPortImports('),
-      liftFunction(ui, 'async function markLeaseOwnerExternal(')
+      liftDeclaration(landing, 'function _canonicalProjectName('),
+      liftDeclaration(landing, 'function getIgnoredLeaseProjects('),
+      liftDeclaration(landing, 'function checkPortImports('),
+      liftDeclaration(ui, 'async function markLeaseOwnerExternal(')
     ].join('\n');
 
     const state = { ports: [], projects: [{ name: 'SomeProject' }], openclawConnections: [] };
@@ -302,7 +281,7 @@ describe('Not a project, traced widget → collector → POST → server (#1381)
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
       const landingSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
-      const jsArg = new Function('esc', `${liftFunction(landingSrc, 'function jsArg(')}\nreturn jsArg;`)(esc);
+      const jsArg = new Function('esc', `${liftDeclaration(landingSrc, 'function jsArg(')}\nreturn jsArg;`)(esc);
       return new Function('importable', 'esc', 'jsArg', ui.slice(start, end + ".join('')".length) + '; return details;')(rendered[0], esc, jsArg);
     })();
     const onclick = [...html.matchAll(/onclick="([^"]*)"/g)].map(m => unescapeHtml(m[1]))
@@ -322,9 +301,9 @@ describe('Not a project, traced widget → collector → POST → server (#1381)
 
     const ui = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
     const src = [
-      liftFunction(ui, 'function showToast('),
-      liftFunction(ui, 'function showOwnerKindRefusal('),
-      liftFunction(ui, 'async function markLeaseOwnerExternal(')
+      liftDeclaration(ui, 'function showToast('),
+      liftDeclaration(ui, 'function showOwnerKindRefusal('),
+      liftDeclaration(ui, 'async function markLeaseOwnerExternal(')
     ].join('\n');
     // Like public/api-helper.js: a refusal returns null and leaves the reason on api.lastError.
     const api = { lastError: null };

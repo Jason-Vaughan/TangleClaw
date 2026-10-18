@@ -9,6 +9,7 @@
  * `.claude/settings.json`. Claude Code loads every ancestor CLAUDE.md, so
  * the stale file re-injected retired V1 governance into every session of
  * the nested project. The guard detects and surfaces; it never deletes.
+ * It also covers the Gemini config files, `GEMINI.md` and `.gemini/GEMINI.md`.
  */
 
 const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
@@ -131,6 +132,60 @@ describe('_findStrandedAncestorConfigs (#592)', () => {
     assert.deepStrictEqual(projects._findStrandedAncestorConfigs(null, new Set(), root), []);
     assert.deepStrictEqual(projects._findStrandedAncestorConfigs('/x', new Set(), null), []);
   });
+
+  it('flags a stranded GEMINI.md (Antigravity loads it walking up)', () => {
+    const inner = mkdirs('gem/repo');
+    fs.writeFileSync(path.join(root, 'gem', 'GEMINI.md'), '# stale\n');
+
+    const out = projects._findStrandedAncestorConfigs(inner, new Set([inner]), root);
+    assert.equal(out.length, 1);
+    assert.equal(out[0].dir, path.join(root, 'gem'));
+    assert.deepStrictEqual(out[0].files, ['GEMINI.md']);
+  });
+
+  it('flags a stranded .gemini/GEMINI.md (left by the retired Gemini CLI engine)', () => {
+    const inner = mkdirs('gemdir/repo');
+    mkdirs('gemdir/.gemini');
+    fs.writeFileSync(path.join(root, 'gemdir', '.gemini', 'GEMINI.md'), '# stale\n');
+
+    const out = projects._findStrandedAncestorConfigs(inner, new Set([inner]), root);
+    assert.equal(out.length, 1);
+    assert.deepStrictEqual(out[0].files, [path.join('.gemini', 'GEMINI.md')]);
+  });
+
+  it('reports CLAUDE.md, GEMINI.md and .gemini/GEMINI.md in list order', () => {
+    const inner = mkdirs('mixed/repo');
+    mkdirs('mixed/.gemini');
+    fs.writeFileSync(path.join(root, 'mixed', '.gemini', 'GEMINI.md'), 'x');
+    fs.writeFileSync(path.join(root, 'mixed', 'GEMINI.md'), 'x');
+    fs.writeFileSync(path.join(root, 'mixed', 'CLAUDE.md'), 'x');
+
+    const out = projects._findStrandedAncestorConfigs(inner, new Set([inner]), root);
+    assert.equal(out.length, 1);
+    assert.deepStrictEqual(out[0].files, [
+      'CLAUDE.md',
+      'GEMINI.md',
+      path.join('.gemini', 'GEMINI.md')
+    ]);
+  });
+
+  it('does NOT flag an ancestor whose .gemini/ holds only settings.json', () => {
+    const inner = mkdirs('gemset/repo');
+    mkdirs('gemset/.gemini');
+    fs.writeFileSync(path.join(root, 'gemset', '.gemini', 'settings.json'), '{}');
+
+    const out = projects._findStrandedAncestorConfigs(inner, new Set([inner]), root);
+    assert.deepStrictEqual(out, []);
+  });
+
+  it('does NOT flag a registered project root holding GEMINI.md', () => {
+    const parent = mkdirs('gemparent');
+    const inner = mkdirs('gemparent/child');
+    fs.writeFileSync(path.join(parent, 'GEMINI.md'), '# parent project config\n');
+
+    const out = projects._findStrandedAncestorConfigs(inner, new Set([inner, parent]), root);
+    assert.deepStrictEqual(out, []);
+  });
 });
 
 describe('scanForStrandedConfigs (#592)', () => {
@@ -184,6 +239,18 @@ describe('scanForStrandedConfigs (#592)', () => {
     assert.equal(result.stranded.length, 1);
     assert.equal(result.stranded[0].dir, path.join(projectsDir, 'TiLT v2'));
     assert.deepStrictEqual(result.stranded[0].files, ['CLAUDE.md']);
+    assert.deepStrictEqual(result.stranded[0].affectedProjects, [inner.name]);
+    assert.deepStrictEqual(result.errors, []);
+  });
+
+  it('reports a stranded GEMINI.md above a registered nested project', () => {
+    const inner = registerProject('Gem v2/gem-v2');
+    fs.writeFileSync(path.join(projectsDir, 'Gem v2', 'GEMINI.md'), '# stale\n');
+
+    const result = projects.scanForStrandedConfigs();
+    assert.equal(result.stranded.length, 1);
+    assert.equal(result.stranded[0].dir, path.join(projectsDir, 'Gem v2'));
+    assert.deepStrictEqual(result.stranded[0].files, ['GEMINI.md']);
     assert.deepStrictEqual(result.stranded[0].affectedProjects, [inner.name]);
     assert.deepStrictEqual(result.errors, []);
   });
