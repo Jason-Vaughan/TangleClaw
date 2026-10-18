@@ -617,6 +617,11 @@ Engine profiles define how TangleClaw interacts with an AI engine. See the [Engi
       "restRows": {
         "<MAJOR.MINOR.PATCH>": {
           "footerPattern": "string — regex source of the ONE footer row this exact engine version draws beneath its status row at rest. Must take a whole row: it starts with ^, ends with $, holds no |, and does not match the empty string.",
+          "turnEnd": {
+            "turnRowPattern": "string — OPTIONAL member, declared whole or not at all. Regex source of a row that starts a turn's drawing (Codex: ^[›•] ). Starts with ^, holds no |, and does not match the empty string.",
+            "endRowPatterns": ["string — regex source of a row that says a turn ended (Codex: ^  Worked for \\d). At least one; each starts with ^, holds no |, and does not match the empty string."],
+            "evidence": { "verifiedOn": "string — ISO date these rows were measured", "source": "string — where and how" }
+          },
           "evidence": { "verifiedOn": "string — ISO date this version was measured", "source": "string — where and how" }
         }
       },
