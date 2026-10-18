@@ -229,17 +229,63 @@ an Architect, some Builders, a PR reviewer — on a machine that already runs Ta
 
     Verify against the group's **actual members**, not a name prefix, and read the mode from
     `GET /api/projects` — the PATCH response omits `releaseMode`, so it cannot confirm this.
-    **Known defect (#1777):** from a pane this check always prints `OWNER_CONFLICT`, because the
-    roster a pane reads has no `releaseMode`; until it is fixed, confirm each project's mode in its
-    dashboard **Settings**:
+    A pane can read only its **own** project's `releaseMode`: every other project's row reaches it
+    as the public projection (`restricted: true`, no `releaseMode`). So the check runs in each
+    member's pane, and the group's answer is the roll-up of what each pane reports.
+
+    **In every member's pane**, check that pane's own mode:
 
     ```sh
     curl -fsS "$TANGLECLAW_API/api/groups/$GID/members" "${BIND[@]}" -o /tmp/tc-members.json
-    curl -fsS "$TANGLECLAW_API/api/projects" -o /tmp/tc-projects.json
+    curl -fsS "$TANGLECLAW_API/api/projects" "${BIND[@]}" -o /tmp/tc-projects.json
+    python3 - /tmp/tc-members.json /tmp/tc-projects.json "$TANGLECLAW_PROJECT_ID" <<'EOF_SCRIPT'
+    import json,sys
+    members=json.load(open(sys.argv[1]))["members"]
+    projects={p["id"]:p for p in json.load(open(sys.argv[2]))["projects"]}
+    me=int(sys.argv[3])
+    mine=projects.get(me)
+    if mine is None or mine.get("restricted"):
+        print("SELF_WRONG", {"reason":"this pane cannot read its own row; check BIND"}); sys.exit(1)
+    mode=mine.get("releaseMode")
+    print(f"SELF {mine['name']}: {mode}")
+    for m in members:
+        if m["id"]!=me: print(f"  {m['name']}: not readable from this pane")
+    if mode in ("ask","auto"): print("SELF_OK owner")
+    elif mode=="off": print("SELF_OK off")
+    else: print("SELF_WRONG", {"releaseMode":mode}); sys.exit(1)
+    EOF_SCRIPT
+    ```
+    Expected: `SELF <project>: <mode>`, the group's other members each as `not readable from this
+    pane`, then `SELF_OK owner` or `SELF_OK off`. Not being able to read another member is not
+    agreement: this pane has said nothing about them.
+    `SELF_WRONG` means this pane's mode is not `off`, `ask` or `auto` (a `null` or unrecognised mode
+    counts), or that the pane could not read its own row because `BIND` was not sent. Fix it before
+    any Builder wraps.
+
+    **Then roll up across the group.** Collect one `SELF_OK` line from **every** member that
+    `GET /api/groups/$GID/members` lists. The group is right when **exactly one** of them is
+    `SELF_OK owner` and every other is `SELF_OK off`. A member that has not reported yet still owes
+    its line: the group is not checked until it does. The operator can instead read every member's
+    mode in its dashboard **Settings**.
+
+    **Optional, one step: from the Project Master's pane only.** On an install that runs a Project
+    Master, the Master sees every row whole and can judge the whole group at once. Run this only in
+    the Master's own pane, and only after `tc whoami` there prints
+    `Launch binding: verified (this is the live Project Master's launch).` It sends that pane's own
+    role and launch id, which TangleClaw exported into it. It works from no other pane: a project
+    pane's launch id stays that project's whatever role it claims, so never send these headers from
+    a Builder's or any other project's pane, and use the per-pane check above there.
+
+    ```sh
+    MASTER=(-H "x-tangleclaw-role: $TANGLECLAW_ROLE" -H "x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID")
+    curl -fsS "$TANGLECLAW_API/api/groups/$GID/members" "${MASTER[@]}" -o /tmp/tc-members.json
+    curl -fsS "$TANGLECLAW_API/api/projects" "${MASTER[@]}" -o /tmp/tc-projects.json
     python3 - /tmp/tc-members.json /tmp/tc-projects.json <<'EOF_SCRIPT'
     import json,sys
     members=json.load(open(sys.argv[1]))["members"]
     projects={p["id"]:p for p in json.load(open(sys.argv[2]))["projects"]}
+    if any(p.get("restricted") for p in projects.values()):
+        print("MASTER_NOT_VERIFIED: a row came back restricted, so this claim was not verified; use the per-pane check"); sys.exit(1)
     missing=[m["id"] for m in members if m["id"] not in projects]
     rows=[(m["name"], projects[m["id"]].get("releaseMode")) for m in members if m["id"] in projects]
     for n,mode in rows: print(f"  {n}: {mode}")
@@ -250,10 +296,12 @@ an Architect, some Builders, a PR reviewer — on a machine that already runs Ta
     print("OWNERS_OK")
     EOF_SCRIPT
     ```
-    Expected: each member listed with its mode, then `OWNERS_OK`.
-    If `OWNER_CONFLICT` prints, the payload says which of the three conditions failed — a member id
-    that resolves to no project, more or fewer than one owner, or a non-owner whose mode is not
-    `off` (a `null` or unrecognised mode counts). Fix it before any Builder wraps.
+    Expected: each member listed with its mode, then `OWNERS_OK`. `MASTER_NOT_VERIFIED` means
+    TangleClaw did not take this pane as the Master, so it judges nothing; fall back to the per-pane
+    roll-up. If `OWNER_CONFLICT` prints, the payload says which of the three conditions failed — a
+    member id that resolves to no project, more or fewer than one owner, or a non-owner whose mode
+    is not `off` (a `null` or unrecognised mode counts). Fix it before any Builder wraps.
+
     Valid values are `off`, `auto`, `ask`; anything else is treated as `ask` with a warning, which
     is itself how a second owner appears by accident — an unrecognised mode is not `off`.
 
@@ -293,8 +341,10 @@ an Architect, some Builders, a PR reviewer — on a machine that already runs Ta
   lists every fleet project.
 - `tc rules` in one Builder's launched pane prints the live-checkout rule, and it names `Acme-Core`
   — not that Builder's own path.
-- 10a's check prints `OWNERS_OK`: **exactly one** group member is `ask` (or `auto`) and every other
-  member is `off`. Inspecting a single project does not establish this.
+- Every group member's pane has printed 10a's `SELF_OK` line, and **exactly one** of them is
+  `SELF_OK owner` while every other is `SELF_OK off` (or, on an install with a Project Master, the
+  Master pane's one-step check prints `OWNERS_OK`). Inspecting a single project does not establish
+  this.
 
 ## Phase 4 — running the fleet concurrently
 
