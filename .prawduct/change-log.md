@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-18 — W19-REC: combined records for the Wave 19 source merges
+
+<!-- prawduct: type=chore | scope=w19-rec-records -->
+
+v5.34.0 records chunk W19-REC, Charter v2.51, from merged main `fe4b1ca2`. W19-B1 PR #2501 merged as `c9b9e61c` (closes #2496, refs #2200); W19-A1 PR #2502 merged as `fe4b1ca2` (refs #1903 Chunk 09). #1903 stays open with 15 private lifters. The two source entries below remain intact.
+
+**What changed.** `CHANGELOG.md` adds two Internal `[Unreleased]` entries for the test-only changes. `FEATURES.md` extends the #1903 lift-helper inventory through Chunk 09, from 26 to 15. `prawduct-hook archive-change-log` dry run moves zero entries: the live log is 33 KB, below its 40 KB threshold, so the October archive is unchanged. `[Unreleased]` is 18,635 UTF-8 bytes, below the 90,000-byte alert. These records do not bump a version, release, tag or deploy.
+
 ## 2026-10-18 — #1903 Chunk 09: eleven more lift copies use the shared helper
 
 <!-- prawduct: type=refactor | scope=w19-a1-lift-chunk09 -->
