@@ -24,9 +24,14 @@ All notable changes to TangleClaw are documented in this file.
 - **A refused launch's message stays until you dismiss it** (#2339): the dashboard no longer hides it after 6 s or under another message's timer. Dismiss it with its button, or Escape on its buttons; a newer one replaces it. Long paths wrap at 320 px. **Bridge Discord times in local time** (#2313): the panel and `tc bridge status` show them in the host's zone; the status JSON keeps ISO.
 - With no login in force, operator routes that grant or approve authority refuse until the operator signs in (403 LOGIN_GATE_REQUIRED; 409 GATE_FALLBACK while stood down): session-rule approval, global/Master rules, learning tiers, coordinator grants, releasing a HOLD, merge-queue creation and gates, shared-doc registration, group membership, recovery mode, the startup prompt (#2378).
 
+### Security
+
+- A member session can take a shared-document lock only in its verified session and project name: mismatched required body claims get `403 LOCK_CALLER_MISMATCH` without a write. HTTP `ttlMinutes` is now a whole number from 1 to 120, default 30; the Operator can still name any session (#2489).
+
 ### Fixed
 
-- Only the session holding a shared-document lock, or the Operator, can release it. Another group member gets `NOT_LOCK_HOLDER` and the lock stays; expired or absent locks still release successfully. The lock route's body-supplied session id remains tracked in #2489 (#2290).
+- The `tc finalize` guide and v5.30 status record now describe what shipped: finalization makes no git write, but its strict check fetches and prunes remote-tracking refs; #2027 shipped as commit `2074e241` via PR #2043. This corrects the earlier "no git" [5.30.0] wording without changing that published note (#2046).
+- Only the session holding a shared-document lock, or the Operator, can release it. Another group member gets `NOT_LOCK_HOLDER` and the lock stays; expired or absent locks still release successfully (#2290).
 - A web UI launch's `201` now includes `launchMode` and `isolationOverride`, matching the tmux launch response. The web UI reports the mode actually recorded for the session and `isolationOverride: null`, because it starts no local engine (#2484).
 - A web UI launch's `201` now includes `privateTempRoot: null`, so the key is present on both launch paths as documented; engine launches still return their root account (#2171).
 - The fleet runbook's release-owner check now works from a project pane: each member reports its own `releaseMode`, and the group is checked from all members' reports. A verified Project Master can check it in one step (#1777).
@@ -52,6 +57,9 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- One owner for POSIX single-quote escaping (#1399). `tmux`, `openclaw-approve`, the lint wrap step and `bridge-handoff` alias `shellWord`, and `control-hooks` calls it. Command lines are byte-identical. A test fails if a copy reappears under `lib/`.
+- #1903 Chunk 07: ten more test files use `test/helpers/lift.js`, and the lift inventory goes from 46 to 36; #1903 remains open.
+- The bridge-gateway expiry test anchors its clock to its own question, and bridge test helpers open a fresh connection per request, removing two causes of intermittent failure under load (#2184).
 - The Full Disk Access advice for a directory that never answers has one owner in the directory scanner. The operator-facing wording remains unchanged, and a cached refusal alone no longer triggers the advice (#1351).
 - Ten more test files use the shared source-lifting helper with byte-identical lifted text; 46 private copies remain (#1903, Chunk 06).
 - The absent-Bridge toggle test uses a deterministic probe seam, so a reused port pair or a loaded host cannot change its verdict. Its prior failure's cause remains unknown (#2485).

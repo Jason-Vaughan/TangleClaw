@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-18 — W17-REC: combined records for the Wave 17 source merges
+
+<!-- prawduct: type=chore | scope=w17-rec-records -->
+
+v5.34.0 records chunk W17-REC, Charter v2.47, from merged main `c71ea903`. W17-A1 PR #2493 merged as `165d8925` (closes #1399, refs #1903 Chunk 07); W17-B1 PR #2494 merged as `c71ea903` (closes #2489, #2184, #2046). #1903 remains open with 36 private lifters. Both source entries below remain intact, including B's guide and generated `CLAUDE.md` block sync under the amended 15-file lock.
+
+**What changed.** `CHANGELOG.md` adds one Security, one folded Fixed and three Internal `[Unreleased]` entries, each below 400 UTF-8 bytes; it also removes the stale #2489-open clause from the older #2290 entry. `FEATURES.md` records verified shared-doc lock caller binding, corrects the earlier lock-release and finalize claims, updates the lift inventory from 46 to 36, and names the single POSIX shell-word owner and its guard. The October archive is unchanged because the live change log remains below its 40,000-byte threshold. These records do not bump a version, release, tag or deploy.
+
 ## 2026-10-18 — #2489, #2184, #2046: a member's shared-doc lock is taken in its verified name with a bounded ttl, the bridge-gateway tests stop racing their clock and sockets, and the finalize docs say what shipped
 
 <!-- prawduct: type=bugfix | scope=w17b1-lock-caller-binding-gateway-determinism-finalize-docs -->
