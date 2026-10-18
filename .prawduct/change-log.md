@@ -55,11 +55,24 @@ v5.34.0 Wave 12 chunk W12-B1, chunk 1 of 1. Branch `fix/w12b1-review-id-and-reco
 
 **Walls** (each file alone, `node --test`, no forced exit, all 8 run in parallel on this host; before from `.tangleclaw/evidence/w12b1/base-walls.txt`): clear-batch 141 → 40 s, held 112 → 19 s, batch-read 100 → 9 s, clearance-audit 99 → 8 s, project-recovery-mode-control 95 → 4 s, fleet-recovery-panel 93 → 2 s, clear-one 4 → 3 s, clear-ended 2 → 2 s. After the fix, each file's wall equals its own `duration_ms` to within a second. With the kickoff unref alone (the fixture reverted) every file also exits when its last test ends, but its tests run longer (held 28.7 s, clear-batch 54.0 s), because the real kickoff and bootstrap still run.
 
-**Tests.** `test/launch-recovery-held.test.js` gains three cases: the 20 s exit bound stays below `IDLE_TIMEOUT_MS`; a child `node` that launches through the fixture, waits until the deferred kickoff and bootstrap have both started, then restores, exits by itself within the bound (measured 0.4 s); and a child that only awaits `_internal.sleep(IDLE_TIMEOUT_MS)` exits within the bound (0.06 s). Red first on the unfixed tree: both child cases were killed at 20 s. With the fixture fixed and the unref reverted, the sleep pin fails and the launch pin passes. With the unref kept and the fixture reverted, both pass. So the launch pin is carried by the unref, and the fixture's stand-ins are measured by the walls above, not by a pin.
+**Tests.** `test/launch-recovery-held.test.js` gains three cases: the 20 s exit bound stays below `IDLE_TIMEOUT_MS`; a child `node` that launches through the fixture, waits until the deferred kickoff and bootstrap have both started, then restores, exits by itself within the bound (measured 0.4 s); and a child that only awaits `_internal.sleep(IDLE_TIMEOUT_MS)` exits within the bound (0.06 s). Red first on the unfixed tree: both child cases were killed at 20 s. With the fixture fixed and the unref reverted, the sleep pin fails and the launch pin passes. With the unref kept and the fixture reverted, both pass. So either change alone lets the launch child exit, the sleep pin alone tells them apart, and the fixture's stand-ins are measured by the walls above, not by a pin.
 
 **Plan premise corrected (D2).** The plan expected a host with no tmux to leave the boot watch polling its 45 s window, which would have made the fixture's boot-watch stand-in load-bearing for the exit pin. Measured with `tmux` removed from the child's `PATH`: the unfixed fixture's boot watch still ended at `pane-gone` in 6 ms, because `tmux.probeSession` treats any non-timeout failure, including the shell's "command not found", as an answer that the session is gone. The stand-in is kept as approved, because the fixture's premise is that no pane exists.
 
 **Narrow runs** on `15b2e89c`, all passing: the 8 fixture users, `launch-kickoff`, `launch-bootstrap-wiring`, `startup-dialog`, `startup-control-launch`, `master`, `master-control-bar`, `master-guard-source`.
+
+**Review.** Cumulative Critic `rev-20261018T005619Z-ca64bac5` on `75fed2c5`: 0 blocking. An earlier inferred verify-resolutions round (`rev-20261018T005508Z-daaab597`) anchored to a W11 review and covered no span from `origin/main`, so the cumulative was run explicitly.
+
+**rev-20261018T005619Z-ca64bac5** — 2026-10-18T00:57:38Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | accepted | The declared suite runs once on the frozen head in the Integrator's exact-head suite slot (charter order, after the Architect's pre-suite read) and is recorded as test evidence before the ready report. Narrow runs on 15b2e89c passed: the 8 fixture users plus launch-kickoff, launch-bootstrap-wiring, startup-dialog, startup-control-launch and the three master files. |
+| R-2 | note | accepted | Known and recorded in the plan and change-log: the stand-ins' effect is speed, not exit, so a pin would have to time test runs. Their value is shown by measured walls (kickoff-only vs full fix: held 28.7 s vs 19.2 s, clear-batch 54.0 s vs 40.1 s); their loss costs longer runs, never a wrong result. |
+| R-3 | note | accepted | Three copies is within tolerance and the other two are out of this chunk's six-file lock; extract to a shared helper if a fourth appears. |
+| R-4 | note | accepted | #2469 and #2253 are GitHub issues closed by the PR's Closes lines; no local backlog item exists for them. |
+
+**4 findings** (1 warning, 3 note) — accepted: 4.
 
 ## 2026-10-17 — W11-REC: the v5.34.0 Wave 11 combined records
 
