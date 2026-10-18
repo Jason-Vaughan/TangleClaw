@@ -17,6 +17,7 @@
 
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
+const { liftBody } = require('./helpers/lift');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -96,27 +97,6 @@ function get(server, urlPath) {
     req.on('error', reject);
     req.end();
   });
-}
-
-/**
- * Extract a function's body from source by walking brace depth.
- * @param {string} src - File source
- * @param {string} marker - Text locating the function (e.g. 'function foo(')
- * @returns {string} the body including braces; '' when not found
- */
-function functionBody(src, marker) {
-  const start = src.indexOf(marker);
-  if (start === -1) return '';
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}') {
-      depth--;
-      if (depth === 0) return src.slice(bodyStart, i + 1);
-    }
-  }
-  return '';
 }
 
 describe('tmux.readNewestBuffer — the newest buffer, or the honest reason there is none (#438)', () => {
@@ -393,11 +373,11 @@ describe('Session page wiring — source pins (#438)', () => {
   });
 
   it('the toolbar handler fetches the clipboard route and carries the server code to the toast decision', () => {
-    const fetchBody = functionBody(sessionJs, 'async function fetchTerminalSelection(');
+    const fetchBody = liftBody(sessionJs, 'async function fetchTerminalSelection(');
     assert.ok(fetchBody, 'fetchTerminalSelection must exist');
     assert.ok(fetchBody.includes('/clipboard`'), 'must read GET /api/sessions/:project/clipboard');
     assert.ok(fetchBody.includes('api.lastErrorCode'), 'the server code (NO_BUFFER) must reach the decision');
-    const body = functionBody(sessionJs, 'async function copyTerminalSelection(');
+    const body = liftBody(sessionJs, 'async function copyTerminalSelection(');
     assert.ok(body, 'copyTerminalSelection must exist');
     assert.ok(body.includes('tcCopyToClipboard('), 'the iOS-safe helper is the fallback clipboard path (#436)');
     assert.ok(body.includes('tcCopyOutcome('), 'toast wording goes through the tested decision');
@@ -406,7 +386,7 @@ describe('Session page wiring — source pins (#438)', () => {
   it('the toolbar handler issues the promise-valued ClipboardItem write INSIDE the gesture — no await before it', () => {
     // iOS Safari drops user activation across an await; the one write it keeps
     // activation for is a ClipboardItem whose value is the pending fetch.
-    const body = functionBody(sessionJs, 'async function copyTerminalSelection(');
+    const body = liftBody(sessionJs, 'async function copyTerminalSelection(');
     assert.ok(body.includes('tcClipboardWritePath('), 'the path is the tested decision');
     const writeCall = "await nav.clipboard.write([new ClipboardItem({ 'text/plain': blobPromise })])";
     const writeAt = body.indexOf(writeCall);
@@ -417,7 +397,7 @@ describe('Session page wiring — source pins (#438)', () => {
   });
 
   it('the Peek handler copies the drawer\'s rendered text, not a fresh terminal read', () => {
-    const body = functionBody(sessionJs, 'async function copyPeekText(');
+    const body = liftBody(sessionJs, 'async function copyPeekText(');
     assert.ok(body, 'copyPeekText must exist');
     assert.ok(body.includes('peekRawText'), 'must copy the ANSI-stripped text the drawer shows');
     assert.ok(!body.includes('/clipboard'), 'a phone needs no tmux selection for this path');
@@ -425,7 +405,7 @@ describe('Session page wiring — source pins (#438)', () => {
   });
 
   it('Web UI sessions get the Copy button disabled like Peek — there is no tmux to read', () => {
-    const body = functionBody(sessionJs, 'function applyWebuiMode(');
+    const body = liftBody(sessionJs, 'function applyWebuiMode(');
     assert.ok(body.includes("disable('copyBtn'"));
   });
 });

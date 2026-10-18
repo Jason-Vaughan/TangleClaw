@@ -17,6 +17,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const { liftDeclaration } = require('./helpers/lift');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -28,27 +29,6 @@ const PUBLIC = path.join(__dirname, '..', 'public');
 const SESSION_SRC = fs.readFileSync(path.join(PUBLIC, 'session.js'), 'utf8');
 const SESSION_HTML = fs.readFileSync(path.join(PUBLIC, 'session.html'), 'utf8');
 const SW_SRC = fs.readFileSync(path.join(PUBLIC, 'sw.js'), 'utf8');
-
-/**
- * The full source of one top-level function in session.js, declaration included.
- * @param {string} name - Function name.
- * @returns {string}
- */
-function functionSource(name) {
-  const re = new RegExp(`^(async )?function ${name}\\(`, 'm');
-  const m = re.exec(SESSION_SRC);
-  assert.ok(m, `session.js must define ${name}`);
-  const bodyStart = SESSION_SRC.indexOf('{', SESSION_SRC.indexOf(')', m.index));
-  let depth = 0;
-  for (let i = bodyStart; i < SESSION_SRC.length; i += 1) {
-    if (SESSION_SRC[i] === '{') depth += 1;
-    else if (SESSION_SRC[i] === '}') {
-      depth -= 1;
-      if (depth === 0) return SESSION_SRC.slice(m.index, i + 1);
-    }
-  }
-  return assert.fail(`unbalanced braces in ${name}`);
-}
 
 /**
  * One top-level `const` declaration from session.js, so the sandbox runs the
@@ -140,7 +120,7 @@ function harness() {
   vm.runInContext(fs.readFileSync(path.join(PUBLIC, 'wrap-drawer.js'), 'utf8'), sandbox);
   vm.runInContext(fs.readFileSync(path.join(PUBLIC, 'session-relaunch.js'), 'utf8'), sandbox);
   const globals = ['let countdownTimer = null;', 'let relaunchController = null;', constSource('RELAUNCH_TIMEOUT_MS')].join('\n');
-  vm.runInContext(`${globals}\n${WIRING.map(functionSource).join('\n\n')}\n`
+  vm.runInContext(`${globals}\n${WIRING.map((n) => liftDeclaration(SESSION_SRC, `function ${n}(`)).join('\n\n')}\n`
     + 'this.__w = { handleSessionEnded, handleWrapCompleted, onRelaunchClick, timeoutMs: RELAUNCH_TIMEOUT_MS };', sandbox);
 
   // Bind the button the way the page does, so a click goes through the listener.

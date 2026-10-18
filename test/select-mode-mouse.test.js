@@ -30,33 +30,13 @@
 
 const { describe, it, before } = require('node:test');
 const assert = require('node:assert/strict');
+const { liftBody } = require('./helpers/lift');
 const fs = require('node:fs');
 const path = require('node:path');
 
 require('../public/api-helper.js');
 const { tcSelectModeMouse, tcIsFocusTap } = globalThis;
 const { _resolveMouseValue } = require('../lib/tmux.js');
-
-/**
- * Extract a function's body from source by walking brace depth.
- * @param {string} src - File source
- * @param {string} marker - Text locating the function (e.g. 'function foo(')
- * @returns {string} the body including braces; '' when not found
- */
-function functionBody(src, marker) {
-  const start = src.indexOf(marker);
-  if (start === -1) return '';
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}') {
-      depth--;
-      if (depth === 0) return src.slice(bodyStart, i + 1);
-    }
-  }
-  return '';
-}
 
 describe('Effective tmux mouse state (#574 RC1 — _resolveMouseValue)', () => {
   it('falls back to the global value when the session has no override (THE regression)', () => {
@@ -81,10 +61,10 @@ describe('Effective tmux mouse state (#574 RC1 — _resolveMouseValue)', () => {
     // delegates to it) — the #574 intent (global fallback consulted) is
     // unchanged, the guard follows the code to its new home.
     const tmuxJs = fs.readFileSync(path.join(__dirname, '..', 'lib', 'tmux.js'), 'utf8');
-    const getBody = functionBody(tmuxJs, 'function getMouse(');
+    const getBody = liftBody(tmuxJs, 'function getMouse(');
     assert.ok(getBody.includes('getMouseState('),
       'getMouse must delegate to the source-aware getMouseState');
-    const stateBody = functionBody(tmuxJs, 'function getMouseState(');
+    const stateBody = liftBody(tmuxJs, 'function getMouseState(');
     assert.ok(stateBody.includes('show-options -g -v mouse'),
       'getMouseState must read the global mouse value as the no-override fallback');
     assert.ok(stateBody.includes('_resolveMouseState('),
@@ -163,10 +143,10 @@ describe('Mouse state source (#579 — _resolveMouseState)', () => {
 
   it('is wired: getMouseState resolves through the tested helper; unsetMouse uses set -u', () => {
     const tmuxJs = fs.readFileSync(path.join(__dirname, '..', 'lib', 'tmux.js'), 'utf8');
-    const stateBody = functionBody(tmuxJs, 'function getMouseState(');
+    const stateBody = liftBody(tmuxJs, 'function getMouseState(');
     assert.ok(stateBody.includes('_resolveMouseState('),
       'getMouseState must resolve through the tested pure helper');
-    const unsetBody = functionBody(tmuxJs, 'function unsetMouse(');
+    const unsetBody = liftBody(tmuxJs, 'function unsetMouse(');
     assert.ok(unsetBody.includes('set-option -u'),
       'unsetMouse must remove the session-level override, not write a value');
   });
@@ -209,7 +189,7 @@ describe('Select abandonment repair (UI-8W3D — tcParseSelectMarker + wiring)',
 
   it('is wired: enter writes the marker BEFORE the tmux flip; clean exit clears it', () => {
     const sessionJs = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
-    const body = functionBody(sessionJs, 'async function toggleSelect(');
+    const body = liftBody(sessionJs, 'async function toggleSelect(');
     const writeAt = body.indexOf('writeSelectMarker(');
     const enterPostAt = body.indexOf('entering: true');
     assert.ok(writeAt !== -1 && enterPostAt !== -1 && writeAt < enterPostAt,
@@ -221,7 +201,7 @@ describe('Select abandonment repair (UI-8W3D — tcParseSelectMarker + wiring)',
 
   it('is wired: page init repairs through the tested exit decision and parses via the tested reader', () => {
     const sessionJs = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
-    const body = functionBody(sessionJs, 'async function repairAbandonedSelect(');
+    const body = liftBody(sessionJs, 'async function repairAbandonedSelect(');
     assert.ok(body, 'repairAbandonedSelect must exist');
     assert.ok(body.includes('tcParseSelectMarker('),
       'raw storage must go through the validating parser');
@@ -242,14 +222,14 @@ describe('Select-mode + mouse-guard wiring (#574 source pins)', () => {
   });
 
   it('toggleSelect has NO auto-revert timer (no-UI-timers rule, #98/#268)', () => {
-    const body = functionBody(sessionJs, 'async function toggleSelect(');
+    const body = liftBody(sessionJs, 'async function toggleSelect(');
     assert.ok(body, 'toggleSelect must exist');
     assert.ok(!body.includes('setTimeout'),
       'select mode must be an explicit toggle — the 30s auto-revert was removed in #574, never re-add or lengthen it');
   });
 
   it('toggleSelect routes BOTH transitions through tcSelectModeMouse', () => {
-    const body = functionBody(sessionJs, 'async function toggleSelect(');
+    const body = liftBody(sessionJs, 'async function toggleSelect(');
     const calls = body.split('tcSelectModeMouse(').length - 1;
     assert.equal(calls, 2,
       'enter and exit must both use the tested pure decision (found ' + calls + ' call(s))');
@@ -262,7 +242,7 @@ describe('Select-mode + mouse-guard wiring (#574 source pins)', () => {
   it('toggleSelect snapshots the pre-select state FRESH on entry (#579)', () => {
     // A page-load snapshot goes stale the moment another tab or the
     // operator changes the mouse state; exit would then "restore" history.
-    const body = functionBody(sessionJs, 'async function toggleSelect(');
+    const body = liftBody(sessionJs, 'async function toggleSelect(');
     assert.ok(body.includes('/api/tmux/mouse/'),
       'entering select mode must re-read the live mouse state before flipping it');
   });
@@ -294,7 +274,7 @@ describe('Tap-to-focus (#574 RC4 — tcIsFocusTap)', () => {
   it('is wired: touchend focuses through the predicate, touchcancel never focuses', () => {
     const helper = fs.readFileSync(
       path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
-    const body = functionBody(helper, 'function tcWireTerminalDragCopy(');
+    const body = liftBody(helper, 'function tcWireTerminalDragCopy(');
     assert.ok(body, 'tcWireTerminalDragCopy must exist');
     // The touchend handler must gate term.focus() on the tested predicate.
     const touchendAt = body.indexOf("addEventListener('touchend'");
@@ -312,7 +292,7 @@ describe('Tap-to-focus (#574 RC4 — tcIsFocusTap)', () => {
   it('is wired: the slop-exceed branch marks the gesture as a scroll', () => {
     const helper = fs.readFileSync(
       path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
-    const body = functionBody(helper, 'function tcWireTerminalDragCopy(');
+    const body = liftBody(helper, 'function tcWireTerminalDragCopy(');
     assert.ok(body.includes('gestureMovedPastSlop = true'),
       'movement past the long-press slop must disqualify the tap, or every scroll would pop the keyboard');
   });

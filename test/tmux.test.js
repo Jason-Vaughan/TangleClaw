@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const tmux = require('../lib/tmux');
+const { shellWord } = require('../lib/shell-word');
 const { uniqueSessionName } = require('./_tmux-session-names');
 
 describe('tmux — a timed-out command says so (#894)', () => {
@@ -272,6 +273,10 @@ describe('tmux', () => {
   });
 
   describe('_escapeArg', () => {
+    it('is shellWord itself, not a second implementation (#1399)', () => {
+      assert.equal(tmux._escapeArg, shellWord);
+    });
+
     it('should wrap in single quotes', () => {
       assert.equal(tmux._escapeArg('hello'), "'hello'");
     });

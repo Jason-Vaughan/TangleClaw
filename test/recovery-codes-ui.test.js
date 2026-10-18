@@ -9,6 +9,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const { liftDeclaration } = require('./helpers/lift');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -16,26 +17,6 @@ const vm = require('node:vm');
 const PUBLIC = path.join(__dirname, '..', 'public');
 const LANDING_SRC = fs.readFileSync(path.join(PUBLIC, 'landing.js'), 'utf8');
 const UI_SRC = fs.readFileSync(path.join(PUBLIC, 'ui.js'), 'utf8');
-
-/**
- * Slice a top-level function out of a script by brace matching.
- * @param {string} src
- * @param {string} name
- * @returns {string}
- */
-function extract(src, name) {
-  const start = src.indexOf(`function ${name}(`);
-  assert.ok(start > -1, `${name} should exist`);
-  let depth = 0;
-  for (let i = src.indexOf('{', start); i < src.length; i += 1) {
-    if (src[i] === '{') depth += 1;
-    else if (src[i] === '}') {
-      depth -= 1;
-      if (depth === 0) return src.slice(start, i + 1);
-    }
-  }
-  throw new Error(`could not brace-match ${name}`);
-}
 
 const escHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;');
@@ -74,7 +55,7 @@ describe('the recovery-code notice banner (#1420)', () => {
       esc: escHtml,
       apiMutate: async (...args) => { calls.push(args); return apiMutate(...args); }
     });
-    vm.runInContext(`${extract(LANDING_SRC, 'renderRecoveryNotice')}\nthis.renderRecoveryNotice = renderRecoveryNotice;`, ctx);
+    vm.runInContext(`${liftDeclaration(LANDING_SRC, 'function renderRecoveryNotice(')}\nthis.renderRecoveryNotice = renderRecoveryNotice;`, ctx);
     ctx.renderRecoveryNotice(notice);
     return { els, calls, ctx };
   }
@@ -159,7 +140,7 @@ describe('Settings > Recovery codes (#1420)', () => {
       apiMutate: async (...args) => { calls.push(args); return mutate(...args); },
       esc: escHtml
     });
-    vm.runInContext(`async ${extract(UI_SRC, '_loadRecoveryCodesSection')}\nthis.run = _loadRecoveryCodesSection;`, ctx);
+    vm.runInContext(`async ${liftDeclaration(UI_SRC, 'function _loadRecoveryCodesSection(')}\nthis.run = _loadRecoveryCodesSection;`, ctx);
     await ctx.run();
     return { els, calls };
   }
