@@ -41,6 +41,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-18 — #2285, #2146, #1563: one session-active rule in `server.js`, no reconciliation owed after READY, and a restart command built from the unit constant
+
+<!-- prawduct: type=bugfix | scope=w13b1-session-active-ready-status-systemd-unit -->
+
+v5.34.0 Wave 13 chunk W13-B1, chunk 1 of 1. Branch `fix/w13b1-session-active-ready-status-systemd-unit` from `origin/main` `5ccc310e`. Closes #2285, #2146 and #1563. Plan: `.tangleclaw/plans/build-plan-w13b1-session-active-ready-status-systemd-unit.md` (rev1 sha256 `44993ed6…477d`, INT and Architect A258); charter v2.37 (sha256 `189678a9…8734`).
+
+**#2285.** `server.js`'s Fire `fireable` judgement and `_deliveryFacts` call `launchRecoveryClear.sessionIsActive` instead of spelling the same test inline; behaviour is unchanged (identical truth tables). A test pins that `fireable` and `sessionActive` agree as a session ends. The `_startupControlForLaunch` JSDoc loses its standalone ` (R-13)`: no standalone `(R-N)` review id remains outside the change logs. Three qualified or prose hits stay, outside this chunk's files (`lib/master.js`, `test/release-certification-runner.test.js`, `docs/prawduct-feedback.md`).
+
+**#2146.** `status()` answers `readiness.reconciliationRequired: null` once `readyAt` is set: the trigger outlives READY, and the attestation already answered it, so `tc start status` no longer says the attestation "will need" one. The READY gate is untouched (it calls `_reconciliationRequired` directly). `renderStartStatus` also checks `readyAt`, so a newer CLI talking to an older server prints no false obligation.
+
+**#1563.** `buildRestartCommand('systemctl')` builds the command from `SYSTEMD_USER_UNIT`; the exact-string test keeps its literal. The `restart button disabled` log goes through `_internal.log`, and four tests pin it: logged once, not repeated, logged on change, and logged again after an ok answer or a missing unit resets the remembered reason.
+
 ## 2026-10-18 — #1903 Chunk 03, #1437, #2234: eight more lift copies use the shared helper, and two doc claims match their ADRs
 
 <!-- prawduct: type=refactor | scope=w13-a1-lift-chunk03-contributing-runbook -->

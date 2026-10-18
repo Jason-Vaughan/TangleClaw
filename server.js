@@ -4687,7 +4687,7 @@ route('GET', '/api/launch-sequences', (req, res) => {
  *
  * The channel's generic header only — never `adapterState`, which is the
  * adapter's and may name a socket or a pid (E2/S4) — and every fire row the
- * launch's session has, newest first, `denied` included (R-13), with the
+ * launch's session has, newest first, `denied` included, with the
  * bounded fields the panel reads. `fireable` is true only when the caller is
  * the operator, the session is active and the channel is open: the exact row
  * the Fire button can act on. The Master reads and never fires (D4).
@@ -4726,7 +4726,7 @@ function _startupControlForLaunch(sequence, access) {
   }));
   const session = store.sessions.get(sequence.sessionId);
   const fireable = access.kind === sharedDocsAccess.KINDS.OPERATOR
-    && !!session && session.status === store.SESSION_STATUS.ACTIVE
+    && launchRecoveryClear.sessionIsActive(session)
     && !!channel && channel.state === 'open';
   return { channel, fires, fireable };
 }
@@ -5855,7 +5855,7 @@ function _deliveryFacts(row) {
   const key = String(row.sessionId);
   if (/^\d+$/.test(key)) {
     const session = store.sessions.get(Number(key));
-    const live = Boolean(session) && session.status === store.SESSION_STATUS.ACTIVE;
+    const live = launchRecoveryClear.sessionIsActive(session);
     const verdict = live ? medusaWake.verdictFor(Number(key)) : null;
     return { live, lastAssessedAt: verdict ? verdict.observedAt : null };
   }
