@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-18 — W19-B1: the twenty-wedged-reads case proves the loop turns while every read is in flight
+
+<!-- prawduct: type=bugfix | scope=w19b1-twenty-wedged-reads-proof -->
+
+v5.34.0 Wave 19 chunk W19-B1, chunk 1 of 1, Charter v2.51, Architect A326. Closes #2496. Refs #2200. Plan: `.tangleclaw/plans/build-plan-w19b1-twenty-wedged-reads-proof.md` (rev1 sha256 `cd7a65e1…2d19`, INT `2b730b48`).
+
+**What changed.** `test/tmux-read-pane-async.test.js`'s "twenty wedged reads leave the event loop turning while they are waited on" case counted 10 ms timer turns while twenty reads ran out a 600 ms timeout, so slow timer delivery alone could fail it. Now the read timeout is 60 s, the stand-in's `hang` sleeps 120 s, and the test releases the reads by killing the children `countSpawns` recorded. It asserts that all 20 children exist and are alive, with no read settled, when the calls return. After at least 10 turns under a 60 s failure guard it asserts the same again, then that every released read rejects as `tcTimedOut`, each stopped at its probe, and every child is gone. The settled flags ride one `Promise.allSettled` that is subscribed at once, so a read that ends early fails a named assertion and never becomes an unhandled rejection. Load can now only make it slower. A blocking-read mutant fails "a read ended before the test released it"; a starved-interval mutant fails on 0 turns. `lib/tmux.js` is unchanged (no product defect). Node's own `execFile` timeout stays proven by the file's other `hang` cases, which use 300 ms timeouts.
+
 ## 2026-10-18 — W18-REC: combined records for the Wave 18 source merges
 
 <!-- prawduct: type=chore | scope=w18-rec-records -->
