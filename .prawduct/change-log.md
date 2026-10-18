@@ -41,6 +41,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-18 — W13-REC: Wave 13 combined records after source PRs #2478 and #2477
+
+<!-- prawduct: type=chore | scope=w13-rec-records -->
+
+v5.34.0 records chunk W13-REC, charter v2.37. Branch `docs/w13-records` from merged `origin/main` `25051c90`. W13-A1 PR #2478 merged at `0b6fa6a8` (refs #1903 Chunk 03, closes #1437/#2234); W13-B1 PR #2477 merged at `25051c90` (closes #2285/#2146/#1563).
+
+**What changed.** `CHANGELOG.md` records the READY-status fix, shared session-active rule, systemd unit and diagnostic, eight byte-identical helper lifts, corrected dependency wording and shared-account runbook check. `FEATURES.md` updates stable source pointers. Every new `[Unreleased]` entry is under 400 UTF-8 bytes and the section remains under 90,000 bytes. Archive dry-run found no entries to move, so the October archive is unchanged.
+
+**Limits.** #1903 remains open for later chunks (77 inventory entries). The source cleanup removed the last *standalone* `(R-N)` review marker outside change logs; qualified or prose hits remain in `lib/master.js`, `test/release-certification-runner.test.js` and `docs/prawduct-feedback.md`. README's broader dependency claim and other out-of-lock docs are PM triage, not this four-file records scope. These records do not release, tag, bump a version or deploy.
+
 ## 2026-10-18 — #2285, #2146, #1563: one session-active rule in `server.js`, no reconciliation owed after READY, and a restart command built from the unit constant
 
 <!-- prawduct: type=bugfix | scope=w13b1-session-active-ready-status-systemd-unit -->

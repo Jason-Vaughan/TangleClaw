@@ -24,6 +24,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- `tc start status` no longer says an already attested READY session "will need a reconciliation"; the status has none owed, and a newer CLI guards against that line from an older server (#2146).
 - Recovery test files no longer wait about 90 s after their last test: the launch kickoff's idle poll no longer holds a process open alone, and the recovery fixture stands in for deferred work while its store is open (#2253).
 - The wrap's changelog check now judges the commit a wrap actually makes when the session's engine cannot run Prawduct: a `.prawduct/` changelog edit the commit leaves out no longer counts as logging source work (#2470).
 - A session continuity `files:` stamp omits paths found only in earlier `Session wrap` commits; paths also changed by session work remain (#1280).
@@ -45,6 +46,11 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- Both `server.js` launch session-active judgments now call `sessionIsActive`; the stale standalone `(R-13)` JSDoc marker is gone (#2285).
+- The systemd restart command uses `SYSTEMD_USER_UNIT`; tests pin the disabled-button diagnostic across repeated and changed reasons (#1563).
+- Eight more test files use the shared lift helper with byte-identical lifted text; the private-lifter inventory shrinks from 85 to 77 (#1903, Chunk 03).
+- CONTRIBUTING now says zero npm dependencies, accurately cites ADR 0012, and keeps its incoming-PR manifest and lockfile gate (#1437).
+- The fleet runbook verifies merge authority from the merging session's own report, which works when sessions share a GitHub account (#2234).
 - Removed the last stale review id (`R-15`) from a source comment in `lib/master.js` (#2469).
 - Five more test files lift page functions through the shared `test/helpers/lift.js` instead of private brace-matchers, with byte-identical lifted text (#1903, Chunk 02).
 - The wrap file classifier now supplies the not-committed and secret-scan lists to its consumers, so a new bucket cannot be missed by a hand-built list; no operator-visible change (#2160).
