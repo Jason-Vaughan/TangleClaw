@@ -470,6 +470,28 @@ describe('tc start (car 21.3)', () => {
     assert.ok(!advisory.includes(recoveryHint), 'an advisory launch is not held, so a stray sentence is not printed');
   });
 
+  it('prints the reconciliation a launch still owes, and none once READY is attested, whatever the server sends (#2146)', () => {
+    /**
+     * Render a status whose readiness block is the variable under test.
+     * @param {object} readiness - The readiness block
+     * @returns {string} The printed page
+     */
+    const render = (readiness) => tcVerbs.renderStartStatus({
+      sequence: 'present', sessionId: 7, sequenceId: 3, revision: 1, applicability: 'applicable',
+      preflight: { verdict: 'ok' }, pageBudget: 7800, toolOutput: null, pending: null,
+      readiness: { unreadyAt: null, nudgeCount: 0, lastNudgedAt: null, ...readiness },
+      status: { cursor: 4, ready: !!readiness.readyAt, recovery: 'none', unready: false }, steps: []
+    });
+    const owed = render({ readyAt: null, reconciliationRequired: 'the governing rules changed' });
+    assert.match(owed, /READY: not attested yet\./);
+    assert.match(owed, /Your attestation will need a reconciliation: the governing rules changed\./);
+    // An older server still sends the reason after READY; the pane must not
+    // repeat it as an obligation.
+    const attested = render({ readyAt: '2026-10-15 22:27:28', reconciliationRequired: 'the governing rules changed' });
+    assert.match(attested, /READY attested 2026-10-15 22:27:28\./);
+    assert.doesNotMatch(attested, /will need a reconciliation/);
+  });
+
   it('prints the missing render context, because a re-render can then be thinner', () => {
     // The status payload and the printed page are two halves of one
     // disclosure; delete either and a session loses the only warning it gets
@@ -558,9 +580,12 @@ describe('tc start (car 21.3)', () => {
     /**
      * A second project whose launch is driven all the way to READY, so the
      * shared sequence above stays unattested for the tests that need it so.
+     * @param {object} [opts] - Launch variations
+     * @param {boolean} [opts.reconcile] - Record a preflight that demands a
+     *   reconciliation, and attest with one
      * @returns {Promise<{env: object, headers: object, launchId: string}>}
      */
-    async function attestedPane() {
+    async function attestedPane(opts = {}) {
       const sessions = require('../lib/sessions');
       const engine = store.engines.get('claude');
       const dir = path.join(store.config.load().projectsDir, `review-${Math.random().toString(36).slice(2, 8)}`);
@@ -575,7 +600,7 @@ describe('tc start (car 21.3)', () => {
         rendered: sessions.renderLaunchSteps(p, engine, { operatorHost: 'operator.example.test' }),
         rules: store.sessionRules.listActiveForProject(p.id),
         preflight: {
-          verdict: 'ok', reason: 'nothing was left behind', requiresRecovery: false, requiresReconciliation: false,
+          verdict: 'ok', reason: 'nothing was left behind', requiresRecovery: false, requiresReconciliation: !!opts.reconcile,
           worktreeDirty: false, evaluationFailed: false, evaluationMissing: false
         }
       });
@@ -588,7 +613,10 @@ describe('tc start (car 21.3)', () => {
       }
       const attested = launchSequence.ready({
         ...id,
-        artifact: { schema: 'tc.ready/1', preflightVerdict: 'ok', proposedFirstAction: 'ask the operator' }
+        artifact: {
+          schema: 'tc.ready/1', preflightVerdict: 'ok', proposedFirstAction: 'ask the operator',
+          ...(opts.reconcile ? { reconciliation: 'The preflight asked me to reconcile; I re-read the handoff it named and nothing I had planned changes.' } : {})
+        }
       });
       assert.equal(attested.status, 200, JSON.stringify(attested.body));
       return {
@@ -639,6 +667,15 @@ describe('tc start (car 21.3)', () => {
 
       const statusAfter = await runTc(['start', 'status'], pane.env);
       assert.equal(statusAfter.stdout, statusBefore.stdout, 'tc start status reads the same before and after');
+    });
+
+    it('a spawned tc start status owes no reconciliation once READY answered it (#2146)', async () => {
+      const pane = await attestedPane({ reconcile: true });
+      const status = await runTc(['start', 'status'], pane.env);
+      assert.equal(status.code, 0, status.stderr);
+      assert.match(status.stdout, /READY attested /);
+      assert.doesNotMatch(status.stdout, /will need a reconciliation/,
+        'the attestation answered the demand, so nothing is owed in the future tense');
     });
 
     it('a spawned tc relays NOT_READY, and refuses bad arguments locally', async () => {

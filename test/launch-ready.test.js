@@ -499,6 +499,33 @@ describe('launch sequence attestation (Train 21, Chunk 02)', () => {
       assert.equal(reconciled.status, 200, 'and a written reconciliation clears it');
     });
 
+    it('stops reporting the reconciliation as owed once READY is attested, though its trigger stays (#2146)', () => {
+      const { id } = launched('preflight-reconciled-status');
+      const sequence = store.launchSequences.getByLaunchId(id.launchId);
+      store.getDb().prepare('UPDATE launch_sequences SET preflight = ? WHERE id = ?').run(
+        JSON.stringify({ verdict: 'stale', reason: 'HEAD is moved', requiresReconciliation: true }),
+        sequence.id
+      );
+      ackEverything(id);
+      const before = launchSequence.status(id).body;
+      assert.equal(before.readiness.readyAt, null);
+      assert.match(before.readiness.reconciliationRequired, /HEAD is moved/, 'unattested, the demand is reported');
+
+      const current = store.launchSequences.getByLaunchId(id.launchId);
+      const reconciled = launchSequence.ready({
+        ...id,
+        artifact: artifactFor(current, {
+          reconciliation: 'The worktree the previous handoff recorded has moved; I checked the branch and nothing I had planned depends on the commit it recorded.'
+        })
+      });
+      assert.equal(reconciled.status, 200);
+      const attested = store.launchSequences.getByLaunchId(id.launchId);
+      assert.ok(launchSequence._reconciliationRequired(attested), 'the trigger outlives READY');
+      const after = launchSequence.status(id).body;
+      assert.ok(after.readiness.readyAt);
+      assert.equal(after.readiness.reconciliationRequired, null, 'READY answered it, so status owes nothing');
+    });
+
     it('still demands a reconciliation when the revision preceded any serve, and says so accurately', () => {
       // Every revision demands one (§2.3's acceptance condition). What changes
       // with an unserved revision is the WORDING: telling an agent that part of
