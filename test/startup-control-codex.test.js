@@ -4243,6 +4243,24 @@ describe('Codex startupControl adapter', () => {
           codex._seams.wakeProfile = realProfile;
         }
       });
+
+      it('the rows a version declares around a turn are the wake\'s alone: the launch reads the same footer with them present', () => {
+        const rest = codex._internal._restScreen;
+        const conn = (version) => ({ initResult: { userAgent: `tangleclaw/${version} (x)` } });
+        const declared = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8')).capabilities.wake.restRows;
+        for (const version of ['0.161.0', '0.162.0']) {
+          assert.ok(declared[version].turnEnd, `${version} declares its rows around a turn`);
+          const out = rest(conn(version), { engineId: 'codex', adapterState: { engineVersion: version } });
+          assert.deepEqual(Object.keys(out), ['version', 'footerRe', 'profile']);
+          assert.equal(out.footerRe.source, declared[version].footerPattern, version);
+        }
+      });
+
+      it('declaring a version\'s rows around a turn admits nothing: the verified versions are still exactly 0.156.1', () => {
+        // #2059's post-turn guard is what a later admission needs; it is not one.
+        const profile = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8'));
+        assert.deepEqual(profile.capabilities.startupControl.verifiedVersions, ['0.156.1']);
+      });
     });
   });
 });

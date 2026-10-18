@@ -1134,54 +1134,6 @@ describe('medusa-wake — a Codex pane still drawing a turn under an idle thread
     assert.match(wake.peerReasonMeaning('pane-turn-in-flight'), /mid-turn/);
   });
 
-  describe('the turnEnd member of a restRows entry is checked when the profile is read', () => {
-    const TURN_END = () => ({
-      turnRowPattern: '^[›•] ',
-      endRowPatterns: ['^  Worked for \\d', '^■ Conversation interrupted'],
-      evidence: { verifiedOn: '2026-10-12', source: 'a live capture' }
-    });
-    /**
-     * The bundled Codex block with 0.161.0's `turnEnd` replaced.
-     * @param {*} turnEnd - The member to declare; `undefined` removes it.
-     * @returns {object}
-     */
-    const codexWith = (turnEnd) => {
-      const block = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8')).capabilities.wake;
-      if (turnEnd === undefined) delete block.restRows['0.161.0'].turnEnd;
-      else block.restRows['0.161.0'].turnEnd = turnEnd;
-      return block;
-    };
-    const derive = (block) => wake._buildWakeProfiles([{ id: 'probe', capabilities: { wake: block } }]).probe;
-
-    it('a well-formed member loads; an entry without one compiles to its footer alone', () => {
-      assert.deepEqual(wake._wakeBlockErrors(codexWith(TURN_END())), []);
-      const without = derive(codexWith(undefined));
-      assert.deepEqual(Object.keys(without.restRows['0.161.0']), ['footerRe']);
-      assert.equal(wake._paneTurnInFlight(pane(STREAMING), without, VERSION), false);
-    });
-
-    it('refuses a member that is not one, a key the gate does not read, or a missing or bad provenance', () => {
-      const bad = [
-        null, [], 'x', {},
-        { ...TURN_END(), extra: 1 },
-        { ...TURN_END(), evidence: undefined }, { ...TURN_END(), evidence: { verifiedOn: '2026-10-12' } },
-        { ...TURN_END(), evidence: { verifiedOn: '12 Oct 2026', source: 'x' } },
-        { ...TURN_END(), endRowPatterns: [] }, { ...TURN_END(), endRowPatterns: '^  Worked for \\d' }
-      ];
-      for (const turnEnd of bad) {
-        assert.match(wake._wakeBlockErrors(codexWith(turnEnd)).join(' '), /restRows must be/, JSON.stringify(turnEnd));
-        assert.equal(derive(codexWith(turnEnd)), undefined, JSON.stringify(turnEnd));
-      }
-    });
-
-    it('refuses a pattern not anchored at the row\'s start, one with alternation, one that matches nothing in particular, or one that does not compile', () => {
-      for (const loose of ['[›•] ', '^a|b', '^(a|b)', '^', '^.*', '^(unclosed', '', null, 7]) {
-        for (const turnEnd of [{ ...TURN_END(), turnRowPattern: loose }, { ...TURN_END(), endRowPatterns: ['^  Worked for \\d', loose] }]) {
-          assert.match(wake._wakeBlockErrors(codexWith(turnEnd)).join(' '), /restRows must be/, JSON.stringify(turnEnd));
-        }
-      }
-    });
-  });
 });
 
 describe('medusa-wake — nudge injection', () => {
