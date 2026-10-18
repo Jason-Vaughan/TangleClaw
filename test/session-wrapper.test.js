@@ -11,6 +11,7 @@ const os = require('node:os');
 
 const store = require('../lib/store');
 const { createServer } = require('../server');
+const { liftDeclaration, liftBody } = require('./helpers/lift');
 
 let server;
 let baseUrl;
@@ -507,18 +508,7 @@ describe('Session Wrapper UI', () => {
       assert.ok(wireIdx >= 0, 'sessionWrapIdle must have a click listener wired');
       const arrowStart = js.indexOf('=>', wireIdx);
       assert.ok(arrowStart >= 0, 'expected arrow function in listener');
-      let i = js.indexOf('{', arrowStart);
-      assert.ok(i >= 0, 'expected listener body open brace');
-      let depth = 0;
-      let end = -1;
-      for (; i < js.length; i++) {
-        if (js[i] === '{') depth++;
-        else if (js[i] === '}') {
-          depth--;
-          if (depth === 0) { end = i; break; }
-        }
-      }
-      const body = js.slice(wireIdx, end + 1);
+      const body = liftDeclaration(js, "$('sessionWrapIdle').addEventListener");
       assert.ok(body.includes('e.target === e.currentTarget'),
         'backdrop click must guard on event target equality');
       assert.ok(body.includes('resumeFromWrapIdle'),
@@ -533,17 +523,7 @@ describe('Session Wrapper UI', () => {
       // The handler should re-enable buttons and show a toast instead.
       const start = js.indexOf('async function confirmReturnFromWrapIdle(');
       assert.ok(start >= 0);
-      let depth = 0;
-      let i = js.indexOf('{', start);
-      let end = -1;
-      for (; i < js.length; i++) {
-        if (js[i] === '{') depth++;
-        else if (js[i] === '}') {
-          depth--;
-          if (depth === 0) { end = i; break; }
-        }
-      }
-      const body = js.slice(start, end + 1);
+      const body = liftDeclaration(js, 'async function confirmReturnFromWrapIdle(');
       assert.ok(body.includes('if (!data)'),
         'must guard the navigate behind a truthy data check');
       assert.ok(body.includes("wrapReturnBtn').disabled = false") ||
@@ -558,19 +538,7 @@ describe('Session Wrapper UI', () => {
       // Slice handleWrapCompleted's body and assert no setInterval/Returning in.
       const start = js.indexOf('function handleWrapCompleted(');
       assert.ok(start >= 0, 'handleWrapCompleted must exist');
-      // Walk braces to find the function body end.
-      let depth = 0;
-      let i = js.indexOf('{', start);
-      let end = -1;
-      for (; i < js.length; i++) {
-        if (js[i] === '{') depth++;
-        else if (js[i] === '}') {
-          depth--;
-          if (depth === 0) { end = i; break; }
-        }
-      }
-      assert.ok(end > start, 'handleWrapCompleted body must close');
-      const body = js.slice(start, end + 1);
+      const body = liftDeclaration(js, 'function handleWrapCompleted(');
       assert.ok(!body.includes('setInterval'),
         'handleWrapCompleted must not start an auto-redirect interval');
       assert.ok(!body.includes('Returning in'),
@@ -595,14 +563,7 @@ describe('Session Wrapper UI', () => {
       // test/wrap-run-controller.test.js; this pins that the handler asks it.
       const start = js.indexOf('async function confirmWrap()');
       assert.ok(start !== -1, 'confirmWrap must exist');
-      const bodyStart = js.indexOf('{', start);
-      let depth = 0, end = -1;
-      for (let i = bodyStart; i < js.length; i++) {
-        if (js[i] === '{') depth++;
-        else if (js[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
-      }
-      assert.ok(end > bodyStart, 'confirmWrap body must close');
-      const body = js.slice(bodyStart, end + 1);
+      const body = liftBody(js, 'async function confirmWrap()');
       assert.ok(body.includes('if (window.tcWrapRunController.isBusy(wrapRunState())) return'),
         'confirmWrap must bail when a wrap is already starting or being followed');
       assert.ok(body.indexOf("dispatchWrapRun({ type: 'start'") < body.indexOf('postWrap('),
@@ -623,13 +584,7 @@ describe('Session Wrapper UI', () => {
       // instead of silently only on touch.
       const start = js.indexOf('function renderStepRow(');
       assert.ok(start !== -1, 'renderStepRow must exist');
-      const bodyStart = js.indexOf('{', start);
-      let depth = 0, end = -1;
-      for (let i = bodyStart; i < js.length; i++) {
-        if (js[i] === '{') depth++;
-        else if (js[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
-      }
-      const body = js.slice(bodyStart, end + 1);
+      const body = liftBody(js, 'function renderStepRow(');
       assert.ok(/createElement\('button'\)/.test(body) && body.includes("'wrap-step-help'"),
         'the per-step help affordance must be a <button>, not a hover-only span');
       assert.ok(body.includes('wrap-step-help-text') && /addEventListener\('click'/.test(body),
@@ -704,33 +659,10 @@ describe('initSession regression check', () => {
 });
 
 describe('Multi-file upload FileReader error handling (#990 review — no onerror shipped a permanent hang)', () => {
-  /**
-   * Extract a function's body from source by walking brace depth (this
-   * codebase has no browser test harness — public/*.js is covered by
-   * source probes, see test/paste-affordance.test.js).
-   * @param {string} src - File source
-   * @param {string} marker - Text locating the function (e.g. 'function foo(')
-   * @returns {string} the body including braces; '' when not found
-   */
-  function functionBody(src, marker) {
-    const start = src.indexOf(marker);
-    if (start === -1) return '';
-    const bodyStart = src.indexOf('{', start);
-    let depth = 0;
-    for (let i = bodyStart; i < src.length; i++) {
-      if (src[i] === '{') depth++;
-      else if (src[i] === '}') {
-        depth--;
-        if (depth === 0) return src.slice(bodyStart, i + 1);
-      }
-    }
-    return '';
-  }
-
   let body;
   before(() => {
     const jsContent = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
-    body = functionBody(jsContent, 'function handleFileSelect(');
+    body = liftBody(jsContent, 'function handleFileSelect(');
     assert.ok(body, 'handleFileSelect must exist');
   });
 
@@ -745,7 +677,7 @@ describe('Multi-file upload FileReader error handling (#990 review — no onerro
   });
 
   it('the error path resets the batch so the operator can retry instead of being stuck', () => {
-    const onerrorBody = functionBody(body, 'reader.onerror =');
+    const onerrorBody = liftBody(body, 'reader.onerror =');
     assert.ok(onerrorBody, 'reader.onerror must be an assignable function body');
     assert.ok(onerrorBody.includes('uploadFiles = []'),
       'a failed read must clear the partial batch — a stale uploadFiles array would submit the wrong/incomplete files');
@@ -754,7 +686,7 @@ describe('Multi-file upload FileReader error handling (#990 review — no onerro
   });
 
   it('onload guards against completing a batch after a sibling file already errored', () => {
-    const onloadBody = functionBody(body, 'reader.onload =');
+    const onloadBody = liftBody(body, 'reader.onload =');
     assert.ok(onloadBody, 'reader.onload must be an assignable function body');
     assert.ok(onloadBody.includes('if (failed) return'),
       'onload must not push a file onto uploadFiles or flip loaded/completion state after failed=true');

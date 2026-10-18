@@ -15,6 +15,7 @@ const medusa = require('../lib/medusa');
 /** The closing sentence of the prime's wrap directive: present whenever the directive is. */
 const WRAP_DIRECTIVE_TAIL = 'Nothing you print opens the wrap drawer.';
 const { installTmuxGuard, removeTmuxGuard, reapFixtureSessions } = require('./_tmux-guard');
+const { liftBody } = require('./helpers/lift');
 
 describe('sessions', () => {
   let tmpDir;
@@ -3903,23 +3904,6 @@ describe('sessions', () => {
       const SRC = fs.readFileSync(require.resolve('../lib/sessions.js'), 'utf8');
 
       /**
-       * Slice a named function's body out of the source.
-       * @param {string} name - Function name.
-       * @returns {string} The body, braces included.
-       */
-      const fnBody = (name) => {
-        const start = SRC.indexOf(`function ${name}(`);
-        assert.notEqual(start, -1, `function ${name} must exist`);
-        const open = SRC.indexOf('{', start);
-        let depth = 0;
-        for (let i = open; i < SRC.length; i++) {
-          if (SRC[i] === '{') depth++;
-          else if (SRC[i] === '}' && --depth === 0) return SRC.slice(open, i + 1);
-        }
-        return assert.fail(`function ${name} body must close`);
-      };
-
-      /**
        * Every `log.*(...)` call in a body, each sliced to its balanced close.
        * @param {string} body - A function body.
        * @returns {string[]} The call expressions.
@@ -3939,7 +3923,7 @@ describe('sessions', () => {
 
       for (const [fn, path] of [['_completePipelineWrap', 'pipeline'], ['completeWrap', 'finalize']]) {
         it(`${fn} stamps path: '${path}' on all of them`, () => {
-          const calls = logCalls(fnBody(fn));
+          const calls = logCalls(liftBody(SRC, `function ${fn}(`));
           assert.ok(calls.length > 0, `${fn} must emit log lines for this to pin anything`);
           for (const call of calls) {
             assert.match(call, new RegExp(`path: '${path}'`),
