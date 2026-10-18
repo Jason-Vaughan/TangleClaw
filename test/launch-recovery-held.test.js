@@ -435,3 +435,83 @@ describe('the fleet recovery read (#2049)', () => {
     }
   });
 });
+
+// A process that launches through the fixture must end when its own work ends.
+// The launch schedules a kickoff that polls a pane for IDLE_TIMEOUT_MS, and the
+// fixture's projects have no pane, so a kickoff that keeps the event loop alive
+// makes every file that uses the fixture wait out that poll after its last test.
+// Each check runs a plain child `node` with no forced exit and gives it the
+// bound below to end by itself.
+describe('a process that launches through the fixture exits by itself (#2253)', () => {
+  const path = require('node:path');
+  const { spawn } = require('node:child_process');
+  const launchKickoff = require('../lib/launch-kickoff');
+
+  /** How long a child is given to exit by itself before it is killed and the check fails. */
+  const EXIT_BOUND_MS = 20_000;
+
+  /**
+   * Run a script in a child `node` and kill it if it is still alive at the bound.
+   * @param {string} script - The child's source, run with `node -e`
+   * @returns {Promise<{exitedBySelf: boolean, code: (number|null), wallMs: number, stdout: string, stderr: string}>}
+   */
+  function runChild(script) {
+    return new Promise((resolve) => {
+      const started = Date.now();
+      const child = spawn(process.execPath, ['-e', script], { cwd: path.join(__dirname, '..'), stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (d) => { stdout += d; });
+      child.stderr.on('data', (d) => { stderr += d; });
+      let killed = false;
+      const bound = setTimeout(() => { killed = true; child.kill('SIGKILL'); }, EXIT_BOUND_MS);
+      child.on('close', (code) => {
+        clearTimeout(bound);
+        resolve({ exitedBySelf: !killed, code, wallMs: Date.now() - started, stdout, stderr });
+      });
+    });
+  }
+
+  it('the bound stays below the kickoff\'s poll, so it still tells "exits" from "held open"', () => {
+    assert.ok(launchKickoff.IDLE_TIMEOUT_MS > EXIT_BOUND_MS,
+      `IDLE_TIMEOUT_MS (${launchKickoff.IDLE_TIMEOUT_MS}) must exceed the exit bound (${EXIT_BOUND_MS})`);
+  });
+
+  it('exits once a launch\'s deferred kickoff and bootstrap have started and the store is restored', async () => {
+    const script = `
+      require('./lib/logger').setLevel('error');
+      const fixture = require('./test/_recovery-fixture');
+      const launchKickoff = require('./lib/launch-kickoff');
+      const launchBootstrap = require('./lib/launch-bootstrap');
+      const env = fixture.openTempStore('tc-recovery-exit-');
+      const started = new Set();
+      for (const [mod, name] of [[launchKickoff, 'kickoff'], [launchBootstrap, 'bootstrap']]) {
+        const inner = mod[name];
+        mod[name] = (...args) => { started.add(name); return inner(...args); };
+      }
+      fixture.launchInRecovery(env);
+      const giveUp = Date.now() + 15000;
+      (async () => {
+        while (started.size < 2 && Date.now() < giveUp) await new Promise((r) => setTimeout(r, 50));
+        env.restore();
+        process.stdout.write(JSON.stringify({ started: [...started].sort() }));
+      })();
+    `;
+    const run = await runChild(script);
+    assert.ok(run.exitedBySelf,
+      `the fixture's launch kept the process alive past ${EXIT_BOUND_MS} ms (stdout: ${run.stdout}; stderr: ${run.stderr.slice(-2000)})`);
+    assert.equal(run.code, 0, run.stderr);
+    assert.deepEqual(JSON.parse(run.stdout).started, ['bootstrap', 'kickoff'],
+      'the child must restore only after the launch\'s deferred work has started, or the check proves nothing');
+  });
+
+  it('exits while the kickoff\'s poll is waiting, because that wait holds no process open', async () => {
+    const script = `
+      const launchKickoff = require('./lib/launch-kickoff');
+      launchKickoff._internal.sleep(launchKickoff.IDLE_TIMEOUT_MS);
+    `;
+    const run = await runChild(script);
+    assert.ok(run.exitedBySelf, `a pending kickoff sleep kept the process alive past ${EXIT_BOUND_MS} ms (stderr: ${run.stderr.slice(-2000)})`);
+    assert.equal(run.code, 0, run.stderr);
+  });
+});

@@ -7,6 +7,15 @@
  * The recovery is reached through the real launch path: a `current.json` this
  * build cannot read makes the preflight demand recovery. No pane is started;
  * tmux and engine detection are stubbed for the length of one launch call.
+ *
+ * A launch also schedules work that runs after the launch call returns: the
+ * boot watch, the kickoff and the bootstrap. All three would wait on a pane
+ * that does not exist, and the kickoff polls for 90 s, which held every file
+ * using this fixture open long after its last test. So while a temp store is
+ * open, the kickoff and bootstrap answer at once (their wiring is proven in
+ * test/launch-bootstrap-wiring.test.js), and the boot watch is told the truth,
+ * that the pane is gone, so it ends on any host, with tmux or without. A test
+ * that wants the real kickoff, bootstrap or boot watch puts them back itself.
  */
 
 const assert = require('node:assert/strict');
@@ -18,12 +27,41 @@ const store = require('../lib/store');
 const lockfile = require('../lib/handoff-lockfile');
 const tmux = require('../lib/tmux');
 const enginesModule = require('../lib/engines');
+const launchKickoff = require('../lib/launch-kickoff');
+const launchBootstrap = require('../lib/launch-bootstrap');
+const startupDialog = require('../lib/startup-dialog');
 
 /**
- * Point the store at a fresh temp directory with no login and direct ingress.
+ * Stand in for the work a launch defers until after its call returns, all of
+ * which would otherwise wait on a pane that does not exist.
+ * @returns {() => void} Puts the real kickoff, bootstrap and boot-watch seams back
+ */
+function standInForNoPane() {
+  const real = {
+    kickoff: launchKickoff.kickoff,
+    bootstrap: launchBootstrap.bootstrap,
+    capturePane: startupDialog._internal.capturePane,
+    probeSession: startupDialog._internal.probeSession
+  };
+  launchKickoff.kickoff = () => Promise.resolve('not-silent');
+  launchBootstrap.bootstrap = () => Promise.resolve('fired');
+  startupDialog._internal.capturePane = () => Promise.reject(new Error('no pane: the fixture starts none'));
+  startupDialog._internal.probeSession = () => ({ answered: true, live: false });
+  return () => {
+    launchKickoff.kickoff = real.kickoff;
+    launchBootstrap.bootstrap = real.bootstrap;
+    startupDialog._internal.capturePane = real.capturePane;
+    startupDialog._internal.probeSession = real.probeSession;
+  };
+}
+
+/**
+ * Point the store at a fresh temp directory with no login and direct ingress,
+ * with the no-pane stand-ins held until `restore`.
  * @param {string} prefix - Temp directory prefix
  * @returns {{tempDir: string, projectsDir: string, sessions: object, restore: () => void}}
- *   `restore` closes the temp store, removes it and points the store back
+ *   `restore` closes the temp store, removes it, points the store back and puts
+ *   the real deferred launch work back
  */
 function openTempStore(prefix) {
   const prevBase = store._getBasePath();
@@ -38,11 +76,13 @@ function openTempStore(prefix) {
   config.authEnabled = false;
   config.ingressMode = 'direct';
   store.config.save(config);
+  const restoreDeferred = standInForNoPane();
   return {
     tempDir,
     projectsDir,
     sessions: require('../lib/sessions'),
     restore() {
+      restoreDeferred();
       store.close();
       store._setBasePath(prevBase);
       fs.rmSync(tempDir, { recursive: true, force: true });
