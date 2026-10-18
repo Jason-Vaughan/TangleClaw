@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
+const net = require('node:net');
 
 const store = require('../lib/store');
 const { createServer } = require('../server');
@@ -23,7 +24,9 @@ describe('launch-binding floor in the dispatcher (#2233)', () => {
   let binding;
   const AUDIT_SECRET = 'audit-secret-for-the-bound-connection';
   const TOKEN = 'tcsk_floor_test_token_0123456789';
-  let nextPort = 39400;
+  // Every port a lease names is held open by this file until it ends, so no
+  // other process can be listening there when the lease route asks the machine.
+  const reservations = [];
 
   before(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-binding-dispatch-'));
@@ -46,9 +49,13 @@ describe('launch-binding floor in the dispatcher (#2233)', () => {
   });
 
   after(async () => {
-    await new Promise((resolve) => server.close(resolve));
-    store.close();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    try {
+      await new Promise((resolve) => server.close(resolve));
+      store.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } finally {
+      await Promise.all(reservations.splice(0).map((held) => new Promise((resolve) => held.close(resolve))));
+    }
   });
 
   /**
@@ -80,13 +87,36 @@ describe('launch-binding floor in the dispatcher (#2233)', () => {
   }
 
   /**
-   * A port lease request for a port no other test in this file uses.
-   * @param {string} name - Project name to lease for
-   * @returns {{port: number, body: object}}
+   * Bind a loopback port the OS chooses and keep it bound until the file ends.
+   * A port that was merely free a moment ago can be taken by another test
+   * worker before the lease route checks it, and the route then refuses the
+   * lease as PORT_IN_USE before the binding assertion is reached.
+   * @returns {Promise<number>} The reserved port
    */
-  function lease(name) {
-    nextPort += 1;
-    return { port: nextPort, body: { port: nextPort, project: name, service: 'floor-test', ttl: 60000 } };
+  function reservePort() {
+    return new Promise((resolve, reject) => {
+      const held = net.createServer();
+      held.once('error', (err) => {
+        reject(new Error(`launch-binding test fixture: could not reserve a port: ${err.message}`));
+      });
+      held.listen(0, '127.0.0.1', () => {
+        reservations.push(held);
+        resolve(held.address().port);
+      });
+    });
+  }
+
+  /**
+   * A port lease request for a port this file holds and no other test uses.
+   * The listener the lease route finds there is this file's own, so the
+   * request says so with `adoptListener`; the route reads that only after the
+   * binding floor has admitted the caller.
+   * @param {string} name - Project name to lease for
+   * @returns {Promise<{port: number, body: object}>}
+   */
+  async function lease(name) {
+    const port = await reservePort();
+    return { port, body: { port, project: name, service: 'floor-test', ttl: 60000, adoptListener: true } };
   }
 
   /**
@@ -110,9 +140,25 @@ describe('launch-binding floor in the dispatcher (#2233)', () => {
     try { await fn(); } finally { store.config.save(saved); }
   }
 
+  describe('the port fixture', () => {
+    it('reserves a distinct port that is held for the whole file', async () => {
+      const first = await lease(project.name);
+      const second = await lease(project.name);
+      assert.notEqual(first.port, second.port);
+      for (const port of [first.port, second.port]) {
+        const code = await new Promise((resolve) => {
+          const probe = net.createServer();
+          probe.once('error', (err) => resolve(err.code));
+          probe.listen(port, '127.0.0.1', () => probe.close(() => resolve('bound')));
+        });
+        assert.equal(code, 'EADDRINUSE', `port ${port} is not held, so another process could take it before the lease`);
+      }
+    });
+  });
+
   describe('who reaches a write', () => {
     it('refuses a caller with no binding, and the write does not happen', async () => {
-      const { port, body } = lease(project.name);
+      const { port, body } = await lease(project.name);
       const res = await send('POST', '/api/ports/lease', body);
       assert.equal(res.status, 403);
       assert.equal(res.data.code, 'LAUNCH_BINDING_REQUIRED');
@@ -122,14 +168,14 @@ describe('launch-binding floor in the dispatcher (#2233)', () => {
     });
 
     it('admits the operator\'s dashboard', async () => {
-      const { port, body } = lease(project.name);
+      const { port, body } = await lease(project.name);
       const res = await send('POST', '/api/ports/lease', body, operatorHeaders(server));
       assert.equal(res.status, 201, JSON.stringify(res.data));
       assert.equal(leased(port), true);
     });
 
     it('admits a project whose launch is its current session', async () => {
-      const { port, body } = lease(project.name);
+      const { port, body } = await lease(project.name);
       const res = await send('POST', '/api/ports/lease', body, binding.headers);
       assert.equal(res.status, 201, JSON.stringify(res.data));
       assert.equal(leased(port), true);
@@ -148,7 +194,7 @@ describe('launch-binding floor in the dispatcher (#2233)', () => {
       ['a Master claim on a launch id nobody holds', () => ({ 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': 'not-the-master' }), null]
     ]) {
       it(`refuses ${label}, and the write does not happen`, async () => {
-        const { port, body } = lease(project.name);
+        const { port, body } = await lease(project.name);
         const res = await send('POST', '/api/ports/lease', body, headers());
         assert.equal(res.status, 403);
         assert.equal(res.data.code, 'LAUNCH_BINDING_INVALID');
@@ -160,7 +206,7 @@ describe('launch-binding floor in the dispatcher (#2233)', () => {
     it('refuses a launch whose session has ended, on a write that is not its own finalize', async () => {
       const ended = bindProject(other);
       store.sessions.kill(ended.sessionId, 'test');
-      const { port, body } = lease(other.name);
+      const { port, body } = await lease(other.name);
       const res = await send('POST', '/api/ports/lease', body, ended.headers);
       assert.equal(res.status, 403);
       assert.equal(res.data.code, 'LAUNCH_BINDING_INVALID');
@@ -176,7 +222,7 @@ describe('launch-binding floor in the dispatcher (#2233)', () => {
       const p = store.projects.create({ name: 'floor-superseded', path: dir, engine: 'claude' });
       const first = bindProject(p);
       const second = bindProject(p);
-      const { port, body } = lease(p.name);
+      const { port, body } = await lease(p.name);
       const res = await send('POST', '/api/ports/lease', body, first.headers);
       assert.equal(res.status, 403);
       assert.equal(res.data.code, 'LAUNCH_BINDING_INVALID');
@@ -199,7 +245,7 @@ describe('launch-binding floor in the dispatcher (#2233)', () => {
       const guard = require('../lib/launch-binding-guard');
       const realJudge = guard.judge;
       guard.judge = () => { throw new Error('database is locked'); };
-      const { port, body } = lease(project.name);
+      const { port, body } = await lease(project.name);
       let timer;
       try {
         const res = await Promise.race([
@@ -217,7 +263,7 @@ describe('launch-binding floor in the dispatcher (#2233)', () => {
         guard.judge = realJudge;
       }
       // The check is back, and an identified write goes through again.
-      const after = await send('POST', '/api/ports/lease', lease(project.name).body, operatorHeaders(server));
+      const after = await send('POST', '/api/ports/lease', (await lease(project.name)).body, operatorHeaders(server));
       assert.equal(after.status, 201, JSON.stringify(after.data));
     });
   });
@@ -248,19 +294,19 @@ describe('launch-binding floor in the dispatcher (#2233)', () => {
   describe('a service token', () => {
     it('is a principal on a port write only while its gate is on and the token matches', async () => {
       const bearer = { Authorization: `Bearer ${TOKEN}` };
-      const off = lease('external-service');
+      const off = await lease('external-service');
       const refused = await send('POST', '/api/ports/lease', off.body, bearer);
       assert.equal(refused.status, 403, 'gate off: the token was never checked, so it proves nothing');
       assert.equal(refused.data.code, 'LAUNCH_BINDING_REQUIRED');
       assert.equal(leased(off.port), false);
 
       await withServiceToken(true, async () => {
-        const on = lease('external-service');
+        const on = await lease('external-service');
         const ok = await send('POST', '/api/ports/lease', on.body, bearer);
         assert.equal(ok.status, 201, JSON.stringify(ok.data));
         assert.equal(leased(on.port), true);
 
-        const wrong = lease('external-service');
+        const wrong = await lease('external-service');
         const bad = await send('POST', '/api/ports/lease', wrong.body, { Authorization: 'Bearer tcsk_wrong' });
         assert.equal(bad.status, 401);
         assert.equal(leased(wrong.port), false);
