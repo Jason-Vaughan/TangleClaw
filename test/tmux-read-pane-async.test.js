@@ -74,7 +74,7 @@ echo "pid $$" >> "${dir}/log"
 mode=$(cat "${dir}/mode" 2>/dev/null)
 for a in "$@"; do echo "arg $a" >> "${dir}/log"; done
 case "$mode" in
-  hang) exec sleep 30 ;;
+  hang) exec sleep 120 ;;
   absent) [ "$1" = "has-session" ] && exit 1 ;;
   slow-each) sleep 0.4 ;;
   no-cursor) [ "$1" = "display-message" ] && { echo ","; exit 0; } ;;
@@ -205,14 +205,63 @@ describe('readPaneAsync — a wedged tmux', () => {
   it('twenty wedged reads leave the event loop turning while they are waited on', async () => {
     mode('hang');
     const pids = countSpawns();
-    let turns = 0;
-    const timer = setInterval(() => { turns += 1; }, 10);
-    const results = await Promise.allSettled(Array.from({ length: 20 }, (_, i) => tmux.readPaneAsync(`proj${i}`, { timeout: 600 })));
-    clearInterval(timer);
-    assert.ok(results.every((r) => r.status === 'rejected' && r.reason.tcTimedOut === true));
-    assert.ok(turns >= 5, `the loop turned ${turns} times during the wait`);
-    assert.equal(pids.length, 20);
-    assert.ok(await eventually(() => pids.every((p) => !alive(p)), 5000), 'a wedged child outlived its read');
+    // Longer than any wait below, so no read can end by itself: each one ends
+    // only when the test kills its child. The proof then rests on what is
+    // counted while every read is certainly in flight, not on how many timer
+    // turns fit in a window, which host load alone can shrink. The guard is
+    // where a starved loop fails the test, not a promise that load never can.
+    const READ_TIMEOUT_MS = 60000;
+    const GUARD_MS = 60000;
+    const settled = new Array(20).fill(false);
+    let timer = null;
+    let outcome = Promise.resolve([]);
+    try {
+      const guardEnds = performance.now() + GUARD_MS;
+      // Each read's settle flag rides the promise that is awaited below, and
+      // that one is subscribed at once, so a read that ends early is reported
+      // by the assertions and never left as a rejection nobody handles.
+      const reads = Array.from({ length: 20 }, (_, i) =>
+        tmux.readPaneAsync(`proj${i}`, { timeout: READ_TIMEOUT_MS }).finally(() => { settled[i] = true; }));
+      outcome = Promise.allSettled(reads);
+      /**
+       * For a failure's message: the children that have ended and the reads that have answered.
+       * @returns {string}
+       */
+      const early = () => `ended: [${pids.filter((p) => !alive(p))}], answered: [${settled.flatMap((s, i) => (s ? [i] : []))}]`;
+
+      // Each read spawns its probe before its first await, so every child
+      // exists when the calls return. A read that waited on tmux in its call
+      // would be over by now.
+      assert.equal(pids.length, 20, 'every read started its child inside its call');
+      assert.ok(pids.every(alive) && !settled.includes(true), `every read was still in flight when the calls returned (${early()})`);
+
+      let turns = 0;
+      timer = setInterval(() => { turns += 1; }, 10);
+      const waitStarted = performance.now();
+      while (turns < 10 && performance.now() < guardEnds) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      clearInterval(timer);
+      const waitMs = Math.round(performance.now() - waitStarted);
+      assert.ok(turns >= 10, `the event loop turned ${turns} times in ${waitMs} ms while the reads were wedged`);
+      // The turns above happened while every one of the twenty reads was wedged.
+      assert.ok(pids.every(alive) && !settled.includes(true), `a read ended before the test released it (${early()})`);
+
+      for (const pid of pids) {
+        try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+      }
+      const results = await outcome;
+      assert.ok(results.every((r) => r.status === 'rejected' && r.reason.tcTimedOut === true));
+      assert.equal(pids.length, 20, 'each read stopped at its probe');
+      assert.ok(await eventually(() => pids.every((p) => !alive(p)), 5000), 'a wedged child outlived its read');
+    } finally {
+      clearInterval(timer);
+      for (const pid of pids) {
+        try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+      }
+      // A failed assertion above leaves the reads unawaited; finish them here.
+      await outcome;
+    }
   });
 });
 
