@@ -54,7 +54,8 @@ function issueLiveCredential() {
  */
 async function call(method, apiPath, options = {}) {
   const as = options.as === undefined ? credential : options.as;
-  const headers = { 'content-type': 'application/json' };
+  // A fresh connection per request: a pooled keep-alive socket the server is closing reads as ECONNRESET.
+  const headers = { 'content-type': 'application/json', connection: 'close' };
   if (as) headers[HEADER] = as;
   const res = await fetch(`${origin}${apiPath}`, {
     method, headers, body: options.body ? JSON.stringify(options.body) : undefined
