@@ -41,6 +41,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-18 — #1903 Chunk 06, #1351: ten more lift copies use the shared helper, and the Full Disk Access remedy has one owner
+
+<!-- prawduct: type=refactor | scope=w16-a1-lift-chunk06-fda-remedy -->
+
+v5.34.0 Wave 16 chunk W16-A1, chunk 1 of 1. Branch `fix/1351-1903-w16-a1` from `origin/main` `0d33fab9`. Refs #1903 (Chunk 06); closes #1351. Plan: `.tangleclaw/plans/w16-a1-lift-chunk06-fda-remedy-1903-1351.md` (rev1 sha256 `7e45a67d…2005`, INT `43d8ca76`, Architect A289); charter v2.43 (sha256 `21ebf9cc…f42340e`, Architect A292), 20-file lock.
+
+**#1351.** `lib/dir-scanner.js` owns `fullDiskAccessHint(err, instead)` beside `failureCode`: only `tcTimedOut` earns the sentence, and the caller supplies only its action phrase ("choose a projects directory" in `lib/projects.js`, "move the project" in `lib/project-facts.js` and `lib/uploads.js`). `uploads.js#_hintFor` is gone; `_scanFailureHint` stays as a one-line delegate that keeps returning `undefined` on a miss. A scratch run of the three callers over eight error shapes printed the same hint before and after for every shape except `tcCached` alone through `project-facts`, which no longer earns it; the scanner never sets `tcCached` without `tcTimedOut`. The setup wizard's fixture is built from `_scanFailureHint` instead of a hand-kept copy, same bytes.
+
+**#1903 Chunk 06.** Ten test files drop their private brace matcher for `liftDeclaration` or `liftBody` from `test/helpers/lift.js`, and their ten `INITIAL_INVENTORY` entries go with them (56 → 46). A runtime capture logged the same lifted text for every call before and after, and the same closing-brace index in `openclaw-cache`, which now also asserts that index lands on the brace (an off-by-one either way was green before). Apart from that one added assertion, no assertion, test name or test count changed in the ten files; four copies that previously searched from index 0, sliced to `-1` or returned `''` on a miss now fail with the helper's message, which only an already-broken test sees.
+
 ## 2026-10-18 — #2290, #2484, #2485: only the holder or the operator releases a shared-doc lock, both launch 201s carry the same keys, and a Bridge-absent toggle test that no network can flip
 
 <!-- prawduct: type=bugfix | scope=w16b1-doc-lock-holder-webui-201-bridge-seam -->

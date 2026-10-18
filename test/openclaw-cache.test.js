@@ -15,6 +15,7 @@
 
 const { describe, it, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
+const { liftDeclaration } = require('./helpers/lift');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -296,21 +297,11 @@ describe('OpenClaw view wiring for cache-bust (#162)', () => {
     const allDirectAssignments = [...viewJs.matchAll(/frame\.src\s*=\s*[^;]/g)];
     // One assignment lives inside the helper definition (frame.src = url);
     // any other direct assignment is a regression.
-    const setFrameSrcBlockEnd = (() => {
-      // Find the closing brace of the setFrameSrc function (rough but
-      // sufficient for this single-statement-body helper).
-      const helperStart = setFrameSrcDef;
-      const helperBodyOpen = viewJs.indexOf('{', helperStart);
-      let depth = 0;
-      for (let i = helperBodyOpen; i < viewJs.length; i++) {
-        if (viewJs[i] === '{') depth++;
-        else if (viewJs[i] === '}') {
-          depth--;
-          if (depth === 0) return i;
-        }
-      }
-      return viewJs.length;
-    })();
+    // The index of the helper's closing brace: the lift starts at the same
+    // `indexOf` as `setFrameSrcDef` and ends on that brace.
+    const setFrameSrcBlockEnd = setFrameSrcDef + liftDeclaration(viewJs, 'function setFrameSrc(').length - 1;
+    assert.equal(viewJs[setFrameSrcBlockEnd], '}',
+      'the helper span must end on its own closing brace, or the inside/outside split below is off');
     const insideHelper = allDirectAssignments.filter(
       (m) => m.index >= setFrameSrcDef && m.index <= setFrameSrcBlockEnd
     );

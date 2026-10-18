@@ -9,6 +9,7 @@
 
 const { describe, it, before } = require('node:test');
 const assert = require('node:assert/strict');
+const { liftBody } = require('./helpers/lift');
 const fs = require('node:fs');
 const path = require('node:path');
 const continuity = require('../lib/continuity');
@@ -172,23 +173,6 @@ describe('Project Rules modal (CC-6, #381)', () => {
   // does after a refusal, not what the source looks like.
   describe('approval sends the text the row showed (#1053)', () => {
     /**
-     * Slice a top-level function out of ui.js by brace-matching.
-     * @param {string} decl - The declaration to find
-     * @returns {string} The body, braces included
-     */
-    function functionBody(decl) {
-      const start = ui.indexOf(decl);
-      assert.ok(start !== -1, `${decl} must exist`);
-      const open = ui.indexOf('{', start);
-      let depth = 0;
-      for (let i = open; i < ui.length; i++) {
-        if (ui[i] === '{') depth++;
-        else if (ui[i] === '}' && --depth === 0) return ui.slice(open, i + 1);
-      }
-      return assert.fail(`${decl} must close`);
-    }
-
-    /**
      * Build the two functions sharing one shown-content map, with every free
      * variable they read supplied.
      * @param {Function} respond - (url, method, body, api) => data|null
@@ -236,7 +220,7 @@ describe('Project Rules modal (CC-6, #381)', () => {
       const names = Object.keys(deps);
       // eslint-disable-next-line no-new-func
       const build = (sig, decl) => new Function(...names,
-        `return ${sig} ${functionBody(decl)};`)(...names.map((n) => deps[n]));
+        `return ${sig} ${liftBody(ui, decl)};`)(...names.map((n) => deps[n]));
       // #1709: renderProjectRulesList calls renderRulesGraveyard as a free
       // variable — build it first and add it to the injected scope so the
       // sliced render function can resolve the reference.

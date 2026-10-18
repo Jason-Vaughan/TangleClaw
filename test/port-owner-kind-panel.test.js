@@ -12,6 +12,7 @@
 
 const { describe, it, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
+const { liftDeclaration } = require('./helpers/lift');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -24,25 +25,6 @@ setLevel('error');
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
 const ui = read('ui.js');
 const landing = read('landing.js');
-
-/**
- * Slice a function declaration out of source text by brace-matching.
- *
- * @param {string} src - File source text.
- * @param {string} decl - Declaration head, e.g. `function foo(`.
- * @returns {string} The declaration through its balanced closing brace.
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 /**
  * Decode entities the way the HTML parser does to an attribute value.
@@ -131,15 +113,15 @@ describe('ports panel: show and undo "Not a project" (#1768)', () => {
     const state = { ports: [], portGroupsOpen: {} };
     const refreshes = [];
     const src = [
-      liftFunction(landing, 'function esc('),
-      liftFunction(landing, 'function jsArg('),
-      liftFunction(landing, 'async function loadPorts('),
-      liftFunction(ui, 'function renderPorts('),
+      liftDeclaration(landing, 'function esc('),
+      liftDeclaration(landing, 'function jsArg('),
+      liftDeclaration(landing, 'async function loadPorts('),
+      liftDeclaration(ui, 'function renderPorts('),
       // loadPorts re-renders through it so a poll keeps focus on a fold toggle (#1946).
-      liftFunction(ui, 'function renderKeepingFoldFocus('),
-      liftFunction(ui, 'function showToast('),
-      liftFunction(ui, 'function showOwnerKindRefusal('),
-      liftFunction(ui, 'async function markLeaseOwnerProject(')
+      liftDeclaration(ui, 'function renderKeepingFoldFocus('),
+      liftDeclaration(ui, 'function showToast('),
+      liftDeclaration(ui, 'function showOwnerKindRefusal('),
+      liftDeclaration(ui, 'async function markLeaseOwnerProject(')
     ].join('\n');
     const page = new Function('state', 'document', 'api', 'apiMutate', 'checkPortImports', `
       ${src}

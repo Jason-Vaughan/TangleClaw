@@ -86,14 +86,14 @@ function loadSetup(lastError, protectedRoots) {
 }
 
 describe('Setup wizard — projects-directory errors (#859)', () => {
-  // Verbatim what the server sends for this failure (`_scanFailureHint` in
-  // lib/projects.js, composed into the SCAN_FAILED error). A stand-in, not an
-  // assertion target — these tests pin that the wizard shows whatever the
-  // server said. Kept in sync so the fixture stays a real example.
-  const PROTECTED_DIR_MESSAGE = 'Could not read ~/Documents/Projects — the directory did not '
-    + 'respond. On macOS that is what a protected folder does when node has no Full Disk '
-    + 'Access. Grant it, or choose a projects directory outside ~/Documents, ~/Desktop and '
-    + '~/Downloads';
+  // What the server sends for this failure (`_scanFailureHint` in
+  // lib/projects.js, composed into the SCAN_FAILED error), built from the
+  // server's own text so the fixture stays a real example without a hand-kept
+  // copy. A stand-in, not an assertion target — these tests pin that the wizard
+  // shows whatever the server said.
+  const PROTECTED_DIR_MESSAGE = 'Could not read ~/Documents/Projects — '
+    + require('../lib/projects')._scanFailureHint(
+      Object.assign(new Error('timed out'), { tcTimedOut: true }));
 
   it('shows what the server said, not a generic not-found line', async () => {
     const ctx = loadSetup(PROTECTED_DIR_MESSAGE);

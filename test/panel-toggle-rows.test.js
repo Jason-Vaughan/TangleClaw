@@ -14,31 +14,13 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const { liftDeclaration } = require('./helpers/lift');
 const fs = require('node:fs');
 const path = require('node:path');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
 const ui = read('ui.js');
 const landing = read('landing.js');
-
-/**
- * Slice a function declaration out of source text by brace-matching.
- *
- * @param {string} src - File source text.
- * @param {string} decl - Declaration head, e.g. `function foo(`.
- * @returns {string} The declaration through its balanced closing brace.
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  return assert.fail(`${decl} body must close`);
-}
 
 const VOID = new Set(['br', 'hr', 'img', 'input', 'meta', 'link']);
 
@@ -100,9 +82,9 @@ function walk(html) {
 function renderPanel(fnName, panelId, state) {
   const panel = { innerHTML: '' };
   const src = [
-    liftFunction(landing, 'function esc('),
-    liftFunction(landing, 'function jsArg('),
-    liftFunction(ui, `function ${fnName}(`)
+    liftDeclaration(landing, 'function esc('),
+    liftDeclaration(landing, 'function jsArg('),
+    liftDeclaration(ui, `function ${fnName}(`)
   ].join('\n');
   new Function('state', 'document', 'api', 'loadGroupDetail', `${src}\n${fnName}();`)(
     state,
@@ -252,8 +234,8 @@ function liftToggle(toggleFn, state) {
   const renders = [];
   const details = [];
   const src = [
-    liftFunction(ui, 'function foldToggleInPlace('),
-    liftFunction(ui, `function ${toggleFn}(`)
+    liftDeclaration(ui, 'function foldToggleInPlace('),
+    liftDeclaration(ui, `function ${toggleFn}(`)
   ].join('\n');
   const toggle = new Function('state', 'renderPorts', 'renderGroups', 'renderOpenclawConnections', 'loadGroupDetail',
     `${src}\nreturn ${toggleFn};`)(
@@ -368,7 +350,7 @@ describe('folding keeps keyboard focus on the toggle (#1946)', () => {
      * @param {object} doc - Fake document.
      * @returns {Function}
      */
-    const lift = (doc) => new Function('document', `${liftFunction(ui, 'function renderKeepingFoldFocus(')}\nreturn renderKeepingFoldFocus;`)(doc);
+    const lift = (doc) => new Function('document', `${liftDeclaration(ui, 'function renderKeepingFoldFocus(')}\nreturn renderKeepingFoldFocus;`)(doc);
 
     it('puts focus back on the re-rendered toggle with the same key', () => {
       const { doc, panel, render, current } = setup(["O'Brien DB", 'SomeProject']);
@@ -410,7 +392,7 @@ describe('folding keeps keyboard focus on the toggle (#1946)', () => {
       ['loadGroups', 'groupsPanel', 'renderGroups'],
       ['loadOpenclawConnections', 'openclawPanel', 'renderOpenclawConnections']
     ]) {
-      const body = liftFunction(landing, `async function ${fn}(`);
+      const body = liftDeclaration(landing, `async function ${fn}(`);
       assert.match(body, new RegExp(`renderKeepingFoldFocus\\(document\\.getElementById\\('${panel}'\\), ${render}\\)`), fn);
     }
   });
