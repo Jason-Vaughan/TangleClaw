@@ -79,6 +79,15 @@ describe('uploads (server half)', () => {
       assert.match(result.unreadableHint, /Full Disk Access/);
     });
 
+    it('advises moving the project, at both places an uploads read can time out', async () => {
+      // One project is moved; choosing a different projects directory is the
+      // wizard's advice, not this one's.
+      mock.method(dirScanner, 'interactiveRequest', async () => { throw timedOut(); });
+      assert.match((await uploads.listUploads('/p')).unreadableHint, /Grant it, or move the project outside ~\/Documents/);
+      assert.match((await uploads.saveUpload('/p', 'a.txt', 'YQ==')).unreadableHint,
+        /Grant it, or move the project outside ~\/Documents/);
+    });
+
     it('reports collateral of another path\'s kill as SCAN_ABORTED, without the remedy', async () => {
       mock.method(dirScanner, 'interactiveRequest', async () => {
         const err = new Error('cancelled');

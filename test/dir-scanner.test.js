@@ -555,6 +555,21 @@ describe('lib/dir-scanner — the failure backoff (#883 chunk 3)', () => {
     }
   });
 
+  test('a remembered refusal still earns the Full Disk Access remedy', async () => {
+    // Built by the scanner's own backoff path, not by hand, so the hint's gate is
+    // tied to the flags the scanner really sets on a refusal it remembers.
+    const forkFn = scriptedForkFn(['hang']);
+    const scanner = backoffScanner(forkFn);
+    try {
+      await rejection(scanner.request('listUnregistered', {}, { pathKey: KEY }));
+      const remembered = await rejection(scanner.request('listUnregistered', {}, { pathKey: KEY }));
+      assert.ok(remembered.tcCached, 'precondition: this refusal came from the backoff');
+      assert.match(dirScanner.fullDiskAccessHint(remembered, 'move the project'), /Full Disk Access/);
+    } finally {
+      await scanner.shutdown();
+    }
+  });
+
   test('exactly one real attempt per backoff interval, however often it is asked', async () => {
     const forkFn = scriptedForkFn(['hang']);
     const scanner = backoffScanner(forkFn, { pathFailureTtlMs: 250 });
@@ -745,6 +760,51 @@ describe('lib/dir-scanner — the failure backoff (#883 chunk 3)', () => {
     } finally {
       await scanner.shutdown();
     }
+  });
+});
+
+describe('lib/dir-scanner — fullDiskAccessHint, the one owner of the remedy (#1351)', () => {
+  const { TCC_PROTECTED_FOLDERS_PROSE } = require('../lib/tcc-folders');
+  const flagged = (props, code) => Object.assign(new Error('boom'), code ? { code } : {}, props);
+
+  test('a path that never answered earns the sentence, ending in the protected folders', () => {
+    assert.equal(dirScanner.fullDiskAccessHint(flagged({ tcTimedOut: true }), 'move the project'),
+      'the directory did not respond. On macOS that is what a protected folder does when '
+        + 'node has no Full Disk Access. Grant it, or move the project outside '
+        + TCC_PROTECTED_FOLDERS_PROSE);
+  });
+
+  test('a remembered refusal earns it through tcTimedOut, which the backoff also sets', () => {
+    assert.equal(
+      dirScanner.fullDiskAccessHint(flagged({ tcTimedOut: true, tcCached: true }), 'move the project'),
+      dirScanner.fullDiskAccessHint(flagged({ tcTimedOut: true }), 'move the project'));
+  });
+
+  test('nothing else earns it: no error, a plain error, EACCES, an aborted sibling, a truncated walk', () => {
+    const others = {
+      none: null,
+      plain: flagged({}),
+      EACCES: flagged({}, 'EACCES'),
+      tcAborted: flagged({ tcAborted: true }),
+      tcTruncated: flagged({ tcTruncated: true })
+    };
+    for (const [name, err] of Object.entries(others)) {
+      assert.equal(dirScanner.fullDiskAccessHint(err, 'move the project'), null, `${name} must not earn the remedy`);
+    }
+  });
+
+  test('the caller supplies the whole action phrase, once, just before "outside"', () => {
+    for (const instead of ['move the project', 'choose a projects directory']) {
+      const hint = dirScanner.fullDiskAccessHint(flagged({ tcTimedOut: true }), instead);
+      assert.equal(hint.split(instead).length - 1, 1, `${instead} appears exactly once`);
+      assert.ok(hint.includes(`Grant it, or ${instead} outside `), `${instead} reads before "outside"`);
+    }
+  });
+
+  test('names the folders in plain words and never the acronym', () => {
+    const hint = dirScanner.fullDiskAccessHint(flagged({ tcTimedOut: true }), 'move the project');
+    assert.match(hint, /~\/Documents/);
+    assert.doesNotMatch(hint, /TCC/);
   });
 });
 

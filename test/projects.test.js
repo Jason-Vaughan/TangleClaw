@@ -2212,6 +2212,14 @@ describe('projects', () => {
       assert.equal(projects._scanFailureHint(null), undefined);
     });
 
+    it('is the scanner\'s remedy sentence, with the advice that fits a projects directory', () => {
+      // The sentence and its gate have one owner; this caller supplies only its
+      // advice. A projects directory is chosen, not moved.
+      const timedOut = Object.assign(new Error('timed out'), { tcTimedOut: true });
+      assert.equal(projects._scanFailureHint(timedOut),
+        dirScanner.fullDiskAccessHint(timedOut, 'choose a projects directory'));
+    });
+
     // `_withTimeout`'s own two unit tests (the deadline fires and carries
     // `tcTimedOut`; it resolves when the work wins) are gone with the helper.
     // #883 moved every operator-path read into the scanner child, leaving the
