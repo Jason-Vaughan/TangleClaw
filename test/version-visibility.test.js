@@ -27,6 +27,7 @@ const vm = require('node:vm');
 
 const tmux = require('../lib/tmux');
 const serverInfo = require('../lib/server-info');
+const { liftDeclaration } = require('./helpers/lift');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
 const BEACON_SRC = fs.readFileSync(
@@ -44,43 +45,10 @@ const BEACON_SRC = fs.readFileSync(
  * @returns {(data: object|null) => boolean}
  */
 function realUpdateGlobals() {
-  /**
-   * Brace-match one top-level function out of the beacon source.
-   * @param {string} decl - The declaration to find.
-   * @returns {string} The function source.
-   */
-  const lift = (decl) => {
-    const start = BEACON_SRC.indexOf(decl);
-    assert.ok(start > -1, `update-beacon.js must still declare ${decl}`);
-    let depth = 0;
-    for (let i = BEACON_SRC.indexOf('{', start); i < BEACON_SRC.length; i++) {
-      if (BEACON_SRC[i] === '{') depth++;
-      else if (BEACON_SRC[i] === '}' && --depth === 0) return BEACON_SRC.slice(start, i + 1);
-    }
-    throw new Error(`could not brace-match ${decl}`);
-  };
   // eslint-disable-next-line no-new-func
-  return new Function(`${lift('function tcIsUpdateAnswer(data)')}\n${lift('function tcUpdateAnswerState(data)')}\n`
+  return new Function(`${liftDeclaration(BEACON_SRC, 'function tcIsUpdateAnswer(data)')}\n`
+    + `${liftDeclaration(BEACON_SRC, 'function tcUpdateAnswerState(data)')}\n`
     + 'return { tcIsUpdateAnswer, tcUpdateAnswerState };')();
-}
-
-/**
- * Slice a top-level function out of landing.js by brace matching.
- * @param {string} name - Function name as declared.
- * @returns {string} The full declaration text.
- */
-function extract(name) {
-  const start = SRC.search(new RegExp(`(async )?function ${name}\\(`));
-  assert.ok(start > -1, `${name} should exist in landing.js`);
-  let depth = 0;
-  for (let i = SRC.indexOf('{', start); i < SRC.length; i++) {
-    if (SRC[i] === '{') depth++;
-    else if (SRC[i] === '}') {
-      depth--;
-      if (depth === 0) return SRC.slice(start, i + 1);
-    }
-  }
-  throw new Error(`could not brace-match ${name}`);
 }
 
 /**
@@ -342,8 +310,9 @@ describe('#744 the dashboard stops advertising a version it is not running', () 
       renderStaleUnknownBanner: () => { unknownBanners++; dom.els.staleServerBanner.classList.remove('hidden'); },
       esc: (s) => String(s)
     });
-    const src = [extract('loadServerInfo'), extract('renderRunningVersion'),
-      extract('hideStaleServerBanner'), 'loadServerInfo();'].join('\n');
+    const src = [liftDeclaration(SRC, 'async function loadServerInfo('),
+      liftDeclaration(SRC, 'function renderRunningVersion('),
+      liftDeclaration(SRC, 'function hideStaleServerBanner('), 'loadServerInfo();'].join('\n');
     await vm.runInContext(src, ctx);
     return { els: dom.els, state, updateChecks, unknownBanners: () => unknownBanners };
   }
@@ -432,8 +401,8 @@ describe('#744 the dashboard stops advertising a version it is not running', () 
         esc: (s) => String(s)
       });
       await vm.runInContext(
-        `${extract('_agoLabel')}\n${extract('renderVersionCheckHint')}\n`
-        + `${extract('loadUpdateStatus')}\nloadUpdateStatus();`,
+        `${liftDeclaration(SRC, 'function _agoLabel(')}\n${liftDeclaration(SRC, 'function renderVersionCheckHint(')}\n`
+        + `${liftDeclaration(SRC, 'async function loadUpdateStatus(')}\nloadUpdateStatus();`,
         ctx
       );
       return rendered;
@@ -473,7 +442,7 @@ describe('#744 the dashboard stops advertising a version it is not running', () 
     it('re-asks on a schedule, so a provisional answer is not the last word', async () => {
       // Two of its answers are deliberately left showing rather than hidden.
       // Without a retry the pill would stay up for the life of the page.
-      const polling = extract('startPolling');
+      const polling = liftDeclaration(SRC, 'function startPolling(');
       assert.match(polling, /loop\(loadUpdateStatus,/,
         'loadUpdateStatus must be in the polling loop, or a provisional answer is permanent');
     });
@@ -512,8 +481,8 @@ describe('#716 update checks happen when they matter', () => {
       esc: (s) => String(s)
     });
     await vm.runInContext(
-      `${extract('_agoLabel')}\n${extract('renderVersionCheckHint')}\n`
-      + `${extract('loadUpdateStatus')}\n`
+      `${liftDeclaration(SRC, 'function _agoLabel(')}\n${liftDeclaration(SRC, 'function renderVersionCheckHint(')}\n`
+      + `${liftDeclaration(SRC, 'async function loadUpdateStatus(')}\n`
       + `loadUpdateStatus(${opts ? JSON.stringify(opts) : ''});`,
       ctx
     );
@@ -576,8 +545,8 @@ describe('#716 update checks happen when they matter', () => {
       esc: (s) => String(s)
     });
     await vm.runInContext(
-      `${extract('_agoLabel')}\n${extract('renderVersionCheckHint')}\n`
-      + `${extract('loadUpdateStatus')}\nloadUpdateStatus({ refresh: true });`,
+      `${liftDeclaration(SRC, 'function _agoLabel(')}\n${liftDeclaration(SRC, 'function renderVersionCheckHint(')}\n`
+      + `${liftDeclaration(SRC, 'async function loadUpdateStatus(')}\nloadUpdateStatus({ refresh: true });`,
       ctx
     );
     assert.deepEqual(calls, ['POST /api/update/check', 'GET /api/update-status'],
@@ -606,8 +575,8 @@ describe('#716 update checks happen when they matter', () => {
       esc: (s) => String(s)
     });
     await vm.runInContext(
-      `${extract('_agoLabel')}\n${extract('renderVersionCheckHint')}\n`
-      + `${extract('loadUpdateStatus')}\nloadUpdateStatus({ refresh: true });`,
+      `${liftDeclaration(SRC, 'function _agoLabel(')}\n${liftDeclaration(SRC, 'function renderVersionCheckHint(')}\n`
+      + `${liftDeclaration(SRC, 'async function loadUpdateStatus(')}\nloadUpdateStatus({ refresh: true });`,
       ctx
     );
     assert.deepEqual(calls, ['POST /api/update/check'], 'no fallback without NOT_FOUND');
@@ -736,9 +705,10 @@ describe('#716 update checks happen when they matter', () => {
       VERSION_RESULT_HOLD_MS: 4000
     });
     await vm.runInContext(
-      `${extract('_showVersionLabel')}\n${extract('_agoLabel')}\n`
-      + `${extract('renderVersionCheckHint')}\n${extract('loadUpdateStatus')}\n`
-      + `${extract('wireVersionCheck')}\nwireVersionCheck();`,
+      `${liftDeclaration(SRC, 'function _showVersionLabel(')}\n${liftDeclaration(SRC, 'function _agoLabel(')}\n`
+      + `${liftDeclaration(SRC, 'function renderVersionCheckHint(')}\n`
+      + `${liftDeclaration(SRC, 'async function loadUpdateStatus(')}\n`
+      + `${liftDeclaration(SRC, 'function wireVersionCheck(')}\nwireVersionCheck();`,
       ctx
     );
     await handlers.click();
@@ -836,7 +806,7 @@ describe('#716 update checks happen when they matter', () => {
       _lastRenderedVersion: null
     });
     vm.runInContext(
-      `${extract('renderRunningVersion')}\n`
+      `${liftDeclaration(SRC, 'function renderRunningVersion(')}\n`
       + 'renderRunningVersion("4.37.0"); renderRunningVersion("4.37.0");',
       ctx
     );

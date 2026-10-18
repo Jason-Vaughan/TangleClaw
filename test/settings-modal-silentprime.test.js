@@ -19,6 +19,7 @@ const { describe, it, before } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { liftBody } = require('./helpers/lift');
 
 describe('Project Settings modal — silentPrime toggle (#103 chunk 2)', () => {
   let src;
@@ -113,19 +114,7 @@ describe('Project Settings modal — silentPrime toggle (#103 chunk 2)', () => {
       // refactor that splits the function still passes structurally.
       const fnIdx = src.indexOf('async function doSaveSettings');
       assert.ok(fnIdx >= 0, 'doSaveSettings must exist');
-      // Walk forward until the matching closing brace for the function.
-      let depth = 0;
-      let i = src.indexOf('{', fnIdx);
-      const start = i;
-      assert.ok(start >= 0);
-      for (; i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}') {
-          depth--;
-          if (depth === 0) break;
-        }
-      }
-      const fnBody = src.slice(start, i + 1);
+      const fnBody = liftBody(src, 'async function doSaveSettings');
       assert.match(fnBody, /getElementById\(['"]settingsSilentPrime['"]\)/);
       assert.match(fnBody, /body\.silentPrime\s*=/);
     });

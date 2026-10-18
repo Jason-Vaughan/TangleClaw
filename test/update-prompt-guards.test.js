@@ -30,6 +30,7 @@ const { describe, it, before } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { liftDeclaration } = require('./helpers/lift');
 
 const { main, configureProcessLogging, parseArgs, runsApplier, USAGE } = require('../scripts/apply-update');
 const logger = require('../lib/logger');
@@ -62,30 +63,6 @@ function forbiddenApplier() {
 function recordingApplier() {
   const calls = [];
   return { calls, applyUpdate: (opts) => { calls.push(opts); return { ok: true }; } };
-}
-
-/**
- * Slice a function's body out of source text.
- *
- * The assertions below are about the instructions an agent receives, so they
- * must read the prompt itself — not the file around it. The JSDoc on
- * `buildUpdatePrompt` names the banned command deliberately (it records why the
- * command is banned), and a whole-file grep cannot tell that explanation apart
- * from an instruction to run it.
- *
- * @param {string} src - File source
- * @param {string} name - Function name
- * @returns {string} Source from the declaration to the matching closing brace
- */
-function functionBody(src, name) {
-  const start = src.indexOf(`function ${name}(`);
-  assert.notEqual(start, -1, `${name} not found`);
-  let depth = 0;
-  for (let i = src.indexOf('{', start); i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  throw new Error(`unbalanced braces in ${name}`);
 }
 
 /**
@@ -376,7 +353,12 @@ describe('injected update prompt (#730)', () => {
 
   before(() => {
     const js = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
-    prompt = functionBody(js, 'buildUpdatePrompt');
+    // These assertions are about the instructions an agent receives, so they
+    // read the prompt itself, not the file around it. The JSDoc on
+    // `buildUpdatePrompt` names the banned command deliberately (it records why
+    // the command is banned), and a whole-file grep cannot tell that explanation
+    // apart from an instruction to run it.
+    prompt = liftDeclaration(js, 'function buildUpdatePrompt(');
   });
 
   it('drives the guarded updater instead of raw git', () => {
