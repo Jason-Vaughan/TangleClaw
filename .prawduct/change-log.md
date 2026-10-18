@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-18 — W14-REC: combined records for the Wave 14 source merges
+
+<!-- prawduct: type=chore | scope=w14-rec-records -->
+
+v5.34.0 records chunk W14-REC, Charter v2.39. Branch `docs/w14-records` from merged `origin/main` `00e82653`. W14-A1 PR #2480 merged as `d5db885a` (closes #1049, refs #1903 Chunk 04); W14-B1 PR #2482 merged as `00e82653` (closes #2059). #1903 stays open with 67 private lifters; #2222 remains the admission gate for Codex 0.161.0/0.162.0, and #2481 tracks the unrelated pane-identity test flake.
+
+**What changed.** `CHANGELOG.md` records the Gemini stranded-config detection, ten byte-identical test-helper migrations, and the Codex post-turn wake hold with its admission and visible-pane limits. `FEATURES.md` updates stable source pointers and removes stale statements that #2059 remains open. New `[Unreleased]` entries are 227, 274 and 151 UTF-8 bytes; the section totals 14,389 bytes, below 90,000. The October archive is unchanged while the live change log remains below its 40,000-byte archive threshold. Four focused records test files pass 27/27. These records do not release, tag, bump a version or deploy.
+
 ## 2026-10-18 — #2059: a Codex 0.161/0.162 pane still drawing a turn is held under an idle thread, and the settling hold restarts when a turn ends
 
 <!-- prawduct: type=bugfix | scope=w14b1-2059-04-codex-post-turn-guard -->

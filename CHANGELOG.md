@@ -17,6 +17,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Changed
 
+- The stranded-config scan also flags `GEMINI.md` and `.gemini/GEMINI.md` in unregistered ancestor folders. It reports their presence and never deletes them; Antigravity reads `GEMINI.md` only up to the repository root (#1049).
+- After a Codex turn was observed busy, a waiting Medusa nudge waits one more 5 s settling interval. Recorded pane rows now hold unfinished turns on 0.161/0.162, but those versions remain unverified and unwoken pending #2222; a deep-scroll stall is still unmeasured (#2059).
 - The wrap drawer's commit row says who merges a wrap PR left for a coordinator, name first, with nothing under *How to fix this*; other auto-PR failures now show their fix there (#2366).
 - Shared-doc change notices go only to the owners of rows an attested author changed and to subscribers, never the author; `tc docs mute|subscribe|default` and the `notices` routes set it per doc or group. A notify of unchanged bytes notifies nobody (#2389).
 - **A refused launch's message stays until you dismiss it** (#2339): the dashboard no longer hides it after 6 s or under another message's timer. Dismiss it with its button, or Escape on its buttons; a newer one replaces it. Long paths wrap at 320 px. **Bridge Discord times in local time** (#2313): the panel and `tc bridge status` show them in the host's zone; the status JSON keeps ISO.
@@ -46,6 +48,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- Ten more test files use the shared lift helper with byte-identical lifted text; the private-lifter inventory shrinks from 77 to 67 (#1903, Chunk 04).
 - Both `server.js` launch session-active judgments now call `sessionIsActive`; the stale standalone `(R-13)` JSDoc marker is gone (#2285).
 - The systemd restart command uses `SYSTEMD_USER_UNIT`; tests pin the disabled-button diagnostic across repeated and changed reasons (#1563).
 - Eight more test files use the shared lift helper with byte-identical lifted text; the private-lifter inventory shrinks from 85 to 77 (#1903, Chunk 03).
