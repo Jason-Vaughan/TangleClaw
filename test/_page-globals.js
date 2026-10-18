@@ -14,26 +14,9 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { liftDeclaration } = require('./helpers/lift');
 
 const LANDING_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
-
-/**
- * Slice a function declaration out of source text by brace-matching.
- * @param {string} src - File source text.
- * @param {string} decl - Declaration head, e.g. `function jsArg(`.
- * @returns {string} The declaration through its balanced closing brace.
- */
-function liftDeclaration(src, decl) {
-  const start = src.indexOf(decl);
-  if (start === -1) throw new Error(`${decl} not found`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  throw new Error(`${decl} body does not close`);
-}
 
 /** `landing.js`'s `function jsArg(value) {…}`, for `vm.runInContext`. */
 const LANDING_JSARG_SRC = liftDeclaration(LANDING_SRC, 'function jsArg(');
