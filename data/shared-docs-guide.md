@@ -35,9 +35,12 @@ GET /api/shared-docs?groupId=<group-id>
 POST /api/shared-docs
 { "groupId": "<group-id>", "name": "NETWORK", "filePath": "/path/to/NETWORK.md", "injectIntoConfig": true, "injectMode": "reference" }
 
-# Lock before editing a document's contents (prevents concurrent edits), then unlock after
+# Lock before editing a document's contents (prevents concurrent edits), then unlock after.
+# sessionId and projectName must be your own: the session and project your launch binding
+# verifies (`tc whoami` prints both), else 403 LOCK_CALLER_MISMATCH. ttlMinutes is optional,
+# a whole number from 1 to 120 (default 30), else 400. A lock cannot be renewed.
 POST /api/shared-docs/<doc-id>/lock
-{ "sessionId": <session-id>, "projectName": "my-project" }
+{ "sessionId": <your-session-id>, "projectName": "my-project", "ttlMinutes": 30 }
 DELETE /api/shared-docs/<doc-id>/lock
 
 # Re-scan a group's shared directory for new files
