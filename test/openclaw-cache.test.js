@@ -300,6 +300,8 @@ describe('OpenClaw view wiring for cache-bust (#162)', () => {
     // The index of the helper's closing brace: the lift starts at the same
     // `indexOf` as `setFrameSrcDef` and ends on that brace.
     const setFrameSrcBlockEnd = setFrameSrcDef + liftDeclaration(viewJs, 'function setFrameSrc(').length - 1;
+    assert.equal(viewJs[setFrameSrcBlockEnd], '}',
+      'the helper span must end on its own closing brace, or the inside/outside split below is off');
     const insideHelper = allDirectAssignments.filter(
       (m) => m.index >= setFrameSrcDef && m.index <= setFrameSrcBlockEnd
     );
