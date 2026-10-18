@@ -128,14 +128,6 @@ const EXCEPTIONS = {
  * removes its file's entries here in the same change; a new copy is refused.
  */
 const INITIAL_INVENTORY = [
-  'caddy-drift-surfacing.test.js :: extract',
-  'card-detail-disclosure.test.js :: functionBody',
-  'card-session-contract.test.js :: functionBody',
-  'create-flow-mode-picker.test.js :: liftFunction',
-  'dashboard-boot-beacon.test.js :: liftFunction',
-  'degraded-reads-frontend.test.js :: functionBody',
-  'engine-error-ui.test.js :: liftFunction',
-  'engine-picker-gating.test.js :: sliceFunction',
   'error-string-parity.test.js :: functionSource',
   'esc-contract.test.js :: liftFunction',
   'eval-audit-reachable.test.js :: lift',

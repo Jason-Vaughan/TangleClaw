@@ -22,6 +22,7 @@ const path = require('node:path');
 
 const store = require('../lib/store');
 const projects = require('../lib/projects');
+const { liftBody } = require('./helpers/lift');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const UI_SRC = fs.readFileSync(path.join(PUBLIC_DIR, 'ui.js'), 'utf8');
@@ -35,25 +36,6 @@ const UI_SRC = fs.readFileSync(path.join(PUBLIC_DIR, 'ui.js'), 'utf8');
 const CARD_SESSION_READERS = ['ui.js', 'api-helper.js', 'landing.js'];
 
 /**
- * Slice out a top-level function body by brace-matching from its declaration.
- *
- * @param {string} src - File source text.
- * @param {string} decl - The declaration, e.g. `function openKill(name)`.
- * @returns {string} The body including its braces.
- */
-function functionBody(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(bodyStart, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
-
-/**
  * Lift a function out of `ui.js` and RUN it, with the browser globals it closes
  * over supplied as parameters. `public/ui.js` is a browser global script, not a
  * requireable module.
@@ -65,7 +47,7 @@ function functionBody(src, decl) {
  */
 function lift(decl, name, scope) {
   const names = Object.keys(scope);
-  const factory = new Function(...names, `${decl}${functionBody(UI_SRC, decl)}\nreturn ${name};`);
+  const factory = new Function(...names, `${decl}${liftBody(UI_SRC, decl)}\nreturn ${name};`);
   return factory(...names.map((k) => scope[k]));
 }
 

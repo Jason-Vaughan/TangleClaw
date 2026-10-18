@@ -23,6 +23,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { liftDeclaration } = require('./helpers/lift');
 
 const PUB = path.join(__dirname, '..', 'public');
 const UI_SRC = fs.readFileSync(path.join(PUB, 'ui.js'), 'utf8');
@@ -33,26 +34,6 @@ const API_HELPER_SRC = fs.readFileSync(path.join(PUB, 'api-helper.js'), 'utf8');
 // on every boot), not a hand-invented launchModes block.
 const CLAUDE_PROFILE = JSON.parse(
   fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'claude.json'), 'utf8'));
-
-/**
- * Slice a top-level function (declaration + body) out of source text by
- * brace-matching, so the sandbox runs the REAL code rather than a copy.
- *
- * @param {string} src - File source text.
- * @param {string} decl - Declaration to find.
- * @returns {string} The declaration plus its balanced body.
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 /** A DOM element stub covering what the create drawer touches. */
 function makeElement() {
@@ -110,11 +91,11 @@ describe('create flow routes through the launch gate (#401)', () => {
       // same roster the drawer's picker is built from.
       `let state = { engines: [${JSON.stringify(CLAUDE_PROFILE)}] };`,
       ...settingTables,
-      liftFunction(API_HELPER_SRC, 'function tcHonoredLaunchModes'),
-      liftFunction(API_HELPER_SRC, 'function tcEngineDisplayName'),
-      liftFunction(API_HELPER_SRC, 'function tcSettingDisposition'),
-      liftFunction(API_HELPER_SRC, 'function tcCreateProjectBody'),
-      liftFunction(UI_SRC, 'async function submitCreate()'),
+      liftDeclaration(API_HELPER_SRC, 'function tcHonoredLaunchModes'),
+      liftDeclaration(API_HELPER_SRC, 'function tcEngineDisplayName'),
+      liftDeclaration(API_HELPER_SRC, 'function tcSettingDisposition'),
+      liftDeclaration(API_HELPER_SRC, 'function tcCreateProjectBody'),
+      liftDeclaration(UI_SRC, 'async function submitCreate()'),
       'globalThis.submitCreate = submitCreate;'
     ].join('\n'), sandbox);
 
@@ -144,9 +125,9 @@ describe('create flow routes through the launch gate (#401)', () => {
     vm.runInContext([
       // The gate asks the shared helper which modes the engine will run, so it
       // comes along: running the REAL gate is the point of this test.
-      liftFunction(API_HELPER_SRC, 'function tcHonoredLaunchModes(engine)'),
-      liftFunction(LANDING_SRC, 'function proceedWithLaunchModeCheck(name, project, continuityMode)'),
-      liftFunction(LANDING_SRC, 'async function launchProject(name)'),
+      liftDeclaration(API_HELPER_SRC, 'function tcHonoredLaunchModes(engine)'),
+      liftDeclaration(LANDING_SRC, 'function proceedWithLaunchModeCheck(name, project, continuityMode)'),
+      liftDeclaration(LANDING_SRC, 'async function launchProject(name)'),
       'globalThis.launchProject = launchProject;'
     ].join('\n'), sandbox);
 
@@ -181,9 +162,9 @@ describe('create flow routes through the launch gate (#401)', () => {
     vm.runInContext([
       // The gate asks the shared helper which modes the engine will run, so it
       // comes along: running the REAL gate is the point of this test.
-      liftFunction(API_HELPER_SRC, 'function tcHonoredLaunchModes(engine)'),
-      liftFunction(LANDING_SRC, 'function proceedWithLaunchModeCheck(name, project, continuityMode)'),
-      liftFunction(LANDING_SRC, 'async function launchProject(name)'),
+      liftDeclaration(API_HELPER_SRC, 'function tcHonoredLaunchModes(engine)'),
+      liftDeclaration(LANDING_SRC, 'function proceedWithLaunchModeCheck(name, project, continuityMode)'),
+      liftDeclaration(LANDING_SRC, 'async function launchProject(name)'),
       'globalThis.launchProject = launchProject;'
     ].join('\n'), sandbox);
 

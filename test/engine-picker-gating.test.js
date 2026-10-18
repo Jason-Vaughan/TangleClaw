@@ -21,23 +21,7 @@ const { describe, it, before } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-
-/**
- * Slice a function out of source text by brace matching.
- * @param {string} src - File source
- * @param {string} name - Function name
- * @returns {string}
- */
-function sliceFunction(src, name) {
-  const start = src.indexOf(`function ${name}(`);
-  assert.notEqual(start, -1, `${name} not found in the given source`);
-  let depth = 0;
-  for (let i = src.indexOf('{', start); i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  throw new Error(`unbalanced braces in ${name}`);
-}
+const { liftDeclaration } = require('./helpers/lift');
 
 describe('engine picker gating (#707)', () => {
   let resolvePickerEngine;
@@ -259,7 +243,7 @@ describe('engine picker gating (#707)', () => {
     // picker now shares `buildEngineOptions`, so the behavioral assertions above
     // cover it and the only thing left to pin is that it still delegates.
     it('delegates to buildEngineOptions instead of hand-rolling options', () => {
-      const body = sliceFunction(helperSrc, 'renderMasterSettingsBody');
+      const body = liftDeclaration(helperSrc, 'function renderMasterSettingsBody(');
       assert.match(body, /buildEngineOptions\(state\.engines/);
       assert.doesNotMatch(
         body,
@@ -269,7 +253,7 @@ describe('engine picker gating (#707)', () => {
     });
 
     it('keeps its own "follow default engine" empty option', () => {
-      const body = sliceFunction(helperSrc, 'renderMasterSettingsBody');
+      const body = liftDeclaration(helperSrc, 'function renderMasterSettingsBody(');
       assert.match(body, /<option value="">\(follow default engine\)<\/option>/,
         'only this picker has a no-pin state');
     });
@@ -284,7 +268,7 @@ describe('engine picker gating (#707)', () => {
     for (const file of ['ui.js', 'session.js']) {
       it(`${file} calls tcBuildEngineOptions rather than re-implementing it`, () => {
         const src = fs.readFileSync(path.join(__dirname, '..', 'public', file), 'utf8');
-        const body = sliceFunction(src, 'buildEngineOptions');
+        const body = liftDeclaration(src, 'function buildEngineOptions(');
         // Pins the argument list, not just the call name. The shared builder
         // escapes with whatever it is handed, so a page delegating with
         // `String` or an identity function would satisfy a bare
@@ -311,7 +295,7 @@ describe('engine picker gating (#707)', () => {
 
   describe('the Create-project drawer seeds from the resolver', () => {
     it('does not read config.defaultEngine straight into the payload', () => {
-      const body = sliceFunction(uiSrc, 'openCreateModal');
+      const body = liftDeclaration(uiSrc, 'function openCreateModal(');
       assert.match(body, /resolvePickerEngine\(/, 'the drawer must seed from the resolved engine');
       assert.doesNotMatch(
         body,
