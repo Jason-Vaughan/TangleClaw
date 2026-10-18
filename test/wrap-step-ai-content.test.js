@@ -1183,6 +1183,47 @@ describe('wrap-step ai-content — D6 verifyChanged file-edit gate', () => {
       assert.equal(res.ok, true, 'both gate call sites honor the predicate');
       assert.equal(res.status, 'done');
     });
+
+    // #2470 — the predicate must classify with the capability the run resolved,
+    // the one the commit step withholds by, on both paths that reach the gate.
+    describe('hands the run\'s methodology to the predicate', () => {
+      const captureStep = {
+        id: 'changelog-update', kind: 'ai-content', prompt: 'go',
+        captureFields: ['summary', 'nextSteps', 'learnings'],
+        captureFile: '.tangleclaw/.wrap-summary.md',
+        verifyChanged: ['CHANGELOG.md'],
+        verifySatisfiedBy: 'changelog-coverage'
+      };
+      const stubCapture = () => {
+        aic._internal.capturePane = () => ({ lines: [] });
+        aic._internal.readCaptureFile = () => ['## Summary', 'x', '## NextSteps', '- y', '## Learnings', '- none'].join('\n');
+        aic._internal.removeCaptureFile = () => {};
+      };
+      const PATHS = [
+        ['the free-text path', (methodologyCtx) => coverageCtx(methodologyCtx)],
+        ['the captureFields path', (methodologyCtx) => { stubCapture(); return coverageCtx({ step: captureStep, ...methodologyCtx }); }]
+      ];
+
+      for (const [label, build] of PATHS) {
+        it(`passes context.methodology itself on ${label}`, async () => {
+          const methodology = { disposition: 'capability-unavailable', available: false, engineId: 'codex' };
+          let seen;
+          aic._internal.readForVerify = () => 'identical content';
+          aic._internal.changelogCoverage = (_p, _paths, _cov, _scope, opts) => { seen = opts; return COVERED; };
+          const res = await aic.run(build({ methodology }));
+          assert.equal(res.status, 'done');
+          assert.equal(seen.methodology, methodology, 'the run-resolved object, not a copy or a re-resolution');
+        });
+
+        it(`passes null, never the HTTP options' methodology, on ${label}`, async () => {
+          let seen;
+          aic._internal.readForVerify = () => 'identical content';
+          aic._internal.changelogCoverage = (_p, _paths, _cov, _scope, opts) => { seen = opts; return COVERED; };
+          await aic.run(build({ options: { methodology: { disposition: 'capability-unavailable' } } }));
+          assert.equal(seen.methodology, null, 'a request body cannot supply the capability');
+        });
+      }
+    });
   });
 
   describe('_verifyChangedGate (unit)', () => {
