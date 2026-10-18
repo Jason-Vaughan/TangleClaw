@@ -9,6 +9,7 @@
 
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
+const { liftDeclaration } = require('./helpers/lift');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -372,14 +373,7 @@ describe('medusa watchdog escalation (#1839 chunk 04)', () => {
 
     it('renders the dashboard banner with text nodes only, and clears it when nothing is escalated', () => {
       const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
-      const start = src.indexOf('function renderMedusaEscalationBanner(');
-      let depth = 0;
-      let end = -1;
-      for (let i = src.indexOf('{', start); i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) { end = i + 1; break; }
-      }
-      const fn = src.slice(start, end);
+      const fn = liftDeclaration(src, 'function renderMedusaEscalationBanner(');
       const el = (id) => ({
         id, _hidden: true, children: [],
         classList: { add(c) { if (c === 'hidden') this._o._hidden = true; }, remove(c) { if (c === 'hidden') this._o._hidden = false; } },

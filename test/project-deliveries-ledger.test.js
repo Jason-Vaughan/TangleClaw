@@ -18,6 +18,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const { liftBody } = require('./helpers/lift');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -25,24 +26,6 @@ const vm = require('node:vm');
 const UI_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
 const HELPER_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
 const LANDING_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
-
-/**
- * Slice a top-level function's body out of a source text by brace matching.
- * @param {string} src - Source text.
- * @param {string} decl - The declaration to find.
- * @returns {string} The body including its braces.
- */
-function functionBody(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(bodyStart, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 /**
  * A top-level `const NAME = [...]` array literal, as source text.
@@ -79,7 +62,7 @@ function helperGlobals() {
 // worked while the operator read a blank.
 const escDecl = 'function esc(str)';
 const escCtx = vm.createContext({});
-vm.runInContext(escDecl + functionBody(LANDING_SRC, escDecl), escCtx);
+vm.runInContext(escDecl + liftBody(LANDING_SRC, escDecl), escCtx);
 const esc = escCtx.esc;
 
 /**
@@ -90,7 +73,7 @@ function renderSection() {
   const decl = 'function renderProjectRulesSection(project)';
   const ctx = vm.createContext({ esc, console });
   vm.runInContext(`${arrayConst('WRAP_SECTION_NAMES')}\n${arrayConst('PROJECT_RULE_KINDS')}\n`
-    + `${decl}${functionBody(UI_SRC, decl)}\nthis.html = renderProjectRulesSection({ id: 7, name: 'p', wrapSections: null });`, ctx);
+    + `${decl}${liftBody(UI_SRC, decl)}\nthis.html = renderProjectRulesSection({ id: 7, name: 'p', wrapSections: null });`, ctx);
   return ctx.html;
 }
 
@@ -109,7 +92,7 @@ function build(api) {
     'function renderProjectRuleDeliveriesUnknown(why)',
     'function renderProjectRuleDeliveries(deliveries)'
   ];
-  const source = decls.map((d) => d + functionBody(UI_SRC, d)).join('\n');
+  const source = decls.map((d) => d + liftBody(UI_SRC, d)).join('\n');
   const ctx = vm.createContext({
     api,
     document,
@@ -151,7 +134,7 @@ describe('#1164 — the Settings modal renders the rule-delivery ledger', () => 
   });
 
   it('loadProjectRules reaches the ledger through the three-state reader', () => {
-    const body = functionBody(UI_SRC, 'async function loadProjectRules(projectId, projectName)');
+    const body = liftBody(UI_SRC, 'async function loadProjectRules(projectId, projectName)');
     assert.match(body, /await refreshProjectRuleDeliveries\(projectId\)/);
     assert.doesNotMatch(body, /api\(`\/api\/session-rules\/deliveries/,
       'the loader does not keep its own copy of the fetch beside the reader');

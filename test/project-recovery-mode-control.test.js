@@ -16,6 +16,7 @@
 
 const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
+const { liftDeclaration } = require('./helpers/lift');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -34,33 +35,15 @@ const fixture = require('./_recovery-fixture');
 const UI_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
 
 /**
- * Slice a top-level declaration out of source text by brace-matching, so the
- * sandbox runs the real code and not a copy.
- * @param {string} src - File source text
- * @param {string} decl - Declaration to find
- * @returns {string} The declaration plus its balanced body
- */
-function lift(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  let depth = 0;
-  for (let i = src.indexOf('{', start); i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  return assert.fail(`${decl} body must close`);
-}
-
-/**
  * The panel's decision functions, run as shipped.
  * @returns {{recoveryModeChoiceOffer: Function, recoveryModeSaveOutcome: Function}}
  */
 function panel() {
   const ctx = {};
   vm.createContext(ctx);
-  vm.runInContext(`${lift(UI_SRC, 'const RECOVERY_MODE_READOUT')};\n`
-    + `${lift(UI_SRC, 'function recoveryModeControlOffer')}\n${lift(UI_SRC, 'function recoveryModeChoiceOffer')}\n`
-    + `${lift(UI_SRC, 'function recoveryModeSaveOutcome')}`, ctx);
+  vm.runInContext(`${liftDeclaration(UI_SRC, 'const RECOVERY_MODE_READOUT')};\n`
+    + `${liftDeclaration(UI_SRC, 'function recoveryModeControlOffer')}\n${liftDeclaration(UI_SRC, 'function recoveryModeChoiceOffer')}\n`
+    + `${liftDeclaration(UI_SRC, 'function recoveryModeSaveOutcome')}`, ctx);
   return ctx;
 }
 

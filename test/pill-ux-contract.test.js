@@ -15,6 +15,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const { liftDeclaration } = require('./helpers/lift');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -24,24 +25,6 @@ const PUBLIC = path.join(__dirname, '..', 'public');
 const SESSION_SRC = fs.readFileSync(path.join(PUBLIC, 'session.js'), 'utf8');
 const SESSION_HTML = fs.readFileSync(path.join(PUBLIC, 'session.html'), 'utf8');
 const SESSION_CSS = fs.readFileSync(path.join(PUBLIC, 'session.css'), 'utf8');
-
-/**
- * Slice a top-level function (declaration + body) out of source text.
- * @param {string} src - File source text.
- * @param {string} decl - Declaration to find.
- * @returns {string} The declaration plus its balanced body.
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 /**
  * The opening tag of the element with this id, from the real session markup.
@@ -103,17 +86,17 @@ function loadPills(modelStatus) {
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   vm.runInContext([
-    liftFunction(SESSION_SRC, 'function esc(str)'),
-    liftFunction(SESSION_SRC, 'function closeBannerPopovers(keep)'),
-    liftFunction(SESSION_SRC, 'function syncBannerExpanded()'),
-    liftFunction(SESSION_SRC, 'function setPillDetail(pill, detail)'),
-    liftFunction(SESSION_SRC, 'function renderPillDetail(pill, pop)'),
-    liftFunction(SESSION_SRC, 'function togglePillDetail(pill)'),
-    liftFunction(SESSION_SRC, 'function bindPillDetails()'),
-    liftFunction(SESSION_SRC, 'function clickHitsSelector(event, selector)'),
-    liftFunction(SESSION_SRC, 'function onBannerOutsideClick(e)'),
-    liftFunction(SESSION_SRC, 'async function loadModelStatus(engineId)'),
-    liftFunction(SESSION_SRC, 'function setConnected(connected)'),
+    liftDeclaration(SESSION_SRC, 'function esc(str)'),
+    liftDeclaration(SESSION_SRC, 'function closeBannerPopovers(keep)'),
+    liftDeclaration(SESSION_SRC, 'function syncBannerExpanded()'),
+    liftDeclaration(SESSION_SRC, 'function setPillDetail(pill, detail)'),
+    liftDeclaration(SESSION_SRC, 'function renderPillDetail(pill, pop)'),
+    liftDeclaration(SESSION_SRC, 'function togglePillDetail(pill)'),
+    liftDeclaration(SESSION_SRC, 'function bindPillDetails()'),
+    liftDeclaration(SESSION_SRC, 'function clickHitsSelector(event, selector)'),
+    liftDeclaration(SESSION_SRC, 'function onBannerOutsideClick(e)'),
+    liftDeclaration(SESSION_SRC, 'async function loadModelStatus(engineId)'),
+    liftDeclaration(SESSION_SRC, 'function setConnected(connected)'),
     'globalThis.loadModelStatus = loadModelStatus;',
     'globalThis.setConnected = setConnected;',
     'globalThis.togglePillDetail = togglePillDetail;',
@@ -166,7 +149,7 @@ describe('#104 every banner pill says what kind of thing it is on hover', () => 
   });
 
   it('group pills carry their label', () => {
-    const src = liftFunction(SESSION_SRC, 'function renderBannerGroups(groups)');
+    const src = liftDeclaration(SESSION_SRC, 'function renderBannerGroups(groups)');
     assert.match(src, /class="group-pill"[^`]*data-tooltip="Project group"/);
   });
 
@@ -311,13 +294,13 @@ describe('#104 the detail closes from outside and from the keyboard', () => {
     ctx.onBannerOutsideClick(documentClick(pill, ctx.document.body));
     assert.ok(popoverOf(pill).classList.contains('open'));
 
-    const bind = liftFunction(SESSION_SRC, 'function bindEvents()');
+    const bind = liftDeclaration(SESSION_SRC, 'function bindEvents()');
     assert.match(bind, /document\.addEventListener\('click', onBannerOutsideClick\)/,
       'the predicate under test must be the one the page binds');
   });
 
   it('Escape closes an open detail — a keyboard user opened it with Enter', () => {
-    const bind = liftFunction(SESSION_SRC, 'function bindEvents()');
+    const bind = liftDeclaration(SESSION_SRC, 'function bindEvents()');
     const escape = bind.match(/if \(e\.key !== 'Escape'\) return;([\s\S]*?)\n  \}\);/);
     assert.ok(escape, 'the Escape handler must exist');
     assert.match(escape[1], /closeBannerPopovers\(\);/);

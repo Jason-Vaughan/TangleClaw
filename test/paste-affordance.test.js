@@ -26,32 +26,12 @@
 
 const { describe, it, before } = require('node:test');
 const assert = require('node:assert/strict');
+const { liftBody } = require('./helpers/lift');
 const fs = require('node:fs');
 const path = require('node:path');
 
 require('../public/api-helper.js');
 const { tcPastePath } = globalThis;
-
-/**
- * Extract a function's body from source by walking brace depth.
- * @param {string} src - File source
- * @param {string} marker - Text locating the function (e.g. 'function foo(')
- * @returns {string} the body including braces; '' when not found
- */
-function functionBody(src, marker) {
-  const start = src.indexOf(marker);
-  if (start === -1) return '';
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}') {
-      depth--;
-      if (depth === 0) return src.slice(bodyStart, i + 1);
-    }
-  }
-  return '';
-}
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
@@ -90,7 +70,7 @@ describe('Paste affordance wiring (#402 — source probes)', () => {
   });
 
   it('paste funnels through term.paste(), never a raw write of the text (#192)', () => {
-    const body = functionBody(sessionJs, 'function insertPasteText(');
+    const body = liftBody(sessionJs, 'function insertPasteText(');
     assert.ok(body, 'insertPasteText must exist');
     assert.ok(body.includes('term.paste('),
       "paste must use xterm's paste() so bracketed-paste framing matches desktop (#192)");
@@ -99,7 +79,7 @@ describe('Paste affordance wiring (#402 — source probes)', () => {
   });
 
   it('the clipboard read is gated through the tested tcPastePath decision', () => {
-    const body = functionBody(sessionJs, 'async function pasteToTerminal(');
+    const body = liftBody(sessionJs, 'async function pasteToTerminal(');
     assert.ok(body, 'pasteToTerminal must exist');
     assert.ok(body.includes('tcPastePath('),
       'the path decision must go through the tested pure helper');
@@ -111,7 +91,7 @@ describe('Paste affordance wiring (#402 — source probes)', () => {
     for (const fn of ['async function pasteToTerminal(', 'function insertPasteText(',
       'function openPasteCatcher(', 'function closePasteCatcher(',
       'function insertFromPasteCatcher(']) {
-      const body = functionBody(sessionJs, fn);
+      const body = liftBody(sessionJs, fn);
       assert.ok(body, `${fn}...} must exist`);
       assert.ok(!body.includes('setTimeout'),
         `${fn}...} must not use timers — timer-driven UI lifecycle is banned (#98/#268)`);

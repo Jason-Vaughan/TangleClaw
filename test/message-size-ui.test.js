@@ -12,6 +12,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const { liftDeclaration } = require('./helpers/lift');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -23,23 +24,6 @@ const SESSION_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'sessio
 const LIMIT = 64 * 1024;
 
 /**
- * Slice a top-level function out of session.js by brace matching.
- * @param {string} decl - Declaration start, e.g. `async function sendCommand(`.
- * @returns {string} The function source.
- */
-function functionSource(decl) {
-  const start = SESSION_SRC.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = SESSION_SRC.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < SESSION_SRC.length; i++) {
-    if (SESSION_SRC[i] === '{') depth++;
-    else if (SESSION_SRC[i] === '}' && --depth === 0) return SESSION_SRC.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
-
-/**
  * Evaluate lifted session.js functions in a sandbox with the given globals.
  * @param {string[]} decls - Declarations to lift.
  * @param {object} globals - What the functions reach for.
@@ -48,7 +32,7 @@ function functionSource(decl) {
 function lift(decls, globals) {
   const names = decls.map((d) => d.replace(/^(async )?function /, '').replace(/\(.*$/, ''));
   const ctx = vm.createContext({ console, encodeURIComponent, parseInt, JSON, Number, ...globals });
-  vm.runInContext(`${decls.map(functionSource).join('\n')}\n${names.map((n) => `this.${n} = ${n};`).join('\n')}`, ctx);
+  vm.runInContext(`${decls.map((d) => liftDeclaration(SESSION_SRC, d)).join('\n')}\n${names.map((n) => `this.${n} = ${n};`).join('\n')}`, ctx);
   return ctx;
 }
 

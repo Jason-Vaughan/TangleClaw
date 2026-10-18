@@ -128,16 +128,6 @@ const EXCEPTIONS = {
  * removes its file's entries here in the same change; a new copy is refused.
  */
 const INITIAL_INVENTORY = [
-  'medusa-escalation.test.js :: (inline)',
-  'message-size-ui.test.js :: functionSource',
-  'openclaw-cache.test.js :: setFrameSrcBlockEnd',
-  'panel-toggle-rows.test.js :: liftFunction',
-  'paste-affordance.test.js :: functionBody',
-  'pill-ux-contract.test.js :: liftFunction',
-  'port-owner-kind-panel.test.js :: liftFunction',
-  'project-deliveries-ledger.test.js :: functionBody',
-  'project-recovery-mode-control.test.js :: lift',
-  'project-rules-modal.test.js :: functionBody',
   'project-rules-unknown.test.js :: functionBody',
   'project-tags-shape.test.js :: functionBody',
   'recovery-codes-ui.test.js :: extract',
