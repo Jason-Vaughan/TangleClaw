@@ -57,6 +57,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- Eleven more private brace-matching lift copies in ten test files use `test/helpers/lift.js`, with byte-identical lifted text and unchanged test counts; the inventory shrinks from 26 to 15 (#1903, Chunk 09).
+- Test: the twenty-wedged-reads case in `test/tmux-read-pane-async.test.js` now proves the event loop turns while all twenty reads are still in flight. The test releases them itself rather than counting timer turns against a 600 ms timeout, so host load can no longer fail it (#2496).
 - The wake monitor's thirty-wedged-reads test now counts event-loop turns while every read is in flight, then releases the reads itself; host load no longer changes its verdict (#2200).
 - Ten more private brace-matching lift copies in five test files use `test/helpers/lift.js`; lifted text and test counts match, and the inventory shrinks from 36 to 26 (#1903, Chunk 08).
 - The checkout-fingerprint early-timer deadline test replays recorded git answers under a frozen clock and checks that each stall is the call the deadline ended; no real git runs inside its window (#2412).
