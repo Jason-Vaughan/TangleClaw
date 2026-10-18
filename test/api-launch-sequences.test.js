@@ -386,6 +386,20 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
     assert.equal(after.body.sequences.find((s) => s.sequenceId === live.sequence.id).startupControl.fireable, false, 'an ended session cannot be fired at');
   });
 
+  it('Fire and the clear offer judge the session by one rule, so they agree as it ends (#2285)', async () => {
+    const live = bind(project);
+    store.startupControlChannels.open({ sessionId: live.session.id, sequenceId: live.sequence.id, engineId: 'claude', adapter: 'codex', adapterState: {} });
+    const read = async () => (await get(server, `/api/launch-sequences?projectId=${project.id}`, { 'x-tangleclaw-client': 'dashboard' }))
+      .body.sequences.find((s) => s.sequenceId === live.sequence.id);
+    const before = await read();
+    assert.equal(before.sessionActive, true);
+    assert.equal(before.startupControl.fireable, before.sessionActive, 'an open channel, the operator: Fire follows the session judgement');
+    store.sessions.kill(live.session.id, 'test');
+    const after = await read();
+    assert.equal(after.sessionActive, false);
+    assert.equal(after.startupControl.fireable, after.sessionActive, 'the ended session is ended for both');
+  });
+
   it('a project-bound or unbound caller gets the rows without the startupControl block (D4: no cross-group oracle)', async () => {
     const unbound = await get(server, `/api/launch-sequences?projectId=${project.id}`);
     assert.equal(unbound.status, 200);
