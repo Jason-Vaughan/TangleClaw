@@ -617,6 +617,11 @@ Engine profiles define how TangleClaw interacts with an AI engine. See the [Engi
       "restRows": {
         "<MAJOR.MINOR.PATCH>": {
           "footerPattern": "string — regex source of the ONE footer row this exact engine version draws beneath its status row at rest. Must take a whole row: it starts with ^, ends with $, holds no |, and does not match the empty string.",
+          "turnEnd": {
+            "turnRowPattern": "string — OPTIONAL member, declared whole or not at all. Regex source of a row that starts a turn's drawing (Codex: ^[›•] ). Starts with ^, holds no |, and does not match the empty string.",
+            "endRowPatterns": ["string — regex source of a row that says a turn ended (Codex: ^  Worked for \\d). At least one; each starts with ^, holds no |, and does not match the empty string."],
+            "evidence": { "verifiedOn": "string — ISO date these rows were measured", "source": "string — where and how" }
+          },
           "evidence": { "verifiedOn": "string — ISO date this version was measured", "source": "string — where and how" }
         }
       },
@@ -651,12 +656,18 @@ row beneath its status row at rest and that footer alone on the screen it opens 
 (#2059). The wake's pane gate then holds a pane as `pane-engine-starting` while that footer is the
 first row below the composer, for the exact version the session's channel proved and for no other;
 the Codex adapter hands the same compiled pattern to the startup fire's pane witness, which accepts
-below the composer exactly one status row and then that footer. An entry holds `footerPattern` and
-its own `evidence` and nothing else; a key that is not one exact version, a pattern that is not
-anchored at both ends, or an entry with no evidence refuses the whole `wake` block when the profile
-is read. A version with no entry is read exactly as before. Declaring a version here does not admit
-it: `startupControl.verifiedVersions` decides which versions get a channel. See
-`docs/engine-guide.md` → `wake`.
+below the composer exactly one status row and then that footer. An entry holds `footerPattern`, its
+own `evidence` and, optionally, `turnEnd`: the rows that version draws around a turn
+(`turnRowPattern`, `endRowPatterns` and their own `evidence`), each pattern anchored at the row's
+start. With it, the wake's pane gate also holds a pane as `pane-turn-in-flight` while a turn row is
+above the composer and no end-of-turn row is the last row above it, for that exact version only;
+the gate reads the visible pane, so an answer that has scrolled its opening row off it is not
+recognised. Anything else in an entry, a key that is not one exact version, a footer pattern that is
+not anchored at both ends, a `turnEnd` pattern not anchored at the row's start, or a missing evidence
+block refuses the whole `wake` block when the profile is read. A version with no entry is read
+exactly as before. Declaring a version here does not admit it: `startupControl.verifiedVersions`
+decides which versions get a channel (admitting Codex 0.161.0 and 0.162.0 is tracked under #2222).
+See `docs/engine-guide.md` → `wake`.
 
 Omit `wake` and the engine is never idle-judged or nudged (skipped and logged, never woken against
 a guessed signature). Its `evidence` map must cover the declared fields in both directions, and a

@@ -811,13 +811,24 @@ TangleClaw uses: both draw the status row and then exactly `  ? for shortcuts`, 
 resume, with that footer alone under an empty composer that holds the cursor, with no header row
 that names a model. Nothing is declared for 0.156.1, which draws one row. A footer pattern must take
 one whole row: it is refused when the profile is read unless it starts with `^`, ends with `$`, holds
-no `|`, and needs some text to match, and an entry may hold nothing but those two keys. A version is
-never read by another version's entry. Two readers:
+no `|`, and needs some text to match. An entry may also hold `turnEnd`, the rows that version draws
+around a turn: `turnRowPattern`, a row that starts a turn's drawing (Codex: `^[›•] `, a submitted
+message or an answer), `endRowPatterns`, a non-empty list of rows that say a turn ended (Codex:
+`^  Worked for \d` and `^■ Conversation interrupted`), and its own `evidence`. Those patterns are
+anchored at the row's start only, because the end-of-turn row carries the turn's duration and a
+clock; each must start with `^`, hold no `|`, and need some text to match. An entry may hold nothing
+but `footerPattern`, `turnEnd` and `evidence`. A version is never read by another version's entry.
+Three readers:
 
 - **The wake's pane gate** refuses the pane as `pane-engine-starting` when the footer is the first
   row drawn below the last bare composer row, **and only for the exact version the session's own
   channel proved** (the version its launch recorded and the one its app-server reports, equal). With
   no version named, or one with no entry, this rule refuses nothing.
+- **The wake's pane gate, for `turnEnd`**, refuses the pane as `pane-turn-in-flight` when a turn
+  row is above the last bare composer row and the last non-blank row above that composer is not an
+  end row, again only for the exact version the channel proved. An older empty composer row above
+  the live one is not a turn row. With no version named, or one whose entry declares no `turnEnd`,
+  this rule refuses nothing. The startup adapter does not read `turnEnd`.
 - **The startup fire's pane witness**, given the compiled pattern by the Codex adapter, accepts
   below the composer exactly one status row and then that footer, in that order (see *The pane
   witness* under the startup channel). The footer first, the status row alone, a third row, and the
@@ -825,9 +836,10 @@ never read by another version's entry. Two readers:
 
 Declaring a version here does **not** admit it: a launch gets a channel only on a version in
 `capabilities.startupControl.verifiedVersions`, and neither 0.161.0 nor 0.162.0 is listed. Each was
-run signed in through a whole launch and wake (2026-10-12, each in its own run), and each is kept
-off the list by one measured case: see *A streaming answer is drawn like rest* under the wake's
-limits below.
+run signed in through a whole launch and wake (2026-10-12, each in its own run). The frame a stopped
+client leaves mid-answer is now refused by the version's own rows around a turn, but a stall deeper
+than one visible screen is not, and admission is tracked under #2222: see *A streaming answer is
+drawn like rest* under the wake's limits below.
 
 | Field | What it is |
 |-------|------------|
@@ -841,7 +853,7 @@ limits below.
 | `decorativePattern` | Optional — a regex source matching cells the engine ANIMATES at rest (decoration the operator did not type). Declare it only where you have watched an idle pane and seen it move |
 | `headerPattern` | Optional, declared with `startingPattern` or not at all — a regex source matching the header row that `startingPattern` is read on, whatever that row says |
 | `startingPattern` | Optional, declared with `headerPattern` or not at all — a regex source matching that header row while the engine is still starting |
-| `restRows` | Optional — a table keyed by exact engine version; each entry is `{footerPattern, evidence}`: the whole-row regex source of the footer that version draws beneath its status row at rest, and where it was measured |
+| `restRows` | Optional — a table keyed by exact engine version; each entry is `{footerPattern, evidence}`, optionally with `turnEnd`: the whole-row regex source of the footer that version draws beneath its status row at rest, where it was measured, and the rows it draws around a turn (`{turnRowPattern, endRowPatterns, evidence}`) |
 
 Every field except `pasteRejectedMarker`, `decorativePattern`, `headerPattern`, `startingPattern` and `restRows` is **required**, `null` included. An author who has not
 measured a value writes `null` and says so in `evidence`, which is a recorded gap; an omitted field
@@ -959,33 +971,49 @@ profile names an adapter that can observe it (`declaresObserver`; today, Codex):
     turn whose answer is streaming draws no busy row** on those versions: the `Working (… esc to
     interrupt)` row is up for the first seconds only, after which the pane shows an empty composer
     with the cursor on it, the status row and the footer, as at rest. What holds a nudge then is
-    the engine's own answer (`engine-thread-busy`, decided before any pane is read) and the
-    transcript still moving (`pane-writing`), not this rule or the busy marker.
-  - **A streaming answer is drawn like rest, and that is why neither 0.161.0 nor 0.162.0 is
-    listed.** Measured signed in, each version in its own run, with real mail waiting. While the
-    turn ran, the wake held on `engine-thread-busy` at every tick, including over a pane held still
-    in the middle of the answer. But the thread's answer comes from the app-server and the pane
-    from the TUI client, which are separate processes. With the client stopped mid-answer and the
-    turn then ending, the thread read idle while the pane still showed the answer cut off
-    mid-line; the wake waited its settling interval, read that pane as `pane-at-prompt`, and typed
-    the nudge into it, on both versions. Nothing was typed while a thread read active. The still
-    pane was made by stopping the client process, not by a pause in the model, and how often a
-    real session shows one is not known. So on these versions the wake's protection during an
-    answer rests wholly on the app-server's `thread/read` status, and nothing ties the pane it
-    reads to the turn that just ended. Each version's captured frame is in the wake's fixture
-    tests as a known hole. Before either version is listed, a revised gate has to refuse a pane
-    that has not been redrawn since the turn ended, on positive evidence that it was redrawn (the
-    absence of a busy row is not that evidence), for longer than the settling interval, and still
-    nudge a session at rest as promptly as now; proved signed in for that version, not inferred
-    from the other.
+    the engine's own answer (`engine-thread-busy`, decided before any pane is read), the
+    transcript still moving (`pane-writing`) and the version's own rows around a turn (below),
+    not this rule or the busy marker.
+  - **A streaming answer is drawn like rest; the frame it leaves is now refused, and neither
+    0.161.0 nor 0.162.0 is listed.** Measured signed in, each version in its own run, with real
+    mail waiting. While the turn ran, the wake held on `engine-thread-busy` at every tick,
+    including over a pane held still in the middle of the answer. But the thread's answer comes
+    from the app-server and the pane from the TUI client, which are separate processes. With the
+    client stopped mid-answer and the turn then ending, the thread read idle while the pane still
+    showed the answer cut off mid-line; the wake waited its settling interval, read that pane as
+    `pane-at-prompt`, and typed the nudge into it, on both versions. Nothing was typed while a
+    thread read active. The still pane was made by stopping the client process, not by a pause in
+    the model, and how often a real session shows one is not known.
+    Each version now declares its rows around a turn (`restRows.<version>.turnEnd`, above), and the
+    pane gate holds that frame as `pane-turn-in-flight`: an answer still being drawn has a turn row
+    above the composer and no `Worked for …` or interrupted row after it. Every frame of both
+    versions' signed-in runs is replayed in the wake's fixture tests with the thread status recorded
+    beside it: nothing is typed into a stopped frame or one still drawing a turn, and the stopped
+    run is next nudged under the drawn end of the turn.
+    **This does not make either version wakeable.** `startupControl.verifiedVersions` stays
+    `["0.156.1"]`, so no session of 0.161.0 or 0.162.0 has a channel and the rule is dormant until
+    one is admitted. Admission is tracked under #2222. **A known boundary: the rule reads only the
+    visible pane.** These versions draw on the alternate screen, so the wake's read is the visible
+    pane and no history. A plain-text answer has one opening `• ` row; an answer long enough to
+    scroll that row off the visible pane, and then left still, shows only continuation rows above
+    the composer, has no turn row to find, and **is not refused**. The recorded stops came about a
+    dozen answer rows in, on an 80×24 pane, so this case was not measured. Neither version may be
+    listed until a stall deeper than one screen is measured signed in for that version and
+    refused, and a session at rest is still nudged as promptly as now; nothing here is inferred
+    from the other version.
 - The first `idle` a launch's thread reports holds as `engine-thread-settling` for one monitor
   interval (`ENGINE_SETTLING_MS`, five seconds), whatever the pane shows, and the pane is not read
   while it holds (#2059). An engine can answer idle a moment before it has finished drawing the screen
   it will rest on: Codex 0.156.1 was measured answering idle 10 ms before a pane sample that still
   showed its `model: loading` header. The hold is timed from the first idle answer for the session's
-  channel and launch, so a relaunch, or a channel that closed and reopened, starts it again; a turn
-  that ends does not. The timestamp is in memory, so a server restart costs the first mail afterwards
-  one interval. It is a rule of its own and does not depend on the idle streak
+  channel and launch, so a relaunch, or a channel that closed and reopened, starts it again. It also
+  starts again when a turn ends: an idle answer that follows a `busy` one on the same channel holds
+  for one interval too, because a turn's end is the other moment the thread can read idle before the
+  pane has caught up. An `unknown` answer in between does not restart it. On 0.156.1, the one version
+  with a channel today, that delays the first nudge after an observed turn by one interval and never
+  types sooner. Its limit: the thread is asked only while mail is waiting, so a turn that starts and
+  ends with no mail waiting is never seen busy and does not restart the hold. The timestamp is in
+  memory, so a server restart costs the first mail afterwards one interval. It is a rule of its own and does not depend on the idle streak
   (`IDLE_TICKS_REQUIRED`), which is counted from after it. The hold delays a nudge and refuses no
   screen: a startup screen or dialog still up when the interval has passed is judged by the pane gate
   alone.

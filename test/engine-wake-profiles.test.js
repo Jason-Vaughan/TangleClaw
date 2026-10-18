@@ -203,9 +203,16 @@ describe('the wake signature is declared in the engine profile (#1255)', () => {
           // entry; an entry's own evidence is provenance and is not derived.
           assert.deepEqual(Object.keys(derived.restRows), Object.keys(value), `${id}.restRows must keep exactly the declared versions`);
           for (const [version, entry] of Object.entries(value)) {
-            assert.deepEqual(Object.keys(derived.restRows[version]), ['footerRe'], `${id}.restRows.${version} derives the compiled footer and nothing else`);
-            assert.ok(derived.restRows[version].footerRe instanceof RegExp);
-            assert.equal(derived.restRows[version].footerRe.source, entry.footerPattern, `${id}.restRows.${version}: the compiled pattern must be the declared one`);
+            const compiled = derived.restRows[version];
+            // The rows around a turn are compiled only where the entry declares them.
+            const keys = entry.turnEnd === undefined ? ['footerRe'] : ['footerRe', 'turnRowRe', 'endRowRes'];
+            assert.deepEqual(Object.keys(compiled), keys, `${id}.restRows.${version} derives the compiled patterns it declares and nothing else`);
+            assert.ok(compiled.footerRe instanceof RegExp);
+            assert.equal(compiled.footerRe.source, entry.footerPattern, `${id}.restRows.${version}: the compiled pattern must be the declared one`);
+            if (entry.turnEnd !== undefined) {
+              assert.equal(compiled.turnRowRe.source, new RegExp(entry.turnEnd.turnRowPattern).source, `${id}.restRows.${version}.turnEnd.turnRowPattern`);
+              assert.deepEqual(compiled.endRowRes.map((re) => re.source), entry.turnEnd.endRowPatterns.map((p) => new RegExp(p).source), `${id}.restRows.${version}.turnEnd.endRowPatterns`);
+            }
           }
           continue;
         }
@@ -830,12 +837,15 @@ describe('restRows: what an exact engine version draws below its composer (#2059
     const declared = block('codex').restRows;
     assert.deepEqual(Object.keys(declared), ['0.161.0', '0.162.0']);
     for (const [version, row] of Object.entries(declared)) {
-      assert.deepEqual(Object.keys(row), ['footerPattern', 'evidence']);
-      assert.match(row.evidence.verifiedOn, /^\d{4}-\d{2}-\d{2}$/);
-      assert.ok(row.evidence.source.includes(`codex-cli ${version}`), `${version}'s evidence is its own`);
-      assert.ok(row.evidence.source.includes('Not inferred from any other version'));
+      assert.deepEqual(Object.keys(row), ['footerPattern', 'turnEnd', 'evidence']);
+      for (const evidence of [row.evidence, row.turnEnd.evidence]) {
+        assert.match(evidence.verifiedOn, /^\d{4}-\d{2}-\d{2}$/);
+        assert.ok(evidence.source.includes(`codex-cli ${version}`), `${version}'s evidence is its own`);
+        assert.ok(evidence.source.includes('Not inferred from any other version'));
+      }
     }
     assert.notEqual(declared['0.161.0'].evidence.source, declared['0.162.0'].evidence.source);
+    assert.notEqual(declared['0.161.0'].turnEnd.evidence.source, declared['0.162.0'].turnEnd.evidence.source);
     // Declaring a version's rows is not admitting it.
     const verified = bundled().find((b) => b.profile.id === 'codex').profile.capabilities.startupControl.verifiedVersions;
     for (const version of Object.keys(declared)) assert.equal(verified.includes(version), false, `${version} is not a verified version`);
@@ -884,6 +894,49 @@ describe('restRows: what an exact engine version draws below its composer (#2059
       assert.match(wake._wakeBlockErrors(b).join(' '), /restRows must be/, JSON.stringify(row));
       assert.equal(derive(b).probe, undefined);
     }
+  });
+
+  describe('turnEnd: the rows an exact version draws around a turn', () => {
+    const TURN_END = () => ({
+      turnRowPattern: '^[›•] ',
+      endRowPatterns: ['^  Worked for \\d', '^■ Conversation interrupted'],
+      evidence: { ...EVIDENCE }
+    });
+
+    it('a well-formed member loads, compiled and frozen; an entry without one compiles to its footer alone', () => {
+      const b = withRows({ '0.161.0': entry({ turnEnd: TURN_END() }), '0.162.0': entry() });
+      assert.deepEqual(wake._wakeBlockErrors(b), []);
+      const rows = derive(b).probe.restRows;
+      assert.equal(rows['0.161.0'].turnRowRe.source, '^[›•] ');
+      assert.deepEqual(rows['0.161.0'].endRowRes.map((re) => re.source), ['^  Worked for \\d', '^■ Conversation interrupted']);
+      assert.ok(Object.isFrozen(rows['0.161.0']) && Object.isFrozen(rows['0.161.0'].endRowRes));
+      assert.deepEqual(Object.keys(rows['0.162.0']), ['footerRe']);
+    });
+
+    it('refuses a member that is not one, a key the gate does not read, or a missing or bad provenance', () => {
+      const bad = [
+        null, [], 'x', {},
+        { ...TURN_END(), extra: 1 },
+        { ...TURN_END(), evidence: undefined }, { ...TURN_END(), evidence: { verifiedOn: '2026-10-12' } },
+        { ...TURN_END(), evidence: { verifiedOn: '12 Oct 2026', source: 'x' } },
+        { ...TURN_END(), endRowPatterns: [] }, { ...TURN_END(), endRowPatterns: '^  Worked for \\d' }
+      ];
+      for (const turnEnd of bad) {
+        const b = withRows({ '0.161.0': entry({ turnEnd }) });
+        assert.match(wake._wakeBlockErrors(b).join(' '), /restRows must be/, JSON.stringify(turnEnd));
+        assert.equal(derive(b).probe, undefined, JSON.stringify(turnEnd));
+      }
+    });
+
+    it('refuses a pattern not anchored at the row\'s start, one with alternation, one that needs no text, or one that does not compile', () => {
+      for (const loose of ['[›•] ', '^a|b', '^(a|b)', '^', '^.*', '^(unclosed', '', null, 7]) {
+        for (const turnEnd of [{ ...TURN_END(), turnRowPattern: loose }, { ...TURN_END(), endRowPatterns: ['^  Worked for \\d', loose] }]) {
+          const b = withRows({ '0.161.0': entry({ turnEnd }) });
+          assert.match(wake._wakeBlockErrors(b).join(' '), /restRows must be/, JSON.stringify(turnEnd));
+          assert.equal(derive(b).probe, undefined, JSON.stringify(turnEnd));
+        }
+      }
+    });
   });
 
   it('the table needs the block\'s own evidence entry too, like every declared field', () => {

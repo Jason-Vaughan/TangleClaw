@@ -144,7 +144,11 @@ const ON_FRESH_IDLE = {
   // An empty status line at rest: one row, the footer with a context item
   // beside it. That is not the declared footer, so this gate does not refuse
   // it; the startup fire's witness does.
-  idleEmptyStatus: null
+  idleEmptyStatus: null,
+  // An answer still being drawn, with no busy row, on a version that declares
+  // its rows around a turn: a turn row above the composer and no end-of-turn
+  // row after it.
+  streamingDefaultLayout: 'pane-turn-in-flight'
 };
 
 /**
@@ -153,7 +157,7 @@ const ON_FRESH_IDLE = {
  * nothing may be typed into them. An entry here records a hole, not a safety
  * property, and a green test over it proves only that the hole is still there.
  *
- * Two kinds of pane are listed.
+ * One pane is listed.
  *
  * The opening screen of 0.159.0. Codex draws its empty composer on the screen
  * it opens with, before the folder-trust or update prompt replaces it: no busy
@@ -176,17 +180,17 @@ const ON_FRESH_IDLE = {
  * no pane, so a screen that is still up when the interval has passed is typed
  * into exactly as before.
  *
- * A streaming answer on 0.161.0 and on 0.162.0. While the answer streams,
- * each draws no busy row: an empty composer with the cursor on it, the status
- * row and the declared footer below, exactly as at rest. Only the transcript
- * above the composer says a turn is running, and the gate does not read it.
- * What keeps a nudge out of a running turn is the channel answering `busy`,
- * and it did on every tick measured. But the thread's answer comes from the
- * app-server and the pane from the TUI client, and they can disagree: with
- * the client stopped mid-answer and the turn then ending, each version's
- * thread read idle under this very frame, the gate called it at the prompt
- * and the nudge was typed into it (signed in, 2026-10-12, each version in its
- * own run). So neither version is verified, and a block below keeps it so.
+ * A streaming answer on 0.161.0 and on 0.162.0 was listed here too, and is
+ * not any more. While the answer streams, each draws no busy row: an empty
+ * composer with the cursor on it, the status row and the declared footer
+ * below, exactly as at rest. With the client stopped mid-answer and the turn
+ * then ending, each version's thread read idle under that frame and the nudge
+ * was typed into it (signed in, 2026-10-12). Each version now declares its own
+ * rows around a turn (`restRows.<version>.turnEnd`), and the gate holds a pane
+ * whose transcript has a turn row and no end-of-turn row after it. That reads
+ * the visible pane only: an answer long enough to scroll its one opening row
+ * off it is not recognised, so neither version is verified by this, and a
+ * block below keeps it so.
  *
  * An empty composer cannot be the refusal, because a usable session shows the
  * same one. When the gate refuses one of these panes, its name leaves this
@@ -196,12 +200,10 @@ const ON_FRESH_IDLE = {
  * about what a whole read of that version holds.
  */
 const KNOWN_UNSAFE_IF_CHANNEL_IDLE = {
-  '0.159.0': ['startScreen'],
-  '0.161.0': ['streamingDefaultLayout'],
-  '0.162.0': ['streamingDefaultLayout']
+  '0.159.0': ['startScreen']
 };
 
-/** The listed panes that are a streaming answer, not an opening screen. */
+/** The captured pane of an answer still streaming, drawn with no busy row. */
 const STREAMING_PANE = 'streamingDefaultLayout';
 
 /**
@@ -724,20 +726,29 @@ describe('the opening and resuming screens of a version that declares its footer
       assert.equal(verdictAt([...fx.lines.busyDefaultLayout], version), 'turn-in-flight');
     });
 
-    it(`codex-cli ${version}: a streaming turn draws no busy row, and is held by the channel's answer and by the transcript moving`, async () => {
+    it(`codex-cli ${version}: a streaming turn draws no busy row, and is held by the channel's answer, by the transcript moving and by its own turn rows`, async () => {
       const { streamingFirst, streamingNext } = fx.turnFrames;
       for (const frame of [streamingFirst, streamingNext]) {
         assert.ok(!frame.lines.join('\n').includes(shipped().busyMarker), 'no busy marker is drawn while the answer streams');
-        // The limit, stated: read alone, with an idle answer nothing real would
-        // give while this is up, the pane gate does not refuse this frame.
-        assert.equal(verdictAt([...frame.lines], version), 'idle');
+        // Read alone, with an idle answer, the frame is held by the version's
+        // own rows around a turn: a turn row above the composer and no
+        // end-of-turn row after it. With no version named nothing declares them.
+        assert.equal(verdictAt([...frame.lines], version), 'turn-in-flight');
+        assert.equal(verdictAt([...frame.lines], null), 'idle');
       }
       assert.equal(fx.threads.userActive.status.type, 'active', 'the thread reports the turn');
       assert.deepEqual(await judge([...streamingFirst.lines], CHANNEL_ANSWERS.busy), { injected: 0, held: 'engine-thread-busy' });
-      // Even under an idle answer, two reads of a transcript that moved are not at rest.
-      const moving = wake.assessSessionIdle({ lines: [...streamingFirst.lines], profile: shipped(), cursor: null, engineIdle: true, engineVersion: version });
-      const next = wake.assessSessionIdle({ lines: [...streamingNext.lines], profile: shipped(), cursor: null, engineIdle: true, engineVersion: version, prevDigest: moving.digest, idleTicks: moving.idleTicks });
-      assert.deepEqual({ idle: next.idle, reason: next.reason, idleTicks: next.idleTicks }, { idle: false, reason: 'pane-writing', idleTicks: 0 });
+      // Even under an idle answer, two reads of a transcript that moved are not
+      // at rest. The turn rows speak first where the version is named; with no
+      // version the movement alone still holds it.
+      const across = (engineVersion) => {
+        const named = engineVersion ? { engineVersion } : {};
+        const moving = wake.assessSessionIdle({ lines: [...streamingFirst.lines], profile: shipped(), cursor: null, engineIdle: true, ...named });
+        const next = wake.assessSessionIdle({ lines: [...streamingNext.lines], profile: shipped(), cursor: null, engineIdle: true, ...named, prevDigest: moving.digest, idleTicks: moving.idleTicks });
+        return { idle: next.idle, reason: next.reason, idleTicks: next.idleTicks };
+      };
+      assert.deepEqual(across(version), { idle: false, reason: 'turn-in-flight', idleTicks: 0 });
+      assert.deepEqual(across(null), { idle: false, reason: 'pane-writing', idleTicks: 0 });
     });
   }
 
@@ -985,14 +996,40 @@ describe('the folder hold, the settling hold and the pane refusals act in that o
     assert.equal(out.injected, 1);
     assert.deepEqual(out.holds.slice(0, 3), [ASKING, 'engine-thread-settling', 'pane-turn-in-flight']);
   });
+
+  /**
+   * Ticks the thread answers idle over a drawn turn, then ticks it answers the
+   * given state, before the turn's end. The pane then changes to one at rest,
+   * so its first read after the gates reopen is `pane-writing`.
+   */
+  const IDLE_FIRST = 6;
+  const THEN_FOR = 3;
+  /**
+   * The thread settles idle over a drawn turn, answers `then` for a while, then idle again over a composer at rest.
+   * @param {object} then - The answer between the two idle stretches.
+   * @returns {Promise<{injected: number, holds: string[]}>}
+   */
+  const idleThenIdle = (then) => timeline(
+    (world) => (world.tick < IDLE_FIRST + THEN_FOR ? set.panes.busyRunState.lines : set.panes.idleRunState.lines),
+    [...Array(IDLE_FIRST).fill(IDLE), ...Array(THEN_FOR).fill(then), IDLE],
+    IDLE_FIRST + THEN_FOR + SETTLED_TICKS
+  );
+
+  it('the end of a turn seen busy starts the settling hold again on the same channel, then nudges once', async () => {
+    const out = await idleThenIdle({ channel: 'present', state: 'busy', reasonCode: 'thread-active' });
+    assert.deepEqual(out, { injected: 1, holds: [ASKING, 'engine-thread-settling', 'pane-turn-in-flight', 'engine-thread-busy', 'engine-thread-settling', 'pane-writing'] });
+  });
+
+  it('an idle answer after an unknown one does not start it again: only a turn seen busy does', async () => {
+    const out = await idleThenIdle({ channel: 'present', state: 'unknown', reasonCode: 'thread-ambiguous' });
+    assert.deepEqual(out, { injected: 1, holds: [ASKING, 'engine-thread-settling', 'pane-turn-in-flight', 'engine-thread-unknown', 'pane-writing'] });
+  });
 });
 
-describe('the known-unsafe list is one opening screen with nothing to refuse it and the streaming answer of two versions (#2059, #2187)', () => {
+describe('the known-unsafe list is one opening screen with nothing to refuse it, and the streaming answer of two versions is held by their own turn rows (#2059, #2187)', () => {
   it('names nothing else, so another hole cannot be added quietly', () => {
     assert.deepEqual(KNOWN_UNSAFE_IF_CHANNEL_IDLE, {
-      '0.159.0': ['startScreen'],
-      '0.161.0': ['streamingDefaultLayout'],
-      '0.162.0': ['streamingDefaultLayout']
+      '0.159.0': ['startScreen']
     });
   });
 
@@ -1030,8 +1067,8 @@ describe('the known-unsafe list is one opening screen with nothing to refuse it 
     }
   });
 
-  /** The versions whose streaming answer is listed. */
-  const STREAMING_VERSIONS = Object.keys(KNOWN_UNSAFE_IF_CHANNEL_IDLE).filter((cliVersion) => knownUnsafe(cliVersion, STREAMING_PANE));
+  /** The versions whose streaming answer was captured. */
+  const STREAMING_VERSIONS = CODEX_FIXTURE_SETS.filter((set) => STREAMING_PANE in set.panes).map((set) => set.cliVersion);
 
   /**
    * Run `fn` with the monitor stopped and its seams put back afterwards.
@@ -1049,8 +1086,12 @@ describe('the known-unsafe list is one opening screen with nothing to refuse it 
     }
   }
 
-  it('a streaming answer is listed for exactly the versions whose footer the profile declares', () => {
+  it('a streaming answer is captured for exactly the versions whose footer the profile declares, and each of them declares its rows around a turn', () => {
     assert.deepEqual(STREAMING_VERSIONS, DECLARED_VERSIONS);
+    for (const cliVersion of DECLARED_VERSIONS) {
+      assert.ok(wake.ENGINE_WAKE_PROFILES.codex.restRows[cliVersion].turnRowRe instanceof RegExp, cliVersion);
+      assert.equal(knownUnsafe(cliVersion, STREAMING_PANE), false, `${cliVersion}'s streaming answer is not on the list`);
+    }
   });
 
   for (const cliVersion of STREAMING_VERSIONS) {
@@ -1072,11 +1113,16 @@ describe('the known-unsafe list is one opening screen with nothing to refuse it 
       assert.doesNotMatch(above[above.length - 1], /^ {2}Worked for /, 'the answer is still being written: no end-of-turn row');
     });
 
-    it(`codex-cli ${cliVersion}: the pane gate alone calls that frame at the prompt once it has been still for the required ticks`, () => {
+    it(`codex-cli ${cliVersion}: still for the required ticks, the pane gate holds that frame as mid-turn under the version the channel names, and only under it`, () => {
       const codex = wake.ENGINE_WAKE_PROFILES.codex;
-      const first = wake.assessSessionIdle({ lines: [...pane.lines], profile: codex, cursor: null, engineIdle: true, engineVersion: cliVersion });
-      const second = wake.assessSessionIdle({ lines: [...pane.lines], profile: codex, cursor: null, engineIdle: true, engineVersion: cliVersion, prevDigest: first.digest, idleTicks: first.idleTicks });
-      assert.deepEqual({ idle: second.idle, reason: second.reason }, { idle: true, reason: 'at-prompt' });
+      const still = (engineVersion) => {
+        const first = wake.assessSessionIdle({ lines: [...pane.lines], profile: codex, cursor: null, engineIdle: true, ...(engineVersion ? { engineVersion } : {}) });
+        const second = wake.assessSessionIdle({ lines: [...pane.lines], profile: codex, cursor: null, engineIdle: true, ...(engineVersion ? { engineVersion } : {}), prevDigest: first.digest, idleTicks: first.idleTicks });
+        return { idle: second.idle, reason: second.reason };
+      };
+      assert.deepEqual(still(cliVersion), { idle: false, reason: 'turn-in-flight' });
+      // The limit, stated: with no version named nothing declares the rows, and the frame reads as rest.
+      assert.deepEqual(still(null), { idle: true, reason: 'at-prompt' });
     });
 
     it(`codex-cli ${cliVersion}: while the thread answers busy over that frame, it is held and nothing is typed`, async () => {
@@ -1086,14 +1132,12 @@ describe('the known-unsafe list is one opening screen with nothing to refuse it 
       });
     });
 
-    // The measured hole, pinned so that closing it turns this red: the frame
-    // does not change, the thread's answer goes from busy to idle, and after
-    // the settling interval the nudge is typed into a pane still showing an
-    // answer being written.
-    it(`KNOWN UNSAFE: codex-cli ${cliVersion}: the turn ends under the same still frame: settles, then is typed into`, async () => {
+    // The measured hole: the frame does not change, the thread's answer goes
+    // from busy to idle, and the pane still shows an answer being written.
+    it(`codex-cli ${cliVersion}: the turn ends under the same still frame: settles, then is held as mid-turn, nothing typed`, async () => {
       await withGate(async () => {
         const out = await timeline(pane.lines, [BUSY, BUSY, BUSY, { ...IDLE, version: cliVersion }], 3 + SETTLED_TICKS);
-        assert.deepEqual(out, { injected: 1, holds: ['engine-thread-unknown', 'engine-thread-busy', 'engine-thread-settling'] }, 'if nothing is typed now, the hole is closed for this version: take its pane off the list and pin its hold');
+        assert.deepEqual(out, { injected: 0, holds: ['engine-thread-unknown', 'engine-thread-busy', 'engine-thread-settling', 'pane-turn-in-flight'] });
       });
     });
   }
@@ -1104,5 +1148,154 @@ describe('the known-unsafe list is one opening screen with nothing to refuse it 
     for (const cliVersion of Object.keys(KNOWN_UNSAFE_IF_CHANNEL_IDLE)) {
       assert.ok(!verified.includes(cliVersion), `${cliVersion} is verified while its opening screen is known unsafe`);
     }
+  });
+});
+
+describe('every frame of the signed-in runs, replayed through the gate beside the thread status recorded with it (#2059)', () => {
+  const BUSY = { channel: 'present', state: 'busy', reasonCode: 'thread-active' };
+  const UNKNOWN = { channel: 'present', state: 'unknown', reasonCode: 'thread-ambiguous' };
+  /** What each version's recording holds, pinned so the data cannot shrink quietly. */
+  const RECORDED = { '0.161.0': { records: 399, panes: 393, frames: 239 }, '0.162.0': { records: 331, panes: 325, frames: 209 } };
+
+  let saved;
+  beforeEach(() => {
+    saved = { ...wake._internal };
+    wake.stop();
+  });
+  afterEach(() => {
+    wake.stop();
+    Object.assign(wake._internal, saved);
+  });
+
+  /**
+   * The recorded watch timeline of one version's fixture file.
+   * @param {string} cliVersion - codex-cli version
+   * @returns {{frames: object[], runs: Object<string, Array<{ms: number, frame: (number|null), thread: string, stopped: boolean}>>, files: object}}
+   */
+  const recorded = (cliVersion) => JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'codex-panes', `codex-${cliVersion}.json`), 'utf8')).watchTimeline;
+
+  /**
+   * The channel's answer for a record: the launch thread's recorded status, as
+   * the adapter would report it.
+   * @param {{thread: string}} record - One recorded sample
+   * @param {string} cliVersion - The version the channel proved
+   * @returns {object}
+   */
+  function answerFor(record, cliVersion) {
+    if (record.thread === 'idle') return { ...IDLE, version: cliVersion };
+    if (record.thread === 'active') return BUSY;
+    return UNKNOWN;
+  }
+
+  /**
+   * Replay one run through the real scan: one tick per record, at the record's
+   * own time, reading its frame, with the channel answering what the thread was
+   * recorded as. Mail is always waiting: each nudge is followed by a new
+   * message, so every record asks the gate whether it may type. `held` is the
+   * standing hold: the ledger writes a verdict once for as long as it lasts.
+   * @param {string} cliVersion - codex-cli version
+   * @param {string} run - The run's letter
+   * @param {number} [restTicks=0] - Monitor intervals to go on after the last
+   *   record with its frame and thread status unchanged: not recorded, the
+   *   session simply left at rest.
+   * @returns {Promise<Array<{ms: number, frame: (number|null), thread: string, stopped: boolean, typed: boolean, held: (string|null)}>>}
+   */
+  async function replay(cliVersion, run, restTicks = 0) {
+    const { frames, runs } = recorded(cliVersion);
+    const last = runs[run][runs[run].length - 1];
+    const records = [...runs[run], ...Array.from({ length: restTicks }, (_, i) => ({ ...last, ms: last.ms + (i + 1) * INTERVAL_MS }))];
+    const world = { clock: 0, at: 0, injected: 0, hold: null };
+    const s = installSeams(world, {
+      pane: () => {
+        const record = records[world.at];
+        if (record.frame === null) throw new Error('the recorded capture failed');
+        return [...frames[record.frame].rows];
+      },
+      channelOpen: true,
+      observe: () => Promise.resolve(answerFor(records[world.at], cliVersion)),
+      onDelivery: (entry) => { world.hold = entry.outcome === 'skipped' ? entry.skipReason : null; },
+      onInject: () => { world.injected += 1; world.hold = null; }
+    });
+    const open = s.openChannel;
+    s.openChannel = () => (records[world.at].thread === 'absent' ? null : open());
+    s.getMessages = () => [{ id: `m${world.injected}`, from: 'peer', message: 'hello' }];
+    const start = 5_000_000;
+    const out = [];
+    for (let i = 0; i < records.length; i++) {
+      world.at = i;
+      world.clock = start + records[i].ms;
+      const before = world.injected;
+      s.tick();
+      await settle();
+      const typed = world.injected > before;
+      out.push({ ...records[i], typed, held: typed ? null : world.hold });
+    }
+    return out;
+  }
+
+  for (const cliVersion of Object.keys(RECORDED)) {
+    const data = recorded(cliVersion);
+    const codex = () => wake.ENGINE_WAKE_PROFILES.codex;
+    const rows = (frame) => data.frames[frame].rows;
+
+    it(`codex-cli ${cliVersion}: the recording is whole, its sources are named by digest, and no scratch path survives`, () => {
+      const records = Object.values(data.runs).flat();
+      assert.deepEqual(Object.keys(data.runs), ['A', 'B', 'E', 'N', 'S', 'U']);
+      assert.deepEqual({ records: records.length, panes: records.filter((r) => r.frame !== null).length, frames: data.frames.length }, RECORDED[cliVersion]);
+      for (const run of Object.keys(data.runs)) {
+        assert.match(data.files[`${run}-watch.jsonl`], /^[0-9a-f]{64}$/);
+        assert.match(data.files[`${run}-marks.txt`], /^[0-9a-f]{64}$/);
+      }
+      const text = JSON.stringify(data.frames);
+      assert.ok(!/\/private\/tmp\/tcb2059b\.(?!XXXXXX)/.test(text), 'every scratch directory is the placeholder');
+      assert.ok(!/@[\w-]+\.\w+/.test(text), 'no address');
+    });
+
+    it(`codex-cli ${cliVersion}: every frame is replayed, and nothing is typed into a frame left by a stopped client or one still drawing a turn`, async () => {
+      let replayed = 0;
+      for (const run of Object.keys(data.runs)) {
+        const ticks = await replay(cliVersion, run);
+        replayed += ticks.filter((t) => t.frame !== null).length;
+        for (const [i, t] of ticks.entries()) {
+          if (!t.typed) continue;
+          assert.equal(t.stopped, false, `${run}[${i}] typed into a stopped frame`);
+          assert.notEqual(t.frame, null, `${run}[${i}]`);
+          assert.equal(wake._paneTurnInFlight(rows(t.frame), codex(), cliVersion), false, `${run}[${i}] typed into a turn still being drawn`);
+        }
+      }
+      assert.equal(replayed, RECORDED[cliVersion].panes);
+    });
+
+    it(`codex-cli ${cliVersion}: the stopped run holds while the thread reads idle under the still frame, and is next nudged under the drawn end of the turn`, async () => {
+      // The recording ends a few seconds after the turn's end is drawn, inside
+      // the settling hold and the idle streak; the session is then left at rest.
+      const ticks = await replay(cliVersion, 'S', SETTLED_TICKS);
+      const stopped = ticks.filter((t) => t.stopped);
+      const idleUnderStill = stopped.filter((t) => t.thread === 'idle');
+      assert.ok(idleUnderStill.length > 0, 'the thread read idle under the stopped frame');
+      assert.ok(stopped.every((t) => !t.typed));
+      // The one-tick lag of the channel's answer shows as busy on the first;
+      // then the turn's end restarts the settling hold; then the frame's own rows hold.
+      assert.ok(idleUnderStill.every((t) => ['engine-thread-busy', 'engine-thread-settling', 'pane-turn-in-flight'].includes(t.held)), idleUnderStill.map((t) => t.held).join());
+      assert.ok(idleUnderStill.some((t) => t.held === 'pane-turn-in-flight'), 'the still frame itself is refused');
+      const lastStopped = ticks.lastIndexOf(stopped[stopped.length - 1]);
+      // Each nudge is followed by a new message, so a session left at rest is
+      // nudged again; the first nudge after the stop is the one in question.
+      const after = ticks.slice(lastStopped + 1).filter((t) => t.typed);
+      assert.ok(after.length > 0, 'nudged once the client has caught up');
+      assert.ok(ticks.slice(lastStopped + 1).every((t) => t.held !== 'pane-turn-in-flight' || wake._paneTurnInFlight(rows(t.frame), codex(), cliVersion)), 'a drawn end of turn is never held as mid-turn');
+      const above = rows(after[0].frame).filter((row) => row.trim() !== '');
+      const composer = above.findIndex((row) => codex().promptRe.test(row));
+      assert.ok(codex().restRows[cliVersion].endRowRes.some((re) => re.test(above[composer - 1])), `nudged under an end-of-turn row: ${above[composer - 1]}`);
+    });
+  }
+
+  it('codex-cli 0.161.0: the frame drawn while the server was unreachable is held as mid-turn under an idle answer', () => {
+    const data = recorded('0.161.0');
+    const reconnecting = data.runs.E.filter((t) => t.thread === 'error');
+    assert.equal(reconnecting.length, 1);
+    const lines = data.frames[reconnecting[0].frame].rows;
+    assert.ok(lines.some((row) => row.startsWith('• Reconnecting to server')));
+    assert.deepEqual(wake._assessPane(lines, wake.ENGINE_WAKE_PROFILES.codex, null, true, '0.161.0'), { idle: false, reason: 'turn-in-flight' });
   });
 });
