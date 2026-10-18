@@ -26,7 +26,9 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
-- A web UI launch's `201` now includes `privateTempRoot: null`, so the key is present on both launch paths as documented; engine launches still return their root account (#2171). `isolationOverride` and `launchMode` parity remain open in #2484.
+- Only the session holding a shared-document lock, or the Operator, can release it. Another group member gets `NOT_LOCK_HOLDER` and the lock stays; expired or absent locks still release successfully. The lock route's body-supplied session id remains tracked in #2489 (#2290).
+- A web UI launch's `201` now includes `launchMode` and `isolationOverride`, matching the tmux launch response. The web UI reports the mode actually recorded for the session and `isolationOverride: null`, because it starts no local engine (#2484).
+- A web UI launch's `201` now includes `privateTempRoot: null`, so the key is present on both launch paths as documented; engine launches still return their root account (#2171).
 - The fleet runbook's release-owner check now works from a project pane: each member reports its own `releaseMode`, and the group is checked from all members' reports. A verified Project Master can check it in one step (#1777).
 - `tc start status` no longer says an already attested READY session "will need a reconciliation"; the status has none owed, and a newer CLI guards against that line from an older server (#2146).
 - Recovery test files no longer wait about 90 s after their last test: the launch kickoff's idle poll no longer holds a process open alone, and the recovery fixture stands in for deferred work while its store is open (#2253).
@@ -50,9 +52,12 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- The Full Disk Access advice for a directory that never answers has one owner in the directory scanner. The operator-facing wording remains unchanged, and a cached refusal alone no longer triggers the advice (#1351).
+- Ten more test files use the shared source-lifting helper with byte-identical lifted text; 46 private copies remain (#1903, Chunk 06).
+- The absent-Bridge toggle test uses a deterministic probe seam, so a reused port pair or a loaded host cannot change its verdict. Its prior failure's cause remains unknown (#2485).
 - Eleven more private test lifters use the shared helper with byte-identical extracted text; the inventory shrinks from 67 to 56. #1903 remains open for later chunks (#1903, Chunk 05).
 - Tests now execute the live wrap stream client and drawer against an `EventSource` double and DOM fixture, including stale frames, stream loss and repaint; the existing wiring test covers the terminal handoff (#1219).
-- Pane-identity spawn tests allow a slow stub `tmux` up to 30 s, so load cannot turn a mismatch refusal into a pass-through. The product's 1 s pane-read limit is unchanged (#2481). The unrelated Bridge-port suite race remains open in #2485.
+- Pane-identity spawn tests allow a slow stub `tmux` up to 30 s, so load cannot turn a mismatch refusal into a pass-through. The product's 1 s pane-read limit is unchanged (#2481).
 - Ten more test files use the shared lift helper with byte-identical lifted text; the private-lifter inventory shrinks from 77 to 67 (#1903, Chunk 04).
 - Both `server.js` launch session-active judgments now call `sessionIsActive`; the stale standalone `(R-13)` JSDoc marker is gone (#2285).
 - The systemd restart command uses `SYSTEMD_USER_UNIT`; tests pin the disabled-button diagnostic across repeated and changed reasons (#1563).
