@@ -23,29 +23,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { makeDocument } = require('./_mini-dom');
+const { liftDeclaration } = require('./helpers/lift');
 
 const PUB = path.join(__dirname, '..', 'public');
 const UI_SRC = fs.readFileSync(path.join(PUB, 'ui.js'), 'utf8');
 const LANDING_SRC = fs.readFileSync(path.join(PUB, 'landing.js'), 'utf8');
-
-/**
- * Slice a top-level function out of source text by brace-matching, so the
- * sandbox runs the REAL code rather than a copy.
- * @param {string} src - File source text
- * @param {string} decl - Declaration to find
- * @returns {string} The declaration plus its balanced body
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 const UI_FUNCTIONS = [
   'function recoveryModeControlOffer', 'function isolationOverrideRiskText', 'function isolationOverrideStands',
@@ -64,9 +46,9 @@ const UI_FUNCTIONS = [
 function sandbox(extra) {
   const ctx = { window: {}, state: { projects: [{ id: 7, name: 'alpha' }] }, confirm: () => true, ...(extra || {}) };
   vm.createContext(ctx);
-  vm.runInContext(liftFunction(LANDING_SRC, 'function esc(str)'), ctx);
+  vm.runInContext(liftDeclaration(LANDING_SRC, 'function esc(str)'), ctx);
   vm.runInContext('let isolationOverrideNotice = null; let isolationOverrideReveal = false; let projectRulesTargetId = null;', ctx);
-  for (const decl of UI_FUNCTIONS) vm.runInContext(liftFunction(UI_SRC, decl), ctx);
+  for (const decl of UI_FUNCTIONS) vm.runInContext(liftDeclaration(UI_SRC, decl), ctx);
   return ctx;
 }
 
@@ -456,10 +438,10 @@ describe('A refused launch leads to the override (#2229)', () => {
     const { doc } = makeDocument(['toast']);
     const opened = [];
     const ctx = sandbox({ document: doc, openSettings: (name) => opened.push(name) });
-    vm.runInContext(liftFunction(LANDING_SRC, 'function appendLaunchIsolationPointer'), ctx);
+    vm.runInContext(liftDeclaration(LANDING_SRC, 'function appendLaunchIsolationPointer'), ctx);
     // The dashboard's one writer of the toast, which owns what a message adds.
-    vm.runInContext(liftFunction(UI_SRC, 'function showToast('), ctx);
-    vm.runInContext(liftFunction(UI_SRC, 'function hideToast('), ctx);
+    vm.runInContext(liftDeclaration(UI_SRC, 'function showToast('), ctx);
+    vm.runInContext(liftDeclaration(UI_SRC, 'function hideToast('), ctx);
     const toast = doc.getElementById('toast');
     ctx.showToast('Launch failed: refused', 'warn', 0, { sticky: true, action: (t) => ctx.appendLaunchIsolationPointer(t, 'alpha', me) });
     return { toast, opened, ctx };
@@ -467,7 +449,7 @@ describe('A refused launch leads to the override (#2229)', () => {
 
   it('is offered for the two version refusals and no other', () => {
     const ctx = sandbox();
-    vm.runInContext(liftFunction(LANDING_SRC, 'function launchRefusalIsOverridable'), ctx);
+    vm.runInContext(liftDeclaration(LANDING_SRC, 'function launchRefusalIsOverridable'), ctx);
     const refusal = (reasonCode, code) => ({ error: 'x', code: code || 'LAUNCH_ISOLATION_UNVERIFIED', reasonCode });
     assert.equal(ctx.launchRefusalIsOverridable(refusal('version_unknown')), true);
     assert.equal(ctx.launchRefusalIsOverridable(refusal('version_unverified')), true);
@@ -527,10 +509,10 @@ describe('A refused launch leads to the override (#2229)', () => {
       strandedLaunch: null
     });
     for (const decl of ['function launchRefusalIsOverridable', 'function appendLaunchIsolationPointer', 'async function doLaunchProject']) {
-      vm.runInContext(liftFunction(LANDING_SRC, decl), ctx);
+      vm.runInContext(liftDeclaration(LANDING_SRC, decl), ctx);
     }
-    vm.runInContext(liftFunction(UI_SRC, 'function showToast('), ctx);
-    vm.runInContext(liftFunction(UI_SRC, 'function hideToast('), ctx);
+    vm.runInContext(liftDeclaration(UI_SRC, 'function showToast('), ctx);
+    vm.runInContext(liftDeclaration(UI_SRC, 'function hideToast('), ctx);
     await ctx.doLaunchProject('alpha', 'default');
     return { toast, timers, asked: api.calls.map((c) => c.url) };
   }
@@ -594,7 +576,7 @@ describe('The override\'s screens are wired into the two Settings modals (#2229)
   it('Project Settings holds the switch\'s box and loads it with the panel', () => {
     assert.match(UI_SRC, /<div class="form-label">Launch isolation override<\/div>/);
     assert.match(UI_SRC, /id="projIsolationOverride" aria-live="polite"/);
-    assert.match(liftFunction(UI_SRC, 'async function loadProjectRules'), /await refreshProjectIsolationOverride\(projectId\);/);
+    assert.match(liftDeclaration(UI_SRC, 'async function loadProjectRules'), /await refreshProjectIsolationOverride\(projectId\);/);
   });
 
   it('Project Settings loads the Launch readiness line and the switch for the project it opened', async () => {
@@ -606,7 +588,7 @@ describe('The override\'s screens are wired into the two Settings modals (#2229)
     ctx.refreshProjectLaunchIsolationLine = async (id) => { calls.push(`line ${id}`); };
     ctx.refreshProjectIsolationOverride = async (id) => { calls.push(`switch ${id}`); };
     vm.runInContext('let projectRulesTargetName = null; let projectRecoveryModeNotice = null;'
-      + liftFunction(UI_SRC, 'async function loadProjectRules'), ctx);
+      + liftDeclaration(UI_SRC, 'async function loadProjectRules'), ctx);
     await ctx.loadProjectRules(7, 'alpha');
     assert.deepEqual(calls, ['line 7', 'switch 7']);
     assert.match(UI_SRC, /id="projLaunchIsolationLine" aria-live="polite"/);
@@ -624,8 +606,8 @@ describe('The override\'s screens are wired into the two Settings modals (#2229)
       document: { getElementById: (id) => (id === 'projLaunchIsolationLine' ? box : null) },
       state: { projects: [{ id: 7, name: 'alpha', session: { active: true } }] }
     });
-    vm.runInContext(liftFunction(UI_SRC, 'function launchIsolationOverrideLineHtml'), ctx);
-    vm.runInContext(liftFunction(UI_SRC, 'async function refreshProjectLaunchIsolationLine'), ctx);
+    vm.runInContext(liftDeclaration(UI_SRC, 'function launchIsolationOverrideLineHtml'), ctx);
+    vm.runInContext(liftDeclaration(UI_SRC, 'async function refreshProjectLaunchIsolationLine'), ctx);
     vm.runInContext('projectRulesTargetId = 7;', ctx);
     await ctx.refreshProjectLaunchIsolationLine(7);
     assert.deepEqual(api.calls.map((c) => `${c.method} ${c.url}`), ['GET /api/launch/isolation']);
@@ -638,7 +620,7 @@ describe('The override\'s screens are wired into the two Settings modals (#2229)
   });
 
   it('Global Settings holds the install-wide switch\'s box and loads it on open', () => {
-    const open = liftFunction(UI_SRC, 'function openGlobalSettings');
+    const open = liftDeclaration(UI_SRC, 'function openGlobalSettings');
     assert.match(open, /<div class="gs-section-label">Launch isolation override<\/div>/);
     assert.match(open, /refreshIsolationOverride\(document\.getElementById\('gsIsolationOverrideSection'\), 'install', null\);/);
   });
@@ -661,8 +643,8 @@ describe('The override\'s screens are wired into the two Settings modals (#2229)
         .filter((line) => !line.startsWith('*') && !line.startsWith('//'));
       assert.deepEqual(code, ['const settings = await once(\'/api/launch/isolation-overrides\');'], 'landing.js only reads the overrides');
     }
-    const wire = liftFunction(UI_SRC, 'function wireIsolationOverride');
+    const wire = liftDeclaration(UI_SRC, 'function wireIsolationOverride');
     assert.doesNotMatch(wire, /\/api\/config|apiMutate|\bfetch\(/);
-    assert.match(liftFunction(UI_SRC, 'async function refreshIsolationOverride'), /await api\('\/api\/launch\/isolation-overrides'\)/);
+    assert.match(liftDeclaration(UI_SRC, 'async function refreshIsolationOverride'), /await api\('\/api\/launch\/isolation-overrides'\)/);
   });
 });
