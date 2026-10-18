@@ -13,6 +13,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const loadApiHelperGlobals = require('./_api-helper-globals');
+const { liftDeclaration } = require('./helpers/lift');
 
 const PUBLIC = path.join(__dirname, '..', 'public');
 const LANDING_SRC = fs.readFileSync(path.join(PUBLIC, 'landing.js'), 'utf8');
@@ -20,24 +21,17 @@ const SESSION_SRC = fs.readFileSync(path.join(PUBLIC, 'session.js'), 'utf8');
 const UI_SRC = fs.readFileSync(path.join(PUBLIC, 'ui.js'), 'utf8');
 
 /**
- * Slice a top-level function out of a script by brace matching.
+ * Slice a top-level function out of a script, from the start of its line, so an
+ * `async ` before `function` stays in the text the sandbox runs.
  * @param {string} src
  * @param {string} name
  * @returns {string}
  */
 function extract(src, name) {
-  const start = src.indexOf(`function ${name}(`);
-  assert.ok(start > -1, `${name} should exist`);
-  const head = src.lastIndexOf('\n', start) + 1;
-  let depth = 0;
-  for (let i = src.indexOf('{', start); i < src.length; i += 1) {
-    if (src[i] === '{') depth += 1;
-    else if (src[i] === '}') {
-      depth -= 1;
-      if (depth === 0) return src.slice(head, i + 1);
-    }
-  }
-  throw new Error(`could not brace-match ${name}`);
+  const decl = `function ${name}(`;
+  const lifted = liftDeclaration(src, decl);
+  const start = src.indexOf(decl);
+  return src.slice(src.lastIndexOf('\n', start) + 1, start) + lifted;
 }
 
 const escHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')

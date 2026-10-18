@@ -19,22 +19,17 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { liftDeclaration } = require('./helpers/lift');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
 
-/** Slice a top-level function out of the source by brace matching. */
+/**
+ * Slice a top-level function out of the source.
+ * @param {string} name - Function name as declared.
+ * @returns {string} The full declaration text.
+ */
 function extract(name) {
-  const start = SRC.indexOf(`function ${name}(`);
-  assert.ok(start > -1, `${name} should exist in landing.js`);
-  let depth = 0;
-  for (let i = SRC.indexOf('{', start); i < SRC.length; i++) {
-    if (SRC[i] === '{') depth++;
-    else if (SRC[i] === '}') {
-      depth--;
-      if (depth === 0) return SRC.slice(start, i + 1);
-    }
-  }
-  throw new Error(`could not brace-match ${name}`);
+  return liftDeclaration(SRC, `function ${name}(`);
 }
 
 /** A DOM stub exposing just what the renderer touches. */

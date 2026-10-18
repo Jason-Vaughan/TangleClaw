@@ -708,3 +708,105 @@ describe('changelog-coverage — what the wrap will not commit (#2160)', () => {
     }
   });
 });
+
+describe('changelog-coverage — judges the commit a dormant methodology lets the wrap make (#2470)', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const nodePath = require('node:path');
+  const { execSync, execFileSync } = require('node:child_process');
+  const ownership = require('../lib/wrap-steps/_file-ownership');
+  const governance = require('../lib/governance-state');
+
+  const DORMANT = { disposition: 'capability-unavailable', available: false, engineId: 'codex' };
+  const RUNNABLE = { disposition: 'available', available: true, engineId: 'claude' };
+  const DECLARED = ['.prawduct/CHANGELOG.md'];
+
+  let root;
+  beforeEach(() => {
+    root = fs.realpathSync(fs.mkdtempSync(nodePath.join(os.tmpdir(), 'tc-withheld-')));
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  /**
+   * Commit a repo whose changelog is declared under `.prawduct/`, then dirty that
+   * changelog and a source file as the session's own edits.
+   *
+   * @returns {object} The wrap scope for the dirtied tree.
+   */
+  function dirtyWithheldChangelog() {
+    const git = (cmd) => execSync(`git -c user.email=t@t -c user.name=t ${cmd}`, { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] });
+    initRepo(root);
+    fs.mkdirSync(nodePath.join(root, '.prawduct'));
+    fs.writeFileSync(nodePath.join(root, '.prawduct', 'CHANGELOG.md'), '# Changelog\n');
+    fs.writeFileSync(nodePath.join(root, 'app.js'), 'v0\n');
+    git('add -A');
+    git('commit -q -m init');
+    const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+    fs.appendFileSync(nodePath.join(root, '.prawduct', 'CHANGELOG.md'), '- entry\n');
+    fs.writeFileSync(nodePath.join(root, 'app.js'), 'v1\n');
+    return {
+      snapshotApplies: true,
+      baseline: { sha, dirty: { paths: [] } },
+      startedAtMs: 0,
+      workToplevel: root
+    };
+  }
+
+  it('a withheld changelog edit does not satisfy coverage for work the commit ships', () => {
+    const scope = dirtyWithheldChangelog();
+    const out = cov.evaluate(root, DECLARED, [], scope, { methodology: DORMANT });
+    assert.equal(out.verdict, cov.VERDICTS.UNCOVERED,
+      'the commit leaves .prawduct/ out, so its changelog edit cannot log the work that ships');
+    assert.deepEqual(out.uncommittedWork, ['app.js']);
+  });
+
+  it('a runnable or absent methodology withholds nothing, so the same tree stays covered', () => {
+    const scope = dirtyWithheldChangelog();
+    assert.equal(cov.evaluate(root, DECLARED, [], scope, { methodology: RUNNABLE }).verdict, cov.VERDICTS.COVERED);
+    assert.equal(cov.evaluate(root, DECLARED, [], scope, {}).verdict, cov.VERDICTS.COVERED);
+    assert.equal(cov.evaluate(root, DECLARED, [], scope).verdict, cov.VERDICTS.COVERED);
+  });
+
+  it('excluded is the notCommitted the commit step computes with the same withheld prefixes', () => {
+    const git = (cmd) => execSync(`git -c user.email=t@t -c user.name=t ${cmd}`, { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] });
+    initRepo(root);
+    fs.mkdirSync(nodePath.join(root, 'pkg'));
+    fs.mkdirSync(nodePath.join(root, '.prawduct'));
+    for (const f of ['pkg/app.js', 'pkg/op.js', '.prawduct/CHANGELOG.md']) {
+      fs.writeFileSync(nodePath.join(root, f), 'v0\n');
+    }
+    git('add -A');
+    git('commit -q -m init');
+    for (const f of ['pkg/app.js', 'pkg/op.js', '.prawduct/CHANGELOG.md']) {
+      fs.writeFileSync(nodePath.join(root, f), 'v1\n');
+    }
+    fs.mkdirSync(nodePath.join(root, 'pkg', '.prawduct'));
+    fs.writeFileSync(nodePath.join(root, 'pkg', '.prawduct', 'notes.md'), 'nested\n');
+    const scope = {
+      snapshotApplies: true,
+      baseline: { dirty: { paths: ['pkg/op.js'] } },
+      startedAtMs: 0,
+      workToplevel: root
+    };
+    const status = execFileSync('git', ownership.statusArgs(), { cwd: root, encoding: 'utf8' });
+    const commitStep = ownership.classify(scope, ownership.parseStatus(status), {
+      decisions: {},
+      withheldPrefixes: governance.withheldPrefixesFor(DORMANT)
+    });
+    assert.ok(commitStep.methodologyWithheld.includes('.prawduct/CHANGELOG.md'),
+      'precondition: the commit step withholds the repo-root .prawduct/ edit');
+
+    // The withheld prefixes are repo-root-relative, so only a project AT the repo
+    // root can see the withheld edit among its own paths; the project below it
+    // pins that the offset is applied after withholding, not before.
+    for (const [project, offset] of [[root, ''], [nodePath.join(root, 'pkg'), 'pkg/']]) {
+      const excluded = cov._sortForCommit(project, scope, {}, { methodology: DORMANT }).excluded;
+      assert.deepEqual([...excluded].sort(),
+        commitStep.notCommitted.filter((p) => p.startsWith(offset)).map((p) => p.slice(offset.length)).sort(),
+        `project at "${offset || '.'}"`);
+    }
+    assert.ok(cov._sortForCommit(root, scope, {}, { methodology: DORMANT }).excluded.has('.prawduct/CHANGELOG.md'));
+  });
+});

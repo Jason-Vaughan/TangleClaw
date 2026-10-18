@@ -20,6 +20,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const behindOrigin = require('../lib/behind-origin');
+const { liftDeclaration } = require('./helpers/lift');
 
 const ROOT = path.join(__dirname, '..');
 const LANDING_SRC = fs.readFileSync(path.join(ROOT, 'public', 'landing.js'), 'utf8');
@@ -32,17 +33,11 @@ const STYLE_SRC = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8'
  * @returns {string} The full declaration text.
  */
 function extract(name) {
-  const start = LANDING_SRC.search(new RegExp(`(async )?function ${name}\\(`));
-  assert.ok(start > -1, `${name} should exist in landing.js`);
-  let depth = 0;
-  for (let i = LANDING_SRC.indexOf('{', start); i < LANDING_SRC.length; i++) {
-    if (LANDING_SRC[i] === '{') depth++;
-    else if (LANDING_SRC[i] === '}') {
-      depth--;
-      if (depth === 0) return LANDING_SRC.slice(start, i + 1);
-    }
-  }
-  throw new Error(`could not brace-match ${name}`);
+  // The first match, `async ` included, is also the first occurrence of its own
+  // text, so the helper starts the slice where the match starts.
+  const m = LANDING_SRC.match(new RegExp(`(async )?function ${name}\\(`));
+  assert.ok(m, `${name} should exist in landing.js`);
+  return liftDeclaration(LANDING_SRC, m[0]);
 }
 
 /**
