@@ -57,6 +57,9 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- The wake monitor's thirty-wedged-reads test now counts event-loop turns while every read is in flight, then releases the reads itself; host load no longer changes its verdict (#2200).
+- Ten more private brace-matching lift copies in five test files use `test/helpers/lift.js`; lifted text and test counts match, and the inventory shrinks from 36 to 26 (#1903, Chunk 08).
+- The checkout-fingerprint early-timer deadline test replays recorded git answers under a frozen clock and checks that each stall is the call the deadline ended; no real git runs inside its window (#2412).
 - One owner for POSIX single-quote escaping (#1399). `tmux`, `openclaw-approve`, the lint wrap step and `bridge-handoff` alias `shellWord`, and `control-hooks` calls it. Command lines are byte-identical. A test fails if a copy reappears under `lib/`.
 - #1903 Chunk 07: ten more test files use `test/helpers/lift.js`, and the lift inventory goes from 46 to 36; #1903 remains open.
 - The bridge-gateway expiry test anchors its clock to its own question, and bridge test helpers open a fresh connection per request, removing two causes of intermittent failure under load (#2184).
