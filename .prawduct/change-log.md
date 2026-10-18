@@ -41,6 +41,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-18 — #1903 Chunk 08, #2412: ten more lift copies use the shared helper, and the early-timer deadline case no longer depends on host speed
+
+<!-- prawduct: type=refactor | scope=w18-a1-lift-chunk08-fingerprint-timer -->
+
+v5.34.0 Wave 18 chunk W18-A1, chunk 1 of 1. Branch `fix/1903-2412-w18-a1` from `origin/main` `494a4897`. Refs #1903 (Chunk 08); closes #2412. Plan: `.tangleclaw/plans/w18-a1-lift-chunk08-fingerprint-timer-1903-2412.md` (rev1 sha256 `f7caed7d…769e`, INT `fe051034`, Architect A315); charter v2.49 (sha256 `3d948ca1…e1e2`), 9-file lock. `lib/checkout-fingerprint.js` is untouched: its guard tells a timeout by the symbol that won the race, not by the clock, and a clock-re-reading mutant of it fails the rewritten case.
+
+**#2412.** `test/checkout-fingerprint.test.js` "reports a timeout as the deadline even when the timer fires before the clock reaches it" sent every unstalled call to real git under a 300 ms deadline. With git slowed by 0.1 s per spawn, five of the six stalls were never reached, and the deadline ended a real git process instead. The case now records real git's answers once, before the shifted-timer window. Inside the window it replays them (an unrecorded call throws) and freezes `Date.now`. It also asserts that each stalled call was ended exactly once. Logging at the seam and at the binary shows no git spawned inside the window. The case passed 200 runs unloaded and 50 beside ten CPU-bound processes. The 2026-10-14 failure itself was never reproduced (its assertion text was lost), so this removes the host-speed path rather than proving that path was the cause.
+
+**#1903 Chunk 08.** `session-update-poll`, `session-wrap-finalize`, `session-wrapper` (five inline loops and a nested `functionBody`), `sessions` and `setting-disposition` drop their private brace-matching copies for `test/helpers/lift.js`. Three `session-wrapper` guards that only checked the old inline loop go with it. A `node --require` capture logged the same 126 lifts, byte for byte, on base and branch, and every file's test count is unchanged. `INITIAL_INVENTORY` goes from 36 to 26.
+
 ## 2026-10-18 — W17-REC: combined records for the Wave 17 source merges
 
 <!-- prawduct: type=chore | scope=w17-rec-records -->
