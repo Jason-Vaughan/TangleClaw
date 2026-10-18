@@ -14,30 +14,12 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { liftDeclaration } = require('./helpers/lift');
 
 const ROOT = path.join(__dirname, '..');
 const LANDING_SRC = fs.readFileSync(path.join(ROOT, 'public', 'landing.js'), 'utf8');
 const INDEX_SRC = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
 const STYLE_SRC = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
-
-/**
- * Slice a top-level function out of landing.js by brace matching.
- * @param {string} name
- * @returns {string}
- */
-function extract(name) {
-  const start = LANDING_SRC.search(new RegExp(`(async )?function ${name}\\(`));
-  assert.ok(start > -1, `${name} should exist in landing.js`);
-  let depth = 0;
-  for (let i = LANDING_SRC.indexOf('{', start); i < LANDING_SRC.length; i++) {
-    if (LANDING_SRC[i] === '{') depth++;
-    else if (LANDING_SRC[i] === '}') {
-      depth--;
-      if (depth === 0) return LANDING_SRC.slice(start, i + 1);
-    }
-  }
-  throw new Error(`could not brace-match ${name}`);
-}
 
 /**
  * A DOM stub with classList add/remove/toggle.
@@ -64,9 +46,10 @@ function makeDom(ids) {
 }
 
 /** A real HTML escaper, so an injection test proves escaping, not a pass-through. */
-const ESC_SRC = extract('esc');
+const ESC_SRC = liftDeclaration(LANDING_SRC, 'function esc(');
 
-const LIVE_FNS = ['_liveCheckoutConditions', '_liveCheckoutUnknowns', 'renderLiveCheckoutBanner'].map(extract).join('\n');
+const LIVE_FNS = ['function _liveCheckoutConditions(', 'function _liveCheckoutUnknowns(', 'function renderLiveCheckoutBanner(']
+  .map((decl) => liftDeclaration(LANDING_SRC, decl)).join('\n');
 
 /**
  * Run the live-checkout renderer.
@@ -182,7 +165,7 @@ describe('live-checkout banner (#993) — executed against a DOM stub', () => {
   });
 
   it('loadServerInfo renders it before the stale-server branches return', () => {
-    const src = extract('loadServerInfo');
+    const src = liftDeclaration(LANDING_SRC, 'async function loadServerInfo(');
     const call = src.indexOf('renderLiveCheckoutBanner(data.liveCheckout, data.behindOrigin)');
     assert.ok(call > -1);
     assert.ok(call < src.indexOf('if (data.isStale === null)'));
@@ -199,7 +182,7 @@ describe('stale-server banner asks the service worker to update (#411)', () => {
   function render(dom, win) {
     const info = { startupSha: 'd0124256d000', currentDiskSha: '7e25288c5000', commitsAhead: 1, uptimeSeconds: 5 };
     const ctx = vm.createContext({ document: dom.document, info, window: win, formatUptime: (s) => `${s}s` });
-    vm.runInContext(`${ESC_SRC}\n${extract('_restartImpactWording')}\n${extract('toggleStaleRestartBtn')}\n${extract('renderStaleServerBanner')}\nrenderStaleServerBanner(info);`, ctx);
+    vm.runInContext(`${ESC_SRC}\n${liftDeclaration(LANDING_SRC, 'function _restartImpactWording(')}\n${liftDeclaration(LANDING_SRC, 'function toggleStaleRestartBtn(')}\n${liftDeclaration(LANDING_SRC, 'function renderStaleServerBanner(')}\nrenderStaleServerBanner(info);`, ctx);
   }
   const ids = ['staleServerBanner', 'staleServerBannerText', 'staleServerRestartBtn'];
 
@@ -259,7 +242,7 @@ describe('stale-server banner restart impact (#1678)', () => {
   function renderStale(info) {
     const dom = makeDom(['staleServerBanner', 'staleServerBannerText', 'staleServerRestartBtn']);
     const ctx = vm.createContext({ document: dom.document, info, formatUptime: (s) => `${s}s` });
-    vm.runInContext(`${ESC_SRC}\n${extract('_restartImpactWording')}\n${extract('toggleStaleRestartBtn')}\n${extract('renderStaleServerBanner')}\nrenderStaleServerBanner(info);`, ctx);
+    vm.runInContext(`${ESC_SRC}\n${liftDeclaration(LANDING_SRC, 'function _restartImpactWording(')}\n${liftDeclaration(LANDING_SRC, 'function toggleStaleRestartBtn(')}\n${liftDeclaration(LANDING_SRC, 'function renderStaleServerBanner(')}\nrenderStaleServerBanner(info);`, ctx);
     return { banner: dom.els.staleServerBanner, text: dom.els.staleServerBannerText, btn: dom.els.staleServerRestartBtn };
   }
   const base = { startupSha: 'd0124256d000', currentDiskSha: '7e25288c5000', commitsAhead: 2, uptimeSeconds: 5, restartMechanism: 'launchctl' };
@@ -287,7 +270,7 @@ describe('stale-server banner restart impact (#1678)', () => {
     const dom = makeDom(['staleServerBanner', 'staleServerBannerText', 'staleServerRestartBtn']);
     const run = (info) => {
       const ctx = vm.createContext({ document: dom.document, info, formatUptime: (s) => `${s}s` });
-      vm.runInContext(`${ESC_SRC}\n${extract('_restartImpactWording')}\n${extract('toggleStaleRestartBtn')}\n${extract('renderStaleServerBanner')}\nrenderStaleServerBanner(info);`, ctx);
+      vm.runInContext(`${ESC_SRC}\n${liftDeclaration(LANDING_SRC, 'function _restartImpactWording(')}\n${liftDeclaration(LANDING_SRC, 'function toggleStaleRestartBtn(')}\n${liftDeclaration(LANDING_SRC, 'function renderStaleServerBanner(')}\nrenderStaleServerBanner(info);`, ctx);
     };
     run({ ...base, restartImpact: { impact: 'records-only' } });
     assert.equal(dom.els.staleServerRestartBtn._hidden, true);

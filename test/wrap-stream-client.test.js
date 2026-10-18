@@ -3,13 +3,18 @@
 /*
  * #185 — the client half of live wrap progress.
  *
- * Two layers, tested two ways. The pure event-folding helpers in
+ * Three layers, each executed. The pure event-folding helpers in
  * `public/wrap-drawer.js` (`applyWrapStreamEvent`, `summarizeLiveStatus`,
  * `liveWrapAsPipelineResult`, `wrapStreamUrl`) load into a vm sandbox and are
  * driven directly, the way test/wrap-drawer.test.js drives their siblings.
- * The wiring in `public/session.js` that follows a run — the POST, the stream,
- * the status fallback — is executed in test/wrap-run-session-wiring.test.js;
- * the few source pins left here cover the live drawer's render primitive.
+ * `startWrapStream` and `renderLiveWrapDrawer` are lifted out of
+ * `public/session.js` and run here on their own (#1219): the stream client
+ * against a fake `EventSource` with a recording `dispatchWrapRun`, the live
+ * drawer against the shared mini-DOM with its paint primitives recorded. How
+ * the two meet the wrap-run controller — the POST, `run-done` closing the
+ * stream and handing off to `openWrapDrawer`, the status fallback — is
+ * executed end to end in test/wrap-run-session-wiring.test.js. The source pins
+ * left here guard text and styles, not behaviour.
  */
 
 const { describe, it, before } = require('node:test');
@@ -17,6 +22,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { makeDocument, withIdParsingInnerHTML } = require('./_mini-dom');
+const { liftDeclaration, liftBody } = require('./helpers/lift');
 
 const PUBLIC = path.join(__dirname, '..', 'public');
 
@@ -39,27 +46,6 @@ function loadHelpers() {
  */
 function plain(v) {
   return v === undefined ? undefined : JSON.parse(JSON.stringify(v));
-}
-
-/**
- * Slice out a top-level function body by brace-matching from its declaration.
- * @param {string} src - Full source text
- * @param {string} decl - The declaration to find
- * @returns {string} The body including its braces
- */
-function functionBody(src, decl) {
-  const start = src.indexOf(decl);
-  assert.ok(start !== -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i += 1) {
-    if (src[i] === '{') depth += 1;
-    else if (src[i] === '}') {
-      depth -= 1;
-      if (depth === 0) return src.slice(bodyStart, i + 1);
-    }
-  }
-  throw new Error(`unbalanced braces for ${decl}`);
 }
 
 const RUN_START = {
@@ -297,7 +283,7 @@ describe('wrap-drawer helpers — a Retry that reuses steps does not read as a r
     const css = fs.readFileSync(path.join(PUBLIC, 'session.css'), 'utf8');
     assert.ok(css.includes('.wrap-step-status--reused {'));
     assert.ok(css.includes('.wrap-step-row--reused'));
-    const body = functionBody(fs.readFileSync(path.join(PUBLIC, 'session.js'), 'utf8'), 'function renderStepRow(');
+    const body = liftBody(fs.readFileSync(path.join(PUBLIC, 'session.js'), 'utf8'), 'function renderStepRow(');
     assert.ok(body.includes("classList.add('wrap-step-row--reused')"));
   });
 });
@@ -315,17 +301,368 @@ describe('session.js wiring (#185)', () => {
     assert.ok(!src.includes('removed in the #990 review'), 'the comment describing the removed server half is stale now that both halves exist');
   });
 
-  it('the live drawer offers no decision: Retry and Done stay hidden until the run is over', () => {
-    const body = functionBody(src, 'function renderLiveWrapDrawer(');
-    assert.ok(body.includes("getElementById('wrapDrawerRetryBtn').classList.add('hidden')"));
-    assert.ok(body.includes("getElementById('wrapDrawerDoneBtn').classList.add('hidden')"));
-    assert.ok(body.includes('renderStepRow('), 'rows render through the same builder as the final drawer');
-    assert.ok(body.includes('summarizeLiveStatus('));
-  });
-
   it('the running tone the live rows use is styled', () => {
     const css = fs.readFileSync(path.join(PUBLIC, 'session.css'), 'utf8');
     assert.ok(css.includes('.wrap-step-status--running {'));
     assert.ok(css.includes('.wrap-drawer-status--running'));
+  });
+});
+
+const SESSION_SRC = fs.readFileSync(path.join(PUBLIC, 'session.js'), 'utf8');
+
+/**
+ * Stand-in for the browser's `EventSource`: records its URL and listeners, and
+ * lets a test deliver a named frame or move `readyState` the way a dropped or
+ * closed connection would.
+ */
+class FakeEventSource {
+  /** @param {string} url - The stream URL the client opened. */
+  constructor(url) {
+    this.url = url;
+    this.readyState = FakeEventSource.CONNECTING;
+    this.listeners = {};
+    this.onerror = null;
+    this.closed = false;
+    FakeEventSource.instances.push(this);
+  }
+
+  /**
+   * @param {string} type - Event name.
+   * @param {Function} fn - Listener.
+   */
+  addEventListener(type, fn) {
+    (this.listeners[type] || (this.listeners[type] = [])).push(fn);
+  }
+
+  /**
+   * Deliver one frame to the listeners for `type`, as the browser would.
+   * @param {string} type - Event name.
+   * @param {string} data - The frame's raw `data`.
+   */
+  emit(type, data) {
+    for (const fn of this.listeners[type] || []) fn({ data });
+  }
+
+  /** Close the connection. */
+  close() {
+    this.closed = true;
+    this.readyState = FakeEventSource.CLOSED;
+  }
+}
+FakeEventSource.CONNECTING = 0;
+FakeEventSource.OPEN = 1;
+FakeEventSource.CLOSED = 2;
+FakeEventSource.instances = [];
+
+/**
+ * Run the real `startWrapStream` / `stopWrapStream` on their own, with the
+ * shipped event vocabulary and helpers, a recording `dispatchWrapRun` and a
+ * recording `console.warn`.
+ *
+ * @param {{eventSource?: boolean}} [opts] - `eventSource: false` models a
+ *   browser that has no `EventSource`.
+ * @returns {{sandbox: object, signals: object[], warns: Array<Array<*>>, streams: FakeEventSource[], state: () => {stream: *, runId: *}}}
+ */
+function loadStreamClient({ eventSource = true } = {}) {
+  FakeEventSource.instances = [];
+  const signals = [];
+  const warns = [];
+  const sandbox = {
+    projectName: 'my project',
+    dispatchWrapRun: (signal) => { signals.push(signal); },
+    console: { warn: (...args) => { warns.push(args); } }
+  };
+  sandbox.window = sandbox;
+  if (eventSource) sandbox.EventSource = FakeEventSource;
+  vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync(path.join(PUBLIC, 'wrap-stream-events.js'), 'utf8'), sandbox);
+  vm.runInContext(fs.readFileSync(path.join(PUBLIC, 'wrap-drawer.js'), 'utf8'), sandbox);
+  vm.runInContext([
+    'let currentWrapStream = null;',
+    'let currentWrapStreamRunId = null;',
+    liftDeclaration(SESSION_SRC, 'function startWrapStream('),
+    liftDeclaration(SESSION_SRC, 'function stopWrapStream('),
+    'globalThis.__state = () => ({ stream: currentWrapStream, runId: currentWrapStreamRunId });'
+  ].join('\n'), sandbox);
+  return { sandbox, signals, warns, streams: FakeEventSource.instances, state: () => sandbox.__state() };
+}
+
+describe('startWrapStream, executed (#1219)', () => {
+  it('opens the run\'s stream URL and subscribes exactly one listener per declared event type', () => {
+    const h = loadStreamClient();
+    h.sandbox.startWrapStream('run-1');
+    assert.equal(h.streams.length, 1);
+    const [es] = h.streams;
+    assert.equal(es.url, h.sandbox.tcWrapDrawerHelpers.wrapStreamUrl('my project', 'run-1'));
+    const declared = [...h.sandbox.tcWrapStreamEvents.WRAP_STREAM_EVENT_TYPES];
+    assert.deepEqual(Object.keys(es.listeners).sort(), [...declared].sort());
+    for (const type of declared) assert.equal(es.listeners[type].length, 1, `one listener for ${type}`);
+    assert.equal(h.state().stream, es);
+    assert.equal(h.state().runId, 'run-1');
+  });
+
+  it('every declared type dispatches exactly one event signal with the frame, its type and a numeric receivedAt', () => {
+    const h = loadStreamClient();
+    h.sandbox.startWrapStream('run-1');
+    const [es] = h.streams;
+    for (const type of h.sandbox.tcWrapStreamEvents.WRAP_STREAM_EVENT_TYPES) {
+      h.signals.length = 0;
+      // The listener's name is the frame's type: a `type` inside the data never overrides it.
+      es.emit(type, JSON.stringify({ stepId: 'commit', sentAt: 5, type: 'spoofed' }));
+      assert.equal(h.signals.length, 1, `${type} dispatches once`);
+      const [signal] = plain(h.signals);
+      assert.equal(typeof h.signals[0].event.receivedAt, 'number');
+      assert.deepEqual(signal, {
+        type: 'event',
+        runId: 'run-1',
+        event: { stepId: 'commit', sentAt: 5, type, receivedAt: h.signals[0].event.receivedAt }
+      });
+    }
+    assert.equal(h.warns.length, 0);
+  });
+
+  it('a superseded stream is ignored on every handler and on onerror; the current one still dispatches', () => {
+    const h = loadStreamClient();
+    h.sandbox.startWrapStream('run-1');
+    const [stale] = h.streams;
+    h.sandbox.startWrapStream('run-2');
+    assert.equal(stale.closed, true, 'starting a new stream closes the old one');
+    const current = h.streams[1];
+    for (const type of h.sandbox.tcWrapStreamEvents.WRAP_STREAM_EVENT_TYPES) {
+      stale.emit(type, JSON.stringify({ stepId: 'commit' }));
+    }
+    stale.readyState = FakeEventSource.CLOSED;
+    stale.onerror();
+    assert.equal(h.signals.length, 0, 'nothing from the superseded stream reaches the controller');
+    assert.equal(h.warns.length, 0);
+    current.emit('run-start', JSON.stringify({ steps: [] }));
+    assert.equal(h.signals.length, 1);
+    assert.equal(h.signals[0].runId, 'run-2');
+  });
+
+  it('onerror while reconnecting dispatches nothing and keeps the stream; CLOSED dispatches stream-lost once', () => {
+    const h = loadStreamClient();
+    h.sandbox.startWrapStream('run-1');
+    const [es] = h.streams;
+    for (const state of [FakeEventSource.CONNECTING, FakeEventSource.OPEN]) {
+      es.readyState = state;
+      es.onerror();
+    }
+    assert.equal(h.signals.length, 0);
+    assert.equal(es.closed, false);
+    assert.equal(h.state().stream, es, 'the client keeps the source the browser is reconnecting');
+    es.readyState = FakeEventSource.CLOSED;
+    es.onerror();
+    assert.deepEqual(plain(h.signals), [{ type: 'stream-lost', runId: 'run-1' }]);
+    assert.equal(h.warns.length, 1, 'a closed stream says so once');
+  });
+
+  it('a malformed frame is warned about and dropped, and later frames still dispatch', () => {
+    const h = loadStreamClient();
+    h.sandbox.startWrapStream('run-1');
+    const [es] = h.streams;
+    es.emit('step-start', '{not json');
+    assert.equal(h.signals.length, 0);
+    assert.equal(h.warns.length, 1);
+    assert.match(h.warns[0][0], /malformed frame/);
+    assert.deepEqual(plain(h.warns[0][1]), { type: 'step-start' });
+    es.emit('step-start', JSON.stringify({ stepId: 'commit' }));
+    assert.equal(h.signals.length, 1);
+    assert.equal(h.signals[0].event.stepId, 'commit');
+  });
+
+  it('stopWrapStream closes the stream, forgets the run, and is idempotent', () => {
+    const h = loadStreamClient();
+    h.sandbox.startWrapStream('run-1');
+    const [es] = h.streams;
+    h.sandbox.stopWrapStream();
+    assert.equal(es.closed, true);
+    assert.deepEqual(plain(h.state()), { stream: null, runId: null });
+    h.sandbox.stopWrapStream();
+    assert.deepEqual(plain(h.state()), { stream: null, runId: null });
+    es.emit('step-start', JSON.stringify({ stepId: 'commit' }));
+    assert.equal(h.signals.length, 0, 'a stopped stream reaches nobody');
+  });
+
+  it('with no EventSource it opens nothing and dispatches stream-lost after a microtask', async () => {
+    const h = loadStreamClient({ eventSource: false });
+    h.sandbox.startWrapStream('run-1');
+    assert.equal(h.streams.length, 0);
+    assert.equal(h.signals.length, 0, 'not synchronously: the caller finishes starting the run first');
+    await Promise.resolve();
+    assert.deepEqual(plain(h.signals), [{ type: 'stream-lost', runId: 'run-1' }]);
+    assert.deepEqual(plain(h.state()), { stream: null, runId: 'run-1' });
+  });
+});
+
+const LIVE_DRAWER_IDS = [
+  'wrapDrawerSkipRoll', 'wrapStepList', 'wrapDrawerDecision', 'wrapDrawerRetryBtn', 'wrapDrawerDoneBtn',
+  'wrapDrawerCancelBtn', 'wrapDrawerPlanned', 'wrapDrawerAbortBtn', 'wrapDrawerCancelNote'
+];
+
+/**
+ * Run the real `renderLiveWrapDrawer` and `paintLiveSessionControls` against
+ * the mini-DOM, with the shipped helpers and recorders for the paint
+ * primitives they call, so a test pins what the render itself decides.
+ *
+ * @param {{runId?: (string|null)}} [opts] - The run `wrapRunState()` reports.
+ * @returns {{sandbox: object, ids: object, calls: Array<[string, Array<*>]>, H: object, state: () => object}}
+ */
+function loadLiveDrawer({ runId = 'run-1' } = {}) {
+  const { doc, ids } = makeDocument(LIVE_DRAWER_IDS);
+  // The three containers the render clears: a real repaint must empty them.
+  for (const id of ['wrapDrawerSkipRoll', 'wrapStepList', 'wrapDrawerDecision']) withIdParsingInnerHTML(ids[id], doc);
+  const calls = [];
+  const record = (name, ret) => (...args) => { calls.push([name, args]); return ret ? ret(...args) : undefined; };
+  const sandbox = {
+    document: doc,
+    sessionState: { wrapDrawerOpen: false },
+    wrapRunState: () => ({ runId }),
+    closeWrapModal: record('closeWrapModal'),
+    paintWrapStatus: record('paintWrapStatus'),
+    cancelEndedCountdown: record('cancelEndedCountdown'),
+    paintLiveTiming: record('paintLiveTiming'),
+    expandWrapDrawer: record('expandWrapDrawer'),
+    renderStepRow: record('renderStepRow', (row) => {
+      const el = doc.createElement('div');
+      el.row = row;
+      return el;
+    })
+  };
+  sandbox.window = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync(path.join(PUBLIC, 'wrap-drawer.js'), 'utf8'), sandbox);
+  vm.runInContext([
+    'let currentWrapPipelineResult = null;',
+    "let currentWrapBaseStatus = 'a settled report';",
+    'let wrapCancelState = { runId: null, requested: false, finishingStepId: null };',
+    liftDeclaration(SESSION_SRC, 'function renderLiveWrapDrawer('),
+    liftDeclaration(SESSION_SRC, 'function paintLiveSessionControls('),
+    'globalThis.__state = () => ({ currentWrapPipelineResult, currentWrapBaseStatus, wrapCancelState });',
+    'globalThis.__setCancel = (v) => { wrapCancelState = v; };'
+  ].join('\n'), sandbox);
+  return { sandbox, ids, calls, H: sandbox.tcWrapDrawerHelpers, state: () => sandbox.__state() };
+}
+
+/**
+ * The live view after `run-start` and a `step-start` on the second step.
+ * @param {object} H - `tcWrapDrawerHelpers`.
+ * @param {object} [extra] - Extra `run-start` fields.
+ * @returns {object}
+ */
+function runningLive(H, extra = {}) {
+  const live = H.applyWrapStreamEvent(null, { ...RUN_START, ...extra });
+  return H.applyWrapStreamEvent(live, { type: 'step-start', stepId: 'changelog-update', kind: 'ai-content' });
+}
+
+/**
+ * The recorded calls to one primitive.
+ * @param {Array<[string, Array<*>]>} calls - The recorder's log.
+ * @param {string} name - Primitive name.
+ * @returns {Array<Array<*>>} Each call's arguments.
+ */
+function callsTo(calls, name) {
+  return calls.filter(([n]) => n === name).map(([, args]) => args);
+}
+
+describe('renderLiveWrapDrawer, executed (#1219)', () => {
+  it('paints the live view: modal closed, banner, one row per step in order, and the drawer opened', () => {
+    const h = loadLiveDrawer();
+    const live = runningLive(h.H);
+    h.sandbox.renderLiveWrapDrawer(live, { retry: false, streamLost: false });
+
+    assert.deepEqual(callsTo(h.calls, 'closeWrapModal'), [[true]]);
+    assert.deepEqual(plain(callsTo(h.calls, 'paintWrapStatus')), [[plain(h.H.summarizeLiveStatus(live, { retry: false })), null, null]]);
+    const asResult = h.H.liveWrapAsPipelineResult(live);
+    const rows = callsTo(h.calls, 'renderStepRow').map(([row]) => row);
+    assert.deepEqual(plain(rows), plain(asResult.results.map((r) => h.H.buildStepRow(r, { blockedAt: asResult.blockedAt }))));
+    assert.deepEqual(h.ids.wrapStepList.childNodes.map((el) => el.row), rows, 'the list holds exactly the rendered rows, in order');
+    assert.deepEqual(plain(h.state().currentWrapPipelineResult), plain(asResult), 'Copy report serialises the run so far');
+    assert.equal(h.state().currentWrapBaseStatus, null);
+    assert.equal(h.sandbox.sessionState.wrapDrawerOpen, true);
+    assert.equal(callsTo(h.calls, 'cancelEndedCountdown').length, 1);
+    assert.deepEqual(h.calls.slice(-2).map(([n]) => n), ['paintLiveTiming', 'expandWrapDrawer']);
+  });
+
+  it('offers no decision while the run is live: Retry, Done, the decision and the skip roll are hidden, and Cancel reads Hide', () => {
+    const h = loadLiveDrawer();
+    h.ids.wrapDrawerDecision.innerHTML = '<div id="wrapDecisionPrompt"></div>';
+    h.ids.wrapDrawerSkipRoll.innerHTML = '<div id="wrapSkipRollItem"></div>';
+    h.sandbox.renderLiveWrapDrawer(runningLive(h.H), { retry: false, streamLost: false });
+
+    for (const id of ['wrapDrawerRetryBtn', 'wrapDrawerDoneBtn', 'wrapDrawerDecision', 'wrapDrawerSkipRoll']) {
+      assert.equal(h.ids[id].classList.contains('hidden'), true, `${id} hidden`);
+    }
+    for (const id of ['wrapDrawerDecision', 'wrapDrawerSkipRoll']) {
+      assert.equal(h.ids[id].innerHTML, '');
+      assert.equal(h.ids[id].childNodes.length, 0, `${id} emptied`);
+    }
+    assert.equal(h.ids.wrapDrawerCancelBtn.textContent, 'Hide');
+    assert.equal(h.ids.wrapDrawerCancelBtn.title, 'Hide this panel. The wrap keeps running; the Wrap button reopens it.');
+  });
+
+  it('says Retrying for a Retry\'s run, and the unavailable banner once the stream is lost', () => {
+    const h = loadLiveDrawer();
+    const live = runningLive(h.H);
+    h.sandbox.renderLiveWrapDrawer(live, { retry: true, streamLost: false });
+    h.sandbox.renderLiveWrapDrawer(live, { retry: false, streamLost: true });
+    h.sandbox.renderLiveWrapDrawer(live, { retry: true, streamLost: true });
+    const banners = callsTo(h.calls, 'paintWrapStatus').map(([status]) => plain(status));
+    assert.deepEqual(banners[0], plain(h.H.summarizeLiveStatus(live, { retry: true })));
+    assert.equal(banners[0].label, 'Retrying — step 2 of 3');
+    assert.deepEqual(banners[1], plain(h.H.streamUnavailableStatus()));
+    assert.deepEqual(banners[2], plain(h.H.streamUnavailableStatus()), 'a lost stream outranks the Retry wording');
+  });
+
+  it('a second paint replaces the rows rather than appending to them', () => {
+    const h = loadLiveDrawer();
+    h.sandbox.renderLiveWrapDrawer(runningLive(h.H), { retry: false, streamLost: false });
+    assert.equal(h.ids.wrapStepList.childNodes.length, 3);
+    const twoSteps = h.H.applyWrapStreamEvent(null, { type: 'run-start', steps: RUN_START.steps.slice(0, 2) });
+    h.sandbox.renderLiveWrapDrawer(twoSteps, { retry: false, streamLost: false });
+    const secondRows = callsTo(h.calls, 'renderStepRow').slice(3).map(([row]) => row);
+    assert.equal(secondRows.length, 2);
+    assert.deepEqual(h.ids.wrapStepList.childNodes.map((el) => el.row), secondRows);
+  });
+
+  it('before run-start it paints the starting banner and no rows', () => {
+    const h = loadLiveDrawer();
+    h.sandbox.renderLiveWrapDrawer(null, { retry: false, streamLost: false });
+    assert.deepEqual(plain(callsTo(h.calls, 'paintWrapStatus')[0][0]), plain(h.H.summarizeLiveStatus(null)));
+    assert.equal(callsTo(h.calls, 'renderStepRow').length, 0);
+    assert.equal(h.ids.wrapStepList.childNodes.length, 0);
+    assert.deepEqual(plain(h.state().currentWrapPipelineResult.results), []);
+  });
+
+  it('the planned-session line and Abort control follow the helpers, and Abort is disabled with no run', () => {
+    const h = loadLiveDrawer();
+    const planned = runningLive(h.H, { sessionOutcomePlanned: 'keep', keepSource: 'request' });
+    h.sandbox.renderLiveWrapDrawer(planned, { retry: false, streamLost: false });
+    assert.equal(h.ids.wrapDrawerPlanned.textContent, h.H.plannedSessionLine(planned));
+    assert.equal(h.ids.wrapDrawerPlanned.classList.contains('hidden'), false);
+    const control = h.H.liveCancelControl(planned, { requested: false });
+    assert.equal(h.ids.wrapDrawerAbortBtn.textContent, control.label);
+    assert.equal(h.ids.wrapDrawerAbortBtn.disabled, false);
+    assert.equal(h.ids.wrapDrawerAbortBtn.classList.contains('hidden'), false);
+    assert.equal(h.ids.wrapDrawerCancelNote.classList.contains('hidden'), true);
+
+    // A cancel this page sent for an earlier run is not this run's.
+    h.sandbox.__setCancel({ runId: 'run-0', requested: true, finishingStepId: 'commit' });
+    h.sandbox.renderLiveWrapDrawer(planned, { retry: false, streamLost: false });
+    assert.equal(h.ids.wrapDrawerAbortBtn.textContent, 'Cancel wrap');
+    assert.deepEqual(plain(h.state().wrapCancelState), { runId: 'run-1', requested: false, finishingStepId: null });
+    // One it sent for this run disables the control and says what is finishing.
+    h.sandbox.__setCancel({ runId: 'run-1', requested: true, finishingStepId: 'changelog-update' });
+    h.sandbox.renderLiveWrapDrawer(planned, { retry: false, streamLost: false });
+    assert.equal(h.ids.wrapDrawerAbortBtn.textContent, 'Cancelling…');
+    assert.equal(h.ids.wrapDrawerAbortBtn.disabled, true);
+    assert.equal(h.ids.wrapDrawerCancelNote.classList.contains('hidden'), false);
+    assert.match(h.ids.wrapDrawerCancelNote.textContent, /"changelog-update" is finishing/);
+
+    const noRun = loadLiveDrawer({ runId: null });
+    noRun.sandbox.renderLiveWrapDrawer(null, { retry: false, streamLost: false });
+    assert.equal(noRun.ids.wrapDrawerPlanned.classList.contains('hidden'), true);
+    assert.equal(noRun.ids.wrapDrawerPlanned.textContent, '');
+    assert.equal(noRun.ids.wrapDrawerAbortBtn.disabled, true, 'nothing to cancel without a run id');
   });
 });

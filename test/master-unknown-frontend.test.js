@@ -23,6 +23,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { liftDeclaration } = require('./helpers/lift');
 
 const UI_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
 const API_HELPER_SRC = fs.readFileSync(
@@ -44,25 +45,6 @@ function loadApiHelper() {
   vm.createContext(g);
   vm.runInContext(API_HELPER_SRC, g);
   return g;
-}
-
-/**
- * Slice a top-level function (declaration + body) out of source text by
- * brace-matching, so the sandbox runs the REAL code rather than a copy.
- * @param {string} src - File source text.
- * @param {string} decl - Declaration to find.
- * @returns {string} The declaration plus its balanced body.
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
 }
 
 /**
@@ -127,8 +109,8 @@ async function render(payload) {
   vm.createContext(sandbox);
 
   const script = [
-    liftFunction(UI_SRC, 'function setMasterStatus(status, text, showRetry)'),
-    liftFunction(UI_SRC, 'async function refreshMasterDot()'),
+    liftDeclaration(UI_SRC, 'function setMasterStatus(status, text, showRetry)'),
+    liftDeclaration(UI_SRC, 'async function refreshMasterDot()'),
     'refreshMasterDot();'
   ].join('\n');
 
@@ -246,8 +228,8 @@ describe('the master panel distinguishes "not running" from "could not look" (#9
     vm.createContext(sandbox);
 
     await vm.runInContext([
-      liftFunction(UI_SRC, 'function setMasterStatus(status, text, showRetry)'),
-      liftFunction(UI_SRC, 'async function ensureMasterAttached()'),
+      liftDeclaration(UI_SRC, 'function setMasterStatus(status, text, showRetry)'),
+      liftDeclaration(UI_SRC, 'async function ensureMasterAttached()'),
       'ensureMasterAttached();'
     ].join('\n'), sandbox);
 
@@ -287,8 +269,8 @@ describe('the master panel distinguishes "not running" from "could not look" (#9
     vm.createContext(sandbox);
 
     await vm.runInContext([
-      liftFunction(UI_SRC, 'function setMasterStatus(status, text, showRetry)'),
-      liftFunction(UI_SRC, 'async function ensureMasterAttached()'),
+      liftDeclaration(UI_SRC, 'function setMasterStatus(status, text, showRetry)'),
+      liftDeclaration(UI_SRC, 'async function ensureMasterAttached()'),
       'ensureMasterAttached();'
     ].join('\n'), sandbox);
 

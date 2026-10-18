@@ -26,6 +26,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { liftDeclaration } = require('./helpers/lift');
 
 const pub = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
 const HELPER = pub('api-helper.js');
@@ -34,24 +35,6 @@ const HELPER = pub('api-helper.js');
 const stripCss = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '');
 const STYLE = stripCss(pub('style.css'));
 const SESSION_CSS = stripCss(pub('session.css'));
-
-/**
- * Slice a top-level function (declaration + body) out of source by brace match.
- *
- * @param {string} decl - Declaration text to find.
- * @param {string} src - Source to slice from.
- * @returns {string} Declaration plus balanced body.
- */
-function lift(decl, src) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist in api-helper.js`);
-  let depth = 0;
-  for (let i = src.indexOf('{', start); i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 /**
  * Every class token the Master settings component can render.
@@ -70,8 +53,8 @@ function lift(decl, src) {
  * @returns {Set<string>} Class names, without the leading dot.
  */
 function emittedClasses() {
-  const src = lift('function tcMasterSettingsMarkup(', HELPER)
-    + '\n' + lift('function tcCreateMasterSettings(deps)', HELPER);
+  const src = liftDeclaration(HELPER, 'function tcMasterSettingsMarkup(')
+    + '\n' + liftDeclaration(HELPER, 'function tcCreateMasterSettings(deps)');
   const found = new Set();
   const addAll = (text) => {
     for (const c of String(text).trim().split(/\s+/)) if (c) found.add(c);

@@ -128,16 +128,6 @@ const EXCEPTIONS = {
  * removes its file's entries here in the same change; a new copy is refused.
  */
 const INITIAL_INVENTORY = [
-  'launch-mode-picker.test.js :: liftFunction',
-  'launch-panel-fire.test.js :: liftFunction',
-  'launch-readiness-panel.test.js :: liftFunction',
-  'launch-recovery-clear-ended.test.js :: liftFunction',
-  'launch-refusal-toast.test.js :: liftFunction',
-  'live-checkout-banner.test.js :: extract',
-  'master-control-bar.test.js :: lift',
-  'master-launch-mode.test.js :: liftFunction',
-  'master-settings-css-parity.test.js :: lift',
-  'master-unknown-frontend.test.js :: liftFunction',
   'medusa-escalation.test.js :: (inline)',
   'message-size-ui.test.js :: functionSource',
   'openclaw-cache.test.js :: setFrameSrcBlockEnd',
@@ -193,7 +183,6 @@ const INITIAL_INVENTORY = [
   'wrap-run-reattach.test.js :: functionBody',
   'wrap-run-session-wiring.test.js :: functionSource',
   'wrap-skip-continue-label.test.js :: functionBody',
-  'wrap-stream-client.test.js :: functionBody',
   'wrap-untrack-offer-ui.test.js :: liftFunction',
 ];
 
