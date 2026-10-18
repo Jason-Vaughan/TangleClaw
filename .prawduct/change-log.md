@@ -45,13 +45,15 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- prawduct: type=bugfix | scope=w17b1-lock-caller-binding-gateway-determinism-finalize-docs -->
 
-v5.34.0 Wave 17 chunk W17-B1, chunk 1 of 1. Branch `fix/w17b1-lock-caller-binding-gateway-determinism-finalize-docs` from `origin/main` `6ae92519`. Closes #2489, #2184, #2046. Plan: `.tangleclaw/plans/build-plan-w17b1-lock-caller-binding-gateway-determinism-finalize-docs.md` (rev2 sha256 `4796821b…61a1`, Architect A302/A304, INT `006884ff`); Charter v2.45 (sha256 `d37c50a6…c65a`), 12-file lock, 10 changed.
+v5.34.0 Wave 17 chunk W17-B1, chunk 1 of 1. Branch `fix/w17b1-lock-caller-binding-gateway-determinism-finalize-docs` from `origin/main` `6ae92519`. Closes #2489, #2184, #2046. Plan: `.tangleclaw/plans/build-plan-w17b1-lock-caller-binding-gateway-determinism-finalize-docs.md` (rev2 sha256 `4796821b…61a1`, Architect A302/A304, INT `006884ff`); Charter v2.47 (sha256 `db13f4aaa53cc418318d39a2fc8d3c04301728b4e412127e77430bb0f95f6d04`), 15-file lock, 13 changed.
 
 **#2489.** `POST /api/shared-docs/:id/lock` used to record whatever `sessionId` and `projectName` its body named. It now treats them as a member's claim and checks it against the launch binding: a mismatch is `403 LOCK_CALLER_MISMATCH` and nothing is written; a match records the verified session and project. The operator still names any session. `ttlMinutes` must be a whole number from 1 to 120 for every HTTP caller (`400 BAD_REQUEST`), and defaults to 30 when omitted. `documentLocks.acquire` is unchanged and still takes any ttl, which a new store test pins. The attest-route test that planted a foreign lock over HTTP now seeds it in the store; its assertions are unchanged. The `attestLockRefusal` JSDoc and the DELETE route comment no longer say every lock records the body's session.
 
 **#2184.** The expiry test's "one millisecond inside" check anchored its clock to the newest question in the database, which a question an earlier test asked under a moved clock can become on a slow host. That would push the anchor past this question's real deadline. The test now anchors its three clock moves to its own route's question (`questionLater`). The fetch helpers in `test/api-bridge-gateway.test.js` and `test/api-bridge.test.js` send `connection: close`, so a pooled keep-alive socket the server is closing cannot be reused and read as ECONNRESET. Two named mechanisms are removed; the cause of every recorded failure is not proven. No assertion changed.
 
 **#2046.** `docs/session-finalize.md` now says finalize makes no git *write*: its strict check fetches and prunes. The v5.30 status row for #2027 gives its exact head, `2074e241` (PR #2043). FEATURES.md and the CHANGELOG `[Unreleased]` correction ride W17-REC.
+
+**Guides.** Under Charter v2.46 and v2.47, `data/shared-docs-guide.md` and `docs/user-guide.md` now say a lock's `sessionId` and `projectName` must be the caller's own verified values and give the `ttlMinutes` range, and the tracked `CLAUDE.md` block is regenerated from the guide by `node scripts/sync-claude-md-block.js --write` (inside the markers only), so the guide note that round 1's R-3 routed to PM triage was done in this chunk instead.
 
 **Critic.** Cumulative review, 0 blocking.
 
