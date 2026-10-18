@@ -7628,6 +7628,9 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
           project: params.project,
           engine: webuiResult.session.engineId,
           sessionMode: 'webui',
+          // The session row records the mode that actually took effect: the
+          // requested one only when the ClawBridge pre-create succeeded.
+          launchMode: webuiResult.session.launchMode || null,
           strandedUnchecked: result.strandedUnchecked || null,
           tmuxSession: null,
           primePrompt: null,
@@ -7637,7 +7640,10 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
           // A web UI launch starts no engine process on this host, so it never
           // has a private socket root. Null, as on a tmux launch whose engine
           // declares none: present, so a caller need not tell absent from none.
-          privateTempRoot: null
+          privateTempRoot: null,
+          // No engine starts on this host, so no launch-isolation check runs
+          // and no override can apply. Present for the same reason as above.
+          isolationOverride: null
         });
       })
       .catch((err) => {
