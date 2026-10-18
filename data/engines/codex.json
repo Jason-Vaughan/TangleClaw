@@ -121,6 +121,17 @@
       "restRows": {
         "0.161.0": {
           "footerPattern": "^  \\? for shortcuts$",
+          "turnEnd": {
+            "turnRowPattern": "^[›•] ",
+            "endRowPatterns": [
+              "^  Worked for \\d",
+              "^■ Conversation interrupted"
+            ],
+            "evidence": {
+              "verifiedOn": "2026-10-12",
+              "source": "Signed-in codex-cli 0.161.0 over the launch path TangleClaw uses (a `codex app-server` per launch, the pane's TUI attached with `--remote`), every frame of the six recorded runs of 2026-10-12 (#2059), read against the thread's own status. Every frame in which the launch thread read idle after a turn had, as the last row above the composer, `  Worked for <duration> • <clock>` or `■ Conversation interrupted - use /feedback if something went wrong`. Every frame left on screen while the pane's TUI process was stopped mid-answer had a `› ` or `• ` row above the composer and neither end row last, including the frames under which the thread already read idle. Before a first turn no row above the composer starts with either glyph. Not measured: an answer long enough to scroll its opening row off the visible pane while stopped. Not inferred from any other version."
+            }
+          },
           "evidence": {
             "verifiedOn": "2026-10-12",
             "source": "Signed-in codex-cli 0.161.0 over the launch path TangleClaw uses (a `codex app-server` per launch, the pane's TUI attached with `--remote`), throwaway CODEX_HOME, private tmux server, whole pane and cursor read together, 2026-10-12. At rest the composer has two rows below it: the status row, then exactly `  ? for shortcuts`, on the default status line, a three-item one and a single-item one, after a turn, after a skipped update prompt and after a resume. The screen it opens with, and the `Resuming session…` screen, draw that footer ALONE under an empty composer with the cursor on it (first seen 387 to 413 ms after launch over six launches, and at 427 ms on a resume, where the thread read idle at 625 to 634 ms while that screen was still up). No header row names a model. A plain `codex` launch on the shared daemon draws a different footer (`  ← for agents · ? for shortcuts`, captured 2026-10-07) and is not this launch path. While an answer streams, codex-cli 0.161.0 draws no busy row: the composer is empty with the cursor on it and these two rows are below it, as at rest (one real turn, 2026-10-12, read while the thread reported `active`). Not inferred from any other version."
@@ -128,6 +139,17 @@
         },
         "0.162.0": {
           "footerPattern": "^  \\? for shortcuts$",
+          "turnEnd": {
+            "turnRowPattern": "^[›•] ",
+            "endRowPatterns": [
+              "^  Worked for \\d",
+              "^■ Conversation interrupted"
+            ],
+            "evidence": {
+              "verifiedOn": "2026-10-12",
+              "source": "Signed-in codex-cli 0.162.0 over the launch path TangleClaw uses (a `codex app-server` per launch, the pane's TUI attached with `--remote`), every frame of the six recorded runs of 2026-10-12 (#2059), read against the thread's own status. Every frame in which the launch thread read idle after a turn had, as the last row above the composer, `  Worked for <duration> • <clock>` or `■ Conversation interrupted - use /feedback if something went wrong`. Every frame left on screen while the pane's TUI process was stopped mid-answer had a `› ` or `• ` row above the composer and neither end row last, including the frames under which the thread already read idle. Before a first turn no row above the composer starts with either glyph. Not measured: an answer long enough to scroll its opening row off the visible pane while stopped. Not inferred from any other version."
+            }
+          },
           "evidence": {
             "verifiedOn": "2026-10-12",
             "source": "Signed-in codex-cli 0.162.0 over the launch path TangleClaw uses (a `codex app-server` per launch, the pane's TUI attached with `--remote`), throwaway CODEX_HOME, private tmux server, whole pane and cursor read together, 2026-10-12. At rest the composer has two rows below it: the status row, then exactly `  ? for shortcuts`, on the default status line, a three-item one and a single-item one, after a turn, after a skipped update prompt and after a resume. The screen it opens with, and the `Resuming session…` screen, draw that footer ALONE under an empty composer with the cursor on it (first seen 702 to 1137 ms after launch over five launches, at 516 ms on a resume, and at 407 ms under an empty status line). No header row names a model. As typing began, one frame drew the status row with the footer absent. While an answer streams, codex-cli 0.162.0 draws no busy row: the composer is empty with the cursor on it and these two rows are below it, as at rest (one real turn, 2026-10-12, read while the thread reported `active`). Not inferred from any other version."

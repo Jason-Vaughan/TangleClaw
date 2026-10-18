@@ -1036,6 +1036,154 @@ describe('medusa-wake — _assessPane: an engine whose header says it is still s
   });
 });
 
+describe('medusa-wake — a Codex pane still drawing a turn under an idle thread, by the version\'s own end-of-turn rows (#2059)', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const CODEX = wake.ENGINE_WAKE_PROFILES.codex;
+  const VERSION = '0.161.0';
+  const COMPOSER = '› Ask Codex to do anything';
+  const BELOW = ['', '  GPT-6.1-Sol default · /tmp/p · Reply OK', '  ? for shortcuts'];
+  const ASKED = '› Write the numbers 1 to 150, one per line.';
+  /**
+   * A pane with `above` drawn over an empty composer and its two rows below.
+   * @param {string[]} above - The rows above the composer.
+   * @returns {string[]}
+   */
+  const pane = (above) => [...above, '', '', COMPOSER, ...BELOW];
+  /** Codex's empty composer row as the cursor read returns it, styled. */
+  const ON_EMPTY_COMPOSER = { x: 2, line: '\u001b[1m›\u001b[0m \u001b[2mAsk Codex to do anything\u001b[0m' };
+
+  const PRE_TURN = ['', '  >_ OpenAI Codex (v0.161.0)', '     /tmp/p'];
+  const STREAMING = [ASKED, '', '', '• 1 the sun shines over quiet hills', '  2 the sun shines over quiet hills', '  13 the sun shines over quiet'];
+  const WORKED = [ASKED, '', '• 1 the sun shines over quiet hills', '  2 the sun shines over quiet hills', '', '  Worked for 1m 04s • 18:16'];
+  const INTERRUPTED = [ASKED, '', '• I’ll read the message.', '', '■ Conversation interrupted - use /feedback if something went wrong'];
+  // Recorded on 0.161.0 while its thread read failed with `connection closed`.
+  const RECONNECTING = [ASKED, '', '• Reconnecting to server… (9s)'];
+
+  it('the bundled profile declares end-of-turn rows for exactly 0.161.0 and 0.162.0, each compiled from its own entry', () => {
+    const declared = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8')).capabilities.wake.restRows;
+    for (const version of ['0.161.0', '0.162.0']) {
+      const { turnEnd } = declared[version];
+      const compiled = CODEX.restRows[version];
+      assert.equal(compiled.turnRowRe.source, new RegExp(turnEnd.turnRowPattern).source, version);
+      assert.deepEqual(compiled.endRowRes.map((re) => re.source), turnEnd.endRowPatterns.map((p) => new RegExp(p).source), version);
+      assert.ok(Object.isFrozen(compiled) && Object.isFrozen(compiled.endRowRes), version);
+      assert.match(turnEnd.evidence.verifiedOn, /^\d{4}-\d{2}-\d{2}$/);
+      assert.ok(turnEnd.evidence.source.includes(`codex-cli ${version}`), `${version}'s end-of-turn rows are its own measurement`);
+    }
+    assert.equal(CODEX.restRows['0.156.1'], undefined, 'nothing is declared for 0.156.1, whose post-turn screen was never measured');
+  });
+
+  it('pre-turn, after a turn that ended, and after an interrupted one: not in flight', () => {
+    assert.equal(wake._paneTurnInFlight(pane(PRE_TURN), CODEX, VERSION), false);
+    assert.equal(wake._paneTurnInFlight(pane(WORKED), CODEX, VERSION), false);
+    assert.equal(wake._paneTurnInFlight(pane(INTERRUPTED), CODEX, VERSION), false);
+  });
+
+  it('an answer still being drawn, a submitted message with no answer yet and a reconnecting turn: in flight', () => {
+    assert.equal(wake._paneTurnInFlight(pane(STREAMING), CODEX, VERSION), true);
+    assert.equal(wake._paneTurnInFlight(pane([ASKED]), CODEX, VERSION), true);
+    assert.equal(wake._paneTurnInFlight(pane(RECONNECTING), CODEX, VERSION), true);
+  });
+
+  it('an end row followed by a newer turn does not end the newer one; trailing space on the end row is not part of it', () => {
+    assert.equal(wake._paneTurnInFlight(pane([...WORKED, '', '› Next one.', '', '• Working on it']), CODEX, VERSION), true);
+    const padded = [...WORKED];
+    padded[padded.length - 1] += '   ';
+    assert.equal(wake._paneTurnInFlight(pane(padded), CODEX, VERSION), false);
+  });
+
+  it('asks only for the exact version the channel proved, and only its own entry', () => {
+    const lines = pane(STREAMING);
+    for (const version of [null, undefined, '0.156.1', '0.159.0', '0.161.00', '0.161', 'constructor', '__proto__']) {
+      assert.equal(wake._paneTurnInFlight(lines, CODEX, version), false, String(version));
+    }
+    assert.equal(wake._paneTurnInFlight(lines, CODEX, '0.162.0'), true);
+    const inherited = { ...CODEX, restRows: Object.create({ [VERSION]: CODEX.restRows[VERSION] }) };
+    assert.equal(wake._paneTurnInFlight(lines, inherited, VERSION), false, 'an entry inherited through the prototype counts as absent');
+    const footerOnly = { ...CODEX, restRows: { [VERSION]: { footerRe: CODEX.restRows[VERSION].footerRe } } };
+    assert.equal(wake._paneTurnInFlight(lines, footerOnly, VERSION), false, 'an entry that declares no end-of-turn rows never holds');
+    assert.equal(wake._paneTurnInFlight(lines, CLAUDE, VERSION), false, 'a profile with no table never holds');
+  });
+
+  it('with no bare composer row in the read there is nothing to anchor on', () => {
+    assert.equal(wake._paneTurnInFlight(STREAMING, CODEX, VERSION), false);
+  });
+
+  it('an older empty composer above the live one is not a turn, though it starts with the same glyph', () => {
+    const olderOpening = [COMPOSER, '  ? for shortcuts', ''];
+    assert.equal(wake._paneTurnInFlight(pane([...olderOpening, ...PRE_TURN]), CODEX, VERSION), false);
+    assert.equal(wake._paneTurnInFlight(pane([...WORKED, '', COMPOSER]), CODEX, VERSION), false, 'nor does one drawn after the end row hide it');
+    assert.equal(wake._paneTurnInFlight(pane([...olderOpening, ...STREAMING]), CODEX, VERSION), true, 'a real turn below one is still in flight');
+  });
+
+  it('through the pane gate: held as turn-in-flight, even with the cursor on the empty composer; a version with no declaration reads at-prompt', () => {
+    assert.deepEqual(wake._assessPane(pane(STREAMING), CODEX, null, true, VERSION), { idle: false, reason: 'turn-in-flight' });
+    assert.deepEqual(wake._assessPane(pane(STREAMING), CODEX, ON_EMPTY_COMPOSER, true, VERSION), { idle: false, reason: 'turn-in-flight' });
+    assert.deepEqual(wake._assessPane(pane(STREAMING), CODEX, null, true), { idle: true, reason: 'at-prompt' });
+    assert.deepEqual(wake._assessPane(pane(WORKED), CODEX, ON_EMPTY_COMPOSER, true, VERSION), { idle: true, reason: 'at-prompt' });
+    assert.deepEqual(wake._assessPane(pane(PRE_TURN), CODEX, null, true, VERSION), { idle: true, reason: 'at-prompt' });
+  });
+
+  it('the opening screen keeps its own refusal: no turn row is drawn on it', () => {
+    const opening = [COMPOSER, '', '  ? for shortcuts'];
+    assert.deepEqual(wake._assessPane(opening, CODEX, null, true, VERSION), { idle: false, reason: 'engine-starting' });
+  });
+
+  it('the reason a sender reads says mid-turn and that the nudge waits', () => {
+    assert.match(wake.peerReasonMeaning('pane-turn-in-flight'), /mid-turn/);
+  });
+
+  describe('the turnEnd member of a restRows entry is checked when the profile is read', () => {
+    const TURN_END = () => ({
+      turnRowPattern: '^[›•] ',
+      endRowPatterns: ['^  Worked for \\d', '^■ Conversation interrupted'],
+      evidence: { verifiedOn: '2026-10-12', source: 'a live capture' }
+    });
+    /**
+     * The bundled Codex block with 0.161.0's `turnEnd` replaced.
+     * @param {*} turnEnd - The member to declare; `undefined` removes it.
+     * @returns {object}
+     */
+    const codexWith = (turnEnd) => {
+      const block = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8')).capabilities.wake;
+      if (turnEnd === undefined) delete block.restRows['0.161.0'].turnEnd;
+      else block.restRows['0.161.0'].turnEnd = turnEnd;
+      return block;
+    };
+    const derive = (block) => wake._buildWakeProfiles([{ id: 'probe', capabilities: { wake: block } }]).probe;
+
+    it('a well-formed member loads; an entry without one compiles to its footer alone', () => {
+      assert.deepEqual(wake._wakeBlockErrors(codexWith(TURN_END())), []);
+      const without = derive(codexWith(undefined));
+      assert.deepEqual(Object.keys(without.restRows['0.161.0']), ['footerRe']);
+      assert.equal(wake._paneTurnInFlight(pane(STREAMING), without, VERSION), false);
+    });
+
+    it('refuses a member that is not one, a key the gate does not read, or a missing or bad provenance', () => {
+      const bad = [
+        null, [], 'x', {},
+        { ...TURN_END(), extra: 1 },
+        { ...TURN_END(), evidence: undefined }, { ...TURN_END(), evidence: { verifiedOn: '2026-10-12' } },
+        { ...TURN_END(), evidence: { verifiedOn: '12 Oct 2026', source: 'x' } },
+        { ...TURN_END(), endRowPatterns: [] }, { ...TURN_END(), endRowPatterns: '^  Worked for \\d' }
+      ];
+      for (const turnEnd of bad) {
+        assert.match(wake._wakeBlockErrors(codexWith(turnEnd)).join(' '), /restRows must be/, JSON.stringify(turnEnd));
+        assert.equal(derive(codexWith(turnEnd)), undefined, JSON.stringify(turnEnd));
+      }
+    });
+
+    it('refuses a pattern not anchored at the row\'s start, one with alternation, one that matches nothing in particular, or one that does not compile', () => {
+      for (const loose of ['[›•] ', '^a|b', '^(a|b)', '^', '^.*', '^(unclosed', '', null, 7]) {
+        for (const turnEnd of [{ ...TURN_END(), turnRowPattern: loose }, { ...TURN_END(), endRowPatterns: ['^  Worked for \\d', loose] }]) {
+          assert.match(wake._wakeBlockErrors(codexWith(turnEnd)).join(' '), /restRows must be/, JSON.stringify(turnEnd));
+        }
+      }
+    });
+  });
+});
+
 describe('medusa-wake — nudge injection', () => {
   let saved;
   beforeEach(() => { wake.stop(); saved = { ...wake._internal }; });
