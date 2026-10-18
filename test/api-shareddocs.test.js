@@ -401,9 +401,9 @@ describe('API /api/shared-docs/:id/lock', () => {
   });
 });
 
-// #2290: a member session may release only a lock it holds. The lock route
-// records whatever session id its body names, so the release compares the
-// lock with the session the caller's launch binding verified. The holder, the
+// #2290: a member session may release only a lock it holds. An operator's
+// lock records whatever session id the operator names, so the release compares
+// the lock with the session the caller's launch binding verified. The holder, the
 // operator, and anyone on an expired or absent lock may release.
 describe('DELETE /api/shared-docs/:id/lock releases only for the holder or the operator (#2290)', () => {
   let tmpDir;
@@ -495,6 +495,156 @@ describe('DELETE /api/shared-docs/:id/lock releases only for the holder or the o
     const { status, data } = await requestAs(server, 'DELETE', `/api/shared-docs/${docId}/lock`, bindingB.headers);
     assert.equal(status, 200);
     assert.deepEqual(data, { ok: true, id: docId });
+  });
+});
+
+// #2489: a member's lock is taken in its own verified name. The body's
+// sessionId and projectName are a claim the route checks against the launch
+// binding, and ttlMinutes is bounded for every caller of the route.
+describe('POST /api/shared-docs/:id/lock binds a member to its verified session and bounds ttlMinutes (#2489)', () => {
+  let tmpDir;
+  let server;
+  let docId;
+  let projectA;
+  let projectB;
+  let bindingA;
+  let bindingB;
+
+  before(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-lock-caller-'));
+    store._setBasePath(tmpDir);
+    store.init();
+
+    const group = store.projectGroups.create({ name: 'LockCallerGroup' });
+    projectA = store.projects.create({ name: 'caller-a', path: path.join(tmpDir, 'a'), engine: 'claude' });
+    projectB = store.projects.create({ name: 'caller-b', path: path.join(tmpDir, 'b'), engine: 'claude' });
+    store.projectGroups.addMember(group.id, projectA.id);
+    store.projectGroups.addMember(group.id, projectB.id);
+    docId = store.sharedDocs.create({ groupId: group.id, name: 'CLAIMED', filePath: path.join(tmpDir, 'claimed.md') }).id;
+    bindingA = bindProject(projectA);
+    bindingB = bindProject(projectB);
+
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /**
+   * Ask the lock route for a lock as project A's bound session.
+   * @param {object} body - The request body
+   * @returns {Promise<{ status: number, data: object }>}
+   */
+  function lockAsA(body) {
+    return requestAs(server, 'POST', `/api/shared-docs/${docId}/lock`, bindingA.headers, body);
+  }
+
+  /**
+   * Assert the document carries no lock, read as project A.
+   * @returns {Promise<void>}
+   */
+  async function assertUnlocked() {
+    const { status, data } = await requestAs(server, 'GET', `/api/shared-docs/${docId}/lock`, bindingA.headers);
+    assert.equal(status, 200);
+    assert.equal(data.locked, false);
+  }
+
+  /**
+   * Minutes between a lock's acquisition and its expiry, from the route's answer.
+   * @param {object} lock - The lock the route answered
+   * @returns {number}
+   */
+  function lockMinutes(lock) {
+    const lockedAt = new Date(`${lock.lockedAt.replace(' ', 'T')}Z`).getTime();
+    return (new Date(lock.expiresAt).getTime() - lockedAt) / 60000;
+  }
+
+  it('refuses a member locking in another session\'s id with 403 LOCK_CALLER_MISMATCH, writing nothing', async () => {
+    const { status, data } = await lockAsA({ sessionId: bindingB.sessionId, projectName: projectA.name });
+    assert.equal(status, 403);
+    assert.equal(data.code, 'LOCK_CALLER_MISMATCH');
+    await assertUnlocked();
+  });
+
+  it('refuses a member locking in another project\'s name with 403 LOCK_CALLER_MISMATCH, writing nothing', async () => {
+    const { status, data } = await lockAsA({ sessionId: bindingA.sessionId, projectName: projectB.name });
+    assert.equal(status, 403);
+    assert.equal(data.code, 'LOCK_CALLER_MISMATCH');
+    await assertUnlocked();
+  });
+
+  it('refuses a mismatch without disclosing a lock another member holds', async () => {
+    const held = await requestAs(server, 'POST', `/api/shared-docs/${docId}/lock`, bindingB.headers, {
+      sessionId: bindingB.sessionId,
+      projectName: projectB.name
+    });
+    assert.equal(held.status, 200);
+    const { status, data } = await lockAsA({ sessionId: bindingB.sessionId, projectName: projectB.name });
+    assert.equal(status, 403);
+    assert.equal(data.code, 'LOCK_CALLER_MISMATCH');
+    assert.ok(!JSON.stringify(data).includes(String(held.data.lockedAt)), 'the refusal names nothing of the held lock');
+    assert.equal((await requestAs(server, 'DELETE', `/api/shared-docs/${docId}/lock`, bindingB.headers)).status, 200);
+  });
+
+  it('grants a member its own lock, recorded under its verified session, and lets it release', async () => {
+    const { status, data } = await lockAsA({ sessionId: String(bindingA.sessionId), projectName: projectA.name });
+    assert.equal(status, 200);
+    assert.equal(data.lockedBySession, bindingA.sessionId);
+    assert.equal(data.lockedByProject, projectA.name);
+    assert.equal((await requestAs(server, 'DELETE', `/api/shared-docs/${docId}/lock`, bindingA.headers)).status, 200);
+    await assertUnlocked();
+  });
+
+  for (const ttlMinutes of [0, -1, 121, 1.5, '30', null]) {
+    it(`refuses ttlMinutes ${JSON.stringify(ttlMinutes)} with 400 BAD_REQUEST, writing nothing`, async () => {
+      const { status, data } = await lockAsA({ sessionId: bindingA.sessionId, projectName: projectA.name, ttlMinutes });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+      assert.match(data.error, /ttlMinutes/);
+      await assertUnlocked();
+    });
+  }
+
+  it('refuses an out-of-range ttlMinutes from the operator too', async () => {
+    const { status, data } = await request(server, 'POST', `/api/shared-docs/${docId}/lock`, {
+      sessionId: 4242,
+      projectName: 'anyone',
+      ttlMinutes: 121
+    });
+    assert.equal(status, 400);
+    assert.equal(data.code, 'BAD_REQUEST');
+    await assertUnlocked();
+  });
+
+  for (const ttlMinutes of [1, 120]) {
+    it(`grants ttlMinutes ${ttlMinutes}, expiring that many minutes after it was taken`, async () => {
+      const { status, data } = await lockAsA({ sessionId: bindingA.sessionId, projectName: projectA.name, ttlMinutes });
+      assert.equal(status, 200);
+      assert.ok(Math.abs(lockMinutes(data) - ttlMinutes) < 0.1, `expected about ${ttlMinutes} minutes, got ${lockMinutes(data)}`);
+      assert.equal((await requestAs(server, 'DELETE', `/api/shared-docs/${docId}/lock`, bindingA.headers)).status, 200);
+    });
+  }
+
+  it('grants the 30-minute default when ttlMinutes is omitted', async () => {
+    const { status, data } = await lockAsA({ sessionId: bindingA.sessionId, projectName: projectA.name });
+    assert.equal(status, 200);
+    assert.ok(Math.abs(lockMinutes(data) - 30) < 0.1, `expected about 30 minutes, got ${lockMinutes(data)}`);
+    assert.equal((await requestAs(server, 'DELETE', `/api/shared-docs/${docId}/lock`, bindingA.headers)).status, 200);
+  });
+
+  it('still lets the operator take a lock under any session id it names', async () => {
+    const { status, data } = await request(server, 'POST', `/api/shared-docs/${docId}/lock`, {
+      sessionId: 4242,
+      projectName: 'operator-named'
+    });
+    assert.equal(status, 200);
+    assert.equal(data.lockedBySession, 4242);
+    assert.equal(data.lockedByProject, 'operator-named');
+    assert.equal((await request(server, 'DELETE', `/api/shared-docs/${docId}/lock`)).status, 200);
   });
 });
 

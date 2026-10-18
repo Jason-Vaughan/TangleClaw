@@ -826,7 +826,7 @@ Each `POST` here needs an identified caller (see "Who may write" above). A servi
 | `/api/shared-docs/:id` | PUT | Update a shared document |
 | `/api/shared-docs/:id` | DELETE | Delete a shared document |
 | `/api/shared-docs/:id/lock` | GET | Check document lock status |
-| `/api/shared-docs/:id/lock` | POST | Lock a shared document |
+| `/api/shared-docs/:id/lock` | POST | Lock a shared document. Body `{sessionId, projectName, ttlMinutes?}`. A member session locks only in its own name: `sessionId` and `projectName` must be the session and project its launch binding verifies, else **403** `LOCK_CALLER_MISMATCH` and nothing is written. The operator can name any session. `ttlMinutes` is optional, a whole number from 1 to 120 (default 30), else **400** `BAD_REQUEST`. A lock cannot be renewed: a long edit unlocks and locks again (#2489) |
 | `/api/shared-docs/:id/lock` | DELETE | Unlock a shared document. The operator can release any lock. A member session can release only a lock it holds, judged by the session its launch binding verifies, not by anything the request says. Another member's release of a live lock gets **409** `NOT_LOCK_HOLDER` with `holder: {sessionId, project, lockedAt, expiresAt}`, and the lock stays. An expired lock, or no lock, answers **200** to any member. When a session ends, every lock it holds is still released (#2290) |
 
 ### OpenClaw

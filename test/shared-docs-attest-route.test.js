@@ -218,7 +218,7 @@ describe('shared-doc attestation route (#2389)', () => {
     });
 
     it('the lock held by another session of INT\'s own project', async () => {
-      assert.equal((await lock(int, int.sessionId + 1000)).status, 200);
+      store.documentLocks.acquire(docId, int.sessionId + 1000, lanes.int.name);
       const res = await refused((s, e) => attest(int, s, e));
       assert.equal(res.data.code, 'NOT_LOCK_HOLDER');
       assert.match(res.data.error, /another session/);
