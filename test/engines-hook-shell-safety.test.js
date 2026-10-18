@@ -286,3 +286,49 @@ describe('shellWord (#1062)', () => {
     });
   }
 });
+
+describe('shellWord quotes a non-string instead of throwing (#1399)', () => {
+  // Every alias of shellWord inherits this, including the lint step's, whose
+  // own copy used to call `.replace` on its argument directly.
+  it('quotes a number', () => {
+    assert.equal(shellWord(42), "'42'");
+  });
+
+  it('quotes null', () => {
+    assert.equal(shellWord(null), "'null'");
+  });
+});
+
+describe('lib/shell-word.js is the only POSIX single-quote escaper under lib/ (#1399)', () => {
+  // A private copy of the escape is how quoting drifts: each copy can be edited
+  // on its own, and a test of one says nothing about the others. The construct
+  // is a `.replace` whose replacement is the close-escape-reopen idiom `'\''`,
+  // written in source as `'\\''`.
+  const ESCAPER = /\.replace(?:All)?\([^\n]*'\\\\''/;
+  const LIB = path.join(__dirname, '..', 'lib');
+  const OWNER = path.join(LIB, 'shell-word.js');
+
+  /**
+   * Every `.js` file under a directory, recursively.
+   * @param {string} dir - Directory to walk
+   * @returns {string[]} Absolute file paths
+   */
+  function jsFiles(dir) {
+    return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return jsFiles(full);
+      return entry.name.endsWith('.js') ? [full] : [];
+    });
+  }
+
+  it('the pattern recognises the owner, so the sweep below can fail', () => {
+    assert.match(fs.readFileSync(OWNER, 'utf8'), ESCAPER);
+  });
+
+  it('no other file under lib/ carries a copy', () => {
+    const copies = jsFiles(LIB)
+      .filter((file) => file !== OWNER && ESCAPER.test(fs.readFileSync(file, 'utf8')))
+      .map((file) => path.relative(path.join(__dirname, '..'), file));
+    assert.deepEqual(copies, [], `use shellWord from lib/shell-word.js instead of a private escaper in: ${copies.join(', ')}`);
+  });
+});

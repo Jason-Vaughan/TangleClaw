@@ -16,6 +16,7 @@
 
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
+const { liftBody } = require('./helpers/lift');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -36,24 +37,6 @@ const DRAWER_SRC = fs.readFileSync(path.join(PUB, 'wrap-drawer.js'), 'utf8');
 const helpers = loadApiHelperGlobals();
 
 /**
- * Lift one function's `{ … }` body out of a browser source file.
- * @param {string} src - The file's source
- * @param {string} decl - The declaration text that opens the function
- * @returns {string}
- */
-function functionBody(src, decl) {
-  const start = src.indexOf(decl);
-  assert.ok(start !== -1, `${decl} must exist`);
-  const open = src.indexOf('{', start + decl.length - 1);
-  let depth = 0;
-  for (let i = open; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(open, i + 1);
-  }
-  return assert.fail(`${decl} must close`);
-}
-
-/**
  * Compile a lifted browser function with its free variables supplied.
  * @param {string} src - The file's source
  * @param {string} decl - Declaration to lift, e.g. 'function renderProjectRulesList('
@@ -66,7 +49,7 @@ function lift(src, decl, params, deps) {
   const isAsync = decl.startsWith('async ');
   // eslint-disable-next-line no-new-func
   return new Function(...names,
-    `return ${isAsync ? 'async ' : ''}function (${params}) ${functionBody(src, decl)};`)(...names.map((n) => deps[n]));
+    `return ${isAsync ? 'async ' : ''}function (${params}) ${liftBody(src, decl)};`)(...names.map((n) => deps[n]));
 }
 
 /** The label helpers exactly as the page gets them from api-helper.js. */
@@ -325,7 +308,7 @@ describe('Rule #<id> on every surface (#2029)', () => {
       // restore-all-defaults act on none and are exempt by construction.)
       for (const decl of ['async function toggleMasterRule(', 'async function deleteMasterRule(',
         'async function restoreMasterRuleVersion(']) {
-        const body = functionBody(HELPER_SRC, decl);
+        const body = liftBody(HELPER_SRC, decl);
         const calls = body.match(/_setMasterRulesStatus\([^;]*;/gs) || [];
         assert.ok(calls.length > 0, `${decl} reports an outcome`);
         for (const call of calls) assert.match(call, /tcRuleLabel\(id\)/, `${decl}: ${call}`);
@@ -460,11 +443,11 @@ describe('Rule #<id> on every surface (#2029)', () => {
     it('source guard: no status line or note in a decision path is written without the label', () => {
       // A new branch added later must name the rule too; this catches one that
       // prints a bare string.
-      const project = functionBody(UI_SRC, 'async function resolveProjectRuleProposal(');
+      const project = liftBody(UI_SRC, 'async function resolveProjectRuleProposal(');
       for (const call of project.match(/_setProjectRulesStatus\([^;]*;/gs)) {
         assert.match(call, /tcRuleLabel\(id\)/, call);
       }
-      const drawer = functionBody(SESSION_SRC, 'async function resolveRuleProposal(');
+      const drawer = liftBody(SESSION_SRC, 'async function resolveRuleProposal(');
       for (const assign of drawer.match(/note\.textContent = [^;]*;/gs)) {
         assert.match(assign, /\$\{label\}/, assign);
       }

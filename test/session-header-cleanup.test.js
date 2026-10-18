@@ -10,6 +10,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const { liftDeclaration } = require('./helpers/lift');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -19,27 +20,6 @@ const SESSION_SRC = fs.readFileSync(path.join(PUBLIC, 'session.js'), 'utf8');
 const SESSION_HTML = fs.readFileSync(path.join(PUBLIC, 'session.html'), 'utf8');
 const INDEX_HTML = fs.readFileSync(path.join(PUBLIC, 'index.html'), 'utf8');
 const UI_SRC = fs.readFileSync(path.join(PUBLIC, 'ui.js'), 'utf8');
-
-/**
- * Slice a top-level function out of a script by brace matching.
- * @param {string} src
- * @param {string} name
- * @returns {string}
- */
-function extract(src, name) {
-  const start = src.indexOf(`function ${name}(`);
-  assert.ok(start > -1, `${name} should exist`);
-  const head = src.lastIndexOf('\n', start) + 1;
-  let depth = 0;
-  for (let i = src.indexOf('{', start); i < src.length; i += 1) {
-    if (src[i] === '{') depth += 1;
-    else if (src[i] === '}') {
-      depth -= 1;
-      if (depth === 0) return src.slice(head, i + 1);
-    }
-  }
-  throw new Error(`could not brace-match ${name}`);
-}
 
 /**
  * An element with a real class set and readable attributes.
@@ -85,10 +65,13 @@ function load(answers = {}) {
       return Object.prototype.hasOwnProperty.call(answers, url) ? answers[url] : null;
     }
   });
-  const fns = ['esc', 'jsArg', 'closeBannerPopovers', 'syncBannerExpanded', 'toggleMoreMenu', 'onMoreMenuClick',
-    'clickHitsSelector', 'renderBannerGroups', 'groupPopoverHtml', 'toggleGroupsPopover', 'toggleCommandBar',
-    'toggleGroupPopover', 'onGroupPillKey', 'applyWebuiMode'];
-  vm.runInContext(`let bannerGroupNames = {};\n${fns.map((f) => extract(SESSION_SRC, f)).join('\n')}\n`
+  const decls = ['function esc(', 'function jsArg(', 'function closeBannerPopovers(', 'function syncBannerExpanded(',
+    'function toggleMoreMenu(', 'function onMoreMenuClick(', 'function clickHitsSelector(',
+    'function renderBannerGroups(', 'function groupPopoverHtml(', 'async function toggleGroupsPopover(',
+    'function toggleCommandBar(', 'async function toggleGroupPopover(', 'function onGroupPillKey(',
+    'function applyWebuiMode('];
+  const fns = decls.map((d) => d.match(/function (\w+)\(/)[1]);
+  vm.runInContext(`let bannerGroupNames = {};\n${decls.map((d) => liftDeclaration(SESSION_SRC, d)).join('\n')}\n`
     + fns.map((f) => `this.${f} = ${f};`).join('\n'), ctx);
   return { els, ctx, calls };
 }
@@ -180,7 +163,7 @@ describe('the ⋯ menu holds the command bar and Peek (#1474, #1475)', () => {
     assert.match(SESSION_SRC, /\$\('moreMenu'\)\.addEventListener\('click', onMoreMenuClick\)/);
     assert.match(SESSION_SRC, /\$\('cmdBtn'\)\.addEventListener\('click', toggleCommandBar\)/);
     assert.match(SESSION_SRC, /\$\('peekBtn'\)\.addEventListener\('click', openPeek\)/);
-    assert.match(extract(SESSION_SRC, 'onBannerOutsideClick'), /\.banner-more-wrap/);
+    assert.match(liftDeclaration(SESSION_SRC, 'function onBannerOutsideClick('), /\.banner-more-wrap/);
   });
 });
 
@@ -276,8 +259,8 @@ describe('two or more groups share one pill (#1472)', () => {
   });
 
   it('the single-group popover and the counted one render a group the same way', () => {
-    assert.match(extract(SESSION_SRC, 'toggleGroupPopover'), /groupPopoverHtml\(data\)/);
-    assert.match(extract(SESSION_SRC, 'toggleGroupsPopover'), /groupPopoverHtml\(data\)/);
+    assert.match(liftDeclaration(SESSION_SRC, 'async function toggleGroupPopover('), /groupPopoverHtml\(data\)/);
+    assert.match(liftDeclaration(SESSION_SRC, 'async function toggleGroupsPopover('), /groupPopoverHtml\(data\)/);
   });
 });
 

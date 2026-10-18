@@ -13,6 +13,7 @@
 
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
+const { liftBody } = require('./helpers/lift');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -20,32 +21,13 @@ const store = require('../lib/store');
 
 const ui = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
 
-/**
- * Slice out a top-level function body by brace-matching from its declaration.
- *
- * @param {string} src - File source text.
- * @param {string} decl - The declaration to find.
- * @returns {string} The body including its braces.
- */
-function functionBody(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(bodyStart, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
-
 // The production `esc`, lifted from `public/landing.js` rather than copied, so
 // the formatter is tested against the escape that ships.
 const landing = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
-const esc = new Function(`function esc(str)${functionBody(landing, 'function esc(str)')}\nreturn esc;`)();
+const esc = new Function(`function esc(str)${liftBody(landing, 'function esc(str)')}\nreturn esc;`)();
 
 const decl = 'function formatTagList(tags)';
-const formatTagList = new Function('esc', `${decl}${functionBody(ui, decl)}\nreturn formatTagList;`)(esc);
+const formatTagList = new Function('esc', `${decl}${liftBody(ui, decl)}\nreturn formatTagList;`)(esc);
 
 describe('project tags shape (#1375)', () => {
   let tmpDir;

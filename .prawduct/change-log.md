@@ -41,6 +41,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-18 — #1903 Chunk 07, #1399: ten more lift copies use the shared helper, and POSIX single-quote escaping has one owner
+
+<!-- prawduct: type=refactor | scope=w17-a1-lift-chunk07-shell-word-owner -->
+
+v5.34.0 Wave 17 chunk W17-A1, chunk 1 of 1. Branch `fix/1399-1903-w17-a1` from `origin/main` `6ae92519`. Refs #1903 (Chunk 07); closes #1399. Plan: `.tangleclaw/plans/w17-a1-lift-chunk07-shell-word-owner-1903-1399.md` (rev2 sha256 `332d7ed0…2643`, INT `ba039eef`, Architect A301/A304); charter v2.45 (sha256 `d37c50a6…c65a`), 25-file lock.
+
+**#1399.** `lib/shell-word.js` `shellWord` is the only implementation of the `'` → `'\''` escape under `lib/`. `tmux._escapeArg`, `openclaw-approve`'s `shellQuote`, the lint wrap step's `_shellQuote` and `bridge-handoff`'s private `_shellQuote` are aliases of it (`const x = shellWord;`), keeping every identifier, call site and export; `control-hooks` writes the generated hook's `node -e` argument with `shellWord(check)`. `lib/git.js` had no copy left. A scratch capture of every quoter and both generated dispatcher scripts over an 18-value corpus printed the same bytes on base and branch, except that the lint quoter now quotes a non-string where it threw (its only caller passes file names). A guard in `test/engines-hook-shell-safety.test.js` fails, naming the file, if the escape construct appears in any other `lib/` file, and identity cases pin each exported alias to `shellWord`, which catches a re-implementation the source guard cannot see.
+
+**#1903 Chunk 07.** Ten test files drop their private brace-matching lift copies for `test/helpers/lift.js`; `session-header-cleanup` spells out its two `async function` declarations so the lifted text keeps its `async`. A `node --require` capture logged the same 452 lifts, byte for byte, on base and branch, and every file's test count is unchanged. `INITIAL_INVENTORY` goes from 46 to 36.
+
 ## 2026-10-18 — W16-REC: combined records for the Wave 16 source merges
 
 <!-- prawduct: type=chore | scope=w16-rec-records -->
