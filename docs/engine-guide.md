@@ -1887,7 +1887,7 @@ provisions nothing.
 handed to the engine. The launch goes ahead, and the server log records the failing path and a
 command for you to run by hand. It also records whether the engine's default location
 (`platformRootEnv`, else `defaultRoot`) will work, and if not, which ancestor fails. The launch response (`POST /api/sessions/:project`) carries the same account as
-`privateTempRoot`, or `null` for an engine that declares no root. TangleClaw never changes the mode of `/tmp`,
+`privateTempRoot`, or `null` for an engine that declares no root and for a web UI launch, which starts no engine on this host. TangleClaw never changes the mode of `/tmp`,
 `/private/tmp` or any directory it does not own. The only `chmod` it performs is tightening its own
 leaf back to `0700`.
 

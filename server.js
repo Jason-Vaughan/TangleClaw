@@ -7633,7 +7633,11 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
           primePrompt: null,
           startedAt: webuiResult.session.startedAt,
           iframeUrl: webuiResult.iframeUrl,
-          ttydUrl: null
+          ttydUrl: null,
+          // A web UI launch starts no engine process on this host, so it never
+          // has a private socket root. Null, as on a tmux launch whose engine
+          // declares none: present, so a caller need not tell absent from none.
+          privateTempRoot: null
         });
       })
       .catch((err) => {
