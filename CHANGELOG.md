@@ -24,6 +24,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- Recovery test files no longer wait about 90 s after their last test: the launch kickoff's idle poll no longer holds a process open alone, and the recovery fixture stands in for deferred work while its store is open (#2253).
+- The wrap's changelog check now judges the commit a wrap actually makes when the session's engine cannot run Prawduct: a `.prawduct/` changelog edit the commit leaves out no longer counts as logging source work (#2470).
 - A session continuity `files:` stamp omits paths found only in earlier `Session wrap` commits; paths also changed by session work remain (#1280).
 - In a non-git folder, a wrap now skips the commit step after flushing staged writes, so continuity and handoff steps still run (#2008).
 - A stored launch-blocker lookup retries `SQLITE_BUSY` once after 50 ms and logs one condition-only diagnostic if it still fails; a failed read never counts as no blocker (#2206).
@@ -43,10 +45,12 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- Removed the last stale review id (`R-15`) from a source comment in `lib/master.js` (#2469).
+- Five more test files lift page functions through the shared `test/helpers/lift.js` instead of private brace-matchers, with byte-identical lifted text (#1903, Chunk 02).
 - The wrap file classifier now supplies the not-committed and secret-scan lists to its consumers, so a new bucket cannot be missed by a hand-built list; no operator-visible change (#2160).
 - The changelog coverage gate imports the shared wrap-subject rule from `_git-range` instead of keeping a second copy (#2465).
 - The store's savepoint helper is named for its mechanism; the absent-Bridge test picks a free port pair; stale review IDs leave test names; and the create-project routing test stubs both scanner paths (#2164, #2036, #1640, #1998).
-- Shared `test/helpers/lift.js` pins declaration/body extraction and the shipped `esc`/`jsArg` loaders; existing tests have not migrated to it yet (#1903, Chunk 01).
+- Shared `test/helpers/lift.js` pins declaration/body extraction and the shipped `esc`/`jsArg` loaders; Chunk 01 inventoried the private lifters for later migration (#1903, Chunk 01).
 - ADR 0025 records the A123 Codex cold-start wake and pane-refusal ruling; #2059 remains open for its unfinished work.
 - The `sendKeys`/`sendRawKey` tmux tests wait for bash's prompt and assert on output lines, so a loaded host no longer scores tty echo (#2447).
 - Antigravity’s profile now records that `? for shortcuts` disappears while its composer holds text; the wake gate permits only its exact stranded nudge with an empty hint slot (#2358).
