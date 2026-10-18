@@ -8,6 +8,10 @@
  * caller tells "no root applies" (`null`) from "the server did not say"
  * (absent) by the key being present.
  *
+ * #2484 — the same holds for `launchMode` and `isolationOverride`, and the
+ * last case here pins the whole class: the web UI 201 carries exactly the keys
+ * the tmux 201 carries, so a key added to one branch alone fails here.
+ *
  * A real listening server, because the web UI 201 is written after the
  * handler has returned, once the web UI launch resolves.
  */
@@ -29,7 +33,7 @@ const strandedCheck = require('../lib/stranded-check');
 const { handleRequest } = require('../server');
 const { operatorHeaders, sendAs } = require('./_shared-docs-callers');
 
-describe('the launch 201 carries privateTempRoot on every launch path (#2171)', () => {
+describe('the launch 201 carries privateTempRoot, launchMode and isolationOverride on every launch path (#2171, #2484)', () => {
   let tempDir;
   let prevBase;
   let server;
@@ -108,5 +112,57 @@ describe('the launch 201 carries privateTempRoot on every launch path (#2171)', 
     assert.equal(res.status, 201, JSON.stringify(res.data));
     assert.equal(res.data.sessionMode, 'tmux');
     assert.deepEqual(res.data.privateTempRoot, refused);
+  });
+
+  /**
+   * Stub a web UI launch whose session row records the given launch mode.
+   * @param {string|null|undefined} launchMode - The row's recorded mode
+   */
+  function stubWebui(launchMode) {
+    sessions.launchSession = () => ({ webui: true, _conn: {}, _engineId: 'openclaw', _engineProfile: {}, _project: project });
+    sessions.launchWebuiSession = async () => ({
+      session: { id: 9, engineId: 'openclaw', startedAt: 'now', launchMode },
+      iframeUrl: '/openclaw/'
+    });
+  }
+
+  it('reports the launch mode the web UI session row recorded', async () => {
+    stubWebui('acceptEdits');
+    const res = await launch();
+    assert.equal(res.status, 201, JSON.stringify(res.data));
+    assert.equal(res.data.sessionMode, 'webui');
+    assert.equal(res.data.launchMode, 'acceptEdits');
+  });
+
+  it('reports launchMode null on the web UI 201 when no mode took effect', async () => {
+    stubWebui(null);
+    const res = await launch();
+    assert.equal(res.status, 201, JSON.stringify(res.data));
+    assert.ok(Object.hasOwn(res.data, 'launchMode'), 'the web UI 201 has no launchMode key');
+    assert.equal(res.data.launchMode, null);
+  });
+
+  it('carries isolationOverride, null, on the web UI 201', async () => {
+    stubWebui('acceptEdits');
+    const res = await launch();
+    assert.equal(res.status, 201, JSON.stringify(res.data));
+    assert.ok(Object.hasOwn(res.data, 'isolationOverride'), 'the web UI 201 has no isolationOverride key');
+    assert.equal(res.data.isolationOverride, null);
+  });
+
+  it('gives the web UI 201 exactly the keys of the tmux 201', async () => {
+    sessions.launchSession = () => ({
+      session: { id: 10, engineId: 'claude', sessionMode: 'tmux', tmuxSession: 'x', startedAt: 'now', launchMode: 'plan' },
+      primePrompt: null, ttydUrl: '/terminal/', error: null, strandedUnchecked: null, privateTempRoot: null,
+      isolationOverride: null
+    });
+    const tmux = await launch();
+    assert.equal(tmux.status, 201, JSON.stringify(tmux.data));
+    assert.equal(tmux.data.sessionMode, 'tmux');
+    stubWebui('plan');
+    const webui = await launch();
+    assert.equal(webui.status, 201, JSON.stringify(webui.data));
+    assert.equal(webui.data.sessionMode, 'webui');
+    assert.deepEqual(Object.keys(webui.data).sort(), Object.keys(tmux.data).sort());
   });
 });

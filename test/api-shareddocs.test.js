@@ -8,7 +8,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
-const { operatorOf } = require('./_shared-docs-callers');
+const { operatorOf, bindProject } = require('./_shared-docs-callers');
 const { createServer, _sharedDocWatchers, _sharedDocDebounceTimers } = require('../server');
 
 // The operator routes that grant authority need a signed-in operator (#2378).
@@ -31,7 +31,7 @@ function operatorFor(server) {
 setLevel('error');
 
 /**
- * Make an HTTP request to the test server.
+ * Make an HTTP request to the test server as the operator.
  * @param {http.Server} server
  * @param {string} method
  * @param {string} urlPath
@@ -39,7 +39,21 @@ setLevel('error');
  * @returns {Promise<{ status: number, data: object }>}
  */
 async function request(server, method, urlPath, body) {
-  const operatorWrite = await operatorFor(server);
+  // These suites exercise the dashboard's group and document management,
+  // so every request is the operator's; a bare machine request is refused.
+  return requestAs(server, method, urlPath, await operatorFor(server), body);
+}
+
+/**
+ * Make an HTTP request to the test server with the given caller headers.
+ * @param {http.Server} server
+ * @param {string} method
+ * @param {string} urlPath
+ * @param {Record<string, string>} callerHeaders - Who the request is from
+ * @param {object} [body]
+ * @returns {Promise<{ status: number, data: object }>}
+ */
+function requestAs(server, method, urlPath, callerHeaders, body) {
   return new Promise((resolve, reject) => {
     const addr = server.address();
     const options = {
@@ -47,9 +61,7 @@ async function request(server, method, urlPath, body) {
       port: addr.port,
       path: urlPath,
       method,
-      // These suites exercise the dashboard's group and document management,
-      // so every request is the operator's; a bare machine request is refused.
-      headers: { 'Content-Type': 'application/json', ...operatorWrite }
+      headers: { 'Content-Type': 'application/json', ...callerHeaders }
     };
 
     const req = http.request(options, (res) => {
@@ -386,6 +398,103 @@ describe('API /api/shared-docs/:id/lock', () => {
 
     // Clean up
     store.documentLocks.release(docId);
+  });
+});
+
+// #2290: a member session may release only a lock it holds. The lock route
+// records whatever session id its body names, so the release compares the
+// lock with the session the caller's launch binding verified. The holder, the
+// operator, and anyone on an expired or absent lock may release.
+describe('DELETE /api/shared-docs/:id/lock releases only for the holder or the operator (#2290)', () => {
+  let tmpDir;
+  let server;
+  let docId;
+  let projectA;
+  let projectB;
+  let bindingA;
+  let bindingB;
+
+  before(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-lock-holder-'));
+    store._setBasePath(tmpDir);
+    store.init();
+
+    const group = store.projectGroups.create({ name: 'LockHolderGroup' });
+    projectA = store.projects.create({ name: 'holder-a', path: path.join(tmpDir, 'a'), engine: 'claude' });
+    projectB = store.projects.create({ name: 'member-b', path: path.join(tmpDir, 'b'), engine: 'claude' });
+    store.projectGroups.addMember(group.id, projectA.id);
+    store.projectGroups.addMember(group.id, projectB.id);
+    docId = store.sharedDocs.create({ groupId: group.id, name: 'HELD', filePath: path.join(tmpDir, 'held.md') }).id;
+    bindingA = bindProject(projectA);
+    bindingB = bindProject(projectB);
+
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /**
+   * Lock the document as project A's session, through the route.
+   * @returns {Promise<object>} The lock the route answered
+   */
+  async function lockAsA() {
+    const { status, data } = await requestAs(server, 'POST', `/api/shared-docs/${docId}/lock`, bindingA.headers, {
+      sessionId: bindingA.sessionId,
+      projectName: projectA.name
+    });
+    assert.equal(status, 200);
+    return data;
+  }
+
+  it('refuses another member session with 409 NOT_LOCK_HOLDER naming the holder, and keeps the lock', async () => {
+    const lock = await lockAsA();
+    const { status, data } = await requestAs(server, 'DELETE', `/api/shared-docs/${docId}/lock`, bindingB.headers);
+    assert.equal(status, 409);
+    assert.equal(data.code, 'NOT_LOCK_HOLDER');
+    assert.equal(data.holder.sessionId, bindingA.sessionId);
+    assert.equal(data.holder.project, projectA.name);
+    assert.equal(data.holder.lockedAt, lock.lockedAt);
+    assert.equal(data.holder.expiresAt, lock.expiresAt);
+    const after = await requestAs(server, 'GET', `/api/shared-docs/${docId}/lock`, bindingB.headers);
+    assert.equal(after.data.locked, true);
+    assert.equal(after.data.lock.lockedBySession, bindingA.sessionId);
+  });
+
+  it('releases for the session that holds the lock', async () => {
+    const { status, data } = await requestAs(server, 'DELETE', `/api/shared-docs/${docId}/lock`, bindingA.headers);
+    assert.equal(status, 200);
+    assert.deepEqual(data, { ok: true, id: docId });
+    assert.equal(store.documentLocks.check(docId), null);
+  });
+
+  it('releases for the operator, whoever holds the lock', async () => {
+    await lockAsA();
+    const { status, data } = await request(server, 'DELETE', `/api/shared-docs/${docId}/lock`);
+    assert.equal(status, 200);
+    assert.equal(data.ok, true);
+    assert.equal(store.documentLocks.check(docId), null);
+  });
+
+  it('releases an expired lock for another member session', async () => {
+    await lockAsA();
+    store.getDb().prepare('UPDATE document_locks SET expires_at = ? WHERE document_id = ?')
+      .run(new Date(Date.now() - 1000).toISOString(), docId);
+    const { status, data } = await requestAs(server, 'DELETE', `/api/shared-docs/${docId}/lock`, bindingB.headers);
+    assert.equal(status, 200);
+    assert.equal(data.ok, true);
+    assert.equal(store.documentLocks.check(docId), null);
+  });
+
+  it('answers 200 to a member session when the document is not locked', async () => {
+    assert.equal(store.documentLocks.check(docId), null);
+    const { status, data } = await requestAs(server, 'DELETE', `/api/shared-docs/${docId}/lock`, bindingB.headers);
+    assert.equal(status, 200);
+    assert.deepEqual(data, { ok: true, id: docId });
   });
 });
 
