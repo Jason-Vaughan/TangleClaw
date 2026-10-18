@@ -33,6 +33,7 @@ const defaultPipeline = require('../lib/wrap-default-pipeline');
 const wrapRunRegistry = require('../lib/wrap-run-registry');
 const { WRAP_STREAM_EVENTS: EV } = require('../public/wrap-stream-events');
 const { handleRequest } = require('../server');
+const { liftDeclaration } = require('./helpers/lift');
 
 const FINISHED = { ok: true, blockedAt: null, cancelledAt: null, results: [], commitSha: null, summary: null, error: null };
 
@@ -861,22 +862,6 @@ describe('drawer: planned outcome, Hide and Cancel (#1708, #1707)', () => {
   });
 
   /**
-   * Lift a top-level function out of the page source by brace matching.
-   * @param {string} decl
-   * @returns {string}
-   */
-  function lift(decl) {
-    const start = SESSION_SRC.indexOf(decl);
-    assert.notEqual(start, -1, `${decl} must exist`);
-    let depth = 0;
-    for (let i = SESSION_SRC.indexOf('{', start); i < SESSION_SRC.length; i++) {
-      if (SESSION_SRC[i] === '{') depth++;
-      else if (SESSION_SRC[i] === '}' && --depth === 0) return SESSION_SRC.slice(start, i + 1);
-    }
-    return assert.fail('unbalanced');
-  }
-
-  /**
    * A sandbox running the page's real cancel wiring against a fake DOM and API.
    * @param {object} answer - What the fake cancel POST answers
    * @returns {object}
@@ -908,8 +893,8 @@ describe('drawer: planned outcome, Hide and Cancel (#1708, #1707)', () => {
     vm.createContext(sandbox);
     vm.runInContext([
       'let wrapCancelState = { runId: null, requested: false, finishingStepId: null };',
-      lift('function paintLiveSessionControls('),
-      lift('async function requestWrapCancel('),
+      liftDeclaration(SESSION_SRC, 'function paintLiveSessionControls('),
+      liftDeclaration(SESSION_SRC, 'async function requestWrapCancel('),
       'this.paint = () => paintLiveSessionControls(wrapRunState().live);',
       'this.cancel = requestWrapCancel;'
     ].join('\n'), sandbox);
@@ -948,13 +933,7 @@ describe('settings modal save: the keep toggle (#1708)', () => {
    * @returns {Promise<object>} The PATCH body
    */
   async function save(project, checked) {
-    const start = UI_SRC.indexOf('async function doSaveSettings()');
-    let depth = 0;
-    let end = -1;
-    for (let i = UI_SRC.indexOf('{', start); i < UI_SRC.length; i++) {
-      if (UI_SRC[i] === '{') depth++;
-      else if (UI_SRC[i] === '}' && --depth === 0) { end = i + 1; break; }
-    }
+    const fn = liftDeclaration(UI_SRC, 'async function doSaveSettings()');
     const els = {
       settingsName: { value: project.name },
       settingsEngine: { value: 'claude' },
@@ -975,7 +954,7 @@ describe('settings modal save: the keep toggle (#1708)', () => {
       openBypassHiddenModal() {}
     };
     vm.createContext(sandbox);
-    vm.runInContext(`${UI_SRC.slice(start, end)}; this.run = doSaveSettings;`, sandbox);
+    vm.runInContext(`${fn}; this.run = doSaveSettings;`, sandbox);
     await sandbox.run();
     return JSON.parse(JSON.stringify(sent[0]));
   }

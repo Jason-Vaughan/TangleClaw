@@ -17,30 +17,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const projects = require('../lib/projects');
+const { liftBody } = require('./helpers/lift');
 
 const UI_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
-
-/**
- * Slice out a top-level function body by brace-matching from its declaration.
- *
- * `public/ui.js` is a browser global script rather than a requireable module,
- * so its renderers are reached this way.
- *
- * @param {string} src - File source text.
- * @param {string} decl - The declaration, e.g. `function renderStatusDot(project)`.
- * @returns {string} The body including its braces.
- */
-function functionBody(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(bodyStart, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 /**
  * Lift a pure renderer out of `ui.js` and RUN it, with the browser globals it
@@ -53,7 +32,7 @@ function functionBody(src, decl) {
  */
 function lift(decl, name, scope) {
   const names = Object.keys(scope);
-  const factory = new Function(...names, `${decl}${functionBody(UI_SRC, decl)}\nreturn ${name};`);
+  const factory = new Function(...names, `${decl}${liftBody(UI_SRC, decl)}\nreturn ${name};`);
   return factory(...names.map((k) => scope[k]));
 }
 
@@ -361,20 +340,8 @@ describe('the card reports a running wrap from the run registry (#1034)', () => 
     // These assertions buy the same mutation coverage for the price of reading
     // a string, which is the whole of the argument.
     const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'projects.js'), 'utf8');
-    const body = (decl) => {
-      const start = src.indexOf(decl);
-      assert.notEqual(start, -1, `${decl} must exist`);
-      const open = src.indexOf('{', start);
-      let depth = 0;
-      for (let i = open; i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) return src.slice(open, i + 1);
-      }
-      assert.fail(`${decl} body must close`);
-    };
-
     it('enrichProject reads the wrap state and passes it to BOTH projections', () => {
-      const enrich = body('async function enrichProject(project, facts, context)');
+      const enrich = liftBody(src, 'async function enrichProject(project, facts, context)');
       assert.match(enrich, /_wrapState\(project\.name\)/,
         'enrichProject must read the wrap state');
       assert.match(enrich, /_liveSession\(activeSession, wrapping\)/,
@@ -390,8 +357,8 @@ describe('the card reports a running wrap from the run registry (#1034)', () => 
       const sessions = fs.readFileSync(path.join(__dirname, '..', 'lib', 'sessions.js'), 'utf8');
       assert.match(sessions, /wrapRunRegistry\.begin\(\s*project\.name/,
         'the pipeline registers under project.name');
-      assert.match(body('function _wrapState(projectName)'), /_internal\.wrapRun\(projectName\)/);
-      assert.match(body('async function enrichProject(project, facts, context)'),
+      assert.match(liftBody(src, 'function _wrapState(projectName)'), /_internal\.wrapRun\(projectName\)/);
+      assert.match(liftBody(src, 'async function enrichProject(project, facts, context)'),
         /_wrapState\(project\.name\)/, 'and the card reads under the same key');
     });
   });
@@ -422,13 +389,7 @@ describe('the card reports a running wrap from the run registry (#1034)', () => 
       const uiSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
       const start = uiSrc.indexOf('function renderStatusDot(project)');
       assert.notEqual(start, -1);
-      const open = uiSrc.indexOf('{', start);
-      let depth = 0;
-      let body = '';
-      for (let i = open; i < uiSrc.length; i++) {
-        if (uiSrc[i] === '{') depth++;
-        else if (uiSrc[i] === '}' && --depth === 0) { body = uiSrc.slice(open, i + 1); break; }
-      }
+      const body = liftBody(uiSrc, 'function renderStatusDot(project)');
       const emitted = new Set();
       // The lookahead matters: without it `class="status-dot-glyph"` also matches
       // and yields a phantom `-glyph` modifier. The glyph is a CHILD span, not a

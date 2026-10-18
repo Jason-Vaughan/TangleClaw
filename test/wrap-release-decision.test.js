@@ -19,6 +19,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { makeDocument } = require('./_mini-dom');
+const { liftDeclaration } = require('./helpers/lift');
 
 const PUB = path.join(__dirname, '..', 'public');
 const SESSION_SRC = fs.readFileSync(path.join(PUB, 'session.js'), 'utf8');
@@ -37,27 +38,6 @@ function loadHelpers() {
   vm.createContext(sandbox);
   vm.runInContext(src, sandbox);
   return sandbox.module.exports;
-}
-
-/**
- * Slice a top-level function out of source text by brace-matching, so the test
- * runs the real code rather than a copy.
- *
- * @param {string} src - File source text.
- * @param {string} decl - Declaration to find.
- * @returns {string} The declaration plus its balanced body.
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-  return '';
 }
 
 const H = loadHelpers();
@@ -250,7 +230,7 @@ describe('the wrap modal release controls (run)', () => {
     el.wrapBumpGroup.classList.add('hidden');
     const ctx = { document: doc, sessionState: { project: { releaseMode: mode } } };
     vm.createContext(ctx);
-    vm.runInContext(`${liftFunction(SESSION_SRC, 'function syncWrapReleaseControls()')}; syncWrapReleaseControls();`, ctx);
+    vm.runInContext(`${liftDeclaration(SESSION_SRC, 'function syncWrapReleaseControls()')}; syncWrapReleaseControls();`, ctx);
     return el;
   }
 
@@ -308,8 +288,8 @@ describe('refreshWrapReleaseMode (run)', () => {
       }
     };
     vm.createContext(ctx);
-    vm.runInContext(`${liftFunction(SESSION_SRC, 'function syncWrapReleaseControls()')}
-${liftFunction(SESSION_SRC, 'async function refreshWrapReleaseMode()')}`, ctx);
+    vm.runInContext(`${liftDeclaration(SESSION_SRC, 'function syncWrapReleaseControls()')}
+${liftDeclaration(SESSION_SRC, 'async function refreshWrapReleaseMode()')}`, ctx);
     const changed = await ctx.refreshWrapReleaseMode();
     return { changed, el, ctx };
   }
@@ -331,7 +311,7 @@ ${liftFunction(SESSION_SRC, 'async function refreshWrapReleaseMode()')}`, ctx);
   });
 
   it('confirmWrap refreshes before reading the choice, and stops when the mode moved', () => {
-    const body = liftFunction(SESSION_SRC, 'async function confirmWrap()');
+    const body = liftDeclaration(SESSION_SRC, 'async function confirmWrap()');
     const refreshAt = body.indexOf('await refreshWrapReleaseMode()');
     assert.ok(refreshAt !== -1, 'confirmWrap re-reads the mode');
     assert.ok(refreshAt < body.indexOf("getElementById('wrapRelease')"), 'before the Release choice is read');
@@ -341,14 +321,14 @@ ${liftFunction(SESSION_SRC, 'async function refreshWrapReleaseMode()')}`, ctx);
 
 describe('the wrap modal and retry thread the decision (source pins)', () => {
   it('confirmWrap reads Release only while it is shown, and a level only with Cut', () => {
-    const body = liftFunction(SESSION_SRC, 'async function confirmWrap()');
+    const body = liftDeclaration(SESSION_SRC, 'async function confirmWrap()');
     assert.match(body, /classList\.contains\('hidden'\)\s*\?\s*releaseEl\.value\s*:\s*''/);
     assert.match(body, /wrapReleaseChoice === 'cut' \? bumpEl\.value : ''/);
     assert.match(body, /release:\s*\(\)\s*=>\s*wrapReleaseChoice/);
   });
 
   it('openWrapModal resets Release to Auto and re-syncs the controls', () => {
-    const body = liftFunction(SESSION_SRC, 'function openWrapModal()');
+    const body = liftDeclaration(SESSION_SRC, 'function openWrapModal()');
     assert.match(body, /releaseEl\.value\s*=\s*''/);
     assert.match(body, /syncWrapReleaseControls\(\)/);
   });
@@ -358,7 +338,7 @@ describe('the wrap modal and retry thread the decision (source pins)', () => {
   });
 
   it('retryWrap prefers a drawer answer, and keeps it for the rest of the wrap', () => {
-    const body = liftFunction(SESSION_SRC, 'async function retryWrap()');
+    const body = liftDeclaration(SESSION_SRC, 'async function retryWrap()');
     assert.match(body, /\.wrap-decision--release input\[type="radio"\]:checked/);
     assert.match(body, /picked \? picked\.value : wrapReleaseChoice/);
     assert.match(body, /if \(options\.release\) wrapReleaseChoice = options\.release/);
@@ -379,7 +359,7 @@ describe('renderReleaseDecisionWidget (run)', () => {
     const { doc } = makeDocument([]);
     const ctx = { document: doc };
     vm.createContext(ctx);
-    vm.runInContext(liftFunction(SESSION_SRC, 'function renderReleaseDecisionWidget(widget)'), ctx);
+    vm.runInContext(liftDeclaration(SESSION_SRC, 'function renderReleaseDecisionWidget(widget)'), ctx);
     const raw = haltedBump();
     adjust(raw.output);
     const widget = H.releaseDecisionWidget(H.buildStepRow(raw, { blockedAt: 'version-bump' }), raw.output);
@@ -437,7 +417,7 @@ describe('the settings modal Release mode (source pins)', () => {
   });
 
   it('saves releaseMode alone, and the legacy checkbox is gone', () => {
-    const body = liftFunction(UI_SRC, 'async function doSaveSettings()');
+    const body = liftDeclaration(UI_SRC, 'async function doSaveSettings()');
     assert.match(body, /body\.releaseMode = releaseModeEl\.value/);
     assert.doesNotMatch(body, /body\.versionBumpEnabled/);
     assert.doesNotMatch(UI_SRC, /settingsVersionBump/);

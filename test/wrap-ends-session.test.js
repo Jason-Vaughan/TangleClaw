@@ -28,6 +28,7 @@ const wrapPipeline = require('../lib/wrap-pipeline');
 const wrapRunRegistry = require('../lib/wrap-run-registry');
 const { handleRequest } = require('../server');
 const drawer = require('../public/wrap-drawer');
+const { liftDeclaration } = require('./helpers/lift');
 
 const PUBLIC = path.join(__dirname, '..', 'public');
 const LANDING_SRC = fs.readFileSync(path.join(PUBLIC, 'landing.js'), 'utf8');
@@ -405,26 +406,6 @@ describe('drawer helpers (#1558)', () => {
 });
 
 /**
- * Slice a top-level function out of source text by brace-matching, so the test
- * runs the real code rather than a copy.
- * @param {string} src
- * @param {string} decl
- * @returns {string}
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-  return '';
-}
-
-/**
  * A fake element with the properties the wrap dialogs touch.
  * @param {string} id
  * @returns {object}
@@ -461,7 +442,7 @@ function makeDocument() {
   };
 }
 
-const escSrc = liftFunction(LANDING_SRC, 'function esc(');
+const escSrc = liftDeclaration(LANDING_SRC, 'function esc(');
 const plain = (v) => JSON.parse(JSON.stringify(v));
 
 describe('dashboard wrap dialog: Keep the session running (#1558)', () => {
@@ -487,11 +468,11 @@ describe('dashboard wrap dialog: Keep the session running (#1558)', () => {
     vm.runInContext([
       escSrc,
       'let wrapTarget = null; let wrapInFlight = false; let wrapStrandedItems = null;',
-      liftFunction(LANDING_SRC, 'function openWrapModal('),
-      liftFunction(LANDING_SRC, 'function showWrapStranded('),
-      liftFunction(LANDING_SRC, 'function syncWrapConfirmButton('),
-      liftFunction(LANDING_SRC, 'function closeWrapModal('),
-      liftFunction(LANDING_SRC, 'async function confirmWrap('),
+      liftDeclaration(LANDING_SRC, 'function openWrapModal('),
+      liftDeclaration(LANDING_SRC, 'function showWrapStranded('),
+      liftDeclaration(LANDING_SRC, 'function syncWrapConfirmButton('),
+      liftDeclaration(LANDING_SRC, 'function closeWrapModal('),
+      liftDeclaration(LANDING_SRC, 'async function confirmWrap('),
       'this.openWrapModal = openWrapModal; this.confirmWrap = confirmWrap;'
     ].join('\n'), sandbox);
     return sandbox;
@@ -576,8 +557,8 @@ describe('session page wrap dialog: Keep the session running (#1558)', () => {
       'let wrapPathDecisions = {}; let wrapPathDecisionBasis = {}; let wrapSkippedAiSteps = {}; let wrapProceedPastStranded = [];',
       'let wrapKeepRunning = null;',
       'let lastRefusedStrandedItems = null; let wrapDrawerStrandedItems = null; let wrapModalStrandedItems = null;',
-      liftFunction(SESSION_SRC, 'function adoptWrapRunChoices('),
-      liftFunction(SESSION_SRC, 'async function retryWrap('),
+      liftDeclaration(SESSION_SRC, 'function adoptWrapRunChoices('),
+      liftDeclaration(SESSION_SRC, 'async function retryWrap('),
       'this.get = (name) => eval(name); this.set = (name, v) => eval(`${name} = v`);'
     ].join('\n'), sandbox);
     return sandbox;
@@ -643,8 +624,8 @@ describe('session page wrap dialog: Keep the session running (#1558)', () => {
       'let wrapPathDecisions = {}; let wrapPathDecisionBasis = {}; let wrapSkippedAiSteps = {}; let wrapProceedPastStranded = [];',
       'let wrapKeepRunning = false; let wrapModalStrandedItems = null; let lastRefusedStrandedItems = null;',
       'let currentWrapPassword = "";',
-      liftFunction(SESSION_SRC, 'function openWrapModal('),
-      liftFunction(SESSION_SRC, 'async function confirmWrap('),
+      liftDeclaration(SESSION_SRC, 'function openWrapModal('),
+      liftDeclaration(SESSION_SRC, 'async function confirmWrap('),
       'this.openWrapModal = openWrapModal; this.confirmWrap = confirmWrap;',
       'this.get = (name) => eval(name);'
     ].join('\n'), sandbox);
@@ -700,10 +681,10 @@ describe('session page wrap dialog: Keep the session running (#1558)', () => {
       syncRetryLabel() {}
     };
     vm.createContext(sandbox);
-    const renderSrc = liftFunction(SESSION_SRC, 'function renderWrapDrawer(');
+    const renderSrc = liftDeclaration(SESSION_SRC, 'function renderWrapDrawer(');
     vm.runInContext([
       'let currentWrapPipelineResult = null; let currentWrapBaseStatus = null;',
-      liftFunction(SESSION_SRC, 'function openWrapDrawer('),
+      liftDeclaration(SESSION_SRC, 'function openWrapDrawer('),
       // Only the banner is under test: stop the render once it is painted.
       renderSrc.replace(/paintWrapStatus\(status, status\.pr, status\);/, 'paintWrapStatus(status, status.pr, status); return;'),
       'this.openWrapDrawer = openWrapDrawer;'
