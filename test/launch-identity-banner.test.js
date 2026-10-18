@@ -22,31 +22,12 @@ setLevel('error');
 
 const serverInfo = require('../lib/server-info');
 const launchIdentity = require('../lib/launch-identity');
+const { liftDeclaration } = require('./helpers/lift');
 
 const LANDING_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
 const INDEX_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 
 const READ_AT = '2026-10-11T22:05:09.000Z';
-
-/**
- * Slice a top-level function out of landing.js by brace matching.
- * @param {string} name - Function name.
- * @returns {string} Its source.
- */
-function extract(name) {
-  const at = LANDING_SRC.indexOf(`function ${name}(`);
-  assert.ok(at > -1, `${name} should exist in landing.js`);
-  const start = LANDING_SRC.lastIndexOf('\n', at) + 1;
-  let depth = 0;
-  for (let i = LANDING_SRC.indexOf('{', at); i < LANDING_SRC.length; i += 1) {
-    if (LANDING_SRC[i] === '{') depth += 1;
-    else if (LANDING_SRC[i] === '}') {
-      depth -= 1;
-      if (depth === 0) return LANDING_SRC.slice(start, i + 1);
-    }
-  }
-  throw new Error(`could not brace-match ${name}`);
-}
 
 /**
  * Run `renderLaunchIdentityBanner` against a DOM stub. The banner starts
@@ -81,7 +62,7 @@ function render(notice, { shownBefore = false } = {}) {
       }
     }
   });
-  vm.runInContext(`${extract('esc')}\n${extract('renderLaunchIdentityBanner')}\nrenderLaunchIdentityBanner(notice);`, ctx);
+  vm.runInContext(`${liftDeclaration(LANDING_SRC, 'function esc(')}\n${liftDeclaration(LANDING_SRC, 'function renderLaunchIdentityBanner(')}\nrenderLaunchIdentityBanner(notice);`, ctx);
   return { hidden: dom.hidden, html: dom.text };
 }
 
@@ -351,7 +332,7 @@ describe('#2268 the launch identity banner: the poll and the page', () => {
       hideStaleServerBanner: noop,
       renderLaunchIdentityBanner: (...args) => { calls.push(args); }
     });
-    await vm.runInContext(`${extract('loadServerInfo')}\nloadServerInfo();`, ctx);
+    await vm.runInContext(`${liftDeclaration(LANDING_SRC, 'async function loadServerInfo(')}\nloadServerInfo();`, ctx);
     return calls;
   }
 
@@ -381,7 +362,7 @@ describe('#2268 the launch identity banner: the poll and the page', () => {
     const at = INDEX_SRC.indexOf('id="launchIdentityBanner"');
     const element = INDEX_SRC.slice(at, INDEX_SRC.indexOf('</div>', at));
     assert.ok(!/<button/.test(element), element);
-    const fn = extract('renderLaunchIdentityBanner');
+    const fn = liftDeclaration(LANDING_SRC, 'function renderLaunchIdentityBanner(');
     assert.ok(!/setTimeout|setInterval|onclick/.test(fn));
   });
 });

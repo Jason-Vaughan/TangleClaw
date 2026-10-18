@@ -27,29 +27,11 @@ setLevel('error');
 const store = require('../lib/store');
 const engines = require('../lib/engines');
 const { makeDocument } = require('./_mini-dom');
+const { liftDeclaration } = require('./helpers/lift');
 
 const PUB = path.join(__dirname, '..', 'public');
 const UI_SRC = fs.readFileSync(path.join(PUB, 'ui.js'), 'utf8');
 const API_HELPER_SRC = fs.readFileSync(path.join(PUB, 'api-helper.js'), 'utf8');
-
-/**
- * Slice a top-level declaration out of source by brace-matching, so the sandbox
- * runs the REAL code rather than a copy of it.
- * @param {string} src - File source.
- * @param {string} decl - Declaration text to find.
- * @returns {string}
- */
-function lift(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  let depth = 0;
-  for (let i = src.indexOf('{', start); i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} must close`);
-  return '';
-}
 
 describe('#1236 Eval Audit is reachable, and honest about where it works', () => {
   let tmpDir;
@@ -239,11 +221,11 @@ describe('#1236 Eval Audit is reachable, and honest about where it works', () =>
       const tables = API_HELPER_SRC.match(/const TC_SETTING_\w+ = \{[\s\S]*?\n {2}\};/g) || [];
       assert.ok(tables.length >= 2, `expected the setting tables to lift, found ${tables.length}`);
       for (const table of tables) vm.runInContext(table, ctx);
-      vm.runInContext(lift(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
-      vm.runInContext(lift(API_HELPER_SRC, 'function tcEngineDisplayName'), ctx);
-      vm.runInContext(lift(API_HELPER_SRC, 'function tcSettingDisposition'), ctx);
-      vm.runInContext(lift(API_HELPER_SRC, 'function tcResolveEngineProfile'), ctx);
-      vm.runInContext(lift(UI_SRC, 'function renderEvalAuditToggle'), ctx);
+      vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
+      vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcEngineDisplayName'), ctx);
+      vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcSettingDisposition'), ctx);
+      vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcResolveEngineProfile'), ctx);
+      vm.runInContext(liftDeclaration(UI_SRC, 'function renderEvalAuditToggle'), ctx);
       ctx.renderEvalAuditToggle(engineId, checked, projectEngine, audit);
       return doc.getElementById('settingsEvalAuditContainer').innerHTML;
     }
@@ -316,11 +298,11 @@ describe('#1236 Eval Audit is reachable, and honest about where it works', () =>
       vm.createContext(ctx);
       const tables = API_HELPER_SRC.match(/const TC_SETTING_\w+ = \{[\s\S]*?\n {2}\};/g) || [];
       for (const table of tables) vm.runInContext(table, ctx);
-      vm.runInContext(lift(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
-      vm.runInContext(lift(API_HELPER_SRC, 'function tcEngineDisplayName'), ctx);
-      vm.runInContext(lift(API_HELPER_SRC, 'function tcSettingDisposition'), ctx);
-      vm.runInContext(lift(API_HELPER_SRC, 'function tcResolveEngineProfile'), ctx);
-      vm.runInContext(lift(UI_SRC, 'function renderEvalAuditToggle'), ctx);
+      vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
+      vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcEngineDisplayName'), ctx);
+      vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcSettingDisposition'), ctx);
+      vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcResolveEngineProfile'), ctx);
+      vm.runInContext(liftDeclaration(UI_SRC, 'function renderEvalAuditToggle'), ctx);
       ctx.renderEvalAuditToggle('claude', true,
         { id: 'claude', name: 'Claude Code', capabilities: {} }, { storedEnabled: true });
       const html = doc.getElementById('settingsEvalAuditContainer').innerHTML;
@@ -341,11 +323,11 @@ describe('#1236 Eval Audit is reachable, and honest about where it works', () =>
       vm.createContext(ctx);
       const tables = API_HELPER_SRC.match(/const TC_SETTING_\w+ = \{[\s\S]*?\n {2}\};/g) || [];
       for (const table of tables) vm.runInContext(table, ctx);
-      vm.runInContext(lift(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
-      vm.runInContext(lift(API_HELPER_SRC, 'function tcEngineDisplayName'), ctx);
-      vm.runInContext(lift(API_HELPER_SRC, 'function tcSettingDisposition'), ctx);
-      vm.runInContext(lift(API_HELPER_SRC, 'function tcResolveEngineProfile'), ctx);
-      vm.runInContext(lift(UI_SRC, 'function renderEvalAuditToggle'), ctx);
+      vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
+      vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcEngineDisplayName'), ctx);
+      vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcSettingDisposition'), ctx);
+      vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcResolveEngineProfile'), ctx);
+      vm.runInContext(liftDeclaration(UI_SRC, 'function renderEvalAuditToggle'), ctx);
       ctx.renderEvalAuditToggle('claude', false,
         { id: 'claude', name: 'Claude Code', capabilities: {} }, { storedEnabled: false });
       const html = doc.getElementById('settingsEvalAuditContainer').innerHTML;

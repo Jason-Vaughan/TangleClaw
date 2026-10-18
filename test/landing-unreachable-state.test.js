@@ -29,6 +29,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { liftDeclaration } = require('./helpers/lift');
 
 const LANDING_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
@@ -40,26 +41,6 @@ const RECONNECT_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'reconnect-policy.js'), 'utf8');
 const UI_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
-
-/**
- * Slice a top-level function (declaration + body) out of source text by
- * brace-matching, so the sandbox runs the REAL code rather than a copy.
- *
- * @param {string} src - File source text.
- * @param {string} decl - Declaration to find, e.g. `function esc(str)`.
- * @returns {string} The declaration plus its balanced body.
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 /**
  * Slice a top-level call statement out of source text by paren-matching.
@@ -130,18 +111,18 @@ function installConnectionState(sandbox, extra) {
   vm.createContext(sandbox);
   vm.runInContext(RECONNECT_SRC, sandbox);
   vm.runInContext([
-    liftFunction(LANDING_SRC, 'function esc(str)'),
+    liftDeclaration(LANDING_SRC, 'function esc(str)'),
     // The page's one writer of the toast, which setConnected and the
     // unreachable state show and hide it through.
-    liftFunction(UI_SRC, 'function showToast('),
-    liftFunction(UI_SRC, 'function hideToast('),
-    liftFunction(LANDING_SRC, 'function renderUnreachableState()'),
-    liftFunction(LANDING_SRC, 'function hideUnreachableState()'),
+    liftDeclaration(UI_SRC, 'function showToast('),
+    liftDeclaration(UI_SRC, 'function hideToast('),
+    liftDeclaration(LANDING_SRC, 'function renderUnreachableState()'),
+    liftDeclaration(LANDING_SRC, 'function hideUnreachableState()'),
     ...extra,
     // The page's OWN construction — callbacks and all.
     liftCall(LANDING_SRC, 'const reconnectPolicy = tcCreateReconnectPolicy('),
-    liftFunction(LANDING_SRC, 'async function retryConnectionNow()'),
-    liftFunction(LANDING_SRC, 'function setConnected(connected)'),
+    liftDeclaration(LANDING_SRC, 'async function retryConnectionNow()'),
+    liftDeclaration(LANDING_SRC, 'function setConnected(connected)'),
     'globalThis.reconnectPolicy = reconnectPolicy;',
     'globalThis.setConnected = setConnected;',
     'globalThis.retryConnectionNow = retryConnectionNow;'
@@ -292,7 +273,7 @@ describe('dead server escalates to an honest unreachable state (#709)', () => {
 function runNavigationPin() {
   for (const decl of ['function renderUnreachableState()',
     'function hideUnreachableState()', 'async function retryConnectionNow()']) {
-    const body = liftFunction(LANDING_SRC, decl);
+    const body = liftDeclaration(LANDING_SRC, decl);
     assert.doesNotMatch(body, /location\.reload|location\.href\s*=|location\.assign/,
       `${decl} must not navigate for the operator`);
   }
@@ -413,8 +394,8 @@ function swBuilders() {
   const ctx = { Response, Headers, JSON, String };
   vm.createContext(ctx);
   vm.runInContext([
-    liftFunction(SW_SRC, 'function _swErrorResponse(err)'),
-    liftFunction(SW_SRC, 'function _withCacheFallbackMarker(cached)'),
+    liftDeclaration(SW_SRC, 'function _swErrorResponse(err)'),
+    liftDeclaration(SW_SRC, 'function _withCacheFallbackMarker(cached)'),
     'globalThis.err = _swErrorResponse; globalThis.mark = _withCacheFallbackMarker;'
   ].join('\n'), ctx);
   return ctx;

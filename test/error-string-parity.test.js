@@ -20,6 +20,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { liftDeclaration } = require('./helpers/lift');
 
 const PUB = path.join(__dirname, '..', 'public');
 const SRC = {
@@ -28,25 +29,6 @@ const SRC = {
   landing: fs.readFileSync(path.join(PUB, 'landing.js'), 'utf8'),
   history: fs.readFileSync(path.join(PUB, 'history-drawer.js'), 'utf8')
 };
-
-/**
- * Slice a top-level function — signature and body — out of a source text by
- * brace matching from its declaration.
- * @param {string} src - Source text.
- * @param {string} decl - The start of the declaration to find (`async function name(`).
- * @returns {string} The whole function, ready to evaluate.
- */
-function functionSource(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 /**
  * A minimal element: the properties the lifted handlers read and write.
@@ -166,7 +148,7 @@ function wrapGlobals(stubs, document) {
  * @returns {object} The sandbox; each lifted function is a property on it.
  */
 function lift(src, decls, globals) {
-  const source = decls.map((d) => functionSource(src, d)).join('\n');
+  const source = decls.map((d) => liftDeclaration(src, d)).join('\n');
   const names = decls.map((d) => d.replace(/^(async )?function /, '').replace(/\(.*$/, ''));
   const ctx = vm.createContext({
     console, encodeURIComponent, parseInt, Date,
@@ -357,7 +339,7 @@ describe('#83 — form handlers render the server reason, not a guess', () => {
         loadProjects: async () => {}
       });
       // The dashboard's one writer of the toast, which the repair reports through.
-      vm.runInContext(functionSource(SRC.ui, 'function showToast('), ctx);
+      vm.runInContext(liftDeclaration(SRC.ui, 'function showToast('), ctx);
       await ctx.repairAllOrphanHooks();
       assert.equal(el('toast').textContent, 'Repair failed: settings.json is not valid JSON');
     });
