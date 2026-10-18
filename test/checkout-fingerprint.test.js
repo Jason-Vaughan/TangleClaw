@@ -134,22 +134,51 @@ describe('checkout fingerprint (#2032 A7a)', () => {
     // Node can fire a timer a fraction of a millisecond early; this one fires
     // 20 ms early, so time is still left when the call is ended. Each git call
     // the deadline can end must still read as the deadline, not a git failure.
+    //
+    // Nothing inside the shifted window may depend on how fast the host is. Real
+    // git there would spend the 300 ms budget before the stalled call is reached
+    // on a slow host, and the deadline would end a real process instead. So every
+    // answer is recorded from real git first, outside the window, and replayed
+    // inside it; and the clock is frozen there, so time is always left when the
+    // timer ends the stalled call.
+    const answers = new Map();
+    const recording = async (d, args, o) => {
+      const out = await fp._seams.git(d, args, o);
+      answers.set(args.join(' '), out);
+      return out;
+    };
+    const recorded = await fp.fingerprint(dir, { importantIgnored: ['.env'] }, { git: recording });
+    assert.ok(recorded.ok, recorded.reason);
+    const replay = (args) => {
+      const key = args.join(' ');
+      // A call the recording never made fails loudly rather than being guessed.
+      if (!answers.has(key)) throw new Error(`no recorded answer for git ${key}`);
+      return Promise.resolve(answers.get(key));
+    };
+
     const realSetTimeout = globalThis.setTimeout;
+    const realNow = Date.now;
     const stalls = ['rev-parse --show-toplevel', 'rev-parse --verify', 'symbolic-ref', 'status', 'diff', 'check-ignore'];
     const results = [];
     globalThis.setTimeout = (fn, ms, ...rest) => realSetTimeout(fn, Math.max(0, (ms || 0) - 20), ...rest);
+    const frozen = realNow();
+    Date.now = () => frozen;
     try {
       for (const stall of stalls) {
         // The stalled call settles when it is aborted, as the real runner does
         // once its child has exited; one that never did would cost the grace.
-        const stalled = (o) => new Promise((resolve) => o.signal.addEventListener('abort', () => resolve(null)));
-        const git = (d, args, o) => (args.join(' ').startsWith(stall) ? stalled(o) : fp._seams.git(d, args, o));
-        results.push([stall, await fp.fingerprint(dir, { importantIgnored: ['.env'] }, { git, deadlineMs: 300 })]);
+        let ended = 0;
+        const stalled = (o) => new Promise((resolve) => o.signal.addEventListener('abort', () => { ended++; resolve(null); }));
+        const git = (d, args, o) => (args.join(' ').startsWith(stall) ? stalled(o) : replay(args));
+        const r = await fp.fingerprint(dir, { importantIgnored: ['.env'] }, { git, deadlineMs: 300 });
+        results.push([stall, r, ended]);
       }
     } finally {
       globalThis.setTimeout = realSetTimeout;
+      Date.now = realNow;
     }
     for (const [stall, r] of results) assert.deepEqual(r, { ok: false, reason: 'deadline' }, `stalled at ${stall}`);
+    for (const [stall, , ended] of results) assert.equal(ended, 1, `the deadline must end the stalled call at ${stall}, exactly once`);
   });
 
   it('checks every declared ignored path in one batched git call', async () => {
