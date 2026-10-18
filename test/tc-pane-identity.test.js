@@ -351,8 +351,36 @@ describe('tc: the pane\'s own launch identity (#2233)', () => {
 
 describe('bin/tc refuses to speak for a pane that recorded a different identity (#2233)', () => {
   let stubDir;
+  let shimPath;
   let server;
   let requests;
+
+  /**
+   * The source of a module preloaded into each spawned `bin/tc`. It widens the
+   * wait for `tmux` only, so a stub slowed by a loaded machine is still read
+   * instead of being given up on: the product's own 1 s give-up is covered by
+   * the injected-exec cases above, and these cases test what `tc` does with
+   * an answer. It is finite so a stub that truly hangs fails the case rather
+   * than stalling the run. `lib/tc-verbs` takes `execFileSync` from the module
+   * object when it loads, so this must replace it first.
+   */
+  const SHIM_SOURCE = [
+    "'use strict';",
+    "const childProcess = require('node:child_process');",
+    'const original = childProcess.execFileSync;',
+    '/**',
+    ' * `execFileSync` with a 30 s wait for `tmux` and nothing else changed.',
+    ' * @param {string} file - The program',
+    ' * @param {string[]} args - Its arguments',
+    ' * @param {object} [options] - execFileSync options',
+    ' * @returns {string|Buffer}',
+    ' */',
+    'childProcess.execFileSync = function execFileSyncWithStubWait(file, args, options) {',
+    "  if (file !== 'tmux') return original.apply(this, arguments);",
+    '  return original.call(this, file, args, { ...options, timeout: 30000 });',
+    '};',
+    ''
+  ].join('\n');
 
   /**
    * Write a `tmux` stand-in that prints a fixed session environment.
@@ -371,7 +399,7 @@ describe('bin/tc refuses to speak for a pane that recorded a different identity 
    */
   function tc(args, env) {
     return new Promise((resolve) => {
-      const child = spawn(process.execPath, [TC_BIN, ...args], {
+      const child = spawn(process.execPath, ['--require', shimPath, TC_BIN, ...args], {
         env: { PATH: `${stubDir}:/usr/bin:/bin`, TANGLECLAW_API: `http://127.0.0.1:${server.address().port}`, ...env }
       });
       let stdout = '';
@@ -386,6 +414,8 @@ describe('bin/tc refuses to speak for a pane that recorded a different identity 
 
   before(async () => {
     stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pane-stub-'));
+    shimPath = path.join(stubDir, 'lift-tmux-timeout.js');
+    fs.writeFileSync(shimPath, SHIM_SOURCE);
     requests = [];
     server = http.createServer((req, res) => {
       requests.push(`${req.method} ${req.url}`);
@@ -416,6 +446,15 @@ describe('bin/tc refuses to speak for a pane that recorded a different identity 
       assert.match(res.stderr, /this shell has 14, the pane recorded 15/, args[0]);
       assert.deepEqual(requests, [], `${args[0]}: a request left the pane`);
     }
+  });
+
+  it('still refuses when the pane\'s tmux answers slower than the product\'s own wait (#2481)', async () => {
+    stubTmux('sleep 1.5; echo "TANGLECLAW_LAUNCH_ID=L-other"; echo "TANGLECLAW_PROJECT_ID=15"');
+    requests.length = 0;
+    const res = await tc(['whoami'], PANE);
+    assert.equal(res.code, 2, res.stderr);
+    assert.match(res.stderr, /\[PANE_IDENTITY_MISMATCH\]/);
+    assert.deepEqual(requests, [], 'a request left the pane');
   });
 
   it('answers as before when the pane recorded the same identity, and whoami says the check passed', async () => {
