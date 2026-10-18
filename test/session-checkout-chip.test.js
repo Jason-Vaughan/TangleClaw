@@ -9,6 +9,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const { liftDeclaration } = require('./helpers/lift');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -17,26 +18,8 @@ const ROOT = path.join(__dirname, '..');
 const SESSION_SRC = fs.readFileSync(path.join(ROOT, 'public', 'session.js'), 'utf8');
 const SESSION_HTML = fs.readFileSync(path.join(ROOT, 'public', 'session.html'), 'utf8');
 
-/**
- * Slice a top-level function out of session.js by brace matching.
- * @param {string} name
- * @returns {string}
- */
-function extract(name) {
-  const start = SESSION_SRC.search(new RegExp(`(async )?function ${name}\\(`));
-  assert.ok(start > -1, `${name} should exist in session.js`);
-  let depth = 0;
-  for (let i = SESSION_SRC.indexOf('{', start); i < SESSION_SRC.length; i++) {
-    if (SESSION_SRC[i] === '{') depth++;
-    else if (SESSION_SRC[i] === '}') {
-      depth--;
-      if (depth === 0) return SESSION_SRC.slice(start, i + 1);
-    }
-  }
-  throw new Error(`could not brace-match ${name}`);
-}
-
-const SRC = ['checkoutChipModel', 'renderCheckoutChip'].map(extract).join('\n');
+const SRC = ['checkoutChipModel', 'renderCheckoutChip']
+  .map((n) => liftDeclaration(SESSION_SRC, `function ${n}(`)).join('\n');
 
 const SHA_A = 'a'.repeat(40);
 const SHA_B = 'b'.repeat(40);

@@ -32,6 +32,7 @@ require('./_probe-stub').probeAnswersFromFixture();
 const {
   approvePending, resolveDockerBin, findContainer, shellQuote, CODES, DOCKER_FALLBACK_PATHS
 } = require('../lib/openclaw-approve.js');
+const { shellWord } = require('../lib/shell-word');
 
 /**
  * Build a runRemote stub from a list of [matcher, response] rules, recording
@@ -219,6 +220,10 @@ describe('#1076 approvePending — end to end over the remote seam', () => {
 });
 
 describe('#1076 shellQuote — remote-shell injection', () => {
+  it('is shellWord itself, not a second implementation (#1399)', () => {
+    assert.equal(shellQuote, shellWord);
+  });
+
   it('quotes plain values', () => {
     assert.equal(shellQuote('abc'), `'abc'`);
   });

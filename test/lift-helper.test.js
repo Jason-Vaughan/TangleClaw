@@ -128,16 +128,6 @@ const EXCEPTIONS = {
  * removes its file's entries here in the same change; a new copy is refused.
  */
 const INITIAL_INVENTORY = [
-  'project-rules-unknown.test.js :: functionBody',
-  'project-tags-shape.test.js :: functionBody',
-  'recovery-codes-ui.test.js :: extract',
-  'rule-id-display.test.js :: functionBody',
-  'select-mode-mouse.test.js :: functionBody',
-  'session-checkout-chip.test.js :: extract',
-  'session-clipboard.test.js :: functionBody',
-  'session-header-cleanup.test.js :: extract',
-  'session-relaunch-page.test.js :: functionSource',
-  'session-unreachable-state.test.js :: liftFunction',
   'session-update-poll.test.js :: lift',
   'session-wrap-finalize.test.js :: lift',
   'session-wrapper.test.js :: (inline)',

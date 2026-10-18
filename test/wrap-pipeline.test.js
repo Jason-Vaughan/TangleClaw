@@ -1328,6 +1328,11 @@ describe('wrap-step lint (#139 Chunk 4)', () => {
       'a killed informational lint must leave a record in the server log');
   });
 
+  it('quotes with shellWord itself, not a second implementation (#1399)', () => {
+    const { shellWord } = require('../lib/shell-word');
+    assert.equal(lintStep._shellQuote, shellWord);
+  });
+
   it('shell-quotes file paths containing spaces and single quotes', async () => {
     // Direct unit test of the quoting helper — visible from public API
     // so the test pins the contract.

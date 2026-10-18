@@ -12,30 +12,13 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const { liftBody } = require('./helpers/lift');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
 const UI_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
 const HELPER_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
-
-/**
- * Slice a top-level function's body out of a source text by brace matching.
- * @param {string} src - Source text.
- * @param {string} decl - The declaration to find.
- * @returns {string} The body including its braces.
- */
-function functionBody(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(bodyStart, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 /**
  * The real `tcRulesUnknownHtml` and `tcDegradedRead`, as api-helper.js exports them.
@@ -74,7 +57,7 @@ function build(api) {
     'function renderRulesGraveyard(retired, byId)',
     'function renderProjectRulesList(kind, rules)'
   ];
-  const source = decls.map((d) => d + functionBody(UI_SRC, d)).join('\n');
+  const source = decls.map((d) => d + liftBody(UI_SRC, d)).join('\n');
   const statuses = [];
   const helpers = helperGlobals();
   const ctx = vm.createContext({

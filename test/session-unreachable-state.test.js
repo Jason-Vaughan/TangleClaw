@@ -26,6 +26,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const { liftDeclaration } = require('./helpers/lift');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -36,24 +37,6 @@ const SESSION_SRC = pub('session.js');
 const SESSION_HTML = pub('session.html');
 const SESSION_CSS = pub('session.css');
 const RECONNECT_SRC = pub('reconnect-policy.js');
-
-/**
- * Slice a top-level function (declaration + body) out of source text.
- * @param {string} src - File source text.
- * @param {string} decl - Declaration to find.
- * @returns {string} The declaration plus its balanced body.
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 /**
  * Slice a top-level call statement out of source text by paren-matching, so
@@ -109,13 +92,13 @@ function loadSessionConnectionState() {
   vm.createContext(sandbox);
   vm.runInContext(RECONNECT_SRC, sandbox);
   vm.runInContext([
-    liftFunction(SESSION_SRC, 'function esc(str)'),
-    liftFunction(SESSION_SRC, 'function renderSessionUnreachable()'),
-    liftFunction(SESSION_SRC, 'function hideSessionUnreachable()'),
+    liftDeclaration(SESSION_SRC, 'function esc(str)'),
+    liftDeclaration(SESSION_SRC, 'function renderSessionUnreachable()'),
+    liftDeclaration(SESSION_SRC, 'function hideSessionUnreachable()'),
     liftCall(SESSION_SRC, 'const reconnectPolicy = tcCreateReconnectPolicy('),
-    liftFunction(SESSION_SRC, 'async function retrySessionConnectionNow()'),
-    liftFunction(SESSION_SRC, 'function setPillDetail(pill, detail)'),
-    liftFunction(SESSION_SRC, 'function setConnected(connected)'),
+    liftDeclaration(SESSION_SRC, 'async function retrySessionConnectionNow()'),
+    liftDeclaration(SESSION_SRC, 'function setPillDetail(pill, detail)'),
+    liftDeclaration(SESSION_SRC, 'function setConnected(connected)'),
     'globalThis.reconnectPolicy = reconnectPolicy;',
     'globalThis.setConnected = setConnected;',
     'globalThis.retrySessionConnectionNow = retrySessionConnectionNow;'
@@ -268,7 +251,7 @@ describe('the banner must never cover the terminal (#941 design constraint)', ()
   it('does not disable the terminal or the page beneath it', () => {
     // The controls that genuinely cannot work without the API (command send)
     // are disabled by setConnected; nothing else should be.
-    const render = liftFunction(SESSION_SRC, 'function renderSessionUnreachable()');
+    const render = liftDeclaration(SESSION_SRC, 'function renderSessionUnreachable()');
     assert.doesNotMatch(render, /terminalFrame|terminalViewport/,
       'the escalation must not touch the terminal it cannot make claims about');
     assert.doesNotMatch(render, /\.src\s*=/,
@@ -282,7 +265,7 @@ describe('session escalation never navigates for the operator (source pin)', () 
     // action, not a blind refresh.
     for (const decl of ['function renderSessionUnreachable()',
       'function hideSessionUnreachable()', 'async function retrySessionConnectionNow()']) {
-      const body = liftFunction(SESSION_SRC, decl);
+      const body = liftDeclaration(SESSION_SRC, decl);
       assert.doesNotMatch(body, /location\.reload|location\.href\s*=|location\.assign/,
         `${decl} must not navigate for the operator`);
     }
