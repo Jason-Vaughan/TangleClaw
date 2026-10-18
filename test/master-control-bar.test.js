@@ -22,6 +22,11 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const loadApiHelperGlobals = require('./_api-helper-globals');
 const { makeDocument, withIdParsingInnerHTML } = require('./_mini-dom');
+// Slices here are brace-matched, never a fixed-size window or a cut to the next
+// `\n}\n`: both cheaper forms landed in the wrong region in this file (the cut
+// matched a shorter function's close, the window started at a comment) and
+// neither failed loudly.
+const { liftDeclaration } = require('./helpers/lift');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
 const INDEX = read('index.html');
@@ -29,33 +34,6 @@ const SESSION_HTML = read('session.html');
 const UI = read('ui.js');
 const SESSION_JS = read('session.js');
 const SW = read('sw.js');
-
-/**
- * A declaration plus its balanced body — a function, or a factory call's
- * argument object.
- *
- * Brace-matched, never a fixed-size window or a cut to the next `\n}\n`. Both
- * cheaper forms were tried in this file and both landed in the WRONG REGION: the
- * newline cut matched the close of a shorter function two definitions earlier,
- * and a 900-character window anchored on a bare identifier started at a COMMENT
- * mentioning it, 300 characters before the call. Neither failed loudly — each
- * asserted confidently about text nobody meant, one reporting a present thing as
- * missing.
- *
- * @param {string} decl - Declaration or call text to find.
- * @param {string} src - Source to slice from.
- * @returns {string} The declaration plus its balanced body.
- */
-function lift(decl, src) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  let depth = 0;
-  for (let i = src.indexOf('{', start); i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  return assert.fail(`${decl} body must close`);
-}
 
 const G = loadApiHelperGlobals();
 // The server's own emitted degradation codes, read as TEXT. Requiring
@@ -1073,7 +1051,7 @@ describe('#755 both surfaces drive the live toggle, and neither grows a timer', 
     // "the component supports it" is not the same as "both callers pass it".
     for (const [name, src, root] of [['ui.js', UI, "rootId: 'masterPanelBar'"],
       ['session.js', SESSION_JS, "rootId: 'masterDrawerBar'"]]) {
-      const block = lift('window.tcCreateMasterControlBar({', src);
+      const block = liftDeclaration(src, 'window.tcCreateMasterControlBar({');
       assert.ok(block.includes(root), `${name}'s bar must be the one at ${root}`);
       assert.match(block, /apiMutate/, `${name} must pass apiMutate to the bar`);
     }
@@ -1110,15 +1088,15 @@ describe('#755 both surfaces drive the live toggle, and neither grows a timer', 
     // The whole CHAIN is asserted, not just the one function. "A function
     // mentions loadAccess" is true of dead code; what makes the level actually
     // refresh is that the scheduled tick reaches it.
-    const poll = lift('async function pollStatus', SESSION_JS);
+    const poll = liftDeclaration(SESSION_JS, 'async function pollStatus');
     assert.match(poll, /masterBar\.loadAccess\(\)/,
       'the polled read must refresh the Master access controls');
     assert.match(poll, /masterOpen/,
       'gated on the drawer being open — a closed drawer must not add a request per tick');
 
-    const tick = lift('async function pollTick', SESSION_JS);
+    const tick = liftDeclaration(SESSION_JS, 'async function pollTick');
     assert.match(tick, /pollStatus\(\)/, 'and the scheduled tick must reach it');
-    assert.match(lift('function startPolling', SESSION_JS), /pollTick\(\)/,
+    assert.match(liftDeclaration(SESSION_JS, 'function startPolling'), /pollTick\(\)/,
       'and the chain that schedules it must be the page\'s existing one');
   });
 
@@ -1129,7 +1107,7 @@ describe('#755 both surfaces drive the live toggle, and neither grows a timer', 
     //
     // THE MUTATION THIS CATCHES: reaching for setInterval on the dashboard to
     // close the cosmetic half — the reflex this decision exists to refuse.
-    const dot = lift('async function refreshMasterDot', UI);
+    const dot = liftDeclaration(UI, 'async function refreshMasterDot');
     assert.doesNotMatch(dot, /setInterval|setTimeout/,
       'the dashboard probe stays one-shot');
   });
@@ -1159,7 +1137,7 @@ describe('#755 both surfaces drive the live toggle, and neither grows a timer', 
     // THE MUTATION THIS CATCHES: adding `onSaved` to the component and wiring it
     // on one page only, which is the exact shape of every defect #768 removed.
     for (const [name, src] of [['ui.js', UI], ['session.js', SESSION_JS]]) {
-      const block = lift('window.tcCreateMasterSettings({', src);
+      const block = liftDeclaration(src, 'window.tcCreateMasterSettings({');
       assert.match(block, /onSaved:/, `${name} must pass onSaved`);
       assert.match(block, /masterBar\.loadAccess\(\)/,
         `${name}'s onSaved must repaint the bar's access controls`);
@@ -1293,7 +1271,7 @@ describe('#755 both surfaces drive the live toggle, and neither grows a timer', 
     // from `writeWarningText` alone.
     const helper = read('api-helper.js');
     for (const fn of ['function renderMasterSettingsBody', 'function writeWarningText']) {
-      const body = lift(fn, helper);
+      const body = liftDeclaration(helper, fn);
       assert.match(body, /restart/i,
         `${fn} describes when a change takes effect and must name the restart`);
     }

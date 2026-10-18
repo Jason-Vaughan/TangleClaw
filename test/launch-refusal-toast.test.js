@@ -23,31 +23,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { makeDocument } = require('./_mini-dom');
+const { liftDeclaration } = require('./helpers/lift');
 
 const PUB = path.join(__dirname, '..', 'public');
 const UI_SRC = fs.readFileSync(path.join(PUB, 'ui.js'), 'utf8');
 const LANDING_SRC = fs.readFileSync(path.join(PUB, 'landing.js'), 'utf8');
 const STYLE_SRC = fs.readFileSync(path.join(PUB, 'style.css'), 'utf8');
 const SESSION_CSS_SRC = fs.readFileSync(path.join(PUB, 'session.css'), 'utf8');
-
-/**
- * Slice a top-level function out of source text by brace-matching, so the
- * sandbox runs the REAL code rather than a copy.
- * @param {string} src - File source text
- * @param {string} decl - Declaration to find
- * @returns {string} The declaration plus its balanced body
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 /** A 120-character path, the length the issue says a refusal can carry. */
 const LONG_PATH = `/private/tmp/${'a'.repeat(60)}/${'b'.repeat(40)}/codex`.slice(0, 120);
@@ -108,12 +90,12 @@ function page(launch) {
   };
   vm.createContext(ctx);
   vm.runInContext([
-    liftFunction(UI_SRC, 'function showToast('),
-    liftFunction(UI_SRC, 'function hideToast('),
-    liftFunction(LANDING_SRC, 'function setConnected('),
-    liftFunction(LANDING_SRC, 'function launchRefusalIsOverridable'),
-    liftFunction(LANDING_SRC, 'function appendLaunchIsolationPointer'),
-    liftFunction(LANDING_SRC, 'async function doLaunchProject')
+    liftDeclaration(UI_SRC, 'function showToast('),
+    liftDeclaration(UI_SRC, 'function hideToast('),
+    liftDeclaration(LANDING_SRC, 'function setConnected('),
+    liftDeclaration(LANDING_SRC, 'function launchRefusalIsOverridable'),
+    liftDeclaration(LANDING_SRC, 'function appendLaunchIsolationPointer'),
+    liftDeclaration(LANDING_SRC, 'async function doLaunchProject')
   ].join('\n'), ctx);
   return {
     toast,
@@ -228,7 +210,7 @@ describe('one owner of the toast: no message is hidden by another\'s timer (#233
 
   it('no dashboard code writes the toast except its owner', () => {
     for (const [file, src] of [['landing.js', LANDING_SRC], ['ui.js', UI_SRC]]) {
-      const outside = src.replace(liftFunction(UI_SRC, 'function showToast('), '').replace(liftFunction(UI_SRC, 'function hideToast('), '');
+      const outside = src.replace(liftDeclaration(UI_SRC, 'function showToast('), '').replace(liftDeclaration(UI_SRC, 'function hideToast('), '');
       assert.doesNotMatch(outside, /getElementById\('toast'\)/, `${file} reaches the toast only through showToast and hideToast`);
     }
   });

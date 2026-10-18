@@ -51,6 +51,16 @@ v5.34.0 Wave 15 chunk W15-B1, chunk 1 of 1. Branch `fix/w15b1-pane-stub-temp-roo
 
 **Evidence.** Each fix was red first (exit 0 where 2 was expected; the web UI key absent). After: `tc-pane-identity` 115/115 and 3/3 runs under CPU load, `private-temp-root` 2/2, `api-stranded-wraps` 41/41, `sessions-webui` 31/31. The runbook script printed `SELF TC-Lane-B: off` and `SELF_OK off` live from this pane and gave the documented line on eight fixtures. Not covered: a live roll-up across other members' panes or a Master pane.
 
+## 2026-10-18 — #1903 Chunk 05, #1219: eleven more lift copies use the shared helper, and the live wrap drawer and its stream client are executed
+
+<!-- prawduct: type=refactor | scope=w15-a1-lift-chunk05-wrap-stream -->
+
+v5.34.0 Wave 15 chunk W15-A1, chunk 1 of 1. Branch `fix/1219-1903-w15-a1` from `origin/main` `5a359d2c`. Refs #1903 (Chunk 05); closes #1219. Plan: `.tangleclaw/plans/w15-a1-lift-chunk05-wrap-stream-1903-1219.md` (rev1 sha256 `02e3b280…6fe60`, INT `cb916f41`, Architect A280); charter v2.40 (sha256 `75f1f861…c601`). Test-only: `public/session.js` is not edited.
+
+**#1903 Chunk 05.** Ten test files drop their private brace matcher for `liftDeclaration` from `test/helpers/lift.js`, and `wrap-stream-client`'s `functionBody` becomes `liftBody`; their eleven `INITIAL_INVENTORY` entries go with them (67 → 56). `master-control-bar` and `master-settings-css-parity` took `(decl, src)`, so their calls swap arguments. `live-checkout-banner`'s name-based `extract` is replaced by literal declarations, `async` included for `loadServerInfo`; it also lifted three names through `.map(extract)`, which the plan's call count missed and the runtime capture found. That capture logged the same 1583 `file|decl|sha256` lines for the ten files before and after, and the same `renderStepRow` slice. No assertion, test name or test count changed in the ten files. Three miss messages change wording; they appear only when a test already fails. Dropping `async` from the `loadServerInfo` declaration changes the capture but reddens no test, which reads the lifted text only.
+
+**#1219.** `startWrapStream` runs on its own against a fake `EventSource` with a recording `dispatchWrapRun`: every declared event type dispatches once with a numeric `receivedAt`, a superseded source is ignored on every handler and on `onerror`, a reconnecting source dispatches nothing while `CLOSED` dispatches `stream-lost` once, a malformed frame is warned about and dropped, and with no `EventSource` it dispatches `stream-lost` after a microtask. `renderLiveWrapDrawer` and the real `paintLiveSessionControls`, which no test executed, run against the shared mini-DOM with their paint primitives recorded, replacing a regex pin on its source. Each case was shown red against a scratch copy of the lifted source with its behaviour removed. `run-done` closing the stream and handing off to `openWrapDrawer` stays executed in `test/wrap-run-session-wiring.test.js`.
+
 ## 2026-10-18 — W14-REC: combined records for the Wave 14 source merges
 
 <!-- prawduct: type=chore | scope=w14-rec-records -->

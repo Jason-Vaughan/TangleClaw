@@ -15,26 +15,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { liftDeclaration } = require('./helpers/lift');
 
 const UI_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
-
-/**
- * Slice a top-level function out of source text by brace-matching.
- * @param {string} src - Source text.
- * @param {string} decl - Declaration to find.
- * @returns {string}
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  return assert.fail(`${decl} body must close`);
-}
 
 /**
  * A sandbox with one rendered Fire button and a scripted server.
@@ -72,7 +55,7 @@ function sandbox({ prompt = { revision: 4, text: 'x' }, fireAnswer = { fire: { i
     refreshProjectLaunchSequences: async (id) => { refreshes.push(id); }
   };
   vm.createContext(ctx);
-  vm.runInContext(liftFunction(UI_SRC, 'function wireStartupFires('), ctx);
+  vm.runInContext(liftDeclaration(UI_SRC, 'function wireStartupFires('), ctx);
   ctx.wireStartupFires(list);
   assert.ok(handler, 'the button was wired');
   return { click: () => handler(), calls, statuses, refreshes, btn };

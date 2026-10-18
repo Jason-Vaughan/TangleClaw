@@ -20,30 +20,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { makeDocument } = require('./_mini-dom');
+const { liftDeclaration } = require('./helpers/lift');
 
 const PUB = path.join(__dirname, '..', 'public');
 const UI_SRC = fs.readFileSync(path.join(PUB, 'ui.js'), 'utf8');
 const API_HELPER_SRC = fs.readFileSync(path.join(PUB, 'api-helper.js'), 'utf8');
 const LANDING_SRC = fs.readFileSync(path.join(PUB, 'landing.js'), 'utf8');
-
-/**
- * Slice a top-level function out of source text by brace-matching, so the
- * sandbox runs the REAL code rather than a copy.
- * @param {string} src - File source text
- * @param {string} decl - Declaration to find
- * @returns {string} The declaration plus its balanced body
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 /**
  * Render the panel for a list of sequences.
@@ -59,19 +41,19 @@ function render(sequences, opts) {
   // panel renders, and landing.js is what defines `esc` there. A stub with a
   // different contract than the shipped helper makes the assertions below pass
   // against markup the panel cannot produce, which is worse than no test.
-  vm.runInContext(liftFunction(LANDING_SRC, 'function esc(str)'), ctx);
-  vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcLaunchReadinessClass'), ctx);
+  vm.runInContext(liftDeclaration(LANDING_SRC, 'function esc(str)'), ctx);
+  vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcLaunchReadinessClass'), ctx);
   ctx.window.tcLaunchReadinessClass = ctx.tcLaunchReadinessClass;
   // Lifted too, for the same reason the panel itself is: they are what the
   // renderer calls, and a sandbox missing them would report every row as a
   // throw — which is precisely what this file exists to catch on the live
   // install, where the panel renders the moment the file is saved.
-  vm.runInContext(liftFunction(UI_SRC, 'function launchClearanceLabel'), ctx);
-  vm.runInContext(liftFunction(UI_SRC, 'function launchRecoveryHtml'), ctx);
-  vm.runInContext(liftFunction(UI_SRC, 'function startupFireLabel'), ctx);
-  vm.runInContext(liftFunction(UI_SRC, 'function launchStartupControlHtml'), ctx);
-  vm.runInContext(liftFunction(UI_SRC, 'function launchReconciliationControlHtml'), ctx);
-  vm.runInContext(liftFunction(UI_SRC, 'function renderProjectLaunchSequences'), ctx);
+  vm.runInContext(liftDeclaration(UI_SRC, 'function launchClearanceLabel'), ctx);
+  vm.runInContext(liftDeclaration(UI_SRC, 'function launchRecoveryHtml'), ctx);
+  vm.runInContext(liftDeclaration(UI_SRC, 'function startupFireLabel'), ctx);
+  vm.runInContext(liftDeclaration(UI_SRC, 'function launchStartupControlHtml'), ctx);
+  vm.runInContext(liftDeclaration(UI_SRC, 'function launchReconciliationControlHtml'), ctx);
+  vm.runInContext(liftDeclaration(UI_SRC, 'function renderProjectLaunchSequences'), ctx);
   if (opts === undefined) ctx.renderProjectLaunchSequences(sequences);
   else ctx.renderProjectLaunchSequences(sequences, opts);
   return doc.getElementById('projLaunchSequencesList').innerHTML;
@@ -243,7 +225,7 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
       const { doc: _doc } = makeDocument([]);
       const ctx = { };
       vm.createContext(ctx);
-      vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcLaunchReadinessClass'), ctx);
+      vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcLaunchReadinessClass'), ctx);
       assert.equal(ctx.tcLaunchReadinessClass(null), 'rules-status-warn');
       assert.equal(ctx.tcLaunchReadinessClass({ applicability: 'applicable', readyAt: 'x' }), 'rules-status-ok');
       assert.equal(ctx.tcLaunchReadinessClass({ applicability: 'applicable', unreadyAt: 'x' }), 'rules-status-err');
@@ -397,7 +379,7 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
       ctx.projectRulesTargetName = 'my project';
       ctx._setProjectRulesStatus = (text, ok) => status.push({ text, ok });
       ctx.refreshProjectLaunchSequences = async () => true;
-      vm.runInContext(liftFunction(UI_SRC, 'function wireLaunchRecoveryClears'), ctx);
+      vm.runInContext(liftDeclaration(UI_SRC, 'function wireLaunchRecoveryClears'), ctx);
       ctx.wireLaunchRecoveryClears({ querySelectorAll: () => [btn] });
       return { run: async () => { await btn._click(); return { calls, status, btn }; } };
     }
@@ -472,7 +454,7 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
       ctx.wireLaunchRecoveryClears = () => order.push('wire');
       ctx.wireLaunchReconciliationReads = () => order.push('wire-reads');
       ctx.wireStartupFires = () => order.push('wire-fires');
-      vm.runInContext(liftFunction(UI_SRC, 'async function refreshProjectLaunchSequences'), ctx);
+      vm.runInContext(liftDeclaration(UI_SRC, 'async function refreshProjectLaunchSequences'), ctx);
       return ctx.refreshProjectLaunchSequences(7).then((answer) => {
         assert.equal(answer, true);
         assert.deepEqual(order, ['render', 'wire', 'wire-reads', 'wire-fires'],
@@ -492,7 +474,7 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
       ctx.wireLaunchRecoveryClears = () => order.push('wire');
       ctx.wireLaunchReconciliationReads = () => order.push('wire-reads');
       ctx.wireStartupFires = () => order.push('wire-fires');
-      vm.runInContext(liftFunction(UI_SRC, 'async function refreshProjectLaunchSequences'), ctx);
+      vm.runInContext(liftDeclaration(UI_SRC, 'async function refreshProjectLaunchSequences'), ctx);
       return ctx.refreshProjectLaunchSequences(7).then((answer) => {
         assert.equal(answer, false);
         assert.deepEqual(order, [], 'a degraded read wires nothing, because it rendered nothing');
@@ -534,12 +516,12 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
     function renderReadback(r) {
       const ctx = { window: {} };
       vm.createContext(ctx);
-      vm.runInContext(liftFunction(LANDING_SRC, 'function esc(str)'), ctx);
-      vm.runInContext(liftFunction(UI_SRC, 'function launchClearanceLabel'), ctx);
+      vm.runInContext(liftDeclaration(LANDING_SRC, 'function esc(str)'), ctx);
+      vm.runInContext(liftDeclaration(UI_SRC, 'function launchClearanceLabel'), ctx);
       const preview = UI_SRC.match(/^const LAUNCH_RECONCILIATION_PREVIEW_CHARS = \d+;$/m);
       assert.ok(preview, 'the preview length is a top-level constant the renderer reads');
       vm.runInContext(preview[0], ctx);
-      vm.runInContext(liftFunction(UI_SRC, 'function launchReconciliationHtml'), ctx);
+      vm.runInContext(liftDeclaration(UI_SRC, 'function launchReconciliationHtml'), ctx);
       return ctx.launchReconciliationHtml(r);
     }
 
@@ -587,7 +569,7 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
         ctx.wireLaunchRecoveryClears = () => {};
         ctx.wireLaunchReconciliationReads = () => {};
         ctx.wireStartupFires = () => {};
-        vm.runInContext(liftFunction(UI_SRC, 'async function refreshProjectLaunchSequences'), ctx);
+        vm.runInContext(liftDeclaration(UI_SRC, 'async function refreshProjectLaunchSequences'), ctx);
         assert.equal(await ctx.refreshProjectLaunchSequences(7), true);
         return got;
       }
@@ -720,7 +702,7 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
       ctx.projectRulesTargetName = 'my project';
       ctx._setProjectRulesStatus = (text, ok) => status.push({ text, ok });
       ctx.launchReconciliationHtml = (r) => `RENDERED:${r.sequenceId}`;
-      vm.runInContext(liftFunction(UI_SRC, 'function wireLaunchReconciliationReads'), ctx);
+      vm.runInContext(liftDeclaration(UI_SRC, 'function wireLaunchReconciliationReads'), ctx);
       const selectors = [];
       ctx.wireLaunchReconciliationReads({
         querySelectorAll: () => [btn],
@@ -788,12 +770,12 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
     function sandbox() {
       const ctx = { window: {} };
       vm.createContext(ctx);
-      vm.runInContext(liftFunction(LANDING_SRC, 'function esc(str)'), ctx);
+      vm.runInContext(liftDeclaration(LANDING_SRC, 'function esc(str)'), ctx);
       // `const` and `let` in a vm script are not properties of the context, so
       // the tables are exposed by name for the assertions that read them.
-      const lifted = MODE_CONSTANTS.map((decl) => `${liftFunction(UI_SRC, decl)};`).join('\n')
+      const lifted = MODE_CONSTANTS.map((decl) => `${liftDeclaration(UI_SRC, decl)};`).join('\n')
         + '\nlet projectRecoveryModeNotice = null;\n'
-        + MODE_FUNCTIONS.map((decl) => liftFunction(UI_SRC, decl)).join('\n')
+        + MODE_FUNCTIONS.map((decl) => liftDeclaration(UI_SRC, decl)).join('\n')
         + '\nthis.tables = { RECOVERY_MODE_READOUT, RECOVERY_DECISION_PROOF_READOUT, RECOVERY_GATE_PHRASES, '
         + 'RECOVERY_SOURCE_READOUT };'
         + '\nthis.setNotice = (n) => { projectRecoveryModeNotice = n; };'
@@ -970,7 +952,7 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
 
         it('has a sentence for each word the server records, and for no other', () => {
           const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-          const proofOf = liftFunction(serverSrc, 'function _operatorProofOf');
+          const proofOf = liftDeclaration(serverSrc, 'function _operatorProofOf');
           const words = [...proofOf.matchAll(/clearance: '([a-z-]+)'/g)].map((m) => m[1]);
           assert.equal(words.length, 2, 'the server\'s proof helper names two words');
           assert.deepEqual(Object.keys(sandbox().tables.RECOVERY_DECISION_PROOF_READOUT).sort(), [...words].sort());
@@ -1356,7 +1338,7 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
         ctx.wireLaunchRecoveryClears = () => {};
         ctx.wireLaunchReconciliationReads = () => {};
         ctx.wireStartupFires = () => {};
-        vm.runInContext(liftFunction(UI_SRC, 'async function refreshProjectLaunchSequences'), ctx);
+        vm.runInContext(liftDeclaration(UI_SRC, 'async function refreshProjectLaunchSequences'), ctx);
         const real = ctx.wireProjectRecoveryMode;
         ctx.wireProjectRecoveryMode = (box) => { wiredCount += 1; assert.equal(box, doc.getElementById('projRecoveryMode')); return real; };
         const answer = await ctx.refreshProjectLaunchSequences(7);
@@ -1406,7 +1388,7 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
         ctx.refreshProjectLaunchIsolationLine = async () => {};
         ctx.refreshProjectIsolationOverride = async () => {};
         vm.runInContext('let projectRulesTargetId = null; let projectRulesTargetName = null; let isolationOverrideNotice = null;'
-          + liftFunction(UI_SRC, 'async function loadProjectRules'), ctx);
+          + liftDeclaration(UI_SRC, 'async function loadProjectRules'), ctx);
         await ctx.loadProjectRules(7, 'my project');
         assert.equal(ctx.getNotice(), null);
       });
@@ -1425,9 +1407,9 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
 function overrideLine(inventory, projectId, read) {
   const ctx = {};
   vm.createContext(ctx);
-  vm.runInContext(liftFunction(LANDING_SRC, 'function esc(str)'), ctx);
-  vm.runInContext(liftFunction(UI_SRC, 'function isolationOverrideRiskText'), ctx);
-  vm.runInContext(liftFunction(UI_SRC, 'function launchIsolationOverrideLineHtml'), ctx);
+  vm.runInContext(liftDeclaration(LANDING_SRC, 'function esc(str)'), ctx);
+  vm.runInContext(liftDeclaration(UI_SRC, 'function isolationOverrideRiskText'), ctx);
+  vm.runInContext(liftDeclaration(UI_SRC, 'function launchIsolationOverrideLineHtml'), ctx);
   return ctx.launchIsolationOverrideLineHtml(inventory, projectId, read || { live: true, error: null });
 }
 

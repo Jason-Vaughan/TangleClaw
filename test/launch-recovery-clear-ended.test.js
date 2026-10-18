@@ -24,29 +24,11 @@ setLevel('error');
 const store = require('../lib/store');
 const { handleRequest } = require('../server');
 const fixture = require('./_recovery-fixture');
+const { liftDeclaration } = require('./helpers/lift');
 
 const PUB = path.join(__dirname, '..', 'public');
 const UI_SRC = fs.readFileSync(path.join(PUB, 'ui.js'), 'utf8');
 const LANDING_SRC = fs.readFileSync(path.join(PUB, 'landing.js'), 'utf8');
-
-/**
- * Slice a top-level function out of source text by brace-matching, so the
- * sandbox runs the real code rather than a copy.
- * @param {string} src - File source text
- * @param {string} decl - Declaration to find
- * @returns {string} The declaration plus its balanced body
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 /**
  * The panel's own recovery line for one row, run from `public/ui.js` with the
@@ -57,9 +39,9 @@ function liftFunction(src, decl) {
 function panelRecoveryHtml(row) {
   const ctx = {};
   vm.createContext(ctx);
-  vm.runInContext(liftFunction(LANDING_SRC, 'function esc(str)'), ctx);
-  vm.runInContext(liftFunction(UI_SRC, 'function launchClearanceLabel'), ctx);
-  vm.runInContext(liftFunction(UI_SRC, 'function launchRecoveryHtml'), ctx);
+  vm.runInContext(liftDeclaration(LANDING_SRC, 'function esc(str)'), ctx);
+  vm.runInContext(liftDeclaration(UI_SRC, 'function launchClearanceLabel'), ctx);
+  vm.runInContext(liftDeclaration(UI_SRC, 'function launchRecoveryHtml'), ctx);
   return ctx.launchRecoveryHtml(row, null);
 }
 
