@@ -317,7 +317,12 @@ and confirmed each one caught something real.
 
 3. **Merge authority stays outside the Builder.** The Builder reports a chunk ready; the PM (or
    the named release owner, step 10a) runs the merge — never the Builder itself.
-   Expected: `gh pr view --json mergedBy` on a Builder's PR is never that Builder's own session.
+   Expected: the merging session's own logged report of the merge names that session, the PR and
+   the head, and it is never the Builder. `gh pr view --json mergedBy` cannot show this where
+   every session acts through one GitHub account: it reads the same login whoever ran the merge
+   (ADR 0014, Amendment 2026-10-07). It tells sessions apart only in a fleet set up with one
+   GitHub identity per role. With neither, merge authority is held by process and has no
+   mechanical check.
 
 4. **A review result is bound to the exact head it reviewed.** A later commit on the same branch
    needs a fresh Critic/PR-review result, not a reused one.

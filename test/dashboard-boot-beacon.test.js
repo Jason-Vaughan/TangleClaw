@@ -34,29 +34,10 @@ const loadApiHelperGlobals = require('./_api-helper-globals');
 logger.setLevel('error');
 
 const store = require('../lib/store');
+const { liftDeclaration } = require('./helpers/lift');
 
 const LANDING_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
-
-/**
- * Slice a top-level function (declaration + body) out of source text by
- * brace-matching, so the sandbox runs the REAL code rather than a copy.
- *
- * @param {string} src - File source text.
- * @param {string} decl - Declaration to find, e.g. `async function loadProjects()`.
- * @returns {string} The declaration plus its balanced body.
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-}
 
 /**
  * Run `fn` with the logger capturing info-and-above to an array, restoring
@@ -284,9 +265,9 @@ describe('the dashboard sends the beacon after the shell boots, not before (#817
     assert.ok(flag, 'the once-per-load flag must be declared in landing.js');
     vm.runInContext([
       flag[0],
-      liftFunction(LANDING_SRC, 'async function readSwCacheName()'),
-      liftFunction(LANDING_SRC, 'async function sendBootBeacon()'),
-      liftFunction(LANDING_SRC, 'async function loadProjects()'),
+      liftDeclaration(LANDING_SRC, 'async function readSwCacheName()'),
+      liftDeclaration(LANDING_SRC, 'async function sendBootBeacon()'),
+      liftDeclaration(LANDING_SRC, 'async function loadProjects()'),
       'globalThis.loadProjects = loadProjects;',
       'globalThis.sendBootBeacon = sendBootBeacon;'
     ].join('\n'), sandbox);
@@ -338,7 +319,7 @@ describe('the dashboard sends the beacon after the shell boots, not before (#817
     // still reaches `fetch` after the synchronous renders and the runtime
     // marks stay in the "right" order — a check that passes for the wrong
     // reason (Critic, #817). The source position is the fact.
-    const body = liftFunction(LANDING_SRC, 'async function loadProjects()');
+    const body = liftDeclaration(LANDING_SRC, 'async function loadProjects()');
     const rendered = body.indexOf('renderProjects();');
     const call = body.indexOf('sendBootBeacon();');
     assert.notEqual(rendered, -1);
@@ -398,7 +379,7 @@ describe('the dashboard sends the beacon after the shell boots, not before (#817
   it('the only call site is inside loadProjects, after the empty-answer guard', () => {
     // The property the whole feature rests on: nothing else — not init(), not
     // a poll — can say "booted". One producer, behind the fetch that proves it.
-    const body = liftFunction(LANDING_SRC, 'async function loadProjects()');
+    const body = liftDeclaration(LANDING_SRC, 'async function loadProjects()');
     const callSites = LANDING_SRC.split('sendBootBeacon();').length - 1;
     assert.equal(callSites, 1, 'exactly one call site');
     const guard = body.indexOf('if (!data) return;');
