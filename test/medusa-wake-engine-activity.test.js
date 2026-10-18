@@ -19,9 +19,10 @@
  *      mail, never twice at once for one channel, and nothing is ever typed
  *      from the read's callback.
  *
- * And the settling hold (#2059): the first `idle` a launch's thread reports
- * holds the nudge for one monitor interval, under its own code, whatever the
- * pane shows and whatever the idle streak is set to.
+ * And the settling hold (#2059): the first `idle` a launch's thread reports,
+ * and the `idle` that follows a `busy` answer on the same channel, holds the
+ * nudge for one monitor interval, under its own code, whatever the pane shows
+ * and whatever the idle streak is set to.
  *
  * And the untrusted-folder hold (#2186): an idle thread in a folder the
  * engine's own config says not to trust is answered `held`, and the nudge is
@@ -506,7 +507,7 @@ describe('medusa-wake — the settling hold after a launch\'s thread first repor
     assert.deepEqual(skips(world), []);
   });
 
-  it('a turn that ends does not start the hold again: busy then idle on the same channel is not a launch', async () => {
+  it('a turn that ends starts the hold again: busy then idle on the same channel holds for one interval, then wakes', async () => {
     const world = installWorld();
     await ticks(TICKS_TO_NUDGE);
     assert.equal(world.injected.length, 1);
@@ -516,9 +517,11 @@ describe('medusa-wake — the settling hold after a launch\'s thread first repor
     await ticks(3);
     assert.equal(lastSkip(world), 'engine-thread-busy');
     world.activity = { channel: 'present', state: 'idle', reasonCode: 'thread-idle' };
-    await ticks(1 + wake.IDLE_TICKS_REQUIRED);
-    assert.equal(world.injected.length, 2);
-    assert.ok(!skips(world).includes('engine-thread-settling'));
+    await ticks(2);
+    assert.equal(world.injected.length, 1, 'the idle answer that ends the turn is held, like a launch\'s first');
+    assert.deepEqual(skips(world), ['engine-thread-busy', 'engine-thread-settling']);
+    await ticks(wake.IDLE_TICKS_REQUIRED);
+    assert.equal(world.injected.length, 2, 'and the session is woken once it has settled');
   });
 
   it('a channel replaced by a relaunch starts the hold again', async () => {

@@ -985,6 +985,34 @@ describe('the folder hold, the settling hold and the pane refusals act in that o
     assert.equal(out.injected, 1);
     assert.deepEqual(out.holds.slice(0, 3), [ASKING, 'engine-thread-settling', 'pane-turn-in-flight']);
   });
+
+  /**
+   * Ticks the thread answers idle over a drawn turn, then ticks it answers the
+   * given state, before the turn's end. The pane then changes to one at rest,
+   * so its first read after the gates reopen is `pane-writing`.
+   */
+  const IDLE_FIRST = 6;
+  const THEN_FOR = 3;
+  /**
+   * The thread settles idle over a drawn turn, answers `then` for a while, then idle again over a composer at rest.
+   * @param {object} then - The answer between the two idle stretches.
+   * @returns {Promise<{injected: number, holds: string[]}>}
+   */
+  const idleThenIdle = (then) => timeline(
+    (world) => (world.tick < IDLE_FIRST + THEN_FOR ? set.panes.busyRunState.lines : set.panes.idleRunState.lines),
+    [...Array(IDLE_FIRST).fill(IDLE), ...Array(THEN_FOR).fill(then), IDLE],
+    IDLE_FIRST + THEN_FOR + SETTLED_TICKS
+  );
+
+  it('the end of a turn seen busy starts the settling hold again on the same channel, then nudges once', async () => {
+    const out = await idleThenIdle({ channel: 'present', state: 'busy', reasonCode: 'thread-active' });
+    assert.deepEqual(out, { injected: 1, holds: [ASKING, 'engine-thread-settling', 'pane-turn-in-flight', 'engine-thread-busy', 'engine-thread-settling', 'pane-writing'] });
+  });
+
+  it('an idle answer after an unknown one does not start it again: only a turn seen busy does', async () => {
+    const out = await idleThenIdle({ channel: 'present', state: 'unknown', reasonCode: 'thread-ambiguous' });
+    assert.deepEqual(out, { injected: 1, holds: [ASKING, 'engine-thread-settling', 'pane-turn-in-flight', 'engine-thread-unknown', 'pane-writing'] });
+  });
 });
 
 describe('the known-unsafe list is one opening screen with nothing to refuse it and the streaming answer of two versions (#2059, #2187)', () => {
