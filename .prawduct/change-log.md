@@ -41,6 +41,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-17 — W11-REC: the v5.34.0 Wave 11 combined records
+
+<!-- prawduct: type=chore | scope=w11-rec-records -->
+
+v5.34.0 records chunk W11-REC (charter v2.34). Branch `docs/w11-rec-records` from `origin/main` `86c2c505`, after W11-B1 PR #2471 (`e295e494`, closes #2164, #2036, #1640 and #1998) and W11-A1 PR #2472 (`86c2c505`, closes #2160 and #2465) merged. The Integrator authors this records-only PR under A172.1.
+
+**What changed.** `CHANGELOG.md` `[Unreleased]` receives three `### Internal` entries for the two wrap changes and the store/test hygiene chunk, each below 400 UTF-8 bytes. `FEATURES.md` records the derived file lists, the one wrap-subject rule, the savepoint helper and test hygiene with stable source pointers. The archive hook's dry run moved zero entries: the live log is below its 40,000-byte threshold, so the October archive stays unchanged.
+
+**Limits.** #2469 remains open for the stale source-comment review ID; #2470 remains open for the coverage gate's missing `withheldPrefixes`. The records do not release, tag, bump a version or deploy.
+
 ## 2026-10-17 — #2160, #2465: the wrap's file classifier derives the not-committed and scan lists itself, and the changelog gate uses the one wrap-subject rule
 
 <!-- prawduct: type=refactor | scope=w11-a1-wrap-subject-import-and-derived-path-lists -->
