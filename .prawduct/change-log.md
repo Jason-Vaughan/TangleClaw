@@ -55,6 +55,18 @@ v5.34.0 Wave 12 chunk W12-A1, chunk 1 of 1. Branch `fix/2470-1903-w12-a1` from `
 
 **Tests.** `test/wrap-changelog-coverage.test.js`: a withheld changelog edit leaves `app.js` uncovered; a runnable or absent methodology stays covered; `excluded` equals the commit step's `notCommitted` at both depths. `test/wrap-step-ai-content.test.js`: on both run paths the predicate receives `context.methodology` itself, and `null` when only `options` carries one. Red first on `main`; mutations (no `withheldPrefixes`, a hard-coded dormant capability, reading `context.options`, one call site only, an adapter without the line head) each went red.
 
+**Review.** Cumulative Critic `rev-20261018T005447Z-c75651a2` on `1123eff0`: 0 blocking, 1 warning, 2 notes, all accepted.
+
+**rev-20261018T005447Z-c75651a2** — 2026-10-18T00:56:27Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | accepted | The declared suite runs once, detached, on the final tree in the Integrator's suite slot after the Architect's pre-suite read (charter order), and is recorded as test evidence before the ready report. Narrow ring on head 1123eff0 (50 files: the locked tests, out-of-lock fixtures, every test naming changelog-coverage, ai-content, _page-globals or helpers/lift) passed 1950/0. |
+| R-2 | note | accepted | The approved plan keeps _excludedFromCommit unchanged: a test-facing wrapper with no production caller, whose callers (wrap-file-ownership, wrap-file-safety) pass no methodology, so 'every path the wrap will not commit' holds for every call it receives. A doc edit now would buy a full review round for no behaviour change. |
+| R-3 | note | accepted | Informational: the work is tracked by GitHub issues #2470 (closed by the PR) and #1903 (referenced, Chunk 02). |
+
+**3 findings** (1 warning, 2 note) — accepted: 3.
+
 ## 2026-10-17 — W11-REC: the v5.34.0 Wave 11 combined records
 
 <!-- prawduct: type=chore | scope=w11-rec-records -->
