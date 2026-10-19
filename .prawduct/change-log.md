@@ -41,6 +41,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-19 — W24-REL: cut v5.34.0
+
+<!-- prawduct: type=chore | scope=w24-rel-release-5.34.0 -->
+
+v5.34.0 release chunk W24-REL, Charter v2.59 (Architect A377), on Operator Receipt #12. Branch `chore/release-5.34.0` from `origin/main` `9448c963`. Plan: `.tangleclaw/plans/build-plan-w24rel-v5.34.0-release-cut.md` (Rev4 sha256 `f1253fc2…a54a69b`; INT, Architect A380, PM).
+
+**What changed.** Six files. `version.json` goes from 5.33.1 to 5.34.0, a minor bump because `[Unreleased]` held Added, Changed and Security entries and no `BREAKING` marker. `CHANGELOG.md` gains one heading line, `## [5.34.0] - 2026-10-19`, under an empty `[Unreleased]`, so the section's body is the former `[Unreleased]` body byte for byte. `node scripts/release-prepare.js` exited 0 and only added: the two `README.md` clone pins now name `v5.34.0`, and `test/fixtures/changelog-released-sections.lock.json` gains the `5.34.0` line. The extracted release notes are 21,032 of the gate's 120,000 bytes (`node lib/changelog-notes.js 5.34.0`, `node scripts/release-notes-gate.js`). `docs/releases/v5.34-status.md` is new: the delta range `v5.33.1` `4eda0f70` to `9448c963` with each count's command, the three finish lines as true at this head (prepared, not yet released; not yet deployed; activation pending the deploy), the upgrade rehearsal, the checks owed after the deploy with their owners, and the four open milestone items as ruled. No `release=` tag was added to any earlier entry.
+
+**Upgrade rehearsal.** A `sqlite3 .backup` copy of the live store, opened by `9448c963`'s own `lib/store.js` in a private scratch directory with `TANGLECLAW_HOME` pointed there, never by `server.js`: schema 66 to 68, integrity ok, no foreign-key violations, no bridge schema problems, four empty tables added, none lost, and only `schema_version` changed row count. A second open changed nothing. The scratch directory was deleted and confirmed gone; only counts and verdicts were recorded.
+
+Merging this pull request publishes v5.34.0 through `release.yml`, which tags the merged commit; nobody tags by hand. This chunk makes no deploy or restart.
+
 ## 2026-10-19 — W23-REC: combined records for the Wave 23 source merges
 
 <!-- prawduct: type=chore | scope=w23-rec-records -->
