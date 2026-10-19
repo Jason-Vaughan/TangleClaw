@@ -698,11 +698,12 @@ describe('soak guest: guest-setup.sh setup', () => {
     // on, nothing carries a password or the no-login choice.
     const step5 = calls.slice(calls.findIndex((c) => c.includes('operator-login')));
     assert.ok(step5.length > 0 && !step5.some((c) => /noLogin|password/i.test(c)), step5.join('\n'));
-    const setupCall = calls.filter((c) => c.includes('api/setup/complete'));
+    // A workload call is logged twice: the admin's sudo, then the call itself.
+    const setupCall = calls.filter((c) => c.includes('api/setup/complete') && !/^\[\w+\] sudo /.test(c));
     assert.equal(setupCall.length, 1);
     assert.match(setupCall[0], /^\[soakrun\] curl .* -d @\S+ /, 'the setup body is sent from a file, by the workload user');
     assert.ok(!calls.some((c) => / -d @- /.test(c)), 'no body is read from a pipe');
-    const dashboard = calls.filter((c) => c.includes('x-tangleclaw-client'));
+    const dashboard = calls.filter((c) => c.includes('x-tangleclaw-client') && !/^\[\w+\] sudo /.test(c));
     assert.deepEqual(dashboard, setupCall, 'the dashboard header goes only on the one call made while the gate is open');
     assert.match(r.stdout, /setup finished: Operator account soak-operator, projects in \/Users\/soakrun\/Projects/);
   });
@@ -712,11 +713,12 @@ describe('soak guest: guest-setup.sh setup', () => {
     const r = setup([], f, tmp);
     assert.equal(r.status, 0, r.stderr);
     const calls = f.calls();
-    const authed = calls.filter((c) => / -X POST /.test(c) && c.includes('127.0.0.1:3102'));
+    // A workload call is logged twice: the admin's sudo, then the call itself.
+    const authed = calls.filter((c) => / -X POST /.test(c) && c.includes('127.0.0.1:3102') && !/^\[\w+\] sudo /.test(c));
     const writes = authed.filter((c) => !c.includes('api/setup/complete'));
     assert.ok(writes.length >= 5, calls.join('\n'));
     for (const w of writes) assert.match(w, /^\[soakrun\] curl .* -b \S+ -H @\S+ /, w);
-    const files = new Set(authed.flatMap((w) => [...w.matchAll(/ (?:-b|-c|-o|-H @|-d @)(\S+)/g)].map((m) => m[1].replace(/^@/, ''))).filter((p) => p.startsWith('/') && p !== '/dev/null'));
+    const files = new Set(authed.flatMap((w) => [...w.matchAll(/ (?:-b |-c |-o |-H @|-d @)(\S+)/g)].map((m) => m[1])).filter((p) => p.startsWith('/') && p !== '/dev/null'));
     assert.ok(files.size >= 4, `the body, jar, CSRF header and reply files: ${[...files].join(', ')}`);
     for (const file of files) {
       assert.ok(file.startsWith(path.join(tmp, 'soakrun-private')), `${file} is the workload's own`);
@@ -770,7 +772,7 @@ describe('soak guest: guest-setup.sh setup', () => {
     const f = guestFakes(tmp);
     const r = setup([], f, tmp, { SOAK_MEDUSA_HTTP_PORT: '4009', SOAK_MEDUSA_WS_PORT: '4010' });
     assert.equal(r.status, 0, r.stderr);
-    const leases = f.calls().filter((c) => c.includes('api/ports/lease'));
+    const leases = f.calls().filter((c) => c.includes('api/ports/lease') && !/^\[\w+\] sudo /.test(c));
     assert.deepEqual(leases.map((c) => (c.match(/"port":(\d+)/) || [])[1]), ['3009', '3010']);
   });
 
