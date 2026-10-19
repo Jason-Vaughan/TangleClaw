@@ -43,7 +43,7 @@ function ctx(fetch) {
 
 /**
  * A WebDriver whose scripts answer from `scripts(script, n)`.
- * @param {object} [opt] - `{scripts, newSession, deleteFails}`
+ * @param {object} [opt] - `{scripts, newSession, deleteFails, cookieFails}`
  * @returns {(req: object) => object} Handler
  */
 function driver(opt = {}) {
@@ -57,6 +57,7 @@ function driver(opt = {}) {
     if (req.path.endsWith('/execute/sync')) return { status: 200, body: { value: opt.scripts ? opt.scripts(req.body.script, n++) : null } };
     if (req.path.endsWith('/element')) return { status: 200, body: { value: { [wd.ELEMENT_KEY]: 'E1' } } };
     if (req.path.endsWith('/frame')) return { status: 200, body: { value: null } };
+    if (req.path.endsWith('/cookie')) return opt.cookieFails ? { status: 400, body: { value: { error: 'unable to set cookie', message: 'x' } } } : { status: 200, body: { value: null } };
     return { status: 404, body: { value: { error: 'unknown command' } } };
   };
 }
@@ -226,5 +227,80 @@ describe('soak browser — WebDriver client', () => {
     const c = { fetch: async (u, i) => { init = i; return { status: 200, text: async () => '{"value":null}' }; }, local: { webdriver: WD } };
     await wd.navigate(c, 'S', `${API}/`);
     assert.equal(init.redirect, 'manual');
+  });
+});
+
+describe('soak browser — signed in as the Operator', () => {
+  const PASSWORD = 'browser-test-password-2468';
+
+  /**
+   * A call context whose Operator is signed in to a fake login.
+   * @param {Function} fetch - The fake's fetch
+   * @returns {Promise<object>} Context
+   */
+  async function signedInCtx(fetch) {
+    const c = ctx(async (url, init) => (url.pathname === '/api/auth/login'
+      ? { status: 200, headers: { getSetCookie: () => ['tc_session=br-tok; Path=/; HttpOnly', 'tc_csrf=br-csrf; Path=/'] }, text: async () => JSON.stringify({ csrfToken: 'br-csrf' }) }
+      : fetch(url, init)));
+    c.operator = ex.createOperator({ username: 'soak-operator', password: PASSWORD });
+    assert.equal((await c.operator.signIn(c)).ok, true);
+    return c;
+  }
+
+  it('opens the sign-in page, gives the browser the session as cookies, and only then opens the dashboard', async () => {
+    const f = fake({ api: () => ({ status: 200, body: {} }), wd: driver({ scripts: () => '3m' }) });
+    const r = await B['browser.dashboard.load'](await signedInCtx(f.fetch));
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const steps = f.calls.filter((c) => c.origin === WD).map((c) => `${c.method} ${c.path.replace('/session/S1', '')}${c.path.endsWith('/url') ? ` ${c.body.url}` : ''}`);
+    assert.deepEqual(steps.slice(0, 5), ['POST /session', `POST /url ${API}/login`, 'POST /cookie', 'POST /cookie', `POST /url ${API}/`]);
+    const cookies = f.calls.filter((c) => c.path.endsWith('/cookie')).map((c) => c.body.cookie);
+    assert.deepEqual(cookies, [
+      { name: 'tc_session', value: 'br-tok', path: '/', httpOnly: true },
+      { name: 'tc_csrf', value: 'br-csrf', path: '/', httpOnly: false }
+    ]);
+    assert.ok(!JSON.stringify(f.calls).includes(PASSWORD), 'the password never reaches WebDriver or a page');
+  });
+
+  it('records a cookie the browser refused at the sign-in step, opens nothing, and still ends the session', async () => {
+    const f = fake({ api: () => ({ status: 200, body: {} }), wd: driver({ cookieFails: true }) });
+    const r = await B['browser.dashboard.load'](await signedInCtx(f.fetch));
+    assert.deepEqual([r.ok, r.code, r.step, r.error], [false, wd.WD_OUTCOME.WD_ERROR, 'sign-in', 'unable to set cookie']);
+    assert.ok(!f.calls.some((c) => c.path.endsWith('/url') && c.body.url === `${API}/`), 'the dashboard was never opened');
+    assert.equal(f.calls.filter((c) => c.method === 'DELETE').length, 1);
+    assert.ok(!JSON.stringify(r).includes('br-tok'));
+  });
+
+  it('says the sign-in page was shown, rather than that the page never rendered', async () => {
+    const f = fake({ api: () => ({ status: 200, body: {} }), wd: driver({ scripts: (s) => (s === B_PAGE_STATE ? { visibility: 'visible', wizard: false, signIn: true } : '--') }) });
+    const r = await B['browser.dashboard.load'](await signedInCtx(f.fetch));
+    assert.deepEqual([r.code, r.step], [O.LOGIN_SHOWN, 'render']);
+  });
+
+  it('reads the sign-in page by its own title, since the gate serves it at the address asked for', () => {
+    assert.match(B_PAGE_STATE, /location\.pathname === '\/login'/);
+    assert.match(B_PAGE_STATE, /document\.title\.indexOf\('Sign in'\) === 0/);
+    const page = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'login.html'), 'utf8');
+    assert.match(page, /<title>Sign in /, 'the sign-in page still carries the title the probe reads');
+  });
+
+  it('launches and kills the terminal event\'s session as the Operator, and signs the browser in before the session page', async () => {
+    let attaches = 0;
+    const f = fake({
+      api: (req) => {
+        if (req.path.endsWith('/status')) return { status: 200, body: { active: false } };
+        if (req.method === 'POST' && req.path === '/api/sessions/soak-a') return { status: 200, body: { engine: ex.STUB_ENGINE_ID } };
+        if (req.path === '/api/system/pty-activity') return { status: 200, body: { instance: 'I', attaches: attaches++ } };
+        return { status: 200, body: {} };
+      },
+      wd: driver({ scripts: (s) => (s.includes(browser.TERMINAL_FRAME) ? '/terminal/soak-a' : true) })
+    });
+    const heard = [];
+    const c = await signedInCtx(async (url, init) => { heard.push({ method: init.method, path: url.pathname, cookie: init.headers.cookie }); return f.fetch(url, init); });
+    const r = await B['browser.terminal.attach'](c, { project: 'soak-a' });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const writes = heard.filter((h) => h.method !== 'GET' && !h.path.startsWith('/session'));
+    assert.deepEqual(writes.map((w) => [w.method, w.path, w.cookie]), [['POST', '/api/sessions/soak-a', 'tc_session=br-tok'], ['DELETE', '/api/sessions/soak-a', 'tc_session=br-tok']]);
+    const urls = f.calls.filter((x) => x.path.endsWith('/url')).map((x) => x.body.url);
+    assert.deepEqual(urls, [`${API}/login`, `${API}/session/soak-a`]);
   });
 });

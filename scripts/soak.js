@@ -10,7 +10,9 @@
  *                 [--load-mean-ms <n>] [--fault-mean-ms <n>] [--fault-quiet-ms <n>]
  *   soak validate --schedule <file>
  *   soak run      --schedule <file> --api <url> --log <file> [--allow-unverified-live] [--no-live-install]
- *                 [--home <dir>] [--webdriver <url>]
+ *                 [--home <dir>] [--webdriver <url>] [--operator-login <file>]
+ *   soak operator-login --file <file> --create
+ *   soak operator-login --file <file> --body login|setup --out <file> [--projects-dir <dir>]
  *   soak repos    --root <dir> --origins <dir> [--projects a,b,c]
  *   soak sample   --home <dir> --api <url> --out <file> --no-live-install
  *                 [--interval-ms <n>] [--count <n>] [--full-every <n>]
@@ -41,6 +43,22 @@
  * Neither is ever passed on the operator's behalf. The service token is read from `TANGLECLAW_SERVICE_TOKEN` only,
  * never from a flag that would put it in shell history and process listings.
  *
+ * A schedule that writes as the Operator (launches, kills, commands, wraps,
+ * the restart route, port leases, and every browser event) needs
+ * `--operator-login`, the guest's Operator login file
+ * (`lib/soak/local.js#checkOperatorLogin`). The run signs in with it after the
+ * guards and before any load, as the target's gate allows
+ * (`lib/soak/driver.js#prepareOperator`). There is no password flag:
+ * `--operator-password` is refused, as `--token` is.
+ *
+ * `operator-login` is the guest's provisioning half of that login, run as the
+ * workload user by `deploy/soak/guest/guest-setup.sh`. `--create` writes the
+ * file with a generated password if it is not there. `--body` writes the JSON
+ * body for the sign-in route (`login`) or for first-run setup (`setup`, with
+ * `--projects-dir`) into `--out`, an existing private file such as `mktemp`
+ * makes, for `curl -d @<file>`. The password is never on a command line, in
+ * the environment, or on stdout or stderr.
+ *
  * A schedule with `fault` or `browser` events also needs `--home` (and
  * `--webdriver` for browser events), and runs only inside the soak guest:
  * those events act on this machine, not only through `--api`
@@ -62,9 +80,9 @@ const fs = require('node:fs');
 
 const scheduleLib = require('../lib/soak/schedule');
 const driver = require('../lib/soak/driver');
-const { EXECUTORS } = require('../lib/soak/executors');
-const { FAULT_EXECUTORS } = require('../lib/soak/faults');
-const { BROWSER_EXECUTORS } = require('../lib/soak/browser');
+const { EXECUTORS, OPERATOR_KINDS, createOperator } = require('../lib/soak/executors');
+const { FAULT_EXECUTORS, FAULT_OPERATOR_KINDS } = require('../lib/soak/faults');
+const { BROWSER_EXECUTORS, BROWSER_OPERATOR_KINDS } = require('../lib/soak/browser');
 const localLib = require('../lib/soak/local');
 const integrityLib = require('../lib/soak/integrity');
 const bundleLib = require('../lib/soak/bundle');
@@ -73,13 +91,18 @@ const reposLib = require('../lib/soak/repos');
 /** Every executor `run` can use, by event kind. */
 const RUN_EXECUTORS = Object.freeze({ ...EXECUTORS, ...FAULT_EXECUTORS, ...BROWSER_EXECUTORS });
 
+/** Every kind `run` can use that writes as the Operator. */
+const RUN_OPERATOR_KINDS = Object.freeze([...OPERATOR_KINDS, ...FAULT_OPERATOR_KINDS, ...BROWSER_OPERATOR_KINDS]);
+
 const USAGE = [
   'usage: soak plan     --seed <s> --phase certifying|destructive --duration-hours <h> --out <file>',
   '                     [--classes api,engine,browser,fault] [--projects a,b,c]',
   '                     [--load-mean-ms <n>] [--fault-mean-ms <n>] [--fault-quiet-ms <n>]',
   '       soak validate --schedule <file>',
   '       soak run      --schedule <file> --api <url> --log <file> [--allow-unverified-live] [--no-live-install]',
-  '                     [--home <dir>] [--webdriver <url>]',
+  '                     [--home <dir>] [--webdriver <url>] [--operator-login <file>]',
+  '       soak operator-login --file <file> --create',
+  '       soak operator-login --file <file> --body login|setup --out <file> [--projects-dir <dir>]',
   '       soak repos    --root <dir> --origins <dir> [--projects a,b,c]',
   '       soak sample   --home <dir> --api <url> --out <file> --no-live-install',
   '                     [--interval-ms <n>] [--count <n>] [--full-every <n>]',
@@ -90,7 +113,7 @@ const USAGE = [
 const HOUR_MS = 60 * 60 * 1000;
 
 /** Flags that take no value. */
-const BOOLEAN = new Set(['allow-unverified-live', 'no-live-install']);
+const BOOLEAN = new Set(['allow-unverified-live', 'no-live-install', 'create']);
 
 /** A malformed or incomplete command line: exit 2 with the usage text. */
 class UsageError extends Error {}
@@ -131,6 +154,9 @@ function parseFlags(argv) {
 function expectFlags(flags, required, optional = []) {
   if (Object.prototype.hasOwnProperty.call(flags, 'token')) {
     throw new UsageError('--token is not accepted; set TANGLECLAW_SERVICE_TOKEN instead');
+  }
+  if (Object.prototype.hasOwnProperty.call(flags, 'operator-password')) {
+    throw new UsageError('--operator-password is not accepted; pass --operator-login <file>, a 0600 file holding the login');
   }
   for (const f of required) if (flags[f] === undefined) throw new UsageError(`--${f} is required`);
   const known = new Set([...required, ...optional]);
@@ -235,7 +261,7 @@ function cmdValidate(flags, io) {
  * @returns {Promise<number>} Exit code
  */
 async function cmdRun(flags, io, deps) {
-  expectFlags(flags, ['schedule', 'api', 'log'], ['allow-unverified-live', 'no-live-install', 'home', 'webdriver']);
+  expectFlags(flags, ['schedule', 'api', 'log'], ['allow-unverified-live', 'no-live-install', 'home', 'webdriver', 'operator-login']);
   let api;
   try {
     api = new URL(flags.api);
@@ -263,6 +289,14 @@ async function cmdRun(flags, io, deps) {
   const token = deps.env.TANGLECLAW_SERVICE_TOKEN || null;
   const identity = await driver.refuseSameInstall({ apiBase: api.href, liveApi, fetch: deps.fetch, token, allowUnverifiedLive: flags['allow-unverified-live'] === true });
   if (!identity.checked) io.stderr.write(`${JSON.stringify({ warning: 'IDENTITY_UNCHECKED', reason: identity.reason, liveUnverified: identity.liveUnverified })}\n`);
+  let operator = null;
+  if (flags['operator-login'] !== undefined) {
+    const login = localLib.checkOperatorLogin(flags['operator-login'], deps.local);
+    if (login.problem) throw new driver.DriverRefusal(driver.REFUSAL.OPERATOR_LOGIN_UNAVAILABLE, `refusing to run: ${login.problem}`, { gateState: null });
+    operator = createOperator(login.credential);
+  }
+  const callCtx = { apiBase: api.href, token, fetch: deps.fetch };
+  const signedIn = await driver.prepareOperator({ schedule, operatorKinds: RUN_OPERATOR_KINDS, operator, ctx: callCtx });
   let stop = false;
   deps.onStopSignal(() => {
     if (!stop) io.stderr.write(`${JSON.stringify({ stopping: 'before the next event; the log resumes from here' })}\n`);
@@ -271,7 +305,8 @@ async function cmdRun(flags, io, deps) {
   const result = await driver.runSchedule({
     schedule,
     executors: RUN_EXECUTORS,
-    ctx: { apiBase: api.href, token, fetch: deps.fetch, ...(localCtx ? { local: localCtx } : {}) },
+    operatorKinds: RUN_OPERATOR_KINDS,
+    ctx: { ...callCtx, ...(signedIn.signedIn ? { operator } : {}), ...(localCtx ? { local: localCtx } : {}) },
     logPath: flags.log,
     clock: deps.clock,
     shouldStop: () => stop,
@@ -288,6 +323,8 @@ async function cmdRun(flags, io, deps) {
         identity: { checked: identity.checked, reason: identity.reason },
         ...(localCtx ? { local: { home: localCtx.home, webdriver: localCtx.webdriver, uid: localCtx.uid } } : {})
       },
+      // What the run signed in to, never how: the account and the gate state.
+      operator: signedIn.signedIn ? { username: signedIn.username, gateState: signedIn.gateState, via: signedIn.via } : null,
       ...(identity.liveUnverified ? { liveIdentityOverride: { reason: identity.reason } } : {}),
       ...(noLiveInstall ? { guardContextOverride: 'no-live-install' } : {})
     }
@@ -296,6 +333,41 @@ async function cmdRun(flags, io, deps) {
   if (result.status === 'stopped') return 4;
   // Finished, but not cleanly: the default disposition is fail and reset.
   return result.ownershipUnverified ? 5 : 0;
+}
+
+/**
+ * `operator-login`: create the guest's Operator login file, or write a
+ * request body built from it into a private file.
+ * @param {Object<string, string|boolean>} flags - Flags
+ * @param {object} io - `{stdout, stderr}`
+ * @param {object} deps - `{local}`; `local` reaches `lib/soak/local.js` (`{fs, uid, randomBytes}`)
+ * @returns {number} Exit code: 0 done, 3 refused
+ */
+function cmdOperatorLogin(flags, io, deps) {
+  expectFlags(flags, ['file'], ['create', 'body', 'projects-dir', 'out']);
+  if ((flags.create === true) === (flags.body !== undefined)) throw new UsageError('operator-login takes exactly one of --create and --body');
+  const refuse = (problem) => {
+    io.stderr.write(`${JSON.stringify({ code: driver.REFUSAL.OPERATOR_LOGIN_UNAVAILABLE, message: problem })}\n`);
+    return 3;
+  };
+  if (flags.create === true) {
+    if (flags['projects-dir'] !== undefined || flags.out !== undefined) throw new UsageError('--projects-dir and --out are only for --body');
+    const r = localLib.createOperatorLogin(flags.file, deps.local);
+    if (r.problem) return refuse(r.problem);
+    io.stdout.write(`${JSON.stringify({ file: flags.file, created: r.created, username: localLib.OPERATOR_USERNAME })}\n`);
+    return 0;
+  }
+  if (flags.body !== 'login' && flags.body !== 'setup') throw new UsageError('--body must be login or setup');
+  if (flags.out === undefined) throw new UsageError('--body needs --out, the private file the body is written to');
+  if ((flags.body === 'setup') !== (flags['projects-dir'] !== undefined)) throw new UsageError('--projects-dir is required with --body setup, and only there');
+  const login = localLib.checkOperatorLogin(flags.file, deps.local);
+  if (login.problem) return refuse(login.problem);
+  const { username, password } = login.credential;
+  const body = flags.body === 'login'
+    ? { username, password }
+    : { adminUser: username, adminPassword: password, projectsDir: flags['projects-dir'] };
+  const written = localLib.writePrivateFile(flags.out, JSON.stringify(body), deps.local);
+  return written.problem ? refuse(written.problem) : 0;
 }
 
 /**
@@ -422,6 +494,7 @@ async function main(argv, deps = {}) {
     if (command === 'validate') return cmdValidate(flags, io);
     if (command === 'run') return await cmdRun(flags, io, full);
     if (command === 'repos') return cmdRepos(flags, io);
+    if (command === 'operator-login') return cmdOperatorLogin(flags, io, full);
     if (command === 'sample') return await cmdSample(flags, io, full);
     if (command === 'bundle') return await cmdBundle(flags, io, full);
     throw new UsageError(command ? `unknown command: ${command}` : 'a command is required');
@@ -444,4 +517,4 @@ if (require.main === module) {
   main(process.argv.slice(2)).then((code) => { process.exitCode = code; });
 }
 
-module.exports = { main, parseFlags, USAGE, RUN_EXECUTORS };
+module.exports = { main, parseFlags, USAGE, RUN_EXECUTORS, RUN_OPERATOR_KINDS };

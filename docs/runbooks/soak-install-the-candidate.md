@@ -85,13 +85,13 @@ As `soakrun`, in that GUI session:
    → Expected: the install finishes with its summary banner. If `mkcert -install` asks for a password
    and fails, the install says so and carries on; that is fine here.
 
-10. Confirm launchd runs both services, and the server runs the pin with the gate off:
+10. Confirm launchd runs both services, and the server runs the pin with the gate not yet on (setup, step 11, turns it on):
     `launchctl print "gui/$(id -u)/com.tangleclaw.server" | grep -m1 'state ='`,
     `launchctl print "gui/$(id -u)/com.tangleclaw.ttyd" | grep -m1 'state ='`,
     `curl -s http://127.0.0.1:3102/api/server-info` and
     `node -p "require(process.env.HOME + '/.tangleclaw/config.json').authEnabled === true"`
     → Expected: `state = running` twice, then `"startupSha"` equal to `$SOAK_SHA`, then `false`.
-    → If the gate is on: browser events cannot log in. Turn the gate off before continuing.
+    → If the gate is on: this guest was set up before. Recreate it, since a finished setup cannot be redone.
 
 As the admin again:
 
@@ -142,8 +142,9 @@ As the admin again:
     - The setup caches the admin's sudo credentials with `sudo true`. It doesn't use `sudo -v`, which
       asks for a password on macOS 26 even under a `NOPASSWD` rule. When setup creates `soakrun` over
       SSH, `sysadminctl` doesn't make its home directory, so setup runs `createhomedir` for it.
-    - Setup also finishes the candidate's first-run setup (no login, `projectsDir` set to the soak's
-      projects root) before it attaches the projects. On a refusal it names the server's reason.
+    - Setup also finishes the candidate's first-run setup with the soak's Operator account (`soak-operator`, its 0600 login written as `soakrun`, never printed, to
+      `~/.tangleclaw/soak-operator-login.json`; this turns the gate on) and `projectsDir` set to the soak's projects root, then attaches the projects signed in.
+      The soak's writes and browser events sign in with that login (the browser gets the driver's session cookie through WebDriver). On a refusal it names the server's reason.
 
 > ⚠️ **Step 11b restarts the guest.** pf does not survive a restart, so setup runs again after it.
 > **Proceed only if:** step 11's `~/setup.log` ends in `guest ready` and `exit 0`.
