@@ -18,27 +18,7 @@ const { describe, it, before } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-
-/**
- * Slice out a top-level function body by brace-matching from its declaration.
- * @param {string} src full source text
- * @param {string} decl the function declaration to find
- * @returns {string} the function body including its braces
- */
-function functionBody(src, decl) {
-  const start = src.indexOf(decl);
-  assert.ok(start !== -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i += 1) {
-    if (src[i] === '{') depth += 1;
-    else if (src[i] === '}') {
-      depth -= 1;
-      if (depth === 0) return src.slice(bodyStart, i + 1);
-    }
-  }
-  throw new Error(`unbalanced braces for ${decl}`);
-}
+const { liftBody } = require('./helpers/lift');
 
 describe('wrap drawer — Skip & continue relabel (#696)', () => {
   let src;
@@ -47,7 +27,7 @@ describe('wrap drawer — Skip & continue relabel (#696)', () => {
   });
 
   it('defines syncRetryLabel that flips the action button on the skip-box state', () => {
-    const body = functionBody(src, 'function syncRetryLabel(');
+    const body = liftBody(src, 'function syncRetryLabel(');
     // Reads the action button and the decision area.
     assert.match(body, /wrapDrawerRetryBtn/);
     assert.match(body, /wrapDrawerDecision/);
@@ -62,13 +42,13 @@ describe('wrap drawer — Skip & continue relabel (#696)', () => {
   });
 
   it('wires the skip checkbox to relabel on change', () => {
-    const body = functionBody(src, 'function renderDecisionWidget(');
+    const body = liftBody(src, 'function renderDecisionWidget(');
     assert.match(body, /addEventListener\('change', syncRetryLabel\)/,
       'toggling the skip box must relabel the action button live');
   });
 
   it('re-syncs the label on every drawer render (so a fresh drawer resets to Retry)', () => {
-    const body = functionBody(src, 'function renderWrapDrawer(');
+    const body = liftBody(src, 'function renderWrapDrawer(');
     assert.match(body, /syncRetryLabel\(\)/,
       'renderWrapDrawer must call syncRetryLabel so a re-render with unticked boxes reads "Retry"');
   });

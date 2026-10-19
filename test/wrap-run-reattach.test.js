@@ -13,27 +13,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-
-/**
- * Slice out a top-level function body by brace-matching from its declaration.
- * @param {string} src full source text
- * @param {string} decl the function declaration to find (e.g. `async function confirmWrap()`)
- * @returns {string} the function body including its braces
- */
-function functionBody(src, decl) {
-  const start = src.indexOf(decl);
-  assert.ok(start !== -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}') {
-      depth--;
-      if (depth === 0) return src.slice(bodyStart, i + 1);
-    }
-  }
-  assert.fail(`unbalanced braces after ${decl}`);
-}
+const { liftBody } = require('./helpers/lift');
 
 describe('wrap-run reattach wiring (#583)', () => {
   let sessionSrc;
@@ -51,19 +31,19 @@ describe('wrap-run reattach wiring (#583)', () => {
       // On the reattach path the drawer can open AFTER handleSessionEnded
       // started its 10s auto-redirect — the countdown must die, not navigate
       // the report away mid-read.
-      const drawerBody = functionBody(sessionSrc, 'function openWrapDrawer(');
+      const drawerBody = liftBody(sessionSrc, 'function openWrapDrawer(');
       assert.ok(drawerBody.includes('cancelEndedCountdown()'),
         'openWrapDrawer cancels an already-ticking countdown');
-      const noticeBody = functionBody(sessionSrc, 'function openWrapDrawerNotice(');
+      const noticeBody = liftBody(sessionSrc, 'function openWrapDrawerNotice(');
       assert.ok(noticeBody.includes('cancelEndedCountdown()'),
         'the notice variant cancels it too');
-      const cancelBody = functionBody(sessionSrc, 'function cancelEndedCountdown()');
+      const cancelBody = liftBody(sessionSrc, 'function cancelEndedCountdown()');
       assert.ok(cancelBody.includes('clearInterval(countdownTimer)'),
         'cancel clears the interval, not just the label');
     });
 
     it('initSession restores the wrap run on load without blocking init on it', () => {
-      const body = functionBody(sessionSrc, 'async function initSession()');
+      const body = liftBody(sessionSrc, 'async function initSession()');
       assert.ok(body.includes('restoreWrapRunOnLoad()'), 'init picks up a running or remembered run');
       assert.ok(!body.includes('await restoreWrapRunOnLoad()'), 'and does not wait on a multi-minute wrap');
     });
@@ -145,7 +125,7 @@ describe('wrap-run reattach wiring (#583)', () => {
       }
       assert.equal((apiHelperSrc.match(/apiMutate\('\/api\/server\/restart'/g) || []).length, 2,
         'exactly the two POSTs inside the helper (initial + forced)');
-      assert.ok(functionBody(landingSrc, 'async function triggerServerRestart()')
+      assert.ok(liftBody(landingSrc, 'async function triggerServerRestart()')
         .includes('restartFlow.postServerRestart()'), '#235 restart uses the guard helper');
       assert.ok(beaconSrc.includes('restart.postServerRestart()'),
         '#229 update-and-restart uses the guard helper');

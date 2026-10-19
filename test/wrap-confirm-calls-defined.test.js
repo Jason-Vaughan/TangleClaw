@@ -32,6 +32,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { liftDeclaration } = require('./helpers/lift');
 
 const PUBLIC = path.join(__dirname, '..', 'public');
 
@@ -57,39 +58,18 @@ function definedNames(t) {
 const NOT_FUNCTIONS = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'typeof', 'function',
   'encodeURIComponent', 'setTimeout', 'clearTimeout']);
 
-/**
- * Slice one top-level function's source out of a file by brace-matching.
- * @param {string} src - File source
- * @param {string} name - Function name
- * @returns {string} The function, or '' when absent
- */
-function functionSource(src, name) {
-  const m = new RegExp(`^(async )?function ${name}\\(`, 'm').exec(src);
-  if (!m) return '';
-  const bodyStart = src.indexOf('{', src.indexOf(')', m.index));
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i += 1) {
-    if (src[i] === '{') depth += 1;
-    else if (src[i] === '}') {
-      depth -= 1;
-      if (depth === 0) return src.slice(m.index, i + 1);
-    }
-  }
-  return '';
-}
-
 // Everything a Wrap press runs through before the pipeline's own frames arrive:
 // the confirm handler, the POST it shares with Retry, and the controller
 // dispatch and effects both of them feed.
 const WRAP_PATH = [
-  'confirmWrap', 'postWrap', 'retryWrap', 'dispatchWrapRun', 'syncWrapRunEffects',
-  'paintWrapRun', 'startWrapStream', 'scheduleWrapStatusPoll', 'restoreWrapRunOnLoad'
+  'async function confirmWrap(', 'async function postWrap(', 'async function retryWrap(', 'function dispatchWrapRun(', 'function syncWrapRunEffects(',
+  'function paintWrapRun(', 'function startWrapStream(', 'function scheduleWrapStatusPoll(', 'async function restoreWrapRunOnLoad('
 ];
 
 describe('the wrap-confirm path calls only functions that exist', () => {
   const session = fs.readFileSync(path.join(PUBLIC, 'session.js'), 'utf8');
   const helper = fs.readFileSync(path.join(PUBLIC, 'api-helper.js'), 'utf8');
-  const bodies = WRAP_PATH.map((name) => [name, functionSource(session, name)]);
+  const bodies = WRAP_PATH.map((decl) => [decl, liftDeclaration(session, decl)]);
 
   it('the wrap-confirm path is still locatable (the scan has something to read)', () => {
     // Without this the extraction could silently yield an empty string and the

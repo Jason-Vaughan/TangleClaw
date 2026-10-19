@@ -18,6 +18,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { liftBody } = require('./helpers/lift');
 
 function loadHelpers() {
   const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'wrap-drawer.js'), 'utf8');
@@ -26,27 +27,6 @@ function loadHelpers() {
   vm.createContext(sandbox);
   vm.runInContext(src, sandbox);
   return sandbox.module.exports;
-}
-
-/**
- * Slice out a top-level function body by brace-matching from its declaration.
- * @param {string} src full source text
- * @param {string} decl the function declaration to find
- * @returns {string} the function body including its braces
- */
-function functionBody(src, decl) {
-  const start = src.indexOf(decl);
-  assert.ok(start !== -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}') {
-      depth--;
-      if (depth === 0) return src.slice(bodyStart, i + 1);
-    }
-  }
-  assert.fail(`${decl} body must close`);
 }
 
 describe('#540 ask-mode — collectOptionsFromAccessors carries bumpLevel', () => {
@@ -113,7 +93,7 @@ describe('#540 ask-mode — the modal wiring (source pins)', () => {
   });
 
   it('confirmWrap captures the choice and sends it through the shared option assembler', () => {
-    const body = functionBody(session, 'async function confirmWrap()');
+    const body = liftBody(session, 'async function confirmWrap()');
     assert.match(body, /getElementById\('wrapBumpLevel'\)/, 'reads the select');
     assert.match(body, /collectOptionsFromAccessors\(/,
       'assembles options via the same pure helper the retry path uses, so the two cannot drift');
@@ -123,13 +103,13 @@ describe('#540 ask-mode — the modal wiring (source pins)', () => {
   });
 
   it('openWrapModal resets the choice to Auto, so a cancelled pick cannot re-arm', () => {
-    const body = functionBody(session, 'function openWrapModal()');
+    const body = liftBody(session, 'function openWrapModal()');
     assert.match(body, /wrapBumpLevel/, 'the modal reset touches the bump select');
     assert.match(body, /bumpEl\.value\s*=\s*''/, 'and clears it back to Auto');
   });
 
   it('retryWrap replays the choice via the pure helper accessor', () => {
-    const body = functionBody(session, 'async function retryWrap()');
+    const body = liftBody(session, 'async function retryWrap()');
     assert.match(body, /bumpLevel:\s*\(\)\s*=>\s*wrapBumpLevel/,
       'retry supplies the bumpLevel accessor so the pipeline re-runs with the same choice');
   });

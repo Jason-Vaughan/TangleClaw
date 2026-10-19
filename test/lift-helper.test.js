@@ -4,12 +4,11 @@
  * Contract for `test/helpers/lift.js`, the shared brace-matcher that lifts
  * shipped browser functions out of `public/*.js` for a test to run (#1903).
  *
- * About ninety test files carry a private copy of the same matcher, and copies
- * drift: one copy of `esc` accepted fewer types than the shipped one. These
- * cases pin the helper to exactly what the copies do today, limitations
- * included, so moving a test onto it cannot change what that test lifts. The
- * inventory at the bottom records every copy, so a new one fails here and each
- * migration shrinks the list in the same change.
+ * The helper is the one copy of that matcher because copies drift: one private
+ * copy of `esc` accepted fewer types than the shipped one. These cases pin the
+ * helper to exactly what the copies it replaced did, limitations included, so a
+ * test that lifts through it lifts the same text. The scan at the bottom refuses
+ * a new private copy.
  */
 
 const { describe, it } = require('node:test');
@@ -124,26 +123,11 @@ const EXCEPTIONS = {
 };
 
 /**
- * Every private brace-matcher copy when the shared helper landed. A migration
- * removes its file's entries here in the same change; a new copy is refused.
+ * Private brace-matcher copies the scan accepts. Empty: every lift in `test/`
+ * goes through the shared helper, so any copy the scan finds is new and is
+ * refused.
  */
-const INITIAL_INVENTORY = [
-  'wrap-bump-level-askmode.test.js :: functionBody',
-  'wrap-confirm-calls-defined.test.js :: functionSource',
-  'wrap-drawer-select-a11y.test.js :: functionBody',
-  'wrap-ends-session.test.js :: liftFunction',
-  'wrap-indicator-card.test.js :: functionBody',
-  'wrap-indicator-card.test.js :: body',
-  'wrap-indicator-card.test.js :: (inline)',
-  'wrap-intent-cancel.test.js :: lift',
-  'wrap-intent-cancel.test.js :: save',
-  'wrap-release-decision.test.js :: liftFunction',
-  'wrap-rule-proposal-widget.test.js :: functionBody',
-  'wrap-run-reattach.test.js :: functionBody',
-  'wrap-run-session-wiring.test.js :: functionSource',
-  'wrap-skip-continue-label.test.js :: functionBody',
-  'wrap-untrack-offer-ui.test.js :: liftFunction',
-];
+const INITIAL_INVENTORY = [];
 
 /**
  * Find every brace-matcher copy in `test/*.js` by the rule above.

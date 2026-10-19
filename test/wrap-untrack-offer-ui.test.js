@@ -14,6 +14,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { makeDocument } = require('./_mini-dom');
+const { liftDeclaration } = require('./helpers/lift');
 
 const PUB = path.join(__dirname, '..', 'public');
 const SESSION_SRC = fs.readFileSync(path.join(PUB, 'session.js'), 'utf8');
@@ -30,26 +31,6 @@ function loadHelpers() {
   vm.createContext(sandbox);
   vm.runInContext(src, sandbox);
   return sandbox.module.exports;
-}
-
-/**
- * Slice a top-level function out of source text by brace-matching.
- *
- * @param {string} src - File source text.
- * @param {string} decl - Declaration to find.
- * @returns {string} The declaration plus its balanced body.
- */
-function liftFunction(src, decl) {
-  const start = src.indexOf(decl);
-  assert.notEqual(start, -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  assert.fail(`${decl} body must close`);
-  return '';
 }
 
 const H = loadHelpers();
@@ -98,12 +79,12 @@ describe('the answer rides the Retry', () => {
   });
 
   it('retryWrap prefers a drawer answer and keeps it for the rest of the wrap; a new wrap forgets it', () => {
-    const retry = liftFunction(SESSION_SRC, 'async function retryWrap()');
+    const retry = liftDeclaration(SESSION_SRC, 'async function retryWrap()');
     assert.match(retry, /\.wrap-decision--untrack input\[type="radio"\]:checked/);
     assert.match(retry, /picked \? picked\.value : wrapUntrackState/);
     assert.match(retry, /if \(options\.untrackState\) wrapUntrackState = options\.untrackState/);
-    assert.match(liftFunction(SESSION_SRC, 'async function confirmWrap()'), /wrapUntrackState = '';/);
-    assert.match(liftFunction(SESSION_SRC, 'function adoptWrapRunChoices(options)'), /wrapUntrackState = choices\.untrackState;/);
+    assert.match(liftDeclaration(SESSION_SRC, 'async function confirmWrap()'), /wrapUntrackState = '';/);
+    assert.match(liftDeclaration(SESSION_SRC, 'function adoptWrapRunChoices(options)'), /wrapUntrackState = choices\.untrackState;/);
   });
 
   it('the drawer renders the widget for a blocked row', () => {
@@ -121,7 +102,7 @@ describe('renderUntrackOfferWidget (run)', () => {
     const { doc } = makeDocument([]);
     const ctx = { document: doc };
     vm.createContext(ctx);
-    vm.runInContext(liftFunction(SESSION_SRC, 'function renderUntrackOfferWidget(widget)'), ctx);
+    vm.runInContext(liftDeclaration(SESSION_SRC, 'function renderUntrackOfferWidget(widget)'), ctx);
     const raw = haltedOffer();
     return ctx.renderUntrackOfferWidget(H.untrackOfferWidget(H.buildStepRow(raw, { blockedAt: 'session-files' }), raw.output));
   }

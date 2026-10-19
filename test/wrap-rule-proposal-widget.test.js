@@ -25,27 +25,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const helperGlobals = require('./_api-helper-globals')();
-
-/**
- * Slice out a top-level function body by brace-matching from its declaration.
- * @param {string} src full source text
- * @param {string} decl the function declaration to find
- * @returns {string} the function body including its braces
- */
-function functionBody(src, decl) {
-  const start = src.indexOf(decl);
-  assert.ok(start !== -1, `${decl} must exist`);
-  const bodyStart = src.indexOf('{', start);
-  let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}') {
-      depth--;
-      if (depth === 0) return src.slice(bodyStart, i + 1);
-    }
-  }
-  assert.fail(`${decl} body must close`);
-}
+const { liftBody } = require('./helpers/lift');
 
 describe('#569 rule-proposal review widget (wrap drawer)', () => {
   let session, sessionCss;
@@ -58,7 +38,7 @@ describe('#569 rule-proposal review widget (wrap drawer)', () => {
 
   describe('the drawer renders the widget', () => {
     it('renderWrapDrawer wires ruleProposalWidget into the decision area', () => {
-      const body = functionBody(session, 'function renderWrapDrawer(');
+      const body = liftBody(session, 'function renderWrapDrawer(');
       assert.ok(/H\.ruleProposalWidget\(row, raw\.output\)/.test(body),
         'renderWrapDrawer must derive the widget from the step row');
       assert.ok(/renderRuleProposalWidget\(/.test(body),
@@ -66,7 +46,7 @@ describe('#569 rule-proposal review widget (wrap drawer)', () => {
     });
 
     it('proposal decisions are not a pipeline retry — the branch must not set warningOnly', () => {
-      const body = functionBody(session, 'function renderWrapDrawer(');
+      const body = liftBody(session, 'function renderWrapDrawer(');
       const branch = body.slice(body.indexOf("row.kind === 'rule-proposal'"));
       const branchEnd = branch.indexOf("decisionEl.classList.toggle");
       assert.ok(!/warningOnly = true/.test(branch.slice(0, branchEnd)),
@@ -76,14 +56,14 @@ describe('#569 rule-proposal review widget (wrap drawer)', () => {
 
   describe('the widget itself', () => {
     it('renders an editable textarea plus Approve and Reject per proposal', () => {
-      const body = functionBody(session, 'function renderRuleProposalWidget(');
+      const body = liftBody(session, 'function renderRuleProposalWidget(');
       assert.ok(/ta\.value = p\.content/.test(body), 'proposal text must be editable, prefilled');
       assert.ok(/wrap-proposal-approve/.test(body), 'approve button must render');
       assert.ok(/wrap-proposal-reject/.test(body), 'reject button must render');
     });
 
     it('is a labelled group with per-proposal accessible names (a11y)', () => {
-      const body = functionBody(session, 'function renderRuleProposalWidget(');
+      const body = liftBody(session, 'function renderRuleProposalWidget(');
       assert.ok(/list\.setAttribute\('role',\s*'group'\)/.test(body));
       assert.ok(/list\.setAttribute\('aria-labelledby',\s*groupLabelId\)/.test(body));
       assert.ok(/ta\.setAttribute\('aria-label'/.test(body),
@@ -91,7 +71,7 @@ describe('#569 rule-proposal review widget (wrap drawer)', () => {
     });
 
     it('carries a hidden password input for the 403 recovery path', () => {
-      const body = functionBody(session, 'function renderRuleProposalWidget(');
+      const body = liftBody(session, 'function renderRuleProposalWidget(');
       assert.ok(/wrap-proposal-password hidden/.test(body),
         'password group must start hidden — it only appears when the server refuses');
     });
@@ -99,7 +79,7 @@ describe('#569 rule-proposal review widget (wrap drawer)', () => {
 
   describe('resolving a proposal', () => {
     it('approve saves a text edit BEFORE flipping status', () => {
-      const body = functionBody(session, 'async function resolveRuleProposal(');
+      const body = liftBody(session, 'async function resolveRuleProposal(');
       const contentPut = body.indexOf("'PUT', { content: edited }");
       const statusPut = body.indexOf('/status`');
       assert.ok(contentPut !== -1, 'approve must PUT the edited content');
@@ -109,7 +89,7 @@ describe('#569 rule-proposal review widget (wrap drawer)', () => {
     });
 
     it('a failed edit-save aborts the approval', () => {
-      const body = functionBody(session, 'async function resolveRuleProposal(');
+      const body = liftBody(session, 'async function resolveRuleProposal(');
       const failBranch = body.slice(body.indexOf('Couldn’t save your edit'));
       assert.ok(/Nothing was approved/.test(failBranch.slice(0, 200)),
         'the operator must be told the approval did not proceed');
@@ -118,24 +98,24 @@ describe('#569 rule-proposal review widget (wrap drawer)', () => {
     });
 
     it('approve replays the cached wrap password, preferring a freshly typed one', () => {
-      const body = functionBody(session, 'async function resolveRuleProposal(');
+      const body = liftBody(session, 'async function resolveRuleProposal(');
       assert.ok(/passwordInput && passwordInput\.value\) \|\| currentWrapPassword/.test(body));
     });
 
     it('a 403 reveals the password input instead of failing opaquely', () => {
-      const body = functionBody(session, 'async function resolveRuleProposal(');
+      const body = liftBody(session, 'async function resolveRuleProposal(');
       assert.ok(/lastErrorCode === 'FORBIDDEN'/.test(body));
       assert.ok(/passwordGroup\.classList\.remove\('hidden'\)/.test(body));
     });
 
     it('reject needs no password and is recorded, not deleted', () => {
-      const body = functionBody(session, 'async function resolveRuleProposal(');
+      const body = liftBody(session, 'async function resolveRuleProposal(');
       const rejectCall = body.match(/\{ status: 'rejected' \}/);
       assert.ok(rejectCall, 'reject must PUT status rejected — the record is what prevents re-proposal');
     });
 
     it('an empty edited rule cannot be approved', () => {
-      const body = functionBody(session, 'async function resolveRuleProposal(');
+      const body = liftBody(session, 'async function resolveRuleProposal(');
       assert.ok(/’s text can’t be empty/.test(body));
     });
   });
@@ -171,7 +151,7 @@ describe('#569 rule-proposal review widget (wrap drawer)', () => {
         calls.push({ url, method, body });
         return respond(url, method, body, api);
       };
-      const src = functionBody(session, 'async function resolveRuleProposal(');
+      const src = liftBody(session, 'async function resolveRuleProposal(');
       // eslint-disable-next-line no-new-func
       // tcRuleLabel is the real one api-helper.js publishes before session.js runs (#2029).
       const fn = new Function('apiMutate', 'api', 'currentWrapPassword', 'tcRuleLabel',

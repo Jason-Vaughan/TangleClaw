@@ -41,6 +41,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-18 — #1903 Chunk 10: the last fifteen lift copies use the shared helper, and the inventory is empty
+
+<!-- prawduct: type=refactor | scope=w20-a1-lift-chunk10 -->
+
+v5.34.0 Wave 20 chunk W20-A1, chunk 1 of 1, the final chunk of #1903. Branch `fix/1903-w20-a1` from `origin/main` `414f3eca`. Closes #1903. Plan: `.tangleclaw/plans/w20-a1-lift-chunk10-1903.md` (rev1 sha256 `65d65237…d434`, INT `83dcfdc5`, Architect A335); charter v2.52 (sha256 `1daeecf8…e98f`, A333), 14-file lock.
+
+**What changed.** Six `functionBody` copies (`wrap-bump-level-askmode`, `wrap-drawer-select-a11y`, `wrap-indicator-card`, `wrap-rule-proposal-widget`, `wrap-run-reattach`, `wrap-skip-continue-label`) become `liftBody`; three `liftFunction` copies (`wrap-ends-session`, `wrap-release-decision`, `wrap-untrack-offer-ui`) become `liftDeclaration`. `wrap-indicator-card`'s `body` arrow and its inline `renderStatusDot` walk become `liftBody` calls; the walk's `start` guard stays. `wrap-intent-cancel`'s `lift` and the walk inside its `save` harness become `liftDeclaration` calls; the harness stays. The two `functionSource` copies (`wrap-confirm-calls-defined`, `wrap-run-session-wiring`) found a declaration by a column-0 `(async )?function name(` regex, so `WRAP_PATH` and `WIRING` become lists of declaration literals, `async ` included on the four and five async ones. `wrap-confirm-calls-defined` now fails a missing function when its describe collects, not in its locatable test, which stays. `INITIAL_INVENTORY` goes from 15 to 0: the scan finds only its three named non-lifter exceptions and refuses any new copy.
+
+**Evidence.** A `node --require` capture logged the same 1066 runtime lifts, byte for byte, on base and branch, across all twelve files. Every file's test count is unchanged. Miss messages change only on an already broken source. Put back, a private brace loop fails `lift-helper.test.js` as a new copy, and a stale inventory line fails it as a copy gone. `test/helpers/lift.js` and production files are untouched. Cumulative Critic `rev-20261018T230330Z-3aca7a16`: 0 blocking, 2 warnings and 4 notes, all accepted; the inventory constant keeps its name and message by plan decision D7.
+
 ## 2026-10-18 — W20-B1: the launch-binding dispatcher test holds every port it leases
 
 <!-- prawduct: type=bugfix | scope=w20b1-launch-binding-port-fixture -->

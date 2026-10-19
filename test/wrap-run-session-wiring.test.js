@@ -23,39 +23,19 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { liftDeclaration } = require('./helpers/lift');
 
 const PUBLIC = path.join(__dirname, '..', 'public');
 const SESSION_SRC = fs.readFileSync(path.join(PUBLIC, 'session.js'), 'utf8');
 
-/**
- * The full source of one top-level function in session.js, declaration included.
- * @param {string} name - Function name
- * @returns {string}
- */
-function functionSource(name) {
-  const re = new RegExp(`^(async )?function ${name}\\(`, 'm');
-  const m = re.exec(SESSION_SRC);
-  assert.ok(m, `session.js must define ${name}`);
-  const bodyStart = SESSION_SRC.indexOf('{', SESSION_SRC.indexOf(')', m.index));
-  let depth = 0;
-  for (let i = bodyStart; i < SESSION_SRC.length; i += 1) {
-    if (SESSION_SRC[i] === '{') depth += 1;
-    else if (SESSION_SRC[i] === '}') {
-      depth -= 1;
-      if (depth === 0) return SESSION_SRC.slice(m.index, i + 1);
-    }
-  }
-  return assert.fail(`unbalanced braces in ${name}`);
-}
-
 const WIRING = [
-  'wrapStartInFlight', 'confirmWrap', 'postWrap', 'retryWrap', 'closeWrapDrawer',
-  'wrapRunState', 'wrapStatusUrl', 'dispatchWrapRun', 'syncWrapRunEffects', 'paintWrapRun',
-  'followedWrapRunKey', 'rememberFollowedWrapRun', 'recallFollowedWrapRun', 'restoreWrapRunOnLoad', 'adoptWrapRunChoices',
-  '_probeWrapStatus', 'startWrapStream', 'stopWrapStream', 'scheduleWrapStatusPoll', 'cancelWrapStatusPoll',
-  'collapseWrapPopover', 'onWrapButtonClick', 'wrapButtonContext',
-  'handbackWatched', 'syncHandbackEffects', 'startHandbackStream', 'stopHandbackStream', 'scheduleHandbackStatusPoll',
-  'syncWrapClock', 'wrapClockTick'
+  'function wrapStartInFlight(', 'async function confirmWrap(', 'async function postWrap(', 'async function retryWrap(', 'function closeWrapDrawer(',
+  'function wrapRunState(', 'function wrapStatusUrl(', 'function dispatchWrapRun(', 'function syncWrapRunEffects(', 'function paintWrapRun(',
+  'function followedWrapRunKey(', 'function rememberFollowedWrapRun(', 'function recallFollowedWrapRun(', 'async function restoreWrapRunOnLoad(', 'function adoptWrapRunChoices(',
+  'async function _probeWrapStatus(', 'function startWrapStream(', 'function stopWrapStream(', 'function scheduleWrapStatusPoll(', 'function cancelWrapStatusPoll(',
+  'function collapseWrapPopover(', 'function onWrapButtonClick(', 'function wrapButtonContext(',
+  'function handbackWatched(', 'function syncHandbackEffects(', 'function startHandbackStream(', 'function stopHandbackStream(', 'function scheduleHandbackStatusPoll(',
+  'function syncWrapClock(', 'function wrapClockTick('
 ];
 
 /** A controllable `EventSource`. */
@@ -163,7 +143,7 @@ function harness() {
     'let currentHandbackStream = null;', 'let currentHandbackStreamId = null;', 'let handbackStatusPollTimer = null;',
     'let wrapClockTimer = null;'
   ].join('\n');
-  vm.runInContext(`${globals}\n${WIRING.map(functionSource).join('\n\n')}\n`
+  vm.runInContext(`${globals}\n${WIRING.map((decl) => liftDeclaration(SESSION_SRC, decl)).join('\n\n')}\n`
     + 'this.__wiring = { confirmWrap, postWrap, retryWrap, closeWrapDrawer, collapseWrapPopover, onWrapButtonClick, wrapClockTick, dispatchWrapRun, wrapRunState, restoreWrapRunOnLoad, getPassword: () => currentWrapPassword, setPassword: (p) => { currentWrapPassword = p; } };', sandbox);
   sandbox.api.lastError = null;
 
