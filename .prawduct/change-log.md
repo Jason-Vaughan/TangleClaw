@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-19 — W23-REC: combined records for the Wave 23 source merges
+
+<!-- prawduct: type=chore | scope=w23-rec-records -->
+
+v5.34.0 records chunk W23-REC, Charter v2.57 (A362), from merged main `60acefde`. W23-B1 PR #2513 merged as `a6ac9aba` and closed #2370; W23-A1 PR #2514 merged as `60acefde` and closed #2222. The two source entries below remain intact.
+
+**What changed.** `CHANGELOG.md` adds two Fixed entries: #2222's Codex 0.161.0 and 0.162.0 kept refused on a measurement, crediting @GURULifeline (PR #2218, unmerged), and #2370's listener keeping its registered connection after a Hub outage, crediting @CRYPTONIKAV, whose proposal was rebuilt under ADR 0014 with no outside code merged. It also replaces the stale tail of the Codex settling-interval Changed entry, which still said those versions awaited #2222 and named the closed #2059; it now says #2222 measured them and names the visible-pane boundary (#1897, #2221). `FEATURES.md` corrects the two #2222 references in the Codex post-turn wake hold and ADR 0025 bullets the same way, and adds #2370's close-time synchronous error and registration cancelling a pending reconnect to the `test/medusa-listener.test.js` index entry. #1897 and #2221 stay open for the Codex visible-pane boundary. The #2313 signed-in panel check is still owed after the next deploy (owner TC-Lane-B). `prawduct-hook archive-change-log` selected nothing to move, so the archive is unchanged. This records PR changes no product code, version, release, tag or deployment.
+
 ## 2026-10-19 — #2222 Chunk 01: Codex 0.161.0 and 0.162.0 measured isolated under `--no-daemon`, and still refused
 
 <!-- prawduct: type=bugfix | scope=w23-a1-codex-version-measure -->
