@@ -41,6 +41,21 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-19 — #2240 Chunk 01: the soak signs in as an Operator account, with CSRF and a bounded 401 policy
+
+<!-- prawduct: type=feature | scope=w21-a1-soak-operator-auth -->
+
+v5.34.0 Wave 21 chunk W21-A1, chunk 1 of 2 of #2240 (items 2, 3 and 4; item 1 is Chunk 02, which closes it). Refs #2240. Branch `fix/2240-w21-a1-soak-operator-auth` from `origin/main` `7641eb92`. Plan: `.tangleclaw/plans/w21-a1-2240-chunk01-soak-operator-auth.md` (rev1 sha256 `b1695551…ea9c`, Architect A344 D1-D8, A345). Charter v2.55 (sha256 `a93ea15c…7c86`, 18-file lock, A348). Rulings during the build: A346 (secrets only in files, never on stdout or a command line) and A351 (the three-step first run below, after the cumulative Critic found that setup with an account starts the Caddy cutover on a guest that has Caddy).
+
+**What changed.** The #2233 launch-binding floor refuses the soak's launches, kills, commands, wraps, restarts and leases from anyone but the Operator, a Master or a live session, and the service token stands for nobody outside the port routes. So the soak now signs in as an account.
+- `guest-setup.sh` step 5 creates a `soak-operator` login as the workload user, a `0600` file the new `soak.js operator-login` writes. A first run then finishes setup with no login, turns the login on (`add-login`) and creates the account (`set-password`), so no Caddy cutover starts; the dashboard header goes only on the two calls made while the gate is open. A re-run reads the gate and does only what is missing: it finishes an interrupted first run, signs in to an armed guest with the file, or refuses with "recreate the guest". Every later write, step 6's hub leases included, goes with the session and CSRF. Secret-bearing calls run as the workload user, with each secret only in its own `mktemp` files.
+- `executors.call(..., { as: 'operator' })` carries the session on a closed list of writes, to the target's own origin only. Reads and `medusa/send`/`read` carry none: those stay failing closed until Chunk 02 carries each session's binding.
+- `soak.js run --operator-login` signs in by gate state before any load (`OPERATOR_LOGIN_UNAVAILABLE` / `OPERATOR_LOGIN_FAILED` otherwise). A 401 is never retried (`UNAUTHENTICATED`). The next Operator event signs in once; a failure is `REAUTH_FAILED`, and three in a row stop the run cleanly (`REAUTH_EXHAUSTED`).
+- Browser events add the session as WebDriver cookies after opening `/login`, and a render on the sign-in page is `LOGIN_SHOWN`.
+- README states the bearer token's scope. The two soak runbooks match the new flow.
+
+**Evidence.** A principal-table test runs every executor kind against one fake target and fails on any mutating call with no entry. Two mutations were checked by hand: a missing entry, and a switchboard call sent as the Operator. Both were caught. Secrecy tests search every outcome, log, header and `resume` record, stdout, stderr and the guest's call log for the password and both tokens. On host scratch servers (temp `TANGLECLAW_HOME`, PortHub ports 4310 and 4313, Caddy off PATH): a cookie plus CSRF leased 201, with no CSRF 403, with no cookie 403 `LAUNCH_BINDING_REQUIRED`, and a logged-out cookie got 401 (A4); the file-based curl sequence answered 200/201/200/200, then 401 after logout; setup with no login, then `add-login`, then `set-password` took the gate open, account-required, armed, with provisioning off, and a signed-in lease got 201. The password appears in either server log 0 times. The Caddy-present cutover was found by reading the code and was never run. Owed to the next guest dry run (A344 D8, owner TC-Lane-A): the engine, fault and Safari cycles in a real guest, including A3 (Add Cookie with `httpOnly`), and steps 5 and 6 end to end.
+
 ## 2026-10-19 — #2088: remove the mechanisms behind three intermittent full-suite failures
 
 <!-- prawduct: type=fix | scope=w21b1-2088-intermittent-hardening -->

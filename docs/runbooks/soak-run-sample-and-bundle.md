@@ -59,7 +59,8 @@ The guest printed `guest ready: …` and you are starting a dry run, a destructi
    with no `TANGLECLAW_API` set.
 
 5. Run the schedule:
-   `node scripts/soak.js run --schedule ~/soak/schedule.json --api http://127.0.0.1:3102 --log ~/soak/soak.ndjson --no-live-install --home ~/.tangleclaw --webdriver http://127.0.0.1:4444`
+   `node scripts/soak.js run --schedule ~/soak/schedule.json --api http://127.0.0.1:3102 --log ~/soak/soak.ndjson --no-live-install --home ~/.tangleclaw --webdriver http://127.0.0.1:4444 --operator-login ~/.tangleclaw/soak-operator-login.json`
+   → The run signs in as the soak's Operator account, which setup created, before any load. Exit 3 with `OPERATOR_LOGIN_UNAVAILABLE` naming gate `open` means the guest was set up without it: recreate the guest.
    → Expected: after the schedule's duration, exit 0 and a line with `"status":"completed"`.
    → Exit 4 (stopped): run the same command again. It resumes, and no logged event runs twice.
    → Exit 5 (`completed-ownership-unverified`): not an automatic pass. Continue to the bundle; the

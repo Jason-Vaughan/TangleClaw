@@ -1859,3 +1859,204 @@ describe('soak driver — the run lasts until the schedule\'s horizon', () => {
     assert.throws(() => driver.readLog(logPath), (err) => err.code === 'LOG_LOCK_LOST', 'the loss is recorded, so the log is never evidence');
   });
 });
+
+describe('soak driver — the Operator sign-in at the start of a run', () => {
+  const ex = require('../lib/soak/executors');
+  const PASSWORD = 'driver-test-password-5555';
+  const API_KINDS = sched.TASKS.filter((k) => k.class === 'api').map((k) => k.kind);
+
+  /**
+   * A target with the given gate state, recording each request path.
+   * @param {string|null} gateState - What `/api/auth/me` reports (null: it answers 500)
+   * @param {object} [opt] - `{loginStatus}`
+   * @returns {{ctx: object, paths: string[]}} Call context and its log
+   */
+  function target(gateState, opt = {}) {
+    const paths = [];
+    const fetch = async (url) => {
+      paths.push(url.pathname);
+      if (url.pathname === '/api/auth/me') {
+        return gateState === null ? { status: 500, text: async () => '{}' } : { status: 200, text: async () => JSON.stringify({ authenticated: false, gateState }) };
+      }
+      if (opt.loginStatus && opt.loginStatus !== 200) return { status: opt.loginStatus, text: async () => JSON.stringify({ code: 'INVALID_CREDENTIALS' }) };
+      return { status: 200, headers: { getSetCookie: () => ['tc_session=drv-tok; Path=/', 'tc_csrf=drv-csrf; Path=/'] }, text: async () => JSON.stringify({ csrfToken: 'drv-csrf' }) };
+    };
+    return { ctx: { apiBase: 'http://127.0.0.1:3102/', token: null, fetch }, paths };
+  }
+
+  const operator = () => ex.createOperator({ username: 'soak-operator', password: PASSWORD });
+
+  it('runs a schedule that makes no Operator call without signing in or asking', async () => {
+    const t = target('armed');
+    const r = await driver.prepareOperator({ schedule: apiSchedule(), operatorKinds: ['engine.session.cycle'], operator: operator(), ctx: t.ctx });
+    assert.deepEqual(r, { needed: false, signedIn: false, gateState: null });
+    assert.deepEqual(t.paths, []);
+  });
+
+  it('refuses a schedule that writes as the Operator when no login was given, asking nothing', async () => {
+    const t = target('armed');
+    await assert.rejects(driver.prepareOperator({ schedule: apiSchedule(), operatorKinds: API_KINDS, operator: null, ctx: t.ctx }),
+      (err) => err.code === 'OPERATOR_LOGIN_UNAVAILABLE' && err.details.gateState === null && /no --operator-login/.test(err.message));
+    assert.deepEqual(t.paths, []);
+  });
+
+  it('signs in on an armed gate', async () => {
+    const t = target('armed');
+    const op = operator();
+    const r = await driver.prepareOperator({ schedule: apiSchedule(), operatorKinds: API_KINDS, operator: op, ctx: t.ctx });
+    assert.deepEqual(r, { needed: true, signedIn: true, gateState: 'armed', username: 'soak-operator', via: 'login' });
+    assert.deepEqual(t.paths, ['/api/auth/me', '/api/auth/login']);
+    assert.equal(op.signedIn, true);
+  });
+
+  it('creates the first account on an account-required gate', async () => {
+    const t = target('account-required');
+    const op = operator();
+    const r = await driver.prepareOperator({ schedule: apiSchedule(), operatorKinds: API_KINDS, operator: op, ctx: t.ctx });
+    assert.deepEqual(r, { needed: true, signedIn: true, gateState: 'account-required', username: 'soak-operator', via: 'set-password' });
+    assert.deepEqual(t.paths, ['/api/auth/me', '/api/auth/set-password']);
+    assert.equal(op.signedIn, true);
+  });
+
+  for (const state of ['open', 'fallback', 'locked', 'unreadable']) {
+    it(`refuses before any load on a gate that is ${state}, naming it, and never tries the password`, async () => {
+      const t = target(state);
+      await assert.rejects(driver.prepareOperator({ schedule: apiSchedule(), operatorKinds: API_KINDS, operator: operator(), ctx: t.ctx }),
+        (err) => err.code === 'OPERATOR_LOGIN_UNAVAILABLE' && err.details.gateState === state && err.message.includes(`gate is ${state}`)
+          && (state !== 'open' || /Recreate the soak guest/.test(err.message)));
+      assert.deepEqual(t.paths, ['/api/auth/me']);
+    });
+  }
+
+  it('refuses when the login state cannot be read', async () => {
+    const t = target(null);
+    await assert.rejects(driver.prepareOperator({ schedule: apiSchedule(), operatorKinds: API_KINDS, operator: operator(), ctx: t.ctx }),
+      (err) => err.code === 'OPERATOR_LOGIN_UNAVAILABLE' && err.details.gateState === null && err.details.status === 500);
+  });
+
+  it('refuses a refused sign-in by status and code, with no secret in the refusal', async () => {
+    const t = target('armed', { loginStatus: 401 });
+    let caught;
+    await assert.rejects(driver.prepareOperator({ schedule: apiSchedule(), operatorKinds: API_KINDS, operator: operator(), ctx: t.ctx }), (err) => { caught = err; return true; });
+    assert.equal(caught.code, 'OPERATOR_LOGIN_FAILED');
+    assert.deepEqual(caught.details, { gateState: 'armed', step: 'login', status: 401, code: 'HTTP_STATUS', serverCode: 'INVALID_CREDENTIALS' });
+    assert.ok(!`${caught.message}${JSON.stringify(caught.details)}`.includes(PASSWORD));
+  });
+});
+
+describe('soak driver — a lapsed Operator session', () => {
+  const ex = require('../lib/soak/executors');
+  const API_KINDS = sched.TASKS.filter((k) => k.class === 'api').map((k) => k.kind);
+
+  /**
+   * An Operator login whose sign-ins answer from `results`, in turn.
+   * @param {boolean[]} results - Whether each sign-in succeeds; the last repeats
+   * @returns {object} Login with `attempts`
+   */
+  function fakeOperator(results) {
+    const op = {
+      signedIn: true,
+      username: 'soak-operator',
+      attempts: 0,
+      async signIn() {
+        const ok = results[Math.min(op.attempts, results.length - 1)];
+        op.attempts++;
+        op.signedIn = ok;
+        return ok ? { ok: true, status: 200, code: 'OK' } : { ok: false, status: 401, code: 'HTTP_STATUS', serverCode: 'INVALID_CREDENTIALS' };
+      }
+    };
+    return op;
+  }
+
+  /**
+   * Executors that lapse the session at the given event indexes, as a 401 would.
+   * @param {object} op - The login
+   * @param {Set<number>} lapseAt - Event indexes whose executor answers UNAUTHENTICATED
+   * @param {number[]} ran - Receives each event index that ran
+   * @returns {object} Executors
+   */
+  function lapsing(op, lapseAt, ran) {
+    const out = {};
+    for (const kind of API_KINDS) {
+      out[kind] = async (ctx) => {
+        ran.push(ctx.eventIndex);
+        if (lapseAt.has(ctx.eventIndex)) { op.signedIn = false; return { ok: false, code: 'UNAUTHENTICATED', status: 401 }; }
+        return { ok: true, code: 'OK', status: 200 };
+      };
+    }
+    return out;
+  }
+
+  it('signs in again once before the next Operator event, and records that it did', async () => {
+    const s = apiSchedule();
+    const op = fakeOperator([true]);
+    const ran = [];
+    const result = await driver.runSchedule({ schedule: s, executors: lapsing(op, new Set([1]), ran), operatorKinds: API_KINDS, ctx: { operator: op }, logPath, clock: fakeClock(T0) });
+    assert.equal(result.status, 'completed');
+    assert.equal(op.attempts, 1);
+    const events = records(logPath).filter((r) => r.type === 'event');
+    assert.deepEqual([events[1].code, events[1].status], ['UNAUTHENTICATED', 401]);
+    assert.equal(events[2].reauthenticated, true);
+    assert.equal(events.filter((e) => e.reauthenticated).length, 1);
+    assert.deepEqual(ran, s.events.map((e) => e.index));
+  });
+
+  it('records REAUTH_FAILED and runs nothing for an event whose sign-in fails, then tries again on the next', async () => {
+    const s = apiSchedule();
+    const op = fakeOperator([false, true]);
+    const ran = [];
+    await driver.runSchedule({ schedule: s, executors: lapsing(op, new Set([0]), ran), operatorKinds: API_KINDS, ctx: { operator: op }, logPath, clock: fakeClock(T0) });
+    const events = records(logPath).filter((r) => r.type === 'event');
+    assert.deepEqual([events[1].ok, events[1].code, events[1].step, events[1].status, events[1].loginCode, events[1].serverCode], [false, 'REAUTH_FAILED', 'reauth', 401, 'HTTP_STATUS', 'INVALID_CREDENTIALS']);
+    assert.ok(!ran.includes(1), 'the event with no session sent nothing');
+    assert.equal(events[2].reauthenticated, true);
+    assert.equal(op.attempts, 2);
+  });
+
+  it(`stops cleanly with REAUTH_EXHAUSTED after ${driver.REAUTH_LIMIT} failed sign-ins in a row, and resumes from the stop`, async () => {
+    const s = apiSchedule();
+    const op = fakeOperator([false]);
+    const ran = [];
+    const clock = fakeClock(T0);
+    let caught;
+    await assert.rejects(driver.runSchedule({ schedule: s, executors: lapsing(op, new Set([0]), ran), operatorKinds: API_KINDS, ctx: { operator: op }, logPath, clock }), (err) => { caught = err; return true; });
+    assert.equal(caught.code, 'REAUTH_EXHAUSTED');
+    assert.equal(caught.details.failures, driver.REAUTH_LIMIT);
+    assert.equal(caught.details.result.status, 'stopped');
+    assert.equal(op.attempts, driver.REAUTH_LIMIT, 'no sign-in beyond the limit');
+    const recs = records(logPath);
+    assert.equal(recs[recs.length - 1].type, 'stop');
+    assert.equal(recs.filter((r) => r.code === 'REAUTH_FAILED').length, driver.REAUTH_LIMIT);
+    assert.equal(fs.existsSync(`${logPath}.lock`), false, 'the lock was released');
+
+    const fixed = fakeOperator([true]);
+    fixed.signedIn = false;
+    const resumed = await driver.runSchedule({ schedule: s, executors: lapsing(fixed, new Set(), []), operatorKinds: API_KINDS, ctx: { operator: fixed }, logPath, clock });
+    assert.equal(resumed.status, 'completed');
+    assert.equal(resumed.resumedFrom, 1 + driver.REAUTH_LIMIT);
+  });
+
+  it('never signs in for an event that makes no Operator call', async () => {
+    const s = apiSchedule();
+    const op = fakeOperator([true]);
+    op.signedIn = false;
+    await driver.runSchedule({ schedule: s, executors: lapsing(op, new Set(), []), operatorKinds: [], ctx: { operator: op }, logPath, clock: fakeClock(T0) });
+    assert.equal(op.attempts, 0);
+  });
+
+  it('writes no password, session token or CSRF token anywhere in the log', async () => {
+    const PASSWORD = 'driver-log-password-7777';
+    const fetch = async (url) => (url.pathname === '/api/auth/login'
+      ? { status: 200, headers: { getSetCookie: () => ['tc_session=log-tok-xyz; Path=/', 'tc_csrf=log-csrf-xyz; Path=/'] }, text: async () => JSON.stringify({ csrfToken: 'log-csrf-xyz' }) }
+      : { status: 401, text: async () => '{}' });
+    const op = ex.createOperator({ username: 'soak-operator', password: PASSWORD });
+    const c = { apiBase: 'http://127.0.0.1:3102/', token: null, fetch, operator: op };
+    await op.signIn(c);
+    const executors = {};
+    for (const kind of API_KINDS) executors[kind] = (ctx) => ex.call(ctx, 'POST', '/api/ports/lease', {}, ex.AS_OPERATOR).then((r) => ({ ...r, body: undefined, ctxSeen: ctx }));
+    await driver.runSchedule({ schedule: apiSchedule(), executors, operatorKinds: API_KINDS, ctx: c, logPath, clock: fakeClock(T0), headerExtra: { operator: { username: op.username, gateState: 'armed', via: 'login' } } });
+    const text = fs.readFileSync(logPath, 'utf8');
+    for (const secret of [PASSWORD, 'log-tok-xyz', 'log-csrf-xyz']) assert.ok(!text.includes(secret), `${secret} in the log`);
+    assert.ok(text.includes('"signedIn"'), 'the context that reached the log shows only whether it was signed in');
+  });
+});

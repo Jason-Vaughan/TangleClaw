@@ -47,10 +47,13 @@
 #   2. load the default-deny pf profile, then run both verifiers;
 #   3. install the stub engine on PATH and its profile for the workload user;
 #   4. create the synthetic repos as the workload user (soak.js repos);
-#   5. finish the guest TangleClaw's first-run setup (no login, the soak's
-#      projects root), then attach each repo as a project through its own API;
-#   6. lease the stub Medusa hub's ports and start it as a LaunchAgent in the
-#      workload user's GUI session, then check it answers on loopback.
+#   5. create the soak's Operator login as the workload user, finish the guest
+#      TangleClaw's first-run setup (the soak's projects root), turn its login
+#      on and create the Operator account with that login, then attach each
+#      repo as a project through its own API, signed in as that account;
+#   6. lease the stub Medusa hub's ports, signed in the same way, and start it
+#      as a LaunchAgent in the workload user's GUI session, then check it
+#      answers on loopback.
 # Before step 2 it checks that the TangleClaw on SOAK_TC_PORT runs as the
 # workload user.
 # Every step is safe to repeat. The TangleClaw checkout lives in a dedicated
@@ -745,37 +748,117 @@ echo "== 4/6 synthetic repos"
 as_user node "$repo/scripts/soak.js" repos --root "$SOAK_PROJECTS_ROOT" --origins "$SOAK_ORIGINS_ROOT" --projects "$SOAK_PROJECTS" \
   || refuse "soak.js repos failed (see above)"
 
-echo "== 5/6 finish setup, attach projects"
-# With the guest's auth gate down, the dashboard client header is how the
-# operator's own tools reach operator routes. With the gate up, attach through
-# the dashboard instead.
+echo "== 5/6 finish setup with the Operator login, attach projects"
+# The soak signs in to the guest as an account, the Operator, the way a person
+# does: the server's launch-binding floor refuses its launches, kills, wraps,
+# restarts and leases from anyone else. The login is created here, as the
+# workload user, in a 0600 file in its own TangleClaw directory, and its
+# password is never on a command line, in the environment or in any output.
+# `soak.js run --operator-login` reads the same file.
+#
+# Every call that carries the password, the session or its CSRF token runs as
+# the workload user, with those secrets only in files: the request body
+# (`soak.js operator-login --body ... --out`, sent with curl -d @file), the
+# cookie jar (-c/-b), the CSRF header (-H @file) and each reply (-o). They are
+# made by the workload's own mktemp, in its private temp directory, because a
+# 0600 file the workload owns is closed to the admin and the reverse. Each is
+# removed once used, and all of them when setup ends.
 #
 # A fresh install opens on its first-run wizard, which covers the dashboard
 # until setup finishes, and keeps the default projects directory under
 # ~/Documents, which macOS privacy protection stops a launchd server reading
-# without a prompt nobody can answer. So setup is finished here, once, the way
-# the wizard's last step finishes it: with the choice of no login (the server
-# binds loopback only and pf admits nothing but SSH from the host) and the
-# soak's projects root. A later run finds it finished and only checks it.
-setup_body="$(node -e 'process.stdout.write(JSON.stringify({ noLogin: true, projectsDir: process.argv[1] }))' "$SOAK_PROJECTS_ROOT")"
-# The reply body is kept: a refusal names its cause (ENGINE_REQUIRED,
-# OPT_OUT_REFUSED, ...) only there, and the server does not log it.
-setup_out="$(mktemp)"
-status="$(curl -sS -o "$setup_out" -w '%{http_code}' --max-time "$t" -X POST \
-  -H 'content-type: application/json' -H 'x-tangleclaw-client: dashboard' \
-  -d "$setup_body" "$api/api/setup/complete" || true)"
-setup_reply="$(cat "$setup_out" 2>/dev/null || true)"
-rm -f "$setup_out"
-setup_why="$(node -e '
-  try { const r = JSON.parse(process.argv[1]); if (r && r.code) process.stdout.write(`: ${r.code}: ${r.error || ""}`); } catch {}
-' "$setup_reply")"
-case "$status" in
-  200) echo "setup finished: no login, projects in $SOAK_PROJECTS_ROOT" ;;
-  409) echo "setup already finished" ;;
-  401|403) refuse "finishing setup answered $status: the guest's auth gate is up; finish setup and attach the soak-* projects from the dashboard" ;;
-  *) refuse "finishing the guest's first-run setup answered $status$setup_why" ;;
+# without a prompt nobody can answer. So a first run finishes setup here, in
+# three calls:
+#   1. setup/complete with no login and the soak's projects root. Setup with an
+#      account would not do: the guest has Caddy, and an account at setup
+#      starts the cutover that puts Caddy in front and restarts the server.
+#   2. auth/add-login, which turns the login on and nothing else, so the gate
+#      waits for its first account.
+#   3. auth/set-password, as the workload user on loopback, which creates the
+#      Operator account and signs it in, arming the gate.
+# The gate is open until step 3, so steps 1 and 2 alone go as the dashboard
+# does (its client header); nothing after the gate is armed does. Which of
+# them a run still needs is read from the gate itself, so a run interrupted
+# part way finishes the rest: a gate still open needs steps 2 and 3, one
+# waiting for its first account needs step 3, and an armed one is signed in to
+# with the login file. A finished setup is never sent again. A missing login
+# file, or a login an armed guest refuses, means the guest was not set up this
+# way: it is refused, to be recreated.
+op_login="/Users/$user/.tangleclaw/soak-operator-login.json"
+body="$(as_user mktemp)" && jar="$(as_user mktemp)" && csrf_header="$(as_user mktemp)" && reply="$(as_user mktemp)" \
+  || refuse "the workload user could not make its private temporary files"
+trap 'as_user rm -f "$body" "$jar" "$csrf_header" "$reply" || true' EXIT
+# A refusal names its cause (ENGINE_REQUIRED, OPT_OUT_REFUSED, ...) only in its
+# body, and the server does not log it. Only the code and the message are read.
+reply_why() {
+  as_user node -e '
+    try { const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); if (r && r.code) process.stdout.write(`: ${r.code}: ${r.error || ""}`); } catch {}
+  ' "$reply"
+}
+# Write the sign-in body (account and password) into the body file; `$1`
+# says what refusing means.
+write_body() {
+  as_user node "$repo/scripts/soak.js" operator-login --file "$op_login" --body login --out "$body" \
+    || refuse "$1"
+}
+config_json="$(curl -sS --max-time "$t" "$api/api/config" || true)"
+setup_state="$(node -e '
+  try { process.stdout.write(JSON.parse(process.argv[1]).setupComplete === true ? "finished" : "first-run"); } catch { process.stdout.write("unreadable"); }
+' "$config_json")"
+if [ "$setup_state" = "unreadable" ]; then refuse "the guest config did not parse"; fi
+if [ "$setup_state" = "first-run" ]; then
+  as_user node "$repo/scripts/soak.js" operator-login --file "$op_login" --create >/dev/null \
+    || refuse "the Operator login $op_login could not be created or is unsafe (see above)"
+  setup_body="$(node -e 'process.stdout.write(JSON.stringify({ noLogin: true, projectsDir: process.argv[1] }))' "$SOAK_PROJECTS_ROOT")"
+  status="$(as_user curl -sS -o "$reply" -w '%{http_code}' --max-time "$t" -X POST \
+    -H 'content-type: application/json' -H 'x-tangleclaw-client: dashboard' \
+    -d "$setup_body" "$api/api/setup/complete" || true)"
+  [ "$status" = "200" ] || refuse "finishing the guest's first-run setup answered $status$(reply_why)"
+fi
+# The gate state is read through a pipe, never a command line: the reply also
+# carries the open install's page token.
+gate_state="$(curl -sS --max-time "$t" "$api/api/auth/me" 2>/dev/null | node -e '
+  let b = ""; process.stdin.on("data", (d) => { b += d; }).on("end", () => {
+    try { const s = JSON.parse(b).gateState; process.stdout.write(typeof s === "string" ? s : "unreadable"); } catch { process.stdout.write("unreadable"); }
+  });
+' || true)"
+no_login="the Operator login $op_login is missing or unsafe (see above), so this guest was not set up with the soak's login. Recreate the guest"
+case "$gate_state" in
+  open|account-required)
+    write_body "$no_login"
+    if [ "$gate_state" = "open" ]; then
+      status="$(as_user curl -sS -o "$reply" -w '%{http_code}' --max-time "$t" -X POST \
+        -H 'x-tangleclaw-client: dashboard' "$api/api/auth/add-login" || true)"
+      [ "$status" = "200" ] || refuse "turning the guest's login on answered $status$(reply_why)"
+    fi
+    status="$(as_user curl -sS -o "$reply" -c "$jar" -w '%{http_code}' --max-time "$t" -X POST \
+      -H 'content-type: application/json' -d @"$body" "$api/api/auth/set-password" || true)"
+    as_user rm -f "$body"
+    [ "$status" = "200" ] || refuse "creating the Operator account answered $status$(reply_why)"
+    echo "setup finished: Operator account soak-operator, projects in $SOAK_PROJECTS_ROOT"
+    ;;
+  armed)
+    write_body "$no_login"
+    status="$(as_user curl -sS -o "$reply" -c "$jar" -w '%{http_code}' --max-time "$t" -X POST \
+      -H 'content-type: application/json' -d @"$body" "$api/api/auth/login" || true)"
+    as_user rm -f "$body"
+    case "$status" in
+      200) echo "setup already finished; signed in as soak-operator" ;;
+      401) refuse "setup is finished, but the guest's TangleClaw does not accept the Operator login in $op_login: it was set up without the soak's login. Recreate the guest" ;;
+      *) refuse "signing in as soak-operator answered $status$(reply_why)" ;;
+    esac
+    ;;
+  *) refuse "the guest's login state is $gate_state, so the Operator cannot sign in" ;;
 esac
-config_json="$(curl -sS --max-time "$t" -H 'x-tangleclaw-client: dashboard' "$api/api/config" || true)"
+# The reply to a sign-in holds the CSRF token (and the first account's, its
+# recovery codes), so it is emptied at once.
+as_user sh -c ': > "$1"' sh "$reply"
+# Each write from here sends the session from the jar and its CSRF token from
+# a header file (-b, -H @file), so neither is ever on a command line. The
+# header is made inside the workload's own shell, never on any output.
+as_user sh -c 'awk '\''$6 == "tc_csrf" { print "x-csrf-token: " $7 }'\'' "$1" > "$2"' sh "$jar" "$csrf_header"
+as_user test -s "$csrf_header" || refuse "signing in set no CSRF token, so the guest's TangleClaw did not sign the Operator in"
+config_json="$(curl -sS --max-time "$t" "$api/api/config" || true)"
 node -e '
   const path = require("path");
   let c;
@@ -791,13 +874,13 @@ IFS=',' read -r -a projects <<< "$SOAK_PROJECTS"
 for name in "${projects[@]}"; do
   status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time "$t" "$api/api/projects/$name" || true)"
   if [ "$status" = "200" ]; then echo "$name: already attached"; continue; fi
-  status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time "$t" -X POST \
-    -H 'content-type: application/json' -H 'x-tangleclaw-client: dashboard' \
+  status="$(as_user curl -sS -o /dev/null -w '%{http_code}' --max-time "$t" -X POST \
+    -b "$jar" -H @"$csrf_header" -H 'content-type: application/json' \
     -d "{\"name\":\"$name\"}" "$api/api/projects/attach" || true)"
   case "$status" in
     201|200) echo "$name: attached" ;;
     409) echo "$name: already attached" ;;
-    401|403) refuse "attach $name answered $status: the guest's auth gate is up; attach the soak-* projects from the dashboard" ;;
+    401|403) refuse "attach $name answered $status: the guest's TangleClaw refused the Operator session" ;;
     *) refuse "attach $name answered $status (is the guest's projectsDir $SOAK_PROJECTS_ROOT?)" ;;
   esac
 done
@@ -826,17 +909,15 @@ for spec in "$hub_http_port:http" "$hub_ws_port:websocket"; do
   lease_body="$(node -e 'process.stdout.write(JSON.stringify({ port: Number(process.argv[1]), host: "localhost", project: "soak-medusa-stub", service: `medusa-stub-${process.argv[2]}`, permanent: true, reach: "loopback", ownerKind: "external" }))' "$port" "${spec#*:}")"
   # The reply names why a lease failed (who holds the port, or what was wrong
   # with the request), so it is kept rather than discarded.
-  lease_out="$(mktemp)"
-  status="$(curl -sS -o "$lease_out" -w '%{http_code}' --max-time "$t" -X POST \
-    -H 'content-type: application/json' -H 'x-tangleclaw-client: dashboard' \
+  status="$(as_user curl -sS -o "$reply" -w '%{http_code}' --max-time "$t" -X POST \
+    -b "$jar" -H @"$csrf_header" -H 'content-type: application/json' \
     -d "$lease_body" "$api/api/ports/lease" || true)"
-  lease_reply="$(cat "$lease_out" 2>/dev/null || true)"
-  rm -f "$lease_out"
-  lease_why="$(node -e '
-    try { const r = JSON.parse(process.argv[1]); if (r && r.code) process.stdout.write(`: ${r.code}: ${r.error || ""}`); } catch {}
-  ' "$lease_reply")"
-  [ "$status" = "201" ] || [ "$status" = "200" ] || refuse "leasing port $port for the stub hub answered $status$lease_why"
+  [ "$status" = "201" ] || [ "$status" = "200" ] || refuse "leasing port $port for the stub hub answered $status$(reply_why)"
 done
+# Setup's own session has made its last write; it is ended here rather than
+# left live for thirty days. The driver signs in for itself.
+status="$(as_user curl -sS -o /dev/null -w '%{http_code}' --max-time "$t" -X POST -b "$jar" -H @"$csrf_header" "$api/api/auth/logout" || true)"
+[ "$status" = "200" ] || echo "note: ending setup's own session answered $status; it lapses on its own" >&2
 as_user mkdir -p "$hub_home/Library/LaunchAgents" "$hub_home/Library/Logs"
 # The workload writes its own plist from stdin. A temp file would not work:
 # macOS mktemp ignores TMPDIR and puts it in the admin's 0700 per-user temp

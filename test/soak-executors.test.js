@@ -728,3 +728,311 @@ describe('soak executors: switchboard request ids are scoped to the run (RM05 fi
     assert.notEqual(out.code, ex.OUTCOME.HTTP_STATUS, 'never recorded as a failed send');
   });
 });
+
+describe('soak executors — who each call speaks for', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { DatabaseSync } = require('node:sqlite');
+  const faults = require('../lib/soak/faults');
+  const browser = require('../lib/soak/browser');
+  const wd = require('../lib/soak/webdriver');
+  const { RUN_EXECUTORS, RUN_OPERATOR_KINDS } = require('../scripts/soak');
+
+  const TOKEN = 'principal-test-session-token';
+  const CSRF = 'principal-test-csrf-token';
+  const PASSWORD = 'principal-test-password-9876';
+  const WEBDRIVER = 'http://127.0.0.1:4444';
+  const SESSION = '/api/sessions/soak-[ab]';
+
+  /**
+   * Every mutating call each kind can make, with its principal. A kind or a
+   * call missing here fails the test, so a new one cannot ship without its
+   * principal being decided.
+   */
+  const PRINCIPALS = {
+    'api.health': [],
+    'api.server-info': [],
+    'api.projects.list': [],
+    'api.ports.list': [],
+    'api.plans.read': [],
+    'api.medusa.reads': [],
+    'api.ports.lease-release': [['POST', '/api/ports/lease', 'operator'], ['POST', '/api/ports/release', 'operator']],
+    'engine.session.cycle': [['DELETE', SESSION, 'operator'], ['POST', SESSION, 'operator'], ['POST', `${SESSION}/command`, 'operator']],
+    'engine.session.medusa-cycle': [['DELETE', SESSION, 'operator'], ['POST', SESSION, 'operator'], ['POST', `${SESSION}/medusa/send`, 'none'], ['POST', `${SESSION}/medusa/read`, 'none']],
+    'engine.session.wrap-cycle': [['DELETE', SESSION, 'operator'], ['POST', SESSION, 'operator'], ['POST', `${SESSION}/wrap`, 'operator']],
+    'fault.server.restart': [['POST', '/api/server/restart', 'operator']],
+    'fault.tmux.session-kill': [['DELETE', SESSION, 'operator'], ['POST', SESSION, 'operator']],
+    'fault.client.abort': [],
+    'fault.db.lock-contention': [['POST', '/api/ports/lease', 'operator'], ['POST', '/api/ports/release', 'operator']],
+    'fault.disk.pressure': [['POST', '/api/ports/lease', 'operator'], ['POST', '/api/ports/release', 'operator']],
+    'fault.ttyd.restart': [],
+    'browser.dashboard.load': [],
+    'browser.terminal.attach': [['DELETE', SESSION, 'operator'], ['POST', SESSION, 'operator']]
+  };
+
+  const PARAMS = { project: 'soak-a', from: 'soak-a', to: 'soak-b', commands: 2, port: 5601 };
+
+  /**
+   * One fake target and WebDriver that walk every executor's whole path.
+   * `leftover` makes the first status read of each project report a soak-stub
+   * session, so the leftover kill is exercised too.
+   * @param {{leftover: boolean}} opt - Scenario
+   * @returns {{fetch: Function, calls: object[]}} Fake and its log
+   */
+  function fakeTarget(opt) {
+    const calls = [];
+    const seenStatus = new Set();
+    let restarted = false;
+    let attaches = 0;
+    const json = (status, body, headers) => ({ status, headers, text: async () => JSON.stringify(body) });
+    const fetch = async (url, init) => {
+      const h = init.headers || {};
+      const req = { origin: url.origin, method: init.method, path: url.pathname, cookie: h.cookie, csrf: h['x-csrf-token'], body: init.body };
+      calls.push(req);
+      if (url.origin === WEBDRIVER) {
+        const body = init.body ? JSON.parse(init.body) : {};
+        if (req.path === '/session' && req.method === 'POST') return json(200, { value: { sessionId: 'wd1' } });
+        if (req.path.endsWith('/element')) return json(200, { value: { [wd.ELEMENT_KEY]: 'el1' } });
+        if (req.path.endsWith('/execute/sync')) {
+          if (body.script === browser.DASHBOARD_PROBE) return json(200, { value: '3m' });
+          if (body.script.includes(browser.TERMINAL_FRAME)) return json(200, { value: '/terminal/soak-a' });
+          return json(200, { value: true });
+        }
+        return json(200, { value: null });
+      }
+      const m = req.path.match(/^\/api\/sessions\/([^/]+)(\/.*)?$/);
+      if (req.path === '/api/auth/login') {
+        return json(200, { username: 'soak-operator', csrfToken: CSRF }, { getSetCookie: () => [`tc_session=${TOKEN}; Path=/; HttpOnly`, `tc_csrf=${CSRF}; Path=/`] });
+      }
+      if (req.path === '/api/server-info') return json(200, { startedAt: restarted ? 'B' : 'A' });
+      if (req.path === '/api/server/restart') { restarted = true; return json(202, {}); }
+      if (req.path === '/api/system/pty-activity') return json(200, { instance: 'i1', attaches: attaches++ });
+      if (req.path.endsWith('/plans')) return json(200, { plans: [{ file: ex.PLAN_FILE, urlPath: '/plans/1/soak-plan.md' }] });
+      if (req.path === '/api/ports/lease') return json(201, {});
+      if (m) {
+        const [, project, rest = ''] = m;
+        if (rest === '/status') {
+          const first = !seenStatus.has(project);
+          seenStatus.add(project);
+          return json(200, opt.leftover && first ? { active: true, engine: ex.STUB_ENGINE_ID } : { active: false });
+        }
+        if (rest === '' && req.method === 'POST') return json(200, { engine: ex.STUB_ENGINE_ID, tmuxSession: faults.tmuxName(project) });
+        if (rest === '/medusa/status') return json(200, { state: 'listening', workspaceId: `ws-${project}` });
+        if (rest === '/medusa/send') return json(200, { id: 'msg1' });
+        if (rest === '/medusa/messages') return json(200, { messages: [{ id: 'msg1' }] });
+        if (rest === '/wrap') return json(202, { runId: 'run1' });
+        if (rest === '/wrap/status') return json(200, { runId: 'run1', finishedAt: 1, result: { ok: true, sessionOutcome: 'ended', pipelineResult: { ok: true } } });
+      }
+      return json(200, {});
+    };
+    return { fetch, calls };
+  }
+
+  /**
+   * Run one kind, signed in, against a fresh fake target.
+   * @param {string} kind - Event kind
+   * @param {{leftover: boolean}} opt - Scenario
+   * @param {string} home - A guest-like home holding a real database
+   * @returns {Promise<{outcome: object, calls: object[]}>} What it did
+   */
+  async function runKind(kind, opt, home) {
+    const t = fakeTarget(opt);
+    let clock = 1_000_000;
+    const c = {
+      apiBase: 'http://127.0.0.1:3102/',
+      token: null,
+      fetch: t.fetch,
+      now: () => clock,
+      sleep: async (ms) => { clock += ms; },
+      eventIndex: 3,
+      runKey: 'abcdef0123456789-1700000000000',
+      local: {
+        home,
+        dbPath: path.join(home, 'tangleclaw.db'),
+        uid: process.getuid(),
+        phase: 'certifying',
+        webdriver: WEBDRIVER,
+        run: async () => ({ code: 0, stdout: '', stderr: '', error: null }),
+        fs: { ...fs, statfsSync: () => ({ bavail: (5 * 1024 * 1024) / 4096, bsize: 4096 }) },
+        limits: { ballastFloorBytes: 2 * 1024 * 1024, ballastMaxBytes: 4 * 1024 * 1024, ballastMinBytes: 1024 * 1024, ballastChunkBytes: 1024 * 1024, aborts: 2, abortAfterMs: 1000 }
+      }
+    };
+    c.operator = ex.createOperator({ username: 'soak-operator', password: PASSWORD });
+    assert.equal((await c.operator.signIn(c)).ok, true);
+    const outcome = await RUN_EXECUTORS[kind](c, PARAMS);
+    return { outcome, calls: t.calls.filter((x) => x.path !== '/api/auth/login') };
+  }
+
+  let home;
+  const setUp = () => {
+    home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'soak-principals-')));
+    const db = new DatabaseSync(path.join(home, 'tangleclaw.db'));
+    db.exec('CREATE TABLE t (v INTEGER)');
+    db.close();
+  };
+
+  it('has a principal entry for every kind the CLI can run, and no other', () => {
+    assert.deepEqual(Object.keys(PRINCIPALS).sort(), Object.keys(RUN_EXECUTORS).sort());
+  });
+
+  it('sends every mutating call as the table says, carries no session on any read, and makes every listed call', async () => {
+    setUp();
+    try {
+      const observed = new Set();
+      for (const kind of Object.keys(RUN_EXECUTORS)) {
+        for (const leftover of [false, true]) {
+          const { outcome, calls } = await runKind(kind, { leftover }, home);
+          assert.notEqual(outcome.code, 'EXECUTOR_THREW', `${kind}: ${JSON.stringify(outcome)}`);
+          for (const c of calls.filter((x) => x.origin !== WEBDRIVER)) {
+            if (c.method === 'GET') {
+              assert.deepEqual([c.cookie, c.csrf], [undefined, undefined], `${kind}: GET ${c.path} carried the session`);
+              continue;
+            }
+            const entry = PRINCIPALS[kind].find(([method, re]) => method === c.method && new RegExp(`^${re}$`).test(c.path));
+            assert.ok(entry, `${kind}: ${c.method} ${c.path} has no principal entry`);
+            observed.add(`${kind} ${entry[0]} ${entry[1]}`);
+            if (entry[2] === 'operator') {
+              assert.equal(c.cookie, `tc_session=${TOKEN}`, `${kind}: ${c.method} ${c.path} without the session`);
+              assert.equal(c.csrf, CSRF, `${kind}: ${c.method} ${c.path} without the CSRF token`);
+            } else {
+              assert.deepEqual([c.cookie, c.csrf], [undefined, undefined], `${kind}: ${c.method} ${c.path} carried the session`);
+            }
+          }
+          assert.ok(!calls.some((c) => (c.body || '').includes(PASSWORD)), `${kind}: the password left the sign-in`);
+        }
+      }
+      const listed = Object.entries(PRINCIPALS).flatMap(([kind, calls]) => calls.map(([m, re]) => `${kind} ${m} ${re}`));
+      assert.deepEqual(listed.filter((e) => !observed.has(e)), [], 'every listed call was made by some run');
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('names as Operator kinds exactly the kinds that make an Operator call, and the browser events', () => {
+    const writing = Object.entries(PRINCIPALS).filter(([, calls]) => calls.some((c) => c[2] === 'operator')).map(([k]) => k);
+    assert.deepEqual([...RUN_OPERATOR_KINDS].sort(), [...new Set([...writing, ...browser.BROWSER_OPERATOR_KINDS])].sort());
+  });
+});
+
+describe('soak executors — the Operator session', () => {
+  const PASSWORD = 'session-test-password-4321';
+
+  /**
+   * A target whose login sets a session, and which answers each other
+   * request from `answer`.
+   * @param {Function} answer - `(req) => {status, body}`
+   * @returns {{fetch: Function, calls: object[]}} Fake and its log
+   */
+  function signingIn(answer) {
+    const calls = [];
+    const fetch = async (url, init) => {
+      const req = { href: url.href, method: init.method, path: url.pathname, headers: init.headers, body: init.body };
+      calls.push(req);
+      if (url.pathname === '/api/auth/login') {
+        return { status: 200, headers: { getSetCookie: () => ['tc_session=tok-1; Path=/; HttpOnly', 'tc_csrf=csrf-1; Path=/'] }, text: async () => JSON.stringify({ username: 'soak-operator', csrfToken: 'csrf-1' }) };
+      }
+      const r = answer(req);
+      return { status: r.status, text: async () => JSON.stringify(r.body || {}) };
+    };
+    return { fetch, calls };
+  }
+
+  const operator = () => ex.createOperator({ username: 'soak-operator', password: PASSWORD });
+
+  it('signs in with the login, keeps the session out of every outcome, and never shows the secrets', async () => {
+    const f = signingIn(() => ({ status: 200 }));
+    const op = operator();
+    const r = await op.signIn(ctx(f.fetch));
+    assert.deepEqual(r, { ok: true, status: 200, code: 'OK' });
+    assert.deepEqual(JSON.parse(f.calls[0].body), { username: 'soak-operator', password: PASSWORD });
+    assert.equal(f.calls[0].redirect, undefined);
+    assert.equal(op.signedIn, true);
+    assert.deepEqual(op.headers(), { cookie: 'tc_session=tok-1', 'x-csrf-token': 'csrf-1' });
+    const shown = [JSON.stringify(op), require('node:util').inspect(op), JSON.stringify({ ctx: { operator: op } }), String(require('node:util').format('%o', op))].join('\n');
+    for (const secret of [PASSWORD, 'tok-1', 'csrf-1']) assert.ok(!shown.includes(secret), `${secret} shown`);
+    assert.deepEqual(JSON.parse(JSON.stringify(op)), { username: 'soak-operator', signedIn: true });
+  });
+
+  it('records a refused sign-in by status and server code only', async () => {
+    const fetch = async () => ({ status: 401, text: async () => JSON.stringify({ code: 'INVALID_CREDENTIALS', error: 'That username and password did not match.' }) });
+    const op = operator();
+    const r = await op.signIn(ctx(fetch));
+    assert.deepEqual(r, { ok: false, status: 401, code: 'HTTP_STATUS', serverCode: 'INVALID_CREDENTIALS' });
+    assert.equal(op.signedIn, false);
+    assert.equal(op.headers(), null);
+  });
+
+  it('refuses a sign-in answer that sets no session', async () => {
+    const fetch = async () => ({ status: 200, text: async () => JSON.stringify({ username: 'soak-operator', csrfToken: 'c' }) });
+    const r = await operator().signIn(ctx(fetch));
+    assert.deepEqual(r, { ok: false, status: 200, code: 'BAD_BODY' });
+  });
+
+  it('creates the first account with set-password, holding the session it signs in, and keeps none of its reply', async () => {
+    const calls = [];
+    const fetch = async (url, init) => {
+      calls.push({ path: url.pathname, body: JSON.parse(init.body) });
+      return { status: 200, headers: { getSetCookie: () => ['tc_session=tok-2; Path=/; HttpOnly', 'tc_csrf=c2; Path=/'] }, text: async () => JSON.stringify({ username: 'soak-operator', csrfToken: 'c2', recoveryCodes: ['AAAA-BBBB'] }) };
+    };
+    const op = operator();
+    const r = await op.setPassword(ctx(fetch));
+    assert.deepEqual(r, { ok: true, status: 200, code: 'OK', step: 'set-password' });
+    assert.deepEqual(calls, [{ path: '/api/auth/set-password', body: { username: 'soak-operator', password: PASSWORD } }]);
+    assert.deepEqual(op.headers(), { cookie: 'tc_session=tok-2', 'x-csrf-token': 'c2' });
+    assert.ok(!JSON.stringify(r).includes('AAAA-BBBB'));
+  });
+
+  it('stops at a refused set-password, naming the step', async () => {
+    const fetch = async () => ({ status: 409, text: async () => JSON.stringify({ code: 'ACCOUNT_EXISTS' }) });
+    const r = await operator().setPassword(ctx(fetch));
+    assert.deepEqual(r, { ok: false, status: 409, code: 'HTTP_STATUS', serverCode: 'ACCOUNT_EXISTS', step: 'set-password' });
+  });
+
+  it('never retries a 401: the session is dropped and the rest of the event sends no Operator call', async () => {
+    let commands = 0;
+    const f = signingIn((req) => {
+      if (req.path.endsWith('/status')) return { status: 200, body: { active: false } };
+      if (req.path.endsWith('/command')) { commands++; return { status: 401, body: { code: 'UNAUTHENTICATED' } }; }
+      return { status: 200, body: {} };
+    });
+    const c = ctx(f.fetch, { operator: operator() });
+    await c.operator.signIn(c);
+    const r = await ex.EXECUTORS['engine.session.cycle'](c, { project: 'soak-a', commands: 3 });
+    assert.equal(commands, 1, 'the refused command was not retried, and the next was never sent');
+    assert.deepEqual([r.ok, r.code, r.status, r.step, r.cleanupFailed], [false, 'UNAUTHENTICATED', 401, 1, true]);
+    assert.equal(c.operator.signedIn, false);
+    const sentAfter = f.calls.slice(f.calls.findIndex((x) => x.path.endsWith('/command')) + 1);
+    assert.deepEqual(sentAfter, [], 'the cleanup kill was not sent with no session');
+    const kill = await ex.call(c, 'DELETE', '/api/sessions/soak-a', {}, ex.AS_OPERATOR);
+    assert.deepEqual(kill, { ok: false, status: null, code: 'UNAUTHENTICATED', body: null });
+  });
+
+  it('treats a 401 on a call made for no one as any other status, and drops nothing', async () => {
+    const f = signingIn(() => ({ status: 401, body: {} }));
+    const c = ctx(f.fetch, { operator: operator() });
+    await c.operator.signIn(c);
+    const r = await ex.call(c, 'GET', '/api/projects');
+    assert.equal(r.code, 'HTTP_STATUS');
+    assert.equal(c.operator.signedIn, true);
+  });
+
+  it('sends the session only to the target\'s own origin', async () => {
+    const f = signingIn(() => ({ status: 200, body: {} }));
+    const c = ctx(f.fetch, { operator: operator() });
+    await c.operator.signIn(c);
+    await ex.call(c, 'POST', 'http://elsewhere.invalid:3102/api/ports/lease', {}, ex.AS_OPERATOR);
+    await ex.call(c, 'POST', '/api/ports/lease', {}, ex.AS_OPERATOR);
+    const [away, home] = f.calls.slice(1);
+    assert.equal(away.href, 'http://elsewhere.invalid:3102/api/ports/lease');
+    assert.deepEqual([away.headers.cookie, away.headers['x-csrf-token']], [undefined, undefined]);
+    assert.deepEqual([home.headers.cookie, home.headers['x-csrf-token']], ['tc_session=tok-1', 'csrf-1']);
+  });
+
+  it('sends an Operator call as any other when no login is in the context', async () => {
+    const f = fakeFetch(() => ({ status: 403, body: { code: 'LAUNCH_BINDING_REQUIRED' } }));
+    const r = await ex.call(ctx(f.fetch), 'POST', '/api/ports/lease', {}, ex.AS_OPERATOR);
+    assert.deepEqual([r.code, r.status, r.body.code], ['HTTP_STATUS', 403, 'LAUNCH_BINDING_REQUIRED']);
+    assert.equal(f.calls[0].headers.cookie, undefined);
+  });
+});

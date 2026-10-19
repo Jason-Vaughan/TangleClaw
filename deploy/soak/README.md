@@ -111,9 +111,10 @@ These kinds need a target prepared as `guest/guest-setup.sh` prepares it:
   `wrapAutoPrEnabled: false` and `releaseMode: "off"`, and the project has a
   `.tangleclaw/plans/soak-plan.md`. The seed commit carries all of these (see
   [The synthetic repos](#the-synthetic-repos)).
-- **First-run setup is finished** (setup step 5), or the dashboard shows the setup wizard.
-- **The driver runs on the guest's loopback**, so the front-door gate treats it as a machine
-  client.
+- **First-run setup is finished with the soak's Operator account** (setup step 5), or the dashboard
+  shows the setup wizard, and the driver has that account's login file (`--operator-login`, below).
+- **The driver runs on the guest's loopback**, so the front-door gate treats its reads as a machine
+  client's. Its writes go as the Operator, signed in (see [Run it](#run-it)).
 
 ### What this load does not exercise
 
@@ -147,8 +148,37 @@ the host. Certification of record exists only as the host's record.
 
 ```sh
 TANGLECLAW_SERVICE_TOKEN=… node scripts/soak.js run --schedule soak-certifying.json \
-  --api http://<guest-ip>:<port> --log soak-certifying.ndjson
+  --api http://<guest-ip>:<port> --log soak-certifying.ndjson \
+  --operator-login ~/.tangleclaw/soak-operator-login.json
 ```
+
+- **The load's writes go as the Operator, signed in as an account.** The server's launch-binding
+  floor refuses a launch, kill, command, wrap, server restart or port lease from anyone who is not the
+  Operator, the Master or a live session. So these, and every browser event, are sent with the session
+  the driver signs in to, and its CSRF token. Nothing else carries that session: no read, no request
+  to another origin, and no switchboard call (`medusa/send`, `medusa/read`), since a message sent as
+  the Operator would be attributed to the Operator instead of the session that sent it. Those still
+  fail closed until each session's own launch binding is carried (#2240).
+  - **`--operator-login <file>`** names the login: a regular file, not a symlink, owned by the
+    driver's user, mode `0600`, holding `{"username", "password"}`. Setup step 5 creates it in the
+    guest. There is no password flag: `--operator-password` is refused, as `--token` is.
+  - **The run signs in after the guards and before any load**, by the target's gate state
+    (`GET /api/auth/me`): `armed` signs in; `account-required` creates the first account with the
+    login (`/api/auth/set-password`, which the server allows only directly on loopback, and which signs
+    it in); any other
+    state is refused (`OPERATOR_LOGIN_UNAVAILABLE`, naming it). An `open` gate is a guest set up
+    without the soak's login: recreate the guest. The dashboard's client header is never used to stand
+    in for the account. A refused sign-in is `OPERATOR_LOGIN_FAILED`. A schedule that writes nothing
+    runs without signing in. The header (or a resumed segment's `resume` record) holds `operator`:
+    the account, the gate state and how it signed in, never a secret.
+  - **A 401 on an Operator write is never retried.** The event ends `UNAUTHENTICATED`, the session
+    is dropped, and the rest of that event sends no Operator call. The next event that needs the
+    Operator signs in again first, once. If that fails, the event is `REAUTH_FAILED` and sends
+    nothing. Three failed sign-ins in a row stop the run cleanly (`REAUTH_EXHAUSTED`, exit 3) rather
+    than load the login route, which shares the server's password-hashing slots; the log resumes from
+    the stop. A sign-in records only its status and codes.
+  - **No secret is written anywhere:** not the password, the session or the CSRF token, in no
+    outcome, log record, header, `resume` record, stdout or stderr.
 
 - **A run lasts until its schedule's horizon.** After the last event it waits, in the same run, until
   the log's start plus the schedule's `durationMs`, and only then writes `end`. The log's span is the
@@ -197,6 +227,12 @@ TANGLECLAW_SERVICE_TOKEN=… node scripts/soak.js run --schedule soak-certifying
   `soak-b`, `soak-c`) and no delete password. Otherwise every session cycle is logged as a `404`
   or `403`.
 - **The token comes from `TANGLECLAW_SERVICE_TOKEN` only.** `--token` is refused.
+  - **What the token is, and is not.** It is sent as a bearer token on every request. The server
+    treats it as a principal only on the port-registry write routes, and only while the operator has
+    the service-token gate on. With that gate off it is not checked and stands for nobody. It is never
+    the Operator, the Master or a session's identity, so it does not let the soak launch, kill, wrap,
+    restart or use the switchboard. Those writes need the Operator login (above) or, for the
+    switchboard, the acting session's own binding (#2240).
 - **The log is `0600`, and one driver holds it at a time** (`<log>.lock`, `LOG_LOCKED`).
   - A lock left by a dead process on this host is reclaimed by exactly one contender, which holds the
     `<log>.lock.reclaim` mutex and replaces the lock in one atomic rename. The reclaim is logged.
@@ -333,7 +369,7 @@ Exit codes: 0 done, 2 usage, 3 refused (the code is printed as JSON on stderr), 
 
 ```sh
 node scripts/soak.js run --schedule s.json --api http://<guest-ip>:<port> --log s.ndjson [--allow-unverified-live] [--no-live-install] \
-  [--home <guest TangleClaw home>] [--webdriver http://127.0.0.1:<port>]
+  [--home <guest TangleClaw home>] [--webdriver http://127.0.0.1:<port>] [--operator-login <file>]
 ```
 
 `--home` and `--webdriver` are for schedules with fault and browser events (see below). Such a schedule
@@ -371,12 +407,16 @@ The header's `guard.local` records the home, the WebDriver and the uid a run was
   under `--home`, the ballast directory under `--home`, and the guest's own launchd jobs.
 - **Ballast a dead run left is removed** before the next disk fault writes any. Only files named
   `ballast-*.bin` are ever removed.
-- **Browser events need the front-door gate off.** A browser is not a machine client, and the soak holds
-  no login, so with the gate on the dashboard never renders (`NOT_RENDERED`). Each event ends its
-  WebDriver session whatever failed, because Safari runs one at a time.
+- **Browser events sign the browser in with the driver's own session.** A browser is a person to the
+  front door, so each event opens `/login` (reachable signed out), gives Safari the driver's
+  `tc_session` (HttpOnly) and `tc_csrf` through WebDriver Add Cookie, and only then opens its page. The
+  password is never typed into a page or sent to WebDriver. A refused cookie fails the event at its
+  `sign-in` step. Each event ends its WebDriver session whatever failed, because Safari runs one at a
+  time.
 - **A render that times out says why, where the page can tell.** The event then reads the page's
-  state and records `SETUP_WIZARD` when the first-run setup wizard covers it (the target was never set
-  up), `PAGE_HIDDEN` when the page is not visible (no display, or a locked or sleeping screen), and
+  state and records `LOGIN_SHOWN` when the gate served its sign-in page instead (the browser's session
+  was refused or had lapsed), `SETUP_WIZARD` when the first-run setup wizard covers it (the target was
+  never set up), `PAGE_HIDDEN` when the page is not visible (no display, or a locked or sleeping screen), and
   `NOT_RENDERED` otherwise. The page's `visibility` is kept with the outcome. A hidden page never
   runs work it defers to an animation frame, which is how the session page sets its terminal.
 
@@ -825,19 +865,44 @@ actions.
   3. **Installs** `soak-stub` on `PATH`, and its engine profile for the workload user. It creates the
      install directory (`SOAK_BIN_DIR`, default `/usr/local/bin`) first: a macOS 26 base image has none.
   4. **Creates the synthetic repos** as the workload user (`soak.js repos`), under its home.
-  5. **Finishes the guest TangleClaw's first-run setup, then attaches each project** through its own
-     API. With the guest's auth gate down, it uses the dashboard client header. With the gate up, it
-     refuses and tells you to finish setup and attach from the dashboard. It never reads or writes a
-     token.
-     - **Setup is finished the way the wizard's last step finishes it** (`POST /api/setup/complete`),
-       with the choice of no login and `projectsDir` set to `SOAK_PROJECTS_ROOT`. Until setup finishes,
-       the dashboard shows the wizard instead of the stats `browser.dashboard.load` waits for. The
-       install's default `projectsDir` is under `~/Documents`, which macOS privacy protection stops a
-       launchd-run server reading without a prompt nobody can answer.
-     - **A later run finds setup finished and checks it.** Setup then refuses unless the guest's config
-       says `setupComplete: true` and `projectsDir` is `SOAK_PROJECTS_ROOT`.
+  5. **Creates the soak's Operator login, finishes the guest TangleClaw's first-run setup with it,
+     then attaches each project** through its own API, signed in. It never reads or writes a token.
+     - **The login is made inside the guest, as the workload user** (`soak.js operator-login
+       --create`): the account `soak-operator` and a generated password, in
+       `/Users/<workload>/.tangleclaw/soak-operator-login.json`, mode `0600`, written to a temporary
+       file and linked into place. An existing one is checked and kept, never replaced. The password is
+       never on a command line, in the environment or in any output: `soak.js operator-login --body
+       login --out <file>` writes the request body into a private file, which curl sends
+       (`-d @<file>`) and setup then removes.
+     - **A first run finishes setup in three calls** (Architect ruling A351):
+       1. `POST /api/setup/complete` with no login and `projectsDir` set to `SOAK_PROJECTS_ROOT`. Setup
+          with an account is not used: the guest has Caddy, and an account at setup starts the cutover
+          that puts Caddy in front and restarts the server.
+       2. `POST /api/auth/add-login`, which turns the login on and nothing else, so the gate waits for
+          its first account.
+       3. `POST /api/auth/set-password`, as the workload user on loopback, which creates the account and
+          signs it in, arming the gate.
+
+       The gate is open until step 3, so steps 1 and 2 alone go as the dashboard does (its client
+       header). Until setup finishes, the dashboard shows the wizard instead of the stats
+       `browser.dashboard.load` waits for. The install's default `projectsDir` is under `~/Documents`,
+       which macOS privacy protection stops a launchd-run server reading without a prompt nobody can
+       answer.
+     - **A later run reads the gate and does only what is still missing**, and never sends a finished
+       setup again or makes a new login. After the step 11b restart the gate is armed, so it signs in
+       with the login file. A first run that stopped part way finishes: a gate still open gets steps 2
+       and 3, one waiting for its first account gets step 3. A missing login file, or a login an armed
+       guest refuses (a guest set up without it, as the earlier no-login setup did), is refused:
+       recreate the guest. Setup then refuses unless the guest's
+       config says `setupComplete: true` and `projectsDir` is `SOAK_PROJECTS_ROOT`.
+     - **Every call that carries the password, the session or its CSRF token runs as the workload
+       user**, with each secret only in a file its own `mktemp` made in its private temp directory: the
+       request body, the cookie jar (`-c`/`-b`), the CSRF header (`-H @<file>`) and each reply (`-o`). A
+       `0600` file the workload owns is closed to the admin, and the reverse. Each file is removed once
+       used, and all of them when setup ends. Setup signs its own session out after its last write. A
+       write the guest refuses names the refused session.
   6. **Starts the stub Medusa hub.** It leases ports 3009 and 3010 in the guest TangleClaw's port
-     registry. These are the candidate's own defaults, where it looks for its hub, so they are not
+     registry, signed in as in step 5. These are the candidate's own defaults, where it looks for its hub, so they are not
      settings; a port another service holds is refused, with the registry's reason. It writes
      a LaunchAgent into the workload user's `~/Library/LaunchAgents` and loads it into that user's GUI
      session, replacing one an earlier run loaded. Then it waits for the hub's `/health` on loopback.
