@@ -1458,8 +1458,25 @@ The server log has one warning for each launch that did not ask, naming the exec
 |---|---|
 | Launches attached to its own per-launch server (`--remote`) | 0.156.1 (`capabilities.startupControl.verifiedVersions` in `data/engines/codex.json`) |
 | Launches with `--no-daemon` | 0.156.1, 0.157.1 (`NO_DAEMON_VERSIONS` in `lib/startup-control-codex.js`) |
-| Refused | 0.154.0 and every other version, 0.161.0 included, and any install whose version cannot be read |
-| Installed by the command TangleClaw offers | 0.156.1 (`npm install -g @openai/codex@0.156.1`), the only version on both lists |
+| Refused | 0.154.0 and every other version, 0.161.0 and 0.162.0 included (measured isolated with `--no-daemon`, and still refused: see below), and any install whose version cannot be read |
+| Installed by the command TangleClaw offers | 0.156.1 (`npm install -g @openai/codex@0.156.1`), the only version on both lists. `RECOMMENDED_VERSION` names it directly, so adding a version to either list does not change it |
+
+**How a version is measured for `--no-daemon`, and why 0.161.0 and 0.162.0 stay refused (#2222).** A version joins
+`NO_DAEMON_VERSIONS` only by an exact-version measurement, never by a range or by reading the version number. The
+measurement, with no account: install that exact version into a throwaway npm prefix and run it by full path; start a
+private tmux server; give both panes ONE fresh throwaway home and `CODEX_HOME` (TangleClaw sets no `CODEX_HOME`, so real
+launches share `~/.codex`, and separate homes could never show sharing), with `check_for_update_on_startup = false` in its
+`config.toml` so the first launch's update notice cannot stop the second pane at Codex's update prompt; start pane A, and
+pane B in another folder once A has drawn its first screen (two first launches on an empty home race Codex's own state
+database migration and one exits); give each its own launch id; then read the process trees, each process's environment,
+any `app-server` process and the unix sockets with their peers. It passes when no daemon or app-server starts, no socket is
+shared and each process holds only its own launch id. The same run on 0.156.1 must pass, and on the measured version
+without `--no-daemon` it must show the sharing, or the run is void. On 2026-10-19 0.161.0 and 0.162.0 each passed three
+times; without the flag each started one daemon from pane A that served pane B under pane A's launch id. Neither is
+listed, because a version is listed only if its sessions can also be woken: the wake's pane gate is not proved for an
+answer long enough that its turn row has scrolled off the top of the pane, and these versions draw that pane like one at
+rest. Listing a version here does not put it in the native channel's `verifiedVersions` or in any other allowance
+(`remoteTrustPrompt.absentOn` included): each list is earned by its own measurement on that version.
 
 The two lists are separate and neither vouches for the other. A refusal on the `--remote` path
 (`native_version_unverified`) names only the first list, so it never suggests 0.157.1, which that path
