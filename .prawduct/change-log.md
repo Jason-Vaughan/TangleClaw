@@ -41,6 +41,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-19 — #2088: remove the mechanisms behind three intermittent full-suite failures
+
+<!-- prawduct: type=fix | scope=w21b1-2088-intermittent-hardening -->
+
+v5.34.0 Wave 21 chunk W21-B1, chunk 1 of 1. Branch `fix/w21b1-2088-intermittent-hardening` from `origin/main` `7641eb92`. Closes #2088 (item 3 was closed by #1993). Plan: `.tangleclaw/plans/build-plan-w21b1-2088-intermittent-hardening.md` (rev1 sha256 `bd60e07a…a3c0`, Architect A343, INT); charter v2.54 five-file lock.
+
+**What changed.** `verifyRecord` (`lib/release-certification/host-publish.js`) passes `-c gc.auto=0 -c maintenance.auto=false` on every git call against its scratch repository, because a `fetch` there spawns `git maintenance run --auto`, which can still be writing while the removal walks the directory (`ENOTEMPTY`). The removal retries (`maxRetries: 5`, `retryDelay: 50`) and still throws if it keeps failing; it goes through a new `opts.rm` seam. `relay()` and its persistent `_relay/<key>.git` are unchanged (A343 D2). The four `sendKeys - behavioral` tests that slept 0.4 s and then looked for text the typed command line already holds now wait for that text as the output line just above a fresh prompt. The four `api-medusa` test servers that listened on every address bind `127.0.0.1`.
+
+**Evidence.** Not reproduced as the original failing tests; each mechanism was shown and removed. E1: with a server on `listen(0)`, a second process bound `127.0.0.1` on its port and answered its requests; on `listen(0, '127.0.0.1')` that bind fails `EADDRINUSE`. E2, through `verifyRecord`'s own wrapper with `GIT_TRACE=1`: no maintenance spawn; with the flags stripped, one. Mutations: dropping the flags, the retries, or the removal on the unreadable-remote return each fails the new #2088 tests. A command typed but never run passes the old `includes` check and fails the new wait. Under 20 CPU hogs, the restored 0.4 s sleep did not fail in 5 runs, so the load race itself is reasoned, not shown. Each changed test file passed 5 of 5 runs alone. Cumulative Critic `rev-20261019T014803Z-b89aa925`: 0 blocking, 1 warning and 3 notes, all accepted. The first full suite failed one test, `auto-merge-callers`, because a new comment quoted git's maintenance command with its auto flag; the comment was reworded, and `verify-resolutions` `rev-20261019T021409Z-9ffce600` found nothing.
+
 ## 2026-10-18 — W20-REC: combined records for the Wave 20 source merges
 
 <!-- prawduct: type=chore | scope=w20-rec-records -->

@@ -530,3 +530,86 @@ describe('host relay and finalize never interleave (Architect ruling 727dcaaf, B
     assert.throws(() => paths.recordPrefix('../x'), (e) => e.code === REFUSAL.INVALID_MANIFEST);
   });
 });
+
+describe('host relay: verifying a record leaves no scratch repository behind (#2088 item 2)', () => {
+  const NO_MAINTENANCE = ['-c', 'gc.auto=0', '-c', 'maintenance.auto=false'];
+  const RM_OPTIONS = { recursive: true, force: true, maxRetries: 5, retryDelay: 50 };
+
+  /**
+   * The entries left in the host's scratch verification directory.
+   * @returns {string[]} Entry names
+   */
+  function scratchLeft() {
+    try {
+      return fs.readdirSync(path.join(hostBase, '_verify'));
+    } catch (err) {
+      if (err.code === 'ENOENT') return [];
+      throw err;
+    }
+  }
+
+  /**
+   * Relay one finalized run and return its record, with a re-digested copy
+   * whose verdict is false, so the three ways out of verification can be driven.
+   * @returns {Promise<{record: object, forged: object}>} The true record and a forged one
+   */
+  async function relayed() {
+    await guestRun();
+    const record = await hostPublish.relay({ hostBase, candidateSha: SHA, guestMetrics: guest, remoteUrl: pub });
+    const forged = { ...record, certified: true };
+    forged.recordDigest = hostPublish.recordDigest(forged);
+    return { record, forged };
+  }
+
+  it('turns off git maintenance on every call it makes against the scratch repository', async () => {
+    const { record } = await relayed();
+    const calls = [];
+    const recording = (args, o) => {
+      calls.push(args);
+      return publisherLib.runGit(args, o);
+    };
+    assert.deepEqual(await hostPublish.verifyRecord(record, { hostBase, remoteUrl: pub, git: recording }), { ok: true, reasons: [] });
+    const subcommands = new Set();
+    for (const args of calls) {
+      assert.deepEqual(args.slice(0, NO_MAINTENANCE.length), NO_MAINTENANCE, `flags lead: git ${args.join(' ')}`);
+      const rest = args.slice(NO_MAINTENANCE.length);
+      subcommands.add(rest[0] === '--git-dir' ? rest[2] : rest[0]);
+    }
+    assert.deepEqual([...subcommands].sort(), ['fetch', 'init', 'merge-base', 'rev-parse', 'show']);
+  });
+
+  it('removes the scratch repository with retries on every way out', async () => {
+    const { record, forged } = await relayed();
+    const exits = [
+      ['verified', record, pub, { ok: true, reasons: [] }],
+      ['a false verdict', forged, pub, null],
+      ['an unreadable remote', record, path.join(tmp, 'missing.git'), null]
+    ];
+    for (const [label, rec, remoteUrl, expected] of exits) {
+      const removed = [];
+      const recordingRm = (target, o) => {
+        removed.push({ target, o });
+        fs.rmSync(target, o);
+      };
+      const res = await hostPublish.verifyRecord(rec, { hostBase, remoteUrl, rm: recordingRm });
+      if (expected) assert.deepEqual(res, expected, label);
+      else assert.equal(res.ok, false, label);
+      if (label === 'a false verdict') assert.ok(res.reasons.includes('VERDICT'), label);
+      if (label === 'an unreadable remote') assert.ok(res.reasons.includes('REMOTE_UNREADABLE'), label);
+      assert.equal(removed.length, 1, `${label}: removed once`);
+      assert.equal(path.dirname(removed[0].target), path.join(hostBase, '_verify'), `${label}: the scratch repository`);
+      assert.deepEqual(removed[0].o, RM_OPTIONS, `${label}: retried removal`);
+      assert.deepEqual(scratchLeft(), [], `${label}: nothing left under _verify`);
+    }
+  });
+
+  it('leaves nothing under _verify with the real removal', async () => {
+    const { record, forged } = await relayed();
+    await hostPublish.verifyRecord(record, { hostBase, remoteUrl: pub });
+    assert.deepEqual(scratchLeft(), [], 'verified');
+    await hostPublish.verifyRecord(forged, { hostBase, remoteUrl: pub });
+    assert.deepEqual(scratchLeft(), [], 'a false verdict');
+    await hostPublish.verifyRecord(record, { hostBase, remoteUrl: path.join(tmp, 'missing.git') });
+    assert.deepEqual(scratchLeft(), [], 'an unreadable remote');
+  });
+});

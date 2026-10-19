@@ -956,11 +956,31 @@ describe('tmux', () => {
   describe('sendKeys - behavioral', () => {
     const testSession = uniqueSessionName('sendkeys');
 
-    function captureContent(session) {
-      // Small delay so the shell finishes processing before we capture
-      execSync('sleep 0.4');
-      const cap = tmux.capturePane(session, { full: true });
-      return cap.lines.join('\n');
+    /**
+     * The line the last command printed: the non-blank line just above the
+     * fresh prompt. A capture does not join wrapped lines, so matching any line
+     * could score a wrapped piece of the typed command instead of its output.
+     * @param {string[]} lines - captured lines
+     * @returns {string} the line, or '' when there is none
+     */
+    function outputLine(lines) {
+      const shown = lines.map((l) => l.trim()).filter(Boolean);
+      return shown.length >= 2 ? shown[shown.length - 2] : '';
+    }
+
+    /**
+     * Wait until the command just sent has printed `expected` as its own line
+     * and bash has drawn a fresh prompt below it. The typed command line holds
+     * the same text, so finding the text anywhere in the pane would pass even if
+     * the command never ran; and a fixed delay before one capture loses to a
+     * loaded host (#2088).
+     * @param {string} session - tmux session name
+     * @param {string} expected - the exact output line
+     * @returns {string[]} the right-trimmed lines once it is printed
+     */
+    function awaitOutput(session, expected) {
+      return waitForPane(session, (lines) => BASH_PROMPT.test(lastLine(lines)) && outputLine(lines) === expected,
+        `the output line ${JSON.stringify(expected)} and a fresh prompt`);
     }
 
     it('should deliver simple text and execute it when enter:true (default)', () => {
@@ -968,10 +988,10 @@ describe('tmux', () => {
         tmux.createSession(testSession, { command: BARE_BASH });
         awaitBashPrompt(testSession);
         tmux.sendKeys(testSession, 'echo hello-from-send-keys');
-        const content = captureContent(testSession);
+        const lines = awaitOutput(testSession, 'hello-from-send-keys');
         assert.ok(
-          content.includes('hello-from-send-keys'),
-          `Expected output to contain echoed string, got: ${content.slice(0, 200)}`
+          outputLine(lines) === 'hello-from-send-keys',
+          `Expected the command to print the echoed string, got:\n${lines.slice(-10).join('\n')}`
         );
       } finally {
         try { tmux.killSession(testSession); } catch (_) {}
@@ -1061,10 +1081,10 @@ describe('tmux', () => {
         awaitBashPrompt(testSession);
         // Single quotes are the trickiest case for shell escaping
         tmux.sendKeys(testSession, `echo "it's working"`);
-        const content = captureContent(testSession);
+        const lines = awaitOutput(testSession, "it's working");
         assert.ok(
-          content.includes("it's working"),
-          `Expected single-quoted content to be preserved, got: ${content.slice(0, 200)}`
+          outputLine(lines) === "it's working",
+          `Expected single-quoted content to be preserved, got:\n${lines.slice(-10).join('\n')}`
         );
       } finally {
         try { tmux.killSession(testSession); } catch (_) {}
@@ -1077,10 +1097,10 @@ describe('tmux', () => {
         awaitBashPrompt(testSession);
         // Send a literal string with characters that would normally be interpreted
         tmux.sendKeys(testSession, `echo 'a$b\`c\\d'`);
-        const content = captureContent(testSession);
+        const lines = awaitOutput(testSession, 'a$b`c\\d');
         assert.ok(
-          content.includes('a$b`c\\d'),
-          `Expected special chars preserved literally, got: ${content.slice(0, 200)}`
+          outputLine(lines) === 'a$b`c\\d',
+          `Expected special chars preserved literally, got:\n${lines.slice(-10).join('\n')}`
         );
       } finally {
         try { tmux.killSession(testSession); } catch (_) {}
@@ -1096,10 +1116,10 @@ describe('tmux', () => {
         const filler = 'x'.repeat(4500);
         const marker = 'large-payload-marker-end';
         tmux.sendKeys(testSession, `echo '${filler}' > /dev/null && echo ${marker}`);
-        const content = captureContent(testSession);
+        const lines = awaitOutput(testSession, marker);
         assert.ok(
-          content.includes(marker),
-          `Expected large payload to execute fully and reach marker, got tail: ${content.slice(-300)}`
+          outputLine(lines) === marker,
+          `Expected large payload to execute fully and reach marker, got tail:\n${lines.slice(-10).join('\n')}`
         );
       } finally {
         try { tmux.killSession(testSession); } catch (_) {}
