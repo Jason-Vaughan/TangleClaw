@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.34.0] - 2026-10-19
+
 ### Added
 
 - Wrap activity now records the paths answered Include and Leave and the paths committed as session-owned, even when the commit step skips (#2155).
