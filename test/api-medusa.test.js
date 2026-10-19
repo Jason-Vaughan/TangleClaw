@@ -700,7 +700,7 @@ describe('API — GET /api/sessions/:project/medusa/status', () => {
     store.projects.create({ name: 'demo', path: projPath, engine: 'claude' });
 
     server = createServer();
-    await new Promise((resolve) => server.listen(0, () => { port = server.address().port; resolve(); }));
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', () => { port = server.address().port; resolve(); }));
   });
 
   after(async () => {
@@ -781,7 +781,7 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
     active = store.sessions.get(pane.sessionId);
 
     server = createServer();
-    await new Promise((resolve) => server.listen(0, () => { port = server.address().port; resolve(); }));
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', () => { port = server.address().port; resolve(); }));
   });
 
   afterEach(() => {
@@ -1560,7 +1560,7 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     active = store.sessions.get(pane.sessionId);
 
     server = createServer();
-    await new Promise((resolve) => server.listen(0, () => { port = server.address().port; resolve(); }));
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', () => { port = server.address().port; resolve(); }));
   });
 
   beforeEach(() => {
@@ -2784,7 +2784,7 @@ describe('medusa delivery ledger (#792)', () => {
     store._setBasePath(tempDir);
     store.init();
     server = createServer();
-    await new Promise((resolve) => server.listen(0, () => { port = server.address().port; resolve(); }));
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', () => { port = server.address().port; resolve(); }));
   });
 
   after(async () => {
