@@ -2529,7 +2529,7 @@ describe('Codex startupControl adapter', () => {
           assert.deepEqual(judge({ command: `${BIN} --sandbox workspace-write --no-daemon`, probe: probe(version) }), { applies: true, allowed: true, isolation: 'no-daemon' });
         }
         assert.ok(codex._internal.NO_DAEMON_VERSIONS.length > 0);
-        for (const version of ['0.150.0', '0.154.0', '0.158.0', '0.161.0', '1.0.0']) {
+        for (const version of ['0.150.0', '0.154.0', '0.158.0', '0.161.0', '0.162.0', '1.0.0']) {
           const verdict = judge({ command: `${BIN} --no-daemon`, probe: probe(version) });
           assert.equal(verdict.allowed, false, `${version} is not verified`);
           assert.equal(verdict.reasonCode, 'version_unverified');
@@ -2669,6 +2669,41 @@ describe('Codex startupControl adapter', () => {
           for (const version of codex._internal.NO_DAEMON_VERSIONS) assert.ok(measured.includes(version), `the setting was measured on ${version}`);
           assert.ok(advice.endsWith('Nothing was started. Sessions that were already running are not changed by this.'), 'the advice sits before the closing lines');
         }
+      });
+
+      it('the install hint names 0.156.1 by name, whatever order the --no-daemon list is in', () => {
+        assert.equal(codex._internal.RECOMMENDED_VERSION, '0.156.1');
+        assert.equal(codex._internal.INSTALL_COMMAND, 'npm install -g @openai/codex@0.156.1');
+        // Load a copy of the module whose list is reordered and grown: the hint must not move with it.
+        const Module = require('node:module');
+        const file = require.resolve('../lib/startup-control-codex');
+        const listed = "const NO_DAEMON_VERSIONS = Object.freeze(['0.156.1', '0.157.1']);";
+        const source = fs.readFileSync(file, 'utf8');
+        assert.ok(source.includes(listed), 'the list is declared where this test reorders it');
+        const copy = new Module(file, module);
+        copy.filename = file;
+        copy.paths = Module._nodeModulePaths(path.dirname(file));
+        copy._compile(source.replace(listed, "const NO_DAEMON_VERSIONS = Object.freeze(['0.162.0', '0.157.1', '0.156.1']);"), file);
+        assert.deepEqual(copy.exports._internal.NO_DAEMON_VERSIONS, ['0.162.0', '0.157.1', '0.156.1']);
+        assert.equal(copy.exports._internal.RECOMMENDED_VERSION, '0.156.1');
+        assert.equal(copy.exports._internal.INSTALL_COMMAND, 'npm install -g @openai/codex@0.156.1');
+      });
+
+      it('0.161.0 and 0.162.0, measured isolated under --no-daemon, are still not admitted: no wake proves their panes', () => {
+        const profile = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8'));
+        const verified = profile.capabilities.startupControl.verifiedVersions;
+        for (const version of ['0.161.0', '0.162.0']) {
+          assert.ok(!codex._internal.NO_DAEMON_VERSIONS.includes(version), `${version} is not listed for --no-daemon`);
+          assert.ok(!verified.includes(version), `${version} is not verified for the native channel`);
+          const verdict = judge({ command: `${BIN} --no-daemon`, probe: probe(version) });
+          assert.equal(verdict.allowed, false, version);
+          assert.equal(verdict.reasonCode, 'version_unverified', version);
+          assert.equal(verdict.overridable, true, `${version} can still be launched by the operator's own override`);
+          assert.ok(verdict.recovery.includes(codex._internal.INSTALL_COMMAND), version);
+        }
+        const why = profile.capabilities.startupControl.evidence.verifiedVersions.source;
+        assert.match(why, /--no-daemon/, 'the profile records the isolation measurement');
+        assert.match(why, /scrolled off|scrolls off/, 'and the boundary that keeps both versions out');
       });
 
       it('the install command it gives is the one the engine profile offers, and installs a version that launches', () => {

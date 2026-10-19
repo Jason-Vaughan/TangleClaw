@@ -120,6 +120,27 @@ describe('each Codex mode under the operator\'s launch-isolation override (#2229
   }
 });
 
+describe('each Codex mode on 0.161.0 and 0.162.0 is refused, not launched with --no-daemon (#2222)', () => {
+  const adapter = require('../lib/startup-control-codex');
+  const BIN = '/opt/fake/bin/codex';
+
+  for (const version of ['0.161.0', '0.162.0']) {
+    for (const mode of ['default', 'fullAuto', 'bypassPermissions']) {
+      it(`${version} ${mode}: no isolated command is built, and the flagged command is refused`, () => {
+        const launchCmd = sessions._buildLaunchCommand(codex, null, mode);
+        const built = adapter.isolateLaunch({ engineId: 'codex', launchCmd, shell: 'codex', enginePath: BIN }, { probeVersionSync: () => version });
+        assert.equal(built.applies, true);
+        assert.equal(built.command, null, 'no --no-daemon command for an unlisted version');
+        assert.equal(built.probe.version, version);
+        const flagged = `${BIN}${launchCmd.slice('codex'.length)} --no-daemon`;
+        const verdict = adapter.judgeLaunchCommand({ engineId: 'codex', command: flagged, enginePath: BIN, probe: built.probe, native: null, nativeVerifiedVersions: codex.capabilities.startupControl.verifiedVersions });
+        assert.equal(verdict.allowed, false);
+        assert.equal(verdict.reasonCode, 'version_unverified');
+      });
+    }
+  }
+});
+
 describe('honorsLaunchMode is the single definition of "the engine will run this" (#731)', () => {
   const engines = require('../lib/engines');
 
