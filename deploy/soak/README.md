@@ -64,7 +64,7 @@ node scripts/soak.js validate --schedule soak-certifying.json
 | `api.plans.read` | api | 1 | `GET /api/projects/<p>/plans` lists `soak-plan.md`, and the page at its `urlPath` answers 200. |
 | `api.medusa.reads` | api | 1 | The fleet-wide switchboard reads, deliveries then escalations, keep answering. |
 | `engine.session.cycle` | engine | 3 | A stub session launches, takes commands, and is killed. |
-| `engine.session.medusa-cycle` | engine | 1 | Two stub sessions on distinct projects both reach `listening`; a message from one is delivered to the other's inbox and marked handled; both are killed. |
+| `engine.session.medusa-cycle` | engine | 1 | Two stub sessions on distinct projects both reach `listening`; one session sends a message from inside its own pane, the other reads it from its own inbox and marks it handled; both are killed. |
 | `engine.session.wrap-cycle` | engine | 1 | A stub session is wrapped with every AI-content step skipped; the run the `202` named finishes, succeeds, and ends the session. |
 
 - **The plans, switchboard and wrap kinds are drawn rarely.** Each makes several requests, and the
@@ -92,6 +92,29 @@ node scripts/soak.js validate --schedule soak-certifying.json
   succeeded, both sessions are killed at the end whatever failed between, and a failed kill is
   reported (`cleanupFailed`). Killing the recipient retires the exchange, so the message needs no
   reply and no close.
+- **Each switchboard call is made by a session, from inside its own pane** (#2240). A send speaks
+  for the session that makes it, and only a session's own pane holds its launch binding, so the
+  driver never makes one. It types a line into the pane as the Operator (`/command`), and the stub
+  engine makes the call with that pane's `TANGLECLAW_LAUNCH_ID` and `TANGLECLAW_PROJECT_ID`:
+  - The sender's pane runs `/soak-medusa send <nonce> <project> <toWorkspace> <tag> [<requestId>]`.
+  - The recipient's pane runs `/soak-medusa read <nonce> <project> <tag>`: it reads its own inbox
+    until the tagged message arrives (45 seconds at most), then marks that one message handled. So the
+    exchange records the send against the sender's session and the read and the handling against the
+    recipient's.
+  - The stub prints one line per command, `soak-medusa <nonce> <verb> ok id=<id>`, `… refused
+    status=<n> code=<CODE>` or `… failed reason=<REASON>`, and the driver reads it back through
+    `GET …/peek`. The line holds no launch id, project id or message body.
+  - Before any switchboard call, the pane asks `whoami` (as a side lookup) and goes on only when its
+    binding reads `verified` and the project and workspace are its own and the route's. The server
+    does not compare a valid binding with the route's project (#1875), so this check is what keeps a
+    pane on its own route.
+  - The driver never holds a launch id and makes no switchboard write or inbox read of its own: its
+    only switchboard request is the listener status read.
+  - Outcomes: a refusal from the server carries the server's own code unchanged
+    (`LAUNCH_BINDING_REQUIRED`, `LAUNCH_BINDING_INVALID`, …). A pane that refuses before calling is
+    `IN_PANE_NO_API`, `IN_PANE_NO_BINDING`, `IN_PANE_BINDING_UNVERIFIED`, `IN_PANE_WRONG_PROJECT` or
+    `IN_PANE_WHOAMI_FAILED`. No result line in time is `IN_PANE_SILENT`. A message that never reached
+    the recipient's inbox is `NOT_DELIVERED`, at step `deliver`.
 - **The message and its request id name the run and the event**
   (`soak-medusa-<runKey>-<index>`, where `runKey` is the schedule digest's first 16 hex characters
   and the log's start time). The server keeps request ids unique across all its sends, so scoping
@@ -157,8 +180,8 @@ TANGLECLAW_SERVICE_TOKEN=… node scripts/soak.js run --schedule soak-certifying
   Operator, the Master or a live session. So these, and every browser event, are sent with the session
   the driver signs in to, and its CSRF token. Nothing else carries that session: no read, no request
   to another origin, and no switchboard call (`medusa/send`, `medusa/read`), since a message sent as
-  the Operator would be attributed to the Operator instead of the session that sent it. Those still
-  fail closed until each session's own launch binding is carried (#2240).
+  the Operator would be attributed to the Operator instead of the session that sent it. Each session
+  makes its own switchboard calls, from its pane (above).
   - **`--operator-login <file>`** names the login: a regular file, not a symlink, owned by the
     driver's user, mode `0600`, holding `{"username", "password"}`. Setup step 5 creates it in the
     guest. There is no password flag: `--operator-password` is refused, as `--token` is.
@@ -174,7 +197,9 @@ TANGLECLAW_SERVICE_TOKEN=… node scripts/soak.js run --schedule soak-certifying
   - **A 401 on an Operator write is never retried.** The event ends `UNAUTHENTICATED`, the session
     is dropped, and the rest of that event sends no Operator call. The next event that needs the
     Operator signs in again first, once. If that fails, the event is `REAUTH_FAILED` and sends
-    nothing. Three failed sign-ins in a row stop the run cleanly (`REAUTH_EXHAUSTED`, exit 3) rather
+    nothing. A browser event that lands on the sign-in page (`LOGIN_SHOWN`) drops the session the same
+    way, so a schedule of browser events alone can also end this way when the sign-ins after it keep
+    failing. Three failed sign-ins in a row stop the run cleanly (`REAUTH_EXHAUSTED`, exit 3) rather
     than load the login route, which shares the server's password-hashing slots; the log resumes from
     the stop. A sign-in records only its status and codes.
   - **No secret is written anywhere:** not the password, the session or the CSRF token, in no
@@ -415,7 +440,7 @@ The header's `guard.local` records the home, the WebDriver and the uid a run was
   time.
 - **A render that times out says why, where the page can tell.** The event then reads the page's
   state and records `LOGIN_SHOWN` when the gate served its sign-in page instead (the browser's session
-  was refused or had lapsed), `SETUP_WIZARD` when the first-run setup wizard covers it (the target was
+  was refused or had lapsed; the driver then drops its Operator session, as after a 401), `SETUP_WIZARD` when the first-run setup wizard covers it (the target was
   never set up), `PAGE_HIDDEN` when the page is not visible (no display, or a locked or sleeping screen), and
   `NOT_RENDERED` otherwise. The page's `visibility` is kept with the outcome. A hidden page never
   runs work it defers to an animation frame, which is how the session page sets its terminal.
@@ -671,7 +696,7 @@ switchboard, not Medusa.**
     answered with `ack_response`.
 - **Message ids and delivery:**
   - One id names a message everywhere: the send's answer, the pushed envelope and the message itself.
-    That id is what the cycle's delivery check matches.
+    The cycle checks that the id the recipient marked handled is the id the send returned.
   - A message stays queued until its recipient acknowledges it. A workspace that registers again is sent
     everything still queued. A workspace that never registered answers 404.
 - **It needs no credentials,** because the candidate sends none. Nothing persists: a restart forgets
@@ -686,8 +711,10 @@ switchboard, not Medusa.**
 
 The guest has no network access and holds no vendor credentials, so the `engine` load uses
 `stub-engine/soak-stub.js`:
-- It is a deterministic program with no network access. Each input line gets
-  `ack <n> <sha256 prefix>`, and `/exit` ends it.
+- It is a deterministic program. Each input line gets `ack <n> <sha256 prefix>`, and `/exit` ends it.
+- Its one network path is the switchboard client above: a `/soak-medusa` line makes calls to its
+  pane's own `TANGLECLAW_API` origin only, carrying only that pane's launch binding (no cookie, CSRF
+  or bearer token) and following no redirect. It loads no networking module.
 - In the guest it is installed as `soak-stub` on `PATH`, with `stub-engine/soak-stub.json` copied into
   `~/.tangleclaw/engines/`.
 
