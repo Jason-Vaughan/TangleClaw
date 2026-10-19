@@ -56,6 +56,18 @@ v5.34.0 Wave 23 chunk W23-A1, chunk 1 of #2222 (chunk 2 merged as `1d6a72ed`). C
 
 **Not checked.** Signed-in sessions, the native `--remote` path, and the scroll-off boundary itself; versions other than 0.156.1, 0.161.0 and 0.162.0 (npm also lists 0.162.1 and 0.163.0).
 
+## 2026-10-19 — #2370: a listener that reconnects after a Hub outage keeps its registered connection
+
+<!-- prawduct: type=bugfix | scope=w23b1-2370-listener-stale-reconnect -->
+
+v5.34.0 Wave 23 chunk W23-B1, the one chunk of #2370. Branch `fix/w23b1-2370-listener-stale-reconnect` from `origin/main` `9605ac2b`. Plan: `.tangleclaw/plans/build-plan-w23b1-2370-listener-stale-reconnect.md` (Rev1 sha256 `7453bdf1…bc44c43`; INT approved, Architect A363). Charter v2.57 (sha256 `d0a1e1a0…22b7`, 3-file lock, A362).
+
+**What changed.** After a Hub outage the listener reconnected and registered, then closed that working connection one backoff step later and registered again. Two causes, both fixed in `lib/medusa-listener.js` (root cause from Architect A362):
+- Node's built-in `WebSocket` reports closing a socket that is still connecting as an `error` dispatched synchronously inside `close()` ("Connection was closed before it was established", measured on Node 22.22.3). The listener closed superseded sockets while they were still `_ws`, so that error passed the identity guard and armed a fresh reconnect. All three close sites (`_connect`, the handshake deadline, `stop`) now detach the socket before closing it. The deadline's `HANDSHAKE_TIMEOUT` code is no longer overwritten by `CONNECT_FAILED`.
+- `registered` now cancels any pending reconnect, so no reconnect armed by an earlier failure can replace a registered socket.
+
+**Evidence.** Four tests in `test/medusa-listener.test.js` use a fake socket that closes as Node 22 was measured to, and drive time with `mock.timers`. Each was seen red on the unfixed code. Reverting each fix hunk alone reds only its own test, and the reconnect test stays green with only the `registered` change reverted. No live Hub was touched: the fix is proved against the fake, not by restarting a Hub. Approach credit: @CRYPTONIKAV's comment on #2370 proposed the same `registered` change (item ii); the external fork was not opened.
+
 ## 2026-10-19 — W22-REC: combined records for the Wave 22 source merge
 
 <!-- prawduct: type=chore | scope=w22-rec-records -->
