@@ -1287,6 +1287,156 @@ describe('MedusaListener — the system-broadcast drain (#1108)', () => {
   });
 });
 
+/**
+ * The message Node 22's built-in `WebSocket` reports when a socket still
+ * CONNECTING is closed — the error line #2370's log shows at the reconnect.
+ */
+const CLOSED_BEFORE_ESTABLISHED = 'Connection was closed before it was established.';
+
+/**
+ * A fake that closes the way Node 22's built-in `WebSocket` was measured to:
+ * `close()` on a socket still CONNECTING dispatches `error` synchronously,
+ * inside the `close()` call, before the call returns. An OPEN socket closes
+ * quietly, as the base fake does. An optional probe runs at the start of
+ * `close()`, so a test can record what the listener held when it closed this
+ * socket.
+ */
+class SyncErrorOnCloseWebSocket extends FakeWebSocket {
+  /**
+   * @param {string} url - The Bridge URL the listener asked for.
+   * @param {(socket: SyncErrorOnCloseWebSocket) => void} [onCloseProbe] - Called first in `close()`.
+   */
+  constructor(url, onCloseProbe) {
+    super(url);
+    this._onCloseProbe = onCloseProbe || null;
+    /** @type {number} How many times `close()` was called. */
+    this.closeCalls = 0;
+  }
+
+  /**
+   * Close the socket; a CONNECTING socket reports its own closing as an error,
+   * synchronously.
+   * @returns {void}
+   */
+  close() {
+    this.closeCalls += 1;
+    if (this._onCloseProbe) this._onCloseProbe(this);
+    const wasConnecting = this.readyState === READY.CONNECTING;
+    if (wasConnecting) this._fire('error', { message: CLOSED_BEFORE_ESTABLISHED });
+    this.readyState = READY.CLOSED;
+  }
+}
+
+describe('a reconnect never replaces a registered socket (#2370)', () => {
+  // #2370: after a Hub outage the listener reconnected and registered, then
+  // tore down that working connection one backoff step later. Two causes, both
+  // fixed: closing a superseded socket while it was still `this._ws` let its
+  // synchronous "closed before established" error through the identity guard,
+  // which armed a fresh reconnect timer; and `registered` left that timer armed.
+  // `mock.timers` drives every timeout, so nothing here waits on real time.
+
+  const BASE = 1000;
+  const DEADLINE = 5000;
+
+  /**
+   * Build a listener whose sockets close as Node 22's do, recording for each
+   * socket whether the listener still held it when it was closed.
+   * @returns {{l: MedusaListener, sockets: SyncErrorOnCloseWebSocket[], heldAtClose: boolean[]}}
+   */
+  function build() {
+    const sockets = [];
+    const heldAtClose = [];
+    let l = null;
+    const factory = (url) => {
+      const s = new SyncErrorOnCloseWebSocket(url, (sock) => { heldAtClose.push(l._ws === sock); });
+      sockets.push(s);
+      return s;
+    };
+    l = new MedusaListener({
+      workspaceId: 'ws-2370', backoffBaseMs: BASE, handshakeTimeoutMs: DEADLINE, wsFactory: factory
+    });
+    return { l, sockets, heldAtClose };
+  }
+
+  /**
+   * Total of every backoff step up to the cap, so one tick passes any reconnect
+   * the listener could have armed.
+   * @returns {number} Milliseconds.
+   */
+  function pastEveryBackoffStep() {
+    let total = 0;
+    for (let step = BASE; step < 30000; step *= 2) total += step;
+    return total + 30000 + 1;
+  }
+
+  it('reconnecting closes the superseded socket without arming another reconnect, and the new socket stays', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+    const { l, sockets } = build();
+    l.start();
+    sockets[0]._errorEvent('Received network error or non-101 status code.');
+    const asyncError = l.lastError;
+    t.mock.timers.tick(BASE);
+    assert.equal(sockets.length, 2, 'the scheduled reconnect opened a second socket');
+    assert.equal(l._reconnectTimer, null, 'closing the superseded socket must not arm another reconnect');
+    assert.equal(l.state, 'connecting');
+    assert.equal(l.lastError, asyncError, 'the superseded socket\'s own closing must not overwrite lastError');
+
+    sockets[1]._open();
+    sockets[1]._message({ type: 'registered', workspaceId: 'ws-2370' });
+    t.mock.timers.tick(pastEveryBackoffStep());
+    assert.equal(sockets.length, 2, 'no reconnect may replace the registered socket');
+    assert.equal(l._ws, sockets[1]);
+    assert.equal(sockets[1].readyState, READY.OPEN);
+    assert.equal(sockets[1].closeCalls, 0);
+    assert.equal(l.state, 'listening');
+    l.stop();
+  });
+
+  it('a missed handshake deadline keeps HANDSHAKE_TIMEOUT, closes a detached socket and reconnects once', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+    const { l, sockets, heldAtClose } = build();
+    l.start();
+    t.mock.timers.tick(DEADLINE);
+    assert.equal(l.lastErrorCode, LISTENER_ERROR_CODES.HANDSHAKE_TIMEOUT,
+      'the abandoned socket\'s synchronous error must not overwrite the deadline\'s code');
+    assert.deepEqual(heldAtClose, [false], 'the socket is detached before it is closed');
+    assert.equal(l.state, 'error');
+    t.mock.timers.tick(BASE);
+    assert.equal(sockets.length, 2, 'exactly one reconnect follows the deadline');
+    l.stop();
+  });
+
+  it('stop() detaches a connecting socket before closing it (probe only: stop already ignores its error)', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+    const { l, sockets, heldAtClose } = build();
+    l.start();
+    l.stop();
+    assert.deepEqual(heldAtClose, [false], 'the socket is detached before it is closed');
+    assert.equal(l.state, 'off');
+    assert.equal(l.lastError, null);
+    assert.equal(l._reconnectTimer, null);
+    t.mock.timers.tick(pastEveryBackoffStep());
+    assert.equal(sockets.length, 1);
+  });
+
+  it('registering cancels a reconnect an earlier failure left pending', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+    const { l, sockets } = build();
+    l.start();
+    sockets[0]._open();
+    sockets[0]._errorEvent('transient');
+    assert.ok(l._reconnectTimer, 'precondition: the error armed a reconnect');
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-2370' });
+    assert.equal(l._reconnectTimer, null, 'registered must cancel the pending reconnect');
+    t.mock.timers.tick(BASE + 2 * BASE + 1);
+    assert.equal(sockets.length, 1);
+    assert.equal(l._ws, sockets[0]);
+    assert.equal(sockets[0].readyState, READY.OPEN);
+    assert.equal(l.state, 'listening');
+    l.stop();
+  });
+});
+
 describe('medusa-registry', () => {
   let tmpDir;
 
