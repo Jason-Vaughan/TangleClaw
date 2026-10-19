@@ -41,6 +41,21 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-19 — #2222 Chunk 01: Codex 0.161.0 and 0.162.0 measured isolated under `--no-daemon`, and still refused
+
+<!-- prawduct: type=bugfix | scope=w23-a1-codex-version-measure -->
+
+v5.34.0 Wave 23 chunk W23-A1, chunk 1 of #2222 (chunk 2 merged as `1d6a72ed`). Closes #2222. Branch `fix/2222-w23-a1-codex-version-measure` from `origin/main` `9605ac2b`. Plan: `.tangleclaw/plans/w23-a1-2222-codex-newer-version-isolation.md` (Rev1 sha256 `8b5f0609…02f6`; Architect A364, INT, PM D3/D5; A366 D5 final). Charter v2.57 seven-file lock.
+
+**What changed.** No version is admitted; the refusal of 0.161.0 and 0.162.0 now rests on a measurement instead of an absence of one.
+- `RECOMMENDED_VERSION` names `0.156.1` instead of taking `NO_DAEMON_VERSIONS[0]`, so adding or reordering versions in that list cannot change the install hint or `INSTALL_COMMAND`.
+- `data/engines/codex.json` records the measurement and why neither version is listed: the wake's pane gate is unproved for an answer whose turn row has scrolled off the pane, and a launchable version without a wake is never exposed.
+- `docs/engine-guide.md` gives the per-version measurement procedure and its controls, and the Refused row names both versions; `docs/user-guide.md` says in one sentence why they are refused.
+
+**Evidence.** D2 (no account; exact binaries from throwaway npm prefixes; private tmux server; one fresh throwaway Codex home shared by both panes, the production condition; `check_for_update_on_startup = false` written first; pane B started after pane A's first screen; 40 s readback of process trees, `ps -E` environments, app-server processes, `lsof -U` peers): 0.161.0 and 0.162.0 with `--no-daemon` PASS 3 of 3 each; controls held twice (0.156.1 flagged PASS; both newer versions without the flag started one daemon from pane A that served pane B under A's launch id). Host Codex processes and default tmux sessions identical before and after. Two earlier method variants were void and are kept with reasons (simultaneous first launches race Codex's state-DB migration; a launch's newer-version notice holds the next pane at the update prompt). New tests pin 0.156.1 against a compiled copy of the module with the list reordered (mutation-checked: fails with the old `[0]`), and the 0.161.0/0.162.0 refusal in every launch mode. Narrow runs green; the full suite runs in the Integrator's slot.
+
+**Not checked.** Signed-in sessions, the native `--remote` path, and the scroll-off boundary itself; versions other than 0.156.1, 0.161.0 and 0.162.0 (npm also lists 0.162.1 and 0.163.0).
+
 ## 2026-10-19 — W22-REC: combined records for the Wave 22 source merge
 
 <!-- prawduct: type=chore | scope=w22-rec-records -->
