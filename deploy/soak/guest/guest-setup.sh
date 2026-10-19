@@ -48,9 +48,9 @@
 #   3. install the stub engine on PATH and its profile for the workload user;
 #   4. create the synthetic repos as the workload user (soak.js repos);
 #   5. create the soak's Operator login as the workload user, finish the guest
-#      TangleClaw's first-run setup with it (an account, the soak's projects
-#      root), then attach each repo as a project through its own API, signed
-#      in as that account;
+#      TangleClaw's first-run setup (the soak's projects root), turn its login
+#      on and create the Operator account with that login, then attach each
+#      repo as a project through its own API, signed in as that account;
 #   6. lease the stub Medusa hub's ports, signed in the same way, and start it
 #      as a LaunchAgent in the workload user's GUI session, then check it
 #      answers on loopback.
@@ -777,11 +777,13 @@ echo "== 5/6 finish setup with the Operator login, attach projects"
 #   3. auth/set-password, as the workload user on loopback, which creates the
 #      Operator account and signs it in, arming the gate.
 # The gate is open until step 3, so steps 1 and 2 alone go as the dashboard
-# does (its client header); nothing after the gate is armed does. A later run
-# (after the step 11b restart, say) finds setup finished and signs in with the
-# login file instead, since a finished setup cannot be redone. A missing login
-# file, or a login the guest refuses, means the guest was not set up this way:
-# it is refused, to be recreated.
+# does (its client header); nothing after the gate is armed does. Which of
+# them a run still needs is read from the gate itself, so a run interrupted
+# part way finishes the rest: a gate still open needs steps 2 and 3, one
+# waiting for its first account needs step 3, and an armed one is signed in to
+# with the login file. A finished setup is never sent again. A missing login
+# file, or a login an armed guest refuses, means the guest was not set up this
+# way: it is refused, to be recreated.
 op_login="/Users/$user/.tangleclaw/soak-operator-login.json"
 body="$(as_user mktemp)" && jar="$(as_user mktemp)" && csrf_header="$(as_user mktemp)" && reply="$(as_user mktemp)" \
   || refuse "the workload user could not make its private temporary files"
@@ -803,27 +805,40 @@ config_json="$(curl -sS --max-time "$t" "$api/api/config" || true)"
 setup_state="$(node -e '
   try { process.stdout.write(JSON.parse(process.argv[1]).setupComplete === true ? "finished" : "first-run"); } catch { process.stdout.write("unreadable"); }
 ' "$config_json")"
-case "$setup_state" in
-  first-run)
-    as_user node "$repo/scripts/soak.js" operator-login --file "$op_login" --create >/dev/null \
-      || refuse "the Operator login $op_login could not be created or is unsafe (see above)"
-    setup_body="$(node -e 'process.stdout.write(JSON.stringify({ noLogin: true, projectsDir: process.argv[1] }))' "$SOAK_PROJECTS_ROOT")"
-    status="$(as_user curl -sS -o "$reply" -w '%{http_code}' --max-time "$t" -X POST \
-      -H 'content-type: application/json' -H 'x-tangleclaw-client: dashboard' \
-      -d "$setup_body" "$api/api/setup/complete" || true)"
-    [ "$status" = "200" ] || refuse "finishing the guest's first-run setup answered $status$(reply_why)"
-    status="$(as_user curl -sS -o "$reply" -w '%{http_code}' --max-time "$t" -X POST \
-      -H 'x-tangleclaw-client: dashboard' "$api/api/auth/add-login" || true)"
-    [ "$status" = "200" ] || refuse "turning the guest's login on answered $status$(reply_why)"
-    write_body "the Operator login $op_login could not be read (see above)"
+if [ "$setup_state" = "unreadable" ]; then refuse "the guest config did not parse"; fi
+if [ "$setup_state" = "first-run" ]; then
+  as_user node "$repo/scripts/soak.js" operator-login --file "$op_login" --create >/dev/null \
+    || refuse "the Operator login $op_login could not be created or is unsafe (see above)"
+  setup_body="$(node -e 'process.stdout.write(JSON.stringify({ noLogin: true, projectsDir: process.argv[1] }))' "$SOAK_PROJECTS_ROOT")"
+  status="$(as_user curl -sS -o "$reply" -w '%{http_code}' --max-time "$t" -X POST \
+    -H 'content-type: application/json' -H 'x-tangleclaw-client: dashboard' \
+    -d "$setup_body" "$api/api/setup/complete" || true)"
+  [ "$status" = "200" ] || refuse "finishing the guest's first-run setup answered $status$(reply_why)"
+fi
+# The gate state is read through a pipe, never a command line: the reply also
+# carries the open install's page token.
+gate_state="$(curl -sS --max-time "$t" "$api/api/auth/me" 2>/dev/null | node -e '
+  let b = ""; process.stdin.on("data", (d) => { b += d; }).on("end", () => {
+    try { const s = JSON.parse(b).gateState; process.stdout.write(typeof s === "string" ? s : "unreadable"); } catch { process.stdout.write("unreadable"); }
+  });
+' || true)"
+no_login="the Operator login $op_login is missing or unsafe (see above), so this guest was not set up with the soak's login. Recreate the guest"
+case "$gate_state" in
+  open|account-required)
+    write_body "$no_login"
+    if [ "$gate_state" = "open" ]; then
+      status="$(as_user curl -sS -o "$reply" -w '%{http_code}' --max-time "$t" -X POST \
+        -H 'x-tangleclaw-client: dashboard' "$api/api/auth/add-login" || true)"
+      [ "$status" = "200" ] || refuse "turning the guest's login on answered $status$(reply_why)"
+    fi
     status="$(as_user curl -sS -o "$reply" -c "$jar" -w '%{http_code}' --max-time "$t" -X POST \
       -H 'content-type: application/json' -d @"$body" "$api/api/auth/set-password" || true)"
     as_user rm -f "$body"
     [ "$status" = "200" ] || refuse "creating the Operator account answered $status$(reply_why)"
     echo "setup finished: Operator account soak-operator, projects in $SOAK_PROJECTS_ROOT"
     ;;
-  finished)
-    write_body "setup is finished, but the Operator login $op_login is missing or unsafe (see above): the guest was not set up with the soak's login. Recreate the guest"
+  armed)
+    write_body "$no_login"
     status="$(as_user curl -sS -o "$reply" -c "$jar" -w '%{http_code}' --max-time "$t" -X POST \
       -H 'content-type: application/json' -d @"$body" "$api/api/auth/login" || true)"
     as_user rm -f "$body"
@@ -833,7 +848,7 @@ case "$setup_state" in
       *) refuse "signing in as soak-operator answered $status$(reply_why)" ;;
     esac
     ;;
-  *) refuse "the guest config did not parse" ;;
+  *) refuse "the guest's login state is $gate_state, so the Operator cannot sign in" ;;
 esac
 # The reply to a sign-in holds the CSRF token (and the first account's, its
 # recovery codes), so it is emptied at once.

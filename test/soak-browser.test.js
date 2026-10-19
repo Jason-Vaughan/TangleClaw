@@ -270,10 +270,20 @@ describe('soak browser — signed in as the Operator', () => {
     assert.ok(!JSON.stringify(r).includes('br-tok'));
   });
 
-  it('says the sign-in page was shown, rather than that the page never rendered', async () => {
+  it('says the sign-in page was shown, rather than that the page never rendered, and drops the refused session', async () => {
     const f = fake({ api: () => ({ status: 200, body: {} }), wd: driver({ scripts: (s) => (s === B_PAGE_STATE ? { visibility: 'visible', wizard: false, signIn: true } : '--') }) });
-    const r = await B['browser.dashboard.load'](await signedInCtx(f.fetch));
+    const c = await signedInCtx(f.fetch);
+    const r = await B['browser.dashboard.load'](c);
     assert.deepEqual([r.code, r.step], [O.LOGIN_SHOWN, 'render']);
+    assert.equal(c.operator.signedIn, false, 'the next Operator event signs in again');
+  });
+
+  it('keeps the session when the page fails to render for another reason', async () => {
+    const f = fake({ api: () => ({ status: 200, body: {} }), wd: driver({ scripts: (s) => (s === B_PAGE_STATE ? { visibility: 'hidden', wizard: false, signIn: false } : '--') }) });
+    const c = await signedInCtx(f.fetch);
+    const r = await B['browser.dashboard.load'](c);
+    assert.equal(r.code, O.PAGE_HIDDEN);
+    assert.equal(c.operator.signedIn, true);
   });
 
   it('reads the sign-in page by its own title, since the gate serves it at the address asked for', () => {

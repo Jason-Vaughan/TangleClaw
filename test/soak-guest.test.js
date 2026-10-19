@@ -300,7 +300,8 @@ const SETUP_FIRST_RUN = JSON.stringify({ setupComplete: false, projectsDir: '~/D
  * `-c` jar, unless `jar` is false. Each answer can be replaced; `setupReply`
  * and `leaseReply` are written to `-o` as the refusal's body.
  * @param {string} dir - The test's temp dir, which holds the fake's state
- * @param {object} [o] - `{setup, addLogin, setPassword, login, logout, attach, lease, project, configBefore, configAfter, hub, jar, setupReply, leaseReply}`
+ * `gate` is the gate state `/api/auth/me` reports (default `open`, a first run's).
+ * @param {object} [o] - `{gate, setup, addLogin, setPassword, login, logout, attach, lease, project, configBefore, configAfter, hub, jar, setupReply, leaseReply}`
  * @returns {string} The fake's shell body
  */
 function guestCurl(dir, o = {}) {
@@ -316,6 +317,7 @@ function guestCurl(dir, o = {}) {
     'case "$*" in',
     `  *api/setup/complete*) ${reply(o.setupReply)}[ "${o.setup || 200}" = 200 ] && : > "${done}"; printf ${o.setup || 200};;`,
     `  *api/auth/add-login*) printf ${o.addLogin || 200};;`,
+    `  *api/auth/me) printf '%s' '${JSON.stringify({ authenticated: false, gateState: o.gate || 'open', openInstallToken: 'fake-page-token' })}';;`,
     `  *api/auth/set-password*) [ "${o.setPassword || 200}" = 200 ] && ${jar}; printf ${o.setPassword || 200};;`,
     `  *api/auth/login*) [ "${o.login || 200}" = 200 ] && ${jar}; printf ${o.login || 200};;`,
     `  *api/auth/logout*) printf ${o.logout || 200};;`,
@@ -518,8 +520,10 @@ describe('soak guest: guest-setup.sh setup', () => {
       /^\[admin\] curl -sS --max-time \d+ http:\/\/127\.0\.0\.1:3102\/api\/config$/,
       /^\[soakrun\] node .*scripts\/soak\.js operator-login --file \/Users\/soakrun\/\.tangleclaw\/soak-operator-login\.json --create$/,
       /^\[soakrun\] curl .*-H x-tangleclaw-client: dashboard -d \{"noLogin":true,"projectsDir":"\/Users\/soakrun\/Projects"\} http:\/\/127\.0\.0\.1:3102\/api\/setup\/complete$/,
-      /^\[soakrun\] curl .*-X POST -H x-tangleclaw-client: dashboard http:\/\/127\.0\.0\.1:3102\/api\/auth\/add-login$/,
+      // The login file is read before the login is turned on, so a guest
+      // without one is refused before its gate changes.
       /^\[soakrun\] node .*scripts\/soak\.js operator-login --file \/Users\/soakrun\/\.tangleclaw\/soak-operator-login\.json --body login --out \S+$/,
+      /^\[soakrun\] curl .*-X POST -H x-tangleclaw-client: dashboard http:\/\/127\.0\.0\.1:3102\/api\/auth\/add-login$/,
       /^\[soakrun\] curl .* -c \S+ .*-d @\S+ http:\/\/127\.0\.0\.1:3102\/api\/auth\/set-password$/,
       /^\[admin\] curl -sS --max-time \d+ http:\/\/127\.0\.0\.1:3102\/api\/config$/,
       /^\[soakrun\] curl .*-b \S+ -H @\S+ .*\{"name":"soak-a"\} http:\/\/127\.0\.0\.1:3102\/api\/projects\/attach$/,
@@ -643,7 +647,7 @@ describe('soak guest: guest-setup.sh setup', () => {
   });
 
   it('finishes setup once: a second run signs in to the finished setup instead, and still checks it', () => {
-    const f = guestFakes(tmp, { curl: guestCurl(tmp, { configBefore: SETUP_DONE }) });
+    const f = guestFakes(tmp, { curl: guestCurl(tmp, { configBefore: SETUP_DONE, gate: 'armed' }) });
     const r = setup([], f, tmp);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /setup already finished; signed in as soak-operator/);
@@ -655,23 +659,46 @@ describe('soak guest: guest-setup.sh setup', () => {
   });
 
   it('refuses a finished setup that does not accept the Operator login, and says to recreate the guest', () => {
-    const f = guestFakes(tmp, { curl: guestCurl(tmp, { configBefore: SETUP_DONE, login: 401 }) });
+    const f = guestFakes(tmp, { curl: guestCurl(tmp, { configBefore: SETUP_DONE, gate: 'armed', login: 401 }) });
     const r = setup([], f, tmp);
     assert.equal(r.status, 3, r.stdout);
     assert.match(r.stderr, /does not accept the Operator login in \/Users\/soakrun\/\.tangleclaw\/soak-operator-login\.json: it was set up without the soak's login\. Recreate the guest/);
     assert.equal(f.calls().filter((c) => c.includes('api/projects/attach')).length, 0);
   });
 
-  it('refuses a finished setup whose login file is missing or unsafe, and says to recreate the guest, sending no setup or sign-in', () => {
+  for (const gate of ['armed', 'open']) {
+  it(`refuses a finished setup whose login file is missing or unsafe (gate ${gate}), and says to recreate the guest, sending no setup or sign-in`, () => {
     const f = guestFakes(tmp, {
-      curl: guestCurl(tmp, { configBefore: SETUP_DONE }),
+      curl: guestCurl(tmp, { configBefore: SETUP_DONE, gate }),
       node: `[ "$1" = "-e" ] && exec "${process.execPath}" "$@"\ncase "$*" in *"--body login"*) echo "the Operator login: /Users/soakrun/.tangleclaw/soak-operator-login.json does not exist" >&2; exit 3;; esac\nexit 0`
     });
     const r = setup([], f, tmp);
     assert.equal(r.status, 3, r.stdout);
-    assert.match(r.stderr, /setup is finished, but the Operator login \/Users\/soakrun\/\.tangleclaw\/soak-operator-login\.json is missing or unsafe .*Recreate the guest/);
+    assert.match(r.stderr, /the Operator login \/Users\/soakrun\/\.tangleclaw\/soak-operator-login\.json is missing or unsafe .*Recreate the guest/);
     const calls = f.calls();
-    assert.equal(calls.filter((c) => /api\/(setup\/complete|auth\/)/.test(c)).length, 0, calls.join('\n'));
+    assert.equal(calls.filter((c) => /api\/(setup\/complete|auth\/(add-login|set-password|login))/.test(c)).length, 0, calls.join('\n'));
+  });
+  }
+
+  for (const [gate, expected] of [['open', ['api/auth/add-login', 'api/auth/set-password']], ['account-required', ['api/auth/set-password']]]) {
+    it(`finishes a first run that stopped part way (setup finished, gate ${gate}) with only the calls still missing`, () => {
+      const f = guestFakes(tmp, { curl: guestCurl(tmp, { configBefore: SETUP_DONE, gate }) });
+      const r = setup([], f, tmp);
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.stdout, /setup finished: Operator account soak-operator/);
+      const calls = f.calls().filter((c) => /^\[soakrun\] curl /.test(c));
+      const auth = calls.map((c) => (c.match(/api\/(setup\/complete|auth\/[a-z-]+)$/) || [])[0]).filter(Boolean).filter((p) => p !== 'api/auth/logout');
+      assert.deepEqual(auth, expected);
+      assert.ok(!f.calls().some((c) => c.includes('--create')), 'the existing login is used, never a new one');
+    });
+  }
+
+  it('refuses a guest whose gate is in no state the Operator can sign in to', () => {
+    const f = guestFakes(tmp, { curl: guestCurl(tmp, { configBefore: SETUP_DONE, gate: 'locked' }) });
+    const r = setup([], f, tmp);
+    assert.equal(r.status, 3, r.stdout);
+    assert.match(r.stderr, /the guest's login state is locked, so the Operator cannot sign in/);
+    assert.equal(f.calls().filter((c) => c.includes('api/projects/attach')).length, 0);
   });
 
   it('refuses when signing in sets no CSRF token, attaching nothing', () => {
@@ -719,7 +746,8 @@ describe('soak guest: guest-setup.sh setup', () => {
     const step5 = calls.slice(calls.findIndex((c) => c.includes('operator-login')));
     assert.ok(step5.length > 0 && !step5.some((c) => /password"|adminPassword|"password/i.test(c)), step5.join('\n'));
     assert.ok(step5.filter((c) => /\] curl .*noLogin/.test(c)).every((c) => c.includes('api/setup/complete')), 'no login is chosen only at setup');
-    for (const out of [r.stdout, r.stderr]) assert.doesNotMatch(out, /fake-session|fake-csrf|password/i);
+    for (const out of [r.stdout, r.stderr]) assert.doesNotMatch(out, /fake-session|fake-csrf|fake-page-token|password/i);
+    assert.ok(!calls.some((c) => c.includes('fake-page-token')), 'the gate state reply is read through a pipe, never a command line');
     // A workload call is logged twice: the admin's sudo, then the call itself.
     const setupCall = calls.filter((c) => c.includes('api/setup/complete') && !/^\[\w+\] sudo /.test(c));
     assert.equal(setupCall.length, 1);

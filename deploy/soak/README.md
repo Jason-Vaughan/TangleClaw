@@ -872,7 +872,7 @@ actions.
        `/Users/<workload>/.tangleclaw/soak-operator-login.json`, mode `0600`, written to a temporary
        file and linked into place. An existing one is checked and kept, never replaced. The password is
        never on a command line, in the environment or in any output: `soak.js operator-login --body
-       login|setup --out <file>` writes the request body into a private file, which curl sends
+       login --out <file>` writes the request body into a private file, which curl sends
        (`-d @<file>`) and setup then removes.
      - **A first run finishes setup in three calls** (Architect ruling A351):
        1. `POST /api/setup/complete` with no login and `projectsDir` set to `SOAK_PROJECTS_ROOT`. Setup
@@ -888,10 +888,12 @@ actions.
        `browser.dashboard.load` waits for. The install's default `projectsDir` is under `~/Documents`,
        which macOS privacy protection stops a launchd-run server reading without a prompt nobody can
        answer.
-     - **A later run (after the step 11b restart, say) finds setup finished and signs in with the login
-       file instead**, since a finished setup cannot be redone, and it never makes a new login. A missing
-       login file, or a login the guest refuses (a guest set up without it, as the earlier no-login
-       setup did), is refused: recreate the guest. Setup then refuses unless the guest's
+     - **A later run reads the gate and does only what is still missing**, and never sends a finished
+       setup again or makes a new login. After the step 11b restart the gate is armed, so it signs in
+       with the login file. A first run that stopped part way finishes: a gate still open gets steps 2
+       and 3, one waiting for its first account gets step 3. A missing login file, or a login an armed
+       guest refuses (a guest set up without it, as the earlier no-login setup did), is refused:
+       recreate the guest. Setup then refuses unless the guest's
        config says `setupComplete: true` and `projectsDir` is `SOAK_PROJECTS_ROOT`.
      - **Every call that carries the password, the session or its CSRF token runs as the workload
        user**, with each secret only in a file its own `mktemp` made in its private temp directory: the
