@@ -17,6 +17,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Changed
 
+- **Soak runs sign in as an Operator account** (#2240, Chunk 01). Guest setup creates `soak-operator` and a 0600 login file. `soak.js run --operator-login <file>` signs in by gate state, sends writes with the session and CSRF, never retries a 401, and stops after three failed sign-ins. Recreate guests set up with no login. Switchboard calls await per-session bindings in Chunk 02.
 - The stranded-config scan also flags `GEMINI.md` and `.gemini/GEMINI.md` in unregistered ancestor folders. It reports their presence and never deletes them; Antigravity reads `GEMINI.md` only up to the repository root (#1049).
 - After a Codex turn was observed busy, a waiting Medusa nudge waits one more 5 s settling interval. Recorded pane rows now hold unfinished turns on 0.161/0.162, but those versions remain unverified and unwoken pending #2222; a deep-scroll stall is still unmeasured (#2059).
 - The wrap drawer's commit row says who merges a wrap PR left for a coordinator, name first, with nothing under *How to fix this*; other auto-PR failures now show their fix there (#2366).
@@ -30,6 +31,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **Release-certification record checks no longer trip over their scratch repository** (#2088). Verification disables git's background maintenance in its temporary repository and retries removal, avoiding intermittent `ENOTEMPTY`; persistent failure still reports an error. Tmux tests wait for shell output rather than a fixed delay, and api-medusa test servers bind loopback.
 - The `tc finalize` guide and v5.30 status record now describe what shipped: finalization makes no git write, but its strict check fetches and prunes remote-tracking refs; #2027 shipped as commit `2074e241` via PR #2043. This corrects the earlier "no git" [5.30.0] wording without changing that published note (#2046).
 - Only the session holding a shared-document lock, or the Operator, can release it. Another group member gets `NOT_LOCK_HOLDER` and the lock stays; expired or absent locks still release successfully (#2290).
 - A web UI launch's `201` now includes `launchMode` and `isolationOverride`, matching the tmux launch response. The web UI reports the mode actually recorded for the session and `isolationOverride: null`, because it starts no local engine (#2484).
