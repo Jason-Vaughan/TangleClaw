@@ -57,6 +57,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- The last fifteen private brace-matching lift copies in twelve `wrap-*` test files use `test/helpers/lift.js` with byte-identical lifted text and unchanged test counts. The inventory is empty, and its scan refuses new copies (#1903, Chunk 10; closes #1903).
+- The launch-binding dispatcher test now binds and holds every port it leases, so another test worker cannot make its route refuse a case as `PORT_IN_USE` before the binding verdict (#2504).
 - Eleven more private brace-matching lift copies in ten test files use `test/helpers/lift.js`, with byte-identical lifted text and unchanged test counts; the inventory shrinks from 26 to 15 (#1903, Chunk 09).
 - Test: the twenty-wedged-reads case in `test/tmux-read-pane-async.test.js` now proves the event loop turns while all twenty reads are still in flight. The test releases them itself rather than counting timer turns against a 600 ms timeout, so host load can no longer fail it (#2496).
 - The wake monitor's thirty-wedged-reads test now counts event-loop turns while every read is in flight, then releases the reads itself; host load no longer changes its verdict (#2200).
