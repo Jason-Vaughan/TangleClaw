@@ -17,6 +17,7 @@ function fakeFetch(answer) {
     const req = {
       method: init.method,
       path: url.pathname,
+      query: url.searchParams,
       body: init.body === undefined ? undefined : JSON.parse(init.body),
       headers: init.headers
     };
@@ -349,193 +350,389 @@ describe('soak executors — switchboard reads', () => {
   });
 });
 
+const stubEngine = require('../deploy/soak/stub-engine/soak-stub');
+
+/** Each fake session's launch binding, as TangleClaw would export it into its pane. */
+const FLEET = Object.freeze({
+  'soak-a': Object.freeze({ projectId: '11', launchId: 'launch-a-7f3e9c1d', workspaceId: 'ws-a' }),
+  'soak-b': Object.freeze({ projectId: '12', launchId: 'launch-b-2b8d4a6e', workspaceId: 'ws-b' })
+});
+const API_ORIGIN = 'http://soak-guest.invalid:3102';
+
+/**
+ * The environment a fake session's pane holds.
+ * @param {string} project - Project name
+ * @returns {object} Env
+ */
+function paneEnv(project) {
+  const id = FLEET[project];
+  return { TANGLECLAW_API: API_ORIGIN, TANGLECLAW_LAUNCH_ID: id.launchId, TANGLECLAW_PROJECT_ID: id.projectId, TANGLECLAW_WORKSPACE_ID: id.workspaceId };
+}
+
+/**
+ * What the write floor makes of a request's launch headers, as the server does
+ * (`lib/launch-binding-guard.js`): none is REQUIRED; an unknown launch id, or
+ * one paired with another project's id (`project-mismatch`), is INVALID. Like
+ * the server, it does not compare a valid binding with the route's project.
+ * @param {object} headers - Request headers
+ * @returns {{status: number, body: object}|null} The refusal, or null when admitted
+ */
+function bindingFloor(headers) {
+  const launchId = headers['x-tangleclaw-launch-id'];
+  const projectId = headers['x-tangleclaw-project-id'];
+  if (!launchId && !projectId) return { status: 403, body: { code: 'LAUNCH_BINDING_REQUIRED' } };
+  const owner = Object.values(FLEET).find((f) => f.launchId === launchId);
+  if (!owner) return { status: 403, body: { code: 'LAUNCH_BINDING_INVALID', reason: 'unknown-launch' } };
+  if (owner.projectId !== projectId) return { status: 403, body: { code: 'LAUNCH_BINDING_INVALID', reason: 'project-mismatch' } };
+  return null;
+}
+
+/**
+ * A fake TangleClaw with two stub-engine panes. A `/soak-medusa` line typed
+ * into a pane runs the real stub engine's client (`handleMedusa`) with that
+ * pane's env, against this same fake, and its result line lands in the pane
+ * for `peek` to read, as on a real server. Each route can be overridden.
+ * @param {object} [over] - `{status(p), launch(p), medusaStatus(p, n), command(p, req), peek(p), whoami(req), send(req), messages(n, req), read(req), kill(p), env(p), clock}`; `command` and `peek` answer null to behave as the pane does
+ * @returns {{fetch: Function, calls: object[], panes: Object<string, string[]>, inbox: object[]}} Fake
+ */
+function fakeFleet(over = {}) {
+  const polls = {};
+  const panes = { 'soak-a': ['soak-stub ready'], 'soak-b': ['soak-stub ready'] };
+  const inbox = [];
+  let inboxReads = 0;
+  let sent = 0;
+  const projectOf = (headers) => Object.keys(FLEET).find((p) => FLEET[p].launchId === headers['x-tangleclaw-launch-id']);
+  const o = {
+    status: () => ({ status: 200, body: { active: false } }),
+    launch: () => ({ status: 200, body: {} }),
+    medusaStatus: (p) => ({ status: 200, body: { state: 'listening', workspaceId: FLEET[p].workspaceId } }),
+    command: () => null,
+    peek: () => null,
+    whoami: (req) => {
+      const p = projectOf(req.headers);
+      const claimed = Object.keys(FLEET).find((k) => FLEET[k].projectId === req.query.get('projectId'));
+      return { status: 200, body: { project: claimed ? { id: Number(FLEET[claimed].projectId), name: claimed } : null, binding: p ? { state: 'verified', projectId: Number(FLEET[p].projectId) } : { state: 'unbound', projectId: null }, workspaceId: req.query.get('workspaceId') } };
+    },
+    send: (req) => {
+      const id = `msg-${++sent}`;
+      inbox.push({ id, message: req.body.message });
+      return { status: 200, body: { id } };
+    },
+    messages: () => ({ status: 200, body: { messages: [{ id: 'msg-0', message: 'unrelated' }, ...inbox] } }),
+    read: () => ({ status: 200, body: {} }),
+    kill: () => ({ status: 200, body: {} }),
+    env: paneEnv,
+    clock: null,
+    ...over
+  };
+  const fake = fakeFetch((req) => {
+    if (req.path === '/api/tc/whoami') return o.whoami(req);
+    const m = req.path.match(/^\/api\/sessions\/([^/]+)(\/.*)?$/);
+    const project = decodeURIComponent(m[1]);
+    const rest = m[2] || '';
+    if (req.method === 'GET' && rest === '/status') return o.status(project);
+    if (req.method === 'POST' && rest === '') return o.launch(project);
+    if (req.method === 'DELETE' && rest === '') return o.kill(project);
+    if (rest === '/medusa/status') { polls[project] = (polls[project] || 0) + 1; return o.medusaStatus(project, polls[project]); }
+    if (rest === '/peek') return o.peek(project) || { status: 200, body: { lines: panes[project].slice(-ex.PEEK_LINES) } };
+    if (rest === '/command') {
+      const answered = o.command(project, req);
+      if (answered) return answered;
+      const line = req.body.command;
+      panes[project].push(`stub> ${line}`);
+      const cmd = stubEngine.parseMedusaLine(line);
+      if (cmd) {
+        const clock = o.clock || {};
+        stubEngine.handleMedusa(cmd, o.env(project), { fetch: fake.fetch, now: clock.now, sleep: clock.sleep }).then((result) => panes[project].push(result));
+      } else panes[project].push('ack');
+      return { status: 200, body: { ok: true } };
+    }
+    if (['/medusa/send', '/medusa/messages', '/medusa/read'].includes(rest)) {
+      const refused = bindingFloor(req.headers || {});
+      if (refused) return refused;
+      if (rest === '/medusa/send') return o.send(req);
+      if (rest === '/medusa/messages') return o.messages(++inboxReads, req);
+      return o.read(req);
+    }
+    throw new Error(`unexpected ${req.method} ${req.path}`);
+  });
+  return { ...fake, panes, inbox };
+}
+
+/**
+ * Whether a recorded call was made from inside a pane (it carries a launch binding).
+ * @param {object} c - Recorded call
+ * @returns {boolean} From a pane
+ */
+const fromPane = (c) => Boolean(c.headers && c.headers['x-tangleclaw-launch-id']);
+
 describe('soak executors — switchboard cycle', () => {
   const PAIR = { from: 'soak-a', to: 'soak-b' };
-  const WS = { 'soak-a': 'ws-a', 'soak-b': 'ws-b' };
-
-  /**
-   * A fake TangleClaw for a switchboard cycle. Each route can be overridden.
-   * @param {object} [over] - `{status(project), launch(project), medusaStatus(project, n), send, messages(n), read, kill(project)}`
-   * @returns {{fetch: Function, calls: object[]}} Fake
-   */
-  function medusaFetch(over = {}) {
-    const polls = {};
-    let inboxReads = 0;
-    const o = {
-      status: () => ({ status: 200, body: { active: false } }),
-      launch: () => ({ status: 200, body: {} }),
-      medusaStatus: (p) => ({ status: 200, body: { state: 'listening', workspaceId: WS[p] } }),
-      send: () => ({ status: 200, body: { id: 'msg-1' } }),
-      messages: () => ({ status: 200, body: { messages: [{ id: 'msg-0' }, { id: 'msg-1' }] } }),
-      read: () => ({ status: 200, body: {} }),
-      kill: () => ({ status: 200, body: {} }),
-      ...over
-    };
-    return fakeFetch((req) => {
-      const m = req.path.match(/^\/api\/sessions\/([^/]+)(\/.*)?$/);
-      const project = decodeURIComponent(m[1]);
-      const rest = m[2] || '';
-      if (req.method === 'GET' && rest === '/status') return o.status(project);
-      if (req.method === 'POST' && rest === '') return o.launch(project);
-      if (req.method === 'DELETE' && rest === '') return o.kill(project);
-      if (rest === '/medusa/status') { polls[project] = (polls[project] || 0) + 1; return o.medusaStatus(project, polls[project]); }
-      if (rest === '/medusa/send') return o.send(req);
-      if (rest === '/medusa/messages') return o.messages(++inboxReads);
-      if (rest === '/medusa/read') return o.read(req);
-      throw new Error(`unexpected ${req.method} ${req.path}`);
-    });
-  }
   const route = (c) => `${c.method} ${c.path}`;
-
-  it('guards both, launches both, waits for listeners, sends, sees delivery, marks it read, and kills both', async () => {
+  /**
+   * Run one cycle against a fake fleet, sharing one fake clock between the
+   * driver and the panes.
+   * @param {object} [over] - fakeFleet overrides
+   * @param {object} [extra] - Extra context
+   * @returns {Promise<{r: object, f: object, clock: object}>} Outcome, fake and clock
+   */
+  async function cycle(over = {}, extra = {}) {
     const clock = fakeClock();
+    const f = fakeFleet({ clock, ...over });
+    const r = await ex.EXECUTORS['engine.session.medusa-cycle'](ctx(f.fetch, { ...clock, ...extra }), PAIR);
+    return { r, f, clock };
+  }
+
+  it('guards both, launches both, waits for listeners, and has each session make its own switchboard calls, then kills both', async () => {
     let n = 0;
-    const f = medusaFetch({ medusaStatus: (p) => ({ status: 200, body: { state: ++n <= 3 ? 'connecting' : 'listening', workspaceId: WS[p] } }) });
     const runKey = `${'c'.repeat(16)}-1790000000000`;
-    const r = await ex.EXECUTORS['engine.session.medusa-cycle'](ctx(f.fetch, { ...clock, eventIndex: 41, runKey }), PAIR);
+    const { r, f, clock } = await cycle({ medusaStatus: (p) => ({ status: 200, body: { state: ++n <= 3 ? 'connecting' : 'listening', workspaceId: FLEET[p].workspaceId } }) }, { eventIndex: 41, runKey, nonce: () => '0a1b2c3d' });
     assert.deepEqual(r, { ok: true, code: 'OK', status: null, step: null, steps: 7, messageId: 'msg-1' });
-    const seq = f.calls.map(route);
-    assert.deepEqual(seq.slice(0, 4), ['GET /api/sessions/soak-a/status', 'GET /api/sessions/soak-b/status', 'POST /api/sessions/soak-a', 'POST /api/sessions/soak-b']);
-    assert.deepEqual(seq.slice(-5), ['POST /api/sessions/soak-a/medusa/send', 'GET /api/sessions/soak-b/medusa/messages', 'POST /api/sessions/soak-b/medusa/read', 'DELETE /api/sessions/soak-a', 'DELETE /api/sessions/soak-b']);
+    const driver = f.calls.filter((c) => !fromPane(c)).map(route);
+    assert.deepEqual(driver.slice(0, 4), ['GET /api/sessions/soak-a/status', 'GET /api/sessions/soak-b/status', 'POST /api/sessions/soak-a', 'POST /api/sessions/soak-b']);
+    assert.deepEqual(driver.filter((c) => !c.includes('/medusa/status') && !c.includes('/peek')).slice(4), ['POST /api/sessions/soak-a/command', 'POST /api/sessions/soak-b/command', 'DELETE /api/sessions/soak-a', 'DELETE /api/sessions/soak-b']);
     for (const launch of f.calls.filter((c) => c.method === 'POST' && /^\/api\/sessions\/[^/]+$/.test(c.path))) {
       assert.deepEqual(launch.body, { engineOverride: ex.STUB_ENGINE_ID, primePrompt: false });
     }
-    const send = f.calls.find((c) => c.path.endsWith('/medusa/send'));
-    assert.deepEqual(Object.keys(send.body).sort(), ['message', 'requestId', 'to']);
-    assert.equal(send.body.to, 'ws-b', 'the recipient\'s workspace, from its own status');
-    assert.equal(send.body.requestId, `soak-medusa-${runKey}-41`, 'scoped to the run, since the server keeps request ids unique across all sends');
-    assert.match(send.body.message, /event 41/);
+    const typed = f.calls.filter((c) => c.path.endsWith('/command')).map((c) => c.body.command);
+    assert.deepEqual(typed, [
+      `/soak-medusa send 0a1b2c3d soak-a ws-b e41-0a1b2c3d soak-medusa-${runKey}-41`,
+      '/soak-medusa read 0a1b2c3d soak-b e41-0a1b2c3d'
+    ], 'the recipient\'s workspace from its own status, and a request id scoped to the run, since the server keeps request ids unique across all sends');
+
+    const pane = f.calls.filter(fromPane);
+    const as = (p) => pane.filter((c) => c.headers['x-tangleclaw-launch-id'] === FLEET[p].launchId).map(route);
+    assert.deepEqual(as('soak-a'), ['GET /api/tc/whoami', 'POST /api/sessions/soak-a/medusa/send'], 'the sender\'s own pane sends');
+    assert.deepEqual(as('soak-b'), ['GET /api/tc/whoami', 'GET /api/sessions/soak-b/medusa/messages', 'POST /api/sessions/soak-b/medusa/read'], 'the recipient\'s own pane reads its inbox and marks the message handled');
     assert.deepEqual(f.calls.find((c) => c.path.endsWith('/medusa/read')).body, { ids: ['msg-1'] });
-    assert.ok(clock.slept.length > 0, 'the listener wait used the injected sleep');
+    assert.ok(clock.slept.length > 0, 'the waits used the injected sleep');
   });
 
-  it('sends the same body on a rerun of the same event in the same run, and no request id without an event index and run key', async () => {
-    const bodies = [];
+  it('makes no switchboard write and no inbox read of its own: every such call comes from a pane, under that pane\'s binding only', async () => {
+    const { f } = await cycle();
+    const switchboard = f.calls.filter((c) => /\/medusa\/(send|read|messages)$/.test(c.path));
+    assert.equal(switchboard.length, 3);
+    for (const c of switchboard) {
+      assert.ok(fromPane(c), `${route(c)} came from the driver`);
+      assert.equal(c.headers.cookie, undefined);
+      assert.equal(c.headers['x-csrf-token'], undefined);
+      assert.equal(c.headers.authorization, undefined);
+      const project = decodeURIComponent(c.path.split('/')[3]);
+      assert.equal(c.headers['x-tangleclaw-launch-id'], FLEET[project].launchId, `${route(c)} carried another session's binding`);
+      assert.equal(c.headers['x-tangleclaw-project-id'], FLEET[project].projectId);
+    }
+  });
+
+  it('never puts a launch id in an outcome, whatever happens', async () => {
+    const outcomes = [];
+    for (const over of [{}, { send: () => ({ status: 403, body: { code: 'LAUNCH_BINDING_INVALID', error: FLEET['soak-a'].launchId } }) }, { messages: () => ({ status: 200, body: { messages: [] } }) }, { env: () => ({}) }]) {
+      outcomes.push((await cycle(over)).r);
+    }
+    const text = JSON.stringify(outcomes);
+    for (const id of Object.values(FLEET)) assert.equal(text.includes(id.launchId), false);
+  });
+
+  it('types the same request id on a rerun of the same event in the same run, and none without an event index and run key', async () => {
+    const sends = [];
     const runKey = `${'d'.repeat(16)}-1790000000001`;
     for (const extra of [{ eventIndex: 3, runKey }, { eventIndex: 3, runKey }, {}, { eventIndex: 3 }]) {
-      const f = medusaFetch();
-      await ex.EXECUTORS['engine.session.medusa-cycle'](ctx(f.fetch, { ...fakeClock(), ...extra }), PAIR);
-      bodies.push(f.calls.find((c) => c.path.endsWith('/medusa/send')).body);
+      const { f } = await cycle({}, extra);
+      sends.push(f.calls.find((c) => c.path.endsWith('/medusa/send')).body);
     }
-    assert.deepEqual(bodies[0], bodies[1]);
-    assert.equal(bodies[0].requestId, `soak-medusa-${runKey}-3`);
-    assert.equal(bodies[2].requestId, undefined);
-    assert.equal(bodies[3].requestId, undefined, 'an unscoped id could collide with another run\'s');
-    assert.equal(bodies[2].inReplyTo, undefined);
-    assert.equal(bodies[2].priority, undefined);
+    assert.equal(sends[0].requestId, `soak-medusa-${runKey}-3`);
+    assert.equal(sends[1].requestId, sends[0].requestId);
+    assert.equal(sends[2].requestId, undefined);
+    assert.equal(sends[3].requestId, undefined, 'an unscoped id could collide with another run\'s');
+    assert.notEqual(sends[0].message, sends[1].message, 'each event\'s tag carries a fresh nonce');
   });
 
   for (const which of ['soak-a', 'soak-b']) {
     it(`never touches a foreign session on ${which}, and launches nothing`, async () => {
-      const f = medusaFetch({ status: (p) => ({ status: 200, body: p === which ? { active: true, engine: 'claude' } : { active: false } }) });
-      const r = await ex.EXECUTORS['engine.session.medusa-cycle'](ctx(f.fetch, fakeClock()), PAIR);
+      const { r, f } = await cycle({ status: (p) => ({ status: 200, body: p === which ? { active: true, engine: 'claude' } : { active: false } }) });
       assert.deepEqual([r.ok, r.code, r.step, r.project, r.foreignEngine], [false, 'FOREIGN_SESSION', 'status', which, 'claude']);
       assert.ok(f.calls.every((c) => c.method === 'GET'), JSON.stringify(f.calls.map(route)));
     });
 
     it(`kills nothing when ${which}'s status cannot be read`, async () => {
-      const f = medusaFetch({ status: (p) => (p === which ? { status: 503, body: {} } : { status: 200, body: { active: false } }) });
-      const r = await ex.EXECUTORS['engine.session.medusa-cycle'](ctx(f.fetch, fakeClock()), PAIR);
+      const { r, f } = await cycle({ status: (p) => (p === which ? { status: 503, body: {} } : { status: 200, body: { active: false } }) });
       assert.deepEqual([r.ok, r.code, r.status, r.step, r.project], [false, 'HTTP_STATUS', 503, 'status', which]);
       assert.ok(f.calls.every((c) => c.method === 'GET'));
     });
   }
 
   it('clears leftover soak-stub sessions on both projects and reports them', async () => {
-    const f = medusaFetch({ status: () => ({ status: 200, body: { active: true, engine: 'soak-stub' } }) });
-    const r = await ex.EXECUTORS['engine.session.medusa-cycle'](ctx(f.fetch, fakeClock()), PAIR);
+    const { r, f } = await cycle({ status: () => ({ status: 200, body: { active: true, engine: 'soak-stub' } }) });
     assert.equal(r.ok, true);
     assert.deepEqual(r.preKilled, ['soak-a', 'soak-b']);
     assert.deepEqual(f.calls.slice(0, 4).map(route), ['GET /api/sessions/soak-a/status', 'DELETE /api/sessions/soak-a', 'GET /api/sessions/soak-b/status', 'DELETE /api/sessions/soak-b']);
   });
 
   it('kills nothing when the first launch fails', async () => {
-    const f = medusaFetch({ launch: () => ({ status: 500, body: {} }) });
-    const r = await ex.EXECUTORS['engine.session.medusa-cycle'](ctx(f.fetch, fakeClock()), PAIR);
+    const { r, f } = await cycle({ launch: () => ({ status: 500, body: {} }) });
     assert.deepEqual([r.ok, r.code, r.step, r.project], [false, 'HTTP_STATUS', 'launch', 'soak-a']);
     assert.equal(f.calls.some((c) => c.method === 'DELETE'), false);
   });
 
   it('kills both when the second launch fails, treating a 404 for the unlaunched one as clean', async () => {
-    const f = medusaFetch({ launch: (p) => (p === 'soak-b' ? { status: 500, body: {} } : { status: 200, body: {} }), kill: (p) => (p === 'soak-b' ? { status: 404, body: {} } : { status: 200, body: {} }) });
-    const r = await ex.EXECUTORS['engine.session.medusa-cycle'](ctx(f.fetch, fakeClock()), PAIR);
+    const { r, f } = await cycle({ launch: (p) => (p === 'soak-b' ? { status: 500, body: {} } : { status: 200, body: {} }), kill: (p) => (p === 'soak-b' ? { status: 404, body: {} } : { status: 200, body: {} }) });
     assert.deepEqual([r.ok, r.code, r.step, r.project, r.cleanupFailed], [false, 'HTTP_STATUS', 'launch', 'soak-b', false]);
     assert.deepEqual(f.calls.filter((c) => c.method === 'DELETE').map(route), ['DELETE /api/sessions/soak-a', 'DELETE /api/sessions/soak-b']);
-    assert.equal(f.calls.some((c) => c.path.includes('/medusa/')), false, 'no switchboard step after a failed launch');
+    assert.equal(f.calls.some((c) => c.path.includes('/medusa/') || c.path.endsWith('/command')), false, 'no switchboard step after a failed launch');
   });
 
   it('reports NOT_LISTENING, naming the laggard, when the budget runs out, and still kills both', async () => {
-    const clock = fakeClock();
-    const f = medusaFetch({ medusaStatus: (p) => ({ status: 200, body: { state: p === 'soak-b' ? 'reconnecting' : 'listening', workspaceId: WS[p] } }) });
-    const r = await ex.EXECUTORS['engine.session.medusa-cycle'](ctx(f.fetch, clock), PAIR);
+    const { r, f, clock } = await cycle({ medusaStatus: (p) => ({ status: 200, body: { state: p === 'soak-b' ? 'reconnecting' : 'listening', workspaceId: FLEET[p].workspaceId } }) });
     assert.deepEqual([r.ok, r.code, r.step, r.notListening, r.cleanupFailed], [false, 'NOT_LISTENING', 'listen', ['soak-b'], false]);
     assert.ok(clock.slept.reduce((a, b) => a + b, 0) >= ex.POLL.listenMs, 'the whole budget was spent');
     assert.ok(clock.slept.reduce((a, b) => a + b, 0) <= ex.POLL.listenMs, 'and not more');
     assert.equal(f.calls.filter((c) => c.path === '/api/sessions/soak-a/medusa/status').length, 1, 'a listening project is not read again');
     assert.deepEqual(f.calls.filter((c) => c.method === 'DELETE').length, 2);
-    assert.equal(f.calls.some((c) => c.path.endsWith('/medusa/send')), false);
+    assert.equal(f.calls.some((c) => c.path.endsWith('/command')), false);
   });
 
   it('fails at the listen step when a switchboard status read fails, and still kills both', async () => {
-    const f = medusaFetch({ medusaStatus: (p) => (p === 'soak-b' ? { status: 500, body: {} } : { status: 200, body: { state: 'listening', workspaceId: WS[p] } }) });
-    const r = await ex.EXECUTORS['engine.session.medusa-cycle'](ctx(f.fetch, fakeClock()), PAIR);
+    const { r, f } = await cycle({ medusaStatus: (p) => (p === 'soak-b' ? { status: 500, body: {} } : { status: 200, body: { state: 'listening', workspaceId: FLEET[p].workspaceId } }) });
     assert.deepEqual([r.ok, r.code, r.status, r.step, r.project, r.cleanupFailed], [false, 'HTTP_STATUS', 500, 'listen', 'soak-b', false]);
     assert.equal(f.calls.filter((c) => c.method === 'DELETE').length, 2);
   });
 
-  it('reports BAD_BODY when the recipient listens without a workspace id', async () => {
-    const f = medusaFetch({ medusaStatus: () => ({ status: 200, body: { state: 'listening' } }) });
-    const r = await ex.EXECUTORS['engine.session.medusa-cycle'](ctx(f.fetch, fakeClock()), PAIR);
-    assert.deepEqual([r.ok, r.code, r.step, r.project], [false, 'BAD_BODY', 'listen', 'soak-b']);
-    assert.equal(f.calls.filter((c) => c.method === 'DELETE').length, 2);
-  });
-
-  it('reports a failed send, or one with no message id, and still kills both', async () => {
-    for (const [send, code] of [[{ status: 403, body: {} }, 'HTTP_STATUS'], [{ status: 200, body: {} }, 'BAD_BODY']]) {
-      const f = medusaFetch({ send: () => send });
-      const r = await ex.EXECUTORS['engine.session.medusa-cycle'](ctx(f.fetch, fakeClock()), PAIR);
-      assert.deepEqual([r.ok, r.code, r.step, r.project, r.cleanupFailed], [false, code, 'send', 'soak-a', false]);
+  it('reports BAD_BODY when the recipient listens without a workspace id it can type, and types nothing', async () => {
+    for (const workspaceId of [undefined, 'ws b; rm', '']) {
+      const { r, f } = await cycle({ medusaStatus: () => ({ status: 200, body: { state: 'listening', workspaceId } }) });
+      assert.deepEqual([r.ok, r.code, r.step, r.project], [false, 'BAD_BODY', 'listen', 'soak-b'], String(workspaceId));
+      assert.equal(f.calls.some((c) => c.path.endsWith('/command')), false);
       assert.equal(f.calls.filter((c) => c.method === 'DELETE').length, 2);
     }
   });
 
-  it('waits for delivery, and reports NOT_DELIVERED when the budget runs out', async () => {
+  it('carries the server\'s binding refusal of the send unchanged: a launch id paired with another project\'s id, and no binding', async () => {
+    // Session A's launch id with project B's id: the floor's project-mismatch.
+    const mismatch = await cycle({
+      env: (p) => ({ ...paneEnv(p), TANGLECLAW_PROJECT_ID: FLEET['soak-b'].projectId }),
+      whoami: (req) => ({ status: 200, body: { project: { id: Number(req.query.get('projectId')), name: 'soak-a' }, binding: { state: 'verified', projectId: Number(req.query.get('projectId')) }, workspaceId: req.query.get('workspaceId') } })
+    });
+    assert.deepEqual([mismatch.r.ok, mismatch.r.code, mismatch.r.status, mismatch.r.step, mismatch.r.project, mismatch.r.cleanupFailed], [false, 'LAUNCH_BINDING_INVALID', 403, 'send', 'soak-a', false]);
+    assert.equal(mismatch.f.inbox.length, 0, 'nothing was sent');
+
+    const required = await cycle({ send: () => ({ status: 403, body: { code: 'LAUNCH_BINDING_REQUIRED' } }) });
+    assert.deepEqual([required.r.code, required.r.status, required.r.step], ['LAUNCH_BINDING_REQUIRED', 403, 'send']);
+  });
+
+  it('records a resent request id the server refuses as SEND_ALREADY_ATTEMPTED, never as a failed send', async () => {
+    const { r } = await cycle({ send: () => ({ status: 409, body: { code: 'SEND_ALREADY_ATTEMPTED' } }) }, { eventIndex: 7, runKey: `${'a'.repeat(16)}-1790000000000` });
+    assert.deepEqual([r.ok, r.code, r.status, r.step, r.project], [false, ex.OUTCOME.SEND_ALREADY_ATTEMPTED, 409, 'send', 'soak-a']);
+  });
+
+  it('reports a send refused without a code, or answered with no message id', async () => {
+    for (const [send, code, status] of [[{ status: 500, body: {} }, 'HTTP_STATUS', 500], [{ status: 200, body: {} }, 'BAD_BODY', null]]) {
+      const { r, f } = await cycle({ send: () => send });
+      assert.deepEqual([r.ok, r.code, r.status, r.step, r.project, r.cleanupFailed], [false, code, status, 'send', 'soak-a', false]);
+      assert.equal(f.calls.filter((c) => c.method === 'DELETE').length, 2);
+      assert.equal(f.calls.filter((c) => c.path.endsWith('/command')).length, 1, 'the recipient is never asked to read');
+    }
+  });
+
+  for (const [what, over, code, project] of [
+    ['the sender\'s pane has no API origin', { env: (p) => (p === 'soak-a' ? { ...paneEnv(p), TANGLECLAW_API: '' } : paneEnv(p)) }, 'IN_PANE_NO_API', 'soak-a'],
+    ['the sender\'s pane has no launch binding', { env: (p) => (p === 'soak-a' ? { ...paneEnv(p), TANGLECLAW_LAUNCH_ID: undefined } : paneEnv(p)) }, 'IN_PANE_NO_BINDING', 'soak-a'],
+    ['whoami calls the sender\'s binding stale', { whoami: () => ({ status: 200, body: { project: { id: 11, name: 'soak-a' }, binding: { state: 'stale', projectId: 11 }, workspaceId: 'ws-a' } }) }, 'IN_PANE_BINDING_UNVERIFIED', 'soak-a'],
+    ['whoami resolves another project than the route\'s', { whoami: () => ({ status: 200, body: { project: { id: 11, name: 'soak-z' }, binding: { state: 'verified', projectId: 11 }, workspaceId: 'ws-a' } }) }, 'IN_PANE_WRONG_PROJECT', 'soak-a'],
+    ['whoami fails', { whoami: () => ({ status: 500, body: {} }) }, 'IN_PANE_WHOAMI_FAILED', 'soak-a']
+  ]) {
+    it(`reports ${code}, with no switchboard call and nothing sent, when ${what}`, async () => {
+      const { r, f } = await cycle(over);
+      assert.deepEqual([r.ok, r.code, r.status, r.step, r.project, r.cleanupFailed], [false, code, null, 'send', project, false]);
+      assert.equal(f.calls.some((c) => /\/medusa\/(send|read|messages)$/.test(c.path)), false);
+      assert.equal(f.calls.filter((c) => c.method === 'DELETE').length, 2);
+    });
+  }
+
+  it('reports IN_PANE_WRONG_PROJECT when the recipient\'s pane is asked to read a route that is not its own', async () => {
+    const { r, f } = await cycle({ env: (p) => (p === 'soak-b' ? paneEnv('soak-a') : paneEnv(p)) });
+    assert.deepEqual([r.ok, r.code, r.step, r.project], [false, 'IN_PANE_WRONG_PROJECT', 'read', 'soak-b']);
+    assert.equal(f.calls.some((c) => /\/medusa\/(read|messages)$/.test(c.path)), false);
+  });
+
+  it('reports IN_PANE_SILENT when a pane prints no result line within the budget, and still kills both', async () => {
+    const { r, f, clock } = await cycle({ command: () => ({ status: 200, body: { ok: true } }) });
+    assert.deepEqual([r.ok, r.code, r.status, r.step, r.project, r.cleanupFailed], [false, 'IN_PANE_SILENT', null, 'send', 'soak-a', false]);
+    assert.ok(clock.slept.reduce((a, b) => a + b, 0) >= ex.POLL.deliveryMs);
+    assert.equal(f.calls.filter((c) => c.method === 'DELETE').length, 2);
+  });
+
+  it('never reads the echoed command, or another event\'s result line, as this event\'s answer', async () => {
+    const f0 = fakeFleet();
+    f0.panes['soak-a'].push('stub> /soak-medusa send 0a1b2c3d soak-a ws-b e1-0a1b2c3d', 'soak-medusa ffffffff send ok id=msg-9');
     const clock = fakeClock();
-    const late = medusaFetch({ messages: (n) => ({ status: 200, body: { messages: n < 4 ? [{ id: 'msg-0' }] : [{ id: 'msg-1' }] } }) });
-    assert.equal((await ex.EXECUTORS['engine.session.medusa-cycle'](ctx(late.fetch, clock), PAIR)).ok, true);
-    assert.equal(late.calls.filter((c) => c.path.endsWith('/medusa/messages')).length, 4);
-
-    const clock2 = fakeClock();
-    const never = medusaFetch({ messages: () => ({ status: 200, body: { messages: [{ id: 'msg-0' }] } }) });
-    const r = await ex.EXECUTORS['engine.session.medusa-cycle'](ctx(never.fetch, clock2), PAIR);
-    assert.deepEqual([r.ok, r.code, r.step, r.project, r.cleanupFailed], [false, 'NOT_DELIVERED', 'deliver', 'soak-b', false]);
-    assert.ok(clock2.slept.reduce((a, b) => a + b, 0) >= ex.POLL.deliveryMs);
-    assert.equal(never.calls.some((c) => c.path.endsWith('/medusa/read')), false, 'nothing is marked read that never arrived');
-    assert.equal(never.calls.filter((c) => c.method === 'DELETE').length, 2);
+    const typedOnly = fakeFleet({ clock, command: (p, req) => { f0.panes[p].push(`stub> ${req.body.command}`); return { status: 200, body: { ok: true } }; } });
+    typedOnly.panes['soak-a'] = f0.panes['soak-a'];
+    const r = await ex.EXECUTORS['engine.session.medusa-cycle'](ctx(typedOnly.fetch, { ...clock, nonce: () => '0a1b2c3d' }), PAIR);
+    assert.deepEqual([r.code, r.step], ['IN_PANE_SILENT', 'send']);
   });
 
-  it('fails at the deliver step when the inbox cannot be read', async () => {
-    const f = medusaFetch({ messages: () => ({ status: 502, body: {} }) });
-    const r = await ex.EXECUTORS['engine.session.medusa-cycle'](ctx(f.fetch, fakeClock()), PAIR);
-    assert.deepEqual([r.ok, r.code, r.status, r.step], [false, 'HTTP_STATUS', 502, 'deliver']);
+  it('keeps from a result line only an id or a code of the shape the stub prints', async () => {
+    for (const [line, code, status] of [
+      ['soak-medusa 0a1b2c3d send refused status=403 code=lower_case', 'HTTP_STATUS', 403],
+      ['soak-medusa 0a1b2c3d send refused status=999 code=LAUNCH_BINDING_INVALID', 'LAUNCH_BINDING_INVALID', null],
+      ['soak-medusa 0a1b2c3d send ok id=a<b', 'BAD_BODY', null],
+      ['soak-medusa 0a1b2c3d send ok', 'BAD_BODY', null],
+      ['soak-medusa 0a1b2c3d send failed reason=SOMETHING_NEW', 'BAD_BODY', null]
+    ]) {
+      const clock = fakeClock();
+      const f = fakeFleet({ clock, command: (p) => { f.panes[p].push(line); return { status: 200, body: { ok: true } }; } });
+      const r = await ex.EXECUTORS['engine.session.medusa-cycle'](ctx(f.fetch, { ...clock, nonce: () => '0a1b2c3d' }), PAIR);
+      assert.deepEqual([r.code, r.status, r.step], [code, status, 'send'], line);
+    }
   });
 
-  it('reports a failed mark-read, and still kills both', async () => {
-    const f = medusaFetch({ read: () => ({ status: 500, body: {} }) });
-    const r = await ex.EXECUTORS['engine.session.medusa-cycle'](ctx(f.fetch, fakeClock()), PAIR);
-    assert.deepEqual([r.ok, r.code, r.step, r.project, r.cleanupFailed], [false, 'HTTP_STATUS', 'read', 'soak-b', false]);
+  it('fails at its step when typing into the pane is refused, or when the pane cannot be read', async () => {
+    const typed = await cycle({ command: () => ({ status: 409, body: { code: 'STARTUP_DIALOG' } }) });
+    assert.deepEqual([typed.r.code, typed.r.status, typed.r.step, typed.r.project, typed.r.cleanupFailed], ['HTTP_STATUS', 409, 'send', 'soak-a', false]);
+    const untyped = await cycle({ command: (p) => (p === 'soak-b' ? { status: 404, body: {} } : null) });
+    assert.deepEqual([untyped.r.code, untyped.r.status, untyped.r.step, untyped.r.project], ['HTTP_STATUS', 404, 'read', 'soak-b']);
+    const unread = await cycle({ peek: (p) => (p === 'soak-b' ? { status: 404, body: {} } : null) });
+    assert.deepEqual([unread.r.code, unread.r.status, unread.r.step, unread.r.project, unread.r.cleanupFailed], ['HTTP_STATUS', 404, 'read', 'soak-b', false]);
+    assert.equal(unread.f.calls.filter((c) => c.method === 'DELETE').length, 2);
+  });
+
+  it('waits for delivery in the recipient\'s own inbox, and reports NOT_DELIVERED at the deliver step when its wait runs out', async () => {
+    const untagged = await cycle({ messages: () => ({ status: 200, body: { messages: [{ id: 'msg-1', message: 'soak medusa-cycle e-other' }] } }) });
+    assert.equal(untagged.r.code, 'NOT_DELIVERED', 'a message without this event\'s tag is not this event\'s message');
+
+    const clock = fakeClock();
+    const f = fakeFleet({ clock, messages: (n) => ({ status: 200, body: { messages: n < 4 ? [] : f.inbox } }) });
+    const r = await ex.EXECUTORS['engine.session.medusa-cycle'](ctx(f.fetch, clock), PAIR);
+    assert.equal(r.ok, true);
+    assert.equal(f.calls.filter((c) => c.path.endsWith('/medusa/messages')).length, 4);
+
+    const never = await cycle({ messages: () => ({ status: 200, body: { messages: [] } }) });
+    assert.deepEqual([never.r.ok, never.r.code, never.r.step, never.r.project, never.r.cleanupFailed], [false, 'NOT_DELIVERED', 'deliver', 'soak-b', false]);
+    assert.equal(never.f.calls.some((c) => c.path.endsWith('/medusa/read')), false, 'nothing is marked read that never arrived');
+    assert.equal(never.f.calls.filter((c) => c.method === 'DELETE').length, 2);
+  });
+
+  it('fails at the read step when the recipient\'s inbox read or mark-handled is refused, with the server\'s code', async () => {
+    const inbox = await cycle({ messages: () => ({ status: 502, body: {} }) });
+    assert.deepEqual([inbox.r.code, inbox.r.status, inbox.r.step], ['HTTP_STATUS', 502, 'read']);
+    const marked = await cycle({ read: () => ({ status: 403, body: { code: 'LAUNCH_BINDING_INVALID' } }) });
+    assert.deepEqual([marked.r.ok, marked.r.code, marked.r.status, marked.r.step, marked.r.project, marked.r.cleanupFailed], [false, 'LAUNCH_BINDING_INVALID', 403, 'read', 'soak-b', false]);
+    assert.equal(marked.f.calls.filter((c) => c.method === 'DELETE').length, 2);
+  });
+
+  it('reports BAD_BODY when the recipient marks a different message than the one sent', async () => {
+    const inbox = [];
+    const { r, f } = await cycle({ send: (req) => { inbox.push({ id: 'msg-other', message: req.body.message }); return { status: 200, body: { id: 'msg-sent' } }; }, messages: () => ({ status: 200, body: { messages: inbox } }) });
+    assert.deepEqual([r.ok, r.code, r.step, r.project], [false, 'BAD_BODY', 'read', 'soak-b']);
     assert.equal(f.calls.filter((c) => c.method === 'DELETE').length, 2);
   });
 
   it('attempts both kills even when the first fails, and reports the failure', async () => {
-    const f = medusaFetch({ kill: (p) => (p === 'soak-a' ? { status: 500, body: {} } : { status: 200, body: {} }) });
-    const r = await ex.EXECUTORS['engine.session.medusa-cycle'](ctx(f.fetch, fakeClock()), PAIR);
+    const { r, f } = await cycle({ kill: (p) => (p === 'soak-a' ? { status: 500, body: {} } : { status: 200, body: {} }) });
     assert.deepEqual([r.ok, r.code, r.status, r.step, r.project], [false, 'HTTP_STATUS', 500, 'kill', 'soak-a']);
     assert.equal(f.calls.filter((c) => c.method === 'DELETE').length, 2);
 
-    const g = medusaFetch({ read: () => ({ status: 500, body: {} }), kill: (p) => (p === 'soak-b' ? { status: 500, body: {} } : { status: 200, body: {} }) });
-    const r2 = await ex.EXECUTORS['engine.session.medusa-cycle'](ctx(g.fetch, fakeClock()), PAIR);
-    assert.deepEqual([r2.step, r2.cleanupFailed], ['read', true]);
+    const g = await cycle({ read: () => ({ status: 500, body: {} }), kill: (p) => (p === 'soak-b' ? { status: 500, body: {} } : { status: 200, body: {} }) });
+    assert.deepEqual([g.r.step, g.r.cleanupFailed], ['read', true]);
   });
 });
 
@@ -697,32 +894,10 @@ describe('soak executors — wrap cycle', () => {
 
 describe('soak executors: switchboard request ids are scoped to the run (RM05 finding 2)', () => {
   it('names the run and event in the request id, and reads a server refusal of a re-send as its own outcome', async () => {
-    const ex = require('../lib/soak/executors');
-    const sends = [];
-    const replies = {
-      status: { ok: true, body: { active: false } },
-      medusaStatus: { ok: true, body: { state: 'listening', workspaceId: 'soak-b-12345678' } }
-    };
-    /**
-     * A target that refuses the send as already attempted.
-     * @param {URL} url - Request URL
-     * @param {object} init - Request init
-     * @returns {Promise<object>} Response
-     */
-    const fetch = async (url, init) => {
-      const p = new URL(url).pathname;
-      const json = (status, body) => ({ status, headers: { get: () => null }, text: async () => JSON.stringify(body) });
-      if (p.endsWith('/medusa/send')) {
-        sends.push(JSON.parse(init.body));
-        return json(409, { error: 'already attempted', code: 'SEND_ALREADY_ATTEMPTED' });
-      }
-      if (p.endsWith('/medusa/status')) return json(200, replies.medusaStatus.body);
-      if (p.endsWith('/status')) return json(200, replies.status.body);
-      return json(200, {});
-    };
-    const ctx = { apiBase: 'http://127.0.0.1:1', fetch, eventIndex: 7, runKey: `${'a'.repeat(16)}-1790000000000`, sleep: async () => {}, now: () => 0 };
-    const out = await ex.EXECUTORS['engine.session.medusa-cycle'](ctx, { from: 'soak-a', to: 'soak-b' });
-    assert.equal(sends[0].requestId, `soak-medusa-${'a'.repeat(16)}-1790000000000-7`);
+    const clock = fakeClock();
+    const f = fakeFleet({ clock, send: () => ({ status: 409, body: { error: 'already attempted', code: 'SEND_ALREADY_ATTEMPTED' } }) });
+    const out = await ex.EXECUTORS['engine.session.medusa-cycle'](ctx(f.fetch, { ...clock, eventIndex: 7, runKey: `${'a'.repeat(16)}-1790000000000` }), { from: 'soak-a', to: 'soak-b' });
+    assert.equal(f.calls.find((c) => c.path.endsWith('/medusa/send')).body.requestId, `soak-medusa-${'a'.repeat(16)}-1790000000000-7`);
     assert.equal(out.code, ex.OUTCOME.SEND_ALREADY_ATTEMPTED);
     assert.equal(out.step, 'send');
     assert.notEqual(out.code, ex.OUTCOME.HTTP_STATUS, 'never recorded as a failed send');
@@ -759,7 +934,9 @@ describe('soak executors — who each call speaks for', () => {
     'api.medusa.reads': [],
     'api.ports.lease-release': [['POST', '/api/ports/lease', 'operator'], ['POST', '/api/ports/release', 'operator']],
     'engine.session.cycle': [['DELETE', SESSION, 'operator'], ['POST', SESSION, 'operator'], ['POST', `${SESSION}/command`, 'operator']],
-    'engine.session.medusa-cycle': [['DELETE', SESSION, 'operator'], ['POST', SESSION, 'operator'], ['POST', `${SESSION}/medusa/send`, 'none'], ['POST', `${SESSION}/medusa/read`, 'none']],
+    // The two switchboard writes are made by the sessions themselves, in their
+    // own panes; the driver only types the instruction (`/command`).
+    'engine.session.medusa-cycle': [['DELETE', SESSION, 'operator'], ['POST', SESSION, 'operator'], ['POST', `${SESSION}/command`, 'operator'], ['POST', `${SESSION}/medusa/send`, 'session'], ['POST', `${SESSION}/medusa/read`, 'session']],
     'engine.session.wrap-cycle': [['DELETE', SESSION, 'operator'], ['POST', SESSION, 'operator'], ['POST', `${SESSION}/wrap`, 'operator']],
     'fault.server.restart': [['POST', '/api/server/restart', 'operator']],
     'fault.tmux.session-kill': [['DELETE', SESSION, 'operator'], ['POST', SESSION, 'operator']],
@@ -780,15 +957,17 @@ describe('soak executors — who each call speaks for', () => {
    * @param {{leftover: boolean}} opt - Scenario
    * @returns {{fetch: Function, calls: object[]}} Fake and its log
    */
-  function fakeTarget(opt) {
+  function fakeTarget(opt, clock) {
     const calls = [];
     const seenStatus = new Set();
+    const panes = {};
+    const inbox = [];
     let restarted = false;
     let attaches = 0;
     const json = (status, body, headers) => ({ status, headers, text: async () => JSON.stringify(body) });
     const fetch = async (url, init) => {
       const h = init.headers || {};
-      const req = { origin: url.origin, method: init.method, path: url.pathname, cookie: h.cookie, csrf: h['x-csrf-token'], body: init.body };
+      const req = { origin: url.origin, method: init.method, path: url.pathname, cookie: h.cookie, csrf: h['x-csrf-token'], launch: h['x-tangleclaw-launch-id'], launchProject: h['x-tangleclaw-project-id'], body: init.body };
       calls.push(req);
       if (url.origin === WEBDRIVER) {
         const body = init.body ? JSON.parse(init.body) : {};
@@ -810,6 +989,10 @@ describe('soak executors — who each call speaks for', () => {
       if (req.path === '/api/system/pty-activity') return json(200, { instance: 'i1', attaches: attaches++ });
       if (req.path.endsWith('/plans')) return json(200, { plans: [{ file: ex.PLAN_FILE, urlPath: '/plans/1/soak-plan.md' }] });
       if (req.path === '/api/ports/lease') return json(201, {});
+      if (req.path === '/api/tc/whoami') {
+        const p = Object.keys(FLEET).find((k) => FLEET[k].launchId === req.launch);
+        return json(200, { project: p ? { id: Number(FLEET[p].projectId), name: p } : null, binding: p ? { state: 'verified', projectId: Number(FLEET[p].projectId) } : { state: 'unbound' }, workspaceId: url.searchParams.get('workspaceId') });
+      }
       if (m) {
         const [, project, rest = ''] = m;
         if (rest === '/status') {
@@ -819,8 +1002,21 @@ describe('soak executors — who each call speaks for', () => {
         }
         if (rest === '' && req.method === 'POST') return json(200, { engine: ex.STUB_ENGINE_ID, tmuxSession: faults.tmuxName(project) });
         if (rest === '/medusa/status') return json(200, { state: 'listening', workspaceId: `ws-${project}` });
-        if (rest === '/medusa/send') return json(200, { id: 'msg1' });
-        if (rest === '/medusa/messages') return json(200, { messages: [{ id: 'msg1' }] });
+        if (rest === '/command') {
+          const cmd = stubEngine.parseMedusaLine(JSON.parse(init.body).command);
+          if (cmd) {
+            panes[project] = panes[project] || [];
+            const env = { ...paneEnv(project), TANGLECLAW_API: url.origin };
+            stubEngine.handleMedusa(cmd, env, { fetch, now: clock.now, sleep: clock.sleep }).then((line) => panes[project].push(line));
+          }
+          return json(200, {});
+        }
+        if (rest === '/peek') return json(200, { lines: panes[project] || [] });
+        if (rest === '/medusa/send') {
+          inbox.push({ id: 'msg1', message: JSON.parse(init.body).message });
+          return json(200, { id: 'msg1' });
+        }
+        if (rest === '/medusa/messages') return json(200, { messages: inbox });
         if (rest === '/wrap') return json(202, { runId: 'run1' });
         if (rest === '/wrap/status') return json(200, { runId: 'run1', finishedAt: 1, result: { ok: true, sessionOutcome: 'ended', pipelineResult: { ok: true } } });
       }
@@ -837,14 +1033,16 @@ describe('soak executors — who each call speaks for', () => {
    * @returns {Promise<{outcome: object, calls: object[]}>} What it did
    */
   async function runKind(kind, opt, home) {
-    const t = fakeTarget(opt);
     let clock = 1_000_000;
+    const now = () => clock;
+    const sleep = async (ms) => { clock += ms; };
+    const t = fakeTarget(opt, { now, sleep });
     const c = {
       apiBase: 'http://127.0.0.1:3102/',
       token: null,
       fetch: t.fetch,
-      now: () => clock,
-      sleep: async (ms) => { clock += ms; },
+      now,
+      sleep,
       eventIndex: 3,
       runKey: 'abcdef0123456789-1700000000000',
       local: {
@@ -885,6 +1083,9 @@ describe('soak executors — who each call speaks for', () => {
           const { outcome, calls } = await runKind(kind, { leftover }, home);
           assert.notEqual(outcome.code, 'EXECUTOR_THREW', `${kind}: ${JSON.stringify(outcome)}`);
           for (const c of calls.filter((x) => x.origin !== WEBDRIVER)) {
+            if (/\/medusa\/(send|read|messages)$/.test(c.path)) {
+              assert.ok(c.launch, `${kind}: ${c.method} ${c.path} was made by the driver, not from a session's pane`);
+            }
             if (c.method === 'GET') {
               assert.deepEqual([c.cookie, c.csrf], [undefined, undefined], `${kind}: GET ${c.path} carried the session`);
               continue;
@@ -895,6 +1096,11 @@ describe('soak executors — who each call speaks for', () => {
             if (entry[2] === 'operator') {
               assert.equal(c.cookie, `tc_session=${TOKEN}`, `${kind}: ${c.method} ${c.path} without the session`);
               assert.equal(c.csrf, CSRF, `${kind}: ${c.method} ${c.path} without the CSRF token`);
+              assert.equal(c.launch, undefined, `${kind}: ${c.method} ${c.path} carried a launch id`);
+            } else if (entry[2] === 'session') {
+              const project = decodeURIComponent(c.path.split('/')[3]);
+              assert.deepEqual([c.launch, c.launchProject], [FLEET[project].launchId, FLEET[project].projectId], `${kind}: ${c.method} ${c.path} not under its own session's binding`);
+              assert.deepEqual([c.cookie, c.csrf], [undefined, undefined], `${kind}: ${c.method} ${c.path} carried the Operator's session`);
             } else {
               assert.deepEqual([c.cookie, c.csrf], [undefined, undefined], `${kind}: ${c.method} ${c.path} carried the session`);
             }
