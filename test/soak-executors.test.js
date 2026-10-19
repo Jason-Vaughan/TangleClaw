@@ -392,7 +392,7 @@ function bindingFloor(headers) {
  * into a pane runs the real stub engine's client (`handleMedusa`) with that
  * pane's env, against this same fake, and its result line lands in the pane
  * for `peek` to read, as on a real server. Each route can be overridden.
- * @param {object} [over] - `{status(p), launch(p), medusaStatus(p, n), command(p, req), whoami(req), send(req), messages(n, req), read(req), kill(p), env(p), clock}`
+ * @param {object} [over] - `{status(p), launch(p), medusaStatus(p, n), command(p, req), peek(p), whoami(req), send(req), messages(n, req), read(req), kill(p), env(p), clock}`; `command` and `peek` answer null to behave as the pane does
  * @returns {{fetch: Function, calls: object[], panes: Object<string, string[]>, inbox: object[]}} Fake
  */
 function fakeFleet(over = {}) {
@@ -407,6 +407,7 @@ function fakeFleet(over = {}) {
     launch: () => ({ status: 200, body: {} }),
     medusaStatus: (p) => ({ status: 200, body: { state: 'listening', workspaceId: FLEET[p].workspaceId } }),
     command: () => null,
+    peek: () => null,
     whoami: (req) => {
       const p = projectOf(req.headers);
       const claimed = Object.keys(FLEET).find((k) => FLEET[k].projectId === req.query.get('projectId'));
@@ -433,7 +434,7 @@ function fakeFleet(over = {}) {
     if (req.method === 'POST' && rest === '') return o.launch(project);
     if (req.method === 'DELETE' && rest === '') return o.kill(project);
     if (rest === '/medusa/status') { polls[project] = (polls[project] || 0) + 1; return o.medusaStatus(project, polls[project]); }
-    if (rest === '/peek') return { status: 200, body: { lines: panes[project].slice(-ex.PEEK_LINES) } };
+    if (rest === '/peek') return o.peek(project) || { status: 200, body: { lines: panes[project].slice(-ex.PEEK_LINES) } };
     if (rest === '/command') {
       const answered = o.command(project, req);
       if (answered) return answered;
@@ -669,11 +670,29 @@ describe('soak executors — switchboard cycle', () => {
     assert.deepEqual([r.code, r.step], ['IN_PANE_SILENT', 'send']);
   });
 
-  it('fails at the send step when typing into the pane is refused, and at its step when the pane cannot be read', async () => {
+  it('keeps from a result line only an id or a code of the shape the stub prints', async () => {
+    for (const [line, code, status] of [
+      ['soak-medusa 0a1b2c3d send refused status=403 code=lower_case', 'HTTP_STATUS', 403],
+      ['soak-medusa 0a1b2c3d send refused status=999 code=LAUNCH_BINDING_INVALID', 'LAUNCH_BINDING_INVALID', null],
+      ['soak-medusa 0a1b2c3d send ok id=a<b', 'BAD_BODY', null],
+      ['soak-medusa 0a1b2c3d send ok', 'BAD_BODY', null],
+      ['soak-medusa 0a1b2c3d send failed reason=SOMETHING_NEW', 'BAD_BODY', null]
+    ]) {
+      const clock = fakeClock();
+      const f = fakeFleet({ clock, command: (p) => { f.panes[p].push(line); return { status: 200, body: { ok: true } }; } });
+      const r = await ex.EXECUTORS['engine.session.medusa-cycle'](ctx(f.fetch, { ...clock, nonce: () => '0a1b2c3d' }), PAIR);
+      assert.deepEqual([r.code, r.status, r.step], [code, status, 'send'], line);
+    }
+  });
+
+  it('fails at its step when typing into the pane is refused, or when the pane cannot be read', async () => {
     const typed = await cycle({ command: () => ({ status: 409, body: { code: 'STARTUP_DIALOG' } }) });
-    assert.deepEqual([typed.r.code, typed.r.status, typed.r.step, typed.r.project], ['HTTP_STATUS', 409, 'send', 'soak-a']);
-    const unread = await cycle({ command: (p, req) => (p === 'soak-b' ? { status: 404, body: {} } : null) });
-    assert.deepEqual([unread.r.code, unread.r.status, unread.r.step, unread.r.project], ['HTTP_STATUS', 404, 'read', 'soak-b']);
+    assert.deepEqual([typed.r.code, typed.r.status, typed.r.step, typed.r.project, typed.r.cleanupFailed], ['HTTP_STATUS', 409, 'send', 'soak-a', false]);
+    const untyped = await cycle({ command: (p) => (p === 'soak-b' ? { status: 404, body: {} } : null) });
+    assert.deepEqual([untyped.r.code, untyped.r.status, untyped.r.step, untyped.r.project], ['HTTP_STATUS', 404, 'read', 'soak-b']);
+    const unread = await cycle({ peek: (p) => (p === 'soak-b' ? { status: 404, body: {} } : null) });
+    assert.deepEqual([unread.r.code, unread.r.status, unread.r.step, unread.r.project, unread.r.cleanupFailed], ['HTTP_STATUS', 404, 'read', 'soak-b', false]);
+    assert.equal(unread.f.calls.filter((c) => c.method === 'DELETE').length, 2);
   });
 
   it('waits for delivery in the recipient\'s own inbox, and reports NOT_DELIVERED at the deliver step when its wait runs out', async () => {
