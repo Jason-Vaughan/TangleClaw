@@ -98,7 +98,8 @@ node scripts/soak.js validate --schedule soak-certifying.json
   engine makes the call with that pane's `TANGLECLAW_LAUNCH_ID` and `TANGLECLAW_PROJECT_ID`:
   - The sender's pane runs `/soak-medusa send <nonce> <project> <toWorkspace> <tag> [<requestId>]`.
   - The recipient's pane runs `/soak-medusa read <nonce> <project> <tag>`: it reads its own inbox
-    until the tagged message arrives (45 seconds at most), then marks that one message handled. So the
+    until the tagged message arrives (45 seconds at most, and the whole command 50), then marks that
+    one message handled. So the
     exchange records the send against the sender's session and the read and the handling against the
     recipient's.
   - The stub prints one line per command, `soak-medusa <nonce> <verb> ok id=<id>`, `… refused
@@ -115,7 +116,7 @@ node scripts/soak.js validate --schedule soak-certifying.json
     `IN_PANE_NO_API`, `IN_PANE_NO_BINDING`, `IN_PANE_BINDING_UNVERIFIED`, `IN_PANE_WRONG_PROJECT` or
     `IN_PANE_WHOAMI_FAILED`. No result line in time is `IN_PANE_SILENT`. A message that never reached
     the recipient's inbox is `NOT_DELIVERED`, at step `deliver`.
-- **The message and its request id name the run and the event**
+- **The request id names the run and the event, and the message's tag names the event**
   (`soak-medusa-<runKey>-<index>`, where `runKey` is the schedule digest's first 16 hex characters
   and the log's start time). The server keeps request ids unique across all its sends, so scoping
   the id to the run keeps a second soak against the same target from colliding with the first.

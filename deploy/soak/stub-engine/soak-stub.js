@@ -47,14 +47,19 @@ const MEDUSA_COMMAND = '/soak-medusa';
 /** The first word of every result line, which the driver searches the pane for. */
 const RESULT_PREFIX = 'soak-medusa';
 
-/** Per-request budget, as the soak's own executors use. */
+/** Per-request budget, as the soak's own executors use, and never past the command's deadline. */
 const REQUEST_TIMEOUT_MS = 30 * 1000;
 
 /**
- * How long a `read` waits for the tagged message to reach this session's
- * inbox. Shorter than the driver's own wait for the result line, so the
- * driver always sees this program's verdict rather than its own timeout.
+ * How long one `/soak-medusa` command may take in all, its whoami and every
+ * request and inbox read included. It must stay below the driver's wait for
+ * the result line (`POLL.deliveryMs` in `lib/soak/executors.js`, pinned by a
+ * test), so a slow server reaches the log as this program's `TIMEOUT` or
+ * `NOT_DELIVERED`, never as a silent pane.
  */
+const COMMAND_DEADLINE_MS = 50 * 1000;
+
+/** How long a `read` waits for the tagged message to reach this session's inbox, within the deadline. */
 const READ_WAIT_MS = 45 * 1000;
 
 /** The gap between two reads of the inbox. */
@@ -81,9 +86,14 @@ const REASON = Object.freeze({
 /** A nonce, a tag and a request id are short tokens with no spaces. */
 const NONCE_RE = /^[0-9a-f]{8,16}$/;
 const TOKEN_RE = /^[A-Za-z0-9._:-]{1,96}$/;
-/** What may be echoed back from the server: a message id and an error code. */
+/**
+ * What may be echoed back from the server: a message id and an error code.
+ * Both are capped so the longest result line, after the prompt, fits an
+ * 80-column pane; a wrapped line would be read back cut short. A longer code
+ * is printed as `HTTP_STATUS`.
+ */
 const ID_RE = /^[A-Za-z0-9._:-]{1,40}$/;
-const CODE_RE = /^[A-Z][A-Z0-9_]{0,39}$/;
+const CODE_RE = /^[A-Z][A-Z0-9_]{0,23}$/;
 
 /**
  * The answer to one input line.
@@ -157,7 +167,7 @@ function paneIdentity(env) {
  * No cookie, CSRF token or bearer token is ever sent, the URL must stay on
  * `TANGLECLAW_API`'s origin, and a redirect is never followed, so no other
  * server can receive the binding.
- * @param {object} io - `{fetch}`
+ * @param {object} io - `{fetch, now, deadline}`
  * @param {object} id - From `paneIdentity`
  * @param {string} method - HTTP method
  * @param {string} path - Path and query on the origin
@@ -168,6 +178,8 @@ function paneIdentity(env) {
 async function _request(io, id, method, path, body, extra = {}) {
   const url = new URL(path, id.origin);
   if (url.origin !== id.origin) return { reason: REASON.NO_API };
+  const left = io.deadline - io.now();
+  if (left <= 0) return { reason: REASON.TIMEOUT };
   const headers = { accept: 'application/json', 'x-tangleclaw-launch-id': id.launchId, 'x-tangleclaw-project-id': id.projectId, ...extra };
   if (body !== undefined) headers['content-type'] = 'application/json';
   let res;
@@ -177,7 +189,7 @@ async function _request(io, id, method, path, body, extra = {}) {
       redirect: 'manual',
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+      signal: AbortSignal.timeout(Math.min(REQUEST_TIMEOUT_MS, left))
     });
   } catch (err) { // prawduct:allow prawduct/broad-except -- network boundary: a call that cannot reach the server is a printed outcome, never a crash of the pane
     const timedOut = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
@@ -210,7 +222,7 @@ async function _checkOwnRoute(io, id, project) {
   const { binding, project: who, workspaceId } = r.body;
   if (!binding || typeof binding !== 'object' || typeof binding.state !== 'string') return { ok: false, reason: REASON.WHOAMI_FAILED };
   if (binding.state !== 'verified') {
-    return { ok: false, reason: REASON.BINDING_UNVERIFIED, state: /^[a-z-]{1,20}$/.test(binding.state) ? binding.state : '?' };
+    return { ok: false, reason: REASON.BINDING_UNVERIFIED, state: /^[a-z-]{1,9}$/.test(binding.state) ? binding.state : '?' };
   }
   if (String(binding.projectId) !== id.projectId) return { ok: false, reason: REASON.WRONG_PROJECT };
   if (!who || typeof who !== 'object' || String(who.id) !== id.projectId || who.name !== project) return { ok: false, reason: REASON.WRONG_PROJECT };
@@ -257,7 +269,7 @@ async function _send(io, id, cmd) {
  */
 async function _read(io, id, cmd) {
   const base = `/api/sessions/${encodeURIComponent(cmd.project)}/medusa`;
-  const deadline = io.now() + READ_WAIT_MS;
+  const deadline = Math.min(io.now() + READ_WAIT_MS, io.deadline);
   for (;;) {
     const inbox = await _request(io, id, 'GET', `${base}/messages`);
     if (inbox.reason) return `failed reason=${inbox.reason}`;
@@ -288,10 +300,12 @@ async function _read(io, id, cmd) {
  * @returns {Promise<string>} The result line
  */
 async function handleMedusa(cmd, env, io) {
+  const now = typeof io.now === 'function' ? io.now : Date.now;
   const clock = {
     fetch: io.fetch,
-    now: typeof io.now === 'function' ? io.now : Date.now,
-    sleep: typeof io.sleep === 'function' ? io.sleep : (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    now,
+    sleep: typeof io.sleep === 'function' ? io.sleep : (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    deadline: now() + COMMAND_DEADLINE_MS
   };
   const head = `${RESULT_PREFIX} ${cmd.nonce} ${cmd.verb}`;
   if (cmd.error) return `${head} failed reason=${cmd.error}`;
@@ -346,4 +360,4 @@ if (require.main === module) {
   run(process.stdin, process.stdout).then(() => process.exit(0));
 }
 
-module.exports = { answer, run, parseMedusaLine, paneIdentity, handleMedusa, PROMPT, MEDUSA_COMMAND, RESULT_PREFIX, REASON, READ_WAIT_MS, REQUEST_TIMEOUT_MS };
+module.exports = { answer, run, parseMedusaLine, paneIdentity, handleMedusa, PROMPT, MEDUSA_COMMAND, RESULT_PREFIX, REASON, COMMAND_DEADLINE_MS, READ_WAIT_MS, REQUEST_TIMEOUT_MS };

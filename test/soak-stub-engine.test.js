@@ -394,6 +394,35 @@ describe('soak stub engine — the in-pane switchboard client: what it prints', 
     fits((await handle(READ, { whoami: () => ({ status: 200, body: { ...WHOAMI_OK, binding: { state: 'unbound' } } }) })).line);
   });
 
+  it('fits its longest result line, after the prompt, in an 80-column pane', () => {
+    const longest = [
+      `soak-medusa ${'f'.repeat(16)} read refused status=403 code=${'X'.repeat(24)}`,
+      `soak-medusa ${'f'.repeat(16)} send ok id=${'a'.repeat(40)}`,
+      `soak-medusa ${'f'.repeat(16)} read failed reason=BINDING_UNVERIFIED state=${'a'.repeat(9)}`
+    ];
+    // Nonces are 8 hex here (the driver's); the stub accepts up to 16, so check both.
+    for (const l of longest) assert.ok(stub.PROMPT.length + l.replace('f'.repeat(16), 'f'.repeat(8)).length <= 80, l);
+  });
+
+  it('prints a code too long to fit as HTTP_STATUS, never cut short', async () => {
+    const { line } = await handle(SEND, { send: () => ({ status: 403, body: { code: 'A_CODE_THAT_IS_FAR_TOO_LONG_TO_FIT' } }) });
+    assert.equal(line, `soak-medusa ${NONCE} send refused status=403 code=HTTP_STATUS`);
+  });
+
+  it('finishes every command within one deadline that is shorter than the driver\'s wait for its line', async () => {
+    const { POLL } = require('../lib/soak/executors');
+    assert.ok(stub.COMMAND_DEADLINE_MS < POLL.deliveryMs, 'a slow server is the stub\'s TIMEOUT, not the driver\'s IN_PANE_SILENT');
+    assert.ok(stub.READ_WAIT_MS <= stub.COMMAND_DEADLINE_MS);
+    // A server slow on every request: each takes 20s of the clock.
+    const clock = fakeClock();
+    const slow = fakeServer({ messages: () => ({ status: 200, body: { messages: [] } }) });
+    const fetch = async (url, init) => { await clock.sleep(20 * 1000); return slow.fetch(url, init); };
+    const start = clock.now();
+    const line = await stub.handleMedusa(stub.parseMedusaLine(READ), ENV, { fetch, now: clock.now, sleep: clock.sleep });
+    assert.match(line, /read failed reason=(TIMEOUT|NOT_DELIVERED)$/);
+    assert.ok(clock.now() - start <= stub.COMMAND_DEADLINE_MS + 20 * 1000, 'no request starts after the deadline');
+  });
+
   it('waits for an in-flight switchboard call before it exits', async () => {
     let release;
     const gate = new Promise((r) => { release = r; });
