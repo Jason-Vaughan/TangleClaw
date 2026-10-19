@@ -17,7 +17,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Changed
 
-- **Soak runs sign in as an Operator account** (#2240, Chunk 01). Guest setup creates `soak-operator` and a 0600 login file. `soak.js run --operator-login <file>` signs in by gate state, sends writes with the session and CSRF, never retries a 401, and stops after three failed sign-ins. Recreate guests set up with no login. Switchboard calls await per-session bindings in Chunk 02.
+- **Soak switchboard cycles run as their sessions** (#2240, Chunk 02; closes #2240). Each send and read is made inside the session's own pane under its own launch binding; the driver types the instruction and reads the result, never holding a launch id. Binding refusals reach the soak log by code; new `IN_PANE_*` outcomes name a pane that refused or stayed silent.
+- **Soak runs sign in as an Operator account** (#2240, Chunk 01). Guest setup creates `soak-operator` and a 0600 login file. `soak.js run --operator-login <file>` signs in by gate state, sends writes with the session and CSRF, never retries a 401, and stops after three failed sign-ins. Recreate guests set up with no login.
 - The stranded-config scan also flags `GEMINI.md` and `.gemini/GEMINI.md` in unregistered ancestor folders. It reports their presence and never deletes them; Antigravity reads `GEMINI.md` only up to the repository root (#1049).
 - After a Codex turn was observed busy, a waiting Medusa nudge waits one more 5 s settling interval. Recorded pane rows now hold unfinished turns on 0.161/0.162, but those versions remain unverified and unwoken pending #2222; a deep-scroll stall is still unmeasured (#2059).
 - The wrap drawer's commit row says who merges a wrap PR left for a coordinator, name first, with nothing under *How to fix this*; other auto-PR failures now show their fix there (#2366).

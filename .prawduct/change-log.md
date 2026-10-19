@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-19 — W22-REC: combined records for the Wave 22 source merge
+
+<!-- prawduct: type=chore | scope=w22-rec-records -->
+
+v5.34.0 records chunk W22-REC, Charter v2.56 (A356), from merged main `fb252caa`. W22-A1 PR #2511 merged as `fb252caa` and closed #2240 (Chunk 02). The source entry below remains intact.
+
+**What changed.** `CHANGELOG.md` adds a Changed entry for #2240 Chunk 02's soak switchboard cycles run as their sessions, and drops the last sentence of the Chunk 01 entry, which said switchboard calls awaited Chunk 02; both chunks ship in the same unreleased version. `FEATURES.md` drops the matching sentence from the Operator-login sub-bullet and adds a sub-bullet for the switchboard cycle as each session. The A353 LOGIN_SHOWN clause owed at W21-REC landed with #2511. Still owed, to the next Tart guest dry run (A344 D8, owner TC-Lane-A): the engine, fault and Safari cycles in a real guest, A3 (Safari Add Cookie with `httpOnly`), and `guest-setup.sh` steps 5 and 6 with Caddy. #2240 does not fix #1875: the server still accepts a valid binding on another project's route, and only the soak stub guards against it, in the pane. `prawduct-hook archive-change-log` selected nothing to move, so the archive is unchanged. This records PR changes no product code, version, release, tag or deployment.
+
 ## 2026-10-19 — #2240 Chunk 02: each soak switchboard call is made by its session, inside its own pane
 
 <!-- prawduct: type=feature | scope=w22-a1-soak-session-identity -->
