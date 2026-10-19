@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-18 — W20-REC: combined records for the Wave 20 source merges
+
+<!-- prawduct: type=chore | scope=w20-rec-records -->
+
+v5.34.0 records chunk W20-REC, Charter v2.52, from merged main `704a41a2`. W20-B1 PR #2505 merged as `50cdb95e` (closes #2504); W20-A1 PR #2506 merged as `704a41a2` (closes #1903, final Chunk 10). The two source entries below remain intact.
+
+**What changed.** `CHANGELOG.md` adds two Internal `[Unreleased]` entries for the test-only changes. `FEATURES.md` completes the #1903 lift-helper line: Chunk 10 removes the last 15 private copies, the inventory is empty, and the scan still names three non-lifter exceptions. The W20-A1 source entry's refreshed cumulative Critic `rev-20261018T234230Z-abbc0b38` had zero blocking findings; the source PR body also records it. `archive-change-log` dry run moves zero entries: the live log is 37 KB, below its 40 KB threshold, so the October archive is unchanged. `[Unreleased]` is about 19 KB, below the 90 KB alert. These records do not bump a version, release, tag or deploy.
+
 ## 2026-10-18 — #1903 Chunk 10: the last fifteen lift copies use the shared helper, and the inventory is empty
 
 <!-- prawduct: type=refactor | scope=w20-a1-lift-chunk10 -->
