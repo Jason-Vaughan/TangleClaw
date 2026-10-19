@@ -12,7 +12,7 @@
  *   soak run      --schedule <file> --api <url> --log <file> [--allow-unverified-live] [--no-live-install]
  *                 [--home <dir>] [--webdriver <url>] [--operator-login <file>]
  *   soak operator-login --file <file> --create
- *   soak operator-login --file <file> --body login|setup --out <file> [--projects-dir <dir>]
+ *   soak operator-login --file <file> --body login --out <file>
  *   soak repos    --root <dir> --origins <dir> [--projects a,b,c]
  *   soak sample   --home <dir> --api <url> --out <file> --no-live-install
  *                 [--interval-ms <n>] [--count <n>] [--full-every <n>]
@@ -53,9 +53,9 @@
  *
  * `operator-login` is the guest's provisioning half of that login, run as the
  * workload user by `deploy/soak/guest/guest-setup.sh`. `--create` writes the
- * file with a generated password if it is not there. `--body` writes the JSON
- * body for the sign-in route (`login`) or for first-run setup (`setup`, with
- * `--projects-dir`) into `--out`, an existing private file such as `mktemp`
+ * file with a generated password if it is not there. `--body login` writes
+ * the JSON body the sign-in and first-account routes take (the account and
+ * its password) into `--out`, an existing private file such as `mktemp`
  * makes, for `curl -d @<file>`. The password is never on a command line, in
  * the environment, or on stdout or stderr.
  *
@@ -102,7 +102,7 @@ const USAGE = [
   '       soak run      --schedule <file> --api <url> --log <file> [--allow-unverified-live] [--no-live-install]',
   '                     [--home <dir>] [--webdriver <url>] [--operator-login <file>]',
   '       soak operator-login --file <file> --create',
-  '       soak operator-login --file <file> --body login|setup --out <file> [--projects-dir <dir>]',
+  '       soak operator-login --file <file> --body login --out <file>',
   '       soak repos    --root <dir> --origins <dir> [--projects a,b,c]',
   '       soak sample   --home <dir> --api <url> --out <file> --no-live-install',
   '                     [--interval-ms <n>] [--count <n>] [--full-every <n>]',
@@ -344,29 +344,25 @@ async function cmdRun(flags, io, deps) {
  * @returns {number} Exit code: 0 done, 3 refused
  */
 function cmdOperatorLogin(flags, io, deps) {
-  expectFlags(flags, ['file'], ['create', 'body', 'projects-dir', 'out']);
+  expectFlags(flags, ['file'], ['create', 'body', 'out']);
   if ((flags.create === true) === (flags.body !== undefined)) throw new UsageError('operator-login takes exactly one of --create and --body');
   const refuse = (problem) => {
     io.stderr.write(`${JSON.stringify({ code: driver.REFUSAL.OPERATOR_LOGIN_UNAVAILABLE, message: problem })}\n`);
     return 3;
   };
   if (flags.create === true) {
-    if (flags['projects-dir'] !== undefined || flags.out !== undefined) throw new UsageError('--projects-dir and --out are only for --body');
+    if (flags.out !== undefined) throw new UsageError('--out is only for --body');
     const r = localLib.createOperatorLogin(flags.file, deps.local);
     if (r.problem) return refuse(r.problem);
     io.stdout.write(`${JSON.stringify({ file: flags.file, created: r.created, username: localLib.OPERATOR_USERNAME })}\n`);
     return 0;
   }
-  if (flags.body !== 'login' && flags.body !== 'setup') throw new UsageError('--body must be login or setup');
+  if (flags.body !== 'login') throw new UsageError('--body must be login');
   if (flags.out === undefined) throw new UsageError('--body needs --out, the private file the body is written to');
-  if ((flags.body === 'setup') !== (flags['projects-dir'] !== undefined)) throw new UsageError('--projects-dir is required with --body setup, and only there');
   const login = localLib.checkOperatorLogin(flags.file, deps.local);
   if (login.problem) return refuse(login.problem);
   const { username, password } = login.credential;
-  const body = flags.body === 'login'
-    ? { username, password }
-    : { adminUser: username, adminPassword: password, projectsDir: flags['projects-dir'] };
-  const written = localLib.writePrivateFile(flags.out, JSON.stringify(body), deps.local);
+  const written = localLib.writePrivateFile(flags.out, JSON.stringify({ username, password }), deps.local);
   return written.problem ? refuse(written.problem) : 0;
 }
 

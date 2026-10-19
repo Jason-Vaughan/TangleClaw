@@ -163,8 +163,8 @@ describe('soak CLI — plan and validate', () => {
     ['operator-login with an unknown body', ['operator-login', '--file', '/x/login.json', '--body', 'token', '--out', '/x/b']],
     ['operator-login with a body but nowhere to write it', ['operator-login', '--file', '/x/login.json', '--body', 'login']],
     ['operator-login --create with --out', ['operator-login', '--file', '/x/login.json', '--create', '--out', '/x/b']],
-    ['operator-login setup body with no projects directory', ['operator-login', '--file', '/x/login.json', '--body', 'setup', '--out', '/x/b']],
-    ['operator-login login body with a projects directory', ['operator-login', '--file', '/x/login.json', '--body', 'login', '--out', '/x/b', '--projects-dir', '/p']],
+    ['operator-login with the retired setup body', ['operator-login', '--file', '/x/login.json', '--body', 'setup', '--out', '/x/b']],
+    ['operator-login with a projects directory', ['operator-login', '--file', '/x/login.json', '--body', 'login', '--out', '/x/b', '--projects-dir', '/p']],
     ['an --api that is not http(s)', ['run', '--schedule', 'a', '--api', 'file:///etc', '--log', 'l']],
     ['an unreadable schedule', ['validate', '--schedule', '/nonexistent/soak.json']]
   ];
@@ -851,16 +851,17 @@ describe('soak CLI — the Operator login', () => {
       return f;
     };
 
-    it('writes the sign-in and setup bodies only into the private file named, and prints nothing', async () => {
+    it('writes the sign-in body only into the private file named, replacing what it held, and prints nothing', async () => {
       const file = loginFile();
       const body = privateFile('body');
       const r = await run(['operator-login', '--file', file, '--body', 'login', '--out', body]);
       assert.deepEqual([r.code, r.out, r.err], [0, '', '']);
       assert.deepEqual(JSON.parse(fs.readFileSync(body, 'utf8')), { username: 'soak-operator', password: OPERATOR_PASSWORD });
       assert.equal(fs.statSync(body).mode & 0o777, 0o600);
-      const setupR = await run(['operator-login', '--file', file, '--body', 'setup', '--projects-dir', '/Users/soakrun/Projects', '--out', body]);
-      assert.deepEqual([setupR.code, setupR.out, setupR.err], [0, '', '']);
-      assert.deepEqual(JSON.parse(fs.readFileSync(body, 'utf8')), { adminUser: 'soak-operator', adminPassword: OPERATOR_PASSWORD, projectsDir: '/Users/soakrun/Projects' }, 'the earlier body was replaced, not appended to');
+      fs.writeFileSync(body, 'x'.repeat(500));
+      const again = await run(['operator-login', '--file', file, '--body', 'login', '--out', body]);
+      assert.deepEqual([again.code, again.out, again.err], [0, '', '']);
+      assert.deepEqual(JSON.parse(fs.readFileSync(body, 'utf8')), { username: 'soak-operator', password: OPERATOR_PASSWORD }, 'what the file held was replaced, not appended to');
     });
 
     for (const [label, prep, reason] of [

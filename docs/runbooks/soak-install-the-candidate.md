@@ -142,8 +142,8 @@ As the admin again:
     - The setup caches the admin's sudo credentials with `sudo true`. It doesn't use `sudo -v`, which
       asks for a password on macOS 26 even under a `NOPASSWD` rule. When setup creates `soakrun` over
       SSH, `sysadminctl` doesn't make its home directory, so setup runs `createhomedir` for it.
-    - Setup also finishes the candidate's first-run setup with the soak's Operator account (`soak-operator`, its 0600 login written as `soakrun`, never printed, to
-      `~/.tangleclaw/soak-operator-login.json`; this turns the gate on) and `projectsDir` set to the soak's projects root, then attaches the projects signed in.
+    - Setup also finishes the candidate's first-run setup (`projectsDir` set to the soak's projects root), turns the login on, and creates the soak's Operator account (`soak-operator`, its 0600 login
+      written as `soakrun`, never printed, to `~/.tangleclaw/soak-operator-login.json`; this arms the gate), then attaches the projects signed in.
       The soak's writes and browser events sign in with that login (the browser gets the driver's session cookie through WebDriver). On a refusal it names the server's reason.
 
 > ⚠️ **Step 11b restarts the guest.** pf does not survive a restart, so setup runs again after it.

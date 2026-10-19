@@ -767,16 +767,22 @@ echo "== 5/6 finish setup with the Operator login, attach projects"
 # A fresh install opens on its first-run wizard, which covers the dashboard
 # until setup finishes, and keeps the default projects directory under
 # ~/Documents, which macOS privacy protection stops a launchd server reading
-# without a prompt nobody can answer. So setup is finished here, once, the way
-# the wizard's last step finishes it: with the Operator account and the soak's
-# projects root. Until that call the guest's gate is open, so it is the one
-# call that goes as the dashboard does (its client header); setup signs the
-# account in on the same reply. A later run finds setup finished and signs in
-# instead, since a finished setup cannot be redone. A guest set up without the
-# soak's login (the earlier no-login setup) is refused: recreate it.
+# without a prompt nobody can answer. So a first run finishes setup here, in
+# three calls:
+#   1. setup/complete with no login and the soak's projects root. Setup with an
+#      account would not do: the guest has Caddy, and an account at setup
+#      starts the cutover that puts Caddy in front and restarts the server.
+#   2. auth/add-login, which turns the login on and nothing else, so the gate
+#      waits for its first account.
+#   3. auth/set-password, as the workload user on loopback, which creates the
+#      Operator account and signs it in, arming the gate.
+# The gate is open until step 3, so steps 1 and 2 alone go as the dashboard
+# does (its client header); nothing after the gate is armed does. A later run
+# (after the step 11b restart, say) finds setup finished and signs in with the
+# login file instead, since a finished setup cannot be redone. A missing login
+# file, or a login the guest refuses, means the guest was not set up this way:
+# it is refused, to be recreated.
 op_login="/Users/$user/.tangleclaw/soak-operator-login.json"
-as_user node "$repo/scripts/soak.js" operator-login --file "$op_login" --create >/dev/null \
-  || refuse "the Operator login $op_login could not be created or is unsafe (see above)"
 body="$(as_user mktemp)" && jar="$(as_user mktemp)" && csrf_header="$(as_user mktemp)" && reply="$(as_user mktemp)" \
   || refuse "the workload user could not make its private temporary files"
 trap 'as_user rm -f "$body" "$jar" "$csrf_header" "$reply" || true' EXIT
@@ -787,10 +793,11 @@ reply_why() {
     try { const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); if (r && r.code) process.stdout.write(`: ${r.code}: ${r.error || ""}`); } catch {}
   ' "$reply"
 }
-# Write the request body for `$1` (login or setup) into the body file.
+# Write the sign-in body (account and password) into the body file; `$1`
+# says what refusing means.
 write_body() {
-  as_user node "$repo/scripts/soak.js" operator-login --file "$op_login" --body "$@" --out "$body" \
-    || refuse "the Operator login's $1 request could not be written (see above)"
+  as_user node "$repo/scripts/soak.js" operator-login --file "$op_login" --body login --out "$body" \
+    || refuse "$1"
 }
 config_json="$(curl -sS --max-time "$t" "$api/api/config" || true)"
 setup_state="$(node -e '
@@ -798,16 +805,25 @@ setup_state="$(node -e '
 ' "$config_json")"
 case "$setup_state" in
   first-run)
-    write_body setup --projects-dir "$SOAK_PROJECTS_ROOT"
-    status="$(as_user curl -sS -o "$reply" -c "$jar" -w '%{http_code}' --max-time "$t" -X POST \
+    as_user node "$repo/scripts/soak.js" operator-login --file "$op_login" --create >/dev/null \
+      || refuse "the Operator login $op_login could not be created or is unsafe (see above)"
+    setup_body="$(node -e 'process.stdout.write(JSON.stringify({ noLogin: true, projectsDir: process.argv[1] }))' "$SOAK_PROJECTS_ROOT")"
+    status="$(as_user curl -sS -o "$reply" -w '%{http_code}' --max-time "$t" -X POST \
       -H 'content-type: application/json' -H 'x-tangleclaw-client: dashboard' \
-      -d @"$body" "$api/api/setup/complete" || true)"
-    as_user rm -f "$body"
+      -d "$setup_body" "$api/api/setup/complete" || true)"
     [ "$status" = "200" ] || refuse "finishing the guest's first-run setup answered $status$(reply_why)"
+    status="$(as_user curl -sS -o "$reply" -w '%{http_code}' --max-time "$t" -X POST \
+      -H 'x-tangleclaw-client: dashboard' "$api/api/auth/add-login" || true)"
+    [ "$status" = "200" ] || refuse "turning the guest's login on answered $status$(reply_why)"
+    write_body "the Operator login $op_login could not be read (see above)"
+    status="$(as_user curl -sS -o "$reply" -c "$jar" -w '%{http_code}' --max-time "$t" -X POST \
+      -H 'content-type: application/json' -d @"$body" "$api/api/auth/set-password" || true)"
+    as_user rm -f "$body"
+    [ "$status" = "200" ] || refuse "creating the Operator account answered $status$(reply_why)"
     echo "setup finished: Operator account soak-operator, projects in $SOAK_PROJECTS_ROOT"
     ;;
   finished)
-    write_body login
+    write_body "setup is finished, but the Operator login $op_login is missing or unsafe (see above): the guest was not set up with the soak's login. Recreate the guest"
     status="$(as_user curl -sS -o "$reply" -c "$jar" -w '%{http_code}' --max-time "$t" -X POST \
       -H 'content-type: application/json' -d @"$body" "$api/api/auth/login" || true)"
     as_user rm -f "$body"
@@ -819,8 +835,8 @@ case "$setup_state" in
     ;;
   *) refuse "the guest config did not parse" ;;
 esac
-# The reply to a sign-in holds the CSRF token (and setup's, the recovery
-# codes), so it is emptied at once.
+# The reply to a sign-in holds the CSRF token (and the first account's, its
+# recovery codes), so it is emptied at once.
 as_user sh -c ': > "$1"' sh "$reply"
 # Each write from here sends the session from the jar and its CSRF token from
 # a header file (-b, -H @file), so neither is ever on a command line. The

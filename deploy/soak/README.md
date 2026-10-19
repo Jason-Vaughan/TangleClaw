@@ -874,16 +874,24 @@ actions.
        never on a command line, in the environment or in any output: `soak.js operator-login --body
        login|setup --out <file>` writes the request body into a private file, which curl sends
        (`-d @<file>`) and setup then removes.
-     - **Setup is finished the way the wizard's last step finishes it** (`POST /api/setup/complete`),
-       with that account and `projectsDir` set to `SOAK_PROJECTS_ROOT`. This arms the guest's gate and
-       signs the account in. The gate is still open until this call, so it alone goes as the dashboard
-       does (its client header). Until setup finishes, the dashboard shows the wizard instead of the
-       stats `browser.dashboard.load` waits for. The install's default `projectsDir` is under
-       `~/Documents`, which macOS privacy protection stops a launchd-run server reading without a prompt
-       nobody can answer.
-     - **A later run finds setup finished and signs in instead**, since a finished setup cannot be
-       redone. A guest whose TangleClaw does not accept the login (one set up without it, as the
-       earlier no-login setup did) is refused: recreate the guest. Setup then refuses unless the guest's
+     - **A first run finishes setup in three calls** (Architect ruling A351):
+       1. `POST /api/setup/complete` with no login and `projectsDir` set to `SOAK_PROJECTS_ROOT`. Setup
+          with an account is not used: the guest has Caddy, and an account at setup starts the cutover
+          that puts Caddy in front and restarts the server.
+       2. `POST /api/auth/add-login`, which turns the login on and nothing else, so the gate waits for
+          its first account.
+       3. `POST /api/auth/set-password`, as the workload user on loopback, which creates the account and
+          signs it in, arming the gate.
+
+       The gate is open until step 3, so steps 1 and 2 alone go as the dashboard does (its client
+       header). Until setup finishes, the dashboard shows the wizard instead of the stats
+       `browser.dashboard.load` waits for. The install's default `projectsDir` is under `~/Documents`,
+       which macOS privacy protection stops a launchd-run server reading without a prompt nobody can
+       answer.
+     - **A later run (after the step 11b restart, say) finds setup finished and signs in with the login
+       file instead**, since a finished setup cannot be redone, and it never makes a new login. A missing
+       login file, or a login the guest refuses (a guest set up without it, as the earlier no-login
+       setup did), is refused: recreate the guest. Setup then refuses unless the guest's
        config says `setupComplete: true` and `projectsDir` is `SOAK_PROJECTS_ROOT`.
      - **Every call that carries the password, the session or its CSRF token runs as the workload
        user**, with each secret only in a file its own `mktemp` made in its private temp directory: the
