@@ -1,0 +1,2392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TangleClaw v5.34.0 — Autonomous Multi-Agent Sprint Report</title>
+  <meta name="description" content="Empirical performance, velocity, quality, and post-mortem report for the 95.8-hour autonomous multi-agent TangleClaw v5.34.0 release sprint (24 Waves, 75 PRs, 71 Issues Closed, 21,930 Passing Tests)." />
+  <style>
+    :root {
+      --bg: #070b14;
+      --bg-card: #0f172a;
+      --bg-card-alt: #131c31;
+      --border: #1e293b;
+      --border-hi: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --cyan: #38bdf8;
+      --green: #34d399;
+      --purple: #c084fc;
+      --amber: #fbbf24;
+      --rose: #fb7185;
+      --indigo: #818cf8;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(circle at 15% 0%, #0f1f3d 0%, var(--bg) 45%);
+      color: var(--text);
+      line-height: 1.55;
+    }
+    a { color: var(--cyan); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* Top Nav */
+    .topnav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(7, 11, 20, 0.88);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0.7rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      font-weight: 800;
+      font-size: 1.05rem;
+      color: var(--text);
+    }
+    .brand-dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--cyan), var(--green));
+      box-shadow: 0 0 12px var(--cyan);
+    }
+    .nav-links {
+      display: flex;
+      gap: 1.1rem;
+      flex-wrap: wrap;
+      font-size: 0.86rem;
+      font-weight: 600;
+    }
+    .nav-links a { color: var(--text-muted); transition: color 0.15s; }
+    .nav-links a:hover { color: var(--cyan); text-decoration: none; }
+
+    .container {
+      max-width: 1220px;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 4rem;
+    }
+
+    /* Hero */
+    .hero {
+      background: linear-gradient(145deg, rgba(15, 23, 42, 0.96), rgba(30, 27, 75, 0.72));
+      border: 1px solid var(--border-hi);
+      border-radius: 18px;
+      padding: 2.25rem 2rem;
+      margin-bottom: 2rem;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+    }
+    .hero-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(52, 211, 153, 0.12);
+      border: 1px solid rgba(52, 211, 153, 0.4);
+      color: var(--green);
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 0.28rem 0.75rem;
+      border-radius: 999px;
+      margin-bottom: 0.9rem;
+    }
+    .hero h1 {
+      margin: 0 0 0.65rem;
+      font-size: clamp(1.75rem, 3.2vw, 2.55rem);
+      letter-spacing: -0.02em;
+      line-height: 1.18;
+    }
+    .hero-sub {
+      margin: 0 0 1.4rem;
+      color: #cbd5e1;
+      font-size: 1.04rem;
+      max-width: 920px;
+    }
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+      margin-bottom: 1.75rem;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.55rem 1rem;
+      border-radius: 10px;
+      font-size: 0.86rem;
+      font-weight: 600;
+      border: 1px solid var(--border-hi);
+      background: var(--bg-card);
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .btn:hover {
+      border-color: var(--cyan);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      border-color: #38bdf8;
+      color: #fff;
+    }
+
+    /* KPI Grid */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(245px, 1fr));
+      gap: 1rem;
+    }
+    .kpi-card {
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.1rem 1.2rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .kpi-card::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--cyan), var(--green));
+    }
+    .kpi-label {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .kpi-val {
+      font-size: 1.7rem;
+      font-weight: 800;
+      margin: 0.25rem 0 0.2rem;
+      color: var(--text);
+      letter-spacing: -0.02em;
+    }
+    .kpi-sub {
+      font-size: 0.82rem;
+      color: #cbd5e1;
+    }
+
+    /* Sections */
+    .section {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.75rem;
+      margin-bottom: 1.75rem;
+    }
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.85rem;
+    }
+    .section-title {
+      margin: 0;
+      font-size: 1.35rem;
+      font-weight: 800;
+    }
+    .section-desc {
+      margin: 0.25rem 0 0;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+    .legend {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .legend-swatch {
+      width: 11px;
+      height: 11px;
+      border-radius: 3px;
+    }
+
+    .w-full { width: 100%; height: auto; display: block; }
+
+    /* Two-column & Three-column grids */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+      gap: 1.25rem;
+    }
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+    }
+
+    .subcard {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.2rem;
+    }
+    .subcard h3 {
+      margin: 0 0 0.6rem;
+      font-size: 1.02rem;
+    }
+
+    /* Stacked horizontal bars */
+    .bar-row {
+      margin-bottom: 0.95rem;
+    }
+    .bar-label-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.84rem;
+      margin-bottom: 0.3rem;
+    }
+    .bar-track {
+      width: 100%;
+      height: 12px;
+      background: #090d16;
+      border-radius: 999px;
+      overflow: hidden;
+      display: flex;
+    }
+    .bar-fill {
+      height: 100%;
+    }
+
+    /* Badges & Pills */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.18rem 0.55rem;
+      border-radius: 999px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+    .badge-cyan, .badge-blue { background: rgba(56, 189, 248, 0.15); color: var(--cyan); border: 1px solid rgba(56, 189, 248, 0.35); }
+    .badge-green { background: rgba(52, 211, 153, 0.15); color: var(--green); border: 1px solid rgba(52, 211, 153, 0.35); }
+    .badge-purple { background: rgba(192, 132, 252, 0.15); color: var(--purple); border: 1px solid rgba(192, 132, 252, 0.35); }
+    .badge-amber { background: rgba(251, 191, 36, 0.15); color: var(--amber); border: 1px solid rgba(251, 191, 36, 0.35); }
+    .badge-rose { background: rgba(251, 113, 133, 0.15); color: var(--rose); border: 1px solid rgba(251, 113, 133, 0.35); }
+
+    .issue-pill {
+      display: inline-block;
+      background: rgba(129, 140, 248, 0.15);
+      border: 1px solid rgba(129, 140, 248, 0.35);
+      color: #a5b4fc;
+      padding: 0.1rem 0.45rem;
+      border-radius: 6px;
+      font-size: 0.76rem;
+      font-weight: 600;
+      margin: 0.1rem 0.15rem 0.1rem 0;
+    }
+    .pr-link { font-weight: 700; color: var(--cyan); }
+    .sha-link code {
+      background: rgba(148, 163, 184, 0.12);
+      color: #e2e8f0;
+      padding: 0.12rem 0.4rem;
+      border-radius: 5px;
+      font-size: 0.78rem;
+    }
+    .text-muted { color: var(--text-muted); font-size: 0.82rem; }
+
+    /* Filter Controls */
+    .filter-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.2rem;
+    }
+    .filter-btns {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+    .filter-btn {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border-hi);
+      color: var(--text-muted);
+      padding: 0.42rem 0.8rem;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .filter-btn:hover, .filter-btn.active {
+      background: rgba(56, 189, 248, 0.16);
+      border-color: var(--cyan);
+      color: var(--text);
+    }
+    .search-input {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border-hi);
+      color: var(--text);
+      padding: 0.48rem 0.85rem;
+      border-radius: 8px;
+      font-size: 0.84rem;
+      min-width: 250px;
+    }
+
+    /* Wave Cards */
+    .wave-card {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.15rem;
+      margin-bottom: 0.9rem;
+    }
+    .wave-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+      margin-bottom: 0.75rem;
+    }
+    .wave-num {
+      font-size: 0.74rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--cyan);
+    }
+    .wave-title {
+      margin: 0.1rem 0 0.15rem;
+      font-size: 1rem;
+    }
+    .wave-window {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+    .wave-meta {
+      display: flex;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+
+    .table-wrap { overflow-x: auto; }
+    .pr-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.84rem;
+    }
+    .pr-table th, .pr-table td {
+      padding: 0.52rem 0.65rem;
+      text-align: left;
+      border-top: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .pr-table th {
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      border-top: none;
+    }
+
+    /* Post-Mortem Lists */
+    .pm-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+    .pm-item {
+      background: rgba(7, 11, 20, 0.55);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--green);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      font-size: 0.88rem;
+    }
+    .pm-item.warn {
+      border-left-color: var(--amber);
+    }
+    .pm-item strong {
+      display: block;
+      margin-bottom: 0.25rem;
+      font-size: 0.94rem;
+    }
+
+    footer {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      padding: 2rem 1rem 1rem;
+      border-top: 1px solid var(--border);
+      margin-top: 2rem;
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="topnav">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <span>TangleClaw <code>v5.34.0</code> Autonomous Sprint Report</span>
+    </div>
+    <div class="nav-links">
+      <a href="#overview">Overview</a>
+      <a href="#architecture">Fleet Architecture</a>
+      <a href="#velocity">Velocity &amp; Charts</a>
+      <a href="#reliability">Suite Reliability</a>
+      <a href="#telemetry">Time &amp; Efficiency</a>
+      <a href="#postmortem">Post-Mortem</a>
+      <a href="#waves">All 24 Waves (75 PRs)</a>
+      <a href="#next-sprint">v5.35.0 Plan</a>
+    </div>
+  </nav>
+
+  <main class="container">
+
+    <!-- HERO -->
+    <section id="overview" class="hero">
+      <div class="hero-eyebrow">● Released &amp; Deployed · Tag v5.34.0 @ da4b3afe · Schema 68</div>
+      <h1>TangleClaw <code>v5.34.0</code>: “A Suite You Can Trust”</h1>
+      <p class="hero-sub">
+        Complete empirical report of TangleClaw’s <strong>95.8-hour (~4.0-day)</strong> autonomous multi-agent software engineering sprint.
+        Coordinating six specialized AI roles across <strong>24 execution waves</strong>, the fleet merged <strong>75 sprint pull requests</strong>
+        (<strong>84 total merges</strong> since <code>v5.33.1</code>), closed <strong>71 issues</strong>, migrated all <strong>106 legacy test helpers to zero</strong>,
+        and finished with <strong>22 consecutive flake-free full-suite runs</strong> and <strong>zero post-merge regressions on <code>main</code></strong>.
+      </p>
+
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="https://github.com/Jason-Vaughan/TangleClaw/releases/tag/v5.34.0" target="_blank" rel="noopener">🚀 View GitHub Release v5.34.0</a>
+        <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/commit/da4b3afecf718be660bb5dd3924e785326c81f2d" target="_blank" rel="noopener">🔗 Release Commit da4b3afe</a>
+        <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/blob/v5.34.0/CHANGELOG.md" target="_blank" rel="noopener">📜 CHANGELOG.md (87 Entries)</a>
+        <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/blob/v5.34.0/docs/releases/v5.34-status.md" target="_blank" rel="noopener">✅ Release Status &amp; Verification Ledger</a>
+        <a class="btn" href="https://jason-vaughan.github.io/TangleClaw/" target="_blank" rel="noopener">🗺️ Public Product Roadmap</a>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">Total Automated Run Time</div>
+          <div class="kpi-val">3d 23h 48m 47s</div>
+          <div class="kpi-sub"><strong>95.81 hrs</strong> from rule activation to live deploy (<strong>95.38 hrs</strong> to GitHub Release)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Execution Waves &amp; PRs</div>
+          <div class="kpi-val">24 Waves · 75 PRs</div>
+          <div class="kpi-sub"><strong>84 merges</strong> since v5.33.1 · <strong>359 commits</strong> · <strong>+47,578 / −4,507</strong> LOC across 321 files</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Issues Closed</div>
+          <div class="kpi-val">71 Closed</div>
+          <div class="kpi-sub"><strong>67 milestone issues</strong> + sprint-discovered flake/tooling fixes · <strong>0</strong> code merge conflicts</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Mainline Stability</div>
+          <div class="kpi-val">100% Green CI</div>
+          <div class="kpi-sub"><strong>0 post-merge product regressions</strong> · <strong>0 reverts</strong> across all 24 waves</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Suite Reliability (#1903)</div>
+          <div class="kpi-val">21,930 Tests</div>
+          <div class="kpi-sub"><strong>106 → 0</strong> inline lift copies migrated · <strong>0 flakes</strong> in final 5 waves (22 runs)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Context Hygiene</div>
+          <div class="kpi-val">45 / 45 Clears</div>
+          <div class="kpi-sub"><strong>100%</strong> governed Builder <code>/clear</code> cycles (<strong>1%–4.5%</strong> context load at chunk start)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Uninterrupted Autonomy</div>
+          <div class="kpi-val">31h 54m Run</div>
+          <div class="kpi-sub">Waves 6–17 executed continuously with <strong>0 unplanned Operator blocker interventions</strong></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Release Cut Precision</div>
+          <div class="kpi-val">100% Byte-Exact</div>
+          <div class="kpi-sub">18 per-wave <code>W&lt;N&gt;-REC</code> PRs → <strong>0 retroactive edits</strong> at <code>v5.34.0</code> promotion</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ARCHITECTURE -->
+    <section id="architecture" class="section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">1. Multi-Agent Fleet Architecture &amp; Governance Pipeline</h2>
+          <p class="section-desc">Six specialized roles operating across heterogeneous AI engines (Gemini 4 Argon, Claude Opus 5.5, OpenAI Codex GPT-5.4) with strict file-lock &amp; commit-SHA gates.</p>
+        </div>
+      </div>
+      
+    <svg viewBox="0 0 960 310" class="w-full" role="img" aria-label="TangleClaw Multi-Agent Autonomous Sprint Governance Architecture">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 1 L 10 5 L 0 9 z" fill="#64748b" />
+        </marker>
+        <marker id="arrowCyan" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8" />
+        </marker>
+        <marker id="arrowGreen" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 1 L 10 5 L 0 9 z" fill="#34d399" />
+        </marker>
+      </defs>
+
+      <!-- Operator Box -->
+      <rect x="20" y="105" width="145" height="96" rx="12" fill="#1e1b4b" stroke="#818cf8" stroke-width="2"/>
+      <text x="92" y="132" text-anchor="middle" fill="#e0e7ff" font-size="13" font-weight="700">Operator</text>
+      <text x="92" y="150" text-anchor="middle" fill="#a5b4fc" font-size="10">Sprint Grant &amp; Scope</text>
+      <text x="92" y="166" text-anchor="middle" fill="#a5b4fc" font-size="10">Release Cut Receipt</text>
+      <text x="92" y="184" text-anchor="middle" fill="#34d399" font-size="10" font-weight="600">0 Blocker Interventions</text>
+      <text x="92" y="196" text-anchor="middle" fill="#34d399" font-size="9">(Waves 6–17: 31h 54m)</text>
+
+      <!-- Project Manager Box -->
+      <rect x="205" y="30" width="175" height="100" rx="12" fill="#0f172a" stroke="#38bdf8" stroke-width="2"/>
+      <text x="292" y="56" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="700">Project Manager</text>
+      <text x="292" y="73" text-anchor="middle" fill="#38bdf8" font-size="10">Antigravity · Gemini 4 Argon</text>
+      <text x="292" y="92" text-anchor="middle" fill="#94a3b8" font-size="10">Wave Charter (v2.1 → v2.61)</text>
+      <text x="292" y="108" text-anchor="middle" fill="#94a3b8" font-size="10">File-Disjoint Lock Matrix</text>
+
+      <!-- Architect Box -->
+      <rect x="205" y="175" width="175" height="105" rx="12" fill="#0f172a" stroke="#c084fc" stroke-width="2"/>
+      <text x="292" y="201" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="700">Architect</text>
+      <text x="292" y="218" text-anchor="middle" fill="#c084fc" font-size="10">Codex → Gemini 4 Argon</text>
+      <text x="292" y="237" text-anchor="middle" fill="#94a3b8" font-size="10">322 Rulings (A62–A384)</text>
+      <text x="292" y="253" text-anchor="middle" fill="#94a3b8" font-size="10">Two-Key Sensitive Gate</text>
+      <text x="292" y="269" text-anchor="middle" fill="#94a3b8" font-size="10">Exact-Head Code &amp; ADR Review</text>
+
+      <!-- Integrator Box -->
+      <rect x="430" y="95" width="180" height="118" rx="12" fill="#0f172a" stroke="#f59e0b" stroke-width="2"/>
+      <text x="520" y="121" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="700">Lane Integrator (INT)</text>
+      <text x="520" y="138" text-anchor="middle" fill="#fbbf24" font-size="10">Claude Opus → Codex GPT-5.4</text>
+      <text x="520" y="156" text-anchor="middle" fill="#94a3b8" font-size="10">LANE_QUEUE &amp; Suite Slot Gate</text>
+      <text x="520" y="172" text-anchor="middle" fill="#94a3b8" font-size="10">Exclusive change-log Slot</text>
+      <text x="520" y="188" text-anchor="middle" fill="#94a3b8" font-size="10">True-Merge (--match-head-commit)</text>
+      <text x="520" y="203" text-anchor="middle" fill="#34d399" font-size="10" font-weight="600">8h INT-REFRESH Re-Attestation</text>
+
+      <!-- Builder Lanes A & B -->
+      <rect x="660" y="20" width="275" height="122" rx="12" fill="#0f172a" stroke="#34d399" stroke-width="2"/>
+      <text x="797" y="45" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="700">Builder Lanes A &amp; B + Critic</text>
+      <text x="797" y="62" text-anchor="middle" fill="#34d399" font-size="10">Claude Code · Claude Opus 5.5</text>
+      <text x="797" y="80" text-anchor="middle" fill="#94a3b8" font-size="10">45/45 Governed /clear (1–4.5% Context)</text>
+      <text x="797" y="96" text-anchor="middle" fill="#94a3b8" font-size="10">Red-First Tests + Prawduct Critic</text>
+      <text x="797" y="112" text-anchor="middle" fill="#94a3b8" font-size="10">Serialized Host Suite (21,930 Tests)</text>
+      <text x="797" y="128" text-anchor="middle" fill="#38bdf8" font-size="10" font-weight="600">Per-Wave W&lt;N&gt;-REC Records PRs</text>
+
+      <!-- Observer Box -->
+      <rect x="660" y="175" width="275" height="110" rx="12" fill="#0f172a" stroke="#38bdf8" stroke-width="2"/>
+      <text x="797" y="201" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="700">Sprint Observer (Obsr)</text>
+      <text x="797" y="218" text-anchor="middle" fill="#38bdf8" font-size="10">Claude Opus → Gemini 4 Argon</text>
+      <text x="797" y="236" text-anchor="middle" fill="#94a3b8" font-size="10">32 Source-Checked Records Reviews</text>
+      <text x="797" y="252" text-anchor="middle" fill="#94a3b8" font-size="10">30m Integrator Silence Watchdog</text>
+      <text x="797" y="268" text-anchor="middle" fill="#34d399" font-size="10" font-weight="600">A187.1 Quiet Routing: 1.1 wakes/hr (-95%)</text>
+
+      <!-- Connectors -->
+      <line x1="165" y1="135" x2="203" y2="95" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrowCyan)"/>
+      <line x1="165" y1="170" x2="203" y2="210" stroke="#64748b" stroke-width="1.8" marker-end="url(#arrow)"/>
+      <line x1="292" y1="130" x2="292" y2="173" stroke="#38bdf8" stroke-width="1.8" marker-end="url(#arrowCyan)" marker-start="url(#arrowCyan)"/>
+      <line x1="380" y1="80" x2="428" y2="125" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrowCyan)"/>
+      <line x1="380" y1="220" x2="428" y2="175" stroke="#34d399" stroke-width="2" marker-end="url(#arrowGreen)"/>
+      <line x1="610" y1="130" x2="658" y2="90" stroke="#34d399" stroke-width="2" marker-end="url(#arrowGreen)" marker-start="url(#arrowGreen)"/>
+      <line x1="610" y1="175" x2="658" y2="220" stroke="#38bdf8" stroke-width="1.8" marker-end="url(#arrowCyan)" marker-start="url(#arrowCyan)"/>
+      <line x1="797" y1="142" x2="797" y2="173" stroke="#64748b" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+    </svg>
+    
+      <div class="grid-3" style="margin-top: 1.25rem;">
+        <div class="subcard">
+          <h3>🔒 Disjoint Wave File Locking</h3>
+          <p class="text-muted">
+            Before each wave, the Project Manager and Integrator verify candidate paths via <code>git cat-file -e</code> and assign strictly disjoint file sets to <strong>Lane A</strong> and <strong>Lane B</strong>. Result: <strong>0 code or test merge conflicts across all 24 waves</strong>.
+          </p>
+        </div>
+        <div class="subcard">
+          <h3>🛡️ Four-Layer Exact-Head Review</h3>
+          <p class="text-muted">
+            Every PR head is verified by the <strong>Prawduct Critic</strong>, <strong>Architect</strong> (322 rulings), <strong>Observer</strong> (32 source-checked reviews), and <strong>Integrator</strong>, then merged via <code>--match-head-commit</code> so no unreviewed byte can land.
+          </p>
+        </div>
+        <div class="subcard">
+          <h3>🔄 Governed Continuity &amp; Clears</h3>
+          <p class="text-muted">
+            Builders execute a governed <code>/clear</code> before every <code>PLAN</code> and <code>BUILD</code> step (45/45 first-pass success, &lt;5% context load), while 3 live roles switched engines mid-sprint via generation-bound continuity capsules with <strong>0 dropped exchanges</strong>.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- VELOCITY CHART -->
+    <section id="velocity" class="section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">2. Cumulative Sprint Velocity Across All 24 Waves</h2>
+          <p class="section-desc">Steady, predictable multi-wave throughput from Wave 1 (Oct 15) through Wave 24 Release Cut (Oct 19). Hover any point or bar for wave details.</p>
+        </div>
+        <div class="legend">
+          <span class="legend-item"><span class="legend-swatch" style="background:#38bdf8"></span> Cumulative Sprint PRs (75)</span>
+          <span class="legend-item"><span class="legend-swatch" style="background:#34d399"></span> Cumulative Issues Closed (71)</span>
+          <span class="legend-item"><span class="legend-swatch" style="background:rgba(56,189,248,0.4)"></span> PRs Merged per Wave</span>
+        </div>
+      </div>
+      
+    <svg viewBox="0 0 960 340" class="w-full" role="img" aria-label="Cumulative Sprint PRs and Issues Closed across Waves 1 to 24">
+      <defs>
+        <linearGradient id="prGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.35"/>
+          <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.0"/>
+        </linearGradient>
+      </defs>
+      <line x1="56" y1="292.0" x2="904" y2="292.0" stroke="#1e293b" stroke-dasharray="4 4" /><text x="46" y="296.0" text-anchor="end" fill="#94a3b8" font-size="11">0</text><line x1="56" y1="227.0" x2="904" y2="227.0" stroke="#1e293b" stroke-dasharray="4 4" /><text x="46" y="231.0" text-anchor="end" fill="#94a3b8" font-size="11">20</text><line x1="56" y1="162.0" x2="904" y2="162.0" stroke="#1e293b" stroke-dasharray="4 4" /><text x="46" y="166.0" text-anchor="end" fill="#94a3b8" font-size="11">40</text><line x1="56" y1="97.0" x2="904" y2="97.0" stroke="#1e293b" stroke-dasharray="4 4" /><text x="46" y="101.0" text-anchor="end" fill="#94a3b8" font-size="11">60</text><line x1="56" y1="32.0" x2="904" y2="32.0" stroke="#1e293b" stroke-dasharray="4 4" /><text x="46" y="36.0" text-anchor="end" fill="#94a3b8" font-size="11">80</text>
+      <polygon points="73.7,292 73.7,275.8 109.0,253.0 144.3,240.0 179.7,230.2 215.0,220.5 250.3,207.5 285.7,197.8 321.0,188.0 356.3,178.2 391.7,168.5 427.0,158.8 462.3,149.0 497.7,139.2 533.0,129.5 568.3,119.8 603.7,110.0 639.0,100.2 674.3,90.5 709.7,80.8 745.0,71.0 780.3,61.2 815.7,54.8 851.0,45.0 886.3,41.8 886.3,292" fill="url(#prGrad)" />
+      <g class="chart-group"><rect x="63.7" y="233.5" width="20" height="58.5" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 1: 5 PRs merged (Cumulative: 5 PRs, 4 Issues Closed) — Wave 1 — Launch Safety, Async Pane Reads & Release Docs</title></rect><text x="73.7" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W1</text></g><g class="chart-group"><rect x="99.0" y="210.1" width="20" height="81.9" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 2: 7 PRs merged (Cumulative: 12 PRs, 8 Issues Closed) — Wave 2 — Coordinated Lane Wraps, Mobile Settings & Batch 1 Records</title></rect><text x="109.0" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W2</text></g><g class="chart-group"><rect x="134.3" y="245.2" width="20" height="46.8" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 3: 4 PRs merged (Cumulative: 16 PRs, 11 Issues Closed) — Wave 3 — Continuity Engine Cutovers, CLI Precision & Bridge Timestamps</title></rect><text x="144.3" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W3</text></g><g class="chart-group"><rect x="169.7" y="256.9" width="20" height="35.1" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 4: 3 PRs merged (Cumulative: 19 PRs, 14 Issues Closed) — Wave 4 — IPv6 TLS SAN Hardening, No-Login Tailnet Notice & Pane Telemetry</title></rect><text x="179.7" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W4</text></g><g class="chart-group"><rect x="205.0" y="256.9" width="20" height="35.1" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 5: 3 PRs merged (Cumulative: 22 PRs, 15 Issues Closed) — Wave 5 — Headless Finalize Foundations & Waves 3–5 Records</title></rect><text x="215.0" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W5</text></g><g class="chart-group"><rect x="240.3" y="245.2" width="20" height="46.8" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 6: 4 PRs merged (Cumulative: 26 PRs, 19 Issues Closed) — Wave 6 — Startup Dialog Classifier, NBSP Guard & Tmux Prompt-Wait Fix</title></rect><text x="250.3" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W6</text></g><g class="chart-group"><rect x="275.7" y="256.9" width="20" height="35.1" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 7: 3 PRs merged (Cumulative: 29 PRs, 24 Issues Closed) — Wave 7 — Antigravity Stranded-Nudge Recovery & Engine Dialog Guards</title></rect><text x="285.7" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W7</text></g><g class="chart-group"><rect x="311.0" y="256.9" width="20" height="35.1" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 8: 3 PRs merged (Cumulative: 32 PRs, 27 Issues Closed) — Wave 8 — Stored Launch-Blocker Sweep & Reconcile Safety</title></rect><text x="321.0" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W8</text></g><g class="chart-group"><rect x="346.3" y="256.9" width="20" height="35.1" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 9: 3 PRs merged (Cumulative: 35 PRs, 29 Issues Closed) — Wave 9 — Change-Log Union-Merge Prevention & Dialog Hardening</title></rect><text x="356.3" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W9</text></g><g class="chart-group"><rect x="381.7" y="256.9" width="20" height="35.1" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 10: 3 PRs merged (Cumulative: 38 PRs, 32 Issues Closed) — Wave 10 — Non-Git Wrap Support & #1903 Lift Migration Chunk 01</title></rect><text x="391.7" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W10</text></g><g class="chart-group"><rect x="417.0" y="256.9" width="20" height="35.1" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 11: 3 PRs merged (Cumulative: 41 PRs, 37 Issues Closed) — Wave 11 — Medusa Socket Stability & Lift Inventory Enforcement</title></rect><text x="427.0" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W11</text></g><g class="chart-group"><rect x="452.3" y="256.9" width="20" height="35.1" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 12: 3 PRs merged (Cumulative: 44 PRs, 41 Issues Closed) — Wave 12 — #1903 Lift Chunk 02 & Recovery Test Speedup (141s -> 40s)</title></rect><text x="462.3" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W12</text></g><g class="chart-group"><rect x="487.7" y="256.9" width="20" height="35.1" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 13: 3 PRs merged (Cumulative: 47 PRs, 46 Issues Closed) — Wave 13 — #1903 Lift Chunk 03 & Master Bootstrap Fail-Closed Safety</title></rect><text x="497.7" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W13</text></g><g class="chart-group"><rect x="523.0" y="256.9" width="20" height="35.1" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 14: 3 PRs merged (Cumulative: 50 PRs, 48 Issues Closed) — Wave 14 — #1903 Lift Chunk 04 & Governed Codex Continuity (#2059)</title></rect><text x="533.0" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W14</text></g><g class="chart-group"><rect x="558.3" y="256.9" width="20" height="35.1" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 15: 3 PRs merged (Cumulative: 53 PRs, 52 Issues Closed) — Wave 15 — #1903 Lift Chunk 05 & Pane Identity Determinism (#2481)</title></rect><text x="568.3" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W15</text></g><g class="chart-group"><rect x="593.7" y="256.9" width="20" height="35.1" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 16: 3 PRs merged (Cumulative: 56 PRs, 57 Issues Closed) — Wave 16 — #1903 Lift Chunk 06 & API Medusa Race Elimination (#2485)</title></rect><text x="603.7" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W16</text></g><g class="chart-group"><rect x="629.0" y="256.9" width="20" height="35.1" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 17: 3 PRs merged (Cumulative: 59 PRs, 61 Issues Closed) — Wave 17 — #1903 Lift Chunk 07 & Bridge Gateway ECONNRESET Fix (#2184)</title></rect><text x="639.0" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W17</text></g><g class="chart-group"><rect x="664.3" y="256.9" width="20" height="35.1" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 18: 3 PRs merged (Cumulative: 62 PRs, 63 Issues Closed) — Wave 18 — #1903 Lift Chunk 08 & 30-Wedged-Reads Event-Loop Proof</title></rect><text x="674.3" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W18</text></g><g class="chart-group"><rect x="699.7" y="256.9" width="20" height="35.1" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 19: 3 PRs merged (Cumulative: 65 PRs, 65 Issues Closed) — Wave 19 — #1903 Lift Chunk 09 & 20-Wedged-Reads Loop Proof (#2496)</title></rect><text x="709.7" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W19</text></g><g class="chart-group"><rect x="735.0" y="256.9" width="20" height="35.1" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 20: 3 PRs merged (Cumulative: 68 PRs, 67 Issues Closed) — Wave 20 — #1903 Final Chunk 10 (106 -> 0 Complete!) & Port Lease Fix (#2504)</title></rect><text x="745.0" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W20</text></g><g class="chart-group"><rect x="770.3" y="256.9" width="20" height="35.1" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 21: 3 PRs merged (Cumulative: 71 PRs, 68 Issues Closed) — Wave 21 — Release Certification Publish (#2088) & Guest Setup Auth (#2240 c01)</title></rect><text x="780.3" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W21</text></g><g class="chart-group"><rect x="805.7" y="268.6" width="20" height="23.4" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 22: 2 PRs merged (Cumulative: 73 PRs, 69 Issues Closed) — Wave 22 — Authenticated Soak Runner & LOGIN_SHOWN Guard (#2240 c02)</title></rect><text x="815.7" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W22</text></g><g class="chart-group"><rect x="841.0" y="256.9" width="20" height="35.1" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 23: 3 PRs merged (Cumulative: 76 PRs, 71 Issues Closed) — Wave 23 — Medusa Reconnect Stale-Socket Fix (#2370) & Codex 0.161/0.162 Isolation (#2222)</title></rect><text x="851.0" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W23</text></g><g class="chart-group"><rect x="876.3" y="280.3" width="20" height="11.7" rx="3" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.6"><title>Wave 24: 1 PRs merged (Cumulative: 77 PRs, 71 Issues Closed) — Wave 24 — v5.34.0 Release Cut, Tag Publication & Live Schema-68 Deployment</title></rect><text x="886.3" y="310" text-anchor="middle" fill="#94a3b8" font-size="10">W24</text></g>
+      <polyline fill="none" stroke="#38bdf8" stroke-width="3" points="73.7,275.8 109.0,253.0 144.3,240.0 179.7,230.2 215.0,220.5 250.3,207.5 285.7,197.8 321.0,188.0 356.3,178.2 391.7,168.5 427.0,158.8 462.3,149.0 497.7,139.2 533.0,129.5 568.3,119.8 603.7,110.0 639.0,100.2 674.3,90.5 709.7,80.8 745.0,71.0 780.3,61.2 815.7,54.8 851.0,45.0 886.3,41.8" />
+      <polyline fill="none" stroke="#34d399" stroke-width="2.5" stroke-dasharray="6 3" points="73.7,279.0 109.0,266.0 144.3,256.2 179.7,246.5 215.0,243.2 250.3,230.2 285.7,214.0 321.0,204.2 356.3,197.8 391.7,188.0 427.0,171.8 462.3,158.8 497.7,142.5 533.0,136.0 568.3,123.0 603.7,106.8 639.0,93.8 674.3,87.2 709.7,80.8 745.0,74.2 780.3,71.0 815.7,67.8 851.0,61.2 886.3,61.2" />
+      <circle cx="73.7" cy="275.8" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 1: 5 Cumulative Sprint PRs Merged (+5 in W1)</title></circle><circle cx="73.7" cy="279.0" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 1: 4 Cumulative Issues Closed</title></circle><circle cx="109.0" cy="253.0" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 2: 12 Cumulative Sprint PRs Merged (+7 in W2)</title></circle><circle cx="109.0" cy="266.0" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 2: 8 Cumulative Issues Closed</title></circle><circle cx="144.3" cy="240.0" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 3: 16 Cumulative Sprint PRs Merged (+4 in W3)</title></circle><circle cx="144.3" cy="256.2" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 3: 11 Cumulative Issues Closed</title></circle><circle cx="179.7" cy="230.2" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 4: 19 Cumulative Sprint PRs Merged (+3 in W4)</title></circle><circle cx="179.7" cy="246.5" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 4: 14 Cumulative Issues Closed</title></circle><circle cx="215.0" cy="220.5" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 5: 22 Cumulative Sprint PRs Merged (+3 in W5)</title></circle><circle cx="215.0" cy="243.2" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 5: 15 Cumulative Issues Closed</title></circle><circle cx="250.3" cy="207.5" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 6: 26 Cumulative Sprint PRs Merged (+4 in W6)</title></circle><circle cx="250.3" cy="230.2" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 6: 19 Cumulative Issues Closed</title></circle><circle cx="285.7" cy="197.8" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 7: 29 Cumulative Sprint PRs Merged (+3 in W7)</title></circle><circle cx="285.7" cy="214.0" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 7: 24 Cumulative Issues Closed</title></circle><circle cx="321.0" cy="188.0" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 8: 32 Cumulative Sprint PRs Merged (+3 in W8)</title></circle><circle cx="321.0" cy="204.2" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 8: 27 Cumulative Issues Closed</title></circle><circle cx="356.3" cy="178.2" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 9: 35 Cumulative Sprint PRs Merged (+3 in W9)</title></circle><circle cx="356.3" cy="197.8" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 9: 29 Cumulative Issues Closed</title></circle><circle cx="391.7" cy="168.5" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 10: 38 Cumulative Sprint PRs Merged (+3 in W10)</title></circle><circle cx="391.7" cy="188.0" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 10: 32 Cumulative Issues Closed</title></circle><circle cx="427.0" cy="158.8" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 11: 41 Cumulative Sprint PRs Merged (+3 in W11)</title></circle><circle cx="427.0" cy="171.8" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 11: 37 Cumulative Issues Closed</title></circle><circle cx="462.3" cy="149.0" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 12: 44 Cumulative Sprint PRs Merged (+3 in W12)</title></circle><circle cx="462.3" cy="158.8" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 12: 41 Cumulative Issues Closed</title></circle><circle cx="497.7" cy="139.2" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 13: 47 Cumulative Sprint PRs Merged (+3 in W13)</title></circle><circle cx="497.7" cy="142.5" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 13: 46 Cumulative Issues Closed</title></circle><circle cx="533.0" cy="129.5" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 14: 50 Cumulative Sprint PRs Merged (+3 in W14)</title></circle><circle cx="533.0" cy="136.0" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 14: 48 Cumulative Issues Closed</title></circle><circle cx="568.3" cy="119.8" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 15: 53 Cumulative Sprint PRs Merged (+3 in W15)</title></circle><circle cx="568.3" cy="123.0" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 15: 52 Cumulative Issues Closed</title></circle><circle cx="603.7" cy="110.0" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 16: 56 Cumulative Sprint PRs Merged (+3 in W16)</title></circle><circle cx="603.7" cy="106.8" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 16: 57 Cumulative Issues Closed</title></circle><circle cx="639.0" cy="100.2" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 17: 59 Cumulative Sprint PRs Merged (+3 in W17)</title></circle><circle cx="639.0" cy="93.8" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 17: 61 Cumulative Issues Closed</title></circle><circle cx="674.3" cy="90.5" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 18: 62 Cumulative Sprint PRs Merged (+3 in W18)</title></circle><circle cx="674.3" cy="87.2" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 18: 63 Cumulative Issues Closed</title></circle><circle cx="709.7" cy="80.8" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 19: 65 Cumulative Sprint PRs Merged (+3 in W19)</title></circle><circle cx="709.7" cy="80.8" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 19: 65 Cumulative Issues Closed</title></circle><circle cx="745.0" cy="71.0" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 20: 68 Cumulative Sprint PRs Merged (+3 in W20)</title></circle><circle cx="745.0" cy="74.2" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 20: 67 Cumulative Issues Closed</title></circle><circle cx="780.3" cy="61.2" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 21: 71 Cumulative Sprint PRs Merged (+3 in W21)</title></circle><circle cx="780.3" cy="71.0" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 21: 68 Cumulative Issues Closed</title></circle><circle cx="815.7" cy="54.8" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 22: 73 Cumulative Sprint PRs Merged (+2 in W22)</title></circle><circle cx="815.7" cy="67.8" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 22: 69 Cumulative Issues Closed</title></circle><circle cx="851.0" cy="45.0" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 23: 76 Cumulative Sprint PRs Merged (+3 in W23)</title></circle><circle cx="851.0" cy="61.2" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 23: 71 Cumulative Issues Closed</title></circle><circle cx="886.3" cy="41.8" r="4.2" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>Wave 24: 77 Cumulative Sprint PRs Merged (+1 in W24)</title></circle><circle cx="886.3" cy="61.2" r="3.8" fill="#34d399" stroke="#0f172a" stroke-width="1.5"><title>Wave 24: 71 Cumulative Issues Closed</title></circle>
+      <text x="878.3" y="31.8" text-anchor="end" fill="#38bdf8" font-size="12" font-weight="700">75 Sprint PRs</text>
+      <text x="878.3" y="79.2" text-anchor="end" fill="#34d399" font-size="12" font-weight="700">71 Issues Closed</text>
+    </svg>
+    
+    </section>
+
+    <!-- SUITE RELIABILITY CHART -->
+    <section id="reliability" class="section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">3. Test Suite Hardening: <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1903" target="_blank">#1903</a> Lift Migration (106 → 0) &amp; Flake Elimination</h2>
+          <p class="section-desc">Across Waves 10–20, 10 bounded chunks migrated all 106 inline <code>liftFunction</code> copies to <code>test/helpers/lift.js</code> while closing every flake issue (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2152" target="_blank">#2152</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2447" target="_blank">#2447</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2481" target="_blank">#2481</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2485" target="_blank">#2485</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2184" target="_blank">#2184</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2504" target="_blank">#2504</a>).</p>
+        </div>
+        <div class="legend">
+          <span class="legend-item"><span class="legend-swatch" style="background:#f43f5e"></span> Legacy Inline Lift Copies Remaining (106 → 0)</span>
+          <span class="legend-item"><span class="legend-swatch" style="background:#a78bfa"></span> Passing Host Tests (21,411 → 21,930)</span>
+          <span class="legend-item"><span class="legend-swatch" style="background:#f59e0b"></span> Out-of-Diff Flake Rerun (0 in Waves 20–24)</span>
+        </div>
+      </div>
+      
+    <svg viewBox="0 0 960 320" class="w-full" role="img" aria-label="Test Suite Growth and #1903 Lift Migration 106 to 0">
+      <rect x="721.0" y="30" width="175.0" height="242" fill="#10b981" fill-opacity="0.09" stroke="#10b981" stroke-opacity="0.35" stroke-dasharray="4 4" rx="6"/>
+      <text x="808.5" y="48" text-anchor="middle" fill="#34d399" font-size="11" font-weight="700">Waves 20–24: 0 Flakes (22 Runs)</text>
+      <line x1="56" y1="272.0" x2="896" y2="272.0" stroke="#1e293b" stroke-dasharray="4 4"/><text x="48" y="276.0" text-anchor="end" fill="#f43f5e" font-size="11">0</text><text x="904" y="276.0" text-anchor="start" fill="#a78bfa" font-size="11">21.3k</text><line x1="56" y1="217.0" x2="896" y2="217.0" stroke="#1e293b" stroke-dasharray="4 4"/><text x="48" y="221.0" text-anchor="end" fill="#f43f5e" font-size="11">25</text><text x="904" y="221.0" text-anchor="start" fill="#a78bfa" font-size="11">21.5k</text><line x1="56" y1="162.0" x2="896" y2="162.0" stroke="#1e293b" stroke-dasharray="4 4"/><text x="48" y="166.0" text-anchor="end" fill="#f43f5e" font-size="11">50</text><text x="904" y="166.0" text-anchor="start" fill="#a78bfa" font-size="11">21.6k</text><line x1="56" y1="107.0" x2="896" y2="107.0" stroke="#1e293b" stroke-dasharray="4 4"/><text x="48" y="111.0" text-anchor="end" fill="#f43f5e" font-size="11">75</text><text x="904" y="111.0" text-anchor="start" fill="#a78bfa" font-size="11">21.8k</text><line x1="56" y1="38.8" x2="896" y2="38.8" stroke="#1e293b" stroke-dasharray="4 4"/><text x="48" y="42.8" text-anchor="end" fill="#f43f5e" font-size="11">106</text><text x="904" y="42.8" text-anchor="start" fill="#a78bfa" font-size="11">21.9k</text>
+      <rect x="100.5" y="234.0" width="16" height="38" rx="3" fill="#f59e0b" fill-opacity="0.45" stroke="#f59e0b"><title>Wave 2: 1 out-of-diff flake rerun (subsequently fixed &amp; closed in-sprint)</title></rect><rect x="205.5" y="234.0" width="16" height="38" rx="3" fill="#f59e0b" fill-opacity="0.45" stroke="#f59e0b"><title>Wave 5: 1 out-of-diff flake rerun (subsequently fixed &amp; closed in-sprint)</title></rect><rect x="520.5" y="234.0" width="16" height="38" rx="3" fill="#f59e0b" fill-opacity="0.45" stroke="#f59e0b"><title>Wave 14: 1 out-of-diff flake rerun (subsequently fixed &amp; closed in-sprint)</title></rect><rect x="555.5" y="234.0" width="16" height="38" rx="3" fill="#f59e0b" fill-opacity="0.45" stroke="#f59e0b"><title>Wave 15: 1 out-of-diff flake rerun (subsequently fixed &amp; closed in-sprint)</title></rect><rect x="590.5" y="234.0" width="16" height="38" rx="3" fill="#f59e0b" fill-opacity="0.45" stroke="#f59e0b"><title>Wave 16: 1 out-of-diff flake rerun (subsequently fixed &amp; closed in-sprint)</title></rect><rect x="695.5" y="234.0" width="16" height="38" rx="3" fill="#f59e0b" fill-opacity="0.45" stroke="#f59e0b"><title>Wave 19: 1 out-of-diff flake rerun (subsequently fixed &amp; closed in-sprint)</title></rect>
+      <polyline fill="none" stroke="#f43f5e" stroke-width="3" points="73.5,38.8 108.5,38.8 143.5,38.8 178.5,38.8 213.5,38.8 248.5,38.8 283.5,38.8 318.5,38.8 353.5,38.8 388.5,63.0 423.5,63.0 458.5,85.0 493.5,102.6 528.5,124.6 563.5,148.8 598.5,170.8 633.5,192.8 668.5,214.8 703.5,239.0 738.5,272.0 773.5,272.0 808.5,272.0 843.5,272.0 878.5,272.0" />
+      <polyline fill="none" stroke="#a78bfa" stroke-width="3" points="73.5,233.6 108.5,233.6 143.5,218.4 178.5,206.3 213.5,192.5 248.5,183.5 283.5,172.4 318.5,164.8 353.5,158.3 388.5,147.5 423.5,144.1 458.5,142.4 493.5,135.4 528.5,127.5 563.5,118.8 598.5,115.0 633.5,107.1 668.5,106.4 703.5,106.1 738.5,105.7 773.5,82.5 808.5,58.3 843.5,54.2 878.5,54.2" />
+      <circle cx="73.5" cy="38.8" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 1: 106 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="73.5" cy="233.6" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 1: 21,411 passing host tests</title></circle><circle cx="108.5" cy="38.8" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 2: 106 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="108.5" cy="233.6" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 2: 21,411 passing host tests</title></circle><circle cx="143.5" cy="38.8" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 3: 106 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="143.5" cy="218.4" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 3: 21,455 passing host tests</title></circle><circle cx="178.5" cy="38.8" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 4: 106 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="178.5" cy="206.3" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 4: 21,490 passing host tests</title></circle><circle cx="213.5" cy="38.8" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 5: 106 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="213.5" cy="192.5" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 5: 21,530 passing host tests</title></circle><circle cx="248.5" cy="38.8" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 6: 106 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="248.5" cy="183.5" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 6: 21,556 passing host tests</title></circle><circle cx="283.5" cy="38.8" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 7: 106 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="283.5" cy="172.4" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 7: 21,588 passing host tests</title></circle><circle cx="318.5" cy="38.8" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 8: 106 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="318.5" cy="164.8" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 8: 21,610 passing host tests</title></circle><circle cx="353.5" cy="38.8" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 9: 106 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="353.5" cy="158.3" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 9: 21,629 passing host tests</title></circle><circle cx="388.5" cy="63.0" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 10: 95 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="388.5" cy="147.5" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 10: 21,660 passing host tests</title></circle><circle cx="423.5" cy="63.0" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 11: 95 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="423.5" cy="144.1" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 11: 21,670 passing host tests</title></circle><circle cx="458.5" cy="85.0" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 12: 85 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="458.5" cy="142.4" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 12: 21,675 passing host tests</title></circle><circle cx="493.5" cy="102.6" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 13: 77 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="493.5" cy="135.4" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 13: 21,695 passing host tests</title></circle><circle cx="528.5" cy="124.6" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 14: 67 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="528.5" cy="127.5" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 14: 21,718 passing host tests</title></circle><circle cx="563.5" cy="148.8" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 15: 56 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="563.5" cy="118.8" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 15: 21,743 passing host tests</title></circle><circle cx="598.5" cy="170.8" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 16: 46 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="598.5" cy="115.0" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 16: 21,754 passing host tests</title></circle><circle cx="633.5" cy="192.8" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 17: 36 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="633.5" cy="107.1" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 17: 21,777 passing host tests</title></circle><circle cx="668.5" cy="214.8" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 18: 26 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="668.5" cy="106.4" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 18: 21,779 passing host tests</title></circle><circle cx="703.5" cy="239.0" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 19: 15 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="703.5" cy="106.1" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 19: 21,780 passing host tests</title></circle><circle cx="738.5" cy="272.0" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 20: 0 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="738.5" cy="105.7" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 20: 21,781 passing host tests</title></circle><circle cx="773.5" cy="272.0" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 21: 0 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="773.5" cy="82.5" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 21: 21,848 passing host tests</title></circle><circle cx="808.5" cy="272.0" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 22: 0 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="808.5" cy="58.3" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 22: 21,918 passing host tests</title></circle><circle cx="843.5" cy="272.0" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 23: 0 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="843.5" cy="54.2" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 23: 21,930 passing host tests</title></circle><circle cx="878.5" cy="272.0" r="4" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>Wave 24: 0 legacy inline liftFunction copies remaining (#1903)</title></circle><circle cx="878.5" cy="54.2" r="4" fill="#a78bfa" stroke="#0f172a" stroke-width="1.5"><title>Wave 24: 21,930 passing host tests</title></circle>
+      <text x="73.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W1</text><text x="108.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W2</text><text x="143.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W3</text><text x="178.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W4</text><text x="213.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W5</text><text x="248.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W6</text><text x="283.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W7</text><text x="318.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W8</text><text x="353.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W9</text><text x="388.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W10</text><text x="423.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W11</text><text x="458.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W12</text><text x="493.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W13</text><text x="528.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W14</text><text x="563.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W15</text><text x="598.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W16</text><text x="633.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W17</text><text x="668.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W18</text><text x="703.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W19</text><text x="738.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W20</text><text x="773.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W21</text><text x="808.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W22</text><text x="843.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W23</text><text x="878.5" y="290" text-anchor="middle" fill="#94a3b8" font-size="10">W24</text>
+      <text x="394.5" y="53.0" fill="#f43f5e" font-size="11" font-weight="700">#1903 Starts (106 → 0)</text>
+      <text x="868.5" y="44.2" text-anchor="end" fill="#a78bfa" font-size="12" font-weight="700">21,930 Passing Tests</text>
+    </svg>
+    
+    </section>
+
+    <!-- TIME & EFFICIENCY TELEMETRY -->
+    <section id="telemetry" class="section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">4. Time Breakdown, Suite Efficiency &amp; Governance Telemetry</h2>
+          <p class="section-desc">Measured turnaround times, host test-suite utilization, Operator touchpoints, and switchboard wake reduction across the 95.8-hour sprint.</p>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <!-- Turnaround Breakdown -->
+        <div class="subcard">
+          <h3>⏱️ Median Chunk Turnaround (Dispatch to Merge)</h3>
+          <p class="text-muted" style="margin-bottom:1rem;">Code chunks averaged a <strong>78-minute median</strong> from build release to merge; per-wave <code>W&lt;N&gt;-REC</code> records chunks averaged <strong>44 minutes</strong>.</p>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Active Build, Narrow Tests &amp; Critic</strong></span>
+              <span><strong>30 min</strong> (38%)</span>
+            </div>
+            <div class="bar-track"><div class="bar-fill" style="width:38%; background:#38bdf8;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Host Full Test Suite (21,930 tests)</strong></span>
+              <span><strong>18.5 min</strong> (24%)</span>
+            </div>
+            <div class="bar-track"><div class="bar-fill" style="width:24%; background:#a78bfa;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Serialized 2nd-Lane Suite Slot Wait</strong></span>
+              <span><strong>17.5 min</strong> (22%)</span>
+            </div>
+            <div class="bar-track"><div class="bar-fill" style="width:22%; background:#fbbf24;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>GitHub PR CI + Multi-Key Exact-Head Review &amp; Merge</strong></span>
+              <span><strong>12 min</strong> (16%)</span>
+            </div>
+            <div class="bar-track"><div class="bar-fill" style="width:16%; background:#34d399;"></div></div>
+          </div>
+        </div>
+
+        <!-- Suite & Wake Efficiency -->
+        <div class="subcard">
+          <h3>⚡ Suite Serialization &amp; Quiet Routing Impact</h3>
+          <p class="text-muted" style="margin-bottom:1rem;">Key process telemetry comparing early waves (Waves 1–2) against hardened mid/late-sprint execution (Waves 3–24).</p>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Observer Switchboard Wakes (Waves 1–2 → Waves 3–24)</strong></span>
+              <span style="color:var(--green)"><strong>20.0/hr → 1.1/hr (−94.5%)</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill" style="width:94.5%; background:linear-gradient(90deg, #34d399, #38bdf8);"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Open Draft PR Age at Merge (Waves 6–24, 53 PRs)</strong></span>
+              <span style="color:var(--cyan)"><strong>Median 13 min</strong> (down from ~90m)</span>
+            </div>
+            <div class="bar-track"><div class="bar-fill" style="width:86%; background:#38bdf8;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Wasted Old-Base Suites When Lane 2 Serialized Behind Lane 1</strong></span>
+              <span style="color:var(--green)"><strong>0 Wasted Suites</strong> across 11 Dual Waves</span>
+            </div>
+            <div class="bar-track"><div class="bar-fill" style="width:100%; background:#34d399;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Operator Touchpoints Across 95.8h (19 Total)</strong></span>
+              <span><strong>10 Planned · 3 Host Env · 6 Drift</strong></span>
+            </div>
+            <div class="bar-track">
+              <div class="bar-fill" style="width:53%; background:#34d399;" title="10 Planned Governance/Scope/Release Grants"></div>
+              <div class="bar-fill" style="width:16%; background:#38bdf8;" title="3 Wave 1 Environment Recoveries (Power Outage, Xcode License)"></div>
+              <div class="bar-fill" style="width:31%; background:#fbbf24;" title="6 Early Process-Drift Corrections (0 in Waves 6-17)"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- POST-MORTEM -->
+    <section id="postmortem" class="section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">5. Sprint Post-Mortem: What Worked vs. What Didn’t</h2>
+          <p class="section-desc">Synthesized by the Project Manager, Architect (Ruling A384), and Sprint Observer across all 24 waves.</p>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div>
+          <h3 style="color:var(--green); margin-top:0;">✅ What Worked Exceptionally Well (Keep &amp; Codify)</h3>
+          <ul class="pm-list">
+            <li class="pm-item">
+              <strong>1. Per-Wave <code>W&lt;N&gt;-REC</code> Records Pattern &amp; Exclusive Change-Log Slot</strong>
+              Running a dedicated 3-file records PR (<code>CHANGELOG.md</code>, <code>FEATURES.md</code>, <code>.prawduct/change-log.md</code>) at the end of every wave (18 consecutive waves) eliminated cross-lane merge conflicts and allowed <code>W24-REL</code> (<a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2516" target="_blank">PR #2516</a>) to promote <code>[Unreleased] → [5.34.0]</code> (87 bullets, 21,032 B) <strong>100% byte-identically with zero retroactive edits</strong>.
+            </li>
+            <li class="pm-item">
+              <strong>2. Systematic Flake Elimination &amp; 10-Chunk <code>#1903</code> Lift Migration</strong>
+              Rather than working around test flakes, the fleet filed, root-caused, and closed every single flake encountered (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2152" target="_blank">#2152</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2447" target="_blank">#2447</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2481" target="_blank">#2481</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2485" target="_blank">#2485</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2184" target="_blank">#2184</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2504" target="_blank">#2504</a>) while migrating 106 inline lift helpers to <code>test/helpers/lift.js</code>, achieving <strong>0 flakes across the final 22 full-suite runs</strong>.
+            </li>
+            <li class="pm-item">
+              <strong>3. Governed Builder In-Place <code>/clear</code> Cycles (45/45 First-Pass)</strong>
+              Clearing Builder context before every <code>PLAN</code> and <code>BUILD</code> phase kept starting context load at <strong>1%–4.5%</strong> across the entire 4-day run, completely preventing long-session instruction drift on Builder lanes.
+            </li>
+            <li class="pm-item">
+              <strong>4. Multi-Layered Exact-Head Pre-Merge Review</strong>
+              Critic caught <a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2509" target="_blank">PR #2509</a>’s Caddy cutover trap on <code>/api/setup/complete</code>; Architect caught fail-open Master spawn (<a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2477" target="_blank">PR #2477</a>), symlink clobber (<a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2487" target="_blank">PR #2487</a>), and pre-cut status-doc drift (<a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2516" target="_blank">PR #2516</a>); Observer caught <code>&gt;400 B</code> changelog caps and label omissions; Integrator caught exception-counter bugs (<a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2460" target="_blank">PR #2460</a>).
+            </li>
+            <li class="pm-item">
+              <strong>5. Serializing 2nd-Lane Host Suites Behind 1st-Lane Merge Windows</strong>
+              In all 11 dual-lane waves where Lane 2 rebased onto Lane 1’s merged commit <em>before</em> starting its 19-minute host suite, <strong>zero green suites were voided by base movement</strong>.
+            </li>
+          </ul>
+        </div>
+
+        <div>
+          <h3 style="color:var(--amber); margin-top:0;">⚠️ What Didn’t Work &amp; Proven Fixes for <code>v5.35.0</code></h3>
+          <ul class="pm-list">
+            <li class="pm-item warn">
+              <strong>1. Multi-Compaction Integrator Thread Drift &amp; Unpolled Post-Merge CI (6h 14m Idle)</strong>
+              Accepting automatic context compaction at Wave 17/18 instead of an explicit procedural refresh caused the Integrator session to end its turn twice while post-merge <code>main</code> CI was still running (4h 36m in W21, 1h 02m in W22). <strong>Fix:</strong> Wave 23’s explicit <code>INT-REFRESH</code> re-attestation immediately yielded <strong>0m of stall in Waves 23–24</strong>; <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1783" target="_blank">#1783</a> adds automatic CI-completion wakes in <code>v5.35.0</code>.
+            </li>
+            <li class="pm-item warn">
+              <strong>2. Duplicate Host Suites (~170m) &amp; Omitted &lt;3s Static Scanners (~53m)</strong>
+              Running both lanes’ 19-minute local suites concurrently on the same base (Waves 1–2, 9–11) or re-running a 19-minute suite for a 2-line prose tweak (<a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2514" target="_blank">PR #2514</a>), plus omitting fast repo scanners (<code>auto-merge-callers</code>, <code>tmux-session-names</code>, <code>wrap-indicator-card</code>) from pre-suite narrow rings. <strong>Fix:</strong> Ship <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2371" target="_blank">#2371</a> (CI-as-suite evidence), <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2498" target="_blank">#2498</a> (5-Stage S/M/L Test Pyramid), and mandatory &lt;3s static pre-suite rings.
+            </li>
+            <li class="pm-item warn">
+              <strong>3. Premature <code>work-blocked</code> Alerts (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2141" target="_blank">#2141</a>) &amp; JUnit Subtest Blind Spot (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2456" target="_blank">#2456</a>)</strong>
+              <code>bridge-notify.js</code> paged Discord within 6–9s when a Builder waited 4–13m for a routine coordinator ruling, with no <code>work-unblocked</code> clearance notice; and top-level JUnit parsing missed nested subtest failures when <code>node --test</code> exited <code>rc=1</code>. <strong>Fix:</strong> Scheduled in Waves 2 &amp; 4 of <code>v5.35.0</code>.
+            </li>
+            <li class="pm-item warn">
+              <strong>4. Rebase-Merge Commit-Message Auto-Close Checks &amp; Launch-Dirty Finalize</strong>
+              <code>gh pr merge --rebase</code> ignores <code>Fixes #N</code> when only in the PR body or triggers on intermediate branch commits (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2313" target="_blank">#2313</a>); and <code>tc finalize</code> refused on a file that was dirty at launch but merged to <code>main</code> in Wave 1. <strong>Fix:</strong> Pre-merge commit-log regex check + clean-<code>HEAD</code> launch-dirty reconciliation in <code>v5.35.0</code>.
+            </li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- INTERACTIVE 24-WAVE EXPLORER -->
+    <section id="waves" class="section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">6. Complete 24-Wave &amp; 75-PR Interactive Explorer</h2>
+          <p class="section-desc">Filter by lane, category, or search any PR number, commit SHA, or GitHub issue across all 24 waves.</p>
+        </div>
+      </div>
+
+      <div class="filter-bar">
+        <div class="filter-btns">
+          <button class="filter-btn active" data-filter="all">All 24 Waves (75 PRs)</button>
+          <button class="filter-btn" data-filter="lane-a">Builder Lane A</button>
+          <button class="filter-btn" data-filter="lane-b">Builder Lane B</button>
+          <button class="filter-btn" data-filter="records">Wave Records (W&lt;N&gt;-REC)</button>
+          <button class="filter-btn" data-filter="lift">#1903 Lift Migration (10 Chunks)</button>
+          <button class="filter-btn" data-filter="flake">Flake &amp; Suite Fixes</button>
+          <button class="filter-btn" data-filter="release">Release Cut (v5.34.0)</button>
+        </div>
+        <input type="search" id="waveSearch" class="search-input" placeholder="Search PR #, issue #, SHA, or topic…" aria-label="Search waves and pull requests" />
+      </div>
+
+      <div id="waveContainer">
+        
+        <div class="wave-card" data-tags="all lane-a lane-b" data-search="wave 1 wave 1 — launch safety, async pane reads & release docs 2418 w1-a1 governed landing settlement & launch state boundary hardening #2364 #2403 2419 w1-b1 async tmux pane reads & launch-isolation confirmation ux #2393 2420 w1-a2a shared-document notice routing & delivery baseline #2389 2421 w1-b2 tls endpoint check hints & operator diagnostic clarity #2414 2422 w1-a2b wake-monitor idle observation & shared-doc delivery completion #2389">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 1</span>
+              <h3 class="wave-title">Wave 1 — Launch Safety, Async Pane Reads & Release Docs</h3>
+              <span class="wave-window">Oct 15, 14:32–18:56 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">5 PRs</span>
+              <span class="badge badge-purple">21,411 Tests</span>
+              <span class="badge badge-rose">#1903 Lift Left: 106</span>
+              <span class="badge badge-green">0 Flakes</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-cyan">W1-A1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2418" target="_blank" rel="noopener" class="pr-link">PR #2418</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/e0fb05fa" target="_blank" rel="noopener" class="sha-link"><code>e0fb05fa</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2364" target="_blank" rel="noopener" class="issue-pill">#2364</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2403" target="_blank" rel="noopener" class="issue-pill">#2403</a></td>
+                <td>Governed landing settlement & launch state boundary hardening</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-purple">W1-B1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2419" target="_blank" rel="noopener" class="pr-link">PR #2419</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/ef6c1f9f" target="_blank" rel="noopener" class="sha-link"><code>ef6c1f9f</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2393" target="_blank" rel="noopener" class="issue-pill">#2393</a></td>
+                <td>Async tmux pane reads & launch-isolation confirmation UX</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-cyan">W1-A2a</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2420" target="_blank" rel="noopener" class="pr-link">PR #2420</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/6bc21b40" target="_blank" rel="noopener" class="sha-link"><code>6bc21b40</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2389" target="_blank" rel="noopener" class="issue-pill">#2389</a></td>
+                <td>Shared-document notice routing & delivery baseline</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-purple">W1-B2</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2421" target="_blank" rel="noopener" class="pr-link">PR #2421</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/a1b43b12" target="_blank" rel="noopener" class="sha-link"><code>a1b43b12</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2414" target="_blank" rel="noopener" class="issue-pill">#2414</a></td>
+                <td>TLS endpoint check hints & operator diagnostic clarity</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-cyan">W1-A2b</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2422" target="_blank" rel="noopener" class="pr-link">PR #2422</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/9e41d75c" target="_blank" rel="noopener" class="sha-link"><code>9e41d75c</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2389" target="_blank" rel="noopener" class="issue-pill">#2389</a></td>
+                <td>Wake-monitor idle observation & shared-doc delivery completion</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+
+        <div class="wave-card" data-tags="all lane-a lane-b records" data-search="wave 2 wave 2 — coordinated lane wraps, mobile settings & batch 1 records 2423 w2-b1 coordinated lane wrap drawer & unarmed lane-wrap contract #2366 2424 w2-a1a headless lane wrap & merge-gate guards #2320 2425 w2-b2a project settings mobile layout & responsive drawer controls #2361 2426 w2-a1b feature index & release-gate alignment for lane wraps #2320 2427 w2-b2b direct-mode coverage & responsive settings verification #2361 2428 w2-a2b antigravity pane-not-at-rest diagnostic harness #2358 2429 w2-rec waves 1–2 source-checked changelog, features & change-log records ">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 2</span>
+              <h3 class="wave-title">Wave 2 — Coordinated Lane Wraps, Mobile Settings & Batch 1 Records</h3>
+              <span class="wave-window">Oct 15, 18:58 – Oct 16, 00:48 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">7 PRs</span>
+              <span class="badge badge-purple">21,411 Tests</span>
+              <span class="badge badge-rose">#1903 Lift Left: 106</span>
+              <span class="badge badge-amber">1 Flake Rerun</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-purple">W2-B1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2423" target="_blank" rel="noopener" class="pr-link">PR #2423</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/6a30b2e1" target="_blank" rel="noopener" class="sha-link"><code>6a30b2e1</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2366" target="_blank" rel="noopener" class="issue-pill">#2366</a></td>
+                <td>Coordinated lane wrap drawer & unarmed lane-wrap contract</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-cyan">W2-A1a</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2424" target="_blank" rel="noopener" class="pr-link">PR #2424</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/42c7e891" target="_blank" rel="noopener" class="sha-link"><code>42c7e891</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2320" target="_blank" rel="noopener" class="issue-pill">#2320</a></td>
+                <td>Headless lane wrap & merge-gate guards</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-purple">W2-B2a</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2425" target="_blank" rel="noopener" class="pr-link">PR #2425</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/b19f04d2" target="_blank" rel="noopener" class="sha-link"><code>b19f04d2</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2361" target="_blank" rel="noopener" class="issue-pill">#2361</a></td>
+                <td>Project Settings mobile layout & responsive drawer controls</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-cyan">W2-A1b</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2426" target="_blank" rel="noopener" class="pr-link">PR #2426</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/7d82a910" target="_blank" rel="noopener" class="sha-link"><code>7d82a910</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2320" target="_blank" rel="noopener" class="issue-pill">#2320</a></td>
+                <td>Feature index & release-gate alignment for lane wraps</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-purple">W2-B2b</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2427" target="_blank" rel="noopener" class="pr-link">PR #2427</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/3f91c284" target="_blank" rel="noopener" class="sha-link"><code>3f91c284</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2361" target="_blank" rel="noopener" class="issue-pill">#2361</a></td>
+                <td>Direct-mode coverage & responsive settings verification</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-cyan">W2-A2b</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2428" target="_blank" rel="noopener" class="pr-link">PR #2428</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/5c18e73a" target="_blank" rel="noopener" class="sha-link"><code>5c18e73a</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2358" target="_blank" rel="noopener" class="issue-pill">#2358</a></td>
+                <td>Antigravity pane-not-at-rest diagnostic harness</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-amber">W2-REC</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2429" target="_blank" rel="noopener" class="pr-link">PR #2429</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/802b511e" target="_blank" rel="noopener" class="sha-link"><code>802b511e</code></a></td>
+                <td><span class="text-muted">Wave Records / Release</span></td>
+                <td>Waves 1–2 source-checked CHANGELOG, FEATURES & change-log records</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+
+        <div class="wave-card" data-tags="all lane-a lane-b" data-search="wave 3 wave 3 — continuity engine cutovers, cli precision & bridge timestamps 2430 w3-a1 live session rule-count refresh after clear #2317 2431 w3-b2 session launch binding & stale-view error classification #2365 2432 w3-b1 operator bridge discord connection local-time formatting #2313 2434 w3-a2 cli --help and --request-id contract & documentation #2318">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 3</span>
+              <h3 class="wave-title">Wave 3 — Continuity Engine Cutovers, CLI Precision & Bridge Timestamps</h3>
+              <span class="wave-window">Oct 16, 10:37–16:40 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">4 PRs</span>
+              <span class="badge badge-purple">21,455 Tests</span>
+              <span class="badge badge-rose">#1903 Lift Left: 106</span>
+              <span class="badge badge-green">0 Flakes</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-cyan">W3-A1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2430" target="_blank" rel="noopener" class="pr-link">PR #2430</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/12a8f49c" target="_blank" rel="noopener" class="sha-link"><code>12a8f49c</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2317" target="_blank" rel="noopener" class="issue-pill">#2317</a></td>
+                <td>Live session rule-count refresh after clear</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-purple">W3-B2</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2431" target="_blank" rel="noopener" class="pr-link">PR #2431</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/9b40e12d" target="_blank" rel="noopener" class="sha-link"><code>9b40e12d</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2365" target="_blank" rel="noopener" class="issue-pill">#2365</a></td>
+                <td>Session launch binding & stale-view error classification</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-purple">W3-B1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2432" target="_blank" rel="noopener" class="pr-link">PR #2432</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/7c31d80e" target="_blank" rel="noopener" class="sha-link"><code>7c31d80e</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2313" target="_blank" rel="noopener" class="issue-pill">#2313</a></td>
+                <td>Operator Bridge Discord connection local-time formatting</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-cyan">W3-A2</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2434" target="_blank" rel="noopener" class="pr-link">PR #2434</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/4ebe2810" target="_blank" rel="noopener" class="sha-link"><code>4ebe2810</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2318" target="_blank" rel="noopener" class="issue-pill">#2318</a></td>
+                <td>CLI --help and --request-id contract & documentation</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+
+        <div class="wave-card" data-tags="all lane-a lane-b" data-search="wave 4 wave 4 — ipv6 tls san hardening, no-login tailnet notice & pane telemetry 2435 w4-b1 node 22 openssl ipv6 [::1] san certificate generation & check #2375 2436 w4-a2 antigravity 167x27 pane cursor & hint-slot measurement #2358 2437 w4-b2 accessible no-login security banner over tailnet ingress #2378">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 4</span>
+              <h3 class="wave-title">Wave 4 — IPv6 TLS SAN Hardening, No-Login Tailnet Notice & Pane Telemetry</h3>
+              <span class="wave-window">Oct 16, 16:45–21:30 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">3 PRs</span>
+              <span class="badge badge-purple">21,490 Tests</span>
+              <span class="badge badge-rose">#1903 Lift Left: 106</span>
+              <span class="badge badge-green">0 Flakes</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-purple">W4-B1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2435" target="_blank" rel="noopener" class="pr-link">PR #2435</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/8d21f09a" target="_blank" rel="noopener" class="sha-link"><code>8d21f09a</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2375" target="_blank" rel="noopener" class="issue-pill">#2375</a></td>
+                <td>Node 22 OpenSSL IPv6 [::1] SAN certificate generation & check</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-cyan">W4-A2</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2436" target="_blank" rel="noopener" class="pr-link">PR #2436</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/3e74c11b" target="_blank" rel="noopener" class="sha-link"><code>3e74c11b</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2358" target="_blank" rel="noopener" class="issue-pill">#2358</a></td>
+                <td>Antigravity 167x27 pane cursor & hint-slot measurement</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-purple">W4-B2</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2437" target="_blank" rel="noopener" class="pr-link">PR #2437</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/6f90a23c" target="_blank" rel="noopener" class="sha-link"><code>6f90a23c</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2378" target="_blank" rel="noopener" class="issue-pill">#2378</a></td>
+                <td>Accessible no-login security banner over tailnet ingress</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+
+        <div class="wave-card" data-tags="all lane-a lane-b records" data-search="wave 5 wave 5 — headless finalize foundations & waves 3–5 records 2440 w5-a1 governed headless session finalization (tc finalize) core #2027 2441 w5-b1 coordinator lifecycle authority & clean-worktree probe #2072 2442 w5-rec waves 3–5 combined changelog, features & change-log records ">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 5</span>
+              <h3 class="wave-title">Wave 5 — Headless Finalize Foundations & Waves 3–5 Records</h3>
+              <span class="wave-window">Oct 16, 21:35 – Oct 17, 00:35 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">3 PRs</span>
+              <span class="badge badge-purple">21,530 Tests</span>
+              <span class="badge badge-rose">#1903 Lift Left: 106</span>
+              <span class="badge badge-amber">1 Flake Rerun</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-cyan">W5-A1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2440" target="_blank" rel="noopener" class="pr-link">PR #2440</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/2a81d40f" target="_blank" rel="noopener" class="sha-link"><code>2a81d40f</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2027" target="_blank" rel="noopener" class="issue-pill">#2027</a></td>
+                <td>Governed headless session finalization (tc finalize) core</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-purple">W5-B1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2441" target="_blank" rel="noopener" class="pr-link">PR #2441</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/5b92e11a" target="_blank" rel="noopener" class="sha-link"><code>5b92e11a</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2072" target="_blank" rel="noopener" class="issue-pill">#2072</a></td>
+                <td>Coordinator lifecycle authority & clean-worktree probe</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-amber">W5-REC</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2442" target="_blank" rel="noopener" class="pr-link">PR #2442</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/896f6f72" target="_blank" rel="noopener" class="sha-link"><code>896f6f72</code></a></td>
+                <td><span class="text-muted">Wave Records / Release</span></td>
+                <td>Waves 3–5 combined CHANGELOG, FEATURES & change-log records</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+
+        <div class="wave-card" data-tags="all lane-a lane-b records flake" data-search="wave 6 wave 6 — startup dialog classifier, nbsp guard & tmux prompt-wait fix 2444 w6-b1a single-pass startup-dialog classifier & non-breaking space source guard #2202 #2203 2446 w6-b1b startup dialog state transitions & recovery #2201 2448 w6-a2 eliminate tmux prompt-wait race (#2152) + argv parameter safety (#831) #2152 #831 2449 w6-rec wave 6 records & byte-identical change-log archival ">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 6</span>
+              <h3 class="wave-title">Wave 6 — Startup Dialog Classifier, NBSP Guard & Tmux Prompt-Wait Fix</h3>
+              <span class="wave-window">Oct 17, 00:40–04:48 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">4 PRs</span>
+              <span class="badge badge-purple">21,556 Tests</span>
+              <span class="badge badge-rose">#1903 Lift Left: 106</span>
+              <span class="badge badge-green">0 Flakes</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-purple">W6-B1a</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2444" target="_blank" rel="noopener" class="pr-link">PR #2444</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/6216a7e5" target="_blank" rel="noopener" class="sha-link"><code>6216a7e5</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2202" target="_blank" rel="noopener" class="issue-pill">#2202</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2203" target="_blank" rel="noopener" class="issue-pill">#2203</a></td>
+                <td>Single-pass startup-dialog classifier & non-breaking space source guard</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-purple">W6-B1b</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2446" target="_blank" rel="noopener" class="pr-link">PR #2446</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/98774fb0" target="_blank" rel="noopener" class="sha-link"><code>98774fb0</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2201" target="_blank" rel="noopener" class="issue-pill">#2201</a></td>
+                <td>Startup dialog state transitions & recovery</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-cyan">W6-A2</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2448" target="_blank" rel="noopener" class="pr-link">PR #2448</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/508074e9" target="_blank" rel="noopener" class="sha-link"><code>508074e9</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2152" target="_blank" rel="noopener" class="issue-pill">#2152</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/831" target="_blank" rel="noopener" class="issue-pill">#831</a></td>
+                <td>Eliminate tmux prompt-wait race (#2152) + argv parameter safety (#831)</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-amber">W6-REC</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2449" target="_blank" rel="noopener" class="pr-link">PR #2449</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/474a6824" target="_blank" rel="noopener" class="sha-link"><code>474a6824</code></a></td>
+                <td><span class="text-muted">Wave Records / Release</span></td>
+                <td>Wave 6 records & byte-identical change-log archival</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+
+        <div class="wave-card" data-tags="all lane-a lane-b records flake" data-search="wave 7 wave 7 — antigravity stranded-nudge recovery & engine dialog guards 2454 w7-a1 antigravity boxed-composer idle detection & awaitbashprompt helper (#2447) #2358 #2447 2455 w7-b1 startup dialog blocker persistence, wrap indicator card & engine guide #2204 #2194 #2196 2457 w7-rec wave 7 changelog, features & change-log records ">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 7</span>
+              <h3 class="wave-title">Wave 7 — Antigravity Stranded-Nudge Recovery & Engine Dialog Guards</h3>
+              <span class="wave-window">Oct 17, 04:50–07:39 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">3 PRs</span>
+              <span class="badge badge-purple">21,588 Tests</span>
+              <span class="badge badge-rose">#1903 Lift Left: 106</span>
+              <span class="badge badge-green">0 Flakes</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-cyan">W7-A1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2454" target="_blank" rel="noopener" class="pr-link">PR #2454</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/81532b76" target="_blank" rel="noopener" class="sha-link"><code>81532b76</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2358" target="_blank" rel="noopener" class="issue-pill">#2358</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2447" target="_blank" rel="noopener" class="issue-pill">#2447</a></td>
+                <td>Antigravity boxed-composer idle detection & awaitBashPrompt helper (#2447)</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-purple">W7-B1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2455" target="_blank" rel="noopener" class="pr-link">PR #2455</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/40897a65" target="_blank" rel="noopener" class="sha-link"><code>40897a65</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2204" target="_blank" rel="noopener" class="issue-pill">#2204</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2194" target="_blank" rel="noopener" class="issue-pill">#2194</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2196" target="_blank" rel="noopener" class="issue-pill">#2196</a></td>
+                <td>Startup dialog blocker persistence, wrap indicator card & engine guide</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-amber">W7-REC</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2457" target="_blank" rel="noopener" class="pr-link">PR #2457</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/dd055aed" target="_blank" rel="noopener" class="sha-link"><code>dd055aed</code></a></td>
+                <td><span class="text-muted">Wave Records / Release</span></td>
+                <td>Wave 7 CHANGELOG, FEATURES & change-log records</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+
+        <div class="wave-card" data-tags="all lane-a lane-b records" data-search="wave 8 wave 8 — stored launch-blocker sweep & reconcile safety 2459 w8-a1 launch-blocker state transitions & diagnostic reporting #2452 #2453 2460 w8-b1 15s live launch-blocker sweep & exception-safe reconcile counter #2450 #2451 2461 w8-rec wave 8 changelog, features & change-log records ">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 8</span>
+              <h3 class="wave-title">Wave 8 — Stored Launch-Blocker Sweep & Reconcile Safety</h3>
+              <span class="wave-window">Oct 17, 07:42–10:00 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">3 PRs</span>
+              <span class="badge badge-purple">21,610 Tests</span>
+              <span class="badge badge-rose">#1903 Lift Left: 106</span>
+              <span class="badge badge-green">0 Flakes</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-cyan">W8-A1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2459" target="_blank" rel="noopener" class="pr-link">PR #2459</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/4051fc6d" target="_blank" rel="noopener" class="sha-link"><code>4051fc6d</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2452" target="_blank" rel="noopener" class="issue-pill">#2452</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2453" target="_blank" rel="noopener" class="issue-pill">#2453</a></td>
+                <td>Launch-blocker state transitions & diagnostic reporting</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-purple">W8-B1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2460" target="_blank" rel="noopener" class="pr-link">PR #2460</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/afbe5895" target="_blank" rel="noopener" class="sha-link"><code>afbe5895</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2450" target="_blank" rel="noopener" class="issue-pill">#2450</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2451" target="_blank" rel="noopener" class="issue-pill">#2451</a></td>
+                <td>15s live launch-blocker sweep & exception-safe reconcile counter</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-amber">W8-REC</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2461" target="_blank" rel="noopener" class="pr-link">PR #2461</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/d06cd1e1" target="_blank" rel="noopener" class="sha-link"><code>d06cd1e1</code></a></td>
+                <td><span class="text-muted">Wave Records / Release</span></td>
+                <td>Wave 8 CHANGELOG, FEATURES & change-log records</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+
+        <div class="wave-card" data-tags="all lane-a lane-b records" data-search="wave 9 wave 9 — change-log union-merge prevention & dialog hardening 2462 w9-b1 startup dialog edge-case classification & recovery #2206 2463 w9-a1 stop union-merge corruption in .prawduct/change-log.md & adr 0025 #2042 2464 w9-rec wave 9 records & byte-identical change-log archival ">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 9</span>
+              <h3 class="wave-title">Wave 9 — Change-Log Union-Merge Prevention & Dialog Hardening</h3>
+              <span class="wave-window">Oct 17, 10:05–12:19 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">3 PRs</span>
+              <span class="badge badge-purple">21,629 Tests</span>
+              <span class="badge badge-rose">#1903 Lift Left: 106</span>
+              <span class="badge badge-green">0 Flakes</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-purple">W9-B1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2462" target="_blank" rel="noopener" class="pr-link">PR #2462</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/0a4dc303" target="_blank" rel="noopener" class="sha-link"><code>0a4dc303</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2206" target="_blank" rel="noopener" class="issue-pill">#2206</a></td>
+                <td>Startup dialog edge-case classification & recovery</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-cyan">W9-A1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2463" target="_blank" rel="noopener" class="pr-link">PR #2463</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/54f2b06a" target="_blank" rel="noopener" class="sha-link"><code>54f2b06a</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2042" target="_blank" rel="noopener" class="issue-pill">#2042</a></td>
+                <td>Stop union-merge corruption in .prawduct/change-log.md & ADR 0025</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-amber">W9-REC</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2464" target="_blank" rel="noopener" class="pr-link">PR #2464</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/0eb92b05" target="_blank" rel="noopener" class="sha-link"><code>0eb92b05</code></a></td>
+                <td><span class="text-muted">Wave Records / Release</span></td>
+                <td>Wave 9 records & byte-identical change-log archival</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+
+        <div class="wave-card" data-tags="all lane-a lane-b records lift" data-search="wave 10 wave 10 — non-git wrap support & #1903 lift migration chunk 01 2466 w10-b1 non-git project wrap pipeline support & clean step skipping #2008 #2155 2467 w10-a1 #1903 chunk 01 shared test/helpers/lift.js foundation (106 -> 95) #1280 #1903 2468 w10-rec wave 10 changelog, features & change-log records ">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 10</span>
+              <h3 class="wave-title">Wave 10 — Non-Git Wrap Support & #1903 Lift Migration Chunk 01</h3>
+              <span class="wave-window">Oct 17, 12:22–14:23 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">3 PRs</span>
+              <span class="badge badge-purple">21,660 Tests</span>
+              <span class="badge badge-rose">#1903 Lift Left: 95</span>
+              <span class="badge badge-green">0 Flakes</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-purple">W10-B1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2466" target="_blank" rel="noopener" class="pr-link">PR #2466</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/1d537f5d" target="_blank" rel="noopener" class="sha-link"><code>1d537f5d</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2008" target="_blank" rel="noopener" class="issue-pill">#2008</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2155" target="_blank" rel="noopener" class="issue-pill">#2155</a></td>
+                <td>Non-git project wrap pipeline support & clean step skipping</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-cyan">W10-A1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2467" target="_blank" rel="noopener" class="pr-link">PR #2467</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/f7eb5439" target="_blank" rel="noopener" class="sha-link"><code>f7eb5439</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1280" target="_blank" rel="noopener" class="issue-pill">#1280</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1903" target="_blank" rel="noopener" class="issue-pill">#1903</a></td>
+                <td>#1903 Chunk 01 shared test/helpers/lift.js foundation (106 -> 95)</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-amber">W10-REC</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2468" target="_blank" rel="noopener" class="pr-link">PR #2468</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/1a70ccd5" target="_blank" rel="noopener" class="sha-link"><code>1a70ccd5</code></a></td>
+                <td><span class="text-muted">Wave Records / Release</span></td>
+                <td>Wave 10 CHANGELOG, FEATURES & change-log records</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+
+        <div class="wave-card" data-tags="all lane-a lane-b records" data-search="wave 11 wave 11 — medusa socket stability & lift inventory enforcement 2471 w11-b1 medusa switchboard test determinism & socket teardown #2164 #2036 #1640 #1998 2472 w11-a1 lift helper inventory guard & test isolation hardening #2160 #2465 2473 w11-rec wave 11 changelog, features & change-log records ">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 11</span>
+              <h3 class="wave-title">Wave 11 — Medusa Socket Stability & Lift Inventory Enforcement</h3>
+              <span class="wave-window">Oct 17, 14:26–17:16 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">3 PRs</span>
+              <span class="badge badge-purple">21,670 Tests</span>
+              <span class="badge badge-rose">#1903 Lift Left: 95</span>
+              <span class="badge badge-green">0 Flakes</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-purple">W11-B1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2471" target="_blank" rel="noopener" class="pr-link">PR #2471</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/e295e494" target="_blank" rel="noopener" class="sha-link"><code>e295e494</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2164" target="_blank" rel="noopener" class="issue-pill">#2164</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2036" target="_blank" rel="noopener" class="issue-pill">#2036</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1640" target="_blank" rel="noopener" class="issue-pill">#1640</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1998" target="_blank" rel="noopener" class="issue-pill">#1998</a></td>
+                <td>Medusa switchboard test determinism & socket teardown</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-cyan">W11-A1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2472" target="_blank" rel="noopener" class="pr-link">PR #2472</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/86c2c505" target="_blank" rel="noopener" class="sha-link"><code>86c2c505</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2160" target="_blank" rel="noopener" class="issue-pill">#2160</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2465" target="_blank" rel="noopener" class="issue-pill">#2465</a></td>
+                <td>Lift helper inventory guard & test isolation hardening</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-amber">W11-REC</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2473" target="_blank" rel="noopener" class="pr-link">PR #2473</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/bdc1a8bb" target="_blank" rel="noopener" class="sha-link"><code>bdc1a8bb</code></a></td>
+                <td><span class="text-muted">Wave Records / Release</span></td>
+                <td>Wave 11 CHANGELOG, FEATURES & change-log records</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+
+        <div class="wave-card" data-tags="all lane-a lane-b records lift" data-search="wave 12 wave 12 — #1903 lift chunk 02 & recovery test speedup (141s -> 40s) 2474 w12-a1 #1903 chunk 02 lift migration (95 -> 85) & non-claude wrap handling #2470 #1903 2475 w12-b1 cut recovery test wall-clock times from 93–141s down to 2–40s #2469 #2253 2476 w12-rec wave 12 records & byte-identical change-log archival ">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 12</span>
+              <h3 class="wave-title">Wave 12 — #1903 Lift Chunk 02 & Recovery Test Speedup (141s -> 40s)</h3>
+              <span class="wave-window">Oct 17, 17:20–19:24 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">3 PRs</span>
+              <span class="badge badge-purple">21,675 Tests</span>
+              <span class="badge badge-rose">#1903 Lift Left: 85</span>
+              <span class="badge badge-green">0 Flakes</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-cyan">W12-A1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2474" target="_blank" rel="noopener" class="pr-link">PR #2474</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/bd1c1555" target="_blank" rel="noopener" class="sha-link"><code>bd1c1555</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2470" target="_blank" rel="noopener" class="issue-pill">#2470</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1903" target="_blank" rel="noopener" class="issue-pill">#1903</a></td>
+                <td>#1903 Chunk 02 lift migration (95 -> 85) & non-Claude wrap handling</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-purple">W12-B1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2475" target="_blank" rel="noopener" class="pr-link">PR #2475</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/57572e56" target="_blank" rel="noopener" class="sha-link"><code>57572e56</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2469" target="_blank" rel="noopener" class="issue-pill">#2469</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2253" target="_blank" rel="noopener" class="issue-pill">#2253</a></td>
+                <td>Cut recovery test wall-clock times from 93–141s down to 2–40s</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-amber">W12-REC</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2476" target="_blank" rel="noopener" class="pr-link">PR #2476</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/5ccc310e" target="_blank" rel="noopener" class="sha-link"><code>5ccc310e</code></a></td>
+                <td><span class="text-muted">Wave Records / Release</span></td>
+                <td>Wave 12 records & byte-identical change-log archival</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+
+        <div class="wave-card" data-tags="all lane-a lane-b records lift" data-search="wave 13 wave 13 — #1903 lift chunk 03 & master bootstrap fail-closed safety 2478 w13-a1 #1903 chunk 03 lift migration (85 -> 77) & session helper cleanup #1437 #2234 #1903 2477 w13-b1 fail-closed project master bootstrap & route validation #2285 #2146 #1563 2479 w13-rec wave 13 changelog, features & change-log records ">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 13</span>
+              <h3 class="wave-title">Wave 13 — #1903 Lift Chunk 03 & Master Bootstrap Fail-Closed Safety</h3>
+              <span class="wave-window">Oct 17, 19:28–21:40 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">3 PRs</span>
+              <span class="badge badge-purple">21,695 Tests</span>
+              <span class="badge badge-rose">#1903 Lift Left: 77</span>
+              <span class="badge badge-green">0 Flakes</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-cyan">W13-A1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2478" target="_blank" rel="noopener" class="pr-link">PR #2478</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/0b6fa6a8" target="_blank" rel="noopener" class="sha-link"><code>0b6fa6a8</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1437" target="_blank" rel="noopener" class="issue-pill">#1437</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2234" target="_blank" rel="noopener" class="issue-pill">#2234</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1903" target="_blank" rel="noopener" class="issue-pill">#1903</a></td>
+                <td>#1903 Chunk 03 lift migration (85 -> 77) & session helper cleanup</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-purple">W13-B1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2477" target="_blank" rel="noopener" class="pr-link">PR #2477</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/25051c90" target="_blank" rel="noopener" class="sha-link"><code>25051c90</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2285" target="_blank" rel="noopener" class="issue-pill">#2285</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2146" target="_blank" rel="noopener" class="issue-pill">#2146</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1563" target="_blank" rel="noopener" class="issue-pill">#1563</a></td>
+                <td>Fail-closed Project Master bootstrap & route validation</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-amber">W13-REC</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2479" target="_blank" rel="noopener" class="pr-link">PR #2479</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/dd8d28f0" target="_blank" rel="noopener" class="sha-link"><code>dd8d28f0</code></a></td>
+                <td><span class="text-muted">Wave Records / Release</span></td>
+                <td>Wave 13 CHANGELOG, FEATURES & change-log records</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+
+        <div class="wave-card" data-tags="all lane-a lane-b records lift" data-search="wave 14 wave 14 — #1903 lift chunk 04 & governed codex continuity (#2059) 2480 w14-a1 #1903 chunk 04 lift migration (77 -> 67) & route test consolidation #1049 #1903 2482 w14-b1 governed codex thread-id continuity & session rebind (#2059) #2059 2483 w14-rec wave 14 changelog, features & change-log records ">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 14</span>
+              <h3 class="wave-title">Wave 14 — #1903 Lift Chunk 04 & Governed Codex Continuity (#2059)</h3>
+              <span class="wave-window">Oct 17, 21:45 – Oct 18, 00:21 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">3 PRs</span>
+              <span class="badge badge-purple">21,718 Tests</span>
+              <span class="badge badge-rose">#1903 Lift Left: 67</span>
+              <span class="badge badge-amber">1 Flake Rerun</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-cyan">W14-A1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2480" target="_blank" rel="noopener" class="pr-link">PR #2480</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/d5db885a" target="_blank" rel="noopener" class="sha-link"><code>d5db885a</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1049" target="_blank" rel="noopener" class="issue-pill">#1049</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1903" target="_blank" rel="noopener" class="issue-pill">#1903</a></td>
+                <td>#1903 Chunk 04 lift migration (77 -> 67) & route test consolidation</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-purple">W14-B1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2482" target="_blank" rel="noopener" class="pr-link">PR #2482</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/00e82653" target="_blank" rel="noopener" class="sha-link"><code>00e82653</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2059" target="_blank" rel="noopener" class="issue-pill">#2059</a></td>
+                <td>Governed Codex thread-id continuity & session rebind (#2059)</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-amber">W14-REC</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2483" target="_blank" rel="noopener" class="pr-link">PR #2483</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/5a359d2c" target="_blank" rel="noopener" class="sha-link"><code>5a359d2c</code></a></td>
+                <td><span class="text-muted">Wave Records / Release</span></td>
+                <td>Wave 14 CHANGELOG, FEATURES & change-log records</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+
+        <div class="wave-card" data-tags="all lane-a lane-b records lift flake" data-search="wave 15 wave 15 — #1903 lift chunk 05 & pane identity determinism (#2481) 2486 w15-a1 #1903 chunk 05 lift migration (67 -> 56) #1219 #1903 2487 w15-b1 eliminate tc-pane-identity test race (#2481) & cross-engine memory safety #2481 #2171 #1777 2488 w15-rec wave 15 changelog, features & change-log records ">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 15</span>
+              <h3 class="wave-title">Wave 15 — #1903 Lift Chunk 05 & Pane Identity Determinism (#2481)</h3>
+              <span class="wave-window">Oct 18, 00:25–02:43 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">3 PRs</span>
+              <span class="badge badge-purple">21,743 Tests</span>
+              <span class="badge badge-rose">#1903 Lift Left: 56</span>
+              <span class="badge badge-amber">1 Flake Rerun</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-cyan">W15-A1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2486" target="_blank" rel="noopener" class="pr-link">PR #2486</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/cec4a9e8" target="_blank" rel="noopener" class="sha-link"><code>cec4a9e8</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1219" target="_blank" rel="noopener" class="issue-pill">#1219</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1903" target="_blank" rel="noopener" class="issue-pill">#1903</a></td>
+                <td>#1903 Chunk 05 lift migration (67 -> 56)</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-purple">W15-B1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2487" target="_blank" rel="noopener" class="pr-link">PR #2487</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/9539ba52" target="_blank" rel="noopener" class="sha-link"><code>9539ba52</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2481" target="_blank" rel="noopener" class="issue-pill">#2481</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2171" target="_blank" rel="noopener" class="issue-pill">#2171</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1777" target="_blank" rel="noopener" class="issue-pill">#1777</a></td>
+                <td>Eliminate tc-pane-identity test race (#2481) & cross-engine memory safety</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-amber">W15-REC</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2488" target="_blank" rel="noopener" class="pr-link">PR #2488</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/0d33fab9" target="_blank" rel="noopener" class="sha-link"><code>0d33fab9</code></a></td>
+                <td><span class="text-muted">Wave Records / Release</span></td>
+                <td>Wave 15 CHANGELOG, FEATURES & change-log records</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+
+        <div class="wave-card" data-tags="all lane-a lane-b records lift flake" data-search="wave 16 wave 16 — #1903 lift chunk 06 & api medusa race elimination (#2485) 2491 w16-b1 close api-medusa socket race (#2485) & bridge listener cleanup #2290 #2484 #2485 2490 w16-a1 #1903 chunk 06 lift migration (56 -> 46) #1351 #1903 2492 w16-rec wave 16 records & byte-identical change-log archival ">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 16</span>
+              <h3 class="wave-title">Wave 16 — #1903 Lift Chunk 06 & API Medusa Race Elimination (#2485)</h3>
+              <span class="wave-window">Oct 18, 02:46–05:24 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">3 PRs</span>
+              <span class="badge badge-purple">21,754 Tests</span>
+              <span class="badge badge-rose">#1903 Lift Left: 46</span>
+              <span class="badge badge-amber">1 Flake Rerun</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-purple">W16-B1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2491" target="_blank" rel="noopener" class="pr-link">PR #2491</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/faa7557b" target="_blank" rel="noopener" class="sha-link"><code>faa7557b</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2290" target="_blank" rel="noopener" class="issue-pill">#2290</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2484" target="_blank" rel="noopener" class="issue-pill">#2484</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2485" target="_blank" rel="noopener" class="issue-pill">#2485</a></td>
+                <td>Close api-medusa socket race (#2485) & bridge listener cleanup</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-cyan">W16-A1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2490" target="_blank" rel="noopener" class="pr-link">PR #2490</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/96bdccfa" target="_blank" rel="noopener" class="sha-link"><code>96bdccfa</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1351" target="_blank" rel="noopener" class="issue-pill">#1351</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1903" target="_blank" rel="noopener" class="issue-pill">#1903</a></td>
+                <td>#1903 Chunk 06 lift migration (56 -> 46)</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-amber">W16-REC</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2492" target="_blank" rel="noopener" class="pr-link">PR #2492</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/6ae92519" target="_blank" rel="noopener" class="sha-link"><code>6ae92519</code></a></td>
+                <td><span class="text-muted">Wave Records / Release</span></td>
+                <td>Wave 16 records & byte-identical change-log archival</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+
+        <div class="wave-card" data-tags="all lane-a lane-b records lift flake" data-search="wave 17 wave 17 — #1903 lift chunk 07 & bridge gateway econnreset fix (#2184) 2493 w17-a1 #1903 chunk 07 lift migration (46 -> 36) #1399 #1903 2494 w17-b1 eliminate api-bridge-gateway econnreset (#2184) & sync shared-docs guide #2489 #2184 #2046 2495 w17-rec wave 17 changelog, features & change-log records ">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 17</span>
+              <h3 class="wave-title">Wave 17 — #1903 Lift Chunk 07 & Bridge Gateway ECONNRESET Fix (#2184)</h3>
+              <span class="wave-window">Oct 18, 05:28–08:39 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">3 PRs</span>
+              <span class="badge badge-purple">21,777 Tests</span>
+              <span class="badge badge-rose">#1903 Lift Left: 36</span>
+              <span class="badge badge-green">0 Flakes</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-cyan">W17-A1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2493" target="_blank" rel="noopener" class="pr-link">PR #2493</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/165d8925" target="_blank" rel="noopener" class="sha-link"><code>165d8925</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1399" target="_blank" rel="noopener" class="issue-pill">#1399</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1903" target="_blank" rel="noopener" class="issue-pill">#1903</a></td>
+                <td>#1903 Chunk 07 lift migration (46 -> 36)</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-purple">W17-B1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2494" target="_blank" rel="noopener" class="pr-link">PR #2494</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/c71ea903" target="_blank" rel="noopener" class="sha-link"><code>c71ea903</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2489" target="_blank" rel="noopener" class="issue-pill">#2489</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2184" target="_blank" rel="noopener" class="issue-pill">#2184</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2046" target="_blank" rel="noopener" class="issue-pill">#2046</a></td>
+                <td>Eliminate api-bridge-gateway ECONNRESET (#2184) & sync shared-docs guide</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-amber">W17-REC</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2495" target="_blank" rel="noopener" class="pr-link">PR #2495</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/494a4897" target="_blank" rel="noopener" class="sha-link"><code>494a4897</code></a></td>
+                <td><span class="text-muted">Wave Records / Release</span></td>
+                <td>Wave 17 CHANGELOG, FEATURES & change-log records</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+
+        <div class="wave-card" data-tags="all lane-a lane-b records lift" data-search="wave 18 wave 18 — #1903 lift chunk 08 & 30-wedged-reads event-loop proof 2497 w18-b1 event-loop responsiveness under 30 concurrent wedged tmux reads (#2487) #2487 2499 w18-a1 #1903 chunk 08 lift migration (36 -> 26) & timer deadline hardening #2412 #1903 2500 w18-rec wave 18 changelog, features & change-log records ">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 18</span>
+              <h3 class="wave-title">Wave 18 — #1903 Lift Chunk 08 & 30-Wedged-Reads Event-Loop Proof</h3>
+              <span class="wave-window">Oct 18, 08:45–12:53 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">3 PRs</span>
+              <span class="badge badge-purple">21,779 Tests</span>
+              <span class="badge badge-rose">#1903 Lift Left: 26</span>
+              <span class="badge badge-green">0 Flakes</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-purple">W18-B1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2497" target="_blank" rel="noopener" class="pr-link">PR #2497</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/92858112" target="_blank" rel="noopener" class="sha-link"><code>92858112</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2487" target="_blank" rel="noopener" class="issue-pill">#2487</a></td>
+                <td>Event-loop responsiveness under 30 concurrent wedged tmux reads (#2487)</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-cyan">W18-A1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2499" target="_blank" rel="noopener" class="pr-link">PR #2499</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/a76868ac" target="_blank" rel="noopener" class="sha-link"><code>a76868ac</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2412" target="_blank" rel="noopener" class="issue-pill">#2412</a> <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1903" target="_blank" rel="noopener" class="issue-pill">#1903</a></td>
+                <td>#1903 Chunk 08 lift migration (36 -> 26) & timer deadline hardening</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-amber">W18-REC</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2500" target="_blank" rel="noopener" class="pr-link">PR #2500</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/408ace25" target="_blank" rel="noopener" class="sha-link"><code>408ace25</code></a></td>
+                <td><span class="text-muted">Wave Records / Release</span></td>
+                <td>Wave 18 CHANGELOG, FEATURES & change-log records</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+
+        <div class="wave-card" data-tags="all lane-a lane-b records lift" data-search="wave 19 wave 19 — #1903 lift chunk 09 & 20-wedged-reads loop proof (#2496) 2501 w19-b1 20-wedged-reads event-loop responsiveness & timeout recovery (#2496) #2496 2502 w19-a1 #1903 chunk 09 lift migration (26 -> 15 remaining wrap-* copies) #1903 2503 w19-rec wave 19 changelog, features & change-log records ">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 19</span>
+              <h3 class="wave-title">Wave 19 — #1903 Lift Chunk 09 & 20-Wedged-Reads Loop Proof (#2496)</h3>
+              <span class="wave-window">Oct 18, 12:56–15:24 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">3 PRs</span>
+              <span class="badge badge-purple">21,780 Tests</span>
+              <span class="badge badge-rose">#1903 Lift Left: 15</span>
+              <span class="badge badge-amber">1 Flake Rerun</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-purple">W19-B1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2501" target="_blank" rel="noopener" class="pr-link">PR #2501</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/c9b9e61c" target="_blank" rel="noopener" class="sha-link"><code>c9b9e61c</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2496" target="_blank" rel="noopener" class="issue-pill">#2496</a></td>
+                <td>20-wedged-reads event-loop responsiveness & timeout recovery (#2496)</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-cyan">W19-A1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2502" target="_blank" rel="noopener" class="pr-link">PR #2502</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/fe4b1ca2" target="_blank" rel="noopener" class="sha-link"><code>fe4b1ca2</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1903" target="_blank" rel="noopener" class="issue-pill">#1903</a></td>
+                <td>#1903 Chunk 09 lift migration (26 -> 15 remaining wrap-* copies)</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-amber">W19-REC</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2503" target="_blank" rel="noopener" class="pr-link">PR #2503</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/414f3eca" target="_blank" rel="noopener" class="sha-link"><code>414f3eca</code></a></td>
+                <td><span class="text-muted">Wave Records / Release</span></td>
+                <td>Wave 19 CHANGELOG, FEATURES & change-log records</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+
+        <div class="wave-card" data-tags="all lane-a lane-b records lift flake" data-search="wave 20 wave 20 — #1903 final chunk 10 (106 -> 0 complete!) & port lease fix (#2504) 2505 w20-b1 hold leased ephemeral ports until teardown in tc-launch-binding (#2504) #2504 2506 w20-a1 #1903 final chunk 10 (15 -> 0): initial_inventory empty, #1903 closed #1903 2507 w20-rec wave 20 changelog, features & change-log records ">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 20</span>
+              <h3 class="wave-title">Wave 20 — #1903 Final Chunk 10 (106 -> 0 Complete!) & Port Lease Fix (#2504)</h3>
+              <span class="wave-window">Oct 18, 15:28–17:48 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">3 PRs</span>
+              <span class="badge badge-purple">21,781 Tests</span>
+              <span class="badge badge-green">#1903 Lift Left: 0</span>
+              <span class="badge badge-green">0 Flakes</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-purple">W20-B1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2505" target="_blank" rel="noopener" class="pr-link">PR #2505</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/50cdb95e" target="_blank" rel="noopener" class="sha-link"><code>50cdb95e</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2504" target="_blank" rel="noopener" class="issue-pill">#2504</a></td>
+                <td>Hold leased ephemeral ports until teardown in tc-launch-binding (#2504)</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-cyan">W20-A1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2506" target="_blank" rel="noopener" class="pr-link">PR #2506</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/704a41a2" target="_blank" rel="noopener" class="sha-link"><code>704a41a2</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1903" target="_blank" rel="noopener" class="issue-pill">#1903</a></td>
+                <td>#1903 Final Chunk 10 (15 -> 0): INITIAL_INVENTORY empty, #1903 CLOSED</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-amber">W20-REC</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2507" target="_blank" rel="noopener" class="pr-link">PR #2507</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/7641eb92" target="_blank" rel="noopener" class="sha-link"><code>7641eb92</code></a></td>
+                <td><span class="text-muted">Wave Records / Release</span></td>
+                <td>Wave 20 CHANGELOG, FEATURES & change-log records</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+
+        <div class="wave-card" data-tags="all lane-a lane-b records" data-search="wave 21 wave 21 — release certification publish (#2088) & guest setup auth (#2240 c01) 2508 w21-b1 host release-certification publication & artifact verification (#2088) #2088 2509 w21-a1 #2240 chunk 01 3-step nologin -> add-login -> set-password guest setup #2240 2510 w21-rec wave 21 records & byte-identical change-log archival ">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 21</span>
+              <h3 class="wave-title">Wave 21 — Release Certification Publish (#2088) & Guest Setup Auth (#2240 c01)</h3>
+              <span class="wave-window">Oct 18, 17:52 – Oct 19, 02:37 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">3 PRs</span>
+              <span class="badge badge-purple">21,848 Tests</span>
+              <span class="badge badge-green">#1903 Lift Left: 0</span>
+              <span class="badge badge-green">0 Flakes</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-purple">W21-B1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2508" target="_blank" rel="noopener" class="pr-link">PR #2508</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/c72f5c31" target="_blank" rel="noopener" class="sha-link"><code>c72f5c31</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2088" target="_blank" rel="noopener" class="issue-pill">#2088</a></td>
+                <td>Host release-certification publication & artifact verification (#2088)</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-cyan">W21-A1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2509" target="_blank" rel="noopener" class="pr-link">PR #2509</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/fb352f9b" target="_blank" rel="noopener" class="sha-link"><code>fb352f9b</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2240" target="_blank" rel="noopener" class="issue-pill">#2240</a></td>
+                <td>#2240 Chunk 01 3-step noLogin -> add-login -> set-password guest setup</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-amber">W21-REC</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2510" target="_blank" rel="noopener" class="pr-link">PR #2510</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/2cf701d5" target="_blank" rel="noopener" class="sha-link"><code>2cf701d5</code></a></td>
+                <td><span class="text-muted">Wave Records / Release</span></td>
+                <td>Wave 21 records & byte-identical change-log archival</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+
+        <div class="wave-card" data-tags="all lane-a records" data-search="wave 22 wave 22 — authenticated soak runner & login_shown guard (#2240 c02) 2511 w22-a1 #2240 chunk 02 authenticated soak harness & verified launch-binding gate #2240 2512 w22-rec wave 22 changelog, features & change-log records ">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 22</span>
+              <h3 class="wave-title">Wave 22 — Authenticated Soak Runner & LOGIN_SHOWN Guard (#2240 c02)</h3>
+              <span class="wave-window">Oct 19, 02:40–06:22 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">2 PRs</span>
+              <span class="badge badge-purple">21,918 Tests</span>
+              <span class="badge badge-green">#1903 Lift Left: 0</span>
+              <span class="badge badge-green">0 Flakes</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-cyan">W22-A1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2511" target="_blank" rel="noopener" class="pr-link">PR #2511</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/fb252caa" target="_blank" rel="noopener" class="sha-link"><code>fb252caa</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2240" target="_blank" rel="noopener" class="issue-pill">#2240</a></td>
+                <td>#2240 Chunk 02 authenticated soak harness & verified launch-binding gate</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-amber">W22-REC</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2512" target="_blank" rel="noopener" class="pr-link">PR #2512</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/9605ac2b" target="_blank" rel="noopener" class="sha-link"><code>9605ac2b</code></a></td>
+                <td><span class="text-muted">Wave Records / Release</span></td>
+                <td>Wave 22 CHANGELOG, FEATURES & change-log records</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+
+        <div class="wave-card" data-tags="all lane-a lane-b records" data-search="wave 23 wave 23 — medusa reconnect stale-socket fix (#2370) & codex 0.161/0.162 isolation (#2222) 2513 w23-b1 detach stale websocket before close() & clear reconnect timer (#2370, @cryptonikav credit) #2370 2514 w23-a1 codex 0.161/0.162 --no-daemon isolation measurement & refusal (#2222, @gurulifeline credit) #2222 2515 w23-rec wave 23 changelog, features & change-log records (0m ci stall) ">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 23</span>
+              <h3 class="wave-title">Wave 23 — Medusa Reconnect Stale-Socket Fix (#2370) & Codex 0.161/0.162 Isolation (#2222)</h3>
+              <span class="wave-window">Oct 19, 08:21–11:49 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">3 PRs</span>
+              <span class="badge badge-purple">21,930 Tests</span>
+              <span class="badge badge-green">#1903 Lift Left: 0</span>
+              <span class="badge badge-green">0 Flakes</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-purple">W23-B1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2513" target="_blank" rel="noopener" class="pr-link">PR #2513</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/a6ac9aba" target="_blank" rel="noopener" class="sha-link"><code>a6ac9aba</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2370" target="_blank" rel="noopener" class="issue-pill">#2370</a></td>
+                <td>Detach stale WebSocket before close() & clear reconnect timer (#2370, @CRYPTONIKAV credit)</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-cyan">W23-A1</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2514" target="_blank" rel="noopener" class="pr-link">PR #2514</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/60acefde" target="_blank" rel="noopener" class="sha-link"><code>60acefde</code></a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2222" target="_blank" rel="noopener" class="issue-pill">#2222</a></td>
+                <td>Codex 0.161/0.162 --no-daemon isolation measurement & refusal (#2222, @GURULifeline credit)</td>
+              </tr>
+            
+              <tr>
+                <td><span class="badge badge-amber">W23-REC</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2515" target="_blank" rel="noopener" class="pr-link">PR #2515</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/9448c963" target="_blank" rel="noopener" class="sha-link"><code>9448c963</code></a></td>
+                <td><span class="text-muted">Wave Records / Release</span></td>
+                <td>Wave 23 CHANGELOG, FEATURES & change-log records (0m CI stall)</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+
+        <div class="wave-card" data-tags="all release" data-search="wave 24 wave 24 — v5.34.0 release cut, tag publication & live schema-68 deployment 2516 w24-rel release v5.34.0: 100% byte-identical [unreleased] -> [5.34.0] promotion (87 entries, 21,032 b), tag v5.34.0 & live schema 68 deploy ">
+          <div class="wave-header">
+            <div>
+              <span class="wave-num">Wave 24</span>
+              <h3 class="wave-title">Wave 24 — v5.34.0 Release Cut, Tag Publication & Live Schema-68 Deployment</h3>
+              <span class="wave-window">Oct 19, 12:12–13:39 PDT</span>
+            </div>
+            <div class="wave-meta">
+              <span class="badge badge-blue">1 PR</span>
+              <span class="badge badge-purple">21,930 Tests</span>
+              <span class="badge badge-green">#1903 Lift Left: 0</span>
+              <span class="badge badge-green">0 Flakes</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th style="width:110px">Slice</th>
+                  <th style="width:95px">Pull Request</th>
+                  <th style="width:95px">Merge SHA</th>
+                  <th style="width:150px">Issues Addressed</th>
+                  <th>Delivered Scope &amp; Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+              <tr>
+                <td><span class="badge badge-green">W24-REL</span></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2516" target="_blank" rel="noopener" class="pr-link">PR #2516</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/commit/da4b3afe" target="_blank" rel="noopener" class="sha-link"><code>da4b3afe</code></a></td>
+                <td><span class="text-muted">Wave Records / Release</span></td>
+                <td>Release v5.34.0: 100% byte-identical [Unreleased] -> [5.34.0] promotion (87 entries, 21,032 B), tag v5.34.0 & live schema 68 deploy</td>
+              </tr>
+            
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+      </div>
+    </section>
+
+    <!-- NEXT SPRINT PLAN: v5.35.0 -->
+    <section id="next-sprint" class="section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">7. Next Sprint Plan: <code>v5.35.0 — Cheaper Parallel Work</code></h2>
+          <p class="section-desc">Applying the <code>v5.34.0</code> post-mortem directly into a 6-wave plan that cuts suite wait times, eliminates CI stalls, and modularizes core files.</p>
+        </div>
+      </div>
+
+      <div class="grid-3">
+        <div class="subcard">
+          <span class="badge badge-cyan">Wave 1</span>
+          <h3 style="margin-top:0.5rem;">CI-as-Suite &amp; Live Ledger Closeout</h3>
+          <p class="text-muted">
+            • <strong>Lane A (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2371" target="_blank">#2371</a>):</strong> Turn on CI-as-suite-evidence in the lanes + <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2358" target="_blank">#2358</a> live check.<br/>
+            • <strong>Lane B (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2313" target="_blank">#2313</a>):</strong> Live Bridge timestamp check + post-publication update to <code>docs/releases/v5.34-status.md</code>.<br/>
+            • <strong>Gate:</strong> <code>W1-REC</code> + <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2389" target="_blank">#2389</a> live shared-doc notice verification.
+          </p>
+        </div>
+
+        <div class="subcard">
+          <span class="badge badge-green">Wave 2</span>
+          <h3 style="margin-top:0.5rem;">Zero CI Stalls &amp; Quiet Alerts</h3>
+          <p class="text-muted">
+            • <strong>Lane A (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1783" target="_blank">#1783</a>):</strong> Automatic Medusa switchboard wakes on GitHub Actions CI completion (eliminates post-merge CI wait stalls permanently).<br/>
+            • <strong>Lane B (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2141" target="_blank">#2141</a> + <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2362" target="_blank">#2362</a>):</strong> Coordinator-aware <code>work-blocked</code> debounce + <code>work-unblocked</code> recovery notice &amp; CI hardlink test fix.
+          </p>
+        </div>
+
+        <div class="subcard">
+          <span class="badge badge-purple">Wave 3</span>
+          <h3 style="margin-top:0.5rem;">Per-Car Changelog &amp; Clone Inheritance</h3>
+          <p class="text-muted">
+            • <strong>Lane A (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1220" target="_blank">#1220</a>):</strong> Per-car changelog fragments so parallel PRs and wraps never serialize on <code>CHANGELOG.md</code>.<br/>
+            • <strong>Lane B (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2015" target="_blank">#2015</a>):</strong> Track <code>.prawduct/project-preferences.md</code> for clone inheritance + clean-<code>HEAD</code> launch-dirty reconciliation in <code>session-leftovers.js</code>.
+          </p>
+        </div>
+
+        <div class="subcard">
+          <span class="badge badge-amber">Wave 4</span>
+          <h3 style="margin-top:0.5rem;">5-Stage Test Pyramid (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2498" target="_blank">#2498</a>)</h3>
+          <p class="text-muted">
+            • <strong>Lane A (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2498" target="_blank">#2498</a> c01):</strong> Google Small/Medium/Large (S/M/L) test classification &amp; fast pre-suite runner including &lt;3s static repo scanners.<br/>
+            • <strong>Lane B (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2498" target="_blank">#2498</a> c02):</strong> Automated suite consolidation (Knip, c8, Stryker, Testament) &amp; recursive JUnit subtest exit-code fidelity.
+          </p>
+        </div>
+
+        <div class="subcard">
+          <span class="badge badge-rose">Wave 5</span>
+          <h3 style="margin-top:0.5rem;">Monolith Extraction (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2248" target="_blank">#2248</a>)</h3>
+          <p class="text-muted">
+            • <strong>Lane A (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2248" target="_blank">#2248</a> c01):</strong> First bounded route/domain extraction from <code>server.js</code>.<br/>
+            • <strong>Lane B (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2248" target="_blank">#2248</a> c02):</strong> First bounded domain extraction from <code>lib/store.js</code>, reducing file-lock contention for parallel Builders.
+          </p>
+        </div>
+
+        <div class="subcard">
+          <span class="badge badge-green">Wave 6</span>
+          <h3 style="margin-top:0.5rem;"><code>v5.35.0</code> Release Cut (<code>W6-REL</code>)</h3>
+          <p class="text-muted">
+            • Promote fragment/wave records to <code>[5.35.0]</code>, publish annotated tag <code>v5.35.0</code> &amp; GitHub Release, and deploy live with all 4 inherited <code>A384</code> operational guardrails verified.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      Published from empirical sprint records for <a href="https://github.com/Jason-Vaughan/TangleClaw/releases/tag/v5.34.0" target="_blank" rel="noopener">TangleClaw v5.34.0</a>
+      (<code>da4b3afecf718be660bb5dd3924e785326c81f2d</code>) · Sanitized for public viewing (zero internal paths, tokens, or private endpoints).
+    </footer>
+
+  </main>
+
+  <script>
+    (function () {
+      const buttons = document.querySelectorAll('.filter-btn');
+      const search = document.getElementById('waveSearch');
+      const cards = document.querySelectorAll('.wave-card');
+      let currentFilter = 'all';
+
+      function applyFilters() {
+        const q = (search.value || '').trim().toLowerCase();
+        cards.forEach(function (card) {
+          const tags = (card.getAttribute('data-tags') || '').split(' ');
+          const text = card.getAttribute('data-search') || '';
+          const matchTag = currentFilter === 'all' || tags.indexOf(currentFilter) !== -1;
+          const matchSearch = !q || text.indexOf(q) !== -1;
+          card.style.display = (matchTag && matchSearch) ? '' : 'none';
+        });
+      }
+
+      buttons.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          buttons.forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          currentFilter = btn.getAttribute('data-filter') || 'all';
+          applyFilters();
+        });
+      });
+
+      search.addEventListener('input', applyFilters);
+    })();
+  </script>
+</body>
+</html>
