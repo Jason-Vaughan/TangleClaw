@@ -535,6 +535,153 @@ describe('changelog-coverage — coverage globs (nested changelogs)', () => {
   });
 });
 
+describe('changelog-coverage — changelog fragments (#1220)', () => {
+  // The changelog-update step asks for `changelog.d/<issue>.<slug>.<type>.md`
+  // instead of an edit to CHANGELOG.md, so a fragment must satisfy coverage by
+  // the same two routes the declared file does — dirty, or committed in range —
+  // and a file under changelog.d/ that is NOT a fragment must satisfy neither.
+  let saved;
+  beforeEach(() => {
+    saved = { ...cov._internal };
+    cov._internal.readLastWrapSha = () => ({ sha: 'c1f94ac', read: 'recorded' });
+    cov._internal.execSync = () => '';
+  });
+  afterEach(() => { Object.assign(cov._internal, saved); });
+
+  function scenario(records, dirty = [], untracked = []) {
+    cov._internal.execSync = (cmd) => {
+      if (cmd.startsWith('git log')) return gitLog(records);
+      if (cmd.startsWith('git diff')) return dirty.join('\n');
+      if (cmd.startsWith('git ls-files')) return untracked.join('\n');
+      return '';
+    };
+  }
+
+  const DECLARED = ['CHANGELOG.md', 'changelog.d/'];
+  const UNLOGGED = [{ sha: 'aaa1111', subject: 'Unlogged work (#999)', files: ['lib/a.js'] }];
+
+  it('COVERED by a dirty (untracked) valid fragment, even with an unlogged commit in range', () => {
+    // The wrap's own output is a brand-new file; `git diff HEAD` never lists it,
+    // so it arrives through the untracked listing like any new file.
+    scenario(UNLOGGED, [], ['changelog.d/1220.c02-wrap-produces-fragments.changed.md']);
+    const out = cov.evaluate('/p', DECLARED);
+    assert.equal(out.verdict, cov.VERDICTS.COVERED);
+    assert.equal(out.checkedCount, 0, 'the dirty route short-circuits before history is judged');
+  });
+
+  it('COVERED by a modified tracked fragment too', () => {
+    scenario(UNLOGGED, ['changelog.d/1220.c02-wrap-produces-fragments.changed.md']);
+    assert.equal(cov.evaluate('/p', DECLARED).verdict, cov.VERDICTS.COVERED);
+  });
+
+  it('a dirty MALFORMED fragment is not coverage — it is named as unlogged work (fail closed)', () => {
+    // README.md, CHANGELOG.md and a nested file are the cases the shared source
+    // classifier would call bookkeeping or not source: under changelog.d/ they
+    // are stray files the release refuses, so they are named all the same.
+    for (const bad of [
+      'changelog.d/README.md', 'changelog.d/CHANGELOG.md', 'changelog.d/0.x.added.md',
+      'changelog.d/1220.x.docs.md', 'changelog.d/1220.Bad_Slug.added.md', 'changelog.d/sub/1.a.added.md',
+      'changelog.d/notes.txt'
+    ]) {
+      scenario([], [], [bad]);
+      const out = cov.evaluate('/p', DECLARED);
+      assert.equal(out.verdict, cov.VERDICTS.UNCOVERED, `${bad} must not satisfy coverage`);
+      assert.deepEqual(out.uncommittedWork, [bad], `${bad} is named so the operator can fix the name`);
+      assert.deepEqual(out.uncovered, []);
+    }
+  });
+
+  it('a dirty malformed fragment beside unlogged source work names both', () => {
+    scenario([], [], ['changelog.d/notes.md', 'lib/new.js']);
+    const out = cov.evaluate('/p', DECLARED);
+    assert.equal(out.verdict, cov.VERDICTS.UNCOVERED);
+    assert.deepEqual(out.uncommittedWork.sort(), ['changelog.d/notes.md', 'lib/new.js']);
+  });
+
+  it('COVERED when a commit in the range added a valid fragment (session-level, like CHANGELOG.md)', () => {
+    scenario([
+      { sha: 'aaa1111', subject: 'Add the thing (#1220)', files: ['lib/a.js', 'changelog.d/1220.the-thing.added.md'] },
+      { sha: 'bbb2222', subject: 'More of the thing (#1220)', files: ['lib/b.js'] }
+    ]);
+    const out = cov.evaluate('/p', DECLARED);
+    assert.equal(out.verdict, cov.VERDICTS.COVERED);
+    assert.equal(out.checkedCount, 2);
+  });
+
+  it('UNCOVERED when the only changelog.d/ file a commit touched is misnamed', () => {
+    scenario([{ sha: 'aaa1111', subject: 'Stray file (#1)', files: ['lib/a.js', 'changelog.d/README.md'] }]);
+    const out = cov.evaluate('/p', DECLARED);
+    assert.equal(out.verdict, cov.VERDICTS.UNCOVERED);
+    assert.deepEqual(out.uncovered.map((c) => c.sha), ['aaa1111']);
+  });
+
+  it('a direct CHANGELOG.md edit still satisfies coverage (the transition keeps both routes)', () => {
+    scenario(UNLOGGED, ['CHANGELOG.md']);
+    assert.equal(cov.evaluate('/p', DECLARED).verdict, cov.VERDICTS.COVERED);
+    scenario([{ sha: 'aaa1111', subject: 'Logged directly (#1)', files: ['lib/a.js', 'CHANGELOG.md'] }]);
+    assert.equal(cov.evaluate('/p', DECLARED).verdict, cov.VERDICTS.COVERED);
+  });
+
+  it('a fragment counts whether or not the step declared changelog.d/ — the contract, not the declaration, decides', () => {
+    // The declared directory never matches a file path exactly; it is declared
+    // for the mutation check and the blocker's wording, not for this predicate.
+    scenario(UNLOGGED, [], ['changelog.d/7.x.fixed.md']);
+    assert.equal(cov.evaluate('/p', ['CHANGELOG.md']).verdict, cov.VERDICTS.COVERED);
+  });
+
+  it('does not need a coveragePaths glob, and a glob is not what makes a fragment count', () => {
+    scenario(UNLOGGED, [], ['changelog.d/7.x.fixed.md']);
+    assert.equal(cov.evaluate('/p', DECLARED, []).verdict, cov.VERDICTS.COVERED);
+    // A glob for the directory would ALSO accept a misnamed file; the name check
+    // is why the shipped step declares none.
+    scenario([], [], ['changelog.d/README.md']);
+    assert.equal(cov.evaluate('/p', DECLARED, []).verdict, cov.VERDICTS.UNCOVERED);
+  });
+
+  describe('_isFragmentPath', () => {
+    it('accepts exactly the name contract, directly under changelog.d/', () => {
+      assert.equal(cov._isFragmentPath('changelog.d/1220.c02-wrap-produces-fragments.changed.md'), true);
+      assert.equal(cov._isFragmentPath('changelog.d/1.a.internal.md'), true);
+    });
+
+    it('refuses every other shape', () => {
+      for (const p of [
+        'changelog.d/README.md',          // not the grammar
+        'changelog.d/0.x.added.md',       // BAD_ISSUE
+        'changelog.d/1220.x.docs.md',     // UNKNOWN_TYPE
+        'changelog.d/1220..added.md',     // BAD_SLUG
+        'changelog.d/sub/1.a.added.md',   // nested: the reader never descends
+        'changelog.d/',                   // the directory itself
+        'changelog.d',
+        'docs/changelog.d/1.a.added.md',  // elsewhere in the tree
+        '1.a.added.md',                   // the root
+        'CHANGELOG.md',
+        '', null, undefined, 42
+      ]) {
+        assert.equal(cov._isFragmentPath(p), false, `${JSON.stringify(p)} is not a fragment`);
+      }
+    });
+
+    it('_isStrayInFragmentDir is the complement under the directory, and nothing outside it', () => {
+      assert.equal(cov._isStrayInFragmentDir('changelog.d/README.md'), true);
+      assert.equal(cov._isStrayInFragmentDir('changelog.d/sub/1.a.added.md'), true);
+      assert.equal(cov._isStrayInFragmentDir('changelog.d/1.a.added.md'), false, 'a fragment is not stray');
+      assert.equal(cov._isStrayInFragmentDir('changelog.d/'), false, 'the directory itself is not an entry');
+      assert.equal(cov._isStrayInFragmentDir('README.md'), false);
+      assert.equal(cov._isStrayInFragmentDir('docs/changelog.d/x.md'), false);
+      assert.equal(cov._isStrayInFragmentDir(null), false);
+    });
+
+    it('is the C01 contract, not a copy of it', () => {
+      const fragments = require('../lib/changelog-fragments');
+      const source = require('node:fs').readFileSync(require.resolve('../lib/wrap-steps/changelog-coverage'), 'utf8');
+      assert.doesNotMatch(source, /added\|changed\|removed/, 'no local copy of the type list or name regex');
+      assert.ok(source.includes('parseFragmentName'), 'judged by the contract module');
+      assert.equal(cov._isFragmentPath(`${fragments.FRAGMENT_DIR}/9.z.security.md`), true);
+    });
+  });
+});
+
 describe('changelog-coverage — against this repository\'s real history', () => {
   // The unit tests above run on synthetic payloads, and synthetic payloads are
   // exactly what let the first version of this predicate pass its whole suite

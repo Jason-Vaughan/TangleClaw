@@ -167,20 +167,24 @@ These steps are for collaborators, who are the only people able to open a pull r
 1. Create a branch from `main`
 2. Make your changes
 3. Run the full test suite: `node --test 'test/*.test.js'`
-4. Update `CHANGELOG.md` with a description of your changes — see the subsection convention below
+4. Add a changelog fragment under `changelog.d/` describing your change — see the convention below. Do not edit `CHANGELOG.md`.
 5. Submit a pull request
 
-### CHANGELOG Subsections
+### Changelog fragments
 
-`CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/) with one addition, and the subsection you choose is load-bearing: the release tooling derives the version bump from it.
+`CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/) with one addition, but a change does not edit it. It adds one file, `changelog.d/<issue>.<slug>.<type>.md`, holding one Markdown list entry (`- ` then the text; continuation lines may follow; no heading, no code fence). The release preparation compiles the fragments into `[Unreleased]` and deletes them, so parallel branches never conflict on the same lines. `docs/changelog-fragments.md` is the full contract: name grammar, body rule, ordering and refusals.
 
-| Subsection | Use for | Bump |
-|---|---|---|
-| `### Added` / `### Changed` / `### Removed` / `### Deprecated` | user-visible behavior | minor |
-| `### Fixed` / `### Security` | bug and security fixes | patch |
-| `### Internal` | refactors, test-only changes, tooling, CI, **documentation** | patch |
+The `<type>` you choose is load-bearing: it names the subsection the entry lands under, and the release tooling derives the version bump from it.
 
-Pick by **user-visible impact**, not by how many files changed: a one-line behavior change is `### Changed`, a large refactor nobody notices is `### Internal`. Documentation-only edits go under `### Internal` — still logged for history, but patch-tier so doc churn doesn't inflate the minor version. Any other heading (`### Documentation`, `### Docs`) matches no bump rule and leaves the release tooling unable to derive a level.
+| `<type>` | Subsection | Use for | Bump |
+|---|---|---|---|
+| `added` / `changed` / `removed` / `deprecated` | `### Added` / `### Changed` / `### Removed` / `### Deprecated` | user-visible behavior | minor |
+| `fixed` / `security` | `### Fixed` / `### Security` | bug and security fixes | patch |
+| `internal` | `### Internal` | refactors, test-only changes, tooling, CI, **documentation** | patch |
+
+Pick by **user-visible impact**, not by how many files changed: a one-line behavior change is `changed`, a large refactor nobody notices is `internal`. Documentation-only edits go under `internal` — still logged for history, but patch-tier so doc churn doesn't inflate the minor version. There is no other type: a name outside the grammar is refused, so `docs` or `documentation` is not a fragment and the wrap's changelog gate reports it as unlogged work rather than accepting it.
+
+**Transition.** A pull request created before PR #C02-PR merged may still add its entry directly under `[Unreleased]` in `CHANGELOG.md`, under the matching `### ` subsection; every pull request after that writes a fragment. `docs/release-process.md` names the boundary.
 
 ### Commit Messages
 

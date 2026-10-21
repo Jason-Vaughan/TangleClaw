@@ -2,9 +2,10 @@
 
 How a change records its changelog entry without touching `CHANGELOG.md`.
 
-> The compiler is not yet wired into the wrap; that is #1220 C02–C03. Until then
-> `CHANGELOG.md`'s `[Unreleased]` block is still written directly, as
-> `CONTRIBUTING.md` describes. This page documents the contract the module
+> The wrap asks for a fragment and accepts one (#1220 C02; "How a wrap produces
+> one" below). The compiler is not yet wired into the release preparation; that
+> is #1220 C03. Until it lands, fragments accumulate under `changelog.d/` and
+> `[Unreleased]` does not show them. This page documents the contract the module
 > `lib/changelog-fragments.js` enforces, so the wiring lands on a settled shape.
 
 ## Why
@@ -111,6 +112,32 @@ preparation stops and reports the list, and nothing is compiled or deleted.
 | `EMPTY_BODY` | The file is empty or whitespace only. |
 | `BAD_BODY` | A heading line, a fence opener, or a first line that is not a list item. The reason names the line. |
 
+## How a wrap produces one
+
+The wrap's `changelog-update` step (`lib/wrap-default-pipeline.js`) asks the
+session's AI to write one fragment per issue worked, named by the grammar
+above, and to leave `CHANGELOG.md` alone. Its verification then passes by any
+of these, judged by `lib/wrap-steps/changelog-coverage.js`:
+
+- a file was created, rewritten or removed directly under `changelog.d/`
+  during the step (the step declares the directory as a produced path, and the
+  wrap reads a declared directory as a digest of its entries, so a new file is
+  a change the same way an edit to `CHANGELOG.md` is);
+- a correctly named fragment is uncommitted in the working tree, or a commit
+  in the session's range added one: the changelog was maintained as the
+  session worked, and the step has nothing to add;
+- `CHANGELOG.md` was edited by the same routes, for the transition
+  (`docs/release-process.md` names the boundary).
+
+Only the **name** is judged here, by `parseFragmentName`. A file under
+`changelog.d/` that is not a fragment (`README.md`, `0.x.added.md`,
+`1220.x.docs.md`, anything nested) satisfies nothing, and a dirty one is
+reported as *unlogged work* with its path whatever its basename, so the name
+gets fixed before it is committed. The body is read at release preparation,
+which refuses a bad one as the table above says. The gate deliberately declares
+no coverage glob for the directory: a glob would accept any `.md` there,
+misnamed ones included.
+
 ## What the module never touches
 
 `lib/changelog-fragments.js` has no write path. Compilation returns new text
@@ -127,7 +154,9 @@ transaction with the bump: the fragments are spliced into `[Unreleased]`,
 the bump level is decided on the result, the file is promoted, and the
 consumed fragments are deleted in the same commit. A pull request does not
 run the compiler; it adds a fragment and leaves `CHANGELOG.md` alone. Until
-C03 lands, the module is callable but nothing in the wrap calls it.
+C03 lands, the wrap calls only `parseFragmentName` (the coverage gate above);
+`readFragments`, `compileFragments` and `spliceIntoUnreleased` are callable
+but nothing in the wrap calls them.
 
 ## The module's exports
 
