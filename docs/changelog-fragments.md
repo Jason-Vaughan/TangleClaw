@@ -2,11 +2,11 @@
 
 How a change records its changelog entry without touching `CHANGELOG.md`.
 
-> The wrap asks for a fragment and accepts one (#1220 C02; "How a wrap produces
-> one" below). The compiler is not yet wired into the release preparation; that
-> is #1220 C03. Until it lands, fragments accumulate under `changelog.d/` and
-> `[Unreleased]` does not show them. This page documents the contract the module
-> `lib/changelog-fragments.js` enforces, so the wiring lands on a settled shape.
+> The wrap asks for a fragment and accepts one ("How a wrap produces one"
+> below), and a wrap that cuts a release compiles every fragment into
+> `[Unreleased]` and deletes it in the same commit ("When compilation happens"
+> below). This page documents the contract the module `lib/changelog-fragments.js`
+> enforces and what the wrap does with it.
 
 ## Why
 
@@ -150,14 +150,49 @@ byte.
 
 ## When compilation happens
 
-At release preparation, inside the wrap's version bump (#1220 C03), as one
-transaction with the bump: the fragments are spliced into `[Unreleased]`,
-the bump level is decided on the result, the file is promoted, and the
-consumed fragments are deleted in the same commit. A pull request does not
-run the compiler; it adds a fragment and leaves `CHANGELOG.md` alone. Until
-C03 lands, the wrap calls only `parseFragmentName` (the coverage gate above);
-`readFragments`, `compileFragments` and `spliceIntoUnreleased` are callable
-but nothing in the wrap calls them.
+At release preparation, inside the wrap's version bump
+(`lib/wrap-steps/version-bump.js`), as one transaction with the bump: the
+fragments are read, spliced into `[Unreleased]` in memory, the bump level is
+decided on the result, the file is promoted, and each consumed fragment is
+staged for deletion beside the promoted `CHANGELOG.md`. The `commit` step
+writes and unlinks them in one flush and commits them in one commit, whose
+body says `Compiled N changelog fragment(s)`. A pull request does not run the
+compiler; it adds a fragment and leaves `CHANGELOG.md` alone.
+
+A pending fragment counts as an entry everywhere the wrap asks whether there
+is anything to release: the readiness gate's `unreleased-entries` signal
+passes on fragments alone, and the `release-recommendation` prompt is sent
+when fragments wait under an empty `[Unreleased]`. A hold stages nothing and
+deletes nothing, so the fragments wait for the next wrap.
+
+Any refused file stops the cut. `version-bump` halts with `needs-operator`,
+naming every file and its code, and nothing is promoted or deleted; a skip
+would promote the block without the refused fragment and publish it under the
+wrong release later. Fix or remove the file, then Retry. The same halt
+covers a stray file: the directory holds fragments and nothing else.
+
+**If the wrap stops after the fragments were consumed**, nothing is
+committed and the cut is put back. Before it flushes a release cut, the
+`commit` step records every release file's prior bytes (the promoted
+`CHANGELOG.md`, the version file and each fragment, an untracked one included)
+and their index entries, in memory and under
+`.tangleclaw/release-recovery/<run id>/` in the project's TangleClaw config
+root. Any halt between the flush and a landed commit restores the work tree
+from that record, and the index entries of those files once `git add` ran;
+the record is then removed. A `git commit` stopped by its timeout is the one
+halt that restores nothing, because the commit may still land: check
+`git log -1` first. While a record exists, which it does only when something
+could not be put back, `version-bump` refuses every cut, naming it, so a
+retry can neither compile a fragment twice nor skip one; its `manifest.json`
+names each file's path and index entry, and copying them back and deleting the
+directory is the recovery. `docs/release-process.md` "If a release did not go
+out" has the steps. The directory ignores itself (a `.gitignore` holding `*`),
+so a wrap never commits it.
+
+This repo's `releasePrepareCommand`, `scripts/release-prepare.js`, refuses to
+run while `changelog.d/` still holds a valid fragment: it runs after the flush,
+so on a correct cut the directory is already empty, and a fragment still there
+is one the cut did not compile.
 
 ## The module's exports
 
@@ -172,3 +207,6 @@ but nothing in the wrap calls them.
 `test/changelog-fragments.test.js` holds the contract as executable cases,
 including the pin that keeps this module's block-finding regexes equal to
 `version-bump`'s and the bump-level fixtures judged by `version-bump` itself.
+`test/version-bump-fragments.test.js` holds the compilation and the refusals,
+and `test/wrap-changelog-transaction.test.js` the cut as one transaction and
+its recovery, against real repositories.

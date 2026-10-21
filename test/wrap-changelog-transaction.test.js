@@ -145,3 +145,589 @@ describe('wrap CHANGELOG transaction — why the order matters (the clobber mech
       'the flush discards the later on-disk edit — hence the ordering invariant above');
   });
 });
+
+// ---------------------------------------------------------------------------
+// #1220 C03 — changelog fragments ride the release cut, and the cut is
+// recoverable until its commit lands. Real repositories throughout: which files
+// a commit holds, what the index records and what `git status` reports are
+// git's answers, and the recovery is proven by comparing them before and after.
+// ---------------------------------------------------------------------------
+const { after } = require('node:test');
+const { execFileSync } = require('node:child_process');
+const launchBaseline = require('../lib/launch-baseline');
+const wrapScope = require('../lib/wrap-scope');
+const { execFileArgs } = require('../lib/exec');
+const { initRepo } = require('./_temp-repo');
+
+const repoDirs = [];
+after(() => { for (const d of repoDirs) fs.rmSync(d, { recursive: true, force: true }); });
+
+const FRAGMENT = '- A feature the fragment records (#7)\n';
+const UNRELEASED_EMPTY = '# Changelog\n\n## [Unreleased]\n\n## [1.0.0] - 2026-01-01\n\n- first\n';
+const RELEASE_TARGETS = ['CHANGELOG.md', 'version.json', 'changelog.d'];
+
+/**
+ * Run git in a repo.
+ * @param {string} cwd - Repo directory.
+ * @param {...string} args - Argv after `git`.
+ * @returns {string} Trimmed stdout.
+ */
+function git(cwd, ...args) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+}
+
+/**
+ * A temp directory removed after the suite.
+ * @param {string} prefix - Directory name prefix.
+ * @param {{resolve?:boolean}} [opts] - `resolve: false` keeps the path as `os.tmpdir()` spells it (a symlink on macOS).
+ * @returns {string} Path.
+ */
+function tmpRepoDir(prefix, { resolve = true } = {}) {
+  const made = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const dir = resolve ? fs.realpathSync(made) : made;
+  repoDirs.push(dir);
+  return dir;
+}
+
+/**
+ * A released project with committed fragments, on a feature branch, its project
+ * config committed so the config file is not itself an uncommitted change.
+ * @param {object} [opts]
+ * @param {object} [opts.config] - `.tangleclaw/project.json` contents.
+ * @param {boolean} [opts.resolve] - See {@link tmpRepoDir}.
+ * @param {Record<string,string>} [opts.fragments] - `changelog.d/` files by name.
+ * @returns {string} Repo path.
+ */
+function makeFragmentRepo({ config = {}, resolve = true, fragments = { '7.feature.added.md': FRAGMENT } } = {}) {
+  const dir = tmpRepoDir('tc-frag-txn-', { resolve });
+  initRepo(dir, ['-q', '-b', 'main']);
+  git(dir, 'config', 'user.email', 't@t');
+  git(dir, 'config', 'user.name', 't');
+  fs.writeFileSync(path.join(dir, 'version.json'), '{\n  "version": "1.0.0"\n}\n');
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), UNRELEASED_EMPTY);
+  fs.mkdirSync(path.join(dir, 'changelog.d'));
+  for (const [name, body] of Object.entries(fragments)) fs.writeFileSync(path.join(dir, 'changelog.d', name), body);
+  fs.mkdirSync(path.join(dir, '.tangleclaw'));
+  fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), JSON.stringify(config));
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-q', '-m', 'init');
+  git(dir, 'checkout', '-q', '-b', 'feat/session');
+  return dir;
+}
+
+/**
+ * Everything a restore must bring back: the release files' bytes, the index
+ * entries of the release targets, and the whole `git status`.
+ * @param {string} repo - Repo path.
+ * @returns {{files:Record<string,string|null>, index:string, status:string}}
+ */
+function treeState(repo) {
+  const files = {};
+  for (const rel of ['CHANGELOG.md', 'version.json']) {
+    files[rel] = fs.existsSync(path.join(repo, rel)) ? fs.readFileSync(path.join(repo, rel), 'utf8') : null;
+  }
+  const fragDir = path.join(repo, 'changelog.d');
+  for (const name of (fs.existsSync(fragDir) ? fs.readdirSync(fragDir) : [])) {
+    files[`changelog.d/${name}`] = fs.readFileSync(path.join(fragDir, name), 'utf8');
+  }
+  return {
+    files,
+    index: execFileSync('git', ['ls-files', '-s', '--', ...RELEASE_TARGETS], { cwd: repo, encoding: 'utf8' }),
+    status: execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: repo, encoding: 'utf8' })
+  };
+}
+
+/**
+ * Run version-bump then commit as the pipeline would, for a session launched now.
+ * @param {string} repo - Repo path.
+ * @param {object} [opts]
+ * @param {object} [opts.options] - Run options.
+ * @param {object|null} [opts.baseline] - Launch baseline; captured now when omitted.
+ * @param {string} [opts.runId] - The wrap run id the recovery record is keyed by.
+ * @returns {Promise<{bump:object, commitRes:object, staged:object, artifactDir:string}>}
+ */
+async function runCut(repo, { options = {}, baseline = launchBaseline.capture(repo), runId = 'run-test' } = {}) {
+  const scope = await wrapScope.resolve({ name: 'own', path: repo }, { id: 1, tmuxSession: 'own', startedAt: '2000-01-01 00:00:00' }, {
+    exec: (file, args, opts) => execFileArgs(file, args, { cwd: opts.cwd, timeoutMs: 10000, maxBufferBytes: 1024 * 1024 }),
+    paneCurrentPath: () => repo,
+    getLaunchBaseline: () => baseline
+  });
+  const project = wrapScope.stepProject({ id: 1, name: 'own', path: repo }, scope);
+  const staged = {};
+  const bump = await vb.run({ project, step: { id: 'version-bump', kind: 'version-bump' }, staged, options, previousResults: [] });
+  const commitRes = await commit.run({ project, session: null, step: { id: 'commit' }, previousResults: [], staged, options, scope, wrapRunId: runId });
+  return { bump, commitRes, staged, artifactDir: path.join(scope.configRoot, vb.RELEASE_RECOVERY_REL, runId) };
+}
+
+/**
+ * Make one git command fail through the commit step's exec seam.
+ * @param {(args:string[]) => boolean} predicate - Which git argv to refuse.
+ * @param {object} [result] - Fields merged over the refusal.
+ * @returns {() => void} Restores the seam.
+ */
+function failGit(predicate, result = {}) {
+  const orig = commit._internal.exec;
+  commit._internal.exec = async (file, args, opts) => (file === 'git' && predicate(args)
+    ? { exitCode: 1, stdout: '', stderr: 'seam: refused', error: null, timedOut: false, ...result }
+    : orig(file, args, opts));
+  return () => { commit._internal.exec = orig; };
+}
+
+/**
+ * `git status` over the release targets only: a landed commit also stamps the
+ * untracked `.tangleclaw/state.json`, which is the wrap's boundary, not a release file.
+ * @param {string} repo - Repo path.
+ * @returns {string} Porcelain output.
+ */
+function releaseStatus(repo) {
+  return execFileSync('git', ['status', '--porcelain', '--untracked-files=all', '--', ...RELEASE_TARGETS], { cwd: repo, encoding: 'utf8' });
+}
+
+/**
+ * Files in the HEAD commit, deletions included.
+ * @param {string} repo - Repo path.
+ * @returns {string[]} Sorted paths.
+ */
+function committedFiles(repo) {
+  return git(repo, 'show', '--name-only', '--format=', 'HEAD').split('\n').filter(Boolean).sort();
+}
+
+describe('wrap CHANGELOG transaction — fragments ride the release cut, recoverably (#1220 C03)', () => {
+  let savedInternal;
+  let savedCommitInternal;
+
+  beforeEach(() => {
+    savedInternal = { ...vb._internal };
+    savedCommitInternal = { ...commit._internal };
+    vb._internal.todayIso = () => '2026-10-21';
+  });
+
+  afterEach(() => {
+    Object.assign(vb._internal, savedInternal);
+    Object.assign(commit._internal, savedCommitInternal);
+  });
+
+  describe('Safeguard 1 — the flush deletes a staged fragment, and the snapshot carries it', () => {
+    it('_flushStagedWrites unlinks a delete entry, reports it, and refuses one already gone', () => {
+      const dir = tmpRepoDir('tc-frag-flush-');
+      const target = path.join(dir, 'changelog.d', '7.feature.added.md');
+      fs.mkdirSync(path.dirname(target));
+      fs.writeFileSync(target, FRAGMENT);
+      const staged = { 'version-bump:fragment:7.feature.added.md': { primingPath: target, newContent: null, delete: true, changed: true, fragment: true } };
+
+      assert.deepEqual(commit._flushStagedWrites(staged), [{ stepId: 'version-bump:fragment:7.feature.added.md', path: target, deleted: true }]);
+      assert.equal(fs.existsSync(target), false);
+      assert.throws(() => commit._flushStagedWrites(staged), { code: 'ENOENT' }, 'a fragment already gone is an error, not a silent success');
+      assert.ok(commit._isDeleteEntry(staged['version-bump:fragment:7.feature.added.md']));
+      assert.equal(commit._isDeleteEntry({ primingPath: target, delete: true }), false, 'newContent must be exactly null');
+      assert.equal(commit._isDeleteEntry({ primingPath: target, newContent: null }), false, 'delete must be stated');
+      assert.deepEqual(commit._flushStagedWrites({ x: { primingPath: target, newContent: undefined, delete: true } }), [], 'an entry with no content is still skipped');
+    });
+
+    it('_snapshotStagedTargets records a delete target\'s prior bytes, and _restoreSnapshot puts them back byte for byte', () => {
+      const dir = tmpRepoDir('tc-frag-snap-');
+      const target = path.join(dir, '7.feature.added.md');
+      const bytes = Buffer.from('- entry with trailing spaces   \r\n  and a continuation\n');
+      fs.writeFileSync(target, bytes);
+      const staged = { f: { primingPath: target, newContent: null, delete: true, changed: true } };
+      const snapshot = commit._snapshotStagedTargets(staged);
+      assert.equal(snapshot.length, 1);
+      assert.equal(snapshot[0].existed, true);
+      assert.ok(Buffer.isBuffer(snapshot[0].content));
+      commit._flushStagedWrites(staged);
+      assert.equal(fs.existsSync(target), false);
+      assert.deepEqual(commit._restoreSnapshot(snapshot), []);
+      assert.ok(fs.readFileSync(target).equals(bytes), 'byte-identical, CRLF and trailing spaces included');
+    });
+  });
+
+  describe('Safeguard 2 — a deleted path still resolves under a symlinked root', () => {
+    it('_realpathOr resolves a missing file through its real parent', () => {
+      const real = tmpRepoDir('tc-frag-real-');
+      const link = path.join(tmpRepoDir('tc-frag-link-'), 'via-link');
+      fs.symlinkSync(real, link);
+      assert.equal(commit._realpathOr(path.join(link, 'gone.md')), path.join(real, 'gone.md'));
+      assert.equal(commit._realpathOr(path.join(link, 'deeper', 'gone.md')), path.join(real, 'deeper', 'gone.md'));
+      fs.writeFileSync(path.join(real, 'here.md'), 'x');
+      assert.equal(commit._realpathOr(path.join(link, 'here.md')), path.join(real, 'here.md'));
+    });
+
+    it('a fragment deletion under os.tmpdir() as spelled (a symlink on macOS) lands in the commit', async () => {
+      const repo = makeFragmentRepo({ resolve: false });
+      const { bump, commitRes } = await runCut(repo);
+      assert.equal(bump.status, 'done', JSON.stringify(bump));
+      assert.equal(commitRes.status, 'done', JSON.stringify(commitRes.blockers));
+      assert.ok(committedFiles(repo).includes('changelog.d/7.feature.added.md'), committedFiles(repo).join(', '));
+      assert.equal(releaseStatus(repo), '');
+    });
+  });
+
+  describe('the cut as one transaction', () => {
+    it('a successful cut commits the promoted CHANGELOG, the bump and the fragment deletion as one commit, and removes the recovery record', async () => {
+      const repo = makeFragmentRepo();
+      const head = git(repo, 'rev-parse', 'HEAD');
+      const { bump, commitRes, artifactDir } = await runCut(repo);
+
+      assert.equal(bump.status, 'done', JSON.stringify(bump));
+      assert.deepEqual(bump.output.fragments, { compiled: 1, files: ['7.feature.added.md'] });
+      assert.equal(commitRes.status, 'done', JSON.stringify(commitRes.blockers));
+      assert.notEqual(git(repo, 'rev-parse', 'HEAD'), head);
+      assert.deepEqual(committedFiles(repo), ['CHANGELOG.md', 'changelog.d/7.feature.added.md', 'version.json']);
+      assert.match(git(repo, 'show', 'HEAD:CHANGELOG.md'), /## \[Unreleased\]\n\n## \[1\.1\.0\] - 2026-10-21\n\n### Added\n- A feature the fragment records \(#7\)\n\n## \[1\.0\.0\]/);
+      assert.throws(() => git(repo, 'cat-file', '-e', 'HEAD:changelog.d/7.feature.added.md'), 'the fragment is gone from the tree');
+      assert.match(commitRes.output.message, /- Bumped 1\.0\.0 → 1\.1\.0 \(minor\)\n- Compiled 1 changelog fragment\(s\)/);
+      assert.ok(commitRes.output.flushed.some((f) => f.deleted === true && f.path.endsWith('7.feature.added.md')));
+      assert.deepEqual(commitRes.output.releaseRecovery, { artifactDir, removed: true });
+      assert.equal(fs.existsSync(artifactDir), false, 'the record is removed once the commit landed');
+      assert.equal(fs.existsSync(path.dirname(artifactDir)), false, 'and so is the parent that held only its self-ignore');
+      assert.equal(releaseStatus(repo), '', 'the release files are clean; the wrap state stamp is the only untracked file');
+    });
+
+    it('a failing releasePrepareCommand puts CHANGELOG, the version file and the fragment back byte for byte', async () => {
+      const repo = makeFragmentRepo({ config: { releasePrepareCommand: 'exit 1' } });
+      const before = treeState(repo);
+      const head = git(repo, 'rev-parse', 'HEAD');
+      const { commitRes, artifactDir } = await runCut(repo);
+
+      assert.equal(commitRes.status, 'blocked');
+      assert.match(commitRes.blockers[0], /releasePrepareCommand exited 1/);
+      assert.equal(git(repo, 'rev-parse', 'HEAD'), head, 'nothing was committed');
+      assert.deepEqual(treeState(repo), before, 'files, index and status are the pre-cut state');
+      assert.match(commitRes.output.remediation, /consumed changelog fragments were put back, so Retry cuts the release again from scratch/);
+      assert.doesNotMatch(commitRes.output.remediation, /git checkout/, 'no checkout is ever recommended: it would discard an untracked fragment and unrelated edits');
+      assert.equal(commitRes.output.releaseRecovery.retained, false);
+      assert.equal(fs.existsSync(path.dirname(artifactDir)), false, 'a complete restore leaves no release-recovery/ behind');
+    });
+  });
+
+  describe('Safeguard 3 — recovery after the flush, with no releasePrepareCommand at all', () => {
+    it('a failing git add restores the work tree and the index, and removes the record', async () => {
+      const repo = makeFragmentRepo();
+      const before = treeState(repo);
+      const restore = failGit((args) => args[0] === 'add');
+      let out;
+      try { out = await runCut(repo); } finally { restore(); }
+
+      assert.equal(out.commitRes.status, 'blocked');
+      assert.match(out.commitRes.blockers[0], /git add failed/);
+      assert.deepEqual(treeState(repo), before);
+      assert.match(out.commitRes.output.remediation, /were put back, and the index entries of those files with them, so Retry cuts the release again/);
+      assert.equal(out.commitRes.output.releaseRecovery.indexRestored, true);
+      assert.deepEqual(out.commitRes.output.releaseRecovery.problems, []);
+      assert.equal(fs.existsSync(out.artifactDir), false);
+    });
+
+    it('a rejected git commit (not a timeout) restores the same, index included, after a real git add', async () => {
+      const repo = makeFragmentRepo();
+      const before = treeState(repo);
+      const restore = failGit((args) => args[0] === 'commit');
+      let out;
+      try { out = await runCut(repo); } finally { restore(); }
+
+      assert.equal(out.commitRes.status, 'blocked');
+      assert.match(out.commitRes.blockers[0], /git commit failed/);
+      assert.deepEqual(treeState(repo), before, 'the real git add staged the cut; the restore unstaged it exactly');
+      assert.equal(fs.existsSync(out.artifactDir), false);
+    });
+
+    it('a git commit stopped by its timeout restores nothing, keeps the record, and names it', async () => {
+      const repo = makeFragmentRepo();
+      const before = treeState(repo);
+      const restore = failGit((args) => args[0] === 'commit', { timedOut: true, error: 'timed out after 1ms' });
+      let out;
+      try { out = await runCut(repo); } finally { restore(); }
+
+      assert.equal(out.commitRes.status, 'blocked');
+      assert.match(out.commitRes.blockers[0], /git commit did not finish and was stopped/);
+      const after_ = treeState(repo);
+      assert.notEqual(after_.files['CHANGELOG.md'], before.files['CHANGELOG.md'], 'the promoted CHANGELOG stays, since the commit may still land');
+      assert.equal(after_.files['changelog.d/7.feature.added.md'], undefined, 'the fragment stays consumed');
+      assert.ok(fs.existsSync(path.join(out.artifactDir, 'manifest.json')), 'the record is retained');
+      assert.equal(out.commitRes.output.releaseRecovery.retained, true);
+      assert.match(out.commitRes.output.remediation, /were NOT put back/);
+      assert.match(out.commitRes.output.remediation, /Run `git log -1` first/);
+      assert.ok(out.commitRes.output.remediation.includes(out.artifactDir));
+      assert.doesNotMatch(after_.status, /release-recovery/, 'the record ignores itself: git never sees it');
+      const manifest = JSON.parse(fs.readFileSync(path.join(out.artifactDir, 'manifest.json'), 'utf8'));
+      assert.equal(manifest.runId, 'run-test');
+      assert.deepEqual(manifest.cut, { from: '1.0.0', to: '1.1.0' });
+      const fragmentTarget = manifest.targets.find((t) => t.path.endsWith('7.feature.added.md'));
+      assert.equal(fragmentTarget.existed, true);
+      assert.equal(fs.readFileSync(path.join(out.artifactDir, fragmentTarget.file), 'utf8'), FRAGMENT, 'the record holds the fragment\'s exact prior bytes');
+      assert.equal(fragmentTarget.repoPath, 'changelog.d/7.feature.added.md');
+      assert.match(fragmentTarget.index.object, /^[0-9a-f]{40}$/, 'and its index entry');
+    });
+
+    it('an untracked fragment whose restore fails stays recoverable from the record, which names itself', async () => {
+      const repo = makeFragmentRepo();
+      const baseline = launchBaseline.capture(repo);
+      const untracked = path.join(repo, 'changelog.d', '8.new.fixed.md');
+      const untrackedBytes = '- a fix this session added and never committed (#8)\n';
+      fs.writeFileSync(untracked, untrackedBytes);
+      commit._internal.writeFileSync = (p, c) => {
+        if (String(p).endsWith('8.new.fixed.md')) throw new Error('disk full');
+        return fs.writeFileSync(p, c);
+      };
+      const restore = failGit((args) => args[0] === 'add');
+      let out;
+      try { out = await runCut(repo, { baseline }); } finally { restore(); }
+
+      assert.equal(out.commitRes.status, 'blocked');
+      const report = out.commitRes.output.releaseRecovery;
+      assert.equal(report.retained, true);
+      assert.ok(report.putBack.some((p) => p.endsWith('CHANGELOG.md')) && report.putBack.some((p) => p.endsWith('version.json')) && report.putBack.some((p) => p.endsWith('7.feature.added.md')));
+      assert.ok(report.problems.some((p) => p.includes('8.new.fixed.md') && p.includes('disk full')));
+      assert.equal(fs.readFileSync(path.join(repo, 'CHANGELOG.md'), 'utf8'), UNRELEASED_EMPTY);
+      assert.equal(fs.existsSync(untracked), false, 'the one file that could not be put back');
+      assert.ok(fs.existsSync(path.join(out.artifactDir, 'manifest.json')));
+      const manifest = JSON.parse(fs.readFileSync(path.join(out.artifactDir, 'manifest.json'), 'utf8'));
+      const target = manifest.targets.find((t) => t.path === untracked);
+      assert.equal(target.existed, true);
+      assert.equal(target.index, null, 'recorded as absent from the index: HEAD never held it');
+      assert.equal(fs.readFileSync(path.join(out.artifactDir, target.file), 'utf8'), untrackedBytes, 'the exact bytes of a fragment HEAD does not hold');
+      assert.match(out.commitRes.output.remediation, /Not everything was put back/);
+      assert.ok(out.commitRes.output.remediation.includes(out.artifactDir), 'the manifest\'s directory is named');
+      assert.match(out.commitRes.output.remediation, /No release is cut while it exists/);
+      assert.doesNotMatch(out.commitRes.output.remediation, /from scratch/, 'never says the tree is clean');
+      assert.doesNotMatch(treeState(repo).status, /release-recovery/);
+      // And the next cut refuses until it is dealt with.
+      Object.assign(commit._internal, savedCommitInternal);
+      const next = await runCut(repo, { runId: 'run-next' });
+      assert.equal(next.bump.status, 'needs-operator');
+      assert.match(next.bump.output.reason, /did not land and its files' prior bytes are still unrecovered/);
+    });
+
+    it('an unrelated uncommitted edit to CHANGELOG.md survives a restore', async () => {
+      const repo = makeFragmentRepo();
+      const baseline = launchBaseline.capture(repo);
+      const edited = `${UNRELEASED_EMPTY}\n<!-- an operator note, uncommitted -->\n`;
+      fs.writeFileSync(path.join(repo, 'CHANGELOG.md'), edited);
+      const restore = failGit((args) => args[0] === 'add');
+      let out;
+      try { out = await runCut(repo, { baseline }); } finally { restore(); }
+
+      assert.equal(out.commitRes.status, 'blocked');
+      assert.equal(fs.readFileSync(path.join(repo, 'CHANGELOG.md'), 'utf8'), edited, 'the edit, not HEAD, is what comes back');
+      assert.equal(fs.existsSync(out.artifactDir), false);
+    });
+
+    for (const [how, arrange, blockerRe] of [
+      ['a failing git add', (repo) => failGit((args) => args[0] === 'add'), /git add failed/],
+      ['a failing pre-commit hook', (repo) => {
+        // `initRepo` copies no template, so the hooks directory starts absent.
+        fs.mkdirSync(path.join(repo, '.git', 'hooks'), { recursive: true });
+        fs.writeFileSync(path.join(repo, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\necho "hook refused" >&2\nexit 1\n', { mode: 0o755 });
+        return () => fs.rmSync(path.join(repo, '.git', 'hooks', 'pre-commit'));
+      }, /git commit failed \(exit 1\): hook refused/]
+    ]) {
+      it(`pre-existing partial staging of the release targets is put back exactly: ${how}`, async () => {
+        const repo = makeFragmentRepo();
+        const baseline = launchBaseline.capture(repo);
+        // The operator's own staged hunk on CHANGELOG.md, and a staged new fragment.
+        fs.writeFileSync(path.join(repo, 'CHANGELOG.md'), `${UNRELEASED_EMPTY}\n<!-- staged by the operator -->\n`);
+        git(repo, 'add', 'CHANGELOG.md');
+        fs.writeFileSync(path.join(repo, 'changelog.d', '9.staged.fixed.md'), '- staged, not committed (#9)\n');
+        git(repo, 'add', 'changelog.d/9.staged.fixed.md');
+        const before = treeState(repo);
+        assert.match(before.status, /^M  CHANGELOG\.md$/m);
+        assert.match(before.status, /^A  changelog\.d\/9\.staged\.fixed\.md$/m);
+        const restore = arrange(repo);
+        let out;
+        try { out = await runCut(repo, { baseline }); } finally { restore(); }
+
+        assert.equal(out.commitRes.status, 'blocked', JSON.stringify(out.commitRes));
+        // The named halt, not an earlier one: a commit pathspec naming the
+        // pre-staged fragment (added to the index, then deleted by the flush)
+        // used to fail on "did not match any file(s) known to git" before the
+        // hook ran, and this assertion is what tells the two apart (A397).
+        assert.match(out.commitRes.blockers[0], blockerRe);
+        assert.deepEqual(out.bump.output.fragments.files, ['7.feature.added.md', '9.staged.fixed.md']);
+        const after_ = treeState(repo);
+        assert.equal(after_.index, before.index, 'git ls-files -s on the targets is byte-identical to the pre-add record');
+        assert.equal(after_.status, before.status, 'git status is identical to the pre-wrap state');
+        assert.deepEqual(after_.files, before.files);
+        assert.equal(fs.existsSync(out.artifactDir), false);
+      });
+    }
+
+    it('a pre-staged new fragment is consumed by a successful cut: its entry lands, and it is gone from HEAD, the index and the work tree (A397)', async () => {
+      const repo = makeFragmentRepo();
+      const baseline = launchBaseline.capture(repo);
+      fs.writeFileSync(path.join(repo, 'changelog.d', '9.staged.fixed.md'), '- staged, not committed (#9)\n');
+      git(repo, 'add', 'changelog.d/9.staged.fixed.md');
+      assert.match(treeState(repo).status, /^A  changelog\.d\/9\.staged\.fixed\.md$/m, 'precondition: added to the index, not in HEAD');
+      const out = await runCut(repo, { baseline });
+
+      assert.equal(out.bump.status, 'done');
+      assert.equal(out.commitRes.status, 'done', JSON.stringify(out.commitRes.blockers));
+      assert.deepEqual(out.bump.output.fragments.files, ['7.feature.added.md', '9.staged.fixed.md']);
+      assert.match(git(repo, 'show', 'HEAD:CHANGELOG.md'), /## \[1\.1\.0\] - 2026-10-21\n\n### Added\n- A feature the fragment records \(#7\)\n\n### Fixed\n- staged, not committed \(#9\)\n/,
+        'the staged fragment\'s bullet is under the release heading');
+      assert.match(out.commitRes.output.message, /- Compiled 2 changelog fragment\(s\)/);
+      assert.throws(() => git(repo, 'cat-file', '-e', 'HEAD:changelog.d/9.staged.fixed.md'), 'absent from HEAD');
+      assert.equal(git(repo, 'ls-files', '-s', '--', 'changelog.d/9.staged.fixed.md'), '', 'absent from the index');
+      assert.equal(fs.existsSync(path.join(repo, 'changelog.d', '9.staged.fixed.md')), false, 'absent from the work tree');
+      assert.deepEqual(committedFiles(repo), ['CHANGELOG.md', 'changelog.d/7.feature.added.md', 'version.json'],
+        'the committed fragment\'s deletion is recorded; the pre-staged one never existed in HEAD, so the commit has no record of it');
+      assert.equal(releaseStatus(repo), '');
+      assert.equal(fs.existsSync(path.dirname(out.artifactDir)), false);
+    });
+
+    it('a wrap whose only selected path was added to the index and then deleted skips with nothing to commit, and the index is left as HEAD has it', async () => {
+      const repo = makeFragmentRepo();
+      const baseline = launchBaseline.capture(repo);
+      const target = path.join(repo, 'notes', 'scratch.md');
+      fs.mkdirSync(path.dirname(target));
+      fs.writeFileSync(target, 'added then deleted\n');
+      git(repo, 'add', 'notes/scratch.md');
+      const head = git(repo, 'rev-parse', 'HEAD');
+      const scope = await wrapScope.resolve({ name: 'own', path: repo }, { id: 1, tmuxSession: 'own', startedAt: '2000-01-01 00:00:00' }, {
+        exec: (file, args, opts) => execFileArgs(file, args, { cwd: opts.cwd, timeoutMs: 10000, maxBufferBytes: 1024 * 1024 }),
+        paneCurrentPath: () => repo,
+        getLaunchBaseline: () => baseline
+      });
+      const res = await commit.run({
+        project: wrapScope.stepProject({ id: 1, name: 'own', path: repo }, scope),
+        session: null,
+        step: { id: 'commit' },
+        previousResults: [],
+        staged: { 'x:delete': { primingPath: target, newContent: null, delete: true, changed: true } },
+        options: {},
+        scope
+      });
+
+      assert.equal(res.status, 'skipped', JSON.stringify(res));
+      assert.match(res.output.reason, /nothing to commit — the only files selected \(notes\/scratch\.md\) were added to the index this session and then deleted/);
+      assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+      assert.equal(execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: repo, encoding: 'utf8' }), '', 'the stale index entry was removed by git add; nothing else moved');
+    });
+
+    it('_commitWithUntrack leaves an added-then-deleted path out of its temporary index and brings the real index level after the commit', async () => {
+      const repo = makeFragmentRepo();
+      fs.writeFileSync(path.join(repo, 'changelog.d', '9.staged.fixed.md'), '- staged (#9)\n');
+      git(repo, 'add', 'changelog.d/9.staged.fixed.md');
+      fs.rmSync(path.join(repo, 'changelog.d', '9.staged.fixed.md'));
+      fs.writeFileSync(path.join(repo, 'CHANGELOG.md'), `${UNRELEASED_EMPTY}- edited\n`);
+      assert.match(treeState(repo).status, /^AD changelog\.d\/9\.staged\.fixed\.md$/m, 'precondition');
+      const pathspec = path.join(tmpRepoDir('tc-frag-ps-'), 'ps');
+      fs.writeFileSync(pathspec, ':(top,literal)CHANGELOG.md\0');
+      const res = await commit._commitWithUntrack({
+        cwd: repo,
+        message: 'untrack with an AD path beside',
+        addPathspecArgs: [`--pathspec-from-file=${pathspec}`, '--pathspec-file-nul'],
+        hasAddable: true,
+        untrackPaths: ['.tangleclaw/project.json'],
+        addedThenDeleted: ['changelog.d/9.staged.fixed.md']
+      });
+
+      assert.equal(res.exitCode, 0, res.stderr);
+      assert.deepEqual(committedFiles(repo), ['.tangleclaw/project.json', 'CHANGELOG.md']);
+      assert.throws(() => git(repo, 'cat-file', '-e', 'HEAD:.tangleclaw/project.json'), 'untracked by the commit');
+      assert.equal(git(repo, 'ls-files', '-s', '--', 'changelog.d/9.staged.fixed.md'), '', 'the real index no longer holds the deleted path');
+      const status = execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: repo, encoding: 'utf8' });
+      assert.match(status, /^\?\? \.tangleclaw\/project\.json$/m, 'the untracked-but-kept file remains, as the untrack route promises');
+      assert.doesNotMatch(status, /9\.staged\.fixed\.md/, 'and the deleted path is reported nowhere: neither staged nor deleted');
+    });
+
+    it('an unselected added-then-deleted path keeps its real-index entry through the untrack route: only the wrap\'s own selection is brought level', async () => {
+      const repo = makeFragmentRepo();
+      // A tracked TangleClaw state file, so an approved un-track offer takes the
+      // temporary-index commit route whose sync edits the REAL index.
+      fs.writeFileSync(path.join(repo, '.tangleclaw', 'state.json'), '{}\n');
+      git(repo, 'add', '.tangleclaw/state.json');
+      git(repo, 'commit', '-q', '-m', 'track state');
+      // The operator's own work, before launch: a new file added to the index and
+      // then deleted from the work tree (porcelain AD), which they Leave.
+      fs.mkdirSync(path.join(repo, 'notes'));
+      fs.writeFileSync(path.join(repo, 'notes', 'op.md'), 'the operator\'s staged draft\n');
+      git(repo, 'add', 'notes/op.md');
+      fs.rmSync(path.join(repo, 'notes', 'op.md'));
+      const baseline = launchBaseline.capture(repo);
+      const indexBefore = execFileSync('git', ['ls-files', '-s', '--', 'notes/op.md'], { cwd: repo, encoding: 'utf8' });
+      assert.match(indexBefore, /^100644 [0-9a-f]{40} 0\tnotes\/op\.md\n$/, 'precondition: in the index');
+      assert.match(treeState(repo).status, /^AD notes\/op\.md$/m, 'precondition: AD');
+      // The session's own selected change.
+      fs.writeFileSync(path.join(repo, 'CHANGELOG.md'), `${UNRELEASED_EMPTY}- the session\'s edit\n`);
+      const scope = await wrapScope.resolve({ name: 'own', path: repo }, { id: 1, tmuxSession: 'own', startedAt: '2000-01-01 00:00:00' }, {
+        exec: (file, args, opts) => execFileArgs(file, args, { cwd: opts.cwd, timeoutMs: 10000, maxBufferBytes: 1024 * 1024 }),
+        paneCurrentPath: () => repo,
+        getLaunchBaseline: () => baseline
+      });
+      const res = await commit.run({
+        project: wrapScope.stepProject({ id: 1, name: 'own', path: repo }, scope),
+        session: null,
+        step: { id: 'commit' },
+        previousResults: [],
+        staged: {},
+        options: { untrackState: 'approve', pathDecisions: { 'notes/op.md': 'leave' } },
+        scope
+      });
+
+      assert.equal(res.status, 'done', JSON.stringify(res));
+      assert.deepEqual(res.output.untrackState, ['.tangleclaw/state.json'], 'the approved un-track went through');
+      assert.deepEqual(committedFiles(repo), ['.tangleclaw/state.json', 'CHANGELOG.md']);
+      assert.throws(() => git(repo, 'cat-file', '-e', 'HEAD:.tangleclaw/state.json'), 'untracked by the commit');
+      assert.equal(execFileSync('git', ['ls-files', '-s', '--', 'notes/op.md'], { cwd: repo, encoding: 'utf8' }), indexBefore,
+        'the operator\'s staged entry is byte-identical: the index sync touched only the wrap\'s own selection');
+      assert.match(treeState(repo).status, /^AD notes\/op\.md$/m, 'and git still reports it exactly as before');
+      assert.ok(!res.output.message.includes('notes/op.md'), 'the commit body names nothing of theirs');
+    });
+
+    it('a failed index restore retains the record and prints the repair', async () => {
+      const repo = makeFragmentRepo();
+      const restore = failGit((args) => args[0] === 'commit' || args[0] === 'update-index');
+      let out;
+      try { out = await runCut(repo); } finally { restore(); }
+
+      assert.equal(out.commitRes.status, 'blocked');
+      const report = out.commitRes.output.releaseRecovery;
+      assert.equal(report.indexRestored, false);
+      assert.equal(report.retained, true);
+      assert.ok(report.problems.some((p) => /index entries of the release files could not be put back/.test(p)));
+      assert.ok(fs.existsSync(path.join(out.artifactDir, 'manifest.json')));
+      assert.match(out.commitRes.output.remediation, /git update-index --add --cacheinfo <mode>,<object>,<path>/);
+      assert.equal(fs.readFileSync(path.join(repo, 'CHANGELOG.md'), 'utf8'), UNRELEASED_EMPTY, 'the work tree was still put back');
+    });
+
+    it('a failing pre-add index read refuses the cut with nothing flushed', async () => {
+      const repo = makeFragmentRepo();
+      const before = treeState(repo);
+      const restore = failGit((args) => args[0] === 'ls-files');
+      let out;
+      try { out = await runCut(repo); } finally { restore(); }
+
+      assert.equal(out.bump.status, 'done');
+      assert.equal(out.commitRes.status, 'blocked');
+      assert.match(out.commitRes.blockers[0], /release cut refused: the index entries of the release files could not be recorded/);
+      assert.match(out.commitRes.output.remediation, /Nothing was written or committed/);
+      assert.deepEqual(treeState(repo), before);
+      assert.equal(fs.existsSync(path.dirname(out.artifactDir)), false, 'no record was written either');
+    });
+
+    for (const [how, leave, leftOut] of [
+      ['every release file left out', { 'CHANGELOG.md': 'leave', 'version.json': 'leave', 'changelog.d/7.feature.added.md': 'leave' }, 'CHANGELOG.md, changelog.d/7.feature.added.md, version.json'],
+      ['CHANGELOG.md left out while the version file and the fragment deletion are included', { 'CHANGELOG.md': 'leave', 'version.json': 'include', 'changelog.d/7.feature.added.md': 'include' }, 'CHANGELOG.md']
+    ]) {
+      it(`a release cut commits all of its files or none: ${how} is refused and put back`, async () => {
+        const repo = makeFragmentRepo();
+        fs.writeFileSync(path.join(repo, 'CHANGELOG.md'), `${UNRELEASED_EMPTY}\n<!-- dirty at launch -->\n`);
+        fs.writeFileSync(path.join(repo, 'version.json'), '{\n  "version": "1.0.0",\n  "note": "dirty at launch"\n}\n');
+        fs.writeFileSync(path.join(repo, 'changelog.d', '7.feature.added.md'), `${FRAGMENT}  with a continuation line added before launch\n`);
+        const baseline = launchBaseline.capture(repo);
+        const before = treeState(repo);
+        const head = git(repo, 'rev-parse', 'HEAD');
+        const out = await runCut(repo, { baseline, options: { pathDecisions: leave } });
+
+        assert.equal(out.bump.status, 'done');
+        assert.equal(out.commitRes.status, 'blocked', JSON.stringify(out.commitRes));
+        assert.equal(git(repo, 'rev-parse', 'HEAD'), head, 'nothing was committed, not even the included half');
+        assert.equal(out.commitRes.output.releaseLeftOut.join(', '), leftOut);
+        assert.match(out.commitRes.output.remediation, /A release cut commits all of its files or none/);
+        assert.match(out.commitRes.output.remediation, /Include every release file .*, or choose Release: Hold/);
+        assert.deepEqual(treeState(repo), before, 'the dirty-at-launch bytes, fragment included, are back');
+        assert.equal(out.commitRes.output.releaseRecovery.retained, false);
+        assert.equal(fs.existsSync(out.artifactDir), false);
+      });
+    }
+  });
+});

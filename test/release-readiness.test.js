@@ -65,6 +65,30 @@ describe('unreleasedEntriesSignal', () => {
     assert.equal(rr.unreleasedEntriesSignal({ found: true, sectionFound: false }).state, 'unknown');
     assert.equal(rr.unreleasedEntriesSignal(undefined).state, 'unknown');
   });
+
+  it('passes on pending changelog fragments with an empty [Unreleased] (#1220)', () => {
+    const s = rr.unreleasedEntriesSignal({ found: true, sectionFound: true, hasEntries: false, fragments: { ok: true, count: 3 } });
+    assert.equal(s.state, 'pass');
+    assert.match(s.detail, /3 changelog fragment\(s\) wait under changelog\.d\//);
+    const both = rr.unreleasedEntriesSignal({ found: true, sectionFound: true, hasEntries: true, fragments: { ok: true, count: 1 } });
+    assert.equal(both.state, 'pass');
+    assert.match(both.detail, /1 of them changelog fragment/);
+  });
+
+  it('is unknown on a refused fragment set, whatever [Unreleased] holds (#1220)', () => {
+    for (const hasEntries of [true, false]) {
+      const s = rr.unreleasedEntriesSignal({ found: true, sectionFound: true, hasEntries, fragments: { ok: false, count: 0 } });
+      assert.equal(s.state, 'unknown', `hasEntries ${hasEntries}`);
+      assert.match(s.detail, /fragment contract refuses/);
+    }
+  });
+
+  it('still fails when [Unreleased] is empty and no fragment is pending, and without the fragment facts at all', () => {
+    assert.equal(rr.unreleasedEntriesSignal({ found: true, sectionFound: true, hasEntries: false, fragments: { ok: true, count: 0 } }).state, 'fail');
+    assert.equal(rr.unreleasedEntriesSignal({ found: true, sectionFound: true, hasEntries: false }).state, 'fail');
+    // A section with no heading cannot take a compiled fragment, so pending ones do not make it readable.
+    assert.equal(rr.unreleasedEntriesSignal({ found: true, sectionFound: false, hasEntries: false, fragments: { ok: true, count: 2 } }).state, 'unknown');
+  });
 });
 
 describe('buildPlanStatusSignal', () => {

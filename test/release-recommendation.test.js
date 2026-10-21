@@ -38,7 +38,7 @@ describe('release recommendation helpers', () => {
    * @param {string|null} [opts.changelog] - CHANGELOG.md text; `null` = no file
    * @returns {{name: string, path: string}}
    */
-  function makeProject({ config, changelog } = {}) {
+  function makeProject({ config, changelog, fragments } = {}) {
     const dir = fs.mkdtempSync(path.join(tmpDir, 'p-'));
     const text = changelog === undefined
       ? '# Changelog\n\n## [Unreleased]\n\n### Added\n- a feature\n\n## [1.2.3] - 2026-09-01\n'
@@ -48,8 +48,14 @@ describe('release recommendation helpers', () => {
       fs.mkdirSync(path.join(dir, '.tangleclaw'));
       fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), JSON.stringify(config));
     }
+    if (fragments) {
+      fs.mkdirSync(path.join(dir, 'changelog.d'));
+      for (const [name, body] of Object.entries(fragments)) fs.writeFileSync(path.join(dir, 'changelog.d', name), body);
+    }
     return { name: path.basename(dir), path: dir };
   }
+
+  const EMPTY_UNRELEASED = '# Changelog\n\n## [Unreleased]\n\n## [1.0.0]\n- x\n';
 
   describe('releaseDecisionOpen', () => {
     it('is open for an auto or ask project with entries to release', () => {
@@ -83,6 +89,32 @@ describe('release recommendation helpers', () => {
         /\[Unreleased\] has no entries/);
       assert.match(rec.releaseDecisionOpen(makeProject({ changelog: '# Changelog\n\n## [1.0.0]\n- x\n' }), {}).reason,
         /\[Unreleased\] has no entries/);
+    });
+
+    it('is open on pending changelog fragments with an empty [Unreleased] (#1220)', () => {
+      const project = makeProject({ changelog: EMPTY_UNRELEASED, fragments: { '7.thing.added.md': '- a thing (#7)\n' } });
+      assert.deepEqual(rec.releaseDecisionOpen(project, {}), { open: true });
+    });
+
+    it('is closed on a refused fragment set, which version-bump stops on by itself (#1220)', () => {
+      const project = makeProject({ changelog: EMPTY_UNRELEASED, fragments: { 'README.md': 'not a fragment\n' } });
+      const out = rec.releaseDecisionOpen(project, {});
+      assert.equal(out.open, false);
+      assert.match(out.reason, /fragment contract refuses/);
+    });
+
+    it('is closed on pending fragments when CHANGELOG.md has no [Unreleased] heading to compile into (#1220)', () => {
+      const project = makeProject({ changelog: '# Changelog\n\n## [1.0.0]\n- x\n', fragments: { '7.thing.added.md': '- a thing (#7)\n' } });
+      const out = rec.releaseDecisionOpen(project, {});
+      assert.equal(out.open, false, 'version-bump skips without the heading, so no prompt is worth sending');
+      assert.match(out.reason, /no \[Unreleased\] heading/);
+    });
+
+    it('is closed with an empty [Unreleased] and an empty changelog.d/, naming both (#1220)', () => {
+      const project = makeProject({ changelog: EMPTY_UNRELEASED, fragments: {} });
+      const out = rec.releaseDecisionOpen(project, {});
+      assert.equal(out.open, false);
+      assert.match(out.reason, /\[Unreleased\] has no entries and changelog\.d\/ holds no fragments/);
     });
 
     it('stays open when the CHANGELOG exists but cannot be read', () => {
