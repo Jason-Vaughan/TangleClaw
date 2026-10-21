@@ -22,7 +22,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { MAX_RELEASE_BODY_BYTES } = require('../scripts/release-notes-gate');
+const fragments = require('../lib/changelog-fragments');
 
+const REPO_ROOT = path.join(__dirname, '..');
 const EXTRACTOR = path.join(__dirname, '..', 'lib', 'changelog-notes.js');
 const GATE = path.join(__dirname, '..', 'scripts', 'release-notes-gate.js');
 
@@ -98,10 +100,28 @@ describe('CHANGELOG [Unreleased] size early warning (#2080)', () => {
     assert.ok(EARLY_WARNING_BYTES < MAX_RELEASE_BODY_BYTES);
   });
 
-  it('[Unreleased] stays under the early-warning line', () => {
-    const bytes = unreleasedPublishBytes(fs.readFileSync(path.join(__dirname, '..', 'CHANGELOG.md'), 'utf8'));
+  it('[Unreleased] stays under the early-warning line, the pending changelog fragments compiled in', () => {
+    // A release compiles every fragment under changelog.d/ into [Unreleased]
+    // before it promotes the block (#1220), so the file it would publish is the
+    // spliced text, not CHANGELOG.md as committed.
+    const pending = fragments.readFragments(REPO_ROOT);
+    assert.ok(pending.ok, `changelog.d/ holds files the release would refuse: ${pending.refused.map((r) => `${r.path} (${r.code})`).join(', ')}`);
+    const spliced = fragments.spliceIntoUnreleased(
+      fs.readFileSync(path.join(REPO_ROOT, 'CHANGELOG.md'), 'utf8'),
+      fragments.compileFragments(pending.fragments)
+    );
+    assert.ok(spliced.ok, 'CHANGELOG.md must have an [Unreleased] section');
+    const bytes = unreleasedPublishBytes(spliced.text);
     assert.notEqual(bytes, null, 'CHANGELOG.md must have an [Unreleased] section');
     assertUnderEarlyWarning(bytes);
+  });
+
+  it('counts a fragment the release would compile, not only what [Unreleased] holds today (#1220)', () => {
+    const base = '# Changelog\n\n## [Unreleased]\n\n## [1.0.0] - 2026-01-01\n\n- old\n';
+    const compiled = fragments.compileFragments([{ issue: 1, slug: 'x', type: 'added', body: `- ${'y'.repeat(100)}\n` }]);
+    const spliced = fragments.spliceIntoUnreleased(base, compiled).text;
+    assert.equal(unreleasedPublishBytes(base), 0);
+    assert.equal(unreleasedPublishBytes(spliced), Buffer.byteLength(`### Added\n- ${'y'.repeat(100)}`, 'utf8') + 1);
   });
 
   it('a publish file of exactly the early-warning size passes, and one byte more fails', () => {

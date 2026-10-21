@@ -127,10 +127,31 @@ describe('scripts/release-prepare.js (#1502)', () => {
     );
   });
 
+  it('refuses, before writing anything, while changelog.d/ still holds a fragment the release did not compile (#1220)', () => {
+    const root = copyOfRepo();
+    cut(root, '99.0.0');
+    fs.mkdirSync(path.join(root, 'changelog.d'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'changelog.d', '42.left-behind.fixed.md'), '- an entry the cut did not compile (#42)\n');
+    fs.writeFileSync(path.join(root, 'changelog.d', '43.also.added.md'), '- another (#43)\n');
+    const readmeBefore = read(root, 'README.md');
+    const lockBefore = read(root, LOCK);
+
+    assert.throws(() => prep.prepareRelease(root, { TANGLECLAW_RELEASE_VERSION: '99.0.0' }),
+      /changelog\.d\/ still holds 2 changelog fragment\(s\) the release did not compile: 42\.left-behind\.fixed\.md, 43\.also\.added\.md/);
+    assert.equal(read(root, 'README.md'), readmeBefore, 'the pins were not moved');
+    assert.equal(read(root, LOCK), lockBefore, 'the lock was not written');
+  });
+
   it('as a CLI, exits 1 with the reason on stderr', () => {
     const root = copyOfRepo();
     fs.mkdirSync(path.join(root, 'scripts'));
     fs.copyFileSync(path.join(REPO_ROOT, 'scripts', 'release-prepare.js'), path.join(root, 'scripts', 'release-prepare.js'));
+    // The script requires the fragment contract from its own repo (#1220), so the
+    // copy needs that module and the logger it requires beside it.
+    fs.mkdirSync(path.join(root, 'lib'));
+    for (const rel of ['changelog-fragments.js', 'logger.js']) {
+      fs.copyFileSync(path.join(REPO_ROOT, 'lib', rel), path.join(root, 'lib', rel));
+    }
     fs.writeFileSync(path.join(root, 'version.json'), '{"version":"99.0.0"}\n');
     let err;
     try {

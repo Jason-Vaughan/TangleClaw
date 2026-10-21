@@ -23,12 +23,20 @@
  * The version comes from `TANGLECLAW_RELEASE_VERSION` when the wrap sets it,
  * and must agree with `version.json`. Run by hand, `version.json` alone decides.
  *
+ * One guard before any file is touched (#1220): a changelog fragment still under
+ * `changelog.d/` is an entry the release did not compile, and locking the
+ * release's section without it would publish that entry twice (the next cut
+ * compiles it again) or never. The wrap's version bump deletes every fragment it
+ * compiles in the same flush this script runs after, so on a correct cut the
+ * directory is already empty.
+ *
  * Exit: 0 files are current · 1 refused (reason on stderr). Idempotent.
  */
 
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readFragments, FRAGMENT_DIR } = require('../lib/changelog-fragments');
 
 const LOCK_REL = path.join('test', 'fixtures', 'changelog-released-sections.lock.json');
 const RELEASE_HEADING_RE = /^## \[(\d+\.\d+\.\d+)\] - /;
@@ -113,6 +121,11 @@ function extendLock(lock, changelog, version) {
  * @throws {Error} On any refusal
  */
 function prepareRelease(root, env = process.env) {
+  const pending = readFragments(root);
+  if (pending.fragments.length > 0) {
+    const names = pending.fragments.map((f) => path.basename(f.path)).join(', ');
+    throw new Error(`${FRAGMENT_DIR}/ still holds ${pending.fragments.length} changelog fragment(s) the release did not compile: ${names}. Locking the release without them would publish them twice or never; cut the release through the wrap, which compiles and removes them.`);
+  }
   const { version } = JSON.parse(fs.readFileSync(path.join(root, 'version.json'), 'utf8'));
   const requested = env.TANGLECLAW_RELEASE_VERSION;
   if (requested && requested !== version) {

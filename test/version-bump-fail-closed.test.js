@@ -628,3 +628,65 @@ describe('version-bump distinguishes prose headings from foreign schemes', () =>
     });
   }
 });
+
+// A file under changelog.d/ the fragment contract refuses stops the cut (#1220).
+// A skip here would promote [Unreleased] without that fragment, and the next
+// cut would compile it under the wrong release; the step halts and names the
+// file and its code instead. It is not a Cut-or-Hold question, so the halt
+// carries no `wouldBump` for the drawer to hang those controls on.
+describe('4. a refused changelog fragment stops the cut (#1220)', () => {
+  let savedInternal;
+  let savedLoad;
+
+  beforeEach(() => {
+    savedInternal = { ...vb._internal };
+    savedLoad = projectConfigModule.load;
+    projectConfigModule.load = () => ({});
+    vb._internal.todayIso = () => '2026-07-19';
+    vb._internal.existsSync = (p) => p.endsWith('version.json') || p.endsWith('CHANGELOG.md');
+    vb._internal.readFileSync = (p) => (p.endsWith('version.json') ? '{"version":"1.4.2"}' : CHANGELOG_3OCTET);
+  });
+
+  afterEach(() => {
+    Object.assign(vb._internal, savedInternal);
+    projectConfigModule.load = savedLoad;
+  });
+
+  it('halts with needs-operator, naming each refused file and its code, and stages nothing', async () => {
+    vb._internal.readFragments = () => ({
+      ok: false,
+      fragments: [],
+      dirMissing: false,
+      refused: [
+        { path: '/p/changelog.d/README.md', code: 'MALFORMED_NAME', reason: 'expected <issue>.<slug>.<type>.md, got "README.md"' },
+        { path: '/p/changelog.d/12.x.docs.md', code: 'UNKNOWN_TYPE', reason: 'type "docs" is not one of added, …' }
+      ]
+    });
+    const context = ctx();
+    const res = await vb.run(context);
+
+    assert.equal(res.ok, false);
+    assert.equal(res.status, 'needs-operator');
+    assert.match(res.output.reason, /refusing to cut: 2 file\(s\) under changelog\.d\/ fail the changelog fragment contract/);
+    assert.match(res.output.reason, /\/p\/changelog\.d\/README\.md \(MALFORMED_NAME: /);
+    assert.match(res.output.reason, /\/p\/changelog\.d\/12\.x\.docs\.md \(UNKNOWN_TYPE: /);
+    assert.equal(res.output.detail, res.output.reason);
+    assert.deepEqual(res.blockers, [res.output.reason]);
+    assert.equal(res.output.fragmentsRefused.length, 2);
+    assert.match(res.output.remediation, /Fix or remove each named file under changelog\.d\//);
+    assert.doesNotMatch(res.output.remediation, /Cut or Hold/, 'not a release decision');
+    assert.equal(res.output.wouldBump, undefined, 'no Cut / Hold controls: the drawer keys them on wouldBump');
+    assert.deepEqual(Object.keys(context.staged), [], 'nothing staged: a halt stages nothing');
+  });
+
+  it('a readable set with no fragments cuts exactly as before', async () => {
+    vb._internal.readFragments = () => ({ ok: true, fragments: [], refused: [], dirMissing: true });
+    const context = ctx();
+    const res = await vb.run(context);
+    assert.equal(res.status, 'done');
+    assert.equal(res.output.to, '1.4.3');
+    assert.deepEqual(res.output.fragments, { compiled: 0, files: [] });
+    assert.doesNotMatch(res.output.detail, /fragment/);
+    assert.deepEqual(Object.keys(context.staged).sort(), ['version-bump:changelog', 'version-bump:version-json']);
+  });
+});

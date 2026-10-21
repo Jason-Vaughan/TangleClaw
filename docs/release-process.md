@@ -5,7 +5,9 @@ How a change in TangleClaw reaches an installed copy.
 ## The chain
 
 ```
-Session Wrap  →  version.json bumped + CHANGELOG promoted  →  merged to main
+Session Wrap  →  changelog.d/ fragments compiled into [Unreleased]
+              →  version.json bumped + CHANGELOG promoted + fragments deleted, one commit
+              →  merged to main
                                                                     ↓
                                           .github/workflows/release.yml (automatic)
                                                                     ↓
@@ -85,16 +87,20 @@ the tag always points at the commit that actually carries the version.
 
 **Bumping the version.** Only an operator-driven Session Wrap bumps `version.json` and promotes the
 `[Unreleased]` CHANGELOG section. Merging PRs does not. So a release happens when you run a wrap and
-that wrap's PR merges to `main` — not when feature PRs merge.
+that wrap's PR merges to `main` — not when feature PRs merge. A wrap that cuts first compiles every
+fragment under `changelog.d/` into `[Unreleased]`, in memory, and decides the bump level on the result;
+the promoted `CHANGELOG.md`, the bumped version file and the deletion of each compiled fragment land as
+one commit, whose body says `Compiled N changelog fragment(s)`. A fragment the contract refuses stops
+the cut at `version-bump` with the file and its code named; nothing is promoted or deleted until it is
+fixed or removed.
 
 **Logging the change.** A change records its entry as a fragment, `changelog.d/<issue>.<slug>.<type>.md`,
 not as an edit under `[Unreleased]`: `docs/changelog-fragments.md` is the contract and `CONTRIBUTING.md`
 says how to write one. The wrap's `changelog-update` step asks for a fragment and its coverage gate
-accepts one, dirty or committed. Compiling the fragments into `[Unreleased]` at release preparation is
-#1220 C03; until it lands they accumulate under `changelog.d/` and the bump table below does not see
-them. **Transition:** a pull request created before PR #2520 merged may still add its entry directly
-under `[Unreleased]`, and the gate accepts both routes. The Integrator records that merge's SHA and time
-in the batch records when it lands.
+accepts one, dirty or committed. The bump table below reads the compiled text, so a pending fragment
+counts exactly as an entry written under `[Unreleased]` would. **Transition:** a pull request created
+before PR #2520 merged (merge commit `c774d21d630145b54504b8ce2393fb93dc1c313b`, 2026-10-21T18:39:01Z)
+may still add its entry directly under `[Unreleased]`, and the gate accepts both routes.
 
 Whether a wrap cuts at all is the project's `releaseMode` (`docs/configuration-reference.md`):
 
@@ -133,10 +139,36 @@ The wrap covers them through the project's `releasePrepareCommand` (#1502). This
 `.tangleclaw/project.json` sets it to `node scripts/release-prepare.js`, which moves the pins and adds
 the new section to the lock. It only ever adds: a locked section that changed, or an older released
 section with no lock line, stops the script and the wrap's commit, because relocking is exactly what
-the lock exists to catch. `.tangleclaw/project.json` is not tracked, so a fresh clone cuts releases
-without it until the key is set. Run by hand, the script reads the version from `version.json`.
+the lock exists to catch. It also refuses while `changelog.d/` still holds a valid fragment: it runs
+after the wrap's flush, so on a correct cut the directory is already empty, and a fragment still there
+is one the cut did not compile and would publish twice or never. `.tangleclaw/project.json` is not
+tracked, so a fresh clone cuts releases without it until the key is set. Run by hand, the script reads
+the version from `version.json`.
 
 ## If a release did not go out
+
+**The wrap stopped after the fragments were consumed** (a halt at or after the `commit` step's
+flush: the release-prepare command, a blocked file decision, `git add`, a pre-commit hook). Nothing
+is committed. Before it flushes a release cut, the commit step records every release file's prior
+bytes (`CHANGELOG.md`, the version file and each fragment, an untracked one included) and their
+index entries, in memory and under `.tangleclaw/release-recovery/<run id>/` in the project's
+TangleClaw config root, and any such halt puts the work tree back from that record, and the index
+entries of those files once `git add` had run. The commit row's remediation says what was put back;
+when everything was, the record is removed and Retry cuts the release again from scratch. Two cases
+leave the record on disk, and `version-bump` refuses every cut while it exists, naming it, so a retry
+can neither compile a fragment twice nor skip one:
+
+- **Something could not be put back** (the remediation says so and never claims the tree is clean).
+  `manifest.json` in that directory names each file's path, whether it existed, and its index entry;
+  copy each file in `files/` back to the path it names, put back each index entry it lists
+  (`git update-index --add --cacheinfo <mode>,<object>,<path>`, or `--force-remove -- <path>` for one
+  recorded as absent), then delete the directory.
+- **`git commit` was stopped by its timeout.** Nothing is put back, because the commit may still land.
+  Run `git log -1` first: if the wrap commit is there, the release landed and only the wrap was cut
+  short, so delete the directory; if it is not, recover as above.
+
+Never `git checkout -- <path>` to recover: it discards unrelated uncommitted edits the files carried,
+and an untracked fragment is not in `HEAD` at all. The record is the source.
 
 Check in this order:
 
