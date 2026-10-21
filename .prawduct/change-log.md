@@ -41,13 +41,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
-## 2026-10-21 — W1-A1: record v5.34.0 as released and deployed
+## 2026-10-21 — W1-A1: record v5.34.0 as released and running live
 
 <!-- prawduct: type=docs | scope=w1-a1-v534-status-sync -->
 
 v5.35.0 Wave 1 chunk W1-A1, split out by the PM's ruling relayed by the Integrator: this pull request carries only the v5.34 status sync, and #2015 is parked for a PM path/content ruling and the Architect's #2162 merge-strategy ruling. Branch `chore/2015-prefs-and-v534-status` from `origin/main` `da4b3afe`.
 
-**What changed.** `docs/releases/v5.34-status.md` moves from the release pull request's view to what is true after it, every fact read on 2026-10-21 without changing anything. Code released: yes, the `v5.34.0` tag peels to `da4b3afe`, `release.yml` succeeded there and the GitHub Release is published. Production updated: yes, the server's launchd working directory is at `da4b3afe`, health answers `ok` at 5.34.0 and the live store reads schema 68, except that no pre-deploy database backup was found under `~/.tangleclaw`, so the backup is recorded as unverified. Feature activated stays pending, because none of the owed live checks is recorded as made. "What is left" becomes those checks and confirming the backup. No product code, test, version, tag, deploy or restart.
+**What changed.** `docs/releases/v5.34-status.md` moves from the release pull request's view to what is true after it, every fact read on 2026-10-21 without changing anything. Code released: yes, the `v5.34.0` tag peels to `da4b3afe`, `release.yml` succeeded there and the GitHub Release is published. Production updated: not verified as a whole. The server's launchd working directory is at `da4b3afe`, health answers `ok` at 5.34.0 and the live store reads schema 68, but no pre-deploy database backup was found under `~/.tangleclaw` and whether one was kept elsewhere is not verified, so the finish line is not shown as met. Feature activated stays pending, because none of the owed live checks is recorded as made. "What is left" becomes confirming the backup, then those checks. No product code, test, version, tag, deploy or restart.
 
 ## 2026-10-19 — W24-REL: cut v5.34.0
 
