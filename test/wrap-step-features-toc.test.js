@@ -1149,6 +1149,16 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       assert.deepEqual(featuresToc._findDanglingCitations(content, PROJ), ['lib/gone.js']);
     });
 
+    it('still reports a cited changelog fragment once the release has deleted it (#2519)', () => {
+      // A fragment is never STUBBED (it is not a source file), but a citation of one
+      // dangles the moment a release cut compiles and deletes it, which is exactly
+      // what this report exists to say; the fragment directory therefore must not
+      // be among the prefixes this scan skips.
+      withExisting([]);
+      const content = '- **Logged** — `changelog.d/1220.pilot-a.added.md`.\n';
+      assert.deepEqual(featuresToc._findDanglingCitations(content, PROJ), ['changelog.d/1220.pilot-a.added.md']);
+    });
+
     it('reports a dangling `path#symbol` anchor as its full token', () => {
       withExisting([]);
       const content = '- **X** — `lib/gone.js#doThing`.\n';

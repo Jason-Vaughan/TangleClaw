@@ -15,7 +15,8 @@ const {
   isSourceFile,
   INDEXABLE_EXTENSIONS,
   EXCLUDED_BASENAMES,
-  EXCLUDED_PREFIXES
+  EXCLUDED_PREFIXES,
+  FRAGMENT_DIR_PREFIX
 } = require('../lib/wrap-steps/_source-paths');
 
 describe('_source-paths — isSourceFile', () => {
@@ -44,7 +45,9 @@ describe('_source-paths — isSourceFile', () => {
     assert.equal(isSourceFile('changelog.d/1220.c04-fragment-obligation.changed.md'), false);
     assert.equal(isSourceFile('changelog.d/README.md'), false,
       'a stray under the directory is changelog-coverage\'s to name by its own rule, never a source file');
-    assert.ok(EXCLUDED_PREFIXES.includes('changelog.d/'), 'excluded by prefix, so every caller inherits it');
+    assert.equal(FRAGMENT_DIR_PREFIX, 'changelog.d/');
+    assert.ok(!EXCLUDED_PREFIXES.includes(FRAGMENT_DIR_PREFIX),
+      'not a prefix exclusion: features-toc skips those when reporting dangling FEATURES.md citations, and a cited fragment must still be reported once the release deletes it');
     assert.equal(isSourceFile('docs/changelog.d/x.md'), true,
       'only the repository-root directory is the fragment directory');
   });
