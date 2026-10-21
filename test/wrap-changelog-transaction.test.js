@@ -511,14 +511,14 @@ describe('wrap CHANGELOG transaction — fragments ride the release cut, recover
       assert.equal(fs.existsSync(out.artifactDir), false);
     });
 
-    for (const [how, arrange] of [
-      ['a failing git add', (repo) => failGit((args) => args[0] === 'add')],
+    for (const [how, arrange, blockerRe] of [
+      ['a failing git add', (repo) => failGit((args) => args[0] === 'add'), /git add failed/],
       ['a failing pre-commit hook', (repo) => {
         // `initRepo` copies no template, so the hooks directory starts absent.
         fs.mkdirSync(path.join(repo, '.git', 'hooks'), { recursive: true });
         fs.writeFileSync(path.join(repo, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\necho "hook refused" >&2\nexit 1\n', { mode: 0o755 });
         return () => fs.rmSync(path.join(repo, '.git', 'hooks', 'pre-commit'));
-      }]
+      }, /git commit failed \(exit 1\): hook refused/]
     ]) {
       it(`pre-existing partial staging of the release targets is put back exactly: ${how}`, async () => {
         const repo = makeFragmentRepo();
@@ -536,6 +536,11 @@ describe('wrap CHANGELOG transaction — fragments ride the release cut, recover
         try { out = await runCut(repo, { baseline }); } finally { restore(); }
 
         assert.equal(out.commitRes.status, 'blocked', JSON.stringify(out.commitRes));
+        // The named halt, not an earlier one: a commit pathspec naming the
+        // pre-staged fragment (added to the index, then deleted by the flush)
+        // used to fail on "did not match any file(s) known to git" before the
+        // hook ran, and this assertion is what tells the two apart (A397).
+        assert.match(out.commitRes.blockers[0], blockerRe);
         assert.deepEqual(out.bump.output.fragments.files, ['7.feature.added.md', '9.staged.fixed.md']);
         const after_ = treeState(repo);
         assert.equal(after_.index, before.index, 'git ls-files -s on the targets is byte-identical to the pre-add record');
@@ -544,6 +549,85 @@ describe('wrap CHANGELOG transaction — fragments ride the release cut, recover
         assert.equal(fs.existsSync(out.artifactDir), false);
       });
     }
+
+    it('a pre-staged new fragment is consumed by a successful cut: its entry lands, and it is gone from HEAD, the index and the work tree (A397)', async () => {
+      const repo = makeFragmentRepo();
+      const baseline = launchBaseline.capture(repo);
+      fs.writeFileSync(path.join(repo, 'changelog.d', '9.staged.fixed.md'), '- staged, not committed (#9)\n');
+      git(repo, 'add', 'changelog.d/9.staged.fixed.md');
+      assert.match(treeState(repo).status, /^A  changelog\.d\/9\.staged\.fixed\.md$/m, 'precondition: added to the index, not in HEAD');
+      const out = await runCut(repo, { baseline });
+
+      assert.equal(out.bump.status, 'done');
+      assert.equal(out.commitRes.status, 'done', JSON.stringify(out.commitRes.blockers));
+      assert.deepEqual(out.bump.output.fragments.files, ['7.feature.added.md', '9.staged.fixed.md']);
+      assert.match(git(repo, 'show', 'HEAD:CHANGELOG.md'), /## \[1\.1\.0\] - 2026-10-21\n\n### Added\n- A feature the fragment records \(#7\)\n\n### Fixed\n- staged, not committed \(#9\)\n/,
+        'the staged fragment\'s bullet is under the release heading');
+      assert.match(out.commitRes.output.message, /- Compiled 2 changelog fragment\(s\)/);
+      assert.throws(() => git(repo, 'cat-file', '-e', 'HEAD:changelog.d/9.staged.fixed.md'), 'absent from HEAD');
+      assert.equal(git(repo, 'ls-files', '-s', '--', 'changelog.d/9.staged.fixed.md'), '', 'absent from the index');
+      assert.equal(fs.existsSync(path.join(repo, 'changelog.d', '9.staged.fixed.md')), false, 'absent from the work tree');
+      assert.deepEqual(committedFiles(repo), ['CHANGELOG.md', 'changelog.d/7.feature.added.md', 'version.json'],
+        'the committed fragment\'s deletion is recorded; the pre-staged one never existed in HEAD, so the commit has no record of it');
+      assert.equal(releaseStatus(repo), '');
+      assert.equal(fs.existsSync(path.dirname(out.artifactDir)), false);
+    });
+
+    it('a wrap whose only selected path was added to the index and then deleted skips with nothing to commit, and the index is left as HEAD has it', async () => {
+      const repo = makeFragmentRepo();
+      const baseline = launchBaseline.capture(repo);
+      const target = path.join(repo, 'notes', 'scratch.md');
+      fs.mkdirSync(path.dirname(target));
+      fs.writeFileSync(target, 'added then deleted\n');
+      git(repo, 'add', 'notes/scratch.md');
+      const head = git(repo, 'rev-parse', 'HEAD');
+      const scope = await wrapScope.resolve({ name: 'own', path: repo }, { id: 1, tmuxSession: 'own', startedAt: '2000-01-01 00:00:00' }, {
+        exec: (file, args, opts) => execFileArgs(file, args, { cwd: opts.cwd, timeoutMs: 10000, maxBufferBytes: 1024 * 1024 }),
+        paneCurrentPath: () => repo,
+        getLaunchBaseline: () => baseline
+      });
+      const res = await commit.run({
+        project: wrapScope.stepProject({ id: 1, name: 'own', path: repo }, scope),
+        session: null,
+        step: { id: 'commit' },
+        previousResults: [],
+        staged: { 'x:delete': { primingPath: target, newContent: null, delete: true, changed: true } },
+        options: {},
+        scope
+      });
+
+      assert.equal(res.status, 'skipped', JSON.stringify(res));
+      assert.match(res.output.reason, /nothing to commit — the only files selected \(notes\/scratch\.md\) were added to the index this session and then deleted/);
+      assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+      assert.equal(execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: repo, encoding: 'utf8' }), '', 'the stale index entry was removed by git add; nothing else moved');
+    });
+
+    it('_commitWithUntrack leaves an added-then-deleted path out of its temporary index and brings the real index level after the commit', async () => {
+      const repo = makeFragmentRepo();
+      fs.writeFileSync(path.join(repo, 'changelog.d', '9.staged.fixed.md'), '- staged (#9)\n');
+      git(repo, 'add', 'changelog.d/9.staged.fixed.md');
+      fs.rmSync(path.join(repo, 'changelog.d', '9.staged.fixed.md'));
+      fs.writeFileSync(path.join(repo, 'CHANGELOG.md'), `${UNRELEASED_EMPTY}- edited\n`);
+      assert.match(treeState(repo).status, /^AD changelog\.d\/9\.staged\.fixed\.md$/m, 'precondition');
+      const pathspec = path.join(tmpRepoDir('tc-frag-ps-'), 'ps');
+      fs.writeFileSync(pathspec, ':(top,literal)CHANGELOG.md\0');
+      const res = await commit._commitWithUntrack({
+        cwd: repo,
+        message: 'untrack with an AD path beside',
+        addPathspecArgs: [`--pathspec-from-file=${pathspec}`, '--pathspec-file-nul'],
+        hasAddable: true,
+        untrackPaths: ['.tangleclaw/project.json'],
+        addedThenDeleted: ['changelog.d/9.staged.fixed.md']
+      });
+
+      assert.equal(res.exitCode, 0, res.stderr);
+      assert.deepEqual(committedFiles(repo), ['.tangleclaw/project.json', 'CHANGELOG.md']);
+      assert.throws(() => git(repo, 'cat-file', '-e', 'HEAD:.tangleclaw/project.json'), 'untracked by the commit');
+      assert.equal(git(repo, 'ls-files', '-s', '--', 'changelog.d/9.staged.fixed.md'), '', 'the real index no longer holds the deleted path');
+      const status = execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: repo, encoding: 'utf8' });
+      assert.match(status, /^\?\? \.tangleclaw\/project\.json$/m, 'the untracked-but-kept file remains, as the untrack route promises');
+      assert.doesNotMatch(status, /9\.staged\.fixed\.md/, 'and the deleted path is reported nowhere: neither staged nor deleted');
+    });
 
     it('a failed index restore retains the record and prints the repair', async () => {
       const repo = makeFragmentRepo();
