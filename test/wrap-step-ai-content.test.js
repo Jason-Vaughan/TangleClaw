@@ -1239,12 +1239,14 @@ describe('wrap-step ai-content — D6 verifyChanged file-edit gate', () => {
     beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-verify-dir-')); });
     afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
 
-    it('reads a missing directory as null, and a created one as a digest — a change', () => {
+    it('reads a missing directory as null, an empty one as null too, and one with an entry as a digest', () => {
+      // Missing and empty both mean "no output present", so creating the bare
+      // directory is not a change; the first entry is.
       assert.equal(aic._internal.readForVerify(root, 'changelog.d/'), null);
       fs.mkdirSync(path.join(root, 'changelog.d'));
-      const empty = aic._internal.readForVerify(root, 'changelog.d/');
-      assert.equal(typeof empty, 'string', 'an existing directory reads as a string, never null');
-      assert.equal(empty, '', 'an empty directory digests to the empty string');
+      assert.equal(aic._internal.readForVerify(root, 'changelog.d/'), null, 'an empty directory holds no output');
+      fs.writeFileSync(path.join(root, 'changelog.d', '1.a.added.md'), '- x\n');
+      assert.equal(typeof aic._internal.readForVerify(root, 'changelog.d/'), 'string');
     });
 
     it('a file created, rewritten or removed in the directory changes the digest', async () => {
@@ -1270,15 +1272,35 @@ describe('wrap-step ai-content — D6 verifyChanged file-edit gate', () => {
     });
 
     it('the digest is independent of enumeration order and lists direct entries only', () => {
-      const dir = path.join(root, 'changelog.d');
+      // A directory with no entry filter (any name but changelog.d) counts everything.
+      const dir = path.join(root, 'notes.d');
       fs.mkdirSync(path.join(dir, 'nested'), { recursive: true });
       fs.writeFileSync(path.join(dir, 'b.md'), 'b\n');
       fs.writeFileSync(path.join(dir, 'a.md'), 'a\n');
       fs.writeFileSync(path.join(dir, 'nested', 'deep.md'), 'deep\n');
-      const digest = aic._internal.readForVerify(root, 'changelog.d/');
+      const digest = aic._internal.readForVerify(root, 'notes.d/');
       const names = digest.split('\n').map((line) => line.split('\t')[0]);
       assert.deepEqual(names, ['a.md', 'b.md', 'nested'], 'sorted by name; the nested file is not walked');
       assert.ok(!digest.includes('deep.md'));
+    });
+
+    it('for changelog.d/ the digest lists only contract-named fragments — a stray file is not the step\'s output', () => {
+      // The mutation route passes on ANY change and runs before the name check,
+      // so a misnamed file the AI writes during the step must read as "no
+      // change" here, leaving the coverage predicate to name it.
+      const dir = path.join(root, 'changelog.d');
+      const empty = aic._internal.readForVerify(root, 'changelog.d/'); // missing: null
+      fs.mkdirSync(dir);
+      fs.writeFileSync(path.join(dir, 'README.md'), '# stray\n');
+      fs.writeFileSync(path.join(dir, '1220.x.docs.md'), '- bad type\n');
+      fs.writeFileSync(path.join(dir, '.DS_Store'), 'x');
+      assert.equal(aic._internal.readForVerify(root, 'changelog.d/'), empty, 'created with three strays only: still no output, no change');
+      fs.writeFileSync(path.join(dir, '1220.c02.changed.md'), '- an entry\n');
+      const withFragment = aic._internal.readForVerify(root, 'changelog.d/');
+      assert.notEqual(withFragment, empty, 'the fragment is a change');
+      assert.deepEqual(withFragment.split('\n').map((l) => l.split('\t')[0]), ['1220.c02.changed.md']);
+      // With or without the trailing slash the same filter applies.
+      assert.equal(aic._internal.readForVerify(root, 'changelog.d'), withFragment);
     });
 
     it('still reads a plain file as its content', () => {
@@ -1306,6 +1328,31 @@ describe('wrap-step ai-content — D6 verifyChanged file-edit gate', () => {
       assert.equal(sent, true);
       assert.equal(res.ok, true, res.blockers && res.blockers.join('; '));
       assert.equal(res.status, 'done');
+    });
+
+    it('a MISNAMED file written into changelog.d/ during the step is blocked and named, not committed as output', async () => {
+      // Real reader, real git-backed predicate on a real repo: the mutation
+      // route must not pass on the stray, and the coverage predicate must name it.
+      const { execSync } = require('node:child_process');
+      const git = (cmd) => execSync(`git -c user.email=t@t -c user.name=t ${cmd}`, { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] });
+      require('./_temp-repo').initRepo(root);
+      fs.writeFileSync(path.join(root, 'CHANGELOG.md'), '# Changelog\n\n## [Unreleased]\n');
+      git('add -A');
+      git('commit -q -m seed'); // on main, so the predicate's trunk range is empty and the tree decides
+      const dir = path.join(root, 'changelog.d');
+      aic._internal.sendKeys = () => {
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, '1220.x.docs.md'), '- wrong type (#1220)\n');
+      };
+      const ctx = ctxWith({
+        project: { name: 'proj', path: root },
+        step: { id: 'changelog-update', kind: 'ai-content', prompt: 'write a fragment', verifyChanged: ['CHANGELOG.md', 'changelog.d/'], verifySatisfiedBy: 'changelog-coverage' }
+      });
+      const res = await aic.run(ctx);
+      assert.equal(res.ok, false, 'a misnamed fragment is not the step\'s output');
+      assert.equal(res.status, 'blocked');
+      assert.match(res.blockers[0], /uncommitted work file/);
+      assert.match(res.output.remediation, /changelog\.d\/1220\.x\.docs\.md/, 'the stray is named so the operator can fix it now');
     });
   });
 

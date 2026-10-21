@@ -119,10 +119,11 @@ session's AI to write one fragment per issue worked, named by the grammar
 above, and to leave `CHANGELOG.md` alone. Its verification then passes by any
 of these, judged by `lib/wrap-steps/changelog-coverage.js`:
 
-- a file was created, rewritten or removed directly under `changelog.d/`
-  during the step (the step declares the directory as a produced path, and the
-  wrap reads a declared directory as a digest of its entries, so a new file is
-  a change the same way an edit to `CHANGELOG.md` is);
+- a correctly named fragment was created, rewritten or removed directly under
+  `changelog.d/` during the step (the step declares the directory as a produced
+  path, and the wrap reads it as a digest of the entries the contract names, so
+  a new fragment is a change the same way an edit to `CHANGELOG.md` is, while a
+  misnamed file written there is not the step's output and reads as no change);
 - a correctly named fragment is uncommitted in the working tree, or a commit
   in the session's range added one: the changelog was maintained as the
   session worked, and the step has nothing to add;
