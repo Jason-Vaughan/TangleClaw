@@ -102,10 +102,16 @@ counts exactly as an entry written under `[Unreleased]` would. **Transition:** a
 before PR #2520 merged (merge commit `c774d21d630145b54504b8ce2393fb93dc1c313b`, 2026-10-21T18:39:01Z)
 may still add its entry directly under `[Unreleased]`, and the gate accepts both routes.
 
+A release cut commits all of its files or none. If the wrap's file decisions leave any release file out of
+the commit (`CHANGELOG.md`, the version file or a compiled fragment), the commit step refuses before
+anything is branched or staged, puts the cut back, and asks you to include every release file or choose
+Release: Hold; a half-committed cut would consume fragments that never publish.
+
 Whether a wrap cuts at all is the project's `releaseMode` (`docs/configuration-reference.md`):
 
 - `off` never cuts. A project on `off` releases by a PR that bumps `version.json`, not by a wrap.
-- `auto` cuts when release readiness is `ready`. Readiness holds when `[Unreleased]` is empty, and
+- `auto` cuts when release readiness is `ready`. Readiness holds when there is nothing to release
+  (`[Unreleased]` empty and no fragment pending under `changelog.d/`), and
   when the project's active Prawduct build plan (`active_build_plan:` in `.prawduct/project-state.yaml`,
   else `.prawduct/artifacts/build-plan.md`) has an unticked box under `## Status`. A plan with no
   `## Status` section isn't judged.

@@ -218,7 +218,7 @@ describe('version-bump compiles changelog fragments into the release (#1220)', (
       assert.match(res.output.reason, /refusing to cut: an earlier release cut did not land/);
       assert.ok(res.output.reason.includes(path.join(runDir, 'manifest.json')), res.output.reason);
       assert.deepEqual(res.output.releaseRecovery, [path.join(runDir, 'manifest.json')]);
-      assert.match(res.output.remediation, /copy each file in it back to the path its manifest\.json gives/);
+      assert.match(res.output.remediation, /Follow the `recover` instructions in that manifest\.json/);
       assert.doesNotMatch(res.output.remediation, /Cut or Hold/);
       assert.equal(res.output.wouldBump, undefined, 'not a release decision');
       assert.deepEqual(staged, {});

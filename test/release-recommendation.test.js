@@ -103,6 +103,13 @@ describe('release recommendation helpers', () => {
       assert.match(out.reason, /fragment contract refuses/);
     });
 
+    it('is closed on pending fragments when CHANGELOG.md has no [Unreleased] heading to compile into (#1220)', () => {
+      const project = makeProject({ changelog: '# Changelog\n\n## [1.0.0]\n- x\n', fragments: { '7.thing.added.md': '- a thing (#7)\n' } });
+      const out = rec.releaseDecisionOpen(project, {});
+      assert.equal(out.open, false, 'version-bump skips without the heading, so no prompt is worth sending');
+      assert.match(out.reason, /no \[Unreleased\] heading/);
+    });
+
     it('is closed with an empty [Unreleased] and an empty changelog.d/, naming both (#1220)', () => {
       const project = makeProject({ changelog: EMPTY_UNRELEASED, fragments: {} });
       const out = rec.releaseDecisionOpen(project, {});

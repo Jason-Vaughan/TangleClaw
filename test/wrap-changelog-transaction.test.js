@@ -576,22 +576,30 @@ describe('wrap CHANGELOG transaction — fragments ride the release cut, recover
       assert.equal(fs.existsSync(path.dirname(out.artifactDir)), false, 'no record was written either');
     });
 
-    it('a cut whose every release file was left out of the commit is put back, and the skip says so', async () => {
-      const repo = makeFragmentRepo();
-      fs.writeFileSync(path.join(repo, 'CHANGELOG.md'), `${UNRELEASED_EMPTY}\n<!-- dirty at launch -->\n`);
-      fs.writeFileSync(path.join(repo, 'version.json'), '{\n  "version": "1.0.0",\n  "note": "dirty at launch"\n}\n');
-      fs.writeFileSync(path.join(repo, 'changelog.d', '7.feature.added.md'), `${FRAGMENT}  with a continuation line added before launch\n`);
-      const baseline = launchBaseline.capture(repo);
-      const before = treeState(repo);
-      const leave = { 'CHANGELOG.md': 'leave', 'version.json': 'leave', 'changelog.d/7.feature.added.md': 'leave' };
-      const out = await runCut(repo, { baseline, options: { pathDecisions: leave } });
+    for (const [how, leave, leftOut] of [
+      ['every release file left out', { 'CHANGELOG.md': 'leave', 'version.json': 'leave', 'changelog.d/7.feature.added.md': 'leave' }, 'CHANGELOG.md, changelog.d/7.feature.added.md, version.json'],
+      ['CHANGELOG.md left out while the version file and the fragment deletion are included', { 'CHANGELOG.md': 'leave', 'version.json': 'include', 'changelog.d/7.feature.added.md': 'include' }, 'CHANGELOG.md']
+    ]) {
+      it(`a release cut commits all of its files or none: ${how} is refused and put back`, async () => {
+        const repo = makeFragmentRepo();
+        fs.writeFileSync(path.join(repo, 'CHANGELOG.md'), `${UNRELEASED_EMPTY}\n<!-- dirty at launch -->\n`);
+        fs.writeFileSync(path.join(repo, 'version.json'), '{\n  "version": "1.0.0",\n  "note": "dirty at launch"\n}\n');
+        fs.writeFileSync(path.join(repo, 'changelog.d', '7.feature.added.md'), `${FRAGMENT}  with a continuation line added before launch\n`);
+        const baseline = launchBaseline.capture(repo);
+        const before = treeState(repo);
+        const head = git(repo, 'rev-parse', 'HEAD');
+        const out = await runCut(repo, { baseline, options: { pathDecisions: leave } });
 
-      assert.equal(out.bump.status, 'done');
-      assert.equal(out.commitRes.status, 'skipped', JSON.stringify(out.commitRes));
-      assert.match(out.commitRes.output.reason, /every uncommitted file was left out; the release cut was put back/);
-      assert.deepEqual(treeState(repo), before, 'the dirty-at-launch bytes, fragment included, are back');
-      assert.equal(out.commitRes.output.releaseRecovery.retained, false);
-      assert.equal(fs.existsSync(out.artifactDir), false);
-    });
+        assert.equal(out.bump.status, 'done');
+        assert.equal(out.commitRes.status, 'blocked', JSON.stringify(out.commitRes));
+        assert.equal(git(repo, 'rev-parse', 'HEAD'), head, 'nothing was committed, not even the included half');
+        assert.equal(out.commitRes.output.releaseLeftOut.join(', '), leftOut);
+        assert.match(out.commitRes.output.remediation, /A release cut commits all of its files or none/);
+        assert.match(out.commitRes.output.remediation, /Include every release file .*, or choose Release: Hold/);
+        assert.deepEqual(treeState(repo), before, 'the dirty-at-launch bytes, fragment included, are back');
+        assert.equal(out.commitRes.output.releaseRecovery.retained, false);
+        assert.equal(fs.existsSync(out.artifactDir), false);
+      });
+    }
   });
 });
