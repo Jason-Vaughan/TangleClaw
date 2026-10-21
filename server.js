@@ -150,7 +150,6 @@ const launchIsolationInventory = require('./lib/launch-isolation-inventory');
 const bindPolicy = require('./lib/bind-policy');
 const wrapRunRegistry = require('./lib/wrap-run-registry');
 const wrapHandback = require('./lib/wrap-handback');
-const wrapDefaultPipeline = require('./lib/wrap-default-pipeline');
 const evalAudit = require('./lib/eval-audit');
 const pidfile = require('./lib/pidfile');
 const sidecar = require('./lib/sidecar');
