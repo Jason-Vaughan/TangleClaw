@@ -92,7 +92,7 @@ not as an edit under `[Unreleased]`: `docs/changelog-fragments.md` is the contra
 says how to write one. The wrap's `changelog-update` step asks for a fragment and its coverage gate
 accepts one, dirty or committed. Compiling the fragments into `[Unreleased]` at release preparation is
 #1220 C03; until it lands they accumulate under `changelog.d/` and the bump table below does not see
-them. **Transition:** a pull request created before PR #C02-PR merged may still add its entry directly
+them. **Transition:** a pull request created before PR #2520 merged may still add its entry directly
 under `[Unreleased]`, and the gate accepts both routes. The Integrator records that merge's SHA and time
 in the batch records when it lands.
 

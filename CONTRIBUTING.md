@@ -184,7 +184,7 @@ The `<type>` you choose is load-bearing: it names the subsection the entry lands
 
 Pick by **user-visible impact**, not by how many files changed: a one-line behavior change is `changed`, a large refactor nobody notices is `internal`. Documentation-only edits go under `internal` — still logged for history, but patch-tier so doc churn doesn't inflate the minor version. There is no other type: a name outside the grammar is refused, so `docs` or `documentation` is not a fragment and the wrap's changelog gate reports it as unlogged work rather than accepting it.
 
-**Transition.** A pull request created before PR #C02-PR merged may still add its entry directly under `[Unreleased]` in `CHANGELOG.md`, under the matching `### ` subsection; every pull request after that writes a fragment. `docs/release-process.md` names the boundary.
+**Transition.** A pull request created before PR #2520 merged may still add its entry directly under `[Unreleased]` in `CHANGELOG.md`, under the matching `### ` subsection; every pull request after that writes a fragment. `docs/release-process.md` names the boundary.
 
 ### Commit Messages
 
