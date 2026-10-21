@@ -87,6 +87,15 @@ the tag always points at the commit that actually carries the version.
 `[Unreleased]` CHANGELOG section. Merging PRs does not. So a release happens when you run a wrap and
 that wrap's PR merges to `main` — not when feature PRs merge.
 
+**Logging the change.** A change records its entry as a fragment, `changelog.d/<issue>.<slug>.<type>.md`,
+not as an edit under `[Unreleased]`: `docs/changelog-fragments.md` is the contract and `CONTRIBUTING.md`
+says how to write one. The wrap's `changelog-update` step asks for a fragment and its coverage gate
+accepts one, dirty or committed. Compiling the fragments into `[Unreleased]` at release preparation is
+#1220 C03; until it lands they accumulate under `changelog.d/` and the bump table below does not see
+them. **Transition:** a pull request created before PR #2520 merged may still add its entry directly
+under `[Unreleased]`, and the gate accepts both routes. The Integrator records that merge's SHA and time
+in the batch records when it lands.
+
 Whether a wrap cuts at all is the project's `releaseMode` (`docs/configuration-reference.md`):
 
 - `off` never cuts. A project on `off` releases by a PR that bumps `version.json`, not by a wrap.

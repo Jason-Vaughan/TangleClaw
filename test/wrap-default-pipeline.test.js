@@ -102,8 +102,45 @@ describe('wrap-default-pipeline — the code-owned pipeline', () => {
   // carries the fix to an install, so pin it here rather than only at the gate.
   it('changelog-update declares the coverage predicate alongside its mutation check', () => {
     const step = defaultPipeline.steps().find((s) => s.id === 'changelog-update');
-    assert.deepEqual(step.verifyChanged, ['CHANGELOG.md']);
+    assert.deepEqual(step.verifyChanged, ['CHANGELOG.md', 'changelog.d/']);
     assert.equal(step.verifySatisfiedBy, 'changelog-coverage');
+  });
+
+  // #1220 — the step's work product is a fragment under changelog.d/, so the
+  // declaration names the directory (the file's name is not known in advance)
+  // and keeps CHANGELOG.md for branches opened before the transition.
+  describe('changelog-update asks for a changelog fragment (#1220)', () => {
+    const step = () => defaultPipeline.steps().find((s) => s.id === 'changelog-update');
+
+    it('declares changelog.d/ as a second produced path, CHANGELOG.md still first', () => {
+      assert.deepEqual(step().verifyChanged, ['CHANGELOG.md', 'changelog.d/']);
+      assert.ok(aiContent._watchedOutputPaths(step()).includes('changelog.d/'),
+        'the file-settle completion signal watches the directory too');
+    });
+
+    it('the prompt asks for a fragment by the name contract, not for a CHANGELOG.md edit', () => {
+      const prompt = step().prompt;
+      assert.ok(prompt.includes('changelog.d/<issue>.<slug>.<type>.md'), 'names the grammar');
+      for (const type of require('../lib/changelog-fragments').TYPES) {
+        assert.ok(prompt.includes(`\`${type}\``), `names the type ${type}`);
+      }
+      assert.ok(prompt.includes('Do not edit CHANGELOG.md'), 'the direct edit is the exception, not the instruction');
+      assert.ok(prompt.includes('opened before the project moved to fragments'), 'states the transition');
+      assert.ok(prompt.includes('{sessionScope}') && prompt.includes('{engineConfigFile}'),
+        'keeps the interpolated tokens the handler supplies');
+    });
+
+    it('declares NO coveragePaths glob for changelog.d/ — a glob would accept a misnamed file', () => {
+      // changelog-coverage judges a fragment by the name contract instead
+      // (test/wrap-changelog-coverage.test.js pins that a misnamed file is
+      // reported as unlogged work, not accepted). A glob here would undo it.
+      assert.equal(step().coveragePaths, undefined);
+    });
+
+    it('version-bump\'s order note says the fragments are compiled there, after changelog-update', () => {
+      const bump = defaultPipeline.steps().find((s) => s.id === 'version-bump');
+      assert.ok(bump._orderNote.includes('changelog.d/'), 'the order contract now covers fragments');
+    });
   });
 
   it('every declared verifySatisfiedBy names a predicate the gate implements', () => {

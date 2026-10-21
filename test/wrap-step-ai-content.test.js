@@ -1226,6 +1226,136 @@ describe('wrap-step ai-content — D6 verifyChanged file-edit gate', () => {
     });
   });
 
+  // #1220 — changelog-update declares `changelog.d/`, a DIRECTORY: its work
+  // product is a new file whose name is not known in advance. A file read of a
+  // directory is null before and after, which the gate reads as "unchanged" and
+  // the #672 settle signal never sees; so the default reader digests a
+  // directory's entries instead.
+  describe('readForVerify on a declared directory', () => {
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const path = require('node:path');
+    let root;
+    beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-verify-dir-')); });
+    afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
+
+    it('reads a missing directory as null, an empty one as null too, and one with an entry as a digest', () => {
+      // Missing and empty both mean "no output present", so creating the bare
+      // directory is not a change; the first entry is.
+      assert.equal(aic._internal.readForVerify(root, 'changelog.d/'), null);
+      fs.mkdirSync(path.join(root, 'changelog.d'));
+      assert.equal(aic._internal.readForVerify(root, 'changelog.d/'), null, 'an empty directory holds no output');
+      fs.writeFileSync(path.join(root, 'changelog.d', '1.a.added.md'), '- x\n');
+      assert.equal(typeof aic._internal.readForVerify(root, 'changelog.d/'), 'string');
+    });
+
+    it('a file created, rewritten or removed in the directory changes the digest', async () => {
+      const dir = path.join(root, 'changelog.d');
+      fs.mkdirSync(dir);
+      const before = aic._internal.readForVerify(root, 'changelog.d/');
+      fs.writeFileSync(path.join(dir, '1220.c02.changed.md'), '- an entry\n');
+      const created = aic._internal.readForVerify(root, 'changelog.d/');
+      assert.notEqual(created, before, 'creation is a change');
+      assert.ok(created.includes('1220.c02.changed.md'), 'the digest names the entry');
+
+      fs.writeFileSync(path.join(dir, '1220.c02.changed.md'), '- an entry, longer\n');
+      const grown = aic._internal.readForVerify(root, 'changelog.d/');
+      assert.notEqual(grown, created, 'a rewrite that changes the size is a change');
+
+      // Same size, later mtime: still a change (the mtime rides in the digest).
+      const stamp = new Date(Date.now() + 5000);
+      fs.utimesSync(path.join(dir, '1220.c02.changed.md'), stamp, stamp);
+      assert.notEqual(aic._internal.readForVerify(root, 'changelog.d/'), grown, 'a touched file is a change');
+
+      fs.rmSync(path.join(dir, '1220.c02.changed.md'));
+      assert.equal(aic._internal.readForVerify(root, 'changelog.d/'), before, 'removal returns to the prior digest');
+    });
+
+    it('the digest is independent of enumeration order and lists direct entries only', () => {
+      // A directory with no entry filter (any name but changelog.d) counts everything.
+      const dir = path.join(root, 'notes.d');
+      fs.mkdirSync(path.join(dir, 'nested'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'b.md'), 'b\n');
+      fs.writeFileSync(path.join(dir, 'a.md'), 'a\n');
+      fs.writeFileSync(path.join(dir, 'nested', 'deep.md'), 'deep\n');
+      const digest = aic._internal.readForVerify(root, 'notes.d/');
+      const names = digest.split('\n').map((line) => line.split('\t')[0]);
+      assert.deepEqual(names, ['a.md', 'b.md', 'nested'], 'sorted by name; the nested file is not walked');
+      assert.ok(!digest.includes('deep.md'));
+    });
+
+    it('for changelog.d/ the digest lists only contract-named fragments — a stray file is not the step\'s output', () => {
+      // The mutation route passes on ANY change and runs before the name check,
+      // so a misnamed file the AI writes during the step must read as "no
+      // change" here, leaving the coverage predicate to name it.
+      const dir = path.join(root, 'changelog.d');
+      const empty = aic._internal.readForVerify(root, 'changelog.d/'); // missing: null
+      fs.mkdirSync(dir);
+      fs.writeFileSync(path.join(dir, 'README.md'), '# stray\n');
+      fs.writeFileSync(path.join(dir, '1220.x.docs.md'), '- bad type\n');
+      fs.writeFileSync(path.join(dir, '.DS_Store'), 'x');
+      assert.equal(aic._internal.readForVerify(root, 'changelog.d/'), empty, 'created with three strays only: still no output, no change');
+      fs.writeFileSync(path.join(dir, '1220.c02.changed.md'), '- an entry\n');
+      const withFragment = aic._internal.readForVerify(root, 'changelog.d/');
+      assert.notEqual(withFragment, empty, 'the fragment is a change');
+      assert.deepEqual(withFragment.split('\n').map((l) => l.split('\t')[0]), ['1220.c02.changed.md']);
+      // With or without the trailing slash the same filter applies.
+      assert.equal(aic._internal.readForVerify(root, 'changelog.d'), withFragment);
+    });
+
+    it('still reads a plain file as its content', () => {
+      fs.writeFileSync(path.join(root, 'CHANGELOG.md'), '# Changelog\n');
+      assert.equal(aic._internal.readForVerify(root, 'CHANGELOG.md'), '# Changelog\n');
+      assert.equal(aic._internal.readForVerify(root, 'missing.md'), null);
+    });
+
+    it('a fragment written into a declared directory satisfies the mutation route end to end', async () => {
+      // The run() shape from the D6 block above, but with the REAL reader and a
+      // real tree: the AI creates changelog.d/<fragment> and nothing else.
+      const dir = path.join(root, 'changelog.d');
+      let sent = false;
+      aic._internal.sendKeys = () => {
+        sent = true;
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, '1220.c02.changed.md'), '- the entry (#1220)\n');
+      };
+      aic._internal.changelogCoverage = () => { throw new Error('the mutation route must settle this before the predicate runs'); };
+      const ctx = ctxWith({
+        project: { name: 'proj', path: root },
+        step: { id: 'changelog-update', kind: 'ai-content', prompt: 'write a fragment', verifyChanged: ['CHANGELOG.md', 'changelog.d/'], verifySatisfiedBy: 'changelog-coverage' }
+      });
+      const res = await aic.run(ctx);
+      assert.equal(sent, true);
+      assert.equal(res.ok, true, res.blockers && res.blockers.join('; '));
+      assert.equal(res.status, 'done');
+    });
+
+    it('a MISNAMED file written into changelog.d/ during the step is blocked and named, not committed as output', async () => {
+      // Real reader, real git-backed predicate on a real repo: the mutation
+      // route must not pass on the stray, and the coverage predicate must name it.
+      const { execSync } = require('node:child_process');
+      const git = (cmd) => execSync(`git -c user.email=t@t -c user.name=t ${cmd}`, { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] });
+      require('./_temp-repo').initRepo(root);
+      fs.writeFileSync(path.join(root, 'CHANGELOG.md'), '# Changelog\n\n## [Unreleased]\n');
+      git('add -A');
+      git('commit -q -m seed'); // on main, so the predicate's trunk range is empty and the tree decides
+      const dir = path.join(root, 'changelog.d');
+      aic._internal.sendKeys = () => {
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, '1220.x.docs.md'), '- wrong type (#1220)\n');
+      };
+      const ctx = ctxWith({
+        project: { name: 'proj', path: root },
+        step: { id: 'changelog-update', kind: 'ai-content', prompt: 'write a fragment', verifyChanged: ['CHANGELOG.md', 'changelog.d/'], verifySatisfiedBy: 'changelog-coverage' }
+      });
+      const res = await aic.run(ctx);
+      assert.equal(res.ok, false, 'a misnamed fragment is not the step\'s output');
+      assert.equal(res.status, 'blocked');
+      assert.match(res.blockers[0], /uncommitted work file/);
+      assert.match(res.output.remediation, /changelog\.d\/1220\.x\.docs\.md/, 'the stray is named so the operator can fix it now');
+    });
+  });
+
   describe('_verifyChangedGate (unit)', () => {
     it('returns null when no snapshot was taken', () => {
       assert.equal(aic._verifyChangedGate('/p', { id: 's' }, null), null);
