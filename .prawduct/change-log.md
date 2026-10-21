@@ -41,6 +41,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-21 — #1220 C01: the changelog fragment contract, parser and compiler
+
+<!-- prawduct: type=feature | scope=1220-changelog-fragments -->
+
+#1220 C01. v5.35.0 Wave 2 chunk W2-A1, plan r5 (Architect A391-R4, Integrator release of C01 only), restart token `W2-1220-C01-R31-20261021-5D8A`. Branch `feat/1220-c01-changelog-fragments` from `origin/main` `cf872d39`.
+
+**What changed.** New `lib/changelog-fragments.js`: the closed contract for `changelog.d/<issue>.<slug>.<type>.md`, a reader that enumerates and validates the directory and fails closed on any refusal (`MALFORMED_NAME`, `BAD_ISSUE`, `BAD_SLUG`, `UNKNOWN_TYPE`, `NOT_A_FILE`, `SYMLINK`, `PATH_ESCAPE`, `NOT_A_DIRECTORY`, `EMPTY_BODY`, `BAD_BODY`), a compiler that groups accepted fragments under the seven Keep a Changelog headings in subsection order with entries sorted by issue, then slug, then type so enumeration order never reaches the output, and a pure splice that writes the sections into `[Unreleased]` and returns every byte outside that block unchanged. No bump derivation and no require of `version-bump`: the module's block-finding regexes are its own constants, pinned equal to `version-bump`'s by the test, which reads both. Production requires are `node:fs`, `node:path` and `./logger` only; refusals log at `warn`, the happy path logs nothing. New `test/changelog-fragments.test.js` (48 cases): every refusal code by name, every type under its heading, identical output under reversed and shuffled enumeration, a missing directory as nothing pending, a symlinked directory refused, splice positions before, between and after existing subsections, a fence inside `[Unreleased]` left alone, non-idempotence named, released sections byte-identical, the regex pin, and the bump-level fixtures (`BREAKING:`, `BREAKING(`, `NOT BREAKING —`, minor-only, patch-only) judged by `version-bump._decideBumpLevel` on the spliced text. New `docs/changelog-fragments.md`: the contract as a contributor reads it, marked as not yet wired into the wrap until C03.
+
+**Three departures from the plan text, all narrower than it, each written into the plan's C01 section after the Critic round.** The logger require from `lib/` is `./logger`, not the plan's `../logger` (copied from `lib/wrap-steps/`). The issue number must have no leading zero, so each issue has one canonical name (`NAME_RE` and the parser agree, and the test holds them to the same verdict). `NOT_A_DIRECTORY` is one code the plan did not list: it is what a file handed in as the root (`.prawduct/change-log.md` included) or a non-directory `changelog.d` gets, so that read path is a refusal and never a read. No `changelog.d/` is created; it first appears with C02's own fragment. `CHANGELOG.md` and `FEATURES.md` are untouched; their entries are in the pull request body for the Integrator's records PR.
+
 ## 2026-10-21 — W1-A1: record v5.34.0 as released and running live
 
 <!-- prawduct: type=docs | scope=w1-a1-v534-status-sync -->
