@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-21 — v5.35.0 Wave 2 records: changelog fragments (#1220)
+
+<!-- prawduct: type=docs | scope=1220-changelog-fragments -->
+
+W2-REC follows the four merged #1220 chunks: C01 PR #2518 (`81891ab3`), C02 PR #2520 (`c774d21d`), C03 PR #2522 (`bdd8b15f`), and C04 PR #2526 (`076474d0`, Architect A401). The live pilot added distinct fragments in PRs #2524 and #2525; the C04 packet records their merge SHAs, a refused exact-path collision, and a scratch release cut that compiled all four then-pending fragments. C04 also closed #2519. This records the current behavior in `FEATURES.md` and adds C01's contract entry as its own fragment. The C02–C04 and pilot changelog entries are already present as fragments. `CHANGELOG.md` remains the release output; this PR does not cut a version, publish, or deploy. #1220 stays open for the Operator's C05 PR-obligation ruling, and #2523 tracks removal of the pre-boundary direct-edit exception after #2385 and #2217 close.
+
+The C02 first CI head failed its prompt phrase test, and a Prawduct recorder receipt undercounted or falsely reported its run; #2521 tracks that tool defect. Exact-head CI and retained full-suite JUnit/spec evidence replaced that receipt for the accepted heads. C04's first `SUITE_SLOT` claim edit was made without the intended shared-document lock because a zsh header variable did not split; Builder recorded the near miss in PR #2526, then attested the later release edit under the lock. The live queue is attested at revision 74.
+
 ## 2026-10-21 — #1220 C04: the repository checks its own fragments, the PR gate is recorded as a proposal, and features-toc never stubs a fragment (#2519)
 
 <!-- prawduct: type=feature | scope=1220-changelog-fragments -->
