@@ -379,6 +379,7 @@ describe('wrap CHANGELOG transaction — fragments ride the release cut, recover
       assert.ok(commitRes.output.flushed.some((f) => f.deleted === true && f.path.endsWith('7.feature.added.md')));
       assert.deepEqual(commitRes.output.releaseRecovery, { artifactDir, removed: true });
       assert.equal(fs.existsSync(artifactDir), false, 'the record is removed once the commit landed');
+      assert.equal(fs.existsSync(path.dirname(artifactDir)), false, 'and so is the parent that held only its self-ignore');
       assert.equal(releaseStatus(repo), '', 'the release files are clean; the wrap state stamp is the only untracked file');
     });
 
@@ -395,7 +396,7 @@ describe('wrap CHANGELOG transaction — fragments ride the release cut, recover
       assert.match(commitRes.output.remediation, /consumed changelog fragments were put back, so Retry cuts the release again from scratch/);
       assert.doesNotMatch(commitRes.output.remediation, /git checkout/, 'no checkout is ever recommended: it would discard an untracked fragment and unrelated edits');
       assert.equal(commitRes.output.releaseRecovery.retained, false);
-      assert.equal(fs.existsSync(artifactDir), false);
+      assert.equal(fs.existsSync(path.dirname(artifactDir)), false, 'a complete restore leaves no release-recovery/ behind');
     });
   });
 
