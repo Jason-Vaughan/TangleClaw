@@ -186,6 +186,8 @@ Pick by **user-visible impact**, not by how many files changed: a one-line behav
 
 **Transition.** A pull request created before PR #2520 merged may still add its entry directly under `[Unreleased]` in `CHANGELOG.md`, under the matching `### ` subsection; every pull request after that writes a fragment. `docs/release-process.md` names the boundary.
 
+**Proposed: PR fragment gate (NOT IN FORCE).** No CI step refuses a pull request for a missing fragment today; the suite only checks that every file under `changelog.d/` is a valid fragment (`test/changelog-fragments-repo.test.js`). The gate that would require one on every change under `lib/`, `server.js`, `public/` or `scripts/`, with a `Changelog: none <reason>` line in the pull request body as the escape, is recorded word for word in `docs/release-process.md` under the same heading, awaiting the Operator's ruling.
+
 ### Commit Messages
 
 - First line: concise summary (72 chars max)

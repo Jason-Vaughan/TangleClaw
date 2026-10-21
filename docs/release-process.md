@@ -133,6 +133,72 @@ The wrap picks the bump level from what is in `[Unreleased]`:
 | Any `### Added`, `### Changed`, `### Removed`, `### Deprecated` | minor |
 | Only `### Fixed`, `### Security`, `### Internal` | patch |
 
+## Proposed: PR fragment gate (NOT IN FORCE)
+
+Nothing in this section binds anyone. It records, word for word, the gate the Operator-conditional
+chunk of #1220 would add, so the Operator can rule on it (`1220 obligation now`, logged in the lane
+queue) by reading what it is rather than what it might be. Until that ruling, and until the pull
+request that builds it merges, no CI step refuses a pull request for a missing fragment. What runs
+today: the repository's own test suite checks every fragment under `changelog.d/` on every run
+(`test/changelog-fragments-repo.test.js`), so a file the contract refuses fails the pull request that
+adds it rather than the next release cut; and a change that ships with no entry at all is caught by the
+wrap's `changelog-update` coverage gate in the session that made it, not at the pull request.
+
+### What the gate would check
+
+- **Which pull requests.** One whose diff touches `lib/`, `server.js`, `public/` or `scripts/`. A pull
+  request that touches none of these (docs, tests, records) is not asked for a fragment.
+- **What satisfies it.** At least one file added under `changelog.d/` whose name `parseFragmentName`
+  in `lib/changelog-fragments.js` accepts: `<issue>.<slug>.<type>.md`. The name is judged, as the
+  wrap's coverage gate judges it; the body is read at release preparation.
+- **The escape.** The pull request body carries the exact line `Changelog: none`, followed on the same
+  line by the reason, for a change with nothing to log (a revert, a refactor an existing entry already
+  covers). The line with no reason refuses.
+- **Fail closed.** An unreadable body, an unreadable file list, or a file under `changelog.d/` whose
+  name the contract refuses, each refuse. The gate never passes on missing evidence.
+
+### Exit codes
+
+| Exit | Meaning |
+|---|---|
+| `0` | pass: a valid fragment was added, the pull request touches no code path, or the escape line carries a reason |
+| `1` | refused, with the reason printed: no fragment on a code change, a malformed fragment name, or the escape line without a reason |
+| `4` | could not measure: the file list or the body could not be read, so nothing was judged |
+
+### The one workflow step
+
+A single step in `.github/workflows/test.yml`, on `pull_request` only, after the conflict-marker scan
+and before the suite. The script, `scripts/changelog-fragment-gate.js`, reads the pull request's
+changed files and body with `gh pr view --json files,body`; its tests hand it a `--files` and
+`--body-file` pair instead, so no test needs the network. It prints as `scripts/release-prepare.js`
+does.
+
+```yaml
+      - name: Require a changelog fragment on a code change
+        # A push event has no pull request to read; the gate is a pull-request contract.
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node scripts/changelog-fragment-gate.js --pr "$PR_NUMBER"
+```
+
+### What has to happen before it is in force
+
+1. The Operator rules `1220 obligation now`, logged in the lane queue. Without the ruling the chunk is
+   not built, #1220 stays open with that chunk named as the remainder, and this section stays as it is.
+2. The chunk ships the script, its tests and the workflow step in one pull request, which the gate
+   refuses once for a missing fragment and then passes with one; both CI run links go in its body.
+3. This heading is removed and the gate is documented as in force, here and in `CONTRIBUTING.md`.
+
+### The transition exception ends separately
+
+The transition in "What is still manual" (a pull request created before the boundary may still edit
+`[Unreleased]` directly, and the coverage gate accepts both routes) ends when no such pull request is
+open, not when the gate above arrives. The open list was taken on 2026-10-21 and two pre-boundary pull
+requests were still open (#2385, #2217), so the wording and the direct-edit route stay; #2523 removes
+them once both are closed or merged.
+
 ## Files a release needs besides the version
 
 Two tests fail a release PR that carries only `version.json` and the promoted `CHANGELOG.md`:
