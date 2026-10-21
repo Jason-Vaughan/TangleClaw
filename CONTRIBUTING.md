@@ -108,6 +108,7 @@ Two limits worth knowing. It reads **committed** history on both sides, so an un
 
 - `server.js` — HTTP server, API routes, reverse proxy, WebSocket upgrade
 - `lib/` — Core modules (store, engines, sessions, wrap pipeline, etc.)
+- `lib/routes/` — One module per API route family, each registering its routes through the shared kernel `lib/routes/_kernel.js` from the position those routes hold in `server.js`; `server.js` keeps the entry point (gates, static serving, the dispatcher, server creation) and the families not yet moved. `docs/areas.json` maps every source path to one named area, so an issue can say which areas it touches and two issues can be checked for overlap by path; add a new file to the map in the same change, or `test/areas-map.test.js` fails.
 - `public/` — Frontend (HTML, CSS, JS — no build step, no framework)
 - `data/engines/` — Bundled engine profiles (JSON)
 - `test/` — Test files matching `*.test.js`

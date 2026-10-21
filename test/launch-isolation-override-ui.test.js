@@ -462,8 +462,11 @@ describe('A refused launch leads to the override (#2229)', () => {
 
   it('reads the reason where the server puts it: beside the code, not under `isolation`', () => {
     const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    // `errorResponse` lives in the kernel every route module shares; the refusal
+    // that calls it is still in the entry point.
+    const kernel = fs.readFileSync(path.join(__dirname, '..', 'lib', 'routes', '_kernel.js'), 'utf8');
     assert.match(server, /if \(result\.code === 'LAUNCH_ISOLATION_UNVERIFIED'\) \{\s*return errorResponse\(res, 409, result\.error, result\.code, result\.isolation\);/);
-    assert.match(server, /jsonResponse\(res, status, \{ \.\.\.\(extra \|\| \{\}\), error: message, code \}\);/);
+    assert.match(kernel, /jsonResponse\(res, status, \{ \.\.\.\(extra \|\| \{\}\), error: message, code \}\);/);
   });
 
   it('gives a page that would be offered the switch one button, which opens that project\'s Settings at it', () => {
