@@ -139,6 +139,16 @@ which refuses a bad one as the table above says. The gate deliberately declares
 no coverage glob for the directory: a glob would accept any `.md` there,
 misnamed ones included.
 
+## Proposed: PR fragment gate (NOT IN FORCE)
+
+Nothing requires a pull request to carry a fragment today. The repository's test suite checks that
+every file under `changelog.d/` is a fragment the contract accepts
+(`test/changelog-fragments-repo.test.js`), so a refusal is met at the pull request that adds the
+file, and the wrap's coverage gate above catches work that shipped with no entry. The CI gate that
+would require one on every code change is recorded in full, as a proposal the Operator has not ruled
+on, under the same heading in `docs/release-process.md`; the text there is the one text, and this
+section only points at it.
+
 ## What the module never touches
 
 `lib/changelog-fragments.js` has no write path. Compilation returns new text

@@ -15,7 +15,8 @@ const {
   isSourceFile,
   INDEXABLE_EXTENSIONS,
   EXCLUDED_BASENAMES,
-  EXCLUDED_PREFIXES
+  EXCLUDED_PREFIXES,
+  FRAGMENT_DIR_PREFIX
 } = require('../lib/wrap-steps/_source-paths');
 
 describe('_source-paths — isSourceFile', () => {
@@ -38,6 +39,17 @@ describe('_source-paths — isSourceFile', () => {
     assert.equal(isSourceFile('dist/bundle.js'), false);
     assert.equal(isSourceFile('coverage/lcov.js'), false);
     assert.equal(isSourceFile('build/out.js'), false);
+  });
+
+  it('rejects changelog fragments: the log being maintained is not work to log or index (#2519)', () => {
+    assert.equal(isSourceFile('changelog.d/1220.c04-fragment-obligation.changed.md'), false);
+    assert.equal(isSourceFile('changelog.d/README.md'), false,
+      'a stray under the directory is changelog-coverage\'s to name by its own rule, never a source file');
+    assert.equal(FRAGMENT_DIR_PREFIX, 'changelog.d/');
+    assert.ok(!EXCLUDED_PREFIXES.includes(FRAGMENT_DIR_PREFIX),
+      'not a prefix exclusion: features-toc skips those when reporting dangling FEATURES.md citations, and a cited fragment must still be reported once the release deletes it');
+    assert.equal(isSourceFile('docs/changelog.d/x.md'), true,
+      'only the repository-root directory is the fragment directory');
   });
 
   it('rejects the high-churn root docs by basename (changelog/readme/index are not "work")', () => {
@@ -73,7 +85,8 @@ describe('_source-paths — shared with features-toc (no drift)', () => {
     // Same instance re-exported, and same verdicts — the whole point of the extraction.
     assert.equal(featuresToc.INDEXABLE_EXTENSIONS, INDEXABLE_EXTENSIONS);
     assert.equal(featuresToc.EXCLUDED_PREFIXES, EXCLUDED_PREFIXES);
-    for (const p of ['lib/a.js', '.prawduct/x.md', 'node_modules/y.js', 'CHANGELOG.md', 'data/z.sql']) {
+    for (const p of ['lib/a.js', '.prawduct/x.md', 'node_modules/y.js', 'CHANGELOG.md', 'data/z.sql',
+      'changelog.d/1220.c04-fragment-obligation.changed.md']) {
       assert.equal(featuresToc._isIndexableCandidate(p), isSourceFile(p), `mismatch on ${p}`);
     }
   });
