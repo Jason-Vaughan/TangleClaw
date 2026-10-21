@@ -61,9 +61,11 @@ whatever its type. `docs/release-process.md` has the rule in full.
 
 ## The body
 
-The file holds **one Markdown list entry**, nothing else: the first non-blank
-line starts with `- ` or `* ` followed by text, and continuation lines or
-sub-bullets may follow.
+The file holds **one Markdown list entry**: the first non-blank line starts
+with `- ` or `* ` followed by text, and continuation lines or sub-bullets may
+follow. Only that first line is checked to be a list item; what follows is
+published as written, so a second column-0 bullet lands as a second entry
+under the same heading, and unindented prose lands as prose. Write one entry.
 
 ```markdown
 - Per-car changelog fragments: an entry lives in `changelog.d/` until the
@@ -81,8 +83,8 @@ structure that `CHANGELOG.md`'s own tests enforce.
 
 ## Ordering
 
-Compiled entries are sorted by issue number, then by slug, and the order of
-the filesystem never reaches the output: two checkouts with the same
+Compiled entries are sorted by issue number, then by slug, then by type, and
+the order of the filesystem never reaches the output: two checkouts with the same
 fragments compile the same bytes. Inside `[Unreleased]`, entries are appended
 after the existing entries of their subsection when that subsection already
 exists, and a missing subsection is added at its place in the order above.

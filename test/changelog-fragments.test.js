@@ -144,6 +144,13 @@ describe('changelog-fragments: readFragments', () => {
     assert.deepEqual(namesOf(readFragments(root)), ['9.a.added.md', '9.z.added.md', '10.a.added.md', '10.b.fixed.md']);
   });
 
+  it('orders two fragments that share issue and slug by type, under either enumeration order', () => {
+    const root = makeRoot({ '1220.x.fixed.md': '- fixed\n', '1220.x.added.md': '- added\n', '1220.x.internal.md': '- internal\n' });
+    const expected = ['1220.x.added.md', '1220.x.fixed.md', '1220.x.internal.md'];
+    assert.deepEqual(namesOf(readFragments(root)), expected);
+    assert.deepEqual(namesOf(readFragments(root, { fs: { readdirSync: (d) => fs.readdirSync(d).reverse() } })), expected);
+  });
+
   it('yields identical output under reversed and shuffled enumeration', () => {
     const root = makeRoot(SIX);
     const natural = readFragments(root);
