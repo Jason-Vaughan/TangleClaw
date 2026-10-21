@@ -40,6 +40,15 @@ describe('_source-paths — isSourceFile', () => {
     assert.equal(isSourceFile('build/out.js'), false);
   });
 
+  it('rejects changelog fragments: the log being maintained is not work to log or index (#2519)', () => {
+    assert.equal(isSourceFile('changelog.d/1220.c04-fragment-obligation.changed.md'), false);
+    assert.equal(isSourceFile('changelog.d/README.md'), false,
+      'a stray under the directory is changelog-coverage\'s to name by its own rule, never a source file');
+    assert.ok(EXCLUDED_PREFIXES.includes('changelog.d/'), 'excluded by prefix, so every caller inherits it');
+    assert.equal(isSourceFile('docs/changelog.d/x.md'), true,
+      'only the repository-root directory is the fragment directory');
+  });
+
   it('rejects the high-churn root docs by basename (changelog/readme/index are not "work")', () => {
     assert.equal(isSourceFile('CHANGELOG.md'), false);
     assert.equal(isSourceFile('README.md'), false);
@@ -73,7 +82,8 @@ describe('_source-paths — shared with features-toc (no drift)', () => {
     // Same instance re-exported, and same verdicts — the whole point of the extraction.
     assert.equal(featuresToc.INDEXABLE_EXTENSIONS, INDEXABLE_EXTENSIONS);
     assert.equal(featuresToc.EXCLUDED_PREFIXES, EXCLUDED_PREFIXES);
-    for (const p of ['lib/a.js', '.prawduct/x.md', 'node_modules/y.js', 'CHANGELOG.md', 'data/z.sql']) {
+    for (const p of ['lib/a.js', '.prawduct/x.md', 'node_modules/y.js', 'CHANGELOG.md', 'data/z.sql',
+      'changelog.d/1220.c04-fragment-obligation.changed.md']) {
       assert.equal(featuresToc._isIndexableCandidate(p), isSourceFile(p), `mismatch on ${p}`);
     }
   });

@@ -166,6 +166,15 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       assert.equal(_isIndexableCandidate('FEATURES.md'), false, 'cannot index the index itself');
     });
 
+    it('never offers a stub for a changelog fragment: changelog.d/ is the log, not source (#2519)', () => {
+      // The wrap's changelog-update step writes `changelog.d/<issue>.<slug>.<type>.md`
+      // (#1220); a session that only logged its work must not be asked to index the log.
+      assert.equal(_isIndexableCandidate('changelog.d/1220.c02-wrap-produces-fragments.changed.md'), false);
+      assert.equal(_isIndexableCandidate('changelog.d/2519.features-toc-never-stubs-fragments.fixed.md'), false);
+      assert.equal(_isIndexableCandidate('changelog.d/README.md'), false,
+        'a stray under the directory is changelog-coverage\'s to name, never an index stub');
+    });
+
     it('handles defensive cases — empty string, non-string, undefined', () => {
       assert.equal(_isIndexableCandidate(''), false);
       assert.equal(_isIndexableCandidate(null), false);
@@ -471,6 +480,39 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
         assert.equal(result.ok, true);
         assert.equal(result.status, 'skipped');
         assert.match(result.output.reason, /no indexable candidates/);
+      } finally {
+        featuresToc._internal.execSync = origExec;
+      }
+    });
+
+    it('returns ok:true,skipped when the session only wrote a changelog fragment (#2519)', async () => {
+      // The wrap's changelog-update step writes `changelog.d/<issue>.<slug>.<type>.md`
+      // (#1220). A session whose only touched file is that fragment logged its work;
+      // it must not be handed a FEATURES.md stub for the log entry.
+      store.projectConfig.save(projectPath, {
+        engine: 'claude',
+        featureIndexEnabled: true
+      });
+      fs.writeFileSync(path.join(projectPath, 'FEATURES.md'), '# Feature Index\n');
+      fs.mkdirSync(path.join(projectPath, 'changelog.d'), { recursive: true });
+      fs.writeFileSync(path.join(projectPath, 'changelog.d', '2519.pilot.fixed.md'), '- Logged.\n');
+
+      const origExec = featuresToc._internal.execSync;
+      featuresToc._internal.execSync = (cmd) => {
+        if (cmd.startsWith('git rev-parse')) return Buffer.from('');
+        if (cmd.startsWith('git diff')) return 'changelog.d/2519.pilot.fixed.md\n';
+        throw new Error(`unexpected command: ${cmd}`);
+      };
+      try {
+        const result = await featuresToc.run({
+          project: createdProject,
+          staged: {}
+        });
+        assert.equal(result.ok, true);
+        assert.equal(result.status, 'skipped');
+        assert.match(result.output.reason, /no indexable candidates/);
+        assert.equal(fs.readFileSync(path.join(projectPath, 'FEATURES.md'), 'utf8'), '# Feature Index\n',
+          'nothing was staged or written for the fragment');
       } finally {
         featuresToc._internal.execSync = origExec;
       }
