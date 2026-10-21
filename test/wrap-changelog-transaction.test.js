@@ -629,6 +629,50 @@ describe('wrap CHANGELOG transaction — fragments ride the release cut, recover
       assert.doesNotMatch(status, /9\.staged\.fixed\.md/, 'and the deleted path is reported nowhere: neither staged nor deleted');
     });
 
+    it('an unselected added-then-deleted path keeps its real-index entry through the untrack route: only the wrap\'s own selection is brought level', async () => {
+      const repo = makeFragmentRepo();
+      // A tracked TangleClaw state file, so an approved un-track offer takes the
+      // temporary-index commit route whose sync edits the REAL index.
+      fs.writeFileSync(path.join(repo, '.tangleclaw', 'state.json'), '{}\n');
+      git(repo, 'add', '.tangleclaw/state.json');
+      git(repo, 'commit', '-q', '-m', 'track state');
+      // The operator's own work, before launch: a new file added to the index and
+      // then deleted from the work tree (porcelain AD), which they Leave.
+      fs.mkdirSync(path.join(repo, 'notes'));
+      fs.writeFileSync(path.join(repo, 'notes', 'op.md'), 'the operator\'s staged draft\n');
+      git(repo, 'add', 'notes/op.md');
+      fs.rmSync(path.join(repo, 'notes', 'op.md'));
+      const baseline = launchBaseline.capture(repo);
+      const indexBefore = execFileSync('git', ['ls-files', '-s', '--', 'notes/op.md'], { cwd: repo, encoding: 'utf8' });
+      assert.match(indexBefore, /^100644 [0-9a-f]{40} 0\tnotes\/op\.md\n$/, 'precondition: in the index');
+      assert.match(treeState(repo).status, /^AD notes\/op\.md$/m, 'precondition: AD');
+      // The session's own selected change.
+      fs.writeFileSync(path.join(repo, 'CHANGELOG.md'), `${UNRELEASED_EMPTY}- the session\'s edit\n`);
+      const scope = await wrapScope.resolve({ name: 'own', path: repo }, { id: 1, tmuxSession: 'own', startedAt: '2000-01-01 00:00:00' }, {
+        exec: (file, args, opts) => execFileArgs(file, args, { cwd: opts.cwd, timeoutMs: 10000, maxBufferBytes: 1024 * 1024 }),
+        paneCurrentPath: () => repo,
+        getLaunchBaseline: () => baseline
+      });
+      const res = await commit.run({
+        project: wrapScope.stepProject({ id: 1, name: 'own', path: repo }, scope),
+        session: null,
+        step: { id: 'commit' },
+        previousResults: [],
+        staged: {},
+        options: { untrackState: 'approve', pathDecisions: { 'notes/op.md': 'leave' } },
+        scope
+      });
+
+      assert.equal(res.status, 'done', JSON.stringify(res));
+      assert.deepEqual(res.output.untrackState, ['.tangleclaw/state.json'], 'the approved un-track went through');
+      assert.deepEqual(committedFiles(repo), ['.tangleclaw/state.json', 'CHANGELOG.md']);
+      assert.throws(() => git(repo, 'cat-file', '-e', 'HEAD:.tangleclaw/state.json'), 'untracked by the commit');
+      assert.equal(execFileSync('git', ['ls-files', '-s', '--', 'notes/op.md'], { cwd: repo, encoding: 'utf8' }), indexBefore,
+        'the operator\'s staged entry is byte-identical: the index sync touched only the wrap\'s own selection');
+      assert.match(treeState(repo).status, /^AD notes\/op\.md$/m, 'and git still reports it exactly as before');
+      assert.ok(!res.output.message.includes('notes/op.md'), 'the commit body names nothing of theirs');
+    });
+
     it('a failed index restore retains the record and prints the repair', async () => {
       const repo = makeFragmentRepo();
       const restore = failGit((args) => args[0] === 'commit' || args[0] === 'update-index');
