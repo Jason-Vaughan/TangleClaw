@@ -206,7 +206,7 @@ const log = createLogger('server');
 
 // The body-size constants, the route table and the response, body and query
 // helpers live in the kernel every route module shares (#2248).
-const { route, matchRoute, _routePatterns, jsonResponse, errorResponse, bodyTooLarge, parseBody, reqUrl, parseQuery, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES } = require('./lib/routes/_kernel');
+const { route, matchRoute, _routePatterns, jsonResponse, errorResponse, parseBody, reqUrl, parseQuery, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES } = require('./lib/routes/_kernel');
 
 // Methods that can change server state, and so must not be accepted from a page
 // on another site. GET/HEAD are excluded because they are the ones a browser
