@@ -41,6 +41,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-22 — #2248 S06: the config route family out of server.js
+
+<!-- prawduct: type=chore | scope=2248-area-extraction -->
+
+#2248 S06. v5.35.0 Wave 3 chunk W3-A1, plan r2 (sha256 `8fb0ec79` at dispatch, S01, T01, T02, T03, T04, S02, S03, S04 and S05 ticked); Part of #2248, which stays open for Part 2. Built on `feat/2248-s06-config-routes` from `origin/main` `6887a658` under dispatch token `W3-S06-2248-6887A658-8FB0EC79`, with the seam accepted by the Integrator before the move and the Architect's exact-head seam review required before merge (plan checkpoint 1, A404).
+
+**What moved, unchanged.** `lib/routes/config.js` holds the two `/api/config` routes (`GET`, `PATCH`) inside a `register(deps)` called where the family stood, together with the one helper that reads a handed-over name (`_withBindState`, which asks the ingress door for the bind state), and at module level in the order they held: the secret redaction (`redactConfigSecrets`), the install's prior-use answer fixed once at boot with its test seam (`_bindPriorUse`, `_installPriorUse`, `_setInstallPriorUse`), the protected roots (`_protectedRoots`) and the Master-settings validation (`_masterTightenedBlindError`, `validateMasterPatch`). The prior-use binding moved whole with both its readers because nothing outside the family touches it directly: boot reads the answer through `_installPriorUse`, imported from the module, and `server.js` re-exports `_setInstallPriorUse` as the same function, so its export surface is unchanged and the two tests that reset the seam are untouched. One line inside the moved validation changed on purpose: the lazy `require` of the startup-dialog identity check is module-relative, so its path moved with the file. `register(deps)` receives the two helpers other families still share: `_decideSetupCredential` (also the setup finish) and `_gateIngress`. Three requires whose only readers moved left `server.js` (`./lib/git-hooks`, `./lib/git-template`, `./lib/tcc-folders`).
+
+**What stayed, and the map.** The setup credential decision and the auth gate's Host-allowlist carve-out, which names `/api/config` as the wizard's Skip terminator, are dispatcher-side and stay in `server.js`, so `setup` stays in `docs/areas.json`'s `shared.holds` (Integrator ruling); `config` leaves it, because every route and helper of the family moved, and the `config` area owns the new file.
+
+**Text readers and records.** One test pins moved text by reading source and now reads the module: `test/bind-policy-wiring.test.js` (the Integrator recorded this re-point as an authorized S06 scope delta beyond the plan's four named readers, none of which needed one) — the PATCH grace-state and allowed-fields pins, the GET bind-state pin and the prior-use count read `lib/routes/config.js`, and the every-gate-state-read sweep now reads `server.js` and every module under `lib/routes/` with its premise and assertions unchanged. The step-0 literal scan of the region against all 46 `server.js` text readers ran before the first narrow run. Fragment `changelog.d/2248.s06-config-routes.internal.md`; one FEATURES anchor moved (`validateMasterPatch`); CHANGELOG and FEATURES entries, and the FEATURES prose that still places the protected-roots builder in `server.js`, in the PR body for the records PR.
+
 ## 2026-10-22 — #2248 S05: the setup route family out of server.js
 
 <!-- prawduct: type=chore | scope=2248-area-extraction -->

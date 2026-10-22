@@ -279,8 +279,10 @@
     },
     "config": {
       "label": "area:config",
-      "why": "The global config routes; still inside server.js.",
-      "paths": []
+      "why": "The global config routes: the settings read and save, with the secret redaction, bind state, protected roots and Master-settings validation they carry.",
+      "paths": [
+        "lib/routes/config.js"
+      ]
     }
   },
   "shared": {
@@ -294,7 +296,6 @@
       "launch",
       "openclaw",
       "setup",
-      "config",
       "tc",
       "projects",
       "control",
