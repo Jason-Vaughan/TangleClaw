@@ -41,6 +41,22 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-21 — #2248 S01: the HTTP kernel and the audit routes out of server.js, the area map and the reachability test
+
+<!-- prawduct: type=chore | scope=2248-area-extraction -->
+
+#2248 S01. v5.35.0 Wave 3 chunk W3-A1, plan r2 (sha256 `fa294c62`, accepted by INT with Architect A404 and PM ruling `2854e406`); Part of #2248, which stays open for Part 2. Built on `feat/2248-s01-kernel-audit` from `origin/main` `b1bf495c` under dispatch token `W3-S01-2248-B1BF495C-FA294C62`.
+
+**What moved, unchanged.** `lib/routes/_kernel.js` holds the route table and matcher (`routes`, `route`, `matchRoute`, `_routePatterns`), the responders (`jsonResponse`, `errorResponse`), the body parser and its 413 (`parseBody`, `bodyTooLarge`), the URL and query helpers (`reqUrl`, `parseQuery`) and the two body-size constants, cut from `server.js` by section marker; `server.js` destructures them back from the kernel and keeps its export object byte for byte. `lib/routes/audit.js` holds the `// ── Eval Audit Mode ──` block (seventeen `/api/audit/*` and `/api/sidecar/*` routes with the debounced incident generator) inside a `register()` the entry point calls at the position the block held, so registration order is unchanged; the family closes over no server helper, so `register` takes nothing. The logger keeps the name `server` so log lines read as before.
+
+**Narrower than the plan, said here.** `htmlResponse` stays in `server.js`: it reads `PLAN_PAGE_CSP`, which is the plan-docs page's own policy, not a kernel concern. `CSRF_UNSAFE_METHODS` stays too: only the dispatcher reads it. Both are named in the plan's kernel list and were left where they are on purpose.
+
+**Text readers.** Of the 35 tests that read `server.js` or `lib/store.js` as text, one lost its needle: `test/launch-isolation-override-ui.test.js` grepped `server.js` for `errorResponse`'s body and now reads it from the kernel, a path change only. PR review: `bodyTooLarge` was destructured into `server.js` with nothing there reading it (the body parser calls it inside the kernel) and is dropped from the destructure; the chunk id is removed from the two module headers, which name the issue only.
+
+**Critic R-1.** The `wrapDefaultPipeline` require in `server.js` had its only caller (the wrap-quality handler) move with the family and is removed; the import now lives beside its one reader. R-2: the plan's `branch:` is set to this branch in both gitignored copies.
+
+**Mechanisms added.** `docs/areas.json` maps every file under `server.js`, `lib/`, `public/` and `scripts/` to one named area with its issue label, with `shared` naming the two files still holding several areas; `test/areas-map.test.js` holds it total and unambiguous (a file matched by two areas is a failure, in any order), and `test/route-reachability.test.js` asserts every registered route answers a request shaped like its own pattern. `CONTRIBUTING.md` gains the `lib/routes/` line; the two `FEATURES.md` anchors naming moved symbols (`bodyTooLarge`, `MESSAGE_BODY_LIMIT_BYTES`) now point at the kernel, under the PM's bounded-anchor ruling.
+
 ## 2026-10-21 — v5.35.0 Wave 2 records: changelog fragments (#1220)
 
 <!-- prawduct: type=docs | scope=1220-changelog-fragments -->

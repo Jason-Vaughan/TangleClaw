@@ -1,0 +1,289 @@
+{
+  "about": "The area map: which named product area owns which source paths. It answers five questions, each for a machine: (1) given a path, which one area owns it; (2) given an area, which path globs it owns; (3) given two planned issues, do their areas overlap, where overlap means a shared area or either touching `shared`; (4) which `area:<name>` issue label an area corresponds to; (5) which files match no area. Globs must not overlap: a file matches exactly one area, in any order; `**` spans directories, `*` does not. `test/areas-map.test.js` enforces that every file under server.js, lib/, public/ and scripts/ matches exactly one area, that every glob matches a file, and that an area with no paths yet is one `shared.holds` still names. `shared` is the two files still holding several areas; each extraction (#2248) moves one family out and removes it from `shared.holds`. Tests are mapped by the module they test and are deliberately outside the totality check.",
+  "version": 1,
+  "areas": {
+    "kernel": {
+      "label": "area:kernel",
+      "why": "The HTTP route table, matcher, responders and body parser every route module shares; owned by no one family.",
+      "paths": [
+        "lib/routes/_kernel.js"
+      ]
+    },
+    "audit": {
+      "label": "area:audit",
+      "why": "Eval audit mode (ingest, scoring, incidents, retention) and OpenClaw process visibility.",
+      "paths": [
+        "lib/routes/audit.js",
+        "lib/eval-audit.js",
+        "lib/sidecar.js",
+        "lib/scorecard-cache.js"
+      ]
+    },
+    "wrap": {
+      "label": "area:wrap",
+      "why": "The session wrap pipeline, its steps, the changelog fragments it compiles and release readiness.",
+      "paths": [
+        "lib/wrap-*.js",
+        "lib/wrap-steps/**",
+        "lib/changelog-*.js",
+        "lib/release-readiness.js",
+        "lib/staged-write.js"
+      ]
+    },
+    "openclaw": {
+      "label": "area:openclaw",
+      "why": "OpenClaw connections, tunnels, the direct and view proxies.",
+      "paths": [
+        "lib/openclaw-*.js",
+        "lib/tunnel*.js",
+        "lib/clawbridge.js",
+        "lib/ws-unix-client.js",
+        "lib/remote-output.js"
+      ]
+    },
+    "bridge": {
+      "label": "area:discord-bridge",
+      "why": "The operator bridge: Discord relay, the Project Master's structured surface, candidates and routes.",
+      "paths": [
+        "lib/bridge-*.js",
+        "lib/bridge-helper/**",
+        "lib/escalation.js",
+        "lib/draft-store.js"
+      ]
+    },
+    "medusa": {
+      "label": "area:medusa",
+      "why": "The switchboard: inbox, exchanges, deliveries, wake and watchdog.",
+      "paths": [
+        "lib/medusa*.js",
+        "lib/wake-transports.js"
+      ]
+    },
+    "control": {
+      "label": "area:control",
+      "why": "Durable HOLD/RELEASE/STOP, the merge queue and check watches.",
+      "paths": [
+        "lib/control-*.js",
+        "lib/merge-queue*.js",
+        "lib/merge-authority.js",
+        "lib/check-watch*.js"
+      ]
+    },
+    "launch": {
+      "label": "area:launch",
+      "why": "Session launch: sequences, preflight, recovery, startup prompt and control, handoffs, rotations and the prime.",
+      "paths": [
+        "lib/launch-*.js",
+        "lib/launchagent-scan.js",
+        "lib/startup-*.js",
+        "lib/recovery-*.js",
+        "lib/handoff-*.js",
+        "lib/session-reentry.js",
+        "lib/ecosystem-primer.js",
+        "lib/prime-hook-output.js",
+        "lib/coordinator-rotation.js",
+        "lib/recorded-launch-command.js",
+        "lib/pane-witness.js",
+        "lib/provenance.js",
+        "lib/feature-index-prime.js",
+        "lib/legacy-claude-md.js",
+        "lib/managed-block.js"
+      ]
+    },
+    "session-rules": {
+      "label": "area:session-rules",
+      "why": "Operator-authored session rules, their delivery and refresh, and learnings.",
+      "paths": [
+        "lib/session-rules-*.js",
+        "lib/rule-label.js",
+        "lib/methodology-topics.js"
+      ]
+    },
+    "sessions": {
+      "label": "area:sessions",
+      "why": "Session lifecycle in tmux and ttyd, the Project Master, transcripts, continuity, workload receipts and engine error watching.",
+      "paths": [
+        "lib/sessions.js",
+        "lib/session-finalize.js",
+        "lib/session-leftovers.js",
+        "lib/session-ownership.js",
+        "lib/master.js",
+        "lib/tmux.js",
+        "lib/ttyd-*.js",
+        "lib/pty-activity.js",
+        "lib/transcript.js",
+        "lib/continuity.js",
+        "lib/workload*.js",
+        "lib/tick-meter.js",
+        "lib/activity-observer.js",
+        "lib/condition-log.js",
+        "lib/uploads*.js",
+        "lib/macho-closure.js",
+        "lib/shell-word.js",
+        "lib/exec*.js",
+        "lib/http-settle.js",
+        "lib/orchestration.js"
+      ]
+    },
+    "auth": {
+      "label": "area:auth",
+      "why": "Operator accounts, sign-in, recovery codes, service and install tokens, the gates and fallback.",
+      "paths": [
+        "lib/auth-*.js",
+        "lib/password.js",
+        "lib/admin-credential.js",
+        "lib/setup-credential.js",
+        "lib/service-token.js",
+        "lib/open-install-token.js",
+        "lib/gate-fallback.js",
+        "lib/ingress-door.js",
+        "lib/secret-scan.js",
+        "lib/bind-policy.js",
+        "lib/ssh-target-safety.js"
+      ]
+    },
+    "setup": {
+      "label": "area:setup",
+      "why": "Install and ingress: HTTPS setup, certificates, Caddy, provisioning, host and port scanning.",
+      "paths": [
+        "lib/https-setup.js",
+        "lib/ingress-provision.js",
+        "lib/caddy*.js",
+        "lib/host-*.js",
+        "lib/tailnet-cutover.js",
+        "lib/port-scanner.js",
+        "lib/pidfile.js",
+        "lib/tangleclaw-home.js",
+        "lib/path-tokens.js"
+      ]
+    },
+    "projects": {
+      "label": "area:projects",
+      "why": "Project records, config, paths and versions, generated files, git hooks and templates, plan docs and actions.",
+      "paths": [
+        "lib/projects.js",
+        "lib/project-*.js",
+        "lib/tcc-folders.js",
+        "lib/git-hooks.js",
+        "lib/git-template.js",
+        "lib/tangleclaw-project-files.js",
+        "lib/plan-*.js",
+        "lib/dir-scanner*.js",
+        "lib/actions.js",
+        "lib/actions/**",
+        "lib/stranded-*.js"
+      ]
+    },
+    "engines": {
+      "label": "area:engines",
+      "why": "Engine definitions, models, temp roots, profiles and engine error detection.",
+      "paths": [
+        "lib/engines.js",
+        "lib/engine-*.js",
+        "lib/model-status.js"
+      ]
+    },
+    "shared-docs": {
+      "label": "area:shared-docs",
+      "why": "Cross-project shared documents, groups, locks, events and notices.",
+      "paths": [
+        "lib/shared-docs*.js"
+      ]
+    },
+    "ports": {
+      "label": "area:ports",
+      "why": "PortHub, the port registry.",
+      "paths": [
+        "lib/porthub.js"
+      ]
+    },
+    "update": {
+      "label": "area:update-checker",
+      "why": "Update checking and applying, and the upstream observer.",
+      "paths": [
+        "lib/update-*.js",
+        "lib/upstream-observer.js"
+      ]
+    },
+    "checkouts": {
+      "label": "area:checkouts",
+      "why": "Checkout state, freshness and fleet, git probes, GitHub facts and checks, CI status and branch retirement.",
+      "paths": [
+        "lib/checkout-*.js",
+        "lib/behind-origin.js",
+        "lib/branch-retire-safety.js",
+        "lib/git.js",
+        "lib/git-probe.js",
+        "lib/github-*.js",
+        "lib/gh-issue-state.js",
+        "lib/ci-status.js"
+      ]
+    },
+    "system": {
+      "label": "area:system",
+      "why": "Host and process facts: system info and health, server info, governance state, the logger.",
+      "paths": [
+        "lib/system*.js",
+        "lib/server-info.js",
+        "lib/governance-state.js",
+        "lib/logger.js"
+      ]
+    },
+    "tc": {
+      "label": "area:tc",
+      "why": "The `tc` command line.",
+      "paths": [
+        "lib/tc-verbs.js"
+      ]
+    },
+    "dashboard-ux": {
+      "label": "area:dashboard-ux",
+      "why": "Everything the browser runs.",
+      "paths": [
+        "public/**"
+      ]
+    },
+    "tooling": {
+      "label": "area:tooling",
+      "why": "Repository scripts, release certification and soak harnesses.",
+      "paths": [
+        "scripts/**",
+        "lib/release-certification/**",
+        "lib/soak/**"
+      ]
+    },
+    "config": {
+      "label": "area:config",
+      "why": "The global config routes; still inside server.js.",
+      "paths": []
+    }
+  },
+  "shared": {
+    "why": "Files still holding several areas; an issue touching one overlaps with every area it holds until it is empty.",
+    "paths": [
+      "server.js",
+      "lib/store.js"
+    ],
+    "holds": [
+      "sessions",
+      "wrap",
+      "launch",
+      "openclaw",
+      "setup",
+      "config",
+      "tc",
+      "projects",
+      "control",
+      "shared-docs",
+      "auth",
+      "session-rules",
+      "medusa",
+      "ports",
+      "system",
+      "engines",
+      "update",
+      "checkouts",
+      "bridge"
+    ]
+  }
+}
