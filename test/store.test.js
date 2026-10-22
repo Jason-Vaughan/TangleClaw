@@ -788,6 +788,38 @@ describe('the schema module and the facade seam (#2248 T01)', () => {
     assert.ok(create !== -1 && bind < create, 'and does so before the chain runs');
   });
 
+  it('every module under lib/store/ that exports _bind is bound by the facade and guards its own handle', () => {
+    // The slip `BOUND_MODULES` exists to catch is a module the facade requires
+    // but never binds. Nothing at runtime can tell "forgotten" from "closed", so
+    // the contract is read off the sources: each binder is required by the
+    // facade and either bound by name in `init()` or listed in `BOUND_MODULES`;
+    // and a domain module guards over its OWN `_db`, because the shared guard
+    // in `_db.js` would pass for a module whose handle was never bound.
+    const dir = path.join(__dirname, '..', 'lib', 'store');
+    const boundList = facadeSrc.match(/const BOUND_MODULES = \[([^\]]*)\];/);
+    assert.ok(boundList, 'the facade declares BOUND_MODULES');
+    const listed = boundList[1].split(',').map((s) => s.trim()).filter(Boolean);
+    const binders = fs.readdirSync(dir).filter((f) => f.endsWith('.js')).filter((f) => {
+      const src = fs.readFileSync(path.join(dir, f), 'utf8');
+      const exports = src.slice(src.lastIndexOf('module.exports'));
+      return /\b_bind\b/.test(exports);
+    });
+    assert.ok(binders.length >= 3, `the three T01 modules export _bind (${binders.join(', ')})`);
+    for (const file of binders) {
+      const mod = file.replace(/\.js$/, '');
+      const required = facadeSrc.match(new RegExp(`\\nconst (\\w+) = require\\('\\./store/${mod}'\\);`));
+      assert.ok(required, `${file} is required by the facade`);
+      const name = required[1];
+      const byName = new RegExp(`\\n\\s+${name}\\._bind\\(`).test(facadeSrc);
+      assert.ok(byName || listed.includes(name), `${file} is bound by init(): by name or through BOUND_MODULES`);
+      if (!file.startsWith('_')) {
+        const src = fs.readFileSync(path.join(dir, file), 'utf8');
+        assert.match(src, /\nfunction _ensureDb\(\) \{\n  if \(!_db\) \{/, `${file} guards over its own handle, not the handle module's`);
+        assert.doesNotMatch(src, /\{[^}]*\b_ensureDb\b[^}]*\} = require\('\.\/_db'\)/, `${file} does not import the shared guard`);
+      }
+    }
+  });
+
   it('a pre-v28 store with a minimal project is seeded through the injected api and loses the column', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-drop-methodology-'));
     try {
