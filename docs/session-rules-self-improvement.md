@@ -78,7 +78,7 @@ the operator's approval.
 ### Status transitions
 
 `session_rules.status` moves only along this allow-list (`SESSION_RULE_TRANSITIONS` in
-`lib/store.js`, mirrored here — `test/session-rule-lifecycle.test.js` holds the two
+`lib/store/session-rules.js`, mirrored here — `test/session-rule-lifecycle.test.js` holds the two
 together so they cannot drift):
 
 ```js

@@ -983,3 +983,26 @@ describe('sessionRuleDeliveries v28→v29 rules-hook channel migration (#749)', 
     }
   });
 });
+
+describe('store.sessionRules and store.sessionRuleDeliveries across close() and init()', () => {
+  it('refuse with NOT_INITIALIZED after close(), and answer again after the next init()', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-session-rules-closed-'));
+    store._setBasePath(tmpDir);
+    store.init();
+    try {
+      const projPath = path.join(tmpDir, 'proj-closed');
+      fs.mkdirSync(projPath, { recursive: true });
+      const pid = store.projects.create({ name: 'proj-closed', path: projPath, engine: 'claude' }).id;
+      const rule = store.sessionRules.create({ content: 'Survives a close', projectId: pid });
+      store.close();
+      assert.throws(() => store.sessionRules.get(rule.id), (err) => err.code === 'NOT_INITIALIZED');
+      assert.throws(() => store.sessionRuleDeliveries.listForProject(pid), (err) => err.code === 'NOT_INITIALIZED');
+      store.init();
+      assert.equal(store.sessionRules.get(rule.id).id, rule.id);
+      assert.deepEqual(store.sessionRuleDeliveries.listForProject(pid), []);
+    } finally {
+      try { store.close(); } catch { /* already closed */ }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});

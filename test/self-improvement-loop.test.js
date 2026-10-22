@@ -186,7 +186,7 @@ describe('self-improvement loop (#569)', () => {
       // deciding by the rows it changed, keeps the check correct whatever runs
       // concurrently. No single-threaded test can tell the two apart, so this
       // pins the shape in the source.
-      const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'store.js'), 'utf8');
+      const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'store', 'session-rules.js'), 'utf8');
       const start = src.indexOf('  setStatus(id, status, opts = {}) {');
       assert.ok(start !== -1, 'setStatus must exist');
       const body = src.slice(start, src.indexOf('\n  },', start));
