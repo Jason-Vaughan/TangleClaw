@@ -28,6 +28,12 @@ const serverInfo = require('../lib/server-info');
 
 const SERVER_SRC = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 const STORE_SRC = fs.readFileSync(path.join(__dirname, '..', 'lib', 'store.js'), 'utf8');
+// The config routes live in their own module; the pins on their bodies read it.
+const CONFIG_SRC = fs.readFileSync(path.join(__dirname, '..', 'lib', 'routes', 'config.js'), 'utf8');
+// The route modules under lib/routes/ hold handlers that were server.js's, so the sweeps read them too.
+const ROUTES_DIR = path.join(__dirname, '..', 'lib', 'routes');
+const ROUTE_SRCS = fs.readdirSync(ROUTES_DIR).filter((f) => f.endsWith('.js'))
+  .map((f) => fs.readFileSync(path.join(ROUTES_DIR, f), 'utf8'));
 
 describe('server.js binds through the policy, not around it', () => {
   it('calls bindPolicy.resolveBind for the listen host', () => {
@@ -58,10 +64,10 @@ describe('server.js binds through the policy, not around it', () => {
     // is still absent when PATCH loads — and load()'s defaults merge would make
     // the next save write `false`, narrowing a remote install nobody decided
     // about. Deleting that call must not leave the suite green.
-    const patchAt = SERVER_SRC.indexOf('const config = store.config.load();\n  // Re-assert the legacy grace state');
+    const patchAt = CONFIG_SRC.indexOf('const config = store.config.load();\n    // Re-assert the legacy grace state');
     assert.ok(patchAt > -1, 'the PATCH handler must re-assert the grace state before saving');
-    const migrateAfter = SERVER_SRC.indexOf('bindPolicy.migrateLegacyBind(', patchAt);
-    const allowedAfter = SERVER_SRC.indexOf('const allowedFields = [', patchAt);
+    const migrateAfter = CONFIG_SRC.indexOf('bindPolicy.migrateLegacyBind(', patchAt);
+    const allowedAfter = CONFIG_SRC.indexOf('const allowedFields = [', patchAt);
     assert.ok(migrateAfter > -1 && migrateAfter < allowedAfter,
       'it must run before the patch loop, so an explicit choice in the body still wins');
   });
@@ -116,15 +122,16 @@ describe('the gate state is wired into the boot notice, the settings bind state 
   });
 
   it('hands GET /api/config\'s bindState a gate state', () => {
-    assert.match(SERVER_SRC,
+    assert.match(CONFIG_SRC,
       /bindState: bindPolicy\.describeBindState\(config, authGate\.resolveGateState\(\(\) => config, store\.authSessions, _gateIngress\)\)/);
   });
 
-  it('passes the Caddyfile door to EVERY gate-state read in server.js', () => {
+  it('passes the Caddyfile door to EVERY gate-state read in server.js and the route modules', () => {
     // Without it `authEnabled: false` opens a caddy-mode install whose Caddyfile
     // serves a remote site with no basic_auth — at whichever call site forgot.
     // Every CALL names `store.authSessions`; prose mentioning the function does not.
-    const calls = SERVER_SRC.match(/authGate\.resolveGateState\([^()]*(\(\)[^()]*)?store\.authSessions[^)]*\)/g) || [];
+    const calls = [SERVER_SRC, ...ROUTE_SRCS]
+      .flatMap((src) => src.match(/authGate\.resolveGateState\([^()]*(\(\)[^()]*)?store\.authSessions[^)]*\)/g) || []);
     assert.ok(calls.length >= 6, `premise: the call sites exist (${calls.length})`);
     for (const call of calls) assert.match(call, /_gateIngress(\)|,\s*\(\))/, call);
   });
@@ -150,26 +157,26 @@ describe('the gate state is wired into the boot notice, the settings bind state 
 
 describe('PATCH /api/config accepts the opt-out setting', () => {
   it('lists bindAllInterfaces as an allowed field', () => {
-    const allowed = SERVER_SRC.slice(
-      SERVER_SRC.indexOf('const allowedFields = ['),
-      SERVER_SRC.indexOf('];', SERVER_SRC.indexOf('const allowedFields = ['))
+    const allowed = CONFIG_SRC.slice(
+      CONFIG_SRC.indexOf('const allowedFields = ['),
+      CONFIG_SRC.indexOf('];', CONFIG_SRC.indexOf('const allowedFields = ['))
     );
     assert.match(allowed, /'bindAllInterfaces'/,
       'an unlisted field is silently dropped by the PATCH loop');
   });
 
   it('rejects a non-boolean value', () => {
-    assert.match(SERVER_SRC, /key === 'bindAllInterfaces' && typeof value !== 'boolean'/);
+    assert.match(CONFIG_SRC, /key === 'bindAllInterfaces' && typeof value !== 'boolean'/);
   });
 
   it('marks the change as requiring a restart', () => {
     // The socket is bound once at listen time, so a live PATCH cannot move it.
     // Reporting otherwise would tell the operator they are exposed (or safe)
     // when the running process still says the opposite.
-    const restartLine = SERVER_SRC.split('\n').find(
+    const restartLine = CONFIG_SRC.split('\n').find(
       (l) => l.includes('requiresRestart = true') && l.includes('config[key] !== storedValue')
     );
-    const guard = SERVER_SRC.split('\n').find(
+    const guard = CONFIG_SRC.split('\n').find(
       (l) => l.includes("key === 'ingressMode'") && l.includes("key === 'serverPort'")
     );
     assert.ok(restartLine, 'the requiresRestart assignment should still exist');
@@ -226,7 +233,7 @@ describe('fresh-install evidence reaches every migration site (#1484)', () => {
     // site that asks the store live can see a project created after boot. Either
     // way the socket and the settings UI would disagree. The behaviour is pinned
     // in api-config.test.js; this names the one helper all three must use.
-    const calls = SERVER_SRC.match(/bindPolicy\.migrateLegacyBind\([\s\S]*?\);/g) || [];
+    const calls = [SERVER_SRC, CONFIG_SRC].flatMap((src) => src.match(/bindPolicy\.migrateLegacyBind\([\s\S]*?\);/g) || []);
     assert.equal(calls.length, 3, 'boot, GET and PATCH each migrate');
     for (const call of calls) {
       assert.match(call, /_installPriorUse\(\)/, `missing boot's prior-use answer: ${call}`);
