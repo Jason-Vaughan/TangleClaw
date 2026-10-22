@@ -32,15 +32,25 @@ function sink() {
 }
 
 /**
- * The declared suite command, read from the project state the recorder reads.
+ * The suite command every governed checkout of this repository declares as
+ * `test_command` in `.prawduct/project-state.yaml`, split on spaces. Pinned
+ * here as text, because that file is per-checkout and gitignored: a clone
+ * that has one must declare exactly this (checked below where it exists), and
+ * a clone that has none, such as CI's, still holds `all` to the same words.
+ */
+const DECLARED_TEST_COMMAND = 'node --test --test-reporter=junit --test-reporter-destination={junit_xml} test/*.test.js'.split(' ');
+
+/**
+ * The `test_command` this checkout's project state declares, or null where
+ * the checkout has no project state (CI's clone) or declares none.
  *
- * @returns {string[]} The command split on spaces, `node` first
+ * @returns {string[]|null} The command split on spaces, `node` first
  */
 function declaredTestCommand() {
-  const yaml = fs.readFileSync(path.join(REPO, '.prawduct', 'project-state.yaml'), 'utf8');
-  const m = /^test_command:\s*"([^"]+)"\s*$/m.exec(yaml);
-  assert.ok(m, 'project-state.yaml declares test_command');
-  return m[1].split(' ');
+  const file = path.join(REPO, '.prawduct', 'project-state.yaml');
+  if (!fs.existsSync(file)) return null;
+  const m = /^test_command:\s*"([^"]+)"\s*$/m.exec(fs.readFileSync(file, 'utf8'));
+  return m ? m[1].split(' ') : null;
 }
 
 describe('parseArgs', () => {
@@ -66,9 +76,9 @@ describe('parseArgs', () => {
 
 describe('all: the declared test_command, argument for argument', () => {
   it('is byte-identical to test_command with {junit_xml} filled in', () => {
+    assert.deepEqual(['node', ...stage.allArgv('{junit_xml}')], DECLARED_TEST_COMMAND);
     const declared = declaredTestCommand();
-    assert.equal(declared[0], 'node');
-    assert.deepEqual(['node', ...stage.allArgv('{junit_xml}')], declared);
+    if (declared) assert.deepEqual(declared, DECLARED_TEST_COMMAND, 'this checkout\'s project state declares the pinned command');
     assert.deepEqual(stage.allArgv('/tmp/j.xml'), ['--test', '--test-reporter=junit', '--test-reporter-destination=/tmp/j.xml', 'test/*.test.js']);
   });
 
