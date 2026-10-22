@@ -1821,7 +1821,10 @@ describe('the session keeps its blocker (#2128)', () => {
           for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
             const full = path.join(dir, entry.name);
             if (entry.isDirectory()) { walk(full); continue; }
-            if (!entry.name.endsWith('.js') || full === path.join(lib, 'store.js')) continue;
+            // The store defines the method (the facade, and lib/store/sessions.js
+            // where the sessions domain lives); a writer is anything that calls it
+            // from outside those two files, other store modules included.
+            if (!entry.name.endsWith('.js') || full === path.join(lib, 'store.js') || full === path.join(lib, 'store', 'sessions.js')) continue;
             const src = fs.readFileSync(full, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
             const n = (src.match(/\bsetLaunchBlocker\(/g) || []).length;
             if (n) writers.push(`${path.relative(lib, full)}:${n}`);
