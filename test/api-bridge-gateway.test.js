@@ -2244,9 +2244,9 @@ describe('bridge API: the round trip (#2031)', () => {
       assert.deepEqual([refused.session, typeof refused.error], [null, 'string']);
       assert.ok(!('sessionId' in refused), 'there is no sessionId at the top of its answer');
       assert.match(read('lib/bridge-gateway.js'), /const sessionId = result && result\.session \? result\.session\.id : null;/);
-      assert.match(read('server.js'), /sessionId: result\.session\.id,/, 'which is how the launch route reads it too');
+      assert.match(read('lib/routes/sessions.js'), /sessionId: result\.session\.id,/, 'which is how the launch route reads it too');
       // And both launch a session after the same warm-up, by the same function.
-      assert.match(read('server.js'), /await launchWarmup\.warmForLaunch\(project\);/);
+      assert.match(read('lib/routes/sessions.js'), /await launchWarmup\.warmForLaunch\(project\);/);
       assert.match(read('lib/bridge-gateway.js'), /warmForLaunch: \(project\) => require\('\.\/launch-warmup'\)\.warmForLaunch\(project\),/);
       assert.match(read('lib/bridge-gateway.js'), /launchSession: \(project\) => require\('\.\/sessions'\)\.launchSession\(project\.name, \{ primePrompt: true, owner: null \}\),/);
       // Nothing is awaited between the checks and the launch: the warm-up is the last await before it.

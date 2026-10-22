@@ -68,7 +68,10 @@ describe('auth-identity.cameThroughProxy — the one spelling of "forwarded"', (
   });
 
   it('is what every caller asks — no hand-spelled X-Forwarded-For check remains', () => {
-    for (const rel of ['server.js', 'lib/auth-gate.js']) {
+    // The route modules under lib/routes/ hold handlers that were server.js's, so they are swept too.
+    const routeModules = require('node:fs').readdirSync(require('node:path').join(__dirname, '..', 'lib', 'routes'))
+      .filter((f) => f.endsWith('.js')).map((f) => `lib/routes/${f}`);
+    for (const rel of ['server.js', 'lib/auth-gate.js', ...routeModules]) {
       const code = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', rel), 'utf8');
       assert.doesNotMatch(code, /headers\s*\[\s*['"]x-forwarded-for['"]\s*\]/i, rel);
     }

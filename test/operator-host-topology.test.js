@@ -53,9 +53,11 @@ describe('#1178 isProxyHeaderTrusted — one predicate, two headers', () => {
 
     // And nothing on the request path reads the header's VALUE as identity:
     // every code reference to it outside the refusal is the Caddyfile emitter.
+    // The route modules under lib/routes/ hold handlers that were server.js's, so the sweep reads them too.
     const libDir = path.join(__dirname, '..', 'lib');
-    const files = fs.readdirSync(libDir).filter((f) => f.endsWith('.js'))
-      .map((f) => path.join(libDir, f)).concat(path.join(__dirname, '..', 'server.js'));
+    const files = [libDir, path.join(libDir, 'routes')]
+      .flatMap((dir) => fs.readdirSync(dir).filter((f) => f.endsWith('.js')).map((f) => path.join(dir, f)))
+      .concat(path.join(__dirname, '..', 'server.js'));
     for (const file of files) {
       const code = fs.readFileSync(file, 'utf8');
       // A `delete headers[...]` is the refusal, not a read, so it is excluded.
