@@ -83,8 +83,8 @@ awaits a readiness that a refused `tmux` probe would have produced). Without a t
 runner's child process sits, and the tier never reports. A timeout turns that into a
 cancelled test that names the file, which is the demotion signal. The value is per file and
 must clear the slowest honest file *under load*: `test/check-watch-monitor.test.js` runs in
-10 s alone and past 120 s when 98 Medium files share the host, so the Medium tier is run with
-`--test-timeout=300000` until the stage runner measures a better number.
+10 s alone and past 120 s when the Medium tier's files share the host, so the Medium tier is run
+with `--test-timeout=300000` until the stage runner measures a better number.
 
 **Where the refusals come from.** When the ledger was first written, the files the Medium
 guard demoted were almost all server-booting tests: the refused calls were `lib/tmux.js`'s
