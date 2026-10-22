@@ -57,7 +57,12 @@ const BASELINE_COMMENT = Object.freeze([
  */
 function defaultRoots(root, io) {
   const list = (dir, keep) => {
-    try { return fs.readdirSync(path.join(root, dir)).filter(keep).map((f) => path.join(root, dir, f)); } catch { return []; }
+    try {
+      return fs.readdirSync(path.join(root, dir)).filter(keep).map((f) => path.join(root, dir, f));
+    } catch (err) {
+      if (err.code === 'ENOENT') return []; // a tree without that directory has no roots there
+      throw err;
+    }
   };
   return [
     path.join(root, 'server.js'),
@@ -181,6 +186,7 @@ function readBaseline(file) {
   try {
     raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch (err) {
+    if (!(err instanceof SyntaxError)) throw err; // unreadable is an error; only unparseable is "malformed"
     return { entries: [], problems: [`malformed baseline: ${err.message}`] };
   }
   if (!raw || !Array.isArray(raw.dead)) return { entries: [], problems: ['malformed baseline: "dead" must be an array of "file:name" strings'] };

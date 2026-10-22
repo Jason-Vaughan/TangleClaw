@@ -154,7 +154,9 @@ constant the file defines from `__dirname` with literal segments, which is how t
 scripts load `lib/`. A product path the text **names** is a dependency whether or not it is
 required: `path.join(__dirname, '..', 'lib', 'x.js')` in a test that reads the source,
 `path.join(REPO, 'scripts', 'x.js')` in one that spawns it, a bare `'scripts/x.js'` literal that
-exists on disk. A join whose last segments are built at run time names the directory its literal
+exists on disk; and a `.js` file named that way is walked in turn, because a script a test spawns
+is run by that test and what the script requires is part of what the test depends on. A join
+whose last segments are built at run time names the directory its literal
 segments reach, and the test then depends on everything under it, which over-selects and never
 misses. `--explain` lists the selected tests per changed file and, for the selected graphs, the
 dynamic requires and the count of **opaque reads**: a `readFileSync` whose path carries nothing
@@ -177,12 +179,12 @@ and the `ESCALATE` line. This chunk's own diff is the documented example: it tou
 so `node scripts/test-stage.js 2` on it prints the `not-javascript` escalation and runs Stage 3.
 
 **Measured when Stage 2 was built** (2026-10-22, this repository at `68c4ff0e`, the laptop):
-the graph is 1,070 files and builds in about 1.0 s; the selection step is about 1.1 s. A one-file
-change to `lib/test-results.js` selects 16 test files plus the ring (6 Small, 1 Medium, 12 Large)
-and the whole of Stage 2 runs in 46.7 s: Small 0.3 s, the one Medium file 16.6 s
-(`test/check-watch-monitor.test.js`, 10 s alone by design), the 12 Large files 28.7 s. What a diff
+the graph is 1,086 files and builds in about 1.1 s; the selection step is about 1.1 s. A one-file
+change to `lib/test-results.js` selects 18 test files plus the ring (7 Small, 1 Medium, 13 Large)
+and the whole of Stage 2 runs in 41.4 s: Small 0.3 s, the one Medium file 10.5 s
+(`test/check-watch-monitor.test.js`, 10 s alone by design), the 13 Large files 29.5 s. What a diff
 reaches decides the time, and a change under `server.js`'s graph (`lib/rule-label.js` reaches
-434 tests) selects most of the suite. Against the under-30 s Builder-ring target of #2371's
+479 tests) selects most of the suite. Against the under-30 s Builder-ring target of #2371's
 checkpoint 4, Stage 1 + Stage 2's selection + Stage 3 is about 8 s before the selected files run;
 the selected files are the variable, and the ring the activation packet names (Stages 1+2+3)
 stays a proposal until the Operator's cutover.

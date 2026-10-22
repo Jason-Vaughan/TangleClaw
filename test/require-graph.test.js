@@ -203,12 +203,31 @@ describe('buildGraph and reachOf', () => {
   it('closes over requires and named paths, and carries the dynamic requires on the way', () => {
     const root = path.join(ROOT, 'test/t.test.js');
     const graph = g.buildGraph([root], io);
-    assert.deepEqual([...graph.keys()].map(rel).sort(), ['lib/a.js', 'lib/b.js', 'test/t.test.js']);
+    assert.deepEqual([...graph.keys()].map(rel).sort(), ['lib/a.js', 'lib/b.js', 'scripts/x.js', 'test/t.test.js'], 'the named script is walked too');
     const r = g.reachOf(root, graph);
     assert.deepEqual([...r.files].map(rel).sort(), ['lib/a.js', 'lib/b.js', 'scripts/x.js', 'test/t.test.js']);
     assert.equal(g.reaches(r, path.join(ROOT, 'lib/b.js')), true);
     assert.equal(g.reaches(r, path.join(ROOT, 'lib/c.js')), false);
     assert.deepEqual(r.dynamic.map((d) => [d.line, d.prefix && rel(d.prefix)]), [[3, 'lib/w'], [4, null]]);
+  });
+
+  it('walks a script a test names by path but never requires, so what the script requires is reached', () => {
+    const io2 = tree({
+      'lib/deep.js': 'module.exports = { deep: 1 };',
+      'scripts/tool.js': "const deep = require('../lib/deep');",
+      'test/t.test.js': "const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'tool.js')]);"
+    });
+    const root = path.join(ROOT, 'test/t.test.js');
+    const graph = g.buildGraph([root], io2);
+    assert.deepEqual([...graph.keys()].map(rel).sort(), ['lib/deep.js', 'scripts/tool.js', 'test/t.test.js']);
+    assert.equal(g.reaches(g.reachOf(root, graph), path.join(ROOT, 'lib/deep.js')), true);
+  });
+
+  it('statOf answers absent for a missing path or a path through a file, and throws for anything else', () => {
+    assert.equal(g.statOf(path.join(ROOT, 'nowhere', 'x.js')).isFile(), false);
+    assert.equal(g.statOf(path.join(__filename, 'under-a-file.js')).isDirectory(), false, 'ENOTDR: a path through a file');
+    assert.equal(g.FS_IO.isFile(__filename), true);
+    assert.equal(g.FS_IO.isDir(__dirname), true);
   });
 
   it('reaches a file under a directory the text names', () => {

@@ -59,9 +59,29 @@ const BARE_PATH = /^(?:server\.js|lib|scripts|bin|public|data|hooks|docs|test)(?
 /** The default io: this file system. */
 const FS_IO = Object.freeze({
   readFile: (f) => fs.readFileSync(f, 'utf8'),
-  isFile: (f) => { try { return fs.statSync(f).isFile(); } catch { return false; } },
-  isDir: (f) => { try { return fs.statSync(f).isDirectory(); } catch { return false; } }
+  isFile: (f) => statOf(f).isFile(),
+  isDir: (f) => statOf(f).isDirectory()
 });
+
+/** What `statOf` answers for a path that is not there. */
+const ABSENT = Object.freeze({ isFile: () => false, isDirectory: () => false });
+
+/**
+ * `fs.statSync` that answers "not there" for a missing path or a path through
+ * a file, and still throws for anything else (a permission error is not an
+ * absence).
+ *
+ * @param {string} f - A path
+ * @returns {{isFile: function(): boolean, isDirectory: function(): boolean}}
+ */
+function statOf(f) {
+  try {
+    return fs.statSync(f);
+  } catch (err) {
+    if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return ABSENT;
+    throw err;
+  }
+}
 
 /**
  * The same text with every string body, template body, comment and regex
@@ -508,8 +528,10 @@ function usesOf(reader, target) {
 }
 
 /**
- * Scan every file reachable from the roots through resolved requires, once
- * each.
+ * Scan every file reachable from the roots, once each: through resolved
+ * requires, and through a `.js` file the text names, because a script a test
+ * spawns by path is run by that test, and what the script requires is part
+ * of what the test depends on.
  *
  * @param {string[]} roots - Absolute paths
  * @param {object} [io] - The seam `scanFile` takes
@@ -524,6 +546,7 @@ function buildGraph(roots, io = FS_IO) {
     const scan = scanFile(file, io);
     graph.set(file, scan);
     for (const r of scan.requires) if (r.resolved && !graph.has(r.resolved)) queue.push(r.resolved);
+    for (const p of scan.paths) if (p.bounded && p.resolved.endsWith('.js') && !graph.has(p.resolved)) queue.push(p.resolved);
   }
   return graph;
 }
@@ -542,10 +565,15 @@ function reachOf(root, graph) {
   const dirs = new Set();
   const dynamic = [];
   const opaque = [];
+  // `walked` is separate from `files`: a file named by path is a dependency
+  // the moment it is named, and still has to be popped and walked for what
+  // it requires in turn.
+  const walked = new Set();
   const stack = [root];
   while (stack.length > 0) {
     const f = stack.pop();
-    if (files.has(f)) continue;
+    if (walked.has(f)) continue;
+    walked.add(f);
     files.add(f);
     const scan = graph.get(f);
     if (!scan) continue;
@@ -575,6 +603,6 @@ function reaches(reach, file) {
 }
 
 module.exports = {
-  ROOT, PRODUCT_DIRS, FS_IO, mask, splitArgs, literalOf, lineStarts, lineOf, rootConstants, resolveJoin, resolveFile,
+  ROOT, PRODUCT_DIRS, FS_IO, statOf, mask, splitArgs, literalOf, lineStarts, lineOf, rootConstants, resolveJoin, resolveFile,
   scanFile, bindingOf, memberUsesOf, readExports, usesOf, buildGraph, reachOf, reaches
 };
