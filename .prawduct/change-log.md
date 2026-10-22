@@ -41,6 +41,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-22 — #2248 T04: the launch domain out of lib/store.js, in two modules
+
+<!-- prawduct: type=chore | scope=2248-area-extraction -->
+
+#2248 T04. v5.35.0 Wave 3 chunk W3-A1, plan r2 (sha256 `abe8af62` at dispatch, S01, T01, T02 and T03 ticked; the step-0 seam recorded under the chunk after dispatch, both copies `e1afbc7d`); Part of #2248, which stays open for Part 2. Built on `feat/2248-t04-store-launch` from `origin/main` `832860a2` under dispatch token `W3-T04-2248-832860A2-ABE8AF62`.
+
+**What moved, unchanged.** The `// ── Launch sequences (Train 21) ──` section left `lib/store.js` as two files, because the step-0 matrix showed its two halves share nothing. `lib/store/launch.js` holds the first half (`LAUNCH_STEP_IDS`, `_insertLaunchSequence`, `_claimInheritedNotice`, `projectRecoveryStateApi`, `recoveryClearancesApi`, `_insertRecoveryClearBatchItem`, `recoveryClearBatchesApi`, `_clearRecoveryCas`, `OPERATOR_RECOVERY_CLEARANCES`, `launchSequencesApi`, and the six `_rowTo*` mappers they read through). `lib/store/handoffs.js` holds the second (`_rowToHandoffPublication`, `_rowToHandoffEpoch`, `handoffEpochApi`, `handoffsApi`) together with the `EPOCH_ROW_MISSING` constant from the facade's header, whose only reader is the epoch api. Three regions cut by line range and emitted byte for byte; the facade imports back the eight names it still exports and re-exports them under the names it always exported. The `HANDOFF_*`, `EPOCH_UNKNOWN_FROM_V41` and `RECOVERY_BATCH_OUTCOMES` constants the plan listed already lived in `lib/store/_schema.js` since T01 and did not move again.
+
+**The seam (INT `83a1e7c7`, Architect A410).** Each module keeps its own `let _db` and guards over it with its own `_ensureDb`. The handoffs module needs nothing but the handle and the schema's baseline vocabulary, which it requires from `./_schema` directly (the schema requires no domain module), so it is handle-only in `BOUND_MODULES`. The launch module filters two readers on `SESSION_STATUS.ACTIVE`, a constant the sessions domain owns, while `lib/store/sessions.js` requires the launch module for the insert its `start()` runs: requiring sessions back would be a cycle, so the constant arrives beside the handle, `launch._bind({ db, SESSION_STATUS })` from `init()` and `_bind(null)` from `close()`, the way the schema already receives the same constant. `lib/store/sessions.js` is the one re-pointed reader: it now requires `./launch` and `./handoffs` directly, drops the two injected `let`s, and its `_bind(db)` shrinks to the handle as it joins `BOUND_MODULES`, still clearing the launch-blocker warning memory when unbound. Dependency graph: `_db ← _schema ← handoffs`; `_db ← launch`; `sessions → launch, handoffs`; the facade requires all of them; nothing under `lib/store/` requires the facade.
+
+**Records and tests.** `docs/areas.json`: the `launch` area gains both files; `shared.holds` keeps `launch` because its routes are still in `server.js`. Two lifecycle pins (PM `ab65826c`): `test/handoff-store.test.js` and `test/launch-sequence.test.js` each close the store, assert the moved apis refuse with `NOT_INITIALIZED`, re-open it and assert they answer again. No `docs/*`, `FEATURES.md` or `CONTRIBUTING.md` line names a moved symbol, so none is repointed and `FEATURES.md` is untouched. `changelog.d/2248.t04-store-launch.internal.md` carries the `### Internal` entry.
+
 ## 2026-10-22 — #2248 T03: the session-rules domain out of lib/store.js
 
 <!-- prawduct: type=chore | scope=2248-area-extraction -->

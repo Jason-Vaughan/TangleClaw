@@ -810,3 +810,35 @@ describe('launch sequence (Train 21, Chunk 01)', () => {
     });
   });
 });
+
+// #2248 T04: the launch domain lives in lib/store/launch.js and keeps its own
+// handle, so a closed store must refuse every one of its apis and a re-opened
+// one must bind them again — a module the facade forgot to rebind would
+// otherwise answer from a stale handle, or not at all.
+describe('store.launchSequences, store.projectRecoveryState, store.recoveryClearances and store.recoveryClearBatches across close() and init()', () => {
+  it('refuse with NOT_INITIALIZED after close(), and answer again after the next init()', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-launch-closed-'));
+    store._setBasePath(tmpDir);
+    store.init();
+    try {
+      const projPath = path.join(tmpDir, 'proj-closed');
+      fs.mkdirSync(projPath, { recursive: true });
+      const pid = store.projects.create({ name: 'proj-closed', path: projPath, engine: 'claude' }).id;
+      const decided = store.projectRecoveryState.recordDecision(pid, 'operator', 'operator-verified');
+      store.close();
+      const notInitialized = (err) => err.code === 'NOT_INITIALIZED';
+      assert.throws(() => store.launchSequences.getByLaunchId('never-bound'), notInitialized);
+      assert.throws(() => store.projectRecoveryState.get(pid), notInitialized);
+      assert.throws(() => store.recoveryClearances.getForSequence(1), notInitialized);
+      assert.throws(() => store.recoveryClearBatches.get('never-created'), notInitialized);
+      store.init();
+      assert.equal(store.projectRecoveryState.get(pid).pinnedMode, decided.pinnedMode);
+      assert.equal(store.launchSequences.getByLaunchId('never-bound'), null);
+      assert.equal(store.recoveryClearances.getForSequence(1), null);
+      assert.equal(store.recoveryClearBatches.get('never-created'), null);
+    } finally {
+      try { store.close(); } catch { /* already closed */ }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});

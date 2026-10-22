@@ -302,3 +302,19 @@ describe('binding inside the wrap lifecycle transition (#1585)', () => {
     assert.ok(!('publicationBound' in wrapped), 'callers that never staged one see no new field');
   });
 });
+
+// #2248 T04: the handoffs domain lives in lib/store/handoffs.js and keeps its
+// own handle, so a closed store must refuse it and a re-opened one must bind
+// it again — a module the facade forgot to rebind would otherwise answer from
+// a stale handle, or not at all.
+describe('store.handoffs and store.handoffEpoch across close() and init()', () => {
+  it('refuse with NOT_INITIALIZED after close(), and answer again after the next init()', () => {
+    const staged = stage({ publicationId: 'pub-survives-close' });
+    store.close();
+    assert.throws(() => store.handoffs.get(staged.publicationId), (err) => err.code === 'NOT_INITIALIZED');
+    assert.throws(() => store.handoffEpoch.get(staged.projectId), (err) => err.code === 'NOT_INITIALIZED');
+    store.init();
+    assert.equal(store.handoffs.get(staged.publicationId).publicationId, staged.publicationId);
+    assert.equal(store.handoffEpoch.get(staged.projectId), null, 'no epoch row was ever written for this project');
+  });
+});
