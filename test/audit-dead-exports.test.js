@@ -154,6 +154,8 @@ describe('check: the ratchet', () => {
       assert.deepEqual(audit.readBaseline(write('order.json', '{"dead": ["lib/b.js:x", "lib/a.js:x"]}')).problems, ['baseline is not sorted']);
       const good = audit.readBaseline(write('good.json', '{"dead": ["lib/a.js:x", "lib/b.js:x"]}'));
       assert.deepEqual(good, { entries: ['lib/a.js:x', 'lib/b.js:x'], problems: [] });
+      // Unreadable is not "malformed": a directory where the file should be propagates.
+      assert.throws(() => audit.readBaseline(dir), /EISDIR/);
       const dup = audit.check(clean([{ file: 'lib/a.js', name: 'dead' }]), audit.readBaseline(write('dup2.json', '{"dead": ["lib/a.js:dead", "lib/a.js:dead"]}')));
       assert.equal(dup.ok, false);
       assert.match(dup.output, /^duplicate baseline entry: lib\/a\.js:dead\n/);
@@ -194,6 +196,20 @@ describe('main', () => {
       const red = sink();
       assert.equal(audit.main(['--check'], { ...seams, stdout: red }), 1);
       assert.match(red.text(), /^new dead export \(not in the baseline\): lib\/a\.js:dead$/m);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('defaultRoots reads a tree without an entry-point directory as having no roots there, and propagates any other failure', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-dead-roots-'));
+    try {
+      fs.mkdirSync(path.join(dir, 'lib'));
+      fs.writeFileSync(path.join(dir, 'lib', 'a.js'), '');
+      const real = require('../scripts/_require-graph');
+      assert.deepEqual(audit.defaultRoots(dir, real.FS_IO).map((f) => path.relative(dir, f)), ['lib/a.js'], 'no server.js, bin/, scripts/ or test/: only the lib module');
+      fs.writeFileSync(path.join(dir, 'scripts'), 'a file where the directory should be');
+      assert.throws(() => audit.defaultRoots(dir, real.FS_IO), /ENOTDIR/);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

@@ -225,9 +225,12 @@ describe('buildGraph and reachOf', () => {
 
   it('statOf answers absent for a missing path or a path through a file, and throws for anything else', () => {
     assert.equal(g.statOf(path.join(ROOT, 'nowhere', 'x.js')).isFile(), false);
-    assert.equal(g.statOf(path.join(__filename, 'under-a-file.js')).isDirectory(), false, 'ENOTDR: a path through a file');
+    assert.equal(g.statOf(path.join(__filename, 'under-a-file.js')).isDirectory(), false, 'ENOTDIR: a path through a file');
     assert.equal(g.FS_IO.isFile(__filename), true);
     assert.equal(g.FS_IO.isDir(__dirname), true);
+    // Not an absence: a path node refuses to look at propagates with its own code.
+    assert.throws(() => g.statOf('a\0b'), (err) => err.code !== 'ENOENT' && err.code !== 'ENOTDIR');
+    assert.throws(() => g.FS_IO.isDir('a\0b'));
   });
 
   it('reaches a file under a directory the text names', () => {
