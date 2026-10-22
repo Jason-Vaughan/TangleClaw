@@ -283,28 +283,33 @@ describe('#1076 shellQuote — remote-shell injection', () => {
   });
 });
 
-describe('#1076 wiring — server.js and the viewer actually use this', () => {
+describe('#1076 wiring — the OpenClaw route module and the viewer actually use this', () => {
+  // The approve-pending route and the gateway-host runner live with the OpenClaw
+  // route family; server.js keeps the entry point and the proxies.
   const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const routeSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'routes', 'openclaw.js'), 'utf8');
   const viewSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'openclaw-view.js'), 'utf8');
 
-  it('server.js no longer hardcodes the docker path anywhere', () => {
-    assert.doesNotMatch(serverSrc, /\$HOME\/\.local\/bin\/docker/,
-      'the hardcoded path is the bug; it belongs only in the module’s candidate list');
+  it('neither the route module nor server.js hardcodes the docker path anywhere', () => {
+    for (const src of [routeSrc, serverSrc]) {
+      assert.doesNotMatch(src, /\$HOME\/\.local\/bin\/docker/,
+        'the hardcoded path is the bug; it belongs only in the module’s candidate list');
+    }
   });
 
-  it('server.js routes approve-pending through the module', () => {
-    assert.match(serverSrc, /openclawApprove\.approvePending/);
+  it('the route module routes approve-pending through the module', () => {
+    assert.match(routeSrc, /openclawApprove\.approvePending/);
   });
 
   it('the route returns the code alongside the reason', () => {
-    const route = serverSrc.slice(serverSrc.indexOf("route('POST', '/api/openclaw/connections/:id/approve-pending'"));
+    const route = routeSrc.slice(routeSrc.indexOf("route('POST', '/api/openclaw/connections/:id/approve-pending'"));
     assert.match(route.slice(0, 2500), /code: result\.code/);
     assert.match(route.slice(0, 2500), /reason: result\.reason/);
   });
 
   it('the remote runner captures stderr separately from stdout', () => {
-    assert.match(serverSrc, /function _runOnGatewayHost/);
-    assert.match(serverSrc, /stderr: redact\(/, 'stderr must be captured AND redacted, not swallowed');
+    assert.match(routeSrc, /function _runOnGatewayHost/);
+    assert.match(routeSrc, /stderr: redact\(/, 'stderr must be captured AND redacted, not swallowed');
   });
 
   it('the viewer surfaces the reason instead of returning silently', () => {

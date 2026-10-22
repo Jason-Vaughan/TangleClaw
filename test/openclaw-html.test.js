@@ -227,11 +227,15 @@ describe('relayRewrittenHtml (#1534)', () => {
 });
 
 describe('both OpenClaw proxies hand their response to one helper (#1534)', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  // The direct proxy is a branch of the request dispatcher in server.js; the
+  // project proxy lives with the OpenClaw route family in its own module.
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const routes = fs.readFileSync(path.join(__dirname, '..', 'lib', 'routes', 'openclaw.js'), 'utf8');
+  const src = server + routes;
   it('relayOpenclawResponse is used for both prefixes, and nothing else relays HTML', () => {
     assert.equal((src.match(/openclawHtml\.relayOpenclawResponse\(/g) || []).length, 2);
-    assert.match(src, /`\/openclaw-direct\/\$\{parts\[2\]\}`/);
-    assert.match(src, /`\/openclaw\/\$\{encodeURIComponent\(projectName\)\}`/);
+    assert.match(server, /`\/openclaw-direct\/\$\{parts\[2\]\}`/);
+    assert.match(routes, /`\/openclaw\/\$\{encodeURIComponent\(projectName\)\}`/);
     assert.equal((src.match(/relayRewrittenHtml/g) || []).length, 0, 'the lower-level relay is the helper\'s business');
   });
 });

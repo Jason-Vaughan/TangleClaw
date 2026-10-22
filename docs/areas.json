@@ -51,6 +51,7 @@
       "label": "area:openclaw",
       "why": "OpenClaw connections, tunnels, the direct and view proxies.",
       "paths": [
+        "lib/routes/openclaw.js",
         "lib/openclaw-*.js",
         "lib/tunnel*.js",
         "lib/clawbridge.js",

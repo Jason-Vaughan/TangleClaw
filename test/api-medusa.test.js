@@ -1208,7 +1208,8 @@ describe('Medusa teardown is wired into EVERY session-end path (MED-2K9P Chunk 0
   // every terminal transition actually calls teardown, so a new end path can't
   // silently strand a live listener (a ghost roster peer) — Critic Chunk 04.
   const sessionsSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'sessions.js'), 'utf8');
-  const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  // The tunnel-kill route lives with the OpenClaw route family, not in server.js.
+  const openclawRoutesSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'routes', 'openclaw.js'), 'utf8');
 
   /**
    * Slice a named function body out of a source string.
@@ -1256,8 +1257,8 @@ describe('Medusa teardown is wired into EVERY session-end path (MED-2K9P Chunk 0
     });
   }
 
-  it('the tunnel-kill path (server.js) forgets the killed webui session', () => {
-    assert.match(serverSrc, /Tunnel killed from connection panel'\);[\s\S]{0,200}medusa\.forgetSession\(/);
+  it('the tunnel-kill path (lib/routes/openclaw.js) forgets the killed webui session', () => {
+    assert.match(openclawRoutesSrc, /Tunnel killed from connection panel'\);[\s\S]{0,200}medusa\.forgetSession\(/);
   });
 });
 
