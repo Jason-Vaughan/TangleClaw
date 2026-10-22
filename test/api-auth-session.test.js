@@ -217,10 +217,17 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
       const helper = src.slice(src.indexOf('function _signIn('), src.indexOf('\n}\n', src.indexOf('function _signIn(')));
       assert.match(helper, /store\.authSessions\.destroy\(arriving\)/, 'the helper rotates the arriving session');
       assert.match(helper, /store\.authSessions\.create\(/);
-      for (const marker of ["route('POST', '/api/auth/login'", "route('POST', '/api/auth/set-password'",
-        "route('POST', '/api/setup/complete'", "route('POST', '/api/auth/recover'"]) {
-        const start = src.indexOf(marker);
-        const body = src.slice(start, src.indexOf('\n});\n', start));
+      // The setup finish is registered from its own route module, where the
+      // route sits one level inside `register(deps)`, so its close is indented.
+      const setupSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'routes', 'setup.js'), 'utf8');
+      for (const [marker, text, close] of [
+        ["route('POST', '/api/auth/login'", src, '\n});\n'],
+        ["route('POST', '/api/auth/set-password'", src, '\n});\n'],
+        ["route('POST', '/api/setup/complete'", setupSrc, '\n  });\n'],
+        ["route('POST', '/api/auth/recover'", src, '\n});\n']]) {
+        const start = text.indexOf(marker);
+        assert.ok(start > -1, `${marker} is registered`);
+        const body = text.slice(start, text.indexOf(close, start));
         assert.match(body, /_signIn\(req, res, user\)/, `${marker} signs in through the helper`);
       }
     });

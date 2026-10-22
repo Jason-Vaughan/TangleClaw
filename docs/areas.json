@@ -170,6 +170,7 @@
       "label": "area:setup",
       "why": "Install and ingress: HTTPS setup, certificates, Caddy, provisioning, host and port scanning.",
       "paths": [
+        "lib/routes/setup.js",
         "lib/https-setup.js",
         "lib/ingress-provision.js",
         "lib/caddy*.js",

@@ -1174,8 +1174,9 @@ describe('setup provisions a login by default', () => {
       // path that string is `caddy validate` stderr quoting a
       // `basic_auth <user> <bcrypt-hash>` line. Filtered at one boundary, unfiltered
       // at the other. Source-asserted because the log call sits inside the request
-      // handler, where no test can observe the arguments it passes.
-      const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+      // handler, where no test can observe the arguments it passes. The handler
+      // lives in the setup route module.
+      const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'routes', 'setup.js'), 'utf8');
       assert.match(src,
         /log\.warn\('Ingress cutover reported a failure',\s*\{[^}]*error: caddy\.redactHashes\(result\.error\)/,
         'the failure reason must be redacted on its way to the log');
