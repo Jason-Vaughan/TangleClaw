@@ -41,6 +41,20 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-22 — #2248 T03: the session-rules domain out of lib/store.js
+
+<!-- prawduct: type=chore | scope=2248-area-extraction -->
+
+#2248 T03. v5.35.0 Wave 3 chunk W3-A1, plan r2 (sha256 `d6b4dfa2` at dispatch, S01, T01 and T02 ticked); Part of #2248, which stays open for Part 2. Built on `feat/2248-t03-store-session-rules` from `origin/main` `179ae6c8` under dispatch token `W3-T03-2248-179AE6C8-D6B4DFA2`.
+
+**What moved, unchanged.** `lib/store/session-rules.js` holds the `// ── Session Rules ──` block (`_snapshotSessionRule` through `_proposeTextChange`, `sessionRulesApi`, the `SESSION_RULE_STATUSES`, `SESSION_RULE_TRANSITIONS`, `SESSION_RULE_KINDS` and `SESSION_RULE_CRITIC_GATES` lists, and the version retention with its setter), the rule-delivery ledger that sat inside the launch region (`SESSION_RULE_DELIVERY_CHANNELS`, `SESSION_RULE_DELIVERY_OUTCOMES`, `RECEIPT_MAX_AGE_MS`, `RULES_SERVED_BY_LAUNCH_SEQUENCE`, the delivery retention and its setter, `_rowToSessionRuleDelivery`, `_pruneSessionRuleDeliveries`, `sessionRuleDeliveriesApi`), the conflict-candidate token helper `_significantTokens`, and from the `Row Mappers` section `_rowToSessionRule` and `_rowToSessionRuleVersion`: four blocks cut by line range and emitted byte for byte. The facade imports back the eleven names it still exports and re-exports them under the names it always exported; its `rule-label` require lost its last reader and is removed.
+
+**The seam (Architect A409).** The module keeps its own `let _db` and guards over it with its own `_ensureDb`. The step-0 scan found one facade-resident call the domain still makes, `projectsApi.get` inside `create`, so the module is bound by name beside the schema and the sessions domain, `_bind({ db, projectsApi })` from `init()` and `_bind(null)` from `close()`, and never requires the facade; when the projects domain has a module of its own, this one imports the api from it and the binding shrinks to the handle. The token helper is not in the plan's T03 list: its only two readers are inside `findConflictCandidates`, it reads no handle, and nothing exports it, so it moves with the section rather than being injected. Beyond those, the module requires only the logger, the handle module (`StoreError`, `_withSavepoint`), the activity log and `rule-label`, none of which reaches the facade.
+
+**Text readers and tests.** `test/self-improvement-loop.test.js` greps the store for `setStatus`'s UPDATE shape and now reads the new module, a path change only. Every `readdirSync` walker under `test/` was read against the moved code before the first commit: none of their counted tokens occur in it, so no census moves and no scanner exemption is added. New in `test/session-rules.test.js` (PM `ab65826c`): the rules and delivery apis refuse with `NOT_INITIALIZED` after `close()` and answer again after the next `init()`. The binders pin from the keystone covers the new module by construction.
+
+**Map and docs.** `docs/areas.json`'s `session-rules` area gains `lib/store/session-rules.js`; `shared.holds` keeps `session-rules` because its routes are still in `server.js`. The one `docs/session-rules-self-improvement.md` line that located `SESSION_RULE_TRANSITIONS` in the facade now names the module (PM `ab65826c`, mechanical path repoint).
+
 ## 2026-10-22 — #2248 T02: the sessions domain out of lib/store.js
 
 <!-- prawduct: type=chore | scope=2248-area-extraction -->
