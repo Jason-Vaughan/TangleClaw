@@ -52,14 +52,16 @@ const DEFAULT_LEDGER = path.join(TEST_DIR, 'tiers.json');
 const TIERS = Object.freeze(['small', 'medium', 'large']);
 
 /**
- * What marks a file Large: it calls something that starts a subprocess. The
+ * What marks a file Large: it binds `child_process` AND calls a spawner. The
  * require alone is not a signal, because the guard refuses the call and not
- * the load; the call pattern catches a destructured `const { spawn } =
- * require(...)` whose require line is far away.
+ * the load. The call alone is not one either: `re.exec(` and SQLite's
+ * `db.exec(` are not spawns, and a file that never binds `child_process`
+ * cannot be calling one of its functions except through a product module,
+ * which is the guard's to catch. Both together catch the destructured
+ * `const { spawn } = require(...)` whose require line is far from the call.
  */
-const LARGE_PATTERNS = Object.freeze([
-  /\b(?:spawn|spawnSync|execFile|execFileSync|exec|execSync|fork)\s*\(/
-]);
+const CHILD_PROCESS_REQUIRE = /require\(\s*['"](?:node:)?child_process['"]\s*\)/;
+const SPAWNER_CALL = /\b(?:spawn|spawnSync|execFile|execFileSync|exec|execSync|fork)\s*\(/;
 
 /**
  * What marks a file at least Medium: it opens a database, listens, serves or
@@ -120,7 +122,7 @@ function resolveLocal(fromFile, request, testDir = TEST_DIR) {
  */
 function classifyText(text) {
   const code = stripComments(text);
-  if (LARGE_PATTERNS.some((re) => re.test(code))) return 'large';
+  if (CHILD_PROCESS_REQUIRE.test(code) && SPAWNER_CALL.test(code)) return 'large';
   if (MEDIUM_PATTERNS.some((re) => re.test(code))) return 'medium';
   return 'small';
 }

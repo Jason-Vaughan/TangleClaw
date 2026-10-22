@@ -114,9 +114,9 @@ Medium, and that is product work, not a ledger edit.
 
 | Tier | Files | Tests | Wall time, guarded | Notes |
 |---|---|---|---|---|
-| `small` | 224 | 4,970 | 5.4 s | 0 refusals; of the 251 files the scan proposed, the guard demoted 27 (23 to `large`, 4 to `medium`): product code they call spawns, opens a database or listens |
-| `medium` | 98 | 3,313 | 2 min 00 s (`--test-timeout=300000`) | 0 refusals; of the 210 files the scan proposed, the guard demoted 112 to `large`, nearly all server-booting tests whose boot path spawns (see above). SQLite and filesystem bound: system time above user time |
-| `large` | 369 | | | not run as a tier here; it is the slow slice of the full suite |
+| `small` | 244 | 5,356 | 4.8 s | 0 refusals; of the 274 files the scan proposed, the guard demoted 30 (26 to `large`, 4 to `medium`): product code they call spawns, opens a database or listens |
+| `medium` | 146 | 5,369 | 4 min 48 s (`--test-timeout=300000`) | 0 refusals; of the 270 files the scan proposed, the guard demoted 124 to `large`, nearly all server-booting tests whose boot path spawns (see above), one by hanging past the timeout. SQLite and filesystem bound: system time above user time |
+| `large` | 301 | | | not run as a tier here; it is the slow slice of the full suite |
 
 Numbers something relies on are re-measured, never copied: the ledger's counts are
 `node scripts/test-tiers.js --check`'s output, and a tier's time is the guarded run's.

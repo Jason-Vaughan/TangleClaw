@@ -11,9 +11,12 @@
  *      declared faster than its text allows.
  *   2. The scan follows requires of other files under `test/`, so a helper
  *      that spawns makes its callers Large, and never follows into `lib/`.
- *   3. The guards refuse at the seam in a real `node --test` child process:
- *      `child_process` and `node:sqlite` requires and a socket listen under
- *      the Small guard, `child_process` alone under the Medium guard.
+ *   3. The guards refuse the ACT, never the require, in a real `node --test`
+ *      child process: each of the seven `child_process` spawners, opening a
+ *      `node:sqlite` database and a socket listen under the Small guard, the
+ *      seven spawners alone under the Medium guard; loading either module
+ *      without calling is allowed; and a refusal the caller swallows still
+ *      fails the file.
  */
 
 const { describe, it } = require('node:test');
@@ -72,11 +75,17 @@ describe('classifyText: the fastest tier a text allows', () => {
     assert.equal(tiers.classifyText(PASSES), 'small');
   });
 
-  it('is large for a call that starts a process, and not for the require alone', () => {
+  it('is large only when child_process is bound AND a spawner is called', () => {
     assert.equal(tiers.classifyText("const cp = require('child_process');"), 'small');
     assert.equal(tiers.classifyText("const { execFileSync } = require('node:child_process');"), 'small');
-    assert.equal(tiers.classifyText('spawnSync(process.execPath, []);'), 'large');
-    assert.equal(tiers.classifyText("cp.execFile('git', ['status']);"), 'large');
+    assert.equal(tiers.classifyText("const { spawnSync } = require('node:child_process');\nspawnSync(process.execPath, []);"), 'large');
+    assert.equal(tiers.classifyText("const cp = require('child_process');\ncp.execFile('git', ['status']);"), 'large');
+  });
+
+  it('does not read RegExp.prototype.exec or SQLite db.exec as a spawn', () => {
+    assert.equal(tiers.classifyText("const m = /x/.exec(text);\nre.exec(FEATURES);"), 'small');
+    assert.equal(tiers.classifyText("const { DatabaseSync } = require('node:sqlite');\nconst db = new DatabaseSync(':memory:');\ndb.exec('create table t (x)');"), 'medium');
+    assert.equal(tiers.classifyText("spawnSync(process.execPath, []);"), 'small', 'a bare call with no child_process binding is not a spawn the scan can see');
   });
 
   it('is medium for a database opened, the store, the server, a listen, a server, a fetch', () => {
@@ -227,6 +236,20 @@ describe('the tracked ledger (test/tiers.json)', () => {
     const lines = out.join('').trimEnd().split('\n');
     assert.deepEqual(lines, tiers.loadLedger().large);
     assert.ok(lines.every((l) => l.startsWith('test/') && l.endsWith('.test.js')));
+  });
+
+  it('proposes one line per file as <tier><TAB><path>, in the order given', () => {
+    const out = [];
+    const files = ['test/test-tiers.test.js', 'test/lift-helper.test.js'];
+    assert.equal(tiers.main(['--propose', ...files], { stdout: { write: (s) => out.push(s) } }), 0);
+    const lines = out.join('').trimEnd().split('\n');
+    assert.equal(lines.length, 2);
+    lines.forEach((line, i) => {
+      const [tier, file] = line.split('\t');
+      assert.ok(tiers.TIERS.includes(tier), line);
+      assert.equal(file, files[i]);
+    });
+    assert.equal(lines[0].split('\t')[0], 'large', 'this file spawns node --test children');
   });
 
   it('refuses a usage error with the usage line', () => {
