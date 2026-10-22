@@ -341,3 +341,40 @@ describe('store.activity', () => {
     });
   });
 });
+
+// The activity domain lives in its own module with its own copy of the handle
+// (#2248): the facade binds it in `init()` and unbinds it in `close()`. A copy
+// the facade forgot to unbind would keep answering from a closed database, so
+// the contract is asserted from the outside: after `close()`, the domain refuses.
+describe('store.activity after close (#2248)', () => {
+  let tmpDir;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-store-activity-closed-'));
+    store._setBasePath(tmpDir);
+    store.init();
+    store.activity.logOrThrow({ eventType: 'before.close' });
+  });
+
+  after(() => {
+    try { store.close(); } catch { /* closed by the test */ }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('refuses every read and strict write with NOT_INITIALIZED, and the lenient write stays silent', () => {
+    store.close();
+    const notInitialized = (err) => err instanceof store.StoreError && err.code === 'NOT_INITIALIZED';
+    assert.throws(() => store.activity.query({ eventType: 'before.close' }), notInitialized);
+    assert.throws(() => store.activity.logOrThrow({ eventType: 'after.close' }), notInitialized);
+    // `log` never throws by contract; with no handle it must do nothing, not reach a closed database.
+    assert.doesNotThrow(() => store.activity.log({ eventType: 'after.close' }));
+    assert.equal(store.getDb(), null, 'the shared handle is unbound too');
+  });
+
+  it('answers again after the next init, on the rebound handle', () => {
+    store.init();
+    assert.equal(store.activity.query({ eventType: 'before.close' }).length, 1, 'the row written before the close is still there');
+    store.activity.logOrThrow({ eventType: 'after.reinit' });
+    assert.equal(store.activity.query({ eventType: 'after.reinit' }).length, 1);
+  });
+});

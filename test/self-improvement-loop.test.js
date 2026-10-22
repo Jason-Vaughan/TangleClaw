@@ -262,6 +262,21 @@ describe('self-improvement loop (#569)', () => {
     const { DatabaseSync } = require('node:sqlite');
 
     /**
+     * Evict the store family from the require cache: the facade and every module
+     * under `lib/store/` (#2248). Evicting the facade alone would leave the shared
+     * handle module cached, so a fresh facade would bind the same handle module the
+     * suite's store holds, and closing the fresh one would unbind the suite's too.
+     * @returns {void}
+     */
+    function evictStore() {
+      const facade = require.resolve('../lib/store');
+      const family = path.join(__dirname, '..', 'lib', 'store') + path.sep;
+      for (const key of Object.keys(require.cache)) {
+        if (key === facade || key.startsWith(family)) delete require.cache[key];
+      }
+    }
+
+    /**
      * Seed a pre-v27 database and run it through `store.init()`.
      * @param {string} seedSql - Rows to insert into the pre-v27 session_rules
      * @returns {{dir: string, db: object, s: object}} Migrated handle
@@ -286,7 +301,7 @@ describe('self-improvement loop (#569)', () => {
       `);
       seed.close();
 
-      delete require.cache[require.resolve('../lib/store')];
+      evictStore();
       const s = require('../lib/store');
       s._setBasePath(dir);
       s.init();
@@ -300,7 +315,7 @@ describe('self-improvement loop (#569)', () => {
     function done(h) {
       h.s.close();
       fs.rmSync(h.dir, { recursive: true, force: true });
-      delete require.cache[require.resolve('../lib/store')];
+      evictStore();
       require('../lib/store')._setBasePath(tmpDir);
     }
 
