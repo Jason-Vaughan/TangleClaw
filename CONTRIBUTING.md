@@ -67,6 +67,18 @@ node --test 'test/*.test.js'
 
 The test suite uses `node:test` (built into Node.js 22+). Tests create temporary directories and in-memory SQLite databases — no external services needed.
 
+The same suite runs in stages ([docs/test-pyramid.md](docs/test-pyramid.md)): every test file is declared `small`, `medium` or `large` in `test/tiers.json`, and one entry point runs a stage, or the whole suite, and ends every run by reconciling the junit report with the runner's own summary:
+
+```bash
+node scripts/test-stage.js 1      # static: syntax, conflict markers, strict assertions, CLAUDE.md block, tier ledger, static ring (about a second)
+node scripts/test-stage.js 3      # the small tier under its guard (seconds)
+node scripts/test-stage.js 4      # the medium tier under its guard (minutes)
+node scripts/test-stage.js 5      # the large tier
+node scripts/test-stage.js all    # the whole suite, with the arguments of the one-liner above, plus the reconciliation
+```
+
+Stage 2, the tests a diff reaches, is not built yet; `node scripts/test-stage.js 2` says so and exits non-zero.
+
 Some tests can only run where the real thing exists — an installed engine CLI, a non-UTC timezone, a macOS host — and skip elsewhere with a printed reason. CI audits those skips: after the suite, `scripts/test-skip-audit.js` compares every skipped test against `test/skip-ledger.json` and fails on any it does not name, then writes "certified N of M" to the run summary. If you add an environment-gated test, add a ledger entry saying why it cannot run on the runner and where it does run. Every entry also needs `requires`: what a machine must have for the test to run there, chosen from the closed list in `scripts/test-skip-audit.js`; CI fails on an entry without a valid one, and [docs/lane-ci-evidence.md](docs/lane-ci-evidence.md) says what each value means. To see the audit locally:
 
 ```bash

@@ -1,9 +1,9 @@
 # The test pyramid: tiers, the ledger and the guards
 
 *Built for #2498. This page covers the three tiers a test file can be in, the ledger that
-declares them, the guards that enforce them, and how to classify a new test. The stage runner
-that runs a tier as one command, and the touched-graph selector, are later chunks of the same
-issue and are not described here until they exist.*
+declares them, the guards that enforce them, how to classify a new test, the stage runner that
+runs a tier or the whole suite as one command, and how a run's count is read. The touched-graph
+selector (Stage 2) is a later chunk of the same issue and is not described until it exists.*
 
 ## Why tiers
 
@@ -83,8 +83,9 @@ awaits a readiness that a refused `tmux` probe would have produced). Without a t
 runner's child process sits, and the tier never reports. A timeout turns that into a
 cancelled test that names the file, which is the demotion signal. The value is per file and
 must clear the slowest honest file *under load*: `test/check-watch-monitor.test.js` runs in
-10 s alone and past 120 s when the Medium tier's files share the host, so the Medium tier is run
-with `--test-timeout=300000` until the stage runner measures a better number.
+10 s alone and past 120 s when the Medium tier's files share the host, so a guarded tier is run
+with `--test-timeout=300000`, which `scripts/test-stage.js` carries for stages 3 and 4; re-measure
+before lowering it.
 
 **Where the refusals come from.** When the ledger was first written, the files the Medium
 guard demoted were almost all server-booting tests: the refused calls were `lib/tmux.js`'s
@@ -110,6 +111,66 @@ Medium, and that is product work, not a ledger edit.
   keeps every existing declaration that is slower than the scan allows (the demotions the
   guarded runs earned).
 
+## The stages: `scripts/test-stage.js`
+
+One entry point runs a stage, or the whole suite, and prints its wall time:
+
+| Stage | Command | What it runs | Who runs it |
+|---|---|---|---|
+| 1 | `node scripts/test-stage.js 1` | static: every tracked `.js` parses (in-process, `vm.Script`), no conflict markers, no bare `node:assert`, the CLAUDE.md block in sync, the tier ledger total, the three static-ring tests | everyone, before every push; about a second |
+| 2 | `node scripts/test-stage.js 2` | the tests a diff reaches: **not built yet**; it says so and exits non-zero rather than read green | nobody yet |
+| 3 | `node scripts/test-stage.js 3` | the `small` tier under its guard, with `--test-timeout=300000` | the Builder's inner loop; seconds |
+| 4 | `node scripts/test-stage.js 4` | the `medium` tier under its guard, with `--test-timeout=300000` | before a draft pull request; minutes |
+| 5 | `node scripts/test-stage.js 5` | the `large` tier, no guard | the slow slice; usually as part of `all` |
+| all | `node scripts/test-stage.js all` | the whole suite as `test_command` runs it: one `node --test --test-reporter=junit --test-reporter-destination=<junit> test/*.test.js`, the same arguments in the same order | the suite gate (`SUITE_SLOT`); CI's shape |
+
+Options: `--junit <path>` says where the junit report goes (default: a file under the OS temp
+directory, named at the end); `--spec <path|stdout>` adds the spec reporter. Stages 3 to 5 default
+to `--spec stdout` so a person sees the failing test; `all` defaults to no spec reporter, which is
+what keeps its arguments identical to `test_command`.
+
+Stages 3, 4 and 5 together are exactly `test/*.test.js` (pinned by `test/test-stage.test.js`), so
+`all` and the three tiers run the same files and differ only in guard and grouping. An empty tier
+runs nothing and says so, because `node --test` with no files discovers its own, which would be
+the whole suite.
+
+## What a run certified: the runner's summary and the junit report
+
+Every stage that runs tests ends by reconciling the junit report with the runner's own summary,
+through `lib/test-results.js`, and prints both:
+
+```text
+runner summary: tests 22120, pass 22119, fail 0, cancelled 0, skipped 1, todo 0, suites 4111
+junit report:   testcases 22114, testsuites 4117, failure elements 0, skipped elements 4
+nodes: 22114 + 4117 = 26231 in the report, 22120 + 4111 = 26231 in the summary (the same run)
+canonical count 22120 (the runner's tests); 22114 testcase leaves in the report; green
+```
+
+**The canonical count is the runner's `tests`.** The junit report counts the same run in another
+shape, and reading it carelessly gives a number nothing agrees with: summing its nested `tests=""`
+attributes overcounts (a parent's attribute already holds its children; 24,119 for the run above),
+and counting `<testcase>` leaves is a few short (22,114 above), because a `test()` with subtests is
+a test to the runner and a `<testsuite>` to the reporter. What the two sides share, measured on
+Node 22 for every shape the reporter produces, is one identity:
+
+> testcases + testsuites in the report == tests + suites in the summary
+
+Every node of the run is rendered once and counted once; only the label moves. A `test()` with
+subtests, a `describe` whose body threw before its tests ran, and a skipped `describe` each move
+both sides by one. A report that breaks the identity is not the report of the run the summary
+describes (truncated, or another run's), and the stage refuses it.
+
+**A failure the summary does not count is red.** A `describe` whose body throws is rendered as a
+`<testcase>` with a `<failure>` but counted by the runner as a suite: the summary says `fail 0`,
+and the process exits 0. The reconciliation reads the report's failure elements against the
+summary's `fail + cancelled` and exits 1 for the uncounted one, whatever node's exit code was.
+
+The summary is read from the spec log when `--spec <path>` was given, otherwise from the comments
+the junit reporter writes at the end of its own report (`<!-- tests N -->`), which are the same
+lines; `summaryOf` reads the spec, TAP and junit spellings alike. `scripts/test-skip-audit.js`
+reads the same report through the same walker (`parseJunit`, moved to `lib/test-results.js`), so
+the skip audit and the count come from one parser.
+
 ## Measured when the ledger was first written (2026-10-22, this repository at `598ab72e`, a laptop)
 
 | Tier | Files | Tests | Wall time, guarded | Notes |
@@ -123,8 +184,9 @@ Numbers something relies on are re-measured, never copied: the ledger's counts a
 
 ## What this does not do yet
 
-- Nothing runs a tier for you as one command; the stage runner is the next chunk.
-- The full suite, `test_command`, CI and every gate are unchanged: the tiers are a declaration
-  and two guards, and the suite is still the union of the three tiers run the way it always was.
+- Stage 2, the tests a diff reaches, is not built (W4-04); `node scripts/test-stage.js 2` says so.
+- `test_command`, CI and every gate are unchanged: `all` is that command, argument for argument,
+  with the reconciliation printed after it, and nothing yet reads a stage as suite evidence (that
+  is #2371, proposed and Operator-held).
 - The ledger says nothing about *where* a test may run (macOS, a non-UTC clock, an engine CLI).
   That stays with `test/skip-ledger.json` and [docs/lane-ci-evidence.md](lane-ci-evidence.md).
