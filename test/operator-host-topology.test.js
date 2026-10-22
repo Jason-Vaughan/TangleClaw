@@ -181,7 +181,9 @@ describe('#1178 the primer states the unknown instead of inventing a host', () =
 
 describe('#1178 the value is actually FORWARDED to the generator', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'sessions.js'), 'utf8');
-  const server = fs.readFileSync(path.join(__dirname, '..', 'lib', 'routes', 'sessions.js'), 'utf8');
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  // The launch route lives in its own module now; the whoami probe below is still server.js's.
+  const launchRoute = fs.readFileSync(path.join(__dirname, '..', 'lib', 'routes', 'sessions.js'), 'utf8');
 
   it('the primerCtx honours the forwarded value instead of re-probing', () => {
     // R-2: the forwarding guard pins the CALL, so replacing the decision with a
@@ -212,14 +214,14 @@ describe('#1178 the value is actually FORWARDED to the generator', () => {
   });
 
   it('the launch route resolves it from the request, beside the owner', () => {
-    assert.match(server, /resolveOperatorHost\(_req\.headers, store\.config\.load\(\)\)/);
-    assert.match(server, /^\s*operatorHost,$/m);
+    assert.match(launchRoute, /resolveOperatorHost\(_req\.headers, store\.config\.load\(\)\)/);
+    assert.match(launchRoute, /^\s*operatorHost,$/m);
   });
 
-  it('server.js can actually reach the resolver', () => {
+  it('the route module can actually reach the resolver', () => {
     // `node --check` passes on an unbound identifier; a missing require here
     // throws only when the route is hit.
-    assert.match(server, /^const sessionOwnership = require\('\.\/lib\/session-ownership'\);$/m);
+    assert.match(launchRoute, /^const sessionOwnership = require\('\.\.\/session-ownership'\);$/m);
   });
 
   it('whoami reports the same measured host, not a second probe of the box', () => {
