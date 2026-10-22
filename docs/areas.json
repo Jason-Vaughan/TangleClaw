@@ -102,7 +102,9 @@
         "lib/provenance.js",
         "lib/feature-index-prime.js",
         "lib/legacy-claude-md.js",
-        "lib/managed-block.js"
+        "lib/managed-block.js",
+        "lib/store/launch.js",
+        "lib/store/handoffs.js"
       ]
     },
     "session-rules": {
