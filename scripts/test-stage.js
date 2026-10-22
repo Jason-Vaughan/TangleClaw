@@ -7,10 +7,13 @@
  *
  *   1    static: every tracked `.js` parses, no conflict markers, no bare
  *        `node:assert`, the CLAUDE.md block is in sync, the tier ledger is
- *        total, and the three static-ring tests pass. In-process where the
- *        check is a function; under ten seconds.
- *   2    touched: the tests a diff reaches. Not built yet (W4-04); says so and
- *        exits non-zero, because "ran nothing" must never read as green.
+ *        total, no `lib/` export went dead past the tracked baseline, and the
+ *        three static-ring tests pass. In-process where the check is a
+ *        function; its wall time is printed, and the pull request that
+ *        changes it carries the measurement.
+ *   2    touched: the tests a diff reaches (`scripts/test-touched.js`), each
+ *        tier under its guard. It fails closed: when the selection cannot be
+ *        trusted it says why, runs Stage 3 whole instead, and says so.
  *   3    small: the Small tier under its guard
  *   4    medium: the Medium tier under its guard
  *   5    large: the Large tier, no guard
@@ -31,11 +34,13 @@
  * report that is not the run the summary describes, or that carries a failure
  * the summary does not count, exits 1 whatever node's exit code was.
  *
- * Usage: node scripts/test-stage.js <1|2|3|4|5|all> [--junit <path>] [--spec <path|stdout>]
- *   --junit  where the junit report goes (default: a file under the OS temp dir, printed)
+ * Usage: node scripts/test-stage.js <1|2|3|4|5|all> [--junit <path>] [--spec <path|stdout>] [--base <ref>]
+ *   --junit  where the junit report goes (default: a file under the OS temp dir, printed);
+ *            Stage 2 writes one per tier beside it, `<path>.<tier>.xml`
  *   --spec   also write the spec reporter there; `stdout` streams it. Stages 3-5
  *            default to `stdout` so a person sees the failing test; `all`
  *            defaults to none, which keeps its arguments identical to `test_command`.
+ *   --base   Stage 2 only: the ref the diff is against (default `origin/main`)
  * Exit 0 when the stage is green, 1 on any red, 2 on a usage error.
  */
 
@@ -48,6 +53,8 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const tiers = require('./test-tiers');
 const conflictMarkers = require('./conflict-marker-scan');
 const assertStrict = require('./assert-strict-guard');
+const deadExports = require('./audit-dead-exports');
+const touched = require('./test-touched');
 const results = require('../lib/test-results');
 
 const ROOT = path.join(__dirname, '..');
@@ -205,6 +212,10 @@ function staticSteps() {
       run: () => { const out = sink(); const code = tiers.main(['--check'], { stdout: out, ledgerPath: path.join(root, 'test', 'tiers.json') }); return { ok: code === 0, output: out.text() }; }
     },
     {
+      name: 'dead exports',
+      run: () => { const out = sink(); const code = deadExports.main(['--check'], { stdout: out }); return { ok: code === 0, output: out.text() }; }
+    },
+    {
       name: 'static ring',
       run: () => {
         const r = runNode(['--test', ...STATIC_RING], root, 'pipe');
@@ -290,16 +301,17 @@ function runSuite(label, argv, io) {
  * Parse argv into the stage and its options.
  *
  * @param {string[]} argv - Arguments after the script name
- * @returns {{stage: string, junitPath: string|null, specPath: string|null}}
+ * @returns {{stage: string, junitPath: string|null, specPath: string|null, base: string|null}}
  */
 function parseArgs(argv) {
   const [stage, ...rest] = argv;
-  if (!STAGES.includes(stage)) throw new Error('usage: test-stage.js <1|2|3|4|5|all> [--junit <path>] [--spec <path|stdout>]');
-  const parsed = { stage, junitPath: null, specPath: null };
+  if (!STAGES.includes(stage)) throw new Error('usage: test-stage.js <1|2|3|4|5|all> [--junit <path>] [--spec <path|stdout>] [--base <ref>]');
+  const parsed = { stage, junitPath: null, specPath: null, base: null };
   for (let i = 0; i < rest.length; i += 2) {
     const [flag, value] = [rest[i], rest[i + 1]];
     if (flag === '--junit' && value) parsed.junitPath = path.resolve(value);
     else if (flag === '--spec' && value) parsed.specPath = value === 'stdout' ? 'stdout' : path.resolve(value);
+    else if (flag === '--base' && value && stage === '2') parsed.base = value;
     else throw new Error(`unknown or incomplete argument: ${flag}`);
   }
   return parsed;
@@ -309,9 +321,10 @@ function parseArgs(argv) {
  * Run one stage and return the process exit code.
  *
  * @param {string[]} argv - Arguments after the script name
- * @param {{stdout?: {write: function(string): any}, root?: string}} [io] - Injection seam: `root` runs
- *   the test-running stages (3, 4, 5, `all`) against another checkout, which is how the runner is
- *   proved on a fixture repository; Stage 1 is bound to this repository (see `staticSteps`)
+ * @param {{stdout?: {write: function(string): any}, root?: string, touchedIo?: object}} [io] - Injection seam: `root` runs
+ *   the test-running stages (2, 3, 4, 5, `all`) against another checkout, which is how the runner is
+ *   proved on a fixture repository; `touchedIo` replaces Stage 2's git and file system (`test-touched.repoIo`);
+ *   Stage 1 is bound to this repository (see `staticSteps`)
  * @returns {number} 0 green, 1 red, 2 usage
  */
 function main(argv, io = {}) {
@@ -325,15 +338,14 @@ function main(argv, io = {}) {
     return 2;
   }
   if (parsed.stage === '1') {
-    if (root !== ROOT) {
+    if (path.resolve(root) !== ROOT) {
       out.write('stage 1 runs only against this repository and cannot be pointed at another checkout\n');
       return 2;
     }
     return runStatic(out);
   }
   if (parsed.stage === '2') {
-    out.write('stage 2 (touched) is not built yet (#2498 W4-04): nothing ran; run stage 3\n');
-    return 1;
+    return touched.stage2({ base: parsed.base || 'origin/main', run: true, explain: false, junitPath: parsed.junitPath }, { stdout: out, root, io: io.touchedIo });
   }
   const junitPath = parsed.junitPath || path.join(os.tmpdir(), `tc-test-stage-${parsed.stage}-${process.pid}.xml`);
   if (parsed.stage === 'all') {
