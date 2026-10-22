@@ -42,6 +42,10 @@ const path = require('node:path');
 
 const DEFAULT_LEDGER = path.join(__dirname, '..', 'test', 'skip-ledger.json');
 
+// The junit walker lives with the suite's other readers; `parseJunit` is
+// re-exported below so this script's readers are unchanged.
+const { parseJunit } = require('../lib/test-results');
+
 /**
  * Every value a ledger entry's `requires` may hold. Each names one fact about
  * a host that a program can measure; an entry's tests are expected to run
@@ -69,94 +73,6 @@ const LEDGER_REQUIREMENTS = Object.freeze([
   'engine-cli:any',
   'engine-cli:each'
 ]);
-
-/**
- * Decode the five XML entities plus numeric character references.
- *
- * `&amp;` is decoded FIRST, which is backwards for well-formed XML and right
- * for this producer: node:test's junit reporter escapes `"` to `&quot;` and
- * then escapes the `&` of that, so a quoted launch mode arrives as
- * `&amp;quot;auto&amp;quot;` while `<` arrives singly as `&lt;` (measured on
- * Node 22, not assumed). Decoding `&amp;` first recovers both shapes. The cost
- * is that a test name containing the literal text `&lt;` would decode one step
- * too far; no test is named that way, and the ledger matches by path so a
- * wrong decode would surface as an unknown skip, never as a silent pass.
- *
- * @param {string} s - Attribute text as it appears in the XML
- * @returns {string} Decoded text
- */
-function decodeXml(s) {
-  return s
-    .replace(/&amp;/g, '&')
-    .replace(/&#x([0-9a-fA-F]+);/g, (_m, hex) => String.fromCodePoint(parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_m, dec) => String.fromCodePoint(Number(dec)))
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, '\'');
-}
-
-/**
- * Read one attribute off a tag's attribute text.
- *
- * @param {string} attrs - Everything between the tag name and `>`
- * @param {string} name - Attribute name
- * @returns {string|null} Decoded value, or null when absent
- */
-function attr(attrs, name) {
-  const m = new RegExp(`\\b${name}="([^"]*)"`).exec(attrs);
-  return m ? decodeXml(m[1]) : null;
-}
-
-/**
- * Walk a junit document and collect every test case, noting the skipped ones.
- *
- * A hand-rolled walker rather than an XML parser because the report has one
- * shape — `testsuites > testsuite* > testcase > skipped?` — and node:test is the
- * only producer. Quoted attribute values are consumed whole, so a value that
- * spans lines (long test names do) or carries a bare `>` (the reporter escapes
- * `<` and not `>`) does not end the tag early.
- *
- * @param {string} xml - The junit report text
- * @returns {{total: number, skipped: Array<{path: string, kind: string, message: string}>}}
- *   `total` counts every `<testcase>`; `skipped` lists those carrying a
- *   `<skipped>` child, with `kind` = the element's `type` (`skipped` | `todo`).
- */
-function parseJunit(xml) {
-  const stack = [];
-  const skipped = [];
-  let total = 0;
-  let open = null;
-  // Attribute values are read as quoted units: the reporter escapes `<` but
-  // not `>`, so a name like `wrap/<ts>-<slug>` arrives as `wrap/&lt;ts>-&lt;slug>`
-  // and a `[^>]*` attribute scan would end the tag inside the name.
-  const tagRe = /<(\/?)(testsuite|testcase|skipped)\b((?:[^>"]|"[^"]*")*?)(\/?)>/g;
-  let m;
-  while ((m = tagRe.exec(xml)) !== null) {
-    const [, closing, tag, attrs, selfClosing] = m;
-    if (tag === 'testsuite') {
-      if (closing) stack.pop();
-      else if (!selfClosing) stack.push(attr(attrs, 'name') || '');
-      continue;
-    }
-    if (tag === 'testcase') {
-      if (closing) { open = null; continue; }
-      total++;
-      const full = [...stack, attr(attrs, 'name') || ''].join(' > ');
-      open = selfClosing ? null : { path: full };
-      continue;
-    }
-    // tag === 'skipped'
-    if (open && !closing) {
-      skipped.push({
-        path: open.path,
-        kind: attr(attrs, 'type') || 'skipped',
-        message: attr(attrs, 'message') || ''
-      });
-    }
-  }
-  return { total, skipped };
-}
 
 /**
  * Validate one entry's `requires` and return a copy of it.

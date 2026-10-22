@@ -275,7 +275,8 @@
       "paths": [
         "scripts/**",
         "lib/release-certification/**",
-        "lib/soak/**"
+        "lib/soak/**",
+        "lib/test-results.js"
       ]
     },
     "config": {
