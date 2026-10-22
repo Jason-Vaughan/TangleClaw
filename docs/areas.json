@@ -258,7 +258,8 @@
       "label": "area:tc",
       "why": "The `tc` command line.",
       "paths": [
-        "lib/tc-verbs.js"
+        "lib/tc-verbs.js",
+        "lib/routes/tc.js"
       ]
     },
     "dashboard-ux": {
@@ -296,7 +297,6 @@
       "launch",
       "openclaw",
       "setup",
-      "tc",
       "projects",
       "control",
       "shared-docs",
