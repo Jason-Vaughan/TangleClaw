@@ -5,11 +5,11 @@
  *
  * Pinned here: `all` hands node the declared `test_command`, argument for
  * argument; stages 3, 4 and 5 together are exactly `test/*.test.js`; a
- * guarded tier carries its guard and the measured timeout; Stage 2 refuses
- * rather than reads green; Stage 1 runs its six steps on this repository
- * under ten seconds; and a real run on a fixture repository ends in the
- * reconciliation, which turns a describe body that threw (node exits 0) into
- * a red stage.
+ * guarded tier carries its guard and the measured timeout; Stage 2 runs the
+ * selection each tier under its guard, and on escalation runs Stage 3 whole
+ * and says so; Stage 1 runs its seven steps on this repository; and a real
+ * run on a fixture repository ends in the reconciliation, which turns a
+ * describe body that threw (node exits 0) into a red stage.
  */
 
 const { describe, it, after } = require('node:test');
@@ -21,6 +21,7 @@ const { spawnSync } = require('node:child_process');
 
 const stage = require('../scripts/test-stage');
 const tiers = require('../scripts/test-tiers');
+const graphLib = require('../scripts/_require-graph');
 const results = require('../lib/test-results');
 
 const REPO = path.join(__dirname, '..');
@@ -54,10 +55,12 @@ function declaredTestCommand() {
 }
 
 describe('parseArgs', () => {
-  it('accepts each stage and the two options', () => {
-    assert.deepEqual(stage.parseArgs(['1']), { stage: '1', junitPath: null, specPath: null });
-    assert.deepEqual(stage.parseArgs(['all', '--junit', 'out/j.xml', '--spec', 'stdout']), { stage: 'all', junitPath: path.resolve('out/j.xml'), specPath: 'stdout' });
+  it('accepts each stage and the three options, --base for stage 2 only', () => {
+    assert.deepEqual(stage.parseArgs(['1']), { stage: '1', junitPath: null, specPath: null, base: null });
+    assert.deepEqual(stage.parseArgs(['all', '--junit', 'out/j.xml', '--spec', 'stdout']), { stage: 'all', junitPath: path.resolve('out/j.xml'), specPath: 'stdout', base: null });
     assert.equal(stage.parseArgs(['3', '--spec', 'out/s.log']).specPath, path.resolve('out/s.log'));
+    assert.equal(stage.parseArgs(['2', '--base', 'main']).base, 'main');
+    assert.throws(() => stage.parseArgs(['3', '--base', 'main']), /unknown or incomplete argument: --base/);
   });
 
   it('refuses an unknown stage, an unknown flag and a flag without a value', () => {
@@ -115,11 +118,69 @@ describe('stages 3, 4 and 5: the ledger\'s tiers, guarded where the tier promise
   });
 });
 
-describe('stage 2: not built yet, and says so with a non-zero exit', () => {
-  it('names the chunk that builds it and the stage to run instead', () => {
+describe('stage 2: the selection, each tier under its guard, through the seam', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-test-stage-2-'));
+  after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'test', 'helpers'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'lib'), { recursive: true });
+  for (const tier of ['small', 'medium']) {
+    fs.writeFileSync(path.join(root, 'test', 'helpers', `preload-${tier}.js`), `require(${JSON.stringify(path.join(REPO, 'test', 'helpers', `preload-${tier}.js`))});\n`);
+  }
+  fs.writeFileSync(path.join(root, 'lib', 'x.js'), 'module.exports = { x: 1 };\n');
+  fs.writeFileSync(path.join(root, 'lib', 'y.js'), 'module.exports = { y: 2 };\n');
+  fs.writeFileSync(path.join(root, 'test', 'x.test.js'), `'use strict';
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { x } = require('../lib/x');
+test('x', () => assert.equal(x, 1));
+`);
+  fs.writeFileSync(path.join(root, 'test', 'y.test.js'), `'use strict';
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { y } = require('../lib/y');
+test('y', () => assert.equal(y, 2));
+`);
+  fs.writeFileSync(path.join(root, 'test', 'tiers.json'), `${JSON.stringify({ small: ['test/x.test.js'], medium: ['test/y.test.js'], large: [] }, null, 2)}\n`);
+  const tests = ['test/x.test.js', 'test/y.test.js'].map((t) => path.join(root, t));
+  const touchedIo = (files) => ({ changed: () => ({ mergeBase: 'fixture0', files }), tests: () => tests, graphIo: { ...graphLib.FS_IO, root }, ring: [] });
+
+  it('runs only the tier the selection needs, under its guard, and reconciles it', () => {
     const out = sink();
-    assert.equal(stage.main(['2'], { stdout: out }), 1);
-    assert.match(out.text(), /^stage 2 \(touched\) is not built yet \(#2498 W4-04\): nothing ran; run stage 3$/m);
+    const junitPath = path.join(root, 'stage2');
+    const code = stage.main(['2', '--junit', junitPath], { stdout: out, root, touchedIo: touchedIo(['lib/y.js']) });
+    assert.equal(code, 0, out.text());
+    assert.match(out.text(), /^ {2}lib\/y\.js -> 1 test file\(s\)$/m);
+    assert.match(out.text(), /^selected: 1 test file\(s\) \+ 0 static ring = 1 \(small 0, medium 1, large 0\)$/m);
+    assert.match(out.text(), /^stage 2 \(touched\): selection \d+ ms, trusted$/m);
+    assert.match(out.text(), /^stage 2 \(medium, 1 files\): node --test --require \.\/test\/helpers\/preload-medium\.js --test-timeout=300000 --test-reporter=junit --test-reporter-destination=\S+\.medium\.xml --test-reporter=spec --test-reporter-destination=stdout test\/y\.test\.js$/m);
+    assert.match(out.text(), /^canonical count 1 \(the runner's tests\); 1 testcase leaves in the report; green$/m);
+    assert.equal(fs.existsSync(`${junitPath}.medium.xml`), true);
+    assert.equal(fs.existsSync(`${junitPath}.small.xml`), false, 'the small tier was not selected, so it did not run');
+  });
+
+  it('on escalation runs stage 3 whole instead, says so, and exits with that run', () => {
+    const out = sink();
+    const junitPath = path.join(root, 'stage2-esc');
+    const code = stage.main(['2', '--junit', junitPath], { stdout: out, root, touchedIo: touchedIo(['test/tiers.json']) });
+    assert.equal(code, 0, out.text());
+    assert.match(out.text(), /^ {2}test\/tiers\.json -> not-javascript: /m);
+    assert.match(out.text(), /^ESCALATE: run stage 3$/m);
+    assert.match(out.text(), /^stage 2 \(touched\): running stage 3 whole instead$/m);
+    assert.match(out.text(), /^stage 3 \(small, 1 files, guard \.\/test\/helpers\/preload-small\.js, --test-timeout=300000\): /m);
+    assert.equal(fs.existsSync(`${junitPath}.small.xml`), true);
+  });
+
+  it('a red selected test is a red stage', () => {
+    fs.writeFileSync(path.join(root, 'test', 'x.test.js'), `'use strict';
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { x } = require('../lib/x');
+test('x', () => assert.equal(x, 2));
+`);
+    const out = sink();
+    const code = stage.main(['2', '--junit', path.join(root, 'stage2-red')], { stdout: out, root, touchedIo: touchedIo(['lib/x.js']) });
+    assert.equal(code, 1);
+    assert.match(out.text(), /^stage 2 \(small, 1 files\): \d+ ms, node exit 1$/m);
   });
 });
 
@@ -141,7 +202,7 @@ describe('stage 1: the static ring, in-process where it can be', () => {
 
   it('names the three static-ring tests the lane rules name', () => {
     assert.deepEqual(stage.STATIC_RING, ['test/auto-merge-callers.test.js', 'test/tmux-session-names.test.js', 'test/wrap-indicator-card.test.js']);
-    assert.deepEqual(stage.staticSteps().map((s) => s.name), ['syntax', 'conflict markers', 'strict assertions', 'CLAUDE.md block', 'tiers ledger', 'static ring']);
+    assert.deepEqual(stage.staticSteps().map((s) => s.name), ['syntax', 'conflict markers', 'strict assertions', 'CLAUDE.md block', 'tiers ledger', 'dead exports', 'static ring']);
   });
 
   // Its wall time is a measurement for the pull request, not a contract this
@@ -151,7 +212,7 @@ describe('stage 1: the static ring, in-process where it can be', () => {
     delete env.NODE_TEST_CONTEXT;
     const r = spawnSync(process.execPath, [path.join(REPO, 'scripts', 'test-stage.js'), '1'], { cwd: REPO, env, encoding: 'utf8' });
     assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
-    for (const name of ['syntax', 'conflict markers', 'strict assertions', 'CLAUDE.md block', 'tiers ledger', 'static ring']) {
+    for (const name of ['syntax', 'conflict markers', 'strict assertions', 'CLAUDE.md block', 'tiers ledger', 'dead exports', 'static ring']) {
       assert.match(r.stdout, new RegExp(`^  ok   ${name} \\(\\d+ ms\\)$`, 'm'));
     }
     assert.match(r.stdout, /^stage 1 \(static\): \d+ ms, green$/m);

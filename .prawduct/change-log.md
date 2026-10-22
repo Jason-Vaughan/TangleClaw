@@ -41,6 +41,70 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-22 — #2498 W4-04: Stage 2, the touched-graph selector that fails closed, and the dead-export audit with its ratchet
+
+<!-- prawduct: type=feature | scope=2498-test-pyramid -->
+
+#2498 W4-04. v5.35.0 Wave 4 chunk, plan r2 (W4-01 to W4-03 ticked at dispatch); Refs #2498 and #2371, both open, #2362 untouched. Built on `feat/2498-w4-04-touched-graph` from `origin/main` `68c4ff0e` under the Integrator's W4-04 dispatch (queue rev 214, restart token `W4-04-20261022T2105Z-68C4FF0E-D22B5E`), the fourth chunk of the five-stage test pyramid: the two require-graph tools on one walker, which tests to run for a diff, and which `lib/` exports nothing reads.
+
+**The walker.** `scripts/_require-graph.js` (a tooling script under `scripts/**`, A416 R1) reads a file's code with strings, comments and regex bodies masked first, resolves `require('./x')` as node does and `require(path.join(ROOT, 'lib', 'x'))` through the file's own root constant (every script here loads `lib/` that way; 55 such requires on `main` resolve as literals), reports a dynamic require with the directory its literal prefix names or with no bound, takes a product path the text names (a source read, a spawned script, a bare literal on disk) as a dependency and walks a named `.js` in turn (a spawned script's requires are the test's), a run-time last segment as a dependency on the directory, and counts a read with nothing literal as opaque. Exports are read from `module.exports = {…}`, `module.exports = value` and `exports.x =`; a reader's use of a module from the shape of its require. Every function takes an io seam, and `test/require-graph.test.js` proves it on an in-memory tree.
+
+**Stage 2.** `scripts/test-touched.js` selects the tests whose graph or named paths reach a changed file (diff against the merge-base with `origin/main` or `--base`, plus the working tree), adds changed tests and the static ring, and with `--run`, or as `node scripts/test-stage.js 2`, runs each tier under its guard with one junit per tier. It fails closed (A416 R4): `dynamic-require`, `not-javascript`, `shared-helper` and `unreached` each exit 1 with the reason named and `ESCALATE: run stage 3`, and the runner then runs Stage 3 whole and says so; no flag accepts a partial selection. `test/test-touched.test.js` pins each reason, the one-file selection, the parser; `test/test-stage.test.js` pins the wiring on a fixture repository (one tier run under its guard, the escalation into Stage 3, a red selection a red stage). Measured here: graph 1,086 files in about 1.1 s; a one-file `lib/test-results.js` change selects 18 tests plus the ring and runs in 41.4 s (Small 0.3 s, Medium 10.5 s, Large 29.5 s); this chunk's own diff escalates on its non-JavaScript files and Stage 3 runs whole in 4.9 s. The Critic's one observation on the first commit (a script a test spawns by path but never requires was not walked, so its `lib/` requires were invisible to the selection) is fixed in the second, which also caught a latent walk bug the new case exposed (a file reached through a named path was marked seen before it was popped, so its own requires were never followed), and narrows the walker's and the audit's file-system catches to the absence codes they mean.
+
+**The audit and the ratchet.** `scripts/audit-dead-exports.js` walks from `server.js`, `bin/tc`, `bin/tc-bridge-helper`, `bin/tc-bridge-receive`, `scripts/*.js`, `test/*.test.js` and every `lib/` module, and reports dead exports, test-only exports with their readers, orphan candidates, and what it cannot audit (opaque modules, modules shadowed by a bounded dynamic require, unbounded dynamic requires). On a clean `git archive` of `68c4ff0e`: 294 modules, 3,251 names, 234 dead, 844 test-only, 163 orphan candidates, 30 `lib/wrap-steps/` modules shadowed by `test/wrap-pipeline.test.js:923`, 0 opaque, 0 unbounded. **Ruled delta (INT ruling, PM concurrence, 2026-10-22, routed under Rule #271 clause 2):** the plan's `--check` "exits 1 on an export with no reader at all" is red on `main` today (234), and D4 forbids deleting in this wave, so `--check` is a ratchet against the tracked `test/dead-exports-baseline.json` (the 234, sorted, unique): red on a new dead export, a stale entry, a missing, malformed, duplicated or unsorted baseline, and graph uncertainty, each named; Stage 1 gains it as its `dead exports` step and reads green with `234 in the baseline, 0 new`. `test/audit-dead-exports.test.js` pins the classification and every red of the comparator. **Second ruled delta:** the plan named `bin/tc.js`, which does not exist; the roots are the three `bin/` commands, and `hooks/*` are shell and load no module. Stage 1 measured 2.2 s with the step (1.2 s of it the audit). Follow-up filed after a search of open issues: #2544, the first dead-export removal batch, citing the baseline; the test-only and orphan batches wait on W4-05's coverage matrix.
+
+**Carried, and what was not touched.** From W4-02: the "under ten seconds" figures in `scripts/test-stage.js` and `test/test-stage.test.js` are gone (the time is printed, the PR carries it), and Stage 1's refusal compares `path.resolve(root)`. Not touched: `scripts/ci-evidence.js`, `scripts/suite-evidence.js` and their `ghRead` copies (the shared helper the W4-03 Critic noted is taken only if this surface is touched; it was not), `scripts/ci-complement.js`'s `decodeXml` citation (next touch), `test/test-tiers.test.js`'s helper-scan cleanup (W4-06). `.github/workflows/test.yml`, `.prawduct/project-state.yaml`, every gate and every rule are unchanged; #2371's activation stays Operator-held. Fragment `changelog.d/2498.w4-04-touched-graph.internal.md`; CHANGELOG and FEATURES entries in the PR body for the records PR; `test/tiers.json` lists the three new test files under `small`.
+
+**Critic dispositions (W4-04: verify-resolutions on 70071404, ce2fcdb5 and 8f21c20f; 0 findings in each, observations answered on the record):**
+
+**rev-20261022T213647Z-aa0581d6** — scope `2498-test-pyramid`, chunk W4.04, 2026-10-22T21:41:08Z
+
+_No findings._
+
+_Observations — read, not owed. Answering one is optional._
+
+| Observation | State | Detail |
+|---|---|---|
+| O-1 | noted | Stage 2 does not walk the require closure of a script a test spawns without requiring it, so a lib change under such a script selects the other readers and silently omits that test |
+| O-2 | accepted | The three chunk-ref-missing hits are prose: /index.js is node's resolution suffix, and bin/tc.js is the plan's own recorded delta (2), which names the real bin/ commands the code and test use |
+| O-3 | accepted | The three figures are audit and selection counts (test-only exports, tests one module reaches), not suite totals; nothing reads them as a total |
+| O-4 | accepted | Designed state: the full local suite runs under SUITE_SLOT on the exact head before the ready report, as every Wave 4 chunk does (plan D3), and its junit is recorded with test-evidence record --from-junit; no record can exist before the Integrator grants the slot |
+| O-5 | accepted | --explain is read-only, documented on the page and pinned by test/test-touched.test.js; it is how the opaque-read count the plan asks the walker to report reaches a person |
+
+**No findings** — a clean pass.
+**5 observations demoted** — 4 answered. An observation gates nothing; answering one is optional.
+
+**rev-20261022T214625Z-3c2d1ddf** — scope `2498-test-pyramid`, chunk W4.04, 2026-10-22T21:48:37Z
+
+_No findings._
+
+_Observations — read, not owed. Answering one is optional._
+
+| Observation | State | Detail |
+|---|---|---|
+| O-1 | noted | The narrowed catches' propagate branches are unasserted, and one test title claims the assertion it does not make |
+| O-2 | accepted | Prose hits: /index.js is node's resolution suffix, and bin/tc.js is replaced by the plan's recorded delta (2); code and tests use the real bin/ commands |
+| O-3 | accepted | 479 is the size of one Stage 2 selection (what lib/rule-label.js reaches), not a suite total; nothing reads it as one |
+| O-4 | accepted | Designed state: the full local suite runs under SUITE_SLOT on the exact head before the ready report (plan D3) and is recorded with test-evidence record --from-junit; the baseline digest is unchanged across both commits |
+
+**No findings** — a clean pass.
+**4 observations demoted** — 3 answered. An observation gates nothing; answering one is optional.
+
+**rev-20261022T215014Z-dc3551a8** — scope `2498-test-pyramid`, chunk W4.04, 2026-10-22T21:51:48Z
+
+_No findings._
+
+_Observations — read, not owed. Answering one is optional._
+
+| Observation | State | Detail |
+|---|---|---|
+| O-1 | accepted | Prose hits: /index.js is node's resolution suffix, and bin/tc.js is replaced by the plan's recorded delta (2); code and tests use the real bin/ commands |
+| O-2 | accepted | Designed state: the full local suite runs under SUITE_SLOT on the exact head before the ready report (plan D3) and is recorded with test-evidence record --from-junit |
+
+**No findings** — a clean pass.
+**2 observations demoted** — 2 answered. An observation gates nothing; answering one is optional.
+
+
 ## 2026-10-22 — #2498 W4-03: the #2371 packet, `scripts/suite-evidence.js` undeclared and fail-closed
 
 <!-- prawduct: type=feature | scope=2498-test-pyramid -->

@@ -2,8 +2,9 @@
 
 *Built for #2498. This page covers the three tiers a test file can be in, the ledger that
 declares them, the guards that enforce them, how to classify a new test, the stage runner that
-runs a tier or the whole suite as one command, and how a run's count is read. The touched-graph
-selector (Stage 2) is a later chunk of the same issue and is not described until it exists.*
+runs a tier or the whole suite as one command, how a run's count is read, the touched-graph
+selector that is Stage 2 and the reasons it refuses, and the dead-export audit with the ratchet
+Stage 1 runs against it.*
 
 ## Why tiers
 
@@ -117,22 +118,112 @@ One entry point runs a stage, or the whole suite, and prints its wall time:
 
 | Stage | Command | What it runs | Who runs it |
 |---|---|---|---|
-| 1 | `node scripts/test-stage.js 1` | static: every tracked `.js` parses (in-process, `vm.Script`), no conflict markers, no bare `node:assert`, the CLAUDE.md block in sync, the tier ledger total, the three static-ring tests | everyone, before every push; about a second |
-| 2 | `node scripts/test-stage.js 2` | the tests a diff reaches: **not built yet**; it says so and exits non-zero rather than read green | nobody yet |
+| 1 | `node scripts/test-stage.js 1` | static: every tracked `.js` parses (in-process, `vm.Script`), no conflict markers, no bare `node:assert`, the CLAUDE.md block in sync, the tier ledger total, no `lib/` export dead past the baseline, the three static-ring tests | everyone, before every push; about two seconds |
+| 2 | `node scripts/test-stage.js 2 [--base <ref>]` | the tests the diff against `origin/main` (or `--base`) reaches, each tier under its guard; fails closed into Stage 3 (below) | the Builder, between Stage 1 and the draft PR; seconds to a minute, by what the diff reaches |
 | 3 | `node scripts/test-stage.js 3` | the `small` tier under its guard, with `--test-timeout=300000` | the Builder's inner loop; seconds |
 | 4 | `node scripts/test-stage.js 4` | the `medium` tier under its guard, with `--test-timeout=300000` | before a draft pull request; minutes |
 | 5 | `node scripts/test-stage.js 5` | the `large` tier, no guard | the slow slice; usually as part of `all` |
 | all | `node scripts/test-stage.js all` | the whole suite as `test_command` runs it: one `node --test --test-reporter=junit --test-reporter-destination=<junit> test/*.test.js`, the same arguments in the same order | the suite gate (`SUITE_SLOT`); CI's shape |
 
 Options: `--junit <path>` says where the junit report goes (default: a file under the OS temp
-directory, named at the end); `--spec <path|stdout>` adds the spec reporter. Stages 3 to 5 default
-to `--spec stdout` so a person sees the failing test; `all` defaults to no spec reporter, which is
-what keeps its arguments identical to `test_command`.
+directory, named at the end; Stage 2 writes one per tier beside it, `<path>.<tier>.xml`);
+`--spec <path|stdout>` adds the spec reporter. Stages 3 to 5 default to `--spec stdout` so a person
+sees the failing test; `all` defaults to no spec reporter, which is what keeps its arguments
+identical to `test_command`.
 
 Stages 3, 4 and 5 together are exactly `test/*.test.js` (pinned by `test/test-stage.test.js`), so
 `all` and the three tiers run the same files and differ only in guard and grouping. An empty tier
 runs nothing and says so, because `node --test` with no files discovers its own, which would be
 the whole suite.
+
+## Stage 2: the tests a diff reaches, or an honest refusal
+
+`node scripts/test-touched.js [--base <ref>] [--run] [--explain] [--junit <path>]` is the
+selector; `node scripts/test-stage.js 2` is `--run` through the runner. The changed files are
+`git diff --name-only <merge-base of base and HEAD> HEAD` plus whatever the working tree holds
+uncommitted or untracked. A test file is selected when its **require graph**, or a **product
+path its text names**, reaches a changed file; a changed test file selects itself; the three
+static-ring tests are always in. The selection is then run as Stages 3, 4 and 5 would run it:
+grouped by the ledger's tier, each tier under its guard, each run reconciled.
+
+**The walker** (`scripts/_require-graph.js`, one text reader shared with the audit below) reads
+each file's code with strings, comments and regex bodies masked out first, so a shell snippet
+inside a template string is not a `require`. It resolves `require('./x')` as node does (`x`,
+`x.js`, `x/index.js`, `x.json`), and `require(path.join(ROOT, 'lib', 'x'))` where `ROOT` is a
+constant the file defines from `__dirname` with literal segments, which is how this repository's
+scripts load `lib/`. A product path the text **names** is a dependency whether or not it is
+required: `path.join(__dirname, '..', 'lib', 'x.js')` in a test that reads the source,
+`path.join(REPO, 'scripts', 'x.js')` in one that spawns it, a bare `'scripts/x.js'` literal that
+exists on disk; and a `.js` file named that way is walked in turn, because a script a test spawns
+is run by that test and what the script requires is part of what the test depends on. A join
+whose last segments are built at run time names the directory its literal
+segments reach, and the test then depends on everything under it, which over-selects and never
+misses. `--explain` lists the selected tests per changed file and, for the selected graphs, the
+dynamic requires and the count of **opaque reads**: a `readFileSync` whose path carries nothing
+literal is outside the walker's sight, and the number is printed so nobody mistakes the selection
+for more than text can see.
+
+**It fails closed.** When the selection cannot be trusted the selector exits 1, prints one line
+per reason, then `ESCALATE: run stage 3`; `--run` and the runner's Stage 2 then run Stage 3 whole
+instead and say so. There is no flag that accepts a partial selection. The reasons:
+
+| Reason | A changed file… | Why text cannot answer |
+|---|---|---|
+| `dynamic-require` | lies where a dynamic `require` on some test's graph could reach: under the literal prefix of a template require (``require(`../lib/wrap-steps/${kind}`)`` names `lib/wrap-steps/`), or anywhere, for a require with no literal at all | the graph has an edge whose target it cannot name |
+| `not-javascript` | is not `.js`: `test/tiers.json`, a YAML or JSON a test may read, a document, `.prawduct/` state | nothing in the graph says who reads it |
+| `shared-helper` | is a shared test helper or fixture (`test/_*.js`, `test/helpers/*`, `test/fixtures/*`) | its readers are every test that loads it, which the ledger's scan follows but the selection does not enumerate from text |
+| `unreached` | is reached by no test at all (a deleted file is one of these) | a change nothing covers is not "nothing to run"; it is a gap, and Stage 3 is the honest answer |
+
+Every reason is pinned by `test/test-touched.test.js` on an in-memory tree, with the exit code
+and the `ESCALATE` line. This chunk's own diff is the documented example: it touches this page,
+so `node scripts/test-stage.js 2` on it prints the `not-javascript` escalation and runs Stage 3.
+
+**Measured when Stage 2 was built** (2026-10-22, this repository at `68c4ff0e`, the laptop):
+the graph is 1,086 files and builds in about 1.1 s; the selection step is about 1.1 s. A one-file
+change to `lib/test-results.js` selects 18 test files plus the ring (7 Small, 1 Medium, 13 Large)
+and the whole of Stage 2 runs in 41.4 s: Small 0.3 s, the one Medium file 10.5 s
+(`test/check-watch-monitor.test.js`, 10 s alone by design), the 13 Large files 29.5 s. What a diff
+reaches decides the time, and a change under `server.js`'s graph (`lib/rule-label.js` reaches
+479 tests) selects most of the suite. Against the under-30 s Builder-ring target of #2371's
+checkpoint 4, Stage 1 + Stage 2's selection + Stage 3 is about 8 s before the selected files run;
+the selected files are the variable, and the ring the activation packet names (Stages 1+2+3)
+stays a proposal until the Operator's cutover.
+
+## The dead-export audit, and the ratchet Stage 1 runs
+
+`node scripts/audit-dead-exports.js` walks the same graph from every entry point of the
+repository, `server.js`, the three `bin/` commands (`tc`, `tc-bridge-helper`, `tc-bridge-receive`;
+`hooks/*` are shell and load no module), every `scripts/*.js` and every `test/*.test.js`, and
+every module under `lib/` as well, so a module no entry point reaches is audited rather than
+silently absent. For each name a `lib/` module exports it finds the readers: the files that require
+the module and use that name, read from the shape of the require (`const { a } = require(…)`
+reads `a`; `const m = require(…)` followed by `m.a` reads `a`, and `m` used any other way, passed
+whole or indexed, reads everything; `require(…).a` reads `a`; a bare `require(…)` reads
+everything). The report lists:
+
+- **dead**: no reader at all, tests included;
+- **test-only**: read by tests and by nothing in the product, with the readers;
+- **orphan candidates**: each test that is the sole reader of a test-only export, with what it
+  alone reads;
+- what it could not audit: an **opaque** module (exports by `...spread` or a computed key, so its
+  names come from elsewhere), modules **shadowed** by a dynamic require bounded to their directory
+  (anything under it could be read, so nothing there can be called dead), and any dynamic require
+  with no literal prefix at all.
+
+It is a report (PM ruling D4: no deletion in Wave 4). **`--check` is the Stage 1 step**, and it is
+a ratchet against the tracked `test/dead-exports-baseline.json`: red on a dead export the baseline
+does not list (new dead code), on a baseline entry that is no longer dead or no longer exists (the
+list must shrink with the code), on a baseline that is missing, malformed, duplicated or unsorted,
+and on graph uncertainty (an opaque module, an unbounded dynamic require), each named. Green
+prints the baseline count and `0 new`. Retiring a batch (its own issue, Architect acceptance each
+time) shrinks the baseline with `--write-baseline`; nothing adds to it by hand.
+
+**Measured when the baseline was written** (`main` at `68c4ff0e`, the audit run on a clean
+`git archive` of that commit): 294 `lib/` modules, 3,251 exported names audited, 0 opaque, 30
+modules under `lib/wrap-steps/` shadowed by the one bounded dynamic require in
+`test/wrap-pipeline.test.js`, 0 unbounded; **234 dead** (the baseline), 844 test-only, 163 orphan
+candidates. The audit pass is about 90 ms on top of the graph; the Stage 1 step is about 1.2 s.
+The first removal batch is #2544.
 
 ## What a run certified: the runner's summary and the junit report
 
@@ -184,7 +275,10 @@ Numbers something relies on are re-measured, never copied: the ledger's counts a
 
 ## What this does not do yet
 
-- Stage 2, the tests a diff reaches, is not built (W4-04); `node scripts/test-stage.js 2` says so.
+- Stage 2 is as good as text: a read whose path is built from nothing literal is counted and
+  reported, not followed, and a dynamic require with no literal prefix escalates every change.
+  The coverage-based audits (the per-file redundancy matrix, the source-reader triage) are the
+  next chunk of #2498.
 - `test_command`, CI and every gate are unchanged: `all` is that command, argument for argument,
   with the reconciliation printed after it, and nothing yet reads a stage as suite evidence (that
   is #2371, proposed and Operator-held).
