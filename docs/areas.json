@@ -119,6 +119,7 @@
       "why": "Session lifecycle in tmux and ttyd, the Project Master, transcripts, continuity, workload receipts and engine error watching.",
       "paths": [
         "lib/sessions.js",
+        "lib/store/sessions.js",
         "lib/session-finalize.js",
         "lib/session-leftovers.js",
         "lib/session-ownership.js",

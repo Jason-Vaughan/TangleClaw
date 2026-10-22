@@ -766,7 +766,7 @@ describe('reading a stored launch blocker (#2201)', () => {
   });
 });
 
-// T01 of #2248: the schema lives in `lib/store/_schema.js` and must never
+// #2248: the schema lives in `lib/store/_schema.js` and must never
 // require the facade (Architect A404): that cycle would evaluate the migration
 // chain against a half-built export object. The one domain api the chain calls,
 // `projectConfigApi` inside `_migrateDropMethodology`, reaches it by injection
@@ -774,7 +774,7 @@ describe('reading a stored launch blocker (#2201)', () => {
 // the facade, and the drop-methodology migration still seeds a project through
 // the injected api on a real pre-v28 database, so the injection is proven live
 // at the point the chain reaches it.
-describe('the schema module and the facade seam (#2248 T01)', () => {
+describe('the schema module and the facade seam (#2248)', () => {
   const schemaSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'store', '_schema.js'), 'utf8');
   const facadeSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'store.js'), 'utf8');
 
@@ -809,7 +809,7 @@ describe('the schema module and the facade seam (#2248 T01)', () => {
       const exports = src.slice(src.lastIndexOf('module.exports'));
       return /\b_bind\b/.test(exports);
     });
-    assert.ok(binders.length >= 3, `the three T01 modules export _bind (${binders.join(', ')})`);
+    assert.ok(binders.length >= 3, `the handle, the schema and at least one domain export _bind (${binders.join(', ')})`);
     for (const file of binders) {
       const mod = file.replace(/\.js$/, '');
       const required = facadeSrc.match(new RegExp(`\\nconst (\\w+) = require\\('\\./store/${mod}'\\);`));
