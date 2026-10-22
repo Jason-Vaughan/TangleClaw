@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-22 — #2248 Wave 3 Part 1 records
+
+<!-- prawduct: type=chore | scope=2248-area-extraction -->
+
+Wave 3 Part 1 shipped eleven extraction chunks: S01 #2528 (`f480a783`), T01 #2529 (`938ca75b`), T02 #2530 (`179ae6c8`), T03 #2532 (`832860a2`), T04 #2533 (`b9161364`), S02 #2534 (`2aaa0b68`), S03 #2535 (`81f7bdd2`), S04 #2536 (`b5b15507`), S05 #2537 (`6887a658`), S06 #2538 (`7204ba38`) and S07 #2539 (`ca2852f7`). Each chunk has its own fragment and PR evidence; this records step adds no duplicate fragment. The final S07 merge passed exact-head CI, static and route/export checks, independent review, and a local runner summary of 22,075 tests with zero failures and one skip (its JUnit report was ingested). The S07 scratch rehearsal caught a missing `workloadSentence` import before tracked edits, and the merge review corrected the PR body's nested JUnit count to distinguish it from the runner total.
+
+`FEATURES.md` now describes the route kernel, area map and remaining facade accurately and re-points prose that still placed moved setup, config and launch-recovery routes in `server.js`. `CHANGELOG.md` remains the released/unreleased compiler output; the eleven existing `changelog.d/2248.*.internal.md` fragments carry these changes into the next release. Checkpoint 3 reads `docs/areas.json` against `server.js` and `lib/store.js`: both files remain shared, with sixteen held areas (sessions, launch, openclaw, setup, projects, control, shared-docs, auth, session-rules, medusa, ports, system, engines, update, checkouts and bridge). #2248 stays open for Part 2 under a separate plan and PM roadmap ruling.
+
 ## 2026-10-22 — #2248 S07: the tc route family out of server.js
 
 <!-- prawduct: type=chore | scope=2248-area-extraction -->
