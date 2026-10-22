@@ -55,6 +55,56 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 **Carried, and what was not touched.** From W4-02: the "under ten seconds" figures in `scripts/test-stage.js` and `test/test-stage.test.js` are gone (the time is printed, the PR carries it), and Stage 1's refusal compares `path.resolve(root)`. Not touched: `scripts/ci-evidence.js`, `scripts/suite-evidence.js` and their `ghRead` copies (the shared helper the W4-03 Critic noted is taken only if this surface is touched; it was not), `scripts/ci-complement.js`'s `decodeXml` citation (next touch), `test/test-tiers.test.js`'s helper-scan cleanup (W4-06). `.github/workflows/test.yml`, `.prawduct/project-state.yaml`, every gate and every rule are unchanged; #2371's activation stays Operator-held. Fragment `changelog.d/2498.w4-04-touched-graph.internal.md`; CHANGELOG and FEATURES entries in the PR body for the records PR; `test/tiers.json` lists the three new test files under `small`.
 
+**Critic dispositions (W4-04: verify-resolutions on 70071404, ce2fcdb5 and 8f21c20f; 0 findings in each, observations answered on the record):**
+
+**rev-20261022T213647Z-aa0581d6** — scope `2498-test-pyramid`, chunk W4.04, 2026-10-22T21:41:08Z
+
+_No findings._
+
+_Observations — read, not owed. Answering one is optional._
+
+| Observation | State | Detail |
+|---|---|---|
+| O-1 | noted | Stage 2 does not walk the require closure of a script a test spawns without requiring it, so a lib change under such a script selects the other readers and silently omits that test |
+| O-2 | accepted | The three chunk-ref-missing hits are prose: /index.js is node's resolution suffix, and bin/tc.js is the plan's own recorded delta (2), which names the real bin/ commands the code and test use |
+| O-3 | accepted | The three figures are audit and selection counts (test-only exports, tests one module reaches), not suite totals; nothing reads them as a total |
+| O-4 | accepted | Designed state: the full local suite runs under SUITE_SLOT on the exact head before the ready report, as every Wave 4 chunk does (plan D3), and its junit is recorded with test-evidence record --from-junit; no record can exist before the Integrator grants the slot |
+| O-5 | accepted | --explain is read-only, documented on the page and pinned by test/test-touched.test.js; it is how the opaque-read count the plan asks the walker to report reaches a person |
+
+**No findings** — a clean pass.
+**5 observations demoted** — 4 answered. An observation gates nothing; answering one is optional.
+
+**rev-20261022T214625Z-3c2d1ddf** — scope `2498-test-pyramid`, chunk W4.04, 2026-10-22T21:48:37Z
+
+_No findings._
+
+_Observations — read, not owed. Answering one is optional._
+
+| Observation | State | Detail |
+|---|---|---|
+| O-1 | noted | The narrowed catches' propagate branches are unasserted, and one test title claims the assertion it does not make |
+| O-2 | accepted | Prose hits: /index.js is node's resolution suffix, and bin/tc.js is replaced by the plan's recorded delta (2); code and tests use the real bin/ commands |
+| O-3 | accepted | 479 is the size of one Stage 2 selection (what lib/rule-label.js reaches), not a suite total; nothing reads it as one |
+| O-4 | accepted | Designed state: the full local suite runs under SUITE_SLOT on the exact head before the ready report (plan D3) and is recorded with test-evidence record --from-junit; the baseline digest is unchanged across both commits |
+
+**No findings** — a clean pass.
+**4 observations demoted** — 3 answered. An observation gates nothing; answering one is optional.
+
+**rev-20261022T215014Z-dc3551a8** — scope `2498-test-pyramid`, chunk W4.04, 2026-10-22T21:51:48Z
+
+_No findings._
+
+_Observations — read, not owed. Answering one is optional._
+
+| Observation | State | Detail |
+|---|---|---|
+| O-1 | accepted | Prose hits: /index.js is node's resolution suffix, and bin/tc.js is replaced by the plan's recorded delta (2); code and tests use the real bin/ commands |
+| O-2 | accepted | Designed state: the full local suite runs under SUITE_SLOT on the exact head before the ready report (plan D3) and is recorded with test-evidence record --from-junit |
+
+**No findings** — a clean pass.
+**2 observations demoted** — 2 answered. An observation gates nothing; answering one is optional.
+
+
 ## 2026-10-22 — #2498 W4-03: the #2371 packet, `scripts/suite-evidence.js` undeclared and fail-closed
 
 <!-- prawduct: type=feature | scope=2498-test-pyramid -->
