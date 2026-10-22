@@ -168,12 +168,17 @@ function sink() {
 }
 
 /**
- * The steps of Stage 1, each a function of the repository root.
+ * The steps of Stage 1. Bound to this repository, not to a `root` a caller
+ * passes: the syntax step reads the files git tracks here, and the ledger
+ * step is `test-tiers --check`, which measures the suite under this
+ * repository's `test/` whatever ledger path it is handed. A stage that could
+ * be pointed at another checkout and silently check this one instead would
+ * be worse than one that cannot be pointed at all.
  *
- * @param {string} root - The repository
  * @returns {Array<{name: string, run: function(): {ok: boolean, output: string}}>}
  */
-function staticSteps(root) {
+function staticSteps() {
+  const root = ROOT;
   return [
     { name: 'syntax', run: () => syntaxCheck(trackedJs(root)) },
     {
@@ -226,16 +231,15 @@ function runNode(argv, root, stdio) {
 }
 
 /**
- * Run Stage 1 and print one line per step.
+ * Run Stage 1 against this repository and print one line per step.
  *
- * @param {string} root - The repository
  * @param {{write: function(string): any}} out - Where the lines go
  * @returns {number} 0 when every step passed, 1 otherwise
  */
-function runStatic(root, out) {
+function runStatic(out) {
   const t0 = Date.now();
   let failed = 0;
-  for (const step of staticSteps(root)) {
+  for (const step of staticSteps()) {
     const s0 = Date.now();
     let r;
     try {
@@ -305,7 +309,9 @@ function parseArgs(argv) {
  * Run one stage and return the process exit code.
  *
  * @param {string[]} argv - Arguments after the script name
- * @param {{stdout?: {write: function(string): any}, root?: string}} [io] - Injection seam: `root` runs the stages against another checkout
+ * @param {{stdout?: {write: function(string): any}, root?: string}} [io] - Injection seam: `root` runs
+ *   the test-running stages (3, 4, 5, `all`) against another checkout, which is how the runner is
+ *   proved on a fixture repository; Stage 1 is bound to this repository (see `staticSteps`)
  * @returns {number} 0 green, 1 red, 2 usage
  */
 function main(argv, io = {}) {
@@ -318,7 +324,7 @@ function main(argv, io = {}) {
     out.write(`${err.message}\n`);
     return 2;
   }
-  if (parsed.stage === '1') return runStatic(root, out);
+  if (parsed.stage === '1') return runStatic(out);
   if (parsed.stage === '2') {
     out.write('stage 2 (touched) is not built yet (#2498 W4-04): nothing ran; run stage 3\n');
     return 1;
