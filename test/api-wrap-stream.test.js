@@ -568,12 +568,12 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
     // failure is an unhandled `'error'` event that reaches the process-global
     // handler carrying no wrap context, and the subscription it leaves behind
     // feeds a dead socket for the rest of the run.
-    const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'routes', 'wrap.js'), 'utf8');
     const route = src.slice(src.indexOf("route('GET', '/api/sessions/:project/wrap/stream/:runId'"));
-    const body = route.slice(0, route.indexOf("\nroute("));
+    const body = route.slice(0, route.indexOf("\n  route("));
     assert.match(body, /res\.on\('error'/, 'an async socket error must have somewhere to land');
     const handlerStart = body.indexOf("res.on('error'");
-    const handler = body.slice(handlerStart, body.indexOf('\n  });', handlerStart));
+    const handler = body.slice(handlerStart, body.indexOf('\n    });', handlerStart));
     assert.match(handler, /sub\.unsubscribe\(\)/,
       'and must drop the subscription — otherwise the run keeps feeding a dead socket');
     // Every write goes through the one guarded helper: the preamble comment

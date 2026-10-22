@@ -41,6 +41,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-22 — #2248 S02: the wrap route family out of server.js
+
+<!-- prawduct: type=chore | scope=2248-area-extraction -->
+
+#2248 S02. v5.35.0 Wave 3 chunk W3-A1, plan r2 (sha256 `4a3e527c` at dispatch, S01, T01, T02, T03 and T04 ticked); Part of #2248, which stays open for Part 2. Built on `feat/2248-s02-wrap-routes` from `origin/main` `b9161364` under dispatch token `W3-S02-2248-B9161364-4A3E527C`.
+
+**What moved, unchanged.** `lib/routes/wrap.js` holds the eight `/api/sessions/:project/wrap/*` routes (`wrap`, `wrap/cancel`, `wrap/status`, `wrap/stream/:runId`, `wrap/handback`, `wrap/handback/stream/:handbackId`, `wrap/pr-status`, `wrap/complete`) inside a `register(deps)` the entry point calls at the position the block held, so registration order is unchanged, and the two payload shapers that sat between them (`_wrapResultPayload`, `_wrapStreamFrame`) at module level: one region cut by line range and emitted byte for byte, the routes two spaces deeper. `finalize` stays where it is: it calls neither shaper, so it leaves with the session lifecycle. Three `server.js` requires lost their only reader and are removed (`lib/project-config`, `lib/wrap-handback`, `public/wrap-stream-events`); the module requires them itself.
+
+**The seam.** The handlers call three gate helpers that still live in `server.js` — the durable HOLD/STOP gate (`controlRefused`, `controlJobSubject`) and the coordinator epoch gate (`coordinatorGateRefused`) — so `register` receives them as its argument, the shape the S01 keystone reserved for a family that closes over server helpers; requiring the entry point back would be a cycle. The logger keeps the name `server`. The step-0 scan ran the T04 identifier matrix plus a spread-aware pass, because the matrix's lookbehind hides a name written `...name` (it missed `projectConfig`); nothing declared in the region is read outside it.
+
+**Text readers and records.** `test/api-wrap-stream.test.js` pins the stream route's error listener by slicing source text; it now reads `lib/routes/wrap.js`, and its two slice needles carry the register indent (`"\n  route("`, `'\n    });'`) with the assertions unchanged. `FEATURES.md`: the two anchors naming the shapers repoint to the module (PM Q1 ruling). `docs/areas.json`: the `wrap` area gains `lib/routes/wrap.js` and `shared.holds` drops `wrap`. `changelog.d/2248.s02-wrap-routes.internal.md` carries the `### Internal` entry.
+
 ## 2026-10-22 — #2248 T04: the launch domain out of lib/store.js, in two modules
 
 <!-- prawduct: type=chore | scope=2248-area-extraction -->

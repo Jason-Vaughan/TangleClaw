@@ -38,6 +38,7 @@
       "label": "area:wrap",
       "why": "The session wrap pipeline, its steps, the changelog fragments it compiles and release readiness.",
       "paths": [
+        "lib/routes/wrap.js",
         "lib/wrap-*.js",
         "lib/wrap-steps/**",
         "lib/changelog-*.js",
@@ -285,7 +286,6 @@
     ],
     "holds": [
       "sessions",
-      "wrap",
       "launch",
       "openclaw",
       "setup",
