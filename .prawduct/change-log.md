@@ -53,6 +53,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 **The records.** `docs/lane-ci-evidence.md` gains the command's section (modes, the facts table, the merged report's properties, what it does not prove) and its PROPOSED, NOT IN FORCE section is rewritten against the mechanism: the order of the Operator-held steps (workflow step, rule texts at this page's digest, `test_command` line with its test pins, complement verified, one named pilot under a charter amendment, broader use decided from measurement), the Builder ring checkpoint 4 named (Stages 1+2+3, never Medium; no CI tier timing claimed; under-30 s to be measured with Stage 2), and the rule text naming `scripts/suite-evidence.js`, the stage runner and every full-suite exception the earlier text kept. Prawduct no longer has to change first, because the command reaches the gate as `test_command`; the draft report stays the Operator's to send and the page says the draft predates the mechanism. The activation packet, `.tangleclaw/plans/2371-activation-packet.md` (gitignored, hosted by the plans route, digest in the PR body), carries the exact cutover: the unified diff for `test.yml` (one `actions/upload-artifact` step pinned to the commit of `v7.0.2`, `if: always()`, `test-results.xml` as `test-results`, `git apply --check` green against `1fb99f52`), the `test_command` line, Rule #271 and Rule #282 as full replacement texts with only clause 4 and clauses 1/2(d) changed, the charter amendment request, the Operator's two asks, what the pilot would measure, and checkpoint 4 as decided. Fragment `changelog.d/2498.w4-03-suite-evidence.internal.md`; CHANGELOG and FEATURES entries in the PR body for the records PR; `test/tiers.json` lists the new test file under `small`.
 
+**Critic dispositions (cumulative, bedde51c):**
+
+**rev-20261022T201938Z-a55cfc53** — scope `2498-test-pyramid`, chunk W4-03, 2026-10-22T20:23:31Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | accepted | The warning is the designed state at this point of the chunk: the full local suite runs under SUITE_SLOT on this exact head (bedde51c) before the ready report, as every Wave 4 chunk does (plan D3, no pilot), and its junit is recorded with test-evidence record --from-junit; no record can exist before the Integrator grants the slot |
+| R-2 | note | accepted | The heading is still true: the mechanism reaches the gate as test_command, which is Prawduct accepting the evidence without a change of its own, and the body under it says exactly that. The heading's full text is pinned by test/ci-evidence.test.js ('the proposed rule's heading says it is not in force'), so changing it changes a test contract and the page digest the packet already cites; the Architect's exact-target review can ask for that change if the wording reads as a precondition |
+| R-3 | note | accepted | The copy is the cost of a separate gh seam with a per-call timeout (10 s API reads, 120 s artifact download). Exporting ghRead/ID_SHAPE from ci-evidence.js would change that module in a chunk whose contract is that ci-evidence.js is unchanged (its tests prove the command itself unchanged); the two readers are 12 lines and one regex, and a shared helper is W4-04's to take if the require-graph work touches the scripts' shared surface |
+
+**3 findings** (1 warning, 2 note) — accepted: 3.
+
 ## 2026-10-22 — #2498 W4-02: the stage runner, Stage 1, and the canonical suite summary
 
 <!-- prawduct: type=feature | scope=2498-test-pyramid -->
