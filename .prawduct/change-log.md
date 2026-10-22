@@ -41,6 +41,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-22 — #2248 S05: the setup route family out of server.js
+
+<!-- prawduct: type=chore | scope=2248-area-extraction -->
+
+#2248 S05. v5.35.0 Wave 3 chunk W3-A1, plan r2 (sha256 `9f006f13` at dispatch, S01, T01, T02, T03, T04, S02, S03 and S04 ticked); Part of #2248, which stays open for Part 2. Built on `feat/2248-s05-setup-routes` from `origin/main` `b5b15507` under dispatch token `W3-S05-2248-B5B15507-9F006F13`, with the seam accepted by the Integrator before the move and the Architect's exact-head seam review required before merge (plan checkpoint 1, A404).
+
+**What moved, unchanged.** `lib/routes/setup.js` holds the seven `/api/setup/*` routes (`GET https-check`, `GET ingress-state`, `GET provision-status`, `POST generate-cert`, `POST scan`, `POST create-dir`, `POST complete`) inside a `register(deps)` called where the family stood, and at module level in the order they held: the two test seams the family alone reads — `_scheduleRestart` with `_setRestartScheduler`, `_spawnCutover` with `_setCutoverSpawner` — and the host-list validation `HOST_RE` and `_certHostListArg`. The seams moved whole, live bindings and setters together, because a `deps` destructure would capture the load-time default and the tests that swap the scheduler do so after load; `server.js` re-exports both setters from the module as the same functions, so its export surface is unchanged and the five tests that call them are untouched. `register(deps)` receives the three helpers other families still share: `_decideSetupCredential` (also the config route's Skip path), `_gateIngress` and `_signIn`. One require whose only readers moved left `server.js` (`./lib/ingress-provision`).
+
+**What stayed, by the plan.** The setup credential decision, the Host-allowlist carve-out for setup routes while setup is open, and the setup-transition guard inside `PATCH /api/config` are shared with the config and auth families and stay in `server.js`; `setup` therefore stays in `docs/areas.json`'s `shared.holds` (Integrator ruling), while the `setup` area owns the new file.
+
+**Text readers and records.** Two tests pin moved text by reading source and now read the module: `test/api-auth-session.test.js` finds the setup finish among the four signing-in routes in the file that holds it (the Integrator recorded this re-point as an authorized S05 scope delta beyond the plan's one named reader), and `test/setup-provisioning.test.js` matches the cutover-failure log redaction in the module. The step-0 literal scan of both regions against all 47 `server.js` text readers ran before the first narrow run. Fragment `changelog.d/2248.s05-setup-routes.internal.md`; CHANGELOG and FEATURES entries in the PR body for the records PR; no FEATURES anchor moved.
+
 ## 2026-10-22 — #2248 S04: the OpenClaw route family out of server.js
 
 <!-- prawduct: type=chore | scope=2248-area-extraction -->
