@@ -284,55 +284,166 @@ Every field is one the run read. None has a default, and a reading that lacks on
   measured and ran. An entry not expected here is named as such, with the measurement.
 - **Anything about a later commit.** It is for one commit and one tree.
 
+## The suite command a gate could be pointed at: `scripts/suite-evidence.js`
+
+```bash
+node scripts/suite-evidence.js --junit <path>                                   # today's suite, argument for argument
+TANGLECLAW_SUITE_EVIDENCE=ci node scripts/suite-evidence.js --junit <path>      # CI's run on the exact head is the suite
+node scripts/suite-evidence.js --explain                                        # which mode would run, and why; runs nothing
+```
+
+This is the command the gate could be pointed at, written so that pointing the gate at it changes
+nothing until the environment says otherwise. **It is declared nowhere today.** `test_command` in
+`.prawduct/project-state.yaml` still names `node --test …`, `test/suite-evidence.test.js` pins that
+it does, and CI runs `node --test` itself and uploads no artifact, which the same test pins. Those
+pins are what make the cutover below visible: it cannot ride in without changing them.
+
+**Local mode**, the default with `TANGLECLAW_SUITE_EVIDENCE` unset, hands node the declared
+`test_command` with `{junit_xml}` filled in, argument for argument (`scripts/test-stage.js` owns
+that argument list; the two are pinned equal), and exits with the suite's code. A gate that ran
+this would record exactly what it records today.
+
+**CI mode**, with `TANGLECLAW_SUITE_EVIDENCE=ci`, treats the green CI run on the exact head commit
+as the suite, and this command is what establishes it. It reads every one of the ten facts the
+evidence command above reads, through that command's own step functions, in the same order:
+
+| # | The fact | Read by |
+|---|---|---|
+| 1 to 8 | the tree, the remote, the repository, the `test` check, its job, its run, the base, the ledger | `scripts/ci-evidence.js`, steps 1 to 8 of its table above |
+| artifact | CI's junit report exists as the run's `test-results` artifact, of this run and this commit, not expired, not empty; it is downloaded through `gh run download`, and it is the whole green report of one run (it carries the runner's summary, the summary adds up, the report obeys the identity `lib/test-results.js` pins, and nothing in it is red) | this command |
+| 9 | the complement, run by this command, is green | `scripts/ci-evidence.js`, step 9, the complement writing its own junit report |
+| 10 | nothing moved while it ran | `scripts/ci-evidence.js`, step 10 |
+
+The artifact is read before the complement runs: the complement is a wide run, and there is no
+point starting it for a report that cannot exist. Any other value of the variable refuses rather
+than picking a mode.
+
+**It fails closed, and there is no synthetic report in any path.** The first fact that does not
+hold, and an artifact that does not exist, which is the state of every run until the Operator
+lands the workflow step the activation packet carries, is a named `REFUSED:` line; nothing is
+written at `<path>`, and a gate that ran this reads red. A report whose structure is invented is
+not evidence, so nothing stands in for CI's own.
+
+`--explain` reads facts 1 to 8 and lists the artifact, printing each as it holds or refuses, says
+that 9 and 10 need the run, and ends with the verdict the run would reach. It downloads nothing
+and runs nothing; its exit code is 0 because its answer is its text.
+
+### The merged report
+
+When every fact holds, `<path>` receives one junit document: every `<testsuite>` of CI's report,
+verbatim, then every one of the complement's, then one more suite, `suite-evidence: binding`,
+whose `<property>` elements carry the facts that bind the two to the commit:
+
+| Property | Value |
+|---|---|
+| `repository`, `head`, `tree` | the remote's repository, HEAD and its tree |
+| `check_name`, `check_run_id`, `check_app`, `check_completed_at` | the `test` check as read |
+| `workflow_name`, `workflow_run_id`, `workflow_event` | the job's workflow, its run, `push` or `pull_request` |
+| `base_branch`, `base_tip` | the base bound, and the tip of it that is inside HEAD |
+| `ledger_path`, `ledger_sha256` | the skip ledger and the digest of its bytes |
+| `artifact_id`, `artifact_name` | the artifact downloaded |
+| `complement_entries_ran`, `complement_entries_total` | how many ledger entries ran here |
+| `read_at` | when the report was written |
+
+The two reports' own trailing summary comments are dropped and one trailer is written for the
+whole: each counter is the sum of the two runs', and `suites` is one more for the binding suite,
+which is a node of the document and counted as one. So the merged document obeys the same identity
+each part does (testcases + testsuites == tests + suites), `lib/test-results.js` reads it as one
+green run, and the skip audit's walker reads its cases. The runner's `tests` of the whole is the
+canonical count, as everywhere else; the leaf count is printed beside it. The file is written whole
+or not at all.
+
+### What it does not prove
+
+The same three things the evidence file does not: that the `test` job ran the suite (a reviewer
+reads the workflow at the exact commit, and from the cutover on, that it uploads the report); that
+the complement covered a machine other than this one; anything about a later commit. One more: it
+does not read the artifact's provenance beyond GitHub's own record that it belongs to that run of
+that commit. The workflow step that uploads it is what makes the artifact CI's own report, which
+is why that step is part of the cutover and not of this command.
+
 ## PROPOSED, NOT IN FORCE: it needs the Operator's approval and a Prawduct that accepts this evidence
 
-Nothing in this section binds anyone. A lane rule is the Operator's to change, and the gate a lane
-reports ready against (`prawduct-hook test-status`) is Prawduct's and does not read the evidence
-file. Until both change, a lane runs the full local suite as its rules say today, and nobody
-records CI's result as suite evidence by hand.
+Nothing in this section binds anyone. A lane rule is the Operator's to change; `.github/workflows/test.yml`
+and `.prawduct/project-state.yaml` are outside every lane row and are edited by nobody in a lane;
+and until the Operator lands the cutover below, `scripts/suite-evidence.js` is declared nowhere and
+refuses on every run. A lane runs the full local suite as its rules say today, and nobody records
+CI's result as suite evidence by hand.
+
+What changed since this section was first written: Prawduct no longer has to change first. Its
+gate runs the declared `test_command` and reads the report that command writes at `{junit_xml}`,
+and `scripts/suite-evidence.js` is such a command. The draft report in `docs/prawduct-feedback.md`
+still asks Prawduct for a first-class `ci_evidence_command:`, which would let the gate run the
+evidence command without it being the suite command; that is worth asking for, and the Operator
+sends it, but nothing below waits on the answer.
 
 ### What has to happen, in this order
 
-1. **Prawduct accepts the evidence itself.** Its `test-status` accepts CI evidence for the exact
-   commit, after checking it, through a change of its own. The draft report in
-   `docs/prawduct-feedback.md` asks for that and says what the gate would have to check. A rule
-   cannot come first: every Prawduct gate reads only the local suite's record (above), so a rule
-   that accepted CI without it would leave `test-status` red on every chunk, and the only ways
-   round that are a waiver per chunk or a hand-recorded result. If Prawduct declines, the reason
-   is recorded and nothing below happens; a refusal waives no gate.
-2. **The rule text is accepted, then activated.** The Architect accepts the exact text; the
-   Operator activates it; each lane reads it back. The rule names this page by the digest of the
-   revision accepted with it, so a later edit here changes nothing the rule allows until the rule
-   is accepted again.
-3. **The complement is verified** on the host the lanes use, before any chunk relies on it.
-4. **One bounded pilot.** Exactly one chunk, named in the lane queue when its plan is approved
-   (before any result exists), stands on CI as the suite. The batch charter's pre-suite order
-   holds the local suite until all of steps 1 to 3 are done and one chunk is measured, so the
-   pilot needs that order amended by name to allow this one chunk; it is not a way round it.
-5. **Broader use is decided separately**, from the pilot's measurement: its time and its safety
+Every line of it is Operator-held. The exact texts are in the activation packet
+(`.tangleclaw/plans/2371-activation-packet.md`, local to the lane that wrote it and served at its
+plans URL; its digest is in the W4-03 pull request).
+
+1. **The Operator lands the workflow step.** One `actions/upload-artifact` step, pinned by commit,
+   `if: always()`, uploading `test-results.xml` as the artifact `test-results`, after the skip
+   audit. From then on every CI run carries its own report, and nothing else changes: no gate
+   reads it until step 3.
+2. **The rule texts are accepted, then activated.** The Architect accepts the exact replacement
+   texts for the Builder overlay (clause 4) and the Integrator overlay (clauses 1 and 2(d)) and
+   this page at the digest of the revision accepted with them; the Operator activates them
+   through `POST /api/session-rules … replacesRuleId`; each lane reads them back. A later edit
+   here changes nothing the rule allows until the rule is accepted again.
+3. **The Operator declares the command.** `test_command` in `.prawduct/project-state.yaml` becomes
+   `node scripts/suite-evidence.js --junit {junit_xml}` on the lane hosts, and the pins in
+   `test/suite-evidence.test.js` that hold today's declaration are changed in the same change,
+   which is how the cutover cannot ride in unnoticed. With no environment set, the declared
+   command is still today's suite, so the declaration alone changes nothing a gate sees.
+4. **The complement is verified** on the host the lanes use, before any chunk relies on it.
+5. **One bounded pilot.** Exactly one chunk, named in the lane queue when its plan is approved
+   (before any result exists), runs `prawduct-hook test-evidence record` with
+   `TANGLECLAW_SUITE_EVIDENCE=ci` and stands on what the command writes. The batch charter's
+   pre-suite order holds every chunk to the full local suite, so the pilot needs that order
+   amended by name to allow this one chunk; the packet carries the request. The pilot measures the
+   slot wait avoided, the command's wall time, any refusal and which fact, and that the gate
+   records the merged report.
+6. **Broader use is decided separately**, from the pilot's measurement: its time and its safety
    failures (a defect the pilot let through, a complement entry that did not run, an evidence
    refusal) alike. Until then, every other chunk runs the full local suite.
+
+### The Builder ring the rule names
+
+Decided at #2498's checkpoint 4 from measurement on the lane host, not from the issue's estimate:
+the ring a chunk runs on the host before pushing for CI is **Stages 1, 2 and 3** of
+`scripts/test-stage.js`, and never the Medium tier. At W4-02 Stage 1 measured about one second and
+Stage 3 about five; the Medium tier measured more than three and a half minutes under its guard,
+which is more than seven times the 30-second target on its own. No CI tier timing is claimed: CI's
+run does not isolate stages. Stage 2 is not built until W4-04, so the ring's under-30-second target
+remains to be measured with Stage 2 in it before any cutover.
 
 ### The rule text proposed
 
 > **CI as the suite, for one pilot chunk.** The chunk named in the lane queue as the CI-as-suite
-> pilot, at its plan approval, may stand on the required CI check instead of the full local suite
-> when all of these hold, and `node scripts/ci-evidence.js` is what establishes them: Prawduct's
-> own `test-status` accepts the evidence; the complement has been verified on this host; the
-> `test` check concluded successfully on the exact head commit; GitHub Actions made it, as a job of
-> that commit; the command itself read it; its run was a push of that commit or a pull request of it
-> into the base branch; the base branch's tip is inside the head; the complement was green on the
-> same tree in the same run; the chunk's own narrow tests passed; and the reviewer has read the
-> workflow at the exact commit and confirmed that its `test` job runs the full suite and the skip
-> audit, because a successful job of that name proves neither. The evidence is the file the
-> command writes. Nobody writes or edits one by hand, and nobody records CI's result as suite
-> evidence by hand.
+> pilot, at its plan approval, stands on the required CI check instead of the full local suite,
+> and `node scripts/suite-evidence.js` in ci mode (`TANGLECLAW_SUITE_EVIDENCE=ci`), run by
+> `prawduct-hook test-evidence record` as the declared `test_command`, is what establishes it: the
+> `test` check concluded successfully on the exact head commit; GitHub Actions made it, as a job
+> of that commit; the command itself read it; its run was a push of that commit or a pull request
+> of it into the base branch; the base branch's tip is inside the head; the skip ledger compiles;
+> CI's own junit report was downloaded as that run's `test-results` artifact and is the whole
+> green report of one run; the complement was green on the same tree in the same run; nothing
+> moved while it ran; the Builder ring (Stages 1, 2 and 3 of `scripts/test-stage.js`, never the
+> Medium tier) passed on the host; and the reviewer has read the workflow at the exact commit and
+> confirmed that its `test` job runs the full suite and the skip audit and uploads the report,
+> because a successful job of that name proves none of those. The evidence is the merged report
+> the command writes at `{junit_xml}`, which the gate records as it records any run. Nobody writes
+> or edits one by hand, and nobody records CI's result as suite evidence by hand; a refusal leaves
+> the gate red, and the full local suite is run.
 >
 > **The full local suite is still required** for: any edit to `test/skip-ledger.json` (add, remove
-> or change); any change to the test runner, the audit or evidence machinery or its configuration;
-> schema; `lib/store.js`; `server.js`; shared test helpers; the last chunk of an issue; once before
-> a deploy; and whenever current-base exact-head evidence cannot be established. In that last case
-> the local suite is run and nothing is hand-stamped.
+> or change); any change to the test runner, the audit or evidence machinery or its configuration
+> (the stage runner, the tier ledger and its guards included); schema; `lib/store.js`; `server.js`;
+> shared test helpers; the last chunk of an issue; once before a deploy; and whenever current-base
+> exact-head evidence cannot be established. In that last case the local suite is run and nothing
+> is hand-stamped.
 >
 > **A green badge never claims the ledger's tests.** They are covered only by the complement, on a
 > machine that has what they need.
@@ -345,20 +456,21 @@ and current-base checks, the browser check, and a ready report made void when `m
 ### Where it would change the lane rules
 
 One clause of the Builder overlay and two of the Integrator overlay; nothing else in either, and
-nothing in the common core.
+nothing in the common core. The activation packet carries each rule's full text with only these
+sentences changed, ready for `POST /api/session-rules … replacesRuleId`, because a replacement
+replaces the whole rule.
 
-- **Builder overlay, clause 4 (Suite & Ready):** the named pilot, when every condition and no
-  exception holds, takes no suite slot; the exceptions are written into the clause itself, and
-  the clause names this page by digest; the ready report names the evidence file; when `main`
-  moves the pilot reruns CI and the evidence instead of the suite.
-- **Integrator overlay, clause 1:** the pilot takes no slot.
-- **Integrator overlay, clause 2(d):** the pilot also needs its evidence file for the exact head,
-  naming the fetched `origin/main` tip as its base, and the Integrator reads the workflow at the
-  exact head to confirm the `test` job runs the full suite and the skip audit.
-
-Each replacement text is made by replacing only those sentences in the rule as it stands, so every
-other clause is unchanged; the exact texts are accepted and proposed against the rules as they are
-at that time, not copied here, where they would go stale.
+- **Builder overlay, clause 4 (Suite & Ready):** the Builder ring named above runs on every chunk
+  before the push for CI; the named pilot, when every condition and no exception holds, takes no
+  suite slot and stands on the merged report; the exceptions are written into the clause itself,
+  and the clause names this page by digest; the ready report names the report the gate recorded;
+  when `main` moves the pilot reruns CI and the command instead of the suite.
+- **Integrator overlay, clause 1:** the pilot takes no slot, and "once `#2371` is active" is
+  spelled out as the three Operator-held steps above having landed.
+- **Integrator overlay, clause 2(d):** for the pilot, test-status passes on the merged report for
+  the exact head, naming the fetched `origin/main` tip as its base, and the Integrator reads the
+  workflow at the exact head to confirm the `test` job runs the full suite and the skip audit and
+  uploads the report.
 
 ### A local suite does not cover everything CI does
 

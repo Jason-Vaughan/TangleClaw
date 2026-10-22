@@ -193,6 +193,7 @@
     "test/startup-prompt-editor.test.js",
     "test/startup-prompt-service.test.js",
     "test/stranded-wraps-ui.test.js",
+    "test/suite-evidence.test.js",
     "test/sw-register.test.js",
     "test/tc-check-verb.test.js",
     "test/tc-control.test.js",
