@@ -951,7 +951,7 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
         };
 
         it('has a sentence for each word the server records, and for no other', () => {
-          const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+          const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'routes', '_callers.js'), 'utf8');
           const proofOf = liftDeclaration(serverSrc, 'function _operatorProofOf');
           const words = [...proofOf.matchAll(/clearance: '([a-z-]+)'/g)].map((m) => m[1]);
           assert.equal(words.length, 2, 'the server\'s proof helper names two words');

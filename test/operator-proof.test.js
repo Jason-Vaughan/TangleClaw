@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * `server.js#_operatorProofOf`, called directly (#2286).
+ * `lib/routes/_callers.js#_operatorProofOf`, called directly through the `server.js` re-export (#2286).
  *
  * The helper says what an already-admitted operator request rested on, and its
  * answer is what a recovery clear and a recovery-mode decision are recorded

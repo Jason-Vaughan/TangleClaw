@@ -76,7 +76,7 @@ describe('wrap stream event vocabulary (#1228)', () => {
     // Built from the declaration, so a type added there is searched for here.
     // String quotes only: backticks are how JSDoc and comments name a type.
     const literal = new RegExp(`['"](${WRAP_STREAM_EVENT_TYPES.join('|')})['"]`);
-    for (const rel of ['lib/wrap-pipeline.js', 'lib/wrap-run-registry.js', 'lib/sessions.js', 'server.js', 'public/session.js']) {
+    for (const rel of ['lib/wrap-pipeline.js', 'lib/wrap-run-registry.js', 'lib/sessions.js', 'server.js', 'lib/routes/wrap.js', 'public/session.js']) {
       const hit = read(rel).split('\n').find((line) => literal.test(line));
       assert.equal(hit, undefined, `${rel} spells an event type instead of using the vocabulary: ${hit}`);
     }

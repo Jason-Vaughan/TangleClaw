@@ -4,9 +4,10 @@
   "areas": {
     "kernel": {
       "label": "area:kernel",
-      "why": "The HTTP route table, matcher, responders and body parser every route module shares; owned by no one family.",
+      "why": "The HTTP route table, matcher, responders and body parser every route module shares, and the caller-identity proofs several families share; owned by no one family.",
       "paths": [
-        "lib/routes/_kernel.js"
+        "lib/routes/_kernel.js",
+        "lib/routes/_callers.js"
       ]
     },
     "store": {
@@ -89,6 +90,7 @@
       "label": "area:launch",
       "why": "Session launch: sequences, preflight, recovery, startup prompt and control, handoffs, rotations and the prime.",
       "paths": [
+        "lib/routes/launch-recovery.js",
         "lib/launch-*.js",
         "lib/launchagent-scan.js",
         "lib/startup-*.js",
@@ -122,6 +124,7 @@
       "label": "area:sessions",
       "why": "Session lifecycle in tmux and ttyd, the Project Master, transcripts, continuity, workload receipts and engine error watching.",
       "paths": [
+        "lib/routes/sessions.js",
         "lib/sessions.js",
         "lib/store/sessions.js",
         "lib/session-finalize.js",
