@@ -144,7 +144,7 @@ describe('/api/server-info identity comes from the session, never a header (#142
   it('stamps a launched session\'s owner from the session, never the header', async () => {
     // `POST /api/sessions/:project` reads the owner the same way; asserted on
     // the source because a launch needs a real engine and project.
-    const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'routes', 'sessions.js'), 'utf8');
     const start = src.indexOf("route('POST', '/api/sessions/:project'");
     const body = src.slice(start, src.indexOf('const result = sessions.launchSession', start));
     assert.match(body, /const owner = \(_req\.tcSession && _req\.tcSession\.username\) \|\| null;/);

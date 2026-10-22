@@ -181,7 +181,7 @@ describe('#1178 the primer states the unknown instead of inventing a host', () =
 
 describe('#1178 the value is actually FORWARDED to the generator', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'sessions.js'), 'utf8');
-  const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const server = fs.readFileSync(path.join(__dirname, '..', 'lib', 'routes', 'sessions.js'), 'utf8');
 
   it('the primerCtx honours the forwarded value instead of re-probing', () => {
     // R-2: the forwarding guard pins the CALL, so replacing the decision with a

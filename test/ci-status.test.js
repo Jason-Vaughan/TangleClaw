@@ -226,10 +226,10 @@ describe('#991 primeLines', () => {
 });
 
 describe('#991 the launch route warms the cache before the synchronous launch reads it', () => {
-  it('server.js awaits ci-status.refresh ahead of launchSession in the launch route', () => {
+  it('the launch route awaits ci-status.refresh ahead of launchSession', () => {
     const fs = require('node:fs');
     const path = require('node:path');
-    const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'routes', 'sessions.js'), 'utf8');
     const route = src.slice(src.indexOf("route('POST', '/api/sessions/:project',"), src.indexOf('sessions.launchSession(params.project'));
     // The warm-up lives in one module now, because the operator bridge launches sessions too (#2031) and must warm
     // up the same way. The route awaits it ahead of the launch, and it awaits the CI probe: the same contract, in two steps.
