@@ -799,6 +799,11 @@ describe('the schema module and the facade seam (#2248 T01)', () => {
     const boundList = facadeSrc.match(/const BOUND_MODULES = \[([^\]]*)\];/);
     assert.ok(boundList, 'the facade declares BOUND_MODULES');
     const listed = boundList[1].split(',').map((s) => s.trim()).filter(Boolean);
+    // The by-name arm reads init()'s body only: `close()` also calls `_bind(null)`,
+    // and a module unbound there but never bound in init() must not pass.
+    const initStart = facadeSrc.indexOf('\nfunction init() {');
+    assert.ok(initStart !== -1, 'the facade defines init()');
+    const initBody = facadeSrc.slice(initStart, facadeSrc.indexOf('\n}\n', initStart));
     const binders = fs.readdirSync(dir).filter((f) => f.endsWith('.js')).filter((f) => {
       const src = fs.readFileSync(path.join(dir, f), 'utf8');
       const exports = src.slice(src.lastIndexOf('module.exports'));
@@ -810,7 +815,7 @@ describe('the schema module and the facade seam (#2248 T01)', () => {
       const required = facadeSrc.match(new RegExp(`\\nconst (\\w+) = require\\('\\./store/${mod}'\\);`));
       assert.ok(required, `${file} is required by the facade`);
       const name = required[1];
-      const byName = new RegExp(`\\n\\s+${name}\\._bind\\(`).test(facadeSrc);
+      const byName = new RegExp(`\\n\\s+${name}\\._bind\\(`).test(initBody);
       assert.ok(byName || listed.includes(name), `${file} is bound by init(): by name or through BOUND_MODULES`);
       if (!file.startsWith('_')) {
         const src = fs.readFileSync(path.join(dir, file), 'utf8');
