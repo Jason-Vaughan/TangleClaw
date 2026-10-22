@@ -41,6 +41,20 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-22 — #2248 T02: the sessions domain out of lib/store.js
+
+<!-- prawduct: type=chore | scope=2248-area-extraction -->
+
+#2248 T02. v5.35.0 Wave 3 chunk W3-A1, plan r2 (sha256 `6a354364` at dispatch, S01 and T01 ticked); Part of #2248, which stays open for Part 2. Built on `feat/2248-t02-store-sessions` from `origin/main` `938ca75b` under dispatch token `W3-T02-2248-938CA75B-6A354364`.
+
+**What moved, unchanged.** `lib/store/sessions.js` holds the `// ── Sessions ──` block (`SESSION_STATUS`, `SESSION_STATUSES`, `SESSION_STATUS_TRANSITIONS`, `canTransition`, `_statusSourcesFor`, `_transitionSession`, `sessionsApi`, `_getSessionById`) and, from the `Row Mappers` section, the four session row readers (`_rowToSession`, `_warnUnreadableLaunchBlocker`, `_launchBlockerFromRow`, `_launchBaselineFromRow`) with the warning cap and memory they read (`LAUNCH_BLOCKER_WARN_CAP`, `_launchBlockerWarned`), two blocks cut by line range and emitted byte for byte. The facade imports back the seven names it still reads or exports and re-exports them under the names it always exported.
+
+**The seam.** The module keeps its own `let _db` and guards over it with its own `_ensureDb`. The step-0 scan found two facade-resident helpers the domain still calls, both of which leave with the launch domain: `_insertLaunchSequence` (inside `start()`'s transaction) and `handoffsApi.bindLifecycleEligibility` (inside `wrap()`). They reach the module the way the schema receives what it calls, `_bind({ db, handoffsApi, _insertLaunchSequence })` from `init()`, bound by name beside the schema rather than through `BOUND_MODULES`, so the module never requires the facade. The launch-blocker warning memory moved with its warner: `close()` used to clear the set directly and now unbinds the module, whose `_bind(null)` clears it, so a database opened later in the same process still warns for its own rows. Two phrases from the keystone that said a forgotten bind "fails at first use" now say the first call that guards, since the activity log's `log()` is lenient by contract; the plan's chunk id leaves the three `test/store.test.js` lines that carried it.
+
+**Tests.** No test that greps `lib/store.js` lost its needle (`engineId: row.engine_id` has five other homes in the facade), but one test that walks all of `lib/` did: `test/startup-dialog.test.js` counts `setLaunchBlocker(` callers and skipped the store by its one filename, so the method's definition in `lib/store/sessions.js` read as a new writer and PR CI run 39716567120 went red on `b00ae7ee`, the head the PR opened on; the skip now names exactly `lib/store/sessions.js` beside `lib/store.js` (PM `f4c67f03`, bounded; the other store modules stay scanned so a call from one of them is still caught), a path change only. New in `test/store-sessions.test.js`: the sessions domain refuses with `NOT_INITIALIZED` after `close()` and answers again after `init()`; and the warning memory does not outlive the database it described (warn once, read again silently, close, open a fresh database that hands out the same session id, warn again). The binders pin from the keystone covers the new module by construction.
+
+**Map.** `docs/areas.json`'s `sessions` area gains `lib/store/sessions.js`; `shared.holds` keeps `sessions` because the session routes are still in `server.js`.
+
 ## 2026-10-22 — #2248 T01: the store handle, the schema and the activity log out of lib/store.js
 
 <!-- prawduct: type=chore | scope=2248-area-extraction -->

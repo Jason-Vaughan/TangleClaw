@@ -356,3 +356,68 @@ describe('store.sessions (write methods)', () => {
     });
   });
 });
+
+describe('store.sessions across close() and init()', () => {
+  const { getLevel, setConsoleStream } = require('../lib/logger');
+
+  /**
+   * Open a fresh store in its own temp home with one project and one session.
+   * @param {string} label - Distinguishes the home, the project and the tmux name
+   * @returns {{tmpDir: string, session: object}}
+   */
+  const openFresh = (label) => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `tc-store-sessions-${label}-`));
+    store._setBasePath(tmpDir);
+    store.init();
+    const project = store.projects.create({ name: label, path: path.join(tmpDir, label), engine: 'claude' });
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: label });
+    return { tmpDir, session };
+  };
+
+  it('refuses with NOT_INITIALIZED after close(), and answers again after the next init()', () => {
+    const { tmpDir, session } = openFresh('closed');
+    try {
+      store.close();
+      assert.throws(() => store.sessions.get(session.id), (err) => err.code === 'NOT_INITIALIZED');
+      assert.throws(() => store.sessions.getActive(session.projectId), (err) => err.code === 'NOT_INITIALIZED');
+      store.init();
+      assert.equal(store.sessions.get(session.id).id, session.id);
+    } finally {
+      try { store.close(); } catch { /* already closed */ }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('forgets the launch-blocker values it warned about when the store closes, so a fresh database reusing the session id warns for its own row', () => {
+    const lines = [];
+    const warnings = () => lines.filter((l) => /launch blocker could not be read/.test(l));
+    const writeRaw = (id, raw) => store.getDb().prepare('UPDATE sessions SET launch_blocker = ? WHERE id = ?').run(raw, id);
+    const priorLevel = getLevel();
+    const homes = [];
+    try {
+      const first = openFresh('first');
+      homes.push(first.tmpDir);
+      setLevel('warn');
+      setConsoleStream({ write: (s) => lines.push(String(s)) });
+
+      writeRaw(first.session.id, 'damaged');
+      assert.equal(store.sessions.get(first.session.id).launchBlocker, null);
+      assert.equal(warnings().length, 1, 'the first read of the damaged row warns');
+      store.sessions.get(first.session.id);
+      assert.equal(warnings().length, 1, 'a second read of the same row is silent');
+
+      store.close();
+      const second = openFresh('second');
+      homes.push(second.tmpDir);
+      assert.equal(second.session.id, first.session.id, 'a fresh database hands out the same session id');
+      writeRaw(second.session.id, 'damaged');
+      assert.equal(store.sessions.get(second.session.id).launchBlocker, null);
+      assert.equal(warnings().length, 2, 'the same id and value warn again: the memory did not outlive the database it described');
+    } finally {
+      setConsoleStream(null);
+      setLevel(priorLevel);
+      try { store.close(); } catch { /* already closed */ }
+      for (const dir of homes) fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
