@@ -9,6 +9,21 @@
         "lib/routes/_kernel.js"
       ]
     },
+    "store": {
+      "label": "area:store",
+      "why": "The database handle every store module shares, and the schema with its one ordered migration chain; owned by no one domain.",
+      "paths": [
+        "lib/store/_db.js",
+        "lib/store/_schema.js"
+      ]
+    },
+    "activity": {
+      "label": "area:activity",
+      "why": "The activity log: the event trail the dashboard shows and its per-type retention.",
+      "paths": [
+        "lib/store/activity.js"
+      ]
+    },
     "audit": {
       "label": "area:audit",
       "why": "Eval audit mode (ingest, scoring, incidents, retention) and OpenClaw process visibility.",

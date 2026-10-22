@@ -765,3 +765,93 @@ describe('reading a stored launch blocker (#2201)', () => {
     assert.equal(warnings().length, cap + 2, 'the memory was cleared when full, so the first value warns again');
   });
 });
+
+// T01 of #2248: the schema lives in `lib/store/_schema.js` and must never
+// require the facade (Architect A404): that cycle would evaluate the migration
+// chain against a half-built export object. The one domain api the chain calls,
+// `projectConfigApi` inside `_migrateDropMethodology`, reaches it by injection
+// from the facade's `init()`. Both halves are pinned: the source never requires
+// the facade, and the drop-methodology migration still seeds a project through
+// the injected api on a real pre-v28 database, so the injection is proven live
+// at the point the chain reaches it.
+describe('the schema module and the facade seam (#2248 T01)', () => {
+  const schemaSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'store', '_schema.js'), 'utf8');
+  const facadeSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'store.js'), 'utf8');
+
+  it('lib/store/_schema.js requires no facade: what it calls into is injected before the chain runs', () => {
+    assert.doesNotMatch(schemaSrc, /require\(['"]\.\.\/store(\.js)?['"]\)/, 'the schema must not require lib/store.js');
+    assert.doesNotMatch(schemaSrc, /require\(['"]\.\/index(\.js)?['"]\)/, 'nor a facade under another name');
+    assert.match(schemaSrc, /projectConfigApi = deps \? deps\.projectConfigApi : null/, 'projectConfigApi arrives through _bind');
+    const bind = facadeSrc.indexOf('schema._bind({ db: _db, dbFile: _dbFile, projectConfigApi, SESSION_STATUS });');
+    const create = facadeSrc.indexOf('\n  _createTables();');
+    assert.ok(bind !== -1, 'the facade binds the schema');
+    assert.ok(create !== -1 && bind < create, 'and does so before the chain runs');
+  });
+
+  it('a pre-v28 store with a minimal project is seeded through the injected api and loses the column', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-drop-methodology-'));
+    try {
+      const { DatabaseSync } = require('node:sqlite');
+      // A real project directory: the migration seeds its project.json through
+      // `projectConfigApi.load`/`.save`, which is the injected api under test.
+      const projectDir = path.join(tmpDir, 'minimal-project');
+      fs.mkdirSync(path.join(projectDir, '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(path.join(projectDir, '.tangleclaw', 'project.json'), '{}\n');
+      const seed = new DatabaseSync(path.join(tmpDir, 'tangleclaw.db'));
+      seed.exec(`
+        CREATE TABLE schema_version (
+          version INTEGER PRIMARY KEY,
+          applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO schema_version (version) VALUES (20);
+        CREATE TABLE projects (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL UNIQUE,
+          path TEXT NOT NULL,
+          engine_id TEXT,
+          methodology TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          archived INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX idx_projects_methodology ON projects(methodology);
+        INSERT INTO projects (id, name, path, methodology)
+          VALUES (1, 'minimal-project', '${projectDir.replace(/'/g, "''")}', 'minimal');
+        CREATE TABLE sessions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          engine_id TEXT NOT NULL,
+          tmux_session TEXT,
+          started_at TEXT NOT NULL DEFAULT (datetime('now')),
+          ended_at TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          wrap_summary TEXT,
+          prime_prompt TEXT,
+          methodology_phase TEXT,
+          duration_seconds INTEGER,
+          session_mode TEXT NOT NULL DEFAULT 'tmux',
+          launch_mode TEXT,
+          wrap_started_at TEXT
+        );
+      `);
+      seed.close();
+
+      store._setBasePath(tmpDir);
+      store.init();
+
+      const db = store.getDb();
+      assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION,
+        'the whole ladder ran');
+      assert.ok(!db.prepare('PRAGMA table_info(projects)').all().some((c) => c.name === 'methodology'),
+        'projects.methodology is dropped');
+      const seeded = JSON.parse(fs.readFileSync(path.join(projectDir, '.tangleclaw', 'project.json'), 'utf8'));
+      assert.equal(seeded.wrapOverridesSeeded, true, 'the injected projectConfigApi.save wrote the one-shot marker');
+      assert.ok(Object.keys(seeded.wrapStepOverrides || {}).length > 0, 'and the commit-only wrap overrides');
+      assert.ok(fs.existsSync(path.join(tmpDir, 'tangleclaw.db.pre-v28-backup')),
+        'the pre-v28 snapshot sits beside the database the injected dbFile names');
+    } finally {
+      try { store.close(); } catch { /* already closed */ }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});

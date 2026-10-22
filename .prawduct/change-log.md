@@ -41,6 +41,20 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-22 — #2248 T01: the store handle, the schema and the activity log out of lib/store.js
+
+<!-- prawduct: type=chore | scope=2248-area-extraction -->
+
+#2248 T01. v5.35.0 Wave 3 chunk W3-A1, plan r2 (sha256 `7cde3dbc` at dispatch; accepted by INT with Architect A404 and PM rulings `2854e406`/`d6346a6a`); Part of #2248, which stays open for Part 2. Built on `feat/2248-t01-store-keystone` from `origin/main` `f480a783` under dispatch token `W3-T01-2248-F480A783-7CDE3DBC`.
+
+**What moved, unchanged.** `lib/store/_db.js` holds the error class, the initialization guard (`_ensureDb`), the JSON reader, `getDb`, and the two transaction wrappers (`_withSavepoint`, `_startupControlTransaction`); `lib/store/_schema.js` holds `CURRENT_SCHEMA_VERSION`, the vocabulary lists the CHECK constraints are built from (the startup-fire, recovery-batch, workload-nudge, handoff-baseline and lease lists with their `_SQL` forms), `_createTables`, `_runMigrations` and every migration, postcondition and per-area DDL helper the chain calls, including `_migrateHandoffEpoch` with its four helpers, `_migrateLaunchRecovery` and `_migrateDropMethodology`; `lib/store/activity.js` holds the `// ── Activity Log ──` block and `_rowToActivity`. Fourteen blocks, cut by line range and emitted byte for byte; the three lazy `require` paths inside the chain climb one directory, and nothing else in a moved line changed.
+
+**The seam.** Each module keeps its own `let _db` and a `_bind`; the facade binds the handle module, the schema and every entry of `BOUND_MODULES` right after it opens the database and unbinds them in `close()`, so every `_db.` call site reads as it did and a module the facade forgot to bind fails with `NOT_INITIALIZED`. The schema receives what it calls into by injection, `_bind({ db, dbFile, projectConfigApi, SESSION_STATUS })`, and never requires the facade (A404); the step-0 scan found two injected values beyond the api the plan named: `_dbFile` (the pre-v28 backup path) and `SESSION_STATUS` (one read in `_classifyHandoffBaseline`). `_startupControlTransaction` moved to the handle module rather than staying in the facade because the chain calls it eighteen times and it reads nothing but the handle. The facade imports back the 26 names the domains still read and re-exports them under the names it always exported; its `merge-queue-state` and `check-watch-state` requires lost their last reader and are removed.
+
+**Text readers and tests.** No test grepping `lib/store.js` lost its needle. `test/self-improvement-loop.test.js` evicted the facade from the require cache for a fresh store instance; with the handle in its own module that left the suite's store sharing one handle module with the fresh one, so it now evicts the whole `lib/store/` family. `test/tc-require-graph.test.js` names the directory too. New pins: the schema source requires no facade and the facade binds it before the chain runs; a pre-v28 database with a `minimal` project is seeded through the injected api and loses the column; the activity domain refuses with `NOT_INITIALIZED` after `close()` and answers again after the next `init()`.
+
+**Map and docs.** `docs/areas.json` gains `store` (the handle and the schema) and `activity`; the three `docs/configuration-reference.md` lines that locate the DDL and the schema version point at `lib/store/_schema.js`, and the four `FEATURES.md` anchors naming moved symbols point at their new files, under the PM's bounded-anchor ruling.
+
 ## 2026-10-21 — #2248 S01: the HTTP kernel and the audit routes out of server.js, the area map and the reachability test
 
 <!-- prawduct: type=chore | scope=2248-area-extraction -->

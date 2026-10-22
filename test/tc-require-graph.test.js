@@ -31,16 +31,20 @@ describe('the tc require graph (Train 21)', () => {
     // A fresh process, because this test file's own requires have already
     // loaded the store — asking `require.cache` in-process would answer about
     // the test run rather than about `tc`.
+    // The store is a facade over `lib/store/` (#2248); a module under that
+    // directory is reachable only through the facade today, but the probe names
+    // the directory too so a later direct require of one cannot slip past.
     const probe = `
       require(${JSON.stringify(path.join(REPO, 'lib', 'tc-verbs.js'))});
       console.log(JSON.stringify({
-        store: Object.keys(require.cache).some((f) => f === ${JSON.stringify(path.join(REPO, 'lib', 'store.js'))})
+        store: Object.keys(require.cache).some((f) => f === ${JSON.stringify(path.join(REPO, 'lib', 'store.js'))}
+          || f.startsWith(${JSON.stringify(path.join(REPO, 'lib', 'store') + path.sep)}))
       }));
     `;
     const out = execFileSync(process.execPath, ['-e', probe], { encoding: 'utf8' });
     const seen = JSON.parse(out.trim().split('\n').pop());
     assert.equal(seen.store, false,
-      'lib/tc-verbs.js reached lib/store.js — every `tc` call now prints node:sqlite\'s ExperimentalWarning');
+      'lib/tc-verbs.js reached lib/store.js or lib/store/ — every `tc` call now prints node:sqlite\'s ExperimentalWarning');
   });
 
 });

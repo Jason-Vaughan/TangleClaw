@@ -690,15 +690,15 @@ malformed block is refused when the profile is read — see `docs/engine-guide.m
 
 The SQLite database at `~/.tangleclaw/tangleclaw.db` stores runtime state. You should not need to edit it directly — use the API instead.
 
-**Tables**: enumerated by the schema in `lib/store.js` (inspect a live DB with `sqlite3 ~/.tangleclaw/tangleclaw.db .tables`). A list copied here went stale twice — the schema is the source of truth.
+**Tables**: enumerated by the schema in `lib/store/_schema.js` (inspect a live DB with `sqlite3 ~/.tangleclaw/tangleclaw.db .tables`). A list copied here went stale twice — the schema is the source of truth.
 
-Current schema version: `CURRENT_SCHEMA_VERSION` in `lib/store.js` (a literal copied here went stale within months; the constant is the source of truth).
+Current schema version: `CURRENT_SCHEMA_VERSION` in `lib/store/_schema.js` (a literal copied here went stale within months; the constant is the source of truth).
 
 ### Port Leases Table
 
 The `port_leases` table stores all managed port assignments. TangleClaw is the authoritative port registry — leases survive restarts.
 
-**Columns**: defined by the `port_leases` DDL in `lib/store.js`. A copy lived here and went stale twice over — it still documented `port` as the sole primary key after v7→v8 made it `(host, port)`, and it missed `reach` entirely (v34→v35, #1394). Both omissions describe the exact shape of a bug this table's own subject shipped: matching a lease by port while ignoring the host half of its key. The schema is the source of truth, the same rule this page already applies to the table list and the schema version above.
+**Columns**: defined by the `port_leases` DDL in `lib/store/_schema.js`. A copy lived here and went stale twice over — it still documented `port` as the sole primary key after v7→v8 made it `(host, port)`, and it missed `reach` entirely (v34→v35, #1394). Both omissions describe the exact shape of a bug this table's own subject shipped: matching a lease by port while ignoring the host half of its key. The schema is the source of truth, the same rule this page already applies to the table list and the schema version above.
 
 ## API Overview
 
