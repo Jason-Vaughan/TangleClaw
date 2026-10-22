@@ -324,7 +324,13 @@ function main(argv, io = {}) {
     out.write(`${err.message}\n`);
     return 2;
   }
-  if (parsed.stage === '1') return runStatic(out);
+  if (parsed.stage === '1') {
+    if (root !== ROOT) {
+      out.write('stage 1 runs only against this repository and cannot be pointed at another checkout\n');
+      return 2;
+    }
+    return runStatic(out);
+  }
   if (parsed.stage === '2') {
     out.write('stage 2 (touched) is not built yet (#2498 W4-04): nothing ran; run stage 3\n');
     return 1;

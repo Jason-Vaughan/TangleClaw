@@ -123,6 +123,12 @@ describe('stage 1: the static ring, in-process where it can be', () => {
     assert.match(bad.output, /^b\.js: Unexpected token/);
   });
 
+  it('refuses a root other than this repository rather than silently checking this one', () => {
+    const out = sink();
+    assert.equal(stage.main(['1'], { stdout: out, root: path.join(os.tmpdir(), 'elsewhere') }), 2);
+    assert.equal(out.text(), 'stage 1 runs only against this repository and cannot be pointed at another checkout\n');
+  });
+
   it('names the three static-ring tests the lane rules name', () => {
     assert.deepEqual(stage.STATIC_RING, ['test/auto-merge-callers.test.js', 'test/tmux-session-names.test.js', 'test/wrap-indicator-card.test.js']);
     assert.deepEqual(stage.staticSteps().map((s) => s.name), ['syntax', 'conflict markers', 'strict assertions', 'CLAUDE.md block', 'tiers ledger', 'static ring']);
