@@ -5,11 +5,14 @@
  * text, in which class, and with what runtime proof (#2498 W4-05).
  *
  * Pinned on an in-memory tree, one test file per case: a read by literal,
- * by a joined root constant and by a constant naming a file; a helper reading
- * a directory by a literal file name, and by names built at run time (a
- * sweep); a read from the root that names no source (not a source read); a
- * read whose path is a variable (opaque, never classified); a read inside a
- * comment (not a read). Classes: LIFT for a lift-helper user, REGEX for a
+ * by a joined root constant and by a constant naming a file; a read on a
+ * renamed `node:fs` binding, on `node:fs/promises`, on an inline
+ * `require('node:fs')` of an inline `require('node:path').join`, and of a
+ * `require.resolve`; a helper reading a directory by a literal file name,
+ * and by names built at run time (a sweep); a read from the root that names
+ * no source (not a source read); a read whose path is a variable, and one on
+ * a receiver that is not the file system (both opaque, never classified); a
+ * read inside a comment (not a read). Classes: LIFT for a lift-helper user, REGEX for a
  * named code file (`.js`, or a `bin/` command), GUARD otherwise. Runtime
  * proof: SELF when the test loads what it reads (through a script it spawns
  * too), OTHER when another test does, NONE when no test does, and `public/`
@@ -46,7 +49,13 @@ const FILES = {
   'test/bin.test.js': `${HEAD}fs.readFileSync('bin/tc', 'utf8');`,
   'test/rootdoc.test.js': `${HEAD}const ROOT = path.join(__dirname, '..');\nconst read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');\nread('docs/x.md');`,
   'test/opaque.test.js': `${HEAD}const cfgPath = makeTemp();\nfs.readFileSync(cfgPath, 'utf8');`,
-  'test/comment.test.js': `${HEAD}// fs.readFileSync('lib/a.js')\nconst s = "fs.readFileSync('lib/b.js')";`
+  'test/comment.test.js': `${HEAD}// fs.readFileSync('lib/a.js')\nconst s = "fs.readFileSync('lib/b.js')";`,
+  'server.js': "require('./lib/a');",
+  'test/renamed.test.js': "const fsMod = require('node:fs');\nconst path = require('node:path');\nfsMod.readFileSync(path.join(__dirname, '..', 'lib', 'c.js'), 'utf8');",
+  'test/inline.test.js': "const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'server.js'), 'utf8');",
+  'test/resolve.test.js': `${HEAD}fs.readFileSync(require.resolve('../lib/a.js'), 'utf8');`,
+  'test/promises.test.js': "const fsp = require('node:fs/promises');\nfsp.readFile('lib/b.js', 'utf8');",
+  'test/stranger.test.js': "const store = makeStore();\nstore.readFile('lib/a.js');"
 };
 
 /**
@@ -84,9 +93,30 @@ describe('triage', () => {
   it('finds the readers and only the readers: the root doc read, the opaque read and the commented read are none of them', () => {
     const { byFile } = run();
     assert.deepEqual([...byFile.keys()], [
-      'test/bin.test.js', 'test/css.test.js', 'test/lift.test.js', 'test/none.test.js',
-      'test/other.test.js', 'test/self.test.js', 'test/spawn.test.js', 'test/sweep.test.js'
+      'test/bin.test.js', 'test/css.test.js', 'test/inline.test.js', 'test/lift.test.js', 'test/none.test.js',
+      'test/other.test.js', 'test/promises.test.js', 'test/renamed.test.js', 'test/resolve.test.js',
+      'test/self.test.js', 'test/spawn.test.js', 'test/sweep.test.js'
     ]);
+  });
+
+  it('a read on a name the test binds to node:fs is a read: here of a module no test loads, so NONE', () => {
+    const r = run().byFile.get('test/renamed.test.js');
+    assert.deepEqual([r.cls, r.proof, r.reads, r.unloaded], ['regex', 'none', ['lib/c.js'], ['lib/c.js']]);
+  });
+
+  it('an inline require(\'node:fs\') reading an inline require(\'node:path\').join is a read', () => {
+    const r = run().byFile.get('test/inline.test.js');
+    assert.deepEqual([r.cls, r.proof, r.reads], ['regex', 'none', ['server.js']]);
+  });
+
+  it('a read of require.resolve(\'../lib/a.js\') reads that file: OTHER, since self.test loads it', () => {
+    const r = run().byFile.get('test/resolve.test.js');
+    assert.deepEqual([r.cls, r.proof, r.reads], ['regex', 'other', ['lib/a.js']]);
+  });
+
+  it('a read on a node:fs/promises binding is a read: OTHER, since a script spawn.test runs loads lib/b.js', () => {
+    const r = run().byFile.get('test/promises.test.js');
+    assert.deepEqual([r.cls, r.proof, r.reads], ['regex', 'other', ['lib/b.js']]);
   });
 
   it('a test that loads the module it reads is REGEX, SELF', () => {
@@ -129,8 +159,11 @@ describe('triage', () => {
     assert.deepEqual([r.cls, r.proof], ['lift', null]);
   });
 
-  it('an opaque read is listed with its file and line, never classified', () => {
-    assert.deepEqual(run().result.opaque, [{ file: 'test/opaque.test.js', line: 4, arg: 'cfgPath' }]);
+  it('an opaque read is listed with its file and line, never classified: a path it cannot resolve, and a read on a receiver that is not the file system', () => {
+    assert.deepEqual(run().result.opaque, [
+      { file: 'test/opaque.test.js', line: 4, arg: 'cfgPath' },
+      { file: 'test/stranger.test.js', line: 2, arg: 'store.readFile(…)' }
+    ]);
   });
 });
 
@@ -153,10 +186,10 @@ describe('main', () => {
     const ledger = { small: [], medium: ['test/self.test.js'], large: ['test/spawn.test.js'] };
     assert.equal(audit.main([], { stdout: out, ...repo(), ledger }), 0);
     const text = out.text();
-    assert.match(text, /^source-reader triage: 8 test file\(s\) .* \(small 0, medium 1, large 1, not in the ledger 6\); 1 read\(s\) in 1 file\(s\) are opaque/m);
+    assert.match(text, /^source-reader triage: 12 test file\(s\) .* \(small 0, medium 1, large 1, not in the ledger 10\); 2 read\(s\) in 2 file\(s\) are opaque/m);
     assert.match(text, /^guard .*: 2 \(/m);
     assert.match(text, /^lift .*: 1 \(/m);
-    assert.match(text, /^regex-of-behaviour .*: 5 \(/m);
+    assert.match(text, /^regex-of-behaviour .*: 9 \(/m);
     assert.match(text, /^ {2}self: .*: 2 \(small 0, medium 1, large 1\)$/m);
     assert.match(text, /^ {2}test\/sweep\.test\.js: lib\/ \(sweep\)$/m);
     assert.match(text, /^ {4}test\/none\.test\.js: public\/app\.js \[unloaded: public\/app\.js\]$/m);

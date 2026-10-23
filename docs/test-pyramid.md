@@ -244,19 +244,25 @@ file of the run executes (what it adds), and three lists:
   no line when all are retired at once (two files executing the same lines are each a candidate,
   and only one of them can go);
 - **no product line executed**: files that prove what they prove by reading text or by testing a
-  helper, about which line coverage says nothing. The source-reader triage covers them.
+  helper, about which line coverage says nothing. The source-reader triage below covers the ones
+  that read source as text; neither audit covers a file that only tests a helper.
 
 Line coverage cannot see what a file asserts. Loading a module executes its top-level lines, so a
 file that only requires a large module "covers" thousands of lines. Two files that execute the same
 line may assert different things about it, and branches are not compared. A run that fails or
-writes no report is named and left out, which can only make other files look less redundant. It is
+writes no report is named and left out, which can only make other files look less redundant, and
+runs that all succeed with no product line among them are refused by name (an lcov report whose
+paths are not repo-relative would otherwise read as a tier that proves nothing). It is
 slow by nature, one process per file, so it runs on request and never in a stage. `--jobs N` sets
 how many files run at once (half the host's cores by default), and a list of test files in place
 of `--tier` runs just those, each under its own tier.
 
-**`node scripts/audit-source-readers.js`** finds every test file that reads product source as text:
-a `readFileSync` or `readFile` whose path the walker above resolves under `server.js`, `lib/`,
-`public/`, `bin/` or `scripts/`. A helper that reads a directory by a file name (`pub('app.js')`)
+**`node scripts/audit-source-readers.js`** finds the test files that read product source as text:
+a `readFileSync` or `readFile` on the file system (a destructured name, any name the test binds to
+`fs` or `fs/promises`, or an inline `require('node:fs')`) whose path the walker above resolves
+under `server.js`, `lib/`, `public/`, `bin/` or `scripts/`, including an inline
+`require('node:path').join` and a `require.resolve('./…')`. A read call on any other receiver is
+opaque. A helper that reads a directory by a file name (`pub('app.js')`)
 reads the files the test names there, and one that names none sweeps the directory. A read from
 the repository root that names no source file is not a source read. Each reader is in one class:
 
@@ -275,16 +281,17 @@ helper, whose file argument the audit does not resolve, so a `public/` file neve
 A read whose path the walker cannot resolve (a variable, a call) is opaque. Opaque reads are counted
 per file and never classified; most are temporary files and fixtures.
 
-**Measured when the audits were built** (`main` at `f0882cae`, the laptop):
+**Measured when the audits were built** (the laptop; the matrix on `main` at `f0882cae`, the triage on
+this chunk's tree, whose only new test files read no source):
 
 | Audit | Time | Result |
 |---|---|---|
 | redundancy matrix, Small tier (249 files, 5 at a time) | 14.1 s | 28 exact-subset candidates, 27 removable together, 90 files executing no product line; 107,170 product lines executed in all |
-| source-reader triage, every test file | 1.3 s | 224 readers: 11 guard, 81 lift, 132 regex-of-behaviour (40 self, 21 other, 71 none); 823 opaque reads in 167 files |
+| source-reader triage, every test file | 1.3 s | 233 readers: 12 guard, 81 lift, 140 regex-of-behaviour (47 self, 22 other, 71 none); 827 opaque reads in 168 files |
 
 The first batches are #2548 (the matrix's candidates) and #2549 (the `self` and `other` readers).
 The issue's 2026-10-18 snapshot counted 207 reading files and the Wave 4 plan's baseline counted 37, each
-by a rule neither recorded; the 224 above is by the rule stated here.
+by a rule neither recorded; the 233 above is by the rule stated here.
 
 ## What a run certified: the runner's summary and the junit report
 

@@ -13,8 +13,9 @@
  * its helpers. The matrix names what each file adds, the files that add
  * nothing, one set of them retirable together, and the files that execute no
  * product line. The runs are injected, so nothing here starts a process: a
- * failed, silent or unparseable run is named and left out, at most `jobs` run
- * at once, and each file runs under its own tier.
+ * failed, silent or unparseable run is named and left out, runs that all
+ * succeed with no product line among them (paths it cannot read) are
+ * refused, at most `jobs` run at once, and each file runs under its own tier.
  */
 
 const { describe, it } = require('node:test');
@@ -266,6 +267,14 @@ describe('main', () => {
     assert.equal(code, 1);
     assert.match(out.text(), /1 failed/);
     assert.match(out.text(), /failed \(left out of the matrix\): test\/s2\.test\.js: exit 1/);
+  });
+
+  it('refuses, exit 1, when runs succeed and none executed a product line: a report whose paths it cannot read is not a tier that proves nothing', async () => {
+    const absolute = ['SF:/home/runner/work/repo/lib/x.js', 'DA:1,1', 'end_of_record', ''].join('\n');
+    const runs = fakeRuns({ 'test/s1.test.js': { lcov: absolute }, 'test/s2.test.js': { lcov: absolute } });
+    const out = sink();
+    assert.equal(await audit.main(['--tier', 'small'], { stdout: out, ledger: LEDGER, runFile: runs.runFile, jobs: 1 }), 1);
+    assert.match(out.text(), /^refused: 2 run\(s\) succeeded and none executed a product line; the lcov SF: paths are probably not repo-relative/m);
   });
 
   it('refuses a named file the ledger does not list, and a usage error, exit 1 with the usage', async () => {

@@ -5,12 +5,15 @@
  * The source-reader triage: which test files read product source as text,
  * and which of those duplicate what a runtime test already loads (#2498 W4-05).
  *
- * A SOURCE READ is a `readFileSync` / `readFile` call (bare, `fs.`, `fsp.` or
- * `fs.promises.`) whose first argument names a path under `server.js`,
+ * A SOURCE READ is a `readFileSync` / `readFile` call on the file system
+ * (bare, as a destructured name; on any name the test binds to `fs`,
+ * `node:fs` or their `promises`, `.promises` included; or on an inline
+ * `require('node:fs')`) whose first argument names a path under `server.js`,
  * `lib/`, `public/`, `bin/` or `scripts/`, read with the walker's own
  * resolution (`scripts/_require-graph.js`): a literal, a `path.join` /
- * `path.resolve` of a root constant and literal segments, or a constant the
- * file defines that way. A read whose path ends in a run-time segment
+ * `path.resolve` (or an inline `require('node:path').join`) of a root
+ * constant and literal segments, a `require.resolve('./…')`, or a constant
+ * the file defines that way. A read call on any other receiver is opaque. A read whose path ends in a run-time segment
  * (`path.join(LIB, name)`, or a helper `pub(f)` joining a directory with its
  * argument) reads from a DIRECTORY; its targets are the product files the
  * same test names under that directory, by a path or by a string literal
@@ -55,8 +58,45 @@ const ROOT = graphLib.ROOT;
 /** The product directories (and one file) whose text a source read reads. */
 const SOURCE_ROOTS = Object.freeze(['server.js', 'lib', 'public', 'bin', 'scripts']);
 
-/** A read call; the walker's mask keeps it from matching inside a string or comment. */
-const READ_CALL = /(?<![\w$.])(?:fs\.|fsp\.|fs\.promises\.)?(?:readFileSync|readFile)\s*\(/g;
+/** A read call, on any receiver or none; the walker's mask keeps it from matching inside a string or comment. */
+const READ_CALL = /(?<![\w$])(?:readFileSync|readFile)\s*\(/g;
+
+/** The module names that are the file system (a binding to one of them is a reader's `fs`). */
+const FS_MODULES = Object.freeze(['fs', 'node:fs', 'fs/promises', 'node:fs/promises']);
+
+/**
+ * The receiver a read call is made on, read backwards from the method name:
+ * none (`readFileSync(…)`, destructured), an identifier (`fs.`, `fsMod.`,
+ * `fsp.`, each optionally `.promises.`), or an inline `require('…').`.
+ *
+ * @param {string} masked - The masked source
+ * @param {string} text - The original source
+ * @param {number} at - Offset of the method name
+ * @returns {{kind: 'none'}|{kind: 'id', id: string}|{kind: 'require', request: string}|{kind: 'other'}}
+ */
+function receiverOf(masked, text, at) {
+  const before = masked.slice(Math.max(0, at - 200), at);
+  if (!/\.\s*$/.test(before)) return { kind: 'none' };
+  const req = /require\(\s*(['"])[^'"]*\1\s*\)(?:\s*\.\s*promises)?\s*\.\s*$/.exec(before);
+  if (req) {
+    const start = at - before.length + req.index;
+    const lit = /require\(\s*(['"])((?:\\.|(?!\1).)*)\1/.exec(text.slice(start, at));
+    return { kind: 'require', request: lit ? lit[2] : '' };
+  }
+  const id = /(?<![\w$.])([A-Za-z_$][\w$]*)(?:\s*\.\s*promises)?\s*\.\s*$/.exec(before);
+  return id ? { kind: 'id', id: id[1] } : { kind: 'other' };
+}
+
+/**
+ * A read's path argument with the inline spellings of `path` normalized, so
+ * the walker's join resolution reads `require('node:path').join(…)` too.
+ *
+ * @param {string} arg - The argument's source text
+ * @returns {string}
+ */
+function normalizePathCall(arg) {
+  return arg.replace(/^require\(\s*(['"])(?:node:)?path\1\s*\)\s*\.\s*(join|resolve)\s*\(/, 'path.$2(');
+}
 
 /**
  * Whether an absolute path is product source, or the repository root itself
@@ -103,6 +143,10 @@ function readsOf(scan, io) {
   const files = new Map();
   const dirs = [];
   const opaque = [];
+  // The names this file gives the file-system module: a read on any other
+  // receiver may be a read, but this audit cannot say, so it is opaque.
+  const fsNames = new Set(scan.requires.filter((q) => q.kind === 'bare' && FS_MODULES.includes(q.request) && q.binding && q.binding.kind === 'namespace').map((q) => q.binding.id));
+  const shown = (a) => (a.length > 60 ? `${a.slice(0, 57)}...` : a);
   let m;
   READ_CALL.lastIndex = 0;
   while ((m = READ_CALL.exec(masked)) !== null) {
@@ -110,18 +154,25 @@ function readsOf(scan, io) {
     const { args } = graphLib.splitArgs(masked, text, open);
     if (args.length === 0) continue;
     const line = graphLib.lineOf(starts, m.index);
-    const a = args[0];
+    const recv = receiverOf(masked, text, m.index);
+    const onFs = recv.kind === 'none' || (recv.kind === 'id' && fsNames.has(recv.id)) || (recv.kind === 'require' && FS_MODULES.includes(recv.request));
+    if (!onFs) { opaque.push({ line, arg: `${recv.kind === 'id' ? recv.id : '(expression)'}.${m[0].replace(/\s*\($/, '')}(…)` }); continue; }
+    const a = normalizePathCall(args[0]);
     let r = null;
     const lit = graphLib.literalOf(a);
     const join = /^path\.(?:join|resolve)\(/.exec(a);
+    const resolveReq = /^require\.resolve\(\s*(['"])((?:\\.|(?!\1).)*)\1\s*\)$/.exec(a);
     if (lit !== null) {
       r = { resolved: path.resolve(root, lit), bounded: true }; // tests run from the root, so a relative read is root-relative
     } else if (join) {
       r = graphLib.resolveJoin(graphLib.splitArgs(graphLib.mask(a), a, join[0].length - 1).args, roots);
+    } else if (resolveReq && /^\.\.?\//.test(resolveReq[2])) {
+      const f = graphLib.resolveFile(path.resolve(path.dirname(scan.file), resolveReq[2]), io);
+      if (f) r = { resolved: f, bounded: true };
     } else if (roots.has(a)) {
       r = { resolved: roots.get(a), bounded: !io.isDir(roots.get(a)) };
     }
-    if (!r) { opaque.push({ line, arg: a.length > 60 ? `${a.slice(0, 57)}...` : a }); continue; }
+    if (!r) { opaque.push({ line, arg: shown(args[0]) }); continue; }
     if (!isSource(r.resolved, root)) continue;
     if (r.bounded) { if (!files.has(r.resolved)) files.set(r.resolved, { line, path: r.resolved }); } else dirs.push({ line, dir: r.resolved });
   }
@@ -317,7 +368,7 @@ function main(argv, io = {}) {
   return 0;
 }
 
-module.exports = { SOURCE_ROOTS, isSource, isCode, readsOf, runtimeLoads, triage, report, main };
+module.exports = { SOURCE_ROOTS, FS_MODULES, isSource, isCode, receiverOf, normalizePathCall, readsOf, runtimeLoads, triage, report, main };
 
 if (require.main === module) {
   process.exitCode = main(process.argv.slice(2));

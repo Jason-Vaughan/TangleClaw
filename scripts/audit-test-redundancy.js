@@ -283,7 +283,8 @@ const USAGE = 'usage: audit-test-redundancy.js --tier small|medium|large [--jobs
  * @param {string[]} argv - Arguments after the script name
  * @param {{stdout?: {write: function(string): any}, root?: string, ledger?: object,
  *   runFile?: typeof runFile, now?: function(): number, jobs?: number}} [io] - Injection seam
- * @returns {Promise<number>} 0 on a report, 1 on a usage error or when any run failed
+ * @returns {Promise<number>} 0 on a report; 1 on a usage error, when any run failed, or when the
+ *   runs that succeeded executed no product line at all (an unreadable report, refused by name)
  */
 async function main(argv, io = {}) {
   const out = io.stdout || process.stdout;
@@ -305,7 +306,16 @@ async function main(argv, io = {}) {
   const started = now();
   const { perFile, failed } = await collect(work, { jobs, root: io.root || ROOT, runFile: io.runFile || runFile });
   const label = parsed.tier ? `tier ${parsed.tier}` : 'named files';
-  report(matrix(perFile), { files: work.length, failed, label, jobs, seconds: (now() - started) / 1000 }, out);
+  const m = matrix(perFile);
+  report(m, { files: work.length, failed, label, jobs, seconds: (now() - started) / 1000 }, out);
+  // Every run green and not one product line among them is not a suite with
+  // nothing to prove: it is a report this audit cannot read (paths written
+  // in a form `PRODUCT_PATH` does not match), and a matrix of empty sets
+  // would call every file "executes no product line".
+  if (perFile.size > 0 && m.union === 0) {
+    out.write(`refused: ${perFile.size} run(s) succeeded and none executed a product line; the lcov SF: paths are probably not repo-relative (server.js, lib/, public/, bin/, scripts/), so this matrix cannot be read\n`);
+    return 1;
+  }
   return failed.length === 0 ? 0 : 1;
 }
 
