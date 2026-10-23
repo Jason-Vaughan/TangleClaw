@@ -625,6 +625,10 @@ tc candidate submit --kind milestone --receipt workload:<seq> --text "PR 12 merg
   with no control or text-direction characters. A candidate the Master has not decided within
   its limit is rejected as expired: 7 days for a milestone, 30 for an operator action.
 - **Nothing is posted.** A candidate never reaches the helper by itself.
+- **The Master is told.** Within one bridge pass of a submit, the Project Master gets one notice
+  naming the candidates newly waiting, by id and never by their text, and a stopped Master is
+  started under the same backoff a route uses. Each is told once while it waits; after a server
+  restart the Master is told once more of what still waits (#2547).
 
 The Master decides, through `tc bridge`:
 

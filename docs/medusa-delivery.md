@@ -192,9 +192,7 @@ a composer holding **only** a switchboard nudge and its wake ref, seen down to t
 composer's lower border, is the switchboard's own stranded text rather than the
 operator's (#1621). The pane counts as at the prompt, the injector's prompt clear
 removes the stale nudge without filing it in the draft store, and a fresh nudge
-with a new nonce replaces it. The composer is read again after the clear: if any of the
-stale nudge is left, because an engine's line-kill cleared only one wrapped row, the
-injection is refused rather than pasted after the leftover. Operator text before or after the nudge, or a
+with a new nonce replaces it. The composer is read again after each line-kill, and another is sent while what is left is still part of the stale nudge, up to one per row it filled; anything else left, or the nudge still there after that, refuses the injection rather than pasting after it (#2555). Operator text before or after the nudge, or a
 composer whose end was not captured, is refused as before. So is the nudge when
 anything glyph-led, such as a dialog's selector, is drawn below its composer,
 whether or not an older bare prompt row is in the read (#2452). On an engine that
