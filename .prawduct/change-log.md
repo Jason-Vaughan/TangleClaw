@@ -41,6 +41,36 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-23 — W1-B #2521 (+ #2371): a suite record Prawduct cannot under-count, and the #2371 cutover made exact
+
+<!-- prawduct: type=fix | scope=w1b-2371-2521-suite-evidence -->
+
+v5.36.0 Wave 1 chunk W1-B, under `GRANT-V536-BATCH1-20261023`.
+- **Approvals:** the Integrator's approval of plan rev 2 (`2dde80a7`); the step-0 seam accept (INT `99a0d6cb`, Architect A428 `c0c1999a`); PM Addendum A3 for the tier ledger.
+- **Branch:** `fix/2521-record-test-run` from `origin/main` `415eb036`, merged with `de32a435` (W1-A).
+
+**What changed.** Prawduct 3.6.1's recorder counts only the `<testcase>`s beneath a top-level `<testsuite>`. node:test's junit report also writes cases directly under the root and inside one `<undefined name="root">` element. On #2521's kept report, Prawduct's own parse therefore read 12,786 of 21,997 leaves.
+- `lib/test-results.js` gains `prawductView` (that reading, modelled) and `hoistToTopLevelSuites`. The hoist renames `<undefined>` and wraps runs of bare top-level cases. It refuses any other top-level shape, and it checks leaf, failure and skip conservation before returning. On the kept report, Prawduct's parse of the hoisted copy reads all 21,997.
+- `scripts/record-test-run.js` runs `scripts/suite-evidence.js` (either mode) and reconciles the raw report. It then hoists, ingests with `prawduct-hook test-evidence record --from-junit`, and re-reads `.prawduct/.test-evidence.json`, refusing on any count that disagrees.
+- It keeps both reports by head and writes the receipt `.tangleclaw/test-recorder.json` on every outcome.
+- The new test is declared in the small tier (`test/tiers.json`, regenerated `.testament.toml`).
+
+**#2371 stays inactive.** The gitignored activation packet (`.tangleclaw/plans/w1b-2371-activation-packet.md`) is a proposal only. It does three things:
+- It shows that the W4-03 path would carry the same under-count into CI-as-suite evidence: `suite-evidence.js` copies the `<undefined>` container into its merged report.
+- It routes that path through `record-test-run.js`, which drops the `test_command` cutover step.
+- It carries full replacement texts for #271, #273 and #282, with the Architect-approved conservation formula and a page-digest placeholder.
+
+**Corrected on the way.** Two corrections:
+- The charter's conservation formula `skipped == 0` refuses every green run (`main` 415eb036 CI run 39974498081 has 19 ledger skips). The Architect approved the replacement formula as a proposal.
+- My plan claimed #271/#282 had been replaced. They had not: #271 is TC-Lane-A's copy of the Builder overlay (#273 is identical).
+
+**Owed.**
+- The full suite, through `record-test-run.js`, under `SUITE_SLOT`.
+- The `docs/lane-ci-evidence.md` follow-up under #2371, which retires the raw-report path it still describes.
+- The upstream Prawduct report for #2521, which needs the Operator's approval of the bytes.
+
+Critic: 0 blocking; R-4/R-5 fixed in `e7bec1f0`; R-1/R-2/R-3/R-6 and O-1 accepted on the record. Refs #2521, Refs #2371.
+
 ## 2026-10-23 — W1-A #2558: v5.35.0 recorded as released, a manual `Tests` run, and the doc-only fast path written down
 
 <!-- prawduct: type=chore | scope=2558-v535-sync-dispatch-docpath -->
