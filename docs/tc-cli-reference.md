@@ -84,12 +84,14 @@ Background: [shared-document revisions and notices](medusa-delivery.md#shared-do
 | Command | What it does |
 | --- | --- |
 | `tc docs` | Lists the shared documents in the groups this pane may read, with this project's notice setting for each. |
+| `tc docs lock <doc> [--ttl <minutes>]` | Takes the document's lock in this launch's own name (its verified session and project), for 30 minutes unless `--ttl` (1–120) says otherwise. Another session's lock refuses with exit `3` and `LOCK_CONFLICT`. |
+| `tc docs unlock <doc>` | Releases the lock this session holds. Another session's lock refuses with exit `3` and `NOT_LOCK_HOLDER`. |
 | `tc docs base <doc>` | Has the server observe the document and prints the digest to save before an edit. Nothing is attested yet. |
 | `tc docs attest <doc> --base <saved-digest>` | Attests the edit made from the saved base. The digest must be the one `tc docs base` printed before the edit. |
 | `tc docs mute\|unmute\|subscribe\|default <doc>` | Sets this project's notice setting for one document. `unmute` clears it, as `default` does. |
 | `tc docs mute\|unmute\|subscribe\|default --group <group>` | Sets the same for a whole group. A document's own setting overrides its group's. |
 
-`<doc>` is a document's id or name, and `<group>` a group's id or name. Take the document's lock before `base` and release it after `attest`. Attested authorship records that the lock holder named its base; it is not proof of who wrote the bytes.
+`<doc>` is a document's id or name, and `<group>` a group's id or name. Take the document's lock (`tc docs lock`) before `base` and release it (`tc docs unlock`) after `attest`. Attested authorship records that the lock holder named its base; it is not proof of who wrote the bytes.
 
 ## Merge queue
 
@@ -230,7 +232,7 @@ Background: [session finalize](session-finalize.md).
 | --- | --- |
 | `tc finalize --reason "<why>"` | Finalizes this session only when its receipt is complete and safe-to-clear, it is drained and it has no unfinished work. |
 | `tc finalize --session <id> --reason "<why>"` | Confirms/finalizes a named session in this pane's own project. |
-| `tc finalize --project <name> --session <id> --reason "<why>"` | With lifecycle authority, finalizes a session in another project. |
+| `tc finalize --project <name> --session <id> --reason "<why>"` | With lifecycle authority, or as the coordinator that project's own `workloadNudge.coordinatorProject` names (no control assignment open, checkout on trunk), finalizes a session in another project. |
 
 Exit `3` means the finalize was refused or remains incomplete. Read its exact facts; when it says `FINALIZE_INCOMPLETE`, repeat the same command to finish.
 

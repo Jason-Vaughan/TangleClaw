@@ -199,7 +199,8 @@ async function main() {
     // read is one more tmux call.
     paneStartCommand: () => readPaneStartCommand(process.env),
     getJson: (apiPath, opts) => requestJson('GET', apiPath, undefined, opts),
-    postJson: (apiPath, body, opts) => requestJson('POST', apiPath, body, opts)
+    postJson: (apiPath, body, opts) => requestJson('POST', apiPath, body, opts),
+    deleteJson: (apiPath, opts) => requestJson('DELETE', apiPath, undefined, opts)
   };
 
   let result;

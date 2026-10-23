@@ -396,4 +396,68 @@ describe('shared-doc attestation route (#2389)', () => {
       assert.equal(latest().authorProjectId, lanes.int.id);
     });
   });
+
+  describe('tc docs lock / unlock (#2556)', () => {
+    const docsVerb = tcVerbs.VERB_ROSTER.find((v) => v.id === 'docs');
+
+    /**
+     * Run `tc docs` as a lane pane against the live server. A refusal throws
+     * the way `bin/tc` throws it: status, code and parsed body on the error.
+     * @param {object} who - A binding (`headers`)
+     * @param {object} project - That binding's project record
+     * @param {string[]} argv - Arguments after `docs`
+     * @returns {Promise<object>} The verb's result
+     */
+    function call(who, project, argv) {
+      const request = async (method, p, body) => {
+        const r = await sendAs(server, method, p, body, who.headers);
+        if (r.status >= 400) {
+          const e = new Error(`the TangleClaw API answered ${r.status}`);
+          e.status = r.status;
+          e.code = r.data && r.data.code;
+          e.body = r.data;
+          throw e;
+        }
+        return r.data;
+      };
+      return docsVerb.run({
+        argv,
+        env: { TANGLECLAW_PROJECT_ID: String(project.id) },
+        getJson: (p) => request('GET', p),
+        postJson: (p, body) => request('POST', p, body),
+        deleteJson: (p) => request('DELETE', p)
+      });
+    }
+
+    it('lock takes the lock in the launch\'s own name, and unlock releases it', async () => {
+      const out = await call(int, lanes.int, ['lock', docId, '--ttl', '5']);
+      assert.equal(out.code, 0, out.stderr);
+      assert.match(out.stdout, new RegExp(`locked by session ${int.sessionId}`));
+      const held = store.documentLocks.check(docId);
+      assert.equal(held.lockedBySession, int.sessionId);
+      assert.equal(held.lockedByProject, 'TC-Lane-INT');
+      const freed = await call(int, lanes.int, ['unlock', docId]);
+      assert.equal(freed.code, 0, freed.stderr);
+      assert.equal(store.documentLocks.check(docId), null);
+    });
+
+    it('another session\'s lock refuses both forms with exit 3 and the server\'s code, and leaves it held', async () => {
+      assert.equal((await lock(int)).status, 200);
+      const taken = await call(b, lanes.b, ['lock', docId]);
+      assert.equal(taken.code, 3);
+      assert.match(taken.stderr, /LOCK_CONFLICT/);
+      const notMine = await call(b, lanes.b, ['unlock', docId]);
+      assert.equal(notMine.code, 3);
+      assert.match(notMine.stderr, /NOT_LOCK_HOLDER/);
+      assert.equal(store.documentLocks.check(docId).lockedBySession, int.sessionId);
+    });
+
+    it('usage errors send nothing', async () => {
+      for (const argv of [['lock'], ['lock', docId, '--ttl', 'soon'], ['unlock', docId, 'extra'], ['lock', docId, '--ttl']]) {
+        const out = await docsVerb.run({ argv, env: {}, getJson: async () => { throw new Error('sent'); }, postJson: async () => { throw new Error('sent'); } });
+        assert.equal(out.code, 1, `${argv.join(' ')}: ${out.stderr}`);
+      }
+      assert.equal(store.documentLocks.check(docId), null);
+    });
+  });
 });

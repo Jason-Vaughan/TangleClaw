@@ -16,7 +16,7 @@ Issue: #2027. Implementation: `lib/session-finalize.js` decides and
 ```
 tc finalize --reason "<why>"                                  # retire this pane's own session
 tc finalize --session <id> --reason "<why>"                   # name a session of this pane's own project
-tc finalize --project <name> --session <id> --reason "<why>"  # a coordinator retires its governed target
+tc finalize --project <name> --session <id> --reason "<why>"  # a coordinator retires a lane it governs or is named by
 ```
 
 Before a session finalizes itself, it reports itself done:
@@ -59,7 +59,7 @@ The request must carry a verified launch binding (`x-tangleclaw-project-id` and
 session the caller observed, so a relaunch between observing and asking can never
 retire the wrong one. `reason` is 1–500 characters, collapsed to one line: it is written into the next session's handoff.
 
-`200` answers `{ ok: true, alreadyFinalized, mode: "self"|"delegated", session: {id, projectId, status, endedAt, wrapSummary}, publication: {id, digest, state, reason}, teardown: {steps, surviving} }`.
+`200` answers `{ ok: true, alreadyFinalized, mode: "self"|"delegated"|"coordinator", session: {id, projectId, status, endedAt, wrapSummary}, publication: {id, digest, state, reason}, teardown: {steps, surviving} }`.
 
 ## Who may finalize
 
@@ -67,7 +67,16 @@ retire the wrong one. `reason` is 1–500 characters, collapsed to one line: it 
 | --- | --- |
 | The session itself (verified launch of the target project) | Only its own session. |
 | A principal in the target's open control assignment's `authority.lifecycle` | Only the session that assignment is bound to. |
+| With no control assignment open, the project the target's own `workloadNudge.coordinatorProject` names (#2556) | Only the target's active session, or with none active its latest one (so a repeat can finish), and only while its checkout is on trunk. |
 | Anyone else: a peer outside the matrix, another project, the operator, the Master, an unbound request | Nothing (`403 FINALIZE_UNAUTHORIZED`). |
+
+The coordinator row reads the same setting that hands a lane's merges to its
+coordinator ([configuration reference](configuration-reference.md), `workloadNudge`).
+Only the lane's own session or the operator can write it, so a lane grants this
+authority over itself, and a coordinator gains nothing over a lane that has not
+named it. A setting that cannot be read, or does not name a project, grants
+nothing. An open control assignment is the operator's explicit word and governs
+alone: while one is open, a coordinator it does not list is refused.
 
 A coordinator in the middle of a managed context rotation (#2032) is fenced
 like any other coordinator mutation. This covers both finalizing its own lane
@@ -89,14 +98,14 @@ nothing is changed.
 | 2 | The caller is a verified launch | `403 FINALIZE_UNAUTHORIZED` |
 | 3 | The caller has authority over the target (table above) | `403 FINALIZE_UNAUTHORIZED`; `503 CONTROL_STATE_UNAVAILABLE` when the assignment's authority matrix cannot be read |
 | 4 | The named session belongs to the project | `404 SESSION_NOT_FOUND` |
-| 5 | The named session is the one the caller's authority covers: its own session for self, the assignment's bound session for a coordinator | `403 FINALIZE_UNAUTHORIZED` if that other session is live, `409 SESSION_CHANGED` if it has ended |
+| 5 | The named session is the one the caller's authority covers: its own session for self, the assignment's bound session for a delegated caller, the active (or latest) session for a named coordinator | `403 FINALIZE_UNAUTHORIZED` if that other session is live, `409 SESSION_CHANGED` if it has ended; for a named coordinator, `403 SESSION_NOT_COVERED` with `coveredSessionId` |
 | 6 | The named session is still active. If this path already ended it, the answer is the idempotent `200 {alreadyFinalized: true}`; a session the wrap ended, or one killed or crashed, is not reported as finalized | `409 SESSION_CHANGED` |
 | 7 | The session is not a webui (gateway) session, whose tunnel the shared teardown does not release | `409 FINALIZE_UNSUPPORTED` |
 | 8 | The lane is not held or stopped (the control gate) | `423` with the gate's code |
 | 9 | No wrap run is live | `409 WRAP_IN_PROGRESS` |
 | 10 | The lane composes `AVAILABLE` (see below) | `409 NOT_CLEAR`, with the verdict, the reasons and the receipt's stale reason |
 | 11 | The lane is drained (see below) | `409 EXCHANGES_OPEN`, naming the `unacknowledged`, `unanswered` and `awaitingReply` exchanges |
-| 12 | The pane is not in a linked worktree, and its directory can be read (see below) | `409 WORK_STATE_UNKNOWN` |
+| 12 | The pane is not in a linked worktree, and its directory can be read (see below). For a named coordinator, the checkout is also on trunk (`main` or `master`) | `409 WORK_STATE_UNKNOWN`; `409 NOT_ON_TRUNK` with `branch` and `trunkRefs` |
 | 13 | No work of the session's own (see below) | `409 OWNED_WORK_PRESENT` (new paths, `changedSinceLaunch`, `changedWorktrees`, `unpushed`, `unpushedOnBranches`, `stashes`), or `409 WORK_STATE_UNKNOWN` |
 | 14 | The final handoff can be staged and bound | `503 FINALIZE_STAGE_FAILED`; the session stays active |
 
@@ -111,7 +120,7 @@ see it at rest. For a self caller only, the current receipt of the exact launch
 making the request stands in for that one observation. Every other rule still
 applies, and the whole composition is checked again at the commit point, so a
 receipt that turned stale or `do-not-clear` in the meantime refuses. A delegated
-caller needs the observer to read `at-rest`.
+caller or a named coordinator needs the observer to read `at-rest`.
 
 **Drained** means no unresolved obligation, read from each exchange's durable
 facts rather than from the inbox:
@@ -119,7 +128,10 @@ facts rather than from the inbox:
   replied to where a reply is required. An acknowledgement made in the
   dashboard is the operator's, not the lane's, and does not count. An exchange
   the lane has acknowledged and answered is resolved even while its initiator
-  has not yet closed it.
+  has not yet closed it. A send to the session whose Hub outcome was never bound
+  (`send_pending`, `send_unknown`) is not counted (#2554): it never reached the
+  lane's inbox, so the lane can neither read nor acknowledge it, and
+  `tc message owed` does not list it either.
 - **Mail the session sent that requires a reply** must have been answered.
 - **Mail it sent that needs no reply** is not an obligation. It may still be in
   flight, and it is counted in the audit.

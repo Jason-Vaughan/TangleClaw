@@ -41,6 +41,27 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-23 — W3-A #2554 + #2556: finalize drain and coordinator authority, Master close, `tc docs lock`
+
+<!-- prawduct: type=fix | scope=w3a-2554-2556-finalize-drain-cli -->
+
+v5.36.0 Wave 3 chunk W3-A, under `GRANT-V536-BATCH1-20261023` / PM A7.
+- **Approvals:** PM Addendum A8 (charter `7f51d9c9`) ruled D1–D4. Architect A433-R1 accepted the step-0 plan rev2 (`2de27817`), including the bounded `server.js` close-route edit, and the Integrator released it.
+- **Branch:** `fix/2554-2556-finalize-drain-cli` from `origin/main` `671015db`.
+
+**What changed (#2554).** `tc finalize` refused `EXCHANGES_OPEN` on a lane that owed nothing.
+- `store.medusaExchanges.listOpenForRecipient` takes an opt-in `hubBoundOnly`, and only `_obligations` in `lib/session-finalize.js` passes it. A `send_pending`/`send_unknown` row has no Hub id, so the recipient could never acknowledge it. The default is unchanged, so the retired-recipient sweep still ends such rows.
+- `close()` in `lib/medusa-exchanges.js` admits a `master` caller for exactly what the Master sent: `origin='send'`, no sending project, its listener key, and not a system send. It is recorded as `master` with `launch` proof.
+- `server.js` close route: on the Master's mount, a verified Master launch is passed as `{kind:'master'}`. `exchangeCaller` is unchanged.
+
+**What changed (#2556).**
+- `lib/session-finalize.js` gains a `coordinator` mode. With no control assignment open, the project the target's own `workloadNudge.coordinatorProject` names covers the target's active session, or its latest one so that a repeat can finish. Every delegated gate applies, plus `409 NOT_ON_TRUNK`. A session outside that coverage answers `403 SESSION_NOT_COVERED`, the guard Architect A433 required, because there is no assignment to name.
+- `tc docs lock <doc> [--ttl]` / `tc docs unlock <doc>` in `lib/tc-verbs.js`. `bin/tc` gains a `deleteJson` helper for the unlock.
+- The `--step 0` seam-review hint is descoped by A8: `review request --type seam` lives in the external Prawduct plugin, not in this repo.
+
+**Tests:** `test/api-session-finalize.test.js`, `test/medusa-exchanges.test.js`, `test/master-medusa.test.js` (the Master mount's route harness) and `test/shared-docs-attest-route.test.js` (the live `tc docs` harness).
+**Docs:** `docs/session-finalize.md`, `docs/medusa-delivery.md`, `docs/tc-cli-reference.md`, and the `workloadNudge` row of `docs/configuration-reference.md`.
+
 ## 2026-10-23 — W2-B #2547 + #2555: the Master is told of waiting candidates, and terminal residue no longer holds a wake
 
 <!-- prawduct: type=fix | scope=w2b-2547-2555-master-candidates-composer -->
