@@ -26,6 +26,14 @@
  *                skipped equal the report's leaves, failed is 0, and skipped
  *                equals the report's skipped elements.
  *
+ * The record names one commit and is about that commit only. The checkout must
+ * be clean (tracked changes and untracked files alike; gitignored files are
+ * not the tree) when the run starts; HEAD, its tree and that cleanliness are
+ * read again after the suite and again just before the ingest, and any change
+ * refuses; and Prawduct's own `evidence_tree`, the tree it captured at ingest,
+ * must equal HEAD's tree. A run cannot be recorded against a head it did not
+ * test, nor a head against a run of something else.
+ *
  * Prawduct is reached only at step 4, so a refusal before it records nothing,
  * and the gate keeps reading whatever it read before (stale for a new tree).
  * A refusal at step 5 cannot withdraw Prawduct's record; the receipt says it is
@@ -140,6 +148,43 @@ function gitLine(git, args) {
 }
 
 /**
+ * Read the commit the run is about: HEAD, its tree, and whether the checkout
+ * holds anything else (tracked changes or untracked files; gitignored files
+ * are not part of the tree).
+ *
+ * @param {function(string[]): {status: (number|null), stdout: string}} git - Runs git in the repository
+ * @returns {{head: string|null, tree: string|null, dirty: boolean|null, changes: string}}
+ */
+function readCheckout(git) {
+  const status = git(['status', '--porcelain', '--untracked-files=all']);
+  const changes = status.status === 0 ? String(status.stdout).trim() : '';
+  return {
+    head: gitLine(git, ['rev-parse', 'HEAD']),
+    tree: gitLine(git, ['rev-parse', 'HEAD^{tree}']),
+    dirty: status.status === 0 ? changes !== '' : null,
+    changes
+  };
+}
+
+/**
+ * Refuse unless the checkout is still exactly the clean commit the run began on.
+ *
+ * @param {function(string[]): {status: (number|null), stdout: string}} git - Runs git in the repository
+ * @param {{head: string, tree: string}} expected - The commit the run began on
+ * @param {string} when - When this is checked, for the refusal's text
+ * @throws {Refusal} step 'run' when HEAD or its tree moved or the checkout is not clean
+ */
+function requireSameCheckout(git, expected, when) {
+  const now = readCheckout(git);
+  if (now.head !== expected.head || now.tree !== expected.tree) {
+    throw new Refusal('run', `HEAD moved ${when}: the run began on ${expected.head} (tree ${expected.tree}) and the checkout is now ${now.head} (tree ${now.tree}), so the report is not a run of the head it would be recorded against`);
+  }
+  if (now.dirty !== false) {
+    throw new Refusal('run', `the checkout is not clean ${when}${now.changes ? `: ${now.changes.split('\n').slice(0, 5).join('; ')}` : ' (git status failed)'}`);
+  }
+}
+
+/**
  * Hold Prawduct's record to the report it was given.
  *
  * @param {{passed: number, failed: number, skipped: number}} recorded - From `.test-evidence.json`
@@ -201,11 +246,15 @@ function recordTestRun(argv, io = {}) {
 
   try {
     const parsed = parseArgs(argv);
-    receipt.head = gitLine(git, ['rev-parse', 'HEAD']);
-    receipt.tree = gitLine(git, ['rev-parse', 'HEAD^{tree}']);
-    const status = git(['status', '--porcelain', '--untracked-files=all']);
-    receipt.dirty = status.status === 0 ? String(status.stdout).trim() !== '' : null;
+    const start = readCheckout(git);
+    receipt.head = start.head;
+    receipt.tree = start.tree;
+    receipt.dirty = start.dirty;
     if (!receipt.head || !receipt.tree) throw new Refusal('run', 'git could not read HEAD and its tree');
+    if (start.dirty !== false) {
+      throw new Refusal('run', `the checkout is not clean before the run${start.changes ? `: ${start.changes.split('\n').slice(0, 5).join('; ')}` : ' (git status failed)'}; commit or remove the changes, since a record names a commit and a dirty tree is not one`);
+    }
+    const expected = { head: receipt.head, tree: receipt.tree };
 
     // 1. run
     try {
@@ -219,12 +268,13 @@ function recordTestRun(argv, io = {}) {
     const hoistedPath = path.join(keep, `${receipt.head}.prawduct.junit.xml`);
     fs.rmSync(rawPath, { force: true });
     fs.rmSync(hoistedPath, { force: true });
-    out.write(`step 1 run: suite-evidence.js in ${receipt.mode} mode on ${receipt.head}${receipt.dirty ? ' (working tree has changes)' : ''}\n`);
+    out.write(`step 1 run: suite-evidence.js in ${receipt.mode} mode on ${receipt.head} (tree ${receipt.tree}, clean)\n`);
     const args = ['--junit', rawPath, ...(parsed.base ? ['--base', parsed.base] : [])];
     const run = runSuiteEvidence(args, env);
     if (run.error) throw new Refusal('run', `suite-evidence.js could not be started: ${run.error.message}`);
     receipt.raw = { path: rawPath, sha256: sha256Of(rawPath) };
     if (!receipt.raw.sha256) throw new Refusal('run', `suite-evidence.js wrote no report at ${rawPath} (exit ${run.status})`);
+    requireSameCheckout(git, expected, 'after the suite');
 
     // 2. reconcile
     const rawXml = fs.readFileSync(rawPath, 'utf8');
@@ -248,6 +298,7 @@ function recordTestRun(argv, io = {}) {
     out.write(`step 3 hoist: ${hoisted.added} element(s) became or were wrapped in a top-level <testsuite>; Prawduct will read ${judged.tally.testcases} leaves (it would have read ${results.prawductView(rawXml).testcases} of the raw report)\n`);
 
     // 4. ingest
+    requireSameCheckout(git, expected, 'before the ingest');
     const ingest = runPrawduct(['test-evidence', 'record', '--from-junit', hoistedPath]);
     if (ingest.error) throw new Refusal('ingest', `prawduct-hook could not be started: ${ingest.error.message}`);
     if (ingest.status !== 0) throw new Refusal('ingest', `prawduct-hook test-evidence record exited ${ingest.status}: ${String(ingest.stderr || ingest.stdout || '').trim()}`);
@@ -260,9 +311,14 @@ function recordTestRun(argv, io = {}) {
     } catch (err) {
       throw new Refusal('verify', `${PATHS.evidence} could not be read back: ${err.message}`);
     }
-    receipt.prawduct = { passed: record.passed, failed: record.failed, skipped: record.skipped, command: record.command };
+    receipt.prawduct = { passed: record.passed, failed: record.failed, skipped: record.skipped, command: record.command, evidence_tree: record.evidence_tree === undefined ? null : record.evidence_tree };
     if (typeof record.command !== 'string' || !record.command.includes(hoistedPath)) {
       throw new Refusal('verify', `${PATHS.evidence} is not the record of ${hoistedPath} (its command is ${JSON.stringify(record.command)})`);
+    }
+    if (record.evidence_tree !== receipt.tree) {
+      throw new Refusal('verify', record.evidence_tree === undefined
+        ? `${PATHS.evidence} carries no evidence_tree, so nothing ties Prawduct's record to the tree ${receipt.tree} that ran`
+        : `Prawduct captured tree ${record.evidence_tree} at ingest; the run was of ${receipt.head}'s tree ${receipt.tree}`);
     }
     const wrong = disagreements(record, judged.tally);
     if (wrong.length) throw new Refusal('verify', wrong.join('; '));
@@ -273,6 +329,7 @@ function recordTestRun(argv, io = {}) {
     if (!(err instanceof Refusal)) {
       // Not a step that refused but this command failing: the receipt still
       // says so, so it never keeps an earlier run's verdict beside this head.
+      receipt.verdict = 'refused';
       receipt.refusal = { step: 'error', reason: err.message };
       finish(1);
       throw err;
@@ -283,7 +340,7 @@ function recordTestRun(argv, io = {}) {
   }
 }
 
-module.exports = { SUITE_EVIDENCE, PATHS, STEPS, Refusal, parseArgs, disagreements, recordTestRun };
+module.exports = { SUITE_EVIDENCE, PATHS, STEPS, Refusal, parseArgs, readCheckout, disagreements, recordTestRun };
 
 if (require.main === module) {
   process.exitCode = recordTestRun(process.argv.slice(2));

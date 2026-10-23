@@ -59,6 +59,7 @@ function fakePrawduct(root, override = {}) {
     const failed = v.failures + v.errors;
     const record = {
       command: `--from-junit ${file}`,
+      evidence_tree: TREE,
       passed: v.testcases - failed - v.skipped, failed, skipped: v.skipped, ...override
     };
     fs.mkdirSync(path.join(root, '.prawduct'), { recursive: true });
@@ -79,17 +80,24 @@ let calls;
  * @param {number} [opts.status] - suite-evidence's exit code
  * @param {object} [opts.env] - The environment
  * @param {function} [opts.prawduct] - The prawduct-hook seam
+ * @param {function(number): {head: string, tree: string, status: string}} [opts.checkout] - What git answers on its
+ *   Nth reading of the checkout (0 before the run); a clean HEAD/TREE every time by default
  * @returns {object}
  */
-function seams({ xml = report(), status = 0, env = {}, prawduct } = {}) {
+function seams({ xml = report(), status = 0, env = {}, prawduct, checkout = () => ({ head: HEAD, tree: TREE, status: '' }) } = {}) {
+  let reading = -1;
   return {
     root,
     env,
     stdout: { write: (s) => lines.push(s) },
     now: () => new Date('2026-10-23T18:00:00Z'),
     git: (args) => {
-      if (args[0] === 'rev-parse') return { status: 0, stdout: `${args[1] === 'HEAD' ? HEAD : TREE}\n` };
-      return { status: 0, stdout: '' };
+      // readCheckout asks status first, then HEAD, then HEAD^{tree}: status starts a new reading.
+      if (args[0] === 'status') reading++;
+      const c = checkout(reading);
+      calls.git.push(args.join(' '));
+      if (args[0] === 'rev-parse') return { status: 0, stdout: `${args[1] === 'HEAD' ? c.head : c.tree}\n` };
+      return { status: 0, stdout: c.status };
     },
     runSuiteEvidence: (args, childEnv) => {
       calls.suite.push({ args, env: childEnv });
@@ -111,7 +119,7 @@ function receipt() {
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'record-test-run-'));
   lines = [];
-  calls = { suite: [], prawduct: [] };
+  calls = { suite: [], prawduct: [], git: [] };
 });
 
 afterEach(() => {
@@ -139,6 +147,7 @@ describe('record-test-run: a green run, recorded whole', () => {
     assert.match(r.hoisted.sha256, /^[0-9a-f]{64}$/);
     assert.equal(r.hoisted.added, 2);
     assert.deepEqual([r.head, r.tree, r.dirty, r.mode, r.written_at], [HEAD, TREE, false, 'local', '2026-10-23T18:00:00.000Z']);
+    assert.equal(r.prawduct.evidence_tree, TREE);
     assert.equal(r.summary.tests, 5);
     assert.equal(r.tally.testcases, 5);
   });
@@ -247,6 +256,57 @@ describe('record-test-run: each step refuses, and nothing reaches Prawduct befor
   it('refuses at verify when the record cannot be read back', () => {
     assert.equal(recorder.recordTestRun([], seams({ prawduct: () => ({ status: 0 }) })), 1);
     assert.match(receipt().refusal.reason, /could not be read back/);
+  });
+});
+
+describe('record-test-run: the record names the one clean commit that ran', () => {
+  it('refuses a dirty checkout before running anything', () => {
+    const checkout = () => ({ head: HEAD, tree: TREE, status: ' M lib/x.js\n?? scratch.txt' });
+    assert.equal(recorder.recordTestRun([], seams({ checkout })), 1);
+    const r = receipt();
+    assert.equal(r.refusal.step, 'run');
+    assert.match(r.refusal.reason, /not clean before the run: M lib\/x\.js; \?\? scratch\.txt/);
+    assert.equal(r.dirty, true);
+    assert.equal(calls.suite.length, 0);
+    assert.equal(calls.prawduct.length, 0);
+  });
+
+  it('refuses when HEAD moved while the suite ran, recording nothing', () => {
+    const moved = 'c'.repeat(40);
+    const checkout = (n) => (n === 0 ? { head: HEAD, tree: TREE, status: '' } : { head: moved, tree: 'd'.repeat(40), status: '' });
+    assert.equal(recorder.recordTestRun([], seams({ checkout })), 1);
+    assert.match(receipt().refusal.reason, new RegExp(`HEAD moved after the suite: the run began on ${HEAD}.*now ${moved}`));
+    assert.equal(calls.suite.length, 1);
+    assert.equal(calls.prawduct.length, 0);
+  });
+
+  it('refuses when the checkout went dirty during the suite', () => {
+    const checkout = (n) => ({ head: HEAD, tree: TREE, status: n === 0 ? '' : ' M scripts/record-test-run.js' });
+    assert.equal(recorder.recordTestRun([], seams({ checkout })), 1);
+    assert.match(receipt().refusal.reason, /not clean after the suite: M scripts\/record-test-run\.js/);
+    assert.equal(calls.prawduct.length, 0);
+  });
+
+  it('checks the checkout again just before the ingest', () => {
+    // Readings: 0 at start, 1 after the suite, 2 before the ingest.
+    const checkout = (n) => ({ head: HEAD, tree: TREE, status: n === 2 ? '?? late.txt' : '' });
+    assert.equal(recorder.recordTestRun([], seams({ checkout })), 1);
+    assert.match(receipt().refusal.reason, /not clean before the ingest: \?\? late\.txt/);
+    assert.equal(calls.prawduct.length, 0);
+  });
+
+  it('refuses at verify when Prawduct captured a different tree than the one that ran', () => {
+    const prawduct = fakePrawduct(root, { evidence_tree: 'e'.repeat(40) });
+    assert.equal(recorder.recordTestRun([], seams({ prawduct })), 1);
+    const r = receipt();
+    assert.equal(r.refusal.step, 'verify');
+    assert.equal(r.refusal.reason, `Prawduct captured tree ${'e'.repeat(40)} at ingest; the run was of ${HEAD}'s tree ${TREE}`);
+  });
+
+  it('refuses at verify when Prawduct\'s record carries no evidence_tree', () => {
+    const prawduct = fakePrawduct(root, { evidence_tree: undefined });
+    assert.equal(recorder.recordTestRun([], seams({ prawduct })), 1);
+    assert.match(receipt().refusal.reason, /carries no evidence_tree/);
   });
 });
 
