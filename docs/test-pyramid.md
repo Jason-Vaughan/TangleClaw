@@ -3,8 +3,8 @@
 *Built for #2498. This page covers the three tiers a test file can be in, the ledger that
 declares them, the guards that enforce them, how to classify a new test, the stage runner that
 runs a tier or the whole suite as one command, how a run's count is read, the touched-graph
-selector that is Stage 2 and the reasons it refuses, and the dead-export audit with the ratchet
-Stage 1 runs against it.*
+selector that is Stage 2 and the reasons it refuses, the audits a consolidation wave reads, and
+`.testament.toml`, the manifest that lets a pool of machines run the tiers.*
 
 ## Why tiers
 
@@ -100,7 +100,8 @@ Medium, and that is product work, not a ledger edit.
 - **A new test file:** `node scripts/test-tiers.js --propose test/new.test.js` prints the
   fastest tier its text allows. Add it to that tier in `test/tiers.json` (sorted), then run
   the tier under its guard. If the guard refuses, move the file down one tier and say why in the
-  commit. `--check` fails CI until the file is declared.
+  commit. Then `node scripts/test-tiers.js --testament` to carry the change into
+  `.testament.toml`. `--check` fails CI until the file is declared and the manifest regenerated.
 - **The scan:** `scripts/test-tiers.js` reads the file's text with comments removed and
   follows its requires of other files under `test/` (helpers, fixtures), so a helper that
   spawns makes every test that loads it Large. It does not follow into `lib/`: that is the
@@ -110,7 +111,7 @@ Medium, and that is product work, not a ledger edit.
   `require('child_process')` marks nothing, because the guard refuses the call, not the load.
 - **Regenerating:** `node scripts/test-tiers.js --write` rebuilds the ledger from the scan and
   keeps every existing declaration that is slower than the scan allows (the demotions the
-  guarded runs earned).
+  guarded runs earned); `--testament` then rewrites the manifest from it.
 
 ## The stages: `scripts/test-stage.js`
 
@@ -118,7 +119,7 @@ One entry point runs a stage, or the whole suite, and prints its wall time:
 
 | Stage | Command | What it runs | Who runs it |
 |---|---|---|---|
-| 1 | `node scripts/test-stage.js 1` | static: every tracked `.js` parses (in-process, `vm.Script`), no conflict markers, no bare `node:assert`, the CLAUDE.md block in sync, the tier ledger total, no `lib/` export dead past the baseline, the three static-ring tests | everyone, before every push; about two seconds |
+| 1 | `node scripts/test-stage.js 1` | static: every tracked `.js` parses (in-process, `vm.Script`), no conflict markers, no bare `node:assert`, the CLAUDE.md block in sync, the tier ledger total and `.testament.toml` generated from it, no `lib/` export dead past the baseline, the three static-ring tests | everyone, before every push; about two seconds |
 | 2 | `node scripts/test-stage.js 2 [--base <ref>]` | the tests the diff against `origin/main` (or `--base`) reaches, each tier under its guard; fails closed into Stage 3 (below) | the Builder, between Stage 1 and the draft PR; seconds to a minute, by what the diff reaches |
 | 3 | `node scripts/test-stage.js 3` | the `small` tier under its guard, with `--test-timeout=300000` | the Builder's inner loop; seconds |
 | 4 | `node scripts/test-stage.js 4` | the `medium` tier under its guard, with `--test-timeout=300000` | before a draft pull request; minutes |
@@ -282,7 +283,7 @@ A read whose path the walker cannot resolve (a variable, a call) is opaque. Opaq
 per file and never classified; most are temporary files and fixtures.
 
 **Measured when the audits were built** (the laptop; the matrix on `main` at `f0882cae`, the triage on
-this chunk's tree, whose only new test files read no source):
+`442303b4`, the commit that added the audits, whose only new test files read no source):
 
 | Audit | Time | Result |
 |---|---|---|
@@ -330,6 +331,74 @@ lines; `summaryOf` reads the spec, TAP and junit spellings alike. `scripts/test-
 reads the same report through the same walker (`parseJunit`, moved to `lib/test-results.js`), so
 the skip audit and the count come from one parser.
 
+## Running the tiers on a pool: `.testament.toml`
+
+[Testament](https://github.com/brookstalley/testament) (private) runs a project's tests on a pool
+of machines and returns one report with every test it was asked to run. `.testament.toml` at the
+repository root is its manifest for this repository. It is generated, never written by hand:
+`node scripts/test-tiers.js --testament` writes it from `test/tiers.json`, and `--check` (Stage 1)
+refuses a manifest that differs by one byte from what that command would write.
+
+| Key | Value | Why |
+|---|---|---|
+| `manifest_version` | `3` | the version with `[suites.<name>]` tables, one per tier |
+| `executor` | `host` | the `large` tier drives tmux, git and engine CLIs, which no container image here provides |
+| `env_inputs` | `.node-version` | the one file whose change means a different environment |
+| `batch_timeout_s` | `1800` | a killed batch reports none of its files, so the bound is six times a guarded tier's per-test timeout and above the whole suite's wall time |
+| `[setup] steps` | none | the suite has no dependencies to install |
+| `[suites.small]`, `.medium`, `.large` | `adapter = "files"`, `cwd = "."`, `files` = the tier's paths from the ledger | a literal path is a glob that matches only itself, so the three suites together are exactly `test/*.test.js` |
+| each suite's `command` | the stage runner's own command line for the tier (`tierArgv`), plus `--test-concurrency=1`, with `{files}` and `{junit}` where the files and the report go | a batch runs a tier exactly as its stage does, guard and timeout included; the pool is the parallelism |
+| `one_file_per_process` | `true` | `node --test` before Node 24 does not say in its junit report which file a test was in |
+
+**What has been checked, and what has not.** The manifest was read by Testament's own parser
+(`manifest.py` and the `files` adapter, at the v0.9.0 tag this work was planned against and at
+v0.12.1, the newest tag on 2026-10-23), with no error. Testament's own collector, run over the
+tracked tree, put each test file in exactly one suite. The batch command it renders for one file of
+each tier ran under node on this host and wrote its junit report. **No Testament run has happened:**
+`testament` is not installed on this host and no pool exists. Nothing reads a Testament report as
+suite evidence; the gates are unchanged (see #2371, proposed and Operator-held).
+
+**The pool is the Operator's to set up.** Testament's own guide is the authority
+(`testament guide pool`, `testament guide machine`), and it marks the steps only the owner can
+take. In outline, from the Operator's machine, which reaches each host over SSH:
+
+1. Install the CLI: `uv tool install git+ssh://git@github.com/brookstalley/testament@<tag>`.
+   Testament is private and not on PyPI.
+2. Give every host an SSH alias in `~/.ssh/config` that logs in without a prompt. Testament runs
+   `ssh -o BatchMode=yes <alias>`, so check each one with `ssh -o BatchMode=yes <alias> true`.
+   Use an unrestricted admin alias, because Testament sends scripts over the login. Each host needs
+   Linux (systemd) or macOS, `curl` and an outbound connection. No root is needed.
+3. Put the pool on a private network (Tailscale here). The protocol is plain TCP and a key travels
+   in a machine's first message.
+4. `testament coordinator install <host> --listen <tailnet-addr>:7621 --operator <name>`, on an
+   always-on host.
+5. `testament runner add <host> --via <coordinator-host> --coordinator <addr>:7621 --slots <n>`
+   for each runner. For this suite a runner also needs Node 22, `git` and `tmux` on the service's
+   PATH, because the `large` tier uses them. On a macOS runner, allow its Python under System
+   Settings → Privacy & Security → Local Network, once; this cannot be done over SSH.
+6. `testament projects allow tangleclaw --executor host --via <coordinator-host>`. A host project
+   also needs the owner secret (`testament owner-secret new`; `runner add` copies it to runners
+   added afterwards).
+7. For each machine that submits runs: `testament invite <person> --machine <name> --project
+   tangleclaw --via <coordinator-host>`, then on that machine
+   `printf '%s' '<token>' | testament join`.
+8. Check it: `testament status` lists the runners; in this repository,
+   `testament onboard -- test/areas-map.test.js` makes one real run.
+
+There is no `testament init` command. The guide's onboarding step also suggests adding its
+agent-instructions block to `CLAUDE.md`. That is not done here: the block would tell every session to
+run its tests through Testament, and the lane rules, not this repository, decide how a gate's
+suite is run.
+
+**Things a runner changes.** A host project sees a narrowed environment (PATH, HOME, locale, temp
+directory, proxies, certificates and a few prefixes), so a test that needs another variable from
+the machine needs the runner's operator to pass it (`[runner] pass_env`). Every slot shares the
+runner's network, so a test that binds a fixed port can collide with another batch; bind
+`127.0.0.1` on port 0 and read the port back. Testament's open issue #67
+(per-test OS routing and slot weights) is not needed here. The tier is the unit, and
+`test/skip-ledger.json` already says which tests need a macOS host or an engine CLI and skip
+without one.
+
 ## Measured when the ledger was first written (2026-10-22, this repository at `598ab72e`, a laptop)
 
 | Tier | Files | Tests | Wall time, guarded | Notes |
@@ -351,5 +420,7 @@ Numbers something relies on are re-measured, never copied: the ledger's counts a
 - `test_command`, CI and every gate are unchanged: `all` is that command, argument for argument,
   with the reconciliation printed after it, and nothing yet reads a stage as suite evidence (that
   is #2371, proposed and Operator-held).
+- `.testament.toml` has not been run. The pool is Operator infrastructure, and its setup is
+  outlined above.
 - The ledger says nothing about *where* a test may run (macOS, a non-UTC clock, an engine CLI).
   That stays with `test/skip-ledger.json` and [docs/lane-ci-evidence.md](lane-ci-evidence.md).

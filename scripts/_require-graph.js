@@ -50,10 +50,10 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 
-/** The directories a bare path literal may name, from the repository root. */
-const PRODUCT_DIRS = Object.freeze(['server.js', 'lib', 'scripts', 'bin', 'public', 'data', 'hooks', 'docs', 'test']);
-
-/** A bare path literal: a product directory, then `/` segments of file-name characters. */
+/**
+ * A bare path literal: a product directory (or `server.js`) named from the
+ * repository root, then `/` segments of file-name characters.
+ */
 const BARE_PATH = /^(?:server\.js|lib|scripts|bin|public|data|hooks|docs|test)(?:\/[\w.@-]+)*$/;
 
 /** The default io: this file system. */
@@ -603,6 +603,6 @@ function reaches(reach, file) {
 }
 
 module.exports = {
-  ROOT, PRODUCT_DIRS, FS_IO, statOf, mask, splitArgs, literalOf, lineStarts, lineOf, rootConstants, resolveJoin, resolveFile,
+  ROOT, FS_IO, statOf, mask, splitArgs, literalOf, lineStarts, lineOf, rootConstants, resolveJoin, resolveFile,
   scanFile, bindingOf, memberUsesOf, readExports, usesOf, buildGraph, reachOf, reaches
 };

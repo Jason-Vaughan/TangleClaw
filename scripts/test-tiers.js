@@ -32,10 +32,17 @@
  * `lib/`: that is the guard's job at run time, and a text scan of the product
  * would turn into a second require graph nobody maintains.
  *
+ * The ledger also writes `.testament.toml`, the manifest Testament reads to
+ * run the three tiers on a pool of machines: `--testament` generates it from
+ * the ledger and the stage runner's own tier command lines, and `--check`
+ * refuses a manifest that is not exactly what `--testament` would write, so
+ * the two declarations cannot drift apart.
+ *
  * Usage: node scripts/test-tiers.js --check
  *        node scripts/test-tiers.js --list <small|medium|large>
  *        node scripts/test-tiers.js --propose [<file> ...]
  *        node scripts/test-tiers.js --write
+ *        node scripts/test-tiers.js --testament
  * Exit 0 on success; `--check` exits 1 naming every failure.
  */
 
@@ -47,6 +54,9 @@ const TEST_DIR = path.join(ROOT, 'test');
 
 /** The ledger's path. Tracked, so the declaration is reviewed like code. */
 const DEFAULT_LEDGER = path.join(TEST_DIR, 'tiers.json');
+
+/** The Testament manifest's path: the repository root, where `testament` looks for it. */
+const DEFAULT_MANIFEST = path.join(ROOT, '.testament.toml');
 
 /** The tiers, fastest first. The index is the order `--check` compares by. */
 const TIERS = Object.freeze(['small', 'medium', 'large']);
@@ -279,6 +289,111 @@ function formatLedger(ledger) {
 }
 
 /**
+ * Seconds a Testament batch may run before it is killed. A killed batch
+ * reports none of its files, so the bound sits far above anything one file
+ * takes here: six times the stage runner's per-test timeout for a guarded
+ * tier, and above the whole suite run in one process on a laptop.
+ */
+const TESTAMENT_BATCH_TIMEOUT_S = 1800;
+
+/**
+ * The command a Testament `files` suite runs for one tier: the stage runner's
+ * own command line for that tier (guard, timeout and junit reporter
+ * included), with Testament's placeholders where the files and the report
+ * path go, and one file at a time because the pool is the parallelism.
+ *
+ * @param {string} tier - `small` | `medium` | `large`
+ * @returns {string[]} The command, starting with `node`
+ */
+function testamentCommand(tier) {
+  // Required here, not at the top: the stage runner requires this module.
+  const stage = require('./test-stage');
+  const argv = stage.tierArgv(tier, ['{files}'], '{junit}');
+  argv.splice(1, 0, '--test-concurrency=1');
+  return ['node', ...argv];
+}
+
+/**
+ * A TOML basic string. JSON's escapes (`\"`, `\\`, `\n`, `\uXXXX` and the
+ * rest it emits) are all valid TOML escapes, so JSON's quoting is TOML's.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+function tomlString(value) {
+  return JSON.stringify(value);
+}
+
+/**
+ * Serialize the Testament manifest for a ledger: one `files` suite per tier,
+ * each listing the tier's paths (a literal path is a glob that matches only
+ * itself). Testament refuses a `files` suite with no files, so an empty tier
+ * is refused here, by name, rather than written into a manifest that fails
+ * on the pool.
+ *
+ * @param {{small: string[], medium: string[], large: string[]}} ledger
+ * @param {{command?: function(string): string[]}} [io] - Injection seam: the per-tier command
+ * @returns {string} The manifest's text
+ */
+function formatTestament(ledger, io = {}) {
+  const command = io.command || testamentCommand;
+  const lines = [
+    '# Generated from test/tiers.json by `node scripts/test-tiers.js --testament`; do not edit',
+    '# by hand. `node scripts/test-tiers.js --check` refuses this file when it differs from what',
+    '# that command writes. What it declares and how the pool is set up: docs/test-pyramid.md.',
+    '#',
+    '# The host executor: the large tier drives tmux, git and engine CLIs, which no image here',
+    '# provides. No setup steps: the suite has no dependencies to install. Each suite runs one',
+    "# file per process because node's junit report before Node 24 does not say which file a",
+    '# test was in.',
+    'manifest_version = 3',
+    `name = ${tomlString('tangleclaw')}`,
+    `executor = ${tomlString('host')}`,
+    `env_inputs = [${tomlString('.node-version')}]`,
+    `batch_timeout_s = ${TESTAMENT_BATCH_TIMEOUT_S}`,
+    '',
+    '[setup]',
+    'steps = []'
+  ];
+  for (const tier of TIERS) {
+    if (ledger[tier].length === 0) throw new Error(`testament manifest: the "${tier}" tier is empty, and Testament refuses a files suite with no files`);
+    lines.push(
+      '',
+      `[suites.${tier}]`,
+      `adapter = ${tomlString('files')}`,
+      `cwd = ${tomlString('.')}`,
+      'files = [',
+      ...ledger[tier].map((rel) => `  ${tomlString(rel)},`),
+      ']',
+      `command = [${command(tier).map(tomlString).join(', ')}]`,
+      'one_file_per_process = true'
+    );
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+/**
+ * Check the manifest on disk against the one the ledger generates.
+ *
+ * @param {{small: string[], medium: string[], large: string[]}} ledger
+ * @param {string|null} text - The manifest's text, or null when the file does not exist
+ * @param {{command?: function(string): string[]}} [io] - Injection seam, as for `formatTestament`
+ * @returns {string[]} Every failure named; empty when the manifest is current
+ */
+function checkManifest(ledger, text, io = {}) {
+  const fix = 'run `node scripts/test-tiers.js --testament`';
+  let expected;
+  try {
+    expected = formatTestament(ledger, io);
+  } catch (err) {
+    return [err.message];
+  }
+  if (text === null) return [`.testament.toml is missing: ${fix}`];
+  if (text !== expected) return [`.testament.toml is not what test/tiers.json generates: ${fix}`];
+  return [];
+}
+
+/**
  * Parse argv into one command.
  *
  * @param {string[]} argv - Arguments after the script name
@@ -288,21 +403,38 @@ function parseArgs(argv) {
   const [flag, ...rest] = argv;
   if (flag === '--check' && rest.length === 0) return { command: 'check' };
   if (flag === '--write' && rest.length === 0) return { command: 'write' };
+  if (flag === '--testament' && rest.length === 0) return { command: 'testament' };
   if (flag === '--propose') return { command: 'propose', files: rest };
   if (flag === '--list' && rest.length === 1 && TIERS.includes(rest[0])) return { command: 'list', tier: rest[0] };
-  throw new Error('usage: test-tiers.js --check | --list <small|medium|large> | --propose [<file> ...] | --write');
+  throw new Error('usage: test-tiers.js --check | --list <small|medium|large> | --propose [<file> ...] | --write | --testament');
+}
+
+/**
+ * Read a file that may not exist.
+ *
+ * @param {string} file
+ * @returns {string|null} Its text, or null when there is no such file
+ */
+function readIfPresent(file) {
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') return null;
+    throw err;
+  }
 }
 
 /**
  * Run one command and return the process exit code.
  *
  * @param {string[]} argv - Arguments after the script name
- * @param {{stdout?: {write: function(string): any}, ledgerPath?: string}} [io] - Injection seam
+ * @param {{stdout?: {write: function(string): any}, ledgerPath?: string, manifestPath?: string}} [io] - Injection seam
  * @returns {number} 0 on success, 1 on a failed check or a usage error
  */
 function main(argv, io = {}) {
   const out = io.stdout || process.stdout;
   const ledgerPath = io.ledgerPath || DEFAULT_LEDGER;
+  const manifestPath = io.manifestPath || DEFAULT_MANIFEST;
   let parsed;
   try {
     parsed = parseArgs(argv);
@@ -327,19 +459,32 @@ function main(argv, io = {}) {
     for (const rel of ledger[parsed.tier]) out.write(`${rel}\n`);
     return 0;
   }
-  const result = checkLedger(ledger);
-  if (result.ok) {
-    out.write(`tiers ledger ok: ${TIERS.map((t) => `${t} ${ledger[t].length}`).join(', ')}\n`);
+  if (parsed.command === 'testament') {
+    let text;
+    try {
+      text = formatTestament(ledger);
+    } catch (err) {
+      out.write(`${err.message}\n`);
+      return 1;
+    }
+    fs.writeFileSync(manifestPath, text);
+    out.write(`wrote ${path.relative(ROOT, manifestPath)}: ${TIERS.map((t) => `${t} ${ledger[t].length}`).join(', ')}\n`);
     return 0;
   }
-  for (const line of result.failures) out.write(`${line}\n`);
-  out.write(`tiers ledger: ${result.failures.length} failure(s)\n`);
+  const failures = [...checkLedger(ledger).failures, ...checkManifest(ledger, readIfPresent(manifestPath))];
+  if (failures.length === 0) {
+    out.write(`tiers ledger ok: ${TIERS.map((t) => `${t} ${ledger[t].length}`).join(', ')}; .testament.toml current\n`);
+    return 0;
+  }
+  for (const line of failures) out.write(`${line}\n`);
+  out.write(`tiers ledger: ${failures.length} failure(s)\n`);
   return 1;
 }
 
 module.exports = {
-  TIERS, DEFAULT_LEDGER, LEDGER_COMMENT, stripComments, classifyText, classifyFile, suiteFiles,
-  loadLedger, checkLedger, buildLedger, formatLedger, parseArgs, main
+  TIERS, DEFAULT_LEDGER, DEFAULT_MANIFEST, LEDGER_COMMENT, TESTAMENT_BATCH_TIMEOUT_S, stripComments,
+  classifyText, classifyFile, suiteFiles, loadLedger, checkLedger, buildLedger, formatLedger,
+  testamentCommand, formatTestament, checkManifest, parseArgs, main
 };
 
 if (require.main === module) {
