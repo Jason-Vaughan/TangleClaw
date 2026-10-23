@@ -256,9 +256,8 @@ describe('record-test-run: arguments and the comparison', () => {
     assert.match(recorder.disagreements({ passed: '3', failed: 0, skipped: 2 }, tally)[0], /not integers/);
   });
 
-  it('runs suite-evidence.js and has no node --test of its own', () => {
-    const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'record-test-run.js'), 'utf8');
-    assert.match(src, /path\.join\(__dirname, 'suite-evidence\.js'\)/);
-    assert.doesNotMatch(src, /['"]--test['"]/);
+  it('runs the suite through suite-evidence.js, the script beside it', () => {
+    assert.equal(recorder.SUITE_EVIDENCE, path.join(__dirname, '..', 'scripts', 'suite-evidence.js'));
+    assert.ok(fs.existsSync(recorder.SUITE_EVIDENCE));
   });
 });

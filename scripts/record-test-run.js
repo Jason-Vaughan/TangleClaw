@@ -269,7 +269,7 @@ function recordTestRun(argv, io = {}) {
   }
 }
 
-module.exports = { PATHS, STEPS, Refusal, parseArgs, disagreements, recordTestRun };
+module.exports = { SUITE_EVIDENCE, PATHS, STEPS, Refusal, parseArgs, disagreements, recordTestRun };
 
 if (require.main === module) {
   process.exitCode = recordTestRun(process.argv.slice(2));
