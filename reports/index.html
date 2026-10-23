@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TangleClaw — Autonomous Multi-Agent Sprint Reports</title>
+  <meta name="description" content="Canonical index of empirical performance, velocity, quality, and post-mortem reports for TangleClaw autonomous multi-agent release sprints." />
+  <style>
+    :root {
+      --bg: #070b14;
+      --bg-card: #0f172a;
+      --bg-card-alt: #131c31;
+      --border: #1e293b;
+      --border-hi: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --cyan: #38bdf8;
+      --green: #34d399;
+      --purple: #c084fc;
+      --amber: #fbbf24;
+      --rose: #fb7185;
+      --indigo: #818cf8;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(circle at 15% 0%, #0f1f3d 0%, var(--bg) 45%);
+      color: var(--text);
+      line-height: 1.55;
+    }
+    a { color: var(--cyan); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.88em;
+      background: rgba(148, 163, 184, 0.14);
+      padding: 0.12rem 0.38rem;
+      border-radius: 5px;
+      color: #e2e8f0;
+    }
+    .topnav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(7, 11, 20, 0.88);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0.7rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      font-weight: 800;
+      font-size: 1.05rem;
+      color: var(--text);
+    }
+    .brand-dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--cyan), var(--green));
+      box-shadow: 0 0 12px var(--cyan);
+    }
+    .nav-links {
+      display: flex;
+      gap: 1.1rem;
+      flex-wrap: wrap;
+      font-size: 0.86rem;
+      font-weight: 600;
+    }
+    .nav-links a { color: var(--text-muted); transition: color 0.15s; }
+    .nav-links a:hover { color: var(--cyan); text-decoration: none; }
+    .container {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 4rem;
+    }
+    .hero {
+      background: linear-gradient(145deg, rgba(15, 23, 42, 0.96), rgba(30, 27, 75, 0.72));
+      border: 1px solid var(--border-hi);
+      border-radius: 18px;
+      padding: 2.25rem 2rem;
+      margin-bottom: 2rem;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+    }
+    .hero-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.4);
+      color: var(--cyan);
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 0.28rem 0.75rem;
+      border-radius: 999px;
+      margin-bottom: 0.9rem;
+    }
+    .hero h1 {
+      margin: 0 0 0.65rem;
+      font-size: clamp(1.75rem, 3.2vw, 2.45rem);
+      letter-spacing: -0.02em;
+      line-height: 1.18;
+    }
+    .hero-sub {
+      margin: 0 0 1.4rem;
+      color: #cbd5e1;
+      font-size: 1.02rem;
+      max-width: 900px;
+    }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+    }
+    .kpi-card {
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1rem 1.15rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .kpi-card::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--cyan), var(--green));
+    }
+    .kpi-label {
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .kpi-val {
+      font-size: 1.55rem;
+      font-weight: 800;
+      margin: 0.25rem 0 0.15rem;
+      color: var(--text);
+    }
+    .kpi-sub { font-size: 0.8rem; color: #cbd5e1; }
+    .report-list {
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+    .report-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-hi);
+      border-radius: 16px;
+      padding: 1.6rem 1.75rem;
+      transition: transform 0.15s, border-color 0.15s;
+    }
+    .report-card:hover {
+      border-color: var(--cyan);
+      transform: translateY(-2px);
+    }
+    .report-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 0.85rem;
+    }
+    .report-title {
+      margin: 0.2rem 0 0;
+      font-size: 1.35rem;
+      font-weight: 800;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.2rem 0.6rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 700;
+    }
+    .badge-green { background: rgba(52, 211, 153, 0.15); color: var(--green); border: 1px solid rgba(52, 211, 153, 0.35); }
+    .badge-cyan { background: rgba(56, 189, 248, 0.15); color: var(--cyan); border: 1px solid rgba(56, 189, 248, 0.35); }
+    .badge-purple { background: rgba(192, 132, 252, 0.15); color: var(--purple); border: 1px solid rgba(192, 132, 252, 0.35); }
+    .meta-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin: 0.85rem 0 1.15rem;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.55rem 1rem;
+      border-radius: 10px;
+      font-size: 0.86rem;
+      font-weight: 600;
+      border: 1px solid var(--border-hi);
+      background: var(--bg-card-alt);
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .btn:hover { border-color: var(--cyan); text-decoration: none; }
+    .btn-primary {
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      border-color: #38bdf8;
+      color: #fff;
+    }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.65rem; }
+    footer {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      padding: 2rem 1rem 1rem;
+      border-top: 1px solid var(--border);
+      margin-top: 2.5rem;
+    }
+  </style>
+</head>
+<body>
+  <nav class="topnav">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <span>TangleClaw Autonomous Sprint Reports</span>
+    </div>
+    <div class="nav-links">
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.35.0/">v5.35.0 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.34.0/">v5.34.0</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/">Public Roadmap</a>
+      <a href="https://github.com/Jason-Vaughan/TangleClaw/releases" target="_blank" rel="noopener">GitHub Releases</a>
+    </div>
+  </nav>
+
+  <main class="container">
+    <section class="hero">
+      <div class="hero-eyebrow">● Canonical Sprint Reports Archive</div>
+      <h1>TangleClaw Autonomous Multi-Agent Sprint Reports</h1>
+      <p class="hero-sub">
+        Single canonical index of empirical release sprint reports. Each sub-page captures the full multi-agent architecture, wave-by-wave velocity charts, suite reliability telemetry, 16-point Observer audit, Architect post-mortem rulings, and interactive PR explorer for that version.
+      </p>
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">Published Sprint Reports</div>
+          <div class="kpi-val">2 Releases</div>
+          <div class="kpi-sub"><code>v5.34.0</code> &amp; <code>v5.35.0</code> (<code>v5.36.0</code> next)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Cumulative Sprint PRs</div>
+          <div class="kpi-val">103 PRs Merged</div>
+          <div class="kpi-sub"><strong>29 waves</strong> · <strong>471 commits</strong> · <strong>0</strong> post-merge regressions</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Current Passing Suite</div>
+          <div class="kpi-val">22,314 Tests</div>
+          <div class="kpi-sub">5-stage Google S/M/L pyramid · <code>26,473 == 26,473</code> JUnit nodes</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Latest Production Release</div>
+          <div class="kpi-val">v5.35.0 Live</div>
+          <div class="kpi-sub">Tag <code>v5.35.0 @ 415eb036</code> · SQLite Schema 68</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="report-list">
+      <!-- v5.35.0 Card -->
+      <article class="report-card">
+        <div class="report-header">
+          <div>
+            <span class="badge badge-green">● Latest Release · Oct 21–23, 2026 (49h 26m)</span>
+            <h2 class="report-title"><a href="./v5.35.0/">TangleClaw <code>v5.35.0</code>: “Cheaper Parallel Work”</a></h2>
+          </div>
+          <span class="badge badge-cyan">Tag v5.35.0 @ 415eb036</span>
+        </div>
+        <p style="color:#cbd5e1; margin:0;">
+          Focused 5-wave structural and test-pyramid sprint: merged <strong>28 PRs</strong> with <strong>0 merge conflicts</strong> and <strong>0 voided host suites</strong> (down from 10 in <code>v5.34.0</code>). Extracted <strong>−14,947 LOC</strong> from <code>server.js</code> (<strong>−5,775</strong>) and <code>lib/store.js</code> (<strong>−9,172</strong>) into <strong>11 domain modules</strong> + <code>docs/areas.json</code> (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2248" target="_blank">#2248</a>), shipped per-car <code>changelog.d/</code> fragments (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1220" target="_blank">#1220</a>), and delivered the 5-stage Google S/M/L test pyramid (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2498" target="_blank">#2498</a>) with <strong>22,314 passing tests</strong>.
+        </p>
+        <div class="meta-pills">
+          <span class="badge badge-cyan">5 Waves · 28 PRs</span>
+          <span class="badge badge-purple">−14,947 LOC Split (11 Modules)</span>
+          <span class="badge badge-green">0 Conflicts · 0 Voided Suites</span>
+          <span class="badge badge-cyan">Architect A388–A426</span>
+          <span class="badge badge-green">4/4 Exit Gates PASS</span>
+        </div>
+        <div class="actions">
+          <a class="btn btn-primary" href="./v5.35.0/">📊 Open v5.35.0 Interactive Sprint Report →</a>
+          <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/releases/tag/v5.35.0" target="_blank" rel="noopener">🚀 GitHub Release v5.35.0</a>
+          <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/blob/v5.35.0/CHANGELOG.md" target="_blank" rel="noopener">📜 CHANGELOG.md</a>
+        </div>
+      </article>
+
+      <!-- v5.34.0 Card -->
+      <article class="report-card">
+        <div class="report-header">
+          <div>
+            <span class="badge badge-purple">Oct 15–19, 2026 (95h 48m)</span>
+            <h2 class="report-title"><a href="./v5.34.0/">TangleClaw <code>v5.34.0</code>: “A Suite You Can Trust”</a></h2>
+          </div>
+          <span class="badge badge-cyan">Tag v5.34.0 @ da4b3afe</span>
+        </div>
+        <p style="color:#cbd5e1; margin:0;">
+          24-wave multi-lane reliability and startup-dialog hardening sprint: merged <strong>75 sprint PRs</strong> (84 total merges), closed <strong>71 issues</strong>, migrated all <strong>106 legacy inline <code>liftFunction</code> copies to zero</strong> (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1903" target="_blank">#1903</a>), ran <strong>31h 54m of uninterrupted autonomy</strong> across Waves 6–17, and finished with <strong>22 consecutive flake-free full-suite runs</strong> (21,930 passing tests).
+        </p>
+        <div class="meta-pills">
+          <span class="badge badge-cyan">24 Waves · 75 PRs</span>
+          <span class="badge badge-green">71 Issues Closed</span>
+          <span class="badge badge-purple">#1903 Lift: 106 → 0</span>
+          <span class="badge badge-cyan">Architect A62–A384</span>
+          <span class="badge badge-green">21,930 Passing Tests</span>
+        </div>
+        <div class="actions">
+          <a class="btn btn-primary" href="./v5.34.0/">📊 Open v5.34.0 Interactive Sprint Report →</a>
+          <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/releases/tag/v5.34.0" target="_blank" rel="noopener">🚀 GitHub Release v5.34.0</a>
+          <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/blob/v5.34.0/CHANGELOG.md" target="_blank" rel="noopener">📜 CHANGELOG.md</a>
+        </div>
+      </article>
+    </div>
+
+    <footer>
+      Canonical Sprint Reports Hub · <a href="https://jason-vaughan.github.io/TangleClaw/reports/">https://jason-vaughan.github.io/TangleClaw/reports/</a> · Sanitized for public viewing.
+    </footer>
+  </main>
+</body>
+</html>
