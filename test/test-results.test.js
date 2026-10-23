@@ -246,3 +246,135 @@ describe('parseJunit moved here whole; the skip audit re-exports it', () => {
     assert.equal(results.attr(' name="a"', 'type'), null);
   });
 });
+
+// The shape that hid #2521's red, as measured in a full-suite report on node
+// 22: a case written at the top level just before the reporter opens one
+// `<undefined name="root">` element, which then holds testcases, testsuites and
+// the runner's own trailing summary. Runner: 5 tests, 2 suites; report: 5
+// testcases, 2 testsuites (`<undefined>` is no node of the run).
+const UNDEFINED_ROOT = '<?xml version="1.0" encoding="utf-8"?>\n<testsuites>\n'
+  + `${SUITE('first', 1, 0, 0, CASE('a'))}\n`
+  + '\t\t\t<testcase name="stray" time="0.0001" classname="test"/>\n'
+  + '\t<undefined name="root">\n'
+  + `${CASE('refusals')}\n`
+  + `${SUITE('create', 2, 1, 0, [CASE('c1'), FAILED_CASE('c2 fails', 'testCodeFailure', 'boom')].join('\n'))}\n`
+  + `${trailer({ tests: 5, suites: 2, pass: 4, fail: 1, cancelled: 0, skipped: 0, todo: 0 })}\n`
+  + '\t</undefined>\n</testsuites>\n';
+
+describe('prawductView: only the leaves beneath a top-level <testsuite>, which is all Prawduct 3.6.1 reads', () => {
+  it('does not see a bare top-level testcase or anything inside <undefined>', () => {
+    assert.deepEqual(results.prawductView(UNDEFINED_ROOT), { testcases: 1, failures: 0, errors: 0, skipped: 0 });
+  });
+
+  it('reads the describe-threw failure as green, the false green of #2521', () => {
+    assert.equal(results.reconcileText(DESCRIBE_THREW).ok, false);
+    assert.deepEqual(results.prawductView(DESCRIBE_THREW), { testcases: 1, failures: 0, errors: 0, skipped: 0 });
+  });
+
+  it('counts todo as skipped and leaves under nested suites once each', () => {
+    // SUBTESTS: 6 leaves under its two suites (3 skipped incl. the todo); its 2 bare top-level cases are not seen.
+    assert.deepEqual(results.prawductView(SUBTESTS), { testcases: 6, failures: 0, errors: 0, skipped: 3 });
+  });
+
+  it('classifies each leaf once, error before failure before skipped', () => {
+    const xml = junit(SUITE('s', 3, 0, 0, [
+      '\t\t<testcase name="e"><error message="x"/><failure message="y"/></testcase>',
+      '\t\t<testcase name="f"><failure message="y"/><skipped/></testcase>',
+      '\t\t<testcase name="k"><skipped type="todo"/></testcase>'
+    ].join('\n')));
+    assert.deepEqual(results.prawductView(xml), { testcases: 3, failures: 1, errors: 1, skipped: 1 });
+  });
+
+  it('reads a leafless top-level suite by its count attributes', () => {
+    const xml = junit('\t<testsuite name="summary only" tests="4" failures="1" errors="1" skipped="2"/>');
+    assert.deepEqual(results.prawductView(xml), { testcases: 4, failures: 1, errors: 1, skipped: 2 });
+  });
+});
+
+describe('hoistToTopLevelSuites: every leaf beneath a top-level <testsuite>, nothing gained or lost', () => {
+  it('lets Prawduct\'s reading see every leaf and the red that #2521 missed', () => {
+    const out = results.hoistToTopLevelSuites(UNDEFINED_ROOT);
+    assert.deepEqual(results.prawductView(out.xml), { testcases: 5, failures: 1, errors: 0, skipped: 0 });
+    assert.deepEqual(results.prawductView(results.hoistToTopLevelSuites(DESCRIBE_THREW).xml), { testcases: 2, failures: 1, errors: 0, skipped: 0 });
+    assert.deepEqual(results.prawductView(results.hoistToTopLevelSuites(SUBTESTS).xml), { testcases: 8, failures: 0, errors: 0, skipped: 4 });
+  });
+
+  it('renames each top-level <undefined> and wraps each run of bare top-level cases, counting both', () => {
+    const out = results.hoistToTopLevelSuites(UNDEFINED_ROOT);
+    assert.equal(out.added, 2);
+    assert.doesNotMatch(out.xml, /<\/?undefined\b/);
+    assert.match(out.xml, /<testsuite name="\(top-level tests\)">\s*<testcase name="stray"[^>]*\/>\s*<\/testsuite>/);
+    const before = results.tallyJunit(UNDEFINED_ROOT);
+    const after = results.tallyJunit(out.xml);
+    assert.deepEqual({ ...after, testsuites: after.testsuites - out.added }, before);
+  });
+
+  it('wraps consecutive bare cases as one run, and a suite between them starts a new one', () => {
+    // SUBTESTS ends with two adjacent bare cases; SKIPPED_DESCRIBES has three after a suite.
+    assert.equal(results.hoistToTopLevelSuites(SUBTESTS).added, 1);
+    assert.equal(results.hoistToTopLevelSuites(SKIPPED_DESCRIBES).added, 1);
+    assert.equal(results.hoistToTopLevelSuites(DESCRIBE_THREW).added, 1);
+  });
+
+  it('keeps the runner\'s summary readable where it was', () => {
+    assert.deepEqual(results.summaryOf(results.hoistToTopLevelSuites(UNDEFINED_ROOT).xml), results.summaryOf(UNDEFINED_ROOT));
+    assert.deepEqual(results.summaryOf(results.hoistToTopLevelSuites(SUBTESTS).xml), results.summaryOf(SUBTESTS));
+  });
+
+  it('changes nothing in a report whose leaves are all beneath top-level suites already', () => {
+    assert.deepEqual(results.hoistToTopLevelSuites(CANCELLED), { xml: CANCELLED, added: 0 });
+  });
+
+  it('leaves the raw report as the one the identity is judged on', () => {
+    // The raw report obeys testcases + testsuites == tests + suites; the hoisted
+    // one has `added` more suites, which is why reconcile reads the raw report.
+    const raw = results.reconcileText(UNDEFINED_ROOT);
+    assert.deepEqual(raw.problems, []);
+    assert.deepEqual(raw.red, ['the summary counts 1 failed and 0 cancelled']);
+    assert.notDeepEqual(results.reconcileText(results.hoistToTopLevelSuites(UNDEFINED_ROOT).xml).problems, []);
+  });
+
+  it('fails closed on a top-level element it does not know', () => {
+    assert.throws(() => results.hoistToTopLevelSuites(junit('\t<properties><property name="a" value="b"/></properties>')),
+      { code: 'JUNIT_SHAPE', message: /unexpected top-level element <properties>/ });
+  });
+
+  it('fails closed on text at the top level', () => {
+    assert.throws(() => results.hoistToTopLevelSuites(junit(`${SUITE('s', 1, 0, 0, CASE('a'))}\nstray words`)),
+      { code: 'JUNIT_SHAPE', message: /text at the top level/ });
+  });
+
+  it('fails closed on a closing tag that does not match', () => {
+    assert.throws(() => results.hoistToTopLevelSuites(junit('\t<testsuite name="s">\n\t\t<testcase name="a">\n\t</testsuite>')),
+      { code: 'JUNIT_SHAPE', message: /<\/testsuite> closes <testcase>/ });
+  });
+
+  it('fails closed on an element left open', () => {
+    assert.throws(() => results.hoistToTopLevelSuites('<testsuites>\n\t<testsuite name="s">\n'),
+      { code: 'JUNIT_SHAPE', message: /left open/ });
+  });
+
+  it('fails closed on a document whose root is not <testsuites>', () => {
+    assert.throws(() => results.hoistToTopLevelSuites('<?xml version="1.0"?>\n<testsuite name="s"></testsuite>\n'),
+      { code: 'JUNIT_SHAPE', message: /root is <testsuite>, not <testsuites>/ });
+    assert.throws(() => results.hoistToTopLevelSuites('nothing here'), { code: 'JUNIT_SHAPE', message: /no <testsuites> root/ });
+  });
+
+  it('fails closed on anything after the root', () => {
+    assert.throws(() => results.hoistToTopLevelSuites(`${CANCELLED}<testsuites></testsuites>\n`),
+      { code: 'JUNIT_SHAPE', message: /after the <testsuites> root/ });
+  });
+
+  it('refuses a report whose rewrite it cannot prove conserved', () => {
+    // A leafless top-level suite: Prawduct counts its tests="" attribute, the
+    // report's leaves do not hold those cases, so no rewrite can show they match.
+    const xml = junit(`${SUITE('s', 1, 0, 0, CASE('a'))}\n\t<testsuite name="summary only" tests="3" failures="0" skipped="0"/>`);
+    assert.throws(() => results.hoistToTopLevelSuites(xml), { code: 'JUNIT_SHAPE', message: /did not conserve the report/ });
+  });
+
+  it('reads a failure body\'s escaped < and bare > as text, not tags', () => {
+    // FAILED_CASE carries `Object.&lt;anonymous> (/x/y.test.js:2:1)` in its body.
+    assert.equal(results.hoistToTopLevelSuites(PARENT_FAILED).added, 0);
+    assert.deepEqual(results.prawductView(PARENT_FAILED), { testcases: 2, failures: 1, errors: 0, skipped: 0 });
+  });
+});
