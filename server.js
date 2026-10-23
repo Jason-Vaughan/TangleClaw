@@ -5129,14 +5129,18 @@ function registerMedusaRoutes(prefix, resolve) {
   });
 
   // POST <prefix>/exchanges/:exchangeId/close — the initiator ends an exchange
-  // (#1839). Only a verified launch of the sending project, or the operator.
+  // (#1839). Only a verified launch of the sending project, a verified Master
+  // launch on the Master's own mount (for what the Master sent), or the operator.
   route('POST', `${prefix}/exchanges/:exchangeId/close`, (req, res, params) => {
     const r = resolve(params);
     if (refused(res, r, 'close an exchange for')) return;
     if (coordinatorGateRefused(req, res, targetProjectId(r.target), 'exchange-close', { exchangeId: params.exchangeId })) return;
     const row = store.medusaExchanges.get(params.exchangeId);
     if (!row) return errorResponse(res, 404, 'No exchange has that id', 'EXCHANGE_NOT_FOUND');
-    const caller = exchangeCaller(req, targetProjectId(r.target));
+    const masterMount = r.target.sessionId === master.MASTER_MEDUSA_KEY;
+    const caller = masterMount && resolveControlCaller(req).kind === 'master'
+      ? { kind: 'master' }
+      : exchangeCaller(req, targetProjectId(r.target));
     try {
       jsonResponse(res, 200, { exchange: medusaExchanges.view(medusaExchanges.close(row.exchange_id, caller)) });
     } catch (err) {

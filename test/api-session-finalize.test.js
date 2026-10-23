@@ -872,6 +872,154 @@ describe('POST /api/sessions/:project/finalize (#2027)', () => {
     assert.equal(store.activity.query({ projectId: lane.project.id, eventType: 'session.finalized' }).length, 1);
   });
 
+  describe('a send that never reached the Hub is not the recipient\'s obligation (#2554)', () => {
+    it('an unbound send_unknown row to the lane does not hold it; the same row once bound to a Hub id does', async () => {
+      const lane = launched('orphan');
+      await receipt(lane);
+      sessionFinalize._internal.workspaceId = () => 'ws-orphan';
+      const id = exchange({ hub_id: null, state: 'send_unknown', recipient_workspace_id: 'ws-orphan', recipient_project_id: lane.project.id });
+      const bound = launched('orphan-bound');
+      await receipt(bound);
+      sessionFinalize._internal.workspaceId = () => 'ws-orphan-bound';
+      const boundId = exchange({ recipient_workspace_id: 'ws-orphan-bound', recipient_project_id: bound.project.id });
+      const held = await finalize(bound, bound.headers);
+      assert.equal(held.status, 409, JSON.stringify(held.data));
+      assert.deepEqual(held.data.unacknowledged, [boundId], 'a Hub-bound row still holds the lane');
+
+      sessionFinalize._internal.workspaceId = () => 'ws-orphan';
+      const r = await finalize(lane, lane.headers);
+      assert.equal(r.status, 200, JSON.stringify(r.data));
+      assert.equal(store.medusaExchanges.get(id).terminal_at, null, 'finalize leaves the sender\'s row to the sender');
+    });
+  });
+
+  describe('the coordinator a lane\'s own settings name (#2556)', () => {
+    const AT_REST = () => ({ activity: 'at-rest', reason: 'test', observedAt: null, ageSeconds: 0 });
+
+    /**
+     * A lane whose own `.tangleclaw/project.json` names a coordinator, written
+     * before launch (as a lane's settings are), plus that coordinator.
+     * @param {string} prefix
+     * @param {object} [opts]
+     * @param {(coord: object) => (string|null)} [opts.names] - The coordinatorProject the lane writes
+     * @param {string|null} [opts.rawConfig] - Raw settings file text, in place of a named coordinator
+     * @param {(dir: string) => void} [opts.beforeLaunch] - Shapes the checkout further
+     * @returns {{lane: object, coord: object}}
+     */
+    function coordinated(prefix, { names = (c) => c.project.name, rawConfig = null, beforeLaunch = null } = {}) {
+      const coord = launched(`${prefix}-int`);
+      const lane = launched(prefix, (dir) => {
+        fs.mkdirSync(path.join(dir, '.tangleclaw'), { recursive: true });
+        const text = rawConfig !== null ? rawConfig : JSON.stringify({ workloadNudge: { enabled: true, coordinatorProject: names(coord) } });
+        fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), text);
+        if (beforeLaunch) beforeLaunch(dir);
+      });
+      return { lane, coord };
+    }
+
+    it('the named coordinator retires a clean, at-rest, on-trunk lane, and a repeat is idempotent', async () => {
+      const { lane, coord } = coordinated('coord');
+      await receipt(lane);
+      serverModule._activityObserver.get = AT_REST;
+      const r = await finalize(lane, coord.headers);
+      assert.equal(r.status, 200, JSON.stringify(r.data));
+      assert.equal(r.data.mode, 'coordinator');
+      assert.equal(store.sessions.get(lane.sessionId).status, 'wrapped');
+      const [event] = store.activity.query({ projectId: lane.project.id, eventType: 'session.finalized' });
+      const detail = typeof event.detail === 'string' ? JSON.parse(event.detail) : event.detail;
+      assert.equal(detail.mode, 'coordinator');
+      assert.equal(detail.assignmentId, null);
+      assert.deepEqual(detail.actor, { principal: `project:${coord.project.id}`, sessionId: coord.sessionId });
+      assert.equal(detail.engine, 'at-rest');
+
+      const again = await finalize(lane, coord.headers);
+      assert.equal(again.status, 200, JSON.stringify(again.data));
+      assert.equal(again.data.alreadyFinalized, true);
+    });
+
+    it('a lane that names another coordinator, none, or an unreadable setting grants nothing', async () => {
+      const cases = [
+        coordinated('other', { names: () => 'someone-else' }),
+        coordinated('none', { names: () => null }),
+        coordinated('broken', { rawConfig: '{ not json' })
+      ];
+      serverModule._activityObserver.get = AT_REST;
+      for (const { lane, coord } of cases) {
+        await receipt(lane);
+        const r = await finalize(lane, coord.headers);
+        assert.equal(r.status, 403, `${lane.project.name}: ${JSON.stringify(r.data)}`);
+        assert.equal(r.data.code, 'FINALIZE_UNAUTHORIZED');
+        assert.equal(store.sessions.get(lane.sessionId).status, 'active');
+      }
+    });
+
+    it('a lane off trunk is NOT_ON_TRUNK and stays active', async () => {
+      const { lane, coord } = coordinated('branch', { beforeLaunch: (dir) => git(dir, ['checkout', '-q', '-b', 'feat/x']) });
+      await receipt(lane);
+      serverModule._activityObserver.get = AT_REST;
+      const r = await finalize(lane, coord.headers);
+      assert.equal(r.status, 409, JSON.stringify(r.data));
+      assert.equal(r.data.code, 'NOT_ON_TRUNK');
+      assert.equal(r.data.branch, 'feat/x');
+      assert.equal(store.sessions.get(lane.sessionId).status, 'active');
+    });
+
+    it('every delegated gate still applies: a busy engine and a missing receipt are NOT_CLEAR', async () => {
+      const busy = coordinated('coord-busy');
+      await receipt(busy.lane);
+      serverModule._activityObserver.get = () => ({ activity: 'busy', reason: 'test', observedAt: null, ageSeconds: 0 });
+      const r = await finalize(busy.lane, busy.coord.headers);
+      assert.equal(r.status, 409, JSON.stringify(r.data));
+      assert.equal(r.data.code, 'NOT_CLEAR');
+      assert.ok(r.data.reasons.includes('engine-busy'));
+
+      const unreported = coordinated('coord-noreceipt');
+      serverModule._activityObserver.get = AT_REST;
+      const none = await finalize(unreported.lane, unreported.coord.headers);
+      assert.equal(none.status, 409, JSON.stringify(none.data));
+      assert.equal(none.data.code, 'NOT_CLEAR');
+      assert.equal(store.sessions.get(busy.lane.sessionId).status, 'active');
+      assert.equal(store.sessions.get(unreported.lane.sessionId).status, 'active');
+    });
+
+    it('an open control assignment governs exclusively: one that omits the coordinator refuses it', async () => {
+      const { lane, coord } = coordinated('coord-asg');
+      const pm = launched('pm');
+      await assign(lane, { lifecycle: [`project:${pm.project.id}`] });
+      await receipt(lane);
+      serverModule._activityObserver.get = AT_REST;
+      const r = await finalize(lane, coord.headers);
+      assert.equal(r.status, 403, JSON.stringify(r.data));
+      assert.equal(r.data.code, 'FINALIZE_UNAUTHORIZED');
+      assert.equal(store.sessions.get(lane.sessionId).status, 'active');
+    });
+
+    it('a session the coordinator does not cover is SESSION_NOT_COVERED, not a crash on the absent assignment', async () => {
+      const { lane, coord } = coordinated('coord-stale');
+      const oldId = lane.sessionId;
+      store.sessions.kill(oldId, 'test: relaunch');
+      const fresh = { ...lane, ...bind(lane.project, lane.dir) };
+      await receipt(fresh);
+      serverModule._activityObserver.get = AT_REST;
+      const r = await finalize(fresh, coord.headers, { sessionId: oldId });
+      assert.equal(r.status, 403, JSON.stringify(r.data));
+      assert.equal(r.data.code, 'SESSION_NOT_COVERED');
+      assert.equal(r.data.mode, 'coordinator');
+      assert.equal(r.data.coveredSessionId, fresh.sessionId);
+      assert.equal(store.sessions.get(fresh.sessionId).status, 'active');
+    });
+
+    it('an ended coordinator launch holds no authority', async () => {
+      const { lane, coord } = coordinated('coord-ended');
+      await receipt(lane);
+      store.sessions.kill(coord.sessionId, 'test: coordinator ended');
+      serverModule._activityObserver.get = AT_REST;
+      const r = await finalize(lane, coord.headers);
+      assert.equal(r.status, 403, JSON.stringify(r.data));
+      assert.equal(store.sessions.get(lane.sessionId).status, 'active');
+    });
+  });
+
   describe('files dirty at launch are preserved by identity, not by time (Architect A8)', () => {
     const wip = (lane) => path.join(lane.dir, 'operator-wip.txt');
 

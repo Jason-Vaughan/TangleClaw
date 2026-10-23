@@ -23,6 +23,7 @@ const AMBIENT = { kind: 'operator', proof: 'ambient-open' };
 const SYSTEM = { kind: 'system' };
 const PM = { kind: 'project', projectId: 10 };
 const BUILDER = { kind: 'project', projectId: 20 };
+const MASTER = { kind: 'master' };
 
 let tmpDir = null;
 let clock = 0;
@@ -382,6 +383,65 @@ describe('medusa-exchanges (#1839)', () => {
       assert.equal(mx.close(x.exchange_id, PM).exchange_id, x.exchange_id, 'closing twice is idempotent');
       const y = sendPmToBuilder({ priority: 'blocking' }, 'hub-2');
       assert.equal(mx.close(y.exchange_id, AMBIENT).terminal_by, 'operator');
+    });
+
+    /**
+     * Record a send from the Project Master to the Builder: no sending project,
+     * from the Master's listener key, as its unbound send route records it.
+     * @param {object} [opts]
+     * @param {string|null} [opts.hubId] - Hub id to bind, or null to leave it unbound
+     * @param {object} [opts.caller] - The send's caller (SYSTEM makes it TangleClaw's own)
+     * @returns {object} The exchange row
+     */
+    function sendMasterToBuilder({ hubId = 'hub-m1', caller = UNBOUND } = {}) {
+      const x = mx.createSendIntent({
+        meta: mx.validateSendMeta({}, caller, null),
+        sender: { projectId: null, sessionId: 'master', workspaceId: 'master-ws' },
+        recipient: { workspaceId: 'builder-ws', projectId: 20, sessionId: 2 }
+      });
+      return hubId ? mx.bindHubId(x.exchange_id, hubId, { hubStatus: 'received' }) : x;
+    }
+
+    it('lets the verified Master close what it sent, an orphaned send_unknown row included, as the initiator', () => {
+      const orphan = mx.markSendUnknown(sendMasterToBuilder({ hubId: null }).exchange_id, 'bridge-unreachable');
+      assert.equal(orphan.hub_id, null);
+      const closed = mx.close(orphan.exchange_id, MASTER);
+      assert.equal(closed.state, 'closed');
+      assert.equal(closed.terminal_by, 'master');
+      assert.equal(closed.terminal_code, 'initiator-closed');
+      const fact = store.medusaExchanges.facts(orphan.exchange_id).find((f) => f.fact === 'closed');
+      assert.equal(fact.actor, 'master');
+      assert.equal(fact.proof, 'launch');
+      assert.equal(mx.close(sendMasterToBuilder().exchange_id, MASTER).state, 'closed', 'a Hub-bound Master send closes too');
+      assertReplayMatches(orphan.exchange_id);
+    });
+
+    it('refuses the Master a project\'s exchange and TangleClaw\'s own system send', () => {
+      const projects = sendPmToBuilder();
+      assert.throws(() => mx.close(projects.exchange_id, MASTER), { code: 'NOT_INITIATOR', status: 403 });
+      const system = sendMasterToBuilder({ hubId: 'hub-sys-1', caller: SYSTEM });
+      assert.ok(mx.isSystemOrigin(system), 'the fixture is a system send');
+      assert.throws(() => mx.close(system.exchange_id, MASTER), { code: 'NOT_INITIATOR', status: 403 });
+    });
+
+    it('still refuses an unbound caller and a project the close of a Master send', () => {
+      const x = sendMasterToBuilder();
+      assert.throws(() => mx.close(x.exchange_id, UNBOUND), { code: 'EXCHANGE_BINDING_REQUIRED', status: 403 });
+      assert.throws(() => mx.close(x.exchange_id, PM), { code: 'NOT_INITIATOR', status: 403 });
+      assert.equal(store.medusaExchanges.get(x.exchange_id).terminal_at, null);
+    });
+  });
+
+  describe('listOpenForRecipient hubBoundOnly', () => {
+    it('leaves out a send that never bound a Hub id only when asked, so the retired-recipient sweep still sees it', () => {
+      const unbound = mx.markSendUnknown(sendPmToBuilder({}, null).exchange_id, 'hub-timeout');
+      const bound = sendPmToBuilder({}, 'hub-2');
+      const all = store.medusaExchanges.listOpenForRecipient('builder-ws').map((x) => x.exchange_id);
+      assert.deepEqual(all.sort(), [unbound.exchange_id, bound.exchange_id].sort());
+      const owed = store.medusaExchanges.listOpenForRecipient('builder-ws', { hubBoundOnly: true }).map((x) => x.exchange_id);
+      assert.deepEqual(owed, [bound.exchange_id]);
+      const ended = mx.markRecipientRetired('builder-ws').map((x) => x.exchange_id);
+      assert.ok(ended.includes(unbound.exchange_id), 'the sweep still ends the unbound row');
     });
   });
 

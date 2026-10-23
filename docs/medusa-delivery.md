@@ -142,6 +142,12 @@ From a pane: `tc message send --priority blocking --reason awaiting-ruling <work
   needs. The inbox and roster reads need neither.
 - **Closing:** the original sender closes an exchange with
   `POST <base>/medusa/exchanges/<exchange-id>/close` (`tc message close`).
+  For the Project Master that is its own mount,
+  `POST /api/master/medusa/exchanges/<exchange-id>/close`, with its role header
+  and launch id. A verified Master launch closes only what the Master sent (no
+  sending project, from the Master's listener, not a TangleClaw system send),
+  including a `send_unknown` row whose Hub outcome was lost (#2554). Any other
+  exchange answers `403 NOT_INITIATOR`.
 - **Listing:** `GET <base>/medusa/exchanges?direction=sent|received&open=1`
   lists them without bodies. `tc message sent` shows the sender's open ones, and
   `tc message owed` shows the recipient what it still owes: replies first, then
