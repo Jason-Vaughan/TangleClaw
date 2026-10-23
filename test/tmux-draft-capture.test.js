@@ -370,6 +370,21 @@ describe('the clear: records what it read, and still clears when it could not re
     }
   });
 
+  it('a leftover that is not how the nudge began is not cleared further, and the paste is refused (#2555)', () => {
+    try {
+      paneWithDraft('');
+      const rows = wrappedNudgeRows();
+      // Part of the nudge, but its tail: not what a line-kill from the end leaves, so not taken for a remnant.
+      const reads = composerReads([boxed(rows), boxed([`❯${NBSP}${rows[rows.length - 1].trim()}`])]);
+      let result;
+      logged(() => { result = tmux._clearPromptLine(session, 'claude', ATTEMPT); });
+      assert.equal(result.strandedNudgeResidue, true);
+      assert.equal(reads.seen(), 2, 'no line-kill after a leftover that is not the nudge\'s head');
+    } finally {
+      try { tmux.killSession(session); } catch (_) { /* already gone */ }
+    }
+  });
+
   it('a terminal reply alone in the composer is cleared without being kept as a draft (#2555)', () => {
     try {
       paneWithDraft('');
