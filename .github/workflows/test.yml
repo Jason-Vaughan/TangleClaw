@@ -24,7 +24,9 @@ on:
   # A manual run, from the Actions tab or `gh workflow run Tests --ref <branch>`.
   # GitHub sometimes drops a push webhook, and then a commit on main has no
   # run at all; with only push and pull_request declared, nothing could start
-  # one short of pushing another commit. It adds no automatic run.
+  # one short of pushing another commit. It adds no automatic run. Use it for
+  # a commit on main: on a pull request branch the manual run becomes the
+  # newest `test` check, which scripts/ci-evidence.js refuses as evidence.
   workflow_dispatch:
 
 # Declared rather than inherited: without this block the token takes the
