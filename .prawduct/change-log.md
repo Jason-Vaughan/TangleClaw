@@ -41,6 +41,20 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-23 — W2-A #2195: the same startup dialog is recorded once
+
+<!-- prawduct: type=fix | scope=2195-launch-blocker-idempotent -->
+
+v5.36.0 Wave 2 chunk W2-A, under `GRANT-V536-BATCH1-20261023` / PM A4.
+- **Approvals:** the Integrator's step-0 seam and plan approval (`0ccd0a29`).
+- **Branch:** `fix/2195-launch-blocker-idempotent` from `origin/main` `5b8386a2`.
+
+**What changed.** `store.sessions.setLaunchBlocker` (`lib/store/sessions.js`) logged `session.launch_blocked` on every call. The boot watch records a dialog when it first sees it; a send's reconcile holding a row read before that write saw no blocker and recorded the same dialog again, so one dialog made two activity entries.
+- The store now decides under one `BEGIN IMMEDIATE`: when the readable stored blocker has the same code, it writes nothing, logs nothing, and returns the session as it stands (the first `observedAt` is kept).
+- A different code, a stored blocker that cannot be read, and a dialog shown again after it was cleared are still written and logged.
+- Return contract: null now means only "this session takes no blocker" (no code, or no such active session). The same-code call returns the session, so the reconcile reports the stored blocker instead of its stale snapshot's none. The boot watch ignores the return.
+- Tests in `test/startup-dialog.test.js`: the four store cases, and the stale-snapshot reconcile race (red on `5b8386a2`).
+
 ## 2026-10-23 — W1-B #2521 (+ #2371): a suite record Prawduct cannot under-count, and the #2371 cutover made exact
 
 <!-- prawduct: type=fix | scope=w1b-2371-2521-suite-evidence -->

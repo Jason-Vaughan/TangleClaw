@@ -972,6 +972,44 @@ describe('the session keeps its blocker (#2128)', () => {
       assert.equal(store.sessions.clearLaunchBlocker(s.id), null);
       assert.equal(store.sessions.get(s.id).launchBlocker.code, 'trust_required');
     });
+
+    describe('the same dialog is recorded once, whoever records it (#2195)', () => {
+      const blockedEvents = (id) => store.activity.query({ sessionId: id, eventType: 'session.launch_blocked' });
+
+      it('a second record of the stored code writes nothing, logs nothing, and returns the session as it stands', () => {
+        const s = start();
+        const first = store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        const again = store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        assert.equal(blockedEvents(s.id).length, 1);
+        assert.equal(again.launchBlocker.code, 'trust_required', 'the caller is told what is stored, not "nothing"');
+        assert.equal(again.launchBlocker.observedAt, first.launchBlocker.observedAt, 'it still says when the dialog was first seen');
+      });
+
+      it('a different code is a different dialog: it replaces the stored one and is logged', () => {
+        const s = start();
+        store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        const other = store.sessions.setLaunchBlocker(s.id, { ...BLOCKER, code: 'login_required', label: 'login screen' });
+        assert.equal(other.launchBlocker.code, 'login_required');
+        assert.deepEqual(blockedEvents(s.id).map((e) => e.detail.code).sort(), ['login_required', 'trust_required']);
+      });
+
+      it('a stored blocker that cannot be read is not "the same": it is replaced and logged', () => {
+        const s = start();
+        store.getDb().prepare('UPDATE sessions SET launch_blocker = ? WHERE id = ?').run('{not json', s.id);
+        const after = store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        assert.equal(after.launchBlocker.code, 'trust_required');
+        assert.equal(blockedEvents(s.id).length, 1);
+      });
+
+      it('a dialog shown again after it was answered is a new event', () => {
+        const s = start();
+        store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        store.sessions.clearLaunchBlocker(s.id);
+        store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        assert.equal(blockedEvents(s.id).length, 2);
+        assert.equal(store.activity.query({ sessionId: s.id, eventType: 'session.launch_unblocked' }).length, 1);
+      });
+    });
   });
 
   describe('in what the API serves', () => {
@@ -1043,6 +1081,17 @@ describe('the session keeps its blocker (#2128)', () => {
         tmux.capturePane = () => served(TRUST_DIALOG);
         assert.equal(sessions.getSessionStatus(project.name).launchBlocker.code, 'trust_required');
         assert.equal(store.activity.query({ sessionId: s.id, eventType: 'session.launch_blocked' }).length, 1, 'and does not record it again');
+      });
+
+      it('a reader holding a row from before the boot watch recorded the dialog does not record it twice (#2195)', () => {
+        const s = start();
+        const snapshot = store.sessions.get(s.id);
+        store.sessions.setLaunchBlocker(s.id, BLOCKER);
+        tmux.capturePane = () => served(TRUST_DIALOG);
+        const res = sessions._reconcileLaunchBlocker(snapshot, 'claude');
+        assert.equal(store.activity.query({ sessionId: s.id, eventType: 'session.launch_blocked' }).length, 1);
+        assert.equal(res.launchBlocker.code, 'trust_required', 'it reports the stored blocker, not its snapshot\'s none');
+        assert.equal(res.withhold.code, 'trust_required');
       });
 
       it('a pane that could not be read changes nothing: unread is not answered', () => {
