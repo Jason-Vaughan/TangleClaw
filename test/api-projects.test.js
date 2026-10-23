@@ -1061,4 +1061,80 @@ describe('api-projects', () => {
       }
     });
   });
+
+  describe('GET /api/projects — a slow scan must not delay the switchboard (#2557)', () => {
+    const dirScanner = require('../lib/dir-scanner');
+    const { monitorEventLoopDelay } = require('node:perf_hooks');
+
+    // Generous on purpose: a CI runner under load answers a local GET in tens of
+    // milliseconds, while work that blocks the loop costs the whole of what it
+    // blocks for, once per project on this route.
+    const FAST_ROUTE_BOUND_MS = 500;
+    // How slow each directory read is made. On a real fleet the reads take
+    // seconds in all; several of these keep the projects request in flight long
+    // enough for the switchboard to be asked many times while it runs.
+    const SCAN_READ_MS = 200;
+    const PROJECT_COUNT = 4;
+
+    it('keeps answering switchboard reads promptly for the whole of a slow project scan', async () => {
+      const names = [];
+      for (let i = 0; i < PROJECT_COUNT; i++) {
+        const name = `slow-scan-2557-${i}`;
+        const dir = path.join(projectsDir, name);
+        fs.mkdirSync(dir, { recursive: true });
+        store.projects.create({ name, path: dir, engineId: 'claude' });
+        names.push(name);
+      }
+
+      // Every scanner read is slow but asynchronous, as the real child is: the
+      // route spends the whole request awaiting reads one project at a time, so
+      // work on that path that blocked the loop for as long as the bound below
+      // would land between two of the switchboard reads and show up as one of
+      // them stalling. Shorter blocking passes; the bound is what CI tolerates.
+      const real = dirScanner.request;
+      let reads = 0;
+      dirScanner.request = (op, payload, opts) => {
+        reads++;
+        return new Promise((resolve) => setTimeout(resolve, SCAN_READ_MS))
+          .then(() => real(op, payload, opts));
+      };
+
+      const lag = monitorEventLoopDelay({ resolution: 10 });
+      lag.enable();
+      try {
+        let projectsSettled = false;
+        const slow = request('GET', '/api/projects').then((r) => { projectsSettled = true; return r; });
+
+        const timings = [];
+        while (!projectsSettled) {
+          const started = Date.now();
+          const fast = await request('GET', `/api/sessions/${names[0]}/medusa/messages`);
+          timings.push(Date.now() - started);
+          assert.equal(fast.status, 200, 'every switchboard read must be answered');
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        lag.disable();
+
+        const { status, data } = await slow;
+        assert.equal(status, 200);
+        for (const name of names) {
+          assert.ok(data.projects.some((p) => p.name === name), `${name} must be listed once the scan answers`);
+        }
+        // The overlap is what makes the timings mean anything: the projects
+        // request read every project slowly, and the switchboard was asked
+        // throughout rather than once before or after it.
+        assert.ok(reads > PROJECT_COUNT, `the scan must have read each project and the folder (${reads} reads)`);
+        assert.ok(timings.length >= PROJECT_COUNT,
+          `the switchboard must have been asked throughout the scan, not ${timings.length} time(s)`);
+        const worst = Math.max(...timings);
+        assert.ok(worst < FAST_ROUTE_BOUND_MS,
+          `a switchboard read took ${worst}ms while a project scan was in flight (all: ${timings.join(', ')})`);
+        assert.ok(lag.max / 1e6 < FAST_ROUTE_BOUND_MS,
+          `the event loop stalled for ${(lag.max / 1e6).toFixed(0)}ms while a project scan was in flight`);
+      } finally {
+        lag.disable();
+        dirScanner.request = real;
+      }
+    });
+  });
 });
