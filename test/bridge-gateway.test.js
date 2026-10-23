@@ -1661,6 +1661,141 @@ describe('bridge gateway (#2031)', () => {
     });
   });
 
+  describe('a submitted candidate wakes the Master (#2547)', () => {
+    let seq = 0;
+    /**
+     * A candidate as a session's submit stores it.
+     * @param {string} candidateId - Its id.
+     * @param {string} [text] - What the session wants said.
+     * @returns {object} The stored candidate.
+     */
+    const submitted = (candidateId, text = `secret words of ${candidateId}`) => bridgeStore.candidates.submit({
+      candidateId, idemKey: `cand:${candidateId}`, kind: 'milestone', sourceLaunchId: `launch-${++seq}`,
+      sourceProjectId: (store.projects.getByName('Offerer') || store.projects.create({ name: 'Offerer', path: path.join(tmpDir, 'Offerer') })).id,
+      text, receipts: [{ kind: 'workload', id: String(seq), digest: 'b'.repeat(64) }], at: clock
+    }).candidate;
+    /**
+     * The Master decides a candidate, as its `tc bridge` write leaves the row.
+     * @param {string} candidateId - Its id.
+     * @returns {void}
+     */
+    const decided = (candidateId) => store.getDb()
+      .prepare("UPDATE bridge_candidates SET state = 'rejected', version = version + 1, decided_at = ? WHERE candidate_id = ?").run(clock, candidateId);
+    const aboutCandidates = () => hub.system.filter((m) => m.message.includes('candidate'));
+
+    it('tells the Master once, by id only, and not again while it waits', async () => {
+      submitted('cd_one');
+      assert.equal((await gateway.tick()).candidatesTold, 1);
+      assert.equal(aboutCandidates().length, 1);
+      assert.equal(aboutCandidates()[0].to, MASTER_WS);
+      assert.match(aboutCandidates()[0].message, /1 candidate waiting for your decision: cd_one\. Run `tc bridge candidates`\./);
+      assert.ok(!aboutCandidates()[0].message.includes('secret words'), 'the notice carries no text the session wrote');
+      // More than one pass later: what was told stays told while the candidate waits.
+      assert.equal((await gateway.tick()).candidatesTold, 0);
+      assert.equal((await gateway.tick()).candidatesTold, 0);
+      assert.equal(aboutCandidates().length, 1);
+    });
+
+    it('tells a later candidate on its own, and the earlier one never again', async () => {
+      submitted('cd_one');
+      await gateway.tick();
+      later(1000);
+      submitted('cd_two');
+      later(1000);
+      submitted('cd_three');
+      assert.equal((await gateway.tick()).candidatesTold, 2);
+      assert.equal(aboutCandidates().length, 2);
+      assert.match(aboutCandidates()[1].message, /2 candidates waiting for your decision: cd_two, cd_three\./);
+      assert.ok(!aboutCandidates()[1].message.includes('cd_one'));
+    });
+
+    it('names at most ten ids and counts the rest', async () => {
+      for (let i = 1; i <= 12; i++) submitted(`cd_${String(i).padStart(2, '0')}`);
+      assert.equal((await gateway.tick()).candidatesTold, 12);
+      assert.match(aboutCandidates()[0].message, /12 candidates waiting for your decision: cd_01, .*, cd_10 and 2 more\./);
+      assert.equal((await gateway.tick()).candidatesTold, 0);
+    });
+
+    it('forgets a candidate once the Master has decided it, and still tells new ones', async () => {
+      submitted('cd_one');
+      await gateway.tick();
+      decided('cd_one');
+      assert.equal((await gateway.tick()).candidatesTold, 0, 'a decided candidate is not told');
+      assert.ok(![...gateway._state.mastersTold].some((k) => k.startsWith('candidate:')), 'and what was remembered of it is gone');
+      submitted('cd_two');
+      assert.equal((await gateway.tick()).candidatesTold, 1);
+      assert.equal(aboutCandidates().length, 2);
+    });
+
+    it('is not told again because a merge moved its version', async () => {
+      submitted('cd_one');
+      await gateway.tick();
+      store.getDb().prepare("UPDATE bridge_candidates SET version = version + 1 WHERE candidate_id = 'cd_one'").run();
+      assert.equal((await gateway.tick()).candidatesTold, 0, 'the Master made the merge, so it already knows');
+    });
+
+    it('retries a notice that could not be sent, and remembers nothing of it', async () => {
+      submitted('cd_one');
+      hub.systemFails = true;
+      assert.equal((await gateway.tick()).candidatesTold, 0);
+      assert.equal(aboutCandidates().length, 0);
+      hub.systemFails = false;
+      assert.equal((await gateway.tick()).candidatesTold, 1);
+      assert.equal(aboutCandidates().length, 1);
+    });
+
+    it('sends nothing to a Master with no listener, and logs that once', async () => {
+      const { setConsoleStream } = require('../lib/logger');
+      let out = '';
+      setConsoleStream({ write: (s) => { out += s; } });
+      setLevel('warn');
+      try {
+        submitted('cd_one');
+        masterState.listening = false;
+        await gateway.tick();
+        await gateway.tick();
+      } finally { setLevel('error'); setConsoleStream(null); }
+      assert.equal(aboutCandidates().length, 0);
+      assert.equal(out.match(/cannot tell the Project Master of waiting candidates/g).length, 1);
+      masterState.listening = true;
+      assert.equal((await gateway.tick()).candidatesTold, 1, 'told once it listens');
+    });
+
+    it('starts a stopped Master under the same backoff a route has', async () => {
+      masterState.live = false;
+      masterState.ensureError = 'tmux did not answer';
+      submitted('cd_one');
+      await gateway.tick();
+      assert.equal(masterState.ensures, 1);
+      await gateway.tick();
+      assert.equal(masterState.ensures, 1, 'not retried inside the backoff window');
+      assert.equal(aboutCandidates().length, 0, 'a Master that is not there is not told');
+      masterState.ensureError = null;
+      later(16 * 1000);
+      assert.equal((await gateway.tick()).candidatesTold, 1);
+      assert.equal(masterState.ensures, 2);
+    });
+
+    it('a candidate and a route share one backoff window', async () => {
+      masterState.live = false;
+      masterState.ensureError = 'tmux did not answer';
+      await operatorSays('m1', '@nobody hello');
+      assert.equal(masterState.ensures, 1);
+      submitted('cd_one');
+      await gateway.tick();
+      assert.equal(masterState.ensures, 1, 'the candidate does not open a second window');
+    });
+
+    it('tells nothing while the bridge is disabled', async () => {
+      submitted('cd_one');
+      bridgeStore.settings.set('enabled', 'false');
+      const pass = await gateway.tick();
+      assert.equal(pass.candidatesTold, undefined);
+      assert.equal(aboutCandidates().length, 0);
+      assert.equal(masterState.ensures, 0);
+    });
+  });
+
   describe('the helper', () => {
     it('verifies only the active token, and a new one revokes the old', () => {
       const first = gateway.mintHelperToken();

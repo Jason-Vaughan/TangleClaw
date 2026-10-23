@@ -298,6 +298,132 @@ describe('the clear: records what it read, and still clears when it could not re
     }
   });
 
+  /**
+   * Script the composer reads one clear makes: each read returns the next frame,
+   * and stays on the last once they run out. `seen()` says how many were read.
+   * @param {Array<{lines: string[], cursor: object}>} frames - What each read sees.
+   * @returns {{seen: () => number}}
+   */
+  function composerReads(frames) {
+    let next = 0;
+    const frame = () => frames[Math.min(next, frames.length - 1)];
+    // `_readDraft` asks for the cursor first, then the pane: the pane read ends a frame.
+    tmux._draftSeams.cursorInfo = () => frame().cursor;
+    tmux._draftSeams.capturePane = () => { const f = frame(); next += 1; return { lines: f.lines, alternateScreen: false }; };
+    tmux._draftSeams.settle = () => {};
+    return { seen: () => next };
+  }
+
+  /**
+   * A switchboard nudge as Claude Code wraps it in its composer box.
+   * @returns {string[]} Its rows.
+   */
+  function wrappedNudgeRows() {
+    const wake = require('../lib/medusa-wake');
+    const nudge = require('../lib/wake-transports').withNonce(
+      wake._nudgeLineFor('/api/sessions/proj-a/medusa', 1, 'http://localhost:3102'), 'a1b2c3d4e5f6');
+    const rows = [];
+    for (let i = 0; i < nudge.length; i += 76) rows.push((i === 0 ? `❯${NBSP}` : '  ') + nudge.slice(i, i + 76));
+    return rows;
+  }
+
+  /**
+   * A boxed Claude composer holding `rows`, cursor at the end of the last.
+   * @param {string[]} rows - Composer rows.
+   * @returns {{lines: string[], cursor: object}}
+   */
+  const boxed = (rows) => ({ lines: [DIVIDER, ...rows, DIVIDER, CLAUDE_FOOTER], cursor: cursorAtEnd(rows[rows.length - 1]) });
+  const EMPTY = { lines: [DIVIDER, `❯${NBSP}`, DIVIDER, CLAUDE_FOOTER], cursor: { x: 2, y: 0, line: `❯${NBSP}` } };
+
+  it('a wrapped stranded nudge is cleared row by row until the composer is empty (#2555)', () => {
+    try {
+      paneWithDraft('');
+      const rows = wrappedNudgeRows();
+      assert.ok(rows.length >= 3, 'the nudge wraps across several rows');
+      // An engine whose line-kill clears only the cursor's row: one row goes with each.
+      const frames = rows.map((_, k) => boxed(rows.slice(0, rows.length - k)));
+      const reads = composerReads([...frames, EMPTY]);
+      const before = draftStore.readDrafts(ATTEMPT).length;
+      let result;
+      const out = logged(() => { result = tmux._clearPromptLine(session, 'claude', ATTEMPT); });
+      assert.notEqual(result.strandedNudgeResidue, true);
+      assert.match(out, new RegExp(`Cleared a stranded switchboard nudge from the prompt before injecting.* lineKills=${rows.length}`));
+      assert.equal(reads.seen(), rows.length + 1, 'read once before the clear and once after each line-kill');
+      assert.equal(draftStore.readDrafts(ATTEMPT).length, before, 'nothing the operator typed, so nothing kept');
+    } finally {
+      try { tmux.killSession(session); } catch (_) { /* already gone */ }
+    }
+  });
+
+  it('a nudge remnant replaced by the operator\'s text is not cleared further, and the paste is refused (#2555)', () => {
+    try {
+      paneWithDraft('');
+      const rows = wrappedNudgeRows();
+      const reads = composerReads([boxed(rows), boxed([`❯${NBSP}wait, I am typing here`])]);
+      let result;
+      const out = logged(() => { result = tmux._clearPromptLine(session, 'claude', ATTEMPT); });
+      assert.equal(result.strandedNudgeResidue, true);
+      assert.match(out, /stranded switchboard nudge was not fully cleared.* lineKills=1 /);
+      assert.equal(reads.seen(), 2, 'no line-kill after the operator\'s text was seen');
+    } finally {
+      try { tmux.killSession(session); } catch (_) { /* already gone */ }
+    }
+  });
+
+  it('a leftover that is not how the nudge began is not cleared further, and the paste is refused (#2555)', () => {
+    try {
+      paneWithDraft('');
+      const rows = wrappedNudgeRows();
+      // Part of the nudge, but its tail: not what a line-kill from the end leaves, so not taken for a remnant.
+      const reads = composerReads([boxed(rows), boxed([`❯${NBSP}${rows[rows.length - 1].trim()}`])]);
+      let result;
+      logged(() => { result = tmux._clearPromptLine(session, 'claude', ATTEMPT); });
+      assert.equal(result.strandedNudgeResidue, true);
+      assert.equal(reads.seen(), 2, 'no line-kill after a leftover that is not the nudge\'s head');
+    } finally {
+      try { tmux.killSession(session); } catch (_) { /* already gone */ }
+    }
+  });
+
+  it('a terminal reply alone in the composer is cleared without being kept as a draft (#2555)', () => {
+    try {
+      paneWithDraft('');
+      composerReads([boxed([`❯${NBSP}0;276;0c`]), EMPTY]);
+      const before = draftStore.readDrafts(ATTEMPT).length;
+      let result;
+      const out = logged(() => { result = tmux._clearPromptLine(session, 'claude', ATTEMPT); });
+      assert.match(out, /Cleared a terminal reply from the prompt before injecting/);
+      assert.equal(draftStore.readDrafts(ATTEMPT).length, before);
+      assert.notEqual(result.terminalReplyResidue, true);
+    } finally {
+      try { tmux.killSession(session); } catch (_) { /* already gone */ }
+    }
+  });
+
+  it('a terminal reply the clear did not remove refuses the paste (#2555)', () => {
+    try {
+      paneWithDraft('');
+      composerReads([boxed([`❯${NBSP}0;276;0c`])]);
+      assert.throws(() => tmux.sendKeys(session, 'SHOULD-NOT-PASTE', { engineId: 'claude', attemptKey: ATTEMPT, enter: false }),
+        /terminal reply was not fully cleared/);
+      assert.doesNotMatch(promptRow(), /SHOULD-NOT-PASTE/);
+    } finally {
+      try { tmux.killSession(session); } catch (_) { /* already gone */ }
+    }
+  });
+
+  it('a terminal reply beside the operator\'s text is kept as their draft (#2555)', () => {
+    try {
+      paneWithDraft('');
+      composerReads([boxed([`❯${NBSP}0;276;0c fix the bug`]), EMPTY]);
+      const out = logged(() => tmux._clearPromptLine(session, 'claude', ATTEMPT));
+      assert.match(out, /kept in the draft store/);
+      assert.equal(draftStore.readDrafts(ATTEMPT).at(-1).text, '0;276;0c fix the bug');
+    } finally {
+      try { tmux.killSession(session); } catch (_) { /* already gone */ }
+    }
+  });
+
   it('an empty composer logs nothing', () => {
     try {
       paneWithDraft('');

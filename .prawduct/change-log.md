@@ -41,6 +41,37 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-23 — W2-B #2547 + #2555: the Master is told of waiting candidates, and terminal residue no longer holds a wake
+
+<!-- prawduct: type=fix | scope=w2b-2547-2555-master-candidates-composer -->
+
+v5.36.0 Wave 2 chunk W2-B, under `GRANT-V536-BATCH1-20261023` / PM A4.
+- **Approvals:** the Integrator's step-0 approval and rulings (`bd1a6b15`); PM Addendum A6 ratifying `docs/operator-bridge.md` and `docs/engine-guide.md`; the Integrator's approval of `docs/medusa-delivery.md` (`15f27f02`).
+- **Branch:** `fix/2547-2555-master-candidates-composer` from `origin/main` `5b8386a2`, merged with `f4fcac55` (W2-A).
+
+**What changed (#2547).** A submitted candidate was only stored, so it waited until something unrelated woke the Project Master, and the per-launch limit then refused that session's next one.
+- `tick()` in `lib/bridge-gateway.js` now sends the Master one notice per pass naming the newly waiting candidates. It carries ids only, never text, at most ten plus a count.
+- Each candidate is remembered as told under `candidate:<id>` only after the send resolves. The id alone is the key, because a merge moves a version and the Master made the merge.
+- A stopped Master is started through `_masterLive()`, the backoff `_summonMaster` already had, so one window serves routes and candidates.
+- The pass's cleanup learns the `candidate:` key. Without that it would have forgotten the key on every pass and re-told the Master every 15 s.
+- 10 tests in `test/bridge-gateway.test.js`.
+
+**What changed (#2555).** Two composer states held every switchboard wake.
+- A terminal device-attributes reply (`0;276;0c`) left in a Codex composer read as typed input.
+  - `isTerminalReplyResidue` and `_terminalReplyRegion` in `lib/medusa-wake.js` let `_assessPane` read a composer row holding only such replies as at the prompt. The guards are the stranded-nudge excuse's: no glyph-led row below it, and never excusing a missing at-rest marker.
+  - Mixed text is still input. `_composerEmpty`, which four modules read, is unchanged.
+- A stranded nudge wrapped over several rows survived the single line-kill.
+  - `_clearPromptLine` in `lib/tmux.js` now repeats the line-kill while what is left is how the nudge began, at most one per row and 12 in all. Anything else refuses the paste, as before.
+  - A residue-only composer is cleared without going to the draft store.
+  - Both sends go through one `_lineKill` helper, so the `tmux -t` site count is unchanged.
+- 13 tests in `test/medusa-wake-stranded-nudge.test.js` and `test/tmux-draft-capture.test.js`.
+
+**Spec corrections.** The issues name `reconcile` (it is `tick()`) and `clearStrandedSwitchboardNudge` (it is `_clearPromptLine`). They put `composer-has-input` in `lib/tmux.js`; it is decided in `lib/medusa-wake.js`. They asked to strip the reply; it is excused only when it stands alone.
+
+**Review.** Cumulative Critic: 0 blocking.
+- Its note (a remnant matched as any substring) was fixed to the prefix rule, and `verify-resolutions` came back clean.
+- Its two warnings, stale test evidence and records deferred until W2-A merged, were accepted on the record.
+
 ## 2026-10-23 — W2-A #2195: the same startup dialog is recorded once
 
 <!-- prawduct: type=fix | scope=2195-launch-blocker-idempotent -->
