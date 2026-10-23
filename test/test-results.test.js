@@ -365,6 +365,13 @@ describe('hoistToTopLevelSuites: every leaf beneath a top-level <testsuite>, not
       { code: 'JUNIT_SHAPE', message: /after the <testsuites> root/ });
   });
 
+  it('refuses a report whose rewrite it cannot prove conserved', () => {
+    // A leafless top-level suite: Prawduct counts its tests="" attribute, the
+    // report's leaves do not hold those cases, so no rewrite can show they match.
+    const xml = junit(`${SUITE('s', 1, 0, 0, CASE('a'))}\n\t<testsuite name="summary only" tests="3" failures="0" skipped="0"/>`);
+    assert.throws(() => results.hoistToTopLevelSuites(xml), { code: 'JUNIT_SHAPE', message: /did not conserve the report/ });
+  });
+
   it('reads a failure body\'s escaped < and bare > as text, not tags', () => {
     // FAILED_CASE carries `Object.&lt;anonymous> (/x/y.test.js:2:1)` in its body.
     assert.equal(results.hoistToTopLevelSuites(PARENT_FAILED).added, 0);

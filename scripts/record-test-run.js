@@ -52,7 +52,8 @@
  * kept reports stay on the host.
  *
  * Usage: node scripts/record-test-run.js [--keep <dir>] [--base <branch>]
- *   --keep <dir>     where the two reports go (default `.tangleclaw/test-runs`)
+ *   --keep <dir>     where the two reports go (default `.tangleclaw/test-runs`);
+ *                    inside the checkout it must be gitignored, or it is refused
  *   --base <branch>  passed to suite-evidence.js; read in ci mode only
  * Exit 0 when Prawduct's record was verified; 1 on any refusal.
  */
@@ -263,6 +264,15 @@ function recordTestRun(argv, io = {}) {
       throw new Refusal('run', err.message);
     }
     const keep = path.resolve(root, parsed.keep || PATHS.keep);
+    const keepRel = path.relative(root, keep);
+    if (!keepRel.startsWith('..') && !path.isAbsolute(keepRel)) {
+      // Reports written inside the checkout must be ignored by git, or they make
+      // the checkout dirty and the after-suite check refuses every run.
+      const probe = path.join(keepRel, `${receipt.head}.raw.junit.xml`);
+      if (git(['check-ignore', '-q', '--', probe]).status !== 0) {
+        throw new Refusal('args', `--keep ${parsed.keep} is inside the checkout and not ignored by git, so the reports would make it dirty; use a gitignored folder (the default ${PATHS.keep} is) or one outside the checkout`);
+      }
+    }
     fs.mkdirSync(keep, { recursive: true });
     const rawPath = path.join(keep, `${receipt.head}.raw.junit.xml`);
     const hoistedPath = path.join(keep, `${receipt.head}.prawduct.junit.xml`);

@@ -80,11 +80,12 @@ let calls;
  * @param {number} [opts.status] - suite-evidence's exit code
  * @param {object} [opts.env] - The environment
  * @param {function} [opts.prawduct] - The prawduct-hook seam
+ * @param {boolean} [opts.ignored] - Whether git ignores a path under --keep
  * @param {function(number): {head: string, tree: string, status: string}} [opts.checkout] - What git answers on its
  *   Nth reading of the checkout (0 before the run); a clean HEAD/TREE every time by default
  * @returns {object}
  */
-function seams({ xml = report(), status = 0, env = {}, prawduct, checkout = () => ({ head: HEAD, tree: TREE, status: '' }) } = {}) {
+function seams({ xml = report(), status = 0, env = {}, prawduct, checkout = () => ({ head: HEAD, tree: TREE, status: '' }), ignored = true } = {}) {
   let reading = -1;
   return {
     root,
@@ -97,6 +98,7 @@ function seams({ xml = report(), status = 0, env = {}, prawduct, checkout = () =
       const c = checkout(reading);
       calls.git.push(args.join(' '));
       if (args[0] === 'rev-parse') return { status: 0, stdout: `${args[1] === 'HEAD' ? c.head : c.tree}\n` };
+      if (args[0] === 'check-ignore') return { status: ignored ? 0 : 1, stdout: '' };
       return { status: 0, stdout: c.status };
     },
     runSuiteEvidence: (args, childEnv) => {
@@ -152,9 +154,28 @@ describe('record-test-run: a green run, recorded whole', () => {
     assert.equal(r.tally.testcases, 5);
   });
 
-  it('keeps the reports where --keep says', () => {
-    recorder.recordTestRun(['--keep', 'elsewhere'], seams());
+  it('keeps the reports where --keep says, inside the checkout when git ignores it', () => {
+    assert.equal(recorder.recordTestRun(['--keep', 'elsewhere'], seams()), 0);
     assert.equal(receipt().raw.path, path.join(root, 'elsewhere', `${HEAD}.raw.junit.xml`));
+    assert.ok(calls.git.includes(`check-ignore -q -- ${path.join('elsewhere', `${HEAD}.raw.junit.xml`)}`));
+  });
+
+  it('refuses a --keep inside the checkout that git does not ignore, before running anything', () => {
+    assert.equal(recorder.recordTestRun(['--keep', 'reports'], seams({ ignored: false })), 1);
+    assert.equal(receipt().refusal.step, 'args');
+    assert.match(receipt().refusal.reason, /--keep reports is inside the checkout and not ignored by git/);
+    assert.equal(calls.suite.length, 0);
+  });
+
+  it('takes a --keep outside the checkout without asking git', () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'record-test-run-keep-'));
+    try {
+      assert.equal(recorder.recordTestRun(['--keep', outside], seams({ ignored: false })), 0);
+      assert.equal(receipt().raw.path, path.join(outside, `${HEAD}.raw.junit.xml`));
+      assert.ok(!calls.git.some((c) => c.startsWith('check-ignore')));
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it('runs suite-evidence.js with the environment and --base passed through, never a suite of its own', () => {
