@@ -209,7 +209,7 @@ function staticSteps() {
     },
     {
       name: 'tiers ledger',
-      run: () => { const out = sink(); const code = tiers.main(['--check'], { stdout: out, ledgerPath: path.join(root, 'test', 'tiers.json'), manifestPath: path.join(root, '.testament.toml') }); return { ok: code === 0, output: out.text() }; }
+      run: () => { const out = sink(); const code = tiers.main(['--check'], { stdout: out, ledgerPath: path.join(root, 'test', 'tiers.json') }); return { ok: code === 0, output: out.text() }; }
     },
     {
       name: 'dead exports',
