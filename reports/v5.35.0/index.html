@@ -578,14 +578,14 @@
 
         <!-- Project Manager Box -->
         <rect x="205" y="30" width="175" height="100" rx="12" fill="#0f172a" stroke="#38bdf8" stroke-width="2"/>
-        <text x="292" y="56" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="700">Project Manager (#1437)</text>
+        <text x="292" y="56" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="700">Project Manager</text>
         <text x="292" y="73" text-anchor="middle" fill="#38bdf8" font-size="10">Antigravity · Gemini 4 Argon</text>
         <text x="292" y="92" text-anchor="middle" fill="#94a3b8" font-size="10">5-Wave Train &amp; Seam Scope</text>
         <text x="292" y="108" text-anchor="middle" fill="#94a3b8" font-size="10">Release Cut &amp; Live Deploy</text>
 
         <!-- Architect Box -->
         <rect x="205" y="175" width="175" height="105" rx="12" fill="#0f172a" stroke="#c084fc" stroke-width="2"/>
-        <text x="292" y="201" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="700">Architect (#1439)</text>
+        <text x="292" y="201" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="700">Architect</text>
         <text x="292" y="218" text-anchor="middle" fill="#c084fc" font-size="10">Antigravity · Gemini 4 Argon</text>
         <text x="292" y="237" text-anchor="middle" fill="#94a3b8" font-size="10">39 Rulings (A388–A426)</text>
         <text x="292" y="253" text-anchor="middle" fill="#94a3b8" font-size="10">18-Area Boundary &amp; Seam Design</text>
@@ -593,7 +593,7 @@
 
         <!-- Integrator Box -->
         <rect x="430" y="95" width="180" height="118" rx="12" fill="#0f172a" stroke="#f59e0b" stroke-width="2"/>
-        <text x="520" y="121" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="700">Lane Integrator (#1440)</text>
+        <text x="520" y="121" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="700">Lane Integrator (INT)</text>
         <text x="520" y="138" text-anchor="middle" fill="#fbbf24" font-size="10">OpenAI Codex · GPT-5.4</text>
         <text x="520" y="156" text-anchor="middle" fill="#94a3b8" font-size="10">Step-0 Seam Gate &amp; SUITE_SLOT</text>
         <text x="520" y="172" text-anchor="middle" fill="#94a3b8" font-size="10">LANE_QUEUE &lt; 15 KB Cap (3.5 KB)</text>
@@ -602,7 +602,7 @@
 
         <!-- Builder Lane A -->
         <rect x="660" y="20" width="275" height="122" rx="12" fill="#0f172a" stroke="#34d399" stroke-width="2"/>
-        <text x="797" y="45" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="700">Builder Lane A (#1441) + Critic</text>
+        <text x="797" y="45" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="700">Builder Lane A + Critic</text>
         <text x="797" y="62" text-anchor="middle" fill="#34d399" font-size="10">Claude Code · Fable 5.1 → Opus 5.5</text>
         <text x="797" y="80" text-anchor="middle" fill="#94a3b8" font-size="10">24/24 Governed /clear + Token Readbacks</text>
         <text x="797" y="96" text-anchor="middle" fill="#94a3b8" font-size="10">50/50 Static Pre-Check Ring (1.01s)</text>
@@ -611,7 +611,7 @@
 
         <!-- Observer Box -->
         <rect x="660" y="175" width="275" height="110" rx="12" fill="#0f172a" stroke="#38bdf8" stroke-width="2"/>
-        <text x="797" y="201" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="700">Sprint Observer (#1442)</text>
+        <text x="797" y="201" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="700">Sprint Observer (Obsr)</text>
         <text x="797" y="218" text-anchor="middle" fill="#38bdf8" font-size="10">Antigravity · Gemini 4 Argon</text>
         <text x="797" y="236" text-anchor="middle" fill="#94a3b8" font-size="10">Source-Checked W&lt;N&gt;-REC &amp; Release Audits</text>
         <text x="797" y="252" text-anchor="middle" fill="#94a3b8" font-size="10">2 Autonomous Liveness Nudges (~40s Recovery)</text>
@@ -1095,7 +1095,7 @@
             <tr>
               <td><strong>Gate 4: Zero Orphan Daemons / Port Leases</strong></td>
               <td>0 temporary preview servers, scratch <code>TANGLECLAW_HOME</code>, or temporary lane port leases</td>
-              <td>0 temporary lane port leases; 1 scratch HTTP server on <code>:5188</code> stopped; subordinate sessions <code>#1440</code>, <code>#1441</code>, <code>#1442</code> wrapped &amp; retired</td>
+              <td>0 temporary lane port leases; 1 scratch HTTP server stopped; all subordinate sprint sessions wrapped &amp; retired</td>
               <td><span class="badge badge-green">PASS</span></td>
             </tr>
           </tbody>
@@ -1134,7 +1134,7 @@
               <td>3</td>
               <td><strong>Active vs Allowed Builders</strong></td>
               <td>1 active (<code>runs_alone: true</code>); 0 idle burn</td>
-              <td><strong>1 / 1 active</strong> (<code>TC-Lane-A #1441</code>); <code>TC-Lane-B..D</code> unlaunched (<strong>0 sessions, 0 tokens burned</strong>)</td>
+              <td><strong>1 / 1 active</strong> (<code>TC-Lane-A</code>); <code>TC-Lane-B..D</code> unlaunched (<strong>0 sessions, 0 tokens burned</strong>)</td>
               <td>Enable 2–4 parallel Builders on disjoint <code>docs/areas.json</code> labels in <code>v5.36.0</code></td>
             </tr>
             <tr>
