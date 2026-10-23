@@ -2,7 +2,7 @@
 
 `tc` is the command a session uses to talk to TangleClaw from inside its own terminal: who it is, what the rest of the fleet is doing, its mail, its launch context, and the state it reports.
 
-**Applies to:** TangleClaw 5.34.0. Other versions may have a different roster; on any install, `tc --help` is the authority.
+**Applies to:** TangleClaw 5.35.0. Other versions may have a different roster; on any install, `tc --help` is the authority.
 
 **If this page and your install disagree, your install is right.** `tc --help` prints the roster of the version you are running. Stop and use its help and error output until this page is corrected.
 

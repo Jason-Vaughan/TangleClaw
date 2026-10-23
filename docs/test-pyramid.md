@@ -137,6 +137,25 @@ Stages 3, 4 and 5 together are exactly `test/*.test.js` (pinned by `test/test-st
 runs nothing and says so, because `node --test` with no files discovers its own, which would be
 the whole suite.
 
+## A documentation-only pull request: Stage 1 and CI, no suite slot
+
+A pull request that changes only documentation does not take `SUITE_SLOT` or run `all` locally.
+The lane runs Stage 1 (`node scripts/test-stage.js 1`) and relies on GitHub `Tests` CI on the
+exact head. The full suite exists to catch a change in behaviour, and a documentation-only diff has
+none to catch; Stage 1 still catches what a `.md` edit can break here, such as the CLAUDE.md block
+falling out of sync.
+
+What decides it is measured, not judged: `prawduct-hook check-pr-doc-only`, run on the branch
+after its last commit. It reads the committed diff `merge-base...HEAD` against the base branch, so
+an uncommitted edit is not in it. It exits 0, and prints that the diff is doc-only, only when the
+diff is non-empty and every file in it is non-judgeable: a `.md` file outside the methodology's
+protected paths, or Prawduct's own session metadata. Any other file (code, a test, a workflow, a
+JSON or YAML file) makes it exit 1, and so does an empty diff or a base it cannot resolve: it fails
+closed. Exit 1 means the pull request takes the suite gate its rules name.
+
+Record the command's output in the pull request body. A later commit that adds a judgeable file
+ends the exemption for that head; run the check again on every new head.
+
 ## Stage 2: the tests a diff reaches, or an honest refusal
 
 `node scripts/test-touched.js [--base <ref>] [--run] [--explain] [--junit <path>]` is the
