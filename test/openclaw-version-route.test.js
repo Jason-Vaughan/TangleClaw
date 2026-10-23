@@ -95,4 +95,59 @@ describe('GET /api/openclaw/connections/:id/version (#1527)', () => {
     assert.equal(status, 404);
     assert.equal(called, false);
   });
+
+  it('keeps answering switchboard reads promptly while a slow probe is in flight (#2557)', async () => {
+    // An unreachable host holds the probe for its whole ssh connect timeout. The
+    // read here is slow but asynchronous, as the real one is, and the switchboard
+    // is asked throughout it. A probe that went back to a synchronous ssh would
+    // stall the loop for as long as the host took, which the delay monitor sees
+    // wherever in the window it happens and the switchboard timings see as one
+    // read that waited for it.
+    const { monitorEventLoopDelay } = require('node:perf_hooks');
+    const FAST_ROUTE_BOUND_MS = 500;
+    const PROBE_MS = 600;
+    const name = 'version-probe-2557';
+    const dir = path.join(tmpDir, name);
+    fs.mkdirSync(dir, { recursive: true });
+    store.projects.create({ name, path: dir, engineId: 'claude' });
+
+    let probes = 0;
+    ocv._internal.execAsync = () => {
+      probes++;
+      return new Promise((resolve) => setTimeout(resolve, PROBE_MS))
+        .then(() => ({ stdout: 'OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw:2026.9.4\n' }));
+    };
+
+    const lag = monitorEventLoopDelay({ resolution: 10 });
+    lag.enable();
+    try {
+      let probeSettled = false;
+      const slow = getJson(`/api/openclaw/connections/${connId}/version?force=1`)
+        .then((r) => { probeSettled = true; return r; });
+
+      const timings = [];
+      while (!probeSettled) {
+        const started = Date.now();
+        const fast = await getJson(`/api/sessions/${name}/medusa/messages`);
+        timings.push(Date.now() - started);
+        assert.equal(fast.status, 200, 'every switchboard read must be answered');
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      lag.disable();
+
+      const { status, json } = await slow;
+      assert.equal(status, 200);
+      assert.equal(json.version, '2026.9.4', 'the slow probe still answers once the host does');
+      assert.equal(probes, 1, 'a forced probe runs once');
+      assert.ok(timings.length >= 5,
+        `the switchboard must have been asked throughout the probe, not ${timings.length} time(s)`);
+      const worst = Math.max(...timings);
+      assert.ok(worst < FAST_ROUTE_BOUND_MS,
+        `a switchboard read took ${worst}ms while a version probe was in flight (all: ${timings.join(', ')})`);
+      assert.ok(lag.max / 1e6 < FAST_ROUTE_BOUND_MS,
+        `the event loop stalled for ${(lag.max / 1e6).toFixed(0)}ms while a version probe was in flight`);
+    } finally {
+      lag.disable();
+    }
+  });
 });
