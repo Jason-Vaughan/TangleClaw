@@ -219,3 +219,66 @@ describe('the wake monitor replaces a stranded nudge (#1621)', () => {
     assert.equal(world.injected.length, 0, 'operator text is never typed over');
   });
 });
+
+describe('a terminal device-attributes reply in the composer does not hold a wake (#2555)', () => {
+  const CODEX = wake.ENGINE_WAKE_PROFILES.codex;
+  const CX_STATUS = '  GPT-6-Astra default · Ready · Ask for approval';
+  /**
+   * A resting Codex pane whose composer row holds `typed`, cursor after it.
+   * @param {string} typed - What the composer row holds after its glyph and pad.
+   * @returns {{lines: string[], cursor: {x: number, y: number, line: string}}}
+   */
+  const codexHolding = (typed) => {
+    const row = `› ${typed}`;
+    return { lines: ['• Done.', '', row, '', CX_STATUS], cursor: { x: [...row].length, y: 0, line: row } };
+  };
+
+  it('recognises replies, and only replies', () => {
+    for (const text of ['0;276;0c', '[>0;276;0c', '\x1b[>0;276;0c', '\x1b[?62;22c', '?1;2c', '0;276;0c0;276;0c', ' 0;276;0c ']) {
+      assert.equal(wake.isTerminalReplyResidue(text), true, JSON.stringify(text));
+    }
+    for (const text of ['3c', 'abc', '12c', '0;276;0c fix the bug', 'fix 0;276;0c', '', null, 7]) {
+      assert.equal(wake.isTerminalReplyResidue(text), false, JSON.stringify(text));
+    }
+  });
+
+  it('a Codex composer holding only the reply is at the prompt', () => {
+    const { lines, cursor } = codexHolding('0;276;0c');
+    assert.equal(wake._composerEmpty(cursor, CODEX), false, 'the cursor alone reads it as input');
+    assert.deepEqual(wake._assessPane(lines, CODEX, cursor), { idle: true, reason: 'at-prompt' });
+  });
+
+  it('the reply with anything typed beside it is still the operator\'s input', () => {
+    for (const typed of ['0;276;0c fix the bug', 'fix the bug 0;276;0c', '3c']) {
+      const { lines, cursor } = codexHolding(typed);
+      assert.deepEqual(wake._assessPane(lines, CODEX, cursor), { idle: false, reason: 'composer-has-input' }, typed);
+    }
+  });
+
+  it('text after the cursor is input, whatever is before it', () => {
+    const row = '› 0;276;0c and more';
+    const cursor = { x: [...'› 0;276;0c'].length, y: 0, line: row };
+    assert.deepEqual(wake._assessPane(['• Done.', '', row, '', CX_STATUS], CODEX, cursor), { idle: false, reason: 'composer-has-input' });
+  });
+
+  it('a row led by the glyph below the composer still refuses, with the at-rest status row in view', () => {
+    const { cursor } = codexHolding('0;276;0c');
+    // The status row is kept, so the activity check passes and only the row
+    // below the composer can refuse: that row is the selector of a dialog.
+    const lines = [cursor.line, '', '  Would you like to run the following command?', '',
+      '› 1. Yes, proceed (y)', '  2. No, and tell Codex what to do differently (esc)', '', CX_STATUS];
+    assert.deepEqual(wake._assessPane(lines, CODEX, cursor), { idle: false, reason: 'composer-has-input' });
+  });
+
+  it('a busy turn still wins over the reply', () => {
+    const { lines, cursor } = codexHolding('0;276;0c');
+    const busy = [...lines.slice(0, -1), '• Working (3s • esc to interrupt)', ...lines.slice(-1)];
+    assert.equal(wake._assessPane(busy, CODEX, cursor).idle, false);
+  });
+
+  it('a Claude composer holding only the reply is at the prompt too', () => {
+    const typed = `❯${NBSP}0;276;0c`;
+    const lines = [DIVIDER, typed, DIVIDER, FOOTER];
+    assert.deepEqual(wake._assessPane(lines, CLAUDE, { x: [...typed].length, y: 0, line: typed }), { idle: true, reason: 'at-prompt' });
+  });
+});
