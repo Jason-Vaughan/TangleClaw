@@ -41,6 +41,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-23 — W1-A #2558: v5.35.0 recorded as released, a manual `Tests` run, and the doc-only fast path written down
+
+<!-- prawduct: type=chore | scope=2558-v535-sync-dispatch-docpath -->
+
+v5.36.0 Wave 1 chunk W1-A, under `GRANT-V536-BATCH1-20261023`, on the Integrator's approval of plan sha256 `df81a8c1…54e1a6` and its step-0 seam accept. Branch `docs/2558-v535-sync-dispatch` from `origin/main` `415eb036`.
+
+**What changed.** `docs/releases/v5.35-status.md` now reads released and deployed, each finish line from a read-only measurement taken 2026-10-23 18:24 UTC: #2553 merged as `415eb036`, `release.yml` concluded `success` on it, the tag `v5.35.0` peels to it and the Release is published; the live checkout is at the tag, the server started after the Release, health answers `5.35.0`, the store reads schema 68, and the pre-deploy backup was found and read (schema 68, `quick_check` ok), not restored. `docs/tc-cli-reference.md` applies to 5.35.0; the roster did not change between the two tags. `.github/workflows/test.yml` gains `workflow_dispatch:`, so a commit whose push webhook was dropped can be tested by hand; `test/ci-workflow.test.js` pins it and was seen failing without it. `docs/test-pyramid.md` says when a pull request skips `SUITE_SLOT`: `prawduct-hook check-pr-doc-only` exits 0 on its committed diff, and then Stage 1 plus GitHub CI are its gate.
+
+**Corrected on the way.** The charter and the issue name `scripts/check-pr-doc-only.js` and `npm run test:stage1`; neither exists (no `package.json`). The real commands are documented instead, as the Integrator ruled. The issue's `0cd77e71` (#2552) and `dcab8e74` (the dropped webhook) are not objects in this repository; #2552 is `1e608f28`, already cited. This pull request is not itself doc-only, so it takes the full suite gate.
+
 ## 2026-10-23 — W5-REL: prepare v5.35.0
 
 <!-- prawduct: type=chore | scope=w5-rel-release-5.35.0 -->
