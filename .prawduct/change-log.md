@@ -53,6 +53,8 @@ v5.36.0 Wave 1 chunk W1-B, under `GRANT-V536-BATCH1-20261023`.
 - `lib/test-results.js` gains `prawductView` (that reading, modelled) and `hoistToTopLevelSuites`. The hoist renames `<undefined>` and wraps runs of bare top-level cases. It refuses any other top-level shape, and it checks leaf, failure and skip conservation before returning. On the kept report, Prawduct's parse of the hoisted copy reads all 21,997.
 - `scripts/record-test-run.js` runs `scripts/suite-evidence.js` (either mode) and reconciles the raw report. It then hoists, ingests with `prawduct-hook test-evidence record --from-junit`, and re-reads `.prawduct/.test-evidence.json`, refusing on any count that disagrees.
 - It keeps both reports by head and writes the receipt `.tangleclaw/test-recorder.json` on every outcome.
+- The record names one clean commit (INT pre-suite review, `32a8f36f`): the checkout must be clean at the start, and unchanged and clean after the suite and again before the ingest; Prawduct's `evidence_tree` must equal HEAD's tree.
+- The same gap shows in v5.34.0's 2026-10-19 release record: 12,737 passed + 1 skipped against 21,925 leaves in its kept report, exactly what `prawductView` predicts (that run was green).
 - The new test is declared in the small tier (`test/tiers.json`, regenerated `.testament.toml`).
 
 **#2371 stays inactive.** The gitignored activation packet (`.tangleclaw/plans/w1b-2371-activation-packet.md`) is a proposal only. It does three things:
