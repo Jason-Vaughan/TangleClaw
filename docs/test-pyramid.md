@@ -225,6 +225,67 @@ modules under `lib/wrap-steps/` shadowed by the one bounded dynamic require in
 candidates. The audit pass is about 90 ms on top of the graph; the Stage 1 step is about 1.2 s.
 The first removal batch is #2544.
 
+## The coverage redundancy matrix and the source-reader triage
+
+Two more reports for a consolidation wave to read. Like the dead-export audit, they list
+candidates and delete nothing (PM ruling D4): retiring or merging a test is a contract change, and
+each batch has its own issue and Architect acceptance.
+
+**`node scripts/audit-test-redundancy.js --tier small`** runs each file of a tier alone, under its
+tier's guard and timeout exactly as its stage runs it, with node's own coverage
+(`--experimental-test-coverage --test-reporter=lcov`; no `c8`). From each run it keeps the product
+lines executed: lines of `server.js`, `lib/`, `public/`, `bin/` and `scripts/` with a hit count
+above zero. The test's own lines and its helpers' do not count, since every file covers itself.
+The report gives, for every file, how many product lines it executes and how many of those no other
+file of the run executes (what it adds), and three lists:
+
+- **exact-subset candidates**: files that add nothing;
+- **removable together**: one set of candidates, chosen greedily from the smallest up, that loses
+  no line when all are retired at once (two files executing the same lines are each a candidate,
+  and only one of them can go);
+- **no product line executed**: files that prove what they prove by reading text or by testing a
+  helper, about which line coverage says nothing. The source-reader triage covers them.
+
+Line coverage cannot see what a file asserts. Loading a module executes its top-level lines, so a
+file that only requires a large module "covers" thousands of lines. Two files that execute the same
+line may assert different things about it, and branches are not compared. A run that fails or
+writes no report is named and left out, which can only make other files look less redundant. It is
+slow by nature, one process per file, so it runs on request and never in a stage. `--jobs N` sets
+how many files run at once (half the host's cores by default), and a list of test files in place
+of `--tier` runs just those, each under its own tier.
+
+**`node scripts/audit-source-readers.js`** finds every test file that reads product source as text:
+a `readFileSync` or `readFile` whose path the walker above resolves under `server.js`, `lib/`,
+`public/`, `bin/` or `scripts/`. A helper that reads a directory by a file name (`pub('app.js')`)
+reads the files the test names there, and one that names none sweeps the directory. A read from
+the repository root that names no source file is not a source read. Each reader is in one class:
+
+| Class | What it reads | Verdict |
+|---|---|---|
+| `guard` | only non-code files (markup, styles), or a sweep of a directory | kept: it asserts a property of the text that no runtime test can |
+| `lift` | it uses `test/helpers/lift.js` | kept: it is how `public/` code runs in node |
+| `regex-of-behaviour` | a named product code file (`.js`, or a `bin/` command) | a candidate, split by runtime proof |
+
+Runtime proof is read from the require graph of every test, plus the `bin/` and `scripts/` entry
+points a test names without reading, which it spawns. It is `self` when the test itself loads every
+file it reads, `other` when some other test loads each of them, and `none` when no test loads one
+of them. `self` and `other` may duplicate a runtime test (#2549). `none` needs a runtime test, and
+nearly all of it is `public/`, which #1037 owns: node runs browser code only through the lift
+helper, whose file argument the audit does not resolve, so a `public/` file never counts as loaded.
+A read whose path the walker cannot resolve (a variable, a call) is opaque. Opaque reads are counted
+per file and never classified; most are temporary files and fixtures.
+
+**Measured when the audits were built** (`main` at `f0882cae`, the laptop):
+
+| Audit | Time | Result |
+|---|---|---|
+| redundancy matrix, Small tier (249 files, 5 at a time) | 14.1 s | 28 exact-subset candidates, 27 removable together, 90 files executing no product line; 107,170 product lines executed in all |
+| source-reader triage, every test file | 1.3 s | 224 readers: 11 guard, 81 lift, 132 regex-of-behaviour (40 self, 21 other, 71 none); 823 opaque reads in 167 files |
+
+The first batches are #2548 (the matrix's candidates) and #2549 (the `self` and `other` readers).
+The issue's 2026-10-18 snapshot counted 207 reading files and the Wave 4 plan's baseline counted 37, each
+by a rule neither recorded; the 224 above is by the rule stated here.
+
 ## What a run certified: the runner's summary and the junit report
 
 Every stage that runs tests ends by reconciling the junit report with the runner's own summary,
@@ -277,8 +338,9 @@ Numbers something relies on are re-measured, never copied: the ledger's counts a
 
 - Stage 2 is as good as text: a read whose path is built from nothing literal is counted and
   reported, not followed, and a dynamic require with no literal prefix escalates every change.
-  The coverage-based audits (the per-file redundancy matrix, the source-reader triage) are the
-  next chunk of #2498.
+- The three audits are reports. No test or export has been retired on their word; each removal
+  batch is its own issue (#2544, #2548, #2549) with Architect acceptance. The redundancy matrix
+  has been measured on the Small tier only.
 - `test_command`, CI and every gate are unchanged: `all` is that command, argument for argument,
   with the reconciliation printed after it, and nothing yet reads a stage as suite evidence (that
   is #2371, proposed and Operator-held).

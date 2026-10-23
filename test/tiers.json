@@ -17,6 +17,8 @@
     "test/account-setup-page.test.js",
     "test/areas-map.test.js",
     "test/audit-dead-exports.test.js",
+    "test/audit-source-readers.test.js",
+    "test/audit-test-redundancy.test.js",
     "test/auth-gate.test.js",
     "test/auth-identity.test.js",
     "test/auth-session.test.js",
