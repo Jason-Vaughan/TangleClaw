@@ -148,6 +148,7 @@
     "test/pty-activity.test.js",
     "test/readme-version-pins.test.js",
     "test/reconnect-policy.test.js",
+    "test/record-test-run.test.js",
     "test/recovery-codes-ui.test.js",
     "test/recovery-codes.test.js",
     "test/release-certification-isolation.test.js",
