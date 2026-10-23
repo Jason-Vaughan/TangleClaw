@@ -1,9 +1,9 @@
 'use strict';
 
 /**
- * The tier ledger and its guards (#2498 W4-01).
+ * The tier ledger, its guards and the Testament manifest it generates (#2498).
  *
- * Three contracts, each pinned here because every later stage of the test
+ * Four contracts, each pinned here because every later stage of the test
  * pyramid stands on them:
  *
  *   1. The ledger is total: every `test/*.test.js` is in it exactly once, and
@@ -17,9 +17,12 @@
  *      seven spawners alone under the Medium guard; loading either module
  *      without calling is allowed; and a refusal the caller swallows still
  *      fails the file.
+ *   4. The Testament manifest is the ledger, suite for suite, with the stage
+ *      runner's own command line for each tier, and `--check` refuses one
+ *      that is anything other than what `--testament` writes.
  */
 
-const { describe, it } = require('node:test');
+const { describe, it, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -27,6 +30,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 const tiers = require('../scripts/test-tiers');
+const stage = require('../scripts/test-stage');
 
 const REPO = path.join(__dirname, '..');
 const SMALL_GUARD = path.join(__dirname, 'helpers', 'preload-small.js');
@@ -123,6 +127,7 @@ describe('classifyFile: the scan follows helpers under test/ and stops at lib/',
   const testDir = path.join(dir, 'test');
   fs.mkdirSync(path.join(testDir, 'helpers'), { recursive: true });
   for (const [f, text] of Object.entries(files)) fs.writeFileSync(path.join(dir, f.replace('/repo/', '')), text);
+  after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
   it('counts a spawning helper against its caller', () => {
     const io = { readFile: (f) => fs.readFileSync(f, 'utf8'), testDir };
@@ -386,5 +391,191 @@ describe('the guards are what the ledger promises', () => {
   it('names each file under test/helpers the stage runner will --require', () => {
     assert.ok(fs.existsSync(path.join(REPO, 'test', 'helpers', 'preload-small.js')));
     assert.ok(fs.existsSync(path.join(REPO, 'test', 'helpers', 'preload-medium.js')));
+  });
+});
+
+/**
+ * Read the TOML the manifest generator writes, and nothing more: `#`
+ * comments, `[table]` and `[a.b]` headers, and `key = value` where the value
+ * is a basic string, an integer, `true`/`false`, or an array of those, which
+ * may span lines and end in a trailing comma. Anything else throws, so a
+ * generator that starts writing more TOML than this fails here first.
+ *
+ * @param {string} text - The manifest's text
+ * @returns {object} The document as plain objects
+ */
+function readToml(text) {
+  const doc = {};
+  let table = doc;
+  let i = 0;
+  const fail = (what) => { throw new Error(`toml subset: ${what} at offset ${i}: ${JSON.stringify(text.slice(i, i + 30))}`); };
+  const skipSpace = (newlines) => {
+    for (;;) {
+      if (text[i] === ' ' || text[i] === '\t' || (newlines && text[i] === '\n')) i += 1;
+      else if (newlines && text[i] === '#') while (i < text.length && text[i] !== '\n') i += 1;
+      else return;
+    }
+  };
+  const value = () => {
+    const rest = text.slice(i);
+    const str = /^"(?:[^"\\\n]|\\.)*"/.exec(rest);
+    if (str) { i += str[0].length; return JSON.parse(str[0]); }
+    const int = /^-?\d+(?![\w.])/.exec(rest);
+    if (int) { i += int[0].length; return Number(int[0]); }
+    const bool = /^(?:true|false)(?!\w)/.exec(rest);
+    if (bool) { i += bool[0].length; return bool[0] === 'true'; }
+    if (text[i] !== '[') fail('unsupported value');
+    i += 1;
+    const items = [];
+    for (;;) {
+      skipSpace(true);
+      if (text[i] === ']') { i += 1; return items; }
+      items.push(value());
+      skipSpace(true);
+      if (text[i] === ',') i += 1;
+      else if (text[i] !== ']') fail('expected , or ]');
+    }
+  };
+  while (i < text.length) {
+    skipSpace(true);
+    if (i >= text.length) break;
+    const header = /^\[([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)\][ \t]*(?:\n|$)/.exec(text.slice(i));
+    if (header) {
+      table = doc;
+      for (const part of header[1].split('.')) {
+        if (!Object.hasOwn(table, part)) table[part] = {};
+        table = table[part];
+      }
+      i += header[0].length;
+      continue;
+    }
+    const key = /^([A-Za-z0-9_-]+)[ \t]*=[ \t]*/.exec(text.slice(i));
+    if (!key) fail('expected a key or a table');
+    if (Object.hasOwn(table, key[1])) fail(`duplicate key ${key[1]}`);
+    i += key[0].length;
+    table[key[1]] = value();
+    skipSpace(false);
+    if (text[i] === '#') while (i < text.length && text[i] !== '\n') i += 1;
+    if (i < text.length && text[i] !== '\n') fail('expected the end of the line');
+  }
+  return doc;
+}
+
+describe('readToml: the subset the manifest generator writes', () => {
+  it('reads tables, strings, integers, booleans and multi-line arrays with comments', () => {
+    assert.deepEqual(readToml('# top\na = "x\\"y" # trailing\nn = 1800\n[s.t]\nb = true\nl = [\n  "p",\n  "q",\n]\ne = []\n'), {
+      a: 'x"y', n: 1800, s: { t: { b: true, l: ['p', 'q'], e: [] } }
+    });
+  });
+
+  it('refuses what it does not read, rather than guessing', () => {
+    assert.throws(() => readToml('a = 1.5\n'), /unsupported value/);
+    assert.throws(() => readToml('a = 1\na = 2\n'), /duplicate key a/);
+    assert.throws(() => readToml('a = { b = 1 }\n'), /unsupported value/);
+  });
+});
+
+describe('formatTestament: one files suite per tier, from the ledger', () => {
+  const ledger = { small: ['test/a.test.js'], medium: ['test/b "q".test.js'], large: ['test/c.test.js', 'test/d.test.js'] };
+  const command = (tier) => ['node', '--test', `--${tier}`, '{files}'];
+
+  it('writes the environment once and each tier as a suite, in tier order', () => {
+    const doc = readToml(tiers.formatTestament(ledger, { command }));
+    assert.deepEqual(Object.keys(doc.suites), tiers.TIERS);
+    assert.equal(doc.manifest_version, 3);
+    assert.equal(doc.name, 'tangleclaw');
+    assert.equal(doc.executor, 'host');
+    assert.deepEqual(doc.env_inputs, ['.node-version']);
+    assert.equal(doc.batch_timeout_s, tiers.TESTAMENT_BATCH_TIMEOUT_S);
+    assert.deepEqual(doc.setup, { steps: [] });
+    for (const tier of tiers.TIERS) {
+      assert.deepEqual(doc.suites[tier], {
+        adapter: 'files', cwd: '.', files: ledger[tier], command: command(tier), one_file_per_process: true
+      }, tier);
+    }
+  });
+
+  it('refuses an empty tier by name: Testament refuses a files suite with no files', () => {
+    assert.throws(() => tiers.formatTestament({ ...ledger, medium: [] }, { command }), /the "medium" tier is empty/);
+  });
+
+  it('builds each tier command from the stage runner, one file at a time, with the placeholders once each', () => {
+    for (const tier of tiers.TIERS) {
+      const cmd = tiers.testamentCommand(tier);
+      assert.deepEqual(cmd, ['node', '--test', '--test-concurrency=1', ...stage.tierArgv(tier, ['{files}'], '{junit}').slice(1)], tier);
+      assert.equal(cmd.filter((a) => a === '{files}').length, 1, tier);
+      assert.equal(cmd.filter((a) => a.includes('{files}')).length, 1, tier);
+      assert.equal(cmd.join('\n').split('{junit}').length - 1, 1, tier);
+      assert.equal(cmd.at(-1), '{files}', 'node --test reads everything after the first file as more files');
+    }
+    assert.ok(tiers.testamentCommand('small').includes('./test/helpers/preload-small.js'));
+    assert.ok(tiers.testamentCommand('medium').includes('./test/helpers/preload-medium.js'));
+    assert.ok(!tiers.testamentCommand('large').includes('--require'));
+  });
+
+  it('bounds a batch well above the per-test timeout of a guarded tier', () => {
+    assert.ok(tiers.TESTAMENT_BATCH_TIMEOUT_S * 1000 >= 6 * stage.GUARDED_TIMEOUT_MS);
+  });
+});
+
+describe('checkManifest: the manifest is exactly what the ledger generates', () => {
+  const ledger = { small: ['test/a.test.js'], medium: ['test/b.test.js'], large: ['test/c.test.js'] };
+  const command = () => ['node', '{files}', '{junit}'];
+
+  it('passes the generated text', () => {
+    assert.deepEqual(tiers.checkManifest(ledger, tiers.formatTestament(ledger, { command }), { command }), []);
+  });
+
+  it('names a missing manifest, a changed one and an empty tier, each with the fix', () => {
+    assert.deepEqual(tiers.checkManifest(ledger, null, { command }), ['.testament.toml is missing: run `node scripts/test-tiers.js --testament`']);
+    const edited = tiers.formatTestament(ledger, { command }).replace('one_file_per_process = true', 'one_file_per_process = false');
+    assert.deepEqual(tiers.checkManifest(ledger, edited, { command }), ['.testament.toml is not what test/tiers.json generates: run `node scripts/test-tiers.js --testament`']);
+    assert.match(tiers.checkManifest({ ...ledger, large: [] }, '', { command })[0], /the "large" tier is empty/);
+  });
+});
+
+describe('the tracked manifest (.testament.toml)', () => {
+  const manifest = readToml(fs.readFileSync(tiers.DEFAULT_MANIFEST, 'utf8'));
+
+  it('declares every tier as a suite whose files are the ledger\'s, so the suites together are the suite', () => {
+    const ledger = tiers.loadLedger();
+    assert.deepEqual(Object.keys(manifest.suites), tiers.TIERS);
+    for (const tier of tiers.TIERS) assert.deepEqual(manifest.suites[tier].files, ledger[tier], tier);
+    const union = tiers.TIERS.flatMap((t) => manifest.suites[t].files).sort();
+    assert.deepEqual(union, tiers.suiteFiles());
+    assert.equal(new Set(union).size, union.length);
+  });
+
+  it('runs each tier the way its stage does, and names an env input that exists', () => {
+    for (const tier of tiers.TIERS) assert.deepEqual(manifest.suites[tier].command, tiers.testamentCommand(tier), tier);
+    for (const input of manifest.env_inputs) assert.ok(fs.existsSync(path.join(REPO, input)), input);
+  });
+
+  it('is refused by --check when edited, and rewritten by --testament', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tier-manifest-'));
+    try {
+      const manifestPath = path.join(dir, '.testament.toml');
+      const out = [];
+      const io = { stdout: { write: (s) => out.push(s) }, manifestPath };
+      assert.equal(tiers.main(['--check'], io), 1);
+      assert.match(out.join(''), /\.testament\.toml is missing/);
+      assert.equal(tiers.main(['--testament'], io), 0);
+      assert.equal(fs.readFileSync(manifestPath, 'utf8'), fs.readFileSync(tiers.DEFAULT_MANIFEST, 'utf8'));
+      out.length = 0;
+      assert.equal(tiers.main(['--check'], io), 0, out.join(''));
+      assert.match(out.join(''), /\.testament\.toml current/);
+      fs.appendFileSync(manifestPath, '# an edit by hand\n');
+      out.length = 0;
+      assert.equal(tiers.main(['--check'], io), 1);
+      assert.match(out.join(''), /\.testament\.toml is not what test\/tiers\.json generates/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('takes no argument after --testament', () => {
+    const out = [];
+    assert.equal(tiers.main(['--testament', 'x'], { stdout: { write: (s) => out.push(s) } }), 1);
+    assert.match(out.join(''), /\| --testament$/m);
   });
 });
