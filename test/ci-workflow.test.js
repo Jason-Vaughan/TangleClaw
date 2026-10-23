@@ -76,6 +76,15 @@ describe('CI workflow (.github/workflows/test.yml)', () => {
       'CI must run on pushes to main, to the v5 integration branch and to a merge queue candidate, and to nothing else');
   });
 
+  it('can be started by hand (#2558)', () => {
+    // When GitHub drops a push webhook, a commit on main gets no run, and the
+    // only way to test it without pushing another commit is a manual run.
+    // Pinned at the `on:` block's indentation so a key nested under another
+    // trigger does not pass for it.
+    assert.match(workflowSource(), /^ {2}workflow_dispatch:/m,
+      'test.yml must keep workflow_dispatch so a missed run can be started by hand');
+  });
+
   it('audits what the run did not execute, from the junit report the suite writes (#844)', () => {
     // The two halves must agree on the file name, or the audit reads nothing
     // and fails every run — or, worse, a stale report from a previous step.
