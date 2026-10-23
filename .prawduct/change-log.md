@@ -41,6 +41,42 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-23 — #2498 W4-05: the per-file coverage redundancy matrix and the source-reader triage
+
+<!-- prawduct: type=feature | scope=2498-test-pyramid -->
+
+#2498 W4-05. v5.35.0 Wave 4 chunk, plan r2 (W4-01 to W4-04 ticked at dispatch); Refs #2498 and #2371, both open, #2362 untouched. Built on `feat/2498-w4-05-redundancy-audits` from `origin/main` `f0882cae` under the Integrator's W4-05 release (queue rev 228, readback token `W4-05-READBACK-20261023T031435Z-F0882CAE`), on Opus 5.5 after the Operator's model switch. The two audits #2498 Phase 2 asks for, as reports (D4: no test deleted or changed).
+
+**The redundancy matrix.** `scripts/audit-test-redundancy.js` runs each file of a tier (`--tier`) or a named list alone, under its tier's guard and timeout from `scripts/test-stage.js`, with `--experimental-test-coverage --test-reporter=lcov` (zero dependencies, so no `c8`), and keeps each file's product lines: `server.js`, `lib/`, `public/`, `bin/`, `scripts/` lines with a hit count above zero, never the test's own or its helpers'. It reports what each file adds, the exact-subset candidates (add nothing), one greedy set of them retirable together without losing a line (twins are each a candidate, only one goes), and the files that execute no product line. A failed, silent or unparseable run is named, left out (which can only make others look less redundant) and exits 1; runs that all succeed with no product line among them are refused by name (Critic W2: lcov paths in a form the filter does not match would otherwise read as a tier proving nothing, exit 0). The lcov parse is pinned on a report shaped as node 22 writes it, with every malformed or misplaced record refused by line. Measured on the Small tier at `f0882cae`: 249 files in 14.1 s, 5 at a time; 28 candidates, 27 removable together, 90 executing no product line, 107,170 product lines in all. Many candidates execute tens of thousands of lines only by loading a large module, which is the stated limit of line coverage and why the list is candidates, not deletions.
+
+**The source-reader triage.** `scripts/audit-source-readers.js` reuses the W4-04 walker's masking and path resolution to find every `readFileSync`/`readFile` of product source on the file system: bare (destructured), on any name the test binds to `fs`/`fs/promises` (`.promises` included), or on an inline `require('node:fs')`, with the path a literal, a root-constant join (an inline `require('node:path').join` too), a `require.resolve('./…')` or a constant; a helper reading a directory by a literal file name reads that file, a sweep when it names none; a read on any other receiver, or of a path it cannot resolve, is opaque (counted per file, never classified). Classes: guard (non-code files or a sweep; kept), lift (`test/helpers/lift.js` users; kept), regex-of-behaviour (a named `.js` file or `bin/` command), split by runtime proof from the require graph plus spawned entry points: self, other, none; `public/` never counts as loaded. Measured on this chunk's tree in 1.3 s: 233 readers, 12 guard, 81 lift, 140 regex-of-behaviour (47 self, 22 other, 71 none, nearly all `public/`), 827 opaque reads in 168 files. Three rule corrections came from reading the real tree before the tests were written: a helper like `pub('app.js')` had read as a sweep (filed as a kept guard), a root read naming only a document had read as a sweep, and `bin/` commands have no `.js` extension and had read as non-code. The Critic found a fourth (W1 below): reads on a renamed `fs` binding (`fsMod`, `fsNode`, `fsx`) and on an inline `require('node:fs')` were dropped, neither read nor opaque, and the count was 224 before the fix.
+
+**Not the plan's 37.** The plan's W4-05 line names "the 37 measured readers"; neither the plan nor #2498 (207 on its 2026-10-18 snapshot) recorded the rule behind its number. The triage states its rule in the script and on `docs/test-pyramid.md`, and its 233 is by that rule. No requirement moves: the deliverable is the classification, and every reader is classified.
+
+**Follow-ups and records.** Filed after searching open issues: #2548 (the matrix's first consolidation batch) and #2549 (the 69 `self` and `other` readers of `lib/`, `server.js`, `bin/`); the `none` group is `public/` and #1037's territory, cited rather than duplicated. `test/tiers.json` gains the two new test files under `small` (PM ruling via INT: the sole file-list delta, also named in the plan header's standing list). Fragment `changelog.d/2498.w4-05-redundancy-audits.internal.md`; CHANGELOG and FEATURES entries in the PR body for the records PR. Not touched: `.github/workflows/test.yml`, `.prawduct/project-state.yaml`, every gate and rule, every existing test; `PRODUCT_DIRS` in `scripts/_require-graph.js` stays for W4-06.
+
+**Critic dispositions (W4-05: cumulative on e9943e8d, 0 blocking, 3 warnings and 1 note; verify-resolutions on fa09bae4, 0 findings):**
+
+**rev-20261023T033144Z-80bab34f** — scope `2498-test-pyramid`, 2026-10-23T03:33:36Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | fixed | Source-reader triage silently misses reads through an aliased fs binding, so 'every reader is classified' does not hold |
+| R-2 | warning | fixed | Fail-closed half fixed in fa09bae4: runs that all succeed with no product line are refused by name (exit 1), pinned by a test with absolute SF paths. A real-spawn test is not added: it would start a process, which the Small guard refuses, and the PM ruling allows only Small rows in test/tiers.json for W4-05. The real run path is exercised by the measured Small-tier run recorded in the PR body. |
+| R-3 | warning | accepted | Owed, not skipped: the chunk's full local suite runs under SUITE_SLOT on the exact pushed head next (Rule #271 cl.4) and is recorded with test-evidence record --from-junit before the ready report. |
+| R-4 | note | fixed-unreviewed | fixed in `docs/test-pyramid.md` |
+
+**rev-20261023T033710Z-1a0f4d6d** — scope `2498-test-pyramid`, 2026-10-23T03:37:44Z
+
+_No findings._
+
+_Observations — read, not owed. Answering one is optional._
+
+| Observation | State | Detail |
+|---|---|---|
+| O-1 | accepted | Owed by the next step: the full local suite under SUITE_SLOT on the exact pushed head, recorded with test-evidence record --from-junit before the ready report. |
+| O-2 | accepted | The inferred chunk is the one this branch builds (W4.05); the record check found nothing. |
+
 ## 2026-10-22 — #2498 W4-04: Stage 2, the touched-graph selector that fails closed, and the dead-export audit with its ratchet
 
 <!-- prawduct: type=feature | scope=2498-test-pyramid -->
