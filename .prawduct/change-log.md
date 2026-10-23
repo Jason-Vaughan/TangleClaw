@@ -55,6 +55,28 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 **Follow-ups and records.** Filed after searching open issues: #2548 (the matrix's first consolidation batch) and #2549 (the 69 `self` and `other` readers of `lib/`, `server.js`, `bin/`); the `none` group is `public/` and #1037's territory, cited rather than duplicated. `test/tiers.json` gains the two new test files under `small` (PM ruling via INT: the sole file-list delta, also named in the plan header's standing list). Fragment `changelog.d/2498.w4-05-redundancy-audits.internal.md`; CHANGELOG and FEATURES entries in the PR body for the records PR. Not touched: `.github/workflows/test.yml`, `.prawduct/project-state.yaml`, every gate and rule, every existing test; `PRODUCT_DIRS` in `scripts/_require-graph.js` stays for W4-06.
 
+**Critic dispositions (W4-05: cumulative on e9943e8d, 0 blocking, 3 warnings and 1 note; verify-resolutions on fa09bae4, 0 findings):**
+
+**rev-20261023T033144Z-80bab34f** — scope `2498-test-pyramid`, 2026-10-23T03:33:36Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | fixed | Source-reader triage silently misses reads through an aliased fs binding, so 'every reader is classified' does not hold |
+| R-2 | warning | fixed | Fail-closed half fixed in fa09bae4: runs that all succeed with no product line are refused by name (exit 1), pinned by a test with absolute SF paths. A real-spawn test is not added: it would start a process, which the Small guard refuses, and the PM ruling allows only Small rows in test/tiers.json for W4-05. The real run path is exercised by the measured Small-tier run recorded in the PR body. |
+| R-3 | warning | accepted | Owed, not skipped: the chunk's full local suite runs under SUITE_SLOT on the exact pushed head next (Rule #271 cl.4) and is recorded with test-evidence record --from-junit before the ready report. |
+| R-4 | note | fixed-unreviewed | fixed in `docs/test-pyramid.md` |
+
+**rev-20261023T033710Z-1a0f4d6d** — scope `2498-test-pyramid`, 2026-10-23T03:37:44Z
+
+_No findings._
+
+_Observations — read, not owed. Answering one is optional._
+
+| Observation | State | Detail |
+|---|---|---|
+| O-1 | accepted | Owed by the next step: the full local suite under SUITE_SLOT on the exact pushed head, recorded with test-evidence record --from-junit before the ready report. |
+| O-2 | accepted | The inferred chunk is the one this branch builds (W4.05); the record check found nothing. |
+
 ## 2026-10-22 — #2498 W4-04: Stage 2, the touched-graph selector that fails closed, and the dead-export audit with its ratchet
 
 <!-- prawduct: type=feature | scope=2498-test-pyramid -->
