@@ -1088,8 +1088,9 @@ describe('api-projects', () => {
 
       // Every scanner read is slow but asynchronous, as the real child is: the
       // route spends the whole request awaiting reads one project at a time, so
-      // anything on that path that blocked the loop instead would land between
-      // two of the switchboard reads below and show up as one of them stalling.
+      // work on that path that blocked the loop for as long as the bound below
+      // would land between two of the switchboard reads and show up as one of
+      // them stalling. Shorter blocking passes; the bound is what CI tolerates.
       const real = dirScanner.request;
       let reads = 0;
       dirScanner.request = (op, payload, opts) => {

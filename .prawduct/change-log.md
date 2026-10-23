@@ -41,6 +41,28 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-23 — W3-B #2557: tests show a slow project scan or version probe cannot delay the switchboard
+
+<!-- prawduct: type=chore | scope=w3b-2557-slow-route-switchboard -->
+
+v5.36.0 Wave 3 chunk W3-B, under `GRANT-V536-BATCH1-20261023`. Tests only, by PM Addendum A9 (TESTONLY).
+
+**Why tests only.** On `main`, #2557's first criterion already held: the `/api/projects` walk and git reads run in the `dir-scanner` child, and the OpenClaw version probe is an async `exec` with a per-connection cache. I measured before building:
+- A fixed harness (the real `handleRequest`, scanner stubbed instant) took 19 ms for 60 projects and 38 ms for 120, with no measurable loop delay.
+- On the live server, a switchboard read polled through a 5-10 s `/api/projects` had a worst case of 114 ms, which cannot be attributed to this route on a shared server.
+- The dashboard's poll awaits each response.
+
+The planned yield-between-projects and single-flight were therefore dropped as cosmetic or unmeasured. The second criterion, regression tests, was missing.
+
+**What changed.**
+- `test/api-projects.test.js` polls `GET /api/sessions/<p>/medusa/messages` through a `GET /api/projects` whose scanner reads are each slowed by an async 200 ms.
+- `test/openclaw-version-route.test.js` does the same around a forced version probe whose ssh read takes an async 600 ms.
+- Both fail when a switchboard answer or the event-loop delay reaches 500 ms.
+
+Mutation checks: a 1.5 s synchronous wait before each facts read, in enrichment, or in `readVersion` failed the tests. Each run reported a 1.5 s read or `ECONNRESET`. Each wait was reverted.
+
+**Changelog:** `changelog.d/2557.slow-route-switchboard-tests.internal.md`. No docs change.
+
 ## 2026-10-23 — W3-A #2554 + #2556: finalize drain and coordinator authority, Master close, `tc docs lock`
 
 <!-- prawduct: type=fix | scope=w3a-2554-2556-finalize-drain-cli -->
