@@ -34,6 +34,7 @@ delete process.env.TANGLECLAW_PORT;
 const store = require('../lib/store');
 const medusa = require('../lib/medusa');
 const master = require('../lib/master');
+const medusaExchanges = require('../lib/medusa-exchanges');
 const { createServer } = require('../server');
 const { operatorHeaders } = require('./_shared-docs-callers');
 
@@ -777,5 +778,42 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
     assert.equal(identityRefreshes.length, 1, 'an unrelated master save does not regenerate');
     await req('/api/config', 'PATCH', { master: { medusaEnabled: false } }, dashboard());
     assert.equal(identityRefreshes.length, 2, 'turning it off regenerates too — the section must leave the identity');
+  });
+
+  /**
+   * Record an exchange as a send route records it, with its Hub outcome lost.
+   * @param {{projectId: (number|null), sessionId: (number|string)}} sender - Who sent it
+   * @returns {object} The `send_unknown` exchange row
+   */
+  function orphanedSend(sender) {
+    const x = medusaExchanges.createSendIntent({
+      meta: medusaExchanges.validateSendMeta({}, { kind: 'unbound' }, sender.projectId),
+      sender: { ...sender, workspaceId: 'sender-ws' },
+      recipient: { workspaceId: 'live-ws', projectId: null, sessionId: null }
+    });
+    return medusaExchanges.markSendUnknown(x.exchange_id, 'bridge-unreachable');
+  }
+
+  it('the verified Master closes its own orphaned send_unknown exchange on its mount (#2554)', async () => {
+    const x = orphanedSend({ projectId: null, sessionId: master.MASTER_MEDUSA_KEY });
+    assert.equal(x.hub_id, null);
+    const { status, data } = await req(`/api/master/medusa/exchanges/${x.exchange_id}/close`, 'POST', {}, MASTER_PANE);
+    assert.equal(status, 200, JSON.stringify(data));
+    assert.equal(data.exchange.state, 'closed');
+    assert.equal(store.medusaExchanges.get(x.exchange_id).terminal_by, 'master');
+  });
+
+  it('the Master close mount refuses an unbound caller, and refuses the Master an exchange a project sent (#2554)', async () => {
+    const mine = orphanedSend({ projectId: null, sessionId: master.MASTER_MEDUSA_KEY });
+    const unbound = await req(`/api/master/medusa/exchanges/${mine.exchange_id}/close`, 'POST', {});
+    assert.equal(unbound.status, 403);
+    assert.equal(unbound.data.code, 'LAUNCH_BINDING_REQUIRED', 'refused before close is asked: a write needs a launch binding');
+    const project = store.projects.create({ name: 'master-close-sender', path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-mc-')) });
+    const theirs = orphanedSend({ projectId: project.id, sessionId: 7 });
+    const refused = await req(`/api/master/medusa/exchanges/${theirs.exchange_id}/close`, 'POST', {}, MASTER_PANE);
+    assert.equal(refused.status, 403);
+    assert.equal(refused.data.code, 'NOT_INITIATOR');
+    assert.equal(store.medusaExchanges.get(mine.exchange_id).terminal_at, null);
+    assert.equal(store.medusaExchanges.get(theirs.exchange_id).terminal_at, null);
   });
 });
