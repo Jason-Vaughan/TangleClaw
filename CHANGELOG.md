@@ -4,7 +4,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
-## [5.35.0] - 2026-10-22
+## [5.35.0] - 2026-10-23
 
 ### Added
 - Added a changelog fragment contract that validates names, bodies and paths
