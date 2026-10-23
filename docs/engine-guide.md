@@ -928,16 +928,16 @@ profile names an adapter that can observe it (`declaresObserver`; today, Codex):
     read (#2452). The same exception also excuses a missing at-rest marker (Antigravity hides
     `? for shortcuts` while its composer holds text), but only for that exact nudge seen whole, with
     nothing glyph-led below it and an empty hint slot in the status row; the busy marker and an
-    agent fleet are never excused (#2358). A composer row holding only a terminal
-    device-attributes reply (`0;276;0c`, `[>0;276;0c`), which the terminal typed and nobody wrote,
-    is excused as input the same way, under the same check below the composer; it never excuses a
-    missing at-rest marker, and anything typed beside it is input (#2555). The injection's prompt
-    clear removes such a reply, or a stranded nudge, with one line-kill per row it filled, reading
-    the composer again after each; it refuses the paste if anything else is left (#2555). A boxed composer, a border above the cursor and one
-    below it, is anchored on its upper border, so a wrapped continuation row that starts with the
-    glyph does not cut off its head; with no box in view, the nearest glyph-led row still decides
-    (#2358). Codex's composer draws no border, so that recovery does not apply there, with or
-    without this rule.
+    agent fleet are never excused (#2358). A composer row holding only a terminal device-attributes
+    reply (`0;276;0c`, `[>0;276;0c`), which the terminal typed and nobody wrote, is excused as input
+    the same way, under the same check below the composer; it never excuses a missing at-rest
+    marker, and anything typed beside it is input (#2555). The injection's prompt clear removes such
+    a reply, or a stranded nudge, with one line-kill per row it filled, reading the composer again
+    after each; it refuses the paste if anything else is left (#2555). A boxed composer, a border
+    above the cursor and one below it, is anchored on its upper border, so a wrapped continuation
+    row that starts with the glyph does not cut off its head; with no box in view, the nearest
+    glyph-led row still decides (#2358). Codex's composer draws no border, so that recovery does not
+    apply there, with or without this rule.
     **A known limit, kept on purpose:** a usable composer whose own row is not bare, because the
     engine has drawn a pending suggestion on it (Claude Code), is refused as `pane-no-prompt` when an
     older bare prompt row is still in the read above it. The cursor says that composer is empty, but
