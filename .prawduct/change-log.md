@@ -41,6 +41,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-23 — W5-REL: prepare v5.35.0
+
+<!-- prawduct: type=chore | scope=w5-rel-release-5.35.0 -->
+
+v5.35.0 release chunk W5-REL, under the batch charter (sha256 `b87fd37a…f98b97`) and the corrected sprint plan (sha256 `edb64f45…3d87ab`), released by the Integrator at queue rev 249. Branch `chore/release-5.35.0` from `origin/main` `1e608f28`. Prepared as a DRAFT pull request: marking it ready, merging, tagging and deploying are held until the Operator authorizes the release cut, relayed by the PM.
+
+**What changed.** `version.json` goes from 5.34.0 to 5.35.0, a minor bump because the compiled section holds Added and Changed entries and no `BREAKING` marker. `CHANGELOG.md`: the 24 fragments under `changelog.d/` were compiled into `[Unreleased]` with `lib/changelog-fragments.js` (`readFragments`, `compileFragments`, `spliceIntoUnreleased`), and that body promoted to `## [5.35.0] - 2026-10-22` with `version-bump`'s own `_promoteUnreleased`, leaving `[Unreleased]` empty, as a wrap's release cut does; the 24 fragment files are deleted. The date is `version-bump`'s local-date convention, read on this host in PDT. `node scripts/release-prepare.js` exited 0 and only added: the two `README.md` clone pins now name `v5.35.0`, and `test/fixtures/changelog-released-sections.lock.json` gains the `5.35.0` line. The extracted release notes are 13,588 of the gate's 120,000 bytes (`node lib/changelog-notes.js 5.35.0`, `node scripts/release-notes-gate.js`). `docs/releases/v5.35-status.md` is new, marked pre-publication: the delta range `v5.34.0` `da4b3afe` to `1e608f28` with each count's command, the three finish lines as true at this head (prepared, not yet released; not yet deployed; activation pending the deploy), Waves 1 to 4, schema 68 unchanged with the same migration chain, and every open or Operator-held item as it stands.
+
+**Not done, and why.** No upgrade rehearsal: no migration was added or changed, so the dispatch did not ask for one; the status document says so. No code, workflow, rule or issue is touched.
+
+Merging this pull request publishes v5.35.0 through `release.yml`, which tags the merged commit; nobody tags by hand. This chunk makes no deploy or restart.
+
 ## 2026-10-23 — #2498 Wave 4 records
 
 <!-- prawduct: type=chore | scope=2498-test-pyramid -->
