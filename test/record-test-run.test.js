@@ -203,10 +203,23 @@ describe('record-test-run: each step refuses, and nothing reaches Prawduct befor
     assert.equal(calls.prawduct.length, 0);
   });
 
-  it('refuses at ingest when prawduct-hook does', () => {
+  it('refuses at ingest when prawduct-hook does, without claiming a record it may not have made', () => {
     const prawduct = () => ({ status: 2, stderr: 'error: refusing to record' });
     assert.equal(recorder.recordTestRun([], seams({ prawduct })), 1);
     assert.deepEqual(receipt().refusal, { step: 'ingest', reason: 'prawduct-hook test-evidence record exited 2: error: refusing to record' });
+    assert.match(lines.join(''), /its record is whatever it was before, not this run's/);
+    assert.doesNotMatch(lines.join(''), /marks Prawduct's record wrong/);
+  });
+
+  it('writes a refused receipt for an unexpected error, then lets the error through', () => {
+    // An earlier run's receipt must not survive beside this head reading "recorded".
+    fs.mkdirSync(path.join(root, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.tangleclaw', 'test-recorder.json'), JSON.stringify({ verdict: 'recorded' }));
+    const io = seams();
+    io.runPrawduct = () => { throw new Error('disk on fire'); };
+    assert.throws(() => recorder.recordTestRun([], io), /disk on fire/);
+    assert.equal(receipt().verdict, 'refused');
+    assert.deepEqual(receipt().refusal, { step: 'error', reason: 'disk on fire' });
   });
 
   it('refuses at ingest when prawduct-hook cannot be started', () => {

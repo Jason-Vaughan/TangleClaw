@@ -70,6 +70,15 @@ const PATHS = Object.freeze({
 /** The steps, in the order they run; a refusal names one. */
 const STEPS = Object.freeze(['run', 'reconcile', 'hoist', 'ingest', 'verify']);
 
+/** What a refusal at each step leaves in Prawduct's record. */
+const AFTER_REFUSAL = Object.freeze({
+  run: 'nothing was recorded',
+  reconcile: 'nothing was recorded',
+  hoist: 'nothing was recorded',
+  ingest: 'Prawduct refused or could not be reached: its record is whatever it was before, not this run\'s',
+  verify: 'the receipt marks Prawduct\'s record wrong'
+});
+
 /** A step that did not hold. */
 class Refusal extends Error {
   /**
@@ -261,10 +270,15 @@ function recordTestRun(argv, io = {}) {
     out.write(`step 5 verify: Prawduct recorded passed ${record.passed}, failed ${record.failed}, skipped ${record.skipped}: the report's ${judged.tally.testcases} leaves, all of them\n`);
     return finish(0);
   } catch (err) {
-    if (!(err instanceof Refusal)) throw err;
+    if (!(err instanceof Refusal)) {
+      // Not a step that refused but this command failing: the receipt still
+      // says so, so it never keeps an earlier run's verdict beside this head.
+      receipt.refusal = { step: 'error', reason: err.message };
+      finish(1);
+      throw err;
+    }
     receipt.refusal = { step: err.step, reason: err.message };
-    out.write(`REFUSED at step ${err.step}: ${err.message}\n`
-      + `${STEPS.indexOf(err.step) < STEPS.indexOf('ingest') ? 'nothing was recorded' : 'the receipt marks Prawduct\'s record wrong'}\n`);
+    out.write(`REFUSED at step ${err.step}: ${err.message}\n${AFTER_REFUSAL[err.step] || AFTER_REFUSAL.run}\n`);
     return finish(1);
   }
 }
