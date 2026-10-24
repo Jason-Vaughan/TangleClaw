@@ -41,6 +41,17 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-24 — W5-REL follow-up: record v5.36.0 as released
+
+<!-- prawduct: type=docs | scope=w5-rel-v5.36-status-post-release -->
+
+The post-publication status correction W5-REL's plan amendment 1 owed, on the Integrator's dispatch after `release.yml` published. Docs only: `docs/releases/v5.36-status.md` and this entry.
+
+- **Code released: Yes.** #2570 merged as `fcef8dfe` at 03:24:50 UTC; `release.yml` run 40058196591 and `Tests` run 40058196531 concluded `success` on it; the annotated tag `v5.36.0` on origin peels to `fcef8dfe`; the GitHub Release is published, not a draft or pre-release, at 03:37:52 UTC. Each fact was read again by TC-Lane-A at 03:40 UTC, not copied from the dispatch.
+- **Production updated: No.** No deploy is authorized; read-only, the live checkout is at `415eb036` (`v5.35.0`) and `/api/health` answers version `5.35.0`.
+- **Feature activated: not proven**, since nothing of v5.36.0 is live.
+- "What is left" now names only the Operator-authorized deploy and its reading.
+
 ## 2026-10-24 — W5-REL: prepare the v5.36.0 release
 
 <!-- prawduct: type=chore | scope=w5-rel-v5.36.0-release-prep -->
