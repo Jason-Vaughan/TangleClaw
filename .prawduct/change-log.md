@@ -41,6 +41,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-24 — W1-B: website security dep bumps and #1220 C05 inspection
+
+<!-- prawduct: type=security | scope=w1b-2579-1220 -->
+
+Security bump for `website/` (`next 16.4.3`, `sharp 0.35.5`, `dompurify 3.4.17`, `source-map-js 1.2.2`, `zod 4.6.7`) — resolves all 5 Dependabot vulnerability alerts. `actions/setup-node` bumped to `7.1.0` across all four CI workflows, superseding Dependabot PR `#2385`. `npm audit --prefix website` reports 0 vulnerabilities. Confirmed `#1220` C01–C04 fragment infrastructure complete with full test coverage; C05 (transition-exception removal) deferred to `#2523` pending `#2217` closing.
+
 ## 2026-10-24 — W5-REL follow-up: record v5.36.0 as live, with no pre-update backup
 
 <!-- prawduct: type=docs | scope=w5-rel-v5.36-status-live -->
