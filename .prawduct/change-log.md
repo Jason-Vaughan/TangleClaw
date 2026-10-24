@@ -41,6 +41,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-24 — W5-REL follow-up: #2544 closed in v5.36.0, #2573 carries the rest
+
+<!-- prawduct: type=docs | scope=w5-rel-v5.36-status-2544-closed -->
+
+A records correction to `docs/releases/v5.36-status.md`, under PM charter A17 (`657d89d3`) and Architect A442-R1, on the Integrator's dispatch. Docs only: the status page and this entry.
+
+- PM A17 closed #2544 as completed in the v5.36.0 milestone, because its first removal batch (#2568) shipped in this release. The remaining exports moved to the new #2573, open in v5.37.0. The page had said the milestone held 25 closed issues and that #2544 stayed open in v5.37.0.
+- "What it contains" now reads 26 issues, all closed. "Known issues that ship" lists #2573 in place of #2544.
+- TC-Lane-A re-read every fact at 04:05 UTC before writing it, not from the dispatch: #2544 is CLOSED (completed, `release:v5.36`, milestone v5.36.0), #2573 is OPEN (`release:v5.37`, milestone v5.37.0), and milestone 21 reads 0 open and 26 closed.
+- A first dispatch of this correction at 04:02 was held, because #2544 had been reopened at 04:01:20 by a conflicting ruling (Architect A442). The correction was built only after A442-R1 aligned with A17 and the live state matched.
+- The finish lines are unchanged: code released Yes, production updated No, activation not proven.
+
 ## 2026-10-24 — W5-REL follow-up: record v5.36.0 as released
 
 <!-- prawduct: type=docs | scope=w5-rel-v5.36-status-post-release -->
