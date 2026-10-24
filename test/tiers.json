@@ -334,6 +334,7 @@
     "test/merge-queue-store.test.js",
     "test/openclaw-direct-trailing-slash.test.js",
     "test/openclaw-html.test.js",
+    "test/openclaw-routes.test.js",
     "test/openclaw-version-route.test.js",
     "test/operator-bridge-panel.test.js",
     "test/operator-proof.test.js",
