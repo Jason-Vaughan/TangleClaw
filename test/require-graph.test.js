@@ -55,6 +55,27 @@ describe('mask', () => {
     const expected = pieces.map(([p, how]) => (how === 'blank' ? ' '.repeat(p.length) : p)).join('');
     assert.equal(g.mask(src), expected);
   });
+
+  it('with keepTemplateExpressions keeps the code of each ${…}, masking the strings and templates inside it, and still blanks template text', () => {
+    const pieces = [
+      ['const t = `', ''], ['a m.x ', 'blank'], ['${m.y + f(', ''], ["'s}'", 'quoted'], [') + `', ''], ['in ', 'blank'],
+      ['${m.z}', ''], ['`', ''], ['}', ''], [' tail ', 'blank'], ['${ { k: m.w }.k }', ''], ['`; m.v;', '']
+    ];
+    const src = pieces.map(([p]) => p).join('');
+    const expected = pieces.map(([p, how]) => (how === 'blank' ? ' '.repeat(p.length) : how === 'quoted' ? `'${' '.repeat(p.length - 2)}'` : p)).join('');
+    assert.equal(g.mask(src, { keepTemplateExpressions: true }), expected);
+  });
+
+  it('reads a regex at the start of a kept ${…} as a regex, whatever came before the template', () => {
+    const src = 'const t = tag`${/m.x{/.test(s) ? m.y : 0}`;';
+    const out = g.mask(src, { keepTemplateExpressions: true });
+    assert.equal(out, `const t = tag\`\${/${' '.repeat(4)}/.test(s) ? m.y : 0}\`;`);
+  });
+
+  it('keeps the default mask blanking a template whole, so a require written inside one is still not an edge', () => {
+    const src = 'const t = `${require("./x")}`;';
+    assert.equal(g.mask(src), `const t = \`${' '.repeat(src.length - 13)}\`;`);
+  });
 });
 
 describe('scanFile: requires', () => {
@@ -81,6 +102,18 @@ describe('scanFile: requires', () => {
     assert.equal(dyn.length, 2);
     assert.deepEqual([dyn[0].line, rel(dyn[0].prefix)], [6, 'lib']);
     assert.deepEqual([dyn[1].line, dyn[1].prefix], [7, null]);
+  });
+
+  it('keeps a template require bounded to its literal prefix when the file\'s member uses are read too, braces in the ${…} included', () => {
+    const t = tree({
+      'lib/wrap-steps/a.js': 'module.exports = { run };',
+      'test/w.test.js': "const steps = require('../lib/wrap-steps/a');\nconst load = (kind) => require(`../lib/wrap-steps/${({ x: 'a' })[kind] || kind}`);\nsteps.run(`${steps.run}`);"
+    });
+    const s = g.scanFile(path.join(ROOT, 'test/w.test.js'), t);
+    const before = s.requires.map((r) => [r.kind, r.prefix && rel(r.prefix)]);
+    g.memberUsesOf(s, 'steps');
+    assert.deepEqual(before, [['literal', null], ['dynamic', 'lib/wrap-steps']]);
+    assert.deepEqual(s.requires.map((r) => [r.kind, r.prefix && rel(r.prefix)]), before);
   });
 
   it('resolves a rooted join through a root constant, one level or two, and names an unresolvable literal', () => {
@@ -136,6 +169,23 @@ describe('scanFile: named paths and reads', () => {
   });
 });
 
+describe('splitArgs', () => {
+  it('balances braces, brackets and commas inside a template argument\'s ${…} under either mask', () => {
+    const src = 'f(`a ${ { k: 1, j: [2, 3] }.k } b`, second, { o: 1 })';
+    for (const opts of [{}, { keepTemplateExpressions: true }]) {
+      const { args, end } = g.splitArgs(g.mask(src, opts), src, 1);
+      assert.deepEqual(args, ['`a ${ { k: 1, j: [2, 3] }.k } b`', 'second', '{ o: 1 }'], JSON.stringify(opts));
+      assert.equal(end, src.length - 1);
+    }
+  });
+
+  it('balances a nested template under the member-use mask, which reads nesting', () => {
+    const src = 'f(`b ${`n, ${x}`}`, second)';
+    const { args } = g.splitArgs(g.mask(src, { keepTemplateExpressions: true }), src, 1);
+    assert.deepEqual(args, ['`b ${`n, ${x}`}`', 'second']);
+  });
+});
+
 describe('readExports', () => {
   const read = (src) => g.readExports(g.mask(src));
 
@@ -182,6 +232,25 @@ describe('usesOf: what a reader reads of a module', () => {
     assert.equal(uses("require('../lib/m');").all, true);
     assert.equal(uses("const { a, ...rest } = require('../lib/m');").all, true);
     assert.equal(uses("f(require('../lib/m'));").all, true);
+  });
+
+  it('reads a member inside a template interpolation, nested or not, but not a name in the template text', () => {
+    const u = uses("const m = require('../lib/m');\nconst s = `m.c ${m.a}:${`${m.b}`}`;");
+    assert.deepEqual([u.all, [...u.names].sort()], [false, ['a', 'b']]);
+    assert.equal(uses("const m = require('../lib/m');\nlog(`${m}`);").all, true);
+  });
+
+  it('does not take the word in a nested template\'s text for a use of the module', () => {
+    const u = uses("const m = require('../lib/m');\nlog(`${ok ? `the m is kept at ${m.a}` : ''}`);");
+    assert.deepEqual([u.all, [...u.names]], [false, ['a']]);
+  });
+
+  it('reads a member a spread takes, and the whole module when the module itself is spread', () => {
+    const u = uses("const m = require('../lib/m');\nconst xs = [...m.a, ...m?.b];");
+    assert.deepEqual([u.all, [...u.names].sort()], [false, ['a', 'b']]);
+    assert.equal(uses("const m = require('../lib/m');\nconst o = { ...m };").all, true);
+    const other = uses("const m = require('../lib/m');\nconst y = o.m.c;");
+    assert.deepEqual([other.all, other.names.size], [false, 0]);
   });
 
   it('reads nothing of a module the reader does not require', () => {

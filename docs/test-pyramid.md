@@ -219,7 +219,8 @@ silently absent. For each name a `lib/` module exports it finds the readers: the
 the module and use that name, read from the shape of the require (`const { a } = require(…)`
 reads `a`; `const m = require(…)` followed by `m.a` reads `a`, and `m` used any other way, passed
 whole or indexed, reads everything; `require(…).a` reads `a`; a bare `require(…)` reads
-everything). The report lists:
+everything). A member use counts inside a template's `${…}` (`${m.a}` reads `a`, nested templates
+included) and through a spread of one member (`[...m.a]` reads `a`). The report lists:
 
 - **dead**: no reader at all, tests included;
 - **test-only**: read by tests and by nothing in the product, with the readers;
@@ -241,9 +242,15 @@ time) shrinks the baseline with `--write-baseline`; nothing adds to it by hand.
 **Measured when the baseline was written** (`main` at `68c4ff0e`, the audit run on a clean
 `git archive` of that commit): 294 `lib/` modules, 3,251 exported names audited, 0 opaque, 30
 modules under `lib/wrap-steps/` shadowed by the one bounded dynamic require in
-`test/wrap-pipeline.test.js`, 0 unbounded; **234 dead** (the baseline), 844 test-only, 163 orphan
+`test/wrap-pipeline.test.js`, 0 unbounded; **234 dead** (the baseline then), 844 test-only, 163 orphan
 candidates. The audit pass is about 90 ms on top of the graph; the Stage 1 step is about 1.2 s.
-The first removal batch is #2544.
+The first removal batch is #2544. Before it removed anything, it fixed the walker's reads in
+template interpolations and member spreads. That fix took 13 entries off the dead list, because code
+reads them, and added 4 in `lib/ttyd-runtime.js` that a misread nested template had hidden. The
+batch then retired the 33 dead exports under `lib/soak/`, by export entry alone, since each is still
+used inside its own module. After that batch, on 2026-10-24, the baseline is **192 dead**
+(234 − 13 + 4 − 33). The 234 above is the snapshot from when the baseline was first written, and
+`--check` prints the count at any later commit.
 
 ## The coverage redundancy matrix and the source-reader triage
 
