@@ -439,6 +439,7 @@ describe('launch kickoff (#1635)', () => {
       launchKickoff._internal.platform = () => 'darwin';
       launchKickoff._internal.homeDir = () => probeHome;
       launchKickoff._internal.readdirSync = () => [{ isFile: () => true, name: 'f.txt' }];
+      launchKickoff._internal.readByte = () => {};
       launchKickoff._internal.runTmuxShell = () => ({ status: 0, signal: null, error: null });
       produced.add(launchKickoff.probeTmuxTcc(`${probeHome}/Documents/p`, 'any')); // tcc-probe-ok
       launchKickoff._internal.runTmuxShell = () => ({ status: 1, signal: null, error: null });
@@ -487,6 +488,7 @@ describe('launch kickoff (#1635)', () => {
         platform: () => 'darwin',
         homeDir: () => DARWIN_HOME,
         readdirSync: () => FAKE_ENTRIES,
+        readByte: () => {},
         runTmuxShell: () => ({ status: 0, signal: null, error: null }),
         ...overrides
       });
@@ -537,6 +539,20 @@ describe('launch kickoff (#1635)', () => {
       assert.match(capturedCmd, /\/bin\/ls/);
     });
 
+    it('falls back to ls probe when the found file is listed but unreadable by Node (mode 000 — not a TCC gap)', () => {
+      // Regression: before this fix, a mode-000 file would be selected for the head
+      // probe; tmux also cannot read it, so the non-zero result was misclassified as
+      // a TCC gap. Node readByte failing is the signal to fall back to directory ls.
+      let capturedCmd;
+      probeWith({
+        readByte: () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); },
+        runTmuxShell: (name, cmd) => { capturedCmd = cmd; return { status: 0, signal: null, error: null }; }
+      });
+      assert.equal(launchKickoff.probeTmuxTcc(PROTECTED_PATH, 'mySession'), 'tcc-probe-ok');
+      assert.match(capturedCmd, /\/bin\/ls/, 'must use ls fallback, not head probe on the unreadable file');
+      assert.doesNotMatch(capturedCmd, /head -c 1/);
+    });
+
     it('returns tcc-probe-blocked when tmux exits non-zero', () => {
       probeWith({ runTmuxShell: () => ({ status: 1, signal: null, error: null }) });
       assert.equal(launchKickoff.probeTmuxTcc(PROTECTED_PATH, 'mySession'), 'tcc-probe-blocked');
@@ -580,6 +596,7 @@ describe('launch kickoff (#1635)', () => {
           homeDir: () => DARWIN_HOME,
           getProject: () => ({ path: PROTECTED_PATH }),
           readdirSync: () => FAKE_ENTRIES,
+          readByte: () => {},
           runTmuxShell: () => ({ status: 0, signal: null, error: null }),
           ...overrides
         });
