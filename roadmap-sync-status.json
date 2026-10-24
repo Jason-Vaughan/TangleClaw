@@ -1,1 +1,1 @@
-{"state":"ok","component":"all","message":"The internal and sanitized public roadmap artifacts refreshed successfully.","checkedAt":"2026-10-24T10:40:12.877296+00:00","snapshot":"2026-10-24 03:40:12 PDT"}
+{"state":"error","component":"release-roadmap","message":"The release-first refresh failed; the board retains its last successful GitHub snapshot. See the sync log.","checkedAt":"2026-10-24T10:52:24.267540+00:00","snapshot":"2026-10-24 03:51:20 PDT"}
