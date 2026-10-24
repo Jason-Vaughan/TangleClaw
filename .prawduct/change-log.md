@@ -55,6 +55,8 @@ v5.36.0 Wave 4 chunk W4-A, under `GRANT-V536-BATCH1-20261023`. Tests only; no li
 
 **Verified.** Mutation checks, both reverted: piping into `cat` instead of `less` failed the alternate-screen test with its timeout message, and a one-shot `setTimeout` in place of the monitor's `setInterval` failed the timer test with `listed 1 time(s)`. Each case passed 20 sequential and 20 concurrent repeats.
 
+Critic: 0 blocking; R-1 (stale suite evidence, full suite runs on the frozen head under SUITE_SLOT) and R-2 (the launch-env-injection tests' 0.5 s sleeps, outside this chunk, filed as #2565) accepted on the record.
+
 **Changelog:** `changelog.d/2531.timing-free-pane-and-monitor-tests.internal.md`. No docs change.
 
 ## 2026-10-23 — W3-B #2557: tests show a slow project scan or version probe cannot delay the switchboard
