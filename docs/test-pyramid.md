@@ -242,13 +242,15 @@ time) shrinks the baseline with `--write-baseline`; nothing adds to it by hand.
 **Measured when the baseline was written** (`main` at `68c4ff0e`, the audit run on a clean
 `git archive` of that commit): 294 `lib/` modules, 3,251 exported names audited, 0 opaque, 30
 modules under `lib/wrap-steps/` shadowed by the one bounded dynamic require in
-`test/wrap-pipeline.test.js`, 0 unbounded; **234 dead** (the baseline), 844 test-only, 163 orphan
+`test/wrap-pipeline.test.js`, 0 unbounded; **234 dead** (the baseline then), 844 test-only, 163 orphan
 candidates. The audit pass is about 90 ms on top of the graph; the Stage 1 step is about 1.2 s.
 The first removal batch is #2544. Before it removed anything, it fixed the walker's reads in
 template interpolations and member spreads. That fix took 13 entries off the dead list, because code
 reads them, and added 4 in `lib/ttyd-runtime.js` that a misread nested template had hidden. The
 batch then retired the 33 dead exports under `lib/soak/`, by export entry alone, since each is still
-used inside its own module. `--check` prints the current baseline count.
+used inside its own module. After that batch, on 2026-10-24, the baseline is **192 dead**
+(234 − 13 + 4 − 33). The 234 above is the snapshot from when the baseline was first written, and
+`--check` prints the count at any later commit.
 
 ## The coverage redundancy matrix and the source-reader triage
 
