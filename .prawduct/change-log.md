@@ -41,6 +41,24 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-24 — W4-A #2531 + #2546: two intermittent tests wait for the behaviour, not a fixed delay
+
+<!-- prawduct: type=fix | scope=w4a-2531-2546-timing-free-tests -->
+
+v5.36.0 Wave 4 chunk W4-A, under `GRANT-V536-BATCH1-20261023`. Tests only; no library change.
+
+**Why.** Both failures measured the host, not the code. The tmux alternate-screen test slept 0.5 s and then expected `less` to have switched screens; one CI run (Tests 39718444172) saw it had not yet. The check-watch monitor timer test slept 60 ms and expected two passes; one full local suite saw one.
+
+**What changed.**
+- `test/tmux.test.js` gains `waitForCapture`, which polls the whole `capturePane` result (lines and screen mode) up to 10 s and fails with the last lines. `waitForPane` is now built on it, with the same signature, return value and failure text for its callers. The alternate-screen test waits until `less` is on the alternate screen showing `hello-alt-test`, then keeps its assertions.
+- `test/check-watch-monitor.test.js` waits up to 10 s for the second timer pass instead of 60 ms. The existing `listed >= 2` assertion reports the count on timeout. The stop proof and the double `start()` are unchanged.
+
+**Verified.** Mutation checks, both reverted: piping into `cat` instead of `less` failed the alternate-screen test with its timeout message, and a one-shot `setTimeout` in place of the monitor's `setInterval` failed the timer test with `listed 1 time(s)`. Each case passed 20 sequential and 20 concurrent repeats.
+
+Critic: 0 blocking; R-1 (stale suite evidence, full suite runs on the frozen head under SUITE_SLOT) and R-2 (the launch-env-injection tests' 0.5 s sleeps, outside this chunk, filed as #2565) accepted on the record.
+
+**Changelog:** `changelog.d/2531.timing-free-pane-and-monitor-tests.internal.md`. No docs change.
+
 ## 2026-10-23 — W3-B #2557: tests show a slow project scan or version probe cannot delay the switchboard
 
 <!-- prawduct: type=chore | scope=w3b-2557-slow-route-switchboard -->

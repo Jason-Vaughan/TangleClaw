@@ -642,7 +642,12 @@ describe('check-watch monitor: it never throws (#2323)', () => {
     monitor._internal.listUnresolved = () => { listed += 1; return []; };
     monitor.start({ intervalMs: 5 });
     monitor.start({ intervalMs: 5 });
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    // Wait for the second timer pass rather than a fixed window: under suite
+    // contention one pass can outlast any short budget.
+    const deadline = Date.now() + 10000;
+    while (listed < 2 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
     monitor.stop();
     await monitor.settled();
     assert.ok(listed >= 2, `listed ${listed} time(s)`);
