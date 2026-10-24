@@ -205,11 +205,11 @@ describe('ci-evidence — the file a green run writes', () => {
     assert.equal(r.gitCalls.filter((c) => c === 'rev-parse --verify HEAD^{tree}').length, 2);
   });
 
-  it('says where the file is, and that it changes nothing a gate accepts', async (t) => {
+  it('says where the file is, and describes its role under A439-R5/v5.37.0 P1.1', async (t) => {
     const r = await run(t);
     assert.match(r.out, new RegExp(`^CI evidence written: ${r.file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
     assert.match(r.out, /the complement is green: 2 of 2 ledger entries ran here/);
-    assert.match(r.out, /changes nothing a gate accepts: no rule in force/);
+    assert.match(r.out, /Under A439-R5\/v5\.37\.0 P1\.1, scripts\/suite-evidence\.js/);
   });
 
   it('records an entry that was not expected here with the measurement that says why', async (t) => {

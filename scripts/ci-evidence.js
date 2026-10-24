@@ -534,7 +534,7 @@ async function main(argv, io = {}) {
     + `  the \`${check.name}\` check (run ${check.runId}, workflow "${check.workflowName}", ${check.event} run ${check.workflowRunId}) concluded ${check.conclusion} on ${evidence.head}\n`
     + `  the base branch ${base.branch} is at ${base.tip}, which is inside HEAD\n`
     + `  the complement is green: ${complement.entriesRan} of ${complement.entriesTotal} ledger entries ran here\n`
-    + 'This file changes nothing a gate accepts: no rule in force lets it stand in for the full local suite.\n');
+    + 'This file is evidence for one commit. Under A439-R5/v5.37.0 P1.1, scripts/suite-evidence.js (with TANGLECLAW_SUITE_EVIDENCE=ci) reads it as part of the merged report the gate records.\n');
   return 0;
 }
 

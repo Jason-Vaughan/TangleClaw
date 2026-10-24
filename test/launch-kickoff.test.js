@@ -430,6 +430,23 @@ describe('launch kickoff (#1635)', () => {
       launchKickoff._internal.getSequence = () => null;
       produced.add(await launchKickoff.kickoff({ ...LIVE_LAUNCH }));
 
+      // Probe outcomes (returned by probeTmuxTcc, declared in OUTCOME_MEANINGS alongside
+      // kickoff codes). kickoff() only returns tcc-probe-blocked directly; the other three
+      // are produced here through probeTmuxTcc so every declared code is covered.
+      const probeHome = '/tmp/probe-honest-states';
+      launchKickoff._internal.platform = () => 'linux';
+      produced.add(launchKickoff.probeTmuxTcc(`${probeHome}/Documents/p`, 'any')); // tcc-probe-skipped
+      launchKickoff._internal.platform = () => 'darwin';
+      launchKickoff._internal.homeDir = () => probeHome;
+      launchKickoff._internal.readdirSync = () => [{ isFile: () => true, name: 'f.txt' }];
+      launchKickoff._internal.runTmuxShell = () => ({ status: 0, signal: null, error: null });
+      produced.add(launchKickoff.probeTmuxTcc(`${probeHome}/Documents/p`, 'any')); // tcc-probe-ok
+      launchKickoff._internal.runTmuxShell = () => ({ status: 1, signal: null, error: null });
+      produced.add(launchKickoff.probeTmuxTcc(`${probeHome}/Documents/p`, 'any')); // tcc-probe-blocked
+      const enoentErr = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      launchKickoff._internal.runTmuxShell = () => ({ status: null, signal: null, error: enoentErr });
+      produced.add(launchKickoff.probeTmuxTcc(`${probeHome}/Documents/p`, 'any')); // tcc-probe-failed
+
       for (const code of produced) {
         assert.ok(launchKickoff.OUTCOME_MEANINGS[code], `outcome "${code}" has no declared meaning`);
       }
@@ -446,6 +463,163 @@ describe('launch kickoff (#1635)', () => {
       launchKickoff._internal.cursorInfo = () => { throw new Error('boom'); };
 
       await assert.doesNotReject(() => launchKickoff.kickoff({ ...LIVE_LAUNCH }));
+    });
+  });
+
+  describe('TCC probe (#2576)', () => {
+    // Each test body calls probeWith/kickoffWithProbe AFTER beforeEach has
+    // already restored REAL_SEAMS and stubbed clock/inject/assess. These
+    // helpers layer on only the seams they need; the rest stay as beforeEach set.
+
+    const DARWIN_HOME = '/Users/tcc-test';
+    const PROTECTED_PATH = `${DARWIN_HOME}/Documents/my-project`;
+    const UNPROTECTED_PATH = `${DARWIN_HOME}/Projects/my-project`;
+    const SIBLING_PATH = `${DARWIN_HOME}/DocumentsBackup/my-project`;
+    const FAKE_ENTRIES = [
+      { isFile: () => true, isDirectory: () => false, name: 'package.json' }
+    ];
+    const FAKE_ENTRIES_NO_FILES = [
+      { isFile: () => false, isDirectory: () => true, name: 'node_modules' }
+    ];
+
+    function probeWith(overrides) {
+      Object.assign(launchKickoff._internal, {
+        platform: () => 'darwin',
+        homeDir: () => DARWIN_HOME,
+        readdirSync: () => FAKE_ENTRIES,
+        runTmuxShell: () => ({ status: 0, signal: null, error: null }),
+        ...overrides
+      });
+    }
+
+    it('returns tcc-probe-skipped when not darwin', () => {
+      probeWith({ platform: () => 'linux' });
+      assert.equal(launchKickoff.probeTmuxTcc(PROTECTED_PATH, 'mySession'), 'tcc-probe-skipped');
+    });
+
+    it('returns tcc-probe-skipped when resolvedPath is null', () => {
+      probeWith({});
+      assert.equal(launchKickoff.probeTmuxTcc(null, 'mySession'), 'tcc-probe-skipped');
+    });
+
+    it('returns tcc-probe-skipped when path is not under a TCC-protected folder', () => {
+      probeWith({});
+      assert.equal(launchKickoff.probeTmuxTcc(UNPROTECTED_PATH, 'mySession'), 'tcc-probe-skipped');
+    });
+
+    it('returns tcc-probe-skipped for a sibling directory (~/DocumentsBackup must not match ~/Documents)', () => {
+      probeWith({});
+      assert.equal(launchKickoff.probeTmuxTcc(SIBLING_PATH, 'mySession'), 'tcc-probe-skipped');
+    });
+
+    it('returns tcc-probe-skipped when readdirSync throws (Node cannot read the directory)', () => {
+      probeWith({ readdirSync: () => { throw new Error('EACCES'); } });
+      assert.equal(launchKickoff.probeTmuxTcc(PROTECTED_PATH, 'mySession'), 'tcc-probe-skipped');
+    });
+
+    it('returns tcc-probe-ok when tmux exits 0 (regular file found — head probe)', () => {
+      let capturedCmd;
+      probeWith({
+        runTmuxShell: (name, cmd) => { capturedCmd = cmd; return { status: 0, signal: null, error: null }; }
+      });
+      assert.equal(launchKickoff.probeTmuxTcc(PROTECTED_PATH, 'mySession'), 'tcc-probe-ok');
+      assert.match(capturedCmd, /head -c 1/);
+      assert.match(capturedCmd, /package\.json/);
+    });
+
+    it('returns tcc-probe-ok when tmux exits 0 (no regular files — ls fallback)', () => {
+      let capturedCmd;
+      probeWith({
+        readdirSync: () => FAKE_ENTRIES_NO_FILES,
+        runTmuxShell: (name, cmd) => { capturedCmd = cmd; return { status: 0, signal: null, error: null }; }
+      });
+      assert.equal(launchKickoff.probeTmuxTcc(PROTECTED_PATH, 'mySession'), 'tcc-probe-ok');
+      assert.match(capturedCmd, /\/bin\/ls/);
+    });
+
+    it('returns tcc-probe-blocked when tmux exits non-zero', () => {
+      probeWith({ runTmuxShell: () => ({ status: 1, signal: null, error: null }) });
+      assert.equal(launchKickoff.probeTmuxTcc(PROTECTED_PATH, 'mySession'), 'tcc-probe-blocked');
+    });
+
+    it('returns tcc-probe-blocked when tmux times out (signal set, status null)', () => {
+      const err = Object.assign(new Error('ETIMEDOUT'), { code: 'ETIMEDOUT' });
+      probeWith({ runTmuxShell: () => ({ status: null, signal: 'SIGTERM', error: err }) });
+      assert.equal(launchKickoff.probeTmuxTcc(PROTECTED_PATH, 'mySession'), 'tcc-probe-blocked');
+    });
+
+    it('returns tcc-probe-failed when tmux is not found (ENOENT)', () => {
+      const err = Object.assign(new Error('spawnSync tmux ENOENT'), { code: 'ENOENT' });
+      probeWith({ runTmuxShell: () => ({ status: null, signal: null, error: err }) });
+      assert.equal(launchKickoff.probeTmuxTcc(PROTECTED_PATH, 'mySession'), 'tcc-probe-failed');
+    });
+
+    it('POSIX-single-quotes a path with an embedded apostrophe in the tmux command', () => {
+      const trickyPath = `${DARWIN_HOME}/Documents/it's a project`;
+      let capturedCmd;
+      probeWith({
+        readdirSync: () => [{ isFile: () => true, isDirectory: () => false, name: 'file.txt' }],
+        runTmuxShell: (name, cmd) => { capturedCmd = cmd; return { status: 0, signal: null, error: null }; }
+      });
+      launchKickoff.probeTmuxTcc(trickyPath, 'mySession');
+      // The ' in the path must be escaped as '\'' so the shell sees it as one argument.
+      assert.match(capturedCmd, /it'\\''s a project/);
+    });
+
+    it('all four new outcome codes appear in OUTCOME_MEANINGS', () => {
+      assert.ok('tcc-probe-skipped' in launchKickoff.OUTCOME_MEANINGS);
+      assert.ok('tcc-probe-ok' in launchKickoff.OUTCOME_MEANINGS);
+      assert.ok('tcc-probe-blocked' in launchKickoff.OUTCOME_MEANINGS);
+      assert.ok('tcc-probe-failed' in launchKickoff.OUTCOME_MEANINGS);
+    });
+
+    describe('kickoff() integration', () => {
+      function kickoffWithProbe(overrides = {}) {
+        Object.assign(launchKickoff._internal, {
+          platform: () => 'darwin',
+          homeDir: () => DARWIN_HOME,
+          getProject: () => ({ path: PROTECTED_PATH }),
+          readdirSync: () => FAKE_ENTRIES,
+          runTmuxShell: () => ({ status: 0, signal: null, error: null }),
+          ...overrides
+        });
+        return launchKickoff.kickoff({ ...LIVE_LAUNCH });
+      }
+
+      it('returns tcc-probe-blocked and does not mark _fired when the probe detects blocked access', async () => {
+        const outcome = await kickoffWithProbe({
+          runTmuxShell: () => ({ status: 1, signal: null, error: null })
+        });
+        assert.equal(outcome, 'tcc-probe-blocked');
+        assert.ok(!launchKickoff._fired.has(LIVE_LAUNCH.sessionId),
+          '_fired must not be set: nothing was typed into the pane');
+      });
+
+      it('returns sent (proceeds normally) when probe returns tcc-probe-ok', async () => {
+        const outcome = await kickoffWithProbe();
+        assert.equal(outcome, 'sent');
+      });
+
+      it('returns sent (proceeds normally) when probe returns tcc-probe-skipped (unprotected path)', async () => {
+        const outcome = await kickoffWithProbe({
+          getProject: () => ({ path: UNPROTECTED_PATH })
+        });
+        assert.equal(outcome, 'sent');
+      });
+
+      it('resolves path from projectId via _internal.getProject when args.projectPath is absent', async () => {
+        let calledWithId;
+        Object.assign(launchKickoff._internal, {
+          platform: () => 'darwin',
+          homeDir: () => DARWIN_HOME,
+          getProject: (id) => { calledWithId = id; return { path: UNPROTECTED_PATH }; },
+          readdirSync: () => FAKE_ENTRIES,
+          runTmuxShell: () => ({ status: 0, signal: null, error: null })
+        });
+        await launchKickoff.kickoff({ ...LIVE_LAUNCH });
+        assert.equal(calledWithId, LIVE_LAUNCH.projectId,
+          'getProject must be called with the projectId from kickoff args');
+      });
     });
   });
 });
