@@ -53,7 +53,8 @@ A records correction to `docs/releases/v5.36-status.md` on the Integrator's disp
   - The live store is at schema 68 and `quick_check` reads `ok`.
 - **The backup.** The only v5.36.0 backup is the PM's post-update snapshot, `tangleclaw-v5.36.0-20261024T0435Z.db`, written 04:35:07 UTC. Its size, SHA-256, schema and `quick_check` were all re-measured. The page names it as post-update and says no pre-update backup exists; the newest older backup is v5.35.0's.
 - **Feature activated: not proven, deferred to passive watch.** By PM ruling, the three owed live scenarios (#2547 candidate wake; #2555 residue release and wrapped-nudge clearing) are read at their next natural occurrence, never forced. TC-Lane-B's telemetry, relayed by the Integrator, saw no triggering event since the update. The page claims no live pass.
-- **Status, "Checks on the live install", "Rollback" and "What is left"** no longer say the release is undeployed. The page does not judge whether the update followed the deploy procedure.
+- **Rollback** says no pre-update restore point exists, and that rollback compatibility of the current live store was not tested. Schema 68 matching does not show v5.35.0's code reads what v5.36.0 wrote; the only rehearsal ran forward, so the Operator must assess before any rollback. Narrowed on the Integrator's finding.
+- **Status, "Checks on the live install" and "What is left"** no longer say the release is undeployed. The page does not judge whether the update followed the deploy procedure.
 
 ## 2026-10-24 — W5-REL follow-up: #2544 closed in v5.36.0, #2573 carries the rest
 
