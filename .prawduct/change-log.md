@@ -41,6 +41,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-24 — v5.37.0 W1-A: TCC probe + CI-as-suite-evidence operationalization
+
+<!-- prawduct: type=feature | scope=w1a-2576-2371 -->
+
+- **`#2576`** (bug fix): `lib/launch-kickoff.js` now probes the tmux server's macOS TCC read access before spawning panes on `~/Documents` projects. Runs `head -c 1` (or `ls`) via `tmux run-shell` before claiming the fire-once slot; returns `tcc-probe-blocked` early with a structured remediation log rather than spawning a silent broken lane. `lib/tcc-folders.js` gains `projectPathIsProtected` (path-segment-bounded check). Project path resolved from `projectId` via `_internal.getProject` seam — no change to `lib/sessions.js`.
+- **`#2371`** (partial): `scripts/ci-evidence.js` output updated — "no rule in force" replaced with accurate A439-R5/v5.37.0 P1.1 description. Remaining items (workflow upload step, docs update, pilot chunk) recorded with owners; issue stays open.
+
 ## 2026-10-24 — W5-REL follow-up: record v5.36.0 as live, with no pre-update backup
 
 <!-- prawduct: type=docs | scope=w5-rel-v5.36-status-live -->
