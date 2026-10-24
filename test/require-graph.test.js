@@ -98,6 +98,18 @@ describe('scanFile: requires', () => {
     assert.deepEqual([dyn[1].line, dyn[1].prefix], [7, null]);
   });
 
+  it('keeps a template require bounded to its literal prefix when the file\'s member uses are read too, braces in the ${…} included', () => {
+    const t = tree({
+      'lib/wrap-steps/a.js': 'module.exports = { run };',
+      'test/w.test.js': "const steps = require('../lib/wrap-steps/a');\nconst load = (kind) => require(`../lib/wrap-steps/${({ x: 'a' })[kind] || kind}`);\nsteps.run(`${steps.run}`);"
+    });
+    const s = g.scanFile(path.join(ROOT, 'test/w.test.js'), t);
+    const before = s.requires.map((r) => [r.kind, r.prefix && rel(r.prefix)]);
+    g.memberUsesOf(s, 'steps');
+    assert.deepEqual(before, [['literal', null], ['dynamic', 'lib/wrap-steps']]);
+    assert.deepEqual(s.requires.map((r) => [r.kind, r.prefix && rel(r.prefix)]), before);
+  });
+
   it('resolves a rooted join through a root constant, one level or two, and names an unresolvable literal', () => {
     const s = g.scanFile(path.join(ROOT, 'scripts/s.js'), io);
     const rooted = s.requires.filter((r) => r.kind === 'rooted');
@@ -148,6 +160,23 @@ describe('scanFile: named paths and reads', () => {
   it('does not take the root constant itself, or anything above the root, as a dependency', () => {
     const io2 = tree({ 'test/t.test.js': "const REPO = path.join(__dirname, '..'); const UP = path.join(__dirname, '..', '..');\n" });
     assert.deepEqual(g.scanFile(path.join(ROOT, 'test/t.test.js'), io2).paths, []);
+  });
+});
+
+describe('splitArgs', () => {
+  it('balances braces, brackets and commas inside a template argument\'s ${…} under either mask', () => {
+    const src = 'f(`a ${ { k: 1, j: [2, 3] }.k } b`, second, { o: 1 })';
+    for (const opts of [{}, { keepTemplateExpressions: true }]) {
+      const { args, end } = g.splitArgs(g.mask(src, opts), src, 1);
+      assert.deepEqual(args, ['`a ${ { k: 1, j: [2, 3] }.k } b`', 'second', '{ o: 1 }'], JSON.stringify(opts));
+      assert.equal(end, src.length - 1);
+    }
+  });
+
+  it('balances a nested template under the member-use mask, which reads nesting', () => {
+    const src = 'f(`b ${`n, ${x}`}`, second)';
+    const { args } = g.splitArgs(g.mask(src, { keepTemplateExpressions: true }), src, 1);
+    assert.deepEqual(args, ['`b ${`n, ${x}`}`', 'second']);
   });
 });
 
