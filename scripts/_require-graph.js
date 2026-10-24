@@ -132,6 +132,27 @@ function mask(text, opts = {}) {
         code(true); // stops on the `}` that closes this `${`
         i++;
         from = i;
+      } else if (!keep && text[i] === '$' && text[i + 1] === '{') {
+        // Default (blank) mode: skip the ${…} expression without exposing its content.
+        // Track brace depth and recurse into nested templates so their closing backticks
+        // do not prematurely end the outer template scan — the bug in #2566.
+        i += 2;
+        let depth = 1;
+        while (i < text.length && depth > 0) {
+          if (text[i] === '\\') { i += 2; continue; }
+          if (text[i] === '`') { skipTemplate(); continue; }
+          if (text[i] === '\'' || text[i] === '"') {
+            const q = text[i]; i++;
+            while (i < text.length && text[i] !== q && text[i] !== '\n') {
+              if (text[i] === '\\') i++;
+              i++;
+            }
+            i++; continue;
+          }
+          if (text[i] === '{') { depth++; i++; }
+          else if (text[i] === '}') { depth--; i++; }
+          else i++;
+        }
       } else i++;
     }
     blank(from, Math.min(i, text.length));

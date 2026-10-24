@@ -76,6 +76,18 @@ describe('mask', () => {
     const src = 'const t = `${require("./x")}`;';
     assert.equal(g.mask(src), `const t = \`${' '.repeat(src.length - 13)}\`;`);
   });
+
+  it('blanks a nested template inside ${…} in default mode so require text in the inner template is not an edge', () => {
+    // Regression: #2566 — the inner template's closing backtick must not end the outer template scan.
+    const src = 'const s = `${ok ? `run require("./b") here` : ""}`;';
+    const masked = g.mask(src);
+    // The entire body between the outer backticks must be blanked.
+    const body = masked.slice(masked.indexOf('`') + 1, masked.lastIndexOf('`'));
+    assert.ok(body.split('').every((c) => c === ' ' || c === '\n'), `expected all blanks inside outer template, got: ${JSON.stringify(masked)}`);
+    // The outer backtick delimiters and surrounding code are preserved.
+    assert.ok(masked.startsWith('const s = `'));
+    assert.ok(masked.endsWith('`;'));
+  });
 });
 
 describe('scanFile: requires', () => {
@@ -129,6 +141,18 @@ describe('scanFile: requires', () => {
     const io2 = tree({ 'lib/z.js': "const s = 'require(\"./a\")'; // require('./b')\n/* require('./c') */ const re = /require\\('.\\/d'\\)/;\nconst t = `node -e \"require(process.argv[1])\"`;\n", 'lib/a.js': '' });
     const s = g.scanFile(path.join(ROOT, 'lib/z.js'), io2);
     assert.deepEqual(s.requires, []);
+  });
+
+  it('does not read a require written as text inside a nested template literal as a require edge (#2566)', () => {
+    // The inner template's text contains require("./b") but that text is not code.
+    // In default mask mode the entire outer template body (${…} included) is blanked,
+    // so the inner template's closing backtick must not prematurely end the scan.
+    const io2 = tree({
+      'lib/a.js': 'const s = `${ok ? `run require("./b") here` : ""}`;\n',
+      'lib/b.js': 'module.exports = {};\n'
+    });
+    const s = g.scanFile(path.join(ROOT, 'lib/a.js'), io2);
+    assert.deepEqual(s.requires, [], 'require inside nested template text must not become an edge');
   });
 });
 
