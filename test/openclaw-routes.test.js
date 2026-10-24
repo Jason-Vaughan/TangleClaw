@@ -222,6 +222,22 @@ describe('openclaw credential projection (#2571)', () => {
       const raw = store.openclawConnections.get(connId);
       assert.equal(raw.bridgeToken, 'new-bridge-secret');
     });
+
+    it('PUT with clearBridgeToken:true clears the bridge token', async () => {
+      await mutate('PUT', `/api/openclaw/connections/${connId}`, { bridgeToken: 'bridge-to-clear' });
+      const { json } = await mutate('PUT', `/api/openclaw/connections/${connId}`, { clearBridgeToken: true });
+      assert.equal(json.hasBridgeToken, false, 'clearBridgeToken:true must clear');
+      const raw = store.openclawConnections.get(connId);
+      assert.equal(raw.bridgeToken, null);
+    });
+
+    it('PUT with clearAuditSecret:true clears the audit secret', async () => {
+      await mutate('PUT', `/api/openclaw/connections/${connId}`, { auditSecret: 'audit-to-clear' });
+      const { json } = await mutate('PUT', `/api/openclaw/connections/${connId}`, { clearAuditSecret: true });
+      assert.equal(json.hasAuditSecret, false, 'clearAuditSecret:true must clear');
+      const raw = store.openclawConnections.get(connId);
+      assert.equal(raw.auditSecret, null);
+    });
   });
 
   // ── 3. Tunnel: webuiUrl and localhost short-circuit ───────────────────────
