@@ -41,6 +41,25 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-24 — W5-REL: prepare the v5.36.0 release
+
+<!-- prawduct: type=chore | scope=w5-rel-v5.36.0-release-prep -->
+
+v5.36.0 Wave 5 chunk W5-REL, under charter A13 `GRANT-V536-W5REL-20261023` as corrected by A14 (charter `4fa6925c`); plan rev 1 (`dfe7e337`) and amendment 1 (`9d46cb99`), approved by the Integrator.
+
+**Merging this pull request is the release.** `.github/workflows/release.yml` runs on the `version.json` change on `main`, tests the merge commit, tags `v5.36.0` on it and publishes the GitHub Release. Nobody tags by hand (this repository's CLAUDE.md exception; `docs/release-process.md`).
+
+**What changed.**
+- The 9 fragments under `changelog.d/` (1 added, 5 fixed, 3 internal) were compiled into `[Unreleased]` by `lib/changelog-fragments.js`, promoted to `## [5.36.0] - 2026-10-23` by `version-bump`'s own promote function, and deleted in the same commit, the path v5.35.0's release took. The charter's first text named 8 fragments; `main` held 9, and A14 corrected it.
+- `version.json` 5.35.0 → 5.36.0. There is no `package.json` in this repository.
+- `node scripts/release-prepare.js` moved the README clone pins and added the `[5.36.0]` line to the released-sections lock, additions only.
+- `docs/releases/v5.36-status.md`: the release's status before the merge, every finish line "No" with what each owes. A read-only upgrade rehearsal on a scratch copy of the live store (schema 68 before and after, 77 tables, row counts unchanged, `quick_check` ok, 0 foreign-key violations; scratch deleted).
+- Release notes: 4,682 of 120,000 bytes (`scripts/release-notes-gate.js`).
+
+**Parity.** `docs/tc-cli-reference.md` was already current and is unchanged. `FEATURES.md` lacked three shipped behaviours; the Integrator widened the lock for one clause each in the existing entries: `tc docs lock`/`unlock` in the shared-doc revision record, finalize's coordinator caller (#2556), and `scripts/record-test-run.js` in the CI-as-suite-evidence entry (#2521). #2547 fixes existing behaviour and needs no entry.
+
+**Changelog:** none of its own; this pull request consumes the fragments.
+
 ## 2026-10-24 — W4-B #2544: the dead-export walker reads templates and spreads; first removal batch retires lib/soak/
 
 <!-- prawduct: type=refactor | scope=w4b-2544-retire-soak-dead-exports -->
