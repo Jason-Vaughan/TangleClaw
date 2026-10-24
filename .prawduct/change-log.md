@@ -41,6 +41,34 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-24 — W4-B #2544: the dead-export walker reads templates and spreads; first removal batch retires lib/soak/
+
+<!-- prawduct: type=refactor | scope=w4b-2544-retire-soak-dead-exports -->
+
+v5.36.0 Wave 4 chunk W4-B, under `GRANT-V536-BATCH1-20261023`. The first D4 removal batch of epic #2498's dead-export audit, accepted at step 0 by PM Addendum A11 (option A) and Architect A436. #2544 stays open for the remaining batches.
+
+**Why the walker came first.** Hand-checking the batch showed the audit's dead list was wrong in both directions.
+- `scripts/_require-graph.js` blanked a template's `${…}` with its text, so `${m.name}` was no read. Its member-use regex also took the last dot of `...` for a member access, so `[...m.name]` was none either.
+- Those two blind spots put 13 read exports on the dead list. One is product-used and test-pinned: `scripts/soak.js` prints `lib/soak/local`'s `OPERATOR_USERNAME`, and `test/soak-cli.test.js` asserts it. Dropping the export fails that test (pass 0 / fail 1), and restoring it passes (pass 1).
+- The old mask also ended a template at a nested template's backtick, so the word "runtime" in `scripts/ttyd-runtime.js`'s message text counted as a whole-module use. That hid 4 genuinely dead `lib/ttyd-runtime.js` exports. They are recorded in the baseline, not removed: that file is outside this batch.
+
+**What changed.**
+- `memberUsesOf` reads a mask that keeps each `${…}`'s code (nested templates handled, and a regex right after `${` read as a regex), and lets a spread's dots precede the identifier.
+- The default mask, which the require scanner, the dynamic-prefix extraction and `splitArgs` read, is byte-identical to main's on every tracked JS file. Its own nested-template limit for require edges is #2566.
+- The 33 dead exports under `lib/soak/` are retired by export entry alone, since each is still used inside its own module.
+- Baseline: 234 − 13 + 4 − 33 = 192.
+- `docs/test-pyramid.md` records the batch and the walker's new reads.
+
+**Verified.**
+- New `test/require-graph.test.js` cases each fail on the old walker. They also pin that a template require keeps its literal-prefix bound and that `splitArgs` balances a template argument under either mask.
+- Ratchet: `--check` was red on 33 stale entries before `--write-baseline`, green at 192 after, and red on a probe export with no reader (reverted).
+- The `audit-source-readers` output is unchanged.
+- Narrow soak and release-certification run: 1038/1038.
+
+Critic: 0 blocking. R-2 (regex after `${`) was fixed and verified. R-1 (suite evidence, full suite under SUITE_SLOT), R-3 (#2566), R-4 (this entry, deferred until W4-A merged), R-5 and R-6 were accepted on the record.
+
+**Changelog:** `changelog.d/2544.retire-soak-dead-exports.internal.md`.
+
 ## 2026-10-24 — W4-A #2531 + #2546: two intermittent tests wait for the behaviour, not a fixed delay
 
 <!-- prawduct: type=fix | scope=w4a-2531-2546-timing-free-tests -->
