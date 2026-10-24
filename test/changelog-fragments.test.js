@@ -287,6 +287,32 @@ describe('changelog-fragments: readFragments', () => {
     assert.deepEqual(reads, [], 'no file was opened');
   });
 
+  it('never opens .prawduct/change-log.md when present alongside changelog.d/ (ADR 0011 / #1220 Invariant 8)', () => {
+    // Invariant 8: TangleClaw must not read .prawduct/change-log.md as the public
+    // changelog and must never write it. readFragments only reaches changelog.d/
+    // inside root — .prawduct/ is invisible to it regardless of what it contains.
+    const root = makeRoot({ '99.invariant8.fixed.md': '- Verify ADR 0011 isolation\n' });
+    const prawductDir = path.join(root, '.prawduct');
+    fs.mkdirSync(prawductDir, { recursive: true });
+    fs.writeFileSync(path.join(prawductDir, 'change-log.md'), '# Change Log\n\n## 2026-10-24 — entry\n\n- not a fragment\n');
+
+    const accessed = [];
+    const track = (orig) => (p, ...rest) => { accessed.push(p); return orig(p, ...rest); };
+    const res = readFragments(root, {
+      fs: {
+        readdirSync: track(fs.readdirSync.bind(fs)),
+        lstatSync: track(fs.lstatSync.bind(fs)),
+        realpathSync: track(fs.realpathSync.bind(fs)),
+        readFileSync: track(fs.readFileSync.bind(fs)),
+      }
+    });
+
+    assert.equal(res.ok, true);
+    assert.equal(res.fragments.length, 1, 'the valid fragment in changelog.d/ is read');
+    const prawductAccesses = accessed.filter((p) => p.includes('.prawduct'));
+    assert.deepEqual(prawductAccesses, [], `.prawduct/ was never accessed; accessed: ${accessed.join(', ')}`);
+  });
+
   it('refuses a non-string root without touching the filesystem', () => {
     const res = readFragments(undefined);
     assert.equal(res.ok, false);
