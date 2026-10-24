@@ -40,6 +40,9 @@
  * `a` and `b`; `const m = require(…)` followed by `m.a` reads `a`, and any
  * other use of `m` (passed whole, spread, indexed) reads everything;
  * `require(…).a` reads `a`; `require(…)` anywhere else reads everything.
+ * These member uses are read with the code inside a template's `${…}` kept
+ * (`${m.a}` reads `a`), and a spread of one member (`[...m.a]`) reads that
+ * member. Requires are not: a `require` inside a template is not an edge.
  *
  * Every function takes an `io` seam (`readFile`, `isFile`, `isDir`) so the
  * tests prove the walker on an in-memory tree without touching this one.
@@ -90,10 +93,19 @@ function statOf(f) {
  * the backticks stay, so a literal's extent is still visible; its contents
  * are read from the original text at the same offsets.
  *
+ * By default a template body is blanked whole, `${…}` included: an
+ * expression inside one is not a require this walker reads, and the call
+ * scanner and `splitArgs` rely on that. `keepTemplateExpressions` keeps the
+ * code of each `${…}` instead (its own strings, templates and comments
+ * masked the same way) and blanks only the template's text, which is the
+ * view `memberUsesOf` reads, because `${m.name}` reads `name` of `m`.
+ *
  * @param {string} text - A JavaScript source
+ * @param {{keepTemplateExpressions?: boolean}} [opts]
  * @returns {string} The masked text, the same length
  */
-function mask(text) {
+function mask(text, opts = {}) {
+  const keep = opts.keepTemplateExpressions === true;
   const out = text.split('');
   let i = 0;
   let lastCode = ''; // the last non-space character of code, for the regex heuristic
@@ -108,53 +120,69 @@ function mask(text) {
     blank(start, i);
     i++;
   };
-  while (i < text.length) {
-    const c = text[i];
-    const next = text[i + 1];
-    if (c === '/' && next === '/') {
-      const end = text.indexOf('\n', i);
-      const stop = end === -1 ? text.length : end;
-      blank(i, stop);
-      i = stop;
-    } else if (c === '/' && next === '*') {
-      const end = text.indexOf('*/', i + 2);
-      const stop = end === -1 ? text.length : end + 2;
-      blank(i, stop);
-      i = stop;
-    } else if (c === '\'' || c === '"') {
-      skipString(c);
-      lastCode = c;
-    } else if (c === '`') {
-      // A template body is blanked whole, `${…}` included: an expression
-      // inside one is not a require this walker reads.
-      const start = i + 1;
-      i++;
-      while (i < text.length && text[i] !== '`') {
-        if (text[i] === '\\') i++;
+  const skipTemplate = () => {
+    i++;
+    let from = i;
+    while (i < text.length && text[i] !== '`') {
+      if (text[i] === '\\') i += 2;
+      else if (keep && text[i] === '$' && text[i + 1] === '{') {
+        blank(from, i);
+        i += 2;
+        code(true); // stops on the `}` that closes this `${`
         i++;
-      }
-      blank(start, i);
-      i++;
-      lastCode = '`';
-    } else if (c === '/' && /[(,=:[!&|?{};+\-*%<>~^]/.test(lastCode || '(') && !/[\w$)\]]/.test(lastCode)) {
-      // A regex literal: `/` where an operand is expected. Its body is blanked.
-      const start = i + 1;
-      i++;
-      let inClass = false;
-      while (i < text.length && text[i] !== '\n' && (inClass || text[i] !== '/')) {
-        if (text[i] === '\\') i++;
-        else if (text[i] === '[') inClass = true;
-        else if (text[i] === ']') inClass = false;
-        i++;
-      }
-      blank(start, i);
-      i++;
-      lastCode = '/';
-    } else {
-      if (!/\s/.test(c)) lastCode = c;
-      i++;
+        from = i;
+      } else i++;
     }
-  }
+    blank(from, Math.min(i, text.length));
+    i++;
+    lastCode = '`';
+  };
+  // Mask code from `i`. Inside a `${…}` it returns at the unmatched `}`
+  // that closes it, leaving `i` on that brace.
+  const code = (inExpression) => {
+    let depth = 0;
+    while (i < text.length) {
+      const c = text[i];
+      const next = text[i + 1];
+      if (inExpression && c === '}' && depth === 0) return;
+      if (c === '/' && next === '/') {
+        const end = text.indexOf('\n', i);
+        const stop = end === -1 ? text.length : end;
+        blank(i, stop);
+        i = stop;
+      } else if (c === '/' && next === '*') {
+        const end = text.indexOf('*/', i + 2);
+        const stop = end === -1 ? text.length : end + 2;
+        blank(i, stop);
+        i = stop;
+      } else if (c === '\'' || c === '"') {
+        skipString(c);
+        lastCode = c;
+      } else if (c === '`') {
+        skipTemplate();
+      } else if (c === '/' && /[(,=:[!&|?{};+\-*%<>~^]/.test(lastCode || '(') && !/[\w$)\]]/.test(lastCode)) {
+        // A regex literal: `/` where an operand is expected. Its body is blanked.
+        const start = i + 1;
+        i++;
+        let inClass = false;
+        while (i < text.length && text[i] !== '\n' && (inClass || text[i] !== '/')) {
+          if (text[i] === '\\') i++;
+          else if (text[i] === '[') inClass = true;
+          else if (text[i] === ']') inClass = false;
+          i++;
+        }
+        blank(start, i);
+        i++;
+        lastCode = '/';
+      } else {
+        if (c === '{') depth++;
+        else if (c === '}') depth--;
+        if (!/\s/.test(c)) lastCode = c;
+        i++;
+      }
+    }
+  };
+  code(false);
   return out.join('');
 }
 
@@ -405,7 +433,7 @@ function scanFile(file, io = FS_IO) {
     paths.push({ line: lineOf(starts, m.index), resolved: abs, bounded });
   }
 
-  return { file, requires, paths, opaqueReads, exports: readExports(masked), masked, memberUses: new Map() };
+  return { file, requires, paths, opaqueReads, exports: readExports(masked), text, masked, memberUses: new Map() };
 }
 
 /**
@@ -443,22 +471,26 @@ function bindingOf(masked, at, end) {
 /**
  * The member names a file reads off one identifier (`id.name`), or `all`
  * when the identifier is used any other way: passed whole, spread, indexed.
- * Cached on the scan, because the audit asks this once per module a reader
- * requires.
+ * A use inside a template's `${…}` counts like any other, and `...id.name`
+ * (a spread of one member) reads `name`: the `.` before `id` there is the
+ * spread's, not a member access on something else. Cached on the scan,
+ * because the audit asks this once per module a reader requires.
  *
- * @param {{masked: string, memberUses: Map<string, {all: boolean, names: Set<string>}>}} scan - A scanned file
+ * @param {{text: string, memberUses: Map<string, {all: boolean, names: Set<string>}>, exprMasked?: string}} scan - A scanned file
  * @param {string} id - The identifier a `require` was bound to
  * @returns {{all: boolean, names: Set<string>}}
  */
 function memberUsesOf(scan, id) {
   if (scan.memberUses.has(id)) return scan.memberUses.get(id);
+  if (scan.exprMasked === undefined) scan.exprMasked = mask(scan.text, { keepTemplateExpressions: true });
+  const masked = scan.exprMasked;
   const names = new Set();
   let all = false;
   const decl = new RegExp(`(?:const|let|var)\\s+${id.replace(/\$/g, '\\$')}\\s*=`);
-  const use = new RegExp(`(?<![\\w$.])${id.replace(/\$/g, '\\$')}(?![\\w$])\\s*(\\??\\.\\s*([A-Za-z_$][\\w$]*))?`, 'g');
+  const use = new RegExp(`(?<![\\w$])(?:(?<=\\.\\.\\.)|(?<!\\.))${id.replace(/\$/g, '\\$')}(?![\\w$])\\s*(\\??\\.\\s*([A-Za-z_$][\\w$]*))?`, 'g');
   let u;
-  while ((u = use.exec(scan.masked)) !== null) {
-    if (decl.test(scan.masked.slice(Math.max(0, u.index - 8), u.index + u[0].length + 2))) continue; // the declaration
+  while ((u = use.exec(masked)) !== null) {
+    if (decl.test(masked.slice(Math.max(0, u.index - 8), u.index + u[0].length + 2))) continue; // the declaration
     if (u[2]) names.add(u[2]);
     else all = true;
   }
