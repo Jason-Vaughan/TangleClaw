@@ -6211,14 +6211,25 @@ async function openConnectionModal(connId) {
     document.getElementById('ocSshUser').value = data.sshUser || '';
     document.getElementById('ocPort').value = data.port || 18789;
     document.getElementById('ocSshKeyPath').value = data.sshKeyPath || '';
-    document.getElementById('ocGatewayToken').value = data.gatewayToken || '';
+    // Secret token fields (#2571 / A432-R1): leave blank on edit so a save with
+    // no changes preserves the stored value. Placeholder signals whether one
+    // is configured, so the operator knows to fill it in only when changing it.
+    const ocGatewayTokenEl = document.getElementById('ocGatewayToken');
+    ocGatewayTokenEl.value = '';
+    ocGatewayTokenEl.placeholder = data.hasGatewayToken
+      ? '•••••••• (configured — leave blank to keep)'
+      : 'Paste gateway token…';
     document.getElementById('ocCliCommand').value = data.cliCommand || 'openclaw-cli';
     document.getElementById('ocLocalPort').value = data.localPort || 18789;
     // Leave blank when bridgePort is null/0 (most non-ClawBridge connections)
     // so re-saving without touching the field doesn't re-introduce the stray
     // 3201 placeholder default (#160).
     document.getElementById('ocBridgePort').value = data.bridgePort != null && data.bridgePort !== 0 ? data.bridgePort : '';
-    document.getElementById('ocBridgeToken').value = data.bridgeToken || '';
+    const ocBridgeTokenEl = document.getElementById('ocBridgeToken');
+    ocBridgeTokenEl.value = '';
+    ocBridgeTokenEl.placeholder = data.hasBridgeToken
+      ? '•••••••• (configured — leave blank to keep)'
+      : 'Paste bridge token…';
     document.getElementById('ocInstanceDir').value = data.instanceDir || '';
     document.getElementById('ocDeleteBtn').classList.remove('hidden');
   } else {
@@ -6227,7 +6238,9 @@ async function openConnectionModal(connId) {
     document.getElementById('ocSshUser').value = '';
     document.getElementById('ocPort').value = '18789';
     document.getElementById('ocSshKeyPath').value = '';
-    document.getElementById('ocGatewayToken').value = '';
+    const ocGatewayTokenNewEl = document.getElementById('ocGatewayToken');
+    ocGatewayTokenNewEl.value = '';
+    ocGatewayTokenNewEl.placeholder = 'Paste gateway token…';
     document.getElementById('ocCliCommand').value = 'openclaw-cli';
     // Leave blank by default: an omitted localPort makes PortHub auto-allocate
     // the first free port (#352), so a second connection can't collide on the
@@ -6237,7 +6250,9 @@ async function openConnectionModal(connId) {
     // can type a port or the literal "auto" / press the Auto button for
     // server-side allocation (#489).
     document.getElementById('ocBridgePort').value = '';
-    document.getElementById('ocBridgeToken').value = '';
+    const ocBridgeTokenNewEl = document.getElementById('ocBridgeToken');
+    ocBridgeTokenNewEl.value = '';
+    ocBridgeTokenNewEl.placeholder = 'Paste bridge token…';
     document.getElementById('ocInstanceDir').value = '';
     document.getElementById('ocDeleteBtn').classList.add('hidden');
   }
@@ -6298,7 +6313,15 @@ async function saveConnection() {
     port: parseInt(document.getElementById('ocPort').value, 10) || 18789,
     sshUser,
     sshKeyPath,
-    gatewayToken: document.getElementById('ocGatewayToken').value.trim() || null,
+    // Secret token fields (#2571 / A432-R1): blank on edit means "unchanged"
+    // (write-only semantics). undefined keys are dropped by JSON.stringify, so
+    // blank → omit → server preserves stored value; non-blank → send → update.
+    // On create, blank means "no token" — store.js treats it as null either way
+    // since the create path uses `|| null` (only update has write-only semantics).
+    gatewayToken: (() => {
+      const v = document.getElementById('ocGatewayToken').value.trim();
+      return v === '' ? undefined : v;
+    })(),
     cliCommand: document.getElementById('ocCliCommand').value.trim() || 'openclaw-cli',
     localPort: (() => {
       // Blank field → omit the key entirely so the server auto-allocates a free
@@ -6311,7 +6334,10 @@ async function saveConnection() {
       return Number.isFinite(parsed) ? parsed : undefined;
     })(),
     bridgePort: bridgeParse.value,
-    bridgeToken: document.getElementById('ocBridgeToken').value.trim() || null,
+    bridgeToken: (() => {
+      const v = document.getElementById('ocBridgeToken').value.trim();
+      return v === '' ? undefined : v;
+    })(),
     instanceDir: document.getElementById('ocInstanceDir').value.trim() || null
     // availableAsEngine intentionally omitted (#459): connections are no
     // longer offered as project engines. The DB column persists untouched.

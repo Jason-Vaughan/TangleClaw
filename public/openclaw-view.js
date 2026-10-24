@@ -140,10 +140,10 @@ async function init() {
 
   showToast(tunnel.alreadyUp ? 'Tunnel already up' : 'Tunnel established', 'ok');
 
-  // Load the proxy URL in the iframe
+  // Load the proxy URL in the iframe. The server embeds the gateway token in
+  // webuiUrl (#2571 / A432-R1 §3.3) so the browser never needs the raw token.
   const frame = document.getElementById('terminalFrame');
-  const tokenParam = conn.gatewayToken ? `#token=${encodeURIComponent(conn.gatewayToken)}` : '';
-  setFrameSrc(frame, `/openclaw-direct/${encodeURIComponent(connId)}/chat?session=main${tokenParam}`);
+  setFrameSrc(frame, tunnel.webuiUrl);
 
   // Reaching here means the proxy served bytes — NOT that the gateway behind
   // it can do anything. Asking the gateway's own health endpoint is the one

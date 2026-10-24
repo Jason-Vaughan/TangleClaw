@@ -419,31 +419,34 @@ describe('update-applier (UB #228/#229)', () => {
   });
 
   describe('_backupSqlite and SQLite backup step (#2577)', () => {
-    it('refuses with backup-failed when vacuumDb throws', () => {
+    it('returns reconcile-required with reason backup-failed when vacuumDb throws', () => {
       applier._internal.git = gitStub({ ...HAPPY });
       applier._internal.vacuumDb = () => { throw new Error('disk full'); };
       const r = applier.applyUpdate();
       assert.equal(r.ok, false);
-      assert.equal(r.code, 'backup-failed');
-      assert.match(r.error, /disk full/);
+      // Uses _reconcile (not a top-level _fail code) so public/session.js needs no change.
+      assert.equal(r.code, 'reconcile-required');
+      assert.ok(Array.isArray(r.reconcile) && r.reconcile.length > 0, 'reconcile array present');
+      assert.equal(r.reconcile[0].reason, 'backup-failed');
       assert.equal(r.fromSha, 'aaaaaaa0000000000000000000000000000000');
     });
 
-    it('refuses with backup-failed when integrity check returns non-ok result', () => {
+    it('returns reconcile-required with reason backup-failed when integrity check returns non-ok result', () => {
       applier._internal.git = gitStub({ ...HAPPY });
       applier._internal.integrityCheck = () => ['*** in database main ***', 'On tree page 2 cell 0'];
       const r = applier.applyUpdate();
       assert.equal(r.ok, false);
-      assert.equal(r.code, 'backup-failed');
-      assert.match(r.error, /integrity check failed/i);
+      assert.equal(r.code, 'reconcile-required');
+      assert.equal(r.reconcile[0].reason, 'backup-failed');
     });
 
-    it('refuses with backup-failed when integrity check returns empty array', () => {
+    it('returns reconcile-required with reason backup-failed when integrity check returns empty array', () => {
       applier._internal.git = gitStub({ ...HAPPY });
       applier._internal.integrityCheck = () => [];
       const r = applier.applyUpdate();
       assert.equal(r.ok, false);
-      assert.equal(r.code, 'backup-failed');
+      assert.equal(r.code, 'reconcile-required');
+      assert.equal(r.reconcile[0].reason, 'backup-failed');
     });
 
     it('includes dbBackup path and sha256 in a successful result', () => {
