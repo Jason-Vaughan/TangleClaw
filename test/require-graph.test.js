@@ -66,6 +66,12 @@ describe('mask', () => {
     assert.equal(g.mask(src, { keepTemplateExpressions: true }), expected);
   });
 
+  it('reads a regex at the start of a kept ${…} as a regex, whatever came before the template', () => {
+    const src = 'const t = tag`${/m.x{/.test(s) ? m.y : 0}`;';
+    const out = g.mask(src, { keepTemplateExpressions: true });
+    assert.equal(out, `const t = tag\`\${/${' '.repeat(4)}/.test(s) ? m.y : 0}\`;`);
+  });
+
   it('keeps the default mask blanking a template whole, so a require written inside one is still not an edge', () => {
     const src = 'const t = `${require("./x")}`;';
     assert.equal(g.mask(src), `const t = \`${' '.repeat(src.length - 13)}\`;`);

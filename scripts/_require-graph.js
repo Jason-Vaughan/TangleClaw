@@ -128,6 +128,7 @@ function mask(text, opts = {}) {
       else if (keep && text[i] === '$' && text[i + 1] === '{') {
         blank(from, i);
         i += 2;
+        lastCode = '{'; // an operand is expected here, so a `/` starts a regex
         code(true); // stops on the `}` that closes this `${`
         i++;
         from = i;
