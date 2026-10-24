@@ -881,9 +881,11 @@ describe('tmux', () => {
         // Use `less` as a controlled alternate screen app
         tmux.createSession(testSession, { command: 'exec bash' });
         tmux.sendKeys(testSession, 'echo hello-alt-test | less');
-        const { execSync } = require('node:child_process');
-        execSync('sleep 0.5');
-        const capture = tmux.capturePane(testSession, { full: true });
+        // less must start, read stdin and switch screens; on a loaded runner
+        // that takes longer than any fixed delay, so wait for what it draws.
+        const capture = waitForCapture(testSession,
+          (cap) => cap.alternateScreen && cap.lines.join('\n').includes('hello-alt-test'),
+          'less on the alternate screen');
         assert.equal(capture.alternateScreen, true);
         assert.ok(Array.isArray(capture.lines));
         // less should show our content on the visible screen
@@ -913,12 +915,27 @@ describe('tmux', () => {
    * @returns {string[]} the right-trimmed lines that satisfied `predicate`
    */
   function waitForPane(session, predicate, what) {
+    const trimmed = (cap) => cap.lines.map((l) => l.trimEnd());
+    return trimmed(waitForCapture(session, (cap) => predicate(trimmed(cap)), what));
+  }
+
+  /**
+   * Poll a pane until `predicate` holds for the whole capture, so a test can
+   * wait on the screen mode as well as the lines. A timeout fails the test
+   * with the last capture, never passes it.
+   * @param {string} session - tmux session name
+   * @param {(cap: {lines: string[], alternateScreen: boolean}) => boolean} predicate - receives the raw `capturePane` result
+   * @param {string} what - what is awaited, for the failure message
+   * @returns {{lines: string[], alternateScreen: boolean}} the capture that satisfied `predicate`
+   */
+  function waitForCapture(session, predicate, what) {
     const deadline = Date.now() + 10000;
-    let lines = [];
+    let cap;
     for (;;) {
-      lines = tmux.capturePane(session, { full: true }).lines.map((l) => l.trimEnd());
-      if (predicate(lines)) return lines;
+      cap = tmux.capturePane(session, { full: true });
+      if (predicate(cap)) return cap;
       if (Date.now() >= deadline) {
+        const lines = cap.lines.map((l) => l.trimEnd());
         assert.fail(`timed out after 10s waiting for ${what}; last lines:\n${lines.slice(-10).join('\n')}`);
       }
       execSync('sleep 0.1');
