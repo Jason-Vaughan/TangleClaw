@@ -52,7 +52,7 @@ const SETTINGS_HAND_EDITED = JSON.stringify({
   permissions: { allow: ['Bash(ls)'] }, hooks: { SessionStart: [OPERATOR_HOOK] } }, null, 2);
 
 describe('update-applier (UB #228/#229)', () => {
-  let origGit, origCheck, origRead, origGetDbPath, origVacuumDb, origIntegrityCheck, origReadBackupFile;
+  let origGit, origCheck, origRead, origGetDbPath, origVacuumDb, origIntegrityCheck, origReadBackupFile, origChmodBackupFile;
 
   beforeEach(() => {
     origGit = applier._internal.git;
@@ -62,13 +62,16 @@ describe('update-applier (UB #228/#229)', () => {
     origVacuumDb = applier._internal.vacuumDb;
     origIntegrityCheck = applier._internal.integrityCheck;
     origReadBackupFile = applier._internal.readBackupFile;
+    origChmodBackupFile = applier._internal.chmodBackupFile;
     applier._internal.checkForUpdate = () => ({ updateAvailable: true, latestVersion: '9.9.9' });
     // Happy-path SQLite backup stubs: vacuumDb is a noop (no file created), so
-    // readBackupFile returns a fake buffer for SHA-256 computation.
+    // readBackupFile returns a fake buffer for SHA-256 computation and chmod is
+    // silenced since the file doesn't exist.
     applier._internal.getDbPath = () => '/tmp/test-tangleclaw.db';
     applier._internal.vacuumDb = () => {};
     applier._internal.integrityCheck = () => ['ok'];
     applier._internal.readBackupFile = () => Buffer.from('fake-backup-content');
+    applier._internal.chmodBackupFile = () => {};
   });
 
   afterEach(() => {
@@ -79,6 +82,7 @@ describe('update-applier (UB #228/#229)', () => {
     applier._internal.vacuumDb = origVacuumDb;
     applier._internal.integrityCheck = origIntegrityCheck;
     applier._internal.readBackupFile = origReadBackupFile;
+    applier._internal.chmodBackupFile = origChmodBackupFile;
   });
 
   describe('applyUpdate guards', () => {
