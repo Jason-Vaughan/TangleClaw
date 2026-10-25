@@ -292,7 +292,9 @@ describe('#1012 wiring — openclaw-view.js actually uses the helpers', () => {
     const probeAt = viewSrc.indexOf('tcTunnelState.probeProxy');
     // The CALL SITE, not `function setFrameSrc(frame, url)` — that definition
     // sits above everything and would make this assertion pass on any ordering.
-    const frameAt = viewSrc.indexOf('setFrameSrc(frame, `/openclaw-direct/');
+    // After #2571 the URL comes from tunnel.webuiUrl (server-side), not a
+    // client-constructed /openclaw-direct/ literal.
+    const frameAt = viewSrc.indexOf('setFrameSrc(frame, tunnel.webuiUrl)');
     assert.ok(probeAt !== -1, 'the pre-flight probe must be called');
     assert.ok(frameAt !== -1, 'the initial frame load must still happen');
     assert.ok(probeAt < frameAt,

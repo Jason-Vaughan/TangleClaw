@@ -52,19 +52,37 @@ const SETTINGS_HAND_EDITED = JSON.stringify({
   permissions: { allow: ['Bash(ls)'] }, hooks: { SessionStart: [OPERATOR_HOOK] } }, null, 2);
 
 describe('update-applier (UB #228/#229)', () => {
-  let origGit, origCheck, origRead;
+  let origGit, origCheck, origRead, origGetDbPath, origVacuumDb, origIntegrityCheck, origReadBackupFile, origChmodBackupFile;
 
   beforeEach(() => {
     origGit = applier._internal.git;
     origCheck = applier._internal.checkForUpdate;
     origRead = applier._internal.readFile;
+    origGetDbPath = applier._internal.getDbPath;
+    origVacuumDb = applier._internal.vacuumDb;
+    origIntegrityCheck = applier._internal.integrityCheck;
+    origReadBackupFile = applier._internal.readBackupFile;
+    origChmodBackupFile = applier._internal.chmodBackupFile;
     applier._internal.checkForUpdate = () => ({ updateAvailable: true, latestVersion: '9.9.9' });
+    // Happy-path SQLite backup stubs: vacuumDb is a noop (no file created), so
+    // readBackupFile returns a fake buffer for SHA-256 computation and chmod is
+    // silenced since the file doesn't exist.
+    applier._internal.getDbPath = () => '/tmp/test-tangleclaw.db';
+    applier._internal.vacuumDb = () => {};
+    applier._internal.integrityCheck = () => ['ok'];
+    applier._internal.readBackupFile = () => Buffer.from('fake-backup-content');
+    applier._internal.chmodBackupFile = () => {};
   });
 
   afterEach(() => {
     applier._internal.git = origGit;
     applier._internal.checkForUpdate = origCheck;
     applier._internal.readFile = origRead;
+    applier._internal.getDbPath = origGetDbPath;
+    applier._internal.vacuumDb = origVacuumDb;
+    applier._internal.integrityCheck = origIntegrityCheck;
+    applier._internal.readBackupFile = origReadBackupFile;
+    applier._internal.chmodBackupFile = origChmodBackupFile;
   });
 
   describe('applyUpdate guards', () => {
@@ -397,6 +415,76 @@ describe('update-applier (UB #228/#229)', () => {
       assert.equal(r.ok, false);
       assert.equal(r.code, 'dirty-tree');
       assert.match(r.error, /did not produce a clean tree/);
+    });
+  });
+
+  describe('_backupSqlite and SQLite backup step (#2577)', () => {
+    it('returns reconcile-required with reason backup-failed when vacuumDb throws', () => {
+      applier._internal.git = gitStub({ ...HAPPY });
+      applier._internal.vacuumDb = () => { throw new Error('disk full'); };
+      const r = applier.applyUpdate();
+      assert.equal(r.ok, false);
+      // Uses _reconcile (not a top-level _fail code) so public/session.js needs no change.
+      assert.equal(r.code, 'reconcile-required');
+      assert.ok(Array.isArray(r.reconcile) && r.reconcile.length > 0, 'reconcile array present');
+      assert.equal(r.reconcile[0].reason, 'backup-failed');
+      assert.equal(r.fromSha, 'aaaaaaa0000000000000000000000000000000');
+    });
+
+    it('returns reconcile-required with reason backup-failed when integrity check returns non-ok result', () => {
+      applier._internal.git = gitStub({ ...HAPPY });
+      applier._internal.integrityCheck = () => ['*** in database main ***', 'On tree page 2 cell 0'];
+      const r = applier.applyUpdate();
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'reconcile-required');
+      assert.equal(r.reconcile[0].reason, 'backup-failed');
+    });
+
+    it('returns reconcile-required with reason backup-failed when integrity check returns empty array', () => {
+      applier._internal.git = gitStub({ ...HAPPY });
+      applier._internal.integrityCheck = () => [];
+      const r = applier.applyUpdate();
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'reconcile-required');
+      assert.equal(r.reconcile[0].reason, 'backup-failed');
+    });
+
+    it('includes dbBackup path and sha256 in a successful result', () => {
+      applier._internal.git = gitStub({ ...HAPPY });
+      let capturedDest;
+      applier._internal.vacuumDb = (_src, dest) => { capturedDest = dest; };
+      applier._internal.integrityCheck = () => ['ok'];
+      const r = applier.applyUpdate();
+      assert.equal(r.ok, true);
+      assert.ok(r.dbBackup, 'result should include dbBackup');
+      assert.ok(typeof r.dbBackup.path === 'string', 'dbBackup.path should be a string');
+      assert.ok(typeof r.dbBackup.sha256 === 'string', 'dbBackup.sha256 should be a string');
+      assert.equal(r.dbBackup.path, capturedDest, 'dbBackup.path should match the dest passed to vacuumDb');
+      assert.match(r.dbBackup.path, /tangleclaw-pre-update-9\.9\.9-/, 'path should contain version');
+      assert.match(r.dbBackup.path, /\.db$/, 'path should end in .db');
+    });
+
+    it('vacuumDb is called with getDbPath result and a backup-dir path', () => {
+      applier._internal.git = gitStub({ ...HAPPY });
+      const calls = [];
+      applier._internal.getDbPath = () => '/custom/tangleclaw.db';
+      applier._internal.vacuumDb = (src, dest) => calls.push({ src, dest });
+      const r = applier.applyUpdate();
+      assert.equal(r.ok, true);
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].src, '/custom/tangleclaw.db');
+    });
+
+    it('backup step runs AFTER headState guard and BEFORE fetch (wrong-ref aborts before backup)', () => {
+      const calls = [];
+      applier._internal.git = gitStub({
+        ...HAPPY,
+        'rev-parse --abbrev-ref HEAD': 'feat/something\n',
+      });
+      applier._internal.vacuumDb = () => calls.push('vacuum');
+      const r = applier.applyUpdate();
+      assert.equal(r.code, 'wrong-ref');
+      assert.equal(calls.length, 0, 'vacuumDb should not be called when headState guard refuses');
     });
   });
 

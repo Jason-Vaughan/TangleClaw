@@ -41,6 +41,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-24 — v5.37.0 W2-A: SQLite backup before self-update + credential projection
+
+<!-- prawduct: type=feature | scope=w2a-2577-2571 -->
+
+- **`#2577`** (feature): `lib/update-applier.js` creates a verified `VACUUM INTO` SQLite backup (`~/.tangleclaw/backups/tangleclaw-pre-update-<version>-<timestamp>.db`) at step 4.5 before executing the git update. `PRAGMA integrity_check` is run on the backup; failure returns `reconcile-required` with `reason: backup-failed` (uses the existing reconcile path — `public/session.js` unchanged). Backup file mode set to `0o600`. Five new `_internal` seams (`getDbPath`, `vacuumDb`, `integrityCheck`, `readBackupFile`, `chmodBackupFile`) enable full test isolation. `dbBackup: { path, sha256 }` added to the success result payload.
+- **`#2571`** (security): `lib/routes/openclaw.js` strips `gatewayToken`/`bridgeToken`/`auditSecret` from all CRUD responses and exposes `hasGatewayToken`/`hasBridgeToken`/`hasAuditSecret` booleans. `PUT` write-only normalization lives in the route (not the store): blank/omitted preserves, `null`/`clearX:true` clears. `POST .../tunnel` builds `webuiUrl` server-side and short-circuits localhost connections with `status:'local'`. `public/openclaw-view.js` uses `tunnel.webuiUrl`. `public/ui.js` edit modal shows placeholder instead of echoing the token; `saveConnection` omits blank tokens from `PUT` body. `lib/store.js` untouched. `test/openclaw-routes.test.js` registered in `test/tiers.json` and `.testament.toml` (commit `4d463818`, SUITE_SLOT granted to A — A-first merge order).
+
 ## 2026-10-24 — v5.37.0 W1-A: TCC probe + CI-as-suite-evidence operationalization
 
 <!-- prawduct: type=feature | scope=w1a-2576-2371 -->
