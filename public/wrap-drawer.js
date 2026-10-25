@@ -1290,9 +1290,10 @@
    *
    * @param {object} widget - From {@link pathDecisionWidget}.
    * @param {Object<string, string>} chosen - `{[path]: 'include'|'leave'}` checked now.
+   * @param {string[]} [keepLocal] - Explicit paths to keep local (from blocked-widget checkboxes, #2156 C04).
    * @returns {{commit: string[], keepLocal: string[], protected: string[], alreadyUpstream: string[], unresolved: string[]}}
    */
-  function projectManifest(widget, chosen) {
+  function projectManifest(widget, chosen, keepLocal) {
     const base = (widget && widget.manifest) || { commit: [], keepLocal: [], protected: [], alreadyUpstream: [], unresolved: [] };
     const asked = new Set(((widget && widget.paths) || []).map((f) => f.path));
     const out = {
@@ -1318,6 +1319,18 @@
         const keepSet = new Set(toKeepLocal);
         out.commit = out.commit.filter((p) => !keepSet.has(p));
         out.keepLocal.push(...toKeepLocal);
+      }
+    }
+    // #2156 (C04) — explicit keepLocal array from the blocked-widget checkboxes;
+    // moves paths from commit to keepLocal without requiring a `chosen` radio entry.
+    if (Array.isArray(keepLocal) && keepLocal.length > 0) {
+      const klSet = new Set(keepLocal.filter((p) => typeof p === 'string' && p));
+      if (klSet.size > 0) {
+        const alreadyKept = new Set(out.keepLocal);
+        out.commit = out.commit.filter((p) => !klSet.has(p));
+        for (const p of klSet) {
+          if (!alreadyKept.has(p)) out.keepLocal.push(p);
+        }
       }
     }
     return out;

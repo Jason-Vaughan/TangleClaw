@@ -2275,6 +2275,20 @@ describe('wrap-drawer helpers — #2156 keep-local for owned files', () => {
     assert.ok(proj.keepLocal.includes('foreign.md'), 'foreign.md moved by the widget.paths loop');
   });
 
+  it('projectManifest: 3rd keepLocal arg moves paths from commit to keepLocal', () => {
+    const widget = { manifest: { commit: ['owned.md', 'other.md'], keepLocal: [], protected: [], alreadyUpstream: [], unresolved: [] }, paths: [] };
+    const proj = plain(H.projectManifest(widget, {}, ['owned.md']));
+    assert.deepEqual(proj.commit, ['other.md'], 'owned.md removed from commit');
+    assert.ok(proj.keepLocal.includes('owned.md'), 'owned.md in keepLocal');
+  });
+
+  it('projectManifest: 3rd keepLocal arg does not double-add a path already in keepLocal', () => {
+    const widget = { manifest: { commit: ['other.md'], keepLocal: ['already.md'], protected: [], alreadyUpstream: [], unresolved: [] }, paths: [] };
+    const proj = plain(H.projectManifest(widget, {}, ['already.md']));
+    assert.equal(proj.keepLocal.filter((p) => p === 'already.md').length, 1, 'already.md appears exactly once');
+    assert.ok(!proj.commit.includes('already.md'), 'not in commit');
+  });
+
   it('collectOptionsFromAccessors: keepLocalPaths merges into pathDecisions as leave', () => {
     const opts = plain(H.collectOptionsFromAccessors({
       keepLocalPaths: () => ['owned.md', 'another.md']
