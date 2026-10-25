@@ -41,33 +41,6 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
-## 2026-10-25 — v5.38.0 W1-D: Windows Ctrl+V/dictation paste + Master Paste button (#2458)
-
-<!-- prawduct: type=fix | scope=w1d-2458-windows-paste -->
-
-W1-D sprint, under `GRANT-V538-BATCH1-20261025` / Architect A473 (B1/B3/B4).
-
-- **`#2458`** (fixed): `tcWireWindowsTerminalPaste` in `public/api-helper.js` intercepts `Ctrl+V`/
-  dictation-synthesized `Ctrl+V` on Windows in the terminal iframe's capture phase before xterm
-  turns it into a literal `^V`, without `preventDefault()` so the browser's native paste still
-  reaches xterm. Wired into the one shared `tcWireTerminalFrame` retry loop every terminal surface
-  already goes through (session terminal, Master dashboard panel, Master drawer), so the fix lands
-  everywhere at once. The Master control bar (`tcMasterControlBarMarkup`/`tcCreateMasterControlBar`)
-  gains a `Paste` button — `pasteToMaster()` reads `navigator.clipboard.readText()` where available,
-  else falls back to a `prompt()` (the same confirm-dialog pattern `killMaster` already uses on this
-  bar).
-- **`#2313` — not touched.** Found already shipped on `main` (commits `24f72447`..`e5709426`):
-  `lib/bridge-api.js`'s `sinceText`/`reportedAtText` (via `lib/bridge-notify.js#when`) are already
-  read by both `public/operator-bridge-panel.js` and `lib/tc-verbs.js`'s `tc bridge status`, with a
-  `CHANGELOG.md` entry and `test/bridge-status-timestamps.test.js` +
-  `test/operator-bridge-panel.test.js` passing 32/32 as-is. Flagged to PM/PRR-A to close the GitHub
-  issue rather than land a redundant diff.
-- **Known pre-existing flake, not this lane's:** `test/remote-output-callers.test.js` →
-  "redacts the git error it both logs and returns" fails deterministically inside the full
-  small-tier concurrent run (`node scripts/test-stage.js 3`) on a clean `origin/main@87778ad`
-  checkout with zero diff, and passes in isolation — a concurrency/git-state race unrelated to
-  this lane's files. Recorded via `prawduct-hook test-evidence record --degraded`.
-
 ## 2026-10-25 — W5-REL: prepare the v5.37.0 release
 
 <!-- prawduct: type=chore | scope=w5-rel-v5.37.0-release-prep -->
