@@ -462,7 +462,7 @@ function renderCard(project) {
       ${githubBadge}
       ${sessionHealthBadge}
       <span class="card-row-actions">
-        <button class="btn btn-compact btn-launch" onclick="event.stopPropagation(); launchProject(${nArg})">${hasSession ? 'Open' : 'Launch'}</button>
+        <a class="btn btn-compact btn-launch" href="/session/${encodeURIComponent(project.name)}" onclick="event.preventDefault(); event.stopPropagation(); launchProject(${nArg})">${hasSession ? 'Open' : 'Launch'}</a>
         ${hasSession ? `<button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openPeekFromCard(${nArg})" title="Peek">&#128065;</button>` : ''}
         ${hasSession ? `<button class="btn btn-compact btn-icon-tiny btn-kill-card" onclick="event.stopPropagation(); openKill(${nArg})" title="Kill session">&#9632;</button>` : ''}
         <button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openHistory(${nArg})" title="Session history &amp; search">&#128269;</button>
@@ -6931,6 +6931,7 @@ const engineFilterEl = document.getElementById('engineFilter');
 if (engineFilterEl) {
   engineFilterEl.addEventListener('change', (e) => {
     state.activeEngine = e.target.value;
+    try { localStorage.setItem('tc_filterActiveEngine', state.activeEngine); } catch (err) { /* ignore */ }
     renderProjects();
   });
 }

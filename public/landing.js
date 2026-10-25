@@ -1967,19 +1967,28 @@ function wireStaleServerBanner() {
     }
     
     select.style.display = 'inline-block';
-    
-    const current = select.value;
+
+    // `select.value` reflects what the dropdown already shows (e.g. across a
+    // poll); `state.activeEngine` carries a value restored from localStorage
+    // (#2122) before the dropdown has ever been populated. Prefer whichever
+    // one is non-empty so a reload doesn't lose the restored selection.
+    const current = select.value || state.activeEngine || '';
     select.innerHTML = '<option value="">All Engines</option>';
-    
+
     Array.from(engines).sort().forEach(e => {
       const opt = document.createElement('option');
       opt.value = e;
       opt.textContent = e;
       select.appendChild(opt);
     });
-    
+
     if (engines.has(current)) {
       select.value = current;
+      state.activeEngine = current;
+    } else if (state.activeEngine && !engines.has(state.activeEngine)) {
+      // A restored engine that no longer exists on any project must not
+      // silently hide every project.
+      state.activeEngine = null;
     }
   }
 
@@ -1989,6 +1998,11 @@ function collectTags() {
     if (Array.isArray(p.tags)) p.tags.forEach(t => tags.add(t));
   }
   state.allTags = Array.from(tags).sort();
+  // A tag restored from localStorage (#2122) that no longer exists on any
+  // project must not silently hide every project — drop it instead.
+  if (state.activeTag && !state.allTags.includes(state.activeTag)) {
+    state.activeTag = null;
+  }
   renderTagRow();
 }
 
@@ -2025,6 +2039,7 @@ function filterProjects() {
 
 function toggleTag(tag) {
   state.activeTag = tag;
+  try { localStorage.setItem('tc_filterActiveTag', JSON.stringify(tag)); } catch (e) { /* ignore */ }
   renderTagRow();
   renderProjects();
 }
@@ -2110,12 +2125,15 @@ async function launchProject(name) {
  *   acknowledged in the stranded-wraps dialog, sent with this launch (#1539)
  */
 async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStranded) {
-  // Immediate visual feedback — swap button text to "Launching…" and disable
-  const btn = document.querySelector(`button[onclick*="launchProject('${name}')"]`);
+  // Immediate visual feedback — swap button text to "Launching…" and disable.
+  // #2124: the Launch/Open control is a real <a>, not a <button> — select by
+  // the shared onclick handler regardless of tag, and use a class for the
+  // pending state since `.disabled` is a no-op on an anchor.
+  const btn = document.querySelector(`[onclick*="launchProject('${name}')"]`);
   const originalText = btn ? btn.textContent : '';
   if (btn) {
     btn.textContent = 'Launching\u2026';
-    btn.disabled = true;
+    btn.classList.add('is-launching');
   }
 
   const body = {};
@@ -2134,7 +2152,7 @@ async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStra
     const data = await res.json();
 
     if (!res.ok) {
-      if (btn) { btn.textContent = originalText; btn.disabled = false; }
+      if (btn) { btn.textContent = originalText; btn.classList.remove('is-launching'); }
       // #1539: stranded wraps hold the launch. Show them and let the operator
       // acknowledge and launch in one step, with the same launch choices.
       if (data.code === 'STRANDED_WRAPS' && Array.isArray(data.items) && data.items.length > 0) {
@@ -2161,7 +2179,7 @@ async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStra
     closeStrandedLaunchModal();
     navigateToSession(name, { launched: true });
   } catch (err) {
-    if (btn) { btn.textContent = originalText; btn.disabled = false; }
+    if (btn) { btn.textContent = originalText; btn.classList.remove('is-launching'); }
     if (err.name === 'TypeError' || err.message === 'Failed to fetch') {
       setConnected(false);
     }
@@ -2767,6 +2785,17 @@ async function init() {
   try {
     const saved = localStorage.getItem('tc_showUnregistered');
     if (saved !== null) state.showUnregistered = JSON.parse(saved);
+  } catch (e) { /* ignore */ }
+  // #2122: tag and engine filter selections survive a reload. Restored here,
+  // before the first loadProjects() -> collectTags()/collectEngines() pass,
+  // which drop whichever one no longer matches a live project.
+  try {
+    const savedTag = localStorage.getItem('tc_filterActiveTag');
+    if (savedTag !== null) state.activeTag = JSON.parse(savedTag);
+  } catch (e) { /* ignore */ }
+  try {
+    const savedEngine = localStorage.getItem('tc_filterActiveEngine');
+    if (savedEngine) state.activeEngine = savedEngine;
   } catch (e) { /* ignore */ }
 
   await Promise.all([loadVersion(), loadConfig(), loadEngines()]);

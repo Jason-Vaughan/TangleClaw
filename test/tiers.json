@@ -48,6 +48,7 @@
     "test/control-docs.test.js",
     "test/create-flow-mode-picker.test.js",
     "test/create-project-modal.test.js",
+    "test/dashboard-filters.test.js",
     "test/degraded-reads-frontend.test.js",
     "test/dependabot-config.test.js",
     "test/docs-w1a1-pointers.test.js",
