@@ -651,6 +651,67 @@ describe('tmux', () => {
         fs.rmSync(binDir, { recursive: true, force: true });
       }
     });
+
+    it('returns false with born null when hasSession is true after the first new-session error (partial-create)', () => {
+      const os = require('node:os');
+      const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-retry-tmux-partial-'));
+      const realPath = process.env.PATH;
+      // State file: new-session touches it and exits 1; has-session checks for it
+      const sessionExistsFile = path.join(binDir, 'session-exists');
+      fs.writeFileSync(path.join(binDir, 'tmux'), [
+        '#!/bin/sh',
+        'case "$1" in',
+        '  has-session)',
+        `    [ -f '${sessionExistsFile}' ] && exit 0 || exit 1 ;;`,
+        '  new-session)',
+        `    touch '${sessionExistsFile}'`,
+        "    echo 'server exited unexpectedly' >&2",
+        '    exit 1',
+        '    ;;',
+        '  *) exit 0 ;;',
+        'esac',
+      ].join('\n'), { mode: 0o755 });
+      process.env.PATH = `${binDir}:${realPath}`;
+      try {
+        const name = uniqueSessionName('srv-exit-partial');
+        const born = {};
+        assert.equal(tmux.createSession(name, { command: 'exec bash', born }), false);
+        assert.equal(born.paneId, null, 'born.paneId must stay null on partial-create return');
+        assert.equal(born.server, null, 'born.server must stay null on partial-create return');
+      } finally {
+        process.env.PATH = realPath;
+        fs.rmSync(binDir, { recursive: true, force: true });
+      }
+    });
+
+    it('propagates the error when the retry also fails with "server exited unexpectedly"', () => {
+      const os = require('node:os');
+      const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-retry-tmux-retry2-'));
+      const realPath = process.env.PATH;
+      fs.writeFileSync(path.join(binDir, 'tmux'), [
+        '#!/bin/sh',
+        'case "$1" in',
+        '  has-session) exit 1 ;;',
+        '  new-session)',
+        "    echo 'server exited unexpectedly' >&2",
+        '    exit 1',
+        '    ;;',
+        '  *) exit 0 ;;',
+        'esac',
+      ].join('\n'), { mode: 0o755 });
+      process.env.PATH = `${binDir}:${realPath}`;
+      try {
+        const name = uniqueSessionName('srv-exit-retry2');
+        assert.throws(
+          () => tmux.createSession(name, { command: 'exec bash' }),
+          /server exited unexpectedly/,
+          'the error from the failed retry must propagate to the caller'
+        );
+      } finally {
+        process.env.PATH = realPath;
+        fs.rmSync(binDir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe('createSession - every launch decides every identity variable (#2268)', () => {
