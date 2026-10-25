@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-25 — v5.37.0 W4-B: dead exports Batch 2 (lib/bridge-* and lib/release-certification/*)
+
+<!-- prawduct: type=internal | scope=w4b-2573-dead-exports-batch2 -->
+
+W4-B sprint, under `GRANT-V537-BATCH1-20261024` / PM A4. Pre-approved Charter A446 (combined A-Gate + D4).
+
+- **`#2573`** (internal): Retire 53 zero-consumer `module.exports` entries from 21 files across `lib/bridge-*` (30 exports, 10 files) and `lib/release-certification/*` (23 exports, 11 files), confirmed by the `#2498` D4 audit. Declarations remain in-file; only the export keys are removed. Dead-export baseline shrinks 192 → 139 (`test/dead-exports-baseline.json`). Batch 3+ tracked under `#2590`; `#1050` re-milestoned to `v5.38.0` per Architect A464.
+
 ## 2026-10-25 — v5.37.0 W3-B: tmux test reliability fixes (env-dump polling + server-exit retry)
 
 <!-- prawduct: type=fix | scope=w3b-2565-2569 -->
