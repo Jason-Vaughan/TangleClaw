@@ -826,10 +826,12 @@ describe('wrap-drawer helpers — Include / Leave for uncommitted files (#1406)'
         // sends none of them gets empty values, never a guessed answer. The
         // upstream fields joined in #1868: no verdict reads as `none`, the
         // weakest, so an echoed answer can never claim more than it saw.
+        // `splitRenames` joined in #1630: always present (empty array when none).
         paths: [{
           path: 'shared.js', why: 'already uncommitted when this session launched', deleted: false, secret: false,
           recommendation: null, recommendationWhy: '', upstreamVerdict: 'none', provenanceChanged: false
         }],
+        splitRenames: [],
         manifest: null,
         protectedPaths: [],
         refusedIncludes: [],
@@ -2183,5 +2185,164 @@ describe('wrap-drawer helpers — upstream provenance (#1868)', () => {
       pathDecisionBasis: { 'a.md': 'upstream-owns', 'b.md': 'none', 'a2.md': 'x' }
     }));
     assert.deepEqual(c.pathDecisionBasis, { 'a.md': 'upstream-owns' });
+  });
+});
+
+describe('wrap-drawer helpers — #1630 split-rename pairs in pathDecisionWidget', () => {
+  const H = loadHelpers();
+  const blockedRow = (kind) => ({ id: kind, kind, isBlocker: true, status: 'blocked' });
+
+  it('returns a widget with splitRenames when only splits are present (no foreignPaths)', () => {
+    const output = {
+      splitRenames: [{ pair: 1, staged: ['new.md'], left: ['old.md'], reason: 'decision' }]
+    };
+    const w = plain(H.pathDecisionWidget(blockedRow('session-files'), output));
+    assert.ok(w !== null, 'widget is returned when splitRenames is non-empty and foreignPaths is absent');
+    assert.deepEqual(w.splitRenames, [{ pair: 1, staged: ['new.md'], left: ['old.md'], reason: 'decision' }]);
+    assert.deepEqual(w.paths, []);
+  });
+
+  it('normalizes splitRenames: defaults reason to decision, filters empties, excludes bad entries', () => {
+    const output = {
+      foreignPaths: [{ path: 'f.js' }],
+      splitRenames: [
+        { pair: 2, staged: ['a.md'], left: ['b.md'], reason: 'not-committable' },
+        { pair: 3, staged: [], left: [], reason: 'decision' }, // filtered: both arrays empty
+        { pair: null, staged: ['c.md'], left: ['d.md'] },      // reason defaults to 'decision'
+        null                                                     // non-object: filtered
+      ]
+    };
+    const w = plain(H.pathDecisionWidget(blockedRow('session-files'), output));
+    assert.equal(w.splitRenames.length, 2, 'empty-halves entry and null entry are filtered');
+    assert.equal(w.splitRenames[0].reason, 'not-committable');
+    assert.equal(w.splitRenames[1].reason, 'decision', 'absent reason defaults to decision');
+  });
+
+  it('still returns null when both foreignPaths and splitRenames are empty', () => {
+    assert.equal(H.pathDecisionWidget(blockedRow('session-files'), { foreignPaths: [], splitRenames: [] }), null);
+    assert.equal(H.pathDecisionWidget(blockedRow('session-files'), {}), null);
+  });
+});
+
+describe('wrap-drawer helpers — #2156 keep-local for owned files', () => {
+  const H = loadHelpers();
+  const doneRow = (kind, manifest) => ({
+    id: kind, kind, status: 'done',
+    output: { manifest },
+    blockers: []
+  });
+
+  it('buildStepRow: keepLocalControls lists manifest.commit files for a done session-files row', () => {
+    const row = plain(H.buildStepRow(doneRow('session-files', { commit: ['foo.md', 'bar.md'], keepLocal: [], protected: [], alreadyUpstream: [], unresolved: [] }), {}));
+    assert.deepEqual(row.keepLocalControls, ['foo.md', 'bar.md']);
+  });
+
+  it('buildStepRow: keepLocalControls is null when manifest.commit is empty', () => {
+    const row = plain(H.buildStepRow(doneRow('session-files', { commit: [], keepLocal: [], protected: [], alreadyUpstream: [], unresolved: [] }), {}));
+    assert.equal(row.keepLocalControls, null);
+  });
+
+  it('buildStepRow: keepLocalControls is null for a done commit row (only session-files)', () => {
+    const row = plain(H.buildStepRow(doneRow('commit', { commit: ['foo.md'], keepLocal: [], protected: [], alreadyUpstream: [], unresolved: [] }), {}));
+    assert.equal(row.keepLocalControls, null);
+  });
+
+  it('buildStepRow: keepLocalControls is null for a blocked session-files row', () => {
+    const row = plain(H.buildStepRow({
+      id: 'session-files', kind: 'session-files', status: 'blocked',
+      output: { manifest: { commit: ['foo.md'], keepLocal: [], protected: [], alreadyUpstream: [], unresolved: [] } },
+      blockers: ['something']
+    }, {}));
+    assert.equal(row.keepLocalControls, null);
+  });
+
+  it('projectManifest: moves owned commit paths with chosen[p]==="leave" to keepLocal', () => {
+    const widget = { manifest: { commit: ['owned.md', 'other.md'], keepLocal: [], protected: [], alreadyUpstream: [], unresolved: [] }, paths: [] };
+    const proj = plain(H.projectManifest(widget, { 'owned.md': 'leave' }));
+    assert.deepEqual(proj.commit, ['other.md'], 'owned.md removed from commit');
+    assert.ok(proj.keepLocal.includes('owned.md'), 'owned.md added to keepLocal');
+  });
+
+  it('projectManifest: does not move a path that is in widget.paths (foreign path)', () => {
+    // foreign paths are decided by the widget.paths loop, not the owned-commit pass
+    const widget = {
+      manifest: { commit: ['owned.md'], keepLocal: [], protected: [], alreadyUpstream: [], unresolved: [] },
+      paths: [{ path: 'foreign.md', recommendation: null }]
+    };
+    const proj = plain(H.projectManifest(widget, { 'owned.md': 'leave', 'foreign.md': 'leave' }));
+    assert.deepEqual(proj.commit, [], 'owned.md moved');
+    assert.ok(proj.keepLocal.includes('owned.md'), 'owned.md is in keepLocal');
+    assert.ok(proj.keepLocal.includes('foreign.md'), 'foreign.md moved by the widget.paths loop');
+  });
+
+  it('projectManifest: 3rd keepLocal arg moves paths from commit to keepLocal', () => {
+    const widget = { manifest: { commit: ['owned.md', 'other.md'], keepLocal: [], protected: [], alreadyUpstream: [], unresolved: [] }, paths: [] };
+    const proj = plain(H.projectManifest(widget, {}, ['owned.md']));
+    assert.deepEqual(proj.commit, ['other.md'], 'owned.md removed from commit');
+    assert.ok(proj.keepLocal.includes('owned.md'), 'owned.md in keepLocal');
+  });
+
+  it('projectManifest: 3rd keepLocal arg does not double-add a path already in keepLocal', () => {
+    const widget = { manifest: { commit: ['other.md'], keepLocal: ['already.md'], protected: [], alreadyUpstream: [], unresolved: [] }, paths: [] };
+    const proj = plain(H.projectManifest(widget, {}, ['already.md']));
+    assert.equal(proj.keepLocal.filter((p) => p === 'already.md').length, 1, 'already.md appears exactly once');
+    assert.ok(!proj.commit.includes('already.md'), 'not in commit');
+  });
+
+  it('collectOptionsFromAccessors: keepLocalPaths merges into pathDecisions as leave', () => {
+    const opts = plain(H.collectOptionsFromAccessors({
+      keepLocalPaths: () => ['owned.md', 'another.md']
+    }));
+    assert.deepEqual(opts.pathDecisions, { 'owned.md': 'leave', 'another.md': 'leave' });
+  });
+
+  it('collectOptionsFromAccessors: keepLocalPaths merges with existing pathDecisions', () => {
+    const opts = plain(H.collectOptionsFromAccessors({
+      pathDecisions: () => ({ 'foreign.md': 'include' }),
+      keepLocalPaths: () => ['owned.md']
+    }));
+    assert.deepEqual(opts.pathDecisions, { 'foreign.md': 'include', 'owned.md': 'leave' });
+  });
+
+  it('collectOptionsFromAccessors: keepLocalPaths null/empty produces no pathDecisions', () => {
+    assert.equal(plain(H.collectOptionsFromAccessors({ keepLocalPaths: () => [] })).pathDecisions, undefined);
+    assert.equal(plain(H.collectOptionsFromAccessors({ keepLocalPaths: () => null })).pathDecisions, undefined);
+  });
+
+  it('buildStepRow: a file already in manifest.keepLocal (prior Retry) does not appear in keepLocalControls', () => {
+    // After a keep-local Retry, the file moves from commit to keepLocal on the
+    // server. keepLocalControlsFor reads only manifest.commit, so the file does
+    // not reappear as a toggleable control on the next done-row render.
+    const row = plain(H.buildStepRow(doneRow('session-files', {
+      commit: ['other.md'],
+      keepLocal: ['already-kept.md'],
+      protected: [], alreadyUpstream: [], unresolved: []
+    }), {}));
+    assert.deepEqual(row.keepLocalControls, ['other.md'],
+      'only manifest.commit files appear — already-kept.md is in keepLocal, not commit');
+    assert.ok(!row.keepLocalControls.includes('already-kept.md'),
+      'a file already kept local on a prior Retry is absent from keepLocalControls');
+  });
+
+  it('buildStepRow: keepLocalControls lists manifest.commit files for a needs-operator session-files row', () => {
+    // A461-R3: when reviewSessionFiles triggers a needs-operator pause, the row must
+    // carry the same keepLocalControls as a done row so the settled drawer renders checkboxes.
+    const row = plain(H.buildStepRow({
+      id: 'session-files', kind: 'session-files', status: 'needs-operator',
+      output: { manifest: { commit: ['owned.md', 'other.md'], keepLocal: [], protected: [], alreadyUpstream: [], unresolved: [] } },
+      blockers: ['2 session files ready to commit — mark any to keep local, then Retry']
+    }, {}));
+    assert.deepEqual(row.keepLocalControls, ['owned.md', 'other.md'],
+      'needs-operator row carries keepLocalControls so the settled drawer renders keep-local checkboxes');
+  });
+
+  it('collectOptionsFromAccessors: reviewSessionFiles:true sets options.reviewSessionFiles', () => {
+    const opts = plain(H.collectOptionsFromAccessors({ reviewSessionFiles: () => true }));
+    assert.equal(opts.reviewSessionFiles, true);
+  });
+
+  it('collectOptionsFromAccessors: reviewSessionFiles:false / absent does not set the option', () => {
+    assert.equal(plain(H.collectOptionsFromAccessors({ reviewSessionFiles: () => false })).reviewSessionFiles, undefined);
+    assert.equal(plain(H.collectOptionsFromAccessors({})).reviewSessionFiles, undefined);
   });
 });

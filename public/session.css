@@ -2456,6 +2456,71 @@ html[data-tc-keyboard] body {
   color: var(--text-secondary);
   font-style: italic;
 }
+/* #1630 C04 — split-rename grouped warning inside the path-decision widget */
+.wrap-decision-splits {
+  margin-top: 12px;
+  padding: 8px 10px;
+  background: var(--elevated-bg);
+  border-radius: 4px;
+}
+.wrap-decision-splits-label {
+  margin: 0 0 6px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+.wrap-decision-splits-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wrap-decision-split-row {
+  margin: 4px 0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+.wrap-decision-split-staged,
+.wrap-decision-split-left {
+  margin-right: 6px;
+  color: var(--text-secondary);
+}
+.wrap-decision-split-reason {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+/* #2156 C04 — Keep-local checkboxes (blocked path-decision widget + done step row) */
+.wrap-step-keeplocal {
+  margin-top: 10px;
+  padding: 8px 10px;
+  background: var(--elevated-bg);
+  border-radius: 4px;
+}
+.wrap-step-keeplocal-label {
+  margin: 0 0 4px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+.wrap-step-keeplocal-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wrap-step-keeplocal-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  padding: 2px 0;
+  cursor: pointer;
+}
+.wrap-step-keeplocal-cb {
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.wrap-step-keeplocal-confirm {
+  margin-top: 8px;
+  padding: 5px 12px;
+  font-size: 0.82rem;
+}
 /* #428 inline plan-picker (blocked priming-roll, multi in-progress plans) */
 .wrap-decision-planselect {
   background: var(--card-bg);

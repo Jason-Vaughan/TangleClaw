@@ -238,8 +238,28 @@
       // than asking again. The session paints the row distinctly.
       reused: Boolean(reuse),
       // #1858 — what the wrap committed, kept local and withheld, by path.
-      manifest: rowManifest(stepResult)
+      manifest: rowManifest(stepResult),
+      // #2156 — per-file Keep-local controls for done session-files rows.
+      keepLocalControls: keepLocalControlsFor(stepResult)
     };
+  }
+
+  /**
+   * The owned files that may be individually kept local on a settled
+   * `session-files` row (#2156). Returns the `manifest.commit` list when the row
+   * is a done session-files step with at least one committable path, else `null`.
+   *
+   * @param {object} stepResult - A pipeline step result.
+   * @returns {string[]|null}
+   */
+  function keepLocalControlsFor(stepResult) {
+    if (!stepResult || stepResult.kind !== 'session-files') return null;
+    if (stepResult.status !== 'done' && stepResult.status !== 'needs-operator') return null;
+    const manifest = stepResult.output && stepResult.output.manifest;
+    const commit = Array.isArray(manifest && manifest.commit)
+      ? manifest.commit.filter((p) => typeof p === 'string' && p)
+      : [];
+    return commit.length > 0 ? commit : null;
   }
 
   /**
@@ -1177,8 +1197,13 @@
    */
   function pathDecisionWidget(stepRow, rawOutput) {
     if (!stepRow || (stepRow.kind !== 'session-files' && stepRow.kind !== 'commit')) return null;
-    if (!rawOutput || typeof rawOutput !== 'object' || !Array.isArray(rawOutput.foreignPaths)) return null;
-    const paths = rawOutput.foreignPaths
+    if (!rawOutput || typeof rawOutput !== 'object') return null;
+    // #1630 — foreignPaths defaults to [] so a blocked-with-splits-only output
+    // (Case B: all decided, but rename would be half-committed) still produces a
+    // widget. The widget is returned when either foreign paths or split renames
+    // are present.
+    const rawForeignPaths = Array.isArray(rawOutput.foreignPaths) ? rawOutput.foreignPaths : [];
+    const paths = rawForeignPaths
       .filter((f) => f && typeof f.path === 'string' && f.path)
       .map((f) => ({
         path: f.path,
@@ -1195,12 +1220,24 @@
         upstreamVerdict: UPSTREAM_VERDICTS.includes(f.upstreamVerdict) ? f.upstreamVerdict : 'none',
         provenanceChanged: f.provenanceChanged === true
       }));
-    if (paths.length === 0) return null;
+    const splitRenames = Array.isArray(rawOutput.splitRenames)
+      ? rawOutput.splitRenames
+        .filter((r) => r && typeof r === 'object')
+        .map((r) => ({
+          pair: typeof r.pair === 'number' ? r.pair : 0,
+          staged: Array.isArray(r.staged) ? r.staged.filter((p) => typeof p === 'string' && p) : [],
+          left: Array.isArray(r.left) ? r.left.filter((p) => typeof p === 'string' && p) : [],
+          reason: r.reason === 'not-committable' ? 'not-committable' : 'decision'
+        }))
+        .filter((r) => r.staged.length > 0 || r.left.length > 0)
+      : [];
+    if (paths.length === 0 && splitRenames.length === 0) return null;
     const strings = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x) : []);
     return {
       kind: 'path-decisions',
       optionsKey: 'pathDecisions',
       paths,
+      splitRenames,
       manifest: normalizeManifest(rawOutput.manifest),
       protectedPaths: strings(rawOutput.safetyWithheld),
       refusedIncludes: strings(rawOutput.refusedIncludes),
@@ -1253,9 +1290,10 @@
    *
    * @param {object} widget - From {@link pathDecisionWidget}.
    * @param {Object<string, string>} chosen - `{[path]: 'include'|'leave'}` checked now.
+   * @param {string[]} [keepLocal] - Explicit paths to keep local (from blocked-widget checkboxes, #2156 C04).
    * @returns {{commit: string[], keepLocal: string[], protected: string[], alreadyUpstream: string[], unresolved: string[]}}
    */
-  function projectManifest(widget, chosen) {
+  function projectManifest(widget, chosen, keepLocal) {
     const base = (widget && widget.manifest) || { commit: [], keepLocal: [], protected: [], alreadyUpstream: [], unresolved: [] };
     const asked = new Set(((widget && widget.paths) || []).map((f) => f.path));
     const out = {
@@ -1271,6 +1309,29 @@
       if (answer === 'include') out.commit.push(f.path);
       else if (answer === 'leave') out.keepLocal.push(f.path);
       else out.unresolved.push(f.path);
+    }
+    // #2156 — owned paths in manifest.commit that the operator marked Keep local
+    // move from commit to keepLocal. These are NOT in widget.paths (which holds
+    // only foreign undecided paths), so `asked` guards against double-moving.
+    if (chosen) {
+      const toKeepLocal = out.commit.filter((p) => chosen[p] === 'leave' && !asked.has(p));
+      if (toKeepLocal.length > 0) {
+        const keepSet = new Set(toKeepLocal);
+        out.commit = out.commit.filter((p) => !keepSet.has(p));
+        out.keepLocal.push(...toKeepLocal);
+      }
+    }
+    // #2156 (C04) — explicit keepLocal array from the blocked-widget checkboxes;
+    // moves paths from commit to keepLocal without requiring a `chosen` radio entry.
+    if (Array.isArray(keepLocal) && keepLocal.length > 0) {
+      const klSet = new Set(keepLocal.filter((p) => typeof p === 'string' && p));
+      if (klSet.size > 0) {
+        const alreadyKept = new Set(out.keepLocal);
+        out.commit = out.commit.filter((p) => !klSet.has(p));
+        for (const p of klSet) {
+          if (!alreadyKept.has(p)) out.keepLocal.push(p);
+        }
+      }
     }
     return out;
   }
@@ -1594,6 +1655,22 @@
           for (const k of keys) options.pathDecisions[k] = v[k];
         }
       }
+    }
+    // #2156 — keep-local for owned files (done session-files row). Merges into
+    // pathDecisions as Leave so the server's existing classify() handles it.
+    if (accessors.keepLocalPaths) {
+      const kl = accessors.keepLocalPaths();
+      if (Array.isArray(kl) && kl.length > 0) {
+        if (!options.pathDecisions) options.pathDecisions = {};
+        for (const p of kl) {
+          if (typeof p === 'string' && p) options.pathDecisions[p] = 'leave';
+        }
+      }
+    }
+    // #2156 (A461-R3) — opt-in pre-commit review pause. Sent only on the initial wrap
+    // POST (confirmWrap passes the accessor); retryWrap does not, avoiding a retry loop.
+    if (typeof accessors.reviewSessionFiles === 'function' && accessors.reviewSessionFiles() === true) {
+      options.reviewSessionFiles = true;
     }
     // #1868 — the upstream verdict each answer was given against, only beside an
     // answer that is being sent, so the server can tell a stale Include apart.

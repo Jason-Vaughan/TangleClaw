@@ -22,6 +22,7 @@ const { execFileSync } = require('node:child_process');
 
 const ownership = require('../lib/wrap-steps/_file-ownership');
 const commitStep = require('../lib/wrap-steps/commit');
+const sessionFiles = require('../lib/wrap-steps/session-files');
 const launchBaseline = require('../lib/launch-baseline');
 const wrapScope = require('../lib/wrap-scope');
 const { execFileArgs } = require('../lib/exec');
@@ -108,6 +109,29 @@ function runCommit(repo, scope, options = {}) {
     staged: {},
     options,
     scope
+  });
+}
+
+/**
+ * Run the REAL session-files step, as the pipeline runs it.
+ *
+ * Parallel to `runCommit`: tests session-files in isolation so C01 assertions
+ * do not depend on what commit.js does after the gate fires.
+ *
+ * @param {string} repo - Repo root
+ * @param {object} scope - From `scopeFor`
+ * @param {object} [options] - Wrap run options (`pathDecisions`)
+ * @returns {Promise<object>} The step result
+ */
+function runSessionFiles(repo, scope, options = {}) {
+  return sessionFiles.run({
+    project: wrapScope.stepProject({ id: 1, name: 'own', path: repo }, scope),
+    session: null,
+    step: { id: 'session-files' },
+    previousResults: [],
+    options,
+    scope,
+    methodology: null
   });
 }
 
@@ -328,5 +352,70 @@ describe('#1629 — a staged rename reaches the commit', () => {
     assert.ok(tracked.includes('new.md'));
     assert.equal(fs.existsSync(path.join(repo, '.tangleclaw', 'medusa', 'registry.json')), true,
       'and the untracked state file is still on disk');
+  });
+});
+
+describe('#1630 — session-files surfaces split-rename pairs early', () => {
+  it('blocks (Case B) when all decisions are settled but a rename would be half-committed', async () => {
+    // Both halves are owned (changed after launch). Operator chose Leave for the
+    // source, so new.md would go in while old.md stays out — a split. session-files
+    // must block here, before _untrackOffer and before the wrap creates a branch.
+    const repo = makeRepo();
+    const baseline = launchBaseline.capture(repo);
+    git(repo, 'mv', 'old.md', 'new.md');
+
+    const r = await runSessionFiles(repo, await scopeFor(repo, baseline), { pathDecisions: { 'old.md': 'leave' } });
+    assert.equal(r.status, 'blocked');
+    assert.ok(Array.isArray(r.output.splitRenames) && r.output.splitRenames.length > 0,
+      'blocked output carries splitRenames');
+    assert.equal(r.output.splitRenames[0].reason, 'decision',
+      'the operator chose Leave for old.md and can change the answer — that is the remedy to offer');
+    assert.ok(r.blockers.some((b) => /half-committed/.test(b)),
+      'a blocker line names the split-rename problem');
+    assert.ok(r.blockers.some((b) => /new\.md/.test(b) && /old\.md/.test(b)),
+      'the blocker line names both halves of the rename pair');
+  });
+
+  it('includes splitRenames (Case A) when already blocked for an undecided foreign path', async () => {
+    // old.md was dirty before launch (foreign). After the rename, new.md is owned
+    // and old.md is undecided. session-files blocks on the undecided foreign path
+    // AND must include splitRenames so the drawer can present the pairs together.
+    const repo = makeRepo();
+    fs.writeFileSync(path.join(repo, 'old.md'), 'operator change before launch\n');
+    const baseline = launchBaseline.capture(repo);
+    git(repo, 'mv', 'old.md', 'new.md');
+
+    const r = await runSessionFiles(repo, await scopeFor(repo, baseline));
+    assert.equal(r.status, 'blocked');
+    assert.ok(Array.isArray(r.output.splitRenames) && r.output.splitRenames.length > 0,
+      'splitRenames is present alongside the undecided-paths blocked response');
+    assert.ok(r.blockers.some((b) => /half-committed/.test(b)),
+      'blockers line names the rename pair conflict even when blocked for a different reason first');
+  });
+});
+
+describe('#2156 (A461-R3) — reviewSessionFiles pre-commit pause', () => {
+  it('pauses with needs-operator when reviewSessionFiles:true and manifest.commit is non-empty', async () => {
+    // Modify a tracked file after the baseline so it is owned by this session.
+    const repo = makeRepo();
+    const baseline = launchBaseline.capture(repo);
+    fs.writeFileSync(path.join(repo, 'old.md'), 'session change after launch\n');
+
+    const r = await runSessionFiles(repo, await scopeFor(repo, baseline), { reviewSessionFiles: true });
+    assert.equal(r.status, 'needs-operator', 'should pause pre-commit when reviewSessionFiles is set');
+    assert.ok(r.blockers.some((b) => /keep local/.test(b) || /Retry/.test(b)),
+      'blocker text guides the operator to mark keep-local then retry');
+    assert.ok(Array.isArray(r.output.manifest.commit) && r.output.manifest.commit.length > 0,
+      'manifest.commit carries the owned files so the drawer can render checkboxes');
+  });
+
+  it('returns done on retry without reviewSessionFiles (no loop)', async () => {
+    // Same setup: owned file changed after baseline; retry omits reviewSessionFiles.
+    const repo = makeRepo();
+    const baseline = launchBaseline.capture(repo);
+    fs.writeFileSync(path.join(repo, 'old.md'), 'session change after launch\n');
+
+    const r = await runSessionFiles(repo, await scopeFor(repo, baseline));
+    assert.equal(r.status, 'done', 'omitting reviewSessionFiles on retry must not pause again');
   });
 });

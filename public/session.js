@@ -3908,6 +3908,20 @@ function openWrapModal() {
   } else {
     pwGroup.classList.add('hidden');
   }
+  // #2156 (A461-R3) — Review session files checkbox: insert once, reset on each open.
+  if (!document.getElementById('wrapReviewFiles')) {
+    const rfLabel = document.createElement('label');
+    rfLabel.className = 'wrap-modal-review-files-row';
+    const rfCb = document.createElement('input');
+    rfCb.type = 'checkbox';
+    rfCb.id = 'wrapReviewFiles';
+    rfLabel.appendChild(rfCb);
+    rfLabel.appendChild(document.createTextNode(' Review session files before committing'));
+    const confirmBtn = document.getElementById('wrapConfirmBtn');
+    if (confirmBtn) confirmBtn.insertAdjacentElement('beforebegin', rfLabel);
+  }
+  const rfEl = document.getElementById('wrapReviewFiles');
+  if (rfEl) rfEl.checked = false;
   document.getElementById('wrapModal').classList.add('open');
 }
 
@@ -4095,7 +4109,9 @@ async function confirmWrap() {
     release: () => wrapReleaseChoice,
     bumpLevel: () => wrapBumpLevel,
     proceedPastStranded: () => wrapProceedPastStranded,
-    keepSessionRunning: () => wrapKeepRunning
+    keepSessionRunning: () => wrapKeepRunning,
+    // #2156 (A461-R3) — initial POST only; retryWrap does not pass this, so the pause never loops.
+    reviewSessionFiles: () => { const el = document.getElementById('wrapReviewFiles'); return Boolean(el && el.checked); }
   });
   if (Object.keys(initialOptions).length > 0) body.options = initialOptions;
 
@@ -4637,7 +4653,7 @@ function renderWrapDrawer(pipelineResult, runContext) {
   const listEl = document.getElementById('wrapStepList');
   listEl.innerHTML = '';
   for (const { row } of rows) {
-    listEl.appendChild(renderStepRow(row));
+    listEl.appendChild(renderStepRow(row, { commitSha: pipelineResult.commitSha }));
   }
 
   // Decision widget — for the blocked step OR for any ok:true step
@@ -4803,7 +4819,7 @@ function syncRetryLabel() {
  * @param {object} row - From `tcWrapDrawerHelpers.buildStepRow`.
  * @returns {HTMLLIElement}
  */
-function renderStepRow(row) {
+function renderStepRow(row, ctx) {
   const li = document.createElement('li');
   li.className = 'wrap-step-row';
   if (row.isBlocker) li.classList.add('wrap-step-row--blocker');
@@ -4861,6 +4877,14 @@ function renderStepRow(row) {
   if (row.manifest) {
     const manifestEl = renderManifest(row.manifest, 'What this wrap did with the uncommitted files');
     if (manifestEl) main.appendChild(manifestEl);
+  }
+
+  // #2156 (A461-R3) — Keep-local affordance: only shown in the settled drawer before commit.
+  // ctx is { commitSha } from renderWrapDrawer. renderLiveWrapDrawer calls without ctx,
+  // so the condition is ctx && !ctx.commitSha (not !ctx || !ctx.commitSha): live callers
+  // get no controls; post-commit settled callers get none either (commitSha is set).
+  if (row.keepLocalControls && row.keepLocalControls.length > 0 && ctx && !ctx.commitSha) {
+    main.appendChild(buildKeepLocalControls(row.keepLocalControls, { showConfirmBtn: true }));
   }
 
   if (row.blockers && row.blockers.length > 0) {
@@ -5203,7 +5227,12 @@ function renderPathDecisionWidget(widget) {
   const label = document.createElement('div');
   label.className = 'wrap-decision-label';
   label.id = groupLabelId;
-  label.textContent = window.tcWrapDrawerHelpers.pathDecisionLabel(widget.paths);
+  // #1630 C04 — Case B: paths.length===0 but splitRenames non-empty; override label
+  // so the widget doesn't say "0 uncommitted files".
+  const splitCount = Array.isArray(widget.splitRenames) ? widget.splitRenames.length : 0;
+  label.textContent = widget.paths.length === 0 && splitCount > 0
+    ? `${splitCount} rename pair${splitCount === 1 ? '' : 's'} need${splitCount === 1 ? 's' : ''} your attention`
+    : window.tcWrapDrawerHelpers.pathDecisionLabel(widget.paths);
   wrap.appendChild(label);
   // #1868 — where this checkout stands against upstream, read before any row.
   let headlineId = null;
@@ -5270,8 +5299,52 @@ function renderPathDecisionWidget(widget) {
     }
     list.appendChild(row);
   });
-  wrap.appendChild(list);
+  // #1630 C04 G6 — only emit the ARIA group container when there are path rows to put in it.
+  if (widget.paths.length > 0) wrap.appendChild(list);
   appendPathSafetyControls(wrap, widget);
+
+  // #1630 C04a — render split-rename pairs as a grouped warning after the path list.
+  if (splitCount > 0) {
+    const splitsSection = document.createElement('div');
+    splitsSection.className = 'wrap-decision-splits';
+    const splitsLabel = document.createElement('p');
+    splitsLabel.className = 'wrap-decision-splits-label';
+    splitsLabel.textContent = 'These files are part of a rename and must be decided together:';
+    splitsSection.appendChild(splitsLabel);
+    const splitsList = document.createElement('ul');
+    splitsList.className = 'wrap-decision-splits-list';
+    for (const r of widget.splitRenames) {
+      const li = document.createElement('li');
+      li.className = 'wrap-decision-split-row';
+      const stagedSpan = document.createElement('span');
+      stagedSpan.className = 'wrap-decision-split-staged';
+      stagedSpan.appendChild(document.createTextNode('Staged: '));
+      for (const p of (Array.isArray(r.staged) ? r.staged : [])) {
+        const code = document.createElement('code');
+        code.textContent = p;
+        stagedSpan.appendChild(code);
+      }
+      li.appendChild(stagedSpan);
+      const leftSpan = document.createElement('span');
+      leftSpan.className = 'wrap-decision-split-left';
+      leftSpan.appendChild(document.createTextNode(' Left out: '));
+      for (const p of (Array.isArray(r.left) ? r.left : [])) {
+        const code = document.createElement('code');
+        code.textContent = p;
+        leftSpan.appendChild(code);
+      }
+      li.appendChild(leftSpan);
+      const reasonSpan = document.createElement('span');
+      reasonSpan.className = 'wrap-decision-split-reason';
+      reasonSpan.textContent = r.reason === 'not-committable'
+        ? ' — Undo the move or commit outside the wrap.'
+        : ' — Include both or leave both local — they cannot be split.';
+      li.appendChild(reasonSpan);
+      splitsList.appendChild(li);
+    }
+    splitsSection.appendChild(splitsList);
+    wrap.appendChild(splitsSection);
+  }
   return wrap;
 }
 
@@ -5287,6 +5360,71 @@ function checkedPathDecisions(wrap) {
     out[input.dataset.path] = input.value;
   }
   return out;
+}
+
+/**
+ * Per-file Keep-local checkboxes for session-owned files (#2156 C04). Used in
+ * two places: inside the blocked path-decision widget (showConfirmBtn: false,
+ * top-level Retry already visible) and on done session-files rows in the step
+ * list (showConfirmBtn: true, top-level Retry is hidden there).
+ *
+ * @param {string[]} paths - Owned commit paths to offer as Keep-local.
+ * @param {{onToggle?: Function, showConfirmBtn?: boolean}} [opts]
+ * @returns {HTMLDivElement}
+ */
+function buildKeepLocalControls(paths, opts) {
+  const onToggle = opts && opts.onToggle;
+  const showConfirmBtn = Boolean(opts && opts.showConfirmBtn);
+
+  const section = document.createElement('div');
+  section.className = 'wrap-step-keeplocal';
+
+  const lbl = document.createElement('p');
+  lbl.className = 'wrap-step-keeplocal-label';
+  lbl.textContent = 'Keep local on Retry:';
+  section.appendChild(lbl);
+
+  const list = document.createElement('ul');
+  list.className = 'wrap-step-keeplocal-list';
+
+  let confirmBtn = null;
+  if (showConfirmBtn) {
+    confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.className = 'btn wrap-step-keeplocal-confirm';
+    confirmBtn.textContent = 'Keep local and retry';
+    confirmBtn.hidden = true;
+    confirmBtn.addEventListener('click', () => {
+      confirmBtn.disabled = true;
+      retryWrap().finally(() => { confirmBtn.disabled = false; });
+    });
+  }
+
+  for (const p of paths) {
+    const li = document.createElement('li');
+    const rowLbl = document.createElement('label');
+    rowLbl.className = 'wrap-step-keeplocal-row';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'wrap-step-keeplocal-cb';
+    cb.dataset.path = p;
+    cb.addEventListener('change', () => {
+      if (onToggle) onToggle();
+      if (confirmBtn) {
+        const anyChecked = section.querySelectorAll('.wrap-step-keeplocal-cb:checked').length > 0;
+        confirmBtn.hidden = !anyChecked;
+      }
+    });
+    rowLbl.appendChild(cb);
+    const code = document.createElement('code');
+    code.textContent = p;
+    rowLbl.appendChild(code);
+    li.appendChild(rowLbl);
+    list.appendChild(li);
+  }
+  section.appendChild(list);
+  if (confirmBtn) section.appendChild(confirmBtn);
+  return section;
 }
 
 /**
@@ -5357,6 +5495,19 @@ function appendPathSafetyControls(wrap, widget) {
     wrap.appendChild(details);
   }
 
+  // #2156 C04 G5 — when session-files is blocked and owned files would be committed,
+  // offer per-file Keep-local checkboxes. The blocked drawer's top-level Retry button
+  // is already visible, so no inline confirm button is needed (showConfirmBtn: false).
+  const ownedCommit = widget.manifest && Array.isArray(widget.manifest.commit)
+    ? widget.manifest.commit
+    : [];
+  if (ownedCommit.length > 0) {
+    wrap.appendChild(buildKeepLocalControls(ownedCommit, {
+      onToggle: () => refreshPathManifest(wrap, widget),
+      showConfirmBtn: false
+    }));
+  }
+
   refreshPathManifest(wrap, widget);
 }
 
@@ -5370,11 +5521,14 @@ function appendPathSafetyControls(wrap, widget) {
 function refreshPathManifest(wrap, widget) {
   const H = window.tcWrapDrawerHelpers;
   const chosen = checkedPathDecisions(wrap);
+  // #2156 C04 G5 — include keep-local checkbox selections in the live manifest preview.
+  const keepLocal = Array.from(wrap.querySelectorAll('.wrap-step-keeplocal-cb:checked'))
+    .map((i) => i.dataset.path).filter(Boolean);
   const slot = wrap.querySelector('.wrap-decision-manifest-slot');
   if (slot) {
     slot.innerHTML = '';
     const title = widget.paths.some((f) => f.recommendation) ? 'If you apply the recommendations' : 'What this wrap will do with the uncommitted files';
-    const el = renderManifest(H.projectManifest(widget, chosen), title);
+    const el = renderManifest(H.projectManifest(widget, chosen, keepLocal), title);
     if (el) slot.appendChild(el);
   }
   const pending = wrap.querySelector('.wrap-decision-apply-pending');
@@ -5950,7 +6104,18 @@ async function retryWrap() {
         : wrapProceedPastStranded;
     },
     // #1558 — the modal's keep-running choice holds for every Retry.
-    keepSessionRunning: () => wrapKeepRunning
+    keepSessionRunning: () => wrapKeepRunning,
+    // #2156 C04 — Keep-local checkboxes from both the done step-row and the
+    // blocked path-decision widget. collectOptionsFromAccessors converts them
+    // to pathDecisions[path]='leave'; accumulatePathDecisions carries them forward.
+    // Scoped to getElementById targets (not document.querySelectorAll) so the VM
+    // test sandbox, which stubs getElementById but not document-level selectors, works.
+    keepLocalPaths: () => {
+      const listEl = document.getElementById('wrapStepList');
+      const fromList = listEl ? Array.from(listEl.querySelectorAll('.wrap-step-keeplocal-cb:checked')) : [];
+      const fromDecision = decisionEl ? Array.from(decisionEl.querySelectorAll('.wrap-step-keeplocal-cb:checked')) : [];
+      return fromList.concat(fromDecision).map((i) => i.dataset.path).filter(Boolean);
+    }
   };
 
   const options = H.collectOptionsFromAccessors(accessors);
