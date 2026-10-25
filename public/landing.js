@@ -2146,17 +2146,61 @@ async function launchProject(name) {
  *   acknowledged in the stranded-wraps dialog, sent with this launch (#1539)
  */
 async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStranded) {
+  // The CSSOM `CSS.escape` algorithm, nested here rather than a top-level
+  // helper or the global: an "unregistered" project (discovered off the
+  // filesystem, never through `validateName`) can have a name with a quote
+  // or other character that would otherwise break the selector below, built
+  // by string interpolation — and several other files lift this function's
+  // declaration text in isolation to test it (test/stranded-wraps-ui.test.js,
+  // test/launch-isolation-override-ui.test.js, test/launch-refusal-toast.test.js),
+  // so any dependency outside this declaration — a global or a sibling
+  // function — is invisible to them. Nesting keeps the lift self-sufficient.
+  function cssEscape(value) {
+    const string = String(value);
+    const length = string.length;
+    let result = '';
+    let index = -1;
+    const firstCodeUnit = string.charCodeAt(0);
+    while (++index < length) {
+      const codeUnit = string.charCodeAt(index);
+      if (codeUnit === 0x0000) {
+        result += '�';
+        continue;
+      }
+      if (
+        (codeUnit >= 0x0001 && codeUnit <= 0x001F) || codeUnit === 0x007F ||
+        (index === 0 && codeUnit >= 0x0030 && codeUnit <= 0x0039) ||
+        (index === 1 && codeUnit >= 0x0030 && codeUnit <= 0x0039 && firstCodeUnit === 0x002D)
+      ) {
+        result += `\\${codeUnit.toString(16)} `;
+        continue;
+      }
+      if (index === 0 && length === 1 && codeUnit === 0x002D) {
+        result += `\\${string.charAt(index)}`;
+        continue;
+      }
+      if (
+        codeUnit >= 0x0080 || codeUnit === 0x002D || codeUnit === 0x005F ||
+        (codeUnit >= 0x0030 && codeUnit <= 0x0039) ||
+        (codeUnit >= 0x0041 && codeUnit <= 0x005A) ||
+        (codeUnit >= 0x0061 && codeUnit <= 0x007A)
+      ) {
+        result += string.charAt(index);
+        continue;
+      }
+      result += `\\${string.charAt(index)}`;
+    }
+    return result;
+  }
+
   // Immediate visual feedback — swap button text to "Launching…" and disable.
   // This runs for the not-yet-active ("Launch") control — a real <a href>
   // (#2124), not a <button>, so the browser's native "Open in new tab" works
   // on it too (consumeLaunchQueryParam() is what turns that landing into an
   // actual launch). `.disabled` is a no-op on an anchor, so the pending state
   // is a CSS class instead. Found by a `data-project-name` attribute, not by
-  // parsing the `onclick` text: an "unregistered" project (discovered off the
-  // filesystem, never through `validateName`) can have a name with a quote in
-  // it, which breaks a selector built by interpolating the raw name between
-  // quote characters — `CSS.escape` is what makes the value safe either way.
-  const btn = document.querySelector(`[data-project-name="${CSS.escape(name)}"]`);
+  // parsing the `onclick` text.
+  const btn = document.querySelector(`[data-project-name="${cssEscape(name)}"]`);
   const originalText = btn ? btn.textContent : '';
   if (btn) {
     btn.textContent = 'Launching\u2026';

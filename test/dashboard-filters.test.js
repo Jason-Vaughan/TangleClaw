@@ -226,49 +226,24 @@ describe('card Launch/Open control is a real link for both states (#2124)', () =
     }
   });
 
-  it('doLaunchProject finds the control by a data-project-name attribute, CSS.escape-d, not by parsing onclick text (CRITIC BLOCKING: an unregistered filesystem project can have a name with a quote in it, which breaks a selector built by string-interpolating the raw name between quote characters)', () => {
+  it('doLaunchProject finds the control by a data-project-name attribute, cssEscape-d, not by parsing onclick text (CRITIC BLOCKING: an unregistered filesystem project can have a name with a quote in it, which breaks a selector built by string-interpolating the raw name between quote characters)', () => {
     const body = liftDeclaration(LANDING_SRC, 'async function doLaunchProject(');
-    assert.match(body, /document\.querySelector\(`\[data-project-name="\$\{CSS\.escape\(name\)\}"\]`\)/,
-      'the selector must look up a data-project-name attribute through CSS.escape, not interpolate the raw name into onclick-text matching');
+    assert.match(body, /document\.querySelector\(`\[data-project-name="\$\{cssEscape\(name\)\}"\]`\)/,
+      'the selector must look up a data-project-name attribute through cssEscape, not interpolate the raw name into onclick-text matching');
 
-    // A reference implementation of the CSSOM `CSS.escape` algorithm (there is
-    // no DOM/jsdom in this test harness to call the real one) — used here to
-    // verify the SAFETY PROPERTY the fix depends on: for an adversarial name
-    // (the one Critic's finding used, plus a backslash and an all-quotes
-    // name), the escaped value, embedded in doLaunchProject's own template,
-    // never contains an unescaped `"` that would close the attribute value
-    // early. Scanning respects `\` as an escape prefix for the next
-    // character, which is exactly what a CSS tokenizer does.
-    function cssEscape(value) {
-      const string = String(value);
-      const length = string.length;
-      let result = '';
-      let index = -1;
-      const firstCodeUnit = string.charCodeAt(0);
-      while (++index < length) {
-        const codeUnit = string.charCodeAt(index);
-        if (codeUnit === 0x0000) { result += '�'; continue; }
-        if ((codeUnit >= 0x0001 && codeUnit <= 0x001F) || codeUnit === 0x007F ||
-            (index === 0 && codeUnit >= 0x0030 && codeUnit <= 0x0039) ||
-            (index === 1 && codeUnit >= 0x0030 && codeUnit <= 0x0039 && firstCodeUnit === 0x002D)) {
-          result += `\\${codeUnit.toString(16)} `;
-          continue;
-        }
-        if (index === 0 && length === 1 && codeUnit === 0x002D) {
-          result += `\\${string.charAt(index)}`;
-          continue;
-        }
-        if (codeUnit >= 0x0080 || codeUnit === 0x002D || codeUnit === 0x005F ||
-            (codeUnit >= 0x0030 && codeUnit <= 0x0039) ||
-            (codeUnit >= 0x0041 && codeUnit <= 0x005A) ||
-            (codeUnit >= 0x0061 && codeUnit <= 0x007A)) {
-          result += string.charAt(index);
-          continue;
-        }
-        result += `\\${string.charAt(index)}`;
-      }
-      return result;
-    }
+    // Lift and run the REAL cssEscape — no DOM/jsdom in this harness to call
+    // the global CSS.escape it was written to replace (that gap is exactly
+    // what broke 3 other test files that lift-and-run doLaunchProject; this
+    // function exists so none of them need a CSS global). Verify the SAFETY
+    // PROPERTY the fix depends on: for an adversarial name (the one Critic's
+    // finding used, plus a backslash and an all-quotes name), the escaped
+    // value, embedded in doLaunchProject's own template, never contains an
+    // unescaped `"` that would close the attribute value early. Scanning
+    // respects `\` as an escape prefix for the next character, which is
+    // exactly what a CSS tokenizer does.
+    const ctx = vm.createContext({});
+    vm.runInContext(`${liftDeclaration(LANDING_SRC, 'function cssEscape(')}\nthis.cssEscape = cssEscape;`, ctx);
+    const cssEscape = ctx.cssEscape;
 
     /**
      * Whether `selector` (a `[attr="value"]`-shaped string) has an unescaped
