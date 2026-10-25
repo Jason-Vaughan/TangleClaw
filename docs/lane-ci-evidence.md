@@ -295,8 +295,9 @@ node scripts/suite-evidence.js --explain                                        
 This is the command the gate could be pointed at, written so that pointing the gate at it changes
 nothing until the environment says otherwise. **It is declared nowhere today.** `test_command` in
 `.prawduct/project-state.yaml` still names `node --test …`, `test/suite-evidence.test.js` pins that
-it does, and CI runs `node --test` itself and uploads no artifact, which the same test pins. Those
-pins are what make the cutover below visible: it cannot ride in without changing them.
+it does, and CI runs `node --test` itself and uploads `test-results.xml` as the `test-results`
+artifact (pinned `actions/upload-artifact` step added at W2-CUT, #2371), which the same test pins.
+Those pins are what make the cutover visible: it cannot ride in without changing them.
 
 **Local mode**, the default with `TANGLECLAW_SUITE_EVIDENCE` unset, hands node the declared
 `test_command` with `{junit_xml}` filled in, argument for argument (`scripts/test-stage.js` owns
@@ -319,9 +320,8 @@ point starting it for a report that cannot exist. Any other value of the variabl
 than picking a mode.
 
 **It fails closed, and there is no synthetic report in any path.** The first fact that does not
-hold, and an artifact that does not exist, which is the state of every run until the Operator
-lands the workflow step the activation packet carries, is a named `REFUSED:` line; nothing is
-written at `<path>`, and a gate that ran this reads red. A report whose structure is invented is
+hold, and an artifact that does not exist, is a named `REFUSED:` line; nothing is written at
+`<path>`, and a gate that ran this reads red. A report whose structure is invented is
 not evidence, so nothing stands in for CI's own.
 
 `--explain` reads facts 1 to 8 and lists the artifact, printing each as it holds or refuses, says
@@ -383,10 +383,10 @@ Every line of it is Operator-held. The exact texts are in the activation packet
 (`.tangleclaw/plans/2371-activation-packet.md`, local to the lane that wrote it and served at its
 plans URL; its digest is in the W4-03 pull request).
 
-1. **The Operator lands the workflow step.** One `actions/upload-artifact` step, pinned by commit,
-   `if: always()`, uploading `test-results.xml` as the artifact `test-results`, after the skip
-   audit. From then on every CI run carries its own report, and nothing else changes: no gate
-   reads it until step 3.
+1. **DONE — W2-CUT (#2371).** `.github/workflows/test.yml` now carries a pinned
+   `actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2` step,
+   `if: always()`, that uploads `test-results.xml` as the artifact `test-results`, after the skip
+   audit. Every CI run from this merge on carries its own report; no gate reads it until step 3.
 2. **The rule texts are accepted, then activated.** The Architect accepts the exact replacement
    texts for the Builder overlay (clause 4) and the Integrator overlay (clauses 1 and 2(d)) and
    this page at the digest of the revision accepted with them; the Operator activates them

@@ -76,6 +76,40 @@ describe('mask', () => {
     const src = 'const t = `${require("./x")}`;';
     assert.equal(g.mask(src), `const t = \`${' '.repeat(src.length - 13)}\`;`);
   });
+
+  it('blanks a nested template inside ${…} in default mode so require text in the inner template is not an edge', () => {
+    // Regression: #2566 — the inner template's closing backtick must not end the outer template scan.
+    const src = 'const s = `${ok ? `run require("./b") here` : ""}`;';
+    const masked = g.mask(src);
+    // The entire body between the outer backticks must be blanked.
+    const body = masked.slice(masked.indexOf('`') + 1, masked.lastIndexOf('`'));
+    assert.ok(body.split('').every((c) => c === ' ' || c === '\n'), `expected all blanks inside outer template, got: ${JSON.stringify(masked)}`);
+    // The outer backtick delimiters and surrounding code are preserved.
+    assert.ok(masked.startsWith('const s = `'));
+    assert.ok(masked.endsWith('`;'));
+  });
+
+  it('blanks the full outer template span including text before ${…} in default mode (outer-span masking)', () => {
+    // Architect A454 fix: blank(keep ? from : start, ...) where start = i+1
+    // (right after opening backtick) ensures pre-${} text is also blanked,
+    // not just the trailing part after the last ${…}.
+    const src = 'const s = `text before ${require("./b")} text after`;';
+    const masked = g.mask(src);
+    // Locate the outer backtick pair
+    const open = masked.indexOf('`');
+    const close = masked.lastIndexOf('`');
+    const body = masked.slice(open + 1, close);
+    assert.ok(
+      body.split('').every((c) => c === ' ' || c === '\n'),
+      `expected full outer template body blanked (including pre-\${} text), got: ${JSON.stringify(masked)}`
+    );
+    // The outer backtick delimiters and surrounding code are preserved.
+    assert.ok(masked.startsWith('const s = `'), 'code before template preserved');
+    assert.ok(masked.endsWith('`;'), 'closing backtick and semicolon preserved');
+    // Verify the pre-${} span ("text before ") is blanked — not just the suffix.
+    // body[0] must be a space, not 't'.
+    assert.equal(body[0], ' ', 'first char of template body is blanked (not literal "t" from "text before")');
+  });
 });
 
 describe('scanFile: requires', () => {
@@ -129,6 +163,18 @@ describe('scanFile: requires', () => {
     const io2 = tree({ 'lib/z.js': "const s = 'require(\"./a\")'; // require('./b')\n/* require('./c') */ const re = /require\\('.\\/d'\\)/;\nconst t = `node -e \"require(process.argv[1])\"`;\n", 'lib/a.js': '' });
     const s = g.scanFile(path.join(ROOT, 'lib/z.js'), io2);
     assert.deepEqual(s.requires, []);
+  });
+
+  it('does not read a require written as text inside a nested template literal as a require edge (#2566)', () => {
+    // The inner template's text contains require("./b") but that text is not code.
+    // In default mask mode the entire outer template body (${…} included) is blanked,
+    // so the inner template's closing backtick must not prematurely end the scan.
+    const io2 = tree({
+      'lib/a.js': 'const s = `${ok ? `run require("./b") here` : ""}`;\n',
+      'lib/b.js': 'module.exports = {};\n'
+    });
+    const s = g.scanFile(path.join(ROOT, 'lib/a.js'), io2);
+    assert.deepEqual(s.requires, [], 'require inside nested template text must not become an edge');
   });
 });
 

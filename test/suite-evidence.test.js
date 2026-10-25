@@ -303,10 +303,10 @@ describe('suite-evidence — the declaration is still today\'s command, so a cut
     assert.deepEqual(m[1].split(' '), DECLARED_TEST_COMMAND);
   });
 
-  it('the workflow still runs node --test itself and uploads no artifact: the packet\'s step has not landed', () => {
+  it('the workflow runs node --test itself and uploads test results via upload-artifact after W2-CUT', () => {
     const workflow = fs.readFileSync(path.join(REPO_ROOT, '.github', 'workflows', 'test.yml'), 'utf8');
     assert.match(workflow, /run: node --test .* 'test\/\*\.test\.js'/);
-    assert.ok(!workflow.includes('upload-artifact'), 'no upload step in the workflow this wave never edits');
+    assert.ok(workflow.includes('upload-artifact'), 'upload-artifact step must be present after W2-CUT');
     assert.ok(!workflow.includes('suite-evidence'), 'CI does not run this command');
   });
 });
@@ -466,9 +466,9 @@ describe('suite-evidence — each of the ten facts refuses alone, writing nothin
 });
 
 describe('suite-evidence — the artifact: every way CI\'s report can be missing refuses', () => {
-  it('no artifact of the name on the run, which is every run until the workflow step lands', async (t) => {
+  it('no artifact of the name on the run', async (t) => {
     const r = await run(t, { artifacts: { total_count: 0, artifacts: [] } });
-    refused(r, /no artifact named `test-results` on workflow run 39842690823: the workflow uploads none until the Operator lands the packet's upload step/);
+    refused(r, /no artifact named `test-results` on workflow run 39842690823/);
     assert.equal(r.seen.complement, null, 'the complement, a wide run, is not started for a report that cannot exist');
     assert.equal(r.seen.downloads.length, 0);
   });

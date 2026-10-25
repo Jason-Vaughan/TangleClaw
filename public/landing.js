@@ -1781,6 +1781,26 @@ async function sendBootBeacon() {
   }
 }
 
+/**
+ * Returns an amber badge HTML string when the session's Medusa wakeups are
+ * held because the pane is not at rest (pane-composer-has-input: unsent prompt
+ * input; pane-not-at-rest: engine busy or showing a dialog/menu), or '' when
+ * they are not. Defined here rather than in ui.js so public/ui.js stays
+ * unmodified (#2578).
+ *
+ * @param {object} project - Project object from GET /api/projects.
+ * @returns {string} Badge HTML or empty string.
+ */
+function renderHeldWakeBadge(project) {
+  if (!(project.session && project.session.active && project.session.heldWakeReason)) return '';
+  const reason = project.session.heldWakeReason;
+  const titleText = reason === 'pane-composer-has-input'
+    ? 'pane has unsent prompt input'
+    : 'pane is not at rest';
+  const label = reason === 'pane-composer-has-input' ? 'input pending' : 'pane not at rest';
+  return `<span class="badge badge-wake-hold" title="Medusa wakeups held: ${titleText} (${esc(reason)})">&#9888; ${label}</span>`;
+}
+
 async function loadProjects() {
   const data = await api('/api/projects?archived=true');
   if (!data) return;
@@ -2751,6 +2771,18 @@ async function init() {
 
   await Promise.all([loadVersion(), loadConfig(), loadEngines()]);
   applyTheme();
+
+  // ui.js is now loaded (script tags are synchronous; this await yielded to the
+  // HTML parser which executed ui.js before any microtask resumed init). Wrap
+  // renderCard to inject the held-wake badge before card-row-actions on every
+  // render, without touching public/ui.js (#2578).
+  const _origRenderCard = renderCard;
+  window.renderCard = function(project) {
+    const html = _origRenderCard(project);
+    const badge = renderHeldWakeBadge(project);
+    if (!badge) return html;
+    return html.replace('<span class="card-row-actions">', badge + '<span class="card-row-actions">');
+  };
 
   // Check for first-run setup wizard
   if (typeof checkSetupWizard === 'function' && checkSetupWizard()) {

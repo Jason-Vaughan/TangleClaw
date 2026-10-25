@@ -92,6 +92,7 @@ files = [
   "test/inline-handler-args.test.js",
   "test/isolation-override-banner.test.js",
   "test/landing-unreachable-state.test.js",
+  "test/landing-wake-hold-badge.test.js",
   "test/landing-wrap-single-flight.test.js",
   "test/launch-binding-guard.test.js",
   "test/launch-bootstrap.test.js",
