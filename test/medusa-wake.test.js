@@ -2291,3 +2291,49 @@ describe('medusa-wake — the peer reason vocabulary is declared for every code 
     assert.equal(wake.peerReasonMeaning('toString'), null, 'no prototype key reads as declared');
   });
 });
+
+describe('medusa-wake — verdictFor exposes per-session hold reason for the projects layer (#2578)', () => {
+  let saved;
+  let clock;
+
+  beforeEach(() => {
+    wake.stop();
+    saved = { ...wake._internal };
+    clock = Date.parse('2026-09-12T10:00:00.000Z');
+    wake._internal.now = () => clock;
+    wake._internal.masterKey = () => 'master';
+    wake._internal.registeredWorkspaceId = () => null;
+  });
+  afterEach(() => { Object.assign(wake._internal, saved); wake.stop(); });
+
+  it('returns null for a session the monitor has not yet assessed', () => {
+    assert.equal(wake.verdictFor(999), null);
+  });
+
+  it('returns the pane-composer-has-input verdict for a session whose composer has typed input', () => {
+    installWorld({ pane: PANE_WITH_PROMPT_TEXT, cursor: TYPED_CURSOR });
+    wake._internal.tick();
+    const v = wake.verdictFor(1); // claudeSession(1).id === 1
+    assert.ok(v, 'verdict is set after a tick');
+    assert.equal(v.reason, 'pane-composer-has-input');
+    assert.equal(typeof v.since, 'string');
+    assert.equal(typeof v.observedAt, 'string');
+  });
+
+  it('returns the pane-not-at-rest verdict for an antigravity session whose pane lacks the at-rest marker', () => {
+    installWorld({ sessions: [antigravitySession(1)], pane: AG_DIALOG_PANE });
+    wake._internal.tick();
+    const v = wake.verdictFor(1); // antigravitySession(1).id === 1
+    assert.ok(v, 'verdict is set after a tick');
+    assert.equal(v.reason, 'pane-not-at-rest');
+  });
+
+  it('returns a shallow copy so the caller cannot mutate the stored verdict', () => {
+    installWorld({ pane: PANE_WITH_PROMPT_TEXT, cursor: TYPED_CURSOR });
+    wake._internal.tick();
+    const v1 = wake.verdictFor(1);
+    v1.reason = 'tampered';
+    const v2 = wake.verdictFor(1);
+    assert.notEqual(v2.reason, 'tampered', 'stored verdict is not mutated by the caller');
+  });
+});

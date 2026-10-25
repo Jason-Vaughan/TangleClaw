@@ -1004,6 +1004,17 @@ html[data-tc-keyboard] body {
   border-radius: 8px;
   font-weight: 600;
 }
+/* Medusa wake-hold badge (#2578): pane has unsent prompt input, so Medusa
+   wakeups are held. Amber like drift/stranded — work is waiting. */
+.badge-wake-hold {
+  background: #4a3410;
+  color: #f0b860;
+  border: 1px solid #7a5418;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 600;
+}
 /* What the latest GitHub check of stranded wraps said (#1542, #1543). None of
    these holds a launch. A wrap PR with failing checks is red: something is
    broken. A wrap branch with no PR is the stranded amber. A check that could

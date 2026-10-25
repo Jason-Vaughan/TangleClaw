@@ -121,41 +121,21 @@ function mask(text, opts = {}) {
     i++;
   };
   const skipTemplate = () => {
+    const start = i + 1;
     i++;
     let from = i;
     while (i < text.length && text[i] !== '`') {
       if (text[i] === '\\') i += 2;
-      else if (keep && text[i] === '$' && text[i + 1] === '{') {
-        blank(from, i);
+      else if (text[i] === '$' && text[i + 1] === '{') {
+        if (keep) blank(from, i);
         i += 2;
         lastCode = '{'; // an operand is expected here, so a `/` starts a regex
-        code(true); // stops on the `}` that closes this `${`
+        code(true); // stops on the `}` that closes this `${`; handles strings, regexes, nested templates
         i++;
         from = i;
-      } else if (!keep && text[i] === '$' && text[i + 1] === '{') {
-        // Default (blank) mode: skip the ${…} expression without exposing its content.
-        // Track brace depth and recurse into nested templates so their closing backticks
-        // do not prematurely end the outer template scan — the bug in #2566.
-        i += 2;
-        let depth = 1;
-        while (i < text.length && depth > 0) {
-          if (text[i] === '\\') { i += 2; continue; }
-          if (text[i] === '`') { skipTemplate(); continue; }
-          if (text[i] === '\'' || text[i] === '"') {
-            const q = text[i]; i++;
-            while (i < text.length && text[i] !== q && text[i] !== '\n') {
-              if (text[i] === '\\') i++;
-              i++;
-            }
-            i++; continue;
-          }
-          if (text[i] === '{') { depth++; i++; }
-          else if (text[i] === '}') { depth--; i++; }
-          else i++;
-        }
       } else i++;
     }
-    blank(from, Math.min(i, text.length));
+    blank(keep ? from : start, Math.min(i, text.length));
     i++;
     lastCode = '`';
   };

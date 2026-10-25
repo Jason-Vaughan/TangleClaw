@@ -88,6 +88,28 @@ describe('mask', () => {
     assert.ok(masked.startsWith('const s = `'));
     assert.ok(masked.endsWith('`;'));
   });
+
+  it('blanks the full outer template span including text before ${…} in default mode (outer-span masking)', () => {
+    // Architect A454 fix: blank(keep ? from : start, ...) where start = i+1
+    // (right after opening backtick) ensures pre-${} text is also blanked,
+    // not just the trailing part after the last ${…}.
+    const src = 'const s = `text before ${require("./b")} text after`;';
+    const masked = g.mask(src);
+    // Locate the outer backtick pair
+    const open = masked.indexOf('`');
+    const close = masked.lastIndexOf('`');
+    const body = masked.slice(open + 1, close);
+    assert.ok(
+      body.split('').every((c) => c === ' ' || c === '\n'),
+      `expected full outer template body blanked (including pre-\${} text), got: ${JSON.stringify(masked)}`
+    );
+    // The outer backtick delimiters and surrounding code are preserved.
+    assert.ok(masked.startsWith('const s = `'), 'code before template preserved');
+    assert.ok(masked.endsWith('`;'), 'closing backtick and semicolon preserved');
+    // Verify the pre-${} span ("text before ") is blanked — not just the suffix.
+    // body[0] must be a space, not 't'.
+    assert.equal(body[0], ' ', 'first char of template body is blanked (not literal "t" from "text before")');
+  });
 });
 
 describe('scanFile: requires', () => {
