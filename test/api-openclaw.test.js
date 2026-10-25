@@ -744,12 +744,13 @@ describe('API /api/openclaw/connections/:id/tunnel', () => {
     });
     const connId = created.data.id;
 
-    // Tunnel will fail because SSH key doesn't exist, but route should respond
+    // localhost/127.0.0.1 short-circuits to the local path — returns 200 with status:'local'
+    // and a webuiUrl built server-side (#2571 / A432 §3.3), without calling ensureTunnel.
     const { status, data } = await request(server, 'POST', `/api/openclaw/connections/${connId}/tunnel`);
-    // Expect 502 (tunnel error) since the SSH key is invalid
-    assert.equal(status, 502);
-    assert.ok(data.error);
-    assert.ok(data.error.includes('Tunnel failed'));
+    assert.equal(status, 200);
+    assert.equal(data.ok, true);
+    assert.equal(data.status, 'local');
+    assert.ok(data.webuiUrl, 'webuiUrl must be present');
   });
 
   it('direct proxy /openclaw-direct/:connId/* returns 404 for unknown connId', async () => {
