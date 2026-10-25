@@ -451,9 +451,11 @@ describe('tmux', () => {
   });
 
   describe('createSession - status bar', () => {
-    const testSession = uniqueSessionName('statusbar');
-
+    // Each test uses its own unique session name: killing the last tmux session
+    // triggers an exit-empty server shutdown, which races the next test's
+    // new-session. Per-test names eliminate the shared-session coupling (#2569).
     it('should set status-left to "TangleClaw" label', () => {
+      const testSession = uniqueSessionName('statusbar');
       try {
         tmux.createSession(testSession, { command: 'exec bash' });
         const { execSync } = require('node:child_process');
@@ -471,6 +473,7 @@ describe('tmux', () => {
     });
 
     it('should set status-right with time and date', () => {
+      const testSession = uniqueSessionName('statusbar');
       try {
         tmux.createSession(testSession, { command: 'exec bash' });
         const { execSync } = require('node:child_process');
@@ -488,6 +491,25 @@ describe('tmux', () => {
 
   describe('createSession - launch env injection', () => {
     const testSession = uniqueSessionName('launchenv');
+    const os = require('node:os');
+    const { execSync } = require('node:child_process');
+
+    /**
+     * Poll until `p` exists and is non-empty, up to a 3s deadline. Fails the
+     * test with a diagnostic showing whether the file was missing or 0 bytes,
+     * instead of a fixed sleep that races on loaded CI runners (#2565).
+     * @param {string} p - Absolute path to the env dump file
+     */
+    function waitForEnvDump(p) {
+      const deadline = Date.now() + 3000;
+      while (!fs.existsSync(p) || fs.statSync(p).size === 0) {
+        if (Date.now() >= deadline) {
+          const state = fs.existsSync(p) ? 'present but 0 bytes' : 'missing';
+          assert.fail(`timed out after 3s waiting for env dump at ${p} (${state})`);
+        }
+        execSync('sleep 0.02');
+      }
+    }
 
     it('makes options.env visible to the spawned launch command (regression: #189 / Aider override)', () => {
       try {
@@ -497,10 +519,6 @@ describe('tmux', () => {
         // pre-fix behavior), the file is missing them and the smoke
         // test for the Aider engine override breaks the same way it
         // did during Web-API ↔ LiteLLM integration.
-        const fs = require('node:fs');
-        const os = require('node:os');
-        const path = require('node:path');
-        const { execSync } = require('node:child_process');
 
         // A directory of its own: a name built from the clock is shared by two
         // runs that reach this line in the same millisecond.
@@ -518,7 +536,7 @@ describe('tmux', () => {
               OPENAI_API_BASE: 'http://example.test:4000'
             }
           });
-          execSync('sleep 0.5');
+          waitForEnvDump(envDumpPath);
 
           assert.ok(fs.existsSync(envDumpPath), `Expected env dump file at ${envDumpPath}`);
           const dumped = fs.readFileSync(envDumpPath, 'utf8');
@@ -536,11 +554,6 @@ describe('tmux', () => {
 
     it('escapes values containing shell metacharacters in env injection', () => {
       try {
-        const fs = require('node:fs');
-        const os = require('node:os');
-        const path = require('node:path');
-        const { execSync } = require('node:child_process');
-
         // Values with spaces, quotes, $, and ; would break a naive
         // unescaped `-e KEY=VAL` concatenation. _escapeArg wraps in
         // single quotes and escapes embedded quotes, so the value
@@ -556,7 +569,7 @@ describe('tmux', () => {
             command,
             env: { TRICKY: tricky }
           });
-          execSync('sleep 0.5');
+          waitForEnvDump(envDumpPath);
 
           assert.ok(fs.existsSync(envDumpPath));
           const dumped = fs.readFileSync(envDumpPath, 'utf8');
@@ -567,6 +580,75 @@ describe('tmux', () => {
         }
       } finally {
         try { tmux.killSession(testSession); } catch (_) {}
+      }
+    });
+  });
+
+  describe('createSession - server-exit retry (#2569)', () => {
+    // Uses PATH-shimmed #!/bin/sh tmux stubs (same pattern as timeout/probe tests at top of
+    // file) to drive the retry path deterministically without a live tmux server.
+
+    it('retries once on "server exited unexpectedly" and returns true with born populated', () => {
+      const os = require('node:os');
+      const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-retry-tmux-'));
+      const realPath = process.env.PATH;
+      // State file: first new-session call touches it and exits 1; second call removes it and succeeds.
+      const stateFile = path.join(binDir, 'new-session-called');
+      fs.writeFileSync(path.join(binDir, 'tmux'), [
+        '#!/bin/sh',
+        'case "$1" in',
+        '  has-session) exit 1 ;;',
+        '  new-session)',
+        `    if [ ! -f '${stateFile}' ]; then`,
+        `      touch '${stateFile}'`,
+        "      echo 'server exited unexpectedly' >&2",
+        '      exit 1',
+        '    fi',
+        "    echo '%0 12345.67890'",
+        '    ;;',
+        '  set-option) exit 0 ;;',
+        '  *) exit 0 ;;',
+        'esac',
+      ].join('\n'), { mode: 0o755 });
+      process.env.PATH = `${binDir}:${realPath}`;
+      try {
+        const name = uniqueSessionName('srv-exit-retry');
+        const born = {};
+        assert.equal(tmux.createSession(name, { command: 'exec bash', born }), true);
+        assert.equal(born.paneId, '%0', 'born.paneId must be populated from the retry output');
+        assert.equal(born.server, '12345.67890', 'born.server must be populated from the retry output');
+      } finally {
+        process.env.PATH = realPath;
+        fs.rmSync(binDir, { recursive: true, force: true });
+      }
+    });
+
+    it('rethrows immediately when the error does not match "server exited unexpectedly"', () => {
+      const os = require('node:os');
+      const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-retry-tmux-nomatch-'));
+      const realPath = process.env.PATH;
+      fs.writeFileSync(path.join(binDir, 'tmux'), [
+        '#!/bin/sh',
+        'case "$1" in',
+        '  has-session) exit 1 ;;',
+        '  new-session)',
+        "    echo 'some other tmux error' >&2",
+        '    exit 1',
+        '    ;;',
+        '  *) exit 0 ;;',
+        'esac',
+      ].join('\n'), { mode: 0o755 });
+      process.env.PATH = `${binDir}:${realPath}`;
+      try {
+        const name = uniqueSessionName('srv-exit-nomatch');
+        assert.throws(
+          () => tmux.createSession(name, { command: 'exec bash' }),
+          /some other tmux error/,
+          'a non-matching error must propagate immediately without retry'
+        );
+      } finally {
+        process.env.PATH = realPath;
+        fs.rmSync(binDir, { recursive: true, force: true });
       }
     });
   });
