@@ -2323,4 +2323,26 @@ describe('wrap-drawer helpers — #2156 keep-local for owned files', () => {
     assert.ok(!row.keepLocalControls.includes('already-kept.md'),
       'a file already kept local on a prior Retry is absent from keepLocalControls');
   });
+
+  it('buildStepRow: keepLocalControls lists manifest.commit files for a needs-operator session-files row', () => {
+    // A461-R3: when reviewSessionFiles triggers a needs-operator pause, the row must
+    // carry the same keepLocalControls as a done row so the settled drawer renders checkboxes.
+    const row = plain(H.buildStepRow({
+      id: 'session-files', kind: 'session-files', status: 'needs-operator',
+      output: { manifest: { commit: ['owned.md', 'other.md'], keepLocal: [], protected: [], alreadyUpstream: [], unresolved: [] } },
+      blockers: ['2 session files ready to commit — mark any to keep local, then Retry']
+    }, {}));
+    assert.deepEqual(row.keepLocalControls, ['owned.md', 'other.md'],
+      'needs-operator row carries keepLocalControls so the settled drawer renders keep-local checkboxes');
+  });
+
+  it('collectOptionsFromAccessors: reviewSessionFiles:true sets options.reviewSessionFiles', () => {
+    const opts = plain(H.collectOptionsFromAccessors({ reviewSessionFiles: () => true }));
+    assert.equal(opts.reviewSessionFiles, true);
+  });
+
+  it('collectOptionsFromAccessors: reviewSessionFiles:false / absent does not set the option', () => {
+    assert.equal(plain(H.collectOptionsFromAccessors({ reviewSessionFiles: () => false })).reviewSessionFiles, undefined);
+    assert.equal(plain(H.collectOptionsFromAccessors({})).reviewSessionFiles, undefined);
+  });
 });

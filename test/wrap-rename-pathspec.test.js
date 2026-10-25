@@ -393,3 +393,29 @@ describe('#1630 — session-files surfaces split-rename pairs early', () => {
       'blockers line names the rename pair conflict even when blocked for a different reason first');
   });
 });
+
+describe('#2156 (A461-R3) — reviewSessionFiles pre-commit pause', () => {
+  it('pauses with needs-operator when reviewSessionFiles:true and manifest.commit is non-empty', async () => {
+    // Modify a tracked file after the baseline so it is owned by this session.
+    const repo = makeRepo();
+    const baseline = launchBaseline.capture(repo);
+    fs.writeFileSync(path.join(repo, 'old.md'), 'session change after launch\n');
+
+    const r = await runSessionFiles(repo, await scopeFor(repo, baseline), { reviewSessionFiles: true });
+    assert.equal(r.status, 'needs-operator', 'should pause pre-commit when reviewSessionFiles is set');
+    assert.ok(r.blockers.some((b) => /keep local/.test(b) || /Retry/.test(b)),
+      'blocker text guides the operator to mark keep-local then retry');
+    assert.ok(Array.isArray(r.output.manifest.commit) && r.output.manifest.commit.length > 0,
+      'manifest.commit carries the owned files so the drawer can render checkboxes');
+  });
+
+  it('returns done on retry without reviewSessionFiles (no loop)', async () => {
+    // Same setup: owned file changed after baseline; retry omits reviewSessionFiles.
+    const repo = makeRepo();
+    const baseline = launchBaseline.capture(repo);
+    fs.writeFileSync(path.join(repo, 'old.md'), 'session change after launch\n');
+
+    const r = await runSessionFiles(repo, await scopeFor(repo, baseline));
+    assert.equal(r.status, 'done', 'omitting reviewSessionFiles on retry must not pause again');
+  });
+});

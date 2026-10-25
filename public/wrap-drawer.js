@@ -254,7 +254,7 @@
    */
   function keepLocalControlsFor(stepResult) {
     if (!stepResult || stepResult.kind !== 'session-files') return null;
-    if (stepResult.status !== 'done') return null;
+    if (stepResult.status !== 'done' && stepResult.status !== 'needs-operator') return null;
     const manifest = stepResult.output && stepResult.output.manifest;
     const commit = Array.isArray(manifest && manifest.commit)
       ? manifest.commit.filter((p) => typeof p === 'string' && p)
@@ -1666,6 +1666,11 @@
           if (typeof p === 'string' && p) options.pathDecisions[p] = 'leave';
         }
       }
+    }
+    // #2156 (A461-R3) — opt-in pre-commit review pause. Sent only on the initial wrap
+    // POST (confirmWrap passes the accessor); retryWrap does not, avoiding a retry loop.
+    if (typeof accessors.reviewSessionFiles === 'function' && accessors.reviewSessionFiles() === true) {
+      options.reviewSessionFiles = true;
     }
     // #1868 — the upstream verdict each answer was given against, only beside an
     // answer that is being sent, so the server can tell a stale Include apart.

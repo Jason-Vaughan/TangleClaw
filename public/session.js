@@ -3908,6 +3908,20 @@ function openWrapModal() {
   } else {
     pwGroup.classList.add('hidden');
   }
+  // #2156 (A461-R3) — Review session files checkbox: insert once, reset on each open.
+  if (!document.getElementById('wrapReviewFiles')) {
+    const rfLabel = document.createElement('label');
+    rfLabel.className = 'wrap-modal-review-files-row';
+    const rfCb = document.createElement('input');
+    rfCb.type = 'checkbox';
+    rfCb.id = 'wrapReviewFiles';
+    rfLabel.appendChild(rfCb);
+    rfLabel.appendChild(document.createTextNode(' Review session files before committing'));
+    const confirmBtn = document.getElementById('wrapConfirmBtn');
+    if (confirmBtn) confirmBtn.insertAdjacentElement('beforebegin', rfLabel);
+  }
+  const rfEl = document.getElementById('wrapReviewFiles');
+  if (rfEl) rfEl.checked = false;
   document.getElementById('wrapModal').classList.add('open');
 }
 
@@ -4095,7 +4109,9 @@ async function confirmWrap() {
     release: () => wrapReleaseChoice,
     bumpLevel: () => wrapBumpLevel,
     proceedPastStranded: () => wrapProceedPastStranded,
-    keepSessionRunning: () => wrapKeepRunning
+    keepSessionRunning: () => wrapKeepRunning,
+    // #2156 (A461-R3) — initial POST only; retryWrap does not pass this, so the pause never loops.
+    reviewSessionFiles: () => { const el = document.getElementById('wrapReviewFiles'); return Boolean(el && el.checked); }
   });
   if (Object.keys(initialOptions).length > 0) body.options = initialOptions;
 
@@ -4637,7 +4653,7 @@ function renderWrapDrawer(pipelineResult, runContext) {
   const listEl = document.getElementById('wrapStepList');
   listEl.innerHTML = '';
   for (const { row } of rows) {
-    listEl.appendChild(renderStepRow(row, pipelineResult));
+    listEl.appendChild(renderStepRow(row, { commitSha: pipelineResult.commitSha }));
   }
 
   // Decision widget — for the blocked step OR for any ok:true step
@@ -4863,10 +4879,11 @@ function renderStepRow(row, ctx) {
     if (manifestEl) main.appendChild(manifestEl);
   }
 
-  // #2156 C04 G7 — done-row Keep-local affordance. Null-safe ctx: callers that
-  // don't pass ctx (renderLiveWrapDrawer) get controls only while commitSha is absent.
-  // Post-commit rows never show controls because ctx.commitSha is set.
-  if (row.keepLocalControls && row.keepLocalControls.length > 0 && (!ctx || !ctx.commitSha)) {
+  // #2156 (A461-R3) — Keep-local affordance: only shown in the settled drawer before commit.
+  // ctx is { commitSha } from renderWrapDrawer. renderLiveWrapDrawer calls without ctx,
+  // so the condition is ctx && !ctx.commitSha (not !ctx || !ctx.commitSha): live callers
+  // get no controls; post-commit settled callers get none either (commitSha is set).
+  if (row.keepLocalControls && row.keepLocalControls.length > 0 && ctx && !ctx.commitSha) {
     main.appendChild(buildKeepLocalControls(row.keepLocalControls, { showConfirmBtn: true }));
   }
 
