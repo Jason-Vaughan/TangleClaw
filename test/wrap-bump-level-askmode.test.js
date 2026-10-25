@@ -20,11 +20,7 @@ const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
 const { liftBody } = require('./helpers/lift');
-const { setLevel } = require('../lib/logger');
-const store = require('../lib/store');
 const versionBump = require('../lib/wrap-steps/version-bump');
-
-setLevel('error');
 
 function loadHelpers() {
   const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'wrap-drawer.js'), 'utf8');
@@ -139,14 +135,13 @@ describe('#540 ask-mode — the modal wiring (source pins)', () => {
 describe('#1497 version-bump.run — releaseMode:off override (A466-G2)', () => {
   let tmpDir;
 
+  // No store.init() needed: store.projectConfig.load (the only store call in
+  // version-bump.run) reads from disk, not SQLite. This keeps the file small-tier.
   before(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-off-override-'));
-    store._setBasePath(path.join(tmpDir, 'store'));
-    store.init();
   });
 
   after(() => {
-    store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
