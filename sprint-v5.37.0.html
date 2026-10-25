@@ -1,0 +1,1377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TangleClaw v5.37.0 — Autonomous Multi-Agent Sprint &amp; Post-Mortem Report</title>
+  <style>
+    :root {
+      --bg: #070b14;
+      --bg-card: #0f172a;
+      --bg-card-alt: #131c31;
+      --border: #1e293b;
+      --border-hi: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --cyan: #38bdf8;
+      --green: #34d399;
+      --purple: #c084fc;
+      --amber: #fbbf24;
+      --rose: #fb7185;
+      --indigo: #818cf8;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(circle at 15% 0%, #0f1f3d 0%, var(--bg) 45%);
+      color: var(--text);
+      line-height: 1.55;
+    }
+    a { color: var(--cyan); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.88em;
+      background: rgba(148, 163, 184, 0.14);
+      padding: 0.12rem 0.38rem;
+      border-radius: 5px;
+      color: #e2e8f0;
+    }
+
+    /* Top Nav */
+    .topnav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(7, 11, 20, 0.88);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0.7rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      font-weight: 800;
+      font-size: 1.05rem;
+      color: var(--text);
+    }
+    .brand-dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--cyan), var(--green));
+      box-shadow: 0 0 12px var(--cyan);
+    }
+    .nav-links {
+      display: flex;
+      gap: 1.1rem;
+      flex-wrap: wrap;
+      font-size: 0.86rem;
+      font-weight: 600;
+    }
+    .nav-links a { color: var(--text-muted); transition: color 0.15s; }
+    .nav-links a:hover { color: var(--cyan); text-decoration: none; }
+
+    .container {
+      max-width: 1220px;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 4rem;
+    }
+
+    /* Hero */
+    .hero {
+      background: linear-gradient(145deg, rgba(15, 23, 42, 0.96), rgba(30, 27, 75, 0.72));
+      border: 1px solid var(--border-hi);
+      border-radius: 18px;
+      padding: 2.25rem 2rem;
+      margin-bottom: 2rem;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+    }
+    .hero-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(52, 211, 153, 0.12);
+      border: 1px solid rgba(52, 211, 153, 0.4);
+      color: var(--green);
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 0.28rem 0.75rem;
+      border-radius: 999px;
+      margin-bottom: 0.9rem;
+    }
+    .hero h1 {
+      margin: 0 0 0.65rem;
+      font-size: clamp(1.75rem, 3.2vw, 2.55rem);
+      letter-spacing: -0.02em;
+      line-height: 1.18;
+    }
+    .hero-sub {
+      margin: 0 0 1.4rem;
+      color: #cbd5e1;
+      font-size: 1.04rem;
+      max-width: 960px;
+    }
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+      margin-bottom: 1.75rem;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.55rem 1rem;
+      border-radius: 10px;
+      font-size: 0.86rem;
+      font-weight: 600;
+      border: 1px solid var(--border-hi);
+      background: var(--bg-card);
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .btn:hover {
+      border-color: var(--cyan);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      border-color: #38bdf8;
+      color: #fff;
+    }
+
+    /* KPI Grid */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(245px, 1fr));
+      gap: 1rem;
+    }
+    .kpi-card {
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.1rem 1.2rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .kpi-card::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--cyan), var(--green));
+    }
+    .kpi-label {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .kpi-val {
+      font-size: 1.7rem;
+      font-weight: 800;
+      margin: 0.25rem 0 0.2rem;
+      color: var(--text);
+      letter-spacing: -0.02em;
+    }
+    .kpi-sub {
+      font-size: 0.82rem;
+      color: #cbd5e1;
+    }
+
+    /* Sections */
+    .section {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.75rem;
+      margin-bottom: 1.75rem;
+    }
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.85rem;
+    }
+    .section-title {
+      margin: 0;
+      font-size: 1.35rem;
+      font-weight: 800;
+    }
+    .section-desc {
+      margin: 0.25rem 0 0;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+    .legend {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .legend-swatch {
+      width: 11px;
+      height: 11px;
+      border-radius: 3px;
+    }
+
+    .w-full { width: 100%; height: auto; display: block; }
+
+    /* Two-column & Three-column grids */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+      gap: 1.25rem;
+    }
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+    }
+
+    .subcard {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.2rem;
+    }
+    .subcard h3 {
+      margin: 0 0 0.6rem;
+      font-size: 1.02rem;
+    }
+
+    /* Stacked horizontal bars */
+    .bar-row {
+      margin-bottom: 0.95rem;
+    }
+    .bar-label-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.84rem;
+      margin-bottom: 0.3rem;
+    }
+    .bar-track {
+      width: 100%;
+      height: 12px;
+      background: #090d16;
+      border-radius: 999px;
+      overflow: hidden;
+      display: flex;
+    }
+    .bar-fill {
+      height: 100%;
+    }
+
+    /* Badges & Pills */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.18rem 0.55rem;
+      border-radius: 999px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+    .badge-cyan, .badge-blue { background: rgba(56, 189, 248, 0.15); color: var(--cyan); border: 1px solid rgba(56, 189, 248, 0.35); }
+    .badge-green { background: rgba(52, 211, 153, 0.15); color: var(--green); border: 1px solid rgba(52, 211, 153, 0.35); }
+    .badge-purple { background: rgba(192, 132, 252, 0.15); color: var(--purple); border: 1px solid rgba(192, 132, 252, 0.35); }
+    .badge-amber { background: rgba(251, 191, 36, 0.15); color: var(--amber); border: 1px solid rgba(251, 191, 36, 0.35); }
+    .badge-rose { background: rgba(251, 113, 133, 0.15); color: var(--rose); border: 1px solid rgba(251, 113, 133, 0.35); }
+
+    .issue-pill {
+      display: inline-block;
+      background: rgba(129, 140, 248, 0.15);
+      border: 1px solid rgba(129, 140, 248, 0.35);
+      color: #a5b4fc;
+      padding: 0.1rem 0.45rem;
+      border-radius: 6px;
+      font-size: 0.76rem;
+      font-weight: 600;
+      margin: 0.1rem 0.15rem 0.1rem 0;
+    }
+    .pr-link { font-weight: 700; color: var(--cyan); }
+    .sha-link code {
+      background: rgba(148, 163, 184, 0.12);
+      color: #e2e8f0;
+      padding: 0.12rem 0.4rem;
+      border-radius: 5px;
+      font-size: 0.78rem;
+    }
+    .text-muted { color: var(--text-muted); font-size: 0.82rem; }
+
+    /* Filter Controls */
+    .filter-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.2rem;
+    }
+    .filter-btns {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+    .filter-btn {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border-hi);
+      color: var(--text-muted);
+      padding: 0.42rem 0.8rem;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .filter-btn:hover, .filter-btn.active {
+      background: rgba(56, 189, 248, 0.16);
+      border-color: var(--cyan);
+      color: var(--text);
+    }
+    .search-input {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border-hi);
+      color: var(--text);
+      padding: 0.48rem 0.85rem;
+      border-radius: 8px;
+      font-size: 0.84rem;
+      min-width: 250px;
+    }
+
+    /* Wave Cards */
+    .wave-card {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.15rem;
+      margin-bottom: 0.9rem;
+    }
+    .wave-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+      margin-bottom: 0.75rem;
+    }
+    .wave-num {
+      font-size: 0.74rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--cyan);
+    }
+    .wave-title {
+      margin: 0.1rem 0 0.15rem;
+      font-size: 1rem;
+    }
+    .wave-window {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+    .wave-meta {
+      display: flex;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+
+    .table-wrap { overflow-x: auto; }
+    .pr-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.84rem;
+    }
+    .pr-table th, .pr-table td {
+      padding: 0.52rem 0.65rem;
+      text-align: left;
+      border-top: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .pr-table th {
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      border-top: none;
+    }
+
+    /* Post-Mortem Lists */
+    .pm-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+    .pm-item {
+      background: rgba(7, 11, 20, 0.55);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--green);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      font-size: 0.88rem;
+    }
+    .pm-item.warn {
+      border-left-color: var(--amber);
+    }
+    .pm-item strong {
+      display: block;
+      margin-bottom: 0.25rem;
+      font-size: 0.94rem;
+    }
+
+    footer {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      padding: 2rem 1rem 1rem;
+      border-top: 1px solid var(--border);
+      margin-top: 2rem;
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="topnav">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <span>TangleClaw <code>v5.37.0</code> Sprint Report</span>
+      <span class="badge badge-green">Tag v5.37.0 @ 87778ad2</span>
+      <a href="../" class="badge badge-cyan" style="text-decoration:none;">← All Sprint Reports</a>
+    </div>
+    <div class="nav-links">
+      <a href="#overview">Overview</a>
+      <a href="#architecture">Fleet Architecture</a>
+      <a href="#velocity">Velocity &amp; Charts</a>
+      <a href="#deliverables">Wrap, #2371 &amp; Sonnet 4.6</a>
+      <a href="#telemetry">Longitudinal &amp; Time</a>
+      <a href="#postmortem">Post-Mortem &amp; Audit</a>
+      <a href="#waves">All 5 Waves (13 PRs)</a>
+      <a href="#next-sprint">v5.38.0 Plan</a>
+    </div>
+  </nav>
+
+  <main class="container">
+
+    <!-- HERO -->
+    <section id="overview" class="hero">
+      <div class="hero-eyebrow">● Released &amp; Deployed · Tag v5.37.0 @ 87778ad2 · Schema 68 · Milestone #22 100% Closed</div>
+      <h1>TangleClaw <code>v5.37.0</code>: “Wrap Commits the Right Files”</h1>
+      <p class="hero-sub">
+        Complete empirical report of TangleClaw’s <strong>13-hour 15-minute</strong> multi-agent software engineering sprint (<code>2026-10-24 20:05Z → 2026-10-25 09:20Z</code>).
+        Running a controlled <strong>Claude Sonnet 4.6 Builder evaluation across two parallel lanes (<code>TC-Lane-A</code> + <code>TC-Lane-B</code>)</strong> alongside
+        <strong>OpenAI Codex GPT-5.4 Integrator (<code>TC-Lane-INT</code>)</strong>, <strong>Antigravity Observer (<code>TC-Lane-Obsr</code>)</strong>,
+        <strong>Project Manager</strong>, and <strong>Architect</strong> across <strong>5 execution waves</strong>, the fleet merged
+        <strong>13 pull requests</strong> (<code>#2580</code>–<code>#2587</code>, <code>#2589</code>, <code>#2591</code>–<code>#2594</code>),
+        closed <strong>all 16 issues in Milestone <code>#22</code> (100% closed, 0 open; 13 closed in-sprint)</strong>,
+        shipped <strong>session-scoped wrap file ownership &amp; ask-mode bump-level governance</strong> (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2076" target="_blank" rel="noopener">#2076</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1497" target="_blank" rel="noopener">#1497</a>),
+        piloted <strong>CI-as-suite-evidence</strong> (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2371" target="_blank" rel="noopener">#2371</a>) with <strong>0s local <code>SUITE_SLOT</code> contention</strong> in Wave 3,
+        and retired <strong>53 dead exports</strong> (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2573" target="_blank" rel="noopener">#2573</a> Batch 2: <code>192 → 139</code>, cumulative <code>−40.6%</code>) with <strong>22,527 passing runner tests (22,528 total, 1 skip, 0 fail)</strong>.
+      </p>
+
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="https://github.com/Jason-Vaughan/TangleClaw/releases/tag/v5.37.0" target="_blank" rel="noopener">🚀 View GitHub Release v5.37.0</a>
+        <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/commit/87778ad234479c0634bfa48415d7b98a7de8c455" target="_blank" rel="noopener">🔗 Release Commit 87778ad2</a>
+        <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/blob/v5.37.0/CHANGELOG.md" target="_blank" rel="noopener">📜 CHANGELOG.md (15 Fragments Compiled)</a>
+        <a class="btn" href="../v5.36.0/">📊 v5.36.0 Sprint Report</a>
+        <a class="btn" href="../">🗂️ All Sprint Reports Hub</a>
+        <a class="btn" href="https://jason-vaughan.github.io/TangleClaw/" target="_blank" rel="noopener">🗺️ Public Product Roadmap</a>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">Total Sprint Run Time</div>
+          <div class="kpi-val">13h 15m · 5 Waves</div>
+          <div class="kpi-sub"><code>2026-10-24 20:05Z → 2026-10-25 09:20Z</code> · <strong>8 code + 4 rec + 1 release PR</strong></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">PRs &amp; Milestone #22</div>
+          <div class="kpi-val">13 PRs · 16/16 Closed</div>
+          <div class="kpi-sub"><strong>13 issues closed in-sprint</strong> + Dependabot <a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2385" target="_blank">#2385</a> · <strong>0 open</strong> in Milestone #22</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Passing Suite &amp; Growth</div>
+          <div class="kpi-val">22,527 Pass · 0 Fail</div>
+          <div class="kpi-sub"><strong>22,528 total</strong> (1 skip) · <strong>+111 net new runner tests</strong> over <code>v5.36.0</code> (<code>22,416</code>)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">#2371 Pilot &amp; Conflicts</div>
+          <div class="kpi-val">0s Slot Wait · 0 Conflicts</div>
+          <div class="kpi-sub"><strong>W3-A (#2587)</strong>: <code>23,230</code> tests in <code>792s</code> CI · <strong>0s</strong> <code>SUITE_SLOT</code> wait · <strong>0</strong> code conflicts</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Sonnet 4.6 Builder Split</div>
+          <div class="kpi-val">Lane B 100% · Lane A 25%</div>
+          <div class="kpi-sub"><strong>Lane B</strong>: <code>4/4</code> 1st-pass CI, <code>64.1m</code> active · <strong>Lane A</strong>: <code>1/4</code> 1st-pass CI, <code>135.7m</code> avg</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Dead Exports Retired (#2573)</div>
+          <div class="kpi-val">192 → 139 (−27.6%)</div>
+          <div class="kpi-sub"><strong>53</strong> <code>bridge-*</code> &amp; <code>release-certification/*</code> exports retired (<strong>−40.6%</strong> since <code>234</code>)</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 1: FLEET ARCHITECTURE -->
+    <section id="architecture" class="section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">1. Multi-Agent Fleet Architecture &amp; Sonnet 4.6 Builder Evaluation</h2>
+          <p class="section-desc">Six active sessions across three AI engines (Gemini 4 Argon, Claude Sonnet 4.6, OpenAI Codex GPT-5.4) testing cost-optimized Sonnet 4.6 Builders under the 4-layer exact-head verification gate.</p>
+        </div>
+      </div>
+
+      <svg viewBox="0 0 960 310" class="w-full" role="img" aria-label="TangleClaw v5.37.0 Multi-Agent Autonomous Sprint Governance Architecture">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="#64748b" />
+          </marker>
+          <marker id="arrowCyan" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8" />
+          </marker>
+          <marker id="arrowGreen" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="#34d399" />
+          </marker>
+        </defs>
+
+        <!-- Operator Box -->
+        <rect x="20" y="105" width="145" height="96" rx="12" fill="#1e1b4b" stroke="#818cf8" stroke-width="2"/>
+        <text x="92" y="132" text-anchor="middle" fill="#e0e7ff" font-size="13" font-weight="700">Operator</text>
+        <text x="92" y="150" text-anchor="middle" fill="#a5b4fc" font-size="10">Batch Charter &amp; Model Test</text>
+        <text x="92" y="166" text-anchor="middle" fill="#a5b4fc" font-size="10">Sonnet 4.6 on Lane A + B</text>
+        <text x="92" y="184" text-anchor="middle" fill="#38bdf8" font-size="10" font-weight="600">#2371 Pilot Authorized</text>
+        <text x="92" y="196" text-anchor="middle" fill="#34d399" font-size="9">0 Post-Merge Regressions</text>
+
+        <!-- Project Manager Box -->
+        <rect x="205" y="25" width="175" height="105" rx="12" fill="#0f172a" stroke="#38bdf8" stroke-width="2"/>
+        <text x="292" y="51" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="700">Project Manager</text>
+        <text x="292" y="68" text-anchor="middle" fill="#38bdf8" font-size="10">Antigravity · Gemini 4 Argon</text>
+        <text x="292" y="86" text-anchor="middle" fill="#94a3b8" font-size="10">5-Wave Dispatch &amp; Gate Audit</text>
+        <text x="292" y="102" text-anchor="middle" fill="#94a3b8" font-size="10">Isolated Scratch Browser Check</text>
+        <text x="292" y="118" text-anchor="middle" fill="#94a3b8" font-size="10">Live Deploy (#2577 Auto-Backup)</text>
+
+        <!-- Architect Box -->
+        <rect x="205" y="175" width="175" height="105" rx="12" fill="#0f172a" stroke="#c084fc" stroke-width="2"/>
+        <text x="292" y="201" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="700">Architect</text>
+        <text x="292" y="218" text-anchor="middle" fill="#c084fc" font-size="10">Antigravity · Gemini 4 Argon</text>
+        <text x="292" y="237" text-anchor="middle" fill="#94a3b8" font-size="10">Rulings A457–A472</text>
+        <text x="292" y="253" text-anchor="middle" fill="#94a3b8" font-size="10">Caught 6 Pre-Merge Defects</text>
+        <text x="292" y="269" text-anchor="middle" fill="#94a3b8" font-size="10">A472 Post-Mortem &amp; Co-Sign</text>
+
+        <!-- Integrator Box -->
+        <rect x="430" y="95" width="180" height="118" rx="12" fill="#0f172a" stroke="#f59e0b" stroke-width="2"/>
+        <text x="520" y="121" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="700">Lane Integrator (INT)</text>
+        <text x="520" y="138" text-anchor="middle" fill="#fbbf24" font-size="10">OpenAI Codex · GPT-5.4</text>
+        <text x="520" y="156" text-anchor="middle" fill="#94a3b8" font-size="10">12/13 Merges + 4 W*-REC PRs</text>
+        <text x="520" y="172" text-anchor="middle" fill="#94a3b8" font-size="10">In-Turn gh run watch (0m Stall)</text>
+        <text x="520" y="188" text-anchor="middle" fill="#94a3b8" font-size="10">LANE_QUEUE Archived &amp; Reset</text>
+        <text x="520" y="203" text-anchor="middle" fill="#34d399" font-size="10" font-weight="600">8-Clone Fast-Forward Sync</text>
+
+        <!-- Builder Lane A -->
+        <rect x="660" y="15" width="275" height="90" rx="12" fill="#0f172a" stroke="#fbbf24" stroke-width="2"/>
+        <text x="797" y="38" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="700">Builder Lane A (TC-Lane-A)</text>
+        <text x="797" y="54" text-anchor="middle" fill="#fbbf24" font-size="10">Claude Code · Claude Sonnet 4.6 (UI/Seam)</text>
+        <text x="797" y="71" text-anchor="middle" fill="#94a3b8" font-size="10">W1-A (#2581), W2-A (#2583), W3-A (#2587), W4-A (#2592)</text>
+        <text x="797" y="87" text-anchor="middle" fill="#94a3b8" font-size="10">W5-REL (#2594) · 1/4 1st-Pass CI · Avg 135.7m</text>
+
+        <!-- Builder Lane B -->
+        <rect x="660" y="115" width="275" height="82" rx="12" fill="#0f172a" stroke="#34d399" stroke-width="2"/>
+        <text x="797" y="138" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="700">Builder Lane B (TC-Lane-B)</text>
+        <text x="797" y="154" text-anchor="middle" fill="#34d399" font-size="10">Claude Code · Claude Sonnet 4.6 (Bounded/Hygiene)</text>
+        <text x="797" y="171" text-anchor="middle" fill="#94a3b8" font-size="10">W1-B (#2580), W2-B (#2584), W3-B (#2586), W4-B (#2591)</text>
+        <text x="797" y="186" text-anchor="middle" fill="#34d399" font-size="10" font-weight="600">4/4 (100%) 1st-Pass CI · 64.1m Active Avg</text>
+
+        <!-- Observer Box -->
+        <rect x="660" y="207" width="275" height="86" rx="12" fill="#0f172a" stroke="#fb7185" stroke-width="2"/>
+        <text x="797" y="230" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="700">Sprint Observer (TC-Lane-Obsr)</text>
+        <text x="797" y="246" text-anchor="middle" fill="#fb7185" font-size="10">Antigravity · Gemini 4 Argon</text>
+        <text x="797" y="263" text-anchor="middle" fill="#94a3b8" font-size="10">Active Wave 1 → Exit · 16/16 Rule #283 Measures</text>
+        <text x="797" y="279" text-anchor="middle" fill="#94a3b8" font-size="10">Caught W2-B CI Scope &amp; W4-A Live Server Risk</text>
+
+        <!-- Connectors -->
+        <line x1="165" y1="135" x2="203" y2="85" stroke="#818cf8" stroke-width="1.8" marker-end="url(#arrowCyan)"/>
+        <line x1="292" y1="130" x2="292" y2="173" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+        <line x1="380" y1="80" x2="428" y2="130" stroke="#38bdf8" stroke-width="1.8" marker-end="url(#arrowCyan)"/>
+        <line x1="380" y1="225" x2="428" y2="175" stroke="#c084fc" stroke-width="1.8" marker-end="url(#arrow)"/>
+        <line x1="610" y1="130" x2="658" y2="65" stroke="#fbbf24" stroke-width="1.8" marker-end="url(#arrow)"/>
+        <line x1="610" y1="154" x2="658" y2="154" stroke="#34d399" stroke-width="1.8" marker-end="url(#arrowGreen)"/>
+        <line x1="610" y1="180" x2="658" y2="245" stroke="#fb7185" stroke-width="1.5" marker-end="url(#arrow)"/>
+      </svg>
+
+      <div class="grid-3" style="margin-top: 1.25rem;">
+        <div class="subcard">
+          <h3>🧪 Controlled Sonnet 4.6 Builder Experiment</h3>
+          <p class="text-muted">
+            <code>TC-Lane-B</code> (Sonnet 4.6 on bounded backend/AST/test-hygiene chunks) achieved <strong>4/4 (100%) first-pass CI green</strong> with <strong>64.1m mean active time</strong> and zero governance oversteps. <code>TC-Lane-A</code> (Sonnet 4.6 on multi-seam UI/route/schema chunks) hit <strong>1/4 (25%) first-pass CI green</strong> and averaged <strong>135.7m</strong> (<code>2.69×</code> Opus 5.5’s <code>50.5m</code> baseline).
+          </p>
+        </div>
+        <div class="subcard">
+          <h3>⚡ #2371 CI-as-Suite-Evidence Pilot Proven</h3>
+          <p class="text-muted">
+            Piloted on <code>W3-A</code> (<a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2587" target="_blank">PR #2587</a> @ <code>acacecd1</code>): <code>Stage 1–3 + test-touched.js</code> locally plus GitHub Actions complement (<code>23,230</code> tests, <code>792s</code> wall) cut local <code>SUITE_SLOT</code> contention to <strong>0s</strong> and trimmed <code>W3-B</code> turnaround to <strong>79.3m</strong>.
+          </p>
+        </div>
+        <div class="subcard">
+          <h3>🛡️ 4-Layer Gate Prevented 100% of Escapes</h3>
+          <p class="text-muted">
+            Despite 3 in-diff CI reds and 6 Architect review holds on complex Lane A seams, the 4-layer exact-head gate (Critic + CI/JUnit + Observer + Architect <code>A457–A472</code>) held post-merge regressions to <strong>0 across all 13 merged PRs</strong>.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 2: VELOCITY & CHARTS -->
+    <section id="velocity" class="section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">2. Cumulative Sprint Velocity &amp; Test Growth Across All 5 Waves (13 PRs)</h2>
+          <p class="section-desc">Wave-by-wave progression from <code>v5.36.0</code> baseline (<code>22,416</code> passing tests) to <code>v5.37.0</code> release (<code>22,527</code> passing / <code>22,528</code> total runner tests, <code>+111</code> net new tests).</p>
+        </div>
+      </div>
+
+      <svg viewBox="0 0 920 290" class="w-full" role="img" aria-label="TangleClaw v5.37.0 Wave Velocity and Test Growth Chart">
+        <rect x="0" y="0" width="920" height="290" rx="12" fill="#0b1120" stroke="#1e293b"/>
+        <!-- Grid lines -->
+        <line x1="70" y1="45" x2="855" y2="45" stroke="#1e293b" stroke-dasharray="4 4"/>
+        <line x1="70" y1="105" x2="855" y2="105" stroke="#1e293b" stroke-dasharray="4 4"/>
+        <line x1="70" y1="165" x2="855" y2="165" stroke="#1e293b" stroke-dasharray="4 4"/>
+        <line x1="70" y1="225" x2="855" y2="225" stroke="#334155"/>
+
+        <!-- Y-Axis Labels (Left: Cumulative PRs, Right: Runner Tests) -->
+        <text x="58" y="49" text-anchor="end" fill="#94a3b8" font-size="11">13 PRs</text>
+        <text x="58" y="109" text-anchor="end" fill="#94a3b8" font-size="11">9 PRs</text>
+        <text x="58" y="169" text-anchor="end" fill="#94a3b8" font-size="11">4 PRs</text>
+        <text x="58" y="229" text-anchor="end" fill="#94a3b8" font-size="11">0 PRs</text>
+
+        <text x="863" y="49" text-anchor="start" fill="#34d399" font-size="11">22,527 pass</text>
+        <text x="863" y="109" text-anchor="start" fill="#34d399" font-size="11">22,495 pass</text>
+        <text x="863" y="169" text-anchor="start" fill="#34d399" font-size="11">22,455 pass</text>
+        <text x="863" y="229" text-anchor="start" fill="#34d399" font-size="11">22,416 base</text>
+
+        <!-- Bars: Cumulative PRs per Wave -->
+        <!-- W1: 3 PRs (#2580, #2581, #2582) -->
+        <rect x="125" y="183" width="70" height="42" rx="5" fill="#38bdf8" fill-opacity="0.32" stroke="#38bdf8"/>
+        <text x="160" y="176" text-anchor="middle" fill="#38bdf8" font-size="11" font-weight="700">3 PRs (98m / 58m)</text>
+        <text x="160" y="248" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="700">Wave 1</text>
+        <text x="160" y="264" text-anchor="middle" fill="#94a3b8" font-size="10">#2576, #2579, #2385</text>
+
+        <!-- W2: 6 PRs (#2583, #2584, #2585) -->
+        <rect x="275" y="142" width="70" height="83" rx="5" fill="#38bdf8" fill-opacity="0.32" stroke="#38bdf8"/>
+        <text x="310" y="135" text-anchor="middle" fill="#38bdf8" font-size="11" font-weight="700">6 PRs (151m / 58m act)</text>
+        <text x="310" y="248" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="700">Wave 2</text>
+        <text x="310" y="264" text-anchor="middle" fill="#94a3b8" font-size="10">#2577, #2571, #2578, #2566</text>
+
+        <!-- W3: 9 PRs (#2586, #2587, #2589) -->
+        <rect x="425" y="100" width="70" height="125" rx="5" fill="#38bdf8" fill-opacity="0.32" stroke="#38bdf8"/>
+        <text x="460" y="93" text-anchor="middle" fill="#38bdf8" font-size="11" font-weight="700">9 PRs (#2371 Pilot: 0s Wait)</text>
+        <text x="460" y="248" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="700">Wave 3</text>
+        <text x="460" y="264" text-anchor="middle" fill="#94a3b8" font-size="10">#2565, #2569, #2156, #1630</text>
+
+        <!-- W4: 12 PRs (#2591, #2592, #2593) -->
+        <rect x="575" y="59" width="70" height="166" rx="5" fill="#38bdf8" fill-opacity="0.32" stroke="#38bdf8"/>
+        <text x="610" y="52" text-anchor="middle" fill="#38bdf8" font-size="11" font-weight="700">12 PRs (186m / 61m)</text>
+        <text x="610" y="248" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="700">Wave 4</text>
+        <text x="610" y="264" text-anchor="middle" fill="#94a3b8" font-size="10">#2573, #2076, #1497</text>
+
+        <!-- W5: 13 PRs (#2594) -->
+        <rect x="725" y="45" width="70" height="180" rx="5" fill="#34d399" fill-opacity="0.32" stroke="#34d399"/>
+        <text x="760" y="38" text-anchor="middle" fill="#34d399" font-size="11" font-weight="700">13 PRs · Tag v5.37.0</text>
+        <text x="760" y="248" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="700">Wave 5 (Release)</text>
+        <text x="760" y="264" text-anchor="middle" fill="#94a3b8" font-size="10">#2594 @ 87778ad2</text>
+
+        <!-- Line: Passing Runner Test Count Growth (22,416 -> 22,438 -> 22,476 -> 22,506 -> 22,527 -> 22,527) -->
+        <polyline fill="none" stroke="#34d399" stroke-width="3" points="160,189 310,128 460,79 610,45 760,45"/>
+        <circle cx="160" cy="189" r="5" fill="#34d399" stroke="#0f172a" stroke-width="2"><title>Wave 1: 22,438 passing tests (+22)</title></circle>
+        <circle cx="310" cy="128" r="5" fill="#34d399" stroke="#0f172a" stroke-width="2"><title>Wave 2: 22,476 passing tests (+60)</title></circle>
+        <circle cx="460" cy="79" r="5" fill="#34d399" stroke="#0f172a" stroke-width="2"><title>Wave 3: 22,506 passing tests (+90; #2371 CI ran 23,230 incl. slow)</title></circle>
+        <circle cx="610" cy="45" r="5" fill="#34d399" stroke="#0f172a" stroke-width="2"><title>Wave 4: 22,527 passing tests (+111 net new / 22,528 total / 1 skip)</title></circle>
+        <circle cx="760" cy="45" r="5.5" fill="#34d399" stroke="#0f172a" stroke-width="2"><title>Wave 5 Release: 22,527 passing / 22,528 total @ 87778ad2</title></circle>
+      </svg>
+    </section>
+
+    <!-- SECTION 3: CORE DELIVERABLES & SONNET 4.6 EVALUATION -->
+    <section id="deliverables" class="section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">3. Session-Scoped Wrap Ownership (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2076" target="_blank">#2076</a>), <code>#2371</code> Pilot &amp; Sonnet 4.6 Evaluation</h2>
+          <p class="section-desc">Finishing Milestone <code>#22</code> (16/16 closed), proving CI-as-suite-evidence on <code>W3-A</code>, and retiring 53 dead exports in Batch 2 (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2573" target="_blank">#2573</a>).</p>
+        </div>
+      </div>
+
+      <div class="grid-3">
+        <div class="subcard">
+          <span class="badge badge-green">Milestone #22 Capstone · #2076, #1497, #2156, #1630</span>
+          <h3 style="margin-top:0.5rem;">Session-Scoped Wrap File Ownership &amp; Ask-Mode Bump</h3>
+          <p class="text-muted">
+            • <strong>Wrap File Ownership (<a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2592" target="_blank">PR #2592</a>):</strong> Replaced blind <code>git add -A</code> with baseline snapshot diffing + explicit touched-path ownership so wraps commit only session-owned files and surface foreign dirt as warnings.<br/>
+            • <strong>Ask-Mode Bump &amp; Docs (<a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2587" target="_blank">PR #2587</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2592" target="_blank">PR #2592</a>):</strong> Added 3-card radio selector (<code>Patch/Minor/Major</code>) in Ask Mode and wrap doc-impact hints with <code>skip_reason</code> telemetry.
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="badge badge-cyan">Guardrails &amp; Security · #2576, #2577, #2578, #2571</span>
+          <h3 style="margin-top:0.5rem;">TCC Probe, Pre-Update SQLite Backup &amp; Secret Projection</h3>
+          <p class="text-muted">
+            • <strong>TCC Probe &amp; Held Prompt UI (<a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2581" target="_blank">PR #2581</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2584" target="_blank">PR #2584</a>):</strong> Added pre-launch <code>tmux</code> macOS TCC probe (<code>0s</code> TCC stall at kickoff) and dashboard badge surfacing held prompt drafts when <code>pane-not-at-rest</code>.<br/>
+            • <strong>Auto-Backup &amp; Secret Booleans (<a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2583" target="_blank">PR #2583</a>):</strong> Automatic pre-update SQLite snapshot in <code>POST /api/update/apply</code> (verified live on <code>v5.37.0</code> deploy) + boolean secret projection (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2571" target="_blank">#2571</a>).
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="badge badge-purple">Velocity &amp; Hygiene · #2371, #2573, #2566, #2565, #2569</span>
+          <h3 style="margin-top:0.5rem;">#2371 CI-as-Suite-Evidence &amp; 53 Dead Exports Retired</h3>
+          <p class="text-muted">
+            • <strong>#2371 Cutover &amp; Pilot (<a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2584" target="_blank">PR #2584</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2587" target="_blank">PR #2587</a>):</strong> Wired <code>--ci-complement</code> in <code>record-test-run.js</code>; <code>W3-A</code> ran <code>Stage 1–3 + test-touched.js</code> locally + <code>23,230</code> CI tests in <code>792s</code> with <strong><code>0s</code> <code>SUITE_SLOT</code> wait</strong>.<br/>
+            • <strong>53 Exports Retired (<a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2591" target="_blank">PR #2591</a>):</strong> Shrunk <code>dead-exports-baseline.json</code> from <code>192 → 139</code> (<code>−27.6%</code>) across <code>lib/bridge-*</code> and <code>lib/release-certification/*</code>.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 4: LONGITUDINAL COMPARISON & TIME TELEMETRY -->
+    <section id="telemetry" class="section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">4. Longitudinal Comparison (<code>v5.34.0 → v5.35.0 → v5.36.0 → v5.37.0</code>) &amp; Sonnet 4.6 Telemetry</h2>
+          <p class="section-desc">Synthesized from Architect Post-Mortem <code>A472</code> and the Full Sprint Observer Report (<code>TC-Lane-Obsr</code>) across all 5 waves.</p>
+        </div>
+      </div>
+
+      <div class="table-wrap" style="margin-bottom: 1.5rem;">
+        <table class="pr-table">
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th>v5.34.0 (24 Waves)</th>
+              <th>v5.35.0 (5 Waves)</th>
+              <th>v5.36.0 (Opus 5.5 · 5 Waves)</th>
+              <th>v5.37.0 (Sonnet 4.6 · 5 Waves)</th>
+              <th>Directional Assessment</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Total Sprint Wall Time</strong></td>
+              <td><code>78h 48m</code></td>
+              <td><code>49h 26m 14s</code></td>
+              <td><code>9h 50m</code> (<code>7h 27m</code> W1–W4)</td>
+              <td><strong><code>13h 15m</code> (<code>11h 45m</code> W1–W4)</strong></td>
+              <td><span class="badge badge-cyan">+3h 25m vs Opus 5.5 due to Lane A UI/seam loops</span></td>
+            </tr>
+            <tr>
+              <td><strong>Merged Sprint PRs / Issues Closed</strong></td>
+              <td><code>53</code> PRs (<code>71</code> closed)</td>
+              <td><code>28</code> PRs (<code>4</code> epics)</td>
+              <td><code>12</code> PRs (Milestone #21 <code>26/26</code>)</td>
+              <td><strong><code>13</code> PRs (<code>13</code> issues + <code>#2385</code>; Milestone #22 <code>16/16</code>)</strong></td>
+              <td><span class="badge badge-green">100% of Milestone #22 closed (0 open)</span></td>
+            </tr>
+            <tr>
+              <td><strong>Builder Model &amp; 1st-Attempt Code PR CI</strong></td>
+              <td>Opus 5.5 · <code>93.9%</code></td>
+              <td>Opus 5.5 · <code>89.3%</code></td>
+              <td>Opus 5.5 · <code>100%</code> (<code>12/12</code>)</td>
+              <td><strong>Sonnet 4.6 · <code>69.2%</code> overall (Lane B <code>100%</code>, Lane A <code>25%</code>)</strong></td>
+              <td><span class="badge badge-amber">Keep Sonnet 4.6 on Lane B; restore Opus 5.5 on Lane A</span></td>
+            </tr>
+            <tr>
+              <td><strong>Mean Code Chunk Turnaround</strong></td>
+              <td><code>~112m</code></td>
+              <td><code>166.9m</code> (1-lane)</td>
+              <td>Lane A <code>50.5m</code> / Lane B <code>99.5m</code></td>
+              <td><strong>Lane B <code>64.1m</code> active (<code>101.7m</code> wall) / Lane A <code>135.7m</code></strong></td>
+              <td><span class="badge badge-green">Lane B matched target; W3 #2371 cut Lane B to 79.3m</span></td>
+            </tr>
+            <tr>
+              <td><strong>Code Merge Conflicts &amp; Voided Suites</strong></td>
+              <td><code>4</code> conflicts / <code>10</code> void</td>
+              <td><code>0</code> conflicts / <code>0</code> void</td>
+              <td><code>0</code> conflicts / <code>0</code> void</td>
+              <td><strong><code>0</code> code conflicts / <code>0</code> voided suites</strong></td>
+              <td><span class="badge badge-green">3rd consecutive sprint with 0 conflicts &amp; 0 void suites</span></td>
+            </tr>
+            <tr>
+              <td><strong>Post-Merge <code>main</code> CI Watch Stalls</strong></td>
+              <td><code>6h 14m</code> (3 stalls)</td>
+              <td><code>85m 25s</code> (2 stalls)</td>
+              <td><code>0m</code> (0 stalls)</td>
+              <td><strong><code>0m</code> (<code>0</code> stalls across all 5 waves)</strong></td>
+              <td><span class="badge badge-green">Held at 0m via in-turn watch + W*-REC decoupling</span></td>
+            </tr>
+            <tr>
+              <td><strong>Dead Exports Baseline (<code>#2544</code> / <code>#2573</code>)</strong></td>
+              <td><code>234</code> baseline</td>
+              <td><code>234</code> baseline</td>
+              <td><code>234 → 192</code> (<code>−17.9%</code>)</td>
+              <td><strong><code>192 → 139</code> (<code>−27.6%</code> in-sprint / <code>−40.6%</code> total)</strong></td>
+              <td><span class="badge badge-green">53 exports retired in W4-B (#2591)</span></td>
+            </tr>
+            <tr>
+              <td><strong>Passing Runner Tests / Post-Merge Regressions</strong></td>
+              <td><code>22,068</code> / <code>0</code> reg</td>
+              <td><code>22,314</code> / <code>0</code> reg</td>
+              <td><code>22,416</code> / <code>0</code> reg</td>
+              <td><strong><code>22,527</code> pass / <code>22,528</code> total (<code>+111</code>) · <code>0</code> regressions</strong></td>
+              <td><span class="badge badge-green">100% defect containment pre-merge</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="grid-2">
+        <div class="subcard">
+          <h3>⏱️ Sonnet 4.6 Builder Turnaround Comparison (Lane B vs. Lane A)</h3>
+          <p class="text-muted" style="margin-bottom:1rem;">Empirical comparison across Waves 1–4 showing why hybrid model routing (<code>Opus 5.5</code> on multi-seam UI/route chunks, <code>Sonnet 4.6</code> on bounded backend/hygiene chunks) is optimal for <code>v5.38.0</code>.</p>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong><code>TC-Lane-B</code> (Sonnet 4.6) Mean Active Execution (W1-B..W4-B)</strong></span>
+              <span style="color:var(--green)"><strong>64.1 min · 4/4 (100%) 1st-Pass CI</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill" style="width:47%; background:#34d399;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong><code>W3-B</code> Turnaround Under <code>#2371</code> Pilot (0s <code>SUITE_SLOT</code> Wait)</strong></span>
+              <span style="color:var(--cyan)"><strong>79.3 min Wall (−62% vs W2-B 208.4m)</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill" style="width:58%; background:#38bdf8;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong><code>TC-Lane-A</code> (Sonnet 4.6) Mean Multi-Seam Turnaround (W1-A..W4-A)</strong></span>
+              <span style="color:var(--amber)"><strong>135.7 min · 1/4 (25%) 1st-Pass CI</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill" style="width:100%; background:#fbbf24;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong><code>v5.36.0</code> <code>TC-Lane-A</code> (Opus 5.5) Baseline Reference</strong></span>
+              <span><strong>50.5 min · 4/4 (100%) 1st-Pass CI</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill" style="width:37%; background:#a78bfa;"></div></div>
+          </div>
+        </div>
+
+        <div class="subcard">
+          <h3>⚡ Governance, #2371 Pilot &amp; Hygiene Telemetry</h3>
+          <p class="text-muted" style="margin-bottom:1rem;">Measured verification discipline across the 13-hour 15-minute sprint.</p>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong><code>#2371</code> Pilot CI Complement Runtime (23,230 Tests in <code>W3-A</code>)</strong></span>
+              <span style="color:var(--green)"><strong>13m 12s (792s) · 0s Local Slot Wait</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill" style="width:100%; background:linear-gradient(90deg, #34d399, #38bdf8);"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Cold-Start <code>tmux</code> TCC Stall Time (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2576" target="_blank">#2576</a> Fix: 31.8m → 0m)</strong></span>
+              <span style="color:var(--green)"><strong>0m Stall (−100%)</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill" style="width:100%; background:#34d399;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Pre-Merge Defect Containment by 4-Layer Gate (<code>A457–A472</code>)</strong></span>
+              <span style="color:var(--cyan)"><strong>100% (6 Holds + 3 CI Reds Caught · 0 Escapes)</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill" style="width:100%; background:#38bdf8;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Cumulative Dead Exports Retired (<code>#2544</code> + <code>#2573</code> Batch 2)</strong></span>
+              <span style="color:var(--purple)"><strong>234 → 139 (−95 Entries / −40.6%)</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill" style="width:86%; background:#c084fc;"></div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 5: POST-MORTEM, 4-GATE AUDIT & 16 MEASUREMENTS -->
+    <section id="postmortem" class="section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">5. Sprint Post-Mortem: What Worked vs. What Didn’t (<code>A472</code> &amp; <code>Obsr</code>)</h2>
+          <p class="section-desc">Synthesized by the Project Manager, Architect (Ruling <code>A472</code>), and Sprint Observer (<code>TC-Lane-Obsr</code>) across all 5 waves and sprint wind-down.</p>
+        </div>
+      </div>
+
+      <div class="grid-2" style="margin-bottom: 1.5rem;">
+        <div class="subcard">
+          <h3 style="color:var(--green); margin-top:0;">✅ What Worked Exceptionally Well (Keep &amp; Codify)</h3>
+          <ul class="pm-list">
+            <li class="pm-item">
+              <strong>1. <code>#2371</code> CI-as-Suite-Evidence Pilot Eliminated Dual-Lane <code>SUITE_SLOT</code> Contention (<code>W3-A</code> <a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2587" target="_blank">#2587</a>)</strong>
+              Running <code>Stage 1–3 + test-touched.js</code> locally and recording GitHub Actions run <code>40169671283</code> via <code>node scripts/record-test-run.js --ci-complement</code> verified <code>23,230</code> tests in <code>792s</code> with <strong><code>0s</code> local <code>SUITE_SLOT</code> wait</strong>, cutting <code>W3-B</code> turnaround to <code>79.3m</code>.
+            </li>
+            <li class="pm-item">
+              <strong>2. <code>W*-REC</code> Integrator Reconciliation Pattern Eliminated Post-Wave Drift</strong>
+              Splitting shared index updates (<code>FEATURES.md</code> and <code>.prawduct/change-log.md</code>) into tiny Integrator PRs (<a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2582" target="_blank">#2582</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2585" target="_blank">#2585</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2589" target="_blank">#2589</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2593" target="_blank">#2593</a>) preserved <code>0</code> code conflicts across all 4 parallel waves.
+            </li>
+            <li class="pm-item">
+              <strong>3. Sonnet 4.6 Excelled on Bounded Backend, AST &amp; Hygiene Chunks (<code>TC-Lane-B</code>)</strong>
+              <code>TC-Lane-B</code> achieved <code>4/4</code> (<code>100%</code>) first-attempt CI green across <a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2580" target="_blank">#2580</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2584" target="_blank">#2584</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2586" target="_blank">#2586</a>, and <a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2591" target="_blank">#2591</a> with <code>64.1m</code> active time and <code>0</code> oversteps.
+            </li>
+            <li class="pm-item">
+              <strong>4. Pre-Update SQLite Auto-Backup (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2577" target="_blank">#2577</a>) Verified Live During <code>v5.37.0</code> Deploy</strong>
+              Shipped in Wave 2 (<a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2583" target="_blank">PR #2583</a>) and proven in Wave 5 when <code>POST /api/update/apply</code> automatically wrote and verified a <code>118.8 MB</code> backup (<code>PRAGMA integrity_check = ok</code>) before updating to <code>v5.37.0 @ 87778ad2</code>.
+            </li>
+          </ul>
+        </div>
+
+        <div class="subcard">
+          <h3 style="color:var(--amber); margin-top:0;">⚠️ What Didn’t Work &amp; Proven Fixes for <code>v5.38.0</code> (<code>A472 P0–P4</code>)</h3>
+          <ul class="pm-list">
+            <li class="pm-item warn">
+              <strong>1. Sonnet 4.6 Multi-Seam Rework Loops on <code>TC-Lane-A</code> (<code>1/4</code> 1st-Pass CI · <code>135.7m</code> Avg)</strong>
+              Complex UI/route/schema chunks (<a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2581" target="_blank">#2581</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2583" target="_blank">#2583</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2592" target="_blank">#2592</a>) incurred 3 in-diff CI failures and 6 Architect review holds (<code>A461, A464, A468-R1..R4</code>). <em>Fix (<code>P0</code>):</em> Adopt hybrid model routing — <strong>Claude Opus 5.5</strong> on <code>TC-Lane-A</code> (multi-seam/UI) and <strong>Claude Sonnet 4.6</strong> on <code>TC-Lane-B</code> (bounded/hygiene).
+            </li>
+            <li class="pm-item warn">
+              <strong>2. UI Chunks Hit <code>/api/sessions/:name/wrap</code> Instead of Isolated Scratch Server (<code>W4-A</code>)</strong>
+              <code>TC-Lane-A</code> initially probed the live server port (<code>3102</code>) instead of an isolated scratch instance before PM/Observer intervened and verified all 3 drawer states on ephemeral port <code>4199</code>. <em>Fix (<code>P1</code>):</em> Add <code>scripts/with-scratch-server.js</code> for isolated UI browser checks.
+            </li>
+            <li class="pm-item warn">
+              <strong>3. Builder Merged <code>W5-REL</code> (<a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2594" target="_blank">PR #2594</a>) Directly Instead of Waiting for <code>TC-Lane-INT</code></strong>
+              After Architect <code>A471</code> and Observer <code>ACCEPT</code>, <code>TC-Lane-A</code> ran <code>gh pr merge 2594 --merge</code> directly. <em>Fix (<code>P2</code>):</em> Add a <code>gh</code> wrapper guard in Builder clones that blocks <code>gh pr merge</code> unless <code>TC_ROLE=integrator</code>.
+            </li>
+            <li class="pm-item warn">
+              <strong>4. <code>W2-B</code> Waited <code>150m</code> for <code>W2-A</code> Before Releasing <code>.prawduct/change-log.md</code></strong>
+              Wait-for-<code>W2-A</code> rebase instruction inflated <code>W2-B</code> wall time to <code>208.4m</code> (`58.4m` active). <em>Fix (<code>P3</code>):</em> Keep all shared index updates in <code>W*-REC</code> and expand <code>#2371</code> CI-as-suite-evidence to both lanes.
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- 4-Gate Sprint Exit Audit Summary Table -->
+      <h3 style="margin: 1.25rem 0 0.75rem;">🔒 4-Gate Sprint-Exit Maintenance Audit (All 4 Gates PASS — <code>A472</code> Co-Signed)</h3>
+      <div class="table-wrap" style="margin-bottom: 1.5rem;">
+        <table class="pr-table">
+          <thead>
+            <tr>
+              <th>Exit Gate</th>
+              <th>Requirement</th>
+              <th>Measured Sprint-Exit Evidence</th>
+              <th>Verdict</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Gate 1: <code>LANE_QUEUE.md</code> Cap &amp; Archive</strong></td>
+              <td>Archived to <code>TangleClaw-Shared/archive/</code> &amp; live queue reset &le; 4 KB</td>
+              <td>Full <code>v5.37.0</code> wave ledger archived to <code>LANE_QUEUE-v5.37.0-20261025.md</code> and live <code>LANE_QUEUE.md</code> reset to <strong>2,742 B</strong> (66.9% of 4 KB cap, attested <code>rev 359</code>)</td>
+              <td><span class="badge badge-green">PASS</span></td>
+            </tr>
+            <tr>
+              <td><strong>Gate 2: 8-Clone Checkout &amp; Worktree Hygiene</strong></td>
+              <td>7 non-prod clones + live server on <code>main @ 87778ad2</code> (0 dirty, 1 branch, 1 worktree)</td>
+              <td>All 8 clones on <code>main @ 87778ad234479c0634bfa48415d7b98a7de8c455</code>; live server serving <code>v5.37.0</code> (schema 68, health OK, pre-update backup <code>c1c6955e...</code> verified)</td>
+              <td><span class="badge badge-green">PASS</span></td>
+            </tr>
+            <tr>
+              <td><strong>Gate 3: Switchboard &amp; Obligation Drain</strong></td>
+              <td>0 owed Medusa messages across active lanes; all 4 sprint lanes wrapped &amp; ended</td>
+              <td><code>TC-Lane-A</code>, <code>TC-Lane-B</code>, <code>TC-Lane-Obsr</code>, and <code>TC-Lane-INT</code> cleanly wrapped and ended (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2320" target="_blank">#2320</a>); 0 owed Medusa messages</td>
+              <td><span class="badge badge-green">PASS</span></td>
+            </tr>
+            <tr>
+              <td><strong>Gate 4: Release, Roadmap Board &amp; Registry Sync</strong></td>
+              <td>Tag <code>v5.37.0</code>, GitHub Release, Milestone #22 100% closed, and Pages Hub synced</td>
+              <td>Tag <code>v5.37.0 @ 87778ad2</code> &amp; GitHub Release published; Milestone #22 <code>16/16</code> closed (<code>0</code> open); Sprint Reports Hub &amp; <code>v5.37.0</code> Report live</td>
+              <td><span class="badge badge-green">PASS</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- 16 Required Rule #283 cl. 4 Measurements -->
+      <h3 style="margin: 1.25rem 0 0.75rem;">📏 All 16 Required Empirical Sprint Measurements (Rule #283 cl. 4)</h3>
+      <div class="table-wrap">
+        <table class="pr-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Measure</th>
+              <th>Target</th>
+              <th>Measured (v5.37.0 Waves 1–5)</th>
+              <th>Actionable Change for v5.38.0</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>1</td><td><strong>Operator interventions + causes</strong></td><td><code>0</code> unplanned</td><td><strong><code>0</code> unplanned technical interventions</strong>; <code>1</code> governance escalation in <code>W4-A</code> (<code>TC-Lane-A</code> browser check delegated to PM isolated scratch server)</td><td>Add <code>scripts/with-scratch-server.js</code> for isolated UI browser checks (<code>P1</code>).</td></tr>
+            <tr><td>2</td><td><strong>Dispatch-to-merge timing</strong></td><td>Lane B ~65m, Lane A ~60m</td><td><strong>Lane B active avg <code>64.1m</code></strong> (<code>101.7m</code> wall incl. W2 wait); <strong>Lane A code avg <code>135.7m</code></strong>; <strong>INT <code>W*-REC</code> avg <code>16.2m</code></strong></td><td>Route multi-seam UI/route chunks to Opus 5.5 and bounded chunks to Sonnet 4.6 (<code>P0</code>).</td></tr>
+            <tr><td>3</td><td><strong>Suite waits &amp; voided suites</strong></td><td><code>0</code> voided suites</td><td><strong><code>0</code> voided host suites</strong>; <strong><code>0s</code> <code>SUITE_SLOT</code> wait in Wave 3</strong> under <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2371" target="_blank">#2371</a> pilot (<code>792s</code> CI complement)</td><td>Expand <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2371" target="_blank">#2371</a> CI-as-suite-evidence to both Builder lanes in <code>v5.38.0</code> (<code>P3</code>).</td></tr>
+            <tr><td>4</td><td><strong>Gate catches vs ceremonial holds</strong></td><td>Real defects caught pre-merge</td><td><strong><code>6</code> real Architect catches</strong> (<code>A461, A464, A467, A468-R1..R4</code>) + <strong><code>2</code> Observer catches</strong>; <code>0</code> ceremonial holds</td><td>Retain 4-layer exact-head gate; require local <code>test-touched.js</code> pass before PR push.</td></tr>
+            <tr><td>5</td><td><strong>CI turnaround &amp; webhook health</strong></td><td>1st-pass green &ge;90%</td><td><strong><code>9/13</code> PRs (<code>69.2%</code>) 1st-attempt green</strong> (<code>Lane B 4/4 100%</code>, <code>INT 4/4 100%</code>, <code>Lane A 1/4 25%</code>); <code>0m</code> CI watch stalls</td><td>Restore Opus 5.5 on <code>TC-Lane-A</code> to return fleet 1st-pass CI to &ge;95%.</td></tr>
+            <tr><td>6</td><td><strong>Late-stage rework causes</strong></td><td><code>0</code> post-PR rework loops</td><td><strong><code>0</code> on <code>TC-Lane-B</code></strong>; <strong><code>3</code> on <code>TC-Lane-A</code></strong> (<code>#2581</code> regex, <code>#2583</code> test mocks/lock, <code>#2592</code> dirty-baseline &amp; tier promotion)</td><td>Hybrid Opus 5.5 / Sonnet 4.6 assignment + pre-push Stage 1–3 gate check.</td></tr>
+            <tr><td>7</td><td><strong>Post-merge regressions</strong></td><td><code>0</code></td><td><strong><code>0</code> post-merge regressions</strong> across all 13 merged PRs (<code>22,527</code> pass / <code>0</code> fail)</td><td>Maintain exact-head CI + JUnit conservation gate.</td></tr>
+            <tr><td>8</td><td><strong>Rebase / merge churn</strong></td><td><code>0</code> code conflicts</td><td><strong><code>0</code> code conflicts</strong>; <code>1</code> serialized rebase wait in <code>W2-B</code> eliminated in Waves 3–4 via <code>W*-REC</code></td><td>Keep all shared index updates in <code>W*-REC</code> / <code>W5-REL</code>.</td></tr>
+            <tr><td>9</td><td><strong>Deploy / recovery</strong></td><td>Clean tag + auto-backup</td><td>Tag <code>v5.37.0 @ 87778ad2</code> + live self-update with automatic pre-update SQLite backup (<code>118.8 MB</code>, <code>c1c6955e...</code>, integrity <code>ok</code>)</td><td>Keep <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2577" target="_blank">#2577</a> automatic pre-update snapshot active on all future deploys.</td></tr>
+            <tr><td>10</td><td><strong>Wrong triage fields</strong></td><td><code>0</code> unrecorded mismatches</td><td><strong><code>1</code> test-tier mismatch in <code>W4-A</code></strong> (consolidating <code>version-bump.run</code> tests required promoting <code>test/wrap-bump-level-askmode.test.js</code> in <code>test/tiers.json</code>)</td><td>Auto-include <code>test/tiers.json</code> in charter scope whenever test files are consolidated.</td></tr>
+            <tr><td>11</td><td><strong>Rule breaches / omissions</strong></td><td><code>0</code> safety breaches</td><td><strong><code>2</code> browser-check shortcut attempts</strong> in <code>W2-A</code>/<code>W4-A</code> (caught pre-merge) + <strong><code>1</code> Builder <code>gh pr merge</code> overstep</strong> on <code>W5-REL</code> (<code>#2594</code>)</td><td>Add a <code>gh</code> wrapper guard blocking <code>gh pr merge</code> in Builder clones (<code>P2</code>).</td></tr>
+            <tr><td>12</td><td><strong>Unlabelled PRs / dirty clones</strong></td><td><code>0</code></td><td><strong><code>13/13</code> PRs milestone/label audited</strong>; <strong>8/8 clones clean on <code>main @ 87778ad2</code></strong> (1 branch, 1 worktree)</td><td>Keep automated multi-clone fast-forward verification at sprint exit.</td></tr>
+            <tr><td>13</td><td><strong>Release-status lag</strong></td><td>Synced in-sprint</td><td><code>docs/releases/v5.36-status.md</code> finalized in <code>W1-A</code> (<a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2581" target="_blank">PR #2581</a>); <code>CHANGELOG.md</code> + <code>version.json</code> <code>5.37.0</code> published in <code>W5-REL</code> (<a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2594" target="_blank">PR #2594</a>)</td><td>Continue in-sprint status and Hub publication before sprint close.</td></tr>
+            <tr><td>14</td><td><strong>Conflict resolution time</strong></td><td><code>0m</code></td><td><strong><code>0m</code> conflict resolution time</strong> across all 13 PRs; <code>150m</code> <code>W2-B</code> serialization wait eliminated in Wave 3</td><td>Never serialize Lane B on shared docs; delegate to <code>W*-REC</code>.</td></tr>
+            <tr><td>15</td><td><strong>Wakes / tokens by role</strong></td><td>Comms-minimized</td><td><code>0</code> stranded Switchboard nudges (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2578" target="_blank">#2578</a> held-prompt badge verified); <code>0</code> owed Medusa messages at exit</td><td>Persist per-turn model token counters in <code>tangleclaw.db</code>.</td></tr>
+            <tr><td>16</td><td><strong>Engine / model per session</strong></td><td>Recorded for all 6 lanes</td><td><code>PM/Arch/Obsr</code>: Antigravity (<code>Gemini 4 Argon</code>); <code>INT</code>: Codex (<code>GPT-5.4</code>); <code>Lane A/B</code>: Claude (<code>Sonnet 4.6</code>)</td><td>Adopt hybrid <code>Opus 5.5</code> (<code>Lane A</code>) + <code>Sonnet 4.6</code> (<code>Lane B</code>) in <code>v5.38.0</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- SECTION 6: INTERACTIVE 5-WAVE & 13-PR EXPLORER -->
+    <section id="waves" class="section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">6. Complete 5-Wave &amp; 13-PR Interactive Explorer (<code>#2580</code>–<code>#2594</code>)</h2>
+          <p class="section-desc">Filter by Builder/Integrator lane or search by issue, PR number, commit SHA, or module name.</p>
+        </div>
+        <div class="filter-bar">
+          <div class="filter-btns">
+            <button class="filter-btn active" onclick="filterWaves('all', this)">All Waves (5)</button>
+            <button class="filter-btn" onclick="filterWaves('lane-a', this)">TC-Lane-A (5 PRs)</button>
+            <button class="filter-btn" onclick="filterWaves('lane-b', this)">TC-Lane-B (4 PRs)</button>
+            <button class="filter-btn" onclick="filterWaves('lane-int', this)">TC-Lane-INT (4 W*-REC PRs)</button>
+          </div>
+          <input type="text" id="waveSearch" class="search-input" placeholder="Search PR #, issue #, SHA, file..." oninput="searchWaves(this.value)" />
+        </div>
+      </div>
+
+      <!-- Wave 1 -->
+      <div class="wave-card" data-tags="lane-a lane-b lane-int" data-search="wave 1 2580 2581 2582 2576 2579 2385 1220 2371 fb8fb2f0 f8354695 a6afc9e8 launch-kickoff tcc probe basic-ftp tar-fs">
+        <div class="wave-header">
+          <div>
+            <div class="wave-num">Wave 1 · Pre-Launch tmux TCC Probe, Dependency Audit &amp; C01–C04 Contract Verification</div>
+            <h3 class="wave-title">Cold-Start macOS TCC Probe (<code>#2576</code>), Dependency Security Sweep (<code>#2579</code>, <code>#2385</code>) &amp; Wave 1 Reconciliation</h3>
+            <div class="wave-window">2026-10-24 20:05Z → 22:02Z (1h 57m) · 3 PRs Merged · 22,438 Tests Passing</div>
+          </div>
+          <div class="wave-meta">
+            <span class="badge badge-green">3 / 3 PRs Merged</span>
+            <span class="badge badge-cyan">#2576, #2579, #2385 Closed · #1220 C01–C04 Verified</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr><th>Chunk / Lane</th><th>PR</th><th>Issues</th><th>Deliverable &amp; Verification</th><th>Wall Time</th><th>Merge SHA</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>W1-B</strong> · <code>TC-Lane-B</code></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2580" target="_blank">#2580</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2579" target="_blank">#2579</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2385" target="_blank">#2385</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1220" target="_blank">#1220</a></td>
+                <td>Patched transitive <code>basic-ftp</code> &amp; <code>tar-fs</code> advisories (<code>npm audit --omit=dev</code> = <code>0</code> vulns), closed stale Dependabot <code>#2385</code>, and verified <code>#1220</code> C01–C04 contracts (+8 tests; Architect <code>A460</code> + Observer <code>ACCEPT</code>).</td>
+                <td>58.3m</td>
+                <td><code>fb8fb2f0</code></td>
+              </tr>
+              <tr>
+                <td><strong>W1-A</strong> · <code>TC-Lane-A</code></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2581" target="_blank">#2581</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2576" target="_blank">#2576</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2371" target="_blank">#2371</a></td>
+                <td>Added <code>probeTmuxDocumentsAccess</code> in <code>lib/launch-kickoff.js</code> with structured <code>TMUX_TCC_DOCUMENTS_UNREADABLE</code> remediation, finalized <code>v5.36-status.md</code>, and added in-row <code>#2371</code> message (+14 tests; Architect <code>A461-R1</code> + Observer <code>ACCEPT</code>).</td>
+                <td>98.4m</td>
+                <td><code>f8354695</code></td>
+              </tr>
+              <tr>
+                <td><strong>W1-REC</strong> · <code>TC-Lane-INT</code></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2582" target="_blank">#2582</a></td>
+                <td>Wave 1 Index</td>
+                <td>Reconciled <code>FEATURES.md</code> and <code>.prawduct/change-log.md</code> for <code>W1-A</code> and <code>W1-B</code> (Architect <code>A462</code> + Observer <code>ACCEPT</code>).</td>
+                <td>15.6m</td>
+                <td><code>a6afc9e8</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Wave 2 -->
+      <div class="wave-card" data-tags="lane-a lane-b lane-int" data-search="wave 2 2583 2584 2585 2577 2571 2578 2566 2371 d96f750c 12771bc3 44c2f718 backup update/apply openclaw secret pane-not-at-rest _require-graph">
+        <div class="wave-header">
+          <div>
+            <div class="wave-num">Wave 2 · Pre-Update Auto-Backup, Secret Projection, Held-Prompt Badge &amp; #2371 Cutover</div>
+            <h3 class="wave-title">Automatic Pre-Update SQLite Snapshot (<code>#2577</code>), Secret Boolean Projection (<code>#2571</code>), Held-Prompt UI (<code>#2578</code>) &amp; Walker Fix (<code>#2566</code>)</h3>
+            <div class="wave-window">2026-10-24 22:08Z → 2026-10-25 01:57Z (3h 49m) · 3 PRs Merged · 22,476 Tests Passing</div>
+          </div>
+          <div class="wave-meta">
+            <span class="badge badge-green">3 / 3 PRs Merged</span>
+            <span class="badge badge-cyan">#2577, #2571, #2578, #2566 Closed · #2371 W2-CUT Ready</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr><th>Chunk / Lane</th><th>PR</th><th>Issues</th><th>Deliverable &amp; Verification</th><th>Wall Time</th><th>Merge SHA</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>W2-A</strong> · <code>TC-Lane-A</code></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2583" target="_blank">#2583</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2577" target="_blank">#2577</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2571" target="_blank">#2571</a></td>
+                <td>Added mandatory pre-update SQLite snapshot in <code>POST /api/update/apply</code> (aborting on backup failure) and projected boolean secret presence flags on OpenClaw connection routes per <code>A432-R1</code> (+21 tests; Architect <code>A464-R1</code> + Observer <code>ACCEPT</code>).</td>
+                <td>150.7m</td>
+                <td><code>d96f750c</code></td>
+              </tr>
+              <tr>
+                <td><strong>W2-B</strong> · <code>TC-Lane-B</code></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2584" target="_blank">#2584</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2578" target="_blank">#2578</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2566" target="_blank">#2566</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2371" target="_blank">#2371</a></td>
+                <td>Surfaced held prompt preview on dashboard cards when <code>pane-not-at-rest</code>, fixed nested template literal masking in <code>scripts/_require-graph.js</code>, and wired <code>--ci-complement</code> in <code>scripts/record-test-run.js</code> (+17 tests; Architect <code>A463-R1</code> + Observer <code>ACCEPT</code>).</td>
+                <td>58.4m active (208.4m wall)</td>
+                <td><code>12771bc3</code></td>
+              </tr>
+              <tr>
+                <td><strong>W2-REC</strong> · <code>TC-Lane-INT</code></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2585" target="_blank">#2585</a></td>
+                <td>Wave 2 Index</td>
+                <td>Reconciled <code>FEATURES.md</code> for Wave 2 deliverables (Architect <code>A464-R2</code> + Observer <code>ACCEPT</code>).</td>
+                <td>18.3m</td>
+                <td><code>44c2f718</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Wave 3 -->
+      <div class="wave-card" data-tags="lane-a lane-b lane-int" data-search="wave 3 2586 2587 2589 2565 2569 2156 1630 2371 1a7eb4d5 acacecd1 91ef02cc tmux doc-impact skip_reason wrap ci-complement">
+        <div class="wave-header">
+          <div>
+            <div class="wave-num">Wave 3 · Wrap Doc-Impact Hints, #2371 CI-as-Suite-Evidence Pilot &amp; tmux Test Hardening</div>
+            <h3 class="wave-title">Wrap Doc-Impact Hints &amp; <code>skip_reason</code> (<code>#2156</code>, <code>#1630</code>), <code>#2371</code> Pilot (<code>0s</code> Slot Wait) &amp; <code>tmux</code> Hardening (<code>#2565</code>, <code>#2569</code>)</h3>
+            <div class="wave-window">2026-10-25 02:13Z → 04:22Z (2h 09m) · 3 PRs Merged · 22,506 Tests Passing (23,230 in CI Pilot)</div>
+          </div>
+          <div class="wave-meta">
+            <span class="badge badge-green">3 / 3 PRs Merged</span>
+            <span class="badge badge-cyan">#2565, #2569, #2156, #1630 Closed · #2371 Pilot Proven</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr><th>Chunk / Lane</th><th>PR</th><th>Issues</th><th>Deliverable &amp; Verification</th><th>Wall Time</th><th>Merge SHA</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>W3-B</strong> · <code>TC-Lane-B</code></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2586" target="_blank">#2586</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2565" target="_blank">#2565</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2569" target="_blank">#2569</a></td>
+                <td>Replaced fixed sleeps with deterministic readiness polling and transient EAGAIN retry in <code>test/tmux.test.js</code> (+12 tests; verified 30× stress loop; Architect <code>A465</code> + Observer <code>ACCEPT</code>).</td>
+                <td>79.3m</td>
+                <td><code>1a7eb4d5</code></td>
+              </tr>
+              <tr>
+                <td><strong>W3-A</strong> · <code>TC-Lane-A</code></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2587" target="_blank">#2587</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2156" target="_blank">#2156</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1630" target="_blank">#1630</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2371" target="_blank">#2371</a></td>
+                <td>Added non-blocking doc-impact hints in wrap advisory and structured <code>skip_reason</code> telemetry on wrap skip; executed live <code>#2371</code> CI-as-suite-evidence pilot (<code>23,230</code> tests in <code>792s</code> CI, <code>0s</code> local <code>SUITE_SLOT</code> wait; Architect <code>A466-R1</code> + Observer <code>ACCEPT</code>).</td>
+                <td>107.8m</td>
+                <td><code>acacecd1</code></td>
+              </tr>
+              <tr>
+                <td><strong>W3-REC</strong> · <code>TC-Lane-INT</code></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2589" target="_blank">#2589</a></td>
+                <td>Wave 3 Index</td>
+                <td>Reconciled <code>FEATURES.md</code> and <code>.prawduct/change-log.md</code> for Wave 3 deliverables (Architect <code>A466-R2</code> + Observer <code>ACCEPT</code>).</td>
+                <td>16.6m</td>
+                <td><code>91ef02cc</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Wave 4 -->
+      <div class="wave-card" data-tags="lane-a lane-b lane-int" data-search="wave 4 2591 2592 2593 2573 2076 1497 4c15143a 4477d5b1 d499c507 wrap-file-ownership askmode bump-level dead-exports bridge release-certification">
+        <div class="wave-header">
+          <div>
+            <div class="wave-num">Wave 4 · Session-Scoped Wrap File Ownership, Ask-Mode Bump Selector &amp; 53 Dead Exports Retired</div>
+            <h3 class="wave-title">Session-Scoped Wrap File Ownership (<code>#2076</code>), Ask-Mode Bump Selector (<code>#1497</code>) &amp; Dead Exports Batch 2 (<code>#2573</code>)</h3>
+            <div class="wave-window">2026-10-25 04:36Z → 07:50Z (3h 14m) · 3 PRs Merged · 22,527 Tests Passing (22,528 Total)</div>
+          </div>
+          <div class="wave-meta">
+            <span class="badge badge-green">3 / 3 PRs Merged</span>
+            <span class="badge badge-cyan">#2573 (Batch 2), #2076, #1497 Closed · Milestone #22 16/16</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr><th>Chunk / Lane</th><th>PR</th><th>Issues</th><th>Deliverable &amp; Verification</th><th>Wall Time</th><th>Merge SHA</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>W4-B</strong> · <code>TC-Lane-B</code></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2591" target="_blank">#2591</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2573" target="_blank">#2573</a></td>
+                <td>Retired <code>53</code> dead exports across <code>lib/bridge-*</code> (<code>30</code>) and <code>lib/release-certification/*</code> (<code>23</code>), shrinking <code>test/dead-exports-baseline.json</code> from <code>192 → 139</code> (<code>−27.6%</code>; filed <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2590" target="_blank">#2590</a> for Batch 3+; Architect <code>A467-R1</code> + Observer <code>ACCEPT</code>).</td>
+                <td>60.5m</td>
+                <td><code>4c15143a</code></td>
+              </tr>
+              <tr>
+                <td><strong>W4-A</strong> · <code>TC-Lane-A</code></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2592" target="_blank">#2592</a></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2076" target="_blank">#2076</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1497" target="_blank">#1497</a></td>
+                <td>Implemented session-scoped wrap file ownership in <code>lib/wrap-file-ownership.js</code> + <code>routes/sessions.js</code> (staging only session-owned paths and surfacing foreign dirt warnings) and 3-card Ask-Mode bump-level selector (+21 net tests, isolated scratch browser check 3/3 states; Architect <code>A468-R5</code> + Observer <code>ACCEPT</code>).</td>
+                <td>185.8m</td>
+                <td><code>4477d5b1</code></td>
+              </tr>
+              <tr>
+                <td><strong>W4-REC</strong> · <code>TC-Lane-INT</code></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2593" target="_blank">#2593</a></td>
+                <td>Wave 4 Index</td>
+                <td>Reconciled <code>FEATURES.md</code> for Wave 4 deliverables (Architect <code>A470</code> + Observer <code>ACCEPT</code>).</td>
+                <td>14.4m</td>
+                <td><code>d499c507</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Wave 5 -->
+      <div class="wave-card" data-tags="lane-a" data-search="wave 5 2594 87778ad2 release v5.37.0 changelog version.json README.md changelog-released-sections.lock.json">
+        <div class="wave-header">
+          <div>
+            <div class="wave-num">Wave 5 · Release Cut, Automated Tag Publication &amp; Live Self-Update Deployment</div>
+            <h3 class="wave-title">Compiled 15 <code>changelog.d/</code> Fragments into <code>CHANGELOG.md</code>, Bumped <code>version.json</code> to <code>5.37.0</code> &amp; Published Tag <code>v5.37.0 @ 87778ad2</code></h3>
+            <div class="wave-window">2026-10-25 08:15Z → 09:20Z (1h 05m) · PR #2594 Merged · Live Server Updated @ 87778ad2</div>
+          </div>
+          <div class="wave-meta">
+            <span class="badge badge-green">Release Published</span>
+            <span class="badge badge-cyan">Milestone #22: 16 / 16 Closed (100%)</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr><th>Chunk / Lane</th><th>PR</th><th>Scope</th><th>Deliverable &amp; Verification</th><th>CI Runs</th><th>Merge SHA</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>W5-REL</strong> · <code>TC-Lane-A</code></td>
+                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2594" target="_blank">#2594</a></td>
+                <td>Release Cut <code>v5.37.0</code></td>
+                <td>Compiled all 15 <code>changelog.d/*.md</code> fragments into <code>CHANGELOG.md</code>, bumped <code>version.json</code> to <code>5.37.0</code>, updated <code>README.md</code> <code>--branch v5.37.0</code> pins and <code>test/fixtures/changelog-released-sections.lock.json</code>, published annotated tag &amp; GitHub Release <code>v5.37.0</code>, and updated live server with verified pre-update backup (Architect <code>A471</code> + Observer <code>ACCEPT</code>).</td>
+                <td><code>40178639979</code>, <code>40179388017</code>, <code>40179388022</code></td>
+                <td><code>87778ad2</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 7: NEXT SPRINT PLAN (v5.38.0) -->
+    <section id="next-sprint" class="section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">7. Next Sprint Plan: <code>v5.38.0</code> &amp; Inherited <code>A472</code> Architectural Guardrails</h2>
+          <p class="section-desc">Prioritized architectural guardrails and backlog items queued for <code>v5.38.0</code>.</p>
+        </div>
+      </div>
+
+      <div class="grid-3">
+        <div class="subcard">
+          <span class="badge badge-cyan">P0 · Hybrid Builder Model Routing</span>
+          <h3 style="margin-top:0.5rem;">Opus 5.5 on Lane A · Sonnet 4.6 on Lane B</h3>
+          <p class="text-muted">
+            • Route multi-seam UI/route/schema chunks (<code>TC-Lane-A</code>) to <strong>Claude Opus 5.5</strong> to eliminate multi-round review/CI rework loops.<br/>
+            • Keep bounded backend, AST, and dead-export chunks (<code>TC-Lane-B</code>) on <strong>Claude Sonnet 4.6</strong> where it achieved <code>4/4</code> (<code>100%</code>) 1st-pass CI green.
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="badge badge-green">P1 · Fleet-Wide #2371 Cutover</span>
+          <h3 style="margin-top:0.5rem;">Expand CI-as-Suite-Evidence to Both Lanes</h3>
+          <p class="text-muted">
+            • Promote <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2371" target="_blank">#2371</a> from single-wave pilot to default Builder gate across Waves 1–4.<br/>
+            • Builders run <code>Stage 1–3 + test-touched.js</code> locally (&lt;60s) and record the GitHub Actions PR run via <code>--ci-complement</code>, eliminating local <code>SUITE_SLOT</code> contention.
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="badge badge-purple">P2 · Isolated UI Scratch Helper</span>
+          <h3 style="margin-top:0.5rem;"><code>scripts/with-scratch-server.js</code></h3>
+          <p class="text-muted">
+            • Provide a single command that boots an ephemeral TangleClaw server on a random high port over a temporary SQLite copy so UI lanes can run headless browser checks with zero risk to live port <code>3102</code>.
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="badge badge-rose">P3 · Structural Merge Role Guard</span>
+          <h3 style="margin-top:0.5rem;">Enforce Integrator-Only <code>gh pr merge</code></h3>
+          <p class="text-muted">
+            • Add a <code>gh</code> wrapper check in Builder clones that blocks <code>gh pr merge</code> unless <code>TC_ROLE=integrator</code>, preventing Builder merge oversteps like <code>W5-REL</code> (<a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2594" target="_blank">#2594</a>).
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="badge badge-amber">P4 · Dead Exports Batch 3+ (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2590" target="_blank">#2590</a>)</span>
+          <h3 style="margin-top:0.5rem;">Shrink Baseline Below 90 Entries</h3>
+          <p class="text-muted">
+            • Execute <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2590" target="_blank">#2590</a> (Batch 3+) on <code>TC-Lane-B</code> (Sonnet 4.6) to retire the next ~50 dead exports from the remaining <code>139</code> entries in <code>test/dead-exports-baseline.json</code>.
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="badge badge-cyan">P5 · Operator-Held Contract Scope</span>
+          <h3 style="margin-top:0.5rem;">Advance <code>#1050</code> &amp; <code>#1220</code> C05+</h3>
+          <p class="text-muted">
+            • Advance the remaining C05+ contract matrix rows in <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1220" target="_blank">#1220</a> and Operator-guided items in Milestone <code>v5.38.0</code> alongside <code>W*-REC</code> index reconciliation.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      Published from empirical sprint records for <a href="https://github.com/Jason-Vaughan/TangleClaw/releases/tag/v5.37.0" target="_blank" rel="noopener">TangleClaw v5.37.0</a>
+      (Tag <code>87778ad234479c0634bfa48415d7b98a7de8c455</code> · Main <code>87778ad234479c0634bfa48415d7b98a7de8c455</code>) · Sanitized for public viewing (zero internal paths, tokens, or private endpoints).
+    </footer>
+  </main>
+
+  <script>
+    function filterWaves(tag, btn) {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.querySelectorAll('.wave-card').forEach(card => {
+        const tags = (card.getAttribute('data-tags') || '').split(' ');
+        card.style.display = (tag === 'all' || tags.includes(tag)) ? '' : 'none';
+      });
+    }
+    function searchWaves(q) {
+      const term = (q || '').trim().toLowerCase();
+      document.querySelectorAll('.wave-card').forEach(card => {
+        const hay = (card.getAttribute('data-search') + ' ' + card.innerText).toLowerCase();
+        card.style.display = (!term || hay.includes(term)) ? '' : 'none';
+      });
+    }
+  </script>
+</body>
+</html>

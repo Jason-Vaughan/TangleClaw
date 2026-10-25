@@ -235,7 +235,8 @@
       <span>TangleClaw Autonomous Sprint Reports</span>
     </div>
     <div class="nav-links">
-      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.36.0/">v5.36.0 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.37.0/">v5.37.0 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.36.0/">v5.36.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.35.0/">v5.35.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.34.0/">v5.34.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/">Public Roadmap</a>
@@ -253,33 +254,59 @@
       <div class="kpi-grid">
         <div class="kpi-card">
           <div class="kpi-label">Published Sprint Reports</div>
-          <div class="kpi-val">2 Releases</div>
-          <div class="kpi-sub"><code>v5.34.0</code> &amp; <code>v5.35.0</code> (<code>v5.36.0</code> next)</div>
+          <div class="kpi-val">4 Releases</div>
+          <div class="kpi-sub"><code>v5.34.0</code> · <code>v5.35.0</code> · <code>v5.36.0</code> · <code>v5.37.0</code></div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Cumulative Sprint PRs</div>
-          <div class="kpi-val">103 PRs Merged</div>
-          <div class="kpi-sub"><strong>29 waves</strong> · <strong>471 commits</strong> · <strong>0</strong> post-merge regressions</div>
+          <div class="kpi-val">116 PRs Merged</div>
+          <div class="kpi-sub"><strong>34 waves</strong> · <strong>0</strong> code conflicts (v5.35–v5.37) · <strong>0</strong> regressions</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Current Passing Suite</div>
-          <div class="kpi-val">22,314 Tests</div>
-          <div class="kpi-sub">5-stage Google S/M/L pyramid · <code>26,574</code> JUnit nodes · 0 fail</div>
+          <div class="kpi-val">22,527 Pass</div>
+          <div class="kpi-sub"><strong>22,528 total</strong> (1 skip, 0 fail) · <strong>+111 net new</strong> in <code>v5.37.0</code></div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Latest Production Release</div>
-          <div class="kpi-val">v5.36.0 Cut</div>
-          <div class="kpi-sub">Tag <code>v5.36.0 @ fcef8dfe</code> · SQLite Schema 68</div>
+          <div class="kpi-val" style="color:var(--green);">v5.37.0 Cut</div>
+          <div class="kpi-sub">Tag <code>v5.37.0 @ 87778ad2</code> · Milestone #22 <code>16/16</code> Closed</div>
         </div>
       </div>
     </section>
 
     <div class="report-list">
+      <!-- v5.37.0 Card -->
+      <article class="report-card">
+        <div class="report-header">
+          <div>
+            <span class="badge badge-green">● Latest Release · Oct 24–25, 2026 (13h 15m)</span>
+            <h2 class="report-title"><a href="./v5.37.0/">TangleClaw <code>v5.37.0</code>: “Wrap Commits the Right Files”</a></h2>
+          </div>
+          <span class="badge badge-cyan">Tag v5.37.0 @ 87778ad2</span>
+        </div>
+        <p style="color:#cbd5e1; margin:0;">
+          Autonomous 5-wave multi-agent sprint running a controlled <strong>Claude Sonnet 4.6 Builder evaluation across <code>TC-Lane-A</code> + <code>TC-Lane-B</code></strong> alongside <strong>Integrator (Codex GPT-5.4)</strong>, <strong>Observer (Antigravity)</strong>, and <strong>Architect</strong>: merged <strong>13 PRs (<code>#2580</code>–<code>#2587</code>, <code>#2589</code>, <code>#2591</code>–<code>#2594</code>)</strong> with <strong>0 code merge conflicts</strong> and <strong>0 post-merge regressions</strong>. Completed Milestone <code>#22</code> (<strong>16/16 closed, 0 open</strong>), delivered session-scoped wrap file ownership (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2076" target="_blank">#2076</a>) and Ask-Mode bump-level selection (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1497" target="_blank">#1497</a>), shipped automatic pre-update SQLite snapshots (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2577" target="_blank">#2577</a>), OpenClaw boolean secret projection (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2571" target="_blank">#2571</a>), and pre-launch <code>tmux</code> macOS TCC probing (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2576" target="_blank">#2576</a>), proved the <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2371" target="_blank">#2371</a> CI-as-suite-evidence pilot with <strong>0s local <code>SUITE_SLOT</code> wait</strong>, and retired <strong>53 dead exports</strong> (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2573" target="_blank">#2573</a> Batch 2: <code>192 → 139</code>) with <strong>22,527 passing runner tests (22,528 total, 1 skip, 0 fail)</strong>.
+        </p>
+        <div class="meta-pills">
+          <span class="badge badge-cyan">5 Waves · 13 PRs</span>
+          <span class="badge badge-green">Milestone #22: 16/16 Closed</span>
+          <span class="badge badge-purple">Sonnet 4.6 Eval (Lane B 4/4 100%)</span>
+          <span class="badge badge-cyan">#2371 Pilot: 0s Slot Wait</span>
+          <span class="badge badge-green">22,527 Passing (+111 Net New)</span>
+        </div>
+        <div class="actions">
+          <a class="btn btn-primary" href="./v5.37.0/">📊 Open v5.37.0 Interactive Sprint Report →</a>
+          <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/releases/tag/v5.37.0" target="_blank" rel="noopener">🚀 GitHub Release v5.37.0</a>
+          <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/blob/v5.37.0/CHANGELOG.md" target="_blank" rel="noopener">📜 CHANGELOG.md</a>
+        </div>
+      </article>
+
       <!-- v5.36.0 Card -->
       <article class="report-card">
         <div class="report-header">
           <div>
-            <span class="badge badge-green">● Latest Release · Oct 23–24, 2026 (9h 50m)</span>
+            <span class="badge badge-cyan">Oct 23–24, 2026 (9h 50m)</span>
             <h2 class="report-title"><a href="./v5.36.0/">TangleClaw <code>v5.36.0</code>: “Startup Dialogs, Finished”</a></h2>
           </div>
           <span class="badge badge-cyan">Tag v5.36.0 @ fcef8dfe</span>
