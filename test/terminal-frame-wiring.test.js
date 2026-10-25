@@ -174,6 +174,27 @@ describe('tcWireTerminalFrame (shared readiness pipeline)', () => {
     assert.equal(win.timeouts.length, 0, 'no retry needed when term is ready');
   });
 
+  it('wires the #2458 Windows Ctrl+V/dictation fix on a Windows client, once the term is ready', () => {
+    win.navigator = { platform: 'Win32', userAgent: 'Windows NT 10.0' };
+    const term = makeTerm();
+    const doc = makeDoc();
+    const frame = makeFrame(term, doc);
+    tcWireTerminalFrame(win, frame, () => 'dark');
+    frame.listeners.load[0]();
+    assert.equal(doc._tcWindowsPasteWired, true,
+      'every terminal surface (session terminal, Master panel, Master drawer) goes through this one pipeline');
+  });
+
+  it('does not wire the Windows paste fix for a non-Windows client', () => {
+    win.navigator = { platform: 'MacIntel', userAgent: 'Macintosh' };
+    const term = makeTerm();
+    const doc = makeDoc();
+    const frame = makeFrame(term, doc);
+    tcWireTerminalFrame(win, frame, () => 'dark');
+    frame.listeners.load[0]();
+    assert.equal(doc._tcWindowsPasteWired, undefined, 'Mac/Linux already have working Ctrl+V/Cmd+V');
+  });
+
   it('retries on the parent window timer until ttyd initializes the term', () => {
     const doc = makeDoc();
     const frame = makeFrame(null, doc); // xterm not initialized yet

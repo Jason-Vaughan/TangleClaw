@@ -934,6 +934,65 @@
   }
 
   /**
+   * Let `Ctrl+V` and OS-level voice dictation reach xterm's native paste on
+   * Windows (#2458).
+   *
+   * A keydown with `ctrlKey: true` and `key: 'v'` is the ASCII control
+   * character SYN (`0x16`, `^V`) to xterm/ttyd, so its own keydown handler
+   * consumes the event and calls `preventDefault()`/`stopPropagation()` —
+   * which stops the browser from ever firing the native `paste` event.
+   * Voice dictation tools (Windows Voice Typing, Wispr Flow, Dragon) hit the
+   * exact same wall: they transcribe speech onto the OS clipboard and send a
+   * synthetic `Ctrl+V` to the focused window.
+   *
+   * Fix: a capture-phase listener on the iframe document sees the keydown
+   * BEFORE xterm's own handler. For a plain `Ctrl+V` on a Windows client it
+   * calls `event.stopImmediatePropagation()` so xterm's handler never runs
+   * and never sends `^V` — but deliberately does NOT call
+   * `preventDefault()`, so the browser's default paste behavior proceeds and
+   * xterm's own `paste` listener (bound to the textarea) catches the text and
+   * forwards it over the WebSocket in bracketed-paste mode.
+   *
+   * Windows detection checks `navigator.platform`, `navigator.userAgent` AND
+   * `navigator.userAgentData.platform`: Chromium on Windows 11 increasingly
+   * deprecates or freezes `navigator.platform`, returning an empty or generic
+   * value.
+   *
+   * Idempotent per iframe document (each reload is a fresh document).
+   *
+   * @param {Window} win - The PARENT window (fallback `navigator` source).
+   * @param {object} term - The xterm.js Terminal instance inside the iframe.
+   * @param {Document} doc - The terminal iframe's document (same-origin).
+   * @returns {boolean} true when wired (or already wired), false when
+   *   skipped (missing args, or not a Windows client).
+   */
+  function tcWireWindowsTerminalPaste(win, term, doc) {
+    const nav = (doc && doc.defaultView && doc.defaultView.navigator) || (win && win.navigator);
+    const isWin = Boolean(nav) && (
+      /Win/i.test(nav.platform || '')
+      || /Windows/i.test(nav.userAgent || '')
+      || Boolean(nav.userAgentData && /Windows/i.test(nav.userAgentData.platform || ''))
+    );
+    if (!doc || !term || !isWin) return false;
+    if (doc._tcWindowsPasteWired) return true;
+    doc._tcWindowsPasteWired = true;
+    doc.addEventListener('keydown', (event) => {
+      if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey
+          || event.isComposing || String(event.key).toLowerCase() !== 'v') return;
+      const target = event.target;
+      if (!target || !(target === term.textarea
+          || (term.element && term.element.contains(target))
+          || target === doc.body || target === doc.documentElement)) return;
+      if (term.textarea && typeof term.textarea.focus === 'function' && doc.activeElement !== term.textarea) {
+        try { term.textarea.focus(); } catch (_) { /* focus is best-effort; the paste still proceeds */ }
+      }
+      // Do NOT preventDefault: that would cancel the browser's native paste too.
+      event.stopImmediatePropagation();
+    }, true);
+    return true;
+  }
+
+  /**
    * Make a PLAIN drag copy terminal text to the CLIENT clipboard (#445) —
    * and give touch devices a selection gesture (long-press) for the first
    * time.
@@ -1405,8 +1464,9 @@
   /**
    * Wire a ttyd terminal iframe with the full TangleClaw terminal stack:
    * theme, the #431 ⌥+drag local-selection override, the #443 touch-scroll
-   * shim, and the #445 plain-drag/long-press copy path. One readiness retry
-   * loop shared by every terminal surface (session terminal, landing Master
+   * shim, the #445 plain-drag/long-press copy path, and the #2458 Windows
+   * `Ctrl+V`/dictation paste fix. One readiness retry loop shared by every
+   * terminal surface (session terminal, landing Master
    * pane, in-session Master drawer) — the per-page copies of this loop are
    * what let #443's dead shim ship twice.
    *
@@ -1439,6 +1499,7 @@
             if (doc) {
               tcWireTerminalTouchScroll(win, term, doc);
               tcWireTerminalDragCopy(win, term, doc);
+              tcWireWindowsTerminalPaste(win, term, doc);
             }
             return;
           }
@@ -3142,6 +3203,7 @@
   global.tcEnableLocalSelectionOverride = tcEnableLocalSelectionOverride;
   global.tcWireTerminalTouchScroll = tcWireTerminalTouchScroll;
   global.tcWireTerminalDragCopy = tcWireTerminalDragCopy;
+  global.tcWireWindowsTerminalPaste = tcWireWindowsTerminalPaste;
   global.tcWireTerminalFrame = tcWireTerminalFrame;
   global.tcWireVisualViewport = tcWireVisualViewport;
   /*
@@ -3881,6 +3943,8 @@
             aria-label="Master access level">${TC_MASTER_ACCESS_SEGMENTS.map((seg) =>
     `<button type="button" class="master-access-seg" id="${p}${seg.suffix}" aria-pressed="false">${seg.label}</button>`).join('')}<span class="master-access-other" id="${p}AccessOther" hidden></span>
       </span>
+      <button type="button" class="banner-btn" id="${p}PasteBtn"
+              aria-label="Paste into Master terminal" title="Paste clipboard text into the Master terminal">Paste</button>
       ${pend('Upload', 'banner-btn', 'Upload')}
       <button class="banner-btn" id="${p}SettingsBtn"
               aria-label="Master settings" title="Master settings">&#9881;</button>
@@ -3908,6 +3972,12 @@
    * @param {Function} [deps.confirm] - Confirmation prompt; defaults to the
    *   window's. Injected so the READ→WRITE warning is assertable without a
    *   browser dialog, which would block the whole page.
+   * @param {string} [deps.frameId] - The terminal iframe's id, for `Paste`
+   *   (#2458). Defaults to `masterFrame` for the `masterPanel` prefix and
+   *   `masterDrawerFrame` for every other prefix — the two surfaces this
+   *   bar ever mounts on.
+   * @param {Function} [deps.prompt] - Fallback text prompt for `Paste` when
+   *   clipboard read is unavailable; defaults to the window's.
    * @returns {{mount: Function, setStatus: Function, setModel: Function, setError: Function,
    *            setWarning: Function, setAccess: Function, loadAccess: Function, loadModel: Function}}
    */
@@ -3976,6 +4046,8 @@
       if (launch && deps.onRetry) launch.addEventListener('click', deps.onRetry);
       const kill = el('KillBtn');
       if (kill) kill.addEventListener('click', killMaster);
+      const paste = el('PasteBtn');
+      if (paste) paste.addEventListener('click', pasteToMaster);
       medusa.mount();
       // Establish the resting state in CODE rather than leaning on the markup's
       // attributes. The component then owns its own initial appearance, which
@@ -4489,7 +4561,64 @@
       setModel(st, engineId);
     }
 
-    return { mount, setStatus, setModel, setError, setWarning, setAccess, setMedusa, loadAccess, loadModel, killMaster, medusa };
+    /**
+     * The xterm instance behind this surface's Master terminal iframe, or
+     * null when the frame isn't there or isn't attached yet (#2458).
+     * @returns {object|null}
+     */
+    function getMasterTerm() {
+      const frameId = deps.frameId || (p === 'masterPanel' ? 'masterFrame' : 'masterDrawerFrame');
+      const frame = doc.getElementById(frameId);
+      try {
+        const win = frame && frame.contentWindow;
+        return (win && (win.term || win.terminal)) || null;
+      } catch (_) {
+        return null; // cross-origin (webui) — nothing to paste into here
+      }
+    }
+
+    /**
+     * Paste clipboard text into this surface's Master terminal (#2458) — the
+     * affordance the bar lacked entirely, leaving an operator whose keyboard
+     * paste failed or was intercepted with no way in.
+     *
+     * Reads `navigator.clipboard.readText()` where the page is a secure
+     * context and the API exists; everywhere else (plain HTTP over
+     * Tailscale, or a browser that refused the read) falls back to a text
+     * `prompt()` — the same confirmation-dialog pattern `killMaster` already
+     * uses on this bar, so this surface gains no new UI primitive.
+     * @returns {Promise<void>}
+     */
+    async function pasteToMaster() {
+      const term = getMasterTerm();
+      if (!term || typeof term.paste !== 'function') {
+        setError('Could not paste: the Master terminal is not ready yet.');
+        return;
+      }
+      const nav = (doc.defaultView && doc.defaultView.navigator) || global.navigator;
+      if (nav && nav.clipboard && typeof nav.clipboard.readText === 'function') {
+        try {
+          const text = await nav.clipboard.readText();
+          if (text) {
+            term.paste(text);
+            if (typeof term.focus === 'function') term.focus();
+            return;
+          }
+        } catch (_) { /* clipboard refused — fall back to the prompt below */ }
+      }
+      const ask = deps.prompt || global.prompt;
+      if (typeof ask !== 'function') {
+        setError('Could not paste: this page cannot show the prompt it needs.');
+        return;
+      }
+      const entered = ask('Paste text into the Master terminal:');
+      if (entered) {
+        term.paste(entered);
+        if (typeof term.focus === 'function') term.focus();
+      }
+    }
+
+    return { mount, setStatus, setModel, setError, setWarning, setAccess, setMedusa, loadAccess, loadModel, killMaster, paste: pasteToMaster, medusa };
   }
 
   /**
