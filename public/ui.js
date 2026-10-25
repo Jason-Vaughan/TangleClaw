@@ -389,9 +389,19 @@ function renderCard(project) {
    * this token. Project-bound (keyed by name, not one dashboard-wide value)
    * so consuming one project's intent can't be confused with, or
    * invalidate, another's; expiring (5 minutes) so a forgotten tab's stale
-   * Launch link can't still fire a launch days later.
+   * Launch link can't still fire a launch days later. `crypto.randomUUID`
+   * is secure-context-only (HTTPS or localhost) — this product's own
+   * "direct ingress" mode supports plain HTTP from a non-localhost browser
+   * (SECURITY.md), where it is simply absent. `renderCard` runs it for
+   * every not-yet-active project on every render, so an uncaught throw
+   * here would abort the whole card grid, not just this one link — caught
+   * the same defensive way the adjacent `localStorage` calls already are.
+   * `null` means no token could be minted; the caller omits `&intent=`
+   * entirely rather than embedding an empty one, and
+   * `consumeLaunchQueryParam()` already treats an absent `intent` as a
+   * no-op, so this fails safe.
    * @param {string} projectName
-   * @returns {string}
+   * @returns {string|null}
    */
   function getLaunchIntentToken(projectName) {
     const key = `tc_launchIntent:${projectName}`;
@@ -405,7 +415,8 @@ function renderCard(project) {
         (Date.now() - record.mintedAt) < ttlMs) {
       return record.token;
     }
-    const token = crypto.randomUUID();
+    let token = null;
+    try { token = crypto.randomUUID(); } catch (e) { return null; }
     try { localStorage.setItem(key, JSON.stringify({ token, mintedAt: Date.now() })); } catch (e) { /* ignore */ }
     return token;
   }
@@ -498,7 +509,15 @@ function renderCard(project) {
       <span class="card-row-actions">
         ${hasSession
           ? `<a class="btn btn-compact btn-launch" data-project-name="${n}" href="/session/${encodeURIComponent(project.name)}" onclick="event.preventDefault(); event.stopPropagation(); launchProject(${nArg})">Open</a>`
-          : `<a class="btn btn-compact btn-launch" data-project-name="${n}" href="/?launch=${encodeURIComponent(project.name)}&intent=${encodeURIComponent(getLaunchIntentToken(project.name))}" onclick="event.preventDefault(); event.stopPropagation(); launchProject(${nArg})">Launch</a>`}
+          : (() => {
+              // No token could be minted (e.g. crypto.randomUUID absent in an
+              // insecure context) — omit &intent= entirely rather than embed
+              // an empty one; consumeLaunchQueryParam() already treats an
+              // absent intent as a no-op, so this fails safe.
+              const launchIntentToken = getLaunchIntentToken(project.name);
+              const intentQs = launchIntentToken ? `&intent=${encodeURIComponent(launchIntentToken)}` : '';
+              return `<a class="btn btn-compact btn-launch" data-project-name="${n}" href="/?launch=${encodeURIComponent(project.name)}${intentQs}" onclick="event.preventDefault(); event.stopPropagation(); launchProject(${nArg})">Launch</a>`;
+            })()}
         ${hasSession ? `<button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openPeekFromCard(${nArg})" title="Peek">&#128065;</button>` : ''}
         ${hasSession ? `<button class="btn btn-compact btn-icon-tiny btn-kill-card" onclick="event.stopPropagation(); openKill(${nArg})" title="Kill session">&#9632;</button>` : ''}
         <button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openHistory(${nArg})" title="Session history &amp; search">&#128269;</button>

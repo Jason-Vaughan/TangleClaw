@@ -208,10 +208,10 @@ describe('card Launch/Open control is a real link for both states (#2124)', () =
   });
 
   it('the not-yet-active ("Launch") branch is a real <a href="/?launch=:name"> (PRR BLOCKING follow-up: a direct /session/:name link would show "no active session" for a never-launched project — /?launch=<name> instead re-enters the page and runs the real launch flow)', () => {
-    const idx = UI_SRC.indexOf(': `<a class="btn btn-compact btn-launch" data-project-name=');
+    const idx = UI_SRC.indexOf('return `<a class="btn btn-compact btn-launch" data-project-name=');
     assert.ok(idx > -1, 'ui.js must render an <a href="/?launch=..."> for the not-yet-active case');
     const snippet = UI_SRC.slice(idx, idx + 320);
-    assert.match(snippet, /href="\/\?launch=\$\{encodeURIComponent\(project\.name\)\}&intent=/);
+    assert.match(snippet, /href="\/\?launch=\$\{encodeURIComponent\(project\.name\)\}\$\{intentQs\}"/);
     assert.match(snippet, /onclick="event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*launchProject/,
       'left-click must still preventDefault and run launchProject immediately, without a page reload');
     assert.match(snippet, />Launch<\/a>/);
@@ -219,7 +219,7 @@ describe('card Launch/Open control is a real link for both states (#2124)', () =
 
   it('both controls carry data-project-name, HTML-escaped the same way every other attribute on the card is', () => {
     const openIdx = UI_SRC.indexOf('? `<a class="btn btn-compact btn-launch"');
-    const launchIdx = UI_SRC.indexOf(': `<a class="btn btn-compact btn-launch" data-project-name=');
+    const launchIdx = UI_SRC.indexOf('return `<a class="btn btn-compact btn-launch" data-project-name=');
     for (const idx of [openIdx, launchIdx]) {
       const snippet = UI_SRC.slice(idx, idx + 90);
       assert.match(snippet, /data-project-name="\$\{n\}"/, 'must use the already-HTML-escaped `n`, not the raw project.name');
@@ -462,11 +462,23 @@ describe('getLaunchIntentToken + consumeLaunchQueryParam guard the launch agains
   });
 
   it('the rendered Launch href carries &intent=<token> bound to the project name (ui.js)', () => {
-    const idx = UI_SRC.indexOf(': `<a class="btn btn-compact btn-launch" data-project-name=');
-    assert.ok(idx > -1);
-    const snippet = UI_SRC.slice(idx, idx + 280);
-    assert.match(snippet, /&intent=\$\{encodeURIComponent\(getLaunchIntentToken\(project\.name\)\)\}/,
-      'the not-yet-active Launch control must embed a token minted for THIS project');
+    const idx = UI_SRC.indexOf('const launchIntentToken = getLaunchIntentToken(project.name);');
+    assert.ok(idx > -1, 'a token minted for THIS project must be read before building the href');
+    const snippet = UI_SRC.slice(idx, idx + 200);
+    assert.match(snippet, /launchIntentToken \? `&intent=\$\{encodeURIComponent\(launchIntentToken\)\}` : ''/,
+      "getLaunchIntentToken() returning null (e.g. crypto.randomUUID absent in an insecure context) must omit &intent= entirely, not embed an empty one");
+  });
+
+  it('getLaunchIntentToken returns null, without throwing, when crypto.randomUUID is unavailable (CRITIC BLOCKING: a throw here would abort the whole card grid render, not just this link — insecure-context dashboards are a supported deployment per SECURITY.md)', () => {
+    const storage = fakeStorage();
+    const ctx = vm.createContext({
+      localStorage: storage,
+      crypto: {} // no randomUUID — the shape an insecure context actually has
+    });
+    const token = vm.runInContext(
+      `${liftDeclaration(UI_SRC, 'function getLaunchIntentToken(')}\ngetLaunchIntentToken('my-project');`, ctx);
+    assert.equal(token, null);
+    assert.equal(storage.store.size, 0, 'nothing should be written to localStorage when minting fails');
   });
 
   it('init() calls consumeLaunchQueryParam once, after loadProjects() populates state.projects and renders the card', () => {
