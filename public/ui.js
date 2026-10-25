@@ -510,13 +510,17 @@ function renderCard(project) {
         ${hasSession
           ? `<a class="btn btn-compact btn-launch" data-project-name="${n}" href="/session/${encodeURIComponent(project.name)}" onclick="event.preventDefault(); event.stopPropagation(); launchProject(${nArg})">Open</a>`
           : (() => {
-              // No token could be minted (e.g. crypto.randomUUID absent in an
-              // insecure context) — omit &intent= entirely rather than embed
-              // an empty one; consumeLaunchQueryParam() already treats an
-              // absent intent as a no-op, so this fails safe.
+              // The intent token rides in the URL FRAGMENT, not the query
+              // string (Critic note): a fragment is never sent to the
+              // server, so the token never reaches access/server logs —
+              // only the query-string `launch` param (just the project
+              // name) does. No token could be minted (e.g. crypto.randomUUID
+              // absent in an insecure context) — omit the fragment entirely
+              // rather than embed an empty one; consumeLaunchQueryParam()
+              // already treats an absent intent as a no-op, so this fails safe.
               const launchIntentToken = getLaunchIntentToken(project.name);
-              const intentQs = launchIntentToken ? `&intent=${encodeURIComponent(launchIntentToken)}` : '';
-              return `<a class="btn btn-compact btn-launch" data-project-name="${n}" href="/?launch=${encodeURIComponent(project.name)}${intentQs}" onclick="event.preventDefault(); event.stopPropagation(); launchProject(${nArg})">Launch</a>`;
+              const intentFragment = launchIntentToken ? `#intent=${encodeURIComponent(launchIntentToken)}` : '';
+              return `<a class="btn btn-compact btn-launch" data-project-name="${n}" href="/?launch=${encodeURIComponent(project.name)}${intentFragment}" onclick="event.preventDefault(); event.stopPropagation(); launchProject(${nArg})">Launch</a>`;
             })()}
         ${hasSession ? `<button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openPeekFromCard(${nArg})" title="Peek">&#128065;</button>` : ''}
         ${hasSession ? `<button class="btn btn-compact btn-icon-tiny btn-kill-card" onclick="event.stopPropagation(); openKill(${nArg})" title="Kill session">&#9632;</button>` : ''}

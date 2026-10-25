@@ -2100,19 +2100,19 @@ function proceedWithLaunchModeCheck(name, project, continuityMode) {
 }
 
 /**
- * Consume a `?launch=<name>&intent=<token>` query param pair (#2124): a
- * card's not-yet-active "Launch" control is a real
- * `<a href="/?launch=<name>&intent=<token>">` so right-click "Open in new
- * tab" has something GET-safe to land on, and this is what turns that
- * landing into an actual launch — strip both params (so reloading or
- * sharing the URL doesn't re-trigger it) and run the exact launch flow a
- * direct click runs (continuity/launch-mode modals, refusal handling
- * included), but ONLY when `intent` matches the token minted for THIS
- * project, is not expired, and its single-use removal actually succeeds
- * (fail closed — PRR-A C5). A bare, missing, mismatched, expired, or
- * replayed `launch`/`intent` makes zero launch calls. No-op entirely if
- * `launch` is absent. Called once from init(), after `loadProjects()`
- * populates `state.projects` and renders the card that `doLaunchProject`'s
+ * Consume a `?launch=<name>#intent=<token>` URL (#2124): a card's
+ * not-yet-active "Launch" control is a real `<a href="/?launch=<name>
+ * #intent=<token>">` so right-click "Open in new tab" has something
+ * GET-safe to land on, and this is what turns that landing into an actual
+ * launch — strip the query param and the fragment (so reloading or sharing
+ * the URL doesn't re-trigger it) and run the exact launch flow a direct
+ * click runs (continuity/launch-mode modals, refusal handling included),
+ * but ONLY when `intent` matches the token minted for THIS project, is not
+ * expired, and its single-use removal actually succeeds (fail closed —
+ * PRR-A C5). A bare, missing, mismatched, expired, or replayed
+ * `launch`/`intent` makes zero launch calls. No-op entirely if `launch` is
+ * absent. Called once from init(), after `loadProjects()` populates
+ * `state.projects` and renders the card that `doLaunchProject`'s
  * pending-state UI targets.
  *
  * The intent check is what makes this CSRF-safe: session and CSRF cookies
@@ -2127,14 +2127,16 @@ function proceedWithLaunchModeCheck(name, project, continuityMode) {
  * one project's intent can't be confused with, or invalidate, another's;
  * expiring (5 minutes, matching `getLaunchIntentToken()`'s TTL) so a
  * forgotten tab's stale Launch link can't still fire a launch days later.
+ * The token itself rides in the URL FRAGMENT, not the query string (Critic
+ * note): a fragment is never sent in the HTTP request, so it never reaches
+ * access/server logs — only `launch` (the project name) does.
  */
 function consumeLaunchQueryParam() {
   const params = new URLSearchParams(location.search);
   const name = params.get('launch');
   if (!name) return;
-  const intent = params.get('intent');
+  const intent = new URLSearchParams(location.hash.replace(/^#/, '')).get('intent');
   params.delete('launch');
-  params.delete('intent');
   const qs = params.toString();
   history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : ''));
   if (!intent) return;
