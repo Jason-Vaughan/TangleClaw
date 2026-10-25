@@ -712,6 +712,42 @@ describe('tmux', () => {
         fs.rmSync(binDir, { recursive: true, force: true });
       }
     });
+
+    it('returns false with born null when hasSession becomes true after the 20ms settle (post-sleep guard)', () => {
+      const os = require('node:os');
+      const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-retry-tmux-postsleep-'));
+      const realPath = process.env.PATH;
+      // Counter file: has-session increments on each call; exits 0 on the 3rd+ call
+      // (1st: top of createSession; 2nd: pre-sleep catch check; 3rd: post-sleep catch check)
+      const counterFile = path.join(binDir, 'has-session-count');
+      fs.writeFileSync(counterFile, '0');
+      fs.writeFileSync(path.join(binDir, 'tmux'), [
+        '#!/bin/sh',
+        'case "$1" in',
+        '  has-session)',
+        `    count=$(cat '${counterFile}' 2>/dev/null || echo 0)`,
+        '    count=$((count + 1))',
+        `    echo "$count" > '${counterFile}'`,
+        '    [ "$count" -ge 3 ] && exit 0 || exit 1 ;;',
+        '  new-session)',
+        "    echo 'server exited unexpectedly' >&2",
+        '    exit 1',
+        '    ;;',
+        '  *) exit 0 ;;',
+        'esac',
+      ].join('\n'), { mode: 0o755 });
+      process.env.PATH = `${binDir}:${realPath}`;
+      try {
+        const name = uniqueSessionName('srv-exit-postsleep');
+        const born = {};
+        assert.equal(tmux.createSession(name, { command: 'exec bash', born }), false);
+        assert.equal(born.paneId, null, 'born.paneId must stay null when post-sleep hasSession returns true');
+        assert.equal(born.server, null, 'born.server must stay null when post-sleep hasSession returns true');
+      } finally {
+        process.env.PATH = realPath;
+        fs.rmSync(binDir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe('createSession - every launch decides every identity variable (#2268)', () => {
