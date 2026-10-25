@@ -362,6 +362,37 @@ does not read the artifact's provenance beyond GitHub's own record that it belon
 that commit. The workflow step that uploads it is what makes the artifact CI's own report, which
 is why that step is part of the cutover and not of this command.
 
+## The `W<N>-REC` invocation contract: `scripts/verify-features-index.js`
+
+`scripts/verify-features-index.js --base <ref>` (#2597) holds a `FEATURES.md` records PR to
+one rule: every `Tests:` anchor the records PR's diff newly adds must name a test file that
+same diff touches. `--base` is **required** and has **no default** — `origin/main` at check
+time is the wrong base for this check (PR #2606 review, Finding C2): by the time a `W<N>-REC`
+records PR runs, the wave's own code/test PRs have already merged into `main`, so a diff
+against the current tip shows `FEATURES.md` changing but never the test file it cites, and a
+genuinely correct records PR would fail every time.
+
+**The base a `W<N>-REC` invocation passes is the wave's own starting commit** — the `Base main
+Head` `LANE_QUEUE` records for that wave, read before any of its PRs merged. For Wave 1 that is
+`87778ad234479c0634bfa48415d7b98a7de8c455`; `TC-Lane-INT` runs and cites, for `W1-REC`:
+
+```bash
+node scripts/verify-features-index.js --base 87778ad234479c0634bfa48415d7b98a7de8c455
+```
+
+**This is a mandatory Integrator-run gate, not push-time automation** (`LANE_QUEUE` rev
+`#376`, "Mandatory `W<N>-REC` wave-diff test-anchor gate (`#2597`)"). Nothing calls this script
+from a hook, wrap step, or CI job today; `TC-Lane-INT` runs it by hand at every `W<N>-REC`,
+after that wave's code PRs have merged and its `FEATURES.md` edits are committed, against the
+recorded wave-start commit. The records PR body must name: the wave-start SHA, the exact
+records-branch head, the command run, its exit code, its stdout, and the touched test paths
+that prove the newly-added `Tests:` citations. **`TC-Lane-INT` must not merge a records PR
+without an exit-0 receipt on its exact head and PRR verification of that receipt.** A later
+wave records its own starting `main` SHA in `LANE_QUEUE` before that wave's builders begin, and
+reads it the same way. Automatically resolving and supplying that commit (so no one has to read
+it off `LANE_QUEUE` by hand, and a skipped manual run can't go unnoticed) is open follow-up
+work, not built here.
+
 ## PROPOSED, NOT IN FORCE: it needs the Operator's approval and a Prawduct that accepts this evidence
 
 Nothing in this section binds anyone. A lane rule is the Operator's to change; `.github/workflows/test.yml`
@@ -396,6 +427,15 @@ plans URL; its digest is in the W4-03 pull request).
    **Pilot (W3-A, 2026-10-25):** A439-R5/v5.37.0 v1 rules #270–#282 carry the charter-gated named
    pilot provision under Charter `GRANT-V537-BATCH1-20261024`. Operator activation of the replacement
    rule texts via `POST /api/session-rules` remains pending. Refs #2371.
+
+   **v5.38.0 (2026-10-25):** the Builder and Integrator overlay rules for this sprint
+   (`#271`/`#273`/`#275`/`#277`/`#279`/`#282`, charter `GRANT-V538-BATCH1-20261025`, Architect
+   co-sign `A473`) already carry the CI-Backed Suite Gate clause quoted above as standing text —
+   confirmed by reading the rules directly (`tc rules`), not by a chat relay — gating it on "when
+   active in the charter for a non-exception chunk". `GRANT-V538-BATCH1-20261025` is the active
+   charter. This page does not claim a fresh `POST /api/session-rules` activation event landed
+   this sprint beyond what the rule text already states; it records that the clause is live for
+   non-exception chunks under this charter.
 3. **The Operator declares the command.** `test_command` in `.prawduct/project-state.yaml` becomes
    `node scripts/suite-evidence.js --junit {junit_xml}` on the lane hosts, and the pins in
    `test/suite-evidence.test.js` that hold today's declaration are changed in the same change,
@@ -413,11 +453,13 @@ plans URL; its digest is in the W4-03 pull request).
    slot wait avoided, the command's wall time, any refusal and which fact, and that the gate
    records the merged report.
 
-   **Pilot (W3-A, 2026-10-25):** W3-A (#2156+#1630) is the named pilot under Charter
-   `GRANT-V537-BATCH1-20261024` (A439-R5/v5.37.0 v1 rules #270–#282). When CI is green on the
-   exact PR head, `TANGLECLAW_SUITE_EVIDENCE=ci node scripts/record-test-run.js` will be run and
-   the measurement posted to the PR body. Step 3 (`test_command` declaration) and Step 6 (broader
-   activation) remain Operator-held after pilot evaluation. Refs #2371.
+   **Pilot (W3-A, 2026-10-25) — COMPLETED.** W3-A (#2156+#1630, PR #2587, merged 2026-10-25) ran
+   `TANGLECLAW_SUITE_EVIDENCE=ci node scripts/record-test-run.js` on CI head `acacecd1`
+   (CI run `40162951976`) and recorded: 23,230 tests, 23,210 pass, 0 fail, 20 skipped, wall time
+   ~792s (13m 12s), **0s slot wait** (no `SUITE_SLOT` held) — posted to the PR body, verified
+   against the live PR via `gh pr view 2587`. Step 3 (`test_command` declaration) and Step 6
+   (broader activation beyond the named pilot) remain Operator-held; this page's own steps above
+   are otherwise unchanged by the pilot's completion. Refs #2371.
 6. **Broader use is decided separately**, from the pilot's measurement: its time and its safety
    failures (a defect the pilot let through, a complement entry that did not run, an evidence
    refusal) alike. Until then, every other chunk runs the full local suite.
