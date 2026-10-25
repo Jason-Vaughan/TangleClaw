@@ -2126,14 +2126,18 @@ async function launchProject(name) {
  */
 async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStranded) {
   // Immediate visual feedback — swap button text to "Launching…" and disable.
-  // #2124: the Launch/Open control is a real <a>, not a <button> — select by
-  // the shared onclick handler regardless of tag, and use a class for the
-  // pending state since `.disabled` is a no-op on an anchor.
-  const btn = document.querySelector(`[onclick*="launchProject('${name}')"]`);
+  // This only ever runs for the not-yet-active ("Launch") control, which stays
+  // a real <button> (#2124 — only the active-session "Open" control became an
+  // <a>, since launching is a mutating POST and can't be a plain GET-safe
+  // link). jsArg() renders the project-name argument double-quoted
+  // (`JSON.stringify` then HTML-escaped), so the rendered attribute reads
+  // `launchProject("name")`, not `launchProject('name')` — the selector below
+  // must match that, or `btn` is always null and nothing here ever applies.
+  const btn = document.querySelector(`button[onclick*='launchProject("${name}")']`);
   const originalText = btn ? btn.textContent : '';
   if (btn) {
     btn.textContent = 'Launching\u2026';
-    btn.classList.add('is-launching');
+    btn.disabled = true;
   }
 
   const body = {};
@@ -2152,7 +2156,7 @@ async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStra
     const data = await res.json();
 
     if (!res.ok) {
-      if (btn) { btn.textContent = originalText; btn.classList.remove('is-launching'); }
+      if (btn) { btn.textContent = originalText; btn.disabled = false; }
       // #1539: stranded wraps hold the launch. Show them and let the operator
       // acknowledge and launch in one step, with the same launch choices.
       if (data.code === 'STRANDED_WRAPS' && Array.isArray(data.items) && data.items.length > 0) {
@@ -2179,7 +2183,7 @@ async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStra
     closeStrandedLaunchModal();
     navigateToSession(name, { launched: true });
   } catch (err) {
-    if (btn) { btn.textContent = originalText; btn.classList.remove('is-launching'); }
+    if (btn) { btn.textContent = originalText; btn.disabled = false; }
     if (err.name === 'TypeError' || err.message === 'Failed to fetch') {
       setConnected(false);
     }

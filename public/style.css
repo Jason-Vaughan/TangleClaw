@@ -2238,13 +2238,6 @@ html[data-tc-keyboard] body {
   color: var(--primary);
 }
 .btn-launch:active { background: var(--primary-dark); color: #fff; }
-/* #2124: the control is a real <a href> (so right-click "Open in new tab"
-   works natively), which has no `disabled` property — this class blocks a
-   second click while a launch is already in flight. */
-.btn-launch.is-launching {
-  pointer-events: none;
-  opacity: 0.7;
-}
 .btn-attach {
   border-color: var(--root-accent);
   color: var(--root-accent);

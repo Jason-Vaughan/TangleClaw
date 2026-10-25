@@ -195,32 +195,58 @@ describe('toolbar filter-group alignment (#2123)', () => {
   });
 });
 
-describe('card Launch/Open control is a real link (#2124)', () => {
-  it('renderCard emits an <a href="/session/:name"> instead of a bare <button onclick>', () => {
-    const idx = UI_SRC.indexOf('btn-launch');
-    assert.ok(idx > -1, 'ui.js must still render the Launch/Open control');
-    const tag = UI_SRC.slice(Math.max(0, idx - 40), idx);
-    assert.match(tag, /<a\s/, 'the Launch/Open control must be a real <a>, not a <button>');
-    const full = UI_SRC.slice(idx - 40, idx + 260);
-    assert.match(full, /href="\/session\/\$\{encodeURIComponent\(project\.name\)\}"/,
+describe('card Launch/Open control is a real link only when it is pure navigation (#2124)', () => {
+  const { loadJsArg } = require('./helpers/lift');
+  const jsArg = loadJsArg('landing.js');
+
+  it('the active-session ("Open") branch is a real <a href="/session/:name">', () => {
+    const idx = UI_SRC.indexOf('? `<a class="btn btn-compact btn-launch"');
+    assert.ok(idx > -1, 'ui.js must render an <a> for the active-session case');
+    const snippet = UI_SRC.slice(idx, idx + 220);
+    assert.match(snippet, /href="\/session\/\$\{encodeURIComponent\(project\.name\)\}"/,
       'the href must point at the session page so right-click "Open in new tab" works');
-    assert.match(full, /onclick="event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*launchProject/,
-      'left-click must still preventDefault and run the existing launch/open logic');
+    assert.match(snippet, /onclick="event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*launchProject/,
+      'left-click must still preventDefault and run the existing navigate-to-session logic');
+    assert.match(snippet, />Open<\/a>/);
   });
 
-  it('doLaunchProject selects the control by onclick regardless of tag, and uses a class for the pending state', () => {
+  it('the not-yet-active ("Launch") branch stays a plain <button> with no href (#2124 PRR BLOCKING: launching is a mutating POST — a GET-safe link to /session/:name would show "no active session" instead of starting one)', () => {
+    const idx = UI_SRC.indexOf(': `<button class="btn btn-compact btn-launch"');
+    assert.ok(idx > -1, 'ui.js must still render a <button> for the not-yet-active case');
+    const snippet = UI_SRC.slice(idx, idx + 220);
+    assert.doesNotMatch(snippet, /href=/, 'the Launch button must carry no href');
+    assert.match(snippet, /onclick="event\.stopPropagation\(\);\s*launchProject/);
+    assert.match(snippet, />Launch<\/button>/);
+  });
+
+  it('doLaunchProject\'s button lookup matches the ACTUAL rendered onclick attribute (PRR WARNING: jsArg renders a double-quoted argument, not single-quoted)', () => {
     const body = liftDeclaration(LANDING_SRC, 'async function doLaunchProject(');
-    assert.match(body, /document\.querySelector\(`\[onclick\*="launchProject\('\$\{name\}'\)"\]`\)/,
-      'the selector must not require a <button> tag — the control is now an <a>');
-    assert.doesNotMatch(body, /btn\.disabled/,
-      '.disabled is a no-op on an anchor; the pending state must use a class instead');
-    assert.match(body, /btn\.classList\.add\('is-launching'\)/);
-    assert.match(body, /btn\.classList\.remove\('is-launching'\)/);
+    assert.match(body, /document\.querySelector\(`button\[onclick\*='launchProject\("\$\{name\}"\)'\]`\)/,
+      'the selector must look for a double-quoted argument — that is what jsArg actually renders');
+
+    // Reproduce the real pipeline: build the onclick attribute exactly as
+    // ui.js does, decode it the way a browser decodes an HTML attribute
+    // value, then confirm the FIXED selector's literal substring is actually
+    // present — not just that the source text looks plausible.
+    const name = "O'Brien's \"Project\"";
+    const nArg = jsArg(name);
+    const rawAttr = `event.stopPropagation(); launchProject(${nArg})`;
+    const decoded = rawAttr
+      .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    const selectorSubstring = `launchProject(${JSON.stringify(name)})`;
+    assert.ok(decoded.includes(selectorSubstring),
+      `decoded onclick attribute (${decoded}) must contain the selector's substring (${selectorSubstring})`);
   });
 
-  it('style.css defines the pending-state class with pointer-events: none (blocks re-entrant clicks on an anchor)', () => {
-    const m = /\.btn-launch\.is-launching\s*\{([^}]*)\}/.exec(CSS_SRC);
-    assert.ok(m, '.btn-launch.is-launching rule must exist');
-    assert.match(m[1], /pointer-events:\s*none/);
+  it('doLaunchProject uses the button\'s native .disabled (back to a <button>, no pending-state class needed)', () => {
+    const body = liftDeclaration(LANDING_SRC, 'async function doLaunchProject(');
+    assert.match(body, /btn\.disabled = true/);
+    assert.match(body, /btn\.disabled = false/);
+    assert.doesNotMatch(body, /classList/, 'no class-based pending state — the control is a real <button> again');
+  });
+
+  it('style.css carries no leftover .is-launching rule', () => {
+    assert.doesNotMatch(CSS_SRC, /is-launching/);
   });
 });
