@@ -10,9 +10,13 @@
  * and says so; Stage 1 runs its seven steps on this repository; and a real
  * run on a fixture repository ends in the reconciliation, which turns a
  * describe body that threw (node exits 0) into a red stage.
+ *
+ * Also covers `scripts/pre-push-gate.js` (#2595, standalone half — A473-A1
+ * serializes wiring it into `lib/control-hooks.js` to W2-B): it chains
+ * Stage 1 then Stage 2 through this file's own `main`, blocking on either.
  */
 
-const { describe, it, after } = require('node:test');
+const { describe, it, after, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -23,6 +27,7 @@ const stage = require('../scripts/test-stage');
 const tiers = require('../scripts/test-tiers');
 const graphLib = require('../scripts/_require-graph');
 const results = require('../lib/test-results');
+const prePushGate = require('../scripts/pre-push-gate');
 
 const REPO = path.join(__dirname, '..');
 
@@ -305,5 +310,80 @@ describe('fine', () => { it('passes', () => {}); });
     assert.equal(code, 1);
     assert.match(out.text(), /^a run that writes nothing: \d+ ms, node exit 0$/m);
     assert.match(out.text(), /^REFUSED: no junit report at .*never\.xml: the run certified nothing$/m);
+  });
+});
+
+describe('pre-push-gate: chaining stage 1 then stage 2', () => {
+  const originalMain = stage.main;
+  afterEach(() => { stage.main = originalMain; });
+
+  it('runs stage 2 only when stage 1 is green, and reports green overall', () => {
+    const calls = [];
+    stage.main = (argv) => { calls.push(argv); return 0; };
+    const out = sink();
+    const code = prePushGate.runGate('origin/main', { stdout: out });
+    assert.equal(code, 0);
+    assert.deepEqual(calls, [['1'], ['2', '--base', 'origin/main']]);
+    assert.match(out.text(), /stage 1 and stage 2 are green; push allowed/);
+  });
+
+  it('blocks on stage 1 red without ever calling stage 2', () => {
+    const calls = [];
+    stage.main = (argv) => { calls.push(argv); return 1; };
+    const out = sink();
+    const code = prePushGate.runGate('origin/main', { stdout: out });
+    assert.equal(code, 1);
+    assert.deepEqual(calls, [['1']], 'stage 2 must not run after a red stage 1');
+    assert.match(out.text(), /stage 1 failed; push blocked/);
+  });
+
+  it('blocks on stage 2 red after a green stage 1', () => {
+    stage.main = (argv) => (argv[0] === '1' ? 0 : 1);
+    const out = sink();
+    const code = prePushGate.runGate('origin/main', { stdout: out });
+    assert.equal(code, 1);
+    assert.match(out.text(), /stage 2 failed; push blocked/);
+  });
+
+  it('passes --base through to stage 2', () => {
+    const calls = [];
+    stage.main = (argv) => { calls.push(argv); return 0; };
+    prePushGate.runGate('some-other-branch', { stdout: sink() });
+    assert.deepEqual(calls[1], ['2', '--base', 'some-other-branch']);
+  });
+});
+
+describe('pre-push-gate: parseArgs', () => {
+  it('defaults base to origin/main', () => {
+    assert.deepEqual(prePushGate.parseArgs([]), { base: 'origin/main' });
+  });
+
+  it('accepts --base', () => {
+    assert.deepEqual(prePushGate.parseArgs(['--base', 'main']), { base: 'main' });
+  });
+
+  it('refuses an unknown or incomplete argument', () => {
+    assert.throws(() => prePushGate.parseArgs(['--nope']), /unknown or incomplete argument: --nope/);
+    assert.throws(() => prePushGate.parseArgs(['--base']), /unknown or incomplete argument: --base/);
+  });
+});
+
+describe('pre-push-gate: main', () => {
+  it('runs the gate', () => {
+    const originalMain = stage.main;
+    try {
+      stage.main = () => 0;
+      const out = sink();
+      assert.equal(prePushGate.main([], { stdout: out }), 0);
+      assert.match(out.text(), /stage 1 and stage 2 are green/);
+    } finally {
+      stage.main = originalMain;
+    }
+  });
+
+  it('a parse error returns 1 and prints the usage', () => {
+    const out = sink();
+    assert.equal(prePushGate.main(['--nope'], { stdout: out }), 1);
+    assert.match(out.text(), /unknown or incomplete argument: --nope/);
   });
 });

@@ -11,6 +11,11 @@
  * actually grep in its file. The seed template in lib/projects.js must
  * prescribe the same convention so newly-seeded projects don't inherit
  * the rotting format.
+ *
+ * Also covers `scripts/verify-features-index.js` (#2597): a `Tests:`
+ * clause newly added to FEATURES.md by a wave's diff must name a file
+ * that same diff touches, so a records PR can't cite pre-existing
+ * coverage as proof of the wave's own work.
  */
 
 const { describe, it } = require('node:test');
@@ -18,8 +23,16 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const verifyFeaturesIndex = require('../scripts/verify-features-index');
+
 const ROOT = path.join(__dirname, '..');
 const FEATURES = fs.readFileSync(path.join(ROOT, 'FEATURES.md'), 'utf8');
+
+/** A stdout sink that keeps what was written. */
+function sink() {
+  let text = '';
+  return { write: (s) => { text += s; return true; }, text: () => text };
+}
 
 // Only these first segments are guaranteed present on a fresh clone / CI
 // checkout — local-only dirs (.prawduct/, .claude/, .tangleclaw/) are
@@ -111,5 +124,96 @@ describe('FEATURES.md citation contract (DOC-3K7Q)', () => {
     const { FEATURE_INDEX_TEMPLATE } = require('../lib/projects');
     assert.match(FEATURE_INDEX_TEMPLATE, /NO :line pointers/);
     assert.ok(!/file\.js:line/.test(FEATURE_INDEX_TEMPLATE), 'template still shows the old file.js:line format');
+  });
+});
+
+describe('testsCitedOn: parsing a Tests: clause off one added line', () => {
+  it('extracts every backtick-quoted path from one clause', () => {
+    assert.deepEqual(
+      verifyFeaturesIndex.testsCitedOn('Tests: `test/a.test.js`, `test/b.test.js`.'),
+      ['test/a.test.js', 'test/b.test.js']
+    );
+  });
+
+  it('extracts a single-file clause', () => {
+    assert.deepEqual(verifyFeaturesIndex.testsCitedOn('Tests: `test/a.test.js`.'), ['test/a.test.js']);
+  });
+
+  it('returns nothing for a line with no Tests: clause', () => {
+    assert.deepEqual(verifyFeaturesIndex.testsCitedOn('- Some feature line with no anchors.'), []);
+  });
+
+  it('does not treat other backticked prose as a Tests: citation', () => {
+    assert.deepEqual(verifyFeaturesIndex.testsCitedOn('Some `code.js#fn` reference. Tests: `test/x.test.js`.'), ['test/x.test.js']);
+  });
+});
+
+describe('newlyCitedTests and touchedFiles: reading the diff through the seam', () => {
+  it('collects Tests: anchors only from + lines of FEATURES.md\'s own hunk', () => {
+    const diff = [
+      'diff --git a/FEATURES.md b/FEATURES.md',
+      '--- a/FEATURES.md',
+      '+++ b/FEATURES.md',
+      '@@ -1,2 +1,3 @@',
+      ' - unrelated context line',
+      '-- Old entry. Tests: `test/old.test.js`.',
+      '+- New entry. Tests: `test/new.test.js`, `test/new2.test.js`.'
+    ].join('\n');
+    const git = (args) => (args[0] === 'diff' && args.includes('FEATURES.md') ? diff : '');
+    assert.deepEqual(verifyFeaturesIndex.newlyCitedTests('origin/main', { git }), ['test/new.test.js', 'test/new2.test.js']);
+  });
+
+  it('touchedFiles reads git diff --name-only into a Set', () => {
+    const git = (args) => {
+      assert.deepEqual(args, ['diff', '--name-only', 'origin/main...HEAD']);
+      return 'test/new.test.js\nscripts/thing.js\n';
+    };
+    assert.deepEqual(verifyFeaturesIndex.touchedFiles('origin/main', { git }), new Set(['test/new.test.js', 'scripts/thing.js']));
+  });
+});
+
+describe('verify-features-index main: the pass/fail disposition', () => {
+  it('passes with nothing to report when no Tests: anchor was newly added', () => {
+    const git = (args) => (args[0] === 'diff' && args.includes('FEATURES.md') ? '' : '');
+    const out = sink();
+    assert.equal(verifyFeaturesIndex.main([], { stdout: out, git }), 0);
+    assert.match(out.text(), /no Tests: anchors were newly added/);
+  });
+
+  it('passes when every newly-cited file is in the diff\'s touched set', () => {
+    const featuresDiff = '+- New entry. Tests: `test/new.test.js`.';
+    const git = (args) => {
+      if (args[0] === 'diff' && args.includes('FEATURES.md')) return featuresDiff;
+      if (args[0] === 'diff' && args.includes('--name-only')) return 'FEATURES.md\ntest/new.test.js\n';
+      throw new Error(`unexpected git ${args.join(' ')}`);
+    };
+    const out = sink();
+    assert.equal(verifyFeaturesIndex.main([], { stdout: out, git }), 0);
+    assert.match(out.text(), /1 newly added Tests: anchor\(s\)/);
+  });
+
+  it('refuses when a newly-cited file is not in the diff\'s touched set', () => {
+    const featuresDiff = '+- New entry. Tests: `test/uncovered.test.js`.';
+    const git = (args) => {
+      if (args[0] === 'diff' && args.includes('FEATURES.md')) return featuresDiff;
+      if (args[0] === 'diff' && args.includes('--name-only')) return 'FEATURES.md\n';
+      throw new Error(`unexpected git ${args.join(' ')}`);
+    };
+    const out = sink();
+    assert.equal(verifyFeaturesIndex.main([], { stdout: out, git }), 1);
+    assert.match(out.text(), /REFUSED: Tests: anchor\(s\) newly added to FEATURES\.md cite a file this diff does not touch: test\/uncovered\.test\.js/);
+  });
+
+  it('passes --base through to both diffs', () => {
+    const calls = [];
+    const git = (args) => { calls.push(args); return args.includes('FEATURES.md') ? '' : ''; };
+    verifyFeaturesIndex.main(['--base', 'main'], { stdout: sink(), git });
+    assert.deepEqual(calls, [['diff', 'main...HEAD', '--', 'FEATURES.md']]);
+  });
+
+  it('refuses an unknown or incomplete argument', () => {
+    const out = sink();
+    assert.equal(verifyFeaturesIndex.main(['--nope'], { stdout: out }), 1);
+    assert.match(out.text(), /unknown or incomplete argument: --nope/);
   });
 });

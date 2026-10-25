@@ -396,6 +396,15 @@ plans URL; its digest is in the W4-03 pull request).
    **Pilot (W3-A, 2026-10-25):** A439-R5/v5.37.0 v1 rules #270–#282 carry the charter-gated named
    pilot provision under Charter `GRANT-V537-BATCH1-20261024`. Operator activation of the replacement
    rule texts via `POST /api/session-rules` remains pending. Refs #2371.
+
+   **v5.38.0 (2026-10-25):** the Builder and Integrator overlay rules for this sprint
+   (`#271`/`#273`/`#275`/`#277`/`#279`/`#282`, charter `GRANT-V538-BATCH1-20261025`, Architect
+   co-sign `A473`) already carry the CI-Backed Suite Gate clause quoted above as standing text —
+   confirmed by reading the rules directly (`tc rules`), not by a chat relay — gating it on "when
+   active in the charter for a non-exception chunk". `GRANT-V538-BATCH1-20261025` is the active
+   charter. This page does not claim a fresh `POST /api/session-rules` activation event landed
+   this sprint beyond what the rule text already states; it records that the clause is live for
+   non-exception chunks under this charter.
 3. **The Operator declares the command.** `test_command` in `.prawduct/project-state.yaml` becomes
    `node scripts/suite-evidence.js --junit {junit_xml}` on the lane hosts, and the pins in
    `test/suite-evidence.test.js` that hold today's declaration are changed in the same change,
@@ -413,11 +422,13 @@ plans URL; its digest is in the W4-03 pull request).
    slot wait avoided, the command's wall time, any refusal and which fact, and that the gate
    records the merged report.
 
-   **Pilot (W3-A, 2026-10-25):** W3-A (#2156+#1630) is the named pilot under Charter
-   `GRANT-V537-BATCH1-20261024` (A439-R5/v5.37.0 v1 rules #270–#282). When CI is green on the
-   exact PR head, `TANGLECLAW_SUITE_EVIDENCE=ci node scripts/record-test-run.js` will be run and
-   the measurement posted to the PR body. Step 3 (`test_command` declaration) and Step 6 (broader
-   activation) remain Operator-held after pilot evaluation. Refs #2371.
+   **Pilot (W3-A, 2026-10-25) — COMPLETED.** W3-A (#2156+#1630, PR #2587, merged 2026-10-25) ran
+   `TANGLECLAW_SUITE_EVIDENCE=ci node scripts/record-test-run.js` on CI head `acacecd1`
+   (CI run `40162951976`) and recorded: 23,230 tests, 23,210 pass, 0 fail, 20 skipped, wall time
+   ~792s (13m 12s), **0s slot wait** (no `SUITE_SLOT` held) — posted to the PR body, verified
+   against the live PR via `gh pr view 2587`. Step 3 (`test_command` declaration) and Step 6
+   (broader activation beyond the named pilot) remain Operator-held; this page's own steps above
+   are otherwise unchanged by the pilot's completion. Refs #2371.
 6. **Broader use is decided separately**, from the pilot's measurement: its time and its safety
    failures (a defect the pilot let through, a complement entry that did not run, an evidence
    refusal) alike. Until then, every other chunk runs the full local suite.
