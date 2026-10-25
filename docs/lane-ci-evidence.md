@@ -362,6 +362,30 @@ does not read the artifact's provenance beyond GitHub's own record that it belon
 that commit. The workflow step that uploads it is what makes the artifact CI's own report, which
 is why that step is part of the cutover and not of this command.
 
+## The `W<N>-REC` invocation contract: `scripts/verify-features-index.js`
+
+`scripts/verify-features-index.js --base <ref>` (#2597) holds a `FEATURES.md` records PR to
+one rule: every `Tests:` anchor the records PR's diff newly adds must name a test file that
+same diff touches. `--base` is **required** and has **no default** — `origin/main` at check
+time is the wrong base for this check (PR #2606 review, Finding C2): by the time a `W<N>-REC`
+records PR runs, the wave's own code/test PRs have already merged into `main`, so a diff
+against the current tip shows `FEATURES.md` changing but never the test file it cites, and a
+genuinely correct records PR would fail every time.
+
+**The base a `W<N>-REC` invocation passes is the wave's own starting commit** — the `Base main
+Head` `LANE_QUEUE` records for that wave, read before any of its PRs merged. For Wave 1 that is
+`87778ad234479c0634bfa48415d7b98a7de8c455`; `TC-Lane-INT` runs and cites, for `W1-REC`:
+
+```bash
+node scripts/verify-features-index.js --base 87778ad234479c0634bfa48415d7b98a7de8c455
+```
+
+**This is an Integrator-run gate, not push-time automation.** Nothing calls this script from a
+hook, wrap step, or CI job today; it is run by hand at `W<N>-REC` against the recorded
+wave-start commit. A later wave reads its own `Base main Head` from `LANE_QUEUE` the same way.
+Automatically resolving and supplying that commit (so no one has to read it off `LANE_QUEUE` by
+hand) is open follow-up work, not built here.
+
 ## PROPOSED, NOT IN FORCE: it needs the Operator's approval and a Prawduct that accepts this evidence
 
 Nothing in this section binds anyone. A lane rule is the Operator's to change; `.github/workflows/test.yml`
