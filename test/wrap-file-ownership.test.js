@@ -1359,3 +1359,228 @@ describe('#2160: the classification derives the two path lists its consumers use
     assert.deepEqual(c.committableOrAsked, ['mine.js']);
   });
 });
+
+// ---------------------------------------------------------------------------
+// #2076 — auto-Leave dirty-at-launch foreign paths for unattended wraps
+// ---------------------------------------------------------------------------
+
+const { _autoLeaveEnabled, _applyAutoLeave } = sessionFiles;
+
+describe('#2076 _autoLeaveEnabled — flag logic', () => {
+  it('returns false when options is absent or null', () => {
+    assert.equal(_autoLeaveEnabled(null), false);
+    assert.equal(_autoLeaveEnabled(undefined), false);
+    assert.equal(_autoLeaveEnabled({}), false);
+  });
+
+  it('returns true when foreignPathDefault is explicitly "leave"', () => {
+    assert.equal(_autoLeaveEnabled({ foreignPathDefault: 'leave' }), true);
+    assert.equal(_autoLeaveEnabled({ foreignPathDefault: 'leave', keepSessionRunning: false }), true);
+  });
+
+  it('returns true when keepSessionRunning:true with no foreignPathDefault or reviewSessionFiles', () => {
+    assert.equal(_autoLeaveEnabled({ keepSessionRunning: true }), true);
+  });
+
+  it('returns false when keepSessionRunning:true but foreignPathDefault is set to a non-leave value', () => {
+    assert.equal(_autoLeaveEnabled({ keepSessionRunning: true, foreignPathDefault: 'include' }), false);
+    assert.equal(_autoLeaveEnabled({ keepSessionRunning: true, foreignPathDefault: 'hold' }), false);
+  });
+
+  it('returns false when keepSessionRunning:true but reviewSessionFiles:true (#2156 guard, A466-G1)', () => {
+    assert.equal(_autoLeaveEnabled({ keepSessionRunning: true, reviewSessionFiles: true }), false);
+  });
+
+  it('returns false when foreignPathDefault:"leave" but reviewSessionFiles:true — unconditional veto (A466-G1)', () => {
+    // reviewSessionFiles wins over foreignPathDefault: the operator asked to review,
+    // so auto-leave must not fire regardless of how foreignPathDefault is set.
+    assert.equal(_autoLeaveEnabled({ foreignPathDefault: 'leave', reviewSessionFiles: true }), false);
+  });
+
+  it('returns false when keepSessionRunning is false regardless of foreignPathDefault', () => {
+    assert.equal(_autoLeaveEnabled({ keepSessionRunning: false, foreignPathDefault: undefined }), false);
+  });
+});
+
+describe('#2076 _applyAutoLeave — candidate selection', () => {
+  /** Build a minimal mock secrets object for unit-testing _applyAutoLeave. */
+  function mockSecrets({ foreignUndecided = [], secretUndecided = [] } = {}) {
+    return { foreignUndecided, secretUndecided };
+  }
+
+  it('returns empty array when auto-leave is not enabled', () => {
+    const secrets = mockSecrets({
+      foreignUndecided: [{ path: 'shared.js', reason: 'dirty-at-launch' }]
+    });
+    assert.deepEqual(_applyAutoLeave({ options: {} }, secrets, {}), []);
+  });
+
+  it('returns dirty-at-launch paths when auto-leave enabled via foreignPathDefault:leave', () => {
+    const secrets = mockSecrets({
+      foreignUndecided: [{ path: 'shared.js', reason: 'dirty-at-launch' }]
+    });
+    const result = _applyAutoLeave({ options: { foreignPathDefault: 'leave' } }, secrets, {});
+    assert.deepEqual(result, ['shared.js']);
+  });
+
+  it('returns dirty-at-launch paths when auto-leave enabled via keepSessionRunning:true', () => {
+    const secrets = mockSecrets({
+      foreignUndecided: [{ path: 'shared.js', reason: 'dirty-at-launch' }]
+    });
+    const result = _applyAutoLeave({ options: { keepSessionRunning: true } }, secrets, {});
+    assert.deepEqual(result, ['shared.js']);
+  });
+
+  it('does NOT include non-dirty-at-launch paths (predates-launch stays blocked)', () => {
+    const secrets = mockSecrets({
+      foreignUndecided: [
+        { path: 'old.js', reason: 'predates-launch' },
+        { path: 'shared.js', reason: 'dirty-at-launch' }
+      ]
+    });
+    const result = _applyAutoLeave({ options: { keepSessionRunning: true } }, secrets, {});
+    assert.deepEqual(result, ['shared.js']);
+  });
+
+  it('does NOT auto-leave a path already explicitly decided by the operator', () => {
+    const secrets = mockSecrets({
+      foreignUndecided: [{ path: 'shared.js', reason: 'dirty-at-launch' }]
+    });
+    // Explicit include decision takes precedence.
+    const result = _applyAutoLeave({ options: { keepSessionRunning: true } }, secrets, { 'shared.js': 'include' });
+    assert.deepEqual(result, []);
+  });
+
+  it('does NOT auto-leave a secret-flagged dirty-at-launch path', () => {
+    const secrets = mockSecrets({
+      foreignUndecided: [{ path: 'creds.env', reason: 'dirty-at-launch', secretRules: ['aws-key'] }],
+      secretUndecided: [{ path: 'creds.env', reason: 'dirty-at-launch', secretRules: ['aws-key'] }]
+    });
+    const result = _applyAutoLeave({ options: { keepSessionRunning: true } }, secrets, {});
+    assert.deepEqual(result, []);
+  });
+
+  it('returns multiple eligible paths and excludes ineligible ones', () => {
+    const secrets = mockSecrets({
+      foreignUndecided: [
+        { path: 'a.js', reason: 'dirty-at-launch' },
+        { path: 'b.js', reason: 'predates-launch' },
+        { path: 'c.js', reason: 'dirty-at-launch' }
+      ],
+      secretUndecided: []
+    });
+    const result = _applyAutoLeave({ options: { keepSessionRunning: true } }, secrets, {});
+    assert.deepEqual(result, ['a.js', 'c.js']);
+  });
+});
+
+describe('#2076 session-files integration — auto-Leave for unattended wraps', () => {
+  /**
+   * A repo where `shared.js` was already uncommitted at launch and the session
+   * has since written `mine.js`. Simulates the common unattended-wrap scenario.
+   */
+  async function unattendedScenario() {
+    const repo = makeRepo();
+    fs.writeFileSync(path.join(repo, 'shared.js'), 'operator wip\n');
+    const baseline = launchBaseline.capture(repo);
+    fs.writeFileSync(path.join(repo, 'mine.js'), 'session work\n');
+    return { repo, scope: await scopeFor(repo, baseline) };
+  }
+
+  it('keepSessionRunning:true auto-leaves dirty-at-launch path and returns done', async () => {
+    const { repo, scope } = await unattendedScenario();
+    const r = await runStep(sessionFiles, repo, scope, { keepSessionRunning: true });
+    assert.equal(r.status, 'done', `expected done, got ${r.status}: ${r.output.remediation || ''}`);
+    assert.deepEqual(r.output.autoLeft, ['shared.js']);
+  });
+
+  it('foreignPathDefault:"leave" auto-leaves dirty-at-launch path and returns done', async () => {
+    const { repo, scope } = await unattendedScenario();
+    const r = await runStep(sessionFiles, repo, scope, { foreignPathDefault: 'leave' });
+    assert.equal(r.status, 'done', `expected done, got ${r.status}`);
+    assert.deepEqual(r.output.autoLeft, ['shared.js']);
+  });
+
+  it('autoLeft lists the exact paths that were auto-left', async () => {
+    const repo = makeRepo();
+    // Two files dirty at launch.
+    fs.writeFileSync(path.join(repo, 'shared.js'), 'wip1\n');
+    fs.writeFileSync(path.join(repo, 'feature.js'), 'wip2\n');
+    const baseline = launchBaseline.capture(repo);
+    fs.writeFileSync(path.join(repo, 'mine.js'), 'session work\n');
+    const scope = await scopeFor(repo, baseline);
+    const r = await runStep(sessionFiles, repo, scope, { keepSessionRunning: true });
+    assert.equal(r.status, 'done');
+    assert.ok(Array.isArray(r.output.autoLeft));
+    assert.ok(r.output.autoLeft.includes('shared.js'), 'shared.js auto-left');
+    assert.ok(r.output.autoLeft.includes('feature.js'), 'feature.js auto-left');
+  });
+
+  it('explicit pathDecisions include for a dirty-at-launch path takes precedence over auto-leave', async () => {
+    const { repo, scope } = await unattendedScenario();
+    const r = await runStep(sessionFiles, repo, scope, {
+      keepSessionRunning: true,
+      pathDecisions: { 'shared.js': 'include' }
+    });
+    assert.equal(r.status, 'done');
+    // shared.js was explicitly included, not auto-left.
+    assert.equal(r.output.autoLeft, undefined, 'no auto-left when explicit decision covers the path');
+    assert.ok(r.output.included.includes('shared.js'), 'shared.js was included per explicit decision');
+  });
+
+  it('auto-leave does NOT fire without keepSessionRunning or foreignPathDefault (no regression)', async () => {
+    const { repo, scope } = await unattendedScenario();
+    const r = await runStep(sessionFiles, repo, scope);
+    assert.equal(r.status, 'blocked', 'standard interactive wrap still blocks');
+    assert.equal(r.output.autoLeft, undefined, 'no autoLeft on a standard blocked result');
+    assert.deepEqual(r.output.foreignPaths.map((f) => f.path), ['shared.js']);
+  });
+
+  it('auto-leave does NOT fire when reviewSessionFiles:true is set (A466-G1)', async () => {
+    const { repo, scope } = await unattendedScenario();
+    const r = await runStep(sessionFiles, repo, scope, {
+      keepSessionRunning: true,
+      reviewSessionFiles: true
+    });
+    // reviewSessionFiles disables auto-leave: blocked at dirty-at-launch, not at the review gate.
+    assert.equal(r.status, 'blocked');
+    assert.equal(r.output.autoLeft, undefined);
+  });
+
+  it('auto-leave writes decisions back to context.options.pathDecisions (A466-G1 commit.js guard)', async () => {
+    const { repo, scope } = await unattendedScenario();
+    const options = { keepSessionRunning: true };
+    await runStep(sessionFiles, repo, scope, options);
+    // After session-files runs, options.pathDecisions must include the auto-left path
+    // so that commit.js's classify pass agrees and does not re-block.
+    assert.ok(options.pathDecisions && options.pathDecisions['shared.js'] === 'leave',
+      'auto-leave written back to options.pathDecisions for commit.js');
+  });
+
+  it('done result has no autoLeft key when no paths needed auto-leaving', async () => {
+    // Session wrote a fresh file; no dirty-at-launch paths.
+    const repo = makeRepo();
+    const baseline = launchBaseline.capture(repo);
+    fs.writeFileSync(path.join(repo, 'mine.js'), 'session work\n');
+    const scope = await scopeFor(repo, baseline);
+    const r = await runStep(sessionFiles, repo, scope, { keepSessionRunning: true });
+    assert.equal(r.status, 'done');
+    assert.equal(r.output.autoLeft, undefined, 'autoLeft absent when nothing was auto-left');
+  });
+
+  it('split-rename still blocks when auto-leave is enabled (A466-G3 invariant, Critic R-3)', async () => {
+    // auto-leave enabled via foreignPathDefault:'leave' AND the session rename has
+    // one half decided Leave — split-rename must surface as blocked, not slip through.
+    const repo = makeRepo();
+    const baseline = launchBaseline.capture(repo);
+    git(repo, 'mv', 'feature.js', 'moved.js');
+    const scope = await scopeFor(repo, baseline);
+    const r = await runStep(sessionFiles, repo, scope, {
+      foreignPathDefault: 'leave',
+      pathDecisions: { 'moved.js': 'leave' }
+    });
+    assert.equal(r.status, 'blocked');
+    assert.ok(r.output.splitRenames && r.output.splitRenames.length > 0,
+      'split-rename blocks even when foreignPathDefault:leave is set');
+  });
+});

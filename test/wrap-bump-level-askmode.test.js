@@ -13,12 +13,14 @@
  *    test/wrap-drawer-select-a11y.test.js convention.
  */
 
-const { describe, it, before } = require('node:test');
+const { describe, it, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
 const { liftBody } = require('./helpers/lift');
+const versionBump = require('../lib/wrap-steps/version-bump');
 
 function loadHelpers() {
   const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'wrap-drawer.js'), 'utf8');
@@ -112,5 +114,80 @@ describe('#540 ask-mode — the modal wiring (source pins)', () => {
     const body = liftBody(session, 'async function retryWrap()');
     assert.match(body, /bumpLevel:\s*\(\)\s*=>\s*wrapBumpLevel/,
       'retry supplies the bumpLevel accessor so the pipeline re-runs with the same choice');
+  });
+
+  // #1497 — syncWrapReleaseControls offNote and legacy versionBumpEnabled guard
+  it('syncWrapReleaseControls sets offNote text mentioning the API override path', () => {
+    const body = liftBody(session, 'function syncWrapReleaseControls()');
+    assert.match(body, /release.*cut.*options|options.*release.*cut/i,
+      'offNote text mentions passing release: cut in options to override the off state');
+  });
+
+  it('syncWrapReleaseControls treats legacy versionBumpEnabled:false as off (A466-G2)', () => {
+    const body = liftBody(session, 'function syncWrapReleaseControls()');
+    assert.match(body, /versionBumpEnabled\s*===\s*false/,
+      'const off covers legacy versionBumpEnabled:false projects without a releaseMode field');
+  });
+});
+
+// #1497 — version-bump.run() behaviour when releaseMode is off, tested here
+// because test/version-bump-release-gate.test.js is outside W4-A's P0.2 target scope.
+describe('#1497 version-bump.run — releaseMode:off override (A466-G2)', () => {
+  let tmpDir;
+
+  // No store.init() needed: store.projectConfig.load (the only store call in
+  // version-bump.run) reads from disk, not SQLite. This keeps the file small-tier.
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-off-override-'));
+  });
+
+  after(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    versionBump._internal.todayIso = () => '2026-09-14';
+  });
+
+  /** Minimal off-project: version.json at 1.2.3, CHANGELOG with an Added entry. */
+  function makeOffProject(config = { releaseMode: 'off' }) {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'p-'));
+    fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '1.2.3' }));
+    fs.writeFileSync(path.join(dir, 'CHANGELOG.md'),
+      '# Changelog\n\n## [Unreleased]\n\n### Added\n- a feature\n\n## [1.2.3] - 2026-09-01\n\n### Fixed\n- a fix\n');
+    fs.mkdirSync(path.join(dir, '.tangleclaw'));
+    fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), JSON.stringify(config));
+    return { name: path.basename(dir), path: dir };
+  }
+
+  const run = (project, options = {}) => {
+    const context = { project, step: { id: 'version-bump', kind: 'version-bump' }, staged: {}, options, previousResults: [] };
+    return versionBump.run(context).then((result) => ({ result, staged: context.staged }));
+  };
+
+  it('skips but names the ignored bumpLevel when level sent without release:cut (A466-G2)', async () => {
+    const { result, staged } = await run(makeOffProject(), { bumpLevel: 'minor' });
+    assert.equal(result.status, 'skipped');
+    assert.match(result.output.reason, /releaseMode is off/);
+    assert.match(result.output.reason, /bumpLevel .minor. was ignored/);
+    assert.equal(result.output.ignoredBumpLevel, 'minor');
+    assert.deepEqual(staged, {});
+  });
+
+  it('proceeds when operator sends release:cut (A466-G2 override)', async () => {
+    const { result, staged } = await run(makeOffProject(), { release: 'cut' });
+    assert.equal(result.status, 'done');
+    assert.equal(result.output.from, '1.2.3');
+    assert.equal(result.output.to, '1.3.0');
+    assert.equal(result.output.releaseModeOverride, 'operator-supplied-release-cut');
+    assert.ok(staged['version-bump:changelog']);
+  });
+
+  it('proceeds with the supplied bumpLevel when both release:cut and bumpLevel are sent', async () => {
+    const { result } = await run(makeOffProject(), { release: 'cut', bumpLevel: 'patch' });
+    assert.equal(result.status, 'done');
+    assert.equal(result.output.bumpLevel, 'patch');
+    assert.equal(result.output.to, '1.2.4');
+    assert.equal(result.output.releaseModeOverride, 'operator-supplied-release-cut');
   });
 });

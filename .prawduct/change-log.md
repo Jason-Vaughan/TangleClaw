@@ -41,6 +41,15 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-25 — v5.37.0 W4-A: unattended wrap auto-Leave + releaseMode:off override
+
+<!-- prawduct: type=added | scope=w4a-2076-1497 -->
+
+W4-A sprint, under `GRANT-V537-BATCH1-20261024` / PM A4. Architect guardrails A466-G1/G2/G3.
+
+- **`#2076`** (added): `session-files` now auto-leaves dirty-at-launch foreign paths (no secret flag, no explicit decision) in unattended wraps (`keepSessionRunning:true` or `foreignPathDefault:'leave'`), writing decisions back to `context.options.pathDecisions` so `commit.js` stays consistent; `reviewSessionFiles:true` is an unconditional veto; secret-flagged and non-`dirty-at-launch` paths are unaffected.
+- **`#1497`** (fixed): `version-bump` no longer silently ignores `bumpLevel` when `releaseMode` is off — bare `bumpLevel` skips with an explanatory note naming the ignored level; passing `release: "cut"` overrides the off state and cuts a release, with `releaseModeOverride: 'operator-supplied-release-cut'` in the output; `syncWrapReleaseControls` UI note updated to mention the API override path and handles legacy `versionBumpEnabled:false` projects.
+
 ## 2026-10-25 — v5.37.0 W4-B: dead exports Batch 2 (lib/bridge-* and lib/release-certification/*)
 
 <!-- prawduct: type=internal | scope=w4b-2573-dead-exports-batch2 -->
