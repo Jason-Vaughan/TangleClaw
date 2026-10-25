@@ -4,8 +4,9 @@
  * Frontend regression tests for #2578 — the held-wake-reason badge on
  * dashboard session cards.
  *
- * When a session's Medusa wakeups are held because the pane has unsent prompt
- * input (`pane-not-at-rest` or `pane-composer-has-input`), a visible badge is
+ * When a session's Medusa wakeups are held because the pane is not at rest
+ * (`pane-composer-has-input`: unsent prompt input; `pane-not-at-rest`: engine
+ * busy or showing a dialog/menu), a visible badge is
  * shown on the project card. `renderHeldWakeBadge` is defined in
  * public/landing.js and injected via a renderCard wrapper in init() so that
  * public/ui.js remains unmodified. public/style.css carries the visual treatment.
@@ -19,10 +20,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 describe('Held wake-reason badge (#2578)', () => {
-  let landing, css;
+  let landing, ui, css;
 
   before(() => {
     landing = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
+    ui = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
     css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
   });
 
@@ -53,6 +55,14 @@ describe('Held wake-reason badge (#2578)', () => {
       assert.match(landing, /window\.renderCard\s*=/);
       assert.match(landing, /card-row-actions/);
       assert.match(landing, /renderHeldWakeBadge\(project\)/);
+    });
+
+    it('the injection anchor <span class="card-row-actions"> exists verbatim in ui.js renderCard (invariant: replace coupling must not silently miss)', () => {
+      // The landing.js wrapper injects the badge by replacing this exact string.
+      // If ui.js renderCard ever changes the class name or whitespace, the badge
+      // would silently disappear on every card. This test is the canary.
+      assert.match(ui, /<span class="card-row-actions">/,
+        'ui.js renderCard must contain the exact anchor string that landing.js replace() targets');
     });
   });
 
