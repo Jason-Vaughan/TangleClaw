@@ -119,6 +119,9 @@ describe('operator-edited global rules across an update (#1730)', () => {
     applier._internal.repoDir = work;
     applier._internal.backupDir = () => backups;
     applier._internal.checkForUpdate = () => ({ updateAvailable: true, latestVersion: '9.9.9' });
+    // Stub the SQLite backup step so it succeeds silently without touching the
+    // backups directory — these tests verify rules-carry behavior, not SQLite backup.
+    applier._internal.backupSqlite = () => ({ path: '/dev/null/stub.db', sha256: '0'.repeat(64) });
   });
 
   afterEach(() => {
