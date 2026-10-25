@@ -384,7 +384,7 @@ Every line of it is Operator-held. The exact texts are in the activation packet
 plans URL; its digest is in the W4-03 pull request).
 
 1. **DONE — W2-CUT (#2371).** `.github/workflows/test.yml` now carries a pinned
-   `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2` step,
+   `actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2` step,
    `if: always()`, that uploads `test-results.xml` as the artifact `test-results`, after the skip
    audit. Every CI run from this merge on carries its own report; no gate reads it until step 3.
 2. **The rule texts are accepted, then activated.** The Architect accepts the exact replacement
