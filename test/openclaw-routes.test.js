@@ -288,6 +288,14 @@ describe('openclaw credential projection (#2571)', () => {
       assert.ok(typeof json.webuiUrl === 'string' && json.webuiUrl.length > 0);
       assertNoSecrets(json, 'localhost tunnel response');
     });
+
+    it('remote connection returns 502 when ensureTunnel reports failure', async () => {
+      tunnel.ensureTunnel = async () => ({ ok: false, error: 'SSH key not found' });
+      const { status, json } = await mutate('POST', `/api/openclaw/connections/${connId}/tunnel`, {});
+      assert.equal(status, 502);
+      assert.ok(json.error, 'error body must be present');
+      assert.ok(json.error.includes('Tunnel failed'), 'error must include Tunnel failed');
+    });
   });
 
   // ── 4. In-process store integrity ────────────────────────────────────────
