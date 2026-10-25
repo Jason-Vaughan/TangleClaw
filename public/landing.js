@@ -2100,30 +2100,6 @@ function proceedWithLaunchModeCheck(name, project, continuityMode) {
 }
 
 /**
- * The dashboard's own unforgeable, single-use launch-intent token (#2124,
- * PRR-A finding C5). `/?launch=<name>` alone auto-calling `launchProject()`
- * on a bare GET is a CSRF vector: session and CSRF cookies are
- * `SameSite=Lax`, so a cross-site top-level link still carries them, and
- * this page's own JS would construct the CSRF header and auto-fire the
- * launch with no operator action in between. A token minted into
- * `localStorage` (same-origin only, unreadable from a cross-site page) and
- * required to match before auto-launching closes that: the only way the
- * right token reaches the URL is a link this page itself built, from a
- * session that already held it — never a crafted cross-site link. Read,
- * not re-minted, when one already exists, so multiple open tabs/reloads
- * share one token until it is actually consumed.
- * @returns {string}
- */
-function getLaunchIntentToken() {
-  let token = null;
-  try { token = localStorage.getItem('tc_launchIntent'); } catch (e) { /* ignore */ }
-  if (token) return token;
-  token = crypto.randomUUID();
-  try { localStorage.setItem('tc_launchIntent', token); } catch (e) { /* ignore */ }
-  return token;
-}
-
-/**
  * Consume a `?launch=<name>&intent=<token>` query param pair (#2124): a
  * card's not-yet-active "Launch" control is a real
  * `<a href="/?launch=<name>&intent=<token>">` so right-click "Open in new
@@ -2138,6 +2114,16 @@ function getLaunchIntentToken() {
  * absent. Called once from init(), after `loadProjects()` populates
  * `state.projects` and renders the card that `doLaunchProject`'s
  * pending-state UI targets.
+ *
+ * The intent check is what makes this CSRF-safe: session and CSRF cookies
+ * are `SameSite=Lax`, so a cross-site top-level link to a bare
+ * `/?launch=<name>` still carries them, and this page's own JS would
+ * otherwise construct the CSRF header and auto-fire the launch with no
+ * operator action in between. `tc_launchIntent` lives in `localStorage`,
+ * same-origin only and unreadable from a cross-site page — the only way the
+ * right token reaches the URL is a link this page itself built (via
+ * `getLaunchIntentToken()`, nested in `ui.js`'s `renderCard`), from a
+ * session that already held it.
  */
 function consumeLaunchQueryParam() {
   const params = new URLSearchParams(location.search);

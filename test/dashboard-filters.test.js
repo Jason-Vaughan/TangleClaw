@@ -310,7 +310,7 @@ describe('getLaunchIntentToken + consumeLaunchQueryParam guard the launch agains
         crypto: { randomUUID: () => 'minted-uuid' }
       });
       const token = vm.runInContext(
-        `${liftDeclaration(LANDING_SRC, 'function getLaunchIntentToken()')}\ngetLaunchIntentToken();`, ctx);
+        `${liftDeclaration(UI_SRC, 'function getLaunchIntentToken()')}\ngetLaunchIntentToken();`, ctx);
       assert.equal(token, 'minted-uuid');
       assert.equal(storage.getItem('tc_launchIntent'), 'minted-uuid');
     });
@@ -322,7 +322,7 @@ describe('getLaunchIntentToken + consumeLaunchQueryParam guard the launch agains
         crypto: { randomUUID: () => { throw new Error('must not mint when a token already exists'); } }
       });
       const token = vm.runInContext(
-        `${liftDeclaration(LANDING_SRC, 'function getLaunchIntentToken()')}\ngetLaunchIntentToken();`, ctx);
+        `${liftDeclaration(UI_SRC, 'function getLaunchIntentToken()')}\ngetLaunchIntentToken();`, ctx);
       assert.equal(token, 'already-there');
     });
   });

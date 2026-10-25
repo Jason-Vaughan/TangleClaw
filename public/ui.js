@@ -376,6 +376,27 @@ function renderCard(project) {
   const n = esc(project.name);
   const nArg = jsArg(project.name);
 
+  /**
+   * The dashboard's own unforgeable, single-use launch-intent token (#2124,
+   * PRR-A finding C5) — nested here, not a sibling in this file or a call
+   * into `landing.js`, because several test files lift `renderCard`'s own
+   * declaration text in isolation to test it (test/card-detail-disclosure,
+   * test/degraded-reads-frontend, test/stranded-wraps-ui,
+   * test/awareness-observability, test/inline-handler-args), so any
+   * dependency outside this declaration is invisible to them. See
+   * `consumeLaunchQueryParam` in `landing.js` for the full rationale and the
+   * matching nested copy that validates this token.
+   * @returns {string}
+   */
+  function getLaunchIntentToken() {
+    let token = null;
+    try { token = localStorage.getItem('tc_launchIntent'); } catch (e) { /* ignore */ }
+    if (token) return token;
+    token = crypto.randomUUID();
+    try { localStorage.setItem('tc_launchIntent', token); } catch (e) { /* ignore */ }
+    return token;
+  }
+
   const versionBadge = project.git && project.git.latestTag
     ? `<span class="badge badge-version">${esc(project.git.latestTag)}</span>`
     : '';
