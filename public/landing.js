@@ -2151,11 +2151,12 @@ async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStra
   // (#2124), not a <button>, so the browser's native "Open in new tab" works
   // on it too (consumeLaunchQueryParam() is what turns that landing into an
   // actual launch). `.disabled` is a no-op on an anchor, so the pending state
-  // is a CSS class instead. jsArg() renders the project-name argument
-  // double-quoted (`JSON.stringify` then HTML-escaped), so the rendered
-  // attribute reads `launchProject("name")`, not `launchProject('name')` —
-  // the selector below must match that, or `btn` is always null.
-  const btn = document.querySelector(`[onclick*='launchProject("${name}")']`);
+  // is a CSS class instead. Found by a `data-project-name` attribute, not by
+  // parsing the `onclick` text: an "unregistered" project (discovered off the
+  // filesystem, never through `validateName`) can have a name with a quote in
+  // it, which breaks a selector built by interpolating the raw name between
+  // quote characters — `CSS.escape` is what makes the value safe either way.
+  const btn = document.querySelector(`[data-project-name="${CSS.escape(name)}"]`);
   const originalText = btn ? btn.textContent : '';
   if (btn) {
     btn.textContent = 'Launching\u2026';

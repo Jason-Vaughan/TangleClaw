@@ -196,9 +196,6 @@ describe('toolbar filter-group alignment (#2123)', () => {
 });
 
 describe('card Launch/Open control is a real link for both states (#2124)', () => {
-  const { loadJsArg } = require('./helpers/lift');
-  const jsArg = loadJsArg('landing.js');
-
   it('the active-session ("Open") branch is a real <a href="/session/:name">', () => {
     const idx = UI_SRC.indexOf('? `<a class="btn btn-compact btn-launch"');
     assert.ok(idx > -1, 'ui.js must render an <a> for the active-session case');
@@ -211,33 +208,91 @@ describe('card Launch/Open control is a real link for both states (#2124)', () =
   });
 
   it('the not-yet-active ("Launch") branch is a real <a href="/?launch=:name"> (PRR BLOCKING follow-up: a direct /session/:name link would show "no active session" for a never-launched project — /?launch=<name> instead re-enters the page and runs the real launch flow)', () => {
-    const idx = UI_SRC.indexOf(': `<a class="btn btn-compact btn-launch" href="/?launch=');
+    const idx = UI_SRC.indexOf(': `<a class="btn btn-compact btn-launch" data-project-name=');
     assert.ok(idx > -1, 'ui.js must render an <a href="/?launch=..."> for the not-yet-active case');
-    const snippet = UI_SRC.slice(idx, idx + 220);
+    const snippet = UI_SRC.slice(idx, idx + 260);
     assert.match(snippet, /href="\/\?launch=\$\{encodeURIComponent\(project\.name\)\}"/);
     assert.match(snippet, /onclick="event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*launchProject/,
       'left-click must still preventDefault and run launchProject immediately, without a page reload');
     assert.match(snippet, />Launch<\/a>/);
   });
 
-  it('doLaunchProject\'s lookup matches the ACTUAL rendered onclick attribute regardless of tag (PRR WARNING: jsArg renders a double-quoted argument, not single-quoted)', () => {
-    const body = liftDeclaration(LANDING_SRC, 'async function doLaunchProject(');
-    assert.match(body, /document\.querySelector\(`\[onclick\*='launchProject\("\$\{name\}"\)'\]`\)/,
-      'the selector must look for a double-quoted argument (what jsArg renders) and not require a <button> tag (the control is an <a>)');
+  it('both controls carry data-project-name, HTML-escaped the same way every other attribute on the card is', () => {
+    const openIdx = UI_SRC.indexOf('? `<a class="btn btn-compact btn-launch"');
+    const launchIdx = UI_SRC.indexOf(': `<a class="btn btn-compact btn-launch" data-project-name=');
+    for (const idx of [openIdx, launchIdx]) {
+      const snippet = UI_SRC.slice(idx, idx + 90);
+      assert.match(snippet, /data-project-name="\$\{n\}"/, 'must use the already-HTML-escaped `n`, not the raw project.name');
+    }
+  });
 
-    // Reproduce the real pipeline: build the onclick attribute exactly as
-    // ui.js does, decode it the way a browser decodes an HTML attribute
-    // value, then confirm the FIXED selector's literal substring is actually
-    // present — not just that the source text looks plausible.
-    const name = "O'Brien's \"Project\"";
-    const nArg = jsArg(name);
-    const rawAttr = `event.preventDefault(); event.stopPropagation(); launchProject(${nArg})`;
-    const decoded = rawAttr
-      .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-    const selectorSubstring = `launchProject(${JSON.stringify(name)})`;
-    assert.ok(decoded.includes(selectorSubstring),
-      `decoded onclick attribute (${decoded}) must contain the selector's substring (${selectorSubstring})`);
+  it('doLaunchProject finds the control by a data-project-name attribute, CSS.escape-d, not by parsing onclick text (CRITIC BLOCKING: an unregistered filesystem project can have a name with a quote in it, which breaks a selector built by string-interpolating the raw name between quote characters)', () => {
+    const body = liftDeclaration(LANDING_SRC, 'async function doLaunchProject(');
+    assert.match(body, /document\.querySelector\(`\[data-project-name="\$\{CSS\.escape\(name\)\}"\]`\)/,
+      'the selector must look up a data-project-name attribute through CSS.escape, not interpolate the raw name into onclick-text matching');
+
+    // A reference implementation of the CSSOM `CSS.escape` algorithm (there is
+    // no DOM/jsdom in this test harness to call the real one) — used here to
+    // verify the SAFETY PROPERTY the fix depends on: for an adversarial name
+    // (the one Critic's finding used, plus a backslash and an all-quotes
+    // name), the escaped value, embedded in doLaunchProject's own template,
+    // never contains an unescaped `"` that would close the attribute value
+    // early. Scanning respects `\` as an escape prefix for the next
+    // character, which is exactly what a CSS tokenizer does.
+    function cssEscape(value) {
+      const string = String(value);
+      const length = string.length;
+      let result = '';
+      let index = -1;
+      const firstCodeUnit = string.charCodeAt(0);
+      while (++index < length) {
+        const codeUnit = string.charCodeAt(index);
+        if (codeUnit === 0x0000) { result += '�'; continue; }
+        if ((codeUnit >= 0x0001 && codeUnit <= 0x001F) || codeUnit === 0x007F ||
+            (index === 0 && codeUnit >= 0x0030 && codeUnit <= 0x0039) ||
+            (index === 1 && codeUnit >= 0x0030 && codeUnit <= 0x0039 && firstCodeUnit === 0x002D)) {
+          result += `\\${codeUnit.toString(16)} `;
+          continue;
+        }
+        if (index === 0 && length === 1 && codeUnit === 0x002D) {
+          result += `\\${string.charAt(index)}`;
+          continue;
+        }
+        if (codeUnit >= 0x0080 || codeUnit === 0x002D || codeUnit === 0x005F ||
+            (codeUnit >= 0x0030 && codeUnit <= 0x0039) ||
+            (codeUnit >= 0x0041 && codeUnit <= 0x005A) ||
+            (codeUnit >= 0x0061 && codeUnit <= 0x007A)) {
+          result += string.charAt(index);
+          continue;
+        }
+        result += `\\${string.charAt(index)}`;
+      }
+      return result;
+    }
+
+    /**
+     * Whether `selector` (a `[attr="value"]`-shaped string) has an unescaped
+     * `"` anywhere except at the two quotes that delimit `value` — i.e.
+     * whether the quoted value is intact rather than closed early.
+     * @param {string} selector
+     * @returns {boolean}
+     */
+    function quotedValueIntact(selector) {
+      const openAt = selector.indexOf('="') + 1;
+      let i = openAt + 1;
+      while (i < selector.length) {
+        if (selector[i] === '\\') { i += 2; continue; }
+        if (selector[i] === '"') return selector[i + 1] === ']';
+        i += 1;
+      }
+      return false;
+    }
+
+    for (const name of ['O\'Brien\'s "Project"', 'back\\slash', '"""', "'''"]) {
+      const selector = `[data-project-name="${cssEscape(name)}"]`;
+      assert.ok(quotedValueIntact(selector),
+        `CSS.escape(${JSON.stringify(name)}) must not let the attribute value close early: ${selector}`);
+    }
   });
 
   it('doLaunchProject uses a CSS class for the pending state (.disabled is a no-op on an <a>)', () => {
