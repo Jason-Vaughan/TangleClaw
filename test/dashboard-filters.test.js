@@ -263,7 +263,7 @@ describe('card Launch/Open control is a real link for both states (#2124)', () =
       return false;
     }
 
-    for (const name of ['O\'Brien\'s "Project"', 'back\\slash', '"""', "'''"]) {
+    for (const name of ['O\'Brien\'s "Project"', 'back\\slash', '"""', "'''", '\x01\x02control"chars']) {
       const selector = `[data-project-name="${cssEscape(name)}"]`;
       assert.ok(quotedValueIntact(selector),
         `CSS.escape(${JSON.stringify(name)}) must not let the attribute value close early: ${selector}`);
