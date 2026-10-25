@@ -41,6 +41,23 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-25 — W5-REL: prepare the v5.37.0 release
+
+<!-- prawduct: type=chore | scope=w5-rel-v5.37.0-release-prep -->
+
+v5.37.0 release cut, under `GRANT-V537-OVERNIGHT-CLOSEOUT-20261024`.
+
+**Merging this pull request is the release.** `.github/workflows/release.yml` runs on the `version.json` change on `main`, tests the merge commit, tags `v5.37.0` on it and publishes the GitHub Release. Nobody tags by hand (`docs/release-process.md`; CLAUDE.md exception).
+
+**What changed.**
+- All 15 fragments under `changelog.d/` (3 added, 7 fixed, 2 security, 3 internal) compiled into `[Unreleased]` by `lib/changelog-fragments.js`, promoted to `## [5.37.0] - 2026-10-25`, and deleted in the same commit.
+- `version.json` 5.36.0 → 5.37.0.
+- `node scripts/release-prepare.js` moved the README clone pins and added the `[5.37.0]` line to the released-sections lock, additions only.
+
+**Verification.** 26 tests pass across the five required test files: `readme-version-pins`, `changelog-released-immutable`, `changelog-fragments-repo`, `changelog-unreleased-size`, `features-index`. (`scripts/verify-records.js` referenced in dispatch does not exist in this revision — treated as absent.)
+
+**Changelog:** none of its own; this pull request consumes the fragments.
+
 ## 2026-10-25 — v5.37.0 W4-A: unattended wrap auto-Leave + releaseMode:off override
 
 <!-- prawduct: type=added | scope=w4a-2076-1497 -->

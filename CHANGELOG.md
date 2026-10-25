@@ -4,6 +4,31 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.37.0] - 2026-10-25
+
+### Added
+- Add auto-Leave for dirty-at-launch foreign paths in unattended wraps: `session-files` now injects Leave for `dirty-at-launch` foreign paths (no secret flag, no explicit decision) when `keepSessionRunning:true` or `foreignPathDefault:'leave'`, writing the decisions back to `context.options.pathDecisions` so `commit.js` stays consistent; secret-flagged and non-`dirty-at-launch` paths are unaffected (#2076).
+- Add keep-local helper layer for session-owned files: `buildStepRow` exposes `keepLocalControls` for done `session-files` rows; `projectManifest` moves owned paths with a Leave decision from `commit` to `keepLocal`; `collectOptionsFromAccessors` accepts a `keepLocalPaths` accessor and merges them into `pathDecisions` as Leave, so a Retry re-runs `session-files` with those files kept out of the wrap commit (#2156).
+- Add held-wake-reason badge to dashboard session cards: when the Medusa wake monitor holds wakeups because the pane has unsent prompt input (`pane-not-at-rest` or `pane-composer-has-input`), an amber "⚠ input pending" badge appears on the project card (#2578).
+
+### Fixed
+- Fix `version-bump` silently ignoring `bumpLevel` when `releaseMode` is off: passing bare `bumpLevel` now skips with an explanatory note naming the ignored level; passing `release: "cut"` overrides the off state and cuts a release, with `releaseModeOverride` in the output naming the reason; `syncWrapReleaseControls` UI note updated to mention the API override path and now also handles legacy `versionBumpEnabled:false` projects (#1497).
+- Surface split-rename pairs in `session-files` before `commit` blocks: when one half of a renamed file would be committed and the other left out, `session-files` now returns `blocked` (with `splitRenames` and the shared remedy text) rather than letting the operator close the drawer and hit the late gate in `commit` (#1630).
+- Replace fixed `sleep 0.5` with bounded polling in `createSession - launch env injection` tests so env-dump assertions are reliable on loaded CI runners (#2565).
+- Fix `mask()` in `scripts/_require-graph.js` so nested template literals inside `${…}` expressions no longer prematurely close the outer template scan in default mode, preventing false `require()` edges from template text (#2566).
+- Harden `createSession` against the exit-empty tmux server teardown race: add a one-retry settle (20 ms) in `lib/tmux.js` for "server exited unexpectedly", and give each `createSession - status bar` test its own unique session name (#2569).
+- Probe the tmux server's TCC read access to the project directory before spawning panes on macOS `~/Documents` projects, surfacing a structured error and remediation hint rather than a silent wait when the launchd-spawned daemon lacks the permission (#2576).
+- Create a verified SQLite backup (`~/.tangleclaw/backups/tangleclaw-pre-update-<version>-<timestamp>.db`) before executing a self-update, refusing the update if the backup or `PRAGMA integrity_check` fails, and recording the backup path and SHA-256 digest in the update result payload (#2577).
+
+### Security
+- Strip `gatewayToken`, `bridgeToken`, and `auditSecret` from all `/api/openclaw/connections` CRUD responses, replacing them with boolean `hasGatewayToken`, `hasBridgeToken`, and `hasAuditSecret` presence fields; `PUT` preserves stored secrets when the field is blank or omitted, and clears on explicit `null` or `clearX: true`; `POST .../tunnel` embeds the token in the server-side `webuiUrl` so the browser never reads the raw secret; localhost connections skip SSH and return `status: 'local'` directly; the connection edit modal leaves token fields blank with a placeholder and omits blank tokens from the `PUT` body (#2571).
+- Bumped website dependencies to resolve 5 Dependabot vulnerability alerts: `next` to `16.4.3`, `sharp` to `0.35.5` (High), `dompurify` to `3.4.17` (Critical+High), `source-map-js` to `1.2.2` (High), `zod` to `4.6.7` (High). Bumped `actions/setup-node` from `7.0.0` to `7.1.0` in all CI workflows, superseding Dependabot PR `#2385`. `npm audit --prefix website` reports 0 vulnerabilities.
+
+### Internal
+- Inspected `#1220` C05 state: C01–C04 (fragment parser/compiler, wrap coverage, release compilation, live two-PR pilot) shipped in v5.35.0 (`415eb03`). All 13 acceptance-evidence items verified covered by existing tests (`test/changelog-fragments.test.js`, `test/version-bump-fragments.test.js`, `test/wrap-changelog-coverage.test.js`, `test/changelog-fragments-repo.test.js`, `test/version-bump-fail-closed.test.js`). C05 transition-exception removal (deferred by PR `#2217` open with a direct `CHANGELOG.md` edit) tracked in `#2523`; will activate once `#2217` closes.
+- Add pinned `actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9` (v7.0.2) step to `.github/workflows/test.yml` (`if: always()`, artifact name `test-results`, path `test-results.xml`), completing the W2-CUT upload-step prerequisite for CI-as-suite-evidence (#2371).
+- Remove 53 dead `module.exports` entries from `lib/bridge-*` and `lib/release-certification/*` identified in the #2498 D4 audit; baseline shrinks 192 → 139 (#2573).
+
 ## [5.36.0] - 2026-10-23
 
 ### Added
