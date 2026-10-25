@@ -19,8 +19,26 @@
  * never held to re-touching every test file `FEATURES.md` has ever cited,
  * only the ones its own new entries claim.
  *
- * Usage: node scripts/verify-features-index.js [--base <ref>]
- *   --base <ref>  what the diff is against (default `origin/main`)
+ * `--base` has no default and is not optional (PR #2606 review, Finding
+ * C2). `origin/main` at check time is the WRONG base for a real
+ * `W<N>-REC` records PR: by the time that PR runs, the wave's own PRs
+ * (which added the test files) have already merged into `main`, so a
+ * diff against the current tip shows `FEATURES.md` changing but no test
+ * file touched — a true records PR would always fail. The base a
+ * `W<N>-REC` caller must pass is the WAVE'S OWN STARTING COMMIT (the
+ * `Base main Head` `LANE_QUEUE` records for that wave, from before any of
+ * its PRs merged): diffed from there, the wave's accumulated changes
+ * include both the new `FEATURES.md` citation and the test file it
+ * cites. Nothing wires that lookup today — this script has no caller yet
+ * (same posture as `scripts/suite-evidence.js`'s ci mode: it exists and
+ * is correct to invoke, but invoking it with the right argument is the
+ * caller's job to build). Refusing a missing `--base` rather than
+ * defaulting to `origin/main` keeps a future wrong-base caller loud
+ * instead of silently passing bad records.
+ *
+ * Usage: node scripts/verify-features-index.js --base <ref>
+ *   --base <ref>  REQUIRED. For `W<N>-REC`, the wave's starting commit —
+ *                 never `origin/main` at check time.
  * Exit 0 when every newly-added `Tests:` anchor names a touched file, or
  * none were added; 1 otherwise, naming each violation.
  */
@@ -98,13 +116,20 @@ function newlyCitedTests(base, io = {}) {
  *
  * @param {string[]} argv - Arguments after the script name
  * @returns {{base: string}}
+ * @throws {Error} When `--base` is missing or unrecognized argv is given — there is no safe
+ *   default (see the module docstring: `origin/main` at check time is wrong for `W<N>-REC`)
  */
 function parseArgs(argv) {
-  const parsed = { base: 'origin/main' };
+  const parsed = { base: null };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     if (flag === '--base' && argv[i + 1]) { parsed.base = argv[++i]; continue; }
-    throw new Error(`unknown or incomplete argument: ${flag}\nusage: verify-features-index.js [--base <ref>]`);
+    throw new Error(`unknown or incomplete argument: ${flag}\nusage: verify-features-index.js --base <ref>`);
+  }
+  if (!parsed.base) {
+    throw new Error('--base is required: there is no safe default. For W<N>-REC, pass the wave\'s own '
+      + 'starting commit, never origin/main at check time (see the module docstring).\n'
+      + 'usage: verify-features-index.js --base <ref>');
   }
   return parsed;
 }

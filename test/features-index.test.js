@@ -176,7 +176,7 @@ describe('verify-features-index main: the pass/fail disposition', () => {
   it('passes with nothing to report when no Tests: anchor was newly added', () => {
     const git = (args) => (args[0] === 'diff' && args.includes('FEATURES.md') ? '' : '');
     const out = sink();
-    assert.equal(verifyFeaturesIndex.main([], { stdout: out, git }), 0);
+    assert.equal(verifyFeaturesIndex.main(['--base', 'origin/main'], { stdout: out, git }), 0);
     assert.match(out.text(), /no Tests: anchors were newly added/);
   });
 
@@ -188,7 +188,7 @@ describe('verify-features-index main: the pass/fail disposition', () => {
       throw new Error(`unexpected git ${args.join(' ')}`);
     };
     const out = sink();
-    assert.equal(verifyFeaturesIndex.main([], { stdout: out, git }), 0);
+    assert.equal(verifyFeaturesIndex.main(['--base', 'origin/main'], { stdout: out, git }), 0);
     assert.match(out.text(), /1 newly added Tests: anchor\(s\)/);
   });
 
@@ -200,7 +200,7 @@ describe('verify-features-index main: the pass/fail disposition', () => {
       throw new Error(`unexpected git ${args.join(' ')}`);
     };
     const out = sink();
-    assert.equal(verifyFeaturesIndex.main([], { stdout: out, git }), 1);
+    assert.equal(verifyFeaturesIndex.main(['--base', 'origin/main'], { stdout: out, git }), 1);
     assert.match(out.text(), /REFUSED: Tests: anchor\(s\) newly added to FEATURES\.md cite a file this diff does not touch: test\/uncovered\.test\.js/);
   });
 
@@ -215,5 +215,42 @@ describe('verify-features-index main: the pass/fail disposition', () => {
     const out = sink();
     assert.equal(verifyFeaturesIndex.main(['--nope'], { stdout: out }), 1);
     assert.match(out.text(), /unknown or incomplete argument: --nope/);
+  });
+
+  it('refuses with no default when --base is omitted (PR #2606 review, Finding C2)', () => {
+    const out = sink();
+    assert.equal(verifyFeaturesIndex.main([], { stdout: out }), 1);
+    assert.match(out.text(), /--base is required/);
+  });
+});
+
+describe('verify-features-index: W<N>-REC must diff against the wave\'s own start, not origin/main at check time (PR #2606 review, Finding C2)', () => {
+  it('against the WRONG base (origin/main after the wave\'s PRs already merged), a true records PR is refused', () => {
+    // Simulates a W<N>-REC records PR after its wave's own PRs (which added
+    // test/a.test.js) already merged into main. The records PR's diff against
+    // the NOW-current origin/main shows FEATURES.md changing but not
+    // test/a.test.js -- that file merged earlier, through a different PR.
+    const featuresDiff = '+- New entry. Tests: `test/a.test.js`.';
+    const git = (args) => {
+      if (args[0] === 'diff' && args.includes('FEATURES.md')) return featuresDiff;
+      if (args[0] === 'diff' && args.includes('--name-only')) return 'FEATURES.md\n';
+      throw new Error(`unexpected git ${args.join(' ')}`);
+    };
+    const out = sink();
+    assert.equal(verifyFeaturesIndex.main(['--base', 'origin/main'], { stdout: out, git }), 1,
+      'origin/main at check time is the wrong base for W<N>-REC and must not pass by accident');
+  });
+
+  it('against the CORRECT base (the wave\'s own starting commit), the same records PR passes', () => {
+    // From the wave's start, the diff is the WHOLE wave: both the FEATURES.md
+    // citation the records PR adds and the test file an earlier wave PR added.
+    const featuresDiff = '+- New entry. Tests: `test/a.test.js`.';
+    const git = (args) => {
+      if (args[0] === 'diff' && args.includes('FEATURES.md')) return featuresDiff;
+      if (args[0] === 'diff' && args.includes('--name-only')) return 'FEATURES.md\ntest/a.test.js\n';
+      throw new Error(`unexpected git ${args.join(' ')}`);
+    };
+    const out = sink();
+    assert.equal(verifyFeaturesIndex.main(['--base', '<wave-start-sha>'], { stdout: out, git }), 0);
   });
 });
