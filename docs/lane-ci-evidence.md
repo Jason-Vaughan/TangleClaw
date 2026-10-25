@@ -380,11 +380,18 @@ Head` `LANE_QUEUE` records for that wave, read before any of its PRs merged. For
 node scripts/verify-features-index.js --base 87778ad234479c0634bfa48415d7b98a7de8c455
 ```
 
-**This is an Integrator-run gate, not push-time automation.** Nothing calls this script from a
-hook, wrap step, or CI job today; it is run by hand at `W<N>-REC` against the recorded
-wave-start commit. A later wave reads its own `Base main Head` from `LANE_QUEUE` the same way.
-Automatically resolving and supplying that commit (so no one has to read it off `LANE_QUEUE` by
-hand) is open follow-up work, not built here.
+**This is a mandatory Integrator-run gate, not push-time automation** (`LANE_QUEUE` rev
+`#376`, "Mandatory `W<N>-REC` wave-diff test-anchor gate (`#2597`)"). Nothing calls this script
+from a hook, wrap step, or CI job today; `TC-Lane-INT` runs it by hand at every `W<N>-REC`,
+after that wave's code PRs have merged and its `FEATURES.md` edits are committed, against the
+recorded wave-start commit. The records PR body must name: the wave-start SHA, the exact
+records-branch head, the command run, its exit code, its stdout, and the touched test paths
+that prove the newly-added `Tests:` citations. **`TC-Lane-INT` must not merge a records PR
+without an exit-0 receipt on its exact head and PRR verification of that receipt.** A later
+wave records its own starting `main` SHA in `LANE_QUEUE` before that wave's builders begin, and
+reads it the same way. Automatically resolving and supplying that commit (so no one has to read
+it off `LANE_QUEUE` by hand, and a skipped manual run can't go unnoticed) is open follow-up
+work, not built here.
 
 ## PROPOSED, NOT IN FORCE: it needs the Operator's approval and a Prawduct that accepts this evidence
 
