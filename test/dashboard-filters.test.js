@@ -447,6 +447,47 @@ describe('getLaunchIntentToken + consumeLaunchQueryParam guard the launch agains
       assert.deepEqual(replay.launched, []);
     });
 
+    it('two cards opened in sequence, same shared storage, no re-render in between — both launch, neither invalidates the other (PRR-A C2: the pre-fix single global token made consuming card A delete the token card B\'s already-rendered href needed)', () => {
+      // Mint both tokens with the REAL getLaunchIntentToken() against ONE
+      // shared storage — exactly what happens when renderCard() draws two
+      // project cards into the same page before any poll re-renders them.
+      const sharedStorage = fakeStorage();
+      let n = 0;
+      const mintCtx = vm.createContext({ localStorage: sharedStorage, crypto: { randomUUID: () => `uuid-${++n}` } });
+      const mintSrc = liftDeclaration(UI_SRC, 'function getLaunchIntentToken(');
+      const tokenA = vm.runInContext(`${mintSrc}\ngetLaunchIntentToken('project-a');`, mintCtx);
+      const tokenB = vm.runInContext(`${mintSrc}\ngetLaunchIntentToken('project-b');`, mintCtx);
+      assert.notEqual(tokenA, tokenB);
+
+      // "Open card A's link in tab 1" then "open card B's link in tab 2" —
+      // two separate consumeLaunchQueryParam() runs against the SAME
+      // storage object, with no re-render (no fresh mint) between them.
+      function consume(search) {
+        const launched = [];
+        const ctx = vm.createContext({
+          URLSearchParams,
+          location: { search, pathname: '/' },
+          history: { replaceState: () => {} },
+          localStorage: sharedStorage,
+          launchProject: (name) => { launched.push(name); }
+        });
+        const fnSrc = liftDeclaration(LANDING_SRC, 'function consumeLaunchQueryParam()');
+        vm.runInContext(`${fnSrc}\nconsumeLaunchQueryParam();`, ctx);
+        return launched;
+      }
+
+      const launchedA = consume(`?launch=project-a&intent=${tokenA}`);
+      assert.deepEqual(launchedA, ['project-a'], "consuming card A's link must launch A");
+
+      const launchedB = consume(`?launch=project-b&intent=${tokenB}`);
+      assert.deepEqual(launchedB, ['project-b'],
+        "consuming card B's link right after A, with no re-render in between, must still launch B — B's token must not have been invalidated by A's consumption");
+
+      // Both are now single-use consumed; replaying either makes zero calls.
+      assert.deepEqual(consume(`?launch=project-a&intent=${tokenA}`), []);
+      assert.deepEqual(consume(`?launch=project-b&intent=${tokenB}`), []);
+    });
+
     it('decodes an encoded project name', () => {
       const name = "O'Brien's Project";
       const { launched } = run(
