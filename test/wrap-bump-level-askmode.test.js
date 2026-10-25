@@ -113,4 +113,17 @@ describe('#540 ask-mode — the modal wiring (source pins)', () => {
     assert.match(body, /bumpLevel:\s*\(\)\s*=>\s*wrapBumpLevel/,
       'retry supplies the bumpLevel accessor so the pipeline re-runs with the same choice');
   });
+
+  // #1497 — syncWrapReleaseControls offNote and legacy versionBumpEnabled guard
+  it('syncWrapReleaseControls sets offNote text mentioning the API override path', () => {
+    const body = liftBody(session, 'function syncWrapReleaseControls()');
+    assert.match(body, /release.*cut.*options|options.*release.*cut/i,
+      'offNote text mentions passing release: cut in options to override the off state');
+  });
+
+  it('syncWrapReleaseControls treats legacy versionBumpEnabled:false as off (A466-G2)', () => {
+    const body = liftBody(session, 'function syncWrapReleaseControls()');
+    assert.match(body, /versionBumpEnabled\s*===\s*false/,
+      'const off covers legacy versionBumpEnabled:false projects without a releaseMode field');
+  });
 });

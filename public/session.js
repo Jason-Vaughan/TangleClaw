@@ -3940,9 +3940,13 @@ function syncWrapReleaseControls() {
   const releaseEl = document.getElementById('wrapRelease');
   const bumpEl = document.getElementById('wrapBumpLevel');
   if (!releaseGroup || !releaseEl || !bumpGroup || !bumpEl) return;
-  const off = mode === 'off';
+  // #1497 — also treat legacy versionBumpEnabled:false (no releaseMode field) as off.
+  const off = mode === 'off' || (mode === undefined && project.versionBumpEnabled === false);
   releaseGroup.classList.toggle('hidden', off);
-  if (offNote) offNote.classList.toggle('hidden', !off);
+  if (offNote) {
+    offNote.textContent = 'Releases are off for this project; this wrap won\'t cut one. To cut a release via the API, pass release: "cut" in options.';
+    offNote.classList.toggle('hidden', !off);
+  }
   const cutting = !off && releaseEl.value === 'cut';
   bumpGroup.classList.toggle('hidden', !cutting);
   if (!cutting) bumpEl.value = '';
