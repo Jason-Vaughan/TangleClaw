@@ -1391,6 +1391,12 @@ describe('#2076 _autoLeaveEnabled — flag logic', () => {
     assert.equal(_autoLeaveEnabled({ keepSessionRunning: true, reviewSessionFiles: true }), false);
   });
 
+  it('returns false when foreignPathDefault:"leave" but reviewSessionFiles:true — unconditional veto (A466-G1)', () => {
+    // reviewSessionFiles wins over foreignPathDefault: the operator asked to review,
+    // so auto-leave must not fire regardless of how foreignPathDefault is set.
+    assert.equal(_autoLeaveEnabled({ foreignPathDefault: 'leave', reviewSessionFiles: true }), false);
+  });
+
   it('returns false when keepSessionRunning is false regardless of foreignPathDefault', () => {
     assert.equal(_autoLeaveEnabled({ keepSessionRunning: false, foreignPathDefault: undefined }), false);
   });
@@ -1560,5 +1566,21 @@ describe('#2076 session-files integration — auto-Leave for unattended wraps', 
     const r = await runStep(sessionFiles, repo, scope, { keepSessionRunning: true });
     assert.equal(r.status, 'done');
     assert.equal(r.output.autoLeft, undefined, 'autoLeft absent when nothing was auto-left');
+  });
+
+  it('split-rename still blocks when auto-leave is enabled (A466-G3 invariant, Critic R-3)', async () => {
+    // auto-leave enabled via foreignPathDefault:'leave' AND the session rename has
+    // one half decided Leave — split-rename must surface as blocked, not slip through.
+    const repo = makeRepo();
+    const baseline = launchBaseline.capture(repo);
+    git(repo, 'mv', 'feature.js', 'moved.js');
+    const scope = await scopeFor(repo, baseline);
+    const r = await runStep(sessionFiles, repo, scope, {
+      foreignPathDefault: 'leave',
+      pathDecisions: { 'moved.js': 'leave' }
+    });
+    assert.equal(r.status, 'blocked');
+    assert.ok(r.output.splitRenames && r.output.splitRenames.length > 0,
+      'split-rename blocks even when foreignPathDefault:leave is set');
   });
 });
