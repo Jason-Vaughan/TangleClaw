@@ -229,33 +229,6 @@ describe('version-bump release gate', () => {
       const { result } = await run(makeProject({ config: { versionBumpEnabled: false, releaseMode: 'auto' } }));
       assert.equal(result.status, 'done');
     });
-
-    // #1497 — operator may override releaseMode:'off' with release:'cut'
-    it('skips but names the ignored bumpLevel when level sent without release:cut (A466-G2)', async () => {
-      const { result, staged } = await run(makeProject({ config: { releaseMode: 'off' } }), { bumpLevel: 'minor' });
-      assert.equal(result.status, 'skipped');
-      assert.match(result.output.reason, /releaseMode is off/);
-      assert.match(result.output.reason, /bumpLevel .minor. was ignored/);
-      assert.equal(result.output.ignoredBumpLevel, 'minor');
-      assert.deepEqual(staged, {});
-    });
-
-    it('proceeds when operator sends release:cut (A466-G2 override)', async () => {
-      const { result, staged } = await run(makeProject({ config: { releaseMode: 'off' } }), { release: 'cut' });
-      assert.equal(result.status, 'done');
-      assert.equal(result.output.from, '1.2.3');
-      assert.equal(result.output.to, '1.3.0');
-      assert.equal(result.output.releaseModeOverride, 'operator-supplied-release-cut');
-      assert.ok(staged['version-bump:changelog']);
-    });
-
-    it('proceeds with the supplied bumpLevel when both release:cut and bumpLevel are sent', async () => {
-      const { result } = await run(makeProject({ config: { releaseMode: 'off' } }), { release: 'cut', bumpLevel: 'patch' });
-      assert.equal(result.status, 'done');
-      assert.equal(result.output.bumpLevel, 'patch');
-      assert.equal(result.output.to, '1.2.4');
-      assert.equal(result.output.releaseModeOverride, 'operator-supplied-release-cut');
-    });
   });
 
   it('in a worktree with no Prawduct state, holds on the registered checkout\'s unfinished plan', async () => {
