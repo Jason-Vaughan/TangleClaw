@@ -285,11 +285,13 @@ describe('card Launch/Open control is a real link for both states (#2124)', () =
 });
 
 describe('getLaunchIntentToken + consumeLaunchQueryParam guard the launch against CSRF (#2124 PRR-A C5)', () => {
+  const TTL_MS = 5 * 60 * 1000;
+
   /**
    * A minimal in-memory localStorage mock, same shape as `fakeLocalStorage()`
-   * above but exposed per-test here so a stored token can be asserted on
+   * above but exposed per-test here so a stored record can be asserted on
    * directly (removed vs. still present) after the run.
-   * @param {Record<string,string>} [seed] - Pre-populated keys.
+   * @param {Record<string,string>} [seed] - Pre-populated keys (raw JSON strings).
    * @returns {{getItem(string): string|null, setItem(string,string): void, removeItem(string): void, store: Map<string,string>}}
    */
   function fakeStorage(seed) {
@@ -302,28 +304,58 @@ describe('getLaunchIntentToken + consumeLaunchQueryParam guard the launch agains
     };
   }
 
+  /** @param {string} token @param {number} mintedAt @returns {string} */
+  function record(token, mintedAt) { return JSON.stringify({ token, mintedAt }); }
+
   describe('getLaunchIntentToken', () => {
-    it('mints and stores a token when none exists', () => {
+    it('mints and stores a project-bound token when none exists', () => {
       const storage = fakeStorage();
       const ctx = vm.createContext({
         localStorage: storage,
         crypto: { randomUUID: () => 'minted-uuid' }
       });
       const token = vm.runInContext(
-        `${liftDeclaration(UI_SRC, 'function getLaunchIntentToken()')}\ngetLaunchIntentToken();`, ctx);
+        `${liftDeclaration(UI_SRC, 'function getLaunchIntentToken(')}\ngetLaunchIntentToken('my-project');`, ctx);
       assert.equal(token, 'minted-uuid');
-      assert.equal(storage.getItem('tc_launchIntent'), 'minted-uuid');
+      const stored = JSON.parse(storage.getItem('tc_launchIntent:my-project'));
+      assert.equal(stored.token, 'minted-uuid');
+      assert.equal(typeof stored.mintedAt, 'number');
     });
 
-    it('reads the existing token instead of minting a new one', () => {
-      const storage = fakeStorage({ tc_launchIntent: 'already-there' });
+    it('reads the existing token instead of minting a new one, when still fresh', () => {
+      const storage = fakeStorage({ 'tc_launchIntent:my-project': record('already-there', Date.now()) });
       const ctx = vm.createContext({
         localStorage: storage,
-        crypto: { randomUUID: () => { throw new Error('must not mint when a token already exists'); } }
+        crypto: { randomUUID: () => { throw new Error('must not mint when a fresh token already exists'); } }
       });
       const token = vm.runInContext(
-        `${liftDeclaration(UI_SRC, 'function getLaunchIntentToken()')}\ngetLaunchIntentToken();`, ctx);
+        `${liftDeclaration(UI_SRC, 'function getLaunchIntentToken(')}\ngetLaunchIntentToken('my-project');`, ctx);
       assert.equal(token, 'already-there');
+    });
+
+    it('mints a fresh token when the existing one has expired', () => {
+      const storage = fakeStorage({
+        'tc_launchIntent:my-project': record('stale-token', Date.now() - TTL_MS - 1000)
+      });
+      const ctx = vm.createContext({
+        localStorage: storage,
+        crypto: { randomUUID: () => 'fresh-uuid' }
+      });
+      const token = vm.runInContext(
+        `${liftDeclaration(UI_SRC, 'function getLaunchIntentToken(')}\ngetLaunchIntentToken('my-project');`, ctx);
+      assert.equal(token, 'fresh-uuid');
+    });
+
+    it('two projects get independent tokens under independent keys', () => {
+      const storage = fakeStorage();
+      let n = 0;
+      const ctx = vm.createContext({ localStorage: storage, crypto: { randomUUID: () => `uuid-${++n}` } });
+      const src = `${liftDeclaration(UI_SRC, 'function getLaunchIntentToken(')}`;
+      const tokenA = vm.runInContext(`${src}\ngetLaunchIntentToken('project-a');`, ctx);
+      const tokenB = vm.runInContext(`${src}\ngetLaunchIntentToken('project-b');`, ctx);
+      assert.notEqual(tokenA, tokenB);
+      assert.ok(storage.store.has('tc_launchIntent:project-a'));
+      assert.ok(storage.store.has('tc_launchIntent:project-b'));
     });
   });
 
@@ -333,13 +365,14 @@ describe('getLaunchIntentToken + consumeLaunchQueryParam guard the launch agains
      * location/history/localStorage, capturing what it does rather than
      * re-declaring its logic.
      * @param {string} search - `location.search` to present.
-     * @param {Record<string,string>} [storageSeed] - Pre-populated localStorage.
+     * @param {Record<string,string>} [storageSeed] - Pre-populated localStorage (raw JSON strings).
+     * @param {object} [localStorageOverrides] - Extra/overriding localStorage methods (e.g. a failing removeItem).
      * @returns {{launched: string[], replaced: Array<{url:string}>, storage: object}}
      */
-    function run(search, storageSeed) {
+    function run(search, storageSeed, localStorageOverrides) {
       const launched = [];
       const replaced = [];
-      const storage = fakeStorage(storageSeed);
+      const storage = { ...fakeStorage(storageSeed), ...(localStorageOverrides || {}) };
       const ctx = vm.createContext({
         URLSearchParams,
         location: { search, pathname: '/' },
@@ -360,20 +393,20 @@ describe('getLaunchIntentToken + consumeLaunchQueryParam guard the launch agains
 
     it('launches and consumes (removes) the token when intent matches (PRR-A C5: single-use)', () => {
       const { launched, replaced, storage } = run(
-        '?launch=my-project&intent=tok-1', { tc_launchIntent: 'tok-1' });
+        '?launch=my-project&intent=tok-1', { 'tc_launchIntent:my-project': record('tok-1', Date.now()) });
       assert.deepEqual(launched, ['my-project']);
       assert.equal(replaced.length, 1);
       assert.equal(replaced[0].url, '/', 'both launch and intent must be stripped from the URL');
-      assert.equal(storage.getItem('tc_launchIntent'), null, 'the token must be removed after use — single-use');
+      assert.equal(storage.getItem('tc_launchIntent:my-project'), null, 'the token must be removed after use — single-use');
     });
 
     it('makes ZERO launch calls when intent is entirely absent — the pre-fix vulnerability this closes (PRR-A C5)', () => {
-      const { launched } = run('?launch=my-project', { tc_launchIntent: 'tok-1' });
+      const { launched } = run('?launch=my-project', { 'tc_launchIntent:my-project': record('tok-1', Date.now()) });
       assert.deepEqual(launched, [], 'a bare ?launch=<name> GET (what a cross-site link would carry) must never auto-launch');
     });
 
     it('makes ZERO launch calls when intent does not match the stored token', () => {
-      const { launched } = run('?launch=my-project&intent=wrong-token', { tc_launchIntent: 'tok-1' });
+      const { launched } = run('?launch=my-project&intent=wrong-token', { 'tc_launchIntent:my-project': record('tok-1', Date.now()) });
       assert.deepEqual(launched, []);
     });
 
@@ -382,10 +415,34 @@ describe('getLaunchIntentToken + consumeLaunchQueryParam guard the launch agains
       assert.deepEqual(launched, []);
     });
 
+    it('makes ZERO launch calls when the token has expired (PRR-A C5: expiring)', () => {
+      const { launched } = run(
+        '?launch=my-project&intent=tok-1',
+        { 'tc_launchIntent:my-project': record('tok-1', Date.now() - TTL_MS - 1000) });
+      assert.deepEqual(launched, []);
+    });
+
+    it("makes ZERO launch calls when intent is valid for a DIFFERENT project (PRR-A C5: project-bound)", () => {
+      const { launched } = run(
+        '?launch=project-b&intent=tok-1', { 'tc_launchIntent:project-a': record('tok-1', Date.now()) });
+      assert.deepEqual(launched, [], "project-a's token must not validate a launch=project-b request");
+    });
+
+    it('fails CLOSED — makes ZERO launch calls — when localStorage.removeItem throws (PRR-A C5: single-use must be guaranteed, not best-effort)', () => {
+      const { launched, storage } = run(
+        '?launch=my-project&intent=tok-1',
+        { 'tc_launchIntent:my-project': record('tok-1', Date.now()) },
+        { removeItem: () => { throw new Error('storage full'); } });
+      assert.deepEqual(launched, [], 'a launch must not proceed if single-use removal could not be confirmed');
+      assert.ok(storage.getItem('tc_launchIntent:my-project'),
+        'the token record is still present (removal failed) — confirms this is the fail-closed path, not a silent success');
+    });
+
     it('a replayed (already-consumed) intent makes zero launch calls on a second attempt', () => {
       // First consumption removes the token; simulate the second attempt
       // starting from that post-removal state.
-      const { storage: afterFirst } = run('?launch=my-project&intent=tok-1', { tc_launchIntent: 'tok-1' });
+      const { storage: afterFirst } = run(
+        '?launch=my-project&intent=tok-1', { 'tc_launchIntent:my-project': record('tok-1', Date.now()) });
       const replay = run('?launch=my-project&intent=tok-1', Object.fromEntries(afterFirst.store));
       assert.deepEqual(replay.launched, []);
     });
@@ -393,23 +450,23 @@ describe('getLaunchIntentToken + consumeLaunchQueryParam guard the launch agains
     it('decodes an encoded project name', () => {
       const name = "O'Brien's Project";
       const { launched } = run(
-        `?launch=${encodeURIComponent(name)}&intent=tok-1`, { tc_launchIntent: 'tok-1' });
+        `?launch=${encodeURIComponent(name)}&intent=tok-1`, { [`tc_launchIntent:${name}`]: record('tok-1', Date.now()) });
       assert.deepEqual(launched, [name]);
     });
 
     it('preserves other query params when stripping launch and intent', () => {
       const { replaced } = run(
-        '?launch=my-project&intent=tok-1&foo=bar', { tc_launchIntent: 'tok-1' });
+        '?launch=my-project&intent=tok-1&foo=bar', { 'tc_launchIntent:my-project': record('tok-1', Date.now()) });
       assert.equal(replaced[0].url, '/?foo=bar');
     });
   });
 
-  it('the rendered Launch href carries &intent=<token> (ui.js)', () => {
+  it('the rendered Launch href carries &intent=<token> bound to the project name (ui.js)', () => {
     const idx = UI_SRC.indexOf(': `<a class="btn btn-compact btn-launch" data-project-name=');
     assert.ok(idx > -1);
-    const snippet = UI_SRC.slice(idx, idx + 260);
-    assert.match(snippet, /&intent=\$\{encodeURIComponent\(getLaunchIntentToken\(\)\)\}/,
-      'the not-yet-active Launch control must embed the dashboard-minted intent token');
+    const snippet = UI_SRC.slice(idx, idx + 280);
+    assert.match(snippet, /&intent=\$\{encodeURIComponent\(getLaunchIntentToken\(project\.name\)\)\}/,
+      'the not-yet-active Launch control must embed a token minted for THIS project');
   });
 
   it('init() calls consumeLaunchQueryParam once, after loadProjects() populates state.projects and renders the card', () => {

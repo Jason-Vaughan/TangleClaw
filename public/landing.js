@@ -2107,23 +2107,26 @@ function proceedWithLaunchModeCheck(name, project, continuityMode) {
  * landing into an actual launch — strip both params (so reloading or
  * sharing the URL doesn't re-trigger it) and run the exact launch flow a
  * direct click runs (continuity/launch-mode modals, refusal handling
- * included), but ONLY when `intent` matches this origin's own
- * `tc_launchIntent` token exactly, which is then immediately removed
- * (single-use — PRR-A C5). A bare, missing, mismatched, or replayed
- * `launch` param makes zero launch calls. No-op entirely if `launch` is
- * absent. Called once from init(), after `loadProjects()` populates
- * `state.projects` and renders the card that `doLaunchProject`'s
+ * included), but ONLY when `intent` matches the token minted for THIS
+ * project, is not expired, and its single-use removal actually succeeds
+ * (fail closed — PRR-A C5). A bare, missing, mismatched, expired, or
+ * replayed `launch`/`intent` makes zero launch calls. No-op entirely if
+ * `launch` is absent. Called once from init(), after `loadProjects()`
+ * populates `state.projects` and renders the card that `doLaunchProject`'s
  * pending-state UI targets.
  *
  * The intent check is what makes this CSRF-safe: session and CSRF cookies
  * are `SameSite=Lax`, so a cross-site top-level link to a bare
  * `/?launch=<name>` still carries them, and this page's own JS would
  * otherwise construct the CSRF header and auto-fire the launch with no
- * operator action in between. `tc_launchIntent` lives in `localStorage`,
- * same-origin only and unreadable from a cross-site page — the only way the
- * right token reaches the URL is a link this page itself built (via
- * `getLaunchIntentToken()`, nested in `ui.js`'s `renderCard`), from a
- * session that already held it.
+ * operator action in between. `tc_launchIntent:<name>` lives in
+ * `localStorage`, same-origin only and unreadable from a cross-site page —
+ * the only way the right token reaches the URL is a link this page itself
+ * built (via `getLaunchIntentToken()`, nested in `ui.js`'s `renderCard`),
+ * from a session that already held it. Project-bound (keyed by name) so
+ * one project's intent can't be confused with, or invalidate, another's;
+ * expiring (5 minutes, matching `getLaunchIntentToken()`'s TTL) so a
+ * forgotten tab's stale Launch link can't still fire a launch days later.
  */
 function consumeLaunchQueryParam() {
   const params = new URLSearchParams(location.search);
@@ -2134,10 +2137,22 @@ function consumeLaunchQueryParam() {
   params.delete('intent');
   const qs = params.toString();
   history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : ''));
-  let expected = null;
-  try { expected = localStorage.getItem('tc_launchIntent'); } catch (e) { /* ignore */ }
-  if (!intent || !expected || intent !== expected) return;
-  try { localStorage.removeItem('tc_launchIntent'); } catch (e) { /* ignore */ }
+  if (!intent) return;
+  const key = `tc_launchIntent:${name}`;
+  const ttlMs = 5 * 60 * 1000;
+  let record = null;
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) record = JSON.parse(raw);
+  } catch (e) { /* ignore */ }
+  if (!record || typeof record.token !== 'string' || typeof record.mintedAt !== 'number') return;
+  if ((Date.now() - record.mintedAt) >= ttlMs) return;
+  if (intent !== record.token) return;
+  try {
+    localStorage.removeItem(key);
+  } catch (e) {
+    return; // fail closed: single-use is not guaranteed, so refuse to launch
+  }
   launchProject(name);
 }
 

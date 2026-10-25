@@ -377,23 +377,36 @@ function renderCard(project) {
   const nArg = jsArg(project.name);
 
   /**
-   * The dashboard's own unforgeable, single-use launch-intent token (#2124,
-   * PRR-A finding C5) — nested here, not a sibling in this file or a call
-   * into `landing.js`, because several test files lift `renderCard`'s own
-   * declaration text in isolation to test it (test/card-detail-disclosure,
-   * test/degraded-reads-frontend, test/stranded-wraps-ui,
-   * test/awareness-observability, test/inline-handler-args), so any
-   * dependency outside this declaration is invisible to them. See
-   * `consumeLaunchQueryParam` in `landing.js` for the full rationale and the
-   * matching nested copy that validates this token.
+   * The dashboard's own unforgeable, project-bound, expiring, single-use
+   * launch-intent token (#2124, PRR-A finding C5) — nested here, not a
+   * sibling in this file or a call into `landing.js`, because several test
+   * files lift `renderCard`'s own declaration text in isolation to test it
+   * (test/card-detail-disclosure, test/degraded-reads-frontend,
+   * test/stranded-wraps-ui, test/awareness-observability,
+   * test/inline-handler-args), so any dependency outside this declaration
+   * is invisible to them. See `consumeLaunchQueryParam` in `landing.js` for
+   * the full CSRF rationale and the matching nested copy that validates
+   * this token. Project-bound (keyed by name, not one dashboard-wide value)
+   * so consuming one project's intent can't be confused with, or
+   * invalidate, another's; expiring (5 minutes) so a forgotten tab's stale
+   * Launch link can't still fire a launch days later.
+   * @param {string} projectName
    * @returns {string}
    */
-  function getLaunchIntentToken() {
-    let token = null;
-    try { token = localStorage.getItem('tc_launchIntent'); } catch (e) { /* ignore */ }
-    if (token) return token;
-    token = crypto.randomUUID();
-    try { localStorage.setItem('tc_launchIntent', token); } catch (e) { /* ignore */ }
+  function getLaunchIntentToken(projectName) {
+    const key = `tc_launchIntent:${projectName}`;
+    const ttlMs = 5 * 60 * 1000;
+    let record = null;
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) record = JSON.parse(raw);
+    } catch (e) { /* ignore */ }
+    if (record && typeof record.token === 'string' && typeof record.mintedAt === 'number' &&
+        (Date.now() - record.mintedAt) < ttlMs) {
+      return record.token;
+    }
+    const token = crypto.randomUUID();
+    try { localStorage.setItem(key, JSON.stringify({ token, mintedAt: Date.now() })); } catch (e) { /* ignore */ }
     return token;
   }
 
@@ -485,7 +498,7 @@ function renderCard(project) {
       <span class="card-row-actions">
         ${hasSession
           ? `<a class="btn btn-compact btn-launch" data-project-name="${n}" href="/session/${encodeURIComponent(project.name)}" onclick="event.preventDefault(); event.stopPropagation(); launchProject(${nArg})">Open</a>`
-          : `<a class="btn btn-compact btn-launch" data-project-name="${n}" href="/?launch=${encodeURIComponent(project.name)}&intent=${encodeURIComponent(getLaunchIntentToken())}" onclick="event.preventDefault(); event.stopPropagation(); launchProject(${nArg})">Launch</a>`}
+          : `<a class="btn btn-compact btn-launch" data-project-name="${n}" href="/?launch=${encodeURIComponent(project.name)}&intent=${encodeURIComponent(getLaunchIntentToken(project.name))}" onclick="event.preventDefault(); event.stopPropagation(); launchProject(${nArg})">Launch</a>`}
         ${hasSession ? `<button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openPeekFromCard(${nArg})" title="Peek">&#128065;</button>` : ''}
         ${hasSession ? `<button class="btn btn-compact btn-icon-tiny btn-kill-card" onclick="event.stopPropagation(); openKill(${nArg})" title="Kill session">&#9632;</button>` : ''}
         <button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openHistory(${nArg})" title="Session history &amp; search">&#128269;</button>
