@@ -396,10 +396,14 @@ function renderCard(project) {
    * every not-yet-active project on every render, so an uncaught throw
    * here would abort the whole card grid, not just this one link — caught
    * the same defensive way the adjacent `localStorage` calls already are.
-   * `null` means no token could be minted; the caller omits `&intent=`
-   * entirely rather than embedding an empty one, and
-   * `consumeLaunchQueryParam()` already treats an absent `intent` as a
-   * no-op, so this fails safe.
+   * `crypto.randomUUID` is secure-context-only, but `crypto.getRandomValues`
+   * is not — it is available on this product's documented plain-HTTP
+   * direct-ingress deployments too — so that is the fallback, rather than
+   * silently disabling the one-click new-tab launch on a supported
+   * deployment. `null` (both unavailable) means no token could be minted;
+   * the caller omits `&intent=` entirely rather than embedding an empty
+   * one, and `consumeLaunchQueryParam()` already treats an absent `intent`
+   * as a no-op, so this still fails safe in that last-resort case.
    * @param {string} projectName
    * @returns {string|null}
    */
@@ -416,7 +420,15 @@ function renderCard(project) {
       return record.token;
     }
     let token = null;
-    try { token = crypto.randomUUID(); } catch (e) { return null; }
+    try {
+      token = crypto.randomUUID();
+    } catch (e) {
+      try {
+        token = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+      } catch (e2) {
+        return null;
+      }
+    }
     try { localStorage.setItem(key, JSON.stringify({ token, mintedAt: Date.now() })); } catch (e) { /* ignore */ }
     return token;
   }

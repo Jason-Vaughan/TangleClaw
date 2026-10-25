@@ -518,16 +518,60 @@ describe('getLaunchIntentToken + consumeLaunchQueryParam guard the launch agains
       "getLaunchIntentToken() returning null (e.g. crypto.randomUUID absent in an insecure context) must omit #intent= entirely, not embed an empty one");
   });
 
-  it('getLaunchIntentToken returns null, without throwing, when crypto.randomUUID is unavailable (CRITIC BLOCKING: a throw here would abort the whole card grid render, not just this link — insecure-context dashboards are a supported deployment per SECURITY.md)', () => {
+  it('getLaunchIntentToken falls back to crypto.getRandomValues when randomUUID is absent (PRR-A C1: the REAL shape of this product\'s supported plain-HTTP direct-ingress deployment — getRandomValues is available there even though randomUUID, secure-context-only, is not; returning null instead of falling back would silently disable one-click new-tab launch on a supported deployment)', () => {
     const storage = fakeStorage();
     const ctx = vm.createContext({
       localStorage: storage,
-      crypto: {} // no randomUUID — the shape an insecure context actually has
+      crypto: {
+        // No randomUUID — getRandomValues predates the secure-context
+        // restriction and remains available everywhere, which is exactly
+        // why it is the fallback rather than a second failure mode.
+        getRandomValues: (arr) => { for (let i = 0; i < arr.length; i++) arr[i] = i; return arr; }
+      }
+    });
+    const token = vm.runInContext(
+      `${liftDeclaration(UI_SRC, 'function getLaunchIntentToken(')}\ngetLaunchIntentToken('my-project');`, ctx);
+    assert.equal(typeof token, 'string');
+    assert.match(token, /^[0-9a-f]{32}$/, 'must be a valid hex token, not null, so the Launch link still carries an intent');
+    const stored = JSON.parse(storage.getItem('tc_launchIntent:my-project'));
+    assert.equal(stored.token, token);
+  });
+
+  it('getLaunchIntentToken returns null, without throwing, when NEITHER crypto API is available (last-resort case — a throw here would abort the whole card grid render, not just this link)', () => {
+    const storage = fakeStorage();
+    const ctx = vm.createContext({
+      localStorage: storage,
+      crypto: {} // neither randomUUID nor getRandomValues
     });
     const token = vm.runInContext(
       `${liftDeclaration(UI_SRC, 'function getLaunchIntentToken(')}\ngetLaunchIntentToken('my-project');`, ctx);
     assert.equal(token, null);
     assert.equal(storage.store.size, 0, 'nothing should be written to localStorage when minting fails');
+  });
+
+  it('full mint -> consume round trip succeeds on the insecure-context shape (PRR-A C1: one-click new-tab launch must still work on a plain-HTTP deployment, not just avoid throwing)', () => {
+    const sharedStorage = fakeStorage();
+    const insecureCrypto = {
+      getRandomValues: (arr) => { for (let i = 0; i < arr.length; i++) arr[i] = (i * 7) % 256; return arr; }
+    };
+
+    const mintCtx = vm.createContext({ localStorage: sharedStorage, crypto: insecureCrypto });
+    const token = vm.runInContext(
+      `${liftDeclaration(UI_SRC, 'function getLaunchIntentToken(')}\ngetLaunchIntentToken('my-project');`, mintCtx);
+    assert.ok(token, 'a token must actually be minted, not null, on this supported deployment shape');
+
+    const launched = [];
+    const consumeCtx = vm.createContext({
+      URLSearchParams,
+      location: { search: '?launch=my-project', hash: `#intent=${token}`, pathname: '/' },
+      history: { replaceState: () => {} },
+      localStorage: sharedStorage,
+      launchProject: (name) => { launched.push(name); }
+    });
+    vm.runInContext(
+      `${liftDeclaration(LANDING_SRC, 'function consumeLaunchQueryParam()')}\nconsumeLaunchQueryParam();`, consumeCtx);
+    assert.deepEqual(launched, ['my-project'],
+      'the getRandomValues-minted token must be accepted by consumeLaunchQueryParam() exactly like a randomUUID-minted one');
   });
 
   it('init() calls consumeLaunchQueryParam once, after loadProjects() populates state.projects and renders the card', () => {
