@@ -6108,11 +6108,13 @@ async function retryWrap() {
     // #2156 C04 — Keep-local checkboxes from both the done step-row and the
     // blocked path-decision widget. collectOptionsFromAccessors converts them
     // to pathDecisions[path]='leave'; accumulatePathDecisions carries them forward.
+    // Scoped to getElementById targets (not document.querySelectorAll) so the VM
+    // test sandbox, which stubs getElementById but not document-level selectors, works.
     keepLocalPaths: () => {
-      const checked = document.querySelectorAll(
-        '#wrapStepList .wrap-step-keeplocal-cb:checked, #wrapDrawerDecision .wrap-step-keeplocal-cb:checked'
-      );
-      return Array.from(checked).map((i) => i.dataset.path).filter(Boolean);
+      const listEl = document.getElementById('wrapStepList');
+      const fromList = listEl ? Array.from(listEl.querySelectorAll('.wrap-step-keeplocal-cb:checked')) : [];
+      const fromDecision = decisionEl ? Array.from(decisionEl.querySelectorAll('.wrap-step-keeplocal-cb:checked')) : [];
+      return fromList.concat(fromDecision).map((i) => i.dataset.path).filter(Boolean);
     }
   };
 
