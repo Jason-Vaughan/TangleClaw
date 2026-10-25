@@ -403,6 +403,7 @@
     "test/version-bump-fail-closed.test.js",
     "test/version-bump-fragments.test.js",
     "test/version-bump-release-gate.test.js",
+    "test/with-scratch-server.test.js",
     "test/workload-nudge-facts.test.js",
     "test/workload-nudge.test.js",
     "test/wrap-default-pipeline.test.js",
