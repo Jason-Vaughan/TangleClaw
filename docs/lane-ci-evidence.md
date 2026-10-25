@@ -393,9 +393,9 @@ plans URL; its digest is in the W4-03 pull request).
    through `POST /api/session-rules … replacesRuleId`; each lane reads them back. A later edit
    here changes nothing the rule allows until the rule is accepted again.
 
-   **Pilot (W3-A, 2026-10-25):** Architect A459 accepted the replacement rule texts under Charter
-   `GRANT-V537-BATCH1-20261024` (Rules #269–#283). Operator activation via `POST /api/session-rules`
-   remains pending. Refs #2371.
+   **Pilot (W3-A, 2026-10-25):** A439-R5/v5.37.0 v1 rules #270–#282 carry the charter-gated named
+   pilot provision under Charter `GRANT-V537-BATCH1-20261024`. Operator activation of the replacement
+   rule texts via `POST /api/session-rules` remains pending. Refs #2371.
 3. **The Operator declares the command.** `test_command` in `.prawduct/project-state.yaml` becomes
    `node scripts/suite-evidence.js --junit {junit_xml}` on the lane hosts, and the pins in
    `test/suite-evidence.test.js` that hold today's declaration are changed in the same change,
@@ -403,8 +403,8 @@ plans URL; its digest is in the W4-03 pull request).
    command is still today's suite, so the declaration alone changes nothing a gate sees.
 4. **The complement is verified** on the host the lanes use, before any chunk relies on it.
 
-   **Pilot (W3-A, 2026-10-25):** Complement verified on the lane host before W3-A pushed for CI.
-   Refs #2371.
+   **Pilot (W3-A, 2026-10-25):** Complement verification on the lane host is pending before the
+   W3-A CI run relies on it. Refs #2371.
 5. **One bounded pilot.** Exactly one chunk, named in the lane queue when its plan is approved
    (before any result exists), runs `prawduct-hook test-evidence record` with
    `TANGLECLAW_SUITE_EVIDENCE=ci` and stands on what the command writes. The batch charter's
@@ -413,11 +413,11 @@ plans URL; its digest is in the W4-03 pull request).
    slot wait avoided, the command's wall time, any refusal and which fact, and that the gate
    records the merged report.
 
-   **Pilot (W3-A, 2026-10-25):** W3-A (#2156+#1630) is the named pilot, authorized and run under
-   Charter `GRANT-V537-BATCH1-20261024` (Rules #269–#283) via
-   `TANGLECLAW_SUITE_EVIDENCE=ci node scripts/record-test-run.js` on the exact PR-head CI run.
-   Step 3 (`test_command` declaration) and Step 6 (broader activation) remain Operator-held after
-   pilot evaluation. Measurement recorded in the PR body. Refs #2371.
+   **Pilot (W3-A, 2026-10-25):** W3-A (#2156+#1630) is the named pilot under Charter
+   `GRANT-V537-BATCH1-20261024` (A439-R5/v5.37.0 v1 rules #270–#282). When CI is green on the
+   exact PR head, `TANGLECLAW_SUITE_EVIDENCE=ci node scripts/record-test-run.js` will be run and
+   the measurement posted to the PR body. Step 3 (`test_command` declaration) and Step 6 (broader
+   activation) remain Operator-held after pilot evaluation. Refs #2371.
 6. **Broader use is decided separately**, from the pilot's measurement: its time and its safety
    failures (a defect the pilot let through, a complement entry that did not run, an evidence
    refusal) alike. Until then, every other chunk runs the full local suite.
