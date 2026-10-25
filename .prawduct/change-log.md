@@ -41,6 +41,15 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-25 — v5.37.0 W3-B: tmux test reliability fixes (env-dump polling + server-exit retry)
+
+<!-- prawduct: type=fix | scope=w3b-2565-2569 -->
+
+W3-B sprint, under `GRANT-V537-BATCH1-20261024` / PM A4.
+
+- **`#2565`** (fix): Replace fixed `sleep 0.5` with bounded polling (`waitForEnvDump`, 3 s deadline, 20 ms interval) in `createSession - launch env injection` tests so env-dump assertions are reliable on loaded CI runners.
+- **`#2569`** (fix): Harden `createSession` against the exit-empty tmux server teardown race: per-test unique session names in `createSession - status bar`, and a one-retry settle (20 ms) in `lib/tmux.js` for "server exited unexpectedly" with dual `hasSession` guards (pre-sleep, post-sleep) preserving the idempotent return-false contract. Five PATH-shimmed tests cover retry-success, partial-create, post-sleep guard, retry-itself-fails, and nonmatching-error-rethrows paths.
+
 ## 2026-10-24 — v5.37.0 W2-B: held-wake badge + require-graph outer-span fix + CI upload-artifact pin
 
 <!-- prawduct: type=feature | scope=w2b-2578-2566 -->
