@@ -195,7 +195,7 @@ describe('toolbar filter-group alignment (#2123)', () => {
   });
 });
 
-describe('card Launch/Open control is a real link only when it is pure navigation (#2124)', () => {
+describe('card Launch/Open control is a real link for both states (#2124)', () => {
   const { loadJsArg } = require('./helpers/lift');
   const jsArg = loadJsArg('landing.js');
 
@@ -210,19 +210,20 @@ describe('card Launch/Open control is a real link only when it is pure navigatio
     assert.match(snippet, />Open<\/a>/);
   });
 
-  it('the not-yet-active ("Launch") branch stays a plain <button> with no href (#2124 PRR BLOCKING: launching is a mutating POST — a GET-safe link to /session/:name would show "no active session" instead of starting one)', () => {
-    const idx = UI_SRC.indexOf(': `<button class="btn btn-compact btn-launch"');
-    assert.ok(idx > -1, 'ui.js must still render a <button> for the not-yet-active case');
+  it('the not-yet-active ("Launch") branch is a real <a href="/?launch=:name"> (PRR BLOCKING follow-up: a direct /session/:name link would show "no active session" for a never-launched project — /?launch=<name> instead re-enters the page and runs the real launch flow)', () => {
+    const idx = UI_SRC.indexOf(': `<a class="btn btn-compact btn-launch" href="/?launch=');
+    assert.ok(idx > -1, 'ui.js must render an <a href="/?launch=..."> for the not-yet-active case');
     const snippet = UI_SRC.slice(idx, idx + 220);
-    assert.doesNotMatch(snippet, /href=/, 'the Launch button must carry no href');
-    assert.match(snippet, /onclick="event\.stopPropagation\(\);\s*launchProject/);
-    assert.match(snippet, />Launch<\/button>/);
+    assert.match(snippet, /href="\/\?launch=\$\{encodeURIComponent\(project\.name\)\}"/);
+    assert.match(snippet, /onclick="event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*launchProject/,
+      'left-click must still preventDefault and run launchProject immediately, without a page reload');
+    assert.match(snippet, />Launch<\/a>/);
   });
 
-  it('doLaunchProject\'s button lookup matches the ACTUAL rendered onclick attribute (PRR WARNING: jsArg renders a double-quoted argument, not single-quoted)', () => {
+  it('doLaunchProject\'s lookup matches the ACTUAL rendered onclick attribute regardless of tag (PRR WARNING: jsArg renders a double-quoted argument, not single-quoted)', () => {
     const body = liftDeclaration(LANDING_SRC, 'async function doLaunchProject(');
-    assert.match(body, /document\.querySelector\(`button\[onclick\*='launchProject\("\$\{name\}"\)'\]`\)/,
-      'the selector must look for a double-quoted argument — that is what jsArg actually renders');
+    assert.match(body, /document\.querySelector\(`\[onclick\*='launchProject\("\$\{name\}"\)'\]`\)/,
+      'the selector must look for a double-quoted argument (what jsArg renders) and not require a <button> tag (the control is an <a>)');
 
     // Reproduce the real pipeline: build the onclick attribute exactly as
     // ui.js does, decode it the way a browser decodes an HTML attribute
@@ -230,7 +231,7 @@ describe('card Launch/Open control is a real link only when it is pure navigatio
     // present — not just that the source text looks plausible.
     const name = "O'Brien's \"Project\"";
     const nArg = jsArg(name);
-    const rawAttr = `event.stopPropagation(); launchProject(${nArg})`;
+    const rawAttr = `event.preventDefault(); event.stopPropagation(); launchProject(${nArg})`;
     const decoded = rawAttr
       .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
       .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
@@ -239,14 +240,69 @@ describe('card Launch/Open control is a real link only when it is pure navigatio
       `decoded onclick attribute (${decoded}) must contain the selector's substring (${selectorSubstring})`);
   });
 
-  it('doLaunchProject uses the button\'s native .disabled (back to a <button>, no pending-state class needed)', () => {
+  it('doLaunchProject uses a CSS class for the pending state (.disabled is a no-op on an <a>)', () => {
     const body = liftDeclaration(LANDING_SRC, 'async function doLaunchProject(');
-    assert.match(body, /btn\.disabled = true/);
-    assert.match(body, /btn\.disabled = false/);
-    assert.doesNotMatch(body, /classList/, 'no class-based pending state — the control is a real <button> again');
+    assert.match(body, /btn\.classList\.add\('is-launching'\)/);
+    assert.match(body, /btn\.classList\.remove\('is-launching'\)/);
+    assert.doesNotMatch(body, /btn\.disabled/);
   });
 
-  it('style.css carries no leftover .is-launching rule', () => {
-    assert.doesNotMatch(CSS_SRC, /is-launching/);
+  it('style.css defines the pending-state class with pointer-events: none', () => {
+    const m = /\.btn-launch\.is-launching\s*\{([^}]*)\}/.exec(CSS_SRC);
+    assert.ok(m, '.btn-launch.is-launching rule must exist');
+    assert.match(m[1], /pointer-events:\s*none/);
+  });
+});
+
+describe('consumeLaunchQueryParam turns a ?launch=<name> landing into a real launch (#2124)', () => {
+  /**
+   * Run the real consumeLaunchQueryParam() against a mocked location/history,
+   * capturing what it does rather than re-declaring its logic.
+   * @param {string} search - `location.search` to present, e.g. '?launch=foo'.
+   * @returns {{launched: string[], replaced: Array<{url:string}>}}
+   */
+  function run(search) {
+    const launched = [];
+    const replaced = [];
+    const ctx = vm.createContext({
+      URLSearchParams,
+      location: { search, pathname: '/' },
+      history: { replaceState: (state, title, url) => replaced.push({ url }) },
+      launchProject: (name) => { launched.push(name); }
+    });
+    const fnSrc = liftDeclaration(LANDING_SRC, 'function consumeLaunchQueryParam()');
+    vm.runInContext(`${fnSrc}\nconsumeLaunchQueryParam();`, ctx);
+    return { launched, replaced };
+  }
+
+  it('is a no-op with no launch param', () => {
+    const { launched, replaced } = run('');
+    assert.deepEqual(launched, []);
+    assert.deepEqual(replaced, []);
+  });
+
+  it('strips the param and launches the named project', () => {
+    const { launched, replaced } = run('?launch=my-project');
+    assert.deepEqual(launched, ['my-project']);
+    assert.equal(replaced.length, 1);
+    assert.equal(replaced[0].url, '/');
+  });
+
+  it('decodes an encoded project name', () => {
+    const { launched } = run(`?launch=${encodeURIComponent("O'Brien's Project")}`);
+    assert.deepEqual(launched, ["O'Brien's Project"]);
+  });
+
+  it('preserves other query params when stripping launch', () => {
+    const { replaced } = run('?launch=my-project&foo=bar');
+    assert.equal(replaced[0].url, '/?foo=bar');
+  });
+
+  it('init() calls it once, after loadProjects() populates state.projects and renders the card', () => {
+    const body = liftDeclaration(LANDING_SRC, 'async function init()');
+    const loadIdx = body.indexOf('await loadProjects()');
+    const consumeIdx = body.indexOf('consumeLaunchQueryParam()');
+    assert.ok(loadIdx > -1 && consumeIdx > -1 && loadIdx < consumeIdx,
+      'consumeLaunchQueryParam() must run after loadProjects(), once state.projects (and the rendered card) exist');
   });
 });

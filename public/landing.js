@@ -2099,6 +2099,27 @@ function proceedWithLaunchModeCheck(name, project, continuityMode) {
   doLaunchProject(name, null, continuityMode);
 }
 
+/**
+ * Consume a `?launch=<name>` query param (#2124): a card's not-yet-active
+ * "Launch" control is a real `<a href="/?launch=<name>">` so right-click
+ * "Open in new tab" has something GET-safe to land on, and this is what
+ * turns that landing into an actual launch — strip the param (so reloading
+ * or sharing the URL doesn't re-trigger it) and run the exact launch flow a
+ * direct click runs (continuity/launch-mode modals, refusal handling,
+ * included). No-op if the param is absent. Called once from init(), after
+ * `loadProjects()` populates `state.projects` and renders the card that
+ * `doLaunchProject`'s pending-state UI targets.
+ */
+function consumeLaunchQueryParam() {
+  const params = new URLSearchParams(location.search);
+  const name = params.get('launch');
+  if (!name) return;
+  params.delete('launch');
+  const qs = params.toString();
+  history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : ''));
+  launchProject(name);
+}
+
 async function launchProject(name) {
   const project = state.projects.find(p => p.name === name);
   if (project && project.session && project.session.active) {
@@ -2126,18 +2147,19 @@ async function launchProject(name) {
  */
 async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStranded) {
   // Immediate visual feedback — swap button text to "Launching…" and disable.
-  // This only ever runs for the not-yet-active ("Launch") control, which stays
-  // a real <button> (#2124 — only the active-session "Open" control became an
-  // <a>, since launching is a mutating POST and can't be a plain GET-safe
-  // link). jsArg() renders the project-name argument double-quoted
-  // (`JSON.stringify` then HTML-escaped), so the rendered attribute reads
-  // `launchProject("name")`, not `launchProject('name')` — the selector below
-  // must match that, or `btn` is always null and nothing here ever applies.
-  const btn = document.querySelector(`button[onclick*='launchProject("${name}")']`);
+  // This runs for the not-yet-active ("Launch") control — a real <a href>
+  // (#2124), not a <button>, so the browser's native "Open in new tab" works
+  // on it too (consumeLaunchQueryParam() is what turns that landing into an
+  // actual launch). `.disabled` is a no-op on an anchor, so the pending state
+  // is a CSS class instead. jsArg() renders the project-name argument
+  // double-quoted (`JSON.stringify` then HTML-escaped), so the rendered
+  // attribute reads `launchProject("name")`, not `launchProject('name')` —
+  // the selector below must match that, or `btn` is always null.
+  const btn = document.querySelector(`[onclick*='launchProject("${name}")']`);
   const originalText = btn ? btn.textContent : '';
   if (btn) {
     btn.textContent = 'Launching\u2026';
-    btn.disabled = true;
+    btn.classList.add('is-launching');
   }
 
   const body = {};
@@ -2156,7 +2178,7 @@ async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStra
     const data = await res.json();
 
     if (!res.ok) {
-      if (btn) { btn.textContent = originalText; btn.disabled = false; }
+      if (btn) { btn.textContent = originalText; btn.classList.remove('is-launching'); }
       // #1539: stranded wraps hold the launch. Show them and let the operator
       // acknowledge and launch in one step, with the same launch choices.
       if (data.code === 'STRANDED_WRAPS' && Array.isArray(data.items) && data.items.length > 0) {
@@ -2183,7 +2205,7 @@ async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStra
     closeStrandedLaunchModal();
     navigateToSession(name, { launched: true });
   } catch (err) {
-    if (btn) { btn.textContent = originalText; btn.disabled = false; }
+    if (btn) { btn.textContent = originalText; btn.classList.remove('is-launching'); }
     if (err.name === 'TypeError' || err.message === 'Failed to fetch') {
       setConnected(false);
     }
@@ -2828,6 +2850,7 @@ async function init() {
   wireStaleServerBanner();
   wireVersionCheck();
   await loadProjects();
+  consumeLaunchQueryParam();
   // Opening the dashboard is a real measurement, not a cache read. A release
   // published since the server's last periodic check was previously invisible
   // until that timer next fired — a whole interval of a page that had been
