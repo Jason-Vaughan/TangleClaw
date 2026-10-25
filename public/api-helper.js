@@ -4608,7 +4608,7 @@
       }
       const ask = deps.prompt || global.prompt;
       if (typeof ask !== 'function') {
-        setError('Could not paste: this page cannot show the prompt that needs.');
+        setError('Could not paste: this page cannot show the prompt it needs.');
         return;
       }
       const entered = ask('Paste text into the Master terminal:');
