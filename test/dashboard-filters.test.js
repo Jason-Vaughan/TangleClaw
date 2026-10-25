@@ -210,8 +210,8 @@ describe('card Launch/Open control is a real link for both states (#2124)', () =
   it('the not-yet-active ("Launch") branch is a real <a href="/?launch=:name"> (PRR BLOCKING follow-up: a direct /session/:name link would show "no active session" for a never-launched project — /?launch=<name> instead re-enters the page and runs the real launch flow)', () => {
     const idx = UI_SRC.indexOf(': `<a class="btn btn-compact btn-launch" data-project-name=');
     assert.ok(idx > -1, 'ui.js must render an <a href="/?launch=..."> for the not-yet-active case');
-    const snippet = UI_SRC.slice(idx, idx + 260);
-    assert.match(snippet, /href="\/\?launch=\$\{encodeURIComponent\(project\.name\)\}"/);
+    const snippet = UI_SRC.slice(idx, idx + 320);
+    assert.match(snippet, /href="\/\?launch=\$\{encodeURIComponent\(project\.name\)\}&intent=/);
     assert.match(snippet, /onclick="event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*launchProject/,
       'left-click must still preventDefault and run launchProject immediately, without a page reload');
     assert.match(snippet, />Launch<\/a>/);
@@ -284,51 +284,135 @@ describe('card Launch/Open control is a real link for both states (#2124)', () =
   });
 });
 
-describe('consumeLaunchQueryParam turns a ?launch=<name> landing into a real launch (#2124)', () => {
+describe('getLaunchIntentToken + consumeLaunchQueryParam guard the launch against CSRF (#2124 PRR-A C5)', () => {
   /**
-   * Run the real consumeLaunchQueryParam() against a mocked location/history,
-   * capturing what it does rather than re-declaring its logic.
-   * @param {string} search - `location.search` to present, e.g. '?launch=foo'.
-   * @returns {{launched: string[], replaced: Array<{url:string}>}}
+   * A minimal in-memory localStorage mock, same shape as `fakeLocalStorage()`
+   * above but exposed per-test here so a stored token can be asserted on
+   * directly (removed vs. still present) after the run.
+   * @param {Record<string,string>} [seed] - Pre-populated keys.
+   * @returns {{getItem(string): string|null, setItem(string,string): void, removeItem(string): void, store: Map<string,string>}}
    */
-  function run(search) {
-    const launched = [];
-    const replaced = [];
-    const ctx = vm.createContext({
-      URLSearchParams,
-      location: { search, pathname: '/' },
-      history: { replaceState: (state, title, url) => replaced.push({ url }) },
-      launchProject: (name) => { launched.push(name); }
-    });
-    const fnSrc = liftDeclaration(LANDING_SRC, 'function consumeLaunchQueryParam()');
-    vm.runInContext(`${fnSrc}\nconsumeLaunchQueryParam();`, ctx);
-    return { launched, replaced };
+  function fakeStorage(seed) {
+    const store = new Map(Object.entries(seed || {}));
+    return {
+      store,
+      getItem(k) { return store.has(k) ? store.get(k) : null; },
+      setItem(k, v) { store.set(k, String(v)); },
+      removeItem(k) { store.delete(k); }
+    };
   }
 
-  it('is a no-op with no launch param', () => {
-    const { launched, replaced } = run('');
-    assert.deepEqual(launched, []);
-    assert.deepEqual(replaced, []);
+  describe('getLaunchIntentToken', () => {
+    it('mints and stores a token when none exists', () => {
+      const storage = fakeStorage();
+      const ctx = vm.createContext({
+        localStorage: storage,
+        crypto: { randomUUID: () => 'minted-uuid' }
+      });
+      const token = vm.runInContext(
+        `${liftDeclaration(LANDING_SRC, 'function getLaunchIntentToken()')}\ngetLaunchIntentToken();`, ctx);
+      assert.equal(token, 'minted-uuid');
+      assert.equal(storage.getItem('tc_launchIntent'), 'minted-uuid');
+    });
+
+    it('reads the existing token instead of minting a new one', () => {
+      const storage = fakeStorage({ tc_launchIntent: 'already-there' });
+      const ctx = vm.createContext({
+        localStorage: storage,
+        crypto: { randomUUID: () => { throw new Error('must not mint when a token already exists'); } }
+      });
+      const token = vm.runInContext(
+        `${liftDeclaration(LANDING_SRC, 'function getLaunchIntentToken()')}\ngetLaunchIntentToken();`, ctx);
+      assert.equal(token, 'already-there');
+    });
   });
 
-  it('strips the param and launches the named project', () => {
-    const { launched, replaced } = run('?launch=my-project');
-    assert.deepEqual(launched, ['my-project']);
-    assert.equal(replaced.length, 1);
-    assert.equal(replaced[0].url, '/');
+  describe('consumeLaunchQueryParam', () => {
+    /**
+     * Run the real consumeLaunchQueryParam() against a mocked
+     * location/history/localStorage, capturing what it does rather than
+     * re-declaring its logic.
+     * @param {string} search - `location.search` to present.
+     * @param {Record<string,string>} [storageSeed] - Pre-populated localStorage.
+     * @returns {{launched: string[], replaced: Array<{url:string}>, storage: object}}
+     */
+    function run(search, storageSeed) {
+      const launched = [];
+      const replaced = [];
+      const storage = fakeStorage(storageSeed);
+      const ctx = vm.createContext({
+        URLSearchParams,
+        location: { search, pathname: '/' },
+        history: { replaceState: (state, title, url) => replaced.push({ url }) },
+        localStorage: storage,
+        launchProject: (name) => { launched.push(name); }
+      });
+      const fnSrc = liftDeclaration(LANDING_SRC, 'function consumeLaunchQueryParam()');
+      vm.runInContext(`${fnSrc}\nconsumeLaunchQueryParam();`, ctx);
+      return { launched, replaced, storage };
+    }
+
+    it('is a no-op with no launch param at all', () => {
+      const { launched, replaced } = run('');
+      assert.deepEqual(launched, []);
+      assert.deepEqual(replaced, []);
+    });
+
+    it('launches and consumes (removes) the token when intent matches (PRR-A C5: single-use)', () => {
+      const { launched, replaced, storage } = run(
+        '?launch=my-project&intent=tok-1', { tc_launchIntent: 'tok-1' });
+      assert.deepEqual(launched, ['my-project']);
+      assert.equal(replaced.length, 1);
+      assert.equal(replaced[0].url, '/', 'both launch and intent must be stripped from the URL');
+      assert.equal(storage.getItem('tc_launchIntent'), null, 'the token must be removed after use — single-use');
+    });
+
+    it('makes ZERO launch calls when intent is entirely absent — the pre-fix vulnerability this closes (PRR-A C5)', () => {
+      const { launched } = run('?launch=my-project', { tc_launchIntent: 'tok-1' });
+      assert.deepEqual(launched, [], 'a bare ?launch=<name> GET (what a cross-site link would carry) must never auto-launch');
+    });
+
+    it('makes ZERO launch calls when intent does not match the stored token', () => {
+      const { launched } = run('?launch=my-project&intent=wrong-token', { tc_launchIntent: 'tok-1' });
+      assert.deepEqual(launched, []);
+    });
+
+    it('makes ZERO launch calls when no token was ever minted (localStorage empty)', () => {
+      const { launched } = run('?launch=my-project&intent=tok-1', {});
+      assert.deepEqual(launched, []);
+    });
+
+    it('a replayed (already-consumed) intent makes zero launch calls on a second attempt', () => {
+      // First consumption removes the token; simulate the second attempt
+      // starting from that post-removal state.
+      const { storage: afterFirst } = run('?launch=my-project&intent=tok-1', { tc_launchIntent: 'tok-1' });
+      const replay = run('?launch=my-project&intent=tok-1', Object.fromEntries(afterFirst.store));
+      assert.deepEqual(replay.launched, []);
+    });
+
+    it('decodes an encoded project name', () => {
+      const name = "O'Brien's Project";
+      const { launched } = run(
+        `?launch=${encodeURIComponent(name)}&intent=tok-1`, { tc_launchIntent: 'tok-1' });
+      assert.deepEqual(launched, [name]);
+    });
+
+    it('preserves other query params when stripping launch and intent', () => {
+      const { replaced } = run(
+        '?launch=my-project&intent=tok-1&foo=bar', { tc_launchIntent: 'tok-1' });
+      assert.equal(replaced[0].url, '/?foo=bar');
+    });
   });
 
-  it('decodes an encoded project name', () => {
-    const { launched } = run(`?launch=${encodeURIComponent("O'Brien's Project")}`);
-    assert.deepEqual(launched, ["O'Brien's Project"]);
+  it('the rendered Launch href carries &intent=<token> (ui.js)', () => {
+    const idx = UI_SRC.indexOf(': `<a class="btn btn-compact btn-launch" data-project-name=');
+    assert.ok(idx > -1);
+    const snippet = UI_SRC.slice(idx, idx + 260);
+    assert.match(snippet, /&intent=\$\{encodeURIComponent\(getLaunchIntentToken\(\)\)\}/,
+      'the not-yet-active Launch control must embed the dashboard-minted intent token');
   });
 
-  it('preserves other query params when stripping launch', () => {
-    const { replaced } = run('?launch=my-project&foo=bar');
-    assert.equal(replaced[0].url, '/?foo=bar');
-  });
-
-  it('init() calls it once, after loadProjects() populates state.projects and renders the card', () => {
+  it('init() calls consumeLaunchQueryParam once, after loadProjects() populates state.projects and renders the card', () => {
     const body = liftDeclaration(LANDING_SRC, 'async function init()');
     const loadIdx = body.indexOf('await loadProjects()');
     const consumeIdx = body.indexOf('consumeLaunchQueryParam()');

@@ -2100,23 +2100,58 @@ function proceedWithLaunchModeCheck(name, project, continuityMode) {
 }
 
 /**
- * Consume a `?launch=<name>` query param (#2124): a card's not-yet-active
- * "Launch" control is a real `<a href="/?launch=<name>">` so right-click
- * "Open in new tab" has something GET-safe to land on, and this is what
- * turns that landing into an actual launch — strip the param (so reloading
- * or sharing the URL doesn't re-trigger it) and run the exact launch flow a
- * direct click runs (continuity/launch-mode modals, refusal handling,
- * included). No-op if the param is absent. Called once from init(), after
- * `loadProjects()` populates `state.projects` and renders the card that
- * `doLaunchProject`'s pending-state UI targets.
+ * The dashboard's own unforgeable, single-use launch-intent token (#2124,
+ * PRR-A finding C5). `/?launch=<name>` alone auto-calling `launchProject()`
+ * on a bare GET is a CSRF vector: session and CSRF cookies are
+ * `SameSite=Lax`, so a cross-site top-level link still carries them, and
+ * this page's own JS would construct the CSRF header and auto-fire the
+ * launch with no operator action in between. A token minted into
+ * `localStorage` (same-origin only, unreadable from a cross-site page) and
+ * required to match before auto-launching closes that: the only way the
+ * right token reaches the URL is a link this page itself built, from a
+ * session that already held it — never a crafted cross-site link. Read,
+ * not re-minted, when one already exists, so multiple open tabs/reloads
+ * share one token until it is actually consumed.
+ * @returns {string}
+ */
+function getLaunchIntentToken() {
+  let token = null;
+  try { token = localStorage.getItem('tc_launchIntent'); } catch (e) { /* ignore */ }
+  if (token) return token;
+  token = crypto.randomUUID();
+  try { localStorage.setItem('tc_launchIntent', token); } catch (e) { /* ignore */ }
+  return token;
+}
+
+/**
+ * Consume a `?launch=<name>&intent=<token>` query param pair (#2124): a
+ * card's not-yet-active "Launch" control is a real
+ * `<a href="/?launch=<name>&intent=<token>">` so right-click "Open in new
+ * tab" has something GET-safe to land on, and this is what turns that
+ * landing into an actual launch — strip both params (so reloading or
+ * sharing the URL doesn't re-trigger it) and run the exact launch flow a
+ * direct click runs (continuity/launch-mode modals, refusal handling
+ * included), but ONLY when `intent` matches this origin's own
+ * `tc_launchIntent` token exactly, which is then immediately removed
+ * (single-use — PRR-A C5). A bare, missing, mismatched, or replayed
+ * `launch` param makes zero launch calls. No-op entirely if `launch` is
+ * absent. Called once from init(), after `loadProjects()` populates
+ * `state.projects` and renders the card that `doLaunchProject`'s
+ * pending-state UI targets.
  */
 function consumeLaunchQueryParam() {
   const params = new URLSearchParams(location.search);
   const name = params.get('launch');
   if (!name) return;
+  const intent = params.get('intent');
   params.delete('launch');
+  params.delete('intent');
   const qs = params.toString();
   history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : ''));
+  let expected = null;
+  try { expected = localStorage.getItem('tc_launchIntent'); } catch (e) { /* ignore */ }
+  if (!intent || !expected || intent !== expected) return;
+  try { localStorage.removeItem('tc_launchIntent'); } catch (e) { /* ignore */ }
   launchProject(name);
 }
 
