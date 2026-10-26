@@ -1343,6 +1343,70 @@ describe('tmux', () => {
         'lib/tmux.js must not call paste-buffer without -p — default LF→CR replacement causes #75'
       );
     });
+
+    it('delivers a multi-line paste\'s closing bracket and the trailing Enter as genuinely separate reads (#192)', () => {
+      // A bracketed-paste-aware TUI (prompt-toolkit, readline) puts its terminal
+      // in raw mode and reads the pty as it arrives, byte for byte, with no line
+      // buffering — unlike a naive cooked-mode reader, which can withhold an
+      // unterminated last line until some LATER byte (here, the separate Enter's
+      // own newline) completes it, making the close bracket and Enter arrive
+      // coalesced in one read no matter how long sendKeys waits between them.
+      // This probe sets raw mode, as a real target app would, and records every
+      // read with its arrival time, so the test can assert on what a
+      // correctly-behaving receiver actually sees: the full bracketed paste
+      // (ending `\x1b[201~`) in one read, and the Enter key's own `\r` in a
+      // LATER, distinct read — never both in the same chunk.
+      const { execSync } = require('node:child_process');
+      const os = require('node:os');
+      // The probe is written to a temp path at run time, not checked in: this
+      // chunk's authorized scope is `test/tmux.test.js` alone.
+      const probeSrc = [
+        'import sys, os, time, tty, termios, select',
+        'fd = sys.stdin.fileno()',
+        'old = termios.tcgetattr(fd)',
+        'tty.setraw(fd)',
+        'try:',
+        "    sys.stdout.write('\\x1b[?2004h'); sys.stdout.flush()",
+        "    with open(sys.argv[1], 'w') as log:",
+        '        start = time.time()',
+        '        while time.time() - start < float(sys.argv[2]):',
+        '            ready, _, _ = select.select([fd], [], [], 0.05)',
+        '            if ready:',
+        '                chunk = os.read(fd, 65536)',
+        "                log.write('%.4f %r\\n' % (time.time() - start, chunk)); log.flush()",
+        'finally:',
+        '    termios.tcsetattr(fd, termios.TCSADRAIN, old)'
+      ].join('\n');
+      const probeScript = path.join(os.tmpdir(), `tc-paste-probe-${Date.now()}.py`);
+      const logPath = path.join(os.tmpdir(), `tc-paste-probe-${Date.now()}.log`);
+      fs.writeFileSync(probeScript, probeSrc);
+      const probeSession = uniqueSessionName('paste-probe');
+      const payload = Array.from({ length: 15 }, (_, i) => `line ${i} of a multi-line payload for issue 192`).join('\n');
+      try {
+        tmux.createSession(probeSession, { command: `python3 ${shellWord(probeScript)} ${shellWord(logPath)} 3` });
+        // Give the probe time to set raw mode and advertise bracketed paste
+        // before anything is sent — the same margin `sendKeys` callers get in
+        // practice from engine-startup detection, not something under test here.
+        execSync('sleep 0.3');
+        tmux.sendKeys(probeSession, payload);
+        execSync('sleep 2');
+      } finally {
+        try { tmux.killSession(probeSession); } catch (_) {}
+        fs.rmSync(probeScript, { force: true });
+      }
+      const lines = fs.readFileSync(logPath, 'utf8').trim().split('\n').filter(Boolean);
+      fs.rmSync(logPath, { force: true });
+      const reads = lines.map((l) => {
+        const sp = l.indexOf(' ');
+        return { t: Number(l.slice(0, sp)), raw: l.slice(sp + 1) };
+      });
+      const pasteRead = reads.find((r) => r.raw.includes('\\x1b[201~'));
+      assert.ok(pasteRead, `expected a read containing the closing bracket, got:\n${lines.join('\n')}`);
+      const enterRead = reads[reads.length - 1];
+      assert.equal(enterRead.raw, "b'\\r'", `expected the Enter keystroke to be the final, own read, got:\n${lines.join('\n')}`);
+      assert.notEqual(enterRead, pasteRead, 'the closing bracket and Enter must not share one read');
+      assert.ok(enterRead.t > pasteRead.t, 'the Enter read must arrive strictly after the paste\'s closing bracket');
+    });
   });
 
   describe('sendRawKey', () => {

@@ -175,6 +175,48 @@ describe('bridge notifications (#2031)', () => {
       assert.equal(bridgeNotify.reconcile().workBlocked, 1);
       assert.equal(notifications().length, 1);
     });
+
+    it('does not page Discord directly for a lane whose coordinatorProject has a live session (#2620)', () => {
+      const coordinator = liveSession('TC-Lane-PM');
+      const alpha = liveSession('TC-Lane-A');
+      const cfg = store.projectConfig.load(alpha.project.path);
+      cfg.workloadNudge = { coordinatorProject: coordinator.project.name };
+      store.projectConfig.save(alpha.project.path, cfg);
+      enable();
+      reports(alpha, 'blocked');
+      assert.equal(bridgeNotify.reconcile().workBlocked, 0);
+      assert.deepEqual(notifications(), []);
+    });
+
+    it('pages Discord when coordinatorProject has no live session, is unset, or names itself (#2620)', () => {
+      const alpha = liveSession('TC-Lane-A');
+      const cfg = store.projectConfig.load(alpha.project.path);
+      cfg.workloadNudge = { coordinatorProject: 'no-such-project-anywhere' };
+      store.projectConfig.save(alpha.project.path, cfg);
+      enable();
+      reports(alpha, 'blocked');
+      assert.equal(bridgeNotify.reconcile().workBlocked, 1, 'an unresolvable coordinator still pages directly');
+
+      const bravo = liveSession('TC-Lane-B');
+      reports(bravo, 'blocked');
+      assert.equal(bridgeNotify.reconcile().workBlocked, 1, 'no coordinatorProject configured still pages directly');
+
+      const charlie = liveSession('TC-Lane-C');
+      const selfCfg = store.projectConfig.load(charlie.project.path);
+      selfCfg.workloadNudge = { coordinatorProject: 'TC-Lane-C' };
+      store.projectConfig.save(charlie.project.path, selfCfg);
+      reports(charlie, 'blocked');
+      assert.equal(bridgeNotify.reconcile().workBlocked, 1, 'naming itself as coordinator still pages directly');
+    });
+
+    it('does not page Discord for an opted-out project, even while blocked (#2620)', () => {
+      const alpha = liveSession('Alpha');
+      bridgeStore.optouts.set(alpha.project.id);
+      enable();
+      reports(alpha, 'blocked');
+      assert.equal(bridgeNotify.reconcile().workBlocked, 0);
+      assert.deepEqual(notifications(), []);
+    });
   });
 
   describe('operator-needed', () => {

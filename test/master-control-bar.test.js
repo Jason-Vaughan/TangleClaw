@@ -282,6 +282,198 @@ describe('#768 the bar behaves', () => {
   });
 });
 
+// ── #2035 — Full screen and Pop out on the Master control bar ──
+//
+// Both buttons live in the ONE shared markup/mount function (#768's own
+// property), so adding them here is what gives BOTH the dashboard panel and
+// the session drawer the controls with no change to either surface's own
+// page — the thing this chunk is scoped to prove, not just implement.
+describe('#2035 Full screen and Pop out', () => {
+  /** @returns {{doc: object, ids: object, bar: object, surface: object}} */
+  function mountedWithSurface(prefix, extraDeps) {
+    const { doc, ids } = makeDocument([prefix + 'Bar', prefix]);
+    withIdParsingInnerHTML(ids[prefix + 'Bar'], doc);
+    const surface = ids[prefix];
+    const bar = G.tcCreateMasterControlBar(Object.assign(
+      { doc, rootId: prefix + 'Bar', prefix, title: 'M' }, extraDeps
+    ));
+    return { doc, ids, bar, surface };
+  }
+
+  it('hides Full screen when the surface or the browser has no requestFullscreen', () => {
+    const { doc, bar } = mountedWithSurface('masterPanel');
+    bar.mount();
+    assert.equal(doc.getElementById('masterPanelFullscreenBtn').hidden, true,
+      'the lift-and-run stub element has no requestFullscreen, same as an unsupporting browser');
+  });
+
+  it('wires Full screen to the surface\'s requestFullscreen when it exists, and toggles exit', () => {
+    const { doc, bar, surface } = mountedWithSurface('masterPanel');
+    const calls = [];
+    surface.requestFullscreen = () => { calls.push('enter'); doc.fullscreenElement = surface; };
+    doc.exitFullscreen = () => { calls.push('exit'); doc.fullscreenElement = null; };
+    bar.mount();
+    const btn = doc.getElementById('masterPanelFullscreenBtn');
+    assert.equal(btn.hidden, false, 'Full screen must show once the surface supports it');
+
+    btn.dispatch('click');
+    assert.deepEqual(calls, ['enter']);
+    assert.equal(doc.fullscreenElement, surface);
+
+    btn.dispatch('click');
+    assert.deepEqual(calls, ['enter', 'exit'], 'a second press exits rather than re-entering');
+    assert.equal(doc.fullscreenElement, null);
+  });
+
+  it('toggleFullscreen is reachable directly, for a caller that is not a click', () => {
+    const { doc, bar, surface } = mountedWithSurface('masterDrawer');
+    let entered = false;
+    surface.requestFullscreen = () => { entered = true; doc.fullscreenElement = surface; };
+    bar.mount();
+    bar.toggleFullscreen();
+    assert.equal(entered, true);
+  });
+
+  it('Full screen expands deps.surfaceId when given one, not the bar\'s own prefix', () => {
+    const { doc, ids } = makeDocument(['masterPanelBar', 'masterPanel', 'customSurface']);
+    withIdParsingInnerHTML(ids.masterPanelBar, doc);
+    let targeted = null;
+    ids.customSurface.requestFullscreen = () => { targeted = 'customSurface'; };
+    ids.masterPanel.requestFullscreen = () => { targeted = 'masterPanel'; };
+    const bar = G.tcCreateMasterControlBar({
+      doc, rootId: 'masterPanelBar', prefix: 'masterPanel', surfaceId: 'customSurface'
+    });
+    bar.mount();
+    bar.toggleFullscreen();
+    assert.equal(targeted, 'customSurface');
+  });
+
+  it('hides Pop out on a page that IS a popout, so a popout cannot open another one', () => {
+    const { doc, bar } = mountedWithSurface('masterPanel', { isPopout: true });
+    bar.mount();
+    assert.equal(doc.getElementById('masterPanelPopoutBtn').hidden, true);
+  });
+
+  it('Pop out opens the root dashboard with ?master=popout, in a named window', () => {
+    const { doc, bar } = mountedWithSurface('masterPanel');
+    const opened = [];
+    doc.defaultView = {
+      location: { href: 'https://tc.example/' },
+      URL,
+      open: (url, name, features) => opened.push({ url, name, features })
+    };
+    bar.mount();
+    doc.getElementById('masterPanelPopoutBtn').dispatch('click');
+    assert.equal(opened.length, 1);
+    assert.equal(opened[0].url, 'https://tc.example/?master=popout');
+    assert.equal(opened[0].name, 'tc-master-popout');
+  });
+
+  it('Pop out from the session drawer still targets the root dashboard, not the session page (PRR-A C1)', () => {
+    // The drawer mounts this same bar on `/session/...` or `/session.html?project=...`
+    // — a page with no `?master=popout` handling of its own (that lives only in
+    // public/ui.js). Carrying the current path forward would open that page
+    // normally, with an unused query param, never reaching Master-only mode.
+    const { doc, bar } = mountedWithSurface('masterDrawer');
+    const opened = [];
+    doc.defaultView = {
+      location: { href: 'https://example.test/session.html?project=Foo' },
+      URL,
+      open: (url, name, features) => opened.push({ url, name, features })
+    };
+    bar.mount();
+    doc.getElementById('masterDrawerPopoutBtn').dispatch('click');
+    assert.equal(opened.length, 1);
+    assert.equal(opened[0].url, 'https://example.test/?master=popout',
+      'must be the root dashboard, not /session.html');
+    assert.equal(opened[0].name, 'tc-master-popout');
+  });
+
+  it('Pop out defers to deps.openPopout when the page supplies one', () => {
+    const fired = [];
+    const { doc, bar } = mountedWithSurface('masterPanel', { openPopout: () => fired.push(1) });
+    bar.mount();
+    doc.getElementById('masterPanelPopoutBtn').dispatch('click');
+    assert.deepEqual(fired, [1]);
+  });
+});
+
+// #192, web-terminal layer: `test/tmux.test.js`'s raw-mode PTY regression
+// covers the SERVER side (tmux sendKeys to the pane); this covers the CLIENT
+// side (pasteToMaster handing the browser clipboard's text to xterm.js) —
+// the other half of the same pipe, with its own chance to mangle a multi-line
+// payload (e.g. splitting on \n, or re-joining with the wrong line ending).
+describe('#192 pasteToMaster passes a multi-line payload to xterm intact', () => {
+  /**
+   * Mount a bar with a given frame registered at `frameId`, directly on the
+   * `ids` map `makeDocument` hands back — the same seam `test/paste-affordance.test.js`
+   * uses for this same component, kept local here since that file is outside
+   * this chunk's authorized scope.
+   * @returns {{doc: object, bar: object}}
+   */
+  function mountedWithFrame(prefix, frameId, frame, extraDeps) {
+    const { doc, ids } = makeDocument([prefix + 'Bar']);
+    withIdParsingInnerHTML(ids[prefix + 'Bar'], doc);
+    ids[frameId] = frame;
+    const bar = G.tcCreateMasterControlBar(Object.assign(
+      { doc, rootId: prefix + 'Bar', prefix, title: 'M' }, extraDeps
+    ));
+    bar.mount();
+    return { doc, bar };
+  }
+
+  it('a multi-line clipboard payload reaches term.paste() with every line and ending intact', async () => {
+    const pasted = [];
+    const term = { paste: (t) => pasted.push(t), focus: () => {} };
+    const { doc, bar } = mountedWithFrame('masterPanel', 'masterFrame', { contentWindow: { term } });
+    const multiLine = 'line one\nline two\nline three\n';
+    doc.defaultView = { navigator: { clipboard: { readText: async () => multiLine } } };
+    await bar.paste();
+    assert.deepEqual(pasted, [multiLine], 'the payload must reach term.paste() byte for byte — no split, re-join, or line-ending change');
+  });
+
+  it('the same holds through the fallback prompt, for a client with no clipboard read', async () => {
+    const pasted = [];
+    const term = { paste: (t) => pasted.push(t), focus: () => {} };
+    const multiLine = 'alpha\nbeta\ngamma';
+    const { doc, bar } = mountedWithFrame('masterDrawer', 'masterDrawerFrame', { contentWindow: { term } },
+      { prompt: () => multiLine });
+    doc.defaultView = { navigator: {} };
+    await bar.paste();
+    assert.deepEqual(pasted, [multiLine]);
+  });
+});
+
+describe('#2035 the dashboard\'s popout bootstrap (public/ui.js)', () => {
+  /** @returns {Function} `isMasterPopoutLoad`, lifted and run for real. */
+  function loadIsMasterPopoutLoad() {
+    return new Function(`${liftDeclaration(UI, 'function isMasterPopoutLoad(')}\nreturn isMasterPopoutLoad;`)();
+  }
+
+  /** @returns {Function} `enterMasterPopoutMode`, lifted and run for real. */
+  function loadEnterMasterPopoutMode() {
+    return new Function(`${liftDeclaration(UI, 'function enterMasterPopoutMode(')}\nreturn enterMasterPopoutMode;`)();
+  }
+
+  it('reads exactly ?master=popout, not any other value or an absent one', () => {
+    const isPopout = loadIsMasterPopoutLoad();
+    assert.equal(isPopout({ search: '?master=popout' }), true);
+    assert.equal(isPopout({ search: '' }), false);
+    assert.equal(isPopout({ search: '?master=1' }), false, 'only the exact value "popout" counts');
+    assert.equal(isPopout({ search: '?other=popout' }), false, 'the key must be master');
+  });
+
+  it('adds the popout-mode class and opens Master, in that order', () => {
+    const enter = loadEnterMasterPopoutMode();
+    const added = [];
+    const doc = { body: { classList: { add: (c) => added.push(c) } } };
+    const order = [];
+    enter(doc, () => order.push('opened'));
+    assert.deepEqual(added, ['master-popout-mode']);
+    assert.deepEqual(order, ['opened'], 'openMaster must actually run');
+  });
+});
+
 // ── #755 chunk 3 — the access toggle goes live ──
 //
 // The property under guard is NOT "pressing READ sends a PATCH". It is that the

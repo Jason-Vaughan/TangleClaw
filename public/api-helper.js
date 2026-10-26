@@ -3945,6 +3945,10 @@
       </span>
       <button type="button" class="banner-btn" id="${p}PasteBtn"
               aria-label="Paste into Master terminal" title="Paste clipboard text into the Master terminal">Paste</button>
+      <button type="button" class="banner-btn" id="${p}FullscreenBtn" aria-pressed="false"
+              aria-label="Full screen" title="Expand the Master terminal to fill the screen">&#x26F6;</button>
+      <button type="button" class="banner-btn" id="${p}PopoutBtn"
+              aria-label="Open in separate window" title="Open the Master terminal in its own window">&#x2197;</button>
       ${pend('Upload', 'banner-btn', 'Upload')}
       <button class="banner-btn" id="${p}SettingsBtn"
               aria-label="Master settings" title="Master settings">&#9881;</button>
@@ -3978,6 +3982,15 @@
    *   bar ever mounts on.
    * @param {Function} [deps.prompt] - Fallback text prompt for `Paste` when
    *   clipboard read is unavailable; defaults to the window's.
+   * @param {string} [deps.surfaceId] - Id of the element Full screen expands
+   *   (#2035). Defaults to `deps.prefix` — true for both surfaces this bar
+   *   mounts on today (`masterPanel`, `masterDrawer`), each the id of its own
+   *   outer container.
+   * @param {boolean} [deps.isPopout] - True when this page IS a popped-out
+   *   Master window (#2035): hides Popout so a popout cannot open another one.
+   * @param {Function} [deps.openPopout] - Called when Popout is pressed, in
+   *   place of the default `window.open('?master=popout', ...)` — for a test,
+   *   or a surface whose popout URL differs from the page's own.
    * @returns {{mount: Function, setStatus: Function, setModel: Function, setError: Function,
    *            setWarning: Function, setAccess: Function, loadAccess: Function, loadModel: Function}}
    */
@@ -4048,6 +4061,23 @@
       if (kill) kill.addEventListener('click', killMaster);
       const paste = el('PasteBtn');
       if (paste) paste.addEventListener('click', pasteToMaster);
+      const fullscreenBtn = el('FullscreenBtn');
+      if (fullscreenBtn) {
+        if (!surfaceEl() || !surfaceEl().requestFullscreen) fullscreenBtn.hidden = true;
+        else fullscreenBtn.addEventListener('click', toggleFullscreen);
+      }
+      // One listener per bar instance, guarded by `bound` same as the rest of
+      // this block — `mount` is idempotent, and a second one would double-fire.
+      // Guarded like the other document-level listeners above: the lift-and-run
+      // test harness's minimal `doc` stub has no `addEventListener` at all.
+      if (doc && typeof doc.addEventListener === 'function') {
+        doc.addEventListener('fullscreenchange', syncFullscreenButton);
+      }
+      const popoutBtn = el('PopoutBtn');
+      if (popoutBtn) {
+        if (deps.isPopout) popoutBtn.hidden = true;
+        else popoutBtn.addEventListener('click', openPopout);
+      }
       medusa.mount();
       // Establish the resting state in CODE rather than leaning on the markup's
       // attributes. The component then owns its own initial appearance, which
@@ -4618,7 +4648,70 @@
       }
     }
 
-    return { mount, setStatus, setModel, setError, setWarning, setAccess, setMedusa, loadAccess, loadModel, killMaster, paste: pasteToMaster, medusa };
+    /**
+     * The element Full screen expands: this bar's surface container, the same
+     * element on both the dashboard panel and the session drawer (#2035).
+     * @returns {Element|null}
+     */
+    function surfaceEl() {
+      return doc.getElementById(deps.surfaceId || p);
+    }
+
+    /**
+     * Toggle full screen on the surface. The Fullscreen API is the browser's
+     * own exit affordance too (Escape, or its own chrome) — `fullscreenchange`
+     * below is what keeps the button in sync with an exit this function did
+     * not cause.
+     * @returns {void}
+     */
+    function toggleFullscreen() {
+      const surface = surfaceEl();
+      if (!surface) return;
+      if (doc.fullscreenElement === surface) {
+        if (doc.exitFullscreen) doc.exitFullscreen();
+      } else if (surface.requestFullscreen) {
+        surface.requestFullscreen();
+      }
+    }
+
+    /**
+     * Repaint the Full screen button from the document's actual fullscreen
+     * state — never from which way the button itself last toggled it, so an
+     * Escape-key exit (never routed through {@link toggleFullscreen}) is still
+     * reflected.
+     * @returns {void}
+     */
+    function syncFullscreenButton() {
+      const btn = el('FullscreenBtn');
+      if (!btn) return;
+      const isFull = doc.fullscreenElement === surfaceEl();
+      btn.setAttribute('aria-pressed', String(isFull));
+      btn.title = isFull ? 'Exit full screen' : 'Expand the Master terminal to fill the screen';
+    }
+
+    /**
+     * Open the Master terminal in its own window, attached to the same tmux
+     * session: the popout page is ALWAYS the root dashboard (`/?master=popout`)
+     * on this origin, whose own `public/ui.js` reads that param to open
+     * straight onto the Master surface (#2035) — never the current page's own
+     * path, which this bar also mounts on `/session/...`; that page has no
+     * `?master=popout` handling of its own, and would just load normally with
+     * an unused param. Detaching this way — a window the operator closes like
+     * any other tab — does not stop the Master session; only Kill does.
+     * @returns {void}
+     */
+    function openPopout() {
+      if (deps.openPopout) { deps.openPopout(); return; }
+      const win = doc.defaultView || global;
+      if (!win.open) return;
+      const url = new win.URL('/?master=popout', win.location.href);
+      win.open(url.toString(), 'tc-master-popout', 'width=820,height=600');
+    }
+
+    return {
+      mount, setStatus, setModel, setError, setWarning, setAccess, setMedusa, loadAccess, loadModel,
+      killMaster, paste: pasteToMaster, medusa, toggleFullscreen, openPopout
+    };
   }
 
   /**

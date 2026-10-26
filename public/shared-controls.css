@@ -706,3 +706,33 @@
 .wrap-keep-running-hint {
   margin: 2px 0 0 24px;
 }
+
+/* #2035 Full screen: the browser's own `:fullscreen` default styling takes
+   the surface out of normal flow, but does not clear AUTHORED constraints on
+   it — `.master-panel.open`'s `max-height: 80vh` (style.css) and
+   `.master-drawer`'s own `max-height: 80vh` (session.css) would otherwise
+   still cap the surface at 80% of the viewport while "in full screen", and
+   `#masterFrame`/`#masterDrawerFrame` would stay at their resting 60%-height
+   rule. One shared rule set, in the stylesheet both pages already link,
+   covers both surfaces' ids rather than duplicating it per page. `#masterFrame`
+   is selected by ID, not by its `.master-frame` class: a test elsewhere in
+   this repo extracts THAT selector's rule body by scanning for its literal
+   text, and a second textual occurrence would be the one it finds. */
+#masterPanel:fullscreen,
+#masterDrawer:fullscreen {
+  max-height: none;
+  height: 100dvh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+#masterPanel:fullscreen .master-frame-wrap,
+#masterDrawer:fullscreen .master-drawer-frame-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+#masterPanel:fullscreen #masterFrame,
+#masterDrawer:fullscreen #masterDrawerFrame {
+  height: 100%;
+}
