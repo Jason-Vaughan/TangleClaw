@@ -405,7 +405,8 @@ describe('#2011 the terminal reattaches on a new session and recovers from an or
     const decls = ['function _sessionTerm(', 'function terminalDisconnectStatus(', 'function clearReconnectingStatus(',
       'function cancelReconnectEpisode(', 'function runReconnectAttempt(', 'function setupTerminalKeepingEpisode(',
       'function beginReconnectEpisode(', 'function checkOrdinaryDisconnect(', 'function setupTerminal(',
-      'function reattachTerminalForStatus(', 'function applyWebuiMode(', 'function startEndedWatch(', 'function stopEndedWatch('];
+      'function reattachTerminalForStatus(', 'function applyWebuiMode(', 'function undoWebuiMode(',
+      'function startEndedWatch(', 'function stopEndedWatch(', 'function showWrappingState('];
     const names = decls.map((d) => d.match(/function (\w+)\(/)[1]);
     vm.runInContext(
       `const RECONNECT_BACKOFF_MS = [1000, 2000, 4000, 4000];\n`
@@ -610,9 +611,53 @@ describe('#2011 the terminal reattaches on a new session and recovers from an or
     assert.equal(h.mobileKeybar.hidden, false, 'switching back to tmux on a touch device reveals the keybar again');
   });
 
+  it('reattaching webui then back to tmux fully RESTORES the tmux-only controls, not just the keybar (PRR-B B3-reverse)', () => {
+    const h = load({ touch: true });
+    h.ctx.reattachTerminalForStatus({ sessionMode: 'webui', iframeUrl: '/openclaw/foo' });
+    for (const id of ['peekBtn', 'copyBtn', 'cmdBtn', 'uploadBtn', 'moreBtn']) {
+      assert.equal(h.ctx.document.getElementById(id).disabled, true, `${id} must be disabled under webui`);
+    }
+    h.ctx.reattachTerminalForStatus({ sessionMode: 'tmux' });
+    for (const id of ['peekBtn', 'copyBtn', 'cmdBtn', 'uploadBtn', 'moreBtn']) {
+      assert.equal(h.ctx.document.getElementById(id).disabled, false,
+        `${id} must be re-enabled switching back to tmux, not left stuck disabled`);
+    }
+    // Copy carries a real tooltip in session.html — restoring must not
+    // blank it to match the others, which never had one.
+    assert.equal(h.ctx.document.getElementById('copyBtn').title, 'Copy the last terminal selection to this device');
+    assert.equal(h.ctx.document.getElementById('peekBtn').title, '');
+  });
+
   it('handleSessionEnded and handleWrapCompleted both cancel any in-flight reconnect episode (PRR-A B1)', () => {
     assert.match(liftDeclaration(SESSION_JS, 'function handleSessionEnded('), /cancelReconnectEpisode\(\)/);
     assert.match(liftDeclaration(SESSION_JS, 'function handleWrapCompleted('), /cancelReconnectEpisode\(\)/);
+  });
+
+  it('cancelReconnectEpisode removes .reconnecting even when ended/wrapping is ALREADY true (PRR-B finding)', () => {
+    // .status-dot.reconnecting is defined AFTER .ended/.wrapping in
+    // session.css, so leaving it on the dot through an end/wrap transition
+    // would have the amber breathing dot win the visual over the correct
+    // ended/wrapping one. The real callers (handleSessionEnded,
+    // handleWrapCompleted) set sessionState.ended/wrapping BEFORE calling
+    // this, which is exactly the order exercised here.
+    const h = load({ bufferLines: ['[exited]', 'Press Enter to Reconnect'] });
+    h.sessionState.session = { sessionId: 'sess-1' };
+    h.ctx.checkOrdinaryDisconnect();
+    assert.ok(h.statusDot.classes.has('reconnecting'), 'the episode must have painted it first');
+    h.sessionState.ended = true; // the real call order: ended is set BEFORE cancelReconnectEpisode
+    h.ctx.cancelReconnectEpisode();
+    assert.ok(!h.statusDot.classes.has('reconnecting'), 'must be removed regardless of ended/wrapping');
+  });
+
+  it('showWrappingState cancels any in-flight reconnect episode, so only .wrapping shows on the dot (PRR-B finding)', () => {
+    const h = load({ bufferLines: ['[exited]', 'Press Enter to Reconnect'] });
+    h.sessionState.session = { sessionId: 'sess-1' };
+    h.ctx.checkOrdinaryDisconnect();
+    assert.ok(h.statusDot.classes.has('reconnecting'));
+    h.ctx.showWrappingState();
+    assert.ok(!h.statusDot.classes.has('reconnecting'), 'must not coexist with .wrapping');
+    assert.ok(h.statusDot.classes.has('wrapping'));
+    assert.equal(h.ctx.getReconnectTimer(), null, 'the pending backoff retry must be cancelled, not left to fire during the wrap');
   });
 
   it('runReconnectAttempt refuses to reattach once the session has ended or wrapped (PRR-A B1 defense in depth)', () => {

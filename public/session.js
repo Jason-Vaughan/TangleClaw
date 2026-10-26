@@ -2510,11 +2510,20 @@ function terminalDisconnectStatus() {
   }
 }
 
-/** Paint the "healthy again" status, undoing runReconnectAttempt's markers. */
+/**
+ * Paint the "healthy again" status, undoing runReconnectAttempt's markers.
+ *
+ * The `.reconnecting` dot class is removed UNCONDITIONALLY (PRR-B finding):
+ * it is defined after `.ended`/`.wrapping` in session.css, so leaving it on
+ * the dot through an end/wrap transition would have it win the visual —
+ * the amber breathing dot showing instead of the ended/wrapping one. Only
+ * the PILL TEXT is gated on ended/wrapping, since those states paint their
+ * own text immediately after and "Active" would just be overwritten anyway.
+ */
 function clearReconnectingStatus() {
+  document.getElementById('statusDot').classList.remove('reconnecting');
   if (sessionState.ended || sessionState.wrapping) return;
   setPillDetail(document.getElementById('statusPill'), 'Active');
-  document.getElementById('statusDot').classList.remove('reconnecting');
 }
 
 /**
@@ -2952,8 +2961,9 @@ function reattachTerminalForStatus(data) {
     applyWebuiMode();
   } else {
     setupTerminal();
-    // The reverse direction of applyWebuiMode's keybar hide — reveals it
-    // again on touch if this page had switched to webui and back.
+    // The reverse of applyWebuiMode — restores the tmux-only controls it
+    // disabled, not just the keybar (PRR-B finding).
+    undoWebuiMode();
     const keybar = document.getElementById('mobileKeybar');
     if (keybar && 'ontouchstart' in window) keybar.hidden = false;
   }
@@ -2995,6 +3005,30 @@ function applyWebuiMode() {
   });
   const cmd = document.getElementById('cmdBtn');
   if (cmd) cmd.setAttribute('aria-expanded', 'false');
+}
+
+/**
+ * Undo `applyWebuiMode` — called by `reattachTerminalForStatus` (#2011) when
+ * a page switches from webui back to a tmux session, the only time a page's
+ * mode changes after load. Restores each button's ORIGINAL title (empty for
+ * every one except Copy, which carries a real tooltip in session.html) —
+ * blanking them all would silently erase that one (PRR-B finding: this
+ * reverse transition previously only unhid the keybar and left every
+ * button `disable()` left behind permanently stuck).
+ */
+function undoWebuiMode() {
+  const enable = (id, title) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.disabled = false;
+      el.title = title;
+    }
+  };
+  enable('peekBtn', '');
+  enable('copyBtn', 'Copy the last terminal selection to this device');
+  enable('cmdBtn', '');
+  enable('uploadBtn', '');
+  enable('moreBtn', '');
 }
 
 // ── Command Bar ──
@@ -7260,6 +7294,10 @@ function showWrappingState() {
   sessionState.wrapping = true;
   sessionState.wrapIdleModalShown = false;
   sessionState.wrapIdleCount = 0;
+  // A wrap starting while a reconnect episode is live would otherwise leave
+  // BOTH .reconnecting and .wrapping on the dot \u2014 same visual-conflict bug
+  // as the ended transitions (PRR-B finding).
+  cancelReconnectEpisode();
 
   const dot = document.getElementById('statusDot');
   dot.classList.add('wrapping');
