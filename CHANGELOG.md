@@ -4,6 +4,81 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.38.0] - 2026-10-25
+
+### Added
+- Creating a project now opens its Settings modal in a draft/setup step
+  instead of auto-launching the first session, so Medusa, model/effort, and
+  Project Rules can be configured before the session boots. "Save & Launch"
+  launches with those settings applied; "Save" or "Cancel" leave the project
+  created but unlaunched (#1304).
+- A project card's Launch/Open action is now a real link, so right-clicking
+  it offers the browser's native "Open in new tab" option (#2124).
+- The managed pre-push dispatcher (`lib/control-hooks.js`, #1861) now runs
+  `scripts/pre-push-gate.js` when a checkout has it, blocking a push whose
+  pre-push verification is red (#2595).
+- Added `scripts/with-scratch-server.js`, a disposable, isolated TangleClaw
+  server helper for browser checks: it spawns a child server on an
+  OS-assigned port against two fresh temp directories, so a check never
+  scans or mutates the real `~/Documents/Projects` or database (#2596,
+  #2604).
+
+### Fixed
+- The port-import "Ignore" list is now stored server-side instead of
+  per-browser localStorage, so ignoring an unregistered port project no
+  longer requires re-dismissing it on every other device (#1382).
+- Edit group, Kill Tunnel, Web UI, SSH, Remove, and +New Group controls now
+  keep keyboard focus across the dashboard's background poll, extending the
+  fix #1946 already applied to fold toggles (#2092).
+- The dashboard's Peek panel now stays open until explicitly toggled, instead
+  of silently closing on the next 10s project poll (#2121).
+- Dashboard tag and engine filters now persist across a reload instead of
+  resetting to "show everything" (#2122).
+- The dashboard toolbar's engine filter and tag picker now sit inline,
+  shifted left, instead of being centered in a way that overlapped and
+  wasted space (#2123).
+- Unarchiving a project now refuses (with a one-time override) when its
+  folder is missing or holds only TangleClaw's own scaffold with no git
+  history, instead of silently coming back as a blank placeholder; a launch
+  of any project in that state now carries the same warning (#2401).
+- **Windows `Ctrl+V` / voice dictation paste, and a Master `Paste` button** (#2458): on Windows,
+  `Ctrl+V` and dictation tools that synthesize it (Wispr Flow, Windows Voice Typing) no longer
+  send a literal `^V` into the terminal — the browser's native paste now reaches xterm on every
+  terminal surface. The Master control bar (dashboard panel and in-session drawer) gains a
+  `Paste` button, reading the clipboard with a text-prompt fallback where clipboard read is
+  unavailable.
+
+### Internal
+- Documented the VoiceOver/NVDA re-announcement risk in the panel
+  focus-restore mechanism (`renderKeepingFoldFocus`); live screen-reader
+  confirmation remains an owed operator-verification check (#2091).
+- Added `test/wrap-needs-operator-live.test.js`: an end-to-end, unmocked wrap
+  through the real HTTP route, proving the needs-operator pre-commit review
+  pause (#2156) against a live run rather than a VM-sandboxed accessor — the
+  owned file lands on `manifest.commit`, pauses the run `needs-operator`, and
+  a Retry (`pathDecisions: {leave}`, no `reviewSessionFiles`) moves it to
+  `manifest.keepLocal` with no second pause and no commit of the file (#2588).
+- Retired 61 dead exports (nothing outside their own module reads them) across 14 `lib/` modules, shrinking `test/dead-exports-baseline.json` from 139 to 78. Each name stays used inside its module; only the export entry goes, no declaration is deleted (#2590).
+- Retired 24 dead exports (nothing outside their own module reads them) across 8 `lib/` modules, shrinking `test/dead-exports-baseline.json` from 78 to 54. Each name stays used inside its module; only the export entry goes, no declaration is deleted (#2590).
+- Added `scripts/pre-push-gate.js`, chaining `node scripts/test-stage.js 1`
+  then `2 --base origin/main` as one command a Builder can run (or a hook
+  can call) before `git push` (#2595). Not yet wired into an actual git
+  hook — `lib/control-hooks.js`'s pre-push dispatcher wiring, and so the
+  push itself being blocked, is serialized to a follow-up wave. A
+  mechanical `gh pr merge` Builder guard is split to #2601.
+- Added `scripts/verify-features-index.js`: given the wave's own starting
+  commit as `--base`, it checks that every `Tests:` anchor newly added to
+  `FEATURES.md` names a test file the same diff touches, so a records PR
+  can't cite pre-existing coverage as proof of the wave's own work. Not yet
+  called from any wrap step, hook, or CI job — it exists to be invoked, not
+  active enforcement yet. Documented the completed v5.37.0 W3-A
+  CI-as-suite-evidence pilot result in `docs/lane-ci-evidence.md` (#2597).
+- Fixed `test/remote-output-callers.test.js:136`, which failed inside the
+  full Small tier but not in isolation: the real (unmocked) `backupSqlite`
+  call is now mocked, so the test's git-error path is reached
+  deterministically regardless of state an earlier file in the same tier
+  run left behind (#2600).
+
 ## [5.37.0] - 2026-10-25
 
 ### Added
