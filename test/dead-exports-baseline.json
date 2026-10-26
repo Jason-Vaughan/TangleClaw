@@ -6,6 +6,8 @@
     "acceptance) shrinks it with `--write-baseline`; nothing adds to it by hand."
   ],
   "dead": [
-    "lib/macho-closure.js:DEFAULT_SYSTEM_ROOTS"
+    "lib/git-template.js:templateDir",
+    "lib/macho-closure.js:DEFAULT_SYSTEM_ROOTS",
+    "lib/project-version.js:_readConfiguredVersion"
   ]
 }
