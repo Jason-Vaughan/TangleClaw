@@ -582,3 +582,194 @@ describe('getLaunchIntentToken + consumeLaunchQueryParam guard the launch agains
       'consumeLaunchQueryParam() must run after loadProjects(), once state.projects (and the rendered card) exist');
   });
 });
+
+/*
+ * #2121 — the Peek panel used to be a DOM node appended to the card and
+ * removed on toggle, so the 10s project poll's `grid.innerHTML` replace
+ * wiped it out every cycle: it looked like a timer-driven auto-close even
+ * though nothing explicitly closed it. `openPeekFromCard` now flips
+ * `openPeekProject`/`peekCache` and re-renders, the same fix `toggleCardDetail`
+ * already applied for the card detail panel (#1015) — run for real against a
+ * `vm` context, the same approach the rest of this file uses for landing.js.
+ * The two `let` lines mirror ui.js's own initial state rather than being
+ * lifted (`liftDeclaration` only understands brace-bodied declarations).
+ */
+describe('Peek panel survives a poll re-render instead of auto-closing (#2121)', () => {
+  const PROJECTS = [
+    { name: 'proj-a', session: { active: true } },
+    { name: 'proj-b', session: { active: true } }
+  ];
+
+  /**
+   * Run the real `openPeekFromCard` in a `vm` context, with `api`/`document`/
+   * `renderProjects` stubbed and recording.
+   * @param {object[]} projects - `state.projects`.
+   * @param {*} apiResult - What the stubbed `api()` resolves to.
+   * @returns {{ctx: object, apiCalls: string[], renders: number[]}}
+   */
+  function buildPeekContext(projects, apiResult) {
+    const apiCalls = [];
+    const renders = [];
+    const ctx = vm.createContext({
+      state: { projects },
+      api: async (url) => { apiCalls.push(url); return apiResult; },
+      document: { querySelector: () => null },
+      renderProjects: () => { renders.push(1); },
+      CSS: { escape: (s) => s }
+    });
+    const src = `let openPeekProject = null;\nlet peekCache = {};\nlet peekGeneration = 0;\n${liftDeclaration(UI_SRC, 'async function openPeekFromCard(')}`;
+    vm.runInContext(src, ctx);
+    return { ctx, apiCalls, renders };
+  }
+
+  it('opens by setting state and re-rendering, not by appending a DOM node', async () => {
+    const { ctx, renders } = buildPeekContext(PROJECTS, { lines: ['hello'] });
+    await vm.runInContext("openPeekFromCard('proj-a')", ctx);
+    assert.equal(vm.runInContext('openPeekProject', ctx), 'proj-a');
+    assert.ok(renders.length >= 1, 'must call renderProjects(), which is what keeps it open across the poll');
+  });
+
+  it('clicking Peek again on the same project closes it, without a second fetch', async () => {
+    const { ctx, apiCalls } = buildPeekContext(PROJECTS, { lines: ['hello'] });
+    await vm.runInContext("openPeekFromCard('proj-a')", ctx);
+    assert.equal(apiCalls.length, 1);
+    await vm.runInContext("openPeekFromCard('proj-a')", ctx);
+    assert.equal(vm.runInContext('openPeekProject', ctx), null, 'second click toggles it closed');
+    assert.equal(apiCalls.length, 1, 'closing must not re-fetch');
+  });
+
+  it('opening a different project closes the first and fetches the second (only one Peek open at a time)', async () => {
+    const { ctx, apiCalls } = buildPeekContext(PROJECTS, { lines: ['hello'] });
+    await vm.runInContext("openPeekFromCard('proj-a')", ctx);
+    await vm.runInContext("openPeekFromCard('proj-b')", ctx);
+    assert.equal(vm.runInContext('openPeekProject', ctx), 'proj-b');
+    assert.equal(apiCalls.length, 2);
+  });
+
+  it('a late response for a since-closed Peek never overwrites peekCache (stale-fetch guard)', async () => {
+    let release;
+    const apiCalls = [];
+    const ctx = vm.createContext({
+      state: { projects: PROJECTS },
+      api: async (url) => {
+        apiCalls.push(url);
+        return new Promise((resolve) => { release = () => resolve({ lines: ['late'] }); });
+      },
+      document: { querySelector: () => null },
+      renderProjects: () => {},
+      CSS: { escape: (s) => s }
+    });
+    const src = `let openPeekProject = null;\nlet peekCache = {};\nlet peekGeneration = 0;\n${liftDeclaration(UI_SRC, 'async function openPeekFromCard(')}`;
+    vm.runInContext(src, ctx);
+
+    const firstOpen = vm.runInContext("openPeekFromCard('proj-a')", ctx); // fetch still in flight
+    await vm.runInContext("openPeekFromCard('proj-a')", ctx); // closes it before the fetch resolves
+    assert.equal(vm.runInContext('openPeekProject', ctx), null);
+    release();
+    await firstOpen;
+    // Field-by-field, not deepEqual: the object is built inside the vm
+    // realm, and deepEqual against a main-realm literal fails on the
+    // prototype mismatch even when every field matches (same pitfall
+    // collectTags's test above works around for a vm-realm Array).
+    const cached = vm.runInContext('peekCache', ctx)['proj-a'];
+    assert.equal(cached.loading, true, 'the late fetch for the already-closed Peek must not overwrite the cache with its stale content');
+    assert.equal(cached.lines, null);
+  });
+
+  it('close then reopen the SAME project, with the closed fetch resolving after the reopened one (PRR-B C1: the name-only guard alone passes here, since openPeekProject is "proj-a" again)', async () => {
+    const releases = [];
+    const apiCalls = [];
+    const ctx = vm.createContext({
+      state: { projects: PROJECTS },
+      api: async (url) => {
+        apiCalls.push(url);
+        return new Promise((resolve) => { releases.push(resolve); });
+      },
+      document: { querySelector: () => null },
+      renderProjects: () => {},
+      CSS: { escape: (s) => s }
+    });
+    const src = `let openPeekProject = null;\nlet peekCache = {};\nlet peekGeneration = 0;\n${liftDeclaration(UI_SRC, 'async function openPeekFromCard(')}`;
+    vm.runInContext(src, ctx);
+
+    const firstOpen = vm.runInContext("openPeekFromCard('proj-a')", ctx); // fetch #1 in flight
+    await vm.runInContext("openPeekFromCard('proj-a')", ctx); // closes it before fetch #1 resolves
+    const reopen = vm.runInContext("openPeekFromCard('proj-a')", ctx); // fetch #2 starts -- same project name
+    assert.equal(apiCalls.length, 2);
+
+    // Resolve the NEWER request first, then the stale one -- the out-of-order
+    // network response order a name-only guard cannot distinguish.
+    releases[1]({ lines: ['fresh'] });
+    await reopen;
+    releases[0]({ lines: ['stale'] });
+    await firstOpen;
+
+    const cached = vm.runInContext('peekCache', ctx)['proj-a'];
+    assert.equal(cached.loading, false);
+    assert.deepEqual(Array.from(cached.lines), ['fresh'],
+      'the stale (first-opened) response must not overwrite the fresher reopen, even though both share the same project name');
+  });
+
+  it("renderCard's isPeekOpen is typeof-guarded (several isolated-lift test harnesses run renderCard() standalone and don't declare openPeekProject — a bare reference ReferenceErrors there instead of evaluating false)", () => {
+    const body = liftDeclaration(UI_SRC, 'function renderCard(project)');
+    assert.match(body, /const isPeekOpen = typeof openPeekProject !== 'undefined' && openPeekProject === project\.name;/);
+    assert.match(body, /\$\{isPeekOpen \? renderCardPeek\(project\) : ''\}/);
+  });
+
+  describe("renderProjects()'s scroll-position carry across the grid replace (Critic BLOCKING: the capture/restore had zero coverage)", () => {
+    /**
+     * Run the real `renderProjects` with a fake `.card-peek-content` element
+     * that resets to `scrollTop: 0` the instant `grid.innerHTML` is
+     * reassigned — exactly what a real re-render does, since the old node is
+     * destroyed and a fresh one takes its place.
+     * @param {string|null} openPeekProject - Which project's Peek is open, or none.
+     * @param {number} startingScrollTop - Where the operator had scrolled to.
+     * @returns {{render: Function, currentEl: () => {scrollTop: number}}}
+     */
+    function buildScrollHarness(openPeekProject, startingScrollTop) {
+      let currentEl = { scrollTop: startingScrollTop };
+      const grid = {};
+      Object.defineProperty(grid, 'innerHTML', {
+        get() { return ''; },
+        // A fresh DOM node always starts at scrollTop 0, same as a real re-render.
+        set() { currentEl = { scrollTop: 0 }; }
+      });
+      const documentStub = {
+        getElementById: () => grid,
+        querySelector: (sel) => (sel === '.card-peek-content' ? currentEl : null)
+      };
+      const render = new Function(
+        'document', 'filterProjects', 'renderCard', 'renderRootPanel',
+        'openCardDetail', 'ensureStrandedItems', 'state', 'openPeekProject',
+        `${liftDeclaration(UI_SRC, 'function renderProjects()')}\nreturn renderProjects;`
+      )(
+        documentStub,
+        () => [{ name: 'proj-a' }],
+        (p) => `<card>${p.name}</card>`,
+        () => '<ROOT-PANEL>',
+        null,
+        () => {},
+        { projects: [{ name: 'proj-a' }], projectsScan: null },
+        openPeekProject
+      );
+      return { render, currentEl: () => currentEl };
+    }
+
+    it('restores the operator\'s scroll position onto the fresh node when a Peek is open', () => {
+      const { render, currentEl } = buildScrollHarness('proj-a', 137);
+      render();
+      assert.equal(currentEl().scrollTop, 137, 'the fresh .card-peek-content must be scrolled back to where it was before the poll');
+    });
+
+    it('does nothing when no Peek is open — the fresh node is left at its natural 0', () => {
+      const { render, currentEl } = buildScrollHarness(null, 137);
+      render();
+      assert.equal(currentEl().scrollTop, 0, 'with openPeekProject null, nothing should attempt to read or restore scrollTop');
+    });
+
+    it('is typeof-guarded the same way isPeekOpen is (isolated-lift harnesses for renderProjects don\'t declare openPeekProject either)', () => {
+      const body = liftDeclaration(UI_SRC, 'function renderProjects()');
+      assert.match(body, /const peekIsOpen = typeof openPeekProject !== 'undefined' && openPeekProject;/);
+    });
+  });
+});

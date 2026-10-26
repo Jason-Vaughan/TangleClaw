@@ -69,10 +69,62 @@ let openCardDetail = null;
  */
 let openNextAction = null;
 
+/**
+ * Name of the project whose Peek panel is open, or `null` for none (#2121).
+ *
+ * Same reasoning as `openCardDetail`: the Peek panel used to be a DOM node
+ * appended to the card and removed on toggle, so the 10s project poll's
+ * `grid.innerHTML` replace destroyed it every cycle — it looked like a
+ * timer-driven auto-close even though nothing explicitly closed it. Keying
+ * on state instead makes the poll's re-render idempotent for Peek too.
+ *
+ * @type {string|null}
+ */
+let openPeekProject = null;
+
+/**
+ * Cached Peek output per project name, keyed so a stale in-flight fetch from
+ * a since-closed or since-switched Peek never overwrites the current one.
+ * `lines: null` with `loading: true` renders the "Loading…" state.
+ * @type {Object<string, {lines: string[]|null, loading: boolean}>}
+ */
+let peekCache = {};
+
+/**
+ * Incremented on every Peek open (#2121). The `openPeekProject !==
+ * name` guard alone passes on a close-then-reopen of the SAME project: if
+ * the closed fetch resolves after the reopened one started, its name still
+ * matches, so it can overwrite the newer request's cache with stale output.
+ * Each open captures the generation at that moment; a response is applied
+ * only if it is still the current generation, not just the current name.
+ * @type {number}
+ */
+let peekGeneration = 0;
+
+/**
+ * Incremented on every `renderGroups()` call (#2092). A
+ * `loadGroupDetail` call started by an older pass can resolve after a newer
+ * `renderGroups()` has already run for the same group; this lets it tell
+ * its own `pendingFoldKey` is superseded and skip honoring it, the same
+ * concern `peekGeneration` guards for the Peek panel.
+ * @type {number}
+ */
+let groupsRenderGeneration = 0;
+
 function renderProjects() {
   const grid = document.getElementById('cardsGrid');
   // The open card lists its stranded wraps; fetch them when its counts moved.
   if (openCardDetail) ensureStrandedItems(state.projects.find(p => p.name === openCardDetail));
+  // Peek is state-driven (#2121), not DOM-appended, so this full re-render
+  // keeps it open — but a fresh `.card-peek-content` node resets scrollTop to
+  // 0, which would silently drag an operator mid-read back to the top every
+  // poll. Carry the scroll position across the replace. typeof-guarded: see
+  // the matching comment on `isPeekOpen` in renderCard — isolated-lift test
+  // harnesses run this function standalone and don't know this variable
+  // exists.
+  const peekIsOpen = typeof openPeekProject !== 'undefined' && openPeekProject;
+  const peekContentBefore = peekIsOpen ? document.querySelector('.card-peek-content') : null;
+  const peekScrollTop = peekContentBefore ? peekContentBefore.scrollTop : null;
   const filtered = filterProjects();
 
   // The ROOT panel carries the "this list may be short" notice, so it is
@@ -121,6 +173,10 @@ function renderProjects() {
   }
 
   grid.innerHTML = rootHtml + filtered.map(renderCard).join('') + archivedHtml;
+  if (peekIsOpen && peekScrollTop !== null) {
+    const peekContentAfter = document.querySelector('.card-peek-content');
+    if (peekContentAfter) peekContentAfter.scrollTop = peekScrollTop;
+  }
 }
 
 /**
@@ -498,6 +554,13 @@ function renderCard(project) {
   // marker, and it sits after the buttons so it is not read as another one.
   const isOpen = openCardDetail === project.name;
   const openClass = isOpen ? ' is-open' : '';
+  // typeof-guarded (not a bare reference, unlike openCardDetail above):
+  // several isolated-lift test harnesses run renderCard() as standalone
+  // source with an explicit, closed set of free variables they stub, and
+  // don't know about this one — a bare reference is a ReferenceError there,
+  // not just a wrong answer. Those harnesses can't set openPeekProject at
+  // all, so this evaluates to false for them exactly as intended.
+  const isPeekOpen = typeof openPeekProject !== 'undefined' && openPeekProject === project.name;
 
   return `<article class="project-card compact${sessionClass}${openClass}" tabindex="0"
     aria-expanded="${isOpen}"
@@ -545,7 +608,26 @@ function renderCard(project) {
       <span class="card-chev" aria-hidden="true">&#9662;</span>
     </div>
     ${isOpen ? renderCardDetail(project) : ''}
+    ${isPeekOpen ? renderCardPeek(project) : ''}
   </article>`;
+}
+
+/**
+ * The inline Peek panel for a card (#2121). Rendered from `openPeekProject`
+ * and `peekCache` rather than appended to the DOM, so a `renderProjects()`
+ * re-render — including the 10s project poll — redraws it instead of
+ * destroying it.
+ * @param {object} project
+ * @returns {string} HTML for the Peek panel.
+ */
+function renderCardPeek(project) {
+  const cached = typeof peekCache !== 'undefined' ? peekCache[project.name] : undefined;
+  const content = !cached || cached.loading
+    ? 'Loading…'
+    : (cached.lines ? cached.lines.join('\n') : 'No output available');
+  return `<div class="card-peek" data-project="${esc(project.name)}">
+    <pre class="card-peek-content">${esc(content)}</pre>
+  </div>`;
 }
 
 function renderUnregisteredCard(project) {
@@ -1362,45 +1444,44 @@ async function unarchiveProject(name) {
   }
 }
 
+/**
+ * Toggle a card's Peek panel open/closed (#2121).
+ *
+ * Flips `openPeekProject` and re-renders rather than appending to or removing
+ * from the card — same reasoning as `toggleCardDetail` — so the 10s project
+ * poll redraws the panel instead of destroying it.
+ *
+ * @param {string} name - Project name.
+ * @returns {Promise<void>}
+ */
 async function openPeekFromCard(name) {
   const project = state.projects.find(p => p.name === name);
   if (!project || !project.session || !project.session.active) return;
 
-  // Toggle existing peek panel
-  const existingPeek = document.querySelector(`.card-peek[data-project="${CSS.escape(name)}"]`);
-  if (existingPeek) {
-    existingPeek.remove();
+  if (openPeekProject === name) {
+    openPeekProject = null;
+    renderProjects();
     return;
   }
 
-  // Close any other open peeks
-  document.querySelectorAll('.card-peek').forEach(el => el.remove());
-
-  // Find the card and insert peek panel after the actions
-  const cards = document.querySelectorAll('.project-card');
-  let targetCard = null;
-  for (const card of cards) {
-    if (card.querySelector('.card-name') && card.querySelector('.card-name').textContent === name) {
-      targetCard = card;
-      break;
-    }
-  }
-  if (!targetCard) return;
-
-  const peekEl = document.createElement('div');
-  peekEl.className = 'card-peek';
-  peekEl.setAttribute('data-project', name);
-  peekEl.innerHTML = '<pre class="card-peek-content">Loading\u2026</pre>';
-  targetCard.appendChild(peekEl);
+  // Only one Peek open at a time, matching the previous behaviour.
+  openPeekProject = name;
+  const myGeneration = ++peekGeneration;
+  peekCache[name] = { lines: null, loading: true };
+  renderProjects();
 
   const data = await api(`/api/sessions/${encodeURIComponent(name)}/peek?lines=15`);
-  const contentEl = peekEl.querySelector('.card-peek-content');
-  if (data && data.lines) {
-    contentEl.textContent = data.lines.join('\n');
-    contentEl.scrollTop = contentEl.scrollHeight;
-  } else {
-    contentEl.textContent = 'No output available';
-  }
+  // The operator may have closed this Peek, or opened a different one, while
+  // the fetch was in flight — don't let a stale response land on it. The name
+  // check alone misses close-then-reopen of the SAME project: the
+  // closed fetch's name still matches on reopen, so it needs its own
+  // generation checked too, not just openPeekProject's current value.
+  if (openPeekProject !== name || myGeneration !== peekGeneration) return;
+  peekCache[name] = { lines: data && data.lines ? data.lines : null, loading: false };
+  renderProjects();
+
+  const contentEl = document.querySelector(`.card-peek[data-project="${CSS.escape(name)}"] .card-peek-content`);
+  if (contentEl) contentEl.scrollTop = contentEl.scrollHeight;
 }
 
 /**
@@ -1568,19 +1649,44 @@ function foldToggleInPlace(button, open) {
 }
 
 /**
- * Re-render a panel without dropping keyboard focus from a fold toggle
- * (#1946). The panels re-render on their polling loops, which replaces every
- * button; the toggle that had focus is found again by its `data-fold-key`.
+ * Re-render a panel without dropping keyboard focus from a fold toggle or any
+ * other control the panel keys with `data-fold-key` (#1946, #2092). The
+ * panels re-render on their polling loops, which replaces every button; the
+ * control that had focus is found again by its `data-fold-key`, not by DOM
+ * identity — the restored button is always a newly created node, never the
+ * one that was actually focused. That is a real, unresolved VoiceOver/NVDA
+ * re-announcement risk (#2091): most screen readers announce on the focus
+ * event itself rather than deduping by node identity, so the fresh node
+ * calling `.focus()` every poll is expected to re-announce the control's
+ * label on the same cadence, with no way to confirm or rule it out short of
+ * a live screen-reader session.
+ *
+ * `knownKey` (#2092): pass the fold key explicitly when the caller
+ * already captured it BEFORE a focused control was destroyed by an earlier,
+ * outer render — by the time this function would read `document.activeElement`
+ * itself, it may already be `<body>`, with the real answer gone. Omit it to
+ * fall back to the normal activeElement read (the common case).
  * @param {HTMLElement|null} container - The panel element the render writes into.
  * @param {Function} render - The panel's render function.
+ * @param {string|undefined} [knownKey] - A fold key captured earlier, overriding the activeElement read.
  * @returns {void}
  */
-function renderKeepingFoldFocus(container, render) {
+function renderKeepingFoldFocus(container, render, knownKey) {
   const active = typeof document !== 'undefined' ? document.activeElement : null;
-  const key = container && active && container.contains(active) && active.dataset
-    ? active.dataset.foldKey : undefined;
+  const key = knownKey !== undefined
+    ? knownKey
+    : (container && active && container.contains(active) && active.dataset ? active.dataset.foldKey : undefined);
   render();
   if (key === undefined || !container) return;
+  // A knownKey crossed an async gap, so it can be stale (#2092):
+  // only act on it if focus is STILL exactly where the earlier destroy left
+  // it (document.body) right now, not wherever the operator deliberately
+  // moved it since, or wherever a sibling group's own restore already
+  // claimed it. Removing a focused element always falls back to <body>, so
+  // anything else here means focus has a real, current owner this must not
+  // steal it from.
+  if (knownKey !== undefined
+    && (typeof document === 'undefined' || document.activeElement !== document.body)) return;
   for (const b of container.querySelectorAll('[data-fold-key]')) {
     // preventScroll: this runs on every poll, and an operator who focused a
     // toggle and then scrolled away must not be pulled back to it each time.
@@ -5599,10 +5705,27 @@ function toggleGroups() {
  */
 function renderGroups() {
   const panel = document.getElementById('groupsPanel');
+  // Captured BEFORE anything renders (#2092): a focused Remove
+  // member/doc button lives inside a group's content div, which this
+  // function is about to replace with a "Loading details..." placeholder —
+  // destroying the button and moving focus to <body> synchronously, well
+  // before loadGroupDetail's async fetch resolves and rebuilds that content
+  // with the real buttons again. By then document.activeElement is already
+  // <body>, so loadGroupDetail's OWN renderKeepingFoldFocus call has nothing
+  // left to capture. Hand this key through instead of relying on it to
+  // re-read activeElement at a point where the real answer is already gone.
+  const active = typeof document !== 'undefined' ? document.activeElement : null;
+  const pendingFoldKey = active && panel && panel.contains(active) && active.dataset
+    ? active.dataset.foldKey : undefined;
+  // Each pass gets its own generation, so a loadGroupDetail call
+  // this pass starts can tell whether a LATER renderGroups() pass has since
+  // superseded it by the time its fetch resolves.
+  const myGroupsGen = ++groupsRenderGeneration;
+
   if (state.groups.length === 0) {
     panel.innerHTML = `<div class="groups-empty">
       No project groups yet
-      <button class="btn btn-small btn-primary" onclick="openGroupModal()" style="margin-left:8px">+ New Group</button>
+      <button class="btn btn-small btn-primary" data-fold-key="new-group" onclick="openGroupModal()" style="margin-left:8px">+ New Group</button>
     </div>`;
     return;
   }
@@ -5615,7 +5738,7 @@ function renderGroups() {
   }
 
   let html = `<div class="groups-header-actions">
-    <button class="btn btn-small btn-primary" onclick="openGroupModal()">+ New Group</button>
+    <button class="btn btn-small btn-primary" data-fold-key="new-group" onclick="openGroupModal()">+ New Group</button>
   </div>`;
 
   for (const group of state.groups) {
@@ -5630,7 +5753,7 @@ function renderGroups() {
         <span class="group-item-name">${esc(group.name)}</span>
         <span class="group-item-meta">${group.memberCount || 0} project${(group.memberCount || 0) !== 1 ? 's' : ''}, ${group.docCount || 0} doc${(group.docCount || 0) !== 1 ? 's' : ''}</span>
       </button>
-      <button type="button" class="btn btn-compact btn-icon-tiny" onclick="openGroupModal(${jsArg(group.id)})" title="Edit group" aria-label="Edit group ${esc(group.name)}">&#9998;</button>
+      <button type="button" class="btn btn-compact btn-icon-tiny" data-fold-key="edit-group-${esc(group.id)}" onclick="openGroupModal(${jsArg(group.id)})" title="Edit group" aria-label="Edit group ${esc(group.name)}">&#9998;</button>
     </div>`;
     html += `<div class="${contentClass}">`;
     if (group.description) {
@@ -5645,7 +5768,7 @@ function renderGroups() {
   // Load details for open groups
   for (const group of state.groups) {
     if (state.groupItemsOpen[group.id]) {
-      loadGroupDetail(group.id);
+      loadGroupDetail(group.id, pendingFoldKey, myGroupsGen);
     }
   }
 }
@@ -5669,8 +5792,16 @@ function toggleGroupItem(groupId, button) {
 /**
  * Load group details (members + docs) and render inline.
  * @param {string} groupId
+ * @param {string|undefined} [pendingFoldKey] - A fold key `renderGroups()`
+ *   captured before replacing this group's content with a "Loading
+ *   details..." placeholder (#2092) — by the time this function's
+ *   own fetch resolves, the real focus is already gone, so it restores from
+ *   this instead of re-reading `document.activeElement`.
+ * @param {number|undefined} [renderGeneration] - The `renderGroups()` pass
+ *   that started this call (#2092). If a later pass has since
+ *   superseded it, `pendingFoldKey` is stale and must not be honored.
  */
-async function loadGroupDetail(groupId) {
+async function loadGroupDetail(groupId, pendingFoldKey, renderGeneration) {
   const data = await api(`/api/groups/${groupId}`);
   if (!data) return;
 
@@ -5702,7 +5833,7 @@ async function loadGroupDetail(groupId) {
       for (const m of data.members) {
         html += `<div class="group-member-row">
           <span class="group-member-name">${esc(m.name)}</span>
-          <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="event.stopPropagation(); removeGroupMember(${jsArg(groupId)}, ${m.id})" title="Remove from group">&times;</button>
+          <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" data-fold-key="remove-member-${esc(groupId)}-${m.id}" onclick="event.stopPropagation(); removeGroupMember(${jsArg(groupId)}, ${m.id})" title="Remove from group">&times;</button>
         </div>`;
       }
       html += `</div>`;
@@ -5723,7 +5854,7 @@ async function loadGroupDetail(groupId) {
           <span class="group-doc-name">${esc(doc.name)}</span>
           <span class="group-doc-mode badge">${esc(doc.injectMode)}</span>
           ${doc.injectIntoConfig ? '<span class="group-doc-inject badge badge-engine">inject</span>' : ''}
-          <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="event.stopPropagation(); removeSharedDoc(${jsArg(doc.id)})" title="Remove document">&times;</button>
+          <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" data-fold-key="remove-doc-${esc(doc.id)}" onclick="event.stopPropagation(); removeSharedDoc(${jsArg(doc.id)})" title="Remove document">&times;</button>
         </div>`;
       }
       html += `</div>`;
@@ -5731,7 +5862,18 @@ async function loadGroupDetail(groupId) {
       html += `<div class="group-empty-hint">No shared documents</div>`;
     }
 
-    content.innerHTML = html;
+    // This content div's own innerHTML replace happens after renderGroups()'s
+    // synchronous render already returned -- its Remove buttons (#2092) exist
+    // only from this point on. Re-reading document.activeElement here would
+    // be too late on its own: renderGroups() already replaced this
+    // button with a "Loading details..." placeholder, so by now focus has
+    // already moved to <body>. pendingFoldKey is what renderGroups() captured
+    // BEFORE that happened, threaded through for exactly this moment -- but
+    // only while this is still the latest renderGroups() pass: a
+    // newer pass means this key is stale, so fall back to the normal
+    // activeElement-based read instead of forcing a now-outdated intent.
+    const effectiveFoldKey = renderGeneration === groupsRenderGeneration ? pendingFoldKey : undefined;
+    renderKeepingFoldFocus(content, () => { content.innerHTML = html; }, effectiveFoldKey);
     break;
   }
 }
@@ -6069,7 +6211,7 @@ function renderOpenclawConnections() {
         ${engineBadge}
         <span class="oc-item-meta">${esc(conn.host)}:${conn.port}</span>
       </button>
-      <button type="button" class="btn btn-compact btn-icon-tiny" onclick="openConnectionModal(${jsArg(conn.id)})" title="Edit connection" aria-label="Edit connection ${esc(conn.name)}">&#9998;</button>
+      <button type="button" class="btn btn-compact btn-icon-tiny" data-fold-key="edit-conn-${esc(conn.id)}" onclick="openConnectionModal(${jsArg(conn.id)})" title="Edit connection" aria-label="Edit connection ${esc(conn.name)}">&#9998;</button>
     </div>`;
     html += `<div class="${contentClass}">`;
     html += `<div class="oc-detail-grid">
@@ -6092,13 +6234,13 @@ function renderOpenclawConnections() {
       html += `<div class="oc-tunnel-status">
         <span class="badge badge-tunnel-active">tunnel active</span>
         <span class="oc-tunnel-detail">port ${ts.localPort}${ts.pid ? `, PID ${ts.pid}` : ''}</span>
-        <button class="btn btn-small btn-danger-subtle" onclick="event.stopPropagation(); killOpenclawTunnel(${jsArg(conn.id)})" title="Kill SSH tunnel and release port">Kill Tunnel</button>
+        <button class="btn btn-small btn-danger-subtle" data-fold-key="kill-tunnel-${esc(conn.id)}" onclick="event.stopPropagation(); killOpenclawTunnel(${jsArg(conn.id)})" title="Kill SSH tunnel and release port">Kill Tunnel</button>
       </div>`;
     }
 
     html += `<div class="oc-actions">
-      <button class="btn btn-small btn-primary" onclick="event.stopPropagation(); launchOpenclawWebUI(${jsArg(conn.id)})" title="Open Web UI via tunnel">Web UI</button>
-      <button class="btn btn-small" onclick="event.stopPropagation(); copyOpenclawSSH(${jsArg(conn.id)})" title="Copy SSH command to clipboard">SSH</button>
+      <button class="btn btn-small btn-primary" data-fold-key="web-ui-${esc(conn.id)}" onclick="event.stopPropagation(); launchOpenclawWebUI(${jsArg(conn.id)})" title="Open Web UI via tunnel">Web UI</button>
+      <button class="btn btn-small" data-fold-key="ssh-${esc(conn.id)}" onclick="event.stopPropagation(); copyOpenclawSSH(${jsArg(conn.id)})" title="Copy SSH command to clipboard">SSH</button>
     </div>`;
     html += '</div></div>';
   }

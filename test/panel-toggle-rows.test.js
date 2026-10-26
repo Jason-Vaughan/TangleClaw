@@ -14,13 +14,15 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { liftDeclaration } = require('./helpers/lift');
+const { liftDeclaration, loadEsc, loadJsArg } = require('./helpers/lift');
 const fs = require('node:fs');
 const path = require('node:path');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
 const ui = read('ui.js');
 const landing = read('landing.js');
+const esc = loadEsc();
+const jsArg = loadJsArg();
 
 const VOID = new Set(['br', 'hr', 'img', 'input', 'meta', 'link']);
 
@@ -84,6 +86,10 @@ function renderPanel(fnName, panelId, state) {
   const src = [
     liftDeclaration(landing, 'function esc('),
     liftDeclaration(landing, 'function jsArg('),
+    // renderGroups() references groupsRenderGeneration bare (PRR-B C2,
+    // #2092); not a parameter like the others since it must persist and
+    // increment across calls the way the real module-level `let` does.
+    'let groupsRenderGeneration = 0;',
     liftDeclaration(ui, `function ${fnName}(`)
   ].join('\n');
   new Function('state', 'document', 'api', 'loadGroupDetail', `${src}\n${fnName}();`)(
@@ -395,5 +401,208 @@ describe('folding keeps keyboard focus on the toggle (#1946)', () => {
       const body = liftDeclaration(landing, `async function ${fn}(`);
       assert.match(body, new RegExp(`renderKeepingFoldFocus\\(document\\.getElementById\\('${panel}'\\), ${render}\\)`), fn);
     }
+  });
+});
+
+/*
+ * #2092 — #1946 fixed fold TOGGLES specifically; the same panels have other
+ * controls (Edit group, Kill Tunnel, Web UI, SSH, Remove, +New Group) that
+ * still lost focus on the same poll, because they weren't keyed with
+ * `data-fold-key` at all. `renderKeepingFoldFocus` already restores ANY
+ * `[data-fold-key]` element generically (it never checked for a toggle
+ * specifically) — the fix is keying these controls too, not changing the
+ * restore mechanism.
+ */
+describe('other panel controls carry a fold key for the poll restore too (#2092)', () => {
+  it('groups panel: +New Group (both the empty-state and header-actions branches) and Edit group', () => {
+    const emptyHtml = renderPanel('renderGroups', 'groupsPanel', { groups: [], groupItemsOpen: {} });
+    assert.match(emptyHtml, /data-fold-key="new-group"/, '+New Group in the empty-state branch');
+
+    const html = renderPanel('renderGroups', 'groupsPanel', {
+      groups: [{ id: 'g1', name: 'Backend', memberCount: 2, docCount: 1 }],
+      groupItemsOpen: { g1: false }
+    });
+    const els = walk(html);
+    assert.ok(els.some((e) => e.tag === 'button' && e.attrs.includes('data-fold-key="new-group"')),
+      '+New Group in the header-actions branch (groups non-empty)');
+    assert.ok(els.some((e) => e.tag === 'button' && e.attrs.includes('data-fold-key="edit-group-g1"')),
+      'Edit group, keyed per group so it does not collide with the toggle\'s own key ("g1")');
+  });
+
+  it('openclaw panel: Edit connection, Web UI, SSH', () => {
+    const els = walk(PANELS.openclaw.html());
+    for (const key of ['edit-conn-c1', 'web-ui-c1', 'ssh-c1']) {
+      assert.ok(els.some((e) => e.tag === 'button' && e.attrs.includes(`data-fold-key="${key}"`)),
+        `expected a button with data-fold-key="${key}"`);
+    }
+  });
+
+  it('openclaw panel: Kill Tunnel is keyed while a tunnel is active (and absent, so untested, while none is)', () => {
+    const noTunnel = walk(PANELS.openclaw.html());
+    assert.ok(!noTunnel.some((e) => e.attrs.includes('kill-tunnel-')), 'no Kill Tunnel button without an active tunnel');
+
+    const html = renderPanel('renderOpenclawConnections', 'openclawPanel', {
+      openclawConnections: [{ id: 'c1', name: 'Lab', host: 'lab.local', port: 18789, sshUser: 'u', sshKeyPath: '/k', localPort: 18790 }],
+      openclawItemsOpen: { c1: false },
+      openclawTunnelStatus: { c1: { active: true, localPort: 9999 } }
+    });
+    const els = walk(html);
+    assert.ok(els.some((e) => e.tag === 'button' && e.attrs.includes('data-fold-key="kill-tunnel-c1"')),
+      'Kill Tunnel must carry a fold key while the tunnel is active');
+  });
+
+  it("loadGroupDetail wraps its own content.innerHTML replace in renderKeepingFoldFocus, passing through the key renderGroups() captured before the Loading placeholder destroyed it, only while that render is still current (PRR-B C1 + C2)", () => {
+    const body = liftDeclaration(ui, 'async function loadGroupDetail(');
+    assert.match(body, /async function loadGroupDetail\(groupId, pendingFoldKey, renderGeneration\)/,
+      'must accept both the key renderGroups() captured earlier AND the generation it captured it in');
+    assert.match(body, /renderGeneration === groupsRenderGeneration \? pendingFoldKey : undefined/,
+      'a superseded generation must drop the stale key rather than honor it');
+    assert.match(body, /renderKeepingFoldFocus\(content, \(\) => \{ content\.innerHTML = html; \}, effectiveFoldKey\)/);
+  });
+
+  it('Remove member and Remove document buttons are keyed by group/member/doc id, not just "remove"', () => {
+    const body = liftDeclaration(ui, 'async function loadGroupDetail(');
+    assert.match(body, /data-fold-key="remove-member-\$\{esc\(groupId\)\}-\$\{m\.id\}"/,
+      'must include both the group and member id, so two different groups\' Remove buttons never collide');
+    assert.match(body, /data-fold-key="remove-doc-\$\{esc\(doc\.id\)\}"/);
+  });
+
+  /*
+   * PRR-B C1 (#2092 REVISE): a focused Remove member/doc button sits inside a
+   * group's content div, which renderGroups() replaces with a "Loading
+   * details..." placeholder on every poll -- destroying the button and
+   * moving focus to <body> BEFORE loadGroupDetail's fetch resolves. By the
+   * time loadGroupDetail ran its own renderKeepingFoldFocus, activeElement
+   * was already <body> with the real answer gone. Two real executions, not
+   * source regexes: renderGroups() capturing the key before the destroy, and
+   * loadGroupDetail actually restoring focus with it afterward.
+   */
+  describe('the full poll-path focus handoff is real, not just structural (PRR-B C1)', () => {
+    it("renderGroups() captures the focused Remove button's key BEFORE replacing it with the Loading placeholder, and hands it to loadGroupDetail", () => {
+      const loadCalls = [];
+      const focusedButton = { dataset: { foldKey: 'remove-member-g1-7' } };
+      const panel = { innerHTML: '', contains: (el) => el === focusedButton };
+      const documentStub = { getElementById: () => panel, activeElement: focusedButton };
+      const render = new Function(
+        'document', 'esc', 'jsArg', 'state', 'loadGroupDetail',
+        `let groupsRenderGeneration = 0;\n${liftDeclaration(ui, 'function renderGroups()')}\nreturn renderGroups;`
+      )(documentStub, esc, jsArg,
+        { groups: [{ id: 'g1', name: 'Backend', memberCount: 1, docCount: 0 }], groupItemsOpen: { g1: true } },
+        (groupId, key) => loadCalls.push({ groupId, key }));
+      render();
+      assert.deepEqual(loadCalls, [{ groupId: 'g1', key: 'remove-member-g1-7' }],
+        'the key must come from the button that was ACTUALLY focused before the replace, handed to this group\'s loadGroupDetail call');
+    });
+
+    it("renderGroups() hands through undefined when nothing relevant was focused -- doesn't invent a key", () => {
+      const loadCalls = [];
+      const panel = { innerHTML: '', contains: () => false };
+      const documentStub = { getElementById: () => panel, activeElement: { dataset: {} } };
+      const render = new Function(
+        'document', 'esc', 'jsArg', 'state', 'loadGroupDetail',
+        `let groupsRenderGeneration = 0;\n${liftDeclaration(ui, 'function renderGroups()')}\nreturn renderGroups;`
+      )(documentStub, esc, jsArg,
+        { groups: [{ id: 'g1', name: 'Backend', memberCount: 0, docCount: 0 }], groupItemsOpen: { g1: true } },
+        (groupId, key) => loadCalls.push({ groupId, key }));
+      render();
+      assert.deepEqual(loadCalls, [{ groupId: 'g1', key: undefined }]);
+    });
+
+    /**
+     * A fake content div: its `querySelectorAll('[data-fold-key]')` parses
+     * the data-fold-key attributes out of whatever HTML string was last
+     * assigned to `innerHTML`, the same contract a real re-parsed DOM node
+     * has after the real `renderKeepingFoldFocus` sets it.
+     * @returns {object}
+     */
+    function fakeContentEl() {
+      const focusCalls = [];
+      let htmlValue = '';
+      return {
+        get innerHTML() { return htmlValue; },
+        set innerHTML(v) { htmlValue = v; },
+        querySelectorAll(sel) {
+          if (sel !== '[data-fold-key]') return [];
+          return [...htmlValue.matchAll(/data-fold-key="([^"]+)"/g)].map(([, key]) => ({
+            dataset: { foldKey: key },
+            focus(opts) { focusCalls.push({ key, opts }); }
+          }));
+        },
+        // Reached when a stale generation drops knownKey back to undefined,
+        // which falls back to renderKeepingFoldFocus's normal
+        // activeElement-based check (PRR-B C2).
+        contains: () => false,
+        focusCalls
+      };
+    }
+
+    /**
+     * Build a runnable `loadGroupDetail` against one fake group/content div.
+     * @param {object} opts
+     * @param {boolean} opts.atFallback - Whether `document.activeElement` is
+     *   still `document.body` (the poll-displaced fallback) at restore
+     *   time, vs. something else (the operator moved on, or a sibling
+     *   group's restore already claimed it) (PRR-B C2).
+     * @param {number} opts.generationAtCall - The 3rd arg `loadGroupDetail`
+     *   is called with, checked against `groupsRenderGeneration`'s value at
+     *   restore time (PRR-B C2).
+     * @param {number} [opts.generationAtRestore] - `groupsRenderGeneration`'s
+     *   value by the time the restore runs; defaults to `generationAtCall`
+     *   (no newer pass superseded this one).
+     * @returns {{run: Function, contentEl: object}}
+     */
+    function buildLoadGroupDetailHarness({ atFallback, generationAtCall, generationAtRestore }) {
+      const contentEl = fakeContentEl();
+      const nameEl = { textContent: 'Backend' };
+      const toggle = { querySelector: (sel) => (sel === '.group-item-name' ? nameEl : null) };
+      const item = {
+        querySelector: (sel) => {
+          if (sel === '.group-item-toggle') return toggle;
+          if (sel === '.group-item-content') return contentEl;
+          return null;
+        }
+      };
+      const body = { dataset: {} };
+      const documentStub = {
+        querySelectorAll: (sel) => (sel === '.group-item' ? [item] : []),
+        body,
+        // Deliberately a DIFFERENT object when not atFallback -- some other
+        // control the operator moved to, or a sibling restore's target.
+        activeElement: atFallback ? body : { dataset: {} },
+        contains: () => false
+      };
+      const genAtRestore = generationAtRestore === undefined ? generationAtCall : generationAtRestore;
+      const run = new Function(
+        'document', 'esc', 'jsArg', 'api', 'state', 'renderKeepingFoldFocus',
+        `let groupsRenderGeneration = ${genAtRestore};\n${liftDeclaration(ui, 'async function loadGroupDetail(')}\nreturn loadGroupDetail;`
+      )(documentStub, esc, jsArg,
+        async () => ({ members: [{ id: 7, name: 'Alice' }], docs: [] }),
+        { groups: [{ id: 'g1', name: 'Backend' }] },
+        new Function('document', `${liftDeclaration(ui, 'function renderKeepingFoldFocus(')}\nreturn renderKeepingFoldFocus;`)(documentStub));
+      return { run, contentEl };
+    }
+
+    it("restores focus onto the matching Remove button once it exists again, using the handed-through key -- when focus is still genuinely at the poll-displaced fallback (document.body) and this is still the current render generation", async () => {
+      const { run, contentEl } = buildLoadGroupDetailHarness({ atFallback: true, generationAtCall: 0 });
+      await run('g1', 'remove-member-g1-7', 0);
+      assert.deepEqual(contentEl.focusCalls, [{ key: 'remove-member-g1-7', opts: { preventScroll: true } }],
+        'the real Remove button, once rendered, must receive focus via the key handed through from renderGroups()');
+    });
+
+    it("does NOT steal focus back if the operator moved it elsewhere while the fetch was in flight (PRR-B C2)", async () => {
+      const { run, contentEl } = buildLoadGroupDetailHarness({ atFallback: false, generationAtCall: 0 });
+      await run('g1', 'remove-member-g1-7', 0);
+      assert.deepEqual(contentEl.focusCalls, [],
+        'focus is not at the poll-displaced fallback any more, so the stale captured key must not be honored');
+    });
+
+    it("does NOT honor the key if a NEWER renderGroups() pass has superseded this call before the fetch resolved (PRR-B C2)", async () => {
+      const { run, contentEl } = buildLoadGroupDetailHarness({
+        atFallback: true, generationAtCall: 0, generationAtRestore: 1
+      });
+      await run('g1', 'remove-member-g1-7', 0);
+      assert.deepEqual(contentEl.focusCalls, [],
+        'this call started under generation 0, but generation is now 1 -- its pendingFoldKey is stale');
+    });
   });
 });
