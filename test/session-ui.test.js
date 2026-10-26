@@ -376,17 +376,19 @@ describe('#2011 the terminal reattaches on a new session and recovers from an or
       },
       requestAnimationFrame: (fn) => fn() // run synchronously so frame.src is observable immediately
     });
-    const decls = ['function _sessionTerm(', 'function terminalShowsDisconnectPrompt(', 'function cancelReconnectEpisode(',
-      'function runReconnectAttempt(', 'function setupTerminalKeepingEpisode(', 'function beginReconnectEpisode(',
-      'function checkOrdinaryDisconnect(', 'function setupTerminal(', 'function startEndedWatch(', 'function stopEndedWatch('];
+    const decls = ['function _sessionTerm(', 'function terminalDisconnectStatus(', 'function clearReconnectingStatus(',
+      'function cancelReconnectEpisode(', 'function runReconnectAttempt(', 'function setupTerminalKeepingEpisode(',
+      'function beginReconnectEpisode(', 'function checkOrdinaryDisconnect(', 'function setupTerminal(',
+      'function startEndedWatch(', 'function stopEndedWatch('];
     const names = decls.map((d) => d.match(/function (\w+)\(/)[1]);
     vm.runInContext(
       `const RECONNECT_BACKOFF_MS = [1000, 2000, 4000, 4000];\n`
-        + `let reconnectAttempt = 0;\nlet reconnectTimer = null;\nlet endedWatchTimer = null;\n`
+        + `let reconnectAttempt = 0;\nlet reconnectTimer = null;\nlet reconnectExhausted = false;\nlet endedWatchTimer = null;\n`
         + `let terminalSetupStarted = false;\nlet countdownTimer = null;\n`
         + `${decls.map((d) => liftDeclaration(SESSION_JS, d)).join('\n')}\n`
         + names.map((n) => `this.${n} = ${n};`).join('\n')
-        + '\nthis.getReconnectAttempt = () => reconnectAttempt;\nthis.getReconnectTimer = () => reconnectTimer;',
+        + '\nthis.getReconnectAttempt = () => reconnectAttempt;\nthis.getReconnectTimer = () => reconnectTimer;'
+        + '\nthis.getReconnectExhausted = () => reconnectExhausted;',
       ctx
     );
     return {
@@ -403,17 +405,17 @@ describe('#2011 the terminal reattaches on a new session and recovers from an or
     assert.match(h.frame.src, /\/terminal\/\?arg=demo/);
   });
 
-  it('terminalShowsDisconnectPrompt reads the real ttyd text, and nothing else', () => {
+  it('terminalDisconnectStatus reads the real ttyd text, and nothing else', () => {
     const h = load({ bufferLines: ['$ some normal output', 'another line'] });
-    assert.equal(h.ctx.terminalShowsDisconnectPrompt(), false);
+    assert.equal(h.ctx.terminalDisconnectStatus(), 'healthy');
     h.setBuffer(['[exited]', 'Press Enter to Reconnect']);
-    assert.equal(h.ctx.terminalShowsDisconnectPrompt(), true);
+    assert.equal(h.ctx.terminalDisconnectStatus(), 'unhealthy');
   });
 
-  it('an unreadable or not-yet-loaded terminal is NEVER positive evidence', () => {
+  it('an unreadable or not-yet-loaded terminal is UNKNOWN — never healthy, never unhealthy', () => {
     const h = load();
     h.frame.contentWindow = null; // not loaded yet / cross-origin — _sessionTerm() returns null either way
-    assert.equal(h.ctx.terminalShowsDisconnectPrompt(), false);
+    assert.equal(h.ctx.terminalDisconnectStatus(), 'unknown');
   });
 
   it('checkOrdinaryDisconnect starts a bounded 1s/2s/4s/4s backoff episode on positive evidence', () => {
@@ -435,15 +437,50 @@ describe('#2011 the terminal reattaches on a new session and recovers from an or
     h.pendingTimeouts.shift().fn(); // attempt 4 — the last one
     assert.equal(h.ctx.getReconnectAttempt(), 4);
     assert.equal(h.pendingTimeouts.length, 0, 'attempts are exhausted — no fifth wait is scheduled');
+    assert.equal(h.ctx.getReconnectExhausted(), true);
   });
 
-  it('resets and clears the reconnecting status once the connection heals', () => {
+  it('a persistent disconnect does NOT restart a fresh unbounded episode once exhausted (INT finding)', () => {
+    const h = load({ bufferLines: ['[exited]', 'Press Enter to Reconnect'] });
+    h.sessionState.session = { sessionId: 'sess-1' };
+    h.ctx.checkOrdinaryDisconnect();
+    h.pendingTimeouts.shift().fn(); // 2
+    h.pendingTimeouts.shift().fn(); // 3
+    h.pendingTimeouts.shift().fn(); // 4 — exhausted
+    assert.equal(h.ctx.getReconnectExhausted(), true);
+    assert.equal(h.pendingTimeouts.length, 0);
+
+    // The NEXT poll tick still sees the same unhealthy prompt. The old bug:
+    // beginReconnectEpisode unconditionally reset reconnectAttempt to 0,
+    // so this would silently start ANOTHER full 1s/2s/4s/4s episode —
+    // forever, for as long as the disconnect persists.
+    h.ctx.checkOrdinaryDisconnect();
+    assert.equal(h.ctx.getReconnectAttempt(), 4, 'must stay latched, not restart from attempt 1');
+    assert.equal(h.pendingTimeouts.length, 0, 'must not schedule a new wait once exhausted');
+  });
+
+  it('a reload-in-progress (unknown) mid-backoff is NOT treated as healed (INT finding)', () => {
+    const h = load({ bufferLines: ['[exited]', 'Press Enter to Reconnect'] });
+    h.sessionState.session = { sessionId: 'sess-1' };
+    h.ctx.checkOrdinaryDisconnect();
+    // The scheduled recheck lands while the just-reattached frame is still
+    // loading — _sessionTerm() can't read it yet. The old bug: that read the
+    // same as "no prompt" = healed, clearing the episode on nothing more
+    // than "we don't know yet".
+    h.frame.contentWindow = null;
+    h.pendingTimeouts.shift().fn();
+    assert.equal(h.ctx.getReconnectAttempt(), 2, 'an unknown read must consume a budgeted retry, not declare victory');
+    assert.equal(h.statusPill.attrs['data-pill-detail'], 'Reconnecting…', 'must not have been marked Active');
+  });
+
+  it('resets and clears the reconnecting status once the connection is DEFINITIVELY healthy', () => {
     const h = load({ bufferLines: ['[exited]', 'Press Enter to Reconnect'] });
     h.sessionState.session = { sessionId: 'sess-1' };
     h.ctx.checkOrdinaryDisconnect();
     h.setBuffer(['a normal prompt again']); // healed before the next scheduled check
     h.pendingTimeouts.shift().fn();
     assert.equal(h.ctx.getReconnectAttempt(), 0);
+    assert.equal(h.ctx.getReconnectExhausted(), false);
     assert.equal(h.pendingTimeouts.length, 0);
     assert.equal(h.statusPill.attrs['data-pill-detail'], 'Active');
     assert.ok(!h.statusDot.classes.has('reconnecting'));
@@ -458,13 +495,27 @@ describe('#2011 the terminal reattaches on a new session and recovers from an or
     assert.equal(h.ctx.getReconnectAttempt(), attemptsAfterFirst, 'must not restart or double-fire mid-episode');
   });
 
-  it('a fresh setupTerminal() call cancels whatever episode was running', () => {
+  it('a fresh setupTerminal() call cancels a MID-episode (not yet exhausted) reconnect attempt', () => {
     const h = load({ bufferLines: ['[exited]', 'Press Enter to Reconnect'] });
     h.sessionState.session = { sessionId: 'sess-1' };
     h.ctx.checkOrdinaryDisconnect();
     assert.ok(h.ctx.getReconnectTimer() !== null);
     h.ctx.setupTerminal();
     assert.equal(h.ctx.getReconnectAttempt(), 0);
+    assert.equal(h.pendingTimeouts.length, 0, 'the pending backoff wait must be cancelled, not just forgotten');
+  });
+
+  it('a fresh setupTerminal() call cancels whatever episode was running, including the exhaustion latch', () => {
+    const h = load({ bufferLines: ['[exited]', 'Press Enter to Reconnect'] });
+    h.sessionState.session = { sessionId: 'sess-1' };
+    h.ctx.checkOrdinaryDisconnect();
+    h.pendingTimeouts.shift().fn();
+    h.pendingTimeouts.shift().fn();
+    h.pendingTimeouts.shift().fn(); // exhausted
+    assert.equal(h.ctx.getReconnectExhausted(), true);
+    h.ctx.setupTerminal();
+    assert.equal(h.ctx.getReconnectAttempt(), 0);
+    assert.equal(h.ctx.getReconnectExhausted(), false, 'a fresh attach earns a clean slate');
     assert.equal(h.pendingTimeouts.length, 0, 'the pending backoff wait must be cancelled, not just forgotten');
   });
 

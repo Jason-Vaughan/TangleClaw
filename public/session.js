@@ -2454,6 +2454,12 @@ const RECONNECT_BACKOFF_MS = [1000, 2000, 4000, 4000];
 
 let reconnectAttempt = 0;
 let reconnectTimer = null;
+// Latched once RECONNECT_BACKOFF_MS is exhausted for the CURRENT disconnect
+// episode, so a persistent drop does not silently restart an unbounded
+// string of fresh 4-attempt episodes forever (INT pre-PR finding). Only
+// positive health evidence or a fresh attach (cancelReconnectEpisode, via
+// setupTerminal — a new session or a manual reload) clears it.
+let reconnectExhausted = false;
 let endedWatchTimer = null;
 // Guards pollStatus's reattach check against initSession's OWN first
 // setupTerminal() call: initSession awaits one pollStatus() before it ever
@@ -2464,15 +2470,20 @@ let terminalSetupStarted = false;
 
 /**
  * Read ttyd's OWN disconnect prompt from the xterm buffer it already
- * rendered — the exact text the issue's reproduction observed. An
- * unreadable or not-yet-loaded terminal returns false, never true: that
- * case can't be told apart from a healthy cross-origin deployment, and
- * treating it as evidence is exactly what would reload-loop one.
- * @returns {boolean} true when the prompt is present
+ * rendered — the exact text the issue's reproduction observed.
+ *
+ * Three-way, not boolean (INT pre-PR finding): an unreadable or
+ * not-yet-loaded terminal is 'unknown', never 'healthy' — that case can't
+ * be told apart from a healthy cross-origin deployment OR from a page that
+ * just reattached and has not finished loading yet, and collapsing it into
+ * "healthy" let a still-broken connection get marked healed the instant a
+ * reconnect attempt's own reload left the frame briefly unreadable.
+ * 'unknown' is also never 'unhealthy': cross-origin must not reload-loop.
+ * @returns {'healthy'|'unhealthy'|'unknown'}
  */
-function terminalShowsDisconnectPrompt() {
+function terminalDisconnectStatus() {
   const term = _sessionTerm();
-  if (!term || !term.buffer || !term.buffer.active) return false;
+  if (!term || !term.buffer || !term.buffer.active) return 'unknown';
   try {
     const buf = term.buffer.active;
     const tailLines = Math.min(buf.length, 5);
@@ -2481,37 +2492,45 @@ function terminalShowsDisconnectPrompt() {
       const line = buf.getLine(i);
       if (line) tail += `${line.translateToString(true)}\n`;
     }
-    return /press enter to reconnect/i.test(tail) || /\[exited\]/i.test(tail);
+    return (/press enter to reconnect/i.test(tail) || /\[exited\]/i.test(tail)) ? 'unhealthy' : 'healthy';
   } catch (_) {
-    return false; // unreadable — never treated as evidence
+    return 'unknown'; // unreadable — never treated as evidence either way
   }
 }
 
+/** Paint the "healthy again" status, undoing runReconnectAttempt's markers. */
+function clearReconnectingStatus() {
+  if (sessionState.ended || sessionState.wrapping) return;
+  setPillDetail(document.getElementById('statusPill'), 'Active');
+  document.getElementById('statusDot').classList.remove('reconnecting');
+}
+
 /**
- * Cancel an in-flight reconnect episode and clear its status. Called by
- * `setupTerminal()` itself — any fresh attach (reconnect-driven or not)
- * supersedes whatever episode was running.
+ * Cancel an in-flight reconnect episode and clear its status, INCLUDING the
+ * exhaustion latch. Called by `setupTerminal()` itself — any fresh attach
+ * (reconnect-driven, a new session taking over, or a manual reload)
+ * supersedes whatever episode was running and earns a clean slate.
  */
 function cancelReconnectEpisode() {
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
-  if (reconnectAttempt > 0) {
+  if (reconnectAttempt > 0 || reconnectExhausted) {
     reconnectAttempt = 0;
-    if (!sessionState.ended && !sessionState.wrapping) {
-      setPillDetail(document.getElementById('statusPill'), 'Active');
-      document.getElementById('statusDot').classList.remove('reconnecting');
-    }
+    reconnectExhausted = false;
+    clearReconnectingStatus();
   }
 }
 
 /**
  * Run one attempt of a reconnect episode: reattach, then — unless attempts
- * are exhausted — wait the next backoff step and check whether the prompt
- * is still showing before trying again. Resets as soon as the prompt is
- * gone (the connection healed, whether this episode's own attempt fixed it
- * or ttyd reconnected on its own in the meantime).
+ * are exhausted — wait the next backoff step and check whether the
+ * connection is definitively healthy before declaring victory. An 'unknown'
+ * read (frame mid-reload, most likely its OWN reload from this very
+ * attempt) is treated the same as 'unhealthy' — another budgeted retry —
+ * never as healed: that distinction is the whole fix for the finding that
+ * a reload-in-progress could get marked healthy by accident.
  */
 function runReconnectAttempt() {
   setPillDetail(document.getElementById('statusPill'), 'Reconnecting…');
@@ -2519,17 +2538,18 @@ function runReconnectAttempt() {
   setupTerminalKeepingEpisode();
   reconnectAttempt++;
   if (reconnectAttempt >= RECONNECT_BACKOFF_MS.length) {
-    reconnectTimer = null; // attempts exhausted for this episode
+    reconnectTimer = null;
+    reconnectExhausted = true; // latched — checkOrdinaryDisconnect won't restart a fresh episode
     return;
   }
   reconnectTimer = setTimeout(() => {
-    if (terminalShowsDisconnectPrompt()) {
-      runReconnectAttempt();
-    } else {
+    if (terminalDisconnectStatus() === 'healthy') {
       reconnectTimer = null;
       reconnectAttempt = 0;
-      setPillDetail(document.getElementById('statusPill'), 'Active');
-      document.getElementById('statusDot').classList.remove('reconnecting');
+      reconnectExhausted = false;
+      clearReconnectingStatus();
+    } else {
+      runReconnectAttempt();
     }
   }, RECONNECT_BACKOFF_MS[reconnectAttempt - 1]);
 }
@@ -2539,22 +2559,37 @@ function runReconnectAttempt() {
  * episode it's part of — the public entry point always cancels on attach,
  * which is right for every OTHER caller but would make an episode unable to
  * reach its own second attempt.
+ *
+ * Zeroing `reconnectAttempt`/`reconnectExhausted` (not just saving them) is
+ * the fix for a real bug this surfaced: on the FIRST attempt `reconnectAttempt`
+ * is already 0 when this runs, so `cancelReconnectEpisode`'s guard happened
+ * to no-op by accident — but from the SECOND attempt on, `reconnectAttempt`
+ * is already >0 at this point (it increments AFTER this call returns), so
+ * that guard fired for real and repainted the pill back to "Active" mid-episode,
+ * even though the saved/restored counter made the final number look right.
+ * Suppressing the guard's INPUTS, not just restoring its output, is what
+ * actually stops the side effect from firing at all.
  */
 function setupTerminalKeepingEpisode() {
   const savedAttempt = reconnectAttempt;
   const savedTimer = reconnectTimer;
-  reconnectTimer = null; // let setupTerminal's cancelReconnectEpisode() no-op the timer clear
+  const savedExhausted = reconnectExhausted;
+  reconnectTimer = null;
+  reconnectAttempt = 0;
+  reconnectExhausted = false;
   setupTerminal();
   reconnectAttempt = savedAttempt;
   reconnectTimer = savedTimer;
+  reconnectExhausted = savedExhausted;
 }
 
 /**
- * Start (or continue) a bounded reconnect episode once ttyd's own prompt is
- * positively observed. No-op while one is already running.
+ * Start a bounded reconnect episode once ttyd's own prompt is positively
+ * observed. No-op while one is already running or already exhausted —
+ * `checkOrdinaryDisconnect` guards both before calling this.
  */
 function beginReconnectEpisode() {
-  if (reconnectTimer) return;
+  if (reconnectTimer || reconnectExhausted) return;
   reconnectAttempt = 0;
   runReconnectAttempt();
 }
@@ -2563,17 +2598,29 @@ function beginReconnectEpisode() {
  * The ordinary-disconnect half of #2011, run from `pollStatus` on every tick
  * where the status poll confirms `active: true` for the SAME session the
  * terminal is already attached to (the new-session case is handled before
- * this is reached). Positive evidence only starts an episode; its absence
- * resets the attempt counter so a later, unrelated prompt starts a fresh
- * backoff rather than inheriting a stale one.
+ * this is reached).
+ *
+ * Only a 'healthy' read ever resets the episode/exhaustion state — an
+ * 'unknown' read (unreadable/loading) proves nothing either way and is
+ * left alone, and an 'unhealthy' read after exhaustion stays latched rather
+ * than restarting a fresh 4-attempt episode forever (the fix for the
+ * unbounded-retries finding: the old code reset the attempt counter on
+ * every non-positive read, including a still-failing one).
  */
 function checkOrdinaryDisconnect() {
   if (reconnectTimer) return; // episode already running
-  if (terminalShowsDisconnectPrompt()) {
-    beginReconnectEpisode();
-  } else if (reconnectAttempt > 0) {
-    reconnectAttempt = 0;
+  const status = terminalDisconnectStatus();
+  if (status === 'healthy') {
+    if (reconnectAttempt > 0 || reconnectExhausted) {
+      reconnectAttempt = 0;
+      reconnectExhausted = false;
+      clearReconnectingStatus();
+    }
+    return;
   }
+  if (status === 'unknown') return; // no evidence either way yet
+  if (reconnectExhausted) return; // already gave up this episode — stay latched
+  beginReconnectEpisode();
 }
 
 /**
