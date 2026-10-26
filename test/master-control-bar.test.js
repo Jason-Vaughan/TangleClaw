@@ -398,6 +398,52 @@ describe('#2035 Full screen and Pop out', () => {
   });
 });
 
+// #192, web-terminal layer: `test/tmux.test.js`'s raw-mode PTY regression
+// covers the SERVER side (tmux sendKeys to the pane); this covers the CLIENT
+// side (pasteToMaster handing the browser clipboard's text to xterm.js) —
+// the other half of the same pipe, with its own chance to mangle a multi-line
+// payload (e.g. splitting on \n, or re-joining with the wrong line ending).
+describe('#192 pasteToMaster passes a multi-line payload to xterm intact', () => {
+  /**
+   * Mount a bar with a given frame registered at `frameId`, directly on the
+   * `ids` map `makeDocument` hands back — the same seam `test/paste-affordance.test.js`
+   * uses for this same component, kept local here since that file is outside
+   * this chunk's authorized scope.
+   * @returns {{doc: object, bar: object}}
+   */
+  function mountedWithFrame(prefix, frameId, frame, extraDeps) {
+    const { doc, ids } = makeDocument([prefix + 'Bar']);
+    withIdParsingInnerHTML(ids[prefix + 'Bar'], doc);
+    ids[frameId] = frame;
+    const bar = G.tcCreateMasterControlBar(Object.assign(
+      { doc, rootId: prefix + 'Bar', prefix, title: 'M' }, extraDeps
+    ));
+    bar.mount();
+    return { doc, bar };
+  }
+
+  it('a multi-line clipboard payload reaches term.paste() with every line and ending intact', async () => {
+    const pasted = [];
+    const term = { paste: (t) => pasted.push(t), focus: () => {} };
+    const { doc, bar } = mountedWithFrame('masterPanel', 'masterFrame', { contentWindow: { term } });
+    const multiLine = 'line one\nline two\nline three\n';
+    doc.defaultView = { navigator: { clipboard: { readText: async () => multiLine } } };
+    await bar.paste();
+    assert.deepEqual(pasted, [multiLine], 'the payload must reach term.paste() byte for byte — no split, re-join, or line-ending change');
+  });
+
+  it('the same holds through the fallback prompt, for a client with no clipboard read', async () => {
+    const pasted = [];
+    const term = { paste: (t) => pasted.push(t), focus: () => {} };
+    const multiLine = 'alpha\nbeta\ngamma';
+    const { doc, bar } = mountedWithFrame('masterDrawer', 'masterDrawerFrame', { contentWindow: { term } },
+      { prompt: () => multiLine });
+    doc.defaultView = { navigator: {} };
+    await bar.paste();
+    assert.deepEqual(pasted, [multiLine]);
+  });
+});
+
 describe('#2035 the dashboard\'s popout bootstrap (public/ui.js)', () => {
   /** @returns {Function} `isMasterPopoutLoad`, lifted and run for real. */
   function loadIsMasterPopoutLoad() {
