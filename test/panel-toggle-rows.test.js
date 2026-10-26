@@ -14,13 +14,15 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { liftDeclaration } = require('./helpers/lift');
+const { liftDeclaration, loadEsc, loadJsArg } = require('./helpers/lift');
 const fs = require('node:fs');
 const path = require('node:path');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
 const ui = read('ui.js');
 const landing = read('landing.js');
+const esc = loadEsc();
+const jsArg = loadJsArg();
 
 const VOID = new Set(['br', 'hr', 'img', 'input', 'meta', 'link']);
 
@@ -445,9 +447,11 @@ describe('other panel controls carry a fold key for the poll restore too (#2092)
       'Kill Tunnel must carry a fold key while the tunnel is active');
   });
 
-  it("loadGroupDetail wraps its own content.innerHTML replace in renderKeepingFoldFocus (Remove member/doc buttons only exist after this async step, which runs after renderGroups()'s own outer restore already returned)", () => {
+  it("loadGroupDetail wraps its own content.innerHTML replace in renderKeepingFoldFocus, passing through the key renderGroups() captured before the Loading placeholder destroyed it (PRR-B C1)", () => {
     const body = liftDeclaration(ui, 'async function loadGroupDetail(');
-    assert.match(body, /renderKeepingFoldFocus\(content, \(\) => \{ content\.innerHTML = html; \}\)/);
+    assert.match(body, /async function loadGroupDetail\(groupId, pendingFoldKey\)/,
+      'must accept the key renderGroups() captured earlier, not just groupId');
+    assert.match(body, /renderKeepingFoldFocus\(content, \(\) => \{ content\.innerHTML = html; \}, pendingFoldKey\)/);
   });
 
   it('Remove member and Remove document buttons are keyed by group/member/doc id, not just "remove"', () => {
@@ -455,5 +459,101 @@ describe('other panel controls carry a fold key for the poll restore too (#2092)
     assert.match(body, /data-fold-key="remove-member-\$\{esc\(groupId\)\}-\$\{m\.id\}"/,
       'must include both the group and member id, so two different groups\' Remove buttons never collide');
     assert.match(body, /data-fold-key="remove-doc-\$\{esc\(doc\.id\)\}"/);
+  });
+
+  /*
+   * PRR-B C1 (#2092 REVISE): a focused Remove member/doc button sits inside a
+   * group's content div, which renderGroups() replaces with a "Loading
+   * details..." placeholder on every poll -- destroying the button and
+   * moving focus to <body> BEFORE loadGroupDetail's fetch resolves. By the
+   * time loadGroupDetail ran its own renderKeepingFoldFocus, activeElement
+   * was already <body> with the real answer gone. Two real executions, not
+   * source regexes: renderGroups() capturing the key before the destroy, and
+   * loadGroupDetail actually restoring focus with it afterward.
+   */
+  describe('the full poll-path focus handoff is real, not just structural (PRR-B C1)', () => {
+    it("renderGroups() captures the focused Remove button's key BEFORE replacing it with the Loading placeholder, and hands it to loadGroupDetail", () => {
+      const loadCalls = [];
+      const focusedButton = { dataset: { foldKey: 'remove-member-g1-7' } };
+      const panel = { innerHTML: '', contains: (el) => el === focusedButton };
+      const documentStub = { getElementById: () => panel, activeElement: focusedButton };
+      const render = new Function(
+        'document', 'esc', 'jsArg', 'state', 'loadGroupDetail',
+        `${liftDeclaration(ui, 'function renderGroups()')}\nreturn renderGroups;`
+      )(documentStub, esc, jsArg,
+        { groups: [{ id: 'g1', name: 'Backend', memberCount: 1, docCount: 0 }], groupItemsOpen: { g1: true } },
+        (groupId, key) => loadCalls.push({ groupId, key }));
+      render();
+      assert.deepEqual(loadCalls, [{ groupId: 'g1', key: 'remove-member-g1-7' }],
+        'the key must come from the button that was ACTUALLY focused before the replace, handed to this group\'s loadGroupDetail call');
+    });
+
+    it("renderGroups() hands through undefined when nothing relevant was focused -- doesn't invent a key", () => {
+      const loadCalls = [];
+      const panel = { innerHTML: '', contains: () => false };
+      const documentStub = { getElementById: () => panel, activeElement: { dataset: {} } };
+      const render = new Function(
+        'document', 'esc', 'jsArg', 'state', 'loadGroupDetail',
+        `${liftDeclaration(ui, 'function renderGroups()')}\nreturn renderGroups;`
+      )(documentStub, esc, jsArg,
+        { groups: [{ id: 'g1', name: 'Backend', memberCount: 0, docCount: 0 }], groupItemsOpen: { g1: true } },
+        (groupId, key) => loadCalls.push({ groupId, key }));
+      render();
+      assert.deepEqual(loadCalls, [{ groupId: 'g1', key: undefined }]);
+    });
+
+    it("loadGroupDetail restores focus onto the matching Remove button once it exists again, using the handed-through key -- NOT document.activeElement, which is already <body>-like by this point", async () => {
+      /**
+       * A fake content div: its `querySelectorAll('[data-fold-key]')`
+       * parses the data-fold-key attributes out of whatever HTML string was
+       * last assigned to `innerHTML`, the same contract a real re-parsed DOM
+       * node has after the real `renderKeepingFoldFocus` sets it.
+       */
+      function fakeContentEl() {
+        const focusCalls = [];
+        let htmlValue = '';
+        return {
+          get innerHTML() { return htmlValue; },
+          set innerHTML(v) { htmlValue = v; },
+          querySelectorAll(sel) {
+            if (sel !== '[data-fold-key]') return [];
+            return [...htmlValue.matchAll(/data-fold-key="([^"]+)"/g)].map(([, key]) => ({
+              dataset: { foldKey: key },
+              focus(opts) { focusCalls.push({ key, opts }); }
+            }));
+          },
+          focusCalls
+        };
+      }
+
+      const contentEl = fakeContentEl();
+      const nameEl = { textContent: 'Backend' };
+      const toggle = { querySelector: (sel) => (sel === '.group-item-name' ? nameEl : null) };
+      const item = {
+        querySelector: (sel) => {
+          if (sel === '.group-item-toggle') return toggle;
+          if (sel === '.group-item-content') return contentEl;
+          return null;
+        }
+      };
+      const documentStub = {
+        querySelectorAll: (sel) => (sel === '.group-item' ? [item] : []),
+        // Deliberately unrelated to the real focus history -- proves the
+        // restore does not fall back to re-reading this.
+        activeElement: { dataset: {} },
+        contains: () => false
+      };
+      const run = new Function(
+        'document', 'esc', 'jsArg', 'api', 'state', 'renderKeepingFoldFocus',
+        `${liftDeclaration(ui, 'async function loadGroupDetail(')}\nreturn loadGroupDetail;`
+      )(documentStub, esc, jsArg,
+        async () => ({ members: [{ id: 7, name: 'Alice' }], docs: [] }),
+        { groups: [{ id: 'g1', name: 'Backend' }] },
+        new Function('document', `${liftDeclaration(ui, 'function renderKeepingFoldFocus(')}\nreturn renderKeepingFoldFocus;`)(documentStub));
+
+      await run('g1', 'remove-member-g1-7');
+      assert.deepEqual(contentEl.focusCalls, [{ key: 'remove-member-g1-7', opts: { preventScroll: true } }],
+        'the real Remove button, once rendered, must receive focus via the key handed through from renderGroups()');
+    });
   });
 });

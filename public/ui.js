@@ -90,6 +90,17 @@ let openPeekProject = null;
  */
 let peekCache = {};
 
+/**
+ * Incremented on every Peek open (PRR-B C1, #2121). The `openPeekProject !==
+ * name` guard alone passes on a close-then-reopen of the SAME project: if
+ * the closed fetch resolves after the reopened one started, its name still
+ * matches, so it can overwrite the newer request's cache with stale output.
+ * Each open captures the generation at that moment; a response is applied
+ * only if it is still the current generation, not just the current name.
+ * @type {number}
+ */
+let peekGeneration = 0;
+
 function renderProjects() {
   const grid = document.getElementById('cardsGrid');
   // The open card lists its stranded wraps; fetch them when its counts moved.
@@ -1427,7 +1438,7 @@ async function unarchiveProject(name) {
  * Toggle a card's Peek panel open/closed (#2121).
  *
  * Flips `openPeekProject` and re-renders rather than appending to or removing
- * from the card \u2014 same reasoning as `toggleCardDetail` \u2014 so the 10s project
+ * from the card — same reasoning as `toggleCardDetail` — so the 10s project
  * poll redraws the panel instead of destroying it.
  *
  * @param {string} name - Project name.
@@ -1445,13 +1456,17 @@ async function openPeekFromCard(name) {
 
   // Only one Peek open at a time, matching the previous behaviour.
   openPeekProject = name;
+  const myGeneration = ++peekGeneration;
   peekCache[name] = { lines: null, loading: true };
   renderProjects();
 
   const data = await api(`/api/sessions/${encodeURIComponent(name)}/peek?lines=15`);
   // The operator may have closed this Peek, or opened a different one, while
-  // the fetch was in flight \u2014 don't let a stale response land on it.
-  if (openPeekProject !== name) return;
+  // the fetch was in flight — don't let a stale response land on it. The name
+  // check alone misses close-then-reopen of the SAME project (PRR-B C1): the
+  // closed fetch's name still matches on reopen, so it needs its own
+  // generation checked too, not just openPeekProject's current value.
+  if (openPeekProject !== name || myGeneration !== peekGeneration) return;
   peekCache[name] = { lines: data && data.lines ? data.lines : null, loading: false };
   renderProjects();
 
@@ -1635,14 +1650,22 @@ function foldToggleInPlace(button, open) {
  * calling `.focus()` every poll is expected to re-announce the control's
  * label on the same cadence, with no way to confirm or rule it out short of
  * a live screen-reader session.
+ *
+ * `knownKey` (PRR-B C1, #2092): pass the fold key explicitly when the caller
+ * already captured it BEFORE a focused control was destroyed by an earlier,
+ * outer render — by the time this function would read `document.activeElement`
+ * itself, it may already be `<body>`, with the real answer gone. Omit it to
+ * fall back to the normal activeElement read (the common case).
  * @param {HTMLElement|null} container - The panel element the render writes into.
  * @param {Function} render - The panel's render function.
+ * @param {string|undefined} [knownKey] - A fold key captured earlier, overriding the activeElement read.
  * @returns {void}
  */
-function renderKeepingFoldFocus(container, render) {
+function renderKeepingFoldFocus(container, render, knownKey) {
   const active = typeof document !== 'undefined' ? document.activeElement : null;
-  const key = container && active && container.contains(active) && active.dataset
-    ? active.dataset.foldKey : undefined;
+  const key = knownKey !== undefined
+    ? knownKey
+    : (container && active && container.contains(active) && active.dataset ? active.dataset.foldKey : undefined);
   render();
   if (key === undefined || !container) return;
   for (const b of container.querySelectorAll('[data-fold-key]')) {
@@ -5663,6 +5686,19 @@ function toggleGroups() {
  */
 function renderGroups() {
   const panel = document.getElementById('groupsPanel');
+  // Captured BEFORE anything renders (PRR-B C1, #2092): a focused Remove
+  // member/doc button lives inside a group's content div, which this
+  // function is about to replace with a "Loading details..." placeholder —
+  // destroying the button and moving focus to <body> synchronously, well
+  // before loadGroupDetail's async fetch resolves and rebuilds that content
+  // with the real buttons again. By then document.activeElement is already
+  // <body>, so loadGroupDetail's OWN renderKeepingFoldFocus call has nothing
+  // left to capture. Hand this key through instead of relying on it to
+  // re-read activeElement at a point where the real answer is already gone.
+  const active = typeof document !== 'undefined' ? document.activeElement : null;
+  const pendingFoldKey = active && panel && panel.contains(active) && active.dataset
+    ? active.dataset.foldKey : undefined;
+
   if (state.groups.length === 0) {
     panel.innerHTML = `<div class="groups-empty">
       No project groups yet
@@ -5709,7 +5745,7 @@ function renderGroups() {
   // Load details for open groups
   for (const group of state.groups) {
     if (state.groupItemsOpen[group.id]) {
-      loadGroupDetail(group.id);
+      loadGroupDetail(group.id, pendingFoldKey);
     }
   }
 }
@@ -5733,8 +5769,13 @@ function toggleGroupItem(groupId, button) {
 /**
  * Load group details (members + docs) and render inline.
  * @param {string} groupId
+ * @param {string|undefined} [pendingFoldKey] - A fold key `renderGroups()`
+ *   captured before replacing this group's content with a "Loading
+ *   details..." placeholder (PRR-B C1, #2092) — by the time this function's
+ *   own fetch resolves, the real focus is already gone, so it restores from
+ *   this instead of re-reading `document.activeElement`.
  */
-async function loadGroupDetail(groupId) {
+async function loadGroupDetail(groupId, pendingFoldKey) {
   const data = await api(`/api/groups/${groupId}`);
   if (!data) return;
 
@@ -5796,11 +5837,13 @@ async function loadGroupDetail(groupId) {
     }
 
     // This content div's own innerHTML replace happens after renderGroups()'s
-    // synchronous render already returned — its Remove buttons (#2092) exist
-    // only from this point on, so the outer renderKeepingFoldFocus call in
-    // loadGroups() is too early to catch focus loss here; wrap this
-    // narrower replace the same way.
-    renderKeepingFoldFocus(content, () => { content.innerHTML = html; });
+    // synchronous render already returned -- its Remove buttons (#2092) exist
+    // only from this point on. Re-reading document.activeElement here would
+    // be too late on its own (PRR-B C1): renderGroups() already replaced this
+    // button with a "Loading details..." placeholder, so by now focus has
+    // already moved to <body>. pendingFoldKey is what renderGroups() captured
+    // BEFORE that happened, threaded through for exactly this moment.
+    renderKeepingFoldFocus(content, () => { content.innerHTML = html; }, pendingFoldKey);
     break;
   }
 }

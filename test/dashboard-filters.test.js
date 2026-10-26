@@ -617,7 +617,7 @@ describe('Peek panel survives a poll re-render instead of auto-closing (#2121)',
       renderProjects: () => { renders.push(1); },
       CSS: { escape: (s) => s }
     });
-    const src = `let openPeekProject = null;\nlet peekCache = {};\n${liftDeclaration(UI_SRC, 'async function openPeekFromCard(')}`;
+    const src = `let openPeekProject = null;\nlet peekCache = {};\nlet peekGeneration = 0;\n${liftDeclaration(UI_SRC, 'async function openPeekFromCard(')}`;
     vm.runInContext(src, ctx);
     return { ctx, apiCalls, renders };
   }
@@ -659,7 +659,7 @@ describe('Peek panel survives a poll re-render instead of auto-closing (#2121)',
       renderProjects: () => {},
       CSS: { escape: (s) => s }
     });
-    const src = `let openPeekProject = null;\nlet peekCache = {};\n${liftDeclaration(UI_SRC, 'async function openPeekFromCard(')}`;
+    const src = `let openPeekProject = null;\nlet peekCache = {};\nlet peekGeneration = 0;\n${liftDeclaration(UI_SRC, 'async function openPeekFromCard(')}`;
     vm.runInContext(src, ctx);
 
     const firstOpen = vm.runInContext("openPeekFromCard('proj-a')", ctx); // fetch still in flight
@@ -674,6 +674,40 @@ describe('Peek panel survives a poll re-render instead of auto-closing (#2121)',
     const cached = vm.runInContext('peekCache', ctx)['proj-a'];
     assert.equal(cached.loading, true, 'the late fetch for the already-closed Peek must not overwrite the cache with its stale content');
     assert.equal(cached.lines, null);
+  });
+
+  it('close then reopen the SAME project, with the closed fetch resolving after the reopened one (PRR-B C1: the name-only guard alone passes here, since openPeekProject is "proj-a" again)', async () => {
+    const releases = [];
+    const apiCalls = [];
+    const ctx = vm.createContext({
+      state: { projects: PROJECTS },
+      api: async (url) => {
+        apiCalls.push(url);
+        return new Promise((resolve) => { releases.push(resolve); });
+      },
+      document: { querySelector: () => null },
+      renderProjects: () => {},
+      CSS: { escape: (s) => s }
+    });
+    const src = `let openPeekProject = null;\nlet peekCache = {};\nlet peekGeneration = 0;\n${liftDeclaration(UI_SRC, 'async function openPeekFromCard(')}`;
+    vm.runInContext(src, ctx);
+
+    const firstOpen = vm.runInContext("openPeekFromCard('proj-a')", ctx); // fetch #1 in flight
+    await vm.runInContext("openPeekFromCard('proj-a')", ctx); // closes it before fetch #1 resolves
+    const reopen = vm.runInContext("openPeekFromCard('proj-a')", ctx); // fetch #2 starts -- same project name
+    assert.equal(apiCalls.length, 2);
+
+    // Resolve the NEWER request first, then the stale one -- the out-of-order
+    // network response order a name-only guard cannot distinguish.
+    releases[1]({ lines: ['fresh'] });
+    await reopen;
+    releases[0]({ lines: ['stale'] });
+    await firstOpen;
+
+    const cached = vm.runInContext('peekCache', ctx)['proj-a'];
+    assert.equal(cached.loading, false);
+    assert.deepEqual(Array.from(cached.lines), ['fresh'],
+      'the stale (first-opened) response must not overwrite the fresher reopen, even though both share the same project name');
   });
 
   it("renderCard's isPeekOpen is typeof-guarded (several isolated-lift test harnesses run renderCard() standalone and don't declare openPeekProject — a bare reference ReferenceErrors there instead of evaluating false)", () => {
