@@ -383,7 +383,15 @@ function declaredTestCommand() {
 
 describe('record-test-run: the declared test_command contract (#2371 Step 3)', () => {
   it('this checkout, if it declares one, declares the suite-evidence wrapper', () => {
+    // A checkout with no `.prawduct/project-state.yaml` at all (CI's clone) declares
+    // nothing and is skipped — but a checkout that HAS the file must parse to a
+    // non-null command; a present file whose `test_command` is missing or not in the
+    // `"..."`-quoted form `declaredTestCommand` reads must fail here, not pass by
+    // silently reading the same null as "no file".
+    const file = path.join(__dirname, '..', '.prawduct', 'project-state.yaml');
+    if (!fs.existsSync(file)) return;
     const declared = declaredTestCommand();
-    if (declared) assert.deepEqual(declared, DECLARED_TEST_COMMAND, 'this checkout\'s project state declares the pinned command');
+    assert.ok(declared, 'this checkout\'s project state declares a test_command in the recognized form');
+    assert.deepEqual(declared, DECLARED_TEST_COMMAND, 'this checkout\'s project state declares the pinned command');
   });
 });
