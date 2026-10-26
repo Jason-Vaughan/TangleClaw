@@ -17,6 +17,7 @@ const { liftDeclaration } = require('./helpers/lift');
 const SESSION_CSS = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.css'), 'utf8');
 const SESSION_HTML = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.html'), 'utf8');
 const SESSION_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
+const API_HELPER_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
 
 describe('#1317 the session header\'s wrapping dot is the same pinwheel the dashboard uses', () => {
   it('session.css defines .status-dot.wrapping with the pinwheel blades', () => {
@@ -58,14 +59,22 @@ describe('#960 #selectBtn and its select-mode machinery are gone (Operator Decis
   it('the #580 stranded select-mode override recovery and its localStorage marker are gone', () => {
     // That recovery path and marker existed only to serve Select mode (per
     // #960's own triage comment); leaving them in place after the button is
-    // gone is dead code with no caller. `tcSelectModeMouse`/`tcParseSelectMarker`
-    // themselves live in public/api-helper.js, outside this chunk's file
-    // scope (W2-B's), and are intentionally left as a flagged follow-up —
-    // asserted only on the session.js caller side here.
+    // gone would be dead code with no caller.
     assert.doesNotMatch(SESSION_JS, /function repairAbandonedSelect\(/);
     assert.doesNotMatch(SESSION_JS, /function writeSelectMarker\(/);
     assert.doesNotMatch(SESSION_JS, /function clearSelectMarker\(/);
     assert.doesNotMatch(SESSION_JS, /selectModeActive/);
+  });
+
+  it('tcSelectModeMouse/tcParseSelectMarker are gone from api-helper.js too (A474-W2-R4)', () => {
+    // Orphaned by this same removal, but living in a file outside #960's
+    // original file scope — W2-B owned it until its own PR merged. Removed
+    // here once the Architect's A474-W2-R4 explicitly authorized W2-C to
+    // touch public/api-helper.js, rather than left as a permanent orphan.
+    assert.doesNotMatch(API_HELPER_JS, /function tcSelectModeMouse\(/);
+    assert.doesNotMatch(API_HELPER_JS, /function tcParseSelectMarker\(/);
+    assert.doesNotMatch(API_HELPER_JS, /global\.tcSelectModeMouse/);
+    assert.doesNotMatch(API_HELPER_JS, /global\.tcParseSelectMarker/);
   });
 });
 

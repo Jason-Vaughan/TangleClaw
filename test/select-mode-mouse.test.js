@@ -17,25 +17,23 @@
  *        designs, so touch-scroll could never reliably work on a phone.
  *
  * The decisions now live in pure functions (the TST-6L2P lift pattern) so
- * the logic executes under test even though the DOM can't:
- * tcSelectModeMouse (public/api-helper.js) and _resolveMouseValue
+ * the logic executes under test even though the DOM can't: _resolveMouseValue
  * (lib/tmux.js). Source probes pin the wiring.
  *
  * #579 (UI-2P7T) extends the family: restoring a pre-select state that was
  * INHERITED from the global by SETTING its value strands a benign-valued
  * session-level override (found live in VRF-574 leg 4). The restore now
  * distinguishes inherited from explicit (_resolveMouseState / getMouseState
- * / unsetMouse in lib/tmux.js; tcSelectModeMouse returns {on}|{unset}).
+ * / unsetMouse in lib/tmux.js). This infrastructure outlives Select mode
+ * itself: #1237's plain mouse-mode Settings toggle routes through the same
+ * /api/tmux/mouse and the same explicit/inherited distinction.
  *
- * #960 (Operator Decision A2) removed the Select button and its session.js
+ * #960 (Operator Decision A2) removed the Select button, its session.js
  * caller side (toggleSelect, repairAbandonedSelect, the writeSelectMarker/
- * clearSelectMarker localStorage helpers) — their "is wired" probes below are
- * removed with them. tcSelectModeMouse and tcParseSelectMarker themselves
- * still live in public/api-helper.js (out of #960's W2-C file scope; W2-B
- * owns that file) and are now orphaned with no caller — flagged for a
- * follow-up removal rather than deleted here. Their pure-function tests stay,
- * since the functions still exist and still need to be correct until that
- * follow-up lands.
+ * clearSelectMarker localStorage helpers), and — per A474-W2-R4's W2-C
+ * authorization to touch public/api-helper.js once W2-B's own PR had
+ * merged — the now-orphaned tcSelectModeMouse/tcParseSelectMarker
+ * themselves, along with their describe blocks here.
  */
 
 const { describe, it, before } = require('node:test');
@@ -45,7 +43,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 require('../public/api-helper.js');
-const { tcSelectModeMouse, tcIsFocusTap } = globalThis;
+const { tcIsFocusTap } = globalThis;
 const { _resolveMouseValue } = require('../lib/tmux.js');
 
 describe('Effective tmux mouse state (#574 RC1 — _resolveMouseValue)', () => {
@@ -79,56 +77,6 @@ describe('Effective tmux mouse state (#574 RC1 — _resolveMouseValue)', () => {
       'getMouseState must read the global mouse value as the no-override fallback');
     assert.ok(stateBody.includes('_resolveMouseState('),
       'getMouseState must resolve through the tested pure helper');
-  });
-});
-
-describe('Select-mode mouse decision (#574 RC2 + #579 — tcSelectModeMouse)', () => {
-  // Contract evolution (#579): the function now returns the /api/tmux/mouse
-  // BODY FIELDS — `{on}` to set, `{unset: true}` to restore-by-unsetting —
-  // because a boolean cannot express "put back the inherited state". The
-  // #574 cases below are the same behavioral contracts as before, restated
-  // in the richer shape (explicit pre-select state → the same value comes
-  // back); none are weakened.
-
-  it('exiting restores an EXPLICIT pre-select state on mobile (THE #574 regression)', () => {
-    // The old mobile exit hardcoded mouse off, permanently stranding a
-    // session-level `mouse off` override that killed touch-scroll.
-    assert.deepEqual(
-      tcSelectModeMouse({ entering: false, isMobile: true, mouseOn: true, mouseExplicit: true }),
-      { on: true });
-  });
-
-  it('exiting restores an INHERITED pre-select state by UNSETTING (THE #579 regression)', () => {
-    // Restoring an inherited state by SETTING the value strands a
-    // benign-valued session-level override (found live in VRF-574 leg 4:
-    // one Select→Done left `mouse on` pinned on the TangleClaw session).
-    assert.deepEqual(
-      tcSelectModeMouse({ entering: false, isMobile: true, mouseOn: true, mouseExplicit: false }),
-      { unset: true });
-    assert.deepEqual(
-      tcSelectModeMouse({ entering: false, isMobile: false, mouseOn: false, mouseExplicit: false }),
-      { unset: true });
-  });
-
-  it('exiting restores explicit values on every platform, in both directions', () => {
-    assert.deepEqual(
-      tcSelectModeMouse({ entering: false, isMobile: false, mouseOn: true, mouseExplicit: true }),
-      { on: true });
-    assert.deepEqual(
-      tcSelectModeMouse({ entering: false, isMobile: true, mouseOn: false, mouseExplicit: true }),
-      { on: false });
-    assert.deepEqual(
-      tcSelectModeMouse({ entering: false, isMobile: false, mouseOn: false, mouseExplicit: true }),
-      { on: false });
-  });
-
-  it('entering keeps the platform split (mobile: mouse on, desktop: mouse off)', () => {
-    assert.deepEqual(
-      tcSelectModeMouse({ entering: true, isMobile: true, mouseOn: false, mouseExplicit: false }),
-      { on: true });
-    assert.deepEqual(
-      tcSelectModeMouse({ entering: true, isMobile: false, mouseOn: true, mouseExplicit: true }),
-      { on: false });
   });
 });
 
@@ -168,33 +116,6 @@ describe('Mouse state source (#579 — _resolveMouseState)', () => {
       'GET must report whether the value is a session-level override');
     assert.ok(serverJs.includes('tmux.unsetMouse('),
       'POST must route unset: true to tmux.unsetMouse');
-  });
-});
-
-describe('Select abandonment repair (UI-8W3D — tcParseSelectMarker + wiring)', () => {
-  const { tcParseSelectMarker } = globalThis;
-
-  it('parses a valid marker (the recorded pre-select state)', () => {
-    assert.deepEqual(tcParseSelectMarker('{"on":true,"explicit":false}'),
-      { on: true, explicit: false });
-    assert.deepEqual(tcParseSelectMarker('{"on":false,"explicit":true}'),
-      { on: false, explicit: true });
-  });
-
-  it('rejects absent, malformed, or wrong-shaped storage — corrupt data must never drive a tmux write', () => {
-    assert.equal(tcParseSelectMarker(null), null);
-    assert.equal(tcParseSelectMarker(''), null);
-    assert.equal(tcParseSelectMarker('not json'), null);
-    assert.equal(tcParseSelectMarker('"a string"'), null);
-    assert.equal(tcParseSelectMarker('[]'), null);
-    assert.equal(tcParseSelectMarker('{"on":"yes","explicit":false}'), null);
-    assert.equal(tcParseSelectMarker('{"on":true}'), null);
-    assert.equal(tcParseSelectMarker('{}'), null);
-  });
-
-  it('drops extraneous fields rather than passing them through to the POST', () => {
-    assert.deepEqual(tcParseSelectMarker('{"on":true,"explicit":true,"session":"evil"}'),
-      { on: true, explicit: true });
   });
 });
 
