@@ -41,6 +41,24 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-25 — v5.38.0 W3-A: create setup, shared lease-ignore, and project path health
+
+<!-- prawduct: type=fix | scope=w3a-1304-1382-2401 -->
+
+- **#1304:** Creating a project opens Settings before the first session launches. Save & Launch starts with the chosen settings; Save and Cancel keep the project without launching.
+- **#1382:** Port-import Ignore choices persist in server config instead of per-browser localStorage, so they carry across devices.
+- **#2401:** Unarchive refuses a missing or empty seeded project path until the operator confirms a fresh start. Launch carries an advisory path-health warning to the session view so it remains visible after navigation; launch itself is not refused.
+
+PR #2615 merged as `d3eee9b749eb5f0dc2d4964ed0dd8af2d1e8eebc` from exact head `57acccba3c305a55de3f37a924874ef1bd726a01` (tree `f20ecc5614255e7e40a402e6736e40e409c73a35`) after PRR-A final ACCEPT. Exact-head Tests run `40272409168` and latest-main Tests run `40258598329` succeeded. The CI-mode recorder accepted that head and tree with 23,400 runner tests, 0 failures, and valid Prawduct evidence; A473-A8 co-signed the final 22-file scope, including the session-view warning handoff.
+
+## 2026-10-25 — v5.38.0 W3-B: needs-operator wrap verification
+
+<!-- prawduct: type=internal | scope=w3b-2588-wrap-needs-operator -->
+
+- **#2588:** Added `test/wrap-needs-operator-live.test.js` against an isolated server and real wrap pipeline. It verifies the pre-commit `needs-operator` pause, the owned file on `manifest.commit`, and a Keep-local Retry that moves the file to `manifest.keepLocal` without a second pause or commit. A VM-mounted test runs the real drawer-row renderer and `retryWrap` accessor/POST with a lightweight DOM. The required manual live-session browser click and visual check remain open under #2588.
+
+PR #2613 merged at exact head `cce1034d6484fc40dd63d40723fdc52b96f1b1da` (tree `b40eb9c2388abed0118861585cd8731f308194d0`) after PRR-B final ACCEPT and Tests run `40257249671` SUCCESS. The CI-mode recorder reported 23,367 tests, 0 failures, and tree-valid Prawduct evidence; A473-A6 co-signed the five-file scope. `test/_mini-dom.js` gained the checkbox, selector, and text-node support used by the new UI test.
+
 ## 2026-10-25 — v5.38.0 W2-A: persistent Peek and panel focus
 
 <!-- prawduct: type=fix | scope=w2a-2121-2092-2091 -->
