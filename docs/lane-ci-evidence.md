@@ -441,6 +441,14 @@ plans URL; its digest is in the W4-03 pull request).
    `test/suite-evidence.test.js` that hold today's declaration are changed in the same change,
    which is how the cutover cannot ride in unnoticed. With no environment set, the declared
    command is still today's suite, so the declaration alone changes nothing a gate sees.
+
+   **`TC-Lane-B`, 2026-10-26 (A474-R3, under `GRANT-V539-FULL-SPRINT`):** declared on this lane's
+   checkout. `test/suite-evidence.test.js`'s own-checkout pin moved to
+   `test/record-test-run.test.js` (the same contract, now named where #2371 Step 3 lives);
+   `test/test-stage.test.js`'s unrelated pin of `scripts/test-stage.js`'s `all` stage — the raw
+   command `suite-evidence.js` still runs internally in local mode — is unchanged. This records
+   one lane host's checkout, not every lane's: `.prawduct/project-state.yaml` is per-checkout and
+   gitignored, so each lane declares it separately.
 4. **The complement is verified** on the host the lanes use, before any chunk relies on it.
 
    **Pilot (W3-A, 2026-10-25):** Complement verification on the lane host is pending before the
@@ -457,12 +465,18 @@ plans URL; its digest is in the W4-03 pull request).
    `TANGLECLAW_SUITE_EVIDENCE=ci node scripts/record-test-run.js` on CI head `acacecd1`
    (CI run `40162951976`) and recorded: 23,230 tests, 23,210 pass, 0 fail, 20 skipped, wall time
    ~792s (13m 12s), **0s slot wait** (no `SUITE_SLOT` held) — posted to the PR body, verified
-   against the live PR via `gh pr view 2587`. Step 3 (`test_command` declaration) and Step 6
-   (broader activation beyond the named pilot) remain Operator-held; this page's own steps above
-   are otherwise unchanged by the pilot's completion. Refs #2371.
+   against the live PR via `gh pr view 2587`. Refs #2371.
 6. **Broader use is decided separately**, from the pilot's measurement: its time and its safety
    failures (a defect the pilot let through, a complement entry that did not run, an evidence
-   refusal) alike. Until then, every other chunk runs the full local suite.
+   refusal) alike.
+
+   **`TC-Lane-B`, 2026-10-26 (Operator ratified `1220 obligation now` / #2371 broader activation
+   in A3, `2026-10-26T18:24:39Z`, under `GRANT-V539-FULL-SPRINT`; logged in `LANE_QUEUE.md`):**
+   broader use is decided — every chunk, not only the named W3-A pilot, may stand on CI-as-suite
+   evidence once Step 3's declaration is in force on its lane host and every condition in "The
+   rule text proposed" above holds. Running the full local suite stays the fallback whenever any
+   condition does not hold, exactly as the rule text says; nothing here waives Stages 1, 2 and 3
+   of `scripts/test-stage.js`, the exceptions list, or any other gate.
 
 ### The Builder ring the rule names
 
