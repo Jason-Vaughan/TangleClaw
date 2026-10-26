@@ -2286,22 +2286,15 @@ async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStra
 
     setConnected(true);
     closeStrandedLaunchModal();
-    // #2401: a non-sticky warning, not the sticky "Launch failed" toast
-    // above — the session still opens either way, this only names the
-    // folder condition so the operator can act on it afterward. The
-    // immediately-following navigateToSession is a hard `window.location`
-    // assignment, which tears down this document (and the toast with it)
-    // before the operator could ever read it — gate it on an explicit
-    // acknowledgment instead of letting navigation race the toast.
+    // #2401: carry the warning across navigation instead of showing it here
+    // — navigateToSession's hard `window.location` assignment tears this
+    // document down right away, and gating it behind a confirm() (an
+    // earlier version of this fix) strands an already-launched live session
+    // on the dashboard if the operator declines, contradicting the warning's
+    // non-blocking design. sessionStorage survives the navigation; the
+    // session page (public/session.js) reads and clears it on load.
     if (data.pathHealthWarning) {
-      showToast(data.pathHealthWarning.message, 'warn', 8000);
-      if (!confirm(`${data.pathHealthWarning.message}\n\nContinue to the session?`)) {
-        // The launch already succeeded server-side — only navigation was
-        // declined — so the button must come back to its normal state
-        // rather than stay stuck "Launching…" with pointer-events disabled.
-        if (btn) { btn.textContent = originalText; btn.classList.remove('is-launching'); }
-        return;
-      }
+      try { sessionStorage.setItem('tc_pathHealthWarning', JSON.stringify(data.pathHealthWarning)); } catch (e) { /* ignore */ }
     }
     navigateToSession(name, { launched: true });
   } catch (err) {

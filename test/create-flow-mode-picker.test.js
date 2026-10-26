@@ -33,12 +33,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { liftDeclaration } = require('./helpers/lift');
+const { liftDeclaration, liftBody } = require('./helpers/lift');
 
 const PUB = path.join(__dirname, '..', 'public');
 const UI_SRC = fs.readFileSync(path.join(PUB, 'ui.js'), 'utf8');
 const LANDING_SRC = fs.readFileSync(path.join(PUB, 'landing.js'), 'utf8');
 const API_HELPER_SRC = fs.readFileSync(path.join(PUB, 'api-helper.js'), 'utf8');
+const SESSION_SRC = fs.readFileSync(path.join(PUB, 'session.js'), 'utf8');
 
 // The REAL bundled profile — the shape a fresh install seeds (#251 syncs it
 // on every boot), not a hand-invented launchModes block.
@@ -189,33 +190,23 @@ describe('create flow routes through the launch gate (#401)', () => {
   });
 });
 
-describe('a successful launch with a path-health warning pauses before navigating (#2401 PRR-A C1)', () => {
+describe('a successful launch carries a path-health warning via sessionStorage, never a blocking confirm (#2401 PRR-A renewed REVISE: a confirm() decline stranded an already-launched session)', () => {
   /**
    * Run the page's own `doLaunchProject` against a successful launch.
    * @param {object|null} pathHealthWarning - The response's warning, or null.
-   * @param {boolean} confirmReturns - What the stubbed `confirm()` answers.
-   * @returns {Promise<{seq: string[], btn: object}>} The ordered call sequence,
-   *   and the Launch button stub so its end state can be asserted.
+   * @returns {Promise<{seq: string[], store: object}>} The ordered call
+   *   sequence, and the fake sessionStorage's final contents.
    */
-  async function run(pathHealthWarning, confirmReturns) {
+  async function run(pathHealthWarning) {
     const seq = [];
-    const classes = new Set(['btn-launch']);
-    const btn = {
-      textContent: 'Launch',
-      classList: {
-        add: (c) => classes.add(c),
-        remove: (c) => classes.delete(c),
-        contains: (c) => classes.has(c)
-      }
-    };
+    const store = {};
     const sandbox = {
       console, setTimeout: () => 0, clearTimeout() {},
-      document: { querySelector: () => btn },
+      document: { querySelector: () => null },
       setConnected: () => {},
       closeStrandedLaunchModal: () => {},
-      showToast: (message) => seq.push(`toast:${message}`),
       navigateToSession: (name) => seq.push(`navigate:${name}`),
-      confirm: (message) => { seq.push(`confirm:${message}`); return confirmReturns; },
+      sessionStorage: { setItem: (k, v) => { seq.push(`setItem:${k}`); store[k] = v; } },
       tcFetch: async () => ({ ok: true, json: async () => ({ sessionId: 1, pathHealthWarning }) })
     };
     sandbox.window = sandbox;
@@ -225,32 +216,63 @@ describe('a successful launch with a path-health warning pauses before navigatin
       'globalThis.doLaunchProject = doLaunchProject;'
     ].join('\n'), sandbox);
     await sandbox.doLaunchProject('proj-x', null, null);
-    return { seq, btn };
+    return { seq, store };
   }
 
-  it('navigates immediately when the launch carries no warning', async () => {
-    const { seq } = await run(null, true);
+  it('navigates immediately when the launch carries no warning, writing nothing to sessionStorage', async () => {
+    const { seq, store } = await run(null);
     assert.deepEqual(seq, ['navigate:proj-x']);
+    assert.deepEqual(store, {});
   });
 
-  it('shows the warning and waits for an explicit acknowledgment before navigating (PRR-A C1: navigateToSession is a hard window.location assignment that would otherwise tear down the toast before the operator could read it)', async () => {
+  it('stashes the warning in sessionStorage and still navigates immediately — no confirm() to strand the already-launched session', async () => {
     const warning = { message: 'proj-x has no git history', code: 'PROJECT_PATH_UNSEEDED' };
-    const { seq } = await run(warning, true);
-    assert.deepEqual(seq, [
-      `toast:${warning.message}`,
-      `confirm:${warning.message}\n\nContinue to the session?`,
-      'navigate:proj-x'
-    ]);
+    const { seq, store } = await run(warning);
+    assert.deepEqual(seq, ['setItem:tc_pathHealthWarning', 'navigate:proj-x']);
+    assert.deepEqual(JSON.parse(store.tc_pathHealthWarning), warning);
+  });
+});
+
+describe('session.js shows the launch path-health warning carried via sessionStorage (#2401 PRR-A renewed REVISE)', () => {
+  const start = SESSION_SRC.indexOf('// #2401: a pathHealthWarning');
+  const end = SESSION_SRC.indexOf('// Keep the terminal\'s prompt', start);
+  const snippet = SESSION_SRC.slice(start, end);
+
+  it('is present inside initSession itself, not dead code elsewhere', () => {
+    assert.ok(start > -1, 'the #2401 snippet must exist in session.js');
+    const initBody = liftBody(SESSION_SRC, 'async function initSession()');
+    assert.ok(initBody.includes(snippet.trim()), 'the snippet must be inside initSession');
   });
 
-  it('does not navigate when the operator declines the warning, and resets the Launch button instead of leaving it stuck (Critic design-review WARNING: a decline left the button "Launching…"/pointer-events:none until a full reload)', async () => {
+  /**
+   * Run the extracted snippet with a controllable sessionStorage + flashToast.
+   * @param {string|null} stored - What sessionStorage.getItem returns, or null.
+   * @returns {{toasts: Array<{msg: string, cls: string}>, removed: string[], storeAfter: object}}
+   */
+  function run(stored) {
+    const toasts = [];
+    const removed = [];
+    const store = stored === null ? {} : { tc_pathHealthWarning: stored };
+    const sessionStorage = {
+      getItem: (k) => (k in store ? store[k] : null),
+      removeItem: (k) => { removed.push(k); delete store[k]; }
+    };
+    const flashToast = (msg, cls) => toasts.push({ msg, cls });
+    new Function('sessionStorage', 'flashToast', snippet)(sessionStorage, flashToast);
+    return { toasts, removed, storeAfter: store };
+  }
+
+  it('does nothing when nothing was stashed', () => {
+    const { toasts, removed } = run(null);
+    assert.deepEqual(toasts, []);
+    assert.deepEqual(removed, []);
+  });
+
+  it('shows the warning as a toast-warn flash and clears the key, read-once', () => {
     const warning = { message: 'proj-x has no git history', code: 'PROJECT_PATH_UNSEEDED' };
-    const { seq, btn } = await run(warning, false);
-    assert.deepEqual(seq, [
-      `toast:${warning.message}`,
-      `confirm:${warning.message}\n\nContinue to the session?`
-    ]);
-    assert.equal(btn.textContent, 'Launch', 'the button text must return to normal, not stay "Launching…"');
-    assert.equal(btn.classList.contains('is-launching'), false, 'the pending (pointer-events: none) class must be removed');
+    const { toasts, removed, storeAfter } = run(JSON.stringify(warning));
+    assert.deepEqual(toasts, [{ msg: warning.message, cls: 'toast-warn' }]);
+    assert.deepEqual(removed, ['tc_pathHealthWarning']);
+    assert.equal('tc_pathHealthWarning' in storeAfter, false);
   });
 });
