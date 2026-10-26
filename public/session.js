@@ -2261,18 +2261,20 @@ async function pollStatus() {
     sessionState.launchGraceRemaining = 0;
   }
 
-  // #2011: keep the terminal attached to whatever tmux session the server
-  // says is actually running. Webui sessions have no xterm instance to
-  // reattach (applyWebuiMode already disables the tmux-only controls); an
-  // ended page's return is the ended-watch's job (handleSessionEnded already
-  // stopped this poll above when active is false). While wrapping, leave the
-  // dot alone — the wrap UI owns it, and a wrap in progress is not a
-  // plausible moment for ttyd's own disconnect prompt to legitimately show.
-  if (terminalSetupStarted && data.active && data.sessionMode !== 'webui') {
+  // #2011: keep the terminal attached to whatever session the server says
+  // is actually running, tmux or webui alike — reattachTerminalForStatus
+  // picks the right setup call and UI mode for whichever this is. The
+  // ttyd-buffer disconnect check is tmux-only (webui has no xterm instance
+  // to read); an ended page's return is the ended-watch's job
+  // (handleSessionEnded already stopped this poll above when active is
+  // false). While wrapping, leave the dot alone — the wrap UI owns it, and a
+  // wrap in progress is not a plausible moment for ttyd's own disconnect
+  // prompt to legitimately show.
+  if (terminalSetupStarted && data.active) {
     if (!sessionState.terminalAttachedSessionId
         || (data.sessionId && sessionState.terminalAttachedSessionId !== data.sessionId)) {
-      setupTerminal();
-    } else if (!sessionState.wrapping) {
+      reattachTerminalForStatus(data);
+    } else if (data.sessionMode !== 'webui' && !sessionState.wrapping) {
       checkOrdinaryDisconnect();
     }
   }
@@ -2368,6 +2370,7 @@ let countdownTimer = null;
 function handleSessionEnded(statusData) {
   sessionState.ended = true;
   stopPolling();
+  cancelReconnectEpisode();
   startEndedWatch();
 
   // Defensively hide wrap-idle modal — if tmux died while it was showing,
@@ -2479,6 +2482,13 @@ let terminalSetupStarted = false;
  * "healthy" let a still-broken connection get marked healed the instant a
  * reconnect attempt's own reload left the frame briefly unreadable.
  * 'unknown' is also never 'unhealthy': cross-origin must not reload-loop.
+ *
+ * A blank or whitespace-only tail is 'unknown' too (PRR-A B4): a freshly
+ * (re)initialized xterm buffer reads exactly like that for the brief window
+ * before the pty's first prompt arrives, and that is "nothing confirmed
+ * yet", not "confirmed healthy" — the same reload-in-progress risk the
+ * unreadable case above exists to guard against, just one step later in the
+ * same reattach.
  * @returns {'healthy'|'unhealthy'|'unknown'}
  */
 function terminalDisconnectStatus() {
@@ -2492,7 +2502,9 @@ function terminalDisconnectStatus() {
       const line = buf.getLine(i);
       if (line) tail += `${line.translateToString(true)}\n`;
     }
-    return (/press enter to reconnect/i.test(tail) || /\[exited\]/i.test(tail)) ? 'unhealthy' : 'healthy';
+    if (/press enter to reconnect/i.test(tail) || /\[exited\]/i.test(tail)) return 'unhealthy';
+    if (tail.trim() === '') return 'unknown';
+    return 'healthy';
   } catch (_) {
     return 'unknown'; // unreadable — never treated as evidence either way
   }
@@ -2533,6 +2545,15 @@ function cancelReconnectEpisode() {
  * a reload-in-progress could get marked healthy by accident.
  */
 function runReconnectAttempt() {
+  // Defense in depth (PRR-A B1): handleSessionEnded/handleWrapCompleted both
+  // call cancelReconnectEpisode(), so a live episode should never reach here
+  // after either — this guard is what keeps it that way if a future caller
+  // ever forgets to, rather than reattaching a terminal whose session the
+  // page has already declared over.
+  if (sessionState.ended || sessionState.wrapping) {
+    reconnectTimer = null;
+    return;
+  }
   setPillDetail(document.getElementById('statusPill'), 'Reconnecting…');
   document.getElementById('statusDot').classList.add('reconnecting');
   setupTerminalKeepingEpisode();
@@ -2641,13 +2662,14 @@ function startEndedWatch() {
     sessionState.ended = false;
     sessionState.session = data;
     document.getElementById('statusDot').classList.remove('ended');
+    setPillDetail(document.getElementById('statusPill'), 'Active');
     document.getElementById('sessionEnded').classList.add('hidden');
     document.getElementById('wrapBtn').disabled = false;
     document.getElementById('killBtn').disabled = false;
     document.getElementById('cmdBtn').disabled = false;
     document.getElementById('commandSend').disabled = false;
     if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
-    setupTerminal();
+    reattachTerminalForStatus(data);
     startPolling();
   }, 5000);
 }
@@ -2915,6 +2937,29 @@ function setupTerminal(iframeUrl) {
 }
 
 /**
+ * Reattach the terminal for whatever session the server now reports — the
+ * #2011 reconnect/reattach action, called from `pollStatus` and
+ * `startEndedWatch`. Mode-aware (PRR-A B3): a webui session has no xterm
+ * instance, so it needs `setupTerminal(iframeUrl)` + `applyWebuiMode()`, not
+ * the tmux/ttyd path — getting this wrong would try to load a ttyd URL for
+ * a session that was never tmux-backed, or leave tmux-only controls (and
+ * the mobile keybar) enabled for one that now is webui.
+ * @param {object} data - Body of `GET /api/sessions/:project/status`
+ */
+function reattachTerminalForStatus(data) {
+  if (data.sessionMode === 'webui') {
+    setupTerminal(data.iframeUrl);
+    applyWebuiMode();
+  } else {
+    setupTerminal();
+    // The reverse direction of applyWebuiMode's keybar hide — reveals it
+    // again on touch if this page had switched to webui and back.
+    const keybar = document.getElementById('mobileKeybar');
+    if (keybar && 'ontouchstart' in window) keybar.hidden = false;
+  }
+}
+
+/**
  * Apply Web UI mode restrictions — disable tmux-dependent buttons.
  * Called when the session is an OpenClaw Web UI session (no tmux).
  */
@@ -2934,6 +2979,12 @@ function applyWebuiMode() {
   // hover title — so the menu itself is disabled rather than opening onto
   // buttons that do nothing.
   disable('moreBtn', 'Command bar and Peek are not available for Web UI sessions');
+  // #1638/#2011: a webui session has no xterm instance to send keys into —
+  // relevant not just at initial load but when #2011's reattach paths
+  // (pollStatus, startEndedWatch) switch THIS SAME page from a tmux session
+  // to a webui one without a reload.
+  const keybar = document.getElementById('mobileKeybar');
+  if (keybar) keybar.hidden = true;
 
   // Close the command bar if open, and every mark that says it is.
   sessionState.commandBarOpen = false;
@@ -3878,6 +3929,13 @@ function toggleCtrlArmed() {
   }
   ctrlArmed = true;
   paintCtrlKey();
+  // Tapping this button moves DOM focus to it, away from the terminal's own
+  // input element — on a phone that can close the soft keyboard, so the
+  // very keystroke this arms for never reaches the listener at all. Refocus
+  // the terminal so the keyboard (and the armed state) stays usable (PRR-A
+  // C2 finding).
+  const term = _sessionTerm();
+  if (term && typeof term.focus === 'function') term.focus();
 }
 
 // ── Upload Modal ──
@@ -7394,6 +7452,7 @@ function handleWrapCompleted() {
   sessionState.wrapCompleting = false;
   sessionState.wrapIdleModalShown = false;
   stopPolling();
+  cancelReconnectEpisode();
   startEndedWatch();
 
   // Hide wrap-related bars

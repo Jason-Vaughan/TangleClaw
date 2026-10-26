@@ -1088,6 +1088,14 @@ html[data-tc-keyboard] body {
   border-top: 1px solid var(--border, #333);
   overflow-x: auto;
 }
+/* The class's own `display: flex` is an author rule, so it beats the UA
+   stylesheet's `[hidden] { display: none }` on a tie (same `hidden` attribute
+   class this page's other toggled bars hit — see shared-controls.css's
+   `.medusa-panel[hidden]` family). Without this, the `hidden` attribute
+   initSession() relies on to keep the bar off desktop/webui does nothing. */
+.mobile-keybar[hidden] {
+  display: none;
+}
 .keybar-key {
   flex-shrink: 0;
   min-width: 44px;

@@ -48,7 +48,9 @@ const WIRING = [
   // #2011 — handleSessionEnded now starts a lightweight liveness watch;
   // its own behavior is covered in test/session-ui.test.js, but it must be
   // wired here too, or lifting handleSessionEnded alone throws.
-  'startEndedWatch', 'stopEndedWatch'
+  'startEndedWatch', 'stopEndedWatch',
+  // PRR-A B1 — both ended paths now cancel any in-flight reconnect episode.
+  'cancelReconnectEpisode', 'clearReconnectingStatus'
 ];
 
 const IDS = [
@@ -115,7 +117,10 @@ function harness() {
     clearInterval: (t) => { if (t) t.cleared = true; },
     // #2011 — startEndedWatch's recovery action; this file tests the ended
     // bar's own wiring, not terminal reattachment, so a no-op is enough.
+    // PRR-A B3 made this mode-aware (reattachTerminalForStatus); still a
+    // no-op stub here for the same reason.
     setupTerminal: () => {},
+    reattachTerminalForStatus: () => {},
     startPolling: () => {},
     location: {}
   };
@@ -128,6 +133,8 @@ function harness() {
   vm.runInContext(fs.readFileSync(path.join(PUBLIC, 'wrap-drawer.js'), 'utf8'), sandbox);
   vm.runInContext(fs.readFileSync(path.join(PUBLIC, 'session-relaunch.js'), 'utf8'), sandbox);
   const globals = ['let countdownTimer = null;', 'let relaunchController = null;', 'let endedWatchTimer = null;',
+    // PRR-A B1 — cancelReconnectEpisode's own state.
+    'let reconnectAttempt = 0;', 'let reconnectTimer = null;', 'let reconnectExhausted = false;',
     constSource('RELAUNCH_TIMEOUT_MS')].join('\n');
   vm.runInContext(`${globals}\n${WIRING.map((n) => liftDeclaration(SESSION_SRC, `function ${n}(`)).join('\n\n')}\n`
     + 'this.__w = { handleSessionEnded, handleWrapCompleted, onRelaunchClick, timeoutMs: RELAUNCH_TIMEOUT_MS };', sandbox);

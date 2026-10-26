@@ -163,6 +163,14 @@ describe('#1638 the mobile keybar sends real terminal input, and sticky Ctrl nev
     assert.match(rule.slice(0, 200), /min-height:\s*44px/);
   });
 
+  it('[hidden] wins over .mobile-keybar\'s own display:flex (PRR-A B2)', () => {
+    // `.mobile-keybar { display: flex }` is an author rule, so it beats the
+    // UA stylesheet's `[hidden] { display: none }` on a specificity tie —
+    // without an explicit override, `hidden` does nothing and the bar shows
+    // on desktop/webui despite initSession() setting the attribute.
+    assert.match(SESSION_CSS, /\.mobile-keybar\[hidden\]\s*\{\s*display:\s*none/);
+  });
+
   it('session.js does not call xterm\'s attachCustomKeyEventHandler', () => {
     // That API allows only one handler per Terminal; calling it here would
     // silently replace whatever ttyd's own built-in client already relies
@@ -180,7 +188,8 @@ describe('#1638 the mobile keybar sends real terminal input, and sticky Ctrl nev
    */
   function load() {
     const inputCalls = [];
-    const term = { input: (data) => inputCalls.push(data), focus: () => {} };
+    let focusCalls = 0;
+    const term = { input: (data) => inputCalls.push(data), focus: () => { focusCalls++; } };
     const listeners = { keydown: [], beforeinput: [] };
     const doc = {
       addEventListener: (type, fn, capture) => {
@@ -210,7 +219,7 @@ describe('#1638 the mobile keybar sends real terminal input, and sticky Ctrl nev
         + '\nthis.getCtrlArmed = () => ctrlArmed;',
       ctx
     );
-    return { ctx, inputCalls, listeners, keybarCtrl, toasts };
+    return { ctx, inputCalls, listeners, keybarCtrl, toasts, getFocusCalls: () => focusCalls };
   }
 
   /** A minimal stand-in for a real keydown/beforeinput DOM event. */
@@ -241,6 +250,15 @@ describe('#1638 the mobile keybar sends real terminal input, and sticky Ctrl nev
     assert.equal(ctx.getCtrlArmed(), true);
     assert.equal(keybarCtrl.attrs['aria-pressed'], 'true');
     assert.ok(keybarCtrl.classes.has('active'));
+  });
+
+  it('refocuses the terminal on arm, so tapping the keybar button does not steal the soft keyboard (PRR-A C2)', () => {
+    // Tapping Ctrl moves DOM focus to that button, off the terminal's own
+    // input element — on a phone that can close the soft keyboard, so the
+    // very keystroke this arms for never reaches the listener at all.
+    const { ctx, getFocusCalls } = load();
+    ctx.toggleCtrlArmed();
+    assert.equal(getFocusCalls(), 1, 'the terminal must be refocused once armed');
   });
 
   it('tapping Ctrl again cancels the armed state rather than sending it', () => {
@@ -350,14 +368,22 @@ describe('#2011 the terminal reattaches on a new session and recovers from an or
     const statusDot = { classes: new Set(), classList: { add: (c) => statusDot.classes.add(c), remove: (c) => statusDot.classes.delete(c) } };
     const statusPill = { attrs: {}, setAttribute: (k, v) => { statusPill.attrs[k] = v; }, getAttribute: (k) => statusPill.attrs[k] ?? null, querySelector: () => null };
     const sessionEnded = { classes: new Set(['hidden']), classList: { add: (c) => sessionEnded.classes.add(c), remove: (c) => sessionEnded.classes.delete(c) } };
-    const buttons = ['wrapBtn', 'killBtn', 'cmdBtn', 'commandSend'].reduce((m, id) => { m[id] = { disabled: true }; return m; }, {});
-    const els = { terminalFrame: frame, statusDot, statusPill, sessionEnded, ...buttons };
+    /** A generic stub for any element id applyWebuiMode touches that this harness doesn't name directly. */
+    const genericEl = () => ({
+      disabled: false, title: '',
+      classList: { add: () => {}, remove: () => {}, contains: () => false },
+      setAttribute: () => {}
+    });
+    const buttons = ['wrapBtn', 'killBtn', 'cmdBtn', 'commandSend']
+      .reduce((m, id) => { m[id] = { ...genericEl(), disabled: true }; return m; }, {});
+    const mobileKeybar = { hidden: false };
+    const els = { terminalFrame: frame, statusDot, statusPill, sessionEnded, mobileKeybar, ...buttons };
     const pendingTimeouts = [];
     const intervals = [];
     const apiCalls = [];
     const sessionState = { ended: false, wrapping: false, session: null, terminalAttachedSessionId: null };
     const ctx = vm.createContext({
-      document: { getElementById: (id) => els[id] || null },
+      document: { getElementById: (id) => { if (!els[id]) els[id] = genericEl(); return els[id]; } },
       sessionState,
       projectName: 'demo',
       setPillDetail: (pill, detail) => { pill.setAttribute('data-pill-detail', detail); },
@@ -371,15 +397,15 @@ describe('#2011 the terminal reattaches on a new session and recovers from an or
       clearTimeout: (id) => { const i = pendingTimeouts.findIndex((t) => t.id === id); if (i !== -1) pendingTimeouts.splice(i, 1); },
       setInterval: (fn, ms) => { const id = intervals.length + 1; intervals.push({ id, fn, ms, active: true }); return id; },
       clearInterval: (id) => { const t = intervals.find((t) => t.id === id); if (t) t.active = false; },
-      window: {
-        tcWireTerminalFrame: () => {}
-      },
+      // opts.touch adds `ontouchstart` so `'ontouchstart' in window` reads true,
+      // matching applyWebuiMode/reattachTerminalForStatus's own check.
+      window: opts.touch ? { tcWireTerminalFrame: () => {}, ontouchstart: null } : { tcWireTerminalFrame: () => {} },
       requestAnimationFrame: (fn) => fn() // run synchronously so frame.src is observable immediately
     });
     const decls = ['function _sessionTerm(', 'function terminalDisconnectStatus(', 'function clearReconnectingStatus(',
       'function cancelReconnectEpisode(', 'function runReconnectAttempt(', 'function setupTerminalKeepingEpisode(',
       'function beginReconnectEpisode(', 'function checkOrdinaryDisconnect(', 'function setupTerminal(',
-      'function startEndedWatch(', 'function stopEndedWatch('];
+      'function reattachTerminalForStatus(', 'function applyWebuiMode(', 'function startEndedWatch(', 'function stopEndedWatch('];
     const names = decls.map((d) => d.match(/function (\w+)\(/)[1]);
     vm.runInContext(
       `const RECONNECT_BACKOFF_MS = [1000, 2000, 4000, 4000];\n`
@@ -392,7 +418,7 @@ describe('#2011 the terminal reattaches on a new session and recovers from an or
       ctx
     );
     return {
-      ctx, frame, statusDot, statusPill, sessionEnded, buttons, pendingTimeouts, intervals, apiCalls, sessionState,
+      ctx, frame, statusDot, statusPill, sessionEnded, buttons, mobileKeybar, pendingTimeouts, intervals, apiCalls, sessionState,
       setBuffer: (lines) => { bufferLines = lines; }
     };
   }
@@ -416,6 +442,16 @@ describe('#2011 the terminal reattaches on a new session and recovers from an or
     const h = load();
     h.frame.contentWindow = null; // not loaded yet / cross-origin — _sessionTerm() returns null either way
     assert.equal(h.ctx.terminalDisconnectStatus(), 'unknown');
+  });
+
+  it('a blank or whitespace-only buffer is UNKNOWN, not healthy — nothing confirmed yet (PRR-A B4)', () => {
+    // A freshly (re)initialized xterm buffer reads exactly like this for
+    // the brief window before the pty's first prompt arrives — "nothing
+    // rendered yet" must not be read as "confirmed healthy".
+    for (const lines of [[], [''], ['   ', '\t'], ['', '  ', '']]) {
+      const h = load({ bufferLines: lines });
+      assert.equal(h.ctx.terminalDisconnectStatus(), 'unknown', JSON.stringify(lines));
+    }
   });
 
   it('checkOrdinaryDisconnect starts a bounded 1s/2s/4s/4s backoff episode on positive evidence', () => {
@@ -523,6 +559,7 @@ describe('#2011 the terminal reattaches on a new session and recovers from an or
     const h = load({ apiAnswer: { active: true, sessionId: 'sess-2' } });
     h.sessionState.ended = true;
     h.sessionState.session = { sessionId: 'sess-1' };
+    h.statusPill.setAttribute('data-pill-detail', 'Session ended'); // what handleSessionEnded left behind
     h.ctx.startEndedWatch();
     assert.equal(h.intervals.length, 1);
     return h.intervals[0].fn().then(() => {
@@ -533,6 +570,10 @@ describe('#2011 the terminal reattaches on a new session and recovers from an or
       assert.ok(h.sessionEnded.classes.has('hidden'));
       assert.equal(h.buttons.wrapBtn.disabled, false);
       assert.equal(h.intervals[0].active, false, 'the watch stops itself once it has done its job');
+      // PRR-A C1: the dot/bar/buttons all flip back, but the pill text was
+      // left stuck at "Session ended" (or "Session wrapped") forever —
+      // nothing else on this path ever repaints it.
+      assert.equal(h.statusPill.attrs['data-pill-detail'], 'Active');
     });
   });
 
@@ -550,11 +591,41 @@ describe('#2011 the terminal reattaches on a new session and recovers from an or
     assert.match(liftDeclaration(SESSION_JS, 'function handleSessionEnded('), /startEndedWatch\(\)/);
   });
 
-  it('pollStatus reattaches on a new active session id, and checks for an ordinary disconnect on the same one', () => {
+  it('pollStatus reattaches (mode-aware) on a new active session id, and checks for an ordinary disconnect only on tmux', () => {
     const body = liftDeclaration(SESSION_JS, 'async function pollStatus(');
     assert.match(body, /terminalSetupStarted/, 'must not race initSession\'s own first setupTerminal() call');
-    assert.match(body, /setupTerminal\(\)/);
+    assert.match(body, /reattachTerminalForStatus\(data\)/, 'reattach must be mode-aware (PRR-A B3), not a raw setupTerminal()');
     assert.match(body, /checkOrdinaryDisconnect\(\)/);
-    assert.match(body, /data\.sessionMode\s*!==\s*'webui'/, 'webui sessions have no xterm instance to reattach');
+    assert.match(body, /data\.sessionMode\s*!==\s*'webui'/, 'the ttyd-buffer disconnect check is tmux-only — webui has no xterm instance');
+  });
+
+  it('reattachTerminalForStatus picks the webui path (iframeUrl + applyWebuiMode) vs. the tmux path, mode-aware', () => {
+    const h = load({ touch: true });
+    h.ctx.reattachTerminalForStatus({ sessionMode: 'webui', iframeUrl: '/openclaw/foo' });
+    assert.equal(h.frame.src, '/openclaw/foo');
+    assert.equal(h.mobileKeybar.hidden, true, 'a webui session has no xterm instance for the keybar to send keys into');
+
+    h.ctx.reattachTerminalForStatus({ sessionMode: 'tmux' });
+    assert.match(h.frame.src, /\/terminal\/\?arg=demo/);
+    assert.equal(h.mobileKeybar.hidden, false, 'switching back to tmux on a touch device reveals the keybar again');
+  });
+
+  it('handleSessionEnded and handleWrapCompleted both cancel any in-flight reconnect episode (PRR-A B1)', () => {
+    assert.match(liftDeclaration(SESSION_JS, 'function handleSessionEnded('), /cancelReconnectEpisode\(\)/);
+    assert.match(liftDeclaration(SESSION_JS, 'function handleWrapCompleted('), /cancelReconnectEpisode\(\)/);
+  });
+
+  it('runReconnectAttempt refuses to reattach once the session has ended or wrapped (PRR-A B1 defense in depth)', () => {
+    const h = load({ bufferLines: ['[exited]', 'Press Enter to Reconnect'] });
+    h.sessionState.session = { sessionId: 'sess-1' };
+    h.ctx.checkOrdinaryDisconnect();
+    assert.ok(h.ctx.getReconnectTimer() !== null, 'an episode is running');
+    // The session ends out from under the pending retry, WITHOUT going
+    // through cancelReconnectEpisode (the real callers always do; this
+    // proves the guard holds even if a future caller forgot to).
+    h.sessionState.ended = true;
+    const before = h.frame.src;
+    h.pendingTimeouts.shift().fn();
+    assert.equal(h.frame.src, before, 'must not reattach a session the page has already declared over');
   });
 });
