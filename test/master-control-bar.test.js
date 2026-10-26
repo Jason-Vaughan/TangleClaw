@@ -354,7 +354,7 @@ describe('#2035 Full screen and Pop out', () => {
     assert.equal(doc.getElementById('masterPanelPopoutBtn').hidden, true);
   });
 
-  it('Pop out opens the page\'s own URL with ?master=popout, in a named window', () => {
+  it('Pop out opens the root dashboard with ?master=popout, in a named window', () => {
     const { doc, bar } = mountedWithSurface('masterPanel');
     const opened = [];
     doc.defaultView = {
@@ -366,6 +366,26 @@ describe('#2035 Full screen and Pop out', () => {
     doc.getElementById('masterPanelPopoutBtn').dispatch('click');
     assert.equal(opened.length, 1);
     assert.equal(opened[0].url, 'https://tc.example/?master=popout');
+    assert.equal(opened[0].name, 'tc-master-popout');
+  });
+
+  it('Pop out from the session drawer still targets the root dashboard, not the session page (PRR-A C1)', () => {
+    // The drawer mounts this same bar on `/session/...` or `/session.html?project=...`
+    // — a page with no `?master=popout` handling of its own (that lives only in
+    // public/ui.js). Carrying the current path forward would open that page
+    // normally, with an unused query param, never reaching Master-only mode.
+    const { doc, bar } = mountedWithSurface('masterDrawer');
+    const opened = [];
+    doc.defaultView = {
+      location: { href: 'https://example.test/session.html?project=Foo' },
+      URL,
+      open: (url, name, features) => opened.push({ url, name, features })
+    };
+    bar.mount();
+    doc.getElementById('masterDrawerPopoutBtn').dispatch('click');
+    assert.equal(opened.length, 1);
+    assert.equal(opened[0].url, 'https://example.test/?master=popout',
+      'must be the root dashboard, not /session.html');
     assert.equal(opened[0].name, 'tc-master-popout');
   });
 

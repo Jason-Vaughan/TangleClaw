@@ -4691,20 +4691,20 @@
 
     /**
      * Open the Master terminal in its own window, attached to the same tmux
-     * session: the popout page is this same origin's page with `?master=popout`
-     * in its query string, which that page's own bootstrap reads to open
-     * straight onto the Master surface (#2035). Detaching this way — a window
-     * the operator closes like any other tab — does not stop the Master
-     * session; only Kill does.
+     * session: the popout page is ALWAYS the root dashboard (`/?master=popout`)
+     * on this origin, whose own `public/ui.js` reads that param to open
+     * straight onto the Master surface (#2035) — never the current page's own
+     * path, which this bar also mounts on `/session/...`; that page has no
+     * `?master=popout` handling of its own, and would just load normally with
+     * an unused param. Detaching this way — a window the operator closes like
+     * any other tab — does not stop the Master session; only Kill does.
      * @returns {void}
      */
     function openPopout() {
       if (deps.openPopout) { deps.openPopout(); return; }
       const win = doc.defaultView || global;
       if (!win.open) return;
-      const href = String(win.location.href);
-      const url = new win.URL(href);
-      url.search = '?master=popout';
+      const url = new win.URL('/?master=popout', win.location.href);
       win.open(url.toString(), 'tc-master-popout', 'width=820,height=600');
     }
 
