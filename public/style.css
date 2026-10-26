@@ -811,6 +811,45 @@ html[data-tc-keyboard] body {
   padding-top: 4px;
   padding-bottom: 12px;
 }
+/* `?master=popout` (#2035): a window the Master bar's own Pop out button
+   opened onto this same page, showing nothing but the Master panel. Hiding
+   by CSS class rather than a second page keeps one render path for the panel
+   both surfaces share, so the popout view cannot drift from the dashboard's. */
+body.master-popout-mode > header,
+body.master-popout-mode .main-scroll > *:not(.master-panel) {
+  display: none !important;
+}
+body.master-popout-mode .main-scroll {
+  padding: 0;
+  margin: 0;
+  height: 100dvh;
+}
+body.master-popout-mode .master-panel {
+  max-height: none;
+  height: 100dvh;
+  width: 100%;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+body.master-popout-mode .master-frame-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+/* `#masterFrame`, not `.master-frame`: a test extracts the LATTER selector's
+   rule body by scanning for its exact text, and a second occurrence earlier
+   in the file would be the one it finds (test/visual-viewport-layout.test.js
+   `ruleBody`). The id reaches the same element without colliding. */
+body.master-popout-mode #masterFrame {
+  height: 100%;
+}
+/* Full screen's own button is redundant once a window IS nothing but the
+   Master surface — the window itself already fills however much of the
+   screen the operator gave it. */
+body.master-popout-mode #masterPanelFullscreenBtn {
+  display: none;
+}
 .master-status-row {
   display: flex;
   align-items: center;

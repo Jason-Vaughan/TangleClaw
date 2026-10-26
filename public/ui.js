@@ -7105,6 +7105,34 @@ const masterSettings = window.tcCreateMasterSettings({
   if (warnHost) warnHost.innerHTML = window.tcSettingsWarningsMarkup();
 }
 
+/**
+ * Whether this page load is a Master popout window (#2035): opened by the
+ * bar's own Pop out button at `?master=popout`, on this same page — there is
+ * no second page, so the only way to tell is the query string.
+ * @param {{search: string}} loc - `window.location`, or a fake for a test.
+ * @returns {boolean}
+ */
+function isMasterPopoutLoad(loc) {
+  return new URLSearchParams(loc.search).get('master') === 'popout';
+}
+
+/**
+ * Enter popout mode: everything but the Master panel hides by CSS
+ * (`body.master-popout-mode`, `style.css`) rather than by a second page or a
+ * second render path, and the panel opens itself — the operator asked for
+ * this exact view by pressing Pop out, so there is no toggle to click here.
+ * @param {Document} doc
+ * @param {Function} openMaster - `toggleMaster`, injected so a test can tell
+ *   whether this ran without actually driving the panel open.
+ * @returns {void}
+ */
+function enterMasterPopoutMode(doc, openMaster) {
+  doc.body.classList.add('master-popout-mode');
+  openMaster();
+}
+
+const isMasterPopout = isMasterPopoutLoad(location);
+
 // The Master control bar. Same component the session drawer mounts, so the two
 // surfaces render from one implementation; only ids and label differ.
 masterBar = window.tcCreateMasterControlBar({
@@ -7115,6 +7143,7 @@ masterBar = window.tcCreateMasterControlBar({
   api,
   apiMutate,
   esc,
+  isPopout: isMasterPopout,
   onRetry: ensureMasterAttached,
   onOpenSettings: () => { masterBar.setError(''); masterSettings.open(); }
 });
@@ -7230,3 +7259,5 @@ $('filterClear').addEventListener('click', () => {
   state.filterText = '';
   renderProjects();
 });
+
+if (isMasterPopout) enterMasterPopoutMode(document, toggleMaster);
