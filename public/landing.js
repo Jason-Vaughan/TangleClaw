@@ -1967,19 +1967,28 @@ function wireStaleServerBanner() {
     }
     
     select.style.display = 'inline-block';
-    
-    const current = select.value;
+
+    // `select.value` reflects what the dropdown already shows (e.g. across a
+    // poll); `state.activeEngine` carries a value restored from localStorage
+    // (#2122) before the dropdown has ever been populated. Prefer whichever
+    // one is non-empty so a reload doesn't lose the restored selection.
+    const current = select.value || state.activeEngine || '';
     select.innerHTML = '<option value="">All Engines</option>';
-    
+
     Array.from(engines).sort().forEach(e => {
       const opt = document.createElement('option');
       opt.value = e;
       opt.textContent = e;
       select.appendChild(opt);
     });
-    
+
     if (engines.has(current)) {
       select.value = current;
+      state.activeEngine = current;
+    } else if (state.activeEngine && !engines.has(state.activeEngine)) {
+      // A restored engine that no longer exists on any project must not
+      // silently hide every project.
+      state.activeEngine = null;
     }
   }
 
@@ -1989,6 +1998,11 @@ function collectTags() {
     if (Array.isArray(p.tags)) p.tags.forEach(t => tags.add(t));
   }
   state.allTags = Array.from(tags).sort();
+  // A tag restored from localStorage (#2122) that no longer exists on any
+  // project must not silently hide every project — drop it instead.
+  if (state.activeTag && !state.allTags.includes(state.activeTag)) {
+    state.activeTag = null;
+  }
   renderTagRow();
 }
 
@@ -2025,6 +2039,7 @@ function filterProjects() {
 
 function toggleTag(tag) {
   state.activeTag = tag;
+  try { localStorage.setItem('tc_filterActiveTag', JSON.stringify(tag)); } catch (e) { /* ignore */ }
   renderTagRow();
   renderProjects();
 }
@@ -2084,6 +2099,65 @@ function proceedWithLaunchModeCheck(name, project, continuityMode) {
   doLaunchProject(name, null, continuityMode);
 }
 
+/**
+ * Consume a `?launch=<name>#intent=<token>` URL (#2124): a card's
+ * not-yet-active "Launch" control is a real `<a href="/?launch=<name>
+ * #intent=<token>">` so right-click "Open in new tab" has something
+ * GET-safe to land on, and this is what turns that landing into an actual
+ * launch — strip the query param and the fragment (so reloading or sharing
+ * the URL doesn't re-trigger it) and run the exact launch flow a direct
+ * click runs (continuity/launch-mode modals, refusal handling included),
+ * but ONLY when `intent` matches the token minted for THIS project, is not
+ * expired, and its single-use removal actually succeeds (fail closed —
+ * PRR-A C5). A bare, missing, mismatched, expired, or replayed
+ * `launch`/`intent` makes zero launch calls. No-op entirely if `launch` is
+ * absent. Called once from init(), after `loadProjects()` populates
+ * `state.projects` and renders the card that `doLaunchProject`'s
+ * pending-state UI targets.
+ *
+ * The intent check is what makes this CSRF-safe: session and CSRF cookies
+ * are `SameSite=Lax`, so a cross-site top-level link to a bare
+ * `/?launch=<name>` still carries them, and this page's own JS would
+ * otherwise construct the CSRF header and auto-fire the launch with no
+ * operator action in between. `tc_launchIntent:<name>` lives in
+ * `localStorage`, same-origin only and unreadable from a cross-site page —
+ * the only way the right token reaches the URL is a link this page itself
+ * built (via `getLaunchIntentToken()`, nested in `ui.js`'s `renderCard`),
+ * from a session that already held it. Project-bound (keyed by name) so
+ * one project's intent can't be confused with, or invalidate, another's;
+ * expiring (5 minutes, matching `getLaunchIntentToken()`'s TTL) so a
+ * forgotten tab's stale Launch link can't still fire a launch days later.
+ * The token itself rides in the URL FRAGMENT, not the query string (Critic
+ * note): a fragment is never sent in the HTTP request, so it never reaches
+ * access/server logs — only `launch` (the project name) does.
+ */
+function consumeLaunchQueryParam() {
+  const params = new URLSearchParams(location.search);
+  const name = params.get('launch');
+  if (!name) return;
+  const intent = new URLSearchParams(location.hash.replace(/^#/, '')).get('intent');
+  params.delete('launch');
+  const qs = params.toString();
+  history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : ''));
+  if (!intent) return;
+  const key = `tc_launchIntent:${name}`;
+  const ttlMs = 5 * 60 * 1000;
+  let record = null;
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) record = JSON.parse(raw);
+  } catch (e) { /* ignore */ }
+  if (!record || typeof record.token !== 'string' || typeof record.mintedAt !== 'number') return;
+  if ((Date.now() - record.mintedAt) >= ttlMs) return;
+  if (intent !== record.token) return;
+  try {
+    localStorage.removeItem(key);
+  } catch (e) {
+    return; // fail closed: single-use is not guaranteed, so refuse to launch
+  }
+  launchProject(name);
+}
+
 async function launchProject(name) {
   const project = state.projects.find(p => p.name === name);
   if (project && project.session && project.session.active) {
@@ -2110,12 +2184,65 @@ async function launchProject(name) {
  *   acknowledged in the stranded-wraps dialog, sent with this launch (#1539)
  */
 async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStranded) {
-  // Immediate visual feedback — swap button text to "Launching…" and disable
-  const btn = document.querySelector(`button[onclick*="launchProject('${name}')"]`);
+  // The CSSOM `CSS.escape` algorithm, nested here rather than a top-level
+  // helper or the global: an "unregistered" project (discovered off the
+  // filesystem, never through `validateName`) can have a name with a quote
+  // or other character that would otherwise break the selector below, built
+  // by string interpolation — and several other files lift this function's
+  // declaration text in isolation to test it (test/stranded-wraps-ui.test.js,
+  // test/launch-isolation-override-ui.test.js, test/launch-refusal-toast.test.js),
+  // so any dependency outside this declaration — a global or a sibling
+  // function — is invisible to them. Nesting keeps the lift self-sufficient.
+  function cssEscape(value) {
+    const string = String(value);
+    const length = string.length;
+    let result = '';
+    let index = -1;
+    const firstCodeUnit = string.charCodeAt(0);
+    while (++index < length) {
+      const codeUnit = string.charCodeAt(index);
+      if (codeUnit === 0x0000) {
+        result += '�';
+        continue;
+      }
+      if (
+        (codeUnit >= 0x0001 && codeUnit <= 0x001F) || codeUnit === 0x007F ||
+        (index === 0 && codeUnit >= 0x0030 && codeUnit <= 0x0039) ||
+        (index === 1 && codeUnit >= 0x0030 && codeUnit <= 0x0039 && firstCodeUnit === 0x002D)
+      ) {
+        result += `\\${codeUnit.toString(16)} `;
+        continue;
+      }
+      if (index === 0 && length === 1 && codeUnit === 0x002D) {
+        result += `\\${string.charAt(index)}`;
+        continue;
+      }
+      if (
+        codeUnit >= 0x0080 || codeUnit === 0x002D || codeUnit === 0x005F ||
+        (codeUnit >= 0x0030 && codeUnit <= 0x0039) ||
+        (codeUnit >= 0x0041 && codeUnit <= 0x005A) ||
+        (codeUnit >= 0x0061 && codeUnit <= 0x007A)
+      ) {
+        result += string.charAt(index);
+        continue;
+      }
+      result += `\\${string.charAt(index)}`;
+    }
+    return result;
+  }
+
+  // Immediate visual feedback — swap button text to "Launching…" and disable.
+  // This runs for the not-yet-active ("Launch") control — a real <a href>
+  // (#2124), not a <button>, so the browser's native "Open in new tab" works
+  // on it too (consumeLaunchQueryParam() is what turns that landing into an
+  // actual launch). `.disabled` is a no-op on an anchor, so the pending state
+  // is a CSS class instead. Found by a `data-project-name` attribute, not by
+  // parsing the `onclick` text.
+  const btn = document.querySelector(`[data-project-name="${cssEscape(name)}"]`);
   const originalText = btn ? btn.textContent : '';
   if (btn) {
     btn.textContent = 'Launching\u2026';
-    btn.disabled = true;
+    btn.classList.add('is-launching');
   }
 
   const body = {};
@@ -2134,7 +2261,7 @@ async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStra
     const data = await res.json();
 
     if (!res.ok) {
-      if (btn) { btn.textContent = originalText; btn.disabled = false; }
+      if (btn) { btn.textContent = originalText; btn.classList.remove('is-launching'); }
       // #1539: stranded wraps hold the launch. Show them and let the operator
       // acknowledge and launch in one step, with the same launch choices.
       if (data.code === 'STRANDED_WRAPS' && Array.isArray(data.items) && data.items.length > 0) {
@@ -2161,7 +2288,7 @@ async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStra
     closeStrandedLaunchModal();
     navigateToSession(name, { launched: true });
   } catch (err) {
-    if (btn) { btn.textContent = originalText; btn.disabled = false; }
+    if (btn) { btn.textContent = originalText; btn.classList.remove('is-launching'); }
     if (err.name === 'TypeError' || err.message === 'Failed to fetch') {
       setConnected(false);
     }
@@ -2768,6 +2895,17 @@ async function init() {
     const saved = localStorage.getItem('tc_showUnregistered');
     if (saved !== null) state.showUnregistered = JSON.parse(saved);
   } catch (e) { /* ignore */ }
+  // #2122: tag and engine filter selections survive a reload. Restored here,
+  // before the first loadProjects() -> collectTags()/collectEngines() pass,
+  // which drop whichever one no longer matches a live project.
+  try {
+    const savedTag = localStorage.getItem('tc_filterActiveTag');
+    if (savedTag !== null) state.activeTag = JSON.parse(savedTag);
+  } catch (e) { /* ignore */ }
+  try {
+    const savedEngine = localStorage.getItem('tc_filterActiveEngine');
+    if (savedEngine) state.activeEngine = savedEngine;
+  } catch (e) { /* ignore */ }
 
   await Promise.all([loadVersion(), loadConfig(), loadEngines()]);
   applyTheme();
@@ -2795,6 +2933,7 @@ async function init() {
   wireStaleServerBanner();
   wireVersionCheck();
   await loadProjects();
+  consumeLaunchQueryParam();
   // Opening the dashboard is a real measurement, not a cache read. A release
   // published since the server's last periodic check was previously invisible
   // until that timer next fired — a whole interval of a page that had been

@@ -233,6 +233,22 @@ describe('the card detail panel (#1015)', () => {
 });
 
 describe('open-ness survives a re-render (#1015)', () => {
+  // A real page's localStorage persists across every renderCard() call —
+  // this lifted harness has none at all, so the #2124 launch-intent token
+  // (getLaunchIntentToken(), nested in renderCard) would otherwise mint a
+  // fresh crypto.randomUUID() on every single call, making two renders of
+  // the SAME open card differ only in that token. One Map-backed store,
+  // shared by every card() call in this describe block, matches what a real
+  // page actually does (A473-A4).
+  const fakeLocalStorage = (() => {
+    const store = new Map();
+    return {
+      getItem: (k) => (store.has(k) ? store.get(k) : null),
+      setItem: (k, v) => store.set(k, String(v)),
+      removeItem: (k) => store.delete(k)
+    };
+  })();
+
   /**
    * Run the real `renderCard` for a registered project.
    *
@@ -245,6 +261,7 @@ describe('open-ness survives a re-render (#1015)', () => {
       esc,
       jsArg,
       openCardDetail,
+      localStorage: fakeLocalStorage,
       renderUnregisteredCard: () => '<UNREGISTERED>',
       renderArchivedCard: () => '<ARCHIVED>',
       renderCardDetail: () => '<PANEL>',

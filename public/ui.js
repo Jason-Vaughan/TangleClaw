@@ -376,6 +376,63 @@ function renderCard(project) {
   const n = esc(project.name);
   const nArg = jsArg(project.name);
 
+  /**
+   * The dashboard's own unforgeable, project-bound, expiring, single-use
+   * launch-intent token (#2124, PRR-A finding C5) — nested here, not a
+   * sibling in this file or a call into `landing.js`, because several test
+   * files lift `renderCard`'s own declaration text in isolation to test it
+   * (test/card-detail-disclosure, test/degraded-reads-frontend,
+   * test/stranded-wraps-ui, test/awareness-observability,
+   * test/inline-handler-args), so any dependency outside this declaration
+   * is invisible to them. See `consumeLaunchQueryParam` in `landing.js` for
+   * the full CSRF rationale and the matching nested copy that validates
+   * this token. Project-bound (keyed by name, not one dashboard-wide value)
+   * so consuming one project's intent can't be confused with, or
+   * invalidate, another's; expiring (5 minutes) so a forgotten tab's stale
+   * Launch link can't still fire a launch days later. `crypto.randomUUID`
+   * is secure-context-only (HTTPS or localhost) — this product's own
+   * "direct ingress" mode supports plain HTTP from a non-localhost browser
+   * (SECURITY.md), where it is simply absent. `renderCard` runs it for
+   * every not-yet-active project on every render, so an uncaught throw
+   * here would abort the whole card grid, not just this one link — caught
+   * the same defensive way the adjacent `localStorage` calls already are.
+   * `crypto.randomUUID` is secure-context-only, but `crypto.getRandomValues`
+   * is not — it is available on this product's documented plain-HTTP
+   * direct-ingress deployments too — so that is the fallback, rather than
+   * silently disabling the one-click new-tab launch on a supported
+   * deployment. `null` (both unavailable) means no token could be minted;
+   * the caller omits `&intent=` entirely rather than embedding an empty
+   * one, and `consumeLaunchQueryParam()` already treats an absent `intent`
+   * as a no-op, so this still fails safe in that last-resort case.
+   * @param {string} projectName
+   * @returns {string|null}
+   */
+  function getLaunchIntentToken(projectName) {
+    const key = `tc_launchIntent:${projectName}`;
+    const ttlMs = 5 * 60 * 1000;
+    let record = null;
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) record = JSON.parse(raw);
+    } catch (e) { /* ignore */ }
+    if (record && typeof record.token === 'string' && typeof record.mintedAt === 'number' &&
+        (Date.now() - record.mintedAt) < ttlMs) {
+      return record.token;
+    }
+    let token = null;
+    try {
+      token = crypto.randomUUID();
+    } catch (e) {
+      try {
+        token = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+      } catch (e2) {
+        return null;
+      }
+    }
+    try { localStorage.setItem(key, JSON.stringify({ token, mintedAt: Date.now() })); } catch (e) { /* ignore */ }
+    return token;
+  }
+
   const versionBadge = project.git && project.git.latestTag
     ? `<span class="badge badge-version">${esc(project.git.latestTag)}</span>`
     : '';
@@ -462,7 +519,21 @@ function renderCard(project) {
       ${githubBadge}
       ${sessionHealthBadge}
       <span class="card-row-actions">
-        <button class="btn btn-compact btn-launch" onclick="event.stopPropagation(); launchProject(${nArg})">${hasSession ? 'Open' : 'Launch'}</button>
+        ${hasSession
+          ? `<a class="btn btn-compact btn-launch" data-project-name="${n}" href="/session/${encodeURIComponent(project.name)}" onclick="event.preventDefault(); event.stopPropagation(); launchProject(${nArg})">Open</a>`
+          : (() => {
+              // The intent token rides in the URL FRAGMENT, not the query
+              // string (Critic note): a fragment is never sent to the
+              // server, so the token never reaches access/server logs —
+              // only the query-string `launch` param (just the project
+              // name) does. No token could be minted (e.g. crypto.randomUUID
+              // absent in an insecure context) — omit the fragment entirely
+              // rather than embed an empty one; consumeLaunchQueryParam()
+              // already treats an absent intent as a no-op, so this fails safe.
+              const launchIntentToken = getLaunchIntentToken(project.name);
+              const intentFragment = launchIntentToken ? `#intent=${encodeURIComponent(launchIntentToken)}` : '';
+              return `<a class="btn btn-compact btn-launch" data-project-name="${n}" href="/?launch=${encodeURIComponent(project.name)}${intentFragment}" onclick="event.preventDefault(); event.stopPropagation(); launchProject(${nArg})">Launch</a>`;
+            })()}
         ${hasSession ? `<button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openPeekFromCard(${nArg})" title="Peek">&#128065;</button>` : ''}
         ${hasSession ? `<button class="btn btn-compact btn-icon-tiny btn-kill-card" onclick="event.stopPropagation(); openKill(${nArg})" title="Kill session">&#9632;</button>` : ''}
         <button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openHistory(${nArg})" title="Session history &amp; search">&#128269;</button>
@@ -6931,6 +7002,7 @@ const engineFilterEl = document.getElementById('engineFilter');
 if (engineFilterEl) {
   engineFilterEl.addEventListener('change', (e) => {
     state.activeEngine = e.target.value;
+    try { localStorage.setItem('tc_filterActiveEngine', state.activeEngine); } catch (err) { /* ignore */ }
     renderProjects();
   });
 }
