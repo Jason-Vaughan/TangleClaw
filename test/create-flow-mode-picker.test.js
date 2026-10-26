@@ -188,3 +188,54 @@ describe('create flow routes through the launch gate (#401)', () => {
       'the server resolves the configured default mode — the UI sends none');
   });
 });
+
+describe('a successful launch with a path-health warning pauses before navigating (#2401 PRR-A C1)', () => {
+  /**
+   * Run the page's own `doLaunchProject` against a successful launch.
+   * @param {object|null} pathHealthWarning - The response's warning, or null.
+   * @param {boolean} confirmReturns - What the stubbed `confirm()` answers.
+   * @returns {Promise<string[]>} The ordered sequence of toast/confirm/navigate calls.
+   */
+  async function run(pathHealthWarning, confirmReturns) {
+    const seq = [];
+    const sandbox = {
+      console, setTimeout: () => 0, clearTimeout() {},
+      document: { querySelector: () => null },
+      setConnected: () => {},
+      closeStrandedLaunchModal: () => {},
+      showToast: (message) => seq.push(`toast:${message}`),
+      navigateToSession: (name) => seq.push(`navigate:${name}`),
+      confirm: (message) => { seq.push(`confirm:${message}`); return confirmReturns; },
+      tcFetch: async () => ({ ok: true, json: async () => ({ sessionId: 1, pathHealthWarning }) })
+    };
+    sandbox.window = sandbox;
+    vm.createContext(sandbox);
+    vm.runInContext([
+      liftDeclaration(LANDING_SRC, 'async function doLaunchProject('),
+      'globalThis.doLaunchProject = doLaunchProject;'
+    ].join('\n'), sandbox);
+    await sandbox.doLaunchProject('proj-x', null, null);
+    return seq;
+  }
+
+  it('navigates immediately when the launch carries no warning', async () => {
+    assert.deepEqual(await run(null, true), ['navigate:proj-x']);
+  });
+
+  it('shows the warning and waits for an explicit acknowledgment before navigating (PRR-A C1: navigateToSession is a hard window.location assignment that would otherwise tear down the toast before the operator could read it)', async () => {
+    const warning = { message: 'proj-x has no git history', code: 'PROJECT_PATH_UNSEEDED' };
+    assert.deepEqual(await run(warning, true), [
+      `toast:${warning.message}`,
+      `confirm:${warning.message}\n\nContinue to the session?`,
+      'navigate:proj-x'
+    ]);
+  });
+
+  it('does not navigate when the operator declines the warning', async () => {
+    const warning = { message: 'proj-x has no git history', code: 'PROJECT_PATH_UNSEEDED' };
+    assert.deepEqual(await run(warning, false), [
+      `toast:${warning.message}`,
+      `confirm:${warning.message}\n\nContinue to the session?`
+    ]);
+  });
+});

@@ -2288,9 +2288,14 @@ async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStra
     closeStrandedLaunchModal();
     // #2401: a non-sticky warning, not the sticky "Launch failed" toast
     // above — the session still opens either way, this only names the
-    // folder condition so the operator can act on it afterward.
+    // folder condition so the operator can act on it afterward. The
+    // immediately-following navigateToSession is a hard `window.location`
+    // assignment, which tears down this document (and the toast with it)
+    // before the operator could ever read it — gate it on an explicit
+    // acknowledgment instead of letting navigation race the toast.
     if (data.pathHealthWarning) {
       showToast(data.pathHealthWarning.message, 'warn', 8000);
+      if (!confirm(`${data.pathHealthWarning.message}\n\nContinue to the session?`)) return;
     }
     navigateToSession(name, { launched: true });
   } catch (err) {
