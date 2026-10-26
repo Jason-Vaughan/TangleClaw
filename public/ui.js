@@ -91,7 +91,7 @@ let openPeekProject = null;
 let peekCache = {};
 
 /**
- * Incremented on every Peek open (PRR-B C1, #2121). The `openPeekProject !==
+ * Incremented on every Peek open (#2121). The `openPeekProject !==
  * name` guard alone passes on a close-then-reopen of the SAME project: if
  * the closed fetch resolves after the reopened one started, its name still
  * matches, so it can overwrite the newer request's cache with stale output.
@@ -100,6 +100,16 @@ let peekCache = {};
  * @type {number}
  */
 let peekGeneration = 0;
+
+/**
+ * Incremented on every `renderGroups()` call (#2092). A
+ * `loadGroupDetail` call started by an older pass can resolve after a newer
+ * `renderGroups()` has already run for the same group; this lets it tell
+ * its own `pendingFoldKey` is superseded and skip honoring it, the same
+ * concern `peekGeneration` guards for the Peek panel.
+ * @type {number}
+ */
+let groupsRenderGeneration = 0;
 
 function renderProjects() {
   const grid = document.getElementById('cardsGrid');
@@ -1463,7 +1473,7 @@ async function openPeekFromCard(name) {
   const data = await api(`/api/sessions/${encodeURIComponent(name)}/peek?lines=15`);
   // The operator may have closed this Peek, or opened a different one, while
   // the fetch was in flight — don't let a stale response land on it. The name
-  // check alone misses close-then-reopen of the SAME project (PRR-B C1): the
+  // check alone misses close-then-reopen of the SAME project: the
   // closed fetch's name still matches on reopen, so it needs its own
   // generation checked too, not just openPeekProject's current value.
   if (openPeekProject !== name || myGeneration !== peekGeneration) return;
@@ -1651,7 +1661,7 @@ function foldToggleInPlace(button, open) {
  * label on the same cadence, with no way to confirm or rule it out short of
  * a live screen-reader session.
  *
- * `knownKey` (PRR-B C1, #2092): pass the fold key explicitly when the caller
+ * `knownKey` (#2092): pass the fold key explicitly when the caller
  * already captured it BEFORE a focused control was destroyed by an earlier,
  * outer render — by the time this function would read `document.activeElement`
  * itself, it may already be `<body>`, with the real answer gone. Omit it to
@@ -1668,6 +1678,15 @@ function renderKeepingFoldFocus(container, render, knownKey) {
     : (container && active && container.contains(active) && active.dataset ? active.dataset.foldKey : undefined);
   render();
   if (key === undefined || !container) return;
+  // A knownKey crossed an async gap, so it can be stale (#2092):
+  // only act on it if focus is STILL exactly where the earlier destroy left
+  // it (document.body) right now, not wherever the operator deliberately
+  // moved it since, or wherever a sibling group's own restore already
+  // claimed it. Removing a focused element always falls back to <body>, so
+  // anything else here means focus has a real, current owner this must not
+  // steal it from.
+  if (knownKey !== undefined
+    && (typeof document === 'undefined' || document.activeElement !== document.body)) return;
   for (const b of container.querySelectorAll('[data-fold-key]')) {
     // preventScroll: this runs on every poll, and an operator who focused a
     // toggle and then scrolled away must not be pulled back to it each time.
@@ -5686,7 +5705,7 @@ function toggleGroups() {
  */
 function renderGroups() {
   const panel = document.getElementById('groupsPanel');
-  // Captured BEFORE anything renders (PRR-B C1, #2092): a focused Remove
+  // Captured BEFORE anything renders (#2092): a focused Remove
   // member/doc button lives inside a group's content div, which this
   // function is about to replace with a "Loading details..." placeholder —
   // destroying the button and moving focus to <body> synchronously, well
@@ -5698,6 +5717,10 @@ function renderGroups() {
   const active = typeof document !== 'undefined' ? document.activeElement : null;
   const pendingFoldKey = active && panel && panel.contains(active) && active.dataset
     ? active.dataset.foldKey : undefined;
+  // Each pass gets its own generation, so a loadGroupDetail call
+  // this pass starts can tell whether a LATER renderGroups() pass has since
+  // superseded it by the time its fetch resolves.
+  const myGroupsGen = ++groupsRenderGeneration;
 
   if (state.groups.length === 0) {
     panel.innerHTML = `<div class="groups-empty">
@@ -5745,7 +5768,7 @@ function renderGroups() {
   // Load details for open groups
   for (const group of state.groups) {
     if (state.groupItemsOpen[group.id]) {
-      loadGroupDetail(group.id, pendingFoldKey);
+      loadGroupDetail(group.id, pendingFoldKey, myGroupsGen);
     }
   }
 }
@@ -5771,11 +5794,14 @@ function toggleGroupItem(groupId, button) {
  * @param {string} groupId
  * @param {string|undefined} [pendingFoldKey] - A fold key `renderGroups()`
  *   captured before replacing this group's content with a "Loading
- *   details..." placeholder (PRR-B C1, #2092) — by the time this function's
+ *   details..." placeholder (#2092) — by the time this function's
  *   own fetch resolves, the real focus is already gone, so it restores from
  *   this instead of re-reading `document.activeElement`.
+ * @param {number|undefined} [renderGeneration] - The `renderGroups()` pass
+ *   that started this call (#2092). If a later pass has since
+ *   superseded it, `pendingFoldKey` is stale and must not be honored.
  */
-async function loadGroupDetail(groupId, pendingFoldKey) {
+async function loadGroupDetail(groupId, pendingFoldKey, renderGeneration) {
   const data = await api(`/api/groups/${groupId}`);
   if (!data) return;
 
@@ -5839,11 +5865,15 @@ async function loadGroupDetail(groupId, pendingFoldKey) {
     // This content div's own innerHTML replace happens after renderGroups()'s
     // synchronous render already returned -- its Remove buttons (#2092) exist
     // only from this point on. Re-reading document.activeElement here would
-    // be too late on its own (PRR-B C1): renderGroups() already replaced this
+    // be too late on its own: renderGroups() already replaced this
     // button with a "Loading details..." placeholder, so by now focus has
     // already moved to <body>. pendingFoldKey is what renderGroups() captured
-    // BEFORE that happened, threaded through for exactly this moment.
-    renderKeepingFoldFocus(content, () => { content.innerHTML = html; }, pendingFoldKey);
+    // BEFORE that happened, threaded through for exactly this moment -- but
+    // only while this is still the latest renderGroups() pass: a
+    // newer pass means this key is stale, so fall back to the normal
+    // activeElement-based read instead of forcing a now-outdated intent.
+    const effectiveFoldKey = renderGeneration === groupsRenderGeneration ? pendingFoldKey : undefined;
+    renderKeepingFoldFocus(content, () => { content.innerHTML = html; }, effectiveFoldKey);
     break;
   }
 }
