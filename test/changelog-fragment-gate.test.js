@@ -76,6 +76,62 @@ describe('changelog-fragment-gate: evaluate', () => {
     assert.equal(verdict.ok, false);
     assert.equal(verdict.code, 1);
   });
+
+  it('refuses a code change that only DELETES an existing fragment (PRR-A F1)', () => {
+    const verdict = gate.evaluate(
+      [
+        { path: 'lib/store.js', additions: 3, deletions: 0 },
+        { path: 'changelog.d/1220.old-entry.fixed.md', additions: 0, deletions: 5 }
+      ],
+      ''
+    );
+    assert.equal(verdict.ok, false);
+    assert.equal(verdict.code, 1);
+    assert.match(verdict.reason, /no changelog\.d/);
+  });
+
+  it('refuses a code change that only MODIFIES an existing fragment, with no added one', () => {
+    const verdict = gate.evaluate(
+      [
+        { path: 'lib/store.js', additions: 3, deletions: 0 },
+        { path: 'changelog.d/1220.old-entry.fixed.md', additions: 2, deletions: 1 }
+      ],
+      ''
+    );
+    assert.equal(verdict.ok, false);
+    assert.equal(verdict.code, 1);
+  });
+
+  it('passes a code change that both deletes one fragment and adds another', () => {
+    const verdict = gate.evaluate(
+      [
+        { path: 'lib/store.js', additions: 3, deletions: 0 },
+        { path: 'changelog.d/1220.old-entry.fixed.md', additions: 0, deletions: 5 },
+        { path: 'changelog.d/1220.new-entry.fixed.md', additions: 4, deletions: 0 }
+      ],
+      ''
+    );
+    assert.equal(verdict.ok, true);
+    assert.equal(verdict.code, 0);
+  });
+
+  it('a pure deletion of a malformed stray file under changelog.d/ does not refuse the cleanup', () => {
+    const verdict = gate.evaluate(
+      [
+        { path: 'lib/store.js', additions: 3, deletions: 0 },
+        { path: 'changelog.d/README.md', additions: 0, deletions: 2 }
+      ],
+      'Changelog: none removes a leftover stray file\n'
+    );
+    assert.equal(verdict.ok, true);
+    assert.equal(verdict.code, 0);
+  });
+
+  it('a plain string entry is shorthand for an added file (additions:1, deletions:0)', () => {
+    const verdict = gate.evaluate(['lib/store.js', 'changelog.d/1220.fragment-gate.added.md'], '');
+    assert.equal(verdict.ok, true);
+    assert.equal(verdict.code, 0);
+  });
 });
 
 describe('changelog-fragment-gate: touchesCode', () => {
@@ -138,6 +194,18 @@ describe('changelog-fragment-gate: the CLI over the --files/--body-file seam', (
 
   it('exits 1 and says refused with no fragment or escape', () => {
     const { status, out } = run(['server.js'], '');
+    assert.equal(status, 1, out);
+    assert.ok(out.includes('refused'), out);
+  });
+
+  it('exits 1 for a code change that only deletes an existing fragment (the gh-shaped --files form)', () => {
+    const { status, out } = run(
+      [
+        { path: 'lib/store.js', additions: 3, deletions: 0 },
+        { path: 'changelog.d/1220.old-entry.fixed.md', additions: 0, deletions: 5 }
+      ],
+      ''
+    );
     assert.equal(status, 1, out);
     assert.ok(out.includes('refused'), out);
   });
