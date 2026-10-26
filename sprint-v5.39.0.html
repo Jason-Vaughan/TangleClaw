@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>TangleClaw v5.39.0 Sprint Telemetry & Post-Mortem Dashboard ("A terminal that reconnects")</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --panel: #121a30;
+    --panel-alt: #17213c;
+    --border: #26355c;
+    --text: #e8eefc;
+    --muted: #9db0d8;
+    --accent: #5ea1ff;
+    --green: #2ecc71;
+    --amber: #f39c12;
+    --purple: #a78bfa;
+    --cyan: #22d3ee;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.55;
+    padding: 28px;
+  }
+  .container { max-width: 1320px; margin: 0 auto; }
+  header {
+    background: linear-gradient(135deg, #131e3a 0%, #1b2850 100%);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px 28px;
+    margin-bottom: 24px;
+  }
+  .badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    background: rgba(94, 161, 255, 0.16);
+    color: var(--accent);
+    border: 1px solid rgba(94, 161, 255, 0.35);
+    margin-right: 8px;
+  }
+  .badge.green { background: rgba(46, 204, 113, 0.16); color: var(--green); border-color: rgba(46, 204, 113, 0.35); }
+  .badge.amber { background: rgba(243, 156, 18, 0.16); color: var(--amber); border-color: rgba(243, 156, 18, 0.35); }
+  .badge.purple { background: rgba(167, 139, 250, 0.16); color: var(--purple); border-color: rgba(167, 139, 250, 0.35); }
+  h1 { margin: 10px 0 8px; font-size: 28px; }
+  h2 { margin: 0 0 14px; font-size: 20px; color: #fff; }
+  p.sub { margin: 0; color: var(--muted); font-size: 14px; }
+  .grid-4 {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin-bottom: 20px;
+  }
+  .kpi-num { font-size: 28px; font-weight: 700; color: #fff; margin: 4px 0; }
+  .kpi-label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  .kpi-note { font-size: 12.5px; color: var(--muted); }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th { color: var(--muted); font-weight: 600; background: var(--panel-alt); }
+  code {
+    background: rgba(255, 255, 255, 0.07);
+    padding: 2px 6px;
+    border-radius: 5px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12.5px;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div>
+      <span class="badge green">13 / 13 ISSUES CLOSED · 6 / 6 PRS MERGED @ a8dcbe79</span>
+      <span class="badge">Milestone #24 · v5.39.0 ("A terminal that reconnects")</span>
+      <span class="badge">Sprint Wall Time: 4h 55m 32s (2.12x Speedup vs. v5.38.0)</span>
+      <span class="badge green">Tag v5.39.0 &amp; Live Server Deployed @ a8dcbe79 (release.yml #40420116703 PASS)</span>
+    </div>
+    <h1>TangleClaw <code>v5.39.0</code> ("A terminal that reconnects") — Sprint Post-Mortem &amp; Telemetry Dashboard</h1>
+    <p class="sub">
+      Observer: <code>TC-Lane-Obsr</code> (Session <code>#1463</code> · <code>Gemini 4 Argon</code>) ·
+      Base: <code>4d8c8612c5bcc17ad6f213a8bff7edb4b4219713</code> (<code>v5.38.0</code>) &rarr; Release Tag &amp; Live Server Head: <code>a8dcbe79e0d365d11c65c2c48bbd019169d8dc11</code> (<code>v5.39.0</code> tag &amp; GitHub Release published at <code>23:41Z</code>; <code>release.yml</code> <code>40420116703</code> <code>SUCCESS</code>; live <code>/api/health</code> <code>5.39.0 @ a8dcbe79</code>) ·
+      <strong>Disclosure (<code>Rule #283</code> cl. 1):</strong> <code>TC-Lane-Obsr</code> is an in-test participant whose reports lanes may read.
+    </p>
+  </header>
+
+  <div class="grid-4">
+    <div class="card">
+      <div class="kpi-label">End-to-End Sprint Speedup</div>
+      <div class="kpi-num" style="color: var(--green);">4h 55m 32s (2.12x)</div>
+      <div class="kpi-note"><code>295.5m</code> total wall time (<code>18:34:00Z &rarr; 23:29:32Z</code>) vs. <code>625.9m</code> (<code>10h 25m 57s</code>) in <code>v5.38.0</code> (<code>&minus;52.8%</code>)</div>
+    </div>
+    <div class="card">
+      <div class="kpi-label">Milestone #24 Completion</div>
+      <div class="kpi-num" style="color: var(--cyan);">13 / 13 Closed</div>
+      <div class="kpi-note">All 13 issues closed (incl. <code>#2588</code> live browser check &amp; <code>#2620</code> same-sprint fix); <code>5/6</code> PRs first-pass CI green (<code>W3-REC</code> initial head <code>ccb72417</code> failed Records Gate before <code>5d9d14af</code> passed; <code>6/6</code> final merged heads green)</div>
+    </div>
+    <div class="card">
+      <div class="kpi-label">W4-REL &amp; W3-REC Fast-Path</div>
+      <div class="kpi-num" style="color: var(--green);">99s Release PR!</div>
+      <div class="kpi-note">Bottleneck A cut PR CI <code>Tests</code> to <strong><code>31s</code></strong> on <code>W4-REL #2624</code> (<code>1.65m</code> open&rarr;merge, <code>10.8x</code> faster) and <code>7.6m</code> on <code>W3-REC #2623</code></div>
+    </div>
+    <div class="card">
+      <div class="kpi-label">Suite &amp; Quota Efficiency</div>
+      <div class="kpi-num" style="color: var(--purple);">23,493 Pass / 0 Fail</div>
+      <div class="kpi-note"><code>23,488</code> JUnit leaves, <code>0</code> failures; only <code>2</code> active Claude Builder lanes needed (<code>TC-Lane-D</code> at <code>0</code> tokens)</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>1. Sprint-Over-Sprint Acceleration Comparison (<code>v5.37.0</code> vs. <code>v5.38.0</code> vs. <code>v5.39.0</code>)</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Telemetry Dimension</th>
+          <th><code>v5.37.0</code> (<code>claude-sonnet-4-6</code>)</th>
+          <th><code>v5.38.0</code> (<code>claude-sonnet-5</code>)</th>
+          <th><code>v5.39.0</code> (<code>claude-sonnet-5</code> + <code>A474</code> 4-Pillar Protocol)</th>
+          <th><code>v5.39.0</code> vs. <code>v5.38.0</code> Improvement</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Total Sprint Wall Time (Dispatch &rarr; <code>W4-REL</code> Merge)</strong></td>
+          <td><code>~14h+</code></td>
+          <td><code>10h 25m 57s</code> (<code>625.9m</code>)</td>
+          <td><strong><code>4h 55m 32s</code> (<code>295.5m</code>)</strong></td>
+          <td><span class="badge green">2.12x Faster (&minus;52.8% / &minus;330.4m)</span></td>
+        </tr>
+        <tr>
+          <td><strong>Milestone Issue Closure Rate</strong></td>
+          <td><code>16 / 19</code></td>
+          <td><code>15 / 16</code> (<code>#2588</code> deferred)</td>
+          <td><strong><code>13 / 13</code> (<code>100.0%</code>, incl. <code>#2588</code> &amp; <code>#2620</code>)</strong></td>
+          <td><span class="badge green">100.0% Closed (0 Deferred)</span></td>
+        </tr>
+        <tr>
+          <td><strong>First-Pass vs. Final-Head CI Green Rate</strong></td>
+          <td><code>62.5%</code> (<code>5/8</code>)</td>
+          <td><code>100.0%</code> (<code>13/13</code> reviewed heads)</td>
+          <td><strong><code>83.3%</code> first-pass (<code>5/6</code> PRs) · <code>100.0%</code> final merged heads (<code>6/6</code>)</strong> (<code>W3-REC #2623</code> initial head <code>ccb72417</code> failed Records Gate before revision <code>5d9d14af</code> passed; all <code>4/4</code> code PRs + <code>W4-REL</code> passed CI on first push)</td>
+          <td><span class="badge green">5/6 First-Pass · 6/6 Final Heads Green</span></td>
+        </tr>
+        <tr>
+          <td><strong><code>W*-REC</code> Records PR Open-to-Merge Time</strong></td>
+          <td><code>~28m</code></td>
+          <td><code>13.0m</code> (full <code>12m</code> CI)</td>
+          <td><strong><code>7.6m</code></strong> (<code>PR #2623</code>: initial head <code>ccb72417</code> failed Records Gate on <code>verify-features-index.js</code>; revised head <code>5d9d14af</code> passed <code>&lt;30s</code> Bottleneck A Records Gate under <code>A474-W3-REC-R1</code>)</td>
+          <td><span class="badge green">1.71x Faster (&minus;41.5%)</span></td>
+        </tr>
+        <tr>
+          <td><strong><code>W4-REL</code> Release Cut PR Open-to-Merge Time</strong></td>
+          <td><code>~35m</code></td>
+          <td><code>17.8m</code> (full <code>12m</code> CI)</td>
+          <td><strong><code>1.65m</code> (<code>99s</code>)</strong> (<code>PR #2624</code> — <code>31s</code> Bottleneck A PR Records Gate; post-merge <code>release.yml</code> <code>40420116703</code> <code>SUCCESS</code> &rarr; tag <code>v5.39.0</code> + live deploy at <code>23:41Z</code>)</td>
+          <td><span class="badge green">10.8x Faster PR Merge (&minus;90.7%)</span></td>
+        </tr>
+        <tr>
+          <td><strong>Live Roadmap Board Dispatch Lag (<code>W3-F1</code>)</strong></td>
+          <td>End-of-sprint only</td>
+          <td><code>90.0m</code> lag on <code>W3-A</code></td>
+          <td><strong><code>0.0m</code> lag</strong> (<code>sync-board.sh</code> verified at <code>18:38Z</code>, <code>18:43Z</code>, <code>23:16Z</code>)</td>
+          <td><span class="badge green">100% Real-Time Board Sync</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>2. Complete Waves 1–4 Execution Matrix (<code>4d8c8612</code> &rarr; <code>a8dcbe79e0d365d11c65c2c48bbd019169d8dc11</code>)</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Wave / Car</th>
+          <th>Lane &amp; Model</th>
+          <th>Delivered Issues &amp; Bottleneck Fixes</th>
+          <th>PR, Revision History &amp; Timing (UTC)</th>
+          <th>PRR / Architect &amp; CI Evidence</th>
+          <th>Final State</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong><code>W1-INT</code></strong></td>
+          <td><code>TC-Lane-INT</code> (<code>#1464</code>)<br/><code>Codex GPT-6</code> (<code>0</code> Claude tokens)</td>
+          <td>
+            <code>Closes #2588</code> (isolated <code>scripts/with-scratch-server.js</code> on port <code>55558</code> + headless Chromium click verification: <code>reviewSessionFiles:true</code> &rarr; <code>needs-operator</code> &rarr; Keep local + Retry &rarr; <code>pathDecisions["notes/session-scratch.md"]="leave"</code>)
+          </td>
+          <td>Dispatched <code>18:34:00Z</code><br/>Closed <code>~18:43Z</code> (<strong><code>~9.0m</code></strong>)</td>
+          <td>Headless Chromium UI pass (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2588#issuecomment-6424410894">receipt</a>); <code>sync-board.sh</code> + <code>gh-pages</code> <code>a9b36c73</code> synced</td>
+          <td><span class="badge green">CLOSED</span></td>
+        </tr>
+        <tr>
+          <td><strong><code>W1-B</code></strong></td>
+          <td><code>TC-Lane-B</code> (<code>#1467</code>)<br/><code>claude-sonnet-5 --effort high</code></td>
+          <td>
+            <code>Closes #2371</code> (Steps 3&amp;6 CI-as-suite-evidence), <code>Closes #1220</code> (<code>#2523</code> mandatory changelog-fragment gate)<br/>
+            + <strong>Bottleneck A</strong> (<code>scripts/docs-records-only-diff.js</code> + <code>test.yml</code> <code>&lt;30s</code> fast-path)<br/>
+            + <strong>Bottleneck B/D</strong> + <strong><code>W1-F6</code></strong> (<code>_dir-scanner-hang-child.js</code> <code>SIGKILL</code> on disconnect)
+          </td>
+          <td><strong><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2619">PR #2619</a></strong> (<code>F1/F2</code> revised &rarr; <code>02eefa96</code>)<br/>Opened <code>19:23:01Z</code> (<code>49.0m</code> build)<br/>Merged <code>19:50:49Z</code> (<strong><code>27.8m</code> open&rarr;merge / <code>76.8m</code> total</strong>)</td>
+          <td>Architect <code>A474-W1B-ACCEPT-R3</code> + <code>PRR-A</code> <code>Rule #81 ACCEPT</code>; CI <code>40387969217</code> <code>PASS</code>; <code>23,410</code> Prawduct pass / <code>0</code> fail</td>
+          <td><span class="badge green">MERGED @ 8091fce1</span></td>
+        </tr>
+        <tr>
+          <td><strong><code>W1-C</code></strong></td>
+          <td><code>TC-Lane-C</code> (<code>#1468</code>)<br/><code>claude-sonnet-5 --effort high</code></td>
+          <td>
+            <code>Closes #2607</code> (Dead exports Batch 4 — <strong><code>51</code> of <code>54</code> baseline entries retired &rarr; <code>3</code> tracked exceptions</strong> in <code>test/dead-exports-baseline.json</code>)<br/>
+            <code>Closes #747</code> (<code>refreshStatusBars</code> direct skip-reason counts + 2 source-shape tests)
+          </td>
+          <td><strong><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2618">PR #2618</a></strong> (<code>4e7c2913</code> &rarr; synced <code>6030e503</code>)<br/>Opened <code>19:06:48Z</code> (<code>32.8m</code> build)<br/>Merged <code>20:10:35Z</code> (<strong><code>63.8m</code> open&rarr;merge / <code>96.6m</code> total</strong>)</td>
+          <td><code>TC-Lane-PRR-B</code> (<code>#1471</code>) renewed exact-head <code>ACCEPT</code>; CI <code>40391249102</code> <code>PASS</code>; <code>23,436</code> leaves / <code>23,412</code> Prawduct pass / <code>0</code> fail</td>
+          <td><span class="badge green">MERGED @ c237ede6</span></td>
+        </tr>
+        <tr>
+          <td><strong><code>W2-B</code></strong></td>
+          <td><code>TC-Lane-B</code> (<code>#1467</code>)<br/><code>claude-sonnet-5 --effort high</code></td>
+          <td>
+            <strong>Group M:</strong> <code>Closes #2035</code> (Master Full screen <code>100vh</code> + Pop out <code>/?master=popout</code>), <strong><code>Closes #2620</code></strong> (<code>A474-W2-R1</code> Coordinator-First <code>work-blocked</code> Discord alert suppression), <code>Closes #192</code> (<code>A474-W2-R2</code> two-layer multi-line paste regression)
+          </td>
+          <td><strong><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2621">PR #2621</a></strong> (<code>511a6c85 &rarr; c352c1a5 &rarr; 46f88c62</code>)<br/>Opened <code>20:41:17Z</code> (<code>30.7m</code> build)<br/>Merged <code>21:22:47Z</code> (<strong><code>41.5m</code> open&rarr;merge / <code>72.2m</code> total</strong>)</td>
+          <td>Architect <code>A474-W2-R2</code> caught <code>F1/F2/F3</code> pre-merge &rarr; <code>A474-W2B-ACCEPT</code> + <code>PRR-A</code> <code>ACCEPT</code>; CI <code>40400670019</code> <code>PASS</code>; <code>23,452</code> leaves / <code>23,428</code> Prawduct pass / <code>0</code> fail</td>
+          <td><span class="badge green">MERGED @ 71586071</span></td>
+        </tr>
+        <tr>
+          <td><strong><code>W2-C</code></strong></td>
+          <td><code>TC-Lane-C</code> (<code>#1468</code>)<br/><code>claude-sonnet-5 --effort high</code></td>
+          <td>
+            <strong>Group S:</strong> <code>Closes #1317</code> (session header pinwheel), <code>Closes #960</code> (remove Select button &amp; mode), <code>Closes #1237</code> (mouse-mode rollback), <code>Closes #1638</code> (mobile modifier keybar + sticky Ctrl), <code>Closes #2011</code> (auto-reconnect)
+          </td>
+          <td><strong><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2622">PR #2622</a></strong> @ <code>89dab766</code><br/>Opened <code>22:39:53Z</code> (<code>149.3m</code> build)<br/>Merged <code>23:14:17Z</code> (<strong><code>34.4m</code> open&rarr;merge / <code>183.7m</code> total</strong>)</td>
+          <td>Architect <code>A474-W2C-ACCEPT-R3</code> + <code>PRR-B</code> <code>Rule #286 ACCEPT</code>; CI <code>40416661372</code> <code>PASS</code>; <code>23,493</code> runner / <code>23,488</code> leaves / <code>0</code> fail</td>
+          <td><span class="badge green">MERGED @ 29ec322d</span></td>
+        </tr>
+        <tr>
+          <td><strong><code>W3-REC</code></strong></td>
+          <td><code>TC-Lane-INT</code> (<code>#1464</code>)<br/><code>Codex GPT-6</code> (<code>0</code> Claude tokens)</td>
+          <td>Consolidated <code>FEATURES.md</code>, <code>.prawduct/change-log.md</code>, and <code>docs/user-guide.md</code> (<code>#960</code> retired Select guide cleanup)</td>
+          <td><strong><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2623">PR #2623</a></strong> (<code>ccb72417</code> failed Records Gate &rarr; revised <code>5d9d14af</code> per <code>A474-W3-REC-R1</code>)<br/>Opened <code>23:17:50Z</code><br/>Merged <code>23:25:29Z</code> (<strong><code>7.6m</code> open&rarr;merge</strong>)</td>
+          <td>Architect <code>A474-W3-REC-ACCEPT</code> + <code>PRR-A</code> <code>Rule #81 ACCEPT</code>; <strong>Bottleneck A Records Gate <code>40418938758</code> <code>711/711</code> (<code>&lt;30s</code>) on <code>5d9d14af</code></strong></td>
+          <td><span class="badge green">MERGED @ 4f6ad6ff</span></td>
+        </tr>
+        <tr>
+          <td><strong><code>W4-REL</code></strong></td>
+          <td><code>TC-Lane-INT</code> (<code>#1464</code>)<br/><code>Codex GPT-6</code> (<code>0</code> Claude tokens)</td>
+          <td><code>version.json</code> (<code>5.39.0</code>), <code>CHANGELOG.md</code> (<code>12</code> fragments compiled &amp; deleted), <code>README.md</code>, <code>docs/releases/v5.39-status.md</code>, <code>changelog-released-sections.lock.json</code> (<code>17</code> files)</td>
+          <td><strong><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2624">PR #2624</a></strong> @ <code>9cd0b9dc</code><br/>Opened <code>23:27:53Z</code><br/>Merged <code>23:29:32Z</code> (<strong><code>1.65m</code> / <code>99s</code> open&rarr;merge!</strong>)<br/>Tagged &amp; Deployed <code>23:41Z</code></td>
+          <td>Architect <code>A474-W4-REL-ACCEPT</code> + <code>PRR-A</code> &amp; <code>PRR-B</code> <code>ACCEPT</code> + <code>TC-Lane-Obsr</code> <code>O-Gate PASS</code>; <strong>PR Records Gate <code>40419938568</code> <code>PASS</code> in <code>31s</code></strong>; post-merge <code>release.yml</code> <code>40420116703</code> <code>SUCCESS</code></td>
+          <td><span class="badge green">MERGED &amp; TAGGED v5.39.0 @ a8dcbe79</span><br/><span class="badge green">LIVE SERVER DEPLOYED (5.39.0)</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>3. Top 3 Process Improvements for <code>v5.40.0</code> &amp; Key Sprint Findings (<code>Rule #283</code> cl. 3)</h2>
+    <ul>
+      <li><strong>Priority #1 — Detect Claude Code Interactive <code>AskUserQuestion</code> TUI Prompts in <code>lib/ttyd-watcher.js</code> &amp; Forbid <code>AskUserQuestion</code> in Headless Builder Panes (<code>Finding W2-F2_v539</code>):</strong> While building <code>W2-C</code>, <code>TC-Lane-C</code> popped up Claude Code's interactive <code>AskUserQuestion</code> TUI menu (<code>Enter to select · &uarr;/&darr; to navigate · Esc to cancel</code>) three times on <code>#1638</code> and <code>#2011</code>. Because the TUI selector hides the standard <code>&#10095;</code> prompt, <code>lib/ttyd-watcher.js</code> classified the session as <code>engine not-at-rest (no-prompt); not nudged (engine busy)</code> until <code>TC-Lane-Obsr</code> sent the scheduled <code>Rule #283</code> cl. 1(b) 30m liveness check (<code>mx_lg4lI-DAd_UUHshs</code>). Adding <code>Enter to select · &uarr;/&darr; to navigate · Esc to cancel</code> to <code>lib/ttyd-watcher.js</code> and forbidding <code>AskUserQuestion</code> in headless Builder rules will save <code>~45m</code> per UI wave.</li>
+      <li><strong>Priority #2 — Omit <code>RETIRED</code> Session Rules from Default <code>tc rules</code> Output (<code>Finding W1-F2_v539</code>):</strong> After <code>/clear</code>, <code>tc rules</code> prints <code>9</code> rules (<code>~50 KB</code>), of which <code>7</code> are <code>RETIRED</code>. Retired <code>Rules #254/#246/#234</code> contain legacy <em>"The Operator's own word, in your own pane, is needed to start a batch"</em> text that contradicted active <code>Rule #280</code> cl. 1 and caused <code>TC-Lane-A</code> to self-block on <code>W1-A</code> (triggering a direct Discord <code>work-blocked</code> alert, which the Operator directed fixing in <code>#2620</code> and which merged in <code>80m</code> via <code>PR #2621</code>). Filtering out <code>RETIRED</code> rules by default in <code>tc rules</code> cuts post-<code>/clear</code> rule payloads by <strong><code>82%</code></strong> (<code>50 KB &rarr; 9 KB</code>) and removes contradictory legacy instructions.</li>
+      <li><strong>Priority #3 — Allow Existing On-Disk Test Paths in <code>scripts/verify-features-index.js</code> on Docs/Records-Only PRs (<code>Finding W3-F1_v539</code>):</strong> On <code>W3-REC</code> (<code>PR #2623</code>), the first records head failed the PR-base <code>verify-features-index.js --base origin/main</code> check in CI because its <code>6</code> newly added <code>FEATURES.md</code> <code>Tests:</code> anchors cited test files that had already merged to <code>main</code> in <code>W1-B..W2-C</code> (resolved in <code>5d9d14af</code> under <code>A474-W3-REC-R1</code>). When <code>scripts/docs-records-only-diff.js</code> reports <code>docs-only: yes</code>, <code>verify-features-index.js</code> should accept newly added <code>Tests: test/&lt;file&gt;.test.js</code> citations whenever the cited test file exists on disk at <code>HEAD</code>.</li>
+    </ul>
+  </div>
+</div>
+</body>
+</html>
