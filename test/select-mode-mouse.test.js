@@ -26,6 +26,16 @@
  * session-level override (found live in VRF-574 leg 4). The restore now
  * distinguishes inherited from explicit (_resolveMouseState / getMouseState
  * / unsetMouse in lib/tmux.js; tcSelectModeMouse returns {on}|{unset}).
+ *
+ * #960 (Operator Decision A2) removed the Select button and its session.js
+ * caller side (toggleSelect, repairAbandonedSelect, the writeSelectMarker/
+ * clearSelectMarker localStorage helpers) — their "is wired" probes below are
+ * removed with them. tcSelectModeMouse and tcParseSelectMarker themselves
+ * still live in public/api-helper.js (out of #960's W2-C file scope; W2-B
+ * owns that file) and are now orphaned with no caller — flagged for a
+ * follow-up removal rather than deleted here. Their pure-function tests stay,
+ * since the functions still exist and still need to be correct until that
+ * follow-up lands.
  */
 
 const { describe, it, before } = require('node:test');
@@ -186,32 +196,6 @@ describe('Select abandonment repair (UI-8W3D — tcParseSelectMarker + wiring)',
     assert.deepEqual(tcParseSelectMarker('{"on":true,"explicit":true,"session":"evil"}'),
       { on: true, explicit: true });
   });
-
-  it('is wired: enter writes the marker BEFORE the tmux flip; clean exit clears it', () => {
-    const sessionJs = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
-    const body = liftBody(sessionJs, 'async function toggleSelect(');
-    const writeAt = body.indexOf('writeSelectMarker(');
-    const enterPostAt = body.indexOf('entering: true');
-    assert.ok(writeAt !== -1 && enterPostAt !== -1 && writeAt < enterPostAt,
-      'the marker must be recorded before the enter POST — a crash between ' +
-      'them must leave a harmless repair, never an unmarked strand');
-    assert.ok(body.includes('clearSelectMarker('),
-      'a clean Done exit must clear the marker so no phantom repair fires');
-  });
-
-  it('is wired: page init repairs through the tested exit decision and parses via the tested reader', () => {
-    const sessionJs = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
-    const body = liftBody(sessionJs, 'async function repairAbandonedSelect(');
-    assert.ok(body, 'repairAbandonedSelect must exist');
-    assert.ok(body.includes('tcParseSelectMarker('),
-      'raw storage must go through the validating parser');
-    assert.ok(body.includes('tcSelectModeMouse(') && body.includes('entering: false'),
-      'the repair must replay the same exit-restore decision (#579 unset semantics)');
-    assert.ok(body.includes('clearSelectMarker('),
-      'a successful repair must clear the marker (SoT cleared on the mutation)');
-    assert.ok(!body.includes('setTimeout'),
-      'the repair is load-time state reconciliation — no timers (#98/#268)');
-  });
 });
 
 describe('Select-mode + mouse-guard wiring (#574 source pins)', () => {
@@ -219,32 +203,6 @@ describe('Select-mode + mouse-guard wiring (#574 source pins)', () => {
 
   before(() => {
     sessionJs = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
-  });
-
-  it('toggleSelect has NO auto-revert timer (no-UI-timers rule, #98/#268)', () => {
-    const body = liftBody(sessionJs, 'async function toggleSelect(');
-    assert.ok(body, 'toggleSelect must exist');
-    assert.ok(!body.includes('setTimeout'),
-      'select mode must be an explicit toggle — the 30s auto-revert was removed in #574, never re-add or lengthen it');
-  });
-
-  it('toggleSelect routes BOTH transitions through tcSelectModeMouse', () => {
-    const body = liftBody(sessionJs, 'async function toggleSelect(');
-    const calls = body.split('tcSelectModeMouse(').length - 1;
-    assert.equal(calls, 2,
-      'enter and exit must both use the tested pure decision (found ' + calls + ' call(s))');
-    assert.ok(body.includes('mouseOn: sessionState.mouseOn') &&
-      body.includes('mouseExplicit: sessionState.mouseExplicit'),
-      'the restore decision must carry BOTH the pre-select value and its ' +
-      'source (#579) — never a platform hardcode');
-  });
-
-  it('toggleSelect snapshots the pre-select state FRESH on entry (#579)', () => {
-    // A page-load snapshot goes stale the moment another tab or the
-    // operator changes the mouse state; exit would then "restore" history.
-    const body = liftBody(sessionJs, 'async function toggleSelect(');
-    assert.ok(body.includes('/api/tmux/mouse/'),
-      'entering select mode must re-read the live mouse state before flipping it');
   });
 
   it('the touch-only mouse guard stays removed (#574 RC3)', () => {

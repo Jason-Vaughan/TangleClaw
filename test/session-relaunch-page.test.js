@@ -44,7 +44,11 @@ function constSource(name) {
 
 const WIRING = [
   'stopPolling', 'handleSessionEnded', 'handleWrapCompleted',
-  'applyRelaunchEligibility', 'sendRelaunch', 'readRelaunchStatus', 'renderRelaunch', 'onRelaunchClick'
+  'applyRelaunchEligibility', 'sendRelaunch', 'readRelaunchStatus', 'renderRelaunch', 'onRelaunchClick',
+  // #2011 — handleSessionEnded now starts a lightweight liveness watch;
+  // its own behavior is covered in test/session-ui.test.js, but it must be
+  // wired here too, or lifting handleSessionEnded alone throws.
+  'startEndedWatch', 'stopEndedWatch'
 ];
 
 const IDS = [
@@ -109,6 +113,10 @@ function harness() {
     clearTimeout: (t) => { if (t) t.cleared = true; },
     setInterval: (fn, ms) => { const t = { fn, ms, cleared: false }; intervals.push(t); return t; },
     clearInterval: (t) => { if (t) t.cleared = true; },
+    // #2011 — startEndedWatch's recovery action; this file tests the ended
+    // bar's own wiring, not terminal reattachment, so a no-op is enough.
+    setupTerminal: () => {},
+    startPolling: () => {},
     location: {}
   };
   Object.defineProperty(sandbox.location, 'href', {
@@ -119,7 +127,8 @@ function harness() {
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(path.join(PUBLIC, 'wrap-drawer.js'), 'utf8'), sandbox);
   vm.runInContext(fs.readFileSync(path.join(PUBLIC, 'session-relaunch.js'), 'utf8'), sandbox);
-  const globals = ['let countdownTimer = null;', 'let relaunchController = null;', constSource('RELAUNCH_TIMEOUT_MS')].join('\n');
+  const globals = ['let countdownTimer = null;', 'let relaunchController = null;', 'let endedWatchTimer = null;',
+    constSource('RELAUNCH_TIMEOUT_MS')].join('\n');
   vm.runInContext(`${globals}\n${WIRING.map((n) => liftDeclaration(SESSION_SRC, `function ${n}(`)).join('\n\n')}\n`
     + 'this.__w = { handleSessionEnded, handleWrapCompleted, onRelaunchClick, timeoutMs: RELAUNCH_TIMEOUT_MS };', sandbox);
 
@@ -137,6 +146,12 @@ function harness() {
     timers,
     intervals,
     liveIntervals: () => intervals.filter((t) => !t.cleared),
+    // #2011 — handleSessionEnded now ALSO always starts the ended-state
+    // liveness watch (5000ms), distinct from the 10s redirect countdown
+    // (1000ms) these tests were written to count. Filtering by `ms` keeps
+    // the original assertions about the countdown meaningful rather than
+    // off by one for every case now that a second interval always exists.
+    liveCountdownIntervals: () => intervals.filter((t) => !t.cleared && t.ms === 1000),
     offered: () => !ids.relaunchBtn.classList.contains('hidden'),
     /** Fire every pending, uncleared timer once. */
     fireTimers() {
@@ -152,8 +167,9 @@ describe('the ended bar offers Restart Session only after a completed wrap', () 
     h.w.handleSessionEnded(WRAPPED);
     assert.ok(!h.ids.sessionEnded.classList.contains('hidden'), 'the ended bar is shown');
     assert.ok(h.offered(), 'Restart Session is offered');
-    assert.equal(h.liveIntervals().length, 0, 'no redirect countdown runs away from the offered button');
+    assert.equal(h.liveCountdownIntervals().length, 0, 'no redirect countdown runs away from the offered button');
     assert.equal(h.ids.countdown.textContent, '');
+    assert.equal(h.liveIntervals().length, 1, '#2011: the ended-state watch always starts, countdown or not');
   });
 
   for (const [label, status] of [['killed', KILLED], ['crashed', CRASHED], ['unknown liveness', UNKNOWN],
@@ -162,7 +178,7 @@ describe('the ended bar offers Restart Session only after a completed wrap', () 
       const h = harness();
       h.w.handleSessionEnded(status);
       assert.ok(!h.offered(), `${label} must not offer a relaunch`);
-      assert.equal(h.liveIntervals().length, 1, 'an unexpected end still redirects as before');
+      assert.equal(h.liveCountdownIntervals().length, 1, 'an unexpected end still redirects as before');
       assert.match(h.ids.countdown.textContent, /Returning in 10s/);
     });
   }
@@ -174,7 +190,8 @@ describe('the ended bar offers Restart Session only after a completed wrap', () 
     assert.equal(h.statusReads.length, 1, 'exactly one status read');
     assert.equal(h.statusReads[0], '/api/sessions/my%20proj/status');
     assert.ok(h.offered());
-    assert.equal(h.liveIntervals().length, 0, 'the wrap-completed path never counts down');
+    assert.equal(h.liveCountdownIntervals().length, 0, 'the wrap-completed path never counts down');
+    assert.equal(h.liveIntervals().length, 1, '#2011: this path also starts the ended-state watch');
   });
 
   for (const [label, status] of [['a failed read', null], ['killed', KILLED], ['unknown liveness', UNKNOWN]]) {

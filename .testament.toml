@@ -182,6 +182,7 @@ files = [
   "test/session-relaunch.test.js",
   "test/session-rules-channel.test.js",
   "test/session-rules-panel.test.js",
+  "test/session-ui.test.js",
   "test/session-unreachable-state.test.js",
   "test/session-update-poll.test.js",
   "test/session-wrap-finalize.test.js",
