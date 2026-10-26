@@ -62,10 +62,9 @@ All notable changes to TangleClaw are documented in this file.
 - Retired 24 dead exports (nothing outside their own module reads them) across 8 `lib/` modules, shrinking `test/dead-exports-baseline.json` from 78 to 54. Each name stays used inside its module; only the export entry goes, no declaration is deleted (#2590).
 - Added `scripts/pre-push-gate.js`, chaining `node scripts/test-stage.js 1`
   then `2 --base origin/main` as one command a Builder can run (or a hook
-  can call) before `git push` (#2595). Not yet wired into an actual git
-  hook — `lib/control-hooks.js`'s pre-push dispatcher wiring, and so the
-  push itself being blocked, is serialized to a follow-up wave. A
-  mechanical `gh pr merge` Builder guard is split to #2601.
+  can call) before `git push` (#2595). The managed pre-push dispatcher was
+  connected in Wave 2, so a red gate now blocks the push. A mechanical
+  `gh pr merge` Builder guard is tracked separately in #2601.
 - Added `scripts/verify-features-index.js`: given the wave's own starting
   commit as `--base`, it checks that every `Tests:` anchor newly added to
   `FEATURES.md` names a test file the same diff touches, so a records PR
