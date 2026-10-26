@@ -4,6 +4,56 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.39.0] - 2026-10-26
+
+### Added
+- Added an on-screen modifier key bar (Esc, Ctrl, Tab, arrows) to the session terminal on touch devices, since the native soft keyboard has none. Tapping Ctrl arms a sticky modifier for the next keystroke, so Ctrl then C sends ^C (#1638).
+- Project Master gained Full screen (expands the terminal to fill the browser
+  viewport, with the browser's own Escape/toggle to exit) and Pop out (opens
+  the Master terminal in its own window, attached to the same tmux session,
+  closing like any other tab without stopping Master). Both land in the one
+  shared control-bar component, so the dashboard panel and the in-session
+  drawer gained them identically, with no change to either surface's own page
+  (#2035).
+
+### Changed
+- The session header's wrapping status dot is now the same spinning pinwheel the dashboard uses, instead of a separate amber breathing dot, for visual consistency across both views (#1317).
+
+### Removed
+- Removed the session banner's "Select" button and its text-selection mode: operator-verified on device that terminal text can be selected and pasted without it (Operator Decision A2), so the mouse-mode flip it drove, its localStorage abandonment-recovery, and the button itself are gone. Long-press selection (#445) still works the same way (#960).
+
+### Fixed
+- Fixed: a rejected mouse-mode toggle in session Settings (tmux unreachable, session gone, server down) no longer leaves the page asserting a state tmux never reached — the toggle now rolls back and the settings-warnings banner surfaces the real reason (#1237).
+- Fixed: the session terminal now automatically reattaches when a session is restarted from anywhere (another tab, the dashboard, or this page's own Restart Session) and recovers from an ordinary ttyd/WebSocket disconnect while the tmux session stays active, with visible "Reconnecting…" status and bounded 1s/2s/4s backoff — previously it stayed on "[exited]" / "Press Enter to Reconnect" until a manual reload (#2011).
+- Suppressed direct Discord `work-blocked` alerts for an opted-out project, and for a sub-lane
+  whose `workloadNudge.coordinatorProject` setting names a different project that currently has
+  a live session — that coordinator escalates it if it chooses to, rather than the operator
+  being paged twice (#2620).
+
+### Internal
+- Closed with regression coverage on both sides of the pipe, not a code
+  change: a raw-mode PTY test (`test/tmux.test.js`) proves `sendKeys`
+  delivers a multi-line bracketed paste and the trailing Enter keystroke as
+  genuinely separate, correctly-ordered reads on the server side, and a
+  client-side test (`test/master-control-bar.test.js`) proves `pasteToMaster`
+  hands a multi-line clipboard payload to the web-terminal's `term.paste()`
+  byte for byte. Together they lock in the behavior that named paste
+  buffers, `tmux paste-buffer -p`, and the post-paste settle delay already
+  gave, with no further code change needed in `lib/tmux.js` (#192).
+- `refreshStatusBars` now counts `alreadyCurrent`, `foreign`, and `failed` directly at each outcome's own site instead of inferring `alreadyCurrent` by subtracting the other two from `skipped`, and returns all three breakdown counts alongside `updated`/`skipped`; the two source-shape tests in `test/version-visibility.test.js` pinning `_getVersion` and `startPolling` now execute the real lifted functions instead of matching their source text (#747).
+- Added the mandatory PR changelog-fragment gate: a pull request touching `lib/`, `server.js`,
+  `public/` or `scripts/` must add a `changelog.d/` fragment or carry a `Changelog: none <reason>`
+  escape, enforced in CI by `scripts/changelog-fragment-gate.js`; the pre-boundary
+  direct-`[Unreleased]`-edit transition has ended now that its two open pull requests are both
+  closed (#1220, #2523).
+- Activated CI-as-suite-evidence beyond the named pilot: `.prawduct/project-state.yaml` now
+  declares the `suite-evidence.js` wrapper as `test_command` on this lane host, the pins that
+  hold the declared command moved to `test/record-test-run.test.js`, `.github/workflows/test.yml`
+  runs a sub-30s Records Gate instead of the full suite shards on a diff touching only
+  docs/records/release-metadata paths, and a libuv worker hang in the dir-scanner test fixture's
+  child process on IPC disconnect is fixed (#2371).
+- Retired 51 of the 54 dead exports the audit found across `lib/*.js`, shrinking `test/dead-exports-baseline.json` to three tracked exceptions the audit's require-graph reader detection cannot see: `lib/macho-closure.js:DEFAULT_SYSTEM_ROOTS` and `lib/git-template.js:templateDir`, each read via an inline `require(...).NAME` property access with no local binding, and `lib/project-version.js:_readConfiguredVersion`, called from inside a spawned-child-process probe string in `test/project-version-require-cycle.test.js` (#2607).
+
 ## [5.38.0] - 2026-10-25
 
 ### Added
