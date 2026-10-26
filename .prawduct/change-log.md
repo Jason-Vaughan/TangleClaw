@@ -49,6 +49,8 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 - **#1382:** Port-import Ignore choices persist in server config instead of per-browser localStorage, so they carry across devices.
 - **#2401:** Unarchive refuses a missing or empty seeded project path until the operator confirms a fresh start. Launch carries an advisory path-health warning to the session view so it remains visible after navigation; launch itself is not refused.
 
+PR #2615 merged as `d3eee9b749eb5f0dc2d4964ed0dd8af2d1e8eebc` from exact head `57acccba3c305a55de3f37a924874ef1bd726a01` (tree `f20ecc5614255e7e40a402e6736e40e409c73a35`) after PRR-A final ACCEPT. Exact-head Tests run `40272409168` and latest-main Tests run `40258598329` succeeded. The CI-mode recorder accepted that head and tree with 23,400 runner tests, 0 failures, and valid Prawduct evidence; A473-A8 co-signed the final 22-file scope, including the session-view warning handoff.
+
 ## 2026-10-25 — v5.38.0 W3-B: needs-operator wrap verification
 
 <!-- prawduct: type=internal | scope=w3b-2588-wrap-needs-operator -->
