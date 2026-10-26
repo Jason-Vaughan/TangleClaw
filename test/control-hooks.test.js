@@ -281,6 +281,63 @@ describe('control-hooks (#1861)', () => {
     });
   });
 
+  describe('scripts/pre-push-gate.js wiring (#2595)', () => {
+    /**
+     * A repo with a bare remote, ready for `git push`.
+     * @param {string} name
+     * @returns {{dir: string, bare: string}}
+     */
+    function pushableRepo(name) {
+      const dir = repo(name);
+      const bare = fs.mkdtempSync(path.join(tmpDir, `bare-${name}-`));
+      initRepo(bare, ['--bare']);
+      execSync(`git remote add origin ${bare}`, { cwd: dir, shell: '/bin/sh' });
+      return dir;
+    }
+
+    it('is silently skipped when the checkout has no scripts/pre-push-gate.js — every other managed project', () => {
+      const dir = pushableRepo('no-gate');
+      hooks.install(dir, { assignmentId: 'asg_nogate', api });
+      setState('asg_nogate', 'active');
+      assert.doesNotThrow(() => execSync('git push -q origin main', { cwd: dir, shell: '/bin/sh' }));
+    });
+
+    it('a present gate that exits 0 lets the push through', () => {
+      const dir = pushableRepo('gate-pass');
+      fs.mkdirSync(path.join(dir, 'scripts'));
+      script(path.join(dir, 'scripts', 'pre-push-gate.js'), '#!/usr/bin/env node\nprocess.exit(0);\n');
+      hooks.install(dir, { assignmentId: 'asg_pass', api });
+      setState('asg_pass', 'active');
+      assert.doesNotThrow(() => execSync('git push -q origin main', { cwd: dir, shell: '/bin/sh' }));
+    });
+
+    it('a present gate that exits 1 blocks the push, before any chained hook runs', () => {
+      const dir = pushableRepo('gate-block');
+      fs.mkdirSync(path.join(dir, 'scripts'));
+      script(path.join(dir, 'scripts', 'pre-push-gate.js'), '#!/usr/bin/env node\nprocess.exit(1);\n');
+      const hooksDir = hooks.locate(dir).hooksDir;
+      const chainedRan = path.join(tmpDir, 'gate-block-chained-ran');
+      script(path.join(hooksDir, 'pre-push'), `#!/bin/sh\ntouch ${chainedRan}\nexit 0\n`);
+      hooks.install(dir, { assignmentId: 'asg_block', api });
+      setState('asg_block', 'active');
+      const r = spawnSync('git', ['push', '-q', 'origin', 'main'], { cwd: dir, encoding: 'utf8' });
+      assert.notEqual(r.status, 0, 'a red gate must refuse the push');
+      assert.equal(fs.existsSync(chainedRan), false, 'the gate runs before the chained hook, which must never be reached');
+    });
+
+    it('a HOLD blocks the push before the gate ever runs', () => {
+      const dir = pushableRepo('gate-held');
+      fs.mkdirSync(path.join(dir, 'scripts'));
+      const gateRan = path.join(tmpDir, 'gate-held-ran');
+      script(path.join(dir, 'scripts', 'pre-push-gate.js'), `#!/usr/bin/env node\nrequire('fs').writeFileSync(${JSON.stringify(gateRan)}, '');\nprocess.exit(0);\n`);
+      hooks.install(dir, { assignmentId: 'asg_held', api });
+      setState('asg_held', 'held');
+      const r = spawnSync('git', ['push', '-q', 'origin', 'main'], { cwd: dir, encoding: 'utf8' });
+      assert.notEqual(r.status, 0);
+      assert.equal(fs.existsSync(gateRan), false, 'a held lane must never reach the gate');
+    });
+  });
+
   describe('refresh and uninstall', () => {
     it('refresh is idempotent; uninstall restores a chained hook byte-for-byte and removes the sidecar', () => {
       const dir = repo('uninstall');

@@ -147,6 +147,13 @@ describe('remote-output redaction reaches every caller outside lib/wrap-steps (#
         if (args[0] === 'status') return '';
         throw new Error(REMOTE_ERR);
       };
+      // #2600: the real (unmocked) backupSqlite reads/writes the live sqlite
+      // file. Inside the full Small tier it's sensitive to state an earlier
+      // file in the same process left behind, throwing and routing the flow
+      // into `_reconcile` (`reconcile-required`) before step 5 ever reaches
+      // the git mock above — this case then tests nothing. Mock it so step
+      // 4.5 always succeeds deterministically, whatever else ran before it.
+      updateApplier._internal.backupSqlite = () => ({ path: '/tmp/fake-pre-update-backup.db', sha256: 'f'.repeat(64) });
 
       let result;
       const logged = await captureLogs(async () => { result = await updateApplier.applyUpdate(); });
