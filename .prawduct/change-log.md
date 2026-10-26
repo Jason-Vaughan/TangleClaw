@@ -41,6 +41,34 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-25 — v5.38.0 W1-A: dashboard filters and Launch links
+
+<!-- prawduct: type=fix | scope=w1a-2122-2123-2124 -->
+
+- **#2122:** Tag and engine filters persist across reload; selections absent from the current projects are discarded.
+- **#2123:** The toolbar displays the engine filter and tag picker inline and left aligned.
+- **#2124:** Open and Launch controls are links with native new-tab actions. A new-tab Launch consumes a dashboard-minted, project-bound, five-minute, single-use intent token from the URL fragment; missing, mismatched, expired, or replayed intent does not launch. Plain-HTTP direct ingress uses `crypto.getRandomValues` when `crypto.randomUUID` is unavailable. The live F10 browser check remains owed in Wave 2 and W4-REL under A473-A3.
+
+## 2026-10-25 — v5.38.0 W1-B: pre-push command and wave-diff test anchors
+
+<!-- prawduct: type=internal | scope=w1b-2595-2597 -->
+
+- **#2597:** CI-backed suite evidence support and `scripts/verify-features-index.js` check newly added `FEATURES.md` test citations against files touched since the wave's starting commit. The Integrator runs this check on each records PR.
+- **#2595:** Standalone `scripts/pre-push-gate.js` chains Stage 1 and Stage 2. W2-B owns hook registration; the command does not yet block a push by itself. The cross-engine merge guard is tracked separately as #2601.
+
+## 2026-10-25 — v5.38.0 W1-C: dead exports Batch 3a
+
+<!-- prawduct: type=internal | scope=w1c-2590-dead-exports-batch3a -->
+
+- **#2590:** Retired 61 unused `module.exports` keys across 14 library modules, retaining their declarations for internal callers. The dead-export baseline shrank from 139 to 78; Batch 3b remains assigned to W2-C.
+
+## 2026-10-25 — v5.38.0 W1-D: Windows terminal paste and Master Paste
+
+<!-- prawduct: type=fix | scope=w1d-2458-terminal-paste -->
+
+- **#2458:** Windows Ctrl+V and dictation paste now reach xterm through the shared terminal frame wiring. The Master bar has a Paste button using the browser clipboard or a prompt fallback. Live browser verification VRF-006 remains owed in Wave 2 and W4-REL under A473-A3.
+- **#2313:** Already implemented on the Wave 1 baseline; no new code change in W1-D.
+
 ## 2026-10-25 — W5-REL: prepare the v5.37.0 release
 
 <!-- prawduct: type=chore | scope=w5-rel-v5.37.0-release-prep -->
