@@ -50,4 +50,9 @@ process.on('message', (msg) => {
   process.send({ id, ok: false, error: { message: `fixture does not know: ${op}`, code: 'ENOSYS' } });
 });
 
-process.on('disconnect', () => { process.exit(0); });
+// A libuv worker thread blocked in the `hang` branch's `fsp.readFile` never
+// returns to run `process.exit`'s callback queue, so Node v22's own
+// CleanupHandles wait for that thread hangs this handler right along with it.
+// SIGKILL ends the process from outside libuv, so the blocked thread never
+// gets a vote.
+process.on('disconnect', () => { process.kill(process.pid, 'SIGKILL'); });

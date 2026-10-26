@@ -60,12 +60,43 @@ jobs:
         # step noticing (#882). First step in the job because it is the cheapest
         # question CI can ask and a corrupt tree makes every later answer suspect.
         run: node scripts/conflict-marker-scan.js
+      - name: Require a changelog fragment on a code change
+        # A push event has no pull request to read; the gate is a pull-request contract.
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node scripts/changelog-fragment-gate.js --pr "$PR_NUMBER"
+      - name: Detect a docs/records/release-metadata-only diff
+        # Restricted to pull_request, like the cache-bump guard below: a push
+        # event has no base to diff against, and `docs_only` defaults to unset
+        # (the Records Gate step below treats that as "run the full suite").
+        if: github.event_name == 'pull_request'
+        id: docs-scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node scripts/docs-records-only-diff.js --base "$BASE_SHA"
       - name: Run test suite
         # Two reporters: tap to the log as before, and junit to a file for the
         # audit below. The audit is what turns "CI green" into a statement of
         # what CI actually ran — the runner has no engine CLIs, sits in UTC and
         # is not macOS, so a slice of the suite skips here by design (#844).
+        if: steps.docs-scope.outputs.docs_only != 'true'
         run: node --test --test-reporter=tap --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results.xml 'test/*.test.js'
+      - name: Run the Records Gate (docs/records/release-metadata diff only)
+        # A diff this narrow cannot change what any CODE path does, so the
+        # full suite is replaced by what actually certifies a records/release
+        # change: the fast local stages, the features-index/changelog/release
+        # contract tests, and the index-verify script they depend on. Still
+        # writes test-results.xml in the same shape, so the audit and the
+        # artifact upload below are unaffected by which branch ran.
+        if: steps.docs-scope.outputs.docs_only == 'true'
+        run: |
+          node scripts/test-stage.js 1
+          node scripts/verify-features-index.js --base "$BASE_SHA"
+          node --test --test-reporter=tap --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results.xml test/features-index.test.js test/changelog-*.test.js test/release-*.test.js
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
       - name: Audit what this run did not execute
         # Fails on any skipped test that test/skip-ledger.json does not name,
         # so a new environment-gated test cannot join the not-run set
