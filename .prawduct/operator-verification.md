@@ -29,3 +29,21 @@ On the Groups or OpenClaw panel with VoiceOver or NVDA active, focus a fold togg
 On a disposable project and session using the scratch server's isolated home and projects root, create a session-owned file and choose “Review session files before committing” in the wrap modal. Confirm the run visibly pauses `needs-operator` before commit, the drawer renders a Keep local checkbox for that file, and checking it then pressing Retry sends the browser's own request. Confirm the file remains on disk and out of the commit, the run does not pause a second time, and the live installation on port 3102 and real projects root were untouched.
 
 PR #2613's automated test exercised the real isolated HTTP route and pipeline, rendered the Keep local row with a VM-mounted drawer renderer, changed the checkbox's DOM state, and invoked the real `retryWrap` accessor and POST. It did not operate a browser or perform a user click, so it does not satisfy #2588's closure condition.
+
+## #1304 — create project, configure, then launch
+
+**Status:** pending isolated live browser interaction at W4-REL.
+
+On a scratch server with isolated home and projects root, create a project and confirm its Settings modal opens before any session launches. Choose Medusa, model, effort, and Project Rules, then use Save & Launch and confirm the first session receives those settings. Repeat with plain Save and Cancel; the project should remain created without a session. The W3-A automated tests cover the modal and launch handoff, not the native browser interaction.
+
+## #1382 — PortHub Ignore across browser contexts
+
+**Status:** pending cross-context browser verification at W4-REL.
+
+On an isolated server, ignore a port-import candidate from one browser context. Reload and open a second context against the same server; confirm the candidate stays ignored in both. Confirm the server config contains the ignored lease project rather than relying on either context's localStorage. The W3-A route and UI tests cover persistence wiring, not a two-context browser run.
+
+## #2401 — project path health at unarchive and launch
+
+**Status:** pending isolated live browser interaction at W4-REL.
+
+With disposable projects under the scratch server's isolated projects root, unarchive one whose folder is missing and one containing only TangleClaw's seeded files without `.git`; confirm each refuses and shows the fresh-start confirmation, then confirm an explicit retry proceeds. For launch, confirm the server starts the session, navigates normally, and displays the advisory path-health warning on the session view after navigation. Confirm a healthy project launches without that warning. The automated W3-A tests cover the server states and page functions; no manual browser run is claimed here.

@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-25 — v5.38.0 W3-A: create setup, shared lease-ignore, and project path health
+
+<!-- prawduct: type=fix | scope=w3a-1304-1382-2401 -->
+
+- **#1304:** Creating a project opens Settings before the first session launches. Save & Launch starts with the chosen settings; Save and Cancel keep the project without launching.
+- **#1382:** Port-import Ignore choices persist in server config instead of per-browser localStorage, so they carry across devices.
+- **#2401:** Unarchive refuses a missing or empty seeded project path until the operator confirms a fresh start. Launch carries an advisory path-health warning to the session view so it remains visible after navigation; launch itself is not refused.
+
 ## 2026-10-25 — v5.38.0 W3-B: needs-operator wrap verification
 
 <!-- prawduct: type=internal | scope=w3b-2588-wrap-needs-operator -->
