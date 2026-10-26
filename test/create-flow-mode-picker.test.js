@@ -194,13 +194,23 @@ describe('a successful launch with a path-health warning pauses before navigatin
    * Run the page's own `doLaunchProject` against a successful launch.
    * @param {object|null} pathHealthWarning - The response's warning, or null.
    * @param {boolean} confirmReturns - What the stubbed `confirm()` answers.
-   * @returns {Promise<string[]>} The ordered sequence of toast/confirm/navigate calls.
+   * @returns {Promise<{seq: string[], btn: object}>} The ordered call sequence,
+   *   and the Launch button stub so its end state can be asserted.
    */
   async function run(pathHealthWarning, confirmReturns) {
     const seq = [];
+    const classes = new Set(['btn-launch']);
+    const btn = {
+      textContent: 'Launch',
+      classList: {
+        add: (c) => classes.add(c),
+        remove: (c) => classes.delete(c),
+        contains: (c) => classes.has(c)
+      }
+    };
     const sandbox = {
       console, setTimeout: () => 0, clearTimeout() {},
-      document: { querySelector: () => null },
+      document: { querySelector: () => btn },
       setConnected: () => {},
       closeStrandedLaunchModal: () => {},
       showToast: (message) => seq.push(`toast:${message}`),
@@ -215,27 +225,32 @@ describe('a successful launch with a path-health warning pauses before navigatin
       'globalThis.doLaunchProject = doLaunchProject;'
     ].join('\n'), sandbox);
     await sandbox.doLaunchProject('proj-x', null, null);
-    return seq;
+    return { seq, btn };
   }
 
   it('navigates immediately when the launch carries no warning', async () => {
-    assert.deepEqual(await run(null, true), ['navigate:proj-x']);
+    const { seq } = await run(null, true);
+    assert.deepEqual(seq, ['navigate:proj-x']);
   });
 
   it('shows the warning and waits for an explicit acknowledgment before navigating (PRR-A C1: navigateToSession is a hard window.location assignment that would otherwise tear down the toast before the operator could read it)', async () => {
     const warning = { message: 'proj-x has no git history', code: 'PROJECT_PATH_UNSEEDED' };
-    assert.deepEqual(await run(warning, true), [
+    const { seq } = await run(warning, true);
+    assert.deepEqual(seq, [
       `toast:${warning.message}`,
       `confirm:${warning.message}\n\nContinue to the session?`,
       'navigate:proj-x'
     ]);
   });
 
-  it('does not navigate when the operator declines the warning', async () => {
+  it('does not navigate when the operator declines the warning, and resets the Launch button instead of leaving it stuck (Critic design-review WARNING: a decline left the button "Launching…"/pointer-events:none until a full reload)', async () => {
     const warning = { message: 'proj-x has no git history', code: 'PROJECT_PATH_UNSEEDED' };
-    assert.deepEqual(await run(warning, false), [
+    const { seq, btn } = await run(warning, false);
+    assert.deepEqual(seq, [
       `toast:${warning.message}`,
       `confirm:${warning.message}\n\nContinue to the session?`
     ]);
+    assert.equal(btn.textContent, 'Launch', 'the button text must return to normal, not stay "Launching…"');
+    assert.equal(btn.classList.contains('is-launching'), false, 'the pending (pointer-events: none) class must be removed');
   });
 });

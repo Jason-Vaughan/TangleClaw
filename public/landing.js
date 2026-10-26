@@ -2295,7 +2295,13 @@ async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStra
     // acknowledgment instead of letting navigation race the toast.
     if (data.pathHealthWarning) {
       showToast(data.pathHealthWarning.message, 'warn', 8000);
-      if (!confirm(`${data.pathHealthWarning.message}\n\nContinue to the session?`)) return;
+      if (!confirm(`${data.pathHealthWarning.message}\n\nContinue to the session?`)) {
+        // The launch already succeeded server-side — only navigation was
+        // declined — so the button must come back to its normal state
+        // rather than stay stuck "Launching…" with pointer-events disabled.
+        if (btn) { btn.textContent = originalText; btn.classList.remove('is-launching'); }
+        return;
+      }
     }
     navigateToSession(name, { launched: true });
   } catch (err) {
