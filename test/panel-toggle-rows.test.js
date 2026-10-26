@@ -397,3 +397,63 @@ describe('folding keeps keyboard focus on the toggle (#1946)', () => {
     }
   });
 });
+
+/*
+ * #2092 — #1946 fixed fold TOGGLES specifically; the same panels have other
+ * controls (Edit group, Kill Tunnel, Web UI, SSH, Remove, +New Group) that
+ * still lost focus on the same poll, because they weren't keyed with
+ * `data-fold-key` at all. `renderKeepingFoldFocus` already restores ANY
+ * `[data-fold-key]` element generically (it never checked for a toggle
+ * specifically) — the fix is keying these controls too, not changing the
+ * restore mechanism.
+ */
+describe('other panel controls carry a fold key for the poll restore too (#2092)', () => {
+  it('groups panel: +New Group (both the empty-state and header-actions branches) and Edit group', () => {
+    const emptyHtml = renderPanel('renderGroups', 'groupsPanel', { groups: [], groupItemsOpen: {} });
+    assert.match(emptyHtml, /data-fold-key="new-group"/, '+New Group in the empty-state branch');
+
+    const html = renderPanel('renderGroups', 'groupsPanel', {
+      groups: [{ id: 'g1', name: 'Backend', memberCount: 2, docCount: 1 }],
+      groupItemsOpen: { g1: false }
+    });
+    const els = walk(html);
+    assert.ok(els.some((e) => e.tag === 'button' && e.attrs.includes('data-fold-key="new-group"')),
+      '+New Group in the header-actions branch (groups non-empty)');
+    assert.ok(els.some((e) => e.tag === 'button' && e.attrs.includes('data-fold-key="edit-group-g1"')),
+      'Edit group, keyed per group so it does not collide with the toggle\'s own key ("g1")');
+  });
+
+  it('openclaw panel: Edit connection, Web UI, SSH', () => {
+    const els = walk(PANELS.openclaw.html());
+    for (const key of ['edit-conn-c1', 'web-ui-c1', 'ssh-c1']) {
+      assert.ok(els.some((e) => e.tag === 'button' && e.attrs.includes(`data-fold-key="${key}"`)),
+        `expected a button with data-fold-key="${key}"`);
+    }
+  });
+
+  it('openclaw panel: Kill Tunnel is keyed while a tunnel is active (and absent, so untested, while none is)', () => {
+    const noTunnel = walk(PANELS.openclaw.html());
+    assert.ok(!noTunnel.some((e) => e.attrs.includes('kill-tunnel-')), 'no Kill Tunnel button without an active tunnel');
+
+    const html = renderPanel('renderOpenclawConnections', 'openclawPanel', {
+      openclawConnections: [{ id: 'c1', name: 'Lab', host: 'lab.local', port: 18789, sshUser: 'u', sshKeyPath: '/k', localPort: 18790 }],
+      openclawItemsOpen: { c1: false },
+      openclawTunnelStatus: { c1: { active: true, localPort: 9999 } }
+    });
+    const els = walk(html);
+    assert.ok(els.some((e) => e.tag === 'button' && e.attrs.includes('data-fold-key="kill-tunnel-c1"')),
+      'Kill Tunnel must carry a fold key while the tunnel is active');
+  });
+
+  it("loadGroupDetail wraps its own content.innerHTML replace in renderKeepingFoldFocus (Remove member/doc buttons only exist after this async step, which runs after renderGroups()'s own outer restore already returned)", () => {
+    const body = liftDeclaration(ui, 'async function loadGroupDetail(');
+    assert.match(body, /renderKeepingFoldFocus\(content, \(\) => \{ content\.innerHTML = html; \}\)/);
+  });
+
+  it('Remove member and Remove document buttons are keyed by group/member/doc id, not just "remove"', () => {
+    const body = liftDeclaration(ui, 'async function loadGroupDetail(');
+    assert.match(body, /data-fold-key="remove-member-\$\{esc\(groupId\)\}-\$\{m\.id\}"/,
+      'must include both the group and member id, so two different groups\' Remove buttons never collide');
+    assert.match(body, /data-fold-key="remove-doc-\$\{esc\(doc\.id\)\}"/);
+  });
+});
