@@ -46,6 +46,7 @@ function makeElement(tag, doc) {
     target: '',
     rel: '',
     disabled: false,
+    checked: false,
     parentNode: null,
     childNodes: [],
     get className() { return [...classes].join(' '); },
@@ -116,6 +117,19 @@ function makeElement(tag, doc) {
       return null;
     },
     /**
+     * Every descendant matching a `.class` or `.class:checked` selector.
+     * @param {string} sel - `.class` or `.class:checked`.
+     * @returns {object[]}
+     */
+    querySelectorAll(sel) {
+      const out = [];
+      for (const child of el.childNodes) {
+        if (matches(child, sel)) out.push(child);
+        out.push(...child.querySelectorAll(sel));
+      }
+      return out;
+    },
+    /**
      * Fire an event at this element. Returns whether any listener ran, so a
      * test can tell "clicked nothing" from "clicked something inert".
      * @param {string} type - Event type.
@@ -142,14 +156,20 @@ function makeElement(tag, doc) {
 }
 
 /**
- * Does an element match a `.class` or bare-tag selector?
+ * Does an element match a `.class`, `.class:checked`, or bare-tag selector?
  * @param {object} el - Element.
  * @param {string} sel - Selector.
  * @returns {boolean}
  */
 function matches(el, sel) {
-  if (sel.startsWith('.')) return el.classList.contains(sel.slice(1));
-  return el.tagName === sel.toUpperCase();
+  // A text node (`createTextNode`) has neither: never a match, but also never
+  // a reason to throw walking past one on the way to a real element.
+  if (!el.classList && !el.tagName) return false;
+  const checkedOnly = sel.endsWith(':checked');
+  const base = checkedOnly ? sel.slice(0, -':checked'.length) : sel;
+  if (checkedOnly && el.checked !== true) return false;
+  if (base.startsWith('.')) return el.classList.contains(base.slice(1));
+  return el.tagName === base.toUpperCase();
 }
 
 /**
@@ -162,6 +182,21 @@ function makeDocument(ids) {
   const byId = Object.create(null);
   const doc = {
     createElement: (tag) => makeElement(tag, doc),
+    /**
+     * A leaf text node: no children, no attributes, just `textContent`/`text` —
+     * enough for `appendChild` targets that only ever read those back.
+     * @param {string} text
+     * @returns {object}
+     */
+    createTextNode: (text) => ({
+      nodeType: 3,
+      textContent: String(text),
+      parentNode: null,
+      childNodes: [],
+      get text() { return this.textContent; },
+      querySelector: () => null,
+      querySelectorAll: () => []
+    }),
     getElementById: (id) => byId[id] || null,
     /** Register an element so `getElementById` can find it. */
     _register(el) { if (el.id) byId[el.id] = el; },
