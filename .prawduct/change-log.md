@@ -41,6 +41,52 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-26 — v5.39.0 W1-B: CI evidence and mandatory fragments
+
+<!-- prawduct: type=internal | scope=v539-w1b-2371-1220 -->
+
+- **#2371:** The lane host now declares the suite-evidence wrapper as its test command. The Tests workflow uses a short Records Gate for docs, records, and release-metadata-only PRs, while code diffs still run the full suite. The directory-scanner fixture's child process now exits on IPC disconnect.
+- **#1220:** Code PRs must add a `changelog.d/` fragment or state `Changelog: none <reason>`; CI enforces the rule after the pre-boundary PRs, including #2523, closed.
+
+PR #2619 merged at exact reviewed head `02eefa96` as `8091fce1`.
+
+## 2026-10-26 — v5.39.0 W1-C: dead exports and status counts
+
+<!-- prawduct: type=internal | scope=v539-w1c-2607-747 -->
+
+- **#2607:** Removed 51 unused public exports, leaving three documented audit exceptions in `test/dead-exports-baseline.json`.
+- **#747:** `refreshStatusBars` now counts its skip reasons at their outcome sites and returns the breakdown; two source-shape tests now run the lifted functions.
+
+PR #2618 merged at exact reviewed head `6030e503` as `c237ede6`.
+
+## 2026-10-26 — v5.39.0 W1-INT: live wrap verification
+
+<!-- prawduct: type=internal | scope=v539-w1int-2588 -->
+
+- **#2588:** An isolated scratch-server and headless Chromium run exercised the real session wrap UI: the review checkbox produced a `needs-operator` pause before commit, Keep local and Retry sent `pathDecisions[path] = 'leave'`, and the second run completed without another pause or commit. The file remained local and the issue closed after the live receipt.
+
+## 2026-10-26 — v5.39.0 W2-B: Master controls, paste evidence, and coordinator alerts
+
+<!-- prawduct: type=fix | scope=v539-w2b-2035-192-2620 -->
+
+- **#2035:** Full screen and Pop out are available for Project Master in both the dashboard panel and session drawer through one shared control bar.
+- **#192:** Raw-mode tmux PTY and browser-side `term.paste()` regression tests pin multi-line Master paste framing and byte-for-byte payload delivery; no production paste change was required.
+- **#2620:** Direct Discord work-blocked alerts are suppressed for an opted-out project or a sub-lane with a live coordinator, leaving escalation to that coordinator.
+
+PR #2621 merged at exact reviewed head `46f88c626b0a57bf40256710bceb2063fbdbe324` as `7158607180c4c442adb569c568ddb14db8e365af`. Exact-head Tests run `40400670019` succeeded; the CI-mode recorder reported 23,452 JUnit leaves and 0 failures. PRR-A and Architect A474-W2B accepted the exact head.
+
+## 2026-10-26 — v5.39.0 W2-C: session controls and terminal recovery
+
+<!-- prawduct: type=fix | scope=v539-w2c-1317-960-1237-1638-2011 -->
+
+- **#1317:** The wrapping status dot now uses the dashboard's spinning pinwheel.
+- **#960:** Removed the session banner Select button, its mouse-mode flip, and abandoned-mode recovery; ordinary selection and the touch long-press Copy pill remain.
+- **#1237:** A rejected mouse-mode Settings save restores the prior state and surfaces its failure.
+- **#1638:** Touch terminals have an Esc, Ctrl, Tab, and arrow keybar; sticky Ctrl applies to the next keystroke without replacing ttyd's xterm handler.
+- **#2011:** The terminal reattaches after a session restart and recovers from a positively detected ttyd disconnect with bounded retries. An unreadable frame alone does not trigger a retry.
+
+PR #2622 merged at exact reviewed head `89dab7661d7a0c521420f5ed921ee930e4e48cb2` (tree `4702ce2a12009942ae8d71c4d54e4089e9e25ea1`) as `29ec322d7599eeeb0b5789492e8b2e8971ad40f5`. Exact-head Tests run `40416661372` succeeded; the CI-mode recorder reported 23,493 runner tests / 23,488 JUnit leaves, 0 failures, and matching Prawduct evidence tree. PRR-B Rule #286/#81 and Architect A474-W2C-ACCEPT-R3 accepted the exact head. All five linked issues closed on merge.
+
 ## 2026-10-25 — v5.38.0 W3-A: create setup, shared lease-ignore, and project path health
 
 <!-- prawduct: type=fix | scope=w3a-1304-1382-2401 -->
