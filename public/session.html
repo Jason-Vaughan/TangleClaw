@@ -114,7 +114,6 @@
         <div class="medusa-panel medusa-loops-panel group-popover" id="medusaLoopsPanel" role="dialog" aria-label="Session loops" hidden></div>
         <span class="sr-only" id="medusaLive" aria-live="polite"></span>
       </span>
-      <button class="banner-btn" id="selectBtn" aria-label="Toggle text selection mode">Select</button>
       <!-- #438: a drag in the terminal is copied by the TUI on the HOST (pbcopy
            plus a tmux buffer) and never reaches this device; desktop gets the
            #431 Option-drag gesture, but a phone has no Option key. This reads
@@ -234,6 +233,19 @@
   <!-- Terminal Viewport -->
   <div class="terminal-viewport" id="terminalViewport">
     <iframe id="terminalFrame" class="terminal-frame" title="Terminal session"></iframe>
+  </div>
+
+  <!-- #1638: mobile on-screen modifier key bar — the native soft keyboard
+       (Gboard etc.) has no Esc/Ctrl/Tab/arrows, so touch devices get one.
+       Hidden by default; initSession() reveals it on touch, same as #pasteBtn. -->
+  <div class="mobile-keybar" id="mobileKeybar" role="toolbar" aria-label="Terminal modifier keys" hidden>
+    <button class="keybar-key banner-btn" id="keybarEsc" type="button">Esc</button>
+    <button class="keybar-key banner-btn" id="keybarCtrl" type="button" aria-pressed="false">Ctrl</button>
+    <button class="keybar-key banner-btn" id="keybarTab" type="button">Tab</button>
+    <button class="keybar-key banner-btn" id="keybarUp" type="button" aria-label="Up arrow">&uarr;</button>
+    <button class="keybar-key banner-btn" id="keybarDown" type="button" aria-label="Down arrow">&darr;</button>
+    <button class="keybar-key banner-btn" id="keybarLeft" type="button" aria-label="Left arrow">&larr;</button>
+    <button class="keybar-key banner-btn" id="keybarRight" type="button" aria-label="Right arrow">&rarr;</button>
   </div>
 
   <!-- Peek Drawer -->

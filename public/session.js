@@ -35,6 +35,11 @@ const sessionState = {
   launchGraceRemaining: 0,
   wrapCompleting: false,
   wrapDrawerOpen: false,
+  // #2011 — the session id the terminal iframe is currently pointed at (or
+  // null before the first attach). Lets pollStatus tell "still the same live
+  // session" apart from "a different one is live now" without re-attaching
+  // on every poll tick.
+  terminalAttachedSessionId: null,
   // MED-2K9P Chunk 02 — Medusa session-comms control state. `unread` mirrors the
   // server badge; `prevUnread` lets a poll detect a fresh inbound (unread rose)
   // to fire the transient inbound-head flow + aria-live announcement. `shown`
@@ -2256,6 +2261,24 @@ async function pollStatus() {
     sessionState.launchGraceRemaining = 0;
   }
 
+  // #2011: keep the terminal attached to whatever session the server says
+  // is actually running, tmux or webui alike — reattachTerminalForStatus
+  // picks the right setup call and UI mode for whichever this is. The
+  // ttyd-buffer disconnect check is tmux-only (webui has no xterm instance
+  // to read); an ended page's return is the ended-watch's job
+  // (handleSessionEnded already stopped this poll above when active is
+  // false). While wrapping, leave the dot alone — the wrap UI owns it, and a
+  // wrap in progress is not a plausible moment for ttyd's own disconnect
+  // prompt to legitimately show.
+  if (terminalSetupStarted && data.active) {
+    if (!sessionState.terminalAttachedSessionId
+        || (data.sessionId && sessionState.terminalAttachedSessionId !== data.sessionId)) {
+      reattachTerminalForStatus(data);
+    } else if (data.sessionMode !== 'webui' && !sessionState.wrapping) {
+      checkOrdinaryDisconnect();
+    }
+  }
+
   // Idle detection for chime — ding once per idle transition.
   //
   // `data.idle` is TRI-STATE: true, false, or null when the pane could not be
@@ -2347,6 +2370,8 @@ let countdownTimer = null;
 function handleSessionEnded(statusData) {
   sessionState.ended = true;
   stopPolling();
+  cancelReconnectEpisode();
+  startEndedWatch();
 
   // Defensively hide wrap-idle modal — if tmux died while it was showing,
   // the wrap-completed code path normally handles this, but cover the case
@@ -2400,6 +2425,270 @@ function handleSessionEnded(statusData) {
       countdownEl.textContent = `Returning in ${remaining}s`;
     }
   }, 1000);
+}
+
+// ── Terminal Reconnect (#2011) ──
+//
+// Three paths, each on its own evidence — never on "the terminal iframe is
+// unreadable" (a loading frame and a cross-origin ttyd deployment look
+// identical from here; treating that as a disconnect signal would
+// reload-loop a perfectly healthy cross-origin install forever):
+//
+//   1. A NEW active session took over from the one the iframe is pointed at
+//      (a restart, launched from anywhere — this page's own button already
+//      navigates away on success, so this path exists for every OTHER way a
+//      session gets relaunched: another tab, the dashboard, a direct API
+//      call). Detected by `sessionState.terminalAttachedSessionId` not
+//      matching the status poll's `sessionId` while `active` is true.
+//   2. The session ended on THIS tab, and later comes back. Status polling
+//      stops when a session ends (nothing else to poll for), so a separate,
+//      lighter watch (`startEndedWatch`) is what notices the return.
+//   3. An ORDINARY transient ttyd/WebSocket drop while the tmux session
+//      never stopped being active — positive, same-origin evidence only:
+//      ttyd's own "[exited]" / "Press Enter to Reconnect" prompt, read from
+//      the xterm buffer it already rendered.
+//
+// None of these ever re-POST a launch — every recovery action is
+// `setupTerminal()` re-pointing the iframe at the same stable per-project
+// URL, never `/api/sessions/:project`.
+
+/** Backoff between reconnect attempts within one disconnect episode (#2011). */
+const RECONNECT_BACKOFF_MS = [1000, 2000, 4000, 4000];
+
+let reconnectAttempt = 0;
+let reconnectTimer = null;
+// Latched once RECONNECT_BACKOFF_MS is exhausted for the CURRENT disconnect
+// episode, so a persistent drop does not silently restart an unbounded
+// string of fresh 4-attempt episodes forever (INT pre-PR finding). Only
+// positive health evidence or a fresh attach (cancelReconnectEpisode, via
+// setupTerminal — a new session or a manual reload) clears it.
+let reconnectExhausted = false;
+let endedWatchTimer = null;
+// Guards pollStatus's reattach check against initSession's OWN first
+// setupTerminal() call: initSession awaits one pollStatus() before it ever
+// calls setupTerminal() itself (it needs the status read to know webui vs.
+// tmux), so without this, that very first poll would race it and attach the
+// iframe twice on every normal page load.
+let terminalSetupStarted = false;
+
+/**
+ * Read ttyd's OWN disconnect prompt from the xterm buffer it already
+ * rendered — the exact text the issue's reproduction observed.
+ *
+ * Three-way, not boolean (INT pre-PR finding): an unreadable or
+ * not-yet-loaded terminal is 'unknown', never 'healthy' — that case can't
+ * be told apart from a healthy cross-origin deployment OR from a page that
+ * just reattached and has not finished loading yet, and collapsing it into
+ * "healthy" let a still-broken connection get marked healed the instant a
+ * reconnect attempt's own reload left the frame briefly unreadable.
+ * 'unknown' is also never 'unhealthy': cross-origin must not reload-loop.
+ *
+ * A blank or whitespace-only tail is 'unknown' too (PRR-A B4): a freshly
+ * (re)initialized xterm buffer reads exactly like that for the brief window
+ * before the pty's first prompt arrives, and that is "nothing confirmed
+ * yet", not "confirmed healthy" — the same reload-in-progress risk the
+ * unreadable case above exists to guard against, just one step later in the
+ * same reattach.
+ * @returns {'healthy'|'unhealthy'|'unknown'}
+ */
+function terminalDisconnectStatus() {
+  const term = _sessionTerm();
+  if (!term || !term.buffer || !term.buffer.active) return 'unknown';
+  try {
+    const buf = term.buffer.active;
+    const tailLines = Math.min(buf.length, 5);
+    let tail = '';
+    for (let i = buf.length - tailLines; i < buf.length; i++) {
+      const line = buf.getLine(i);
+      if (line) tail += `${line.translateToString(true)}\n`;
+    }
+    if (/press enter to reconnect/i.test(tail) || /\[exited\]/i.test(tail)) return 'unhealthy';
+    if (tail.trim() === '') return 'unknown';
+    return 'healthy';
+  } catch (_) {
+    return 'unknown'; // unreadable — never treated as evidence either way
+  }
+}
+
+/**
+ * Paint the "healthy again" status, undoing runReconnectAttempt's markers.
+ *
+ * The `.reconnecting` dot class is removed UNCONDITIONALLY (PRR-B finding):
+ * it is defined after `.ended`/`.wrapping` in session.css, so leaving it on
+ * the dot through an end/wrap transition would have it win the visual —
+ * the amber breathing dot showing instead of the ended/wrapping one. Only
+ * the PILL TEXT is gated on ended/wrapping, since those states paint their
+ * own text immediately after and "Active" would just be overwritten anyway.
+ */
+function clearReconnectingStatus() {
+  document.getElementById('statusDot').classList.remove('reconnecting');
+  if (sessionState.ended || sessionState.wrapping) return;
+  setPillDetail(document.getElementById('statusPill'), 'Active');
+}
+
+/**
+ * Cancel an in-flight reconnect episode and clear its status, INCLUDING the
+ * exhaustion latch. Called by `setupTerminal()` itself — any fresh attach
+ * (reconnect-driven, a new session taking over, or a manual reload)
+ * supersedes whatever episode was running and earns a clean slate.
+ */
+function cancelReconnectEpisode() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  if (reconnectAttempt > 0 || reconnectExhausted) {
+    reconnectAttempt = 0;
+    reconnectExhausted = false;
+    clearReconnectingStatus();
+  }
+}
+
+/**
+ * Run one attempt of a reconnect episode: reattach, then — unless attempts
+ * are exhausted — wait the next backoff step and check whether the
+ * connection is definitively healthy before declaring victory. An 'unknown'
+ * read (frame mid-reload, most likely its OWN reload from this very
+ * attempt) is treated the same as 'unhealthy' — another budgeted retry —
+ * never as healed: that distinction is the whole fix for the finding that
+ * a reload-in-progress could get marked healthy by accident.
+ */
+function runReconnectAttempt() {
+  // Defense in depth (PRR-A B1): handleSessionEnded/handleWrapCompleted both
+  // call cancelReconnectEpisode(), so a live episode should never reach here
+  // after either — this guard is what keeps it that way if a future caller
+  // ever forgets to, rather than reattaching a terminal whose session the
+  // page has already declared over.
+  if (sessionState.ended || sessionState.wrapping) {
+    reconnectTimer = null;
+    return;
+  }
+  setPillDetail(document.getElementById('statusPill'), 'Reconnecting…');
+  document.getElementById('statusDot').classList.add('reconnecting');
+  setupTerminalKeepingEpisode();
+  reconnectAttempt++;
+  if (reconnectAttempt >= RECONNECT_BACKOFF_MS.length) {
+    reconnectTimer = null;
+    reconnectExhausted = true; // latched — checkOrdinaryDisconnect won't restart a fresh episode
+    return;
+  }
+  reconnectTimer = setTimeout(() => {
+    if (terminalDisconnectStatus() === 'healthy') {
+      reconnectTimer = null;
+      reconnectAttempt = 0;
+      reconnectExhausted = false;
+      clearReconnectingStatus();
+    } else {
+      runReconnectAttempt();
+    }
+  }, RECONNECT_BACKOFF_MS[reconnectAttempt - 1]);
+}
+
+/**
+ * `setupTerminal()` for a reconnect attempt, without letting it cancel the
+ * episode it's part of — the public entry point always cancels on attach,
+ * which is right for every OTHER caller but would make an episode unable to
+ * reach its own second attempt.
+ *
+ * Zeroing `reconnectAttempt`/`reconnectExhausted` (not just saving them) is
+ * the fix for a real bug this surfaced: on the FIRST attempt `reconnectAttempt`
+ * is already 0 when this runs, so `cancelReconnectEpisode`'s guard happened
+ * to no-op by accident — but from the SECOND attempt on, `reconnectAttempt`
+ * is already >0 at this point (it increments AFTER this call returns), so
+ * that guard fired for real and repainted the pill back to "Active" mid-episode,
+ * even though the saved/restored counter made the final number look right.
+ * Suppressing the guard's INPUTS, not just restoring its output, is what
+ * actually stops the side effect from firing at all.
+ */
+function setupTerminalKeepingEpisode() {
+  const savedAttempt = reconnectAttempt;
+  const savedTimer = reconnectTimer;
+  const savedExhausted = reconnectExhausted;
+  reconnectTimer = null;
+  reconnectAttempt = 0;
+  reconnectExhausted = false;
+  setupTerminal();
+  reconnectAttempt = savedAttempt;
+  reconnectTimer = savedTimer;
+  reconnectExhausted = savedExhausted;
+}
+
+/**
+ * Start a bounded reconnect episode once ttyd's own prompt is positively
+ * observed. No-op while one is already running or already exhausted —
+ * `checkOrdinaryDisconnect` guards both before calling this.
+ */
+function beginReconnectEpisode() {
+  if (reconnectTimer || reconnectExhausted) return;
+  reconnectAttempt = 0;
+  runReconnectAttempt();
+}
+
+/**
+ * The ordinary-disconnect half of #2011, run from `pollStatus` on every tick
+ * where the status poll confirms `active: true` for the SAME session the
+ * terminal is already attached to (the new-session case is handled before
+ * this is reached).
+ *
+ * Only a 'healthy' read ever resets the episode/exhaustion state — an
+ * 'unknown' read (unreadable/loading) proves nothing either way and is
+ * left alone, and an 'unhealthy' read after exhaustion stays latched rather
+ * than restarting a fresh 4-attempt episode forever (the fix for the
+ * unbounded-retries finding: the old code reset the attempt counter on
+ * every non-positive read, including a still-failing one).
+ */
+function checkOrdinaryDisconnect() {
+  if (reconnectTimer) return; // episode already running
+  const status = terminalDisconnectStatus();
+  if (status === 'healthy') {
+    if (reconnectAttempt > 0 || reconnectExhausted) {
+      reconnectAttempt = 0;
+      reconnectExhausted = false;
+      clearReconnectingStatus();
+    }
+    return;
+  }
+  if (status === 'unknown') return; // no evidence either way yet
+  if (reconnectExhausted) return; // already gave up this episode — stay latched
+  beginReconnectEpisode();
+}
+
+/**
+ * Lightweight liveness watch for a page sitting on the ended state (#2011).
+ * `handleSessionEnded` already stopped the full poll cycle — nothing on an
+ * ended page needs wrap/idle/Medusa polling — so this is the one thing that
+ * keeps watching: has a session come back for this project, launched from
+ * anywhere? On a positive read it undoes the ended state and resumes normal
+ * polling, the same place a fresh page load would land. Never POSTs a launch.
+ */
+function startEndedWatch() {
+  if (endedWatchTimer) return;
+  endedWatchTimer = setInterval(async () => {
+    if (!sessionState.ended) { stopEndedWatch(); return; }
+    const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/status`);
+    if (!data || data.active !== true) return;
+    stopEndedWatch();
+    sessionState.ended = false;
+    sessionState.session = data;
+    document.getElementById('statusDot').classList.remove('ended');
+    setPillDetail(document.getElementById('statusPill'), 'Active');
+    document.getElementById('sessionEnded').classList.add('hidden');
+    document.getElementById('wrapBtn').disabled = false;
+    document.getElementById('killBtn').disabled = false;
+    document.getElementById('cmdBtn').disabled = false;
+    document.getElementById('commandSend').disabled = false;
+    if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+    reattachTerminalForStatus(data);
+    startPolling();
+  }, 5000);
+}
+
+/** Stop the ended-state liveness watch. */
+function stopEndedWatch() {
+  if (endedWatchTimer) {
+    clearInterval(endedWatchTimer);
+    endedWatchTimer = null;
+  }
 }
 
 // ── Restart Session (#1637) ──
@@ -2631,10 +2920,18 @@ function attachMasterDrawerFrame() {
 /**
  * Set up the terminal iframe. For webui sessions uses iframeUrl (OpenClaw UI),
  * otherwise loads the ttyd terminal proxy.
+ *
+ * Also the #2011 reattach action: calling this again (same signature, no
+ * extra args) re-navigates the iframe to the same stable per-project URL,
+ * which is a fresh ttyd connection — the recovery action for every
+ * reconnect path below. Never issues a launch request itself.
  * @param {string} [iframeUrl] - OpenClaw iframe URL for webui sessions
  */
 function setupTerminal(iframeUrl) {
   const frame = document.getElementById('terminalFrame');
+  terminalSetupStarted = true;
+  sessionState.terminalAttachedSessionId = (sessionState.session && sessionState.session.sessionId) || null;
+  cancelReconnectEpisode();
   // Shared readiness-retry pipeline (api-helper.js): theme + the #431 ⌥+drag
   // local-selection override + the #443 touch-scroll shim + #445 drag-copy.
   window.tcWireTerminalFrame(window, frame,
@@ -2646,6 +2943,30 @@ function setupTerminal(iframeUrl) {
       frame.src = `/terminal/?arg=${encodeURIComponent(projectName)}`;
     }
   });
+}
+
+/**
+ * Reattach the terminal for whatever session the server now reports — the
+ * #2011 reconnect/reattach action, called from `pollStatus` and
+ * `startEndedWatch`. Mode-aware (PRR-A B3): a webui session has no xterm
+ * instance, so it needs `setupTerminal(iframeUrl)` + `applyWebuiMode()`, not
+ * the tmux/ttyd path — getting this wrong would try to load a ttyd URL for
+ * a session that was never tmux-backed, or leave tmux-only controls (and
+ * the mobile keybar) enabled for one that now is webui.
+ * @param {object} data - Body of `GET /api/sessions/:project/status`
+ */
+function reattachTerminalForStatus(data) {
+  if (data.sessionMode === 'webui') {
+    setupTerminal(data.iframeUrl);
+    applyWebuiMode();
+  } else {
+    setupTerminal();
+    // The reverse of applyWebuiMode — restores the tmux-only controls it
+    // disabled, not just the keybar (PRR-B finding).
+    undoWebuiMode();
+    const keybar = document.getElementById('mobileKeybar');
+    if (keybar && 'ontouchstart' in window) keybar.hidden = false;
+  }
 }
 
 /**
@@ -2663,12 +2984,17 @@ function applyWebuiMode() {
   disable('peekBtn', 'Peek not available for Web UI sessions');
   disable('copyBtn', 'Copy not available for Web UI sessions');
   disable('cmdBtn', 'Command bar not available for Web UI sessions');
-  disable('selectBtn', 'Select not available for Web UI sessions');
   disable('uploadBtn', 'Upload not available for Web UI sessions');
   // Everything the ⋯ menu holds is disabled above, and a phone never sees a
   // hover title — so the menu itself is disabled rather than opening onto
   // buttons that do nothing.
   disable('moreBtn', 'Command bar and Peek are not available for Web UI sessions');
+  // #1638/#2011: a webui session has no xterm instance to send keys into —
+  // relevant not just at initial load but when #2011's reattach paths
+  // (pollStatus, startEndedWatch) switch THIS SAME page from a tmux session
+  // to a webui one without a reload.
+  const keybar = document.getElementById('mobileKeybar');
+  if (keybar) keybar.hidden = true;
 
   // Close the command bar if open, and every mark that says it is.
   sessionState.commandBarOpen = false;
@@ -2679,6 +3005,30 @@ function applyWebuiMode() {
   });
   const cmd = document.getElementById('cmdBtn');
   if (cmd) cmd.setAttribute('aria-expanded', 'false');
+}
+
+/**
+ * Undo `applyWebuiMode` — called by `reattachTerminalForStatus` (#2011) when
+ * a page switches from webui back to a tmux session, the only time a page's
+ * mode changes after load. Restores each button's ORIGINAL title (empty for
+ * every one except Copy, which carries a real tooltip in session.html) —
+ * blanking them all would silently erase that one (PRR-B finding: this
+ * reverse transition previously only unhid the keybar and left every
+ * button `disable()` left behind permanently stuck).
+ */
+function undoWebuiMode() {
+  const enable = (id, title) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.disabled = false;
+      el.title = title;
+    }
+  };
+  enable('peekBtn', '');
+  enable('copyBtn', 'Copy the last terminal selection to this device');
+  enable('cmdBtn', '');
+  enable('uploadBtn', '');
+  enable('moreBtn', '');
 }
 
 // ── Command Bar ──
@@ -3341,14 +3691,31 @@ async function closeSettings() {
 
   // Apply mouse toggle — an operator's deliberate Settings choice IS a
   // session-explicit override (#579), unlike select mode's transient flips.
+  //
+  // #1237: the old code set sessionState.mouseOn/mouseExplicit BEFORE the
+  // POST and never read its result, so a rejected request (tmux unreachable,
+  // session gone, server down) left the client asserting a state tmux never
+  // reached — and mouseExplicit seeded a wrong "the operator explicitly
+  // chose this" marker that later select-mode-style restores would have
+  // honoured. Set state only from the server's confirmed response; on
+  // failure leave it alone (the toggle UI already reflects what was picked,
+  // but sessionState — the thing other code trusts — stays truthful) and
+  // surface the failure the same way #758 does for a rejected engine save.
   const newMouse = document.getElementById('mouseToggle').checked;
   if (newMouse !== sessionState.mouseOn) {
-    sessionState.mouseOn = newMouse;
-    sessionState.mouseExplicit = true;
-    await apiMutate('/api/tmux/mouse', 'POST', {
+    const data = await apiMutate('/api/tmux/mouse', 'POST', {
       session: projectName,
       on: newMouse
     });
+    if (data && typeof data.mouse === 'boolean') {
+      sessionState.mouseOn = data.mouse;
+      sessionState.mouseExplicit = !!data.explicit;
+    } else {
+      document.getElementById('mouseToggle').checked = sessionState.mouseOn;
+      window.tcRenderSettingsWarnings(document, [
+        `Mouse mode not saved: ${api.lastError || 'the server rejected the update'}`
+      ]);
+    }
   }
 }
 
@@ -3361,149 +3728,6 @@ const chimeControl = window.tcCreateChimeControl({
     saveSetting('chime', enabled);
   }
 });
-
-// ── Select Mode ──
-
-let selectModeActive = false;
-
-/**
- * localStorage key for this project's select-mode intent marker (UI-8W3D).
- * @returns {string}
- */
-function selectMarkerKey() {
-  return `tcSelectPending:${projectName}`;
-}
-
-/**
- * Persist the pre-select mouse state BEFORE flipping tmux (UI-8W3D). If the
- * page dies mid-select (reload, close, crash) the exit restore never runs;
- * this marker is how the next visit knows a restore is owed and what to
- * restore. Written before the enter POST on purpose: a crash between write
- * and POST leaves only a harmless idempotent repair, while the opposite
- * order leaves a strand with no marker.
- * @param {{on: boolean, explicit: boolean}} state - The pre-select state
- */
-function writeSelectMarker(state) {
-  try {
-    localStorage.setItem(selectMarkerKey(),
-      JSON.stringify({ on: state.on, explicit: state.explicit }));
-  } catch (_) { /* storage unavailable — abandonment repair degrades, select still works */ }
-}
-
-/** Remove the select-mode intent marker (clean exit, or repair done). */
-function clearSelectMarker() {
-  try {
-    localStorage.removeItem(selectMarkerKey());
-  } catch (_) { /* storage unavailable */ }
-}
-
-/**
- * Repair a mouse override stranded by an interrupted Select (UI-8W3D).
- * A marker present at page load means the previous visit entered select
- * mode and never exited — replay the exit restore from the marker's
- * recorded pre-select state (unset when it was inherited, per #579) and
- * clear the marker. Localstorage is the source of truth, cleared on the
- * mutation (the #566/TC#561 SoT rule); no timers. Known accepted edge:
- * a second tab reloading while the first is legitimately mid-select
- * repairs under it — rare, and strictly better than stranding forever.
- * @returns {Promise<boolean>} true when a repair POST was issued
- */
-async function repairAbandonedSelect() {
-  let marker = null;
-  try {
-    marker = tcParseSelectMarker(localStorage.getItem(selectMarkerKey()));
-  } catch (_) {
-    return false; // storage unavailable — nothing recorded, nothing owed
-  }
-  if (!marker) return false;
-  const isMobile = 'ontouchstart' in window;
-  const data = await apiMutate('/api/tmux/mouse', 'POST', {
-    session: projectName,
-    ...tcSelectModeMouse({
-      entering: false,
-      isMobile,
-      mouseOn: marker.on,
-      mouseExplicit: marker.explicit
-    })
-  });
-  // Only clear on a successful restore — a failed POST (server down) keeps
-  // the marker so the NEXT load can still repair.
-  if (data && typeof data.mouse === 'boolean') {
-    clearSelectMarker();
-    sessionState.mouseOn = data.mouse;
-    sessionState.mouseExplicit = !!data.explicit;
-    console.debug('Restored tmux mouse state stranded by an interrupted Select (UI-8W3D)');
-    return true;
-  }
-  return false;
-}
-
-/**
- * Toggle text selection mode by flipping tmux mouse.
- * On mobile: mouse ON = select mode (allows native text selection).
- * On desktop: mouse OFF = select mode (allows native text selection).
- *
- * Explicit toggle only — no auto-revert timer (#574: the old 30s rug-pull
- * violated the no-UI-timers rule, #98/#268). Leaving select mode restores
- * the pre-select mouse CONFIGURATION via tcSelectModeMouse (#574 + #579):
- * an explicit session-level value is set back; an inherited one is
- * restored by UNSETTING, so no session-level override is stranded (#579 —
- * the benign-valued sibling of the #574 stranded-`off` bug). The
- * pre-select state is snapshotted fresh on entry, not trusted from page
- * load — another tab or the operator may have changed it since.
- */
-async function toggleSelect() {
-  const isMobile = 'ontouchstart' in window;
-  const btn = document.getElementById('selectBtn');
-
-  if (selectModeActive) {
-    // Leaving select mode — restore the pre-select mouse configuration
-    selectModeActive = false;
-    btn.textContent = 'Select';
-    btn.classList.remove('select-active');
-    const restore = tcSelectModeMouse({
-      entering: false,
-      isMobile,
-      mouseOn: sessionState.mouseOn,
-      mouseExplicit: sessionState.mouseExplicit
-    });
-    const data = await apiMutate('/api/tmux/mouse', 'POST', {
-      session: projectName,
-      ...restore
-    });
-    // Track the post-restore effective state the server reports.
-    if (data && typeof data.mouse === 'boolean') {
-      sessionState.mouseOn = data.mouse;
-      sessionState.mouseExplicit = !!data.explicit;
-      // Clean exit — the restore ran, so no repair is owed (UI-8W3D).
-      clearSelectMarker();
-    }
-    return;
-  }
-
-  // Enter select mode — snapshot the CURRENT state first so exit restores
-  // reality, not a stale page-load value.
-  const fresh = await api(`/api/tmux/mouse/${encodeURIComponent(projectName)}`);
-  if (fresh && typeof fresh.mouse === 'boolean') {
-    sessionState.mouseOn = fresh.mouse;
-    sessionState.mouseExplicit = !!fresh.explicit;
-  }
-  // Record the restore intent BEFORE flipping tmux (UI-8W3D): if this page
-  // dies mid-select, the next load replays the exit from this marker.
-  writeSelectMarker({ on: sessionState.mouseOn, explicit: sessionState.mouseExplicit });
-  selectModeActive = true;
-  btn.textContent = 'Done';
-  btn.classList.add('select-active');
-  await apiMutate('/api/tmux/mouse', 'POST', {
-    session: projectName,
-    ...tcSelectModeMouse({
-      entering: true,
-      isMobile,
-      mouseOn: sessionState.mouseOn,
-      mouseExplicit: sessionState.mouseExplicit
-    })
-  });
-}
 
 // ── Paste (#402) ──
 
@@ -3610,6 +3834,142 @@ function insertFromPasteCatcher() {
     return;
   }
   closePasteCatcher();
+}
+
+// ── Mobile Keybar (#1638) ──
+//
+// The native soft keyboard (Gboard et al.) has no Esc, Ctrl, Tab or arrow
+// keys, so touch devices get an on-screen bar for them. Esc/Tab/arrows send
+// their escape sequence directly; Ctrl arms a sticky modifier for the NEXT
+// keystroke (tap Ctrl, then C on the soft keyboard, to send ^C).
+//
+// Deliberately NOT xterm's attachCustomKeyEventHandler: that API allows only
+// ONE handler per Terminal, and calling it here would silently replace
+// whatever ttyd's own built-in client already relies on. These are
+// independent capture-phase DOM listeners on the terminal iframe's own
+// document instead — same idiom as tcWireWindowsTerminalPaste
+// (public/api-helper.js) — so ttyd's own handling is untouched while Ctrl is
+// unarmed, which is the overwhelming majority of keystrokes.
+
+/** Sticky Ctrl: true for exactly one keystroke after the keybar's Ctrl is tapped. */
+let ctrlArmed = false;
+
+/** Paint the keybar's Ctrl button to match `ctrlArmed`. */
+function paintCtrlKey() {
+  const btn = document.getElementById('keybarCtrl');
+  if (!btn) return;
+  btn.setAttribute('aria-pressed', ctrlArmed ? 'true' : 'false');
+  btn.classList.toggle('active', ctrlArmed);
+}
+
+/**
+ * Resolve the terminal iframe's own document. Same accessor family and the
+ * same same-origin caveat as `_sessionTerm()`: a cross-origin ttyd
+ * deployment degrades to no interception rather than throwing.
+ * @returns {Document|null}
+ */
+function _terminalDoc() {
+  const frame = document.getElementById('terminalFrame');
+  try {
+    const win = frame && frame.contentWindow;
+    return (win && win.document) || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * Feed raw bytes into the terminal as real input — through xterm's input(),
+ * which fires the same path a real keystroke would, so the bytes reach the
+ * pty exactly like typing them would. Distinct from `insertPasteText`
+ * (xterm's paste()): that applies bracketed-paste framing meant for pasted
+ * TEXT, not a single control byte or escape sequence.
+ * @param {string} data - Raw bytes to send
+ * @returns {boolean} true when delivered
+ */
+function sendTerminalInput(data) {
+  const term = _sessionTerm();
+  if (!term || typeof term.input !== 'function') return false;
+  try {
+    term.input(data, true);
+    if (typeof term.focus === 'function') term.focus();
+  } catch (_) {
+    return false; // terminal disposed mid-call
+  }
+  return true;
+}
+
+/**
+ * Wire the capture-phase listeners that implement sticky Ctrl (#1638).
+ * Idempotent — safe to call on every Ctrl tap; wires the iframe document
+ * exactly once.
+ *
+ * Two paths because a physical/BT keyboard's `keydown` carries a usable
+ * `event.key`, while a mobile soft keyboard's IME path often delivers
+ * `keydown` with `key: "Unidentified"` for composed input and only
+ * `beforeinput`'s `event.data` carries the real character. Disarming
+ * BEFORE `preventDefault`/`stopImmediatePropagation` is what keeps one
+ * physical keystroke from being sent twice: both events fire for an
+ * ordinary keystroke, but once the first one to run disarms, the other
+ * sees `ctrlArmed` already false and no-ops.
+ * @param {Document} doc - The terminal iframe's own document
+ * @returns {boolean} true once wired
+ */
+function wireMobileCtrlSticky(doc) {
+  if (!doc) return false;
+  if (doc._tcCtrlStickyWired) return true;
+  doc._tcCtrlStickyWired = true;
+
+  doc.addEventListener('keydown', (event) => {
+    if (!ctrlArmed) return;
+    if (event.isComposing || event.key === 'Unidentified') return;
+    if (event.key === 'Control' || event.key === 'Shift' || event.key === 'Alt' || event.key === 'Meta') return;
+    if (typeof event.key !== 'string' || event.key.length !== 1) return;
+    ctrlArmed = false;
+    paintCtrlKey();
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    sendTerminalInput(String.fromCharCode(event.key.toUpperCase().charCodeAt(0) & 0x1f));
+  }, true);
+
+  doc.addEventListener('beforeinput', (event) => {
+    if (!ctrlArmed) return;
+    if (typeof event.data !== 'string' || event.data.length !== 1) return;
+    ctrlArmed = false;
+    paintCtrlKey();
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    sendTerminalInput(String.fromCharCode(event.data.toUpperCase().charCodeAt(0) & 0x1f));
+  }, true);
+
+  return true;
+}
+
+/**
+ * The keybar's Ctrl button: arm, disarm (a second tap cancels rather than
+ * sending), or report unavailable when the terminal iframe can't be wired
+ * (not yet loaded, or a cross-origin ttyd deployment).
+ */
+function toggleCtrlArmed() {
+  if (ctrlArmed) {
+    ctrlArmed = false;
+    paintCtrlKey();
+    return;
+  }
+  const doc = _terminalDoc();
+  if (!doc || !wireMobileCtrlSticky(doc)) {
+    showBannerActionToast('Ctrl is not available for this terminal yet', true);
+    return;
+  }
+  ctrlArmed = true;
+  paintCtrlKey();
+  // Tapping this button moves DOM focus to it, away from the terminal's own
+  // input element — on a phone that can close the soft keyboard, so the
+  // very keystroke this arms for never reaches the listener at all. Refocus
+  // the terminal so the keyboard (and the armed state) stays usable (PRR-A
+  // C2 finding).
+  const term = _sessionTerm();
+  if (term && typeof term.focus === 'function') term.focus();
 }
 
 // ── Upload Modal ──
@@ -6927,13 +7287,17 @@ async function requestWrapCancel() {
 // ── Wrapping State ──
 
 /**
- * Show wrapping state UI — amber dot, disable action buttons, show wrapping bar.
+ * Show wrapping state UI — pinwheel dot, disable action buttons, show wrapping bar.
  * Terminal stays visible so user can watch the wrap.
  */
 function showWrappingState() {
   sessionState.wrapping = true;
   sessionState.wrapIdleModalShown = false;
   sessionState.wrapIdleCount = 0;
+  // A wrap starting while a reconnect episode is live would otherwise leave
+  // BOTH .reconnecting and .wrapping on the dot \u2014 same visual-conflict bug
+  // as the ended transitions (PRR-B finding).
+  cancelReconnectEpisode();
 
   const dot = document.getElementById('statusDot');
   dot.classList.add('wrapping');
@@ -7126,6 +7490,8 @@ function handleWrapCompleted() {
   sessionState.wrapCompleting = false;
   sessionState.wrapIdleModalShown = false;
   stopPolling();
+  cancelReconnectEpisode();
+  startEndedWatch();
 
   // Hide wrap-related bars
   document.getElementById('sessionWrapping').classList.add('hidden');
@@ -7347,7 +7713,6 @@ function bindEvents() {
   });
 
   // Banner buttons
-  $('selectBtn').addEventListener('click', toggleSelect);
   $('copyBtn').addEventListener('click', copyTerminalSelection);
   $('pasteBtn').addEventListener('click', pasteToTerminal);
   $('pasteCatcherInsert').addEventListener('click', insertFromPasteCatcher);
@@ -7357,6 +7722,13 @@ function bindEvents() {
     // (no re-render races — the #566 composedPath hazard doesn't apply).
     if (e.target === e.currentTarget) closePasteCatcher();
   });
+  $('keybarEsc').addEventListener('click', () => sendTerminalInput('\x1b'));
+  $('keybarTab').addEventListener('click', () => sendTerminalInput('\t'));
+  $('keybarUp').addEventListener('click', () => sendTerminalInput('\x1b[A'));
+  $('keybarDown').addEventListener('click', () => sendTerminalInput('\x1b[B'));
+  $('keybarLeft').addEventListener('click', () => sendTerminalInput('\x1b[D'));
+  $('keybarRight').addEventListener('click', () => sendTerminalInput('\x1b[C'));
+  $('keybarCtrl').addEventListener('click', toggleCtrlArmed);
   $('uploadBtn').addEventListener('click', openUploadModal);
   $('cmdBtn').addEventListener('click', toggleCommandBar);
   $('moreBtn').addEventListener('click', toggleMoreMenu);
@@ -7599,6 +7971,12 @@ async function initSession() {
     document.getElementById('pasteBtn').hidden = false;
   }
 
+  // #1638: same gating as Paste above — the on-screen modifier key bar only
+  // makes sense where there's a real xterm instance and no hardware keyboard.
+  if (!isWebui && 'ontouchstart' in window) {
+    document.getElementById('mobileKeybar').hidden = false;
+  }
+
 
   // Start polling if session is active
   if (!sessionState.ended) {
@@ -7621,17 +7999,12 @@ async function initSession() {
     }, 120000);
   })();
 
-  // Initial mouse state — tmux only. First repair any override a previous
-  // visit stranded by dying mid-select (UI-8W3D); the repair's POST response
-  // already carries the fresh state, so the plain GET only runs otherwise.
+  // Initial mouse state — tmux only.
   if (!isWebui) {
-    const repaired = await repairAbandonedSelect();
-    if (!repaired) {
-      const mouseData = await api(`/api/tmux/mouse/${encodeURIComponent(projectName)}`);
-      if (mouseData) {
-        sessionState.mouseOn = mouseData.mouse;
-        sessionState.mouseExplicit = !!mouseData.explicit;
-      }
+    const mouseData = await api(`/api/tmux/mouse/${encodeURIComponent(projectName)}`);
+    if (mouseData) {
+      sessionState.mouseOn = mouseData.mouse;
+      sessionState.mouseExplicit = !!mouseData.explicit;
     }
   }
 }

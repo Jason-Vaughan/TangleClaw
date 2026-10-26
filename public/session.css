@@ -228,17 +228,35 @@ html[data-tc-keyboard] body {
   background: var(--danger);
   animation: none;
 }
+/* Same pinwheel geometry as the dashboard's `.status-dot.wrapping` (#1317):
+   hard conic-gradient stops rather than a soft sweep, so the blades stay
+   legible at this size instead of blurring into a smudge, and the state is
+   carried by the blades themselves, not only the spin — `prefers-reduced-motion`
+   below strips the animation but the pinwheel silhouette still reads as
+   distinct from the plain breathing `.status-dot`. */
 .status-dot.wrapping {
-  background: var(--amber);
-  animation: breathe-slow 3s ease-in-out infinite;
-}
-@keyframes breathe-slow {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
+  background: conic-gradient(
+    var(--primary) 0deg 45deg,
+    transparent 45deg 90deg,
+    var(--primary) 90deg 135deg,
+    transparent 135deg 180deg,
+    var(--primary) 180deg 225deg,
+    transparent 225deg 270deg,
+    var(--primary) 270deg 315deg,
+    transparent 315deg 360deg);
+  animation: spin 1.4s linear infinite;
 }
 .status-dot.ended {
   background: var(--text-muted);
   animation: none;
+}
+/* #2011: an ordinary ttyd/WebSocket drop while tmux stays up — amber and
+   breathing, same visual family as `.checking`/`.unverified` below ("still
+   resolving", not a hard failure like `.disconnected`). Cleared the moment
+   the reconnect episode heals or a fresh attach supersedes it. */
+.status-dot.reconnecting {
+  background: var(--amber);
+  animation: breathe 1s ease-in-out infinite;
 }
 
 /* OpenClaw connection indicator — three levels, and green means VERIFIED.
@@ -1054,6 +1072,34 @@ html[data-tc-keyboard] body {
   border: none;
   background: var(--bg);
   touch-action: auto;
+}
+
+/* #1638: a normal flex-column sibling after .terminal-viewport (flex: 1), not
+   position: fixed/sticky — `body`'s existing data-tc-keyboard resize already
+   shrinks the page to the real visual viewport when the soft keyboard opens,
+   so this row lands right above the keyboard for free, the same way every
+   other below-the-terminal bar on this page does. */
+.mobile-keybar {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 6px 10px calc(env(safe-area-inset-bottom, 0px) + 6px);
+  background: var(--elevated-bg);
+  border-top: 1px solid var(--border, #333);
+  overflow-x: auto;
+}
+/* The class's own `display: flex` is an author rule, so it beats the UA
+   stylesheet's `[hidden] { display: none }` on a tie (same `hidden` attribute
+   class this page's other toggled bars hit — see shared-controls.css's
+   `.medusa-panel[hidden]` family). Without this, the `hidden` attribute
+   initSession() relies on to keep the bar off desktop/webui does nothing. */
+.mobile-keybar[hidden] {
+  display: none;
+}
+.keybar-key {
+  flex-shrink: 0;
+  min-width: 44px;
+  min-height: 44px;
 }
 
 /* ── Peek Drawer ── */

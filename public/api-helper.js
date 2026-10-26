@@ -662,56 +662,6 @@
   }
 
   /**
-   * Decide the /api/tmux/mouse body select mode should POST (#574 RC2 +
-   * #579, pure). Entering keeps the legacy platform split: mobile turns
-   * mouse ON (frees native text selection), desktop turns it OFF (a plain
-   * drag reaches xterm's local selection engine). Exiting must restore the
-   * pre-select CONFIGURATION, not just its value (#579): when the
-   * pre-select state was inherited from the global, restoring by SETTING
-   * the value strands a session-level override that pins the session
-   * against future global changes — the benign-valued sibling of the #574
-   * stranded-`off` bug. Inherited state is restored by unsetting.
-   * @param {{entering: boolean, isMobile: boolean, mouseOn: boolean,
-   *   mouseExplicit: boolean}} opts - `entering` = toggling INTO select
-   *   mode; `mouseOn`/`mouseExplicit` = the pre-select effective mouse
-   *   state and whether it was a session-level override (from
-   *   GET /api/tmux/mouse's `explicit`)
-   * @returns {{on: boolean}|{unset: true}} the /api/tmux/mouse body fields
-   */
-  function tcSelectModeMouse(opts) {
-    if (opts.entering) return { on: !!opts.isMobile };
-    if (opts.mouseExplicit) return { on: !!opts.mouseOn };
-    return { unset: true };
-  }
-
-  /**
-   * Parse and validate a persisted select-mode intent marker (UI-8W3D, pure).
-   *
-   * Entering select mode stores the pre-select mouse state in localStorage
-   * BEFORE flipping tmux; a clean exit removes it. A marker found at page
-   * load therefore means the previous visit died mid-select (reload, tab
-   * close, crash) and its restore never ran — the stranded-override
-   * abandonment window that the #580 unset-on-exit fix could not close
-   * (no exit event fires on a reload). The reader must not trust raw
-   * storage: it validates shape and types, returning null for anything
-   * malformed so a corrupt value can never drive a tmux write.
-   * @param {string|null} raw - The raw localStorage value (or null)
-   * @returns {{on: boolean, explicit: boolean}|null} the recorded
-   *   pre-select state, or null when absent/malformed
-   */
-  function tcParseSelectMarker(raw) {
-    if (typeof raw !== 'string' || raw === '') return null;
-    try {
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== 'object') return null;
-      if (typeof parsed.on !== 'boolean' || typeof parsed.explicit !== 'boolean') return null;
-      return { on: parsed.on, explicit: parsed.explicit };
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /**
    * Decide which paste path the Paste affordance should take (#402, pure).
    *
    * iOS Safari offers no native route into xterm (no Cmd-V; the long-press
@@ -1841,8 +1791,6 @@
   global.tcCellFromPoint = tcCellFromPoint;
   global.tcSelectionSpan = tcSelectionSpan;
   global.tcParseBridgePort = tcParseBridgePort;
-  global.tcSelectModeMouse = tcSelectModeMouse;
-  global.tcParseSelectMarker = tcParseSelectMarker;
   global.tcPastePath = tcPastePath;
   global.tcIsFocusTap = tcIsFocusTap;
   global.tcUrlAtColumn = tcUrlAtColumn;
