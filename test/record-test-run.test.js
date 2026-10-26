@@ -355,3 +355,43 @@ describe('record-test-run: arguments and the comparison', () => {
     assert.ok(fs.existsSync(recorder.SUITE_EVIDENCE));
   });
 });
+
+/**
+ * The `test_command` every governed checkout declares in
+ * `.prawduct/project-state.yaml` once #2371 Step 3 lands: the
+ * `suite-evidence.js` wrapper, split on spaces. Pinned here as text because
+ * that file is per-checkout and gitignored: a checkout that declares one
+ * must declare exactly this. In local mode (no `TANGLECLAW_SUITE_EVIDENCE`
+ * set) the wrapper runs today's raw command unchanged — `test/test-stage.js`
+ * pins that one, not this — so declaring this wrapper changes nothing a
+ * gate sees until the environment says otherwise.
+ */
+const DECLARED_TEST_COMMAND = 'node scripts/suite-evidence.js --junit {junit_xml}'.split(' ');
+
+/**
+ * The `test_command` this checkout's project state declares, or null where
+ * the checkout has no project state (CI's clone) or declares none.
+ *
+ * @returns {string[]|null} The command split on spaces, `node` first
+ */
+function declaredTestCommand() {
+  const file = path.join(__dirname, '..', '.prawduct', 'project-state.yaml');
+  if (!fs.existsSync(file)) return null;
+  const m = /^test_command:\s*"([^"]+)"\s*$/m.exec(fs.readFileSync(file, 'utf8'));
+  return m ? m[1].split(' ') : null;
+}
+
+describe('record-test-run: the declared test_command contract (#2371 Step 3)', () => {
+  it('this checkout, if it declares one, declares the suite-evidence wrapper', () => {
+    // A checkout with no `.prawduct/project-state.yaml` at all (CI's clone) declares
+    // nothing and is skipped — but a checkout that HAS the file must parse to a
+    // non-null command; a present file whose `test_command` is missing or not in the
+    // `"..."`-quoted form `declaredTestCommand` reads must fail here, not pass by
+    // silently reading the same null as "no file".
+    const file = path.join(__dirname, '..', '.prawduct', 'project-state.yaml');
+    if (!fs.existsSync(file)) return;
+    const declared = declaredTestCommand();
+    assert.ok(declared, 'this checkout\'s project state declares a test_command in the recognized form');
+    assert.deepEqual(declared, DECLARED_TEST_COMMAND, 'this checkout\'s project state declares the pinned command');
+  });
+});

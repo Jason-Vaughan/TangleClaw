@@ -198,9 +198,9 @@ The `<type>` you choose is load-bearing: it names the subsection the entry lands
 
 Pick by **user-visible impact**, not by how many files changed: a one-line behavior change is `changed`, a large refactor nobody notices is `internal`. Documentation-only edits go under `internal` — still logged for history, but patch-tier so doc churn doesn't inflate the minor version. There is no other type: a name outside the grammar is refused, so `docs` or `documentation` is not a fragment and the wrap's changelog gate reports it as unlogged work rather than accepting it.
 
-**Transition.** A pull request created before PR #2520 merged may still add its entry directly under `[Unreleased]` in `CHANGELOG.md`, under the matching `### ` subsection; every pull request after that writes a fragment. `docs/release-process.md` names the boundary.
+Every pull request writes a fragment — the transition that once let a pre-boundary pull request add its entry directly under `[Unreleased]` has ended; `docs/release-process.md` "What is still manual" names when.
 
-**Proposed: PR fragment gate (NOT IN FORCE).** No CI step refuses a pull request for a missing fragment today; the suite only checks that every file under `changelog.d/` is a valid fragment (`test/changelog-fragments-repo.test.js`). The gate that would require one on every change under `lib/`, `server.js`, `public/` or `scripts/`, with a `Changelog: none <reason>` line in the pull request body as the escape, is recorded word for word in `docs/release-process.md` under the same heading, awaiting the Operator's ruling.
+**PR fragment gate.** A pull request whose diff touches `lib/`, `server.js`, `public/` or `scripts/` must add a fragment, or carry a `Changelog: none <reason>` line in the pull request body as the escape — enforced in CI by `scripts/changelog-fragment-gate.js`, recorded word for word in `docs/release-process.md` under "PR fragment gate". A pull request that touches none of those paths is not asked for one; the suite separately checks that every file under `changelog.d/` is a valid fragment (`test/changelog-fragments-repo.test.js`), whichever pull request it ships on.
 
 ### Commit Messages
 

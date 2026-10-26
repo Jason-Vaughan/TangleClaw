@@ -288,20 +288,18 @@ describe('suite-evidence — local mode is today\'s command, argument for argume
   });
 });
 
-describe('suite-evidence — the declaration is still today\'s command, so a cutover cannot ride in unnoticed', () => {
+describe('suite-evidence — the raw command identity, independent of what wraps it', () => {
   it('the pinned test_command names node --test, not this command', () => {
     assert.equal(DECLARED_TEST_COMMAND[0], 'node');
     assert.equal(DECLARED_TEST_COMMAND[1], '--test');
     assert.ok(!DECLARED_TEST_COMMAND.some((a) => a.includes('suite-evidence')), 'the declaration does not name scripts/suite-evidence.js');
   });
 
-  it('this checkout\'s project state, where it has one, declares exactly the pinned command', () => {
-    const file = path.join(REPO_ROOT, '.prawduct', 'project-state.yaml');
-    if (!fs.existsSync(file)) return;
-    const m = /^test_command:\s*"([^"]+)"\s*$/m.exec(fs.readFileSync(file, 'utf8'));
-    assert.ok(m, 'the project state declares a test_command');
-    assert.deepEqual(m[1].split(' '), DECLARED_TEST_COMMAND);
-  });
+  // Whether THIS checkout's `.prawduct/project-state.yaml` declares this raw
+  // command directly or the `scripts/suite-evidence.js` wrapper that runs it
+  // in local mode is `test/record-test-run.test.js`'s contract (#2371 Step
+  // 3), not this file's — that is where the canary against a silent cutover
+  // now lives.
 
   it('the workflow runs node --test itself and uploads test results via upload-artifact after W2-CUT', () => {
     const workflow = fs.readFileSync(path.join(REPO_ROOT, '.github', 'workflows', 'test.yml'), 'utf8');
