@@ -13,8 +13,18 @@
  * performs, which is why clean-Mac installs never saw the picker while
  * long-lived installs (opening existing projects via the card button) did.
  *
+ * #1304 moved WHEN the gated launch happens — creating a project opens
+ * Settings in its draft/setup step instead of launching immediately, so the
+ * operator can configure Medusa/model/rules first — but not WHETHER it stays
+ * gated: "Save & Launch" (public/ui.js#_submitSettings) still calls the same
+ * launchProject, one hop later, which is what `test/create-launch-posture.test.js`
+ * pins directly. This file's job narrows to what's still true at the create
+ * step itself: no raw session POST, and launchProject's own picker gate
+ * (second test below) is unchanged.
+ *
  * Two hops, both pinned by running the REAL functions:
- *  1. submitCreate routes through launchProject and performs no raw launch.
+ *  1. submitCreate hands off to openSettings — no raw launch, no direct
+ *     launchProject call from the create step itself.
  *  2. launchProject, given the real bundled claude profile, opens the picker.
  */
 
@@ -49,11 +59,9 @@ function makeElement() {
 }
 
 describe('create flow routes through the launch gate (#401)', () => {
-  it('submitCreate hands off to launchProject and performs no raw launch', async () => {
+  it('submitCreate hands off to openSettings in its draft/setup step, performing no raw launch and no direct launchProject call (#1304)', async () => {
     // One shared sequence array: the ORDER is load-bearing, not just the
-    // counts. launchProject reads the refreshed state.projects to honor the
-    // per-project picker opt-out — launch-before-refresh would silently skip
-    // it while a count-only assertion stayed green.
+    // counts.
     const seq = [];
     const elements = new Map();
     const sandbox = {
@@ -67,7 +75,11 @@ describe('create flow routes through the launch gate (#401)', () => {
       apiMutate: async () => ({ ok: true }),
       api: Object.assign(async () => null, { lastError: null }),
       loadProjects: async () => { seq.push('loadProjects'); },
+      // #1304: submitCreate must not reach launchProject directly any more —
+      // that now only happens one hop later, from "Save & Launch"
+      // (test/create-launch-posture.test.js pins that hop directly).
       launchProject: async (name) => { seq.push(`launchProject:${name}`); },
+      openSettings: (name, options) => { seq.push(`openSettings:${name}:${JSON.stringify(options)}`); },
       closeCreateModal: () => {},
       navigateToSession: (name) => { seq.push(`NAVIGATE:${name}`); },
       fetch: async (url, opts) => {
@@ -101,9 +113,10 @@ describe('create flow routes through the launch gate (#401)', () => {
 
     await sandbox.submitCreate();
 
-    assert.deepEqual(seq, ['loadProjects', 'launchProject:proj-x'],
-      'exactly one refresh THEN one gated launch — no raw session POST, no '
-      + 'navigation around the gate, and never launch before the list refresh');
+    assert.deepEqual(seq, ['loadProjects', 'openSettings:proj-x:{"offerLaunch":true}'],
+      'exactly one refresh THEN Settings opened in its draft/setup step (#1304) — no raw '
+      + 'session POST, no navigation around the gate, and no direct launchProject call '
+      + 'from the create step itself (that only happens one hop later, via Save & Launch)');
   });
 
   it('launchProject opens the picker for the real bundled claude profile', async () => {

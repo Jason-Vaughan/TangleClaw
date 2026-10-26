@@ -25,6 +25,7 @@ const { setLevel } = require('../lib/logger');
 setLevel('error');
 const store = require('../lib/store');
 const loadApiHelperGlobals = require('./_api-helper-globals');
+const { liftDeclaration } = require('./helpers/lift');
 
 const PUB = path.join(__dirname, '..', 'public');
 const UI_SRC = fs.readFileSync(path.join(PUB, 'ui.js'), 'utf8');
@@ -231,6 +232,186 @@ describe('#626 launch posture is settable at creation, and the guard runs there'
       const confirm = UI_SRC.slice(UI_SRC.indexOf('async function confirmBypassHidden'));
       assert.match(confirm.slice(0, 600), /pendingBypassHiddenSubmit/,
         'the confirm resends to the caller that parked the body');
+    });
+  });
+});
+
+/*
+ * #1304 — Create opens Settings in its draft/setup step instead of
+ * auto-launching, so Medusa/model/effort/Project Rules are reachable before
+ * the first session boots. Real execution of the shipped functions, not
+ * source-text matching: both halves (submitCreate's handoff, and the save
+ * flow's launch-after-save) are behaviors a regex can't tell apart from a
+ * plausible-looking but dead branch.
+ */
+describe('#1304 — Create opens Settings instead of auto-launching, with a Save & Launch path', () => {
+  describe('submitCreate hands off to openSettings', () => {
+    /**
+     * Run the real submitCreate() with every dependency stubbed/recording.
+     * @param {object} opts
+     * @param {object} opts.createData - The createData object submitCreate reads.
+     * @param {object|null} opts.apiResult - What the stubbed POST /api/projects resolves to.
+     * @returns {{run: Function, calls: object}}
+     */
+    function buildSubmitCreateHarness({ createData, apiResult }) {
+      const calls = { apiMutate: [], closeCreateModal: 0, loadProjects: 0, openSettings: [] };
+      const documentStub = {
+        getElementById: (id) => {
+          if (id === 'createTags') return { value: createData.tags || '' };
+          if (id === 'createSubmitBtn') return { disabled: false, innerHTML: '', textContent: '' };
+          if (id === 'createError') return { textContent: '', classList: { remove: () => {} } };
+          return null;
+        }
+      };
+      const run = new Function(
+        'document', 'createData', 'state', 'openBypassHiddenModal', 'apiMutate', 'tcCreateProjectBody',
+        'api', 'showToast', 'closeCreateModal', 'loadProjects', 'openSettings',
+        `${liftDeclaration(UI_SRC, 'async function submitCreate(')}\nreturn submitCreate;`
+      )(
+        documentStub,
+        createData,
+        { engines: [] },
+        () => { throw new Error('must not open the bypass-hidden modal in this fixture'); },
+        async (url, method, body) => { calls.apiMutate.push({ url, method, body }); return apiResult; },
+        (data) => data, // the real tcCreateProjectBody has its own tests above; identity suffices here
+        { lastError: null },
+        () => {},
+        () => { calls.closeCreateModal++; },
+        async () => { calls.loadProjects++; },
+        (name, options) => { calls.openSettings.push({ name, options }); }
+      );
+      return { run, calls };
+    }
+
+    it('opens Settings with offerLaunch:true on success, instead of launching directly', async () => {
+      const { run, calls } = buildSubmitCreateHarness({
+        createData: { name: 'new-proj', engine: 'claude', showLaunchModePicker: true, tags: '' },
+        apiResult: { project: { id: 1, name: 'new-proj' } }
+      });
+      await run();
+      assert.equal(calls.closeCreateModal, 1);
+      assert.equal(calls.loadProjects, 1);
+      assert.deepEqual(calls.openSettings, [{ name: 'new-proj', options: { offerLaunch: true } }]);
+    });
+
+    it('does not open Settings when creation fails', async () => {
+      const { run, calls } = buildSubmitCreateHarness({
+        createData: { name: 'new-proj', engine: 'claude', showLaunchModePicker: true, tags: '' },
+        apiResult: null
+      });
+      await run();
+      assert.equal(calls.openSettings.length, 0);
+      assert.equal(calls.closeCreateModal, 0);
+    });
+  });
+
+  describe('openSettings/closeSettings control the Save & Launch button', () => {
+    /**
+     * A fake classList recording every toggle() call.
+     * @returns {{toggle: Function, calls: Array<{cls: string, force: boolean}>}}
+     */
+    function fakeClassList() {
+      const calls = [];
+      return {
+        calls,
+        toggle(cls, force) { calls.push({ op: 'toggle', cls, force }); },
+        add(cls) { calls.push({ op: 'add', cls }); },
+        remove(cls) { calls.push({ op: 'remove', cls }); }
+      };
+    }
+
+    it('openSettings sets settingsOfferLaunch and shows/hides the button accordingly', () => {
+      const btn = { classList: fakeClassList() };
+      const documentStub = { getElementById: (id) => (id === 'settingsSaveLaunchBtn' ? btn : null) };
+      // state.projects has no matching project, so openSettings returns right
+      // after the #1304 lines -- the only ones under test here -- without
+      // needing to stub the rest of the (large) form-rendering body.
+      const src = `let settingsTarget = null;\nlet settingsOfferLaunch = false;\n${liftDeclaration(UI_SRC, 'function openSettings(')}\nreturn { openSettings, get settingsOfferLaunch() { return settingsOfferLaunch; } };`;
+      const { openSettings } = new Function('document', 'state', src)(documentStub, { projects: [] });
+
+      openSettings('draft-proj', { offerLaunch: true });
+      assert.deepEqual(btn.classList.calls.at(-1), { op: 'toggle', cls: 'hidden', force: false });
+
+      openSettings('other-proj');
+      assert.deepEqual(btn.classList.calls.at(-1), { op: 'toggle', cls: 'hidden', force: true },
+        'opening normally (no offerLaunch) must hide the button again');
+    });
+
+    it('closeSettings resets settingsOfferLaunch and re-hides the button', () => {
+      const btn = { classList: fakeClassList() };
+      const modal = { classList: fakeClassList() };
+      const documentStub = {
+        getElementById: (id) => {
+          if (id === 'settingsSaveLaunchBtn') return btn;
+          if (id === 'settingsModal') return modal;
+          return null;
+        }
+      };
+      const src = `let settingsTarget = 'draft-proj';\nlet settingsOfferLaunch = true;\nlet isolationOverrideReveal = false;\nlet projectRulesTargetId = 1;\nlet projectRulesTargetName = 'draft-proj';\n${liftDeclaration(UI_SRC, 'function closeSettings(')}\nreturn { closeSettings, get settingsOfferLaunch() { return settingsOfferLaunch; }, get settingsTarget() { return settingsTarget; } };`;
+      // NOT destructured with spread: `...rest` reads a getter's value AT
+      // SPREAD TIME, flattening it into a static property -- which would
+      // capture the pre-closeSettings() value instead of reading it fresh
+      // afterward.
+      const result = new Function('document', src)(documentStub);
+      result.closeSettings();
+      assert.equal(result.settingsOfferLaunch, false);
+      assert.equal(result.settingsTarget, null);
+      assert.ok(btn.classList.calls.some((c) => c.op === 'add' && c.cls === 'hidden'),
+        'closeSettings must add the hidden class back');
+    });
+  });
+
+  describe('saveSettings(launchAfter) only launches when asked, and only after a successful save', () => {
+    /**
+     * Run the real _submitSettings(body, launchAfter) with every dependency stubbed.
+     * @param {object} opts
+     * @param {string} opts.target - The settingsTarget in scope when called.
+     * @param {object|null} opts.apiResult - What the stubbed PATCH resolves to.
+     * @returns {{run: Function, calls: object}}
+     */
+    function buildSubmitSettingsHarness({ target, apiResult }) {
+      const calls = { closeSettings: 0, loadProjects: 0, launchProject: [] };
+      const src = `let settingsTarget = ${JSON.stringify(target)};\n${liftDeclaration(UI_SRC, 'async function _submitSettings(')}\nreturn _submitSettings;`;
+      const run = new Function(
+        'document', 'apiMutate', 'api', 'closeSettings', 'renderSettingsWarnings', 'loadProjects', 'launchProject',
+        src
+      )(
+        { getElementById: () => null },
+        async (url, method, body) => apiResult,
+        { lastError: null },
+        () => { calls.closeSettings++; },
+        () => {},
+        async () => { calls.loadProjects++; },
+        async (name) => { calls.launchProject.push(name); }
+      );
+      return { run, calls };
+    }
+
+    it('launches the project after a successful save when launchAfter is true', async () => {
+      const { run, calls } = buildSubmitSettingsHarness({ target: 'my-proj', apiResult: { warnings: [] } });
+      await run({ engine: 'claude' }, true);
+      assert.deepEqual(calls.launchProject, ['my-proj']);
+      assert.equal(calls.closeSettings, 1);
+    });
+
+    it('does not launch when launchAfter is false (plain Save)', async () => {
+      const { run, calls } = buildSubmitSettingsHarness({ target: 'my-proj', apiResult: { warnings: [] } });
+      await run({ engine: 'claude' }, false);
+      assert.deepEqual(calls.launchProject, []);
+      assert.equal(calls.closeSettings, 1, 'a plain save must still save and close');
+    });
+
+    it('does not launch when the save fails, even if launchAfter is true', async () => {
+      const { run, calls } = buildSubmitSettingsHarness({ target: 'my-proj', apiResult: null });
+      await run({ engine: 'claude' }, true);
+      assert.deepEqual(calls.launchProject, []);
+      assert.equal(calls.closeSettings, 0, 'the modal must stay open so the error is visible');
+    });
+
+    it('launches using the RENAMED name when the save included a rename', async () => {
+      const { run, calls } = buildSubmitSettingsHarness({ target: 'old-name', apiResult: { warnings: [] } });
+      await run({ engine: 'claude', name: 'new-name' }, true);
+      assert.deepEqual(calls.launchProject, ['new-name']);
     });
   });
 });

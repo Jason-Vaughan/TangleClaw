@@ -506,6 +506,24 @@ describe('api-projects', () => {
       assert.equal(status, 200);
       assert.equal(store.projects.getByName('op-lifecycle'), null);
     });
+
+    it('refuses to unarchive with 409 when the path is gone, and accepts a confirmFreshStart retry (#2401)', async () => {
+      await request('POST', '/api/projects', { name: 'op-gone-xyz' }, asOperator());
+      const project = store.projects.getByName('op-gone-xyz');
+      await request('POST', '/api/projects/op-gone-xyz/archive', {}, asOperator());
+      fs.rmSync(project.path, { recursive: true, force: true });
+
+      const refused = await request('POST', '/api/projects/op-gone-xyz/unarchive', {}, asOperator());
+      assert.equal(refused.status, 409);
+      assert.equal(refused.data.code, 'PROJECT_PATH_MISSING');
+      assert.equal(store.projects.list({ archived: true }).find((p) => p.name === 'op-gone-xyz').archived, true,
+        'must still be archived -- the refusal must not have unarchived it anyway');
+
+      const confirmed = await request('POST', '/api/projects/op-gone-xyz/unarchive',
+        { confirmFreshStart: true }, asOperator());
+      assert.equal(confirmed.status, 200);
+      assert.ok(store.projects.getByName('op-gone-xyz'), 'now unarchived');
+    });
   });
 
   describe('the other project write routes answer only the callers they should (#1752)', () => {

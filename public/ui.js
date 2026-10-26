@@ -1435,13 +1435,28 @@ async function archiveProjectUI(name) {
 
 /**
  * Unarchive (restore) an archived project.
+ *
+ * #2401: a missing or placeholder-only path refuses with a confirmable
+ * override (409, `PROJECT_PATH_MISSING`/`PROJECT_PATH_UNSEEDED`) — surfaced
+ * here with `confirm()`, the same lightweight pattern `archiveProjectUI`
+ * already uses for a state-changing action, rather than a full modal: this
+ * is a single yes/no decision, not a list of items to review like the
+ * stranded-wraps confirm flow.
  * @param {string} name - Project name
  */
 async function unarchiveProject(name) {
   const data = await apiMutate(`/api/projects/${encodeURIComponent(name)}/unarchive`, 'POST', {});
   if (data) {
     await loadProjects();
+    return;
   }
+  if (api.lastErrorCode === 'PROJECT_PATH_MISSING' || api.lastErrorCode === 'PROJECT_PATH_UNSEEDED') {
+    if (!confirm(`${api.lastError}\n\nProceed anyway and treat this as a fresh start?`)) return;
+    const retry = await apiMutate(`/api/projects/${encodeURIComponent(name)}/unarchive`, 'POST', { confirmFreshStart: true });
+    if (retry) await loadProjects();
+    return;
+  }
+  showToast(`Could not unarchive "${name}": ${api.lastError || 'unknown error'}`, 'warn', 6000);
 }
 
 /**
@@ -1895,8 +1910,37 @@ async function confirmKill() {
 
 let settingsTarget = null;
 
-function openSettings(name) {
+/**
+ * Whether this open of the Settings modal is the Create flow's draft/setup
+ * step (#1304) — the operator has not yet launched the first session, so
+ * "Save & Launch" is offered alongside the normal Save and Cancel, letting
+ * them configure Medusa/model/rules before the session boots instead of
+ * after. Reset in `closeSettings()`.
+ * @type {boolean}
+ */
+let settingsOfferLaunch = false;
+
+/**
+ * Open the Settings modal for a project.
+ *
+ * `options` defaults inside the body, not `= {}` in the parameter list —
+ * `test/helpers/lift.js`'s matcher finds a function's body by the first `{`
+ * after its declaration text, and a brace in a default parameter value is
+ * indistinguishable from that to it (confirmed: it lifted an empty body here
+ * while adding this). Keeping declarations brace-free in the parameter list
+ * is a cheap, permanent way to never trip that landmine for this function.
+ *
+ * @param {string} name - Project name.
+ * @param {object} [options]
+ * @param {boolean} [options.offerLaunch] - Show "Save & Launch" (#1304),
+ *   for the Create flow's draft/setup step.
+ * @returns {void}
+ */
+function openSettings(name, options) {
+  options = options || {};
   settingsTarget = name;
+  settingsOfferLaunch = Boolean(options.offerLaunch);
+  document.getElementById('settingsSaveLaunchBtn').classList.toggle('hidden', !settingsOfferLaunch);
   const project = state.projects.find(p => p.name === name);
   if (!project) return;
   const modal = document.getElementById('settingsModal');
@@ -2512,6 +2556,8 @@ function renderLaunchModeSettings(engineId, preserveMode, preserveShow, resetFro
 function closeSettings() {
   document.getElementById('settingsModal').classList.remove('open');
   settingsTarget = null;
+  settingsOfferLaunch = false;
+  document.getElementById('settingsSaveLaunchBtn').classList.add('hidden');
   isolationOverrideReveal = false;
   projectRulesTargetId = null;
   projectRulesTargetName = null;
@@ -4379,13 +4425,25 @@ function _setProjectRulesStatus(text, ok) {
   _setRulesStatus('projectRulesStatus', text, ok);
 }
 
-async function saveSettings() {
+/**
+ * @param {boolean} [launchAfter] - Launch the project once the save
+ *   succeeds (#1304's "Save & Launch"). Explicit per call, not read from
+ *   `settingsOfferLaunch` — that flag only controls whether the button is
+ *   shown, so the plain Save button (always wired with `false`) never
+ *   launches just because the modal happens to be in draft/setup mode.
+ * @returns {Promise<void>}
+ */
+async function saveSettings(launchAfter = false) {
   if (!settingsTarget) return;
-  await doSaveSettings();
+  await doSaveSettings(launchAfter);
 }
 
-/** Execute the settings save. */
-async function doSaveSettings() {
+/**
+ * Execute the settings save.
+ * @param {boolean} [launchAfter] - See `saveSettings`.
+ * @returns {Promise<void>}
+ */
+async function doSaveSettings(launchAfter = false) {
   if (!settingsTarget) return;
   const newName = document.getElementById('settingsName').value.trim();
   const body = {
@@ -4492,12 +4550,12 @@ async function doSaveSettings() {
     const guardProfile = (state.engines || []).find(e => e.id === body.engine);
     const modeConfig = guardProfile && guardProfile.launchModes && guardProfile.launchModes[effMode];
     if (!effShow && modeConfig && modeConfig.warning) {
-      openBypassHiddenModal(body, effMode, modeConfig, settingsTarget, _submitSettings);
+      openBypassHiddenModal(body, effMode, modeConfig, settingsTarget, (b) => _submitSettings(b, launchAfter));
       return;
     }
   }
 
-  await _submitSettings(body);
+  await _submitSettings(body, launchAfter);
 }
 
 /**
@@ -4507,9 +4565,13 @@ async function doSaveSettings() {
  * the modal OPEN and surfaces the error, instead of silently closing as if
  * the save succeeded.
  * @param {object} body - PATCH body for /api/projects/:name
+ * @param {boolean} [launchAfter] - See `saveSettings` (#1304).
  */
-async function _submitSettings(body) {
+async function _submitSettings(body, launchAfter = false) {
   if (!settingsTarget) return;
+  // Captured before closeSettings() nulls settingsTarget — body.name wins
+  // if this save included a rename, since that's the project's name now.
+  const launchName = (body && body.name) || settingsTarget;
   const res = await apiMutate(`/api/projects/${encodeURIComponent(settingsTarget)}`, 'PATCH', body);
   if (!res) {
     const status = document.getElementById('projectRulesStatus');
@@ -4523,6 +4585,8 @@ async function _submitSettings(body) {
   closeSettings();
   renderSettingsWarnings(res.warnings);
   await loadProjects();
+  // #1304: "Save & Launch" from the Create flow's draft/setup step.
+  if (launchAfter) await launchProject(launchName);
 }
 
 /**
@@ -5475,16 +5539,16 @@ async function submitCreate() {
   closeCreateModal();
   await loadProjects();
 
-  // One launch path, one gate (#401). This used to auto-launch with a raw
-  // POST, which silently bypassed launchProject's mode-picker gate — and on a
-  // fresh install, creating a project is the FIRST launch anyone performs, so
-  // the picker never appeared at all and the session started with no chosen
-  // mode. Routing through launchProject gives the create flow exactly what
-  // the card's Open button gives: the picker when the engine offers a choice,
-  // the project's own opt-out when configured, and navigation into the live
-  // terminal on success. On a failed launch the operator keeps the dashboard
-  // and its error toast instead of landing on a dead session page.
-  await launchProject(createData.name);
+  // #1304: open Settings in its draft/setup step instead of auto-launching.
+  // The wizard above only asks engine/launch-mode/tags; Medusa, model/effort,
+  // and Project Rules were only reachable by creating (which used to launch
+  // immediately), opening Settings, changing them, then restarting the
+  // session to pick up the new config. "Save & Launch" (settingsSaveLaunchBtn)
+  // still routes through launchProject -- the picker when the engine offers a
+  // choice, the project's own opt-out when configured -- the same #401
+  // guarantee the old direct call here gave; "Save" and "Cancel" both leave
+  // the project created but unlaunched, for the operator to launch later.
+  openSettings(createData.name, { offerLaunch: true });
 }
 
 // ── Import Banner ──
@@ -7104,7 +7168,11 @@ $('wrapStrandedConfirm').addEventListener('change', syncWrapConfirmButton);
 $('strandedLaunchCancelBtn').addEventListener('click', closeStrandedLaunchModal);
 $('strandedLaunchConfirmBtn').addEventListener('click', confirmStrandedLaunch);
 $('settingsCancelBtn').addEventListener('click', closeSettings);
-$('settingsSaveBtn').addEventListener('click', saveSettings);
+// Explicit false/true, not the bare function reference (#1304): addEventListener
+// hands the click Event as the first argument, which saveSettings's own
+// default parameter would otherwise read as a truthy launchAfter.
+$('settingsSaveBtn').addEventListener('click', () => saveSettings(false));
+$('settingsSaveLaunchBtn').addEventListener('click', () => saveSettings(true));
 $('deleteModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeDelete(); });
 $('wrapModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeWrapModal(); });
 $('strandedLaunchModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeStrandedLaunchModal(); });

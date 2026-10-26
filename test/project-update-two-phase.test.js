@@ -244,7 +244,7 @@ describe('the fixture tracks the settings modal, not a remembered list', () => {
   // read from the producer — `doSaveSettings` in public/ui.js — which is the
   // only place that knows what a save really carries.
   const ui = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
-  const start = ui.indexOf('async function doSaveSettings()');
+  const start = ui.indexOf('async function doSaveSettings(');
   const body = ui.slice(start, ui.indexOf('\nasync function _submitSettings', start));
   // The session page is the OTHER producer: its engine picker and its wrap-drawer
   // plan picker each PATCH this endpoint with a body the modal never sends. Both

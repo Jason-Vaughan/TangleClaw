@@ -2286,6 +2286,12 @@ async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStra
 
     setConnected(true);
     closeStrandedLaunchModal();
+    // #2401: a non-sticky warning, not the sticky "Launch failed" toast
+    // above — the session still opens either way, this only names the
+    // folder condition so the operator can act on it afterward.
+    if (data.pathHealthWarning) {
+      showToast(data.pathHealthWarning.message, 'warn', 8000);
+    }
     navigateToSession(name, { launched: true });
   } catch (err) {
     if (btn) { btn.textContent = originalText; btn.classList.remove('is-launching'); }
@@ -2861,28 +2867,39 @@ function checkPortImports() {
 }
 
 /**
- * Get the set of lease project names permanently ignored by the user.
+ * Get the set of lease project names permanently ignored by the operator.
+ * Server-side (#1382): localStorage was per-browser, so the ignore banner
+ * kept reappearing on every other device reaching this server. Reads
+ * `state.config`, already loaded by `init()` before anything that calls
+ * this runs, so no fetch of its own is needed here.
  * @returns {Set<string>}
  */
 function getIgnoredLeaseProjects() {
-  try {
-    const raw = localStorage.getItem('tc_ignoredLeaseProjects');
-    return raw ? new Set(JSON.parse(raw)) : new Set();
-  } catch (e) { return new Set(); }
+  const list = (state.config && state.config.ignoredLeaseProjects) || [];
+  return new Set(list);
 }
 
 /**
- * Add a lease project name to the permanent ignore list.
+ * Add a lease project name to the permanent ignore list, persisted
+ * server-side (#1382) so it syncs across every device reaching this
+ * server instead of being stuck in one browser's localStorage.
  * @param {string} name - Project name to ignore
  */
-function ignoreLeaseProject(name) {
+async function ignoreLeaseProject(name) {
   const ignored = getIgnoredLeaseProjects();
   ignored.add(name);
-  localStorage.setItem('tc_ignoredLeaseProjects', JSON.stringify([...ignored]));
+  const list = [...ignored];
+  // Update local state immediately so the re-check below sees the
+  // operator's choice right away, without waiting on the round trip.
+  if (state.config) state.config.ignoredLeaseProjects = list;
   // Remove banner and re-check
   const el = document.getElementById('importBanner');
   if (el) el.remove();
   checkPortImports();
+  const result = await apiMutate('/api/config', 'PATCH', { ignoredLeaseProjects: list });
+  if (!result) {
+    showToast(`Could not save the ignore list to the server (${api.lastError || 'unknown error'}) — it will revert on reload`, 'warn', 6000);
+  }
 }
 
 async function init() {
