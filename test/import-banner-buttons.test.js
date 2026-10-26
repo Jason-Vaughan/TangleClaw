@@ -98,7 +98,7 @@ describe('port-lease import banner buttons (#1383)', () => {
     assert.deepEqual(argumentOf('importLeaseProjects(' + unescapeHtml(attr) + ')'), allNames);
   });
 
-  it('the CONSUMER side accepts what the button sends, end to end (#1383 R-13)', () => {
+  it('the CONSUMER side accepts what the button sends, end to end (#1383 R-13)', async () => {
     // The producer tests above pin what the button emits. This one executes the
     // SHIPPED consumer — ignoreLeaseProject, getIgnoredLeaseProjects,
     // _canonicalProjectName and checkPortImports lifted out of landing.js — so
@@ -109,28 +109,34 @@ describe('port-lease import banner buttons (#1383)', () => {
     const src = [
       liftDeclaration(landing, 'function _canonicalProjectName('),
       liftDeclaration(landing, 'function getIgnoredLeaseProjects('),
-      liftDeclaration(landing, 'function ignoreLeaseProject('),
+      liftDeclaration(landing, 'async function ignoreLeaseProject('),
       liftDeclaration(landing, 'function checkPortImports(')
     ].join('\n');
 
+    // #1382: the ignore list is server-side now (state.config), not
+    // localStorage — ignoreLeaseProject() is async and PATCHes /api/config.
     const make = () => {
-      const store = new Map();
       const rendered = [];
-      const scope = new Function('localStorage', 'document', 'state', 'renderImportBanner', `
+      const patches = [];
+      const state = {
+        config: { ignoredLeaseProjects: [] },
+        ports: [{ port: 5432, project: 'Homebrew', service: 'postgresql@14' }],
+        projects: [{ name: 'TangleClaw-Builder' }],
+        openclawConnections: []
+      };
+      const scope = new Function('document', 'state', 'renderImportBanner', 'apiMutate', 'showToast', 'api', `
         ${src}
         return { ignoreLeaseProject, checkPortImports, getIgnoredLeaseProjects };
       `);
       const api = scope(
-        { getItem: k => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, v) },
         { getElementById: () => null },
-        {
-          ports: [{ port: 5432, project: 'Homebrew', service: 'postgresql@14' }],
-          projects: [{ name: 'TangleClaw-Builder' }],
-          openclawConnections: []
-        },
-        (importable) => rendered.push(importable)
+        state,
+        (importable) => rendered.push(importable),
+        async (url, method, body) => { patches.push({ url, method, body }); return {}; },
+        () => {},
+        { lastError: null }
       );
-      return { api, rendered };
+      return { api, rendered, patches, state };
     };
 
     // The name the FIXED button actually sends suppresses the banner — and that
@@ -141,16 +147,18 @@ describe('port-lease import banner buttons (#1383)', () => {
       onclicks('Homebrew').find(o => o.startsWith('ignoreLeaseProject('))
     );
     const good = make();
-    good.api.ignoreLeaseProject(sent);
+    await good.api.ignoreLeaseProject(sent);
     good.rendered.length = 0;
     good.api.checkPortImports();
     assert.equal(good.rendered.length, 0, 'ignoring the raw name must suppress the banner');
+    assert.deepEqual(good.patches, [{ url: '/api/config', method: 'PATCH', body: { ignoredLeaseProjects: ['Homebrew'] } }],
+      'must persist the ignore to the server, not just local state (#1382)');
 
     // The value the BROKEN producer emitted does not match — the defect, pinned.
     // Built by applying the old double pass, so it tracks the real bug shape
     // rather than a hand-written approximation of it.
     const bad = make();
-    bad.api.ignoreLeaseProject(JSON.stringify(sent));
+    await bad.api.ignoreLeaseProject(JSON.stringify(sent));
     bad.rendered.length = 0;
     bad.api.checkPortImports();
     assert.equal(bad.rendered.length, 1, 'a quote-wrapped name must NOT match — that was the bug');

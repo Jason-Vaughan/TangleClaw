@@ -13,8 +13,18 @@
  * performs, which is why clean-Mac installs never saw the picker while
  * long-lived installs (opening existing projects via the card button) did.
  *
+ * #1304 moved WHEN the gated launch happens — creating a project opens
+ * Settings in its draft/setup step instead of launching immediately, so the
+ * operator can configure Medusa/model/rules first — but not WHETHER it stays
+ * gated: "Save & Launch" (public/ui.js#_submitSettings) still calls the same
+ * launchProject, one hop later, which is what `test/create-launch-posture.test.js`
+ * pins directly. This file's job narrows to what's still true at the create
+ * step itself: no raw session POST, and launchProject's own picker gate
+ * (second test below) is unchanged.
+ *
  * Two hops, both pinned by running the REAL functions:
- *  1. submitCreate routes through launchProject and performs no raw launch.
+ *  1. submitCreate hands off to openSettings — no raw launch, no direct
+ *     launchProject call from the create step itself.
  *  2. launchProject, given the real bundled claude profile, opens the picker.
  */
 
@@ -23,12 +33,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { liftDeclaration } = require('./helpers/lift');
+const { liftDeclaration, liftBody } = require('./helpers/lift');
 
 const PUB = path.join(__dirname, '..', 'public');
 const UI_SRC = fs.readFileSync(path.join(PUB, 'ui.js'), 'utf8');
 const LANDING_SRC = fs.readFileSync(path.join(PUB, 'landing.js'), 'utf8');
 const API_HELPER_SRC = fs.readFileSync(path.join(PUB, 'api-helper.js'), 'utf8');
+const SESSION_SRC = fs.readFileSync(path.join(PUB, 'session.js'), 'utf8');
 
 // The REAL bundled profile — the shape a fresh install seeds (#251 syncs it
 // on every boot), not a hand-invented launchModes block.
@@ -49,11 +60,9 @@ function makeElement() {
 }
 
 describe('create flow routes through the launch gate (#401)', () => {
-  it('submitCreate hands off to launchProject and performs no raw launch', async () => {
+  it('submitCreate hands off to openSettings in its draft/setup step, performing no raw launch and no direct launchProject call (#1304)', async () => {
     // One shared sequence array: the ORDER is load-bearing, not just the
-    // counts. launchProject reads the refreshed state.projects to honor the
-    // per-project picker opt-out — launch-before-refresh would silently skip
-    // it while a count-only assertion stayed green.
+    // counts.
     const seq = [];
     const elements = new Map();
     const sandbox = {
@@ -67,7 +76,11 @@ describe('create flow routes through the launch gate (#401)', () => {
       apiMutate: async () => ({ ok: true }),
       api: Object.assign(async () => null, { lastError: null }),
       loadProjects: async () => { seq.push('loadProjects'); },
+      // #1304: submitCreate must not reach launchProject directly any more —
+      // that now only happens one hop later, from "Save & Launch"
+      // (test/create-launch-posture.test.js pins that hop directly).
       launchProject: async (name) => { seq.push(`launchProject:${name}`); },
+      openSettings: (name, options) => { seq.push(`openSettings:${name}:${JSON.stringify(options)}`); },
       closeCreateModal: () => {},
       navigateToSession: (name) => { seq.push(`NAVIGATE:${name}`); },
       fetch: async (url, opts) => {
@@ -101,9 +114,10 @@ describe('create flow routes through the launch gate (#401)', () => {
 
     await sandbox.submitCreate();
 
-    assert.deepEqual(seq, ['loadProjects', 'launchProject:proj-x'],
-      'exactly one refresh THEN one gated launch — no raw session POST, no '
-      + 'navigation around the gate, and never launch before the list refresh');
+    assert.deepEqual(seq, ['loadProjects', 'openSettings:proj-x:{"offerLaunch":true}'],
+      'exactly one refresh THEN Settings opened in its draft/setup step (#1304) — no raw '
+      + 'session POST, no navigation around the gate, and no direct launchProject call '
+      + 'from the create step itself (that only happens one hop later, via Save & Launch)');
   });
 
   it('launchProject opens the picker for the real bundled claude profile', async () => {
@@ -173,5 +187,92 @@ describe('create flow routes through the launch gate (#401)', () => {
     assert.deepEqual(calls.picker, [], 'opt-out projects skip the picker by choice');
     assert.deepEqual(calls.direct, [{ name: 'proj-x', mode: null }],
       'the server resolves the configured default mode — the UI sends none');
+  });
+});
+
+describe('a successful launch carries a path-health warning via sessionStorage, never a blocking confirm (#2401 PRR-A renewed REVISE: a confirm() decline stranded an already-launched session)', () => {
+  /**
+   * Run the page's own `doLaunchProject` against a successful launch.
+   * @param {object|null} pathHealthWarning - The response's warning, or null.
+   * @returns {Promise<{seq: string[], store: object}>} The ordered call
+   *   sequence, and the fake sessionStorage's final contents.
+   */
+  async function run(pathHealthWarning) {
+    const seq = [];
+    const store = {};
+    const sandbox = {
+      console, setTimeout: () => 0, clearTimeout() {},
+      document: { querySelector: () => null },
+      setConnected: () => {},
+      closeStrandedLaunchModal: () => {},
+      navigateToSession: (name) => seq.push(`navigate:${name}`),
+      sessionStorage: { setItem: (k, v) => { seq.push(`setItem:${k}`); store[k] = v; } },
+      tcFetch: async () => ({ ok: true, json: async () => ({ sessionId: 1, pathHealthWarning }) })
+    };
+    sandbox.window = sandbox;
+    vm.createContext(sandbox);
+    vm.runInContext([
+      liftDeclaration(LANDING_SRC, 'async function doLaunchProject('),
+      'globalThis.doLaunchProject = doLaunchProject;'
+    ].join('\n'), sandbox);
+    await sandbox.doLaunchProject('proj-x', null, null);
+    return { seq, store };
+  }
+
+  it('navigates immediately when the launch carries no warning, writing nothing to sessionStorage', async () => {
+    const { seq, store } = await run(null);
+    assert.deepEqual(seq, ['navigate:proj-x']);
+    assert.deepEqual(store, {});
+  });
+
+  it('stashes the warning in sessionStorage and still navigates immediately — no confirm() to strand the already-launched session', async () => {
+    const warning = { message: 'proj-x has no git history', code: 'PROJECT_PATH_UNSEEDED' };
+    const { seq, store } = await run(warning);
+    assert.deepEqual(seq, ['setItem:tc_pathHealthWarning', 'navigate:proj-x']);
+    assert.deepEqual(JSON.parse(store.tc_pathHealthWarning), warning);
+  });
+});
+
+describe('session.js shows the launch path-health warning carried via sessionStorage (#2401 PRR-A renewed REVISE)', () => {
+  const start = SESSION_SRC.indexOf('// #2401: a pathHealthWarning');
+  const end = SESSION_SRC.indexOf('// Keep the terminal\'s prompt', start);
+  const snippet = SESSION_SRC.slice(start, end);
+
+  it('is present inside initSession itself, not dead code elsewhere', () => {
+    assert.ok(start > -1, 'the #2401 snippet must exist in session.js');
+    const initBody = liftBody(SESSION_SRC, 'async function initSession()');
+    assert.ok(initBody.includes(snippet.trim()), 'the snippet must be inside initSession');
+  });
+
+  /**
+   * Run the extracted snippet with a controllable sessionStorage + flashToast.
+   * @param {string|null} stored - What sessionStorage.getItem returns, or null.
+   * @returns {{toasts: Array<{msg: string, cls: string}>, removed: string[], storeAfter: object}}
+   */
+  function run(stored) {
+    const toasts = [];
+    const removed = [];
+    const store = stored === null ? {} : { tc_pathHealthWarning: stored };
+    const sessionStorage = {
+      getItem: (k) => (k in store ? store[k] : null),
+      removeItem: (k) => { removed.push(k); delete store[k]; }
+    };
+    const flashToast = (msg, cls) => toasts.push({ msg, cls });
+    new Function('sessionStorage', 'flashToast', snippet)(sessionStorage, flashToast);
+    return { toasts, removed, storeAfter: store };
+  }
+
+  it('does nothing when nothing was stashed', () => {
+    const { toasts, removed } = run(null);
+    assert.deepEqual(toasts, []);
+    assert.deepEqual(removed, []);
+  });
+
+  it('shows the warning as a toast-warn flash and clears the key, read-once', () => {
+    const warning = { message: 'proj-x has no git history', code: 'PROJECT_PATH_UNSEEDED' };
+    const { toasts, removed, storeAfter } = run(JSON.stringify(warning));
+    assert.deepEqual(toasts, [{ msg: warning.message, cls: 'toast-warn' }]);
+    assert.deepEqual(removed, ['tc_pathHealthWarning']);
+    assert.equal('tc_pathHealthWarning' in storeAfter, false);
   });
 });

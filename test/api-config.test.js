@@ -432,6 +432,41 @@ describe('API endpoints', () => {
       assert.equal(data.code, 'BAD_REQUEST');
     });
 
+    it('defaults ignoredLeaseProjects to an empty array (#1382)', async () => {
+      const { data } = await request(server, 'GET', '/api/config');
+      assert.deepEqual(data.ignoredLeaseProjects, []);
+    });
+
+    it('should accept and persist an ignoredLeaseProjects list (#1382)', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        ignoredLeaseProjects: ['Homebrew', 'legacy-db']
+      });
+      assert.equal(status, 200);
+      assert.deepEqual(data.config.ignoredLeaseProjects, ['Homebrew', 'legacy-db']);
+      // Persisted to disk, not just echoed back in the response — the point
+      // of moving this off localStorage is that it survives a reload from a
+      // different browser/device.
+      const reloaded = store.config.load();
+      assert.deepEqual(reloaded.ignoredLeaseProjects, ['Homebrew', 'legacy-db']);
+      await request(server, 'PATCH', '/api/config', { ignoredLeaseProjects: [] });
+    });
+
+    it('should reject a non-array ignoredLeaseProjects', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        ignoredLeaseProjects: 'Homebrew'
+      });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
+
+    it('should reject an ignoredLeaseProjects array with a non-string element', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        ignoredLeaseProjects: ['Homebrew', 42]
+      });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
+
     it('should accept portScannerEnabled boolean', async () => {
       const { status, data } = await request(server, 'PATCH', '/api/config', {
         portScannerEnabled: false

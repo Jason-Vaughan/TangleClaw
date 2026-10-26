@@ -4469,11 +4469,20 @@ route('POST', '/api/projects/:name/archive', (req, res, params) => {
 });
 
 // POST /api/projects/:name/unarchive — Restore an archived project
-route('POST', '/api/projects/:name/unarchive', (req, res, params) => {
+route('POST', '/api/projects/:name/unarchive', (req, res, params, body) => {
   if (!operatorProjectCaller(req, res, 'unarchive a project')) return;
-  const result = projects.unarchiveProject(params.name);
+  const result = projects.unarchiveProject(params.name, {
+    confirmFreshStart: Boolean(body && body.confirmFreshStart === true)
+  });
   if (!result.success) {
     const firstError = result.errors[0];
+    // #2401: a missing or placeholder-only path is a confirmable warning
+    // (409, so the operator can retry with confirmFreshStart), not a 400 —
+    // the request itself is well-formed, the PROJECT is the thing in a
+    // state that needs an explicit yes.
+    if (result.code === 'PROJECT_PATH_MISSING' || result.code === 'PROJECT_PATH_UNSEEDED') {
+      return errorResponse(res, 409, firstError, result.code);
+    }
     const status = firstError.includes('not found') ? 404 : 400;
     return errorResponse(res, status, firstError, firstError.includes('not found') ? 'NOT_FOUND' : 'BAD_REQUEST');
   }

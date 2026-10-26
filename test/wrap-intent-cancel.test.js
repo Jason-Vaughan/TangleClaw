@@ -933,7 +933,7 @@ describe('settings modal save: the keep toggle (#1708)', () => {
    * @returns {Promise<object>} The PATCH body
    */
   async function save(project, checked) {
-    const fn = liftDeclaration(UI_SRC, 'async function doSaveSettings()');
+    const fn = liftDeclaration(UI_SRC, 'async function doSaveSettings(');
     const els = {
       settingsName: { value: project.name },
       settingsEngine: { value: 'claude' },

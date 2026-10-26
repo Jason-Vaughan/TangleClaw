@@ -417,7 +417,7 @@ describe('the settings modal Release mode (source pins)', () => {
   });
 
   it('saves releaseMode alone, and the legacy checkbox is gone', () => {
-    const body = liftDeclaration(UI_SRC, 'async function doSaveSettings()');
+    const body = liftDeclaration(UI_SRC, 'async function doSaveSettings(');
     assert.match(body, /body\.releaseMode = releaseModeEl\.value/);
     assert.doesNotMatch(body, /body\.versionBumpEnabled/);
     assert.doesNotMatch(UI_SRC, /settingsVersionBump/);

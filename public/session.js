@@ -7528,6 +7528,18 @@ async function initSession() {
     sessionState.launchGraceRemaining = 3;
   }
 
+  // #2401: a pathHealthWarning from the launch that brought the operator
+  // here — sessionStorage survives the navigation; read-once, so a later
+  // reload of this same tab doesn't re-show it.
+  try {
+    const rawPathWarning = sessionStorage.getItem('tc_pathHealthWarning');
+    if (rawPathWarning) {
+      sessionStorage.removeItem('tc_pathHealthWarning');
+      const pathWarning = JSON.parse(rawPathWarning);
+      if (pathWarning && pathWarning.message) flashToast(pathWarning.message, 'toast-warn');
+    }
+  } catch (e) { /* ignore */ }
+
   // Keep the terminal's prompt above the soft keyboard (#1570): the shared
   // listener publishes the visible area while the keyboard is up.
   window.tcWireVisualViewport(window, document);

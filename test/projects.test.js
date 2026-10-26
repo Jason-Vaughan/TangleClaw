@@ -12,6 +12,7 @@ const store = require('../lib/store');
 const projectConfigModule = require('../lib/project-config');
 const projects = require('../lib/projects');
 const engines = require('../lib/engines');
+const sessions = require('../lib/sessions');
 
 describe('projects', () => {
   let tmpDir;
@@ -2737,6 +2738,11 @@ describe('projects', () => {
     it('attaches an existing unregistered directory', async () => {
       const attachDir = path.join(projectsDir, 'attachable');
       fs.mkdirSync(attachDir, { recursive: true });
+      // A real directory worth attaching has SOME content — a bare empty
+      // directory is exactly the #2401 placeholder shape, and 'attachable'
+      // is reused by archiveProject/unarchiveProject below, which test the
+      // archive round trip, not that edge case.
+      fs.mkdirSync(path.join(attachDir, '.git'));
 
       const result = await projects.attachProject('attachable');
       assert.ok(result.project);
@@ -2838,6 +2844,174 @@ describe('projects', () => {
       const result = projects.unarchiveProject('nonexistent-xyz');
       assert.equal(result.success, false);
       assert.ok(result.errors[0].includes('not found'));
+    });
+
+    describe('path health (#2401)', () => {
+      /**
+       * Create, archive, and return a project whose directory is set up
+       * however the test needs, so the unarchive path-health check runs
+       * against a controlled fixture rather than 'attachable' (shared with
+       * other describe blocks above).
+       * @param {string} name
+       * @param {(dir: string) => void} setupDir - Mutates the directory
+       *   after it's created, before the project is archived.
+       * @returns {string} The project's directory path.
+       */
+      function archivedProjectWithDir(name, setupDir) {
+        const dir = path.join(projectsDir, name);
+        fs.mkdirSync(dir, { recursive: true });
+        setupDir(dir);
+        store.projects.create({ name, path: dir, engine: 'claude', tags: [], ports: {} });
+        projects.archiveProject(name);
+        return dir;
+      }
+
+      it('refuses when the path no longer exists', () => {
+        const dir = archivedProjectWithDir('gone-xyz', () => {});
+        fs.rmSync(dir, { recursive: true, force: true });
+        const result = projects.unarchiveProject('gone-xyz');
+        assert.equal(result.success, false);
+        assert.equal(result.code, 'PROJECT_PATH_MISSING');
+        assert.match(result.errors[0], /no longer exists/);
+      });
+
+      it('refuses when the path holds only TangleClaw-seeded files and no .git', () => {
+        archivedProjectWithDir('placeholder-xyz', (dir) => {
+          fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), '# Changelog\n');
+          fs.mkdirSync(path.join(dir, '.tangleclaw'), { recursive: true });
+        });
+        const result = projects.unarchiveProject('placeholder-xyz');
+        assert.equal(result.success, false);
+        assert.equal(result.code, 'PROJECT_PATH_UNSEEDED');
+        assert.match(result.errors[0], /no git history/);
+      });
+
+      it('refuses when the only non-dotfile is an engine onboarding carrier (CLAUDE.md), not just CHANGELOG.md', () => {
+        // Caught by the launchSession integration test below: createProject
+        // writes CLAUDE.md for the 'claude' engine, which is NOT dotfile-
+        // prefixed and would otherwise read as "real content".
+        archivedProjectWithDir('placeholder-claude-xyz', (dir) => {
+          fs.writeFileSync(path.join(dir, 'CLAUDE.md'), '# Project instructions\n');
+        });
+        const result = projects.unarchiveProject('placeholder-claude-xyz');
+        assert.equal(result.success, false);
+        assert.equal(result.code, 'PROJECT_PATH_UNSEEDED');
+      });
+
+      it('refuses when the only non-dotfile is a retired engine\'s leftover carrier (GEMINI.md), which no installed profile names any more', () => {
+        // No currently-installed engine profile's configFormat.filename is
+        // GEMINI.md (Gemini CLI support was retired) — this pins that the
+        // retired-carrier set (lib/engines.js#SHARED_CONVENTION_CARRIERS) is
+        // still consulted, not just enginesApi.list()'s live profiles.
+        archivedProjectWithDir('placeholder-gemini-xyz', (dir) => {
+          fs.writeFileSync(path.join(dir, 'GEMINI.md'), '# Project instructions\n');
+        });
+        const result = projects.unarchiveProject('placeholder-gemini-xyz');
+        assert.equal(result.success, false);
+        assert.equal(result.code, 'PROJECT_PATH_UNSEEDED');
+      });
+
+      it('succeeds when confirmFreshStart is set, even though the path is missing', () => {
+        const dir = archivedProjectWithDir('gone-confirmed-xyz', () => {});
+        fs.rmSync(dir, { recursive: true, force: true });
+        const result = projects.unarchiveProject('gone-confirmed-xyz', { confirmFreshStart: true });
+        assert.ok(result.success);
+      });
+
+      it('succeeds normally when the path has real content with no .git', () => {
+        archivedProjectWithDir('real-no-git-xyz', (dir) => {
+          fs.writeFileSync(path.join(dir, 'README.md'), '# Real project\n');
+        });
+        const result = projects.unarchiveProject('real-no-git-xyz');
+        assert.ok(result.success, 'a real file beyond CHANGELOG.md/dotfiles must not be mistaken for a placeholder');
+      });
+
+      it('succeeds normally when .git is present, even with no other files', () => {
+        archivedProjectWithDir('git-only-xyz', (dir) => {
+          fs.mkdirSync(path.join(dir, '.git'));
+        });
+        const result = projects.unarchiveProject('git-only-xyz');
+        assert.ok(result.success);
+      });
+    });
+  });
+
+  describe('launchSession path health (#2401)', () => {
+    // Real launchSession(), through every gate (archived/stopped/existing-
+    // session/engine-resolution/stranded-wraps/handoff-preflight/baseline/
+    // real tmux) with nothing mocked except engine *availability* -- the one
+    // gate that would otherwise depend on a real engine binary being on this
+    // machine's PATH, the same stub this file already uses at "resolves
+    // engine availability without taking the blocking path" above. Unlike
+    // unarchiveProject, this is a WARNING, not a refusal (see the comment in
+    // lib/sessions.js): ~30 test files across this codebase launch sessions
+    // against fixtures that never touch the real filesystem at all, so a
+    // blocking check here would have refused the overwhelming majority of
+    // them -- confirmed empirically before settling on this design.
+    function withEngineAvailable(fn) {
+      const real = engines.detectEngine;
+      engines.detectEngine = () => ({ available: true });
+      try {
+        return fn();
+      } finally {
+        engines.detectEngine = real;
+      }
+    }
+
+    it('still launches (does not refuse), carrying a pathHealthWarning, when the project path no longer exists', () => {
+      projects.createProject({ name: 'launch-gone-xyz' });
+      const project = store.projects.getByName('launch-gone-xyz');
+      fs.rmSync(project.path, { recursive: true, force: true });
+      const result = withEngineAvailable(() => sessions.launchSession('launch-gone-xyz', {}));
+      try {
+        assert.ok(result.session, 'the launch must still succeed');
+        assert.equal(result.pathHealthWarning.code, 'PROJECT_PATH_MISSING');
+        assert.match(result.pathHealthWarning.message, /no longer exists/);
+      } finally {
+        if (result.session) sessions.killSession('launch-gone-xyz', 'test cleanup');
+      }
+    });
+
+    it('still launches, carrying a pathHealthWarning, when the path holds only TangleClaw-seeded files and no .git', () => {
+      // createProject writes CHANGELOG.md + .tangleclaw/ + CLAUDE.md
+      // (for the 'claude' engine) regardless of gitInit -- the directory
+      // needs re-creating by hand to isolate just the no-.git condition,
+      // since createProject's git init is what we're opting out of testing.
+      const dir = path.join(projectsDir, 'launch-placeholder-xyz');
+      store.projects.create({ name: 'launch-placeholder-xyz', path: dir, engine: 'claude', tags: [], ports: {} });
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), '# Changelog\n');
+      const result = withEngineAvailable(() => sessions.launchSession('launch-placeholder-xyz', {}));
+      try {
+        assert.ok(result.session, 'the launch must still succeed');
+        assert.equal(result.pathHealthWarning.code, 'PROJECT_PATH_UNSEEDED');
+      } finally {
+        if (result.session) sessions.killSession('launch-placeholder-xyz', 'test cleanup');
+      }
+    });
+
+    it('carries no pathHealthWarning for a normal project', () => {
+      projects.createProject({ name: 'launch-healthy-xyz' });
+      const result = withEngineAvailable(() => sessions.launchSession('launch-healthy-xyz', {}));
+      try {
+        assert.ok(result.session);
+        assert.equal(result.pathHealthWarning, null);
+      } finally {
+        if (result.session) sessions.killSession('launch-healthy-xyz', 'test cleanup');
+      }
+    });
+
+    it('skips computing the warning entirely when confirmFreshStart is set', () => {
+      projects.createProject({ name: 'launch-gone-confirmed-xyz' });
+      const project = store.projects.getByName('launch-gone-confirmed-xyz');
+      fs.rmSync(project.path, { recursive: true, force: true });
+      const result = withEngineAvailable(() =>
+        sessions.launchSession('launch-gone-confirmed-xyz', { confirmFreshStart: true }));
+      try {
+        assert.equal(result.pathHealthWarning, null);
+      } finally {
+        if (result.session) sessions.killSession('launch-gone-confirmed-xyz', 'test cleanup');
+      }
     });
   });
 
