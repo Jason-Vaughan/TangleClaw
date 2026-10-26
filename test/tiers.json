@@ -702,6 +702,7 @@
     "test/wrap-file-ownership.test.js",
     "test/wrap-file-safety.test.js",
     "test/wrap-intent-cancel.test.js",
+    "test/wrap-needs-operator-live.test.js",
     "test/wrap-pipeline-lane.test.js",
     "test/wrap-pipeline.test.js",
     "test/wrap-plan-mode-precheck.test.js",
