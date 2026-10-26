@@ -498,6 +498,18 @@
           <div class="kpi-sub"><strong><code>23,371</code> Prawduct leaves</strong> · Stage 3 <code>5,607/5,607</code> pass · <strong><code>0</code> post-merge regressions</strong></div>
         </div>
       </div>
+
+      <aside aria-labelledby="permanent-sprint-modality" style="margin-top:1.5rem; padding:1.5rem; border:2px solid var(--cyan); border-radius:16px; background:linear-gradient(135deg, rgba(56,189,248,.18), rgba(192,132,252,.15)); box-shadow:0 0 32px rgba(56,189,248,.16);">
+        <div class="hero-eyebrow">● Adopted for v5.39.0 and later</div>
+        <h2 id="permanent-sprint-modality" style="margin:.25rem 0 .65rem; font-size:clamp(1.35rem,2.5vw,1.85rem); line-height:1.25;">⚡ Permanent Sprint Modality: The 2.93× Wave Acceleration Protocol (Codified for v5.39.0+)</h2>
+        <p style="margin:.2rem 0 1rem; color:#e2e8f0;">Wave 2 reduced full-wave wall time from <strong>4h 35m to 1h 34m</strong>. The following four practices carry forward as the sprint operating protocol:</p>
+        <ol style="display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:.85rem; padding:0; margin:0; list-style:none; counter-reset:pillar;">
+          <li style="padding:1rem; border:1px solid var(--border-hi); border-radius:12px; background:rgba(7,11,20,.55);"><strong>1. Charter-Disjoint Same-Wave Merge Pipelining</strong><br>When the trial merge and Stage 1 pass, merge disjoint same-wave PRs without serial rebases; Waves 2–3 required <strong>0 same-wave rebases</strong>.</li>
+          <li style="padding:1rem; border:1px solid var(--border-hi); border-radius:12px; background:rgba(7,11,20,.55);"><strong>2. Fast Push + CI Suite Evidence</strong><br>Run Stage 1+2 before push in <strong>&lt;15s</strong>, then use post-push <code>TANGLECLAW_SUITE_EVIDENCE=ci</code> to record the approximately <strong>80s</strong> CI suite result.</li>
+          <li style="padding:1rem; border:1px solid var(--border-hi); border-radius:12px; background:rgba(7,11,20,.55);"><strong>3. W*-REC Separation</strong><br>Only Integrator touches <code>.prawduct/change-log.md</code> and <code>FEATURES.md</code>, in a dedicated <code>W*-REC</code> records PR after the wave's code merges.</li>
+          <li style="padding:1rem; border:1px solid var(--border-hi); border-radius:12px; background:rgba(7,11,20,.55);"><strong>4. Immediate Next-Wave Pre-Build</strong><br>After a governed <code>/clear</code>, prepare the next wave on current <code>main</code> immediately so design and setup overlap the preceding wave's review.</li>
+        </ol>
+      </aside>
     </section>
 
     <!-- SECTION 1: BEFORE-VS-AFTER ADDENDUM A473-A5 ACCELERATION -->
