@@ -2898,6 +2898,19 @@ describe('projects', () => {
         assert.equal(result.code, 'PROJECT_PATH_UNSEEDED');
       });
 
+      it('refuses when the only non-dotfile is a retired engine\'s leftover carrier (GEMINI.md), which no installed profile names any more', () => {
+        // No currently-installed engine profile's configFormat.filename is
+        // GEMINI.md (Gemini CLI support was retired) — this pins that the
+        // retired-carrier set (lib/engines.js#SHARED_CONVENTION_CARRIERS) is
+        // still consulted, not just enginesApi.list()'s live profiles.
+        archivedProjectWithDir('placeholder-gemini-xyz', (dir) => {
+          fs.writeFileSync(path.join(dir, 'GEMINI.md'), '# Project instructions\n');
+        });
+        const result = projects.unarchiveProject('placeholder-gemini-xyz');
+        assert.equal(result.success, false);
+        assert.equal(result.code, 'PROJECT_PATH_UNSEEDED');
+      });
+
       it('succeeds when confirmFreshStart is set, even though the path is missing', () => {
         const dir = archivedProjectWithDir('gone-confirmed-xyz', () => {});
         fs.rmSync(dir, { recursive: true, force: true });

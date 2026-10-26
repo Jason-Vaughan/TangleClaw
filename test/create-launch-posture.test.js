@@ -414,4 +414,89 @@ describe('#1304 — Create opens Settings instead of auto-launching, with a Save
       assert.deepEqual(calls.launchProject, ['new-name']);
     });
   });
+
+  describe('unarchiveProject surfaces the path-health refusal with a confirm-and-retry (#2401 Critic BLOCKING: no prior coverage of this branch)', () => {
+    /**
+     * Run the real unarchiveProject(name), with apiMutate answering each
+     * call in order from `responses`.
+     * @param {object} opts
+     * @param {Array<{ok: boolean, data?: object, error?: string, code?: (string|null)}>} opts.responses
+     * @param {boolean} [opts.confirmReturns] - What the stubbed confirm() answers.
+     * @returns {{run: Function, calls: object}}
+     */
+    function buildUnarchiveHarness({ responses, confirmReturns }) {
+      const calls = { apiMutate: [], loadProjects: 0, showToast: [], confirmAsked: [] };
+      const api = { lastError: null, lastErrorCode: null };
+      let callIndex = 0;
+      const apiMutate = async (url, method, body) => {
+        calls.apiMutate.push({ url, method, body });
+        const resp = responses[callIndex++];
+        if (resp.ok) {
+          api.lastError = null;
+          api.lastErrorCode = null;
+          return resp.data;
+        }
+        api.lastError = resp.error;
+        api.lastErrorCode = resp.code || null;
+        return null;
+      };
+      const confirm = (message) => { calls.confirmAsked.push(message); return confirmReturns; };
+      const run = new Function(
+        'apiMutate', 'api', 'confirm', 'loadProjects', 'showToast',
+        `${liftDeclaration(UI_SRC, 'async function unarchiveProject(')}\nreturn unarchiveProject;`
+      )(
+        apiMutate,
+        api,
+        confirm,
+        async () => { calls.loadProjects++; },
+        (message) => { calls.showToast.push(message); }
+      );
+      return { run, calls };
+    }
+
+    it('unarchives directly on success, with no confirm', async () => {
+      const { run, calls } = buildUnarchiveHarness({ responses: [{ ok: true, data: { success: true } }] });
+      await run('proj');
+      assert.equal(calls.loadProjects, 1);
+      assert.deepEqual(calls.confirmAsked, []);
+      assert.equal(calls.apiMutate.length, 1);
+    });
+
+    it('asks to proceed as a fresh start on PROJECT_PATH_UNSEEDED, then retries and succeeds when confirmed', async () => {
+      const { run, calls } = buildUnarchiveHarness({
+        responses: [
+          { ok: false, error: '"x" has no git history — it looks like an empty placeholder', code: 'PROJECT_PATH_UNSEEDED' },
+          { ok: true, data: { success: true } }
+        ],
+        confirmReturns: true
+      });
+      await run('proj');
+      assert.equal(calls.confirmAsked.length, 1);
+      assert.match(calls.confirmAsked[0], /looks like an empty placeholder/);
+      assert.equal(calls.apiMutate.length, 2, 'the refused call, then a retry');
+      assert.deepEqual(calls.apiMutate[1].body, { confirmFreshStart: true });
+      assert.equal(calls.loadProjects, 1);
+    });
+
+    it('asks on PROJECT_PATH_MISSING too, and does not retry when the operator declines', async () => {
+      const { run, calls } = buildUnarchiveHarness({
+        responses: [{ ok: false, error: 'the project folder no longer exists', code: 'PROJECT_PATH_MISSING' }],
+        confirmReturns: false
+      });
+      await run('proj');
+      assert.equal(calls.confirmAsked.length, 1);
+      assert.equal(calls.apiMutate.length, 1, 'declining must not send the confirmFreshStart retry');
+      assert.equal(calls.loadProjects, 0);
+    });
+
+    it('shows a toast for any other failure, without asking to confirm', async () => {
+      const { run, calls } = buildUnarchiveHarness({
+        responses: [{ ok: false, error: 'is not archived', code: null }]
+      });
+      await run('proj');
+      assert.deepEqual(calls.confirmAsked, []);
+      assert.equal(calls.loadProjects, 0);
+      assert.deepEqual(calls.showToast, ['Could not unarchive "proj": is not archived']);
+    });
+  });
 });
