@@ -51,6 +51,7 @@ const wrapRunRegistry = require('../lib/wrap-run-registry');
 const { operatorHeaders } = require('./_shared-docs-callers');
 const { liftDeclaration } = require('./helpers/lift');
 const { makeDocument } = require('./_mini-dom');
+const { initRepo } = require('./_temp-repo');
 const wrapDrawerHelpers = require('../public/wrap-drawer');
 const wrapRunController = require('../public/wrap-run-controller');
 
@@ -344,7 +345,7 @@ describe('#2588 — needs-operator pre-commit review pause, a real wrap start to
 
     projectPath = path.join(projectsDir, PROJECT_NAME);
     fs.mkdirSync(projectPath, { recursive: true });
-    git(projectPath, 'init', '-q');
+    initRepo(projectPath);
     git(projectPath, 'config', 'user.email', 't@t');
     git(projectPath, 'config', 'user.name', 't');
     fs.writeFileSync(path.join(projectPath, 'README.md'), `# ${PROJECT_NAME}\n`);
@@ -363,7 +364,7 @@ describe('#2588 — needs-operator pre-commit review pause, a real wrap start to
 
     browserProjectPath = path.join(projectsDir, BROWSER_PROJECT_NAME);
     fs.mkdirSync(browserProjectPath, { recursive: true });
-    git(browserProjectPath, 'init', '-q');
+    initRepo(browserProjectPath);
     git(browserProjectPath, 'config', 'user.email', 't@t');
     git(browserProjectPath, 'config', 'user.name', 't');
     fs.writeFileSync(path.join(browserProjectPath, 'README.md'), `# ${BROWSER_PROJECT_NAME}\n`);
