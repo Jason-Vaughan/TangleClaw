@@ -138,7 +138,7 @@ describe('#745 status bar names the version the process actually loaded', () => 
     it('re-stamps a session that predates the update', () => {
       const h = harness([{ name: 'proj' }], { proj: brandedOld });
       const res = tmux.refreshStatusBars(h.deps);
-      assert.deepEqual(res, { updated: 1, skipped: 0 });
+      assert.deepEqual(res, { updated: 1, skipped: 0, alreadyCurrent: 0, foreign: 0, failed: 0 });
       assert.match(h.setCalls[0], /TangleClaw v4\.35\.0/);
     });
 
@@ -147,14 +147,14 @@ describe('#745 status bar names the version the process actually loaded', () => 
       // started by hand. Branding those would be us vandalising someone's shell.
       const h = harness([{ name: 'mine' }], { mine: 'status-left "[my-shell] "' });
       const res = tmux.refreshStatusBars(h.deps);
-      assert.deepEqual(res, { updated: 0, skipped: 1 });
+      assert.deepEqual(res, { updated: 0, skipped: 1, alreadyCurrent: 0, foreign: 1, failed: 0 });
       assert.equal(h.setCalls.length, 0);
     });
 
     it('does not rewrite a bar that is already current', () => {
       const h = harness([{ name: 'proj' }], { proj: 'status-left "#[x] TangleClaw v4.35.0 "' });
       const res = tmux.refreshStatusBars(h.deps);
-      assert.deepEqual(res, { updated: 0, skipped: 1 });
+      assert.deepEqual(res, { updated: 0, skipped: 1, alreadyCurrent: 1, foreign: 0, failed: 0 });
       assert.equal(h.setCalls.length, 0);
     });
 
@@ -164,7 +164,7 @@ describe('#745 status bar names the version the process actually loaded', () => 
       // every branded bar would be re-stamped on every boot.
       const h = harness([{ name: 'proj' }], { proj: 'status-left #[x] TangleClaw v4.35.0' });
       const res = tmux.refreshStatusBars(h.deps);
-      assert.deepEqual(res, { updated: 0, skipped: 1 });
+      assert.deepEqual(res, { updated: 0, skipped: 1, alreadyCurrent: 1, foreign: 0, failed: 0 });
     });
 
     it('corrects a version that is a prefix of the current one', () => {
@@ -172,7 +172,7 @@ describe('#745 status bar names the version the process actually loaded', () => 
       // this bar as already-current and leave it wrong forever.
       const h = harness([{ name: 'proj' }], { proj: 'status-left "#[x] TangleClaw v4.3 "' });
       const res = tmux.refreshStatusBars(h.deps);
-      assert.deepEqual(res, { updated: 1, skipped: 0 });
+      assert.deepEqual(res, { updated: 1, skipped: 0, alreadyCurrent: 0, foreign: 0, failed: 0 });
       assert.match(h.setCalls[0], /TangleClaw v4\.35\.0/);
     });
 
@@ -184,7 +184,7 @@ describe('#745 status bar names the version the process actually loaded', () => 
         { bad: new Error('no server running'), good: brandedOld }
       );
       const res = tmux.refreshStatusBars(h.deps);
-      assert.deepEqual(res, { updated: 1, skipped: 1 });
+      assert.deepEqual(res, { updated: 1, skipped: 1, alreadyCurrent: 0, foreign: 0, failed: 1 });
       assert.match(h.setCalls[0], /-t '=good:'/);
     });
 
@@ -193,8 +193,25 @@ describe('#745 status bar names the version the process actually loaded', () => 
       // every bar — worse than the staleness it exists to fix.
       const h = harness([{ name: 'proj' }], { proj: brandedOld });
       const res = tmux.refreshStatusBars({ ...h.deps, version: () => null });
-      assert.deepEqual(res, { updated: 0, skipped: 0 });
+      assert.deepEqual(res, { updated: 0, skipped: 0, alreadyCurrent: 0, foreign: 0, failed: 0 });
       assert.equal(h.setCalls.length, 0);
+    });
+
+    it('counts a mix of every outcome at its own site, not by subtracting from the total', () => {
+      // A bare skipped count cannot prove alreadyCurrent/foreign/failed are
+      // each attested directly rather than one derived as skipped - the other
+      // two: four sessions land in four different buckets simultaneously.
+      const h = harness(
+        [{ name: 'updateMe' }, { name: 'current' }, { name: 'foreign' }, { name: 'bad' }],
+        {
+          updateMe: brandedOld,
+          current: 'status-left "#[x] TangleClaw v4.35.0 "',
+          foreign: 'status-left "[my-shell] "',
+          bad: new Error('no server running')
+        }
+      );
+      const res = tmux.refreshStatusBars(h.deps);
+      assert.deepEqual(res, { updated: 1, skipped: 3, alreadyCurrent: 1, foreign: 1, failed: 1 });
     });
   });
 
@@ -228,22 +245,52 @@ describe('#745 status bar names the version the process actually loaded', () => 
 });
 
 describe('#744 both writers of the version label agree by construction', () => {
+  /**
+   * Run the real, lifted `_getVersion()` from server.js against a stubbed
+   * `serverInfo` and disk read — executed, not grepped, same as the frontend
+   * halves elsewhere in this file.
+   * @param {object} opts
+   * @param {string|null} opts.running - What `serverInfo.getRunningVersion()` answers.
+   * @param {function(): string} opts.readFileSync - Disk read stub.
+   * @returns {{result: string, readFileSyncCalls: number}}
+   */
+  function runGetVersion({ running, readFileSync }) {
+    let readFileSyncCalls = 0;
+    const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    const ctx = vm.createContext({
+      serverInfo: { getRunningVersion: () => running },
+      path: { join: (...parts) => parts.join('/') },
+      fs: { readFileSync: (...args) => { readFileSyncCalls++; return readFileSync(...args); } },
+      __dirname: '/fake',
+      _cachedVersion: null
+    });
+    const result = vm.runInContext(`${liftDeclaration(serverSrc, 'function _getVersion(')}\n_getVersion();`, ctx);
+    return { result, readFileSyncCalls };
+  }
+
   it('/api/version answers with the running version, not the disk read', () => {
     // The header is written from GET /api/version at page load and from
     // /api/server-info's runningVersion on every poll. Those are two endpoints
     // answering one question, and they used to derive it differently — so the
     // label could change under the operator 60 seconds after load with nothing
-    // having happened. Pinned at the source rather than by ordering the two
-    // calls, because the first-run wizard path never reaches the poll at all.
-    const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-    const start = src.indexOf('function _getVersion(');
-    assert.ok(start > -1, '_getVersion should exist');
-    const body = src.slice(start, src.indexOf('\n}', start));
-    const runningIdx = body.indexOf('serverInfo.getRunningVersion()');
-    const diskIdx = body.indexOf('readFileSync');
-    assert.ok(runningIdx > -1, '_getVersion must consult the running version');
-    assert.ok(diskIdx === -1 || runningIdx < diskIdx,
-      'the running version must be preferred over the disk read, not the reverse');
+    // having happened. The disk read must not even run once the running
+    // version is known, or a self-update's checkout would be confirmed before
+    // this process ever restarts onto it.
+    const { result, readFileSyncCalls } = runGetVersion({
+      running: '1.1.1',
+      readFileSync: () => JSON.stringify({ version: '9.9.9' })
+    });
+    assert.equal(result, '1.1.1', 'must prefer the running version over the disk');
+    assert.equal(readFileSyncCalls, 0, 'must not fall through to the disk read once the running version is known');
+  });
+
+  it('falls back to version.json only for the window before startup is captured', () => {
+    const { result, readFileSyncCalls } = runGetVersion({
+      running: null,
+      readFileSync: () => JSON.stringify({ version: '2.0.0' })
+    });
+    assert.equal(result, '2.0.0');
+    assert.equal(readFileSyncCalls, 1);
   });
 });
 
@@ -442,9 +489,40 @@ describe('#744 the dashboard stops advertising a version it is not running', () 
     it('re-asks on a schedule, so a provisional answer is not the last word', async () => {
       // Two of its answers are deliberately left showing rather than hidden.
       // Without a retry the pill would stay up for the life of the page.
-      const polling = liftDeclaration(SRC, 'function startPolling(');
-      assert.match(polling, /loop\(loadUpdateStatus,/,
-        'loadUpdateStatus must be in the polling loop, or a provisional answer is permanent');
+      // Executed, not grepped: the real startPolling/loop closures are run
+      // against a setTimeout stub that captures each scheduled tick rather
+      // than firing it, so the test drives the loop itself instead of reading
+      // its source text.
+      const scheduled = [];
+      let loadUpdateStatusCalls = 0;
+      const noop = async () => {};
+      const ctx = vm.createContext({
+        document: { addEventListener: () => {} },
+        loadStats: noop,
+        loadPorts: noop,
+        loadProjects: noop,
+        loadModelStatus: noop,
+        loadGroups: noop,
+        loadOpenclawConnections: noop,
+        loadServerInfo: noop,
+        loadSystemHealth: noop,
+        loadUpdateStatus: async () => { loadUpdateStatusCalls++; },
+        setTimeout: (fn, ms) => { scheduled.push({ fn, ms }); }
+      });
+      vm.runInContext(`${liftDeclaration(SRC, 'function startPolling(')}\nstartPolling();`, ctx);
+
+      let entry = scheduled.find((s) => s.ms === 300000);
+      assert.ok(entry, 'loadUpdateStatus must be in the polling loop, or a provisional answer is permanent');
+
+      // Chase three real ticks through the real loop/tick closures: each one
+      // must run loadUpdateStatus and reschedule itself at the same interval.
+      for (let i = 0; i < 3; i++) {
+        await entry.fn();
+        entry = scheduled[scheduled.length - 1];
+        assert.equal(entry.ms, 300000, 'each tick must reschedule at the same interval');
+      }
+      assert.equal(loadUpdateStatusCalls, 3,
+        'loadUpdateStatus must run on every scheduled tick, not just the first');
     });
   });
 });
