@@ -13,36 +13,40 @@
  * is not asked for a fragment.
  *
  * **What satisfies it.** At least one changed file directly under
- * `changelog.d/` whose name {@link parseFragmentName} accepts AND that was
- * actually ADDED to — `gh pr view --json files` carries no change-status
- * field, only an `additions`/`deletions` count per file, so "added" is read
- * from that: nothing removed (`deletions === 0`). A PR that only deletes an
- * existing fragment, or only edits one (removing a line and adding another),
- * does not satisfy the gate by that file — a pure cleanup must not refuse the
- * PR that does it, so a deletion is excluded before the malformed-name check
- * too, not just before the "satisfies it" one. The name is judged, as the
- * wrap's coverage gate judges it; the body is read at release preparation,
- * not here.
+ * `changelog.d/` whose name {@link parseFragmentName} accepts AND whose
+ * GitHub file status is exactly `"added"`. An additions/deletions line
+ * count was tried first and is not proof of added-file status: a PR that
+ * only appends a line to a pre-existing, already-valid fragment shows
+ * `additions: 1, deletions: 0` — identical to a genuinely new file — so a
+ * real git status is required instead (`gh pr view --json files` carries no
+ * such field; the REST `pulls/<pr>/files` endpoint's `status` does). Any
+ * other status — `modified`, `removed`, `renamed`, or missing/unrecognized —
+ * does not satisfy the gate by that file, and is also excluded from the
+ * malformed-name check below: a cleanup that only deletes, renames or edits
+ * an existing entry must not be refused for a naming problem it did not
+ * introduce. The name is judged, as the wrap's coverage gate judges it; the
+ * body is read at release preparation, not here.
  *
  * **The escape.** The PR body carries the exact line `Changelog: none`,
  * followed on the same line by the reason. The line with no reason refuses.
  *
- * **Fail closed, unconditionally.** A malformed name directly under
- * `changelog.d/` on an added or modified file refuses the run even when a
- * valid fragment or the escape is also present — the same "a stray file
- * there is never waved through" rule `lib/wrap-steps/changelog-coverage.js`
- * enforces for the wrap's own gate. An unreadable files list or PR body
- * cannot be judged at all, which is a different exit code (`4`) from a
- * judged refusal (`1`).
+ * **Fail closed, unconditionally.** A malformed name on an ADDED file under
+ * `changelog.d/` refuses the run even when a valid fragment or the escape is
+ * also present — the same "a stray file there is never waved through" rule
+ * `lib/wrap-steps/changelog-coverage.js` enforces for the wrap's own gate.
+ * An unreadable files list or PR body cannot be judged at all, which is a
+ * different exit code (`4`) from a judged refusal (`1`).
  *
  * Usage: node scripts/changelog-fragment-gate.js --pr <number>
  *        node scripts/changelog-fragment-gate.js --files <path> --body-file <path>
- *   --pr <number>        read the PR's changed files and body with
- *                         `gh pr view --json files,body`
+ *   --pr <number>        read the PR's changed files (with real git status)
+ *                         via `gh api repos/{owner}/{repo}/pulls/<number>/files
+ *                         --paginate`, and the body via
+ *                         `gh api repos/{owner}/{repo}/pulls/<number>`
  *   --files <path>        test seam: a JSON file holding an array of
- *                          `gh`-shaped `{path, additions, deletions}`
- *                          objects (a plain string is shorthand for an
- *                          added file), instead of `gh`
+ *                          `{path, status}` objects (`status` one of
+ *                          `added`/`modified`/`removed`/`renamed`; a plain
+ *                          string is shorthand for `{path, status: 'added'}`)
  *   --body-file <path>    test seam: a file holding the PR body text
  * Exit 0: a valid fragment was added, the PR touches no code path, or the
  *   escape line carries a reason.
@@ -92,27 +96,28 @@ function fragmentDirEntry(p) {
 /**
  * Judge a PR's changed files and body against the gate.
  *
- * @param {Array<string|{path:string, additions?:number, deletions?:number}>} files - Changed
- *   entries. A plain string is shorthand for an added file (`additions: 1, deletions: 0`); the
- *   richer shape is `gh pr view --json files`'s own per-file stat, needed to tell an added
- *   fragment from one only deleted or only modified.
+ * @param {Array<string|{path:string, status?:string}>} files - Changed entries. A plain string
+ *   is shorthand for `{path, status: 'added'}`; the richer shape carries GitHub's real file
+ *   status (`added`/`modified`/`removed`/`renamed`), the only way to tell a genuinely new
+ *   fragment from an append-only edit of an existing one.
  * @param {string} body - The PR body text
  * @returns {{ok:boolean, code:number, reason:string}}
  */
 function evaluate(files, body) {
   const changed = (Array.isArray(files) ? files : [])
-    .map((f) => (typeof f === 'string' ? { path: f, additions: 1, deletions: 0 } : f))
+    .map((f) => (typeof f === 'string' ? { path: f, status: 'added' } : f))
     .filter((f) => f && typeof f.path === 'string' && f.path.length > 0)
-    .map((f) => ({ path: f.path, additions: Number(f.additions) || 0, deletions: Number(f.deletions) || 0 }));
+    .map((f) => ({ path: f.path, status: typeof f.status === 'string' ? f.status : null }));
   if (!changed.some((f) => touchesCode(f.path))) {
     return { ok: true, code: 0, reason: 'touches no `lib/`, `server.js`, `public/` or `scripts/` path; no fragment asked' };
   }
 
-  // A deletion (or a modification with any removed lines) is not an ADDED fragment — only an
-  // entry with nothing removed can be. Excluded before the malformed-name check too: removing a
-  // stray leftover file under `changelog.d/` must not refuse the pull request that cleans it up.
+  // Only a file GitHub reports as `added` can be an ADDED fragment. Anything else — modified,
+  // removed, renamed, or a status this gate doesn't recognize — is excluded before the
+  // malformed-name check too: a PR that only deletes, renames or edits an existing entry must
+  // not be refused for a naming problem it did not introduce.
   const fragmentEntries = changed
-    .filter((f) => f.deletions === 0)
+    .filter((f) => f.status === 'added')
     .map((f) => ({ path: f.path, name: fragmentDirEntry(f.path) }))
     .filter((e) => e.name !== null);
 
@@ -141,38 +146,57 @@ function evaluate(files, body) {
 }
 
 /**
- * Read the PR's changed files and body through `gh`.
+ * Read one JSON document from `gh api`.
  *
- * @param {string} prNumber
- * @returns {Promise<{files:Array<{path:string, additions:number, deletions:number}>, body:string}>}
+ * @param {string[]} apiArgs - Arguments after `gh api`
+ * @returns {Promise<*>} The parsed JSON
  * @throws {Unreadable} When `gh` fails or answers with something unparseable
  */
-async function readFromGh(prNumber) {
-  const r = await execFileArgs('gh', ['pr', 'view', prNumber, '--json', 'files,body'], { timeoutMs: 15000, maxBufferBytes: 2 * 1024 * 1024 });
-  if (r.exitCode !== 0) throw new Unreadable(describeFailure(r, 'gh pr view'));
-  let parsed;
+async function _ghApi(apiArgs) {
+  const r = await execFileArgs('gh', ['api', ...apiArgs], { timeoutMs: 15000, maxBufferBytes: 8 * 1024 * 1024 });
+  if (r.exitCode !== 0) throw new Unreadable(describeFailure(r, `gh api ${apiArgs[0]}`));
   try {
-    parsed = JSON.parse(r.stdout);
+    return JSON.parse(r.stdout);
   } catch (err) {
     throw new Unreadable(`gh answered with something that is not JSON: ${err.message}`);
   }
-  const files = Array.isArray(parsed.files)
-    ? parsed.files
-      .filter((f) => f && typeof f.path === 'string')
-      .map((f) => ({ path: f.path, additions: Number(f.additions) || 0, deletions: Number(f.deletions) || 0 }))
+}
+
+/**
+ * Read the PR's changed files (with real git status) and body through `gh api`.
+ *
+ * `gh pr view --json files` carries no change-status field, only a line count — not proof of
+ * added-file status (see the module header). The REST `pulls/<pr>/files` endpoint's `status`
+ * is; `--paginate` covers a PR with more files than one page, merged by `gh` into one JSON array.
+ *
+ * @param {string} prNumber
+ * @returns {Promise<{files:Array<{path:string, status:string}>, body:string}>}
+ * @throws {Unreadable} When `gh` fails or answers with something unparseable
+ */
+async function readFromGh(prNumber) {
+  const filesJson = await _ghApi(['repos/{owner}/{repo}/pulls/' + prNumber + '/files', '--paginate']);
+  const files = Array.isArray(filesJson)
+    ? filesJson
+      .filter((f) => f && typeof f.filename === 'string')
+      .map((f) => ({ path: f.filename, status: typeof f.status === 'string' ? f.status : null }))
     : null;
-  if (files === null) throw new Unreadable('gh\'s answer carried no readable `files` list');
-  if (typeof parsed.body !== 'string') throw new Unreadable('gh\'s answer carried no readable `body`');
-  return { files, body: parsed.body };
+  if (files === null) throw new Unreadable('gh\'s answer carried no readable files list');
+
+  // GitHub's REST API reports `body: null` for a pull request with no description — an empty
+  // body to judge, not an unreadable one, so it is not refused with exit 4.
+  const pr = await _ghApi(['repos/{owner}/{repo}/pulls/' + prNumber]);
+  if (pr.body !== null && typeof pr.body !== 'string') throw new Unreadable('gh\'s answer carried no readable `body`');
+  return { files, body: pr.body === null ? '' : pr.body };
 }
 
 /**
  * Read the files list and body from the test seam's two files.
  *
- * @param {string} filesPath - A JSON file holding an array of `gh pr view --json files`-shaped
- *   `{path, additions, deletions}` objects (a plain string entry is shorthand for an added file)
+ * @param {string} filesPath - A JSON file holding an array of `{path, status}` objects
+ *   (`status` one of `added`/`modified`/`removed`/`renamed`; a plain string entry is shorthand
+ *   for `{path, status: 'added'}`)
  * @param {string} bodyFilePath - A file holding the PR body text
- * @returns {{files:Array<string|{path:string, additions?:number, deletions?:number}>, body:string}}
+ * @returns {{files:Array<string|{path:string, status?:string}>, body:string}}
  * @throws {Unreadable} When either file is unreadable or the files JSON is not an array of strings/objects
  */
 function readFromFiles(filesPath, bodyFilePath) {
@@ -184,7 +208,7 @@ function readFromFiles(filesPath, bodyFilePath) {
   }
   const validEntry = (f) => typeof f === 'string' || (f && typeof f.path === 'string');
   if (!Array.isArray(files) || !files.every(validEntry)) {
-    throw new Unreadable(`--files ${filesPath} must hold a JSON array of strings or {path, additions, deletions} objects`);
+    throw new Unreadable(`--files ${filesPath} must hold a JSON array of strings or {path, status} objects`);
   }
   let body;
   try {

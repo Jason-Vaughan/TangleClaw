@@ -174,9 +174,12 @@ coverage gate in the session that made it, independent of the PR-level gate belo
 
 A single step in `.github/workflows/test.yml`, on `pull_request` only, after the conflict-marker scan
 and before the suite. The script, `scripts/changelog-fragment-gate.js`, reads the pull request's
-changed files and body with `gh pr view --json files,body`; its tests hand it a `--files` and
-`--body-file` pair instead, so no test needs the network. It prints as `scripts/release-prepare.js`
-does.
+changed files (with each one's real git status) via `gh api repos/{owner}/{repo}/pulls/<number>/files
+--paginate` and the body via `gh api repos/{owner}/{repo}/pulls/<number>` — a line-count heuristic
+was tried first and cannot tell a genuinely added fragment from an append-only edit of an existing
+one, which only the real `added`/`modified`/`removed`/`renamed` status can. Its tests hand it a
+`--files` and `--body-file` pair instead, so no test needs the network. It prints as
+`scripts/release-prepare.js` does.
 
 ```yaml
       - name: Require a changelog fragment on a code change

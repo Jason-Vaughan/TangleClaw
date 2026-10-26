@@ -80,8 +80,8 @@ describe('changelog-fragment-gate: evaluate', () => {
   it('refuses a code change that only DELETES an existing fragment (PRR-A F1)', () => {
     const verdict = gate.evaluate(
       [
-        { path: 'lib/store.js', additions: 3, deletions: 0 },
-        { path: 'changelog.d/1220.old-entry.fixed.md', additions: 0, deletions: 5 }
+        { path: 'lib/store.js', status: 'added' },
+        { path: 'changelog.d/1220.old-entry.fixed.md', status: 'removed' }
       ],
       ''
     );
@@ -90,11 +90,26 @@ describe('changelog-fragment-gate: evaluate', () => {
     assert.match(verdict.reason, /no changelog\.d/);
   });
 
-  it('refuses a code change that only MODIFIES an existing fragment, with no added one', () => {
+  it('refuses a code change that only APPENDS to an existing fragment, with no added one (PRR-A F1, append-only)', () => {
+    // The exact case line counts cannot distinguish: additions:1, deletions:0 on a file that
+    // already existed before this PR — identical shape to a genuinely new file.
     const verdict = gate.evaluate(
       [
-        { path: 'lib/store.js', additions: 3, deletions: 0 },
-        { path: 'changelog.d/1220.old-entry.fixed.md', additions: 2, deletions: 1 }
+        { path: 'lib/store.js', status: 'added' },
+        { path: 'changelog.d/1220.valid.md', status: 'modified', additions: 1, deletions: 0 }
+      ],
+      ''
+    );
+    assert.equal(verdict.ok, false);
+    assert.equal(verdict.code, 1);
+    assert.match(verdict.reason, /no changelog\.d/);
+  });
+
+  it('refuses a code change that only RENAMES an existing fragment, with no added one', () => {
+    const verdict = gate.evaluate(
+      [
+        { path: 'lib/store.js', status: 'added' },
+        { path: 'changelog.d/1220.renamed.fixed.md', status: 'renamed' }
       ],
       ''
     );
@@ -105,9 +120,9 @@ describe('changelog-fragment-gate: evaluate', () => {
   it('passes a code change that both deletes one fragment and adds another', () => {
     const verdict = gate.evaluate(
       [
-        { path: 'lib/store.js', additions: 3, deletions: 0 },
-        { path: 'changelog.d/1220.old-entry.fixed.md', additions: 0, deletions: 5 },
-        { path: 'changelog.d/1220.new-entry.fixed.md', additions: 4, deletions: 0 }
+        { path: 'lib/store.js', status: 'added' },
+        { path: 'changelog.d/1220.old-entry.fixed.md', status: 'removed' },
+        { path: 'changelog.d/1220.new-entry.fixed.md', status: 'added' }
       ],
       ''
     );
@@ -118,8 +133,8 @@ describe('changelog-fragment-gate: evaluate', () => {
   it('a pure deletion of a malformed stray file under changelog.d/ does not refuse the cleanup', () => {
     const verdict = gate.evaluate(
       [
-        { path: 'lib/store.js', additions: 3, deletions: 0 },
-        { path: 'changelog.d/README.md', additions: 0, deletions: 2 }
+        { path: 'lib/store.js', status: 'added' },
+        { path: 'changelog.d/README.md', status: 'removed' }
       ],
       'Changelog: none removes a leftover stray file\n'
     );
@@ -127,7 +142,31 @@ describe('changelog-fragment-gate: evaluate', () => {
     assert.equal(verdict.code, 0);
   });
 
-  it('a plain string entry is shorthand for an added file (additions:1, deletions:0)', () => {
+  it('a malformed name on a MODIFIED (not added) file does not refuse the PR', () => {
+    const verdict = gate.evaluate(
+      [
+        { path: 'lib/store.js', status: 'added' },
+        { path: 'changelog.d/not-a-fragment.txt', status: 'modified' }
+      ],
+      'Changelog: none pre-existing stray file, unrelated to this change\n'
+    );
+    assert.equal(verdict.ok, true);
+    assert.equal(verdict.code, 0);
+  });
+
+  it('a missing or unrecognized status does not satisfy the gate', () => {
+    const verdict = gate.evaluate(
+      [
+        { path: 'lib/store.js', status: 'added' },
+        { path: 'changelog.d/1220.x.added.md' }
+      ],
+      ''
+    );
+    assert.equal(verdict.ok, false);
+    assert.equal(verdict.code, 1);
+  });
+
+  it('a plain string entry is shorthand for an added file', () => {
     const verdict = gate.evaluate(['lib/store.js', 'changelog.d/1220.fragment-gate.added.md'], '');
     assert.equal(verdict.ok, true);
     assert.equal(verdict.code, 0);
@@ -198,11 +237,11 @@ describe('changelog-fragment-gate: the CLI over the --files/--body-file seam', (
     assert.ok(out.includes('refused'), out);
   });
 
-  it('exits 1 for a code change that only deletes an existing fragment (the gh-shaped --files form)', () => {
+  it('exits 1 for a code change that only appends to an existing fragment (the status-shaped --files form)', () => {
     const { status, out } = run(
       [
-        { path: 'lib/store.js', additions: 3, deletions: 0 },
-        { path: 'changelog.d/1220.old-entry.fixed.md', additions: 0, deletions: 5 }
+        { path: 'lib/store.js', status: 'added' },
+        { path: 'changelog.d/1220.old-entry.fixed.md', status: 'modified' }
       ],
       ''
     );
