@@ -41,6 +41,32 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-25 — v5.38.0 W2-A: persistent Peek and panel focus
+
+<!-- prawduct: type=fix | scope=w2a-2121-2092-2091 -->
+
+- **#2121:** The dashboard Peek panel survives the 10-second project poll until explicitly toggled. A generation guard rejects an older response after the same project is closed and reopened.
+- **#2092:** Edit group, Kill Tunnel, Web UI, SSH, Remove member/document, and +New Group controls preserve keyboard focus across the 30-second panel poll. Group details restore a displaced focus key only while the operator has not moved focus and that render is still current.
+- **#2091:** The possible VoiceOver/NVDA re-announcement on each focus restore is documented and remains open for live screen-reader verification (VRF-007). No audio behavior was inferred from automated tests.
+
+Exact-head PR #2611 (`868400f83d7cb87d6cb8c104d131a7356c503e62`, tree `40acc5d8b4fdb2b5f28655d5801ea451c9705e7f`) passed Tests run `40253602950`. CI-mode `scripts/record-test-run.js --base main` recorded 23,364 tests / 23,344 pass / 0 fail / 20 skipped, with Prawduct evidence current on the same tree. PRR-B issued final exact-head ACCEPT. The scoped three-file UI test command passed 128 / 0 / 0.
+
+## 2026-10-25 — v5.38.0 W2-B: managed pre-push and isolated browser fixtures
+
+<!-- prawduct: type=internal | scope=w2b-2596-2595-2600 -->
+
+- **#2595:** Managed `pre-push` hooks now call the standalone Stage 1 + Stage 2 gate and block a failing push.
+- **#2596 / #2604:** `scripts/with-scratch-server.js` starts a disposable server with both its database home and `projectsDir` isolated before config loads, then removes both temporary roots after the check.
+- **#2600:** The remote-output callers test mocks `backupSqlite`, so its git-error path is stable in the full Small tier.
+
+**A473-A3 scratch receipt on `main@95e141364cd56985625971a0ae0752f5ee823754` (exit 0):** With the merged `withScratchServer` helper, a temporary `a473-f10-fixture` project was created under the server-reported isolated `projectsDir`; dashboard `/` and `/session/a473-f10-fixture` returned HTTP 200 with the expected cards grid, engine picker, terminal frame and session script. The served UI scripts included launch-intent mint/consume and the shared Windows paste and Master Paste wiring. Both temporary roots were absent after the callback. This was an HTTP/DOM/wiring check: native right-click/new-tab behavior (W1-A F10) and Windows Ctrl+V/dictation and Master Paste interaction (W1-D VRF-006) were not exercised on this macOS host. Those live input checks remain owed at W4-REL/operator verification; see `.prawduct/operator-verification.md`.
+
+## 2026-10-25 — v5.38.0 W2-C: dead exports Batch 3b
+
+<!-- prawduct: type=internal | scope=w2c-2590-dead-exports-batch3b -->
+
+- **#2590:** Retired 24 more unused public export keys across eight library modules while keeping internal declarations. The dead-export baseline shrank from 78 to 54. Batch 4 is tracked as #2607 for v5.39.0.
+
 ## 2026-10-25 — v5.38.0 W1-A: dashboard filters and Launch links
 
 <!-- prawduct: type=fix | scope=w1a-2122-2123-2124 -->
