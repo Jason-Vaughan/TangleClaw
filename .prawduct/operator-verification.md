@@ -1,4 +1,4 @@
-# Operator verification — v5.38.0 Wave 2
+# Operator verification — v5.38.0 Waves 2–3
 
 The A473-A3 isolated scratch-server pass ran on `main@95e141364cd56985625971a0ae0752f5ee823754` with `scripts/with-scratch-server.js` and exited 0. Its server reported the helper's temporary `projectsDir`; a fixture project was created inside that directory. The dashboard and fixture session pages returned HTTP 200 with their expected DOM hosts, and the served scripts contained the launch-intent and terminal-paste wiring. Both temporary home and projects directories were removed after the callback. The pass made no request to the live port 3102 and used no real `~/Documents/Projects` fixture.
 
@@ -21,3 +21,11 @@ Using a safely isolated session on Windows, focus xterm and verify Ctrl+V and vo
 **Status:** pending live screen-reader observation. #2091 remains open.
 
 On the Groups or OpenClaw panel with VoiceOver or NVDA active, focus a fold toggle or an Edit group, Kill Tunnel, Web UI, SSH, or Remove control. Leave the panel open through a full 30-second poll cycle. Record whether the screen reader announces the focused control again on each restore or remains silent when its accessible meaning has not changed. If it repeats, file the follow-up to avoid an unnecessary focus event or preserve the DOM node across the poll. Automated tests for PR #2611 verify focus placement and stale-response guards; they cannot observe spoken announcements.
+
+## #2588 — needs-operator wrap pause, Keep local, and Retry
+
+**Status:** pending manual browser interaction on a live isolated session; #2588 remains open.
+
+On a disposable project and session using the scratch server's isolated home and projects root, create a session-owned file and choose “Review session files before committing” in the wrap modal. Confirm the run visibly pauses `needs-operator` before commit, the drawer renders a Keep local checkbox for that file, and checking it then pressing Retry sends the browser's own request. Confirm the file remains on disk and out of the commit, the run does not pause a second time, and the live installation on port 3102 and real projects root were untouched.
+
+PR #2613's automated test exercised the real isolated HTTP route and pipeline, rendered the Keep local row with a VM-mounted drawer renderer, changed the checkbox's DOM state, and invoked the real `retryWrap` accessor and POST. It did not operate a browser or perform a user click, so it does not satisfy #2588's closure condition.

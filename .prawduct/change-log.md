@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-25 — v5.38.0 W3-B: needs-operator wrap verification
+
+<!-- prawduct: type=internal | scope=w3b-2588-wrap-needs-operator -->
+
+- **#2588:** Added `test/wrap-needs-operator-live.test.js` against an isolated server and real wrap pipeline. It verifies the pre-commit `needs-operator` pause, the owned file on `manifest.commit`, and a Keep-local Retry that moves the file to `manifest.keepLocal` without a second pause or commit. A VM-mounted test runs the real drawer-row renderer and `retryWrap` accessor/POST with a lightweight DOM. The required manual live-session browser click and visual check remain open under #2588.
+
+PR #2613 merged at exact head `cce1034d6484fc40dd63d40723fdc52b96f1b1da` (tree `b40eb9c2388abed0118861585cd8731f308194d0`) after PRR-B final ACCEPT and Tests run `40257249671` SUCCESS. The CI-mode recorder reported 23,367 tests, 0 failures, and tree-valid Prawduct evidence; A473-A6 co-signed the five-file scope. `test/_mini-dom.js` gained the checkbox, selector, and text-node support used by the new UI test.
+
 ## 2026-10-25 — v5.38.0 W2-A: persistent Peek and panel focus
 
 <!-- prawduct: type=fix | scope=w2a-2121-2092-2091 -->
