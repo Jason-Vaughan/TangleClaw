@@ -39,6 +39,7 @@ setLevel('error');
 const store = require('../lib/store');
 const sharedDocRecord = require('../lib/shared-docs');
 const medusa = require('../lib/medusa');
+const master = require('../lib/master');
 const { createServer } = require('../server');
 const { operatorHeaders } = require('./_shared-docs-callers');
 
@@ -168,9 +169,13 @@ describe('a reader gets one shared-doc notice per quiet period (#1108)', () => {
     realGetStatus = realGetStatus || medusa.getStatus;
     realGetMessages = realGetMessages || medusa.getMessages;
 
-    medusa.getStatus = (sessionId) => ({
-      state: 'listening', workspaceId: `ws-${sessionId}`, unread: 0, lastError: null
-    });
+    // The Master defaults to `off` here: this file is about PER-READER
+    // coalescing among project sessions, written before the Master could be
+    // a recipient (#1084) — a blanket "everyone is listening" stub would
+    // otherwise add it as an extra reader to every assertion below.
+    medusa.getStatus = (sessionId) => (sessionId === master.MASTER_MEDUSA_KEY
+      ? { state: 'off', workspaceId: null, unread: 0, lastError: null }
+      : { state: 'listening', workspaceId: `ws-${sessionId}`, unread: 0, lastError: null });
     // The delivery the Bridge makes: the text is echoed verbatim into the
     // recipient's inbox under `from: 'system'`, and stays there until a consumer
     // reports it handled.
@@ -189,6 +194,29 @@ describe('a reader gets one shared-doc notice per quiet period (#1108)', () => {
    * @returns {string} Its workspace id.
    */
   const wsFor = (project) => `ws-${store.sessions.getActive(project.id).id}`;
+
+  /**
+   * Make the Master appear listening for the rest of this test, on top of
+   * the `beforeEach` default (`off`).
+   * @returns {void}
+   */
+  const masterListens = () => {
+    const base = medusa.getStatus;
+    medusa.getStatus = (sessionId) => (sessionId === master.MASTER_MEDUSA_KEY
+      ? { state: 'listening', workspaceId: 'ws-master', unread: 0, lastError: null }
+      : base(sessionId));
+  };
+
+  /**
+   * Set the Master's configured scope for this test.
+   * @param {string|{type: string, groupId: string}} scope - Normalized scope value
+   * @returns {void}
+   */
+  const setMasterScope = (scope) => {
+    const config = store.config.load();
+    config.master = { ...(config.master || {}), scope };
+    store.config.save(config);
+  };
 
   /**
    * How many notices a project's inbox is holding un-handled.
@@ -226,6 +254,35 @@ describe('a reader gets one shared-doc notice per quiet period (#1108)', () => {
       'exactly one send per reader left the process; the other eight never reached the Bridge');
     assert.deepEqual(store.sharedDocDeliveries.summary(store.sharedDocEvents.latest(docId).id), { coalesced: 2 },
       'and the record says why: the fifth revision was coalesced for both readers');
+  });
+
+  it('within the staleness window, an un-handled notice still coalesces exactly as before (#2350, #1108 regression guard)', async () => {
+    // Default coalesceStaleMs (10 minutes) comfortably covers the gap between
+    // two awaited writes in a test, so this is the #1108 contract, unchanged.
+    const first = await change(docId);
+    assert.equal(first.body.notifiedCount, 2);
+    const second = await change(docId);
+    assert.equal(second.body.notifiedCount, 0, 'still within the window: the un-handled notice already says it');
+    assert.equal(second.body.coalescedCount, 2);
+    assert.equal(depth(readerA), 1, 'no second notice landed — coalescing did its job');
+  });
+
+  it('a reader that never handles its mail is told again once its silence passes the staleness bound (#2350)', async () => {
+    const original = sharedDocRecord.limits.coalesceStaleMs;
+    sharedDocRecord.limits.coalesceStaleMs = 0;
+    try {
+      const first = await change(docId);
+      assert.equal(first.body.notifiedCount, 2, 'the first write reaches both readers normally');
+      const second = await change(docId);
+      assert.equal(second.body.notifiedCount, 2,
+        'with no staleness window, the still-un-handled first notice no longer coalesces the second');
+      assert.equal(second.body.coalescedCount, 0);
+      assert.equal(depth(readerA), 2, 'the reader actually received a second, distinct notice, not a suppressed one');
+      assert.equal(sent.length, 4,
+        'two real sends per reader: a reader that never drains its inbox must not go silent forever');
+    } finally {
+      sharedDocRecord.limits.coalesceStaleMs = original;
+    }
   });
 
   it('unchanged bytes notified again are one recorded revision and notify nobody (#2389)', async () => {
@@ -376,5 +433,56 @@ describe('a reader gets one shared-doc notice per quiet period (#1108)', () => {
 
     assert.ok(sent.some((m) => m.to === wsFor(readerA)),
       'an un-matchable notice must not be treated as a match');
+  });
+
+  it('a notice pending with no corresponding sent delivery row still ages off correctly (#2350)', async () => {
+    // Simulates a notice an interrupted-delivery sweep left with no 'sent'
+    // row at all (`recoverDeliveries` marks it `unknown`, never `sent`,
+    // even when the message genuinely reached the Bridge) — the scenario
+    // PRR-B's review named directly: staleness must read the message's own
+    // `sentAt`, not a delivery record that can be missing or wrong.
+    inboxes.set(wsFor(readerA), [{
+      id: 'orphan-1',
+      from: 'system',
+      message: JSON.stringify({
+        type: 'system', event: 'shared_doc_updated', doc: 'BOARD', docId,
+        sentAt: new Date(Date.now() - sharedDocRecord.limits.coalesceStaleMs - 1000).toISOString()
+      })
+    }]);
+
+    const res = await change(docId);
+
+    assert.ok(sent.some((m) => m.to === wsFor(readerA)),
+      'no shared_doc_deliveries row ever recorded this as sent, yet its own timestamp says it is stale enough to send again');
+    assert.equal(res.body.notifiedCount, 2);
+  });
+
+  it('the Master coalesces an un-handled notice the same way a project session does (#1084)', async () => {
+    masterListens();
+    setMasterScope('all');
+    await change(docId);
+    sent.length = 0;
+    await change(docId);
+
+    assert.ok(!sent.some((m) => m.to === 'ws-master'),
+      'the Master still holds the first notice un-handled; a second carries nothing new');
+  });
+
+  it('the Master is told again once its silence passes the staleness bound (#2350)', async () => {
+    masterListens();
+    setMasterScope('all');
+    const original = sharedDocRecord.limits.coalesceStaleMs;
+    sharedDocRecord.limits.coalesceStaleMs = 0;
+    try {
+      await change(docId);
+      sent.length = 0;
+      await change(docId);
+
+      assert.ok(sent.some((m) => m.to === 'ws-master'),
+        'with no staleness window, the Master\'s still-un-handled first notice no longer coalesces the second — ' +
+        'a Master that never drains its inbox must not go silent forever either');
+    } finally {
+      sharedDocRecord.limits.coalesceStaleMs = original;
+    }
   });
 });

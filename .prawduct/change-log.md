@@ -58,6 +58,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   line 41's ruling not to widen the Master's outbound authority as a side
   effect of the wording fix.
 
+## 2026-10-27 — v5.40.0 W1-C: Master shared-doc notices and stale-coalescing fix
+
+<!-- prawduct: type=feature | scope=v540-w1c-2350-1084 -->
+
+- **#1084:** The Project Master now receives shared-doc change notices when it is listening and its configured scope covers the doc's group — best-effort, coalesced the same way a project session's notice is.
+- **#2350:** Coalescing an un-handled notice no longer hides a reader going silent forever: past a 10-minute staleness bound the next write sends anyway instead of coalescing, and a warning names the doc and session so the gap is visible before it reaches hours.
+
 ## 2026-10-26 — v5.39.0 W1-B: CI evidence and mandatory fragments
 
 <!-- prawduct: type=internal | scope=v539-w1b-2371-1220 -->
