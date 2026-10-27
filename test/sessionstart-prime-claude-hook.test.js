@@ -242,6 +242,20 @@ describe('sessionstart-prime-claude.sh hook script (#103)', () => {
     assert.match(out, /recovered\n$/);
   });
 
+  it('consumes the mirror once ingested, so a LATER SessionStart does not replay it (#1733 round 2)', () => {
+    writeHandoffNotesFixture({ mirror: 'one-time notes\n' });
+    const mirrorPath = path.join(projectDir, '.tangleclaw', 'handoff-notes-continuity.md');
+
+    const first = runHook(null);
+    assert.match(first, /one-time notes\n$/, 'shown the first time');
+    assert.equal(fs.existsSync(mirrorPath), false,
+      'the mirror must be removed once shown — otherwise it has no way to ever stop being replayed');
+
+    const second = runHook(null);
+    assert.equal(second, '# Session Prime\n',
+      'a session booting again before the next wrap must not see the same notes twice');
+  });
+
   it('survives an empty CLAUDE_PROJECT_DIR (set, but blank)', () => {
     // Distinct from the unset case: an explicitly-blank env var would set
     // PRIME_FILE='/.tangleclaw/session-prime.md' (root-level path) under naive

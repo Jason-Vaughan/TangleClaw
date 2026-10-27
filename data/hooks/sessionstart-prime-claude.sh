@@ -65,6 +65,13 @@ fi
 # SessionStart — the mirror is read instead, so the notes are not lost. The
 # live file wins whenever it still has content: this is a fallback, not a
 # second copy to show alongside it.
+#
+# Consumed once ingested (round 2): without removing it here, the SAME mirror
+# would be replayed at every later SessionStart until the next wrap happens to
+# overwrite or clear it — including a `/clear` or a fresh launch that has
+# nothing to do with the session the notes were written for. Removing it the
+# moment it is shown bounds the replay to exactly once, matching prawduct's
+# own "only `/clear` consumes it" contract for the live file.
 HANDOFF_NOTES_LIVE="${CLAUDE_PROJECT_DIR:-}/.prawduct/.handoff-notes.md"
 HANDOFF_NOTES_MIRROR="${CLAUDE_PROJECT_DIR:-}/.tangleclaw/handoff-notes-continuity.md"
 if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "$HANDOFF_NOTES_MIRROR" ] && [ -r "$HANDOFF_NOTES_MIRROR" ] && [ ! -s "$HANDOFF_NOTES_LIVE" ]; then
@@ -74,6 +81,7 @@ if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "$HANDOFF_NOTES_MIRROR" ] && [ -r "$
   echo "# Forward notes from the last wrap (recovered — .prawduct/.handoff-notes.md was already gone)"
   echo ""
   cat "$HANDOFF_NOTES_MIRROR" || true
+  rm -f "$HANDOFF_NOTES_MIRROR" || true
 fi
 
 exit 0

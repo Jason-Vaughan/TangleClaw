@@ -53,6 +53,77 @@ async function _assertGoneSoon(pid, timeoutMs) {
   }
 }
 
+/**
+ * A script for a grandchild that explicitly ignores `SIGTERM` and otherwise
+ * just stays alive — only `SIGKILL` can end it.
+ */
+const TERM_IGNORING_GRANDCHILD_SCRIPT = 'process.on("SIGTERM",()=>{});setInterval(()=>{},1000)';
+
+/**
+ * Write a fixture for the "SIGTERM-ignoring descendant" scenario: the
+ * grandchild's own script on disk, and the DIRECT-child script (what
+ * `execShell`/`execFileArgs` tracks) that spawns it WITHOUT `detached` — so
+ * it joins this process's own process group (standard `fork()` inheritance,
+ * same as a shell's backgrounded job would) — then writes its pid to
+ * `markerFile` and stays alive itself. The direct child does NOT trap
+ * `SIGTERM`, so unlike its grandchild it dies immediately once signalled —
+ * which is exactly the gap #1503's round 2 is about: the one child Node
+ * holds a handle to can die long before the rest of its process group does.
+ *
+ * Both scripts live in files on disk, referenced by path, rather than being
+ * embedded inline or passed through `env`: the `test`/`lint` step wrappers
+ * this file drives `execShell` through do not forward `options.env` (only
+ * `cwd`/`timeoutMs`/`maxBufferBytes`), and a file path is also one layer
+ * simpler to get right than nesting an `-e` script inside a shell-quoted `-e`
+ * script.
+ *
+ * Built entirely in Node rather than shell (`trap '' TERM; ...`) because a
+ * shell's own job-control handling of a backgrounded job changes how and
+ * when ITS OWN process dies on `SIGTERM` in ways that turned out to mask
+ * exactly the race this is meant to expose — confirmed by running this same
+ * scenario against the pre-round-2 implementation, where this construction
+ * reproduces the bug and the shell-`trap` construction did not.
+ *
+ * @param {string} suffix - Distinguishes this run's fixture files from a
+ *   concurrent one.
+ * @returns {{parentScriptFile: string, markerFile: string, cleanup: () => void}}
+ */
+function _writeTermSurvivingFixture(suffix) {
+  const gcScriptFile = path.join(os.tmpdir(), `tc-exec-term-gc-${suffix}.js`);
+  const parentScriptFile = path.join(os.tmpdir(), `tc-exec-term-parent-${suffix}.js`);
+  const markerFile = path.join(os.tmpdir(), `tc-exec-term-marker-${suffix}.pid`);
+  fs.writeFileSync(gcScriptFile, TERM_IGNORING_GRANDCHILD_SCRIPT, 'utf8');
+  fs.writeFileSync(parentScriptFile, [
+    'const { spawn } = require("child_process");',
+    'const fs = require("fs");',
+    `const gc = spawn(process.execPath, [${JSON.stringify(gcScriptFile)}], { stdio: "ignore" });`,
+    `fs.writeFileSync(${JSON.stringify(markerFile)}, String(gc.pid));`,
+    'setInterval(() => {}, 1000);'
+  ].join('\n'), 'utf8');
+  return {
+    parentScriptFile,
+    markerFile,
+    cleanup: () => {
+      for (const f of [gcScriptFile, parentScriptFile, markerFile]) fs.rmSync(f, { force: true });
+    }
+  };
+}
+
+/**
+ * Assert that the pid written to `markerFile` is confirmed dead with NO
+ * polling grace: #1503's own wording is "whole tree gone BEFORE execShell
+ * resolves", so by the time the caller's `await` has already returned, it
+ * must already be true — not eventually, after some slack.
+ * @param {string} markerFile
+ * @returns {void}
+ */
+function _assertAlreadyDead(markerFile) {
+  const pid = Number(fs.readFileSync(markerFile, 'utf8').trim());
+  assert.ok(Number.isInteger(pid) && pid > 0, 'the SIGTERM-ignoring descendant pid was captured');
+  assert.throws(() => process.kill(pid, 0), (err) => err.code === 'ESRCH',
+    'a SIGTERM-ignoring descendant must be confirmed dead before the promise resolves, not merely signalled');
+}
+
 describe('wrap exec shell — a killed command is named as killed (#894)', () => {
   for (const [label, step] of [['test', testStep], ['lint', lintStep]]) {
     describe(`${label} step`, () => {
@@ -101,6 +172,21 @@ describe('wrap exec shell — a killed command is named as killed (#894)', () =>
         }
       });
 
+      it('confirms a SIGTERM-ignoring descendant is dead BEFORE the promise resolves, not merely signalled (#1503 round 2)', async () => {
+        const { parentScriptFile, markerFile, cleanup } = _writeTermSurvivingFixture(`${label}-${process.pid}`);
+        try {
+          const result = await step._internal.execShell(
+            `"${process.execPath}" "${parentScriptFile}"`,
+            { cwd: os.tmpdir(), timeoutMs: SHORT_TIMEOUT_MS }
+          );
+
+          assert.equal(result.timedOut, true, 'still reported as a timeout');
+          _assertAlreadyDead(markerFile);
+        } finally {
+          cleanup();
+        }
+      });
+
       it('names an output overflow instead of reporting a silent failure', async () => {
         // The reachable non-numeric code, and why `typeof err.code !== 'number'`
         // replaced `err.code === undefined`: a suite chatty enough to exceed
@@ -142,6 +228,21 @@ describe('wrap exec shell — a killed command is named as killed (#894)', () =>
         await _assertGoneSoon(grandchildPid, 2000);
       } finally {
         fs.rmSync(markerFile, { force: true });
+      }
+    });
+
+    it('confirms a SIGTERM-ignoring descendant is dead before resolving, too (#1503 round 2)', async () => {
+      const { parentScriptFile, markerFile, cleanup } = _writeTermSurvivingFixture(`argv-${process.pid}`);
+      try {
+        const result = await execFileArgs(
+          process.execPath, [parentScriptFile],
+          { cwd: os.tmpdir(), timeoutMs: SHORT_TIMEOUT_MS }
+        );
+
+        assert.equal(result.timedOut, true, 'still reported as a timeout');
+        _assertAlreadyDead(markerFile);
+      } finally {
+        cleanup();
       }
     });
   });

@@ -372,6 +372,53 @@ describe('the handoff-stage wrap step', () => {
         'the live file is prawduct\'s to manage — this only ever reads it');
     });
 
+    it('clears an earlier mirror once a LATER wrap has no live notes to carry (#1733 round 2)', async () => {
+      // Wrap #1 wrote real notes and they were correctly mirrored.
+      fs.mkdirSync(path.join(project.path, '.prawduct'), { recursive: true });
+      fs.writeFileSync(notesPath(), '# stale\nold handoff from wrap 1\n');
+      await stageStep.run(ctx({ wrapRunId: 'run-1' }));
+      assert.equal(fs.readFileSync(mirrorPath(), 'utf8'), '# stale\nold handoff from wrap 1\n');
+
+      // The session consumed/cleared the live notes itself before wrap #2 —
+      // this wrap's own end state is "nothing to hand off".
+      fs.rmSync(notesPath());
+
+      await stageStep.run(ctx({ wrapRunId: 'run-2' }));
+
+      assert.equal(fs.existsSync(mirrorPath()), false,
+        'a mirror from an earlier wrap must not outlive a later wrap that had nothing to carry — ' +
+        'otherwise it would be replayed at every SessionStart indefinitely, with nothing left to ever clear it');
+    });
+
+    it('also clears an earlier mirror when the live file is present but blank', async () => {
+      fs.mkdirSync(path.join(project.path, '.prawduct'), { recursive: true });
+      fs.writeFileSync(notesPath(), 'real notes\n');
+      await stageStep.run(ctx({ wrapRunId: 'run-1' }));
+      assert.equal(fs.existsSync(mirrorPath()), true);
+
+      fs.writeFileSync(notesPath(), '   \n');
+      await stageStep.run(ctx({ wrapRunId: 'run-2' }));
+
+      assert.equal(fs.existsSync(mirrorPath()), false);
+    });
+
+    it('leaves an existing mirror alone on a non-ENOENT read failure — that is not a legitimate "absent"', async () => {
+      fs.mkdirSync(path.join(project.path, '.prawduct'), { recursive: true });
+      fs.writeFileSync(notesPath(), 'real notes\n');
+      await stageStep.run(ctx({ wrapRunId: 'run-1' }));
+      assert.equal(fs.readFileSync(mirrorPath(), 'utf8'), 'real notes\n');
+
+      // A directory where the live file should be: EISDIR, not ENOENT — an
+      // ambiguous failure that says nothing about whether notes exist.
+      fs.rmSync(notesPath());
+      fs.mkdirSync(notesPath());
+
+      await stageStep.run(ctx({ wrapRunId: 'run-2' }));
+
+      assert.equal(fs.readFileSync(mirrorPath(), 'utf8'), 'real notes\n',
+        'a non-ENOENT read failure must not be treated the same as a legitimate absence');
+    });
+
     it('_mirrorPrawductHandoffNotes is best-effort: a write failure is swallowed, not thrown', () => {
       fs.mkdirSync(path.join(project.path, '.prawduct'), { recursive: true });
       fs.writeFileSync(notesPath(), 'x\n');
