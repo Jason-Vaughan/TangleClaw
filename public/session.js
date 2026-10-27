@@ -1657,14 +1657,37 @@ function renderPermissionRequestsPanel(requests) {
   panel.innerHTML = `${head}${rows}`;
 }
 
-/** Open/close the pending-permissions panel (the chip click). @returns {void} */
+/**
+ * Close the pending-permissions panel. Idempotent — safe for a sibling
+ * popover's open path, or the outside-click handler, to call unconditionally.
+ * @returns {void}
+ */
+function closePermissionRequestsPanel() {
+  const panel = document.getElementById('permissionRequestsPanel');
+  const chip = document.getElementById('permissionRequestsChip');
+  if (panel) panel.hidden = true;
+  if (chip) chip.setAttribute('aria-expanded', 'false');
+}
+
+/**
+ * Open/close the pending-permissions panel (the chip click). On open, closes
+ * every sibling popover in the Medusa control cluster first, the same way
+ * `openMedusaLoopsPanel` already does for its own siblings — so this panel
+ * and a sibling can never both be open at once.
+ * @returns {void}
+ */
 function togglePermissionRequestsPanel() {
   const panel = document.getElementById('permissionRequestsPanel');
   const chip = document.getElementById('permissionRequestsChip');
   if (!panel) return;
-  panel.hidden = !panel.hidden;
-  if (chip) chip.setAttribute('aria-expanded', panel.hidden ? 'false' : 'true');
-  if (!panel.hidden) renderPermissionRequestsPanel(sessionState.permissionRequests);
+  if (!panel.hidden) { closePermissionRequestsPanel(); return; }
+  closeMedusaInbox();
+  hideMedusaPeers();
+  closeMedusaLoopModal();
+  closeMedusaLoopsPanel();
+  panel.hidden = false;
+  if (chip) chip.setAttribute('aria-expanded', 'true');
+  renderPermissionRequestsPanel(sessionState.permissionRequests);
 }
 
 /**
@@ -2014,6 +2037,7 @@ async function openMedusaLoopsPanel() {
   closeMedusaInbox();
   hideMedusaPeers();
   closeMedusaLoopModal();
+  closePermissionRequestsPanel();
   panel.hidden = false;
   const chip = document.getElementById('medusaLoopsChip');
   if (chip) chip.setAttribute('aria-expanded', 'true');
@@ -7717,6 +7741,8 @@ function bindEvents() {
     // v2 T4 — the loops panel dismisses on outside click like the inbox/peers
     // popovers, which the shared control now handles for itself in `mount()`.
     if (!clickHitsSelector(e, '.medusa-control')) closeMedusaLoopsPanel();
+    // #2352 — same rule, same cluster.
+    if (!clickHitsSelector(e, '.medusa-control')) closePermissionRequestsPanel();
   });
 
   // Medusa session-comms control (MED-2K9P Chunk 02): heads = toggle listener,
@@ -7801,7 +7827,7 @@ function bindEvents() {
   const permissionRequestsPanel = $('permissionRequestsPanel');
   if (permissionRequestsPanel) {
     permissionRequestsPanel.addEventListener('click', (e) => {
-      if (e.target.closest('.permission-requests-close')) { togglePermissionRequestsPanel(); return; }
+      if (e.target.closest('.permission-requests-close')) { closePermissionRequestsPanel(); return; }
       const btn = e.target.closest('.permission-request-grant, .permission-request-refuse');
       if (!btn) return;
       const row = btn.closest('.permission-request-row');
@@ -7816,7 +7842,7 @@ function bindEvents() {
     const loopsPanel = $('medusaLoopsPanel');
     if (loopsPanel && !loopsPanel.hidden) closeMedusaLoopsPanel();
     const permissionRequestsPanelEsc = $('permissionRequestsPanel');
-    if (permissionRequestsPanelEsc && !permissionRequestsPanelEsc.hidden) togglePermissionRequestsPanel();
+    if (permissionRequestsPanelEsc && !permissionRequestsPanelEsc.hidden) closePermissionRequestsPanel();
     const catcher = $('pasteCatcher');
     if (catcher && catcher.classList.contains('open')) closePasteCatcher();
     // Pill details open from the keyboard (Enter/Space), so they must close

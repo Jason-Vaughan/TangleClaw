@@ -55,7 +55,14 @@ function load(options = {}) {
       calls.apiMutate.push({ url, method, body });
       return (options.apiMutateImpl || (() => ({ ok: true })))(url, method, body);
     },
-    showBannerActionToast: (message, isError) => { toasts.push({ message, isError }); }
+    showBannerActionToast: (message, isError) => { toasts.push({ message, isError }); },
+    // Sibling popovers from the shared Medusa control cluster — not this
+    // file's concern (they have their own tests), but togglePermissionRequestsPanel
+    // closes them on open per R-3, so the lifted function needs them to exist.
+    closeMedusaInbox: () => { calls.closedSiblings = (calls.closedSiblings || []).concat('inbox'); },
+    hideMedusaPeers: () => { calls.closedSiblings = (calls.closedSiblings || []).concat('peers'); },
+    closeMedusaLoopModal: () => { calls.closedSiblings = (calls.closedSiblings || []).concat('loopModal'); },
+    closeMedusaLoopsPanel: () => { calls.closedSiblings = (calls.closedSiblings || []).concat('loopsPanel'); }
   };
   sandbox.api.lastError = null;
   vm.createContext(sandbox);
@@ -64,11 +71,13 @@ function load(options = {}) {
     liftDeclaration(SESSION_SRC, 'async function pollPermissionRequests()'),
     liftDeclaration(SESSION_SRC, 'function renderPermissionRequestsChip(requests)'),
     liftDeclaration(SESSION_SRC, 'function renderPermissionRequestsPanel(requests)'),
+    liftDeclaration(SESSION_SRC, 'function closePermissionRequestsPanel()'),
     liftDeclaration(SESSION_SRC, 'function togglePermissionRequestsPanel()'),
     liftDeclaration(SESSION_SRC, 'async function decidePermissionRequestFromUi(requestId, decision, expectedScope)'),
     'globalThis.pollPermissionRequests = pollPermissionRequests;',
     'globalThis.renderPermissionRequestsChip = renderPermissionRequestsChip;',
     'globalThis.renderPermissionRequestsPanel = renderPermissionRequestsPanel;',
+    'globalThis.closePermissionRequestsPanel = closePermissionRequestsPanel;',
     'globalThis.togglePermissionRequestsPanel = togglePermissionRequestsPanel;',
     'globalThis.decidePermissionRequestFromUi = decidePermissionRequestFromUi;'
   ].join('\n'), sandbox);
@@ -120,6 +129,22 @@ describe('#2352 session page: pending-permissions chip + panel', () => {
     sandbox.togglePermissionRequestsPanel();
     assert.equal(el.permissionRequestsPanel.hidden, true);
     assert.equal(el.permissionRequestsChip.getAttribute('aria-expanded'), 'false');
+  });
+
+  it('opening closes every sibling popover in the Medusa control cluster first (R-3)', () => {
+    const { sandbox, calls } = load();
+    sandbox.togglePermissionRequestsPanel();
+    assert.deepEqual(calls.closedSiblings.sort(), ['inbox', 'loopModal', 'loopsPanel', 'peers']);
+  });
+
+  it('closePermissionRequestsPanel is idempotent and is what the outside-click handler is wired to', () => {
+    const { el, sandbox } = load();
+    sandbox.closePermissionRequestsPanel();
+    assert.equal(el.permissionRequestsPanel.hidden, true);
+    sandbox.togglePermissionRequestsPanel();
+    sandbox.closePermissionRequestsPanel();
+    assert.equal(el.permissionRequestsPanel.hidden, true);
+    assert.match(SESSION_SRC, /closePermissionRequestsPanel\(\);\s*\n\s*}\);/, 'bound in the outside-click handler');
   });
 
   it('a successful decide refreshes the panel from the server and shows no toast', async () => {
@@ -176,8 +201,8 @@ describe('#2352 session page: pending-permissions chip + panel', () => {
     assert.match(SESSION_SRC, /decidePermissionRequestFromUi\(row\.dataset\.requestId, btn\.dataset\.decision, row\.dataset\.scope\)/);
   });
 
-  it('Escape closes the panel via the same toggle an open panel already behaves correctly through', () => {
+  it('Escape closes the panel via the dedicated close function', () => {
     const keydown = liftDeclaration(SESSION_SRC, "document.addEventListener('keydown', (e) => {");
-    assert.match(keydown, /permissionRequestsPanelEsc && !permissionRequestsPanelEsc\.hidden\) togglePermissionRequestsPanel\(\)/);
+    assert.match(keydown, /permissionRequestsPanelEsc && !permissionRequestsPanelEsc\.hidden\) closePermissionRequestsPanel\(\)/);
   });
 });

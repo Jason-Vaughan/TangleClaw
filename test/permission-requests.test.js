@@ -195,6 +195,38 @@ describe('createPermissionRequest', () => {
     assert.match(result.message, /actionSummary/);
   });
 
+  it('refuses a non-string field rather than letting it reach the DB layer', () => {
+    const session = startSession(PROJECT_A, 'launch-badtype-string');
+    const result = permissionRequests.createPermissionRequest({
+      idemKey: 'idem-badtype', projectId: PROJECT_A, sessionId: session.id, launchId: 'launch-badtype-string',
+      scope: { not: 'a string' }, scopeTarget: 'origin/main', gate: 'g', actionSummary: 'x', ttlMs: MINUTE
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'PERMISSION_REQUEST_INVALID');
+    assert.match(result.message, /scope/);
+  });
+
+  it('refuses a non-numeric ttlMs rather than throwing out of Date construction', () => {
+    const session = startSession(PROJECT_A, 'launch-badtype-ttl');
+    const result = permissionRequests.createPermissionRequest({
+      idemKey: 'idem-badttl', projectId: PROJECT_A, sessionId: session.id, launchId: 'launch-badtype-ttl',
+      scope: 's', scopeTarget: 't', gate: 'g', actionSummary: 'x', ttlMs: 'soon'
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'PERMISSION_REQUEST_INVALID');
+    assert.match(result.message, /ttlMs/);
+  });
+
+  it('refuses a non-positive ttlMs', () => {
+    const session = startSession(PROJECT_A, 'launch-badtype-ttl-neg');
+    const result = permissionRequests.createPermissionRequest({
+      idemKey: 'idem-badttl-neg', projectId: PROJECT_A, sessionId: session.id, launchId: 'launch-badtype-ttl-neg',
+      scope: 's', scopeTarget: 't', gate: 'g', actionSummary: 'x', ttlMs: 0
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'PERMISSION_REQUEST_INVALID');
+  });
+
   it('is idempotent on (projectId, idemKey): a repeat create returns the same row, not a second one', () => {
     const session = startSession(PROJECT_A, 'launch-idem');
     const first = permissionRequests.createPermissionRequest({
