@@ -35,7 +35,7 @@ const store = require('../lib/store');
 const medusa = require('../lib/medusa');
 const master = require('../lib/master');
 const medusaExchanges = require('../lib/medusa-exchanges');
-const { createServer } = require('../server');
+const { createServer, _exchangeCaller } = require('../server');
 const { operatorHeaders } = require('./_shared-docs-callers');
 
 const NO_FLEET = async () => ({ refreshed: false, count: 0 });
@@ -851,6 +851,18 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
       { to: 'proj-ws', message: 'on it', inReplyTo: 'hub-not-mine' }, MASTER_PANE);
     assert.equal(status, 404);
     assert.equal(data.code, 'REPLY_TARGET_UNKNOWN');
+  });
+
+  it('exchangeCaller resolves a verified Master only when the route target has no project (A475-W1D-R1)', () => {
+    // Every current consumer of {kind: 'master'} (validateSendMeta's
+    // _isVerifiedMaster, close()'s _isMasterSend) independently re-derives
+    // this same restriction from the sender/row shape, so no HTTP response
+    // currently differs whether this guard is present or not — the only way
+    // to observe the guard ITSELF, rather than its (currently redundant)
+    // downstream safety nets, is to call the resolver directly.
+    const fakeReq = { headers: { 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': MASTER_LAUNCH_ID } };
+    assert.deepEqual(_exchangeCaller(fakeReq, null), { kind: 'master' }, 'the Master\'s own mount (no project target)');
+    assert.deepEqual(_exchangeCaller(fakeReq, 10), { kind: 'unbound' }, 'a project\'s own mount, even with Master-role headers');
   });
 
   it('the Master close mount refuses an unbound caller, and refuses the Master an exchange a project sent (#2554)', async () => {
