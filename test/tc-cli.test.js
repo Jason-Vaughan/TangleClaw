@@ -159,6 +159,28 @@ describe('tc CLI vertical slice (ambient-awareness Chunk 02)', () => {
       }
     });
 
+    it('a resolved session with no registry binding reports workspaceId null, never a stale claim (R-Gate round 2)', async () => {
+      store.projectConfig.save(project.path, { medusaEnabled: true });
+      const bound = bindProject(project);
+      try {
+        // No ensureWorkspaceId call: the registry has nothing recorded for
+        // this session — the exact state right after a session starts,
+        // before Medusa first mints it an id. The real send path needs a
+        // live listener for this session (lib/medusa.js), so a stale claim
+        // must not make whoami advertise a binding that cannot work.
+        const res = await request(server, 'GET', `/api/tc/whoami?projectId=${project.id}&workspaceId=stale-ws-id`);
+        assert.equal(res.status, 200);
+        assert.equal(res.body.workspaceId, null,
+          'an absent registry entry for a resolved session must not fall back to the caller\'s stale claim');
+        const sb = res.body.capabilities.find((c) => c.id === 'switchboard');
+        assert.equal(sb.enabled, false,
+          'switchboard reports disabled rather than advertising a binding the send path cannot corroborate');
+      } finally {
+        store.sessions.kill(bound.sessionId, 'test cleanup');
+        store.projectConfig.save(project.path, { medusaEnabled: false });
+      }
+    });
+
     it('an unresolvable project still records a receipt — the signal is "the CLI was invoked at all"', async () => {
       const before2 = store.awarenessReceipts.listForProject(project.id).length;
       const res = await request(server, 'GET', '/api/tc/whoami?projectId=999999');
