@@ -41,7 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
-## 2026-10-27 — v5.41.0 W4-REL: prepare the release candidate
+## 2026-10-27 — v5.42.0 W1-B: post-READY reconciliation and durable readiness receipt (#2191, #1877, #1596)
+
+<!-- prawduct: type=fix | scope=w1b-2191-1877-1596 -->
+
+- **#2191:** An attested launch (`ready_at IS NOT NULL`) that still shows live governing-rule/shared-doc drift can now append a reconciliation (`tc start ready --reconciliation`) instead of being refused `READY_CONFLICT`. The append is additive and idempotent on `(sequence_id, revision, drift_digest)` in the new `launch_reconciliations` table; the original attestation is never rewritten, and `tc start status` stops reporting the drift as owed once it is recorded.
+- **#1877:** `tc start ready` now emits an idempotent durable readiness receipt into the new `launch_readiness_receipts` table, atomically inside the `markReady` transaction, keyed on `(sequence_id, revision, assignment_id)`. The recipient project is resolved strictly from durable `control_assignments`/`coordinator_roles` data, never a nickname. The Medusa projection of the receipt is deferred past this car (recorded honestly as `projection_state: 'skipped'`, with the resolved recipient and workspace kept on the row for the follow-up) — wiring an actual send belongs to `lib/medusa-exchanges.js`, outside this car's authorized scope.
+- **#1596:** `last_unready_verdict`/`last_unready_verdict_at` provisioned on `launch_sequences` in this same schema bump (v71), so W2-B (the car that writes them) makes zero further edits to `lib/store/_schema.js`.
+- Scope note: `lib/store.js`'s facade wiring (the require-destructure and the two `store.launchReconciliations`/`store.launchReadinessReceipts` export lines) was edited beyond this car's 10 named files — a structural necessity, since `lib/store/launch.js`'s two new APIs are otherwise unreachable through `store.*`. Flagged in the PR body for the Integrator/PM to judge.
 
 <!-- prawduct: type=internal | scope=v541-w4-rel -->
 

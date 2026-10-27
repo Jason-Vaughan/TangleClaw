@@ -643,4 +643,180 @@ describe('launch sequence attestation (Train 21, Chunk 02)', () => {
       assert.ok(!listed.some((s) => s.sessionId === theirs.session.id));
     });
   });
+
+  describe('a post-READY reconciliation against live drift (#2191, Architect ruling A477-COSIGN-20261027T2307Z)', () => {
+    /**
+     * Stamp a sequence's frozen sourceManifest with a ruleDrift as if a
+     * shared document had been added since the previous handoff — the one
+     * `_reconciliationRequired` trigger that can still be outstanding after
+     * READY (every other trigger clears inside the READY transaction
+     * itself, before this car).
+     * @param {number} sequenceId - Launch sequence id
+     * @returns {void}
+     */
+    function stampLiveDrift(sequenceId) {
+      const row = store.getDb().prepare('SELECT source_manifest FROM launch_sequences WHERE id = ?').get(sequenceId);
+      const manifest = JSON.parse(row.source_manifest);
+      manifest.ruleDrift = {
+        recorded: true,
+        added: [{ source: 'shared', id: 'doc-1', label: 'shared document V5_30_RELEASE_SOURCE_OF_TRUTH' }],
+        removed: [],
+        changed: [],
+        perSource: { project: 'unchanged', global: 'unchanged', shared: 'changed' },
+        unmeasured: { before: [], after: [] },
+        hasDrift: true,
+        comparedSources: ['project', 'global', 'shared']
+      };
+      store.getDb().prepare('UPDATE launch_sequences SET source_manifest = ? WHERE id = ?')
+        .run(JSON.stringify(manifest), sequenceId);
+    }
+
+    it('appends a reconciliation against live drift rather than refusing, and never rewrites the original attestation', () => {
+      const { id } = launched('post-ready-append');
+      ackEverything(id);
+      const sequence = store.launchSequences.getByLaunchId(id.launchId);
+      const artifact = artifactFor(sequence);
+      const first = launchSequence.ready({ ...id, artifact });
+      assert.equal(first.status, 200);
+      const originalReadyAt = first.body.readyAt;
+      const originalArtifact = store.launchSequences.getByLaunchId(id.launchId).readyArtifact;
+
+      stampLiveDrift(sequence.id);
+      const before = launchSequence.status(id).body;
+      assert.match(before.readiness.reconciliationRequired, /the governing rules changed/,
+        'status now reports the live drift, even though this launch is already attested');
+
+      const text = 'A shared document was added after I attested; I read it and nothing I committed to depends on its content.';
+      const appended = launchSequence.ready({ ...id, artifact: artifactFor(sequence, { reconciliation: text }) });
+      assert.equal(appended.status, 200);
+      assert.equal(appended.body.reconciled, true);
+      assert.equal(appended.body.readyAt, originalReadyAt, 'the original attestation timestamp is untouched');
+
+      const stored = store.launchSequences.getByLaunchId(id.launchId);
+      assert.deepEqual(stored.readyArtifact, originalArtifact, 'ready_artifact is never rewritten by an appended reconciliation');
+      assert.equal(stored.readyAt, originalReadyAt);
+
+      const after = launchSequence.status(id).body;
+      assert.equal(after.readiness.reconciliationRequired, null, 'recording it clears the line');
+
+      const recorded = store.launchReconciliations.listForSequence(sequence.id);
+      assert.equal(recorded.length, 1);
+      assert.equal(recorded[0].reconciliation, text);
+    });
+
+    it('is idempotent: appending the same drift twice records it once', () => {
+      const { id } = launched('post-ready-append-idempotent');
+      ackEverything(id);
+      const sequence = store.launchSequences.getByLaunchId(id.launchId);
+      launchSequence.ready({ ...id, artifact: artifactFor(sequence) });
+      stampLiveDrift(sequence.id);
+      const text = 'A reconciliation of at least forty characters about the drift stamped above.';
+      const first = launchSequence.ready({ ...id, artifact: artifactFor(sequence, { reconciliation: text }) });
+      assert.equal(first.status, 200);
+      const second = launchSequence.ready({ ...id, artifact: artifactFor(sequence, { reconciliation: text }) });
+      assert.equal(second.status, 200);
+      assert.equal(store.launchReconciliations.listForSequence(sequence.id).length, 1,
+        'the same (sequence, revision, drift digest) is not recorded twice');
+    });
+
+    it('falls through to the ordinary conflict check when there is no live drift to reconcile', () => {
+      const { id } = launched('post-ready-no-drift');
+      ackEverything(id);
+      const sequence = store.launchSequences.getByLaunchId(id.launchId);
+      launchSequence.ready({ ...id, artifact: artifactFor(sequence) });
+      // Reconciliation text supplied, but no drift stamped: there is nothing
+      // outstanding to append against, so this is read as re-attesting with a
+      // different artifact — a genuine conflict, not a reconciliation.
+      const replay = launchSequence.ready({
+        ...id,
+        artifact: artifactFor(sequence, { reconciliation: 'A reconciliation nobody asked for, forty-plus characters long.' })
+      });
+      assert.equal(replay.status, 409);
+      assert.equal(replay.body.code, 'READY_CONFLICT');
+      assert.equal(store.launchReconciliations.listForSequence(sequence.id).length, 0);
+    });
+
+    it('still refuses a conflicting artifact with no reconciliation once drift is live', () => {
+      const { id } = launched('post-ready-conflict-baseline');
+      ackEverything(id);
+      const sequence = store.launchSequences.getByLaunchId(id.launchId);
+      const artifact = artifactFor(sequence);
+      assert.equal(launchSequence.ready({ ...id, artifact }).status, 200);
+      stampLiveDrift(sequence.id);
+      const conflict = launchSequence.ready({ ...id, artifact: { ...artifact, proposedFirstAction: 'something else entirely' } });
+      assert.equal(conflict.status, 409);
+      assert.equal(conflict.body.code, 'READY_CONFLICT');
+    });
+  });
+
+  describe('the durable readiness receipt (#1877, same ruling)', () => {
+    it('emits exactly one receipt on a fresh READY, resolving the recipient from durable control_assignments/coordinator_roles data', () => {
+      const pm = makeProject('pm-project-for-receipt');
+      store.coordinatorRoles.grant({
+        roleId: 'role-pm-receipt-1', projectId: pm.id, role: 'project-manager', note: null, now: new Date(0).toISOString()
+      });
+      const { id, project } = launched('receipt-fresh-ready');
+      store.control.insertAssignment({
+        assignment_id: 'asg-receipt-1', project_id: project.id,
+        authority_json: JSON.stringify({ lifecycle: [`project:${pm.id}`] }),
+        state: 'active', state_generation: 1, created_by_kind: 'operator'
+      });
+      ackEverything(id);
+      const sequence = store.launchSequences.getByLaunchId(id.launchId);
+      const answer = launchSequence.ready({ ...id, artifact: artifactFor(sequence) });
+      assert.equal(answer.status, 200);
+
+      const receipts = store.launchReadinessReceipts.listForSequence(sequence.id);
+      assert.equal(receipts.length, 1, 'exactly one receipt for this READY');
+      assert.equal(receipts[0].assignmentId, 'asg-receipt-1');
+      assert.equal(receipts[0].recipientProjectId, pm.id,
+        'the recipient is resolved from the durable assignment/coordinator-role data, not a nickname');
+      assert.equal(receipts[0].revision, sequence.revision);
+      assert.equal(receipts[0].readyDigest, store.launchSequences.getByLaunchId(id.launchId).readyDigest);
+
+      const status = launchSequence.status(id).body;
+      assert.ok(status.readinessReceipt, 'the PM-visible surface this car exposes it on');
+      assert.equal(status.readinessReceipt.recipientProjectId, pm.id);
+    });
+
+    it('does not emit a second receipt row when READY is answered again (replay or race)', () => {
+      const { id } = launched('receipt-no-duplicate');
+      ackEverything(id);
+      const sequence = store.launchSequences.getByLaunchId(id.launchId);
+      const artifact = artifactFor(sequence);
+      assert.equal(launchSequence.ready({ ...id, artifact }).status, 200);
+      assert.equal(launchSequence.ready({ ...id, artifact: { ...artifact } }).body.duplicate, true);
+      assert.equal(store.launchReadinessReceipts.listForSequence(sequence.id).length, 1);
+    });
+
+    it('records a receipt with no recipient, rather than failing READY, when no coordinator role resolves', () => {
+      const { id } = launched('receipt-no-recipient');
+      ackEverything(id);
+      const sequence = store.launchSequences.getByLaunchId(id.launchId);
+      const answer = launchSequence.ready({ ...id, artifact: artifactFor(sequence) });
+      assert.equal(answer.status, 200, 'READY succeeds whether or not a recipient can be resolved');
+      const receipts = store.launchReadinessReceipts.listForSequence(sequence.id);
+      assert.equal(receipts.length, 1);
+      assert.equal(receipts[0].recipientProjectId, null);
+      assert.equal(receipts[0].projectionState, 'skipped', 'nothing to project with no recipient');
+    });
+
+    it('the store layer is idempotent on (sequenceId, revision, assignmentId), independent of the ready() call site', () => {
+      const { id } = launched('receipt-store-idempotent');
+      ackEverything(id);
+      const sequence = store.launchSequences.getByLaunchId(id.launchId);
+      const fields = {
+        receiptId: 'receipt-idempotent-1', sequenceId: sequence.id, launchId: sequence.launchId,
+        sessionId: sequence.sessionId, projectId: sequence.projectId, assignmentId: null,
+        revision: sequence.revision, readyDigest: 'digest-a', recipientProjectId: null,
+        recipientWorkspaceId: null, projectionState: 'skipped'
+      };
+      const first = store.launchReadinessReceipts.emit(fields);
+      assert.equal(first.created, true);
+      const second = store.launchReadinessReceipts.emit({ ...fields, receiptId: 'receipt-idempotent-2', readyDigest: 'digest-b' });
+      assert.equal(second.created, false, 'the same (sequence, revision, assignment) key returns the existing row');
+      assert.equal(second.row.receiptId, 'receipt-idempotent-1');
+      assert.equal(second.row.readyDigest, 'digest-a', 'the existing row, not a second write');
+    });
+  });
 });
