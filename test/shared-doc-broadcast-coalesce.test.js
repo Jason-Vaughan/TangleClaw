@@ -233,6 +233,35 @@ describe('a reader gets one shared-doc notice per quiet period (#1108)', () => {
       'and the record says why: the fifth revision was coalesced for both readers');
   });
 
+  it('within the staleness window, an un-handled notice still coalesces exactly as before (#2350, #1108 regression guard)', async () => {
+    // Default coalesceStaleMs (10 minutes) comfortably covers the gap between
+    // two awaited writes in a test, so this is the #1108 contract, unchanged.
+    const first = await change(docId);
+    assert.equal(first.body.notifiedCount, 2);
+    const second = await change(docId);
+    assert.equal(second.body.notifiedCount, 0, 'still within the window: the un-handled notice already says it');
+    assert.equal(second.body.coalescedCount, 2);
+    assert.equal(depth(readerA), 1, 'no second notice landed — coalescing did its job');
+  });
+
+  it('a reader that never handles its mail is told again once its silence passes the staleness bound (#2350)', async () => {
+    const original = sharedDocRecord.limits.coalesceStaleMs;
+    sharedDocRecord.limits.coalesceStaleMs = 0;
+    try {
+      const first = await change(docId);
+      assert.equal(first.body.notifiedCount, 2, 'the first write reaches both readers normally');
+      const second = await change(docId);
+      assert.equal(second.body.notifiedCount, 2,
+        'with no staleness window, the still-un-handled first notice no longer coalesces the second');
+      assert.equal(second.body.coalescedCount, 0);
+      assert.equal(depth(readerA), 2, 'the reader actually received a second, distinct notice, not a suppressed one');
+      assert.equal(sent.length, 4,
+        'two real sends per reader: a reader that never drains its inbox must not go silent forever');
+    } finally {
+      sharedDocRecord.limits.coalesceStaleMs = original;
+    }
+  });
+
   it('unchanged bytes notified again are one recorded revision and notify nobody (#2389)', async () => {
     const first = await change(docId);
     assert.equal(first.body.notifiedCount, 2);
