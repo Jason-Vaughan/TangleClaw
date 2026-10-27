@@ -41,6 +41,23 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-27 — v5.40.0 W1-D: Master Medusa reply deadlocks
+
+<!-- prawduct: type=fixed | scope=w1d-1988-2176 -->
+
+- **#1988:** `exchangeCaller()` had no branch for a verified Master launch, so
+  every Master caller fell through to `unbound` on the send route and a
+  reply carrying `inReplyTo` was refused before `REPLY_TARGET_UNKNOWN` was
+  even reached. The Master's verified launch now binds a reply, narrowly
+  (not folded into `boundSender`, so it gains no `blocking`/`critical`
+  priority).
+- **#2176:** The wake nudge told a read-only Project Master to POST a reply
+  its own access level refuses (403 `ACCESS_LEVEL`). It now reads the
+  Master's current access level per nudge and, when read-only, tells it to
+  describe the needed reply for the operator instead — per Charter A475
+  line 41's ruling not to widen the Master's outbound authority as a side
+  effect of the wording fix.
+
 ## 2026-10-26 — v5.39.0 W1-B: CI evidence and mandatory fragments
 
 <!-- prawduct: type=internal | scope=v539-w1b-2371-1220 -->
