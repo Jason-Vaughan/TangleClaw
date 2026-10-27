@@ -413,4 +413,16 @@ describe('shared-doc broadcasts stay inside the doc\'s group (#1222)', () => {
     await change();
     assert.ok(!sent.some((m) => m.to === 'ws-master'), 'an offline Master is not sent to, scope notwithstanding');
   });
+
+  it('does not notify the Master of a doc\'s first observation — there is no prior baseline to have changed from', async () => {
+    masterListens();
+    setMasterScope('all');
+    const freshPath = path.join(tmpDir, 'FRESH.md');
+    fs.writeFileSync(freshPath, '# fresh\n');
+    const fresh = store.sharedDocs.create({ groupId: store.sharedDocs.get(docId).groupId, name: 'FRESH', filePath: freshPath });
+    const res = await post(server, `/api/shared-docs/${fresh.id}/notify`);
+    assert.equal(res.body.duplicate, false, 'first-seen is not the duplicate exit — it is its own exit, with the same effect');
+    assert.deepEqual(sent, [],
+      'first-seen selects zero project recipients for the same reason (#2389); the Master must not become a side door around it');
+  });
 });
