@@ -532,7 +532,8 @@ TangleClaw's answer is echoed.
 | `outbound-rejected`, `outbound-part-conflict` | The bridge was asked to set an item aside; see "Items set aside". |
 | `outbound-report-failed` | The bridge could not be told that an item could not be posted. It is told again on the next pass. |
 | `outbound-ack-failed` | A posted item could not be reported or acknowledged: the bridge did not answer, the helper's lease on it is no longer live, or the item was withdrawn or set aside at the bridge in the meantime (`409 ACK_NOT_APPLIED`). The helper does not post it again. If the item is still waiting it is handed over again and acknowledged then. |
-| `outbound-digest-mismatch`, `outbound-foreign-channel` | An item did not pass the helper's checks and was not posted. Either is a defect to report. |
+| `outbound-digest-mismatch` | An item did not pass the helper's checks and was not posted. A defect to report. |
+| `outbound-foreign-channel` | An item named a destination the helper did not post to: no other channel it names, a reply whose original is elsewhere, or (#2433) a surface with no verified local pin (the DM surface is off or unverified here) or a bridge-claimed destination that disagrees with this run's own pin. The helper never posts on the bridge's say-so alone — a defect to report, and worth checking whether the DM surface's pin agrees on both sides (helper config and operator panel) if it names a DM item. |
 | `outbound-pass-failed` | A pass ended on a failure the helper did not expect. The line gives the failure's type and never its message. Report it, with the lines around it. |
 
 ## What is not proven here
