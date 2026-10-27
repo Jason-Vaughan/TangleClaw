@@ -13,6 +13,25 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const gitRange = require('../lib/wrap-steps/_git-range');
+const logger = require('../lib/logger');
+
+/**
+ * Capture warn-and-above log lines while `fn` runs, restoring the prior level.
+ * @param {() => (void|Promise<void>)} fn - Work to run while capturing.
+ * @returns {Promise<string[]>} The captured lines.
+ */
+async function captureWarnLog(fn) {
+  const lines = [];
+  logger.setLevel('warn');
+  logger.setConsoleStream({ write: (line) => lines.push(line) });
+  try {
+    await fn();
+  } finally {
+    logger.setConsoleStream(null);
+    logger.setLevel('error');
+  }
+  return lines;
+}
 
 /**
  * An `execSync` stand-in that fails for refs matching `failing`.
@@ -86,6 +105,63 @@ describe('_git-range — session range resolution', () => {
     const out = gitRange.resolveSessionRange('/p', 'c1f94ac', { exec: fakeExec() });
     assert.equal(out.range, 'c1f94ac..HEAD');
     assert.equal(out.kind, 'session');
+  });
+});
+
+describe('_git-range — downgrade is observable (#670)', () => {
+  // The signal is a LOG, never a new field: `changelog-coverage` and
+  // `features-toc` (and anything pinning their exact return shape) must see
+  // no change to the object this resolver returns.
+  it('logs a downgrade, naming the stale sha, when a recorded lastWrapSha did not validate', async () => {
+    const lines = await captureWarnLog(() => {
+      const out = gitRange.resolveSessionRange('/p', 'deadbee', { dots: 'two', exec: fakeExec(/deadbee/) });
+      assert.deepEqual(out, { range: 'main..HEAD', kind: 'branch', baseBranch: 'main', base: null, stopped: [] });
+    });
+    assert.ok(lines.some((l) => l.includes('downgraded') && l.includes('deadbee')),
+      `expected a downgrade warning naming the stale sha: ${lines.join(' | ')}`);
+  });
+
+  it('logs a downgrade when the recorded sha resolves but is orphaned (#664)', async () => {
+    const lines = await captureWarnLog(() => {
+      gitRange.resolveSessionRange('/p', 'c1f94ac', { dots: 'two', exec: fakeExec(/is-ancestor/) });
+    });
+    assert.ok(lines.some((l) => l.includes('downgraded')));
+  });
+
+  it('logs a downgrade when an unusable launchSha is what dropped to the trunk', async () => {
+    const lines = await captureWarnLog(() => {
+      gitRange.resolveSessionRange('/p', null, { dots: 'two', launchSha: 'deadbee', exec: fakeExec(/deadbee/) });
+    });
+    assert.ok(lines.some((l) => l.includes('downgraded')));
+  });
+
+  it('logs nothing on a project\'s genuine first wrap (nothing recorded)', async () => {
+    const lines = await captureWarnLog(() => {
+      const out = gitRange.resolveSessionRange('/p', null, { dots: 'two', exec: fakeExec() });
+      assert.equal(out.range, 'main..HEAD');
+      assert.equal(out.kind, 'branch');
+    });
+    assert.deepEqual(lines, [], 'a genuine first wrap must not log as though a boundary failed');
+  });
+
+  it('logs nothing when the session or launch range resolves cleanly', async () => {
+    const lines = await captureWarnLog(() => {
+      gitRange.resolveSessionRange('/p', 'c1f94ac', { exec: fakeExec() });
+    });
+    assert.deepEqual(lines, []);
+  });
+
+  it('agrees with the async twin, and logs the same way', async () => {
+    const asyncFailing = async (file, args) => {
+      const cmd = `${file} ${args.join(' ')}`;
+      if (/deadbee/.test(cmd)) return { exitCode: 1, stdout: '', stderr: '', error: null, timedOut: false };
+      return { exitCode: 0, stdout: '', stderr: '', error: null, timedOut: false };
+    };
+    const lines = await captureWarnLog(async () => {
+      const out = await gitRange.resolveSessionRangeAsync('/p', 'deadbee', { dots: 'two', exec: asyncFailing });
+      assert.deepEqual(out, { range: 'main..HEAD', kind: 'branch', baseBranch: 'main', base: null, stopped: [] });
+    });
+    assert.ok(lines.some((l) => l.includes('downgraded') && l.includes('deadbee')));
   });
 });
 
