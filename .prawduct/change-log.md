@@ -50,6 +50,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 Dispatch (mx_4d00fbbd / PM) named `lib/updater.js`, `routes/update.js`, `test/updater.test.js`, `test/medusa.test.js`; none exist in this repo. Corrected scope confirmed by PM (mx_0M9uk1K0QYRtpeWD): `lib/update-applier.js`, `lib/medusa.js`, `test/update-applier.test.js`, `test/api-medusa.test.js`. Critic also required touching `lib/medusa-listener.js` (new `WS_URL_REFUSED` code), `public/api-helper.js` and `public/update-beacon.js` (surfacing the new codes to the operator), `public/session.js` and two docs (`docs/configuration-reference.md`, `docs/adr/0010-one-update-mechanism.md`) to keep existing contract tests and documentation accurate.
 
+## 2026-10-27 — v5.40.0 W1-C: Master shared-doc notices and stale-coalescing fix
+
+<!-- prawduct: type=feature | scope=v540-w1c-2350-1084 -->
+
+- **#1084:** The Project Master now receives shared-doc change notices when it is listening and its configured scope covers the doc's group — best-effort, coalesced the same way a project session's notice is.
+- **#2350:** Coalescing an un-handled notice no longer hides a reader going silent forever: past a 10-minute staleness bound the next write sends anyway instead of coalescing, and a warning names the doc and session so the gap is visible before it reaches hours.
+
 ## 2026-10-26 — v5.39.0 W1-B: CI evidence and mandatory fragments
 
 <!-- prawduct: type=internal | scope=v539-w1b-2371-1220 -->
