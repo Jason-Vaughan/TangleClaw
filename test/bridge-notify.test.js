@@ -220,12 +220,24 @@ describe('bridge notifications (#2031)', () => {
   });
 
   describe('work-unblocked (#2141)', () => {
+    /**
+     * Mark the newest ready `work-blocked` notice delivered, as the helper does once it has
+     * actually posted it to Discord. `_workUnblocked` requires this (PR #2629 review, third
+     * round): a `ready` or `blocked` row never reached Discord either, same as a `dropped` one.
+     * @returns {void}
+     */
+    function deliverWorkBlocked() {
+      store.getDb().prepare("UPDATE bridge_outbound SET state = 'delivered', delivered_at = ?, updated_at = ? WHERE notify_type = 'work-blocked' AND state = 'ready'")
+        .run(clock, clock);
+    }
+
     it('tells the operator once when an announced block clears, bound to the clearing receipt', () => {
       const alpha = liveSession('Alpha');
       enable();
       reports(alpha, 'working');
       const blockedSeq = reports(alpha, 'blocked');
       assert.equal(bridgeNotify.reconcile().workBlocked, 1);
+      deliverWorkBlocked();
       const clearSeq = reports(alpha, 'working');
       assert.equal(bridgeNotify.reconcile().workUnblocked, 1);
       assert.equal(bridgeNotify.reconcile().workUnblocked, 0, 'a second pass finds it already made');
@@ -246,6 +258,7 @@ describe('bridge notifications (#2031)', () => {
         enable();
         reports(alpha, 'blocked');
         bridgeNotify.reconcile();
+        deliverWorkBlocked();
         reports(alpha, clearTo);
         assert.equal(bridgeNotify.reconcile().workUnblocked, 1, clearTo);
       }
@@ -281,12 +294,14 @@ describe('bridge notifications (#2031)', () => {
       enable();
       reports(alpha, 'blocked');
       bridgeNotify.reconcile();
+      deliverWorkBlocked();
       reports(alpha, 'working');
       assert.equal(bridgeNotify.reconcile().workUnblocked, 1);
       reports(alpha, 'working');
       assert.equal(bridgeNotify.reconcile().workUnblocked, 0, 'already clear is not a new event');
       reports(alpha, 'blocked');
       bridgeNotify.reconcile();
+      deliverWorkBlocked();
       reports(alpha, 'complete');
       assert.equal(bridgeNotify.reconcile().workUnblocked, 1, 'a later block clearing is its own event');
     });
@@ -296,6 +311,7 @@ describe('bridge notifications (#2031)', () => {
       enable();
       const firstBlockedSeq = reports(alpha, 'blocked');
       assert.equal(bridgeNotify.reconcile().workBlocked, 1, 'the first blocked receipt of the run is announced');
+      deliverWorkBlocked();
       reports(alpha, 'blocked');
       assert.equal(bridgeNotify.reconcile().workBlocked, 0, 'a repeat blocked report is not a new event, and is never announced itself');
       const clearSeq = reports(alpha, 'working');
@@ -312,6 +328,8 @@ describe('bridge notifications (#2031)', () => {
       enable();
       reports(alpha, 'blocked');
       assert.equal(bridgeNotify.reconcile().workBlocked, 1);
+      // Delivered, so the suppression below is isolated to staleness, not to never having reached Discord.
+      deliverWorkBlocked();
       reports(alpha, 'working');
       const reblockSeq = reports(alpha, 'blocked');
       const result = bridgeNotify.reconcile();
@@ -331,6 +349,27 @@ describe('bridge notifications (#2031)', () => {
           .run(dropCode, clock);
         reports(alpha, 'working');
         assert.equal(bridgeNotify.reconcile().workUnblocked, 0, `${dropCode}: the operator never saw the block, so no recovery either`);
+      }
+    });
+
+    it('is not announced while the block notice is still ready or set aside, undelivered, and is announced once it is actually delivered (PR #2629 review, third round)', () => {
+      for (const outboundState of ['ready', 'blocked']) {
+        const alpha = liveSession(`Alpha-${outboundState}`);
+        enable();
+        reports(alpha, 'blocked');
+        bridgeNotify.reconcile();
+        if (outboundState === 'blocked') {
+          store.getDb().prepare("UPDATE bridge_outbound SET state = 'blocked', block_code = 'rejected-by-chat', updated_at = ? WHERE notify_type = 'work-blocked' AND state = 'ready'")
+            .run(clock);
+        }
+        reports(alpha, 'working');
+        assert.equal(bridgeNotify.reconcile().workUnblocked, 0,
+          `${outboundState}: the block notice has not reached Discord yet, so no recovery is announced for it`);
+
+        // Once the helper actually delivers it, the recovery that was waiting fires.
+        store.getDb().prepare("UPDATE bridge_outbound SET state = 'delivered', block_code = NULL, delivered_at = ?, updated_at = ? WHERE notify_type = 'work-blocked' AND state IN ('ready','blocked')")
+          .run(clock, clock);
+        assert.equal(bridgeNotify.reconcile().workUnblocked, 1, `${outboundState}: delivered, so the recovery it was waiting on now fires`);
       }
     });
   });
@@ -1424,6 +1463,9 @@ describe('bridge notifications (#2031)', () => {
       bridgeNotify._deps.discordReading = () => { throw new Error('the gateway could not be read'); };
       assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, workUnblocked: 0, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 0 });
       assert.deepEqual(notifications().map((x) => x.type), ['work-blocked']);
+      // Delivered, so the suppression below is isolated to staleness, not to never having reached Discord.
+      store.getDb().prepare("UPDATE bridge_outbound SET state = 'delivered', delivered_at = ?, updated_at = ? WHERE notify_type = 'work-blocked' AND state = 'ready'")
+        .run(clock, clock);
       // And with an outage announced in the same pass, each kind counts its own.
       Object.assign(bridgeNotify._deps, { discordReading: () => reading });
       reads('down');
