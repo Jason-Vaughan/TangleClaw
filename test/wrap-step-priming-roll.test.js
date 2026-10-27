@@ -784,6 +784,30 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
       assert.deepEqual(JSON.parse(staged.newContent), { other: 'kept' });
     });
 
+    it('an activePlan naming a LIVE plan is honored even when an archived copy shares its filename (#1757 regression, PRR-A)', async () => {
+      // Real bug caught in review: the archived-bare-filename check fired on
+      // the archive copy's mere existence, independent of whether the live
+      // target also existed — so a plan that is BOTH live and (separately)
+      // archived under the same bare filename was wrongly cleared as stale,
+      // and resolution fell through into a genuine two-plan ambiguity that
+      // only existed because the valid pin was discarded.
+      writePlan('picked.md', '### Chunk 1: A\n');
+      writePlan('other.md', '### Chunk 1: B\n'); // second live plan — proves no fallthrough-to-ambiguity
+      const archive = path.join(projectPath, '.tangleclaw', 'plans', 'archive');
+      fs.mkdirSync(archive, { recursive: true });
+      fs.writeFileSync(path.join(archive, 'picked.md'), '### Chunk 1: An old revision\n');
+      const cfg = path.join(projectPath, '.tangleclaw', 'project.json');
+      fs.mkdirSync(path.dirname(cfg), { recursive: true });
+      fs.writeFileSync(cfg, JSON.stringify({ activePlan: 'picked.md' }));
+      const ctx = buildContext({ id: 'next-session-prime' });
+      const result = await primingRoll.run(ctx);
+      assert.equal(result.status, 'done');
+      assert.match(result.output.planPath, /picked\.md$/);
+      assert.equal(result.output.staleActivePlan, undefined, 'the live pick must not be treated as stale');
+      assert.equal(ctx.staged['next-session-prime:active-plan-clear'], undefined, 'nothing should be staged for clearing');
+      assert.deepEqual(JSON.parse(fs.readFileSync(cfg, 'utf8')), { activePlan: 'picked.md' });
+    });
+
     it('an activePlan whose explicit path (not a bare filename) resolves into archive/ is treated as stale too (#1757)', async () => {
       writePlan('live.md', '### Chunk 1: A\n');
       const archive = path.join(projectPath, '.claude', 'plans', 'archive');
