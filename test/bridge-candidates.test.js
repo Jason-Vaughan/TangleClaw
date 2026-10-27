@@ -19,8 +19,10 @@ setLevel('error');
 const store = require('../lib/store');
 const bridgeStore = require('../lib/bridge-store');
 const handoff = require('../lib/bridge-handoff');
+const gateway = require('../lib/bridge-gateway');
 const { pinMasterLiveness } = require('./_master-liveness');
 const { bindProject } = require('./_shared-docs-callers');
+const { install: installHub } = require('./_bridge-hub');
 
 const TC_BIN = path.join(__dirname, '..', 'bin', 'tc');
 
@@ -535,6 +537,150 @@ describe('bridge candidates (#2031)', () => {
       assert.deepEqual(await inventory(), []);
       assert.equal(db.prepare("SELECT COUNT(*) AS n FROM bridge_outbound WHERE state IN ('ready','blocked')").get().n, 0);
       assert.equal(db.prepare("SELECT COUNT(*) AS n FROM bridge_outbound WHERE text IS NOT NULL").get().n, 0, 'and no text of any of it is kept');
+    });
+  });
+
+  describe('#2133 (already fixed by #2547/8343e1c5) and #2214 (session reads its own outcome), together', () => {
+    const bridgeApi = require('../lib/bridge-api');
+    const SIGNED_IN = { tcSession: { username: 'rosie' }, tcGateState: 'guarding', headers: {} };
+    const withdrawRoute = bridgeApi.routeFor('POST', '/api/bridge/operator/candidates/:candidateId/withdraw');
+    /**
+     * The operator withdraws a candidate, in process, the way this file's
+     * other operator-route tests already do (`bridgeApi.handle` directly;
+     * faking a signed-in dashboard session over real HTTP is what that
+     * pattern exists to avoid).
+     * @param {string} candidateId - Its id.
+     * @returns {Promise<{status: number, body: object}>}
+     */
+    const withdraws = (candidateId) => bridgeApi.handle(withdrawRoute, {
+      req: SIGNED_IN, headers: SIGNED_IN.headers, params: { candidateId }, body: { requestId: `req-wd-${++seq}-0000` }
+    });
+    /**
+     * `GET /api/bridge/session/candidates[/:id]`, as the submitting session reads it.
+     * @param {object} session - The session.
+     * @param {string} [candidateId] - One candidate, or the whole list.
+     * @returns {Promise<{status: number, body: object}>}
+     */
+    const reads = (session, candidateId) => call(
+      'GET', candidateId ? `/api/bridge/session/candidates/${candidateId}` : '/api/bridge/session/candidates',
+      { headers: session.headers }
+    );
+    /**
+     * `tc candidate status [<id>]`, through the real binary.
+     * @param {object} session - The session.
+     * @param {string} [candidateId] - One candidate, or the whole list.
+     * @returns {Promise<{code: number, stdout: string, stderr: string}>}
+     */
+    const statusCli = (session, candidateId) => new Promise((resolve) => {
+      const args = candidateId ? ['candidate', 'status', candidateId] : ['candidate', 'status'];
+      const env = {
+        PATH: process.env.PATH, HOME: process.env.HOME, TANGLECLAW_API: origin,
+        TANGLECLAW_PROJECT_ID: String(session.project.id), TANGLECLAW_LAUNCH_ID: session.launchId
+      };
+      execFile(TC_BIN, args, { env, encoding: 'utf8' }, (err, stdout, stderr) => resolve({ code: err ? err.code : 0, stdout, stderr }));
+    });
+
+    let hub;
+    before(() => { hub = installHub(); });
+    after(() => { hub.restore(); });
+
+    it('reads waiting, posted and discarded outcomes, after the gateway tick wakes the Master (#2133) — never another project\'s candidate or the Master\'s reworded text', async () => {
+      const session = liveSession();
+      const receiptSeq = reports(session);
+      const other = liveSession();
+      reports(other);
+
+      // #2133 (already fixed by #2547/8343e1c5): the gateway's own tick, not
+      // a second notify path, wakes the Master as soon as it next runs.
+      const waitingId = (await offers(session, { receipts: [{ kind: 'workload', seq: receiptSeq }] })).body.candidateId;
+      assert.equal((await gateway.tick()).candidatesTold, 1);
+      assert.ok(hub.system.some((m) => m.to === 'master-ws' && m.message.includes(waitingId)));
+
+      // #2214, while it waits.
+      const waitingRead = await reads(session, waitingId);
+      assert.deepEqual([waitingRead.status, waitingRead.body.outcome, waitingRead.body.submittedByThisLaunch], [200, 'waiting', true]);
+      const waitingCli = await statusCli(session, waitingId);
+      assert.match(waitingCli.stdout, /waiting for the Master/);
+
+      // Approved, with the Master's own wording, and posted.
+      const postedId = (await offers(session, { receipts: [{ kind: 'workload', seq: receiptSeq }] })).body.candidateId;
+      assert.equal((await master(postedId, 'approve', { text: 'A session needs your sign-off.' })).status, 200);
+      const postedOutboundId = candidateItems().find((i) => i.candidate_id === postedId).outbound_id;
+      store.getDb().prepare(
+        "UPDATE bridge_outbound SET state = 'delivered', delivered_ref = 'discord:999', delivered_at = ?, text = NULL WHERE outbound_id = ?"
+      ).run(new Date().toISOString(), postedOutboundId);
+      const postedRead = await reads(session, postedId);
+      assert.deepEqual(
+        [postedRead.status, postedRead.body.outcome, postedRead.body.wording, postedRead.body.deliveredRef],
+        [200, 'posted', 'master', 'discord:999']
+      );
+      assert.equal(JSON.stringify(postedRead.body).includes('A session needs your sign-off'), false, 'the posted read never carries the reworded text');
+      const postedCli = await statusCli(session, postedId);
+      assert.match(postedCli.stdout, /posted as discord:999/);
+
+      // Approved with the session's own wording, left ready (not yet posted).
+      const approvedId = (await offers(session, { receipts: [{ kind: 'workload', seq: receiptSeq }] })).body.candidateId;
+      assert.equal((await master(approvedId, 'approve')).status, 200);
+      const approvedRead = await reads(session, approvedId);
+      assert.deepEqual([approvedRead.status, approvedRead.body.outcome, approvedRead.body.wording], [200, 'approved', 'session']);
+
+      // Rejected by the Master: decided_generation is set.
+      const rejectedId = (await offers(session, { receipts: [{ kind: 'workload', seq: receiptSeq }] })).body.candidateId;
+      assert.equal((await master(rejectedId, 'reject')).status, 200);
+      assert.deepEqual((await reads(session, rejectedId)).body, {
+        candidateId: rejectedId, kind: 'milestone', createdAt: bridgeStore.candidates.get(rejectedId).createdAt,
+        submittedByThisLaunch: true, outcome: 'discarded', reason: 'rejected'
+      });
+
+      // Withdrawn by the operator: rejected, but decided_generation stays NULL.
+      const withdrawnId = (await offers(session, { receipts: [{ kind: 'workload', seq: receiptSeq }] })).body.candidateId;
+      assert.equal((await withdraws(withdrawnId)).status, 200);
+      const withdrawnRead = await reads(session, withdrawnId);
+      assert.deepEqual([withdrawnRead.status, withdrawnRead.body.outcome, withdrawnRead.body.reason], [200, 'discarded', 'withdrawn']);
+
+      // Merged: the folded-in candidate reports the survivor's id and its own current outcome.
+      const foldedId = (await offers(session, { receipts: [{ kind: 'workload', seq: receiptSeq }] })).body.candidateId;
+      const survivorId = (await offers(session, { receipts: [{ kind: 'workload', seq: receiptSeq }] })).body.candidateId;
+      assert.equal((await master(foldedId, 'merge', { into: survivorId })).status, 200);
+      const foldedRead = await reads(session, foldedId);
+      assert.deepEqual(
+        [foldedRead.status, foldedRead.body.outcome, foldedRead.body.reason, foldedRead.body.mergedInto, foldedRead.body.mergedOutcome.outcome],
+        [200, 'discarded', 'merged', survivorId, 'waiting']
+      );
+
+      // Another project's launch may read its own list, but neither this
+      // candidate by id (404, same as unknown) nor it in the collection.
+      assert.equal((await reads(other, waitingId)).status, 404);
+      const otherList = await reads(other);
+      assert.deepEqual(otherList.body.candidates, []);
+
+      // A caller that is not a verified project launch (the Master's own
+      // credential, or nothing at all) is refused the same way #2214 asked:
+      // 403, not a silent empty read.
+      for (const headers of [{ 'x-tangleclaw-bridge-credential': masterCredential }, {}]) {
+        const refused = await call('GET', '/api/bridge/session/candidates', { headers });
+        assert.deepEqual([refused.status, refused.body.code], [403, 'VERIFIED_LAUNCH_REQUIRED']);
+      }
+
+      // The whole-list read names every one of this launch's candidates, in order.
+      const list = await reads(session);
+      assert.deepEqual(list.body.candidates.map((c) => c.candidateId),
+        [waitingId, postedId, approvedId, rejectedId, withdrawnId, foldedId, survivorId]);
+      const listCli = await statusCli(session);
+      assert.match(listCli.stdout, new RegExp(`${survivorId}.*waiting`));
+    });
+
+    it('an approved candidate whose outbound item expired uncollected reads as discarded/expired, not forever "approved"', async () => {
+      const session = liveSession();
+      const receiptSeq = reports(session);
+      const id = (await offers(session, { receipts: [{ kind: 'workload', seq: receiptSeq }] })).body.candidateId;
+      assert.equal((await master(id, 'approve')).status, 200);
+      const outboundId = candidateItems().find((i) => i.candidate_id === id).outbound_id;
+      store.getDb().prepare("UPDATE bridge_outbound SET state = 'dropped', drop_code = 'approved-uncollected-expired' WHERE outbound_id = ?").run(outboundId);
+      assert.deepEqual((await reads(session, id)).body, {
+        candidateId: id, kind: 'milestone', createdAt: bridgeStore.candidates.get(id).createdAt,
+        submittedByThisLaunch: true, outcome: 'discarded', reason: 'expired'
+      });
     });
   });
 });

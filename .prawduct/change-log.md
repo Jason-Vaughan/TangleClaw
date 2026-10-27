@@ -41,6 +41,23 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-27 — v5.40.0 W2-B: session candidate-status read, and the #2133 duplicate closed
+
+<!-- prawduct: type=added | scope=w2b-2133-2214 -->
+
+- **#2214:** A session can now read what became of a candidate it submitted to the Project
+  Master — `tc candidate status [<candidate-id>]` and `GET /api/bridge/session/candidates[/:candidateId]`
+  — separating waiting, approved (ready/blocked), posted (with the Discord message id and
+  parts), and discarded (rejected, withdrawn, expired, or merged with the survivor's own
+  outcome). New `lib/bridge-candidates.js`, mounted in `server.js` right after the
+  `bridgeApi.ROUTES` loop; reads `bridge_candidates`/`bridge_outbound`/`bridge_outbound_parts`/`bridge_audit`
+  directly, with zero changes to `lib/bridge-api.js` or `lib/bridge-store.js` (A475-W2-PACK).
+- **#2133:** Closed as a duplicate, not rebuilt — the wake-Master-on-submission behavior it
+  asked for already shipped under #2547 (commit `8343e1c5`, `_tellMasterOfCandidates()` in
+  `lib/bridge-gateway.js`'s tick pass). Verified end to end alongside #2214 in
+  `test/bridge-candidates.test.js` (Architect Ruling A475-W2B-R2: no second, parallel notify
+  mechanism was built, so the one source of truth can never double-notify or race).
+
 ## 2026-10-27 — v5.40.0 W1-A: operator-needed alert context and Gateway resume docs
 
 <!-- prawduct: type=changed | scope=v540-w1a-2141-2334 -->
