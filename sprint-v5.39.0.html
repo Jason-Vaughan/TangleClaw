@@ -419,6 +419,43 @@
       border-top: 1px solid var(--border);
       margin-top: 2rem;
     }
+  
+    .legend {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .legend-swatch {
+      width: 11px;
+      height: 11px;
+      border-radius: 3px;
+    }
+    .issue-pill {
+      display: inline-block;
+      background: rgba(129, 140, 248, 0.15);
+      border: 1px solid rgba(129, 140, 248, 0.35);
+      color: #a5b4fc;
+      padding: 0.1rem 0.45rem;
+      border-radius: 6px;
+      font-size: 0.76rem;
+      font-weight: 600;
+      margin: 0.1rem 0.15rem 0.1rem 0;
+    }
+    .pr-link { font-weight: 700; color: var(--cyan); }
+    .sha-link code {
+      background: rgba(148, 163, 184, 0.12);
+      color: #e2e8f0;
+      padding: 0.12rem 0.4rem;
+      border-radius: 5px;
+      font-size: 0.78rem;
+    }
   </style>
 </head>
 <body>
@@ -498,6 +535,16 @@
           <div class="kpi-label">Gate Containment &amp; Rebases</div>
           <div class="kpi-val">7 Caught · 0 Escapes</div>
           <div class="kpi-sub"><strong>6 W2-C defects + 1 W3-REC flag mismatch</strong> caught pre-merge · <strong>0 same-wave rebases</strong></div>
+        </div>
+              <div class="kpi-card">
+          <div class="kpi-label">Mainline Stability</div>
+          <div class="kpi-val">100% Green CI</div>
+          <div class="kpi-sub"><strong>0 post-merge regressions</strong> · <strong>0 reverts</strong> across all 6 merges on <code>main @ a8dcbe79</code></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Exit Maintenance Audit</div>
+          <div class="kpi-val">4 / 4 Gates PASS</div>
+          <div class="kpi-sub">Charter <code>A474</code> co-signed · 9-clone hygiene · <code>0</code> owed Medusa messages · <code>v5.39.0</code> deployed</div>
         </div>
       </div>
     </section>
@@ -624,60 +671,90 @@
       <div class="section-header">
         <div>
           <h2 class="section-title">2. Cumulative Sprint Velocity &amp; Test Growth Across All 4 Waves (6 PRs)</h2>
-          <p class="section-desc">Wave-by-wave progression from <code>v5.38.0</code> baseline (<code>23,400</code> passing runner tests) to <code>v5.39.0</code> release (<code>23,493</code> passing runner tests / <code>23,488</code> JUnit leaves, <code>+93</code> net new tests).</p>
+          <p class="section-desc">Steady, zero-conflict progression from Wave 1 (<code>#2588</code>, <code>PR #2618</code>, <code>PR #2619</code>) through Wave 4 Release Cut &amp; Deploy (<code>PR #2624 @ a8dcbe79</code>). Hover any bar or point for wave details.</p>
+        </div>
+        <div class="legend">
+          <span class="legend-item"><span class="legend-swatch" style="background:#38bdf8"></span> Cumulative Sprint PRs (6)</span>
+          <span class="legend-item"><span class="legend-swatch" style="background:#34d399"></span> Passing Host Tests (23,400 → 23,493)</span>
+          <span class="legend-item"><span class="legend-swatch" style="background:rgba(56,189,248,0.4)"></span> PRs Merged per Wave</span>
         </div>
       </div>
 
-      <svg viewBox="0 0 920 290" class="w-full" role="img" aria-label="TangleClaw v5.39.0 Wave Velocity and Test Growth Chart">
-        <rect x="0" y="0" width="920" height="290" rx="12" fill="#0b1120" stroke="#1e293b"/>
-        <!-- Grid lines -->
-        <line x1="70" y1="45" x2="845" y2="45" stroke="#1e293b" stroke-dasharray="4 4"/>
-        <line x1="70" y1="105" x2="845" y2="105" stroke="#1e293b" stroke-dasharray="4 4"/>
-        <line x1="70" y1="165" x2="845" y2="165" stroke="#1e293b" stroke-dasharray="4 4"/>
-        <line x1="70" y1="225" x2="845" y2="225" stroke="#334155"/>
+      <svg viewBox="0 0 960 340" class="w-full" role="img" aria-label="TangleClaw v5.39.0 Cumulative Sprint PRs and Host Test Growth across Waves 1 to 4">
+        <defs>
+          <linearGradient id="prGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.35"/>
+            <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.0"/>
+          </linearGradient>
+        </defs>
+        <line x1="64" y1="280" x2="886" y2="280" stroke="#1e293b" stroke-dasharray="4 4"/>
+        <text x="54" y="284" text-anchor="end" fill="#38bdf8" font-size="11">0 PRs</text>
+        <text x="896" y="284" text-anchor="start" fill="#34d399" font-size="11">23,400</text>
 
-        <!-- Y-Axis Labels (Left: Cumulative PRs, Right: Runner Tests) -->
-        <text x="58" y="49" text-anchor="end" fill="#94a3b8" font-size="11">6 PRs (13 iss)</text>
-        <text x="58" y="109" text-anchor="end" fill="#94a3b8" font-size="11">4 PRs (13 iss)</text>
-        <text x="58" y="169" text-anchor="end" fill="#94a3b8" font-size="11">2 PRs (5 iss)</text>
-        <text x="58" y="229" text-anchor="end" fill="#94a3b8" font-size="11">0 PRs</text>
+        <line x1="64" y1="200" x2="886" y2="200" stroke="#1e293b" stroke-dasharray="4 4"/>
+        <text x="54" y="204" text-anchor="end" fill="#38bdf8" font-size="11">2 PRs</text>
+        <text x="896" y="204" text-anchor="start" fill="#34d399" font-size="11">23,435</text>
 
-        <text x="853" y="49" text-anchor="start" fill="#34d399" font-size="11">23,493 pass</text>
-        <text x="853" y="109" text-anchor="start" fill="#34d399" font-size="11">23,457 pass</text>
-        <text x="853" y="169" text-anchor="start" fill="#34d399" font-size="11">23,435 pass</text>
-        <text x="853" y="229" text-anchor="start" fill="#34d399" font-size="11">23,400 base</text>
+        <line x1="64" y1="120" x2="886" y2="120" stroke="#1e293b" stroke-dasharray="4 4"/>
+        <text x="54" y="124" text-anchor="end" fill="#38bdf8" font-size="11">4 PRs</text>
+        <text x="896" y="124" text-anchor="start" fill="#34d399" font-size="11">23,465</text>
 
-        <!-- Bars: Cumulative PRs per Wave -->
-        <!-- W1: 2 PRs + #2588 (#2618, #2619) -->
-        <rect x="135" y="165" width="95" height="60" rx="5" fill="#38bdf8" fill-opacity="0.32" stroke="#38bdf8"/>
-        <text x="182" y="158" text-anchor="middle" fill="#38bdf8" font-size="11" font-weight="700">2 PRs + #2588 (41m / 50m)</text>
-        <text x="182" y="248" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="700">Wave 1</text>
-        <text x="182" y="264" text-anchor="middle" fill="#94a3b8" font-size="10">#2588, #2607, #747, #2371, #1220, #2523</text>
+        <line x1="64" y1="40" x2="886" y2="40" stroke="#1e293b" stroke-dasharray="4 4"/>
+        <text x="54" y="44" text-anchor="end" fill="#38bdf8" font-size="11">6 PRs</text>
+        <text x="896" y="44" text-anchor="start" fill="#34d399" font-size="11">23,493</text>
 
-        <!-- W2: 4 PRs (#2621, #2622) -->
-        <rect x="330" y="105" width="95" height="120" rx="5" fill="#38bdf8" fill-opacity="0.32" stroke="#38bdf8"/>
-        <text x="377" y="98" text-anchor="middle" fill="#38bdf8" font-size="11" font-weight="700">4 PRs · 13/13 Issues (57m / 148m)</text>
-        <text x="377" y="248" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="700">Wave 2</text>
-        <text x="377" y="264" text-anchor="middle" fill="#94a3b8" font-size="10">#2035, #2620, #192, #1317, #960, #1237, #1638, #2011</text>
+        <polygon points="175,280 175,200 375,120 575,80 775,40 775,280" fill="url(#prGrad)" />
 
-        <!-- W3: 5 PRs (#2623 W3-REC) -->
-        <rect x="525" y="75" width="95" height="150" rx="5" fill="#c084fc" fill-opacity="0.32" stroke="#c084fc"/>
-        <text x="572" y="68" text-anchor="middle" fill="#c084fc" font-size="11" font-weight="700">5 PRs · W3-REC (39s CI!)</text>
-        <text x="572" y="248" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="700">Wave 3 (Records)</text>
-        <text x="572" y="264" text-anchor="middle" fill="#94a3b8" font-size="10">#2623 @ 4f6ad6ff (711/711 gate)</text>
+        <g>
+          <rect x="137" y="200" width="76" height="80" rx="5" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.65">
+            <title>Wave 1 (2 PRs + #2588): PR #2618 (mobile keybar &amp; viewport fixes) + PR #2619 (#2523 Bottleneck A &amp; pre-push critic) + #2588 Chromium check — 5/13 issues closed</title>
+          </rect>
+          <text x="175" y="191" text-anchor="middle" fill="#38bdf8" font-size="11" font-weight="700">2 PRs + #2588 (5 iss)</text>
+          <text x="175" y="302" text-anchor="middle" fill="#f8fafc" font-size="11" font-weight="700">Wave 1</text>
+          <text x="175" y="317" text-anchor="middle" fill="#94a3b8" font-size="10">#2588, #2618, #2619</text>
+        </g>
 
-        <!-- W4: 6 PRs (#2624 W4-REL) -->
-        <rect x="710" y="45" width="95" height="180" rx="5" fill="#34d399" fill-opacity="0.32" stroke="#34d399"/>
-        <text x="757" y="38" text-anchor="middle" fill="#34d399" font-size="11" font-weight="700">6 PRs · Tag v5.39.0 (31s PR CI!)</text>
-        <text x="757" y="248" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="700">Wave 4 (Release)</text>
-        <text x="757" y="264" text-anchor="middle" fill="#94a3b8" font-size="10">#2624 @ a8dcbe79 · Live 5.39.0</text>
+        <g>
+          <rect x="337" y="200" width="76" height="80" rx="5" fill="#38bdf8" fill-opacity="0.28" stroke="#38bdf8" stroke-opacity="0.65">
+            <title>Wave 2 (2 PRs): PR #2621 (transport lifecycle &amp; header-gen guards) + PR #2622 (sticky-Ctrl, reverse-mode undo, reconnect backoff &amp; ended-state watcher) — 13/13 Milestone #24 issues closed</title>
+          </rect>
+          <text x="375" y="191" text-anchor="middle" fill="#38bdf8" font-size="11" font-weight="700">+2 PRs (13/13 iss)</text>
+          <text x="375" y="302" text-anchor="middle" fill="#f8fafc" font-size="11" font-weight="700">Wave 2</text>
+          <text x="375" y="317" text-anchor="middle" fill="#94a3b8" font-size="10">#2621, #2622 · +58 Tests</text>
+        </g>
 
-        <!-- Line: Passing Runner Test Count Growth (23,400 -> 23,435 -> 23,493 -> 23,493 -> 23,493) -->
-        <polyline fill="none" stroke="#34d399" stroke-width="3" points="182,165 377,45 572,45 757,45"/>
-        <circle cx="182" cy="165" r="5" fill="#34d399" stroke="#0f172a" stroke-width="2"><title>Wave 1 (#2618 + #2619): 23,435 passing runner tests (+35)</title></circle>
-        <circle cx="377" cy="45" r="5" fill="#34d399" stroke="#0f172a" stroke-width="2"><title>Wave 2 (#2621 + #2622): 23,493 passing runner tests / 23,488 JUnit leaves (+93 net new)</title></circle>
-        <circle cx="572" cy="45" r="5" fill="#34d399" stroke="#0f172a" stroke-width="2"><title>Wave 3 (#2623 W3-REC): 711/711 Records Gate passed in 39s</title></circle>
-        <circle cx="757" cy="45" r="5.5" fill="#34d399" stroke="#0f172a" stroke-width="2"><title>Wave 4 Release (#2624): 31s PR Records Gate + 23,493/23,493 release.yml @ a8dcbe79</title></circle>
+        <g>
+          <rect x="537" y="240" width="76" height="40" rx="5" fill="#c084fc" fill-opacity="0.28" stroke="#c084fc" stroke-opacity="0.65">
+            <title>Wave 3 (W3-REC, PR #2623 @ 4f6ad6ff): Consolidated FEATURES.md, .prawduct/change-log.md &amp; docs/user-guide.md — 39s CI via #2523 Bottleneck A</title>
+          </rect>
+          <text x="575" y="231" text-anchor="middle" fill="#c084fc" font-size="11" font-weight="700">+1 PR · 39s CI</text>
+          <text x="575" y="302" text-anchor="middle" fill="#f8fafc" font-size="11" font-weight="700">Wave 3 (W3-REC)</text>
+          <text x="575" y="317" text-anchor="middle" fill="#94a3b8" font-size="10">PR #2623 · 711/711 Gate</text>
+        </g>
+
+        <g>
+          <rect x="737" y="240" width="76" height="40" rx="5" fill="#34d399" fill-opacity="0.28" stroke="#34d399" stroke-opacity="0.65">
+            <title>Wave 4 (W4-REL, PR #2624 @ a8dcbe79): Compiled 12 changelog.d/ fragments, bumped version.json to 5.39.0, 31s PR CI, published tag v5.39.0 &amp; deployed live server</title>
+          </rect>
+          <text x="775" y="231" text-anchor="middle" fill="#34d399" font-size="11" font-weight="700">+1 PR · 31s CI</text>
+          <text x="775" y="302" text-anchor="middle" fill="#f8fafc" font-size="11" font-weight="700">Wave 4 (Release)</text>
+          <text x="775" y="317" text-anchor="middle" fill="#94a3b8" font-size="10">PR #2624 · v5.39.0 Live</text>
+        </g>
+
+        <polyline fill="none" stroke="#38bdf8" stroke-width="3.2" points="175,200 375,120 575,80 775,40" />
+        <polyline fill="none" stroke="#34d399" stroke-width="2.8" stroke-dasharray="6 3" points="175,190 375,40 575,40 775,40" />
+
+        <circle cx="175" cy="200" r="5" fill="#38bdf8" stroke="#0f172a" stroke-width="1.8"><title>Wave 1: 2 Cumulative PRs Merged (#2618, #2619) + #2588 Verified</title></circle>
+        <circle cx="175" cy="190" r="4.5" fill="#34d399" stroke="#0f172a" stroke-width="1.8"><title>Wave 1: 23,435 Passing Host Tests (+35 new tests)</title></circle>
+
+        <circle cx="375" cy="120" r="5" fill="#38bdf8" stroke="#0f172a" stroke-width="1.8"><title>Wave 2: 4 Cumulative PRs Merged (#2621, #2622 — all 13/13 Milestone #24 issues closed)</title></circle>
+        <circle cx="375" cy="40" r="4.5" fill="#34d399" stroke="#0f172a" stroke-width="1.8"><title>Wave 2: 23,493 Passing Host Tests (+58 new tests in Wave 2, +93 total)</title></circle>
+
+        <circle cx="575" cy="80" r="5" fill="#c084fc" stroke="#0f172a" stroke-width="1.8"><title>Wave 3 (W3-REC): 5 Cumulative PRs Merged (PR #2623 @ 4f6ad6ff — 39s CI via #2523 Bottleneck A)</title></circle>
+        <circle cx="575" cy="40" r="4.5" fill="#34d399" stroke="#0f172a" stroke-width="1.8"><title>Wave 3: 23,493 Passing Host Tests (711/711 Records Gate in 39s)</title></circle>
+
+        <circle cx="775" cy="40" r="5.5" fill="#38bdf8" stroke="#0f172a" stroke-width="1.8"><title>Wave 4 (W4-REL): 6 Cumulative PRs Merged (PR #2624 @ a8dcbe79 — v5.39.0 Released &amp; Deployed)</title></circle>
+        <circle cx="775" cy="40" r="4.5" fill="#34d399" stroke="#0f172a" stroke-width="1.8"><title>Wave 4: 23,493 Passing Host Tests (0 failures, 23,488 JUnit leaves)</title></circle>
       </svg>
     </section>
 
@@ -685,12 +762,62 @@
     <section id="deliverables" class="section">
       <div class="section-header">
         <div>
-          <h2 class="section-title">3. Terminal Reconnect Resilience (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2011" target="_blank">#2011</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2035" target="_blank">#2035</a>), Mobile Keybar (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1638" target="_blank">#1638</a>) &amp; <code>#2523</code> Fast-Path</h2>
-          <p class="section-desc">Finishing Milestone <code>#24</code> (13/13 closed), shipping resilient WebUI terminal reconnection and sticky-<code>Ctrl</code> mobile ergonomics, and cutting release-tail CI by <code>29×</code>.</p>
+          <h2 class="section-title">3. Terminal Reconnect Resilience (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2011" target="_blank">#2011</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2035" target="_blank">#2035</a>), Mobile Keybar (<a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1638" target="_blank">#1638</a>) &amp; <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2523" target="_blank">#2523</a> Fast-Path</h2>
+          <p class="section-desc">Finishing Milestone <code>#24</code> (13/13 closed) while eliminating the ~18-minute records/release CI bottleneck via <code>scripts/docs-records-only-diff.js</code> (<code>39s</code> &amp; <code>31s</code> CI runs).</p>
+        </div>
+        <div class="legend">
+          <span class="legend-item"><span class="legend-swatch" style="background:#38bdf8"></span> Cumulative Net New Tests (+93 across W1–W2)</span>
+          <span class="legend-item"><span class="legend-swatch" style="background:#f43f5e"></span> CI Gate Duration (18.0m → 0.5m via #2523 Fast-Path)</span>
         </div>
       </div>
 
-      <div class="grid-3">
+      <svg viewBox="0 0 960 310" class="w-full" role="img" aria-label="v5.39.0 Car-by-Car Test Growth and #2523 CI Gate Compression">
+        <rect x="610" y="24" width="275" height="236" fill="#10b981" fill-opacity="0.08" stroke="#10b981" stroke-opacity="0.35" stroke-dasharray="4 4" rx="6"/>
+        <text x="747" y="44" text-anchor="middle" fill="#34d399" font-size="11" font-weight="700">#2523 Fast-Path Active: 39s &amp; 31s CI (29× Faster)</text>
+
+        <line x1="64" y1="260" x2="886" y2="260" stroke="#1e293b" stroke-dasharray="4 4"/>
+        <text x="54" y="264" text-anchor="end" fill="#38bdf8" font-size="11">+0 Tests</text>
+        <text x="896" y="264" text-anchor="start" fill="#f43f5e" font-size="11">0m CI</text>
+
+        <line x1="64" y1="205" x2="886" y2="205" stroke="#1e293b" stroke-dasharray="4 4"/>
+        <text x="54" y="209" text-anchor="end" fill="#38bdf8" font-size="11">+25 Tests</text>
+        <text x="896" y="209" text-anchor="start" fill="#f43f5e" font-size="11">5m CI</text>
+
+        <line x1="64" y1="150" x2="886" y2="150" stroke="#1e293b" stroke-dasharray="4 4"/>
+        <text x="54" y="154" text-anchor="end" fill="#38bdf8" font-size="11">+50 Tests</text>
+        <text x="896" y="154" text-anchor="start" fill="#f43f5e" font-size="11">10m CI</text>
+
+        <line x1="64" y1="95" x2="886" y2="95" stroke="#1e293b" stroke-dasharray="4 4"/>
+        <text x="54" y="99" text-anchor="end" fill="#38bdf8" font-size="11">+75 Tests</text>
+        <text x="896" y="99" text-anchor="start" fill="#f43f5e" font-size="11">15m CI</text>
+
+        <line x1="64" y1="45" x2="886" y2="45" stroke="#1e293b" stroke-dasharray="4 4"/>
+        <text x="54" y="49" text-anchor="end" fill="#38bdf8" font-size="11">+93 Tests</text>
+        <text x="896" y="49" text-anchor="start" fill="#f43f5e" font-size="11">20m CI</text>
+
+        <polyline fill="none" stroke="#38bdf8" stroke-width="3" points="100,260 225,260 350,207 475,183 600,145 725,45 850,45"/>
+        <polyline fill="none" stroke="#f43f5e" stroke-width="2.8" stroke-dasharray="6 3" points="100,68 225,112 350,115 475,114 600,110 725,253 850,254"/>
+
+        <text x="100" y="282" text-anchor="middle" fill="#94a3b8" font-size="10">v5.38 Base</text>
+        <text x="225" y="282" text-anchor="middle" fill="#38bdf8" font-size="10">W1-INT #2588</text>
+        <text x="350" y="282" text-anchor="middle" fill="#38bdf8" font-size="10">W1-B #2619</text>
+        <text x="475" y="282" text-anchor="middle" fill="#38bdf8" font-size="10">W1-C #2618</text>
+        <text x="600" y="282" text-anchor="middle" fill="#38bdf8" font-size="10">W2-B #2621</text>
+        <text x="725" y="282" text-anchor="middle" fill="#34d399" font-size="10">W2-C #2622</text>
+        <text x="850" y="282" text-anchor="middle" fill="#34d399" font-size="10">W3/W4 #2623–24</text>
+
+        <circle cx="100" cy="260" r="4" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>v5.38.0 Baseline: 23,400 passing runner tests; ~17.5m records/release CI tail</title></circle>
+        <circle cx="225" cy="260" r="4" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>W1-INT (#2588): Empirical headless Chromium check of mobile keybar &amp; input controls (18.0m total)</title></circle>
+        <circle cx="350" cy="207" r="4.5" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>W1-B (PR #2619 @ 8091fce1): Shipped scripts/docs-records-only-diff.js (#2523) &amp; pre-critic-test-check.js (+24 tests)</title></circle>
+        <circle cx="475" cy="183" r="4.5" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>W1-C (PR #2618 @ c237ede6): Mobile terminal keybar height &amp; viewport layout fixes (+35 cumulative new tests)</title></circle>
+        <circle cx="600" cy="145" r="4.5" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>W2-B (PR #2621 @ 71586071): Terminal transport lifecycle &amp; header-gen guards (+52 cumulative new tests)</title></circle>
+        <circle cx="725" cy="45" r="5" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>W2-C (PR #2622 @ 46f88c62): Sticky-Ctrl latch, reverse-mode undo, reconnect backoff &amp; ended-state watcher (+93 cumulative new tests → 23,493 total)</title></circle>
+        <circle cx="725" cy="253" r="4.5" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>W3-REC (PR #2623 @ 4f6ad6ff): Records Gate completed in 39s (vs ~18m baseline — 28× faster)</title></circle>
+        <circle cx="850" cy="45" r="5" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>W4-REL (PR #2624 @ a8dcbe79): 23,493 passing tests conserved; release PR CI completed in 31s</title></circle>
+        <circle cx="850" cy="254" r="4.5" fill="#f43f5e" stroke="#0f172a" stroke-width="1.5"><title>W4-REL (PR #2624 @ a8dcbe79): Release prep PR CI completed in 31s (29× faster than v5.38.0)</title></circle>
+      </svg>
+
+      <div class="grid-3" style="margin-top: 1.25rem;">
         <div class="subcard">
           <span class="badge badge-cyan">Milestone #24 Capstone · #2011, #2035, #2620, #192</span>
           <h3 style="margin-top:0.5rem;">Terminal Reconnect Signal &amp; Ended-State Watcher</h3>
@@ -1025,21 +1152,28 @@
       <div class="section-header">
         <div>
           <h2 class="section-title">6. Complete 4-Wave &amp; 6-PR Interactive Explorer (<code>#2618</code>–<code>#2624</code>)</h2>
-          <p class="section-desc">Filter by Builder/Integrator lane or search by issue, PR number, commit SHA, or module name.</p>
-        </div>
-        <div class="filter-bar">
-          <div class="filter-btns">
-            <button class="filter-btn active" onclick="filterWaves('all', this)">All Waves (4)</button>
-            <button class="filter-btn" onclick="filterWaves('lane-b', this)">TC-Lane-B (2 PRs)</button>
-            <button class="filter-btn" onclick="filterWaves('lane-c', this)">TC-Lane-C (2 PRs)</button>
-            <button class="filter-btn" onclick="filterWaves('lane-int', this)">TC-Lane-INT (#2588 + 2 PRs)</button>
-          </div>
-          <input type="text" id="waveSearch" class="search-input" placeholder="Search PR #, issue #, SHA, file..." oninput="searchWaves(this.value)" />
+          <p class="section-desc">Filter by wave, builder/integrator lane, or category, or search any PR number, commit SHA, Architect ruling (<code>A474</code>), or GitHub issue.</p>
         </div>
       </div>
 
-      <!-- Wave 1 -->
-      <div class="wave-card" data-tags="lane-b lane-c lane-int" data-search="wave 1 2588 2618 2619 2607 747 2371 1220 2523 c237ede6 8091fce1 6030e503 02eefa96 docs-records-only-diff pre-critic-test-check mobile-keybar">
+      <div class="filter-bar">
+        <div class="filter-btns">
+          <button class="filter-btn active" data-filter="all">All 4 Waves (6 PRs + #2588)</button>
+          <button class="filter-btn" data-filter="wave-1">Wave 1 (2 PRs + #2588)</button>
+          <button class="filter-btn" data-filter="wave-2">Wave 2 (2 PRs)</button>
+          <button class="filter-btn" data-filter="wave-3">Wave 3: W3-REC (1 PR)</button>
+          <button class="filter-btn" data-filter="wave-4">Wave 4: W4-REL (1 PR)</button>
+          <button class="filter-btn" data-filter="lane-b">TC-Lane-B (2 PRs)</button>
+          <button class="filter-btn" data-filter="lane-c">TC-Lane-C (2 PRs)</button>
+          <button class="filter-btn" data-filter="lane-int">TC-Lane-INT (#2588 + 2 PRs)</button>
+          <button class="filter-btn" data-filter="ui">WebUI / Chromium</button>
+          <button class="filter-btn" data-filter="records">Records &amp; Release</button>
+        </div>
+        <input type="search" id="waveSearch" class="search-input" placeholder="Search PR #, issue #, SHA, ruling, or module..." />
+      </div>
+
+<!-- Wave 1 -->
+      <div class="wave-card" data-tags="all wave-1 lane-b lane-c lane-int ui" data-search="wave 1 2588 2618 2619 2607 747 2371 1220 2523 c237ede6 8091fce1 6030e503 02eefa96 docs-records-only-diff pre-critic-test-check mobile-keybar">
         <div class="wave-header">
           <div>
             <div class="wave-num">Wave 1 · Parallel Kickoff: #2588 Chromium Verification, Mobile Keybar/Viewport (#2607, #747) &amp; CI Fast-Path (#2371, #1220, #2523)</div>
@@ -1057,29 +1191,29 @@
               <tr><th>Chunk / Lane</th><th>PR / Issue</th><th>Issues</th><th>Deliverable &amp; Verification</th><th>Wall Time</th><th>Merge SHA</th></tr>
             </thead>
             <tbody>
-              <tr>
+              <tr data-row-tags="all wave-1 lane-int ui">
                 <td><strong>W1-INT</strong> · <code>TC-Lane-INT</code></td>
-                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2588#issuecomment-6424410894" target="_blank">#2588</a></td>
-                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2588" target="_blank">#2588</a></td>
+                <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/issues/2588#issuecomment-6424410894" target="_blank">#2588</a></td>
+                <td><a class="issue-pill" href="https://github.com/Jason-Vaughan/TangleClaw/issues/2588" target="_blank">#2588</a></td>
                 <td>Executed isolated scratch-server headless Chromium verification of WebUI terminal keybar &amp; mobile input controls; posted empirical receipt (<code>#issuecomment-6424410894</code>) and closed <code>#2588</code>.</td>
                 <td>18.0m</td>
                 <td>Verified on <code>main</code></td>
               </tr>
-              <tr>
+              <tr data-row-tags="all wave-1 lane-c ui">
                 <td><strong>W1-C</strong> · <code>TC-Lane-C</code></td>
-                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2618" target="_blank">#2618</a></td>
-                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2607" target="_blank">#2607</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/747" target="_blank">#747</a></td>
+                <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2618" target="_blank">#2618</a></td>
+                <td><a class="issue-pill" href="https://github.com/Jason-Vaughan/TangleClaw/issues/2607" target="_blank">#2607</a>, <a class="issue-pill" href="https://github.com/Jason-Vaughan/TangleClaw/issues/747" target="_blank">#747</a></td>
                 <td>Fixed terminal keybar responsive layout wrapping and mobile viewport/cursor scroll ergonomics on head <code>6030e503</code> (CI <code>40384871588</code> <code>11m27s</code>; <code>PRR-B ACCEPT</code> + Architect <code>A474-W1C-ACCEPT</code>).</td>
                 <td>41.0m</td>
-                <td><code>c237ede6</code></td>
+                <td><a class="sha-link" href="https://github.com/Jason-Vaughan/TangleClaw/commit/c237ede6" target="_blank"><code>c237ede6</code></a></td>
               </tr>
-              <tr>
+              <tr data-row-tags="all wave-1 lane-b records">
                 <td><strong>W1-B</strong> · <code>TC-Lane-B</code></td>
-                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2619" target="_blank">#2619</a></td>
-                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2371" target="_blank">#2371</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1220" target="_blank">#1220</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2523" target="_blank">#2523</a></td>
+                <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2619" target="_blank">#2619</a></td>
+                <td><a class="issue-pill" href="https://github.com/Jason-Vaughan/TangleClaw/issues/2371" target="_blank">#2371</a>, <a class="issue-pill" href="https://github.com/Jason-Vaughan/TangleClaw/issues/1220" target="_blank">#1220</a>, <a class="issue-pill" href="https://github.com/Jason-Vaughan/TangleClaw/issues/2523" target="_blank">#2523</a></td>
                 <td>Shipped <code>#2371</code> Step 3 Stage 1+2 pre-push critic gate, <code>#1220</code> <code>scripts/tangleclaw-env.sh</code>, <code>#2523</code> Bottleneck A <code>scripts/docs-records-only-diff.js</code> fast-path, and <code>W1-F6</code> FIFO child <code>SIGKILL</code> cleanup on head <code>02eefa96</code> (CI <code>40387141966</code> <code>11m36s</code>; <code>PRR-A ACCEPT</code> + Architect <code>A474-W1B-ACCEPT</code>).</td>
                 <td>50.0m</td>
-                <td><code>8091fce1</code></td>
+                <td><a class="sha-link" href="https://github.com/Jason-Vaughan/TangleClaw/commit/8091fce1" target="_blank"><code>8091fce1</code></a></td>
               </tr>
             </tbody>
           </table>
@@ -1087,7 +1221,7 @@
       </div>
 
       <!-- Wave 2 -->
-      <div class="wave-card" data-tags="lane-b lane-c" data-search="wave 2 2621 2622 2035 2620 192 1317 960 1237 1638 2011 71586071 29ec322d 46f88c62 89dab766 sticky-ctrl reconnect undoWebuiMode">
+      <div class="wave-card" data-tags="all wave-2 lane-b lane-c ui" data-search="wave 2 2621 2622 2035 2620 192 1317 960 1237 1638 2011 71586071 29ec322d 46f88c62 89dab766 sticky-ctrl reconnect undoWebuiMode">
         <div class="wave-header">
           <div>
             <div class="wave-num">Wave 2 · Core Reconnect &amp; Mobile Keybar Wave: Session Transport (#2035, #2620, #192) &amp; Sticky-Ctrl / Reconnect Signal (#1317, #960, #1237, #1638, #2011)</div>
@@ -1105,21 +1239,21 @@
               <tr><th>Chunk / Lane</th><th>PR</th><th>Issues</th><th>Deliverable &amp; Verification</th><th>Wall Time</th><th>Merge SHA</th></tr>
             </thead>
             <tbody>
-              <tr>
+              <tr data-row-tags="all wave-2 lane-b">
                 <td><strong>W2-B</strong> · <code>TC-Lane-B</code></td>
-                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2621" target="_blank">#2621</a></td>
-                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2035" target="_blank">#2035</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2620" target="_blank">#2620</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/192" target="_blank">#192</a></td>
+                <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2621" target="_blank">#2621</a></td>
+                <td><a class="issue-pill" href="https://github.com/Jason-Vaughan/TangleClaw/issues/2035" target="_blank">#2035</a>, <a class="issue-pill" href="https://github.com/Jason-Vaughan/TangleClaw/issues/2620" target="_blank">#2620</a>, <a class="issue-pill" href="https://github.com/Jason-Vaughan/TangleClaw/issues/192" target="_blank">#192</a></td>
                 <td>Hardened <code>ttyd</code> exit/reconnect lifecycle handling, session header-generation guards, and transport recovery on head <code>46f88c62</code> (<code>23,452/23,452</code> JUnit leaves, <code>0</code> fail; CI <code>40400670019</code> <code>10m47s</code>; <code>PRR-A ACCEPT</code> + Architect <code>A474-W2B-ACCEPT</code>).</td>
                 <td>57.0m</td>
-                <td><code>71586071</code></td>
+                <td><a class="sha-link" href="https://github.com/Jason-Vaughan/TangleClaw/commit/71586071" target="_blank"><code>71586071</code></a></td>
               </tr>
-              <tr>
+              <tr data-row-tags="all wave-2 lane-c ui">
                 <td><strong>W2-C</strong> · <code>TC-Lane-C</code></td>
-                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2622" target="_blank">#2622</a></td>
-                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1317" target="_blank">#1317</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/960" target="_blank">#960</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1237" target="_blank">#1237</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/1638" target="_blank">#1638</a>, <a href="https://github.com/Jason-Vaughan/TangleClaw/issues/2011" target="_blank">#2011</a></td>
+                <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2622" target="_blank">#2622</a></td>
+                <td><a class="issue-pill" href="https://github.com/Jason-Vaughan/TangleClaw/issues/1317" target="_blank">#1317</a>, <a class="issue-pill" href="https://github.com/Jason-Vaughan/TangleClaw/issues/960" target="_blank">#960</a>, <a class="issue-pill" href="https://github.com/Jason-Vaughan/TangleClaw/issues/1237" target="_blank">#1237</a>, <a class="issue-pill" href="https://github.com/Jason-Vaughan/TangleClaw/issues/1638" target="_blank">#1638</a>, <a class="issue-pill" href="https://github.com/Jason-Vaughan/TangleClaw/issues/2011" target="_blank">#2011</a></td>
                 <td>Shipped sticky-<code>Ctrl</code> mobile keybar latch (<code>#1638</code>), terminal reconnect signal + backoff exhaustion latch + ended-state watcher (<code>#2011</code>), and WebUI reverse-mode undo restoration (<code>#1317, #960, #1237</code>) on head <code>89dab766</code> after fixing 6 pre-merge findings under <code>A474-W2-R3..R6</code> (<code>23,493</code> runner / <code>23,488</code> leaves, <code>0</code> fail; CI <code>40416661372</code> <code>10m29s</code>; <code>PRR-B ACCEPT</code> + Architect <code>A474-W2C-ACCEPT-R3</code>).</td>
                 <td>148.0m</td>
-                <td><code>29ec322d</code></td>
+                <td><a class="sha-link" href="https://github.com/Jason-Vaughan/TangleClaw/commit/29ec322d" target="_blank"><code>29ec322d</code></a></td>
               </tr>
             </tbody>
           </table>
@@ -1127,7 +1261,7 @@
       </div>
 
       <!-- Wave 3 -->
-      <div class="wave-card" data-tags="lane-int" data-search="wave 3 2623 w3-rec 4f6ad6ff 5d9d14af features.md change-log.md user-guide.md 39s records gate">
+      <div class="wave-card" data-tags="all wave-3 lane-int records" data-search="wave 3 2623 w3-rec 4f6ad6ff 5d9d14af features.md change-log.md user-guide.md 39s records gate">
         <div class="wave-header">
           <div>
             <div class="wave-num">Wave 3 · Consolidated Sprint Records Pass (W3-REC) Accelerated by #2523 Bottleneck A</div>
@@ -1145,13 +1279,13 @@
               <tr><th>Chunk / Lane</th><th>PR</th><th>Scope</th><th>Deliverable &amp; Verification</th><th>Wall Time</th><th>Merge SHA</th></tr>
             </thead>
             <tbody>
-              <tr>
+              <tr data-row-tags="all wave-3 lane-int records ui">
                 <td><strong>W3-REC</strong> · <code>TC-Lane-INT</code></td>
-                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2623" target="_blank">#2623</a></td>
+                <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2623" target="_blank">#2623</a></td>
                 <td>Waves 1–2 Records</td>
                 <td>Reconciled all 13 Milestone <code>#24</code> deliverables in <code>FEATURES.md</code>, <code>.prawduct/change-log.md</code>, and <code>docs/user-guide.md</code> on head <code>5d9d14af</code> (after resolving initial <code>22s</code> <code>verify-features-index.js --base</code> check on <code>ccb72417</code> under <code>A474-W3-REC-R1</code>). Verified by Bottleneck A fast-path Records Gate (<code>711/711</code> tests passing in <strong><code>39s</code></strong>; <code>PRR-A ACCEPT</code> + Architect <code>A474-W3-REC-ACCEPT</code>).</td>
                 <td>11.0m</td>
-                <td><code>4f6ad6ff</code></td>
+                <td><a class="sha-link" href="https://github.com/Jason-Vaughan/TangleClaw/commit/4f6ad6ff" target="_blank"><code>4f6ad6ff</code></a></td>
               </tr>
             </tbody>
           </table>
@@ -1159,7 +1293,7 @@
       </div>
 
       <!-- Wave 4 -->
-      <div class="wave-card" data-tags="lane-int" data-search="wave 4 2624 w4-rel a8dcbe79 9cd0b9dc v5.39.0 release changelog.md version.json 31s 40420116703 deploy">
+      <div class="wave-card" data-tags="all wave-4 lane-int records" data-search="wave 4 2624 w4-rel a8dcbe79 9cd0b9dc v5.39.0 release changelog.md version.json 31s 40420116703 deploy">
         <div class="wave-header">
           <div>
             <div class="wave-num">Wave 4 · Release Cut v5.39.0, 31s Records Gate CI, Tag Publication &amp; Live Server Deployment</div>
@@ -1177,13 +1311,13 @@
               <tr><th>Chunk / Lane</th><th>PR</th><th>Scope</th><th>Deliverable &amp; Verification</th><th>CI Runs</th><th>Merge SHA</th></tr>
             </thead>
             <tbody>
-              <tr>
+              <tr data-row-tags="all wave-4 lane-int records ui">
                 <td><strong>W4-REL</strong> · <code>TC-Lane-INT</code></td>
-                <td><a href="https://github.com/Jason-Vaughan/TangleClaw/pull/2624" target="_blank">#2624</a></td>
+                <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2624" target="_blank">#2624</a></td>
                 <td>Release Cut <code>v5.39.0</code></td>
                 <td>Compiled 12 <code>changelog.d/*.md</code> fragments into <code>CHANGELOG.md</code>, bumped <code>version.json</code> to <code>5.39.0</code>, updated <code>README.md</code>, <code>test/fixtures/changelog-released-sections.lock.json</code>, and <code>docs/releases/v5.39-status.md</code> on head <code>9cd0b9dc</code>. PR CI passed in <strong><code>31s</code></strong>; automatic <code>release.yml</code> passed the full suite and published tag <code>v5.39.0</code> at <code>a8dcbe79</code>. Live server updated to <code>5.39.0</code> with verified SQLite backup and all 4 health checks clear (<code>PRR-A</code> + <code>PRR-B</code> + Architect <code>A474-W4-REL-ACCEPT</code> + Observer O-Gate <code>ACCEPT</code>).</td>
                 <td>PR <code>40419938568</code> (<code>31s</code>), Release <code>40420116703</code></td>
-                <td><code>a8dcbe79</code></td>
+                <td><a class="sha-link" href="https://github.com/Jason-Vaughan/TangleClaw/commit/a8dcbe79" target="_blank"><code>a8dcbe79</code></a></td>
               </tr>
             </tbody>
           </table>
@@ -1254,22 +1388,65 @@
     </footer>
   </main>
 
-  <script>
-    function filterWaves(tag, btn) {
-      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      document.querySelectorAll('.wave-card').forEach(card => {
-        const tags = (card.getAttribute('data-tags') || '').split(' ');
-        card.style.display = (tag === 'all' || tags.includes(tag)) ? '' : 'none';
+    <script>
+    (function () {
+      const buttons = document.querySelectorAll('.filter-btn');
+      const search = document.getElementById('waveSearch');
+      const cards = document.querySelectorAll('.wave-card');
+      let currentFilter = 'all';
+
+      function applyFilters() {
+        const q = (search && search.value ? search.value : '').trim().toLowerCase();
+        cards.forEach(function (card) {
+          const cardTags = (card.getAttribute('data-tags') || '').split(/\s+/);
+          const cardSearch = (card.getAttribute('data-search') || '') + ' ' + card.innerText.toLowerCase();
+          const rows = card.querySelectorAll('tbody tr[data-row-tags]');
+          if (rows.length > 0) {
+            let visibleRows = 0;
+            rows.forEach(function (row) {
+              const rTags = (row.getAttribute('data-row-tags') || '').split(/\s+/);
+              const rText = ((row.getAttribute('data-row-search') || '') + ' ' + row.innerText).toLowerCase();
+              const matchTag = currentFilter === 'all' || rTags.indexOf(currentFilter) !== -1 || cardTags.indexOf(currentFilter) !== -1 && currentFilter.indexOf('wave-') === 0;
+              const matchSearch = !q || rText.indexOf(q) !== -1;
+              if (matchTag && matchSearch) {
+                row.style.display = '';
+                visibleRows++;
+              } else {
+                row.style.display = 'none';
+              }
+            });
+            card.style.display = visibleRows > 0 ? '' : 'none';
+          } else {
+            const matchTag = currentFilter === 'all' || cardTags.indexOf(currentFilter) !== -1;
+            const matchSearch = !q || cardSearch.indexOf(q) !== -1;
+            card.style.display = (matchTag && matchSearch) ? '' : 'none';
+          }
+        });
+      }
+
+      buttons.forEach(function (btn) {
+        btn.removeAttribute('onclick');
+        btn.addEventListener('click', function () {
+          buttons.forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          currentFilter = btn.getAttribute('data-filter') || 'all';
+          applyFilters();
+        });
       });
-    }
-    function searchWaves(q) {
-      const term = (q || '').trim().toLowerCase();
-      document.querySelectorAll('.wave-card').forEach(card => {
-        const hay = (card.getAttribute('data-search') + ' ' + card.innerText).toLowerCase();
-        card.style.display = (!term || hay.includes(term)) ? '' : 'none';
-      });
-    }
+
+      if (search) {
+        search.removeAttribute('oninput');
+        search.addEventListener('input', applyFilters);
+      }
+
+      window.filterWaves = function (tag, btn) {
+        buttons.forEach(function (b) { b.classList.remove('active'); });
+        if (btn) btn.classList.add('active');
+        currentFilter = tag || 'all';
+        applyFilters();
+      };
+      window.searchWaves = function () { applyFilters(); };
+    })();
   </script>
 </body>
 </html>
