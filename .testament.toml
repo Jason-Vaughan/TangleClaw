@@ -289,6 +289,7 @@ files = [
   "test/auth-credential-durability.test.js",
   "test/behind-origin.test.js",
   "test/bridge-arrival-observer.test.js",
+  "test/bridge-dm-inbound.test.js",
   "test/bridge-gateway.test.js",
   "test/bridge-helper-gateway.test.js",
   "test/bridge-helper-relay.test.js",
