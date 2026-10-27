@@ -15,7 +15,9 @@
  * Also covers `scripts/verify-features-index.js` (#2597): a `Tests:`
  * clause newly added to FEATURES.md by a wave's diff must name a file
  * that same diff touches, so a records PR can't cite pre-existing
- * coverage as proof of the wave's own work.
+ * coverage as proof of the wave's own work -- except on a true
+ * docs/records-only diff (LANE_QUEUE v5.40.0 process rule P1), where an
+ * otherwise-unproven citation is accepted if the file is real on disk.
  */
 
 const { describe, it } = require('node:test');
@@ -252,5 +254,212 @@ describe('verify-features-index: W<N>-REC must diff against the wave\'s own star
     };
     const out = sink();
     assert.equal(verifyFeaturesIndex.main(['--base', '<wave-start-sha>'], { stdout: out, git }), 0);
+  });
+});
+
+describe('verify-features-index: docs-only fallback accepts a real on-disk citation outside the diff (LANE_QUEUE v5.40.0 P1)', () => {
+  const featuresDiff = '+- New entry. Tests: `test/wave-owned.test.js`.';
+
+  function gitFor(touchedList) {
+    return (args) => {
+      if (args[0] === 'diff' && args.includes('FEATURES.md')) return featuresDiff;
+      if (args[0] === 'diff' && args.includes('--name-only')) return `${touchedList.join('\n')}\n`;
+      throw new Error(`unexpected git ${args.join(' ')}`);
+    };
+  }
+
+  it('passes when a docs-only diff cites a real, existing test file outside the diff', () => {
+    const out = sink();
+    const existsSync = (p) => p.endsWith('test/wave-owned.test.js');
+    const readFileSync = () => "it('does a thing', () => {});\n";
+    const code = verifyFeaturesIndex.main(
+      ['--base', 'origin/main'],
+      { stdout: out, git: gitFor(['FEATURES.md']), existsSync, readFileSync }
+    );
+    assert.equal(code, 0);
+    assert.match(out.text(), /1 newly added Tests: anchor\(s\)/);
+  });
+
+  it('refuses when the cited file does not exist on disk, even on a docs-only diff', () => {
+    const out = sink();
+    const existsSync = () => false;
+    const code = verifyFeaturesIndex.main(
+      ['--base', 'origin/main'],
+      { stdout: out, git: gitFor(['FEATURES.md']), existsSync }
+    );
+    assert.equal(code, 1);
+    assert.match(out.text(), /REFUSED: .*test\/wave-owned\.test\.js/);
+  });
+
+  it('refuses when the cited file exists but has no test registration', () => {
+    const out = sink();
+    const existsSync = () => true;
+    const readFileSync = () => '// just a comment, no tests here\n';
+    const code = verifyFeaturesIndex.main(
+      ['--base', 'origin/main'],
+      { stdout: out, git: gitFor(['FEATURES.md']), existsSync, readFileSync }
+    );
+    assert.equal(code, 1);
+    assert.match(out.text(), /REFUSED: .*test\/wave-owned\.test\.js/);
+  });
+
+  it('keeps the strict requirement when the diff also touches a code file (not docs-only), even though the file is real on disk', () => {
+    const out = sink();
+    const existsSync = () => true;
+    const readFileSync = () => "test('x', () => {});\n";
+    const code = verifyFeaturesIndex.main(
+      ['--base', 'origin/main'],
+      { stdout: out, git: gitFor(['FEATURES.md', 'scripts/unrelated.js']), existsSync, readFileSync }
+    );
+    assert.equal(code, 1, 'a diff touching an executable file must not get the docs-only fallback');
+    assert.match(
+      out.text(),
+      /REFUSED: Tests: anchor\(s\) newly added to FEATURES\.md cite a file this diff does not touch: test\/wave-owned\.test\.js/
+    );
+  });
+});
+
+describe('existsOnDisk and hasRealTests: on-disk reality seams', () => {
+  const realTestIo = { existsSync: () => true, readFileSync: () => "describe('x', () => { it('y', () => {}); });\n" };
+
+  it('existsOnDisk delegates to the injected check', () => {
+    assert.equal(verifyFeaturesIndex.existsOnDisk('a.js', { existsSync: (p) => p.endsWith('a.js') }), true);
+    assert.equal(verifyFeaturesIndex.existsOnDisk('a.js', { existsSync: () => false }), false);
+  });
+
+  it('hasRealTests matches it(/test( registrations on a real test/ path', () => {
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/a.test.js', realTestIo), true);
+  });
+
+  it('hasRealTests is false for content with no registration call', () => {
+    const io = { existsSync: () => true, readFileSync: () => '// nothing to see here\n' };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/a.test.js', io), false);
+  });
+
+  it('hasRealTests is false when the file cannot be read', () => {
+    const io = { existsSync: () => true, readFileSync: () => { throw new Error('ENOENT'); } };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/missing.test.js', io), false);
+  });
+
+  it('hasRealTests rejects a path outside test/ even with a real registration and existsSync true (PRR-B review, #2632)', () => {
+    assert.equal(verifyFeaturesIndex.hasRealTests('lib/foo.js', realTestIo), false);
+    assert.equal(verifyFeaturesIndex.hasRealTests('docs/foo.md', realTestIo), false);
+  });
+
+  it('hasRealTests never calls readFileSync for a path outside test/ (path checked before any read)', () => {
+    let read = false;
+    const io = { existsSync: () => true, readFileSync: () => { read = true; return "it('y', () => {});"; } };
+    assert.equal(verifyFeaturesIndex.hasRealTests('lib/foo.js', io), false);
+    assert.equal(read, false, 'a non-test path must be rejected by the path check alone, never reaching a read');
+  });
+
+  it('hasRealTests rejects a test/ file whose only it(/test( text is commented out (PRR-B review, #2632)', () => {
+    const io = {
+      existsSync: () => true,
+      readFileSync: () => '// it("should pass", () => {});\n/* also test("fake", () => {}); */\n'
+    };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/commented-out.test.js', io), false);
+  });
+
+  it('hasRealTests rejects a test/ file whose only it(/test( text is a string literal', () => {
+    const io = { existsSync: () => true, readFileSync: () => 'const example = "it(\'should pass\')";\n' };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/string-only.test.js', io), false);
+  });
+
+  it('stripCommentsAndStrings blanks line comments, block comments, and string/template literals, leaving real code intact', () => {
+    const stripped = verifyFeaturesIndex.stripCommentsAndStrings(
+      "it('real', () => {}); // it('fake, in a line comment')\n"
+      + "/* test('fake, in a block comment') */\n"
+      + 'const s = "it(\'fake, in a string\')";\n'
+      + 'const t = `test(fake, in a template, ${1 + 1})`;'
+    );
+    assert.match(stripped, /it\(/, 'the real call survives stripping');
+    assert.ok(!/fake/.test(stripped), `no "fake" text should survive: ${JSON.stringify(stripped)}`);
+  });
+
+  it('isRealTestPath rejects a path that escapes test/ via .. even though it matches the shape regex (PRR-B review round 2, #2632)', () => {
+    assert.equal(verifyFeaturesIndex.isRealTestPath('test/../docs/fake.test.js'), false);
+    assert.equal(verifyFeaturesIndex.isRealTestPath('test/../../outside.test.js'), false);
+  });
+
+  it('isRealTestPath rejects a backslash path and accepts a genuine test/ path', () => {
+    assert.equal(verifyFeaturesIndex.isRealTestPath('test\\a.test.js'), false);
+    assert.equal(verifyFeaturesIndex.isRealTestPath('test/a.test.js'), true);
+    assert.equal(verifyFeaturesIndex.isRealTestPath('test/sub/a.test.js'), true);
+  });
+
+  it('hasRealTests rejects a traversal path even with a real registration and existsSync true (PRR-B review round 2, #2632)', () => {
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/../docs/fake.test.js', realTestIo), false);
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/../../outside.test.js', realTestIo), false);
+  });
+
+  it('hasRealTests rejects a test/ file whose only it(/test( text is a bare regex literal, not a real call (PRR-B review round 2, #2632)', () => {
+    const io = { existsSync: () => true, readFileSync: () => 'const matcher = /it(foo)/;\n' };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/regex-only.test.js', io), false);
+  });
+
+  it('hasRealTests rejects a regex literal whose body itself contains quote characters (PRR-B review round 3, #2632)', () => {
+    const io1 = { existsSync: () => true, readFileSync: () => 'const matcher = /it("fake")/;\n' };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/regex-quoted-it.test.js', io1), false);
+    const io2 = { existsSync: () => true, readFileSync: () => "const m2 = /test('fake')/;\n" };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/regex-quoted-test.test.js', io2), false);
+  });
+
+  it('stripCommentsAndStrings does not let a regex literal\'s quoted body read as a string literal', () => {
+    const stripped = verifyFeaturesIndex.stripCommentsAndStrings('const matcher = /it("fake")/;');
+    assert.ok(!/it\(\s*""/.test(stripped), `the regex literal must not collapse into an it("") shape: ${JSON.stringify(stripped)}`);
+  });
+
+  it('stripCommentsAndStrings does not treat a division operator as a regex-literal opener', () => {
+    const stripped = verifyFeaturesIndex.stripCommentsAndStrings('const x = a / b; it(\'y\', () => {});');
+    assert.match(stripped, /it\(\s*""/, 'a real call after an ordinary division must still match');
+  });
+
+  it('hasRealTests matches it.only/.skip/.todo variants once stripped to a string-literal first argument', () => {
+    const io = { existsSync: () => true, readFileSync: () => "it.only('y', () => {});\n" };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/only.test.js', io), true);
+  });
+
+  it('hasRealTests rejects a regex literal following a regex-preceding keyword like return/throw/case (PRR-B review round 4, #2632)', () => {
+    const returnIo = { existsSync: () => true, readFileSync: () => 'function matcher() { return /;it("fake")/; }\n' };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/return-regex.test.js', returnIo), false);
+    const throwIo = { existsSync: () => true, readFileSync: () => 'function f() { throw /;test("fake")/; }\n' };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/throw-regex.test.js', throwIo), false);
+    const caseIo = { existsSync: () => true, readFileSync: () => 'switch (x) { case /it("fake")/.test(y): break; }\n' };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/case-regex.test.js', caseIo), false);
+  });
+
+  it('stripCommentsAndStrings treats / after return as a regex literal, not division (PRR-B review round 4, #2632)', () => {
+    const stripped = verifyFeaturesIndex.stripCommentsAndStrings('function matcher() { return /;it("fake")/; }');
+    assert.ok(!/it\(\s*""/.test(stripped), `the regex literal after return must not collapse into an it("") shape: ${JSON.stringify(stripped)}`);
+  });
+
+  it('stripCommentsAndStrings does not treat a keyword used as a property name as a regex-preceding context', () => {
+    const stripped = verifyFeaturesIndex.stripCommentsAndStrings('const x = obj.return / 2; it(\'real\', () => {});');
+    assert.match(stripped, /it\(\s*""/, 'obj.return is a property access, so the following / divides and the real call after it must still match');
+  });
+
+  it('hasRealTests rejects a regex literal immediately after an if/while/for control condition (PRR-B review round 5, #2632)', () => {
+    const ifIo = { existsSync: () => true, readFileSync: () => 'if (flag) /;it("fake")/.test(text);\n' };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/if-regex.test.js', ifIo), false);
+    const whileIo = { existsSync: () => true, readFileSync: () => 'while (flag) /;test("fake")/.test(text);\n' };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/while-regex.test.js', whileIo), false);
+    const forIo = { existsSync: () => true, readFileSync: () => 'for (;flag;) /;it("fake")/.test(text);\n' };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/for-regex.test.js', forIo), false);
+  });
+
+  it('stripCommentsAndStrings treats / after a control condition\'s closing ) as a regex literal, not division', () => {
+    const stripped = verifyFeaturesIndex.stripCommentsAndStrings('if (flag) /;it("fake")/.test(text);');
+    assert.ok(!/it\(\s*""/.test(stripped), `the regex literal after if (...) must not collapse into an it("") shape: ${JSON.stringify(stripped)}`);
+  });
+
+  it('stripCommentsAndStrings still treats / as division after an ordinary function-call paren (not a control keyword)', () => {
+    const stripped = verifyFeaturesIndex.stripCommentsAndStrings('f(x) / 2; it(\'real\', () => {});');
+    assert.match(stripped, /it\(\s*""/, 'f(...) is a call, not if/while/for/with, so the following / divides and the real call after it must still match');
+  });
+
+  it('stripCommentsAndStrings handles a control condition with its own nested parens', () => {
+    const stripped = verifyFeaturesIndex.stripCommentsAndStrings('if (a && (b || c)) /;it("fake")/.test(text);');
+    assert.ok(!/it\(\s*""/.test(stripped), `nested parens in the condition must not defeat the outer if's control-paren tracking: ${JSON.stringify(stripped)}`);
   });
 });
