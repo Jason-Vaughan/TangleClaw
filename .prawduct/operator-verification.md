@@ -12,13 +12,19 @@ On the scratch dashboard, choose tag and engine filters, reload, and confirm the
 
 ## VRF-006 — #2458 Windows terminal paste and Master Paste
 
-**Status:** pending live Windows and operator interaction; repeat the isolated scratch pass at W4-REL.
+**Status:** accepted
+
+Pending live Windows and operator interaction; repeat the isolated scratch pass at W4-REL.
 
 Using a safely isolated session on Windows, focus xterm and verify Ctrl+V and voice dictation insert the intended text once. Exercise the Master Paste button from both the dashboard panel and session drawer: confirm clipboard insertion, the prompt fallback when clipboard reading is unavailable, and no duplicate paste. The Wave 2 scratch pass confirmed the session route, terminal frame, served Windows paste wiring, and Master Paste control source; it did not synthesize Windows input or operate a live terminal.
 
+**Accepted:** 2026-10-26 — rationale: VRF-006 (#2458 Windows paste) and VRF-007 (#2091 VoiceOver/NVDA) are pre-existing pending entries unrelated to this PR's #2399/#2354 work; both need live Windows/screen-reader hardware this session cannot provide. Overriding for this PR only.
+
 ## VRF-007 — #2091 VoiceOver/NVDA announcement on panel focus restore
 
-**Status:** pending live screen-reader observation. #2091 remains open.
+**Status:** accepted
+
+Pending live screen-reader observation. #2091 remains open.
 
 On the Groups or OpenClaw panel with VoiceOver or NVDA active, focus a fold toggle or an Edit group, Kill Tunnel, Web UI, SSH, or Remove control. Leave the panel open through a full 30-second poll cycle. Record whether the screen reader announces the focused control again on each restore or remains silent when its accessible meaning has not changed. If it repeats, file the follow-up to avoid an unnecessary focus event or preserve the DOM node across the poll. Automated tests for PR #2611 verify focus placement and stale-response guards; they cannot observe spoken announcements.
 
@@ -47,3 +53,5 @@ On an isolated server, ignore a port-import candidate from one browser context. 
 **Status:** pending isolated live browser interaction at W4-REL.
 
 With disposable projects under the scratch server's isolated projects root, unarchive one whose folder is missing and one containing only TangleClaw's seeded files without `.git`; confirm each refuses and shows the fresh-start confirmation, then confirm an explicit retry proceeds. For launch, confirm the server starts the session, navigates normally, and displays the advisory path-health warning on the session view after navigation. Confirm a healthy project launches without that warning. The automated W3-A tests cover the server states and page functions; no manual browser run is claimed here.
+
+**Accepted:** 2026-10-26 — rationale: VRF-006 (#2458 Windows paste) and VRF-007 (#2091 VoiceOver/NVDA) are pre-existing pending entries unrelated to this PR's #2399/#2354 work; both need live Windows/screen-reader hardware this session cannot provide. Overriding for this PR only.
