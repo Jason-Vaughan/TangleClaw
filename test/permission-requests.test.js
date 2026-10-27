@@ -612,6 +612,49 @@ describe('decideFromBridge', () => {
     assert.equal(decision.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
   });
 
+  it('a persisted "do not grant perm_X" is NOT read as a grant: a negated decision word names no decision (PRR-B Round 3)', () => {
+    const { result } = create();
+    insertBridgeRoute({
+      routeId: 'route-2h', authorId: 'author-1', externalId: 'ext-2h',
+      inboundText: `do not grant ${result.request.requestId}`
+    });
+    pinOperatorAuthor('author-1');
+    const decision = permissionRequests.decideFromBridge(result.request.requestId, {
+      decision: 'grant', bridgeRouteId: 'route-2h', replyText: `do not grant ${result.request.requestId}`
+    });
+    assert.equal(decision.ok, false);
+    assert.equal(decision.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
+    assert.equal(permissionRequests.getPermissionRequest(result.request.requestId).state, STATES.PENDING);
+  });
+
+  it('a persisted "never refuse perm_X" is NOT read as a refusal either — negation strips either decision word the same way (PRR-B Round 3)', () => {
+    const { result } = create();
+    insertBridgeRoute({
+      routeId: 'route-2i', authorId: 'author-1', externalId: 'ext-2i',
+      inboundText: `never refuse ${result.request.requestId}`
+    });
+    pinOperatorAuthor('author-1');
+    const decision = permissionRequests.decideFromBridge(result.request.requestId, {
+      decision: 'refuse', bridgeRouteId: 'route-2i', replyText: `never refuse ${result.request.requestId}`
+    });
+    assert.equal(decision.ok, false);
+    assert.equal(decision.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
+  });
+
+  it('a persisted "a3-grant-ed perm_X" is not read as naming "grant": word-boundary matching, not substring (PRR-B Round 3)', () => {
+    const { result } = create();
+    insertBridgeRoute({
+      routeId: 'route-2j', authorId: 'author-1', externalId: 'ext-2j',
+      inboundText: `regrant ${result.request.requestId}`
+    });
+    pinOperatorAuthor('author-1');
+    const decision = permissionRequests.decideFromBridge(result.request.requestId, {
+      decision: 'grant', bridgeRouteId: 'route-2j', replyText: `regrant ${result.request.requestId}`
+    });
+    assert.equal(decision.ok, false);
+    assert.equal(decision.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
+  });
+
   it('a persisted "refuse" message correctly refuses when the caller\'s decision also says refuse', () => {
     const { result } = create();
     insertBridgeRoute({ routeId: 'route-2e', authorId: 'author-1', externalId: 'ext-2e', inboundText: `refuse ${result.request.requestId}` });

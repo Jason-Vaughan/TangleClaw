@@ -41,6 +41,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-27 — v5.40.0 W2-C PR #2637 Round 3: negated decision words, and never probe an absent default server
+
+<!-- prawduct: type=fixed | scope=w2c-2352-2625 -->
+
+- **#2352:** `_persistedBridgeDecision` (`lib/permission-requests.js`) previously read "do not grant perm_X" as a grant, since `.includes('grant')` is true for it regardless of the "do not" in front. Fixed with `_stripNegatedDecisionWords` (removes a decision word immediately preceded by `not`/`never`/`don't`/`dont` before the grant/refuse check runs) plus word-boundary matching (`\bgrant\b`, so "regrant" no longer counts as naming "grant" either) — a negated or substring-only occurrence now correctly resolves to `PERMISSION_BRIDGE_DECISION_AMBIGUOUS`, never silently to the opposite of what was never explicitly said. Caught by TC-Lane-PRR-B's Round 3 review.
+- **#2625:** `createSessionWithTccBootstrap` (`lib/tmux.js`) ran its starting-type readability probe (`new-session`) against the DEFAULT tmux server unconditionally — against an absent default socket, that implicitly starts one, and because a tmux server daemonizes independently of the short-lived client that asked for it, the newly-started (unprivileged) default server can survive even after the probe's own client call times out and gets killed. Fixed: a new `_tmuxServerRunning` presence check (generalized from the TCC-authorized-socket one added in Round 2, via `list-sessions`, which never starts a server) gates the default-server probe the same way the authorized-socket probe was already gated — an absent default server is read as "can't assume readable" without ever probing it. Also caught by TC-Lane-PRR-B's Round 3 review.
+
 ## 2026-10-27 — v5.40.0 W2-C PR #2637 Round 2: bind the bridge decision to the persisted message, bootstrap the TCC-authorized server via Terminal.app
 
 <!-- prawduct: type=fixed | scope=w2c-2352-2625 -->

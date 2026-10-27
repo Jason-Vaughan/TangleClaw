@@ -24,6 +24,7 @@ const REAL_TMUX = execFileSync('which', ['tmux'], { encoding: 'utf8' }).trim();
 let createdDefault = [];
 let createdFakeHome = null;
 const realBootstrap = tmux.bootstrapTccAuthorizedServer;
+const realDefaultServerRunning = tmux._tccSeams.defaultServerRunning;
 
 // `_tccSeams.settle` is real production behavior (giving Terminal.app a
 // moment to actually start the server) — this file stubs
@@ -44,6 +45,7 @@ afterEach(() => {
   delete tmux._tccSeams.homedir;
   tmux._tccSeams.homedir = () => os.homedir();
   tmux.bootstrapTccAuthorizedServer = realBootstrap;
+  tmux._tccSeams.defaultServerRunning = realDefaultServerRunning;
   // Best-effort: some tests intentionally leave the TCC-authorized server
   // without a session the test itself tracks (the fail-closed case never
   // creates one; others clean up their own named session already).
@@ -228,5 +230,41 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
     });
     const proxyCommand = execFileSync('tmux', ['list-panes', '-t', name, '-F', '#{pane_start_command}'], { encoding: 'utf8' }).trim();
     assert.match(proxyCommand, /-u/, 'the proxy attaches with -u so the real session\'s UTF-8 content survives the hop');
+  });
+
+  it('never runs the starting-type probe against an absent default server — it would risk orphaning an unprivileged one (PRR-B Round 3)', () => {
+    const cwd = fakeProtectedCwd('Documents/default-absent-proj');
+    const name = uniqueSessionName('tcc_default_absent');
+    createdDefault.push(name);
+    startAuthorizedAnchor();
+    tmux._tccSeams.defaultServerRunning = () => false;
+
+    // A shim that records (rather than sleeps on) a default-server probe
+    // call: no leading `-L`, so it only matches the UNQUALIFIED default-server
+    // probe, never the authorized-socket one — proving the specific call this
+    // test cares about, not merely that SOME call was slow.
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tcc-detect-'));
+    const markerFile = path.join(binDir, 'default-probe-called');
+    fs.writeFileSync(path.join(binDir, 'tmux'), [
+      '#!/bin/sh',
+      'case "$*" in',
+      `  "new-session -d -s tc-tcc-probe-"*) touch ${markerFile} ;;`,
+      'esac',
+      `exec ${REAL_TMUX} "$@"`
+    ].join('\n'), { mode: 0o755 });
+    const realPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${realPath}`;
+    try {
+      const created = tmux.createSessionWithTccBootstrap(name, { cwd });
+      assert.equal(created, true);
+    } finally {
+      process.env.PATH = realPath;
+    }
+    assert.equal(fs.existsSync(markerFile), false, 'the default-server probe must never run when the default server is reported absent');
+    fs.rmSync(binDir, { recursive: true, force: true });
+
+    // The real session still lands on the already-running authorized server.
+    assert.doesNotThrow(() => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }));
+    assert.equal(tmux.hasSession(name), true, 'the default server still gets its attach proxy');
   });
 });
