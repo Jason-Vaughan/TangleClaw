@@ -95,7 +95,7 @@ describe('bridge helper: its commands (#2031)', () => {
     const file = paths(home).config;
     assert.equal(fs.statSync(file).mode & 0o777, 0o600);
     assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')),
-      { baseUrl: 'http://127.0.0.1:3102', authorId: IDS.author, guildId: IDS.guild, channelId: IDS.channel, pollSeconds: 15 });
+      { baseUrl: 'http://127.0.0.1:3102', authorId: IDS.author, guildId: IDS.guild, channelId: IDS.channel, pollSeconds: 15, dmChannelId: null, dmEnabled: false });
     const before = fs.readFileSync(file, 'utf8');
 
     const bad = await main(['configure', '--base-url', 'http://tc.example.net', '--author', IDS.author, '--guild', IDS.guild, '--channel', IDS.channel], env());

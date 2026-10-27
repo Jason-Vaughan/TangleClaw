@@ -1279,6 +1279,36 @@ describe('bridge helper: the relay against the real server (#2031)', () => {
       await bridge.fail(id, item.leaseId, 'chat-channel-missing', [], 1);
       await failing({}, ['FAIL bridge-circuit: configuration-circuit-open']);
     });
+
+    const DM_ID = '300000000000000099';
+
+    it('checks the pinned DM channel only when the DM surface is enabled, and refuses one that is not a usable DM (#2433)', async () => {
+      discord.reads.channelsById[DM_ID] = [200, { id: DM_ID, guild_id: null, type: 1, recipients: [{ id: IDS.authorId }] }];
+      const { code, lines } = await preflight({ ids: { dmChannelId: DM_ID, dmEnabled: true } });
+      assert.equal(code, EXIT.ok, lines.join('\n'));
+      assert.ok(lines.map((l) => l.replace(/\s+/g, ' ')).includes('ok discord-dm-channel'));
+      delete discord.reads.channelsById[DM_ID];
+    });
+
+    it('is not asked at all when the DM surface is off, even with a channel id on file', async () => {
+      const { code, lines } = await preflight({ ids: { dmChannelId: DM_ID } });
+      assert.equal(code, EXIT.ok, lines.join('\n'));
+      assert.ok(!lines.some((l) => l.includes('discord-dm-channel')), 'off means unasked, not skipped-and-shown');
+    });
+
+    it('fails on a pinned DM channel that is not a DM, is in a guild, or answers for someone else', async () => {
+      const failingDm = async (channel, expected) => {
+        bridgeApi._resetRateLimits();
+        discord.reads.channelsById[DM_ID] = channel;
+        const { code, lines } = await preflight({ ids: { dmChannelId: DM_ID, dmEnabled: true } });
+        assert.equal(code, EXIT.failed, expected);
+        assert.ok(lines.map((l) => l.replace(/\s+/g, ' ')).includes(expected), lines.join(' | '));
+      };
+      await failingDm([200, { id: DM_ID, guild_id: null, type: 0, recipients: [{ id: IDS.authorId }] }], 'FAIL discord-dm-channel: dm-channel-not-a-dm');
+      await failingDm([200, { id: DM_ID, guild_id: '200000000000000002', type: 1, recipients: [{ id: IDS.authorId }] }], 'FAIL discord-dm-channel: dm-channel-in-a-guild');
+      await failingDm([200, { id: DM_ID, guild_id: null, type: 1, recipients: [{ id: '100000000000000099' }] }], 'FAIL discord-dm-channel: dm-channel-wrong-recipient');
+      delete discord.reads.channelsById[DM_ID];
+    });
   });
 
   describe('the helper process, end to end', () => {

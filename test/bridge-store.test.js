@@ -81,13 +81,39 @@ describe('bridge store (#2031)', () => {
     for (const change of [
       { text: 'different text', digest: other },
       { authorId: 'someone-else' }, { spaceId: 'other-space' }, { channelId: 'other-channel' },
-      { threadId: 'a-thread' }, { replyToExternalId: 'ext-0' }
+      { threadId: 'a-thread' }, { replyToExternalId: 'ext-0' },
+      { surfaceKind: 'bot-dm' } // #2433: a replay on a different ingress surface is not a replay.
     ]) {
       const result = bridgeStore.routes.accept(inbound({ routeId: 'rt_x', ...change }));
       assert.deepEqual(result, { created: false, mismatch: true, route: null }, JSON.stringify(change));
     }
     assert.equal(bridgeStore.routes.list().length, 1);
     assert.deepEqual(bridgeStore.routes.bodies('rt_1').map((b) => b.text), ['hello']);
+  });
+
+  it('stores which pinned ingress surface a route arrived on, defaulting to guild-channel (#2433)', () => {
+    const guild = bridgeStore.routes.accept(inbound());
+    assert.equal(guild.route.surfaceKind, 'guild-channel', 'the surface before this column existed');
+
+    const dm = bridgeStore.routes.accept(inbound({ routeId: 'rt_2', externalId: 'ext-2', surfaceKind: 'bot-dm' }));
+    assert.equal(dm.route.surfaceKind, 'bot-dm');
+
+    // A replay (same external id, same surface) is still the same route, unaffected.
+    const again = bridgeStore.routes.accept(inbound({ routeId: 'rt_2', externalId: 'ext-2', surfaceKind: 'bot-dm' }));
+    assert.deepEqual([again.created, again.mismatch, again.route.surfaceKind], [false, false, 'bot-dm']);
+
+    // An outbound item bound to a DM route inherits that route's surface; a routeless one keeps guild-channel.
+    const reply = bridgeStore.outbound.enqueue({
+      idemKey: 'reply:rt_2', kind: 'reply', routeId: 'rt_2', releasedGeneration: 1,
+      sourceLabel: 'TangleClaw', text: 'hi', digest
+    });
+    assert.equal(reply.surfaceKind, 'bot-dm');
+
+    const notice = bridgeStore.outbound.enqueue({
+      idemKey: 'notice:1', kind: 'notification', notifyType: 'fleet-idle',
+      sourceLabel: 'TangleClaw', text: 'idle', digest
+    });
+    assert.equal(notice.surfaceKind, 'guild-channel', 'a routeless notification keeps the original guild-only policy');
   });
 
   it('keeps one live Master generation and revokes the one before it', () => {

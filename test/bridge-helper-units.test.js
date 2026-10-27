@@ -180,7 +180,7 @@ describe('bridge helper: its parts (#2031)', () => {
     it('is written owner-only and whole, and a value that does not pass writes nothing', () => {
       const file = config.paths(tmpDir).config;
       const written = config.writeConfig(file, { baseUrl: 'http://127.0.0.1:3102/x', ...IDS });
-      assert.deepEqual(written, { baseUrl: 'http://127.0.0.1:3102', ...IDS, pollSeconds: 15 });
+      assert.deepEqual(written, { baseUrl: 'http://127.0.0.1:3102', ...IDS, pollSeconds: 15, dmChannelId: null, dmEnabled: false });
       assert.equal(fs.statSync(file).mode & 0o777, 0o600);
       assert.equal(fs.statSync(path.dirname(file)).mode & 0o777, 0o700);
       assert.deepEqual(config.readConfig(file), written);
@@ -192,6 +192,31 @@ describe('bridge helper: its parts (#2031)', () => {
         assert.throws(() => config.writeConfig(file, { ...written, [field]: value }), (err) => err.code === 'config-invalid' && err.field === field);
       }
       assert.deepEqual(config.readConfig(file), written, 'the earlier config still stands');
+    });
+
+    it('the DM surface is off by default and needs a pinned DM channel id to turn on (#2433)', () => {
+      const file = config.paths(tmpDir).config;
+      // Omitted entirely: off, no pinned channel -- the shape an existing config has.
+      const base = config.writeConfig(file, { baseUrl: 'http://127.0.0.1:3102', ...IDS });
+      assert.deepEqual([base.dmChannelId, base.dmEnabled], [null, false]);
+
+      // A pinned DM channel id with the surface still off is accepted (configured, not yet live).
+      const pinned = config.writeConfig(file, { ...base, dmChannelId: '300000000000000099' });
+      assert.deepEqual([pinned.dmChannelId, pinned.dmEnabled], ['300000000000000099', false]);
+
+      // Enabling it without a pinned channel id is refused.
+      assert.throws(
+        () => config.writeConfig(file, { ...base, dmEnabled: true }),
+        (err) => err.code === 'config-invalid' && err.field === 'dmChannelId'
+      );
+
+      // Enabling it with the pinned channel id passes.
+      const live = config.writeConfig(file, { ...pinned, dmEnabled: true });
+      assert.deepEqual([live.dmChannelId, live.dmEnabled], ['300000000000000099', true]);
+
+      for (const [field, value] of [['dmChannelId', 'not-a-snowflake'], ['dmEnabled', 'yes']]) {
+        assert.throws(() => config.writeConfig(file, { ...pinned, [field]: value }), (err) => err.code === 'config-invalid' && err.field === field);
+      }
     });
 
     it('tells a missing config from one that does not pass', () => {

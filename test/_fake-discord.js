@@ -21,7 +21,11 @@ async function startFakeDiscord() {
   const reactions = [];
   const script = [];
   const byNonce = new Map();
-  const reads = { self: [200, { id: '900000000000000009', bot: true }], channel: null, guildId: '200000000000000002' };
+  // `channelsById` (#2433) answers a specific channel id differently from
+  // every other one -- needed once a test juggles the guild channel and the
+  // pinned DM channel at the same time, each with its own shape. Checked
+  // before the single `channel` stub, which still answers every id alike.
+  const reads = { self: [200, { id: '900000000000000009', bot: true }], channel: null, channelsById: {}, guildId: '200000000000000002' };
   let postCalls = 0;
   let nextId = 400000000000000000n;
 
@@ -72,7 +76,9 @@ async function startFakeDiscord() {
       // The two read-only calls preflight makes. `reads` holds what each answers with.
       if (req.method === 'GET' && req.url === '/users/@me') return answer(...reads.self);
       const channel = /^\/channels\/(\d+)$/.exec(req.url);
-      if (req.method === 'GET' && channel) return answer(...(reads.channel || [200, { id: channel[1], guild_id: reads.guildId, type: 0 }]));
+      if (req.method === 'GET' && channel) {
+        return answer(...(reads.channelsById[channel[1]] || reads.channel || [200, { id: channel[1], guild_id: reads.guildId, type: 0 }]));
+      }
       return answer(404, { code: 0 });
     });
   });

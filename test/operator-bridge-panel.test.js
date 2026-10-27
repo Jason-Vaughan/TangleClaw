@@ -355,7 +355,7 @@ describe('the Operator Bridge panel (#2031)', () => {
       assert.match(panel.state.notice.text, /must be the number Discord shows for it/);
       assert.equal(gateway.allowlist(), null);
       assert.equal(await panel.act('allowlist', IDS), 'done');
-      assert.deepEqual(gateway.allowlist(), IDS);
+      assert.deepEqual(gateway.allowlist(), { ...IDS, dmChannelId: null, dmEnabled: false });
       assert.equal(await panel.act('nonsense'), 'unknown');
     });
   });
@@ -895,7 +895,7 @@ describe('the Operator Bridge panel (#2031)', () => {
       doc.getElementById('obSpaceId').value = IDS.spaceId;
       doc.getElementById('obChannelId').value = IDS.channelId;
       await press({ bridgeAction: 'allowlist' });
-      assert.deepEqual(gateway.allowlist(), IDS, 'the three inputs, trimmed');
+      assert.deepEqual(gateway.allowlist(), { ...IDS, dmChannelId: null, dmEnabled: false }, 'the three inputs, trimmed');
       assert.match(container.innerHTML, new RegExp(`author ${IDS.authorId}`));
 
       await press({ bridgeAction: 'mint-token' });

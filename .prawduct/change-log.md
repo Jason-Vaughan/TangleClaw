@@ -41,6 +41,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-27 — v5.40.0 W2-A Chunk 1: Operator Bridge pinned DM ingress, schema and inbound half
+
+<!-- prawduct: type=feature | scope=w2a-operator-bridge-dm-ingress -->
+
+- **#2433 (chunk 1 of 3):** Schema v69 (bridge schema v64) adds `surface_kind` to `bridge_routes` and `bridge_outbound`, migrated via the bridge's own generic `upgradeBridgeTables` rebuild (existing rows default `guild-channel`). The helper's config (`dmChannelId`, `dmEnabled`), Discord REST (`getChannel` now reads a DM's `recipientId`), and preflight/startup (`verifyDmChannel`) gain the second pinned ingress surface: one type-1 DM channel from the same verified author, off by default. `inbound.js` accepts a matching DM alongside the existing guild channel, rejects every other DM shape (bot, webhook, group-DM, wrong author) before reading content, and replies refusals on the surface a message arrived on. Server-side, a new `POST operator/dm-allowlist` route and `bridge-gateway.js#acceptInbound`'s own independent allowlist check admit the DM surface in parallel with the guild one, deciding `surface_kind` itself rather than trusting the helper's say-so. `routes.accept()`'s existing replay-mismatch check now also catches a changed surface. Outbound dispatch binding to a route's surface (so a DM failure can never fall back to the guild channel) and the operator panel/docs are chunks 2 and 3, not in this PR.
+
 ## 2026-10-27 — v5.40.0 W1-A: operator-needed alert context and Gateway resume docs
 
 <!-- prawduct: type=changed | scope=v540-w1a-2141-2334 -->
