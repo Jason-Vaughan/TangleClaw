@@ -641,18 +641,60 @@ describe('decideFromBridge', () => {
     assert.equal(decision.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
   });
 
-  it('a persisted "a3-grant-ed perm_X" is not read as naming "grant": word-boundary matching, not substring (PRR-B Round 3)', () => {
+  it('a negation word still refuses even when NOT immediately adjacent to the decision word — "do not ever grant perm_X" (PRR-B Round 4)', () => {
     const { result } = create();
     insertBridgeRoute({
-      routeId: 'route-2j', authorId: 'author-1', externalId: 'ext-2j',
-      inboundText: `regrant ${result.request.requestId}`
+      routeId: 'route-2l', authorId: 'author-1', externalId: 'ext-2l',
+      inboundText: `do not ever grant ${result.request.requestId}`
     });
     pinOperatorAuthor('author-1');
     const decision = permissionRequests.decideFromBridge(result.request.requestId, {
-      decision: 'grant', bridgeRouteId: 'route-2j', replyText: `regrant ${result.request.requestId}`
+      decision: 'grant', bridgeRouteId: 'route-2l', replyText: `do not ever grant ${result.request.requestId}`
     });
     assert.equal(decision.ok, false);
     assert.equal(decision.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
+  });
+
+  it('negation matching is case-insensitive — "DON\'T grant perm_X" (PRR-B Round 4)', () => {
+    const { result } = create();
+    insertBridgeRoute({
+      routeId: 'route-2m', authorId: 'author-1', externalId: 'ext-2m',
+      inboundText: `DON'T grant ${result.request.requestId}`
+    });
+    pinOperatorAuthor('author-1');
+    const decision = permissionRequests.decideFromBridge(result.request.requestId, {
+      decision: 'grant', bridgeRouteId: 'route-2m', replyText: `DON'T grant ${result.request.requestId}`
+    });
+    assert.equal(decision.ok, false);
+    assert.equal(decision.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
+  });
+
+  it('a persisted "vagrant perm_X" is not read as naming "grant": word-boundary matching, not substring (PRR-B Round 3)', () => {
+    const { result } = create();
+    insertBridgeRoute({
+      routeId: 'route-2j', authorId: 'author-1', externalId: 'ext-2j',
+      inboundText: `vagrant ${result.request.requestId}`
+    });
+    pinOperatorAuthor('author-1');
+    const decision = permissionRequests.decideFromBridge(result.request.requestId, {
+      decision: 'grant', bridgeRouteId: 'route-2j', replyText: `vagrant ${result.request.requestId}`
+    });
+    assert.equal(decision.ok, false);
+    assert.equal(decision.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
+  });
+
+  it('matches the decision word case-insensitively: "GRANT perm_X" still grants (PRR-B Round 3)', () => {
+    const { result } = create();
+    insertBridgeRoute({
+      routeId: 'route-2k', authorId: 'author-1', externalId: 'ext-2k',
+      inboundText: `GRANT ${result.request.requestId}`
+    });
+    pinOperatorAuthor('author-1');
+    const decision = permissionRequests.decideFromBridge(result.request.requestId, {
+      decision: 'grant', bridgeRouteId: 'route-2k', replyText: `GRANT ${result.request.requestId}`
+    });
+    assert.equal(decision.ok, true);
+    assert.equal(decision.request.state, STATES.GRANTED);
   });
 
   it('a persisted "refuse" message correctly refuses when the caller\'s decision also says refuse', () => {
@@ -714,10 +756,10 @@ describe('decideFromBridge', () => {
     // uniqueness, not supersession.
     const first = create({ projectId: PROJECT_A, launchId: 'launch-dup-1' }).result;
     const second = create({ projectId: PROJECT_B, launchId: 'launch-dup-2' }).result;
-    // One persisted message happens to name both ids, so the ambiguity check
-    // passes for both and the duplicate-external_id check is what's actually
-    // being isolated here.
-    const text = `grant ${first.request.requestId} and also ${second.request.requestId}`;
+    // One persisted message names an explicit "grant <id>" command for BOTH
+    // ids, so the decision-parsing check passes cleanly for both and the
+    // duplicate-external_id check is what's actually being isolated here.
+    const text = `grant ${first.request.requestId} and grant ${second.request.requestId}`;
     insertBridgeRoute({ routeId: 'route-5', authorId: 'author-1', externalId: 'ext-5', inboundText: text });
     pinOperatorAuthor('author-1');
     const firstDecision = permissionRequests.decideFromBridge(first.request.requestId, {

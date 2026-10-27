@@ -41,6 +41,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-27 — v5.40.0 W2-C PR #2637 Round 3 (PM re-dispatch): whole-message negation, word-bounded command, case-insensitive
+
+<!-- prawduct: type=fixed | scope=w2c-2352-2625 -->
+
+- **#2352:** Tightened `_persistedBridgeDecision` (`lib/permission-requests.js`) past the prior commit's adjacency-only negation strip, which still read "do not ever grant perm_X" (negation not immediately before the verb) or "DON'T grant perm_X" (case mismatch) as a grant. Now: any negation word (`not`/`no`/`never`/`don't`/`dont`/`cannot`/`can't`/`cant`/`without`) ANYWHERE in the message, case-insensitively, refuses the whole message as `PERMISSION_BRIDGE_DECISION_AMBIGUOUS` rather than trying to localize what it negates; the decision itself now requires an explicit `grant <requestId>`/`refuse <requestId>` adjacent phrase (word-bounded, case-insensitive, with a trailing lookahead so a longer id can't satisfy a shorter one's match) instead of the verb and the id merely appearing anywhere in the same message. The tmux.js default-server-probe fix from the prior commit needed no further change (confirmed accepted as-is). Dispatched directly by PM with the exact regex spec after TC-Lane-PRR-B's continued review; landed with unit + API negative tests for the negation-distance and case-mismatch cases.
+
 ## 2026-10-27 — v5.40.0 W2-C PR #2637 Round 3: negated decision words, and never probe an absent default server
 
 <!-- prawduct: type=fixed | scope=w2c-2352-2625 -->

@@ -227,4 +227,34 @@ describe('permission-request routes (#2352)', () => {
     assert.equal(res.status, 409);
     assert.equal(res.data.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
   });
+
+  it('409s PERMISSION_BRIDGE_DECISION_AMBIGUOUS over HTTP: a negated decision word ("do not grant") is not read as a grant (PRR-B Round 3)', async () => {
+    const created = await createAs(binding.headers, { requestId: 'req-for-bridge-negated' });
+    const requestId = created.data.request.requestId;
+    insertBridgeRoute({ routeId: 'api-route-negated', authorId: 'api-author-1', externalId: 'api-ext-negated', inboundText: `do not grant ${requestId}` });
+    store.getDb().prepare(
+      "INSERT OR REPLACE INTO bridge_settings (key, value, updated_by, updated_at) VALUES ('allow.author', ?, 'operator', ?)"
+    ).run('api-author-1', new Date().toISOString());
+
+    const res = await sendAs(server, 'POST', `/api/permissions/requests/${encodeURIComponent(requestId)}/decide`,
+      { decision: 'grant', bridgeRouteId: 'api-route-negated', replyText: `do not grant ${requestId}` },
+      { 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': MASTER_LAUNCH_ID });
+    assert.equal(res.status, 409);
+    assert.equal(res.data.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
+  });
+
+  it('409s PERMISSION_BRIDGE_DECISION_AMBIGUOUS over HTTP: an embedded word ("vagrant") is not read as naming "grant" (PRR-B Round 3)', async () => {
+    const created = await createAs(binding.headers, { requestId: 'req-for-bridge-embedded' });
+    const requestId = created.data.request.requestId;
+    insertBridgeRoute({ routeId: 'api-route-embedded', authorId: 'api-author-1', externalId: 'api-ext-embedded', inboundText: `vagrant ${requestId}` });
+    store.getDb().prepare(
+      "INSERT OR REPLACE INTO bridge_settings (key, value, updated_by, updated_at) VALUES ('allow.author', ?, 'operator', ?)"
+    ).run('api-author-1', new Date().toISOString());
+
+    const res = await sendAs(server, 'POST', `/api/permissions/requests/${encodeURIComponent(requestId)}/decide`,
+      { decision: 'grant', bridgeRouteId: 'api-route-embedded', replyText: `vagrant ${requestId}` },
+      { 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': MASTER_LAUNCH_ID });
+    assert.equal(res.status, 409);
+    assert.equal(res.data.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
+  });
 });
