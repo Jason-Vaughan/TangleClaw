@@ -41,6 +41,32 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-27 — v5.42.0 W1-A: extract shared pane-writer behind launch-unready and launch-kickoff (#1669)
+
+<!-- prawduct: type=internal | scope=w1a-1669 -->
+
+- **#1669:** Extracted the pane-capture, idle-assessment (with its best-effort cursor fallback),
+  injection-result classification, and swallow-and-warn activity-logging mechanics shared by
+  `launch-unready.js` and `launch-kickoff.js` into a new `lib/launch-pane-writer.js`, per Architect
+  Pre-Flight Ruling A477-COSIGN-20261027T2307Z. Each caller's own one-shot state machine is
+  untouched: `launch-unready` still counts a nudge only after a successful send, and
+  `launch-kickoff` still claims its fire-once slot before sending and releases it only on a
+  pre-send bailout. Both existing test suites (`test/launch-unready.test.js`,
+  `test/launch-kickoff.test.js`) pass unchanged against the extracted module; added
+  `test/launch-pane-writer.test.js` to cover it directly.
+- Noted for the record rather than changed (outside this car's authorized file scope): the
+  independent PR reviewer observed that `assessIdle` now runs inside the same try/catch as
+  `capturePane` in both callers, where it previously ran unguarded. For `launch-kickoff` this
+  closes a latent gap against the module's own "never rejects" invariant; for `launch-unready` it
+  changes only the log message and an `idleTicks` reset on an `assessIdle` throw, not the verdict
+  code returned. The cumulative Critic review of this exact diff passed with 0 blocking.
+- Also noted: one pre-existing, unrelated full-suite failure
+  (`record-test-run.test.js`'s "declares the suite-evidence wrapper" check) reproduces identically
+  against `origin/main` with no local change to the files it reads (`.prawduct/project-state.yaml`,
+  untouched by this branch). It tracks the open, Operator-held #2371 cutover — `scripts/suite-evidence.js`
+  is built but not yet declared as `test_command` — which is outside this car's authorized scope to
+  fix.
+
 ## 2026-10-27 — v5.41.0 W4-REL: prepare the release candidate
 
 <!-- prawduct: type=internal | scope=v541-w4-rel -->
