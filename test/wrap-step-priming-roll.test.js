@@ -397,9 +397,9 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
     };
   }
 
-  /** Write a plan markdown file into <project>/.claude/plans/<name>. */
+  /** Write a plan markdown file into <project>/.tangleclaw/plans/<name>. */
   function writePlan(name, body) {
-    const dir = path.join(projectPath, '.claude', 'plans');
+    const dir = path.join(projectPath, '.tangleclaw', 'plans');
     fs.mkdirSync(dir, { recursive: true });
     const p = path.join(dir, name);
     fs.writeFileSync(p, body);
@@ -505,10 +505,10 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
     assert.match(result.blockers[0], /planPath does not exist/i);
   });
 
-  it('skips (not blocks) when .claude/plans is empty (#302)', async () => {
+  it('skips (not blocks) when .tangleclaw/plans is empty (#302)', async () => {
     // An empty active plans dir means "no plan to roll" — same as the
     // all-complete case below. Must skip cleanly, not block the wrap.
-    fs.mkdirSync(path.join(projectPath, '.claude', 'plans'), { recursive: true });
+    fs.mkdirSync(path.join(projectPath, '.tangleclaw', 'plans'), { recursive: true });
     const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
     assert.equal(result.ok, true, 'an empty active plans dir must not block the wrap');
     assert.equal(result.status, 'skipped');
@@ -516,13 +516,13 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
     assert.deepEqual(result.blockers, []);
   });
 
-  it('skips when all plans are archived under .claude/plans/archive/ (#302 repro)', async () => {
+  it('skips when all plans are archived under .tangleclaw/plans/archive/ (#302 repro)', async () => {
     // The exact reported scenario: every shipped plan has been moved to
     // the archive subdir (per CLAUDE.md's archive rule), leaving the
     // active dir holding only `archive/`. The non-recursive `.md` filter
     // must ignore the subdir's plans, so the step skips rather than
     // mistaking 20 archived plans for active ones.
-    const archiveDir = path.join(projectPath, '.claude', 'plans', 'archive');
+    const archiveDir = path.join(projectPath, '.tangleclaw', 'plans', 'archive');
     fs.mkdirSync(archiveDir, { recursive: true });
     fs.writeFileSync(path.join(archiveDir, 'shipped-a.md'), '### Chunk 1: A ✅\n');
     fs.writeFileSync(path.join(archiveDir, 'shipped-b.md'), '### Chunk 1: B\n'); // undone, but archived
@@ -646,7 +646,7 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
       assert.deepEqual(result.output.archiveCandidates, [{ file: 'train-9.md', issues: [1416, 1417] }]);
       assert.equal(result.output.warning, true, 'the row is flagged for the operator to look at');
       assert.match(result.output.note, /Archive candidate: train-9\.md \(#1416, #1417 closed\)/);
-      assert.ok(fs.existsSync(path.join(projectPath, '.claude', 'plans', 'train-9.md')), 'a warning only — nothing is moved');
+      assert.ok(fs.existsSync(path.join(projectPath, '.tangleclaw', 'plans', 'train-9.md')), 'a warning only — nothing is moved');
     });
 
     it('two live candidates: the picker still shows, with no archive candidate', async () => {
@@ -698,7 +698,7 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
       assert.equal(result.status, 'skipped');
       assert.deepEqual(result.output.archiveCandidates.map((a) => a.file), ['shipped.md']);
       assert.match(result.output.reason, /every in-progress plan cites only closed issues/);
-      assert.ok(fs.existsSync(path.join(projectPath, '.claude', 'plans', 'shipped.md')), 'a warning only — nothing is moved');
+      assert.ok(fs.existsSync(path.join(projectPath, '.tangleclaw', 'plans', 'shipped.md')), 'a warning only — nothing is moved');
     });
 
     it('ONE in-progress plan with an open issue is rolled exactly as before', async () => {
@@ -714,7 +714,7 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
     it('an operator pointer is rolled as named, never dropped underneath them', async () => {
       writePlan('pinned.md', '**Issues:** #1\n### Chunk 1: A\n');
       const calls = fakeLookup(() => { throw new Error('must not be called'); });
-      const result = await primingRoll.run(buildContext({ id: 'next-session-prime', planPath: '.claude/plans/pinned.md' }));
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime', planPath: '.tangleclaw/plans/pinned.md' }));
       assert.equal(result.status, 'done');
       assert.match(result.output.planPath, /pinned\.md$/);
       assert.equal(calls.length, 0, 'a named plan is not second-guessed against GitHub');
@@ -740,7 +740,7 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
       assert.equal(result.status, 'done');
       assert.match(result.output.planPath, /uncited\.md$/, 'prose references do not make a plan shipped');
 
-      fs.rmSync(path.join(projectPath, '.claude', 'plans', 'shipped.md'));
+      fs.rmSync(path.join(projectPath, '.tangleclaw', 'plans', 'shipped.md'));
       writePlan('also-uncited.md', '### Chunk 1: A\n');
       const calls = fakeLookup(() => { throw new Error('must not be called'); });
       const blocked = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
@@ -761,7 +761,7 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
     it('an activePlan naming a since-archived plan falls through to resolution, says so, and STAGES the stale pin\'s clear (#1757)', async () => {
       writePlan('live.md', '### Chunk 1: A\n');
       writePlan('shipped-done.md', '### Chunk 1: A ✅\n');
-      const archive = path.join(projectPath, '.claude', 'plans', 'archive');
+      const archive = path.join(projectPath, '.tangleclaw', 'plans', 'archive');
       fs.mkdirSync(archive, { recursive: true });
       fs.writeFileSync(path.join(archive, 'picked-before.md'), '### Chunk 1: A\n');
       const cfg = path.join(projectPath, '.tangleclaw', 'project.json');
@@ -850,7 +850,7 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
       assert.equal(result.status, 'skipped');
       assert.deepEqual(result.output.archiveCandidates.map((a) => a.file), ['shipped.md']);
       assert.match(result.output.reason, /every in-progress plan cites only closed issues/);
-      assert.ok(fs.existsSync(path.join(projectPath, '.claude', 'plans', 'shipped.md')), 'a warning only — nothing is moved');
+      assert.ok(fs.existsSync(path.join(projectPath, '.tangleclaw', 'plans', 'shipped.md')), 'a warning only — nothing is moved');
     });
 
     it('the lone plan with an open cited issue is rolled exactly as before', async () => {
@@ -874,7 +874,7 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
     it('an explicit step.planPath naming the lone plan is never second-guessed against GitHub', async () => {
       writePlan('pinned.md', '**Issues:** #1\n### Chunk 1: A\n');
       const calls = fakeLookup(() => { throw new Error('must not be called'); });
-      const result = await primingRoll.run(buildContext({ id: 'next-session-prime', planPath: '.claude/plans/pinned.md' }));
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime', planPath: '.tangleclaw/plans/pinned.md' }));
       assert.equal(result.status, 'done');
       assert.equal(calls.length, 0);
     });
@@ -1029,21 +1029,19 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
 
     // Single-transaction: real fs must NOT have a priming file yet.
     assert.equal(
-      fs.existsSync(path.join(projectPath, '.claude/priming/build-session.md')),
+      fs.existsSync(path.join(projectPath, '.tangleclaw/priming/build-session.md')),
       false,
       'handler must NOT write to disk — that is the Chunk 9 commit step'
     );
 
-    // Staged shape pinned for commit-step consumption. This fixture's plans
-    // live in the legacy directory, so the new priming file goes there too —
-    // a project's TangleClaw artifacts stay in ONE home rather than splitting
-    // across both. (A project with no legacy plans gets the TC-owned path;
-    // covered in the path-resolution suite.)
+    // Staged shape pinned for commit-step consumption. No existing priming
+    // file and no legacy plans dir (#1050 retired resolution from it), so the
+    // new priming file goes to the TC-owned default path.
     const stagedEntry = ctx.staged['next-session-prime'];
     assert.ok(stagedEntry, 'must stage under step.id');
     assert.equal(
       stagedEntry.primingPath,
-      path.join(projectPath, '.claude/priming/build-session.md')
+      path.join(projectPath, '.tangleclaw/priming/build-session.md')
     );
     assert.match(stagedEntry.newContent, /TANGLECLAW:PRIMING-ROLL:BEGIN/);
     assert.match(stagedEntry.newContent, /TANGLECLAW:PRIMING-ROLL:END/);
@@ -1224,9 +1222,9 @@ describe('wrap-step priming-roll — governed plan pointer (#620)', () => {
     fs.writeFileSync(path.join(dir, name), body);
   }
 
-  /** Write a plan under `.claude/plans/<name>`. */
-  function writeLegacyPlan(name, body) {
-    const dir = path.join(projectPath, '.claude', 'plans');
+  /** Write a plan under `.tangleclaw/plans/<name>`. */
+  function writePlainPlan(name, body) {
+    const dir = path.join(projectPath, '.tangleclaw', 'plans');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, name), body);
   }
@@ -1274,11 +1272,11 @@ describe('wrap-step priming-roll — governed plan pointer (#620)', () => {
   });
 
   describe('resolution precedence', () => {
-    it('rolls to the governed plan instead of the lone .claude/plans file (#620 repro)', async () => {
-      // The exact reported failure: an unrelated plan sits in .claude/plans/
+    it('rolls to the governed plan instead of the lone .tangleclaw/plans file (#620 repro)', async () => {
+      // The exact reported failure: an unrelated plan sits in .tangleclaw/plans/
       // and used to win by the "only .md in the dir" rule, priming the next
       // session onto stale work.
-      writeLegacyPlan('unrelated.md', '### Chunk 01 — One-way auto-inject\n');
+      writePlainPlan('unrelated.md', '### Chunk 01 — One-way auto-inject\n');
       writeGovernedPlan('active.md', '### Chunk 08: Clean-room ✅\n### Chunk 09: Phase B discovery\n');
       writeState('active_build_plan: artifacts/active.md\n');
 
@@ -1288,7 +1286,7 @@ describe('wrap-step priming-roll — governed plan pointer (#620)', () => {
       assert.equal(result.ok, true);
       assert.equal(result.status, 'done');
       assert.match(result.output.planPath, /\.prawduct[/\\]artifacts[/\\]active\.md$/,
-        'must resolve the governed plan, not the .claude/plans file');
+        'must resolve the governed plan, not the .tangleclaw/plans file');
       assert.equal(result.output.pointer.current.id, '09');
       assert.equal(result.output.pointer.current.title, 'Phase B discovery');
       assert.match(ctx.staged['next-session-prime'].newContent, /Chunk 09 — Phase B discovery/);
@@ -1297,11 +1295,11 @@ describe('wrap-step priming-roll — governed plan pointer (#620)', () => {
     it('lets step.planPath outrank the governed pointer', async () => {
       writeGovernedPlan('governed.md', '### Chunk 1: Governed\n');
       writeState('active_build_plan: artifacts/governed.md\n');
-      writeLegacyPlan('explicit.md', '### Chunk 1: Explicit\n');
+      writePlainPlan('explicit.md', '### Chunk 1: Explicit\n');
 
       const result = await primingRoll.run(buildContext({
         id: 'next-session-prime',
-        planPath: '.claude/plans/explicit.md'
+        planPath: '.tangleclaw/plans/explicit.md'
       }));
       assert.equal(result.ok, true);
       assert.equal(result.output.pointer.current.title, 'Explicit');
@@ -1312,7 +1310,7 @@ describe('wrap-step priming-roll — governed plan pointer (#620)', () => {
       // activePlan; an auto-derived pointer must not override a human pick.
       writeGovernedPlan('governed.md', '### Chunk 1: Governed\n');
       writeState('active_build_plan: artifacts/governed.md\n');
-      writeLegacyPlan('picked.md', '### Chunk 1: Picked\n');
+      writePlainPlan('picked.md', '### Chunk 1: Picked\n');
       const cfgDir = path.join(projectPath, '.tangleclaw');
       fs.mkdirSync(cfgDir, { recursive: true });
       fs.writeFileSync(path.join(cfgDir, 'project.json'), JSON.stringify({ activePlan: 'picked.md' }));
@@ -1325,7 +1323,7 @@ describe('wrap-step priming-roll — governed plan pointer (#620)', () => {
     it('skips (never falls through) when the governed pointer dangles', async () => {
       // Falling back to the plans-dir heuristic here is what produced the
       // confidently-wrong pointer in the first place.
-      writeLegacyPlan('unrelated.md', '### Chunk 1: Unrelated\n');
+      writePlainPlan('unrelated.md', '### Chunk 1: Unrelated\n');
       writeState('active_build_plan: artifacts/gone.md\n');
 
       const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
@@ -1343,13 +1341,13 @@ describe('wrap-step priming-roll — governed plan pointer (#620)', () => {
       assert.match(result.blockers[0], /resolves outside the project root/);
     });
 
-    it('falls through to .claude/plans when no pointer is declared', async () => {
+    it('falls through to .tangleclaw/plans when no pointer is declared', async () => {
       // Ungoverned projects keep today's behavior byte-for-byte.
       writeState('classification:\n  domain: [x]\n');
-      writeLegacyPlan('only.md', '### Chunk 1: Legacy\n');
+      writePlainPlan('only.md', '### Chunk 1: Plain\n');
       const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
       assert.equal(result.ok, true);
-      assert.equal(result.output.pointer.current.title, 'Legacy');
+      assert.equal(result.output.pointer.current.title, 'Plain');
     });
   });
 
@@ -1603,7 +1601,7 @@ describe('wrap-step priming-roll — Critic-caught edges (#620)', () => {
   describe('skip reason for a chunkless plan', () => {
     it('mentions both the heading and roster forms', async () => {
       // The old reason misdirected a roster-only author toward headings.
-      const dir = path.join(projectPath, '.claude', 'plans');
+      const dir = path.join(projectPath, '.tangleclaw', 'plans');
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, 'spec.md'), '# A design doc\n\nNo chunks here.\n');
       const result = await primingRoll.run({
@@ -1625,8 +1623,10 @@ describe('wrap-step priming-roll — engine-agnostic path resolution (#612 widen
   // Plans and priming files are TangleClaw orchestration state. They used to
   // resolve under `.claude/`, so a project on any other engine silently found
   // no plan and the step reported "nothing to roll" — a failure that looked
-  // like success. These pin the TC-owned home, the legacy fallback that keeps
-  // pre-move projects working, and the precedence between them.
+  // like success. These pin the TC-owned home as the sole plan-RESOLUTION
+  // location (the legacy fallback it once also checked was retired by
+  // #1050, once every project it covered was migrated) and the still-live
+  // legacy PRIMING-FILE fallback, which is a separate, unretired concern.
   const primingRoll = require('../lib/wrap-steps/priming-roll');
 
   let tmpDir;
@@ -1675,14 +1675,15 @@ describe('wrap-step priming-roll — engine-agnostic path resolution (#612 widen
     assert.equal(resolved.legacy, false);
   });
 
-  it('falls back to legacy .claude/plans so pre-move projects keep working', () => {
+  it('never resolves from legacy .claude/plans, even when it is the only plan anywhere (#1050)', () => {
+    // RETIRED (#1050): the 48 plan files this fallback existed for are all
+    // migrated. A plan sitting only in the legacy location is now invisible
+    // to resolution, not a fallback target.
     writePlanIn('.claude/plans', 'plan.md', PLAN_BODY);
-    const resolved = primingRoll._resolvePlansDir(projectPath);
-    assert.equal(resolved.relative, '.claude/plans');
-    assert.equal(resolved.legacy, true);
+    assert.equal(primingRoll._resolvePlansDir(projectPath), null);
   });
 
-  it('prefers the TangleClaw home when both exist', () => {
+  it('a plan in .claude/plans never shadows or competes with .tangleclaw/plans (#1050)', () => {
     writePlanIn('.claude/plans', 'legacy.md', PLAN_BODY);
     writePlanIn('.tangleclaw/plans', 'current.md', PLAN_BODY);
     const resolved = primingRoll._resolvePlansDir(projectPath);
@@ -1694,24 +1695,22 @@ describe('wrap-step priming-roll — engine-agnostic path resolution (#612 widen
     assert.equal(primingRoll._resolvePlansDir(projectPath), null);
   });
 
-  it('an EMPTY TangleClaw dir does not shadow legacy plans', () => {
-    // The quieter variant of the defect this move fixes. TangleClaw creates
-    // `.tangleclaw/` in every project, so ranking by directory existence would
-    // let an empty `.tangleclaw/plans/` hide real plans in the legacy location
-    // and report "nothing to roll" — silent success, exactly the failure the
-    // whole chunk exists to eliminate.
+  it('an EMPTY TangleClaw dir does NOT fall back to legacy plans (#1050)', () => {
+    // Inverted from the pre-#1050 contract: resolution used to fall back to a
+    // real legacy plan rather than report "nothing to roll" against an empty
+    // TC-owned dir. Now there is no fallback, so the empty dir IS the answer.
     fs.mkdirSync(path.join(projectPath, '.tangleclaw/plans'), { recursive: true });
     writePlanIn('.claude/plans', 'real.md', PLAN_BODY);
 
     const resolved = primingRoll._resolvePlansDir(projectPath);
-    assert.equal(resolved.relative, '.claude/plans', 'must follow the plans, not the empty directory');
+    assert.equal(resolved.relative, '.tangleclaw/plans');
 
     const plan = primingRoll._resolvePlanPath(projectPath, {});
-    assert.equal(plan.ok, true, 'the real plan must still be found');
-    assert.equal(plan.planPath, path.join(projectPath, '.claude/plans/real.md'));
+    assert.equal(plan.ok, false, 'the legacy plan must NOT be found');
+    assert.equal(plan.skip, true);
   });
 
-  it('a NON-empty TangleClaw dir still wins over legacy plans', () => {
+  it('a NON-empty TangleClaw dir resolves normally regardless of legacy content', () => {
     writePlanIn('.tangleclaw/plans', 'current.md', PLAN_BODY);
     writePlanIn('.claude/plans', 'old.md', PLAN_BODY);
     assert.equal(primingRoll._resolvePlansDir(projectPath).relative, '.tangleclaw/plans');
@@ -1726,30 +1725,37 @@ describe('wrap-step priming-roll — engine-agnostic path resolution (#612 widen
     assert.equal(resolved.legacy, false);
   });
 
-  it('ignores a directory holding only non-markdown files', () => {
+  it('ignores a directory holding only non-markdown files, and does NOT fall back to legacy (#1050)', () => {
     fs.mkdirSync(path.join(projectPath, '.tangleclaw/plans'), { recursive: true });
     fs.writeFileSync(path.join(projectPath, '.tangleclaw/plans/notes.txt'), 'not a plan');
     writePlanIn('.claude/plans', 'real.md', PLAN_BODY);
-    assert.equal(primingRoll._resolvePlansDir(projectPath).relative, '.claude/plans');
+    assert.equal(primingRoll._resolvePlansDir(projectPath).relative, '.tangleclaw/plans');
+    const plan = primingRoll._resolvePlanPath(projectPath, {});
+    assert.equal(plan.ok, false, 'the legacy plan must NOT be found');
+    assert.equal(plan.skip, true);
+    assert.match(plan.reason, /No \.md plans found/);
   });
 
-  it('names BOTH locations in the skip reason when no plans directory is found (#676)', async () => {
+  it('names only the TC-owned location in the skip reason when no plans directory is found (#676, #1050)', async () => {
     const result = await primingRoll.run({
       project: { path: projectPath },
       step: { id: 'next-session-prime' },
       staged: {}
     });
-    // The no-plans-dir case skips (#676), not blocks; the reason still names
-    // both homes so a reader who DID expect a plan knows where it should live.
+    // The no-plans-dir case skips (#676), not blocks. Since #1050 the legacy
+    // location is no longer a resolution candidate, so the reason names only
+    // the TC-owned one, not both homes.
     assert.equal(result.status, 'skipped');
     assert.match(result.output.reason, /\.tangleclaw\/plans/);
-    assert.match(result.output.reason, /\.claude\/plans/);
+    assert.doesNotMatch(result.output.reason, /\.claude\/plans/);
   });
 
-  it('resolves a bare activePlan filename against the LEGACY dir when that is where plans live', () => {
-    // The escape hatch must not pin itself to the preferred constant, or it
-    // breaks exactly the pre-move projects the fallback protects.
+  it('a bare activePlan filename that only exists in the LEGACY dir is treated as missing, cleared, and falls through (#1050, #1757)', () => {
+    // The escape hatch no longer checks the legacy dir either (#1050): a
+    // plan living only there is as unresolvable as one that was deleted,
+    // which routes through #1757's stale-pin handling.
     writePlanIn('.claude/plans', 'chosen.md', PLAN_BODY);
+    writePlanIn('.tangleclaw/plans', 'other.md', PLAN_BODY);
     fs.mkdirSync(path.join(projectPath, '.tangleclaw'), { recursive: true });
     fs.writeFileSync(
       path.join(projectPath, '.tangleclaw', 'project.json'),
@@ -1757,7 +1763,8 @@ describe('wrap-step priming-roll — engine-agnostic path resolution (#612 widen
     );
     const resolved = primingRoll._resolvePlanPath(projectPath, {});
     assert.equal(resolved.ok, true);
-    assert.equal(resolved.planPath, path.join(projectPath, '.claude/plans/chosen.md'));
+    assert.equal(resolved.staleActivePlan, 'chosen.md');
+    assert.equal(resolved.planPath, path.join(projectPath, '.tangleclaw/plans/other.md'));
   });
 
   it('sends a NEW priming file to the TangleClaw home', () => {
@@ -1777,14 +1784,14 @@ describe('wrap-step priming-roll — engine-agnostic path resolution (#612 widen
     );
   });
 
-  it('does not split a legacy project across both homes', () => {
-    // Plans in the legacy dir + no priming file yet: the new priming file must
-    // join the plans rather than landing in the other directory, which would
-    // leave the project straddling two homes with nothing modelling it.
+  it('a legacy-plans-only project still gets a NEW priming file at the TC-owned home (#1050)', () => {
+    // Plan resolution is no longer legacy-aware, so `_resolvePlansDir` never
+    // reports `legacy: true` any more — the priming-file home this once
+    // followed into the legacy directory now always lands at the default.
     writePlanIn('.claude/plans', 'plan.md', PLAN_BODY);
     assert.equal(
       primingRoll._resolvePrimingPath(projectPath, {}),
-      path.join(projectPath, '.claude/priming/build-session.md')
+      path.join(projectPath, '.tangleclaw/priming/build-session.md')
     );
   });
 
