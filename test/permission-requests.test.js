@@ -612,7 +612,7 @@ describe('decideFromBridge', () => {
     assert.equal(decision.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
   });
 
-  it('a persisted "do not grant perm_X" is NOT read as a grant: a negated decision word names no decision (PRR-B Round 3)', () => {
+  it('a persisted "do not grant perm_X" is NOT read as a grant: it doesn\'t match the anchored "grant <id>" grammar (PRR-B Round 3)', () => {
     const { result } = create();
     insertBridgeRoute({
       routeId: 'route-2h', authorId: 'author-1', externalId: 'ext-2h',
@@ -627,7 +627,7 @@ describe('decideFromBridge', () => {
     assert.equal(permissionRequests.getPermissionRequest(result.request.requestId).state, STATES.PENDING);
   });
 
-  it('a persisted "never refuse perm_X" is NOT read as a refusal either — negation strips either decision word the same way (PRR-B Round 3)', () => {
+  it('a persisted "never refuse perm_X" is NOT read as a refusal either — same anchored-grammar rejection (PRR-B Round 3)', () => {
     const { result } = create();
     insertBridgeRoute({
       routeId: 'route-2i', authorId: 'author-1', externalId: 'ext-2i',
@@ -641,7 +641,7 @@ describe('decideFromBridge', () => {
     assert.equal(decision.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
   });
 
-  it('a negation word still refuses even when NOT immediately adjacent to the decision word — "do not ever grant perm_X" (PRR-B Round 4)', () => {
+  it('"do not ever grant perm_X" still refuses under the anchored grammar regardless of what comes before "grant" (PRR-B Round 4)', () => {
     const { result } = create();
     insertBridgeRoute({
       routeId: 'route-2l', authorId: 'author-1', externalId: 'ext-2l',
@@ -655,7 +655,7 @@ describe('decideFromBridge', () => {
     assert.equal(decision.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
   });
 
-  it('negation matching is case-insensitive — "DON\'T grant perm_X" (PRR-B Round 4)', () => {
+  it('the anchored grammar is case-insensitive on the verb but "DON\'T grant perm_X" still doesn\'t start with one (PRR-B Round 4)', () => {
     const { result } = create();
     insertBridgeRoute({
       routeId: 'route-2m', authorId: 'author-1', externalId: 'ext-2m',
@@ -669,7 +669,7 @@ describe('decideFromBridge', () => {
     assert.equal(decision.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
   });
 
-  it('a persisted "vagrant perm_X" is not read as naming "grant": word-boundary matching, not substring (PRR-B Round 3)', () => {
+  it('a persisted "vagrant perm_X" is not read as naming "grant": the anchored grammar requires the verb at the very start (PRR-B Round 3)', () => {
     const { result } = create();
     insertBridgeRoute({
       routeId: 'route-2j', authorId: 'author-1', externalId: 'ext-2j',
@@ -756,21 +756,69 @@ describe('decideFromBridge', () => {
     // uniqueness, not supersession.
     const first = create({ projectId: PROJECT_A, launchId: 'launch-dup-1' }).result;
     const second = create({ projectId: PROJECT_B, launchId: 'launch-dup-2' }).result;
-    // One persisted message names an explicit "grant <id>" command for BOTH
-    // ids, so the decision-parsing check passes cleanly for both and the
-    // duplicate-external_id check is what's actually being isolated here.
-    const text = `grant ${first.request.requestId} and grant ${second.request.requestId}`;
-    insertBridgeRoute({ routeId: 'route-5', authorId: 'author-1', externalId: 'ext-5', inboundText: text });
+    // The anchored whole-message grammar (PRR-B Round 5) refuses a message
+    // naming two ids at once, so this isolates the duplicate-external_id
+    // check on its OWN: the SAME route's persisted body is updated between
+    // the two calls to a fresh, cleanly-anchored single-decision message —
+    // the second call reaches the duplicate-external_id check on `route-5`'s
+    // `external_id`, not a decision-parsing ambiguity.
+    const firstText = `grant ${first.request.requestId}`;
+    insertBridgeRoute({ routeId: 'route-5', authorId: 'author-1', externalId: 'ext-5', inboundText: firstText });
     pinOperatorAuthor('author-1');
     const firstDecision = permissionRequests.decideFromBridge(first.request.requestId, {
-      decision: 'grant', bridgeRouteId: 'route-5', replyText: text
+      decision: 'grant', bridgeRouteId: 'route-5', replyText: firstText
     });
     assert.equal(firstDecision.ok, true);
+    const secondText = `grant ${second.request.requestId}`;
+    store.getDb().prepare("UPDATE bridge_route_bodies SET text = ? WHERE route_id = ? AND role = 'inbound'")
+      .run(secondText, 'route-5');
     const secondDecision = permissionRequests.decideFromBridge(second.request.requestId, {
-      decision: 'grant', bridgeRouteId: 'route-5', replyText: text
+      decision: 'grant', bridgeRouteId: 'route-5', replyText: secondText
     });
     assert.equal(secondDecision.ok, false);
     assert.equal(secondDecision.code, 'PERMISSION_BRIDGE_DUPLICATE_DECISION');
+  });
+
+  it('the anchored whole-message grammar refuses a message naming two decisions at once: "grant <id1> and grant <id2>" (PRR-B Round 5)', () => {
+    const { result } = create();
+    insertBridgeRoute({
+      routeId: 'route-2n', authorId: 'author-1', externalId: 'ext-2n',
+      inboundText: `grant ${result.request.requestId} and grant perm_other`
+    });
+    pinOperatorAuthor('author-1');
+    const decision = permissionRequests.decideFromBridge(result.request.requestId, {
+      decision: 'grant', bridgeRouteId: 'route-2n', replyText: `grant ${result.request.requestId} and grant perm_other`
+    });
+    assert.equal(decision.ok, false);
+    assert.equal(decision.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
+  });
+
+  it('refuses a persisted question — "Can you grant perm_X?" is not a command (PRR-B Round 5)', () => {
+    const { result } = create();
+    insertBridgeRoute({
+      routeId: 'route-2o', authorId: 'author-1', externalId: 'ext-2o',
+      inboundText: `Can you grant ${result.request.requestId}?`
+    });
+    pinOperatorAuthor('author-1');
+    const decision = permissionRequests.decideFromBridge(result.request.requestId, {
+      decision: 'grant', bridgeRouteId: 'route-2o', replyText: `Can you grant ${result.request.requestId}?`
+    });
+    assert.equal(decision.ok, false);
+    assert.equal(decision.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
+  });
+
+  it('refuses a persisted conditional — "If you want to grant perm_X, ask me first" is not a command (PRR-B Round 5)', () => {
+    const { result } = create();
+    insertBridgeRoute({
+      routeId: 'route-2p', authorId: 'author-1', externalId: 'ext-2p',
+      inboundText: `If you want to grant ${result.request.requestId}, ask me first`
+    });
+    pinOperatorAuthor('author-1');
+    const decision = permissionRequests.decideFromBridge(result.request.requestId, {
+      decision: 'grant', bridgeRouteId: 'route-2p', replyText: `If you want to grant ${result.request.requestId}, ask me first`
+    });
+    assert.equal(decision.ok, false);
+    assert.equal(decision.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
   });
 
   it('is idempotent on a true replay: the same route deciding the same request twice the same way', () => {

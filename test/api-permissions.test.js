@@ -257,4 +257,34 @@ describe('permission-request routes (#2352)', () => {
     assert.equal(res.status, 409);
     assert.equal(res.data.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
   });
+
+  it('409s PERMISSION_BRIDGE_DECISION_AMBIGUOUS over HTTP: a persisted question ("Can you grant perm_X?") is not a command (PRR-B Round 5)', async () => {
+    const created = await createAs(binding.headers, { requestId: 'req-for-bridge-question' });
+    const requestId = created.data.request.requestId;
+    insertBridgeRoute({ routeId: 'api-route-question', authorId: 'api-author-1', externalId: 'api-ext-question', inboundText: `Can you grant ${requestId}?` });
+    store.getDb().prepare(
+      "INSERT OR REPLACE INTO bridge_settings (key, value, updated_by, updated_at) VALUES ('allow.author', ?, 'operator', ?)"
+    ).run('api-author-1', new Date().toISOString());
+
+    const res = await sendAs(server, 'POST', `/api/permissions/requests/${encodeURIComponent(requestId)}/decide`,
+      { decision: 'grant', bridgeRouteId: 'api-route-question', replyText: `Can you grant ${requestId}?` },
+      { 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': MASTER_LAUNCH_ID });
+    assert.equal(res.status, 409);
+    assert.equal(res.data.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
+  });
+
+  it('409s PERMISSION_BRIDGE_DECISION_AMBIGUOUS over HTTP: a persisted conditional ("If you want to grant perm_X, ask me first") is not a command (PRR-B Round 5)', async () => {
+    const created = await createAs(binding.headers, { requestId: 'req-for-bridge-conditional' });
+    const requestId = created.data.request.requestId;
+    insertBridgeRoute({ routeId: 'api-route-conditional', authorId: 'api-author-1', externalId: 'api-ext-conditional', inboundText: `If you want to grant ${requestId}, ask me first` });
+    store.getDb().prepare(
+      "INSERT OR REPLACE INTO bridge_settings (key, value, updated_by, updated_at) VALUES ('allow.author', ?, 'operator', ?)"
+    ).run('api-author-1', new Date().toISOString());
+
+    const res = await sendAs(server, 'POST', `/api/permissions/requests/${encodeURIComponent(requestId)}/decide`,
+      { decision: 'grant', bridgeRouteId: 'api-route-conditional', replyText: `If you want to grant ${requestId}, ask me first` },
+      { 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': MASTER_LAUNCH_ID });
+    assert.equal(res.status, 409);
+    assert.equal(res.data.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
+  });
 });
