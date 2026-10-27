@@ -56,6 +56,15 @@ mirrored rule stays as written because it is correct everywhere else.
   as a lane (a Builder working under an Integrator and a shared lane queue); every other checkout of this
   repo updates `CHANGELOG.md` as the rules say. The project's own rules, read with `tc rules`, are the
   authority, and they say which of the two a session is in.
+- **This repo's own wrap no longer falls back to the legacy `.claude/plans` directory.** The Build
+  Plans & Chunks rule below says TangleClaw's wrap "still falls back to a legacy `.claude/plans/`
+  directory where one exists, so existing projects keep working" — true for the projects TangleClaw
+  manages, but no longer true for TangleClaw itself (dated exception, 2026-10-27, #1050):
+  `lib/wrap-steps/priming-roll.js`'s `_resolvePlansDir` retired that fallback once the Operator
+  authorized migrating every local project still using it to `.tangleclaw/plans`. A plan sitting only
+  in `.claude/plans` is no longer rolled by this repo's own wrap. `lib/plan-docs.js` still SERVES a
+  plan from the legacy location — for any TangleClaw-managed project this migration did not cover —
+  so only the wrap-resolution half of the mirrored rule is an exception here, not the serving half.
 
 # Global Rules
 
