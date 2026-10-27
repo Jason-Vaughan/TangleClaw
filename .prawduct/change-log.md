@@ -41,6 +41,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-27 — v5.40.0 W2-A Chunk 2: Operator Bridge per-destination outbound dispatch and failure isolation
+
+<!-- prawduct: type=feature | scope=w2a-operator-bridge-dm-ingress -->
+
+- **#2433 (chunk 2 of 3):** The helper now posts each outbound item to its own bound ingress surface's channel (resolved server-side, never left for the helper to guess), instead of the one fixed guild channel. The configuration circuit breaker is now scoped per surface (schema v70/bridge v65: `surface_kind` on `bridge_config_circuit`, its one-open-episode uniqueness rescoped from global to per-surface) — a DM channel outage no longer stops guild delivery, and the reverse, at both claim time (the SQL exclusion is per-surface) and within a single already-claimed batch (a circuit-classified post failure no longer aborts the whole relay pass; only items of the SAME destination in that batch are skipped). Disabling the DM surface holds its ready items for reconciliation without reposting them to the guild channel. `operator/circuit/reset` and `master/circuit/reset` take an optional `surfaceKind`. Outbound dispatch binding was the one piece chunk 1 explicitly deferred; the operator panel/docs/rollback instructions remain chunk 3.
+
 ## 2026-10-27 — v5.40.0 W2-A Chunk 1: Operator Bridge pinned DM ingress, schema and inbound half
 
 <!-- prawduct: type=feature | scope=w2a-operator-bridge-dm-ingress -->
