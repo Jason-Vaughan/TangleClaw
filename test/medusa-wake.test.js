@@ -849,6 +849,15 @@ describe('medusa-wake — a live 167x27 Antigravity pane whose composer hides th
   // the composer and agy drew no `? for shortcuts` hint, because it hides the
   // hint while its composer holds text. The monitor refused every tick as
   // `not-at-rest` until it escalated; one Enter submitted the nudge.
+  //
+  // The nudge's own wording gained `inReplyTo` since this was captured
+  // (#1988), so the composer rows below are re-wrapped (same greedy
+  // word-wrap at 167 columns the original rows measure out to) to the
+  // CURRENT text rather than frozen at the 2026-10-17 bytes — what #2358
+  // is actually about (agy hiding the at-rest hint while its composer holds
+  // ANY text) is unaffected by the nudge's wording, but `isOwnNudge` below
+  // is tied to current wording, so a frozen mismatch would wrongly fail
+  // `_assessPane`'s `at-prompt` classification on an unrelated axis.
   const RULE = '─'.repeat(167);
   const CAPTURE = [
     '      • Event-driven triage of Medusa switchboard exchanges and the Operator Bridge (tc bridge), handling inbound routes and verifying/releasing session milestone',
@@ -860,9 +869,9 @@ describe('medusa-wake — a live 167x27 Antigravity pane whose composer hides th
     RULE,
     '> [TangleClaw Switchboard] You have 1 unread Medusa message(s). Fetch them from the TangleClaw API at http://localhost:3102: GET /api/master/medusa/messages — act on',
     '  them as appropriate. Reply to each one that needs an answer BEFORE marking it handled: POST /api/master/medusa/send',
-    '  {"to":"<sender-workspace-id>","message":"<reply>"}; then mark it handled: POST /api/master/medusa/read {"ids":[...]}. Both POSTs need the headers',
-    '  x-tangleclaw-role: master and x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID. The initiator closes the exchange, so a message you do not answer leaves them blocked.',
-    '  Never use /clear as an acknowledgement. (wake ref abd48653f687)',
+    '  {"to":"<sender-workspace-id>","message":"<reply>","inReplyTo":"<message-id>"}; then mark it handled: POST /api/master/medusa/read {"ids":[...]}. Both POSTs need the',
+    '  headers x-tangleclaw-role: master and x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID. The initiator closes the exchange, so a message you do not answer leaves them',
+    '  blocked. Never use /clear as an acknowledgement. (wake ref abd48653f687)',
     RULE,
     `${' '.repeat(142)}Gemini 3.8 Flash · medium`,
   ];
@@ -1711,8 +1720,11 @@ describe('medusa-wake — the Project Master is scanned like any session (#996)'
     withMasterAccessLevel('write', () => {
       const line = wake._nudgeLineFor(base, 2, 'http://localhost:3102');
       assert.doesNotMatch(line, /tc message/, 'no tc message command reaches the Master');
-      assert.doesNotMatch(line, /launch headers|inReplyTo|in-reply-to/, 'nor the project-only reply carrier');
-      assert.match(line, /POST \/api\/master\/medusa\/send \{"to":"<sender-workspace-id>","message":"<reply>"\}/);
+      assert.doesNotMatch(line, /launch headers|in-reply-to/, 'nor the project-only reply carrier');
+      // `inReplyTo` itself DOES belong in the Master's raw body (#1988): without
+      // it, the body the nudge demonstrates never binds a reply, leaving the
+      // initiator blocked exactly as before the fix.
+      assert.match(line, /POST \/api\/master\/medusa\/send \{"to":"<sender-workspace-id>","message":"<reply>","inReplyTo":"<message-id>"\}/);
       assert.match(line, /POST \/api\/master\/medusa\/read \{"ids":\[\.\.\.\]\}/);
       assert.ok(line.indexOf('/medusa/send') < line.indexOf('/medusa/read'), 'reply comes before the ack');
       // Both writes are refused without the Master's own binding (#2233), which
@@ -1726,6 +1738,43 @@ describe('medusa-wake — the Project Master is scanned like any session (#996)'
     });
     // The base picks the form, so a project session never gets the Master's.
     assert.match(wake._nudgeLineFor('/api/sessions/master/medusa', 2, 'http://localhost:3102'), /tc message send --in-reply-to/);
+  });
+
+  it("following the Master's own raw instruction literally binds the reply and marks the original replied (#1988)", () => {
+    // Parsed from the nudge's OWN text rather than hand-written, so a future
+    // wording change that drops `inReplyTo` again fails here, not just at the
+    // regex assertion above.
+    const medusaExchanges = require('../lib/medusa-exchanges');
+    const base = require('../lib/master').MASTER_MEDUSA_API_BASE;
+    withMasterAccessLevel('write', () => {
+      const line = wake._nudgeLineFor(base, 1, 'http://localhost:3102');
+      const bodyMatch = line.match(/POST \/api\/master\/medusa\/send (\{.*?\});/);
+      assert.ok(bodyMatch, 'the nudge demonstrates a JSON body for the send');
+      const demonstratedBody = JSON.parse(bodyMatch[1]);
+      assert.equal(demonstratedBody.inReplyTo, '<message-id>', 'the demonstrated body names inReplyTo');
+      assert.equal(demonstratedBody.to, '<sender-workspace-id>', 'the demonstrated body names the placeholder to fill in');
+
+      const original = medusaExchanges.createSendIntent({
+        meta: medusaExchanges.validateSendMeta({}, { kind: 'project', projectId: 20 }, 20),
+        sender: { projectId: 20, sessionId: 2, workspaceId: 'builder-ws' },
+        recipient: { workspaceId: 'master-ws', projectId: null, sessionId: null }
+      });
+      medusaExchanges.bindHubId(original.exchange_id, 'hub-follow-instruction', { hubStatus: 'received' });
+
+      // The Master follows its own nudge literally: `<sender-workspace-id>`
+      // filled in with the real sender it names (builder-ws), `<message-id>`
+      // with the Hub id the message actually arrived under.
+      const reply = medusaExchanges.createSendIntent({
+        meta: medusaExchanges.validateSendMeta({ inReplyTo: 'hub-follow-instruction' }, { kind: 'master' }, null),
+        sender: { projectId: null, sessionId: 'master', workspaceId: 'master-ws' },
+        recipient: { workspaceId: 'builder-ws', projectId: 20 }
+      });
+      assert.equal(reply.in_reply_to, original.exchange_id, 'the demonstrated body binds the reply');
+      medusaExchanges.bindHubId(reply.exchange_id, 'hub-master-followed-nudge', { hubStatus: 'received' });
+      const repliedFact = require('../lib/store').medusaExchanges.facts(original.exchange_id).find((f) => f.fact === 'replied');
+      assert.ok(repliedFact, 'the original is marked replied');
+      assert.equal(repliedFact.actor, 'master');
+    });
   });
 
   it('tells a suggest-tier Master it may send too — only read-only is refused the POST form (#2176)', () => {
