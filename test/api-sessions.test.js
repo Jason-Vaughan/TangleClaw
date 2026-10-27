@@ -232,6 +232,87 @@ describe('api-sessions', () => {
     });
   });
 
+  describe('sessions.injectCommand — refused while this project\'s wrap is running (#2269)', () => {
+    // A clean Claude Code composer: no dialog, nothing typed, nothing stored —
+    // so the startup-dialog guard clears and the wrap-running guard is what is
+    // under test (lifted from test/card-session-contract.test.js's proven shape).
+    const CLEAN_COMPOSER = Object.freeze(['──────────', '❯ ', '──────────', '  ? for shortcuts']);
+
+    /**
+     * Stand up a tmux-stubbed, dialog-free session and return cleanup helpers.
+     * @returns {{session: object, typed: () => number, cleanup: () => void}}
+     */
+    function readySession() {
+      const tmux = require('../lib/tmux');
+      const real = { hasSession: tmux.hasSession, probeSession: tmux.probeSession, capturePane: tmux.capturePane, sendKeys: tmux.sendKeys };
+      const project = store.projects.getByName('api-sess-test');
+      const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'api-sess-wrap-guard' });
+      let typed = 0;
+      tmux.hasSession = () => true;
+      tmux.probeSession = () => ({ answered: true, live: true, cause: null });
+      tmux.capturePane = () => ({ lines: CLEAN_COMPOSER, alternateScreen: false });
+      tmux.sendKeys = () => { typed += 1; };
+      return {
+        session,
+        typed: () => typed,
+        cleanup: () => { Object.assign(tmux, real); store.sessions.kill(session.id, 'test cleanup'); }
+      };
+    }
+
+    it('refuses with WRAP_RUNNING and types nothing while a wrap is claimed for this project', () => {
+      const sessions = require('../lib/sessions');
+      const wrapRunRegistry = require('../lib/wrap-run-registry');
+      const { typed, cleanup } = readySession();
+      const claim = wrapRunRegistry.begin('api-sess-test', null, {});
+      assert.equal(claim.ok, true);
+      try {
+        const result = sessions.injectCommand('api-sess-test', 'ls');
+        assert.equal(result.ok, false);
+        assert.equal(result.wrapRunning.code, 'WRAP_RUNNING');
+        assert.match(result.error, /^WRAP_RUNNING: /);
+        assert.equal(typed(), 0, 'nothing was typed into the pane');
+      } finally {
+        wrapRunRegistry.finish('api-sess-test', claim.runId, null);
+        wrapRunRegistry._resetForTests();
+        cleanup();
+      }
+    });
+
+    it('proceeds once the wrap has finished', () => {
+      const sessions = require('../lib/sessions');
+      const wrapRunRegistry = require('../lib/wrap-run-registry');
+      const { typed, cleanup } = readySession();
+      const claim = wrapRunRegistry.begin('api-sess-test', null, {});
+      wrapRunRegistry.finish('api-sess-test', claim.runId, null);
+      try {
+        const result = sessions.injectCommand('api-sess-test', 'ls');
+        assert.equal(result.ok, true);
+        assert.equal(typed(), 1);
+      } finally {
+        wrapRunRegistry._resetForTests();
+        cleanup();
+      }
+    });
+
+    it('withholds the send when the registry cannot be read, same as a confirmed-running wrap', () => {
+      const sessions = require('../lib/sessions');
+      const wrapRunRegistry = require('../lib/wrap-run-registry');
+      const { typed, cleanup } = readySession();
+      const realGet = wrapRunRegistry.get;
+      wrapRunRegistry.get = () => { throw new Error('registry exploded'); };
+      try {
+        const result = sessions.injectCommand('api-sess-test', 'ls');
+        assert.equal(result.ok, false);
+        assert.equal(result.wrapRunning.code, 'WRAP_RUNNING');
+        assert.equal(typed(), 0);
+      } finally {
+        wrapRunRegistry.get = realGet;
+        wrapRunRegistry._resetForTests();
+        cleanup();
+      }
+    });
+  });
+
   describe('GET /api/sessions/:project/status', () => {
     it('a stored blocker on a half-drawn frame is served as stored, with no sleep on the server (#2194)', async () => {
       const tmux = require('../lib/tmux');
