@@ -111,10 +111,20 @@ describe('permission-request routes (#2352)', () => {
     assert.equal(asNobody.status, 403);
   });
 
-  it('the GET receipt route marks receiptDeliveredAt only when the requesting launch reads it, not the Operator', async () => {
+  it('the GET receipt route marks receiptDeliveredAt only once decided, and only when the requesting launch reads it, not the Operator', async () => {
     const created = await createAs(binding.headers, { requestId: 'req-for-receipt' });
     const requestId = created.data.request.requestId;
     const receiptUrl = `/api/permissions/requests/${encodeURIComponent(requestId)}`;
+
+    // Still pending: neither reader's read marks a receipt — there is no
+    // decision yet to receipt.
+    const pendingProjectRead = await sendAs(server, 'GET', receiptUrl, undefined, binding.headers);
+    assert.equal(pendingProjectRead.status, 200);
+    assert.equal(pendingProjectRead.data.request.receiptDeliveredAt, null, 'a pending request has no receipt to deliver');
+
+    const decide = await sendAs(server, 'POST', `/api/permissions/requests/${encodeURIComponent(requestId)}/decide`,
+      { decision: 'grant', expectedScope: 'repo-write' }, writeHeaders);
+    assert.equal(decide.status, 201);
 
     const operatorRead = await sendAs(server, 'GET', receiptUrl, undefined, writeHeaders);
     assert.equal(operatorRead.status, 200);
@@ -122,7 +132,7 @@ describe('permission-request routes (#2352)', () => {
 
     const projectRead = await sendAs(server, 'GET', receiptUrl, undefined, binding.headers);
     assert.equal(projectRead.status, 200);
-    assert.ok(projectRead.data.request.receiptDeliveredAt, 'the requesting launch\'s own read marks delivery');
+    assert.ok(projectRead.data.request.receiptDeliveredAt, 'the requesting launch\'s own read, after a decision exists, marks delivery');
   });
 
   it('404s a receipt read for an unknown request id, for every caller', async () => {

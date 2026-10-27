@@ -113,19 +113,28 @@ function flush() {
 }
 
 /**
- * Insert a minimal, valid `bridge_routes` row directly (the table is created
- * by `store.init()` itself — `lib/store.js` wires `lib/bridge-schema.js` at
- * startup, so this test needs no bridge module of its own).
- * @param {{routeId: string, authorId: string, externalId: string}} fields
+ * Insert a minimal, valid `bridge_routes` row, and (unless explicitly
+ * omitted) its persisted inbound `bridge_route_bodies` row — both tables are
+ * created by `store.init()` itself (`lib/store.js` wires `lib/bridge-schema.js`
+ * at startup), so this test needs no bridge module of its own.
+ * @param {{routeId: string, authorId: string, externalId: string, inboundText?: (string|null)}} fields
+ *   `inboundText: null` means "insert the route, but no body row at all" (the
+ *   unavailable-body case); omitting it defaults to a generic placeholder —
+ *   tests that check the ambiguity/mismatch behavior pass their own text.
  * @returns {void}
  */
-function insertBridgeRoute({ routeId, authorId, externalId }) {
+function insertBridgeRoute({ routeId, authorId, externalId, inboundText = 'placeholder inbound text' }) {
   const now = permissionRequests._internal.now();
   store.getDb().prepare(
     `INSERT INTO bridge_routes
        (route_id, external_id, author_id, space_id, channel_id, body_digest, state, version, created_at, updated_at)
      VALUES (?, ?, ?, 'space-1', 'channel-1', ?, 'accepted', 1, ?, ?)`
   ).run(routeId, externalId, authorId, '0'.repeat(64), now, now);
+  if (inboundText !== null) {
+    store.getDb().prepare(
+      "INSERT INTO bridge_route_bodies (route_id, role, text, digest, created_at) VALUES (?, 'inbound', ?, ?, ?)"
+    ).run(routeId, inboundText, '0'.repeat(64), now);
+  }
 }
 
 /**
@@ -432,8 +441,20 @@ describe('listPermissionRequestsForSession', () => {
 });
 
 describe('markReceiptDelivered', () => {
-  it('delivers once: the first call sets receiptDeliveredAt, the second is a no-op reporting delivered:false', () => {
+  it('is a no-op on a still-pending request: no decision exists yet, so nothing is marked delivered', () => {
     const { result } = create();
+    const read = permissionRequests.markReceiptDelivered(result.request.requestId);
+    assert.equal(read.ok, true);
+    assert.equal(read.delivered, false);
+    assert.equal(read.request.receiptDeliveredAt, null, 'a pending request\'s receipt is never stamped');
+    assert.equal(read.request.state, STATES.PENDING);
+  });
+
+  it('delivers once a request is decided: the first call after a decision sets receiptDeliveredAt, the second is a no-op reporting delivered:false', () => {
+    const { result } = create();
+    permissionRequests.decidePermissionRequest(result.request.requestId, {
+      decision: 'grant', decidedBySurface: 'dashboard', decidedByActor: 'operator', decisionProof: 'p'
+    });
     const first = permissionRequests.markReceiptDelivered(result.request.requestId);
     assert.equal(first.ok, true);
     assert.equal(first.delivered, true);
@@ -446,6 +467,16 @@ describe('markReceiptDelivered', () => {
     assert.equal(second.request.receiptDeliveredAt, first.request.receiptDeliveredAt, 'timestamp does not move on the second delivery');
   });
 
+  it('is a no-op on an expired or superseded request: fail-closed termination is not a decision either', () => {
+    const { result } = create({ ttlMs: MINUTE });
+    clockAt(2 * MINUTE);
+    const read = permissionRequests.markReceiptDelivered(result.request.requestId);
+    assert.equal(read.ok, true);
+    assert.equal(read.delivered, false);
+    assert.equal(read.request.state, STATES.EXPIRED);
+    assert.equal(read.request.receiptDeliveredAt, null);
+  });
+
   it('answers PERMISSION_REQUEST_NOT_FOUND for an unknown request id', () => {
     const result = permissionRequests.markReceiptDelivered('perm_does_not_exist');
     assert.equal(result.ok, false);
@@ -454,32 +485,49 @@ describe('markReceiptDelivered', () => {
 });
 
 describe('permission_request_events', () => {
-  it('records one event per lifecycle transition', () => {
+  /** @returns {string[]} Every event kind recorded for `requestId`, oldest first. */
+  function eventKinds(requestId) {
+    return store.getDb()
+      .prepare('SELECT kind FROM permission_request_events WHERE request_id = ? ORDER BY event_id')
+      .all(requestId)
+      .map((row) => row.kind);
+  }
+
+  it('records created, decided, then receipt-delivered — in that order, once each', () => {
+    const { result } = create();
+    assert.deepEqual(eventKinds(result.request.requestId), ['created']);
+
+    permissionRequests.decidePermissionRequest(result.request.requestId, {
+      decision: 'grant', decidedBySurface: 'dashboard', decidedByActor: 'operator', decisionProof: 'p'
+    });
+    assert.deepEqual(eventKinds(result.request.requestId), ['created', 'decided']);
+
+    permissionRequests.markReceiptDelivered(result.request.requestId);
+    assert.deepEqual(eventKinds(result.request.requestId), ['created', 'decided', 'receipt-delivered']);
+  });
+
+  it('records created then expired for a request nobody ever decided — markReceiptDelivered stays a no-op throughout', () => {
     const { result } = create({ ttlMs: MINUTE });
     permissionRequests.markReceiptDelivered(result.request.requestId);
-    const kinds = store.getDb()
-      .prepare('SELECT kind FROM permission_request_events WHERE request_id = ? ORDER BY event_id')
-      .all(result.request.requestId)
-      .map((row) => row.kind);
-    assert.deepEqual(kinds, ['created', 'receipt-delivered']);
+    assert.deepEqual(eventKinds(result.request.requestId), ['created'], 'still pending — no receipt-delivered event');
 
     clockAt(2 * MINUTE);
     permissionRequests.getPermissionRequest(result.request.requestId);
-    const kindsAfterExpiry = store.getDb()
-      .prepare('SELECT kind FROM permission_request_events WHERE request_id = ? ORDER BY event_id')
-      .all(result.request.requestId)
-      .map((row) => row.kind);
-    assert.deepEqual(kindsAfterExpiry, ['created', 'receipt-delivered', 'expired']);
+    assert.deepEqual(eventKinds(result.request.requestId), ['created', 'expired']);
+
+    permissionRequests.markReceiptDelivered(result.request.requestId);
+    assert.deepEqual(eventKinds(result.request.requestId), ['created', 'expired'], 'expired is not a decision — still no receipt-delivered event');
   });
 });
 
 describe('decideFromBridge', () => {
   it('grants from a reply that names the exact request id, binding decision_bridge_external_id', () => {
     const { result } = create();
-    insertBridgeRoute({ routeId: 'route-1', authorId: 'author-1', externalId: 'ext-1' });
+    const text = `yes, grant ${result.request.requestId}`;
+    insertBridgeRoute({ routeId: 'route-1', authorId: 'author-1', externalId: 'ext-1', inboundText: text });
     pinOperatorAuthor('author-1');
     const decision = permissionRequests.decideFromBridge(result.request.requestId, {
-      decision: 'grant', bridgeRouteId: 'route-1', replyText: `yes, grant ${result.request.requestId}`
+      decision: 'grant', bridgeRouteId: 'route-1', replyText: text
     });
     assert.equal(decision.ok, true);
     assert.equal(decision.request.state, STATES.GRANTED);
@@ -488,9 +536,19 @@ describe('decideFromBridge', () => {
     assert.equal(decision.request.decisionBridgeExternalId, 'ext-1');
   });
 
-  it('refuses a broad reply that never names the exact request id (zero free-form inference)', () => {
+  it('decides correctly with no caller-supplied replyText at all, reading the persisted inbound text directly', () => {
     const { result } = create();
-    insertBridgeRoute({ routeId: 'route-2', authorId: 'author-1', externalId: 'ext-2' });
+    insertBridgeRoute({ routeId: 'route-1b', authorId: 'author-1', externalId: 'ext-1b', inboundText: `grant ${result.request.requestId}` });
+    pinOperatorAuthor('author-1');
+    const decision = permissionRequests.decideFromBridge(result.request.requestId, {
+      decision: 'grant', bridgeRouteId: 'route-1b'
+    });
+    assert.equal(decision.ok, true);
+  });
+
+  it('refuses a broad reply that never names the exact request id (zero free-form inference) — checked against the PERSISTED text, not the caller\'s claim', () => {
+    const { result } = create();
+    insertBridgeRoute({ routeId: 'route-2', authorId: 'author-1', externalId: 'ext-2', inboundText: 'yes, approve all' });
     pinOperatorAuthor('author-1');
     const decision = permissionRequests.decideFromBridge(result.request.requestId, {
       decision: 'grant', bridgeRouteId: 'route-2', replyText: 'yes, approve all'
@@ -499,9 +557,33 @@ describe('decideFromBridge', () => {
     assert.equal(decision.code, 'AMBIGUOUS_PERMISSION_REPLY');
   });
 
+  it('refuses when the caller-supplied replyText does not match the persisted inbound message (cannot be bound to a claim, not a record)', () => {
+    const { result } = create();
+    insertBridgeRoute({ routeId: 'route-2b', authorId: 'author-1', externalId: 'ext-2b', inboundText: `grant ${result.request.requestId}` });
+    pinOperatorAuthor('author-1');
+    const decision = permissionRequests.decideFromBridge(result.request.requestId, {
+      // A caller could try to pass an unambiguous-looking claim for a
+      // message that never said it — this must be refused, not trusted.
+      decision: 'grant', bridgeRouteId: 'route-2b', replyText: `grant ${result.request.requestId} PLUS SOMETHING ELSE ENTIRELY`
+    });
+    assert.equal(decision.ok, false);
+    assert.equal(decision.code, 'PERMISSION_BRIDGE_BODY_MISMATCH');
+  });
+
+  it('refuses when the bridge route has no persisted inbound body at all (fails closed, never falls back to the caller\'s claim)', () => {
+    const { result } = create();
+    insertBridgeRoute({ routeId: 'route-2c', authorId: 'author-1', externalId: 'ext-2c', inboundText: null });
+    pinOperatorAuthor('author-1');
+    const decision = permissionRequests.decideFromBridge(result.request.requestId, {
+      decision: 'grant', bridgeRouteId: 'route-2c', replyText: `grant ${result.request.requestId}`
+    });
+    assert.equal(decision.ok, false);
+    assert.equal(decision.code, 'PERMISSION_BRIDGE_BODY_UNAVAILABLE');
+  });
+
   it('refuses a reply from an author who is not the pinned operator', () => {
     const { result } = create();
-    insertBridgeRoute({ routeId: 'route-3', authorId: 'someone-else', externalId: 'ext-3' });
+    insertBridgeRoute({ routeId: 'route-3', authorId: 'someone-else', externalId: 'ext-3', inboundText: `grant ${result.request.requestId}` });
     pinOperatorAuthor('author-1');
     const decision = permissionRequests.decideFromBridge(result.request.requestId, {
       decision: 'grant', bridgeRouteId: 'route-3', replyText: `grant ${result.request.requestId}`
@@ -512,7 +594,7 @@ describe('decideFromBridge', () => {
 
   it('refuses when no operator author is pinned at all', () => {
     const { result } = create();
-    insertBridgeRoute({ routeId: 'route-4', authorId: 'author-1', externalId: 'ext-4' });
+    insertBridgeRoute({ routeId: 'route-4', authorId: 'author-1', externalId: 'ext-4', inboundText: `grant ${result.request.requestId}` });
     const decision = permissionRequests.decideFromBridge(result.request.requestId, {
       decision: 'grant', bridgeRouteId: 'route-4', replyText: `grant ${result.request.requestId}`
     });
@@ -536,14 +618,18 @@ describe('decideFromBridge', () => {
     // uniqueness, not supersession.
     const first = create({ projectId: PROJECT_A, launchId: 'launch-dup-1' }).result;
     const second = create({ projectId: PROJECT_B, launchId: 'launch-dup-2' }).result;
-    insertBridgeRoute({ routeId: 'route-5', authorId: 'author-1', externalId: 'ext-5' });
+    // One persisted message happens to name both ids, so the ambiguity check
+    // passes for both and the duplicate-external_id check is what's actually
+    // being isolated here.
+    const text = `grant ${first.request.requestId} and also ${second.request.requestId}`;
+    insertBridgeRoute({ routeId: 'route-5', authorId: 'author-1', externalId: 'ext-5', inboundText: text });
     pinOperatorAuthor('author-1');
     const firstDecision = permissionRequests.decideFromBridge(first.request.requestId, {
-      decision: 'grant', bridgeRouteId: 'route-5', replyText: `grant ${first.request.requestId}`
+      decision: 'grant', bridgeRouteId: 'route-5', replyText: text
     });
     assert.equal(firstDecision.ok, true);
     const secondDecision = permissionRequests.decideFromBridge(second.request.requestId, {
-      decision: 'grant', bridgeRouteId: 'route-5', replyText: `grant ${second.request.requestId}`
+      decision: 'grant', bridgeRouteId: 'route-5', replyText: text
     });
     assert.equal(secondDecision.ok, false);
     assert.equal(secondDecision.code, 'PERMISSION_BRIDGE_DUPLICATE_DECISION');
@@ -551,7 +637,7 @@ describe('decideFromBridge', () => {
 
   it('is idempotent on a true replay: the same route deciding the same request twice the same way', () => {
     const { result } = create();
-    insertBridgeRoute({ routeId: 'route-6', authorId: 'author-1', externalId: 'ext-6' });
+    insertBridgeRoute({ routeId: 'route-6', authorId: 'author-1', externalId: 'ext-6', inboundText: `grant ${result.request.requestId}` });
     pinOperatorAuthor('author-1');
     const first = permissionRequests.decideFromBridge(result.request.requestId, {
       decision: 'grant', bridgeRouteId: 'route-6', replyText: `grant ${result.request.requestId}`

@@ -1672,7 +1672,14 @@ describe('tmux', () => {
       // 29 since `solePaneId` (#2186) added a `list-panes -s`, which pins the one
       // pane a witness reads; `visiblePane`'s two sites now aim at that pane id
       // through `_target(session, paneId)`.
-      assert.equal(targets.length, 29, `expected 29 -t sites in lib/tmux.js, found ${targets.length}`);
+      // 32 since the TCC-authorized-server bootstrap (#2625) added three: the
+      // readability probe's own `kill-session` (its target is the probe's own
+      // freshly-created, randomly-named session, but exact-match costs
+      // nothing and stays consistent); the attach proxy's `attach`, into the
+      // real session on the OTHER server, where a prefix match would be just
+      // as unsafe as on the default one; and the proxy's own `status off`.
+      // All three go through `_target()`, like every other site here.
+      assert.equal(targets.length, 32, `expected 32 -t sites in lib/tmux.js, found ${targets.length}`);
       for (const expr of targets) {
         assert.match(
           expr,
