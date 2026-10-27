@@ -150,6 +150,12 @@ describe('api wrap-run status + single-flight (#583)', () => {
         keepSource: null,
         cancellable: false,
         cancelRequested: false,
+        // #1816 — a project that never wrapped has no checkpoint to recover
+        // either: never interrupted, same as it is never stale.
+        interrupted: false,
+        interruptedStepId: null,
+        interruptedCommitStarted: false,
+        interruptedAt: null,
         handback: null
       });
     });
@@ -247,6 +253,133 @@ describe('api wrap-run status + single-flight (#583)', () => {
   // That is how the reference came to document a `stale` nobody sent. Pinning
   // the key SET (not just `stale`) is what makes the next added field fail
   // here instead of silently going missing.
+  // #1805 — a stale run must not leave an old pipeline running unaccounted
+  // for. Short of its own cancel boundary it is taken over automatically (the
+  // takeover itself tells the displaced pipeline to stop — pinned at the
+  // registry level in test/wrap-run-registry.test.js); past that boundary —
+  // it may already be committing, branching or pushing — no request can make
+  // a takeover safe, so it refuses instead, with no override.
+  describe('POST /api/sessions/:project/wrap — a stale run past its cancel boundary refuses; short of it, takes over', () => {
+    it('409s with stale:true against a stale run already past commit, with no way to override it', async () => {
+      store.sessions.start({ projectId, engineId: 'claude', tmuxSession: 'wrap-run-stale-committed' });
+      const realNow = wrapRunRegistry._internal.now;
+      let fakeNow = realNow();
+      wrapRunRegistry._internal.now = () => fakeNow;
+      try {
+        const claim = wrapRunRegistry.begin('wrap-run-test', 1);
+        wrapRunRegistry.admitStep('wrap-run-test', claim.runId, { stepId: 'commit', pastCancelBoundary: true });
+        fakeNow += wrapRunRegistry.STALE_RUN_MS;
+
+        const refused = await operatorRequest(server, 'POST', '/api/sessions/wrap-run-test/wrap', {});
+        assert.equal(refused.status, 409);
+        assert.equal(refused.body.code, 'WRAP_IN_PROGRESS');
+        assert.equal(refused.body.runId, claim.runId, 'names the stale run — nothing was taken over');
+        assert.equal(refused.body.stale, true);
+        assert.equal(wrapRunRegistry.get('wrap-run-test').runId, claim.runId, 'the stale run is untouched');
+
+        // Still refused on a second attempt — there is no flag that overrides this.
+        const stillRefused = await operatorRequest(server, 'POST', '/api/sessions/wrap-run-test/wrap', {});
+        assert.equal(stillRefused.status, 409);
+
+        // It frees itself the ordinary way: the pipeline finally finishes.
+        wrapRunRegistry.finish('wrap-run-test', claim.runId, { ok: true });
+        wrapPipelineMod.runWrapPipeline = async () => ({ ...EMPTY_PIPELINE_RESULT });
+        const after = await operatorRequest(server, 'POST', '/api/sessions/wrap-run-test/wrap', {});
+        assert.equal(after.status, 202, 'the slot is free once the run actually settles');
+      } finally {
+        wrapRunRegistry._internal.now = realNow;
+        wrapRunRegistry._resetForTests();
+      }
+    });
+
+    it('202s automatically against a stale run that never reached its cancel boundary', async () => {
+      store.sessions.start({ projectId, engineId: 'claude', tmuxSession: 'wrap-run-stale-uncommitted' });
+      const realNow = wrapRunRegistry._internal.now;
+      let fakeNow = realNow();
+      wrapRunRegistry._internal.now = () => fakeNow;
+      try {
+        const claim = wrapRunRegistry.begin('wrap-run-test', 1);
+        fakeNow += wrapRunRegistry.STALE_RUN_MS;
+
+        wrapPipelineMod.runWrapPipeline = async () => ({ ...EMPTY_PIPELINE_RESULT });
+        const taken = await operatorRequest(server, 'POST', '/api/sessions/wrap-run-test/wrap', {});
+        assert.equal(taken.status, 202, 'short of the cancel boundary, nothing needs confirming');
+        assert.notEqual(taken.body.runId, claim.runId, 'a genuinely new run');
+      } finally {
+        wrapRunRegistry._internal.now = realNow;
+        wrapRunRegistry._resetForTests();
+      }
+    });
+
+    it('a live (not stale) run refuses regardless', async () => {
+      store.sessions.start({ projectId, engineId: 'claude', tmuxSession: 'wrap-run-live-refuse' });
+      let releaseGate;
+      const gate = new Promise((resolve) => { releaseGate = resolve; });
+      wrapPipelineMod.runWrapPipeline = async () => { await gate; return { ...EMPTY_PIPELINE_RESULT }; };
+      try {
+        const first = await operatorRequest(server, 'POST', '/api/sessions/wrap-run-test/wrap', {});
+        assert.equal(first.status, 202);
+        let status;
+        for (let i = 0; i < 50; i++) {
+          status = await request(server, 'GET', '/api/sessions/wrap-run-test/wrap/status');
+          if (status.body.running) break;
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        assert.equal(status.body.running, true, 'precondition: live, not stale');
+
+        const second = await operatorRequest(server, 'POST', '/api/sessions/wrap-run-test/wrap', {});
+        assert.equal(second.status, 409);
+        assert.equal(second.body.stale, false, 'this refusal is the live case, not the stale one');
+      } finally {
+        releaseGate();
+        for (let i = 0; i < 500; i++) {
+          const after = await request(server, 'GET', '/api/sessions/wrap-run-test/wrap/status');
+          if (!after.body.running) break;
+          await new Promise((resolve) => setTimeout(resolve, 2));
+        }
+      }
+    });
+  });
+
+  // #1816 — a restart kills the pipeline and empties the in-memory registry;
+  // only the durable checkpoint trail survives. `_resetForTests` plus a fresh
+  // `begin`/`emit`/`admitStep` sequence stands in for "the process restarted
+  // mid-wrap", since this suite cannot actually kill and relaunch the server.
+  describe('GET /wrap/status — interrupted-run recovery (#1816)', () => {
+    it('reports interrupted with the last step and commit state once the in-memory run is gone', async () => {
+      const claim = wrapRunRegistry.begin('wrap-run-test', 1);
+      wrapRunRegistry.emit('wrap-run-test', claim.runId, { type: 'step-start', stepId: 'memory-update' });
+      wrapRunRegistry.emit('wrap-run-test', claim.runId, { type: 'step-done', stepId: 'memory-update' });
+      wrapRunRegistry.emit('wrap-run-test', claim.runId, { type: 'step-start', stepId: 'commit' });
+      wrapRunRegistry.admitStep('wrap-run-test', claim.runId, { stepId: 'commit', pastCancelBoundary: true });
+
+      // "The process restarted": drop every in-memory run, but the durable
+      // checkpoints just written are still in the SAME store this server uses.
+      wrapRunRegistry._resetForTests();
+
+      const res = await request(server, 'GET', '/api/sessions/wrap-run-test/wrap/status');
+      assert.equal(res.status, 200);
+      assert.equal(res.body.running, false);
+      assert.equal(res.body.runId, claim.runId);
+      assert.equal(res.body.interrupted, true);
+      assert.equal(res.body.interruptedStepId, 'commit');
+      assert.equal(res.body.interruptedCommitStarted, true);
+      assert.equal(typeof res.body.interruptedAt, 'string');
+    });
+
+    it('is not interrupted once the run actually settled before the restart', async () => {
+      const claim = wrapRunRegistry.begin('wrap-run-test', 1);
+      wrapRunRegistry.emit('wrap-run-test', claim.runId, { type: 'step-start', stepId: 'memory-update' });
+      wrapRunRegistry.finish('wrap-run-test', claim.runId, { ...EMPTY_PIPELINE_RESULT });
+
+      wrapRunRegistry._resetForTests();
+
+      const res = await request(server, 'GET', '/api/sessions/wrap-run-test/wrap/status');
+      assert.equal(res.body.interrupted, false, 'finish recorded a settled marker before the simulated restart');
+      assert.equal(res.body.runId, null, 'and no run at all, like any project that never wrapped');
+    });
+  });
+
   describe('GET /wrap/status forwards the registry payload whole', () => {
     it('carries every field the registry reports, stale included', async () => {
       const realNow = wrapRunRegistry._internal.now;
@@ -256,7 +389,9 @@ describe('api wrap-run status + single-flight (#583)', () => {
         wrapRunRegistry.begin('wrap-run-test', 1);
         const live = await request(server, 'GET', '/api/sessions/wrap-run-test/wrap/status');
         assert.deepEqual(Object.keys(live.body).sort(),
-          ['cancelRequested', 'cancellable', 'currentStepId', 'currentStepStartedAt', 'finishedAt', 'handback', 'keepSource', 'options', 'project', 'result', 'runId', 'running', 'sessionId', 'sessionOutcomePlanned', 'stale', 'startedAt'],
+          ['cancelRequested', 'cancellable', 'currentStepId', 'currentStepStartedAt', 'finishedAt', 'handback',
+            'interrupted', 'interruptedAt', 'interruptedCommitStarted', 'interruptedStepId',
+            'keepSource', 'options', 'project', 'result', 'runId', 'running', 'sessionId', 'sessionOutcomePlanned', 'stale', 'startedAt'],
           'the route\'s key set is the contract docs/configuration-reference.md describes');
         assert.equal(live.body.running, true);
         assert.equal(live.body.stale, false);

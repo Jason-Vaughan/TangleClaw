@@ -291,6 +291,47 @@ describe('wrap-run controller — handback (#1312)', () => {
   });
 });
 
+describe('wrap-run controller — interrupted (#1816)', () => {
+  it('a page load reporting an interrupted run shows it, with no live view to follow', () => {
+    const s = C.reduceWrapRun(C.initialWrapRun(), {
+      type: 'interrupted', runId: RUN, lastStepId: 'commit', commitStarted: true
+    });
+    assert.equal(s.phase, 'interrupted');
+    assert.equal(s.runId, RUN);
+    assert.equal(s.interruptedStepId, 'commit');
+    assert.equal(s.interruptedCommitStarted, true);
+    assert.equal(s.visible, true);
+    assert.equal(s.live, null);
+    assert.equal(s.result, null);
+  });
+
+  it('defaults a missing step id to null and a non-true commitStarted to false', () => {
+    const s = C.reduceWrapRun(C.initialWrapRun(), { type: 'interrupted', runId: RUN });
+    assert.equal(s.interruptedStepId, null);
+    assert.equal(s.interruptedCommitStarted, false);
+  });
+
+  it('is ignored without a runId, and once anything else is already being followed', () => {
+    const idle = C.initialWrapRun();
+    assert.equal(C.reduceWrapRun(idle, { type: 'interrupted' }), idle);
+    const following = run([{ type: 'follow', runId: RUN }]);
+    assert.equal(C.reduceWrapRun(following, { type: 'interrupted', runId: NEXT, lastStepId: 'tests' }), following);
+    const settled = settledBlocked();
+    assert.equal(C.reduceWrapRun(settled, { type: 'interrupted', runId: NEXT, lastStepId: 'tests' }), settled);
+  });
+
+  it('dismiss on an interrupted report returns to idle — there is nothing left to follow', () => {
+    const s = C.reduceWrapRun(C.initialWrapRun(), { type: 'interrupted', runId: RUN, lastStepId: 'tests', commitStarted: false });
+    assert.deepEqual(C.reduceWrapRun(s, { type: 'dismiss' }), C.initialWrapRun());
+  });
+
+  it('a fresh wrap can still start from an interrupted report', () => {
+    const s = C.reduceWrapRun(C.initialWrapRun(), { type: 'interrupted', runId: RUN, lastStepId: 'tests', commitStarted: false });
+    const starting = C.reduceWrapRun(s, { type: 'start', retry: false });
+    assert.equal(starting.phase, 'starting');
+  });
+});
+
 describe('wrap-run controller — input hygiene', () => {
   it('is pure and tolerates garbage', () => {
     const s = settledBlocked();
