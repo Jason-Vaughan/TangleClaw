@@ -343,6 +343,7 @@
     "test/orchestration-profiles-store.test.js",
     "test/pane-witness.test.js",
     "test/paste-rejection-observation.test.js",
+    "test/permission-requests.test.js",
     "test/port-owner-kind-panel.test.js",
     "test/prime-golden.test.js",
     "test/prime-readiness-gate.test.js",
