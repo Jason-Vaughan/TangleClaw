@@ -29,28 +29,31 @@
  * `Base main Head` `LANE_QUEUE` records for that wave, from before any of
  * its PRs merged): diffed from there, the wave's accumulated changes
  * include both the new `FEATURES.md` citation and the test file it
- * cites. Nothing wires that lookup today — this script has no caller yet
- * (same posture as `scripts/suite-evidence.js`'s ci mode: it exists and
- * is correct to invoke, but invoking it with the right argument is the
- * caller's job to build). Refusing a missing `--base` rather than
- * defaulting to `origin/main` keeps a future wrong-base caller loud
- * instead of silently passing bad records.
+ * cites. `.github/workflows/test.yml`'s Records Gate already invokes
+ * this script with the ordinary PR base (`github.event.pull_request.base.sha`),
+ * which is correct for a single-wave records PR but is exactly the WRONG
+ * base above for a consolidated multi-wave one — nothing wires that
+ * wave-start lookup yet (same posture as `scripts/suite-evidence.js`'s ci
+ * mode: it exists and is correct to invoke, but computing the right
+ * argument for that specific case is the caller's job to build). Refusing
+ * a missing `--base` rather than defaulting to `origin/main` keeps a
+ * future wrong-base caller loud instead of silently passing bad records.
+ *
+ * A consolidated records PR has no single `--base` that makes every cited
+ * test file "touched" even with the right base above — those files landed
+ * through each wave's own code PRs, which merged before the records PR
+ * even branched. For that case, when the WHOLE diff classifies as
+ * docs/records-only (`scripts/docs-records-only-diff.js`'s roster — no
+ * executable/test file touched), an otherwise-unproven citation is
+ * accepted when the file is real: present on disk at `HEAD` and
+ * containing an actual test registration, not merely a dangling claim.
+ * Any diff that also touches an executable or test file keeps the
+ * original strict "must be touched" requirement, unchanged. This is the
+ * fallback the Records Gate's existing invocation benefits from directly.
  *
  * Usage: node scripts/verify-features-index.js --base <ref>
  *   --base <ref>  REQUIRED. For `W<N>-REC`, the wave's starting commit —
  *                 never `origin/main` at check time.
- * A consolidated records PR (e.g. a `W<N>-REC` citing tests from several
- * already-merged waves) has no single `--base` that makes every cited test
- * file "touched" -- those files landed through each wave's own code PRs,
- * which merged before the records PR even branched. For that case, when
- * the WHOLE diff classifies as docs/records-only
- * (`scripts/docs-records-only-diff.js`'s roster -- no executable/test file
- * touched), an otherwise-unproven citation is accepted when the file is
- * real: present on disk at `HEAD` and containing an actual test
- * registration, not merely a dangling claim. Any diff that also touches
- * an executable or test file keeps the original strict "must be touched"
- * requirement, unchanged.
- *
  * Exit 0 when every newly-added `Tests:` anchor names a touched file (or,
  * on a docs-only diff, a real file on disk), or none were added; 1
  * otherwise, naming each violation.
