@@ -39,6 +39,7 @@ setLevel('error');
 const store = require('../lib/store');
 const sharedDocRecord = require('../lib/shared-docs');
 const medusa = require('../lib/medusa');
+const master = require('../lib/master');
 const { createServer } = require('../server');
 const { operatorHeaders } = require('./_shared-docs-callers');
 
@@ -168,9 +169,13 @@ describe('a reader gets one shared-doc notice per quiet period (#1108)', () => {
     realGetStatus = realGetStatus || medusa.getStatus;
     realGetMessages = realGetMessages || medusa.getMessages;
 
-    medusa.getStatus = (sessionId) => ({
-      state: 'listening', workspaceId: `ws-${sessionId}`, unread: 0, lastError: null
-    });
+    // The Master defaults to `off` here: this file is about PER-READER
+    // coalescing among project sessions, written before the Master could be
+    // a recipient (#1084) — a blanket "everyone is listening" stub would
+    // otherwise add it as an extra reader to every assertion below.
+    medusa.getStatus = (sessionId) => (sessionId === master.MASTER_MEDUSA_KEY
+      ? { state: 'off', workspaceId: null, unread: 0, lastError: null }
+      : { state: 'listening', workspaceId: `ws-${sessionId}`, unread: 0, lastError: null });
     // The delivery the Bridge makes: the text is echoed verbatim into the
     // recipient's inbox under `from: 'system'`, and stays there until a consumer
     // reports it handled.
