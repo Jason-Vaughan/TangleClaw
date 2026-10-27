@@ -37,6 +37,7 @@
     enable: '/api/bridge/operator/enable',
     disable: '/api/bridge/operator/disable',
     allowlist: '/api/bridge/operator/allowlist',
+    dmAllowlist: '/api/bridge/operator/dm-allowlist',
     helperToken: '/api/bridge/operator/helper-token',
     primer: '/api/bridge/operator/candidate-primer',
     circuitReset: '/api/bridge/operator/circuit/reset',
@@ -61,14 +62,18 @@
     enable: () => 'Enable the operator bridge? Messages from the allowlisted Discord author will reach TangleClaw and may start the Project Master.',
     allowlist: (f) => `Set the allowlist to exactly this author (${f.authorId}), server (${f.spaceId}) and channel (${f.channelId})? `
       + 'Messages from anyone else, or anywhere else, are refused.',
+    'dm-allowlist': (f) => `Pin ${f.dmChannelId} as the DM channel and turn the DM surface on? A direct message from the allowlisted author on that channel `
+      + 'reaches TangleClaw too, the same as the guild channel, but on its own: a DM failure never falls back to the guild channel, and the reverse. '
+      + 'The helper still checks the recipient itself before it treats the channel as live.',
+    'dm-allowlist-off': () => 'Turn the DM surface off? Its pinned channel id stays on file; nothing more is accepted from it, and work already waiting for it is held for reconciliation, never rerouted to the guild channel.',
     'mint-token': (f, status) => (status && status.helperToken
       ? 'Create a new helper token? The current one stops working at once, and the helper posts nothing until it is given the new one.'
       : 'Create the helper token? Its value is shown once.'),
     'revoke-token': () => 'Revoke the helper token? The helper can then neither deliver messages nor collect what to post.',
     'primer-on': () => 'Tell every session of `tc candidate` at its next launch?',
-    'circuit-reset': (f) => (f.decision === 'withdraw'
-      ? 'Reset the circuit and WITHDRAW what it set aside? Those items will never be posted, and a route whose answer is among them is closed.'
-      : 'Reset the circuit and put what it set aside back in the queue to be posted?'),
+    'circuit-reset': (f) => `Reset the ${f.surfaceKind || 'guild-channel'} circuit${f.decision === 'withdraw'
+      ? ' and WITHDRAW what it set aside? Those items will never be posted, and a route whose answer is among them is closed.'
+      : ' and put what it set aside back in the queue to be posted?'}`,
     requeue: (f) => `Put item ${f.outboundId} back in the queue to be posted?`,
     withdraw: (f) => `Withdraw item ${f.outboundId}? It will never be posted. If it is a route's answer, that route is closed.`,
     'withdraw-candidate': (f) => `Withdraw candidate ${f.candidateId}? Nobody has decided it, and it will then never be approved or posted.`,
@@ -212,6 +217,8 @@
       enable: () => send(ROUTES.enable, 'POST', {}, 'The bridge is enabled.'),
       disable: () => send(ROUTES.disable, 'POST', {}, 'The bridge is disabled. Nothing more is accepted or handed over.'),
       allowlist: (f) => send(ROUTES.allowlist, 'POST', { authorId: f.authorId, spaceId: f.spaceId, channelId: f.channelId }, 'The allowlist is set.'),
+      'dm-allowlist': (f) => send(ROUTES.dmAllowlist, 'POST', { dmChannelId: f.dmChannelId, dmEnabled: true }, 'The DM channel is pinned and the surface is on.'),
+      'dm-allowlist-off': () => send(ROUTES.dmAllowlist, 'POST', { dmEnabled: false }, 'The DM surface is off. Its pinned channel id is unchanged.'),
       'mint-token': async () => {
         const answer = await send(ROUTES.helperToken, 'POST', {}, 'A helper token was created. Its value is shown below, once.');
         // An answer that arrives after the panel left the screen is not kept:
@@ -223,8 +230,10 @@
       'primer-on': () => send(ROUTES.primer, 'POST', { primed: true }, 'Sessions are told of tc candidate at their next launch.'),
       'primer-off': () => send(ROUTES.primer, 'POST', { primed: false }, 'Sessions are no longer told of tc candidate.'),
       'circuit-reset': (f) => {
-        const key = `circuit-reset:${f.episodeId}:${f.decision}`;
-        return send(ROUTES.circuitReset, 'POST', { requestId: requestIdFor(key), decision: f.decision },
+        // #2433: which surface's episode; a control that never names one (the
+        // guild section's own buttons) resets the one there always was.
+        const key = `circuit-reset:${f.episodeId}:${f.decision}:${f.surfaceKind || 'guild-channel'}`;
+        return send(ROUTES.circuitReset, 'POST', { requestId: requestIdFor(key), decision: f.decision, surfaceKind: f.surfaceKind || undefined },
           f.decision === 'withdraw' ? 'The circuit is reset; what it set aside is withdrawn.' : 'The circuit is reset; what it set aside is back in the queue.', key);
       },
       requeue: (f) => {
@@ -256,6 +265,9 @@
         for (const [field, label] of [['authorId', 'author id'], ['spaceId', 'server id'], ['channelId', 'channel id']]) {
           if (typeof f[field] !== 'string' || !CHAT_ID.test(f[field])) return `The ${label} must be the number Discord shows for it.`;
         }
+      }
+      if (action === 'dm-allowlist' && (typeof f.dmChannelId !== 'string' || !CHAT_ID.test(f.dmChannelId))) {
+        return 'The DM channel id must be the number Discord shows for it.';
       }
       // Rolling back is disable first, then everything else. Revoking the token
       // of a bridge that is still enabled leaves it accepting and unable to post.
@@ -347,6 +359,7 @@
       const s = state.status;
       const allow = s.allowlist;
       const circuit = s.configurationCircuit;
+      const dmCircuit = s.configurationCircuitDm;
       const routes = Object.entries(s.openRoutesByState || {}).map(([k, v]) => `${escapeHtml(k)} ${escapeHtml(v)}`).join(', ');
       const items = Array.isArray(s.setAsideItems) ? s.setAsideItems : [];
       const routeless = Array.isArray(s.routelessItems) ? s.routelessItems : [];
@@ -382,6 +395,18 @@
           <input type="text" class="form-input" id="obSpaceId" inputmode="numeric" autocomplete="off" aria-label="Discord server id" placeholder="Discord server id">
           <input type="text" class="form-input" id="obChannelId" inputmode="numeric" autocomplete="off" aria-label="Discord channel id" placeholder="Discord channel id">
           ${button('allowlist', 'Set the allowlist')}
+        </div>
+
+        <div class="gs-section-sublabel">DM surface</div>
+        <div class="form-hint">A second, independently-enabled ingress and reply surface: one direct-message channel from the same allowlisted author. Off by default.
+          A DM failure never falls back to the guild channel, and the reverse.</div>
+        ${line('Now', allow && allow.dmChannelId
+          ? `channel ${escapeHtml(allow.dmChannelId)}, ${allow.dmEnabled ? '<strong>on</strong>' : 'off'}`
+          : '<strong>not pinned</strong>')}
+        <div class="ob-form">
+          <input type="text" class="form-input" id="obDmChannelId" inputmode="numeric" autocomplete="off" aria-label="Discord DM channel id" placeholder="Discord DM channel id">
+          ${button('dm-allowlist', 'Pin and turn on')}
+          ${allow && allow.dmEnabled ? button('dm-allowlist-off', 'Turn off') : ''}
         </div>
 
         <div class="gs-section-sublabel">What the bridge may reach</div>
@@ -420,12 +445,20 @@
             + `(${escapeHtml(s.candidatePrimerOmitted.length)} characters against a cap of ${escapeHtml(s.candidatePrimerOmitted.cap)}, at ${escapeHtml(s.candidatePrimerOmitted.at)})` : ''))}
         <div class="ob-controls">${s.candidatesPrimed || s.candidatePrimerSetting ? button('primer-off', 'Switch it off') : button('primer-on', 'Switch it on', {}, !s.enabled)}</div>
 
-        <div class="gs-section-sublabel">Configuration circuit</div>
+        <div class="gs-section-sublabel">Configuration circuit (guild channel)</div>
         ${circuit
-          ? line('Now', `<strong>OPEN</strong>, episode ${escapeHtml(circuit.episodeId)} since ${escapeHtml(circuit.openedAt)} (${escapeHtml(circuit.reason)}). The chat is not taking posts.`)
+          ? line('Now', `<strong>OPEN</strong>, episode ${escapeHtml(circuit.episodeId)} since ${escapeHtml(circuit.openedAt)} (${escapeHtml(circuit.reason)}). That channel is not taking posts.`)
             + `<div class="form-hint">Put the bot's access to the channel right first. Then say what becomes of what was set aside.</div>
-               <div class="ob-controls">${button('circuit-reset', 'Reset and put back', { episode: circuit.episodeId, decision: 'requeue' })}
-               ${button('circuit-reset', 'Reset and withdraw', { episode: circuit.episodeId, decision: 'withdraw' })}</div>`
+               <div class="ob-controls">${button('circuit-reset', 'Reset and put back', { episode: circuit.episodeId, decision: 'requeue', surface: 'guild-channel' })}
+               ${button('circuit-reset', 'Reset and withdraw', { episode: circuit.episodeId, decision: 'withdraw', surface: 'guild-channel' })}</div>`
+          : line('Now', 'closed')}
+
+        <div class="gs-section-sublabel">Configuration circuit (DM surface)</div>
+        ${dmCircuit
+          ? line('Now', `<strong>OPEN</strong>, episode ${escapeHtml(dmCircuit.episodeId)} since ${escapeHtml(dmCircuit.openedAt)} (${escapeHtml(dmCircuit.reason)}). The DM channel is not taking posts; the guild channel is unaffected.`)
+            + `<div class="form-hint">Put the bot's access to the DM channel right first. Then say what becomes of what was set aside.</div>
+               <div class="ob-controls">${button('circuit-reset', 'Reset and put back', { episode: dmCircuit.episodeId, decision: 'requeue', surface: 'bot-dm' })}
+               ${button('circuit-reset', 'Reset and withdraw', { episode: dmCircuit.episodeId, decision: 'withdraw', surface: 'bot-dm' })}</div>`
           : line('Now', 'closed')}
 
         <div class="gs-section-sublabel">Set aside</div>
@@ -488,16 +521,16 @@
     });
     const draw = () => { if (!panel.state.gone) container.innerHTML = panel.html(); };
     /**
-     * What a pressed control carries: its own data, and the allowlist's three inputs.
+     * What a pressed control carries: its own data, and the allowlist's four inputs (#2433 adds the DM channel id).
      * @param {object} target - The pressed element.
      * @returns {object}
      */
     const fieldsOf = (target) => {
       const value = (id) => { const input = doc.getElementById(id); return input ? String(input.value || '').trim() : ''; };
       return {
-        authorId: value('obAuthorId'), spaceId: value('obSpaceId'), channelId: value('obChannelId'),
+        authorId: value('obAuthorId'), spaceId: value('obSpaceId'), channelId: value('obChannelId'), dmChannelId: value('obDmChannelId'),
         outboundId: target.dataset.bridgeItem, candidateId: target.dataset.bridgeCandidate, projectId: target.dataset.bridgeProject, nickname: target.dataset.bridgeNickname,
-        episodeId: target.dataset.bridgeEpisode, decision: target.dataset.bridgeDecision
+        episodeId: target.dataset.bridgeEpisode, decision: target.dataset.bridgeDecision, surfaceKind: target.dataset.bridgeSurface
       };
     };
     if (!container.dataset.bridgeBound) {
