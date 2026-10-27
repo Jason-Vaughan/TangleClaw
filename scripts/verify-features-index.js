@@ -79,12 +79,15 @@ const ROOT = path.join(__dirname, '..');
  * string/template literal into a literal `""`, so this can require that
  * `""` right after the call -- `it(foo)` or a (correctly stripped) regex
  * literal never produces that shape, only a real `it('name', fn)`/
- * `test(\`name\`, fn)` does. The call must also follow a statement/block
- * boundary (start of file, `;{()` or a line break) -- never a bare `/`,
- * which would mean a regex literal survived stripping unstripped: belt and
- * suspenders alongside the scanner below, not a substitute for it.
+ * `test(\`name\`, fn)` does. The call must also sit at true line start or
+ * right after `{` -- deliberately NOT `;` or `(`, which a regex literal's
+ * OWN body can contain (`/;it("fake")/`'s `;` satisfied an earlier, looser
+ * version of this boundary). A JS regex literal can never span a newline,
+ * so this is a boundary a stray regex literal's content cannot fake, unlike
+ * `;`/`(`: belt and suspenders alongside the scanner below, not a
+ * substitute for it.
  */
-const TEST_CALL_RE = /(?:^|[;{()\r\n])\s*(?:await\s+)?(?:it|test)(?:\s*\.\s*(?:only|skip|todo))?\s*\(\s*""/;
+const TEST_CALL_RE = /(?:^|[\r\n{])[ \t]*(?:await[ \t]+)?(?:it|test)(?:[ \t]*\.[ \t]*(?:only|skip|todo))?[ \t]*\([ \t]*""/;
 
 /**
  * A docs-only fallback citation must itself look like a test file -- `lib/foo.js`
@@ -173,14 +176,24 @@ const ID_START_RE = /[A-Za-z_$]/;
 const ID_PART_RE = /[A-Za-z0-9_$]/;
 
 /**
+ * Statement keywords whose parenthesized condition is ALWAYS followed by a
+ * statement, never a binary operator -- so a `/` immediately after that
+ * condition's closing `)` is unambiguously a regex literal, never division
+ * (`if (x) /y/.test(z)` is valid; `if (x) / y` is not). `function`/method
+ * call parens are deliberately excluded: `f(x) / 2` is ordinary division.
+ */
+const CONTROL_PAREN_KEYWORDS = new Set(['if', 'while', 'for', 'with']);
+
+/**
  * Blank out comments and regex literals, and collapse every string/template
  * literal down to a bare `""` -- so a real call's string first argument can
  * be matched by shape (`it("", ...)`) regardless of what the argument text
  * said, while `it(`/`test(` appearing in prose, inside a comment, inside a
  * `/regex/` literal (including one whose body itself contains quote
- * characters, e.g. `/it("fake")/`, or follows a regex-preceding keyword like
- * `return`), or followed by a non-string argument never produces a `""`
- * right after the call.
+ * characters, e.g. `/it("fake")/`, follows a regex-preceding keyword like
+ * `return`, or follows an `if`/`while`/`for`/`with` condition's closing
+ * `)`), or followed by a non-string argument never produces a `""` right
+ * after the call.
  *
  * A single left-to-right scan, not independent regex passes: a regex
  * literal can contain quote characters and a string can contain `/`
@@ -194,8 +207,12 @@ const ID_PART_RE = /[A-Za-z0-9_$]/;
  * or an operator/punctuation character per {@link REGEX_PRECEDES_RE}), OR
  * when the most recent identifier token is a {@link REGEX_PRECEDING_KEYWORDS}
  * entry that is itself not a property access (`obj.return /2` divides;
- * `return /x/` does not) -- the same heuristics real tokenizers use to
- * disambiguate regex-literal start from division.
+ * `return /x/` does not), OR when it immediately follows the closing `)` of
+ * a {@link CONTROL_PAREN_KEYWORDS} condition (a paren stack tracks whether
+ * each `(` opened such a condition, since conditions can nest: `if (a &&
+ * (b || c)) /x/` must still recognize the outer `if`'s `)`) -- the same
+ * heuristics real tokenizers use to disambiguate regex-literal start from
+ * division.
  *
  * @param {string} src - JavaScript source
  * @returns {string} The same source with comments and regex literals
@@ -208,6 +225,8 @@ function stripCommentsAndStrings(src) {
   let prevNonWs = '';
   let prevWord = '';
   let prevWordIsProperty = false;
+  let afterControlParen = false;
+  const parenStack = [];
   const n = src.length;
   while (i < n) {
     const ch = src[i];
@@ -240,12 +259,14 @@ function stripCommentsAndStrings(src) {
       prevNonWs = ')'; // a completed string behaves like an expression, never regex-preceding
       prevWord = '';
       prevWordIsProperty = false;
+      afterControlParen = false;
       continue;
     }
 
     if (ch === '/' && next !== '/' && next !== '*'
         && (prevNonWs === '' || REGEX_PRECEDES_RE.test(prevNonWs)
-          || (!prevWordIsProperty && REGEX_PRECEDING_KEYWORDS.has(prevWord)))) {
+          || (!prevWordIsProperty && REGEX_PRECEDING_KEYWORDS.has(prevWord))
+          || afterControlParen)) {
       let j = i + 1;
       let inClass = false;
       let closed = false;
@@ -262,9 +283,31 @@ function stripCommentsAndStrings(src) {
         prevNonWs = ')'; // a completed regex literal behaves like an expression too
         prevWord = '';
         prevWordIsProperty = false;
+        afterControlParen = false;
         continue;
       }
       // No closing `/` on this line: not a regex literal after all, fall through below.
+    }
+
+    if (ch === '(') {
+      parenStack.push(CONTROL_PAREN_KEYWORDS.has(prevWord) && !prevWordIsProperty);
+      out += ch;
+      prevNonWs = ch;
+      prevWord = '';
+      prevWordIsProperty = false;
+      afterControlParen = false;
+      i += 1;
+      continue;
+    }
+
+    if (ch === ')') {
+      afterControlParen = Boolean(parenStack.pop());
+      out += ch;
+      prevNonWs = ch;
+      prevWord = '';
+      prevWordIsProperty = false;
+      i += 1;
+      continue;
     }
 
     if (ID_START_RE.test(ch)) {
@@ -275,6 +318,7 @@ function stripCommentsAndStrings(src) {
       prevWordIsProperty = prevNonWs === '.';
       prevWord = word;
       prevNonWs = word[word.length - 1];
+      afterControlParen = false;
       i = j;
       continue;
     }
@@ -284,6 +328,7 @@ function stripCommentsAndStrings(src) {
       prevNonWs = ch;
       prevWord = '';
       prevWordIsProperty = false;
+      afterControlParen = false;
     }
     i += 1;
   }

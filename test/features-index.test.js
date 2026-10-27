@@ -438,4 +438,28 @@ describe('existsOnDisk and hasRealTests: on-disk reality seams', () => {
     const stripped = verifyFeaturesIndex.stripCommentsAndStrings('const x = obj.return / 2; it(\'real\', () => {});');
     assert.match(stripped, /it\(\s*""/, 'obj.return is a property access, so the following / divides and the real call after it must still match');
   });
+
+  it('hasRealTests rejects a regex literal immediately after an if/while/for control condition (PRR-B review round 5, #2632)', () => {
+    const ifIo = { existsSync: () => true, readFileSync: () => 'if (flag) /;it("fake")/.test(text);\n' };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/if-regex.test.js', ifIo), false);
+    const whileIo = { existsSync: () => true, readFileSync: () => 'while (flag) /;test("fake")/.test(text);\n' };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/while-regex.test.js', whileIo), false);
+    const forIo = { existsSync: () => true, readFileSync: () => 'for (;flag;) /;it("fake")/.test(text);\n' };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/for-regex.test.js', forIo), false);
+  });
+
+  it('stripCommentsAndStrings treats / after a control condition\'s closing ) as a regex literal, not division', () => {
+    const stripped = verifyFeaturesIndex.stripCommentsAndStrings('if (flag) /;it("fake")/.test(text);');
+    assert.ok(!/it\(\s*""/.test(stripped), `the regex literal after if (...) must not collapse into an it("") shape: ${JSON.stringify(stripped)}`);
+  });
+
+  it('stripCommentsAndStrings still treats / as division after an ordinary function-call paren (not a control keyword)', () => {
+    const stripped = verifyFeaturesIndex.stripCommentsAndStrings('f(x) / 2; it(\'real\', () => {});');
+    assert.match(stripped, /it\(\s*""/, 'f(...) is a call, not if/while/for/with, so the following / divides and the real call after it must still match');
+  });
+
+  it('stripCommentsAndStrings handles a control condition with its own nested parens', () => {
+    const stripped = verifyFeaturesIndex.stripCommentsAndStrings('if (a && (b || c)) /;it("fake")/.test(text);');
+    assert.ok(!/it\(\s*""/.test(stripped), `nested parens in the condition must not defeat the outer if's control-paren tracking: ${JSON.stringify(stripped)}`);
+  });
 });
