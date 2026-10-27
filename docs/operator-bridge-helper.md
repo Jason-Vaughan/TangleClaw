@@ -235,6 +235,38 @@ last stopped being ready, or when it was started if it has not been ready yet; n
 ready). The first restarts on every attempt of an outage. The second is how long the outage
 has lasted.
 
+### The resume Discord itself starts, roughly every one to two hours (#2334)
+
+Discord periodically sends the Gateway's own Reconnect opcode (op 7) to a connected client. Its
+own docs confirm this is a normal, documented trigger for a resume and say the client must resume
+on it, not re-identify — but they do not publish why or how often: #2334's observation (four
+resumes overnight, roughly every two hours, each `gateway-connecting` to `gateway-resumed` in
+about 0.23-0.25 seconds) is this helper's own record of the pattern, not a cause Discord states.
+Treat the interval as empirical, not contractual: it can change without notice on Discord's side.
+
+The helper's `OP.RECONNECT` handler (`lib/bridge-helper/discord-gateway.js`) answers exactly this
+way: `dropAndReconnect` closes the current socket with the resume-preserving code and reconnects
+with the session kept, so the next attempt resumes rather than identifies afresh. Two things
+follow that otherwise read as surprising in the log:
+
+- **No `gateway-closed` line appears for it.** `dropAndReconnect` detaches the socket's own event
+  listeners before closing it, because the close is this helper's own choice, not something that
+  happened to it — the `close` handler that would log `gateway-closed` is exactly the one a
+  Discord-initiated or network-caused close goes through. A resume with no matching
+  `gateway-closed` is this case, not a gap in the log.
+- **No event is missed.** Resuming (as opposed to a fresh `IDENTIFY`) replays every dispatch after
+  the last acknowledged `seq`, which is the Gateway's own contract for a resumed session. A
+  message sent to the bot in the moment between `gateway-connecting` and `gateway-resumed` is not
+  lost — it arrives once the session is ready, with its own `MESSAGE_CREATE`, same as any other.
+
+So four or five changes to `connected since` overnight, each this shape, do not by themselves mean
+a reply was missed or that the outage-notice threshold was approached — check the Hub and helper
+delivery records for that, as #2334 did, rather than inferring it from the Gateway state alone.
+This is a known, accepted gap, not something this change fixes: the log has no code that marks
+*why* a resume happened (Discord's op 7 versus a zombie-heartbeat drop versus the watchdog), so a
+`gateway-resumed` after a quiet `gateway-connecting` is read by this pattern, not by a dedicated
+log line.
+
 ### Telling TangleClaw how the connection is
 
 On every pass the helper tells TangleClaw how its Gateway connection is, inside the claim it
