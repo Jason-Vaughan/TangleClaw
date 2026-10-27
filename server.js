@@ -4784,6 +4784,42 @@ function resolveMasterMedusaTarget() {
 }
 
 /**
+ * Who is calling, in the terms the exchange record uses (#1839). A verified
+ * launch counts only for the participant's own project; the dashboard is
+ * `operator-ui` when `asReader`, since opening the inbox panel is the
+ * operator looking, not the agent.
+ *
+ * Module-scoped rather than nested in `registerMedusaRoutes` (which calls it
+ * identically for both the project and the Master prefix): it closes over
+ * nothing local to that function, so nesting it only built the same closure
+ * twice and put the `projectId == null` guard below out of direct reach for
+ * a test, since every consumer of its `master` kind independently re-derives
+ * the same restriction from the exchange row or sender shape — exported as
+ * `_exchangeCaller` so the guard itself can be tested directly.
+ * @param {import('http').IncomingMessage} req - Request.
+ * @param {number|null} projectId - The participant's project.
+ * @param {boolean} [asReader] - Resolving a read or ack rather than a send.
+ * @returns {object}
+ */
+function exchangeCaller(req, projectId, asReader = false) {
+  const c = resolveControlCaller(req);
+  if (c.kind === 'operator') {
+    const proof = c.actor.operatorProof;
+    return asReader && isOperatorShaped(req) ? { kind: 'operator-ui', proof } : { kind: 'operator', proof };
+  }
+  if (c.kind === 'project' && projectId != null && c.projectId === projectId) return { kind: 'project', projectId };
+  // A verified Master launch has no project id, so the `project` branch
+  // above can never match it (#1988): every Master caller fell through to
+  // `unbound`, which is why a Master-addressed reply could never bind.
+  // Scoped to `projectId == null` (the route's own TARGET has no project —
+  // true only on the Master's own mount) so a Master-role caller hitting a
+  // PROJECT's mount still resolves `unbound` there rather than being
+  // credited as a verified sender of that project's mail.
+  if (c.kind === 'master' && projectId == null) return { kind: 'master' };
+  return { kind: 'unbound' };
+}
+
+/**
  * Mount the switchboard route family under `prefix`, resolving the
  * participant through `resolve`. Thin pass-throughs to lib/medusa; the
  * browser never talks to the Bridge directly.
@@ -4802,26 +4838,6 @@ function registerMedusaRoutes(prefix, resolve) {
     if (!target || !target.name || !target.projectPath) return null;
     const project = store.projects.getByName(target.name);
     return project ? project.id : null;
-  }
-
-  /**
-   * Who is calling, in the terms the exchange record uses (#1839). A verified
-   * launch counts only for the participant's own project; the dashboard is
-   * `operator-ui` when `asReader`, since opening the inbox panel is the
-   * operator looking, not the agent.
-   * @param {import('http').IncomingMessage} req - Request.
-   * @param {number|null} projectId - The participant's project.
-   * @param {boolean} [asReader] - Resolving a read or ack rather than a send.
-   * @returns {object}
-   */
-  function exchangeCaller(req, projectId, asReader = false) {
-    const c = resolveControlCaller(req);
-    if (c.kind === 'operator') {
-      const proof = c.actor.operatorProof;
-      return asReader && isOperatorShaped(req) ? { kind: 'operator-ui', proof } : { kind: 'operator', proof };
-    }
-    if (c.kind === 'project' && projectId != null && c.projectId === projectId) return { kind: 'project', projectId };
-    return { kind: 'unbound' };
   }
 
   /**
@@ -8205,4 +8221,4 @@ if (require.main === module) {
 }
 
 
-module.exports = { _routePatterns, createServer, _recoveryGateProbeFor, _operatorProofOf, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers, _activityObserver: activityObserver };
+module.exports = { _routePatterns, createServer, _recoveryGateProbeFor, _operatorProofOf, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers, _activityObserver: activityObserver, _exchangeCaller: exchangeCaller };

@@ -35,7 +35,7 @@ const store = require('../lib/store');
 const medusa = require('../lib/medusa');
 const master = require('../lib/master');
 const medusaExchanges = require('../lib/medusa-exchanges');
-const { createServer } = require('../server');
+const { createServer, _exchangeCaller } = require('../server');
 const { operatorHeaders } = require('./_shared-docs-callers');
 
 const NO_FLEET = async () => ({ refreshed: false, count: 0 });
@@ -801,6 +801,68 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
     assert.equal(status, 200, JSON.stringify(data));
     assert.equal(data.exchange.state, 'closed');
     assert.equal(store.medusaExchanges.get(x.exchange_id).terminal_by, 'master');
+  });
+
+  /**
+   * Record an exchange from a project TO the Master, Hub-bound — what the
+   * Master sees in its inbox as a reply-required message. Uses the Master's
+   * REAL minted workspace id and `sessionId: null`, matching what
+   * `localParticipant` actually resolves for it in production (its registry
+   * candidate carries no session record) — the reply match in
+   * `createSendIntent` is proven against that shape, not a convenient test
+   * stand-in. Requires the Master's listener already started.
+   * @param {{projectId: number}} sender - The sending project
+   * @param {string} hubId - Hub id to bind
+   * @returns {object} The exchange row
+   */
+  function sentToMaster(sender, hubId) {
+    const x = medusaExchanges.createSendIntent({
+      meta: medusaExchanges.validateSendMeta({}, { kind: 'project', projectId: sender.projectId }, sender.projectId),
+      sender: { projectId: sender.projectId, sessionId: 9, workspaceId: 'proj-ws' },
+      recipient: { workspaceId: master.getMasterMedusaStatus().workspaceId, projectId: null, sessionId: null }
+    });
+    return medusaExchanges.bindHubId(x.exchange_id, hubId, { hubStatus: 'received' });
+  }
+
+  it('replies, over its own send route, to a message addressed to it — the inReplyTo deadlock #1988 fixed', async () => {
+    // Before #1988, the Master's own verified launch resolved to `unbound` on
+    // this route (exchangeCaller had no `master` case), so this exact request
+    // was refused at 403 EXCHANGE_BINDING_REQUIRED — never reaching the
+    // REPLY_TARGET_UNKNOWN check the fix also touches.
+    startListening();
+    const original = sentToMaster({ projectId: 10 }, 'hub-to-master-1988');
+    const { status, data } = await req('/api/master/medusa/send', 'POST',
+      { to: 'proj-ws', message: 'on it', inReplyTo: 'hub-to-master-1988' }, MASTER_PANE);
+    assert.equal(status, 200, JSON.stringify(data));
+    assert.equal(data.exchange.sender.verified, true, 'the Master\'s own verified launch, recorded as such');
+    assert.equal(store.medusaExchanges.get(data.exchange.exchangeId).in_reply_to, original.exchange_id);
+  });
+
+  it('still refuses the Master a reply to a message that was not addressed to it (#1988)', async () => {
+    startListening();
+    const project = store.projects.create({ name: 'master-reply-other', path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-mro-')) });
+    const x = medusaExchanges.createSendIntent({
+      meta: medusaExchanges.validateSendMeta({}, { kind: 'project', projectId: project.id }, project.id),
+      sender: { projectId: project.id, sessionId: 9, workspaceId: 'proj-ws' },
+      recipient: { workspaceId: 'other-proj-ws', projectId: 55, sessionId: 11 }
+    });
+    medusaExchanges.bindHubId(x.exchange_id, 'hub-not-mine', { hubStatus: 'received' });
+    const { status, data } = await req('/api/master/medusa/send', 'POST',
+      { to: 'proj-ws', message: 'on it', inReplyTo: 'hub-not-mine' }, MASTER_PANE);
+    assert.equal(status, 404);
+    assert.equal(data.code, 'REPLY_TARGET_UNKNOWN');
+  });
+
+  it('exchangeCaller resolves a verified Master only when the route target has no project', () => {
+    // Every current consumer of {kind: 'master'} (validateSendMeta's
+    // _isVerifiedMaster, close()'s _isMasterSend) independently re-derives
+    // this same restriction from the sender/row shape, so no HTTP response
+    // currently differs whether this guard is present or not — the only way
+    // to observe the guard ITSELF, rather than its (currently redundant)
+    // downstream safety nets, is to call the resolver directly.
+    const fakeReq = { headers: { 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': MASTER_LAUNCH_ID } };
+    assert.deepEqual(_exchangeCaller(fakeReq, null), { kind: 'master' }, 'the Master\'s own mount (no project target)');
+    assert.deepEqual(_exchangeCaller(fakeReq, 10), { kind: 'unbound' }, 'a project\'s own mount, even with Master-role headers');
   });
 
   it('the Master close mount refuses an unbound caller, and refuses the Master an exchange a project sent (#2554)', async () => {
