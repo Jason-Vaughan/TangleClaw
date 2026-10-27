@@ -4820,6 +4820,10 @@ function registerMedusaRoutes(prefix, resolve) {
       return asReader && isOperatorShaped(req) ? { kind: 'operator-ui', proof } : { kind: 'operator', proof };
     }
     if (c.kind === 'project' && projectId != null && c.projectId === projectId) return { kind: 'project', projectId };
+    // A verified Master launch has no project id, so the `project` branch
+    // above can never match it (#1988): every Master caller fell through to
+    // `unbound`, which is why a Master-addressed reply could never bind.
+    if (c.kind === 'master') return { kind: 'master' };
     return { kind: 'unbound' };
   }
 

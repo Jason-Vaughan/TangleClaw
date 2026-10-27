@@ -803,6 +803,51 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
     assert.equal(store.medusaExchanges.get(x.exchange_id).terminal_by, 'master');
   });
 
+  /**
+   * Record an exchange from a project TO the Master, Hub-bound — what the
+   * Master sees in its inbox as a reply-required message.
+   * @param {{projectId: number}} sender - The sending project
+   * @param {string} hubId - Hub id to bind
+   * @returns {object} The exchange row
+   */
+  function sentToMaster(sender, hubId) {
+    const x = medusaExchanges.createSendIntent({
+      meta: medusaExchanges.validateSendMeta({}, { kind: 'project', projectId: sender.projectId }, sender.projectId),
+      sender: { projectId: sender.projectId, sessionId: 9, workspaceId: 'proj-ws' },
+      recipient: { workspaceId: 'master-ws', projectId: null, sessionId: master.MASTER_MEDUSA_KEY }
+    });
+    return medusaExchanges.bindHubId(x.exchange_id, hubId, { hubStatus: 'received' });
+  }
+
+  it('replies, over its own send route, to a message addressed to it — the inReplyTo deadlock #1988 fixed', async () => {
+    // Before #1988, the Master's own verified launch resolved to `unbound` on
+    // this route (exchangeCaller had no `master` case), so this exact request
+    // was refused at 403 EXCHANGE_BINDING_REQUIRED — never reaching the
+    // REPLY_TARGET_UNKNOWN check the fix also touches.
+    startListening();
+    const original = sentToMaster({ projectId: 10 }, 'hub-to-master-1988');
+    const { status, data } = await req('/api/master/medusa/send', 'POST',
+      { to: 'proj-ws', message: 'on it', inReplyTo: 'hub-to-master-1988' }, MASTER_PANE);
+    assert.equal(status, 200, JSON.stringify(data));
+    assert.equal(data.exchange.sender.verified, true, 'the Master\'s own verified launch, recorded as such');
+    assert.equal(store.medusaExchanges.get(data.exchange.exchangeId).in_reply_to, original.exchange_id);
+  });
+
+  it('still refuses the Master a reply to a message that was not addressed to it (#1988)', async () => {
+    startListening();
+    const project = store.projects.create({ name: 'master-reply-other', path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-mro-')) });
+    const x = medusaExchanges.createSendIntent({
+      meta: medusaExchanges.validateSendMeta({}, { kind: 'project', projectId: project.id }, project.id),
+      sender: { projectId: project.id, sessionId: 9, workspaceId: 'proj-ws' },
+      recipient: { workspaceId: 'other-proj-ws', projectId: 55, sessionId: 11 }
+    });
+    medusaExchanges.bindHubId(x.exchange_id, 'hub-not-mine', { hubStatus: 'received' });
+    const { status, data } = await req('/api/master/medusa/send', 'POST',
+      { to: 'proj-ws', message: 'on it', inReplyTo: 'hub-not-mine' }, MASTER_PANE);
+    assert.equal(status, 404);
+    assert.equal(data.code, 'REPLY_TARGET_UNKNOWN');
+  });
+
   it('the Master close mount refuses an unbound caller, and refuses the Master an exchange a project sent (#2554)', async () => {
     const mine = orphanedSend({ projectId: null, sessionId: master.MASTER_MEDUSA_KEY });
     const unbound = await req(`/api/master/medusa/exchanges/${mine.exchange_id}/close`, 'POST', {});
