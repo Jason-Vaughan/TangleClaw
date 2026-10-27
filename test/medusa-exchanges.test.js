@@ -340,6 +340,20 @@ describe('medusa-exchanges (#1839)', () => {
       assert.equal(reply.in_reply_to, original.exchange_id);
     });
 
+    it("records the Master's own reply as actor 'master' on both the send and the original's replied fact (A475-W1D-R1)", () => {
+      const original = sendBuilderToMaster();
+      const reply = mx.createSendIntent({
+        meta: mx.validateSendMeta({ inReplyTo: 'hub-to-master' }, MASTER, null),
+        sender: { projectId: null, sessionId: 'master', workspaceId: 'master-ws' },
+        recipient: { workspaceId: 'builder-ws', projectId: 20 }
+      });
+      const sendFact = store.medusaExchanges.facts(reply.exchange_id).find((f) => f.fact === 'send_pending');
+      assert.equal(sendFact.actor, 'master');
+      mx.bindHubId(reply.exchange_id, 'hub-master-reply', { hubStatus: 'received' });
+      const repliedFact = store.medusaExchanges.facts(original.exchange_id).find((f) => f.fact === 'replied');
+      assert.equal(repliedFact.actor, 'master');
+    });
+
     it('refuses the Master a reply to a message that was not addressed to it (#1988)', () => {
       sendPmToBuilder(); // addressed to the Builder's project, not the Master
       assert.throws(() => mx.createSendIntent({
