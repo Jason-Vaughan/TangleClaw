@@ -398,6 +398,23 @@ describe('existsOnDisk and hasRealTests: on-disk reality seams', () => {
     assert.equal(verifyFeaturesIndex.hasRealTests('test/regex-only.test.js', io), false);
   });
 
+  it('hasRealTests rejects a regex literal whose body itself contains quote characters (PRR-B review round 3, #2632)', () => {
+    const io1 = { existsSync: () => true, readFileSync: () => 'const matcher = /it("fake")/;\n' };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/regex-quoted-it.test.js', io1), false);
+    const io2 = { existsSync: () => true, readFileSync: () => "const m2 = /test('fake')/;\n" };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/regex-quoted-test.test.js', io2), false);
+  });
+
+  it('stripCommentsAndStrings does not let a regex literal\'s quoted body read as a string literal', () => {
+    const stripped = verifyFeaturesIndex.stripCommentsAndStrings('const matcher = /it("fake")/;');
+    assert.ok(!/it\(\s*""/.test(stripped), `the regex literal must not collapse into an it("") shape: ${JSON.stringify(stripped)}`);
+  });
+
+  it('stripCommentsAndStrings does not treat a division operator as a regex-literal opener', () => {
+    const stripped = verifyFeaturesIndex.stripCommentsAndStrings('const x = a / b; it(\'y\', () => {});');
+    assert.match(stripped, /it\(\s*""/, 'a real call after an ordinary division must still match');
+  });
+
   it('hasRealTests matches it.only/.skip/.todo variants once stripped to a string-literal first argument', () => {
     const io = { existsSync: () => true, readFileSync: () => "it.only('y', () => {});\n" };
     assert.equal(verifyFeaturesIndex.hasRealTests('test/only.test.js', io), true);

@@ -74,13 +74,17 @@ const ROOT = path.join(__dirname, '..');
 /**
  * A test registration call whose first argument is a string/template literal
  * -- `it(`/`test(`, this repo's node:test convention, including the
- * `.only`/`.skip`/`.todo` variants. Matched against content where
- * {@link stripCommentsAndStrings} has already turned every string/template
- * literal into a literal `""`, so this can require that `""` right after the
- * call -- `it(foo)` or a bare `/it(foo)/` regex literal never produces that
- * shape, only a real `it('name', fn)`/`test(\`name\`, fn)` does.
+ * `.only`/`.skip`/`.todo` variants and an optional `await`. Matched against
+ * content where {@link stripCommentsAndStrings} has already turned every
+ * string/template literal into a literal `""`, so this can require that
+ * `""` right after the call -- `it(foo)` or a (correctly stripped) regex
+ * literal never produces that shape, only a real `it('name', fn)`/
+ * `test(\`name\`, fn)` does. The call must also follow a statement/block
+ * boundary (start of file, `;{()` or a line break) -- never a bare `/`,
+ * which would mean a regex literal survived stripping unstripped: belt and
+ * suspenders alongside the scanner below, not a substitute for it.
  */
-const TEST_CALL_RE = /\b(?:it|test)(?:\s*\.\s*(?:only|skip|todo))?\s*\(\s*""/;
+const TEST_CALL_RE = /(?:^|[;{()\r\n])\s*(?:await\s+)?(?:it|test)(?:\s*\.\s*(?:only|skip|todo))?\s*\(\s*""/;
 
 /**
  * A docs-only fallback citation must itself look like a test file -- `lib/foo.js`
@@ -148,27 +152,98 @@ function existsOnDisk(relPath, io = {}) {
   return exists(path.join(ROOT, relPath));
 }
 
+/** A char that can legally precede the `/` that OPENS a regex literal (never divides). */
+const REGEX_PRECEDES_RE = /[=([{,;:!&|?~^%+\-*/<>]/;
+
 /**
- * Blank out comments, and collapse every string/template literal down to a
- * bare `""` -- so a real call's string first argument can be matched by
- * shape (`it("", ...)`) regardless of what the argument text said, while
- * `it(`/`test(` appearing in prose, inside a `/regex/` literal, or followed
- * by a non-string argument never produces a `""` right after the call.
- * Order matters: strings are collapsed first so a `//`/`/*` sequence inside
- * one can't later confuse the comment regexes.
+ * Blank out comments and regex literals, and collapse every string/template
+ * literal down to a bare `""` -- so a real call's string first argument can
+ * be matched by shape (`it("", ...)`) regardless of what the argument text
+ * said, while `it(`/`test(` appearing in prose, inside a comment, inside a
+ * `/regex/` literal (including one whose body itself contains quote
+ * characters, e.g. `/it("fake")/`), or followed by a non-string argument
+ * never produces a `""` right after the call.
+ *
+ * A single left-to-right scan, not independent regex passes: a regex
+ * literal can contain quote characters and a string can contain `/`
+ * characters, so each construct must be recognized in the context of what
+ * has already been consumed, not pattern-matched against the raw source in
+ * isolation (that was the exact bug a round of review caught -- the
+ * standalone string regex read the quotes inside `/it("fake")/` as a
+ * string literal before anything recognized the surrounding `/.../` as a
+ * regex). A `/` opens a regex literal only when the last non-whitespace
+ * character emitted could not have ended an expression (start of source,
+ * or an operator/punctuation character per {@link REGEX_PRECEDES_RE}) --
+ * the same heuristic real tokenizers use to disambiguate regex-literal
+ * start from division.
  *
  * @param {string} src - JavaScript source
- * @returns {string} The same source with comments replaced by spaces and
- *   every string/template literal replaced by the two characters `""`
+ * @returns {string} The same source with comments and regex literals
+ *   replaced by spaces, and every string/template literal replaced by the
+ *   two characters `""`
  */
 function stripCommentsAndStrings(src) {
-  const blank = (m) => m.replace(/[^\n]/g, ' ');
-  return src
-    .replace(/`(?:\\.|[^`\\])*`/g, '""')
-    .replace(/"(?:\\.|[^"\\\n])*"/g, '""')
-    .replace(/'(?:\\.|[^'\\\n])*'/g, '""')
-    .replace(/\/\*[\s\S]*?\*\//g, blank)
-    .replace(/\/\/[^\n]*/g, blank);
+  let out = '';
+  let i = 0;
+  let prevNonWs = '';
+  const n = src.length;
+  while (i < n) {
+    const ch = src[i];
+    const next = i + 1 < n ? src[i + 1] : '';
+
+    if (ch === '/' && next === '/') {
+      while (i < n && src[i] !== '\n') { out += ' '; i += 1; }
+      continue;
+    }
+
+    if (ch === '/' && next === '*') {
+      out += '  ';
+      i += 2;
+      while (i < n && !(src[i] === '*' && src[i + 1] === '/')) {
+        out += src[i] === '\n' ? '\n' : ' ';
+        i += 1;
+      }
+      if (i < n) { out += '  '; i += 2; }
+      continue;
+    }
+
+    if (ch === '"' || ch === "'" || ch === '`') {
+      const quote = ch;
+      let j = i + 1;
+      while (j < n && src[j] !== quote) {
+        j += src[j] === '\\' && j + 1 < n ? 2 : 1;
+      }
+      out += '""';
+      i = j < n ? j + 1 : j;
+      prevNonWs = ')'; // a completed string behaves like an expression, never regex-preceding
+      continue;
+    }
+
+    if (ch === '/' && next !== '/' && next !== '*' && (prevNonWs === '' || REGEX_PRECEDES_RE.test(prevNonWs))) {
+      let j = i + 1;
+      let inClass = false;
+      let closed = false;
+      while (j < n && src[j] !== '\n') {
+        if (src[j] === '\\') { j += 2; continue; }
+        if (src[j] === '[') { inClass = true; j += 1; continue; }
+        if (src[j] === ']') { inClass = false; j += 1; continue; }
+        if (src[j] === '/' && !inClass) { closed = true; break; }
+        j += 1;
+      }
+      if (closed) {
+        for (let k = i; k <= j; k += 1) out += ' ';
+        i = j + 1;
+        prevNonWs = ')'; // a completed regex literal behaves like an expression too
+        continue;
+      }
+      // No closing `/` on this line: not a regex literal after all, fall through below.
+    }
+
+    out += ch;
+    if (!/\s/.test(ch)) prevNonWs = ch;
+    i += 1;
+  }
+  return out;
 }
 
 /**
