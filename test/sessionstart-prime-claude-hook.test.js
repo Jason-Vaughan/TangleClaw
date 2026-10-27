@@ -256,6 +256,44 @@ describe('sessionstart-prime-claude.sh hook script (#103)', () => {
       'a session booting again before the next wrap must not see the same notes twice');
   });
 
+  it('leaves the mirror intact when it cannot be read, rather than destroying un-ingested notes (#1733 round 3)', () => {
+    // This case is ALSO caught by the pre-existing `[ -r ]` guard, so on its
+    // own it passes unchanged against the pre-round-3 script too — it does
+    // NOT by itself prove the round-3 fix. What actually regression-guards
+    // round 3 — the TOCTOU between passing `[ -r ]` and the read itself still
+    // failing — is not reproducible on demand in a portable test, so that is
+    // covered instead by the structural test below, which pins `rm -f` to be
+    // nested inside the success-gated block rather than a sibling of the
+    // `[ -r ]` check. This test stays for the adjacent, worth-having property
+    // it DOES prove end-to-end: an unreadable mirror is never shown and never
+    // deleted, whichever check catches it.
+    writeHandoffNotesFixture({ mirror: 'must survive\n' });
+    const mirrorPath = path.join(projectDir, '.tangleclaw', 'handoff-notes-continuity.md');
+    fs.chmodSync(mirrorPath, 0o000);
+    try {
+      if (fs.readFileSync(mirrorPath, 'utf8')) return; // this uid can read 0o000 files (root) — not a meaningful run
+    } catch { /* expected: unreadable, as intended */ }
+
+    const out = runHook(null);
+
+    assert.equal(out, '# Session Prime\n', 'nothing is shown for content that could not be read');
+    assert.equal(fs.existsSync(mirrorPath), true,
+      'a mirror that could not be read must not be deleted — it was never actually ingested');
+  });
+
+  it('gates rm -f on the read\'s own success, not merely on having passed the readability check', () => {
+    // Structural pin for the shape of the round-3 fix itself: `rm -f` must be
+    // nested inside the block that only runs once the capture succeeded, not
+    // a second, independent condition alongside it — the exact distinction
+    // between "checked once, acted twice" (the round-2 bug) and "acted once,
+    // gated on that same action's own result" (the fix).
+    const src = fs.readFileSync(HOOK_SCRIPT, 'utf8');
+    const match = src.match(/if HANDOFF_NOTES_CONTENT=.*?\n([\s\S]*?)\n\s*fi\n/);
+    assert.ok(match, 'expected an `if HANDOFF_NOTES_CONTENT=...; then ... fi` block');
+    assert.match(match[1], /rm -f "\$HANDOFF_NOTES_MIRROR"/,
+      'rm -f must be inside the success-gated block, not a sibling of it');
+  });
+
   it('survives an empty CLAUDE_PROJECT_DIR (set, but blank)', () => {
     // Distinct from the unset case: an explicitly-blank env var would set
     // PRIME_FILE='/.tangleclaw/session-prime.md' (root-level path) under naive

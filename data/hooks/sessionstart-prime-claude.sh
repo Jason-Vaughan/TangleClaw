@@ -72,16 +72,29 @@ fi
 # nothing to do with the session the notes were written for. Removing it the
 # moment it is shown bounds the replay to exactly once, matching prawduct's
 # own "only `/clear` consumes it" contract for the live file.
+#
+# Deletion is gated on a SUCCESSFUL read (round 3), not merely on passing the
+# `[ -r ]` check above: a read can still fail after that check races true (the
+# file vanishes, a transient I/O error) — `cat ... || true` alone would then
+# delete notes that were never actually shown anywhere. The read is captured
+# into a variable rather than streamed straight to stdout so its own exit
+# status can gate the deletion; a trailing sentinel (`TC_READ_OK_8f3a`, chosen
+# to be vanishingly unlikely to collide with real content) stops command
+# substitution from stripping the trailing newlines `cat` itself would have
+# preserved, and is peeled back off below.
 HANDOFF_NOTES_LIVE="${CLAUDE_PROJECT_DIR:-}/.prawduct/.handoff-notes.md"
 HANDOFF_NOTES_MIRROR="${CLAUDE_PROJECT_DIR:-}/.tangleclaw/handoff-notes-continuity.md"
 if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "$HANDOFF_NOTES_MIRROR" ] && [ -r "$HANDOFF_NOTES_MIRROR" ] && [ ! -s "$HANDOFF_NOTES_LIVE" ]; then
-  echo ""
-  echo "---"
-  echo ""
-  echo "# Forward notes from the last wrap (recovered — .prawduct/.handoff-notes.md was already gone)"
-  echo ""
-  cat "$HANDOFF_NOTES_MIRROR" || true
-  rm -f "$HANDOFF_NOTES_MIRROR" || true
+  if HANDOFF_NOTES_CONTENT="$(cat "$HANDOFF_NOTES_MIRROR" 2>/dev/null && printf 'TC_READ_OK_8f3a')"; then
+    HANDOFF_NOTES_CONTENT="${HANDOFF_NOTES_CONTENT%TC_READ_OK_8f3a}"
+    rm -f "$HANDOFF_NOTES_MIRROR" || true
+    echo ""
+    echo "---"
+    echo ""
+    echo "# Forward notes from the last wrap (recovered — .prawduct/.handoff-notes.md was already gone)"
+    echo ""
+    printf '%s' "$HANDOFF_NOTES_CONTENT"
+  fi
 fi
 
 exit 0

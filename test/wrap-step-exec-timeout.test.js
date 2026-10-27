@@ -21,9 +21,12 @@ const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { spawn } = require('node:child_process');
+
 const testStep = require('../lib/wrap-steps/test');
 const lintStep = require('../lib/wrap-steps/lint');
-const { execFileArgs } = require('../lib/exec');
+const exec = require('../lib/exec');
+const { execFileArgs } = exec;
 
 /** Short enough to keep the suite fast, long enough not to race the spawn. */
 const SHORT_TIMEOUT_MS = 300;
@@ -281,6 +284,71 @@ describe('wrap exec shell — a killed command is named as killed (#894)', () =>
         _assertAlreadyDead(markerFile);
       } finally {
         cleanup();
+      }
+    });
+  });
+
+  describe('groupKillConfirmed (#1503 round 3)', () => {
+    it('is absent from an ordinary successful result — no new noise on the common path', async () => {
+      const result = await exec.execShell('exit 0', { cwd: os.tmpdir() });
+      assert.equal('groupKillConfirmed' in result, false);
+    });
+
+    it('is absent from an ORDINARY timeout, where the group WAS confirmed gone', async () => {
+      const result = await exec.execShell('sleep 30', { cwd: os.tmpdir(), timeoutMs: SHORT_TIMEOUT_MS });
+      assert.equal(result.timedOut, true);
+      assert.equal('groupKillConfirmed' in result, false,
+        'the common, successfully-confirmed case must not grow a new key either');
+    });
+
+    it('_killProcessGroupUntilGone reports false when the confirm deadline expires with the group still alive', async () => {
+      // A SIGKILL that genuinely cannot be confirmed (a process stuck in
+      // uninterruptible I/O, say) cannot be produced on demand — simulated
+      // instead by stubbing `process.kill`'s existence PROBE (signal `0`,
+      // and only for this real process's group) to always answer "still
+      // alive", while every other signal this sends — the real `SIGTERM`,
+      // the real `SIGKILL` — still reaches the real process untouched. The
+      // process genuinely dies from those; this only makes the function
+      // unable to find out.
+      const child = spawn('sleep', ['5'], { detached: true });
+      const pid = child.pid;
+      const originalKill = process.kill;
+      process.kill = (target, signal) => {
+        if (target === -pid && signal === 0) return true;
+        return originalKill.call(process, target, signal);
+      };
+      try {
+        const confirmed = await exec._killProcessGroupUntilGone(pid);
+        assert.equal(confirmed, false,
+          'a confirmation that hit its deadline with the group still (apparently) alive must say so, not report true');
+      } finally {
+        process.kill = originalKill;
+        try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone for real */ }
+      }
+    });
+
+    it('execShell surfaces groupKillConfirmed: false end-to-end, with the caveat in the error text too', async () => {
+      // Same technique as the direct unit test above, generalized to
+      // whichever pid `execShell` spawns (it doesn't expose the pid to the
+      // caller): `_groupAlive` is the only thing in this module that ever
+      // probes a NEGATIVE pid with signal `0`, so intercepting exactly that
+      // shape reaches only the group-existence check, not the real
+      // `SIGTERM`/`SIGKILL` this still sends (and which really end the
+      // spawned `sleep`) or anything unrelated elsewhere in the process.
+      const originalKill = process.kill;
+      process.kill = (target, signal) => {
+        if (signal === 0 && typeof target === 'number' && target < 0) return true;
+        return originalKill.call(process, target, signal);
+      };
+      try {
+        const result = await exec.execShell('sleep 30', { cwd: os.tmpdir(), timeoutMs: SHORT_TIMEOUT_MS });
+
+        assert.equal(result.timedOut, true, 'it was genuinely timed out, whatever else is uncertain');
+        assert.equal(result.groupKillConfirmed, false);
+        assert.match(result.error, /could not be confirmed terminated/,
+          'a reader of just the error text — describeFailure, a log line — must see the caveat too');
+      } finally {
+        process.kill = originalKill;
       }
     });
   });
