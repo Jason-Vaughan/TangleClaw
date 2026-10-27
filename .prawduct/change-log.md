@@ -60,12 +60,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   closes a latent gap against the module's own "never rejects" invariant; for `launch-unready` it
   changes only the log message and an `idleTicks` reset on an `assessIdle` throw, not the verdict
   code returned. The cumulative Critic review of this exact diff passed with 0 blocking.
-- Also noted: one pre-existing, unrelated full-suite failure
-  (`record-test-run.test.js`'s "declares the suite-evidence wrapper" check) reproduces identically
-  against `origin/main` with no local change to the files it reads (`.prawduct/project-state.yaml`,
-  untouched by this branch). It tracks the open, Operator-held #2371 cutover — `scripts/suite-evidence.js`
-  is built but not yet declared as `test_command` — which is outside this car's authorized scope to
-  fix.
+- Also noted: one unrelated full-suite failure (`record-test-run.test.js`'s "declares the
+  suite-evidence wrapper" check) is a local-environment artifact, not a regression this branch
+  introduces: `.prawduct/project-state.yaml` is gitignored (`.gitignore:43`, `.prawduct/*`) and
+  never ships with any branch, so the test's assertion is purely against this checkout's own local
+  config, which still declares the pre-cutover `test_command`. Reproduced on a clean detached
+  `origin/main` worktree sharing this same local config and confirmed the test passes there in
+  isolation when run against a fresh worktree with no `.prawduct/project-state.yaml` of its own —
+  the failure tracks this checkout's pending, Operator-held #2371 cutover
+  (`scripts/suite-evidence.js` is built but not yet declared as `test_command`), which is outside
+  this car's authorized file scope to change.
 
 ## 2026-10-27 — v5.41.0 W4-REL: prepare the release candidate
 
