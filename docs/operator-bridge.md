@@ -649,6 +649,34 @@ Refusals: `403 VERIFIED_LAUNCH_REQUIRED`, `409 BRIDGE_DISABLED`, `404 RECEIPT_NO
 `409 RECEIPTS_DO_NOT_HOLD`, `409 NOT_DISPLAY_SAFE`, `400 REQUEST_ID_REQUIRED`,
 `400 EXPECTED_VERSION_REQUIRED`, `400 MERGE_TARGET_REQUIRED`, `409 MERGE_TARGET_NOT_OPEN`.
 
+A session reads what became of its own candidates the same way it offered one: no bridge
+credential, scoped to its own project (#2214).
+
+| Command | Does |
+|---|---|
+| `tc candidate status` | Every candidate this project has submitted, oldest first. |
+| `tc candidate status <id>` | One candidate's outcome. |
+
+`GET /api/bridge/session/candidates` and `GET /api/bridge/session/candidates/:candidateId`
+answer the same way, and read even while the bridge is disabled — a session's own history does
+not depend on whether Discord delivery is currently switched on. The answer separates:
+
+- **`waiting`** — not yet decided.
+- **`approved`** — decided, with `blockCode` if the resulting item is currently set aside, else `null`.
+- **`posted`** — delivered, with `deliveredRef` (the Discord message id), `deliveredAt`, `parts`
+  (for a message split into more than one), and `wording` (`session` or `master`) — never the
+  text itself, decided or posted.
+- **`discarded`**, with the reason: `rejected` (by the Master), `withdrawn` (by the operator),
+  `expired` (undecided past its limit, or approved and never collected), or `merged` (with
+  `mergedInto` and that candidate's own current outcome, `mergedOutcome`). A merge the Master made
+  into a candidate from **another** project — `mergeCandidate` does not check that the two share a
+  project — answers with `mergedInto: null, mergedOutcome: null` instead of resolving the survivor:
+  the submitting launch never learns another project's candidate id, delivery reference, or parts.
+
+Refusal: `403 VERIFIED_LAUNCH_REQUIRED` for anything that is not a verified project launch,
+including the Master's own credential and the operator's dashboard. Another project's candidate
+answers `404 CANDIDATE_NOT_FOUND`, the same as an unknown id.
+
 `tc candidate` works in any pane, but a pane is told of it only once the operator has switched
 that on (`POST /api/bridge/operator/candidate-primer`, below). The switch is off by default and
 can be turned on only while the bridge is enabled; switching the bridge off takes the verb out

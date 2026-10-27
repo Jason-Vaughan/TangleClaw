@@ -2706,6 +2706,13 @@ for (const entry of bridgeApi.ROUTES) {
   }, { ownPrincipal: bridgeApi.provesOwnPrincipal(entry) });
 }
 
+// GET /api/bridge/session/candidates[/:candidateId] (#2214): a session's own
+// read of what became of the candidates it submitted. Mounted outside
+// `bridgeApi.ROUTES` and `bridgeApi.handle` — these two routes answer even
+// while the operator bridge is disabled, since a session's own history does
+// not depend on whether Discord delivery is currently switched on.
+require('./lib/bridge-candidates').registerRoutes({ route, jsonResponse });
+
 // GET /api/launch/isolation — for every live session and the Project Master,
 // whether the command its pane was started with shows it was kept off its
 // engine's shared background process (#2233). A launch is judged as it starts;
