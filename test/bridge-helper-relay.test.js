@@ -1222,9 +1222,32 @@ describe('bridge helper: the relay against the real server (#2031)', () => {
     it('posts a DM-surface reply to the pinned DM channel, not the guild channel', async () => {
       await setDmAllowlist(true);
       const { outboundId } = await dmAnswered('a DM answer');
-      const relay = outbound();
+      const relay = outbound({ dmChannelId: DM_ID });
       assert.deepEqual(await relay.pass(), { ok: true, posted: 1, acked: 1, held: 0 });
       assert.deepEqual([discord.posts[0].channelId, atBridge(outboundId)[0]], [DM_ID, 'delivered']);
+    });
+
+    it('never posts a DM item whose destination the helper has not itself verified (#2433)', async () => {
+      await setDmAllowlist(true);
+      const { outboundId } = await dmAnswered('an answer with no local DM pin');
+      // No dmChannelId passed: this run never verified a DM channel locally,
+      // even though the bridge itself is happy to hand the item over.
+      const relay = outbound();
+      assert.deepEqual(await relay.pass(), { ok: true, posted: 0, acked: 0, held: 0 });
+      assert.equal(discord.posts.length, 0, 'nothing was posted on the bridge\'s say-so alone');
+      assert.ok(logged().includes('outbound-foreign-channel'));
+      assert.equal(bridgeStore.outbound.get(outboundId).state, 'ready', 'left for a run that has actually verified the DM pin');
+    });
+
+    it('never posts a DM item to a destination that disagrees with the helper\'s own verified pin (#2433)', async () => {
+      await setDmAllowlist(true);
+      const { outboundId } = await dmAnswered('an answer naming a channel this run never pinned');
+      // The bridge named DM_ID; this run verified a DIFFERENT DM channel.
+      const relay = outbound({ dmChannelId: '300000000000000077' });
+      assert.deepEqual(await relay.pass(), { ok: true, posted: 0, acked: 0, held: 0 });
+      assert.equal(discord.posts.length, 0);
+      assert.ok(logged().includes('outbound-foreign-channel'));
+      assert.equal(bridgeStore.outbound.get(outboundId).state, 'ready');
     });
 
     it('a DM delivery failure does not stop a concurrently queued guild item, and the reverse', async () => {
@@ -1239,7 +1262,7 @@ describe('bridge helper: the relay against the real server (#2031)', () => {
       }).outboundId;
       // The DM channel is gone; the guild channel is fine.
       discord.script.push({ status: 404, body: { code: 10003 } });
-      const relay = outbound();
+      const relay = outbound({ dmChannelId: DM_ID });
       const result = await relay.pass();
       assert.equal(result.acked, 1, 'the guild item still got through');
       assert.deepEqual(atBridge(guildId), ['delivered', String(discord.posts.find((p) => p.channelId === IDS.channelId).id)]);

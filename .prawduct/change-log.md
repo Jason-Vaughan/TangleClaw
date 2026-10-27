@@ -41,6 +41,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-27 — v5.40.0 W2-A: the helper verifies its own posting destination, not just the bridge's (#2433, PR #2635, Architect Ruling A475-W2A-R4)
+
+<!-- prawduct: type=fixed | scope=w2a-operator-bridge-dm-ingress -->
+
+- **#2433:** The helper no longer posts an item to whatever `destinationChannelId` the bridge resolved without checking it first. `outbound.js`'s `relay()` now cross-checks the bridge's claim against this run's OWN verified local pin for that item's surface — the configured guild channel, or the DM channel this run's own startup check confirmed (`createOutbound`'s new `dmChannelId` param, wired from `cli.js`'s `allow` state). A surface with no verified local pin, or a named destination that disagrees with one, fails closed (`outbound-foreign-channel`) rather than posting on the bridge's say-so alone — closing the gap where a changed or unverified server-side pin could otherwise redirect a post. `bridge-gateway.js#_forHelper()` now also hands the item's own `surfaceKind` to the helper (previously only `destinationChannelId`), which this check needs to tell a DM item from a guild one client-side.
+
 ## 2026-10-27 — v5.40.0 W2-A: DM startup check no longer takes the whole helper down (#2433, PR #2635)
 
 <!-- prawduct: type=fixed | scope=w2a-operator-bridge-dm-ingress -->

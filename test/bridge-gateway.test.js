@@ -1229,7 +1229,7 @@ describe('bridge gateway (#2031)', () => {
       assert.equal(claimed.length, 1);
       // What the helper is handed: what to post, where, and the lease it posts it under. No field for anything else.
       assert.deepEqual(Object.keys(claimed[0]).sort(),
-        ['attempts', 'destinationChannelId', 'digest', 'expiresAt', 'inReplyTo', 'issuedAt', 'kind', 'leaseId', 'leaseState', 'outboundId', 'partCount', 'postedParts', 'sourceLabel', 'text']);
+        ['attempts', 'destinationChannelId', 'digest', 'expiresAt', 'inReplyTo', 'issuedAt', 'kind', 'leaseId', 'leaseState', 'outboundId', 'partCount', 'postedParts', 'sourceLabel', 'surfaceKind', 'text']);
       assert.deepEqual(Object.keys(claimed[0].inReplyTo).sort(), ['channelId', 'externalId', 'threadId']);
       assert.equal(claimed[0].inReplyTo.externalId, 'm1');
       const row = store.getDb().prepare("SELECT * FROM bridge_outbound WHERE route_id = ? AND kind = 'failure'").get(routeId);
