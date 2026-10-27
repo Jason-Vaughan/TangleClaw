@@ -45,7 +45,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- prawduct: type=changed | scope=v540-w1a-2141-2334 -->
 
-- **#2141:** `operator-needed` Discord alerts now name the sender, priority, age and exchange id instead of a bare recipient-only sentence, and are suppressed for a recipient whose `coordinatorProject` has a live session — the same coordinator-first suppression `work-blocked` already had (#2620). A `work-unblocked` recovery notice is now raised when an announced block clears (Architect Ruling A475-W1A-R1: it rides under `work-blocked`'s own admitted `notify_type` and retention in `bridge_outbound`, so no schema migration was needed).
+- **#2141:** `operator-needed` Discord alerts now name the sender, priority, age and exchange id instead of a bare recipient-only sentence, and are suppressed for an opted-out recipient or one whose `coordinatorProject` has a live session — the same opt-out and coordinator-first suppression `work-blocked` already had (#2620). A `work-unblocked` recovery notice is now raised when an announced block clears, but never for a block whose own notice was dropped (let go uncollected or withdrawn) before the operator saw it, and never when a newer block has already superseded the clearing (Architect Ruling A475-W1A-R1: it rides under `work-blocked`'s own admitted `notify_type` and retention in `bridge_outbound`, so no schema migration was needed).
 - **#2334:** Documented the Discord helper's periodic Gateway resume (`gateway-connecting` to `gateway-resumed` in about a quarter second, no `gateway-closed` line, no event lost) as Discord's own documented op 7 Reconnect, not an outage or a defect.
 
 ## 2026-10-26 — v5.39.0 W1-B: CI evidence and mandatory fragments
