@@ -4823,7 +4823,11 @@ function registerMedusaRoutes(prefix, resolve) {
     // A verified Master launch has no project id, so the `project` branch
     // above can never match it (#1988): every Master caller fell through to
     // `unbound`, which is why a Master-addressed reply could never bind.
-    if (c.kind === 'master') return { kind: 'master' };
+    // Scoped to `projectId == null` (the route's own TARGET has no project —
+    // true only on the Master's own mount) so a Master-role caller hitting a
+    // PROJECT's mount still resolves `unbound` there rather than being
+    // credited as a verified sender of that project's mail (A475-W1D-R1).
+    if (c.kind === 'master' && projectId == null) return { kind: 'master' };
     return { kind: 'unbound' };
   }
 

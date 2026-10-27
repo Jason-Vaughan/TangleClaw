@@ -805,7 +805,12 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
 
   /**
    * Record an exchange from a project TO the Master, Hub-bound — what the
-   * Master sees in its inbox as a reply-required message.
+   * Master sees in its inbox as a reply-required message. Uses the Master's
+   * REAL minted workspace id and `sessionId: null`, matching what
+   * `localParticipant` actually resolves for it in production (its registry
+   * candidate carries no session record) — the reply match in
+   * `createSendIntent` is proven against that shape, not a convenient test
+   * stand-in (A475-W1D-R1). Requires the Master's listener already started.
    * @param {{projectId: number}} sender - The sending project
    * @param {string} hubId - Hub id to bind
    * @returns {object} The exchange row
@@ -814,7 +819,7 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
     const x = medusaExchanges.createSendIntent({
       meta: medusaExchanges.validateSendMeta({}, { kind: 'project', projectId: sender.projectId }, sender.projectId),
       sender: { projectId: sender.projectId, sessionId: 9, workspaceId: 'proj-ws' },
-      recipient: { workspaceId: 'master-ws', projectId: null, sessionId: master.MASTER_MEDUSA_KEY }
+      recipient: { workspaceId: master.getMasterMedusaStatus().workspaceId, projectId: null, sessionId: null }
     });
     return medusaExchanges.bindHubId(x.exchange_id, hubId, { hubStatus: 'received' });
   }

@@ -56,6 +56,10 @@ function sendPmToBuilder(body = {}, hubId = 'hub-1') {
 /**
  * Record a send from the Builder to the Master and bind its Hub id. The
  * Master has no project, so its recipient facts are `projectId: null` (#1988).
+ * `sessionId: null` matches `localParticipant`'s real resolution for the
+ * Master (its registry candidate carries no session record), so the reply
+ * match in `createSendIntent` is proven against what production actually
+ * writes, not a session id the Master happens to share with itself (A475-W1D-R1).
  * @param {object} [body] - Send body
  * @param {string} [hubId] - Hub id to bind
  * @returns {object} The exchange row
@@ -65,7 +69,7 @@ function sendBuilderToMaster(body = {}, hubId = 'hub-to-master') {
   const x = mx.createSendIntent({
     meta,
     sender: { projectId: 20, sessionId: 2, workspaceId: 'builder-ws' },
-    recipient: { workspaceId: 'master-ws', projectId: null, sessionId: 'master' }
+    recipient: { workspaceId: 'master-ws', projectId: null, sessionId: null }
   });
   return hubId ? mx.bindHubId(x.exchange_id, hubId, { hubStatus: 'received' }) : x;
 }
