@@ -41,6 +41,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-27 — v5.40.0 W4-REL: prepare the release candidate
+
+- Compiled 15 accepted changelog fragments into the dated `[5.40.0]` section, removed those consumed files, changed `version.json` to 5.40.0, and ran `scripts/release-prepare.js` to update README pins and extend the released-section lock. The merge that changes `version.json` will trigger the release workflow; this preparation does not tag or publish.
+- Rehearsed the merged store's actual schema 68→70 upgrade on a disposable SQLite backup of the live database, leaving the live database untouched. `quick_check` remained `ok`, bridge route/outbound row counts were preserved, both `surface_kind` columns appeared, and a second open was idempotent. Three `activity_log` foreign-key violations already existed before the rehearsal and remained unchanged. `docs/releases/v5.40-status.md` records the three separate finish lines and owed post-deploy browser check.
+- The release PR's merge remains held for the Operator's explicit exact-target release approval under Rule #282; preparation and review do not grant that final authorization.
+
 ## 2026-10-27 — v5.40.0 W3-REC: consolidate the Wave 1–2 feature record and operator guide
 
 - Consolidated the v5.40.0 feature inventory in `FEATURES.md`, with real `Tests:` citations for the four merged Wave 1 cars and four merged Wave 2 cars. The record includes the already-shipped candidate wake behavior (#2133, duplicate of #2547), the records-only citation gate (#2632), and the production launch wiring follow-up (#2636) without claiming those are separate user-facing controls.
