@@ -58,4 +58,22 @@ if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "$WRAP_ADVISORY" ] && [ -r "$WRAP_AD
   cat "$WRAP_ADVISORY" || true
 fi
 
+# Recovery fallback for prawduct's forward notes (#1733). The `handoff-stage`
+# wrap step mirrors `.prawduct/.handoff-notes.md` into this file at the end of
+# every wrap, before anything can consume the live file. If the live file is
+# gone or empty by the time a session boots — whatever source fired this
+# SessionStart — the mirror is read instead, so the notes are not lost. The
+# live file wins whenever it still has content: this is a fallback, not a
+# second copy to show alongside it.
+HANDOFF_NOTES_LIVE="${CLAUDE_PROJECT_DIR:-}/.prawduct/.handoff-notes.md"
+HANDOFF_NOTES_MIRROR="${CLAUDE_PROJECT_DIR:-}/.tangleclaw/handoff-notes-continuity.md"
+if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "$HANDOFF_NOTES_MIRROR" ] && [ -r "$HANDOFF_NOTES_MIRROR" ] && [ ! -s "$HANDOFF_NOTES_LIVE" ]; then
+  echo ""
+  echo "---"
+  echo ""
+  echo "# Forward notes from the last wrap (recovered — .prawduct/.handoff-notes.md was already gone)"
+  echo ""
+  cat "$HANDOFF_NOTES_MIRROR" || true
+fi
+
 exit 0

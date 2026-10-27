@@ -151,6 +151,28 @@ describe('publishing a handoff (#1585)', () => {
     assert.ok(row.eligibleAt, 'it completed, so the record keeps saying so');
   });
 
+  it('re-validates the staged file INSIDE the transaction, not before it (#1651)', () => {
+    // `_fileMismatch`'s check used to run before `BEGIN IMMEDIATE` opened, so a
+    // write landing in the window between that check and the rename below
+    // would go unseen. Simulated here by mutating the file as a side effect of
+    // `newerPublished` — a call `publishHandoff` only ever makes from inside
+    // the transaction — so a file swapped at that point is still caught only
+    // if the real validation happens at or after that point too.
+    const pid = stageAttempt();
+    const savedNewerPublished = store.handoffs.newerPublished;
+    store.handoffs.newerPublished = function (...args) {
+      fs.writeFileSync(lockfile.stagedPath(project, pid), '{"schema":"tc.handoff/1","publicationId":"x","kind":"final"}\n', 'utf8');
+      return savedNewerPublished.apply(this, args);
+    };
+    try {
+      const res = publishHandoff(project, pid);
+      assert.equal(res.published, false, 'a file swapped mid-transaction must not be published');
+      assert.match(res.reason, /staged file/);
+    } finally {
+      store.handoffs.newerPublished = savedNewerPublished;
+    }
+  });
+
   it('refuses an abandoned attempt', () => {
     const pid = stageAttempt({ bind: false });
     abandonHandoff(pid, 'lost-to-kill');
@@ -306,6 +328,58 @@ describe('the handoff-stage wrap step', () => {
   it('skips when there is no session to hand off from', async () => {
     const res = await stageStep.run(ctx({ session: null }));
     assert.equal(res.status, 'skipped');
+  });
+
+  describe('mirroring prawduct forward notes for continuity (#1733)', () => {
+    const MIRROR_NAME = stageStep.HANDOFF_NOTES_MIRROR_NAME;
+    const mirrorPath = () => path.join(project.path, '.tangleclaw', MIRROR_NAME);
+    const notesPath = () => path.join(project.path, '.prawduct', '.handoff-notes.md');
+
+    it('mirrors a live .prawduct/.handoff-notes.md into .tangleclaw at the end of a wrap', async () => {
+      fs.mkdirSync(path.join(project.path, '.prawduct'), { recursive: true });
+      fs.writeFileSync(notesPath(), '# Forward notes\nship chunk 03\n');
+
+      await stageStep.run(ctx());
+
+      assert.equal(fs.readFileSync(mirrorPath(), 'utf8'), '# Forward notes\nship chunk 03\n');
+    });
+
+    it('writes no mirror when the project has no .prawduct/.handoff-notes.md', async () => {
+      await stageStep.run(ctx());
+      assert.equal(fs.existsSync(mirrorPath()), false);
+    });
+
+    it('still mirrors when there is no wrap run id to bind a handoff to', async () => {
+      // The mirror is independent of whether this attempt can be staged at
+      // all: a wrap with no run id still just finished a session that may
+      // have written forward notes.
+      fs.mkdirSync(path.join(project.path, '.prawduct'), { recursive: true });
+      fs.writeFileSync(notesPath(), 'notes despite no run id\n');
+
+      const res = await stageStep.run(ctx({ wrapRunId: null }));
+
+      assert.equal(res.status, 'skipped');
+      assert.equal(fs.readFileSync(mirrorPath(), 'utf8'), 'notes despite no run id\n');
+    });
+
+    it('never writes to or deletes the live file', async () => {
+      fs.mkdirSync(path.join(project.path, '.prawduct'), { recursive: true });
+      fs.writeFileSync(notesPath(), 'untouched\n');
+
+      await stageStep.run(ctx());
+
+      assert.equal(fs.readFileSync(notesPath(), 'utf8'), 'untouched\n',
+        'the live file is prawduct\'s to manage — this only ever reads it');
+    });
+
+    it('_mirrorPrawductHandoffNotes is best-effort: a write failure is swallowed, not thrown', () => {
+      fs.mkdirSync(path.join(project.path, '.prawduct'), { recursive: true });
+      fs.writeFileSync(notesPath(), 'x\n');
+      // Put a FILE where the mirror's directory needs to be, so mkdirSync fails.
+      fs.writeFileSync(path.join(project.path, '.tangleclaw'), 'not a directory');
+
+      assert.doesNotThrow(() => stageStep._mirrorPrawductHandoffNotes(project));
+    });
   });
 
   // The rows below carry EXACTLY the runner's recorded shape — `{stepId, kind,

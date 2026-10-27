@@ -192,6 +192,56 @@ describe('sessionstart-prime-claude.sh hook script (#103)', () => {
     assert.ok(Date.now() - started < 5000, 'the stdin read is bounded');
   });
 
+  // ── #1733: recover prawduct's forward notes if the live file is already gone ──
+
+  /**
+   * Write the prime (required for any output) and optionally the live
+   * prawduct notes file and/or the TangleClaw mirror of it.
+   * @param {object} [opts] - `{live, mirror}` — content strings, or undefined to omit the file
+   */
+  function writeHandoffNotesFixture({ live, mirror } = {}) {
+    fs.mkdirSync(path.join(projectDir, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(path.join(projectDir, '.tangleclaw', 'session-prime.md'), '# Session Prime\n');
+    if (live !== undefined) {
+      fs.mkdirSync(path.join(projectDir, '.prawduct'), { recursive: true });
+      fs.writeFileSync(path.join(projectDir, '.prawduct', '.handoff-notes.md'), live);
+    }
+    if (mirror !== undefined) {
+      fs.writeFileSync(path.join(projectDir, '.tangleclaw', 'handoff-notes-continuity.md'), mirror);
+    }
+  }
+
+  it('recovers the mirror when the live notes file is gone', () => {
+    writeHandoffNotesFixture({ mirror: '# Forward notes\nship it\n' });
+    const out = runHook(null);
+    assert.equal(out,
+      '# Session Prime\n\n---\n\n# Forward notes from the last wrap (recovered — .prawduct/.handoff-notes.md was already gone)\n\n# Forward notes\nship it\n');
+  });
+
+  it('recovers the mirror when the live notes file exists but is empty', () => {
+    writeHandoffNotesFixture({ live: '', mirror: '# Forward notes\nship it\n' });
+    const out = runHook(null);
+    assert.match(out, /# Forward notes\nship it\n$/);
+  });
+
+  it('does NOT show the mirror when the live file still has content — the live file wins', () => {
+    writeHandoffNotesFixture({ live: 'still live\n', mirror: '# stale mirror\n' });
+    const out = runHook(null);
+    assert.equal(out, '# Session Prime\n');
+  });
+
+  it('shows nothing extra when there is no mirror at all (ordinary project, never wrapped under #1733)', () => {
+    writeHandoffNotesFixture({});
+    const out = runHook(null);
+    assert.equal(out, '# Session Prime\n');
+  });
+
+  it('recovers the mirror on a plain startup, not just clear/compact — a fresh launch is exactly the case #1733 reports', () => {
+    writeHandoffNotesFixture({ mirror: 'recovered\n' });
+    const out = runHook(JSON.stringify({ source: 'startup' }));
+    assert.match(out, /recovered\n$/);
+  });
+
   it('survives an empty CLAUDE_PROJECT_DIR (set, but blank)', () => {
     // Distinct from the unset case: an explicitly-blank env var would set
     // PRIME_FILE='/.tangleclaw/session-prime.md' (root-level path) under naive
