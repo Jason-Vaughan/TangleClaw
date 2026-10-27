@@ -48,6 +48,23 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 - **#2141:** `operator-needed` Discord alerts now name the sender, priority, age and exchange id instead of a bare recipient-only sentence, and are suppressed for an opted-out recipient or one whose `coordinatorProject` has a live session — the same opt-out and coordinator-first suppression `work-blocked` already had (#2620). A `work-unblocked` recovery notice is now raised once its block notice is actually `delivered` to Discord — never while that notice is still queued, set aside, or was let go uncollected or withdrawn, and never when a newer block has already superseded the clearing (Architect Ruling A475-W1A-R1: it rides under `work-blocked`'s own admitted `notify_type` and retention in `bridge_outbound`, so no schema migration was needed).
 - **#2334:** Documented the Discord helper's periodic Gateway resume (`gateway-connecting` to `gateway-resumed` in about a quarter second, no `gateway-closed` line, no event lost) as Discord's own documented op 7 Reconnect, not an outage or a defect.
 
+## 2026-10-27 — v5.40.0 W1-D: Master Medusa reply deadlocks
+
+<!-- prawduct: type=fixed | scope=w1d-1988-2176 -->
+
+- **#1988:** `exchangeCaller()` had no branch for a verified Master launch, so
+  every Master caller fell through to `unbound` on the send route and a
+  reply carrying `inReplyTo` was refused before `REPLY_TARGET_UNKNOWN` was
+  even reached. The Master's verified launch now binds a reply, narrowly
+  (not folded into `boundSender`, so it gains no `blocking`/`critical`
+  priority).
+- **#2176:** The wake nudge told a read-only Project Master to POST a reply
+  its own access level refuses (403 `ACCESS_LEVEL`). It now reads the
+  Master's current access level per nudge and, when read-only, tells it to
+  describe the needed reply for the operator instead — per Charter A475
+  line 41's ruling not to widen the Master's outbound authority as a side
+  effect of the wording fix.
+
 ## 2026-10-27 — v5.40.0 W1-B: update rebase-onto-tag and Medusa Bridge fail-closed
 
 <!-- prawduct: type=feature | scope=v540-w1b-2399-2354 -->

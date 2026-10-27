@@ -54,6 +54,27 @@ function sendPmToBuilder(body = {}, hubId = 'hub-1') {
 }
 
 /**
+ * Record a send from the Builder to the Master and bind its Hub id. The
+ * Master has no project, so its recipient facts are `projectId: null` (#1988).
+ * `sessionId: null` matches `localParticipant`'s real resolution for the
+ * Master (its registry candidate carries no session record), so the reply
+ * match in `createSendIntent` is proven against what production actually
+ * writes, not a session id the Master happens to share with itself.
+ * @param {object} [body] - Send body
+ * @param {string} [hubId] - Hub id to bind
+ * @returns {object} The exchange row
+ */
+function sendBuilderToMaster(body = {}, hubId = 'hub-to-master') {
+  const meta = mx.validateSendMeta(body, BUILDER, 20);
+  const x = mx.createSendIntent({
+    meta,
+    sender: { projectId: 20, sessionId: 2, workspaceId: 'builder-ws' },
+    recipient: { workspaceId: 'master-ws', projectId: null, sessionId: null }
+  });
+  return hubId ? mx.bindHubId(x.exchange_id, hubId, { hubStatus: 'received' }) : x;
+}
+
+/**
  * Assert a row's projection equals a fresh replay of its facts.
  * @param {string} exchangeId - Exchange id
  * @returns {void}
@@ -129,6 +150,18 @@ describe('medusa-exchanges (#1839)', () => {
     it('requires a verified caller to reply to an existing exchange', () => {
       assert.throws(() => mx.validateSendMeta({ inReplyTo: 'hub-1' }, UNBOUND, 20), { code: 'EXCHANGE_BINDING_REQUIRED', status: 403 });
       assert.equal(mx.validateSendMeta({ inReplyTo: 'hub-1' }, BUILDER, 20).inReplyTo, 'hub-1');
+    });
+
+    it("lets the Project Master's own verified launch reply, without granting it blocking priority (#1988)", () => {
+      // The Master has no project, so it can never be a `boundSender` — the
+      // REPLY_TARGET_UNKNOWN fix needed its own narrow recognition
+      // (`_isVerifiedMaster`), kept separate so it does not also unlock the
+      // elevated priorities `boundSender` gates.
+      const m = mx.validateSendMeta({ inReplyTo: 'hub-1' }, MASTER, null);
+      assert.equal(m.inReplyTo, 'hub-1');
+      assert.equal(m.verified, true);
+      assert.equal(m.proof, 'launch');
+      assert.throws(() => mx.validateSendMeta({ priority: 'blocking' }, MASTER, null), { code: 'PRIORITY_BINDING_REQUIRED', status: 403 });
     });
   });
 
@@ -292,6 +325,57 @@ describe('medusa-exchanges (#1839)', () => {
       assert.throws(() => mx.createSendIntent({
         meta: mx.validateSendMeta({ inReplyTo: 'hub-1' }, other, 30),
         sender: { projectId: 30 }, recipient: { workspaceId: 'pm-ws' }
+      }), { code: 'REPLY_TARGET_UNKNOWN', status: 404 });
+    });
+
+    it("lets the Master's verified launch reply to a message addressed to it (#1988)", () => {
+      // Before the fix, `recipient_project_id == null` (the Master's shape)
+      // threw unconditionally, regardless of who the sender actually was.
+      const original = sendBuilderToMaster();
+      const reply = mx.createSendIntent({
+        meta: mx.validateSendMeta({ inReplyTo: 'hub-to-master' }, MASTER, null),
+        sender: { projectId: null, sessionId: 'master', workspaceId: 'master-ws' },
+        recipient: { workspaceId: 'builder-ws', projectId: 20 }
+      });
+      assert.equal(reply.in_reply_to, original.exchange_id);
+    });
+
+    it("records the Master's own reply as actor 'master' on both the send and the original's replied fact", () => {
+      const original = sendBuilderToMaster();
+      const reply = mx.createSendIntent({
+        meta: mx.validateSendMeta({ inReplyTo: 'hub-to-master' }, MASTER, null),
+        sender: { projectId: null, sessionId: 'master', workspaceId: 'master-ws' },
+        recipient: { workspaceId: 'builder-ws', projectId: 20 }
+      });
+      const sendFact = store.medusaExchanges.facts(reply.exchange_id).find((f) => f.fact === 'send_pending');
+      assert.equal(sendFact.actor, 'master');
+      mx.bindHubId(reply.exchange_id, 'hub-master-reply', { hubStatus: 'received' });
+      const repliedFact = store.medusaExchanges.facts(original.exchange_id).find((f) => f.fact === 'replied');
+      assert.equal(repliedFact.actor, 'master');
+    });
+
+    it('refuses the Master a reply to a message that was not addressed to it (#1988)', () => {
+      sendPmToBuilder(); // addressed to the Builder's project, not the Master
+      assert.throws(() => mx.createSendIntent({
+        meta: mx.validateSendMeta({ inReplyTo: 'hub-1' }, MASTER, null),
+        sender: { projectId: null, sessionId: 'master' }, recipient: { workspaceId: 'pm-ws' }
+      }), { code: 'REPLY_TARGET_UNKNOWN', status: 404 });
+    });
+
+    it('still refuses a forged null-project reply that was never verified (#1988 defense in depth)', () => {
+      // `validateSendMeta` is the only path that can set `meta.verified: true`
+      // for a null-project sender (operator-on-the-Master's-mount or the
+      // Master itself), so this bypasses it to prove the null==null match in
+      // `createSendIntent` is not a blanket allowance for any unverified caller
+      // that merely claims a null project id.
+      sendBuilderToMaster();
+      assert.throws(() => mx.createSendIntent({
+        meta: {
+          priority: 'normal', replyRequired: false, escalateAfterMs: null, reasonCode: null,
+          inReplyTo: 'hub-to-master', requestId: 'send:forged', verified: false, proof: null
+        },
+        sender: { projectId: null, sessionId: 'not-the-master', workspaceId: 'impostor-ws' },
+        recipient: { workspaceId: 'builder-ws', projectId: 20 }
       }), { code: 'REPLY_TARGET_UNKNOWN', status: 404 });
     });
   });
