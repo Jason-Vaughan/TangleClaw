@@ -112,6 +112,12 @@
         <span class="medusa-peers group-popover" id="medusaPeers" role="tooltip" hidden></span>
         <div class="medusa-panel group-popover" id="medusaPanel" role="dialog" aria-label="Medusa inbox" hidden></div>
         <div class="medusa-panel medusa-loops-panel group-popover" id="medusaLoopsPanel" role="dialog" aria-label="Session loops" hidden></div>
+        <!-- #2352 — durable scoped permission requests: the chip is this
+             project's pending count, hidden while there are none; the panel
+             lists each with Grant/Refuse. Reuses the Medusa panel's styling. -->
+        <button class="medusa-loops-chip" id="permissionRequestsChip" type="button" hidden
+                aria-label="Open pending permission requests" aria-haspopup="dialog" aria-expanded="false"></button>
+        <div class="medusa-panel group-popover" id="permissionRequestsPanel" role="dialog" aria-label="Pending permission requests" hidden></div>
         <span class="sr-only" id="medusaLive" aria-live="polite"></span>
       </span>
       <!-- #438: a drag in the terminal is copied by the TUI on the HOST (pbcopy

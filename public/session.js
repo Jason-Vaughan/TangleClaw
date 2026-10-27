@@ -47,7 +47,10 @@ const sessionState = {
   // v2 T4: `loops` carries the session's known loops with live Bridge state
   // (from the status poll); `loopsError` is the honest reason when the loop
   // fetch failed (never a silently-empty list).
-  medusa: { state: 'off', unread: 0, prevUnread: 0, workspaceId: null, lastError: null, shown: false, loops: [], loopsError: null, outbound: { allowed: true, reason: null } }
+  medusa: { state: 'off', unread: 0, prevUnread: 0, workspaceId: null, lastError: null, shown: false, loops: [], loopsError: null, outbound: { allowed: true, reason: null } },
+  // #2352 — this project's pending permission requests, refreshed on the
+  // same cadence as pollStatus (no new timer).
+  permissionRequests: []
 };
 
 // ── Storage Helpers ──
@@ -1593,6 +1596,144 @@ function renderMedusaControl() { medusaControl.render(); }
 function pollMedusa() { return medusaControl.poll(); }
 
 /**
+ * Poll this project's pending permission requests (#2352) on the same
+ * cadence as `pollStatus` — no new timer, same convention as `pollMedusa`.
+ * Renders the chip + panel from whatever it fetches, including an empty list.
+ * @returns {Promise<void>}
+ */
+async function pollPermissionRequests() {
+  const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/permissions?state=pending`);
+  sessionState.permissionRequests = (data && data.requests) || [];
+  renderPermissionRequestsChip(sessionState.permissionRequests);
+  const panel = document.getElementById('permissionRequestsPanel');
+  if (panel && !panel.hidden) renderPermissionRequestsPanel(sessionState.permissionRequests);
+}
+
+/**
+ * The chip: hidden with nothing pending, otherwise the pending count.
+ * @param {object[]} requests
+ * @returns {void}
+ */
+function renderPermissionRequestsChip(requests) {
+  const chip = document.getElementById('permissionRequestsChip');
+  if (!chip) return;
+  if (!requests.length) {
+    chip.hidden = true;
+    const panel = document.getElementById('permissionRequestsPanel');
+    if (panel) panel.hidden = true;
+    return;
+  }
+  chip.hidden = false;
+  chip.textContent = String(requests.length);
+  chip.setAttribute('aria-label', `${requests.length} pending permission request${requests.length === 1 ? '' : 's'}`);
+}
+
+/**
+ * The panel: one row per pending request, each with Grant/Refuse, the
+ * asker's own `expectedAnswer` shown when it set one (PRR-B: the stored
+ * record carries it, so the deciding Operator should see it too, not just
+ * the scope/summary). All server-supplied text is escaped — a permission
+ * request's `actionSummary`, `scope`/`scopeTarget` and `expectedAnswer` are
+ * product text, not markup.
+ * @param {object[]} requests
+ * @returns {void}
+ */
+function renderPermissionRequestsPanel(requests) {
+  const panel = document.getElementById('permissionRequestsPanel');
+  if (!panel) return;
+  const head = '<div class="group-popover-title">Pending permission requests'
+    + '<button type="button" class="permission-requests-close" aria-label="Close pending permission requests">✕</button></div>';
+  if (!requests.length) {
+    panel.innerHTML = `${head}<div class="medusa-msg-empty">No pending permission requests.</div>`;
+    return;
+  }
+  const rows = requests.map((r) => `
+    <div class="permission-request-row" data-request-id="${esc(r.requestId)}" data-scope="${esc(r.scope)}">
+      <div class="permission-request-summary">${esc(r.actionSummary)}</div>
+      <div class="permission-request-detail">${esc(r.scope)} on ${esc(r.scopeTarget)}</div>
+      ${r.expectedAnswer ? `<div class="permission-request-expected">Asker expects: ${esc(r.expectedAnswer)}</div>` : ''}
+      <div class="permission-request-actions">
+        <button type="button" class="permission-request-grant" data-decision="grant">Grant</button>
+        <button type="button" class="permission-request-refuse" data-decision="refuse">Refuse</button>
+      </div>
+    </div>
+  `).join('');
+  panel.innerHTML = `${head}${rows}`;
+}
+
+/**
+ * Close the pending-permissions panel. Idempotent — safe for a sibling
+ * popover's open path, or the outside-click handler, to call unconditionally.
+ * @returns {void}
+ */
+function closePermissionRequestsPanel() {
+  const panel = document.getElementById('permissionRequestsPanel');
+  const chip = document.getElementById('permissionRequestsChip');
+  if (panel) panel.hidden = true;
+  if (chip) chip.setAttribute('aria-expanded', 'false');
+}
+
+/**
+ * Open/close the pending-permissions panel (the chip click). On open, closes
+ * every sibling popover in the Medusa control cluster first, the same way
+ * `openMedusaLoopsPanel` already does for its own siblings — so this panel
+ * and a sibling can never both be open at once.
+ * @returns {void}
+ */
+function togglePermissionRequestsPanel() {
+  const panel = document.getElementById('permissionRequestsPanel');
+  const chip = document.getElementById('permissionRequestsChip');
+  if (!panel) return;
+  if (!panel.hidden) { closePermissionRequestsPanel(); return; }
+  closeMedusaInbox();
+  hideMedusaPeers();
+  closeMedusaLoopModal();
+  closeMedusaLoopsPanel();
+  panel.hidden = false;
+  if (chip) chip.setAttribute('aria-expanded', 'true');
+  renderPermissionRequestsPanel(sessionState.permissionRequests);
+}
+
+/**
+ * Grant or refuse a pending permission request from the panel. On success,
+ * refreshes the panel so the row's new state shows. On failure (e.g. it was
+ * already decided or expired elsewhere first), surfaces `api.lastError` as a
+ * toast — the same feedback every other mutate call in this file gives — so
+ * a refused click is never silently indistinguishable from a slow one.
+ *
+ * Calls `api()` directly rather than the shared `apiMutate()`: the decide
+ * route is gated by `_requireOperatorWrite` (`lib/routes/_callers.js`),
+ * which on an OPEN (no-login) install additionally requires
+ * `X-TC-Open-Token` — a header `apiMutate()` never attaches, since no
+ * earlier write this file made ever reached an `_requireOperatorWrite`-gated
+ * route. Following the same `GET /api/auth/me` + `me.openInstallToken`
+ * pattern `public/ui.js`/`public/landing.js` already use at their own
+ * `_requireOperatorWrite` call sites, so a login-configured install (which
+ * has no such token) is unaffected — `me.openInstallToken` is simply absent
+ * there, and the header is left off.
+ * @param {string} requestId
+ * @param {string} decision - `'grant'` or `'refuse'`
+ * @param {string} expectedScope
+ * @returns {Promise<void>}
+ */
+async function decidePermissionRequestFromUi(requestId, decision, expectedScope) {
+  const me = await api('/api/auth/me');
+  const headers = { 'Content-Type': 'application/json' };
+  if (me && me.openInstallToken) headers['X-TC-Open-Token'] = me.openInstallToken;
+  const result = await api(`/api/permissions/requests/${encodeURIComponent(requestId)}/decide`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ decision, expectedScope })
+  });
+  if (!result) {
+    showBannerActionToast(`Couldn't ${decision === 'grant' ? 'grant' : 'refuse'} the permission request: ${api.lastError || 'the server rejected it'}`, true);
+  }
+  // Refresh either way: a failure here is often "already decided elsewhere",
+  // and the re-fetch is what makes that row's real state show.
+  await pollPermissionRequests();
+}
+
+/**
  * Close the inbox read panel. Safe to call when already closed.
  * @returns {void}
  */
@@ -1918,6 +2059,7 @@ async function openMedusaLoopsPanel() {
   closeMedusaInbox();
   hideMedusaPeers();
   closeMedusaLoopModal();
+  closePermissionRequestsPanel();
   panel.hidden = false;
   const chip = document.getElementById('medusaLoopsChip');
   if (chip) chip.setAttribute('aria-expanded', 'true');
@@ -2307,6 +2449,9 @@ async function pollStatus() {
   // MED-2K9P Chunk 02 — refresh the Medusa control on the same cadence (no new
   // timer). Skipped once the session has ended.
   if (!sessionState.ended) await pollMedusa();
+
+  // #2352 — same cadence, same reason: no new timer for one more small panel.
+  if (!sessionState.ended) await pollPermissionRequests();
 
   // The Master's access level rides the same tick (#755). This is what makes a
   // flip from one session's bar reach another's — there is exactly one Master,
@@ -7618,6 +7763,8 @@ function bindEvents() {
     // v2 T4 — the loops panel dismisses on outside click like the inbox/peers
     // popovers, which the shared control now handles for itself in `mount()`.
     if (!clickHitsSelector(e, '.medusa-control')) closeMedusaLoopsPanel();
+    // #2352 — same rule, same cluster.
+    if (!clickHitsSelector(e, '.medusa-control')) closePermissionRequestsPanel();
   });
 
   // Medusa session-comms control (MED-2K9P Chunk 02): heads = toggle listener,
@@ -7695,6 +7842,20 @@ function bindEvents() {
       }
     });
   }
+  // #2352 — the badge chip opens/closes the pending-permissions panel; its
+  // row controls are delegated since the panel's content re-renders every poll.
+  const permissionRequestsChip = $('permissionRequestsChip');
+  if (permissionRequestsChip) permissionRequestsChip.addEventListener('click', togglePermissionRequestsPanel);
+  const permissionRequestsPanel = $('permissionRequestsPanel');
+  if (permissionRequestsPanel) {
+    permissionRequestsPanel.addEventListener('click', (e) => {
+      if (e.target.closest('.permission-requests-close')) { closePermissionRequestsPanel(); return; }
+      const btn = e.target.closest('.permission-request-grant, .permission-request-refuse');
+      if (!btn) return;
+      const row = btn.closest('.permission-request-row');
+      if (row) decidePermissionRequestFromUi(row.dataset.requestId, btn.dataset.decision, row.dataset.scope);
+    });
+  }
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     // The inbox panel's Escape is bound by the shared Medusa control (#996).
@@ -7702,6 +7863,8 @@ function bindEvents() {
     if (loopModal && loopModal.classList.contains('open')) closeMedusaLoopModal();
     const loopsPanel = $('medusaLoopsPanel');
     if (loopsPanel && !loopsPanel.hidden) closeMedusaLoopsPanel();
+    const permissionRequestsPanelEsc = $('permissionRequestsPanel');
+    if (permissionRequestsPanelEsc && !permissionRequestsPanelEsc.hidden) closePermissionRequestsPanel();
     const catcher = $('pasteCatcher');
     if (catcher && catcher.classList.contains('open')) closePasteCatcher();
     // Pill details open from the keyboard (Enter/Space), so they must close

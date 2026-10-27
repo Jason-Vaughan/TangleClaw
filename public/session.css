@@ -606,6 +606,38 @@ html[data-tc-keyboard] body {
 .medusa-loop-transcript { margin-top: 4px; padding-left: 8px; border-left: 2px solid var(--elevated-bg); }
 .medusa-loop-transcript-note { color: var(--text-muted); font-size: 10px; margin-bottom: 2px; }
 
+/* #2352 — durable scoped permission requests. The chip/panel containers reuse
+   .medusa-loops-chip/.medusa-panel/.group-popover (and their [hidden]
+   handling) as-is; only the rows inside the panel are new. */
+.permission-request-row {
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.permission-request-row:last-child { border-bottom: none; }
+.permission-request-summary { font-weight: 600; color: var(--text); font-size: 12px; }
+.permission-request-detail { color: var(--text-muted); font-size: 11px; margin: 2px 0 4px; }
+.permission-request-expected { color: var(--text-muted); font-size: 11px; font-style: italic; margin: 0 0 4px; }
+.permission-request-actions { display: flex; align-items: center; gap: 8px; }
+.permission-request-grant,
+.permission-request-refuse {
+  border: 1px solid var(--root-accent);
+  border-radius: 4px;
+  background: none;
+  color: var(--root-accent);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 10px;
+  min-height: 36px; /* touch-first */
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.permission-request-grant:hover { background: var(--root-accent); color: #fff; }
+.permission-request-refuse { border-color: var(--danger); color: var(--danger); }
+.permission-request-refuse:hover { background: var(--danger); color: #fff; }
+.permission-request-grant:focus-visible,
+.permission-request-refuse:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
+
 /* Continue (FEEDBACK) + Mark done (satisfied CLOSEOUT) — the initiator's judge
    controls (TC#561). Continue/Send use the accent; Mark done is a quiet
    confirm (distinct from the danger-styled force-done kill-switch). */

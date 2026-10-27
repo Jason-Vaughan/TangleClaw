@@ -4185,6 +4185,26 @@ describe('sessions', () => {
       assert.equal(result.session.engineId, 'claude');
     });
 
+    it('creates the real session through createSessionWithTccBootstrap, not createSession directly (#2625)', () => {
+      // Pin the call site itself, not just its effect: stub the bootstrap
+      // function (not createSession, which this describe's own beforeEach
+      // already stubs) and verify launchSession reaches it.
+      const realBootstrap = tmux.createSessionWithTccBootstrap;
+      let calledWith = null;
+      tmux.createSessionWithTccBootstrap = (name, options) => { calledWith = { name, options }; return true; };
+      tmux.hasSession = (name) => name === 'orphan-test';
+      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+      try {
+        const result = sessions.launchSession('orphan-test');
+        assert.equal(result.error, null);
+        assert.ok(calledWith, 'launchSession must call tmux.createSessionWithTccBootstrap');
+        assert.equal(calledWith.name, 'orphan-test');
+        assert.equal(calledWith.options.cwd, store.projects.getByName('orphan-test').path);
+      } finally {
+        tmux.createSessionWithTccBootstrap = realBootstrap;
+      }
+    });
+
     it('writes project-version.txt during launch (#101 — TC owns the writer)', () => {
       tmux.hasSession = (name) => name === 'orphan-test';
       enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
