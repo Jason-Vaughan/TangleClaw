@@ -592,17 +592,24 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
     assert.match(result.output.planPath, /pick-me\.md$/);
   });
 
-  it('blocks with remediation when activePlan points at a missing file (#226)', async () => {
+  it('clears a missing activePlan and falls through to resolution instead of blocking on it (#1757)', async () => {
+    // A dangling activePlan no longer blocks by itself — it is cleared as a
+    // stale one-shot pin and resolution proceeds as if it had never been
+    // set. The genuine ambiguity below it (two in-progress plans) still
+    // blocks, but on ITS OWN terms, not the stale pointer's.
     writePlan('one.md', '### Chunk 1: A\n');
     writePlan('two.md', '### Chunk 1: A\n');
     const tcDir = path.join(projectPath, '.tangleclaw');
     fs.mkdirSync(tcDir, { recursive: true });
-    fs.writeFileSync(path.join(tcDir, 'project.json'), JSON.stringify({ activePlan: 'ghost.md' }));
+    const cfg = path.join(tcDir, 'project.json');
+    fs.writeFileSync(cfg, JSON.stringify({ activePlan: 'ghost.md', other: 'kept' }));
     const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
     assert.equal(result.ok, false);
     assert.equal(result.status, 'blocked');
-    assert.match(result.blockers[0], /activePlan "ghost\.md".*does not exist/);
-    assert.match(result.output.remediation, /activePlan/);
+    assert.match(result.blockers[0], /Multiple in-progress plans/);
+    assert.equal(result.output.staleActivePlan, 'ghost.md');
+    assert.deepEqual(JSON.parse(fs.readFileSync(cfg, 'utf8')), { other: 'kept' },
+      'the stale pin is cleared; every other key is preserved');
   });
 
   describe('plans whose cited issues are all closed (#1516)', () => {
@@ -744,7 +751,7 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
       assert.equal(result.output.candidates.length, 2);
     });
 
-    it('an activePlan naming a since-archived plan falls through to resolution and says so, without rewriting project.json', async () => {
+    it('an activePlan naming a since-archived plan falls through to resolution, says so, and clears the stale pin (#1757)', async () => {
       writePlan('live.md', '### Chunk 1: A\n');
       writePlan('shipped-done.md', '### Chunk 1: A ✅\n');
       const archive = path.join(projectPath, '.claude', 'plans', 'archive');
@@ -752,8 +759,7 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
       fs.writeFileSync(path.join(archive, 'picked-before.md'), '### Chunk 1: A\n');
       const cfg = path.join(projectPath, '.tangleclaw', 'project.json');
       fs.mkdirSync(path.dirname(cfg), { recursive: true });
-      const cfgBody = JSON.stringify({ activePlan: 'picked-before.md' });
-      fs.writeFileSync(cfg, cfgBody);
+      fs.writeFileSync(cfg, JSON.stringify({ activePlan: 'picked-before.md', other: 'kept' }));
       fakeLookup(() => { throw new Error('no issues cited'); });
       const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
       assert.equal(result.status, 'done');
@@ -761,7 +767,101 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
       assert.equal(result.output.staleActivePlan, 'picked-before.md');
       assert.equal(result.output.warning, true);
       assert.match(result.output.note, /activePlan "picked-before\.md".*archived/);
-      assert.equal(fs.readFileSync(cfg, 'utf8'), cfgBody, 'project.json is read, never written');
+      // #1757 (Required Fix Update) — a stale pin must not keep poisoning
+      // every later wrap, so it is cleared from project.json; every other
+      // key survives.
+      assert.deepEqual(JSON.parse(fs.readFileSync(cfg, 'utf8')), { other: 'kept' });
+    });
+
+    it('an activePlan whose explicit path (not a bare filename) resolves into archive/ is treated as stale too (#1757)', async () => {
+      writePlan('live.md', '### Chunk 1: A\n');
+      const archive = path.join(projectPath, '.claude', 'plans', 'archive');
+      fs.mkdirSync(archive, { recursive: true });
+      fs.writeFileSync(path.join(archive, 'old.md'), '### Chunk 1: A\n');
+      const cfg = path.join(projectPath, '.tangleclaw', 'project.json');
+      fs.mkdirSync(path.dirname(cfg), { recursive: true });
+      fs.writeFileSync(cfg, JSON.stringify({ activePlan: '.claude/plans/archive/old.md' }));
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      assert.equal(result.status, 'done');
+      assert.match(result.output.planPath, /live\.md$/);
+      assert.equal(result.output.staleActivePlan, '.claude/plans/archive/old.md');
+      assert.deepEqual(JSON.parse(fs.readFileSync(cfg, 'utf8')), {});
+    });
+
+    it('a one-shot activePlan pin is cleared once the plan it names is fully done', async () => {
+      writePlan('finished.md', '### Chunk 1: A ✅\n');
+      const cfg = path.join(projectPath, '.tangleclaw', 'project.json');
+      fs.mkdirSync(path.dirname(cfg), { recursive: true });
+      fs.writeFileSync(cfg, JSON.stringify({ activePlan: 'finished.md', other: 'kept' }));
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      assert.equal(result.status, 'done');
+      assert.equal(result.output.activePlanCleared, true);
+      assert.deepEqual(JSON.parse(fs.readFileSync(cfg, 'utf8')), { other: 'kept' });
+    });
+
+    it('activePlanCleared is false when the pinned plan still has an undone chunk', async () => {
+      writePlan('live.md', '### Chunk 1: A\n');
+      const cfg = path.join(projectPath, '.tangleclaw', 'project.json');
+      fs.mkdirSync(path.dirname(cfg), { recursive: true });
+      fs.writeFileSync(cfg, JSON.stringify({ activePlan: 'live.md' }));
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      assert.equal(result.status, 'done');
+      assert.equal(result.output.activePlanCleared, false);
+      assert.deepEqual(JSON.parse(fs.readFileSync(cfg, 'utf8')), { activePlan: 'live.md' });
+    });
+  });
+
+  describe('precedence 4 (lone plan) gets the same shipped-plan filter as precedence 5 (#1522)', () => {
+    /**
+     * Install a fake issue lookup; records every call.
+     * @param {object|Function} answer - The lookup result, or a function of the numbers
+     * @returns {Array<{cwd: string, numbers: number[]}>} calls
+     */
+    function fakeLookup(answer) {
+      const calls = [];
+      primingRoll._internal.lookupIssueStates = async (cwd, numbers) => {
+        calls.push({ cwd, numbers: [...numbers].sort((a, b) => a - b) });
+        return typeof answer === 'function' ? answer(numbers) : answer;
+      };
+      return calls;
+    }
+
+    it('the lone plan in the dir, all cited issues closed: dropped and skipped as an archive candidate', async () => {
+      writePlan('shipped.md', '**Issues:** #1, #2\n### Chunk 1: A\n');
+      const calls = fakeLookup({ available: true, states: { 1: 'closed', 2: 'closed' } });
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      assert.deepEqual(calls, [{ cwd: projectPath, numbers: [1, 2] }]);
+      assert.equal(result.ok, true);
+      assert.equal(result.status, 'skipped');
+      assert.deepEqual(result.output.archiveCandidates.map((a) => a.file), ['shipped.md']);
+      assert.match(result.output.reason, /every in-progress plan cites only closed issues/);
+      assert.ok(fs.existsSync(path.join(projectPath, '.claude', 'plans', 'shipped.md')), 'a warning only — nothing is moved');
+    });
+
+    it('the lone plan with an open cited issue is rolled exactly as before', async () => {
+      writePlan('live.md', '**Issues:** #1, #2\n### Chunk 1: A\n');
+      fakeLookup({ available: true, states: { 1: 'closed', 2: 'open' } });
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      assert.equal(result.status, 'done');
+      assert.match(result.output.planPath, /live\.md$/);
+      assert.equal(result.output.archiveCandidates, undefined);
+    });
+
+    it('the lone plan citing no issues is rolled with no lookup', async () => {
+      writePlan('uncited.md', '### Chunk 1: A\n');
+      const calls = fakeLookup(() => { throw new Error('must not be called'); });
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      assert.equal(result.status, 'done');
+      assert.match(result.output.planPath, /uncited\.md$/);
+      assert.equal(calls.length, 0, 'no cited issue, no lookup');
+    });
+
+    it('an explicit step.planPath naming the lone plan is never second-guessed against GitHub', async () => {
+      writePlan('pinned.md', '**Issues:** #1\n### Chunk 1: A\n');
+      const calls = fakeLookup(() => { throw new Error('must not be called'); });
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime', planPath: '.claude/plans/pinned.md' }));
+      assert.equal(result.status, 'done');
+      assert.equal(calls.length, 0);
     });
   });
 
@@ -786,6 +886,18 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
     }));
     assert.equal(result.ok, false);
     assert.match(result.blockers[0], /Configured planPath does not exist/);
+  });
+
+  it('blocks when step.planPath resolves inside a plans archive/ directory (#1757)', async () => {
+    const archive = path.join(projectPath, '.claude', 'plans', 'archive');
+    fs.mkdirSync(archive, { recursive: true });
+    fs.writeFileSync(path.join(archive, 'retired.md'), '### Chunk 1: A\n');
+    const result = await primingRoll.run(buildContext({
+      id: 'next-session-prime',
+      planPath: '.claude/plans/archive/retired.md'
+    }));
+    assert.equal(result.ok, false);
+    assert.match(result.blockers[0], /resolves inside an archive\/ directory/);
   });
 
   it('blocks when project-relative step.planPath escapes the project root', async () => {
@@ -1032,15 +1144,16 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
     writePlan('plan.md', '### Chunk 1: A\n');
     const primingDir = path.join(projectPath, '.claude/priming');
     fs.mkdirSync(primingDir, { recursive: true });
-    fs.writeFileSync(path.join(primingDir, 'build-session.md'), 'existing\n');
+    const primingFile = path.join(primingDir, 'build-session.md');
+    fs.writeFileSync(primingFile, 'existing\n');
 
-    // First read (plan) succeeds; second read (priming) throws.
-    let calls = 0;
+    // Every read succeeds except the priming file's — keyed on path, not call
+    // order, so a resolution pass reading the plan more than once (#1522's
+    // cited-issues check) does not shift which call this mock means to fail.
     const realRead = originals.readFileSync;
     primingRoll._internal.readFileSync = (p, enc) => {
-      calls++;
-      if (calls === 1) return realRead(p, enc);
-      throw new Error('disk gone');
+      if (p === primingFile) throw new Error('disk gone');
+      return realRead(p, enc);
     };
     const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
     assert.equal(result.ok, false);
