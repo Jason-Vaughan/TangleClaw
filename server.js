@@ -4791,11 +4791,10 @@ function resolveMasterMedusaTarget() {
  * Module-scoped rather than nested in `registerMedusaRoutes` (which calls it
  * identically for both the project and the Master prefix): it closes over
  * nothing local to that function, so nesting it only built the same closure
- * twice and put a security-relevant branch out of direct reach for a test —
- * exported as `_exchangeCaller` for exactly that reason (A475-W1D-R1 Critic
- * finding: the `projectId == null` guard below had no test that could
- * observe it, since every consumer of its `master` kind independently
- * re-derives the same restriction from the exchange row or sender shape).
+ * twice and put the `projectId == null` guard below out of direct reach for
+ * a test, since every consumer of its `master` kind independently re-derives
+ * the same restriction from the exchange row or sender shape — exported as
+ * `_exchangeCaller` so the guard itself can be tested directly.
  * @param {import('http').IncomingMessage} req - Request.
  * @param {number|null} projectId - The participant's project.
  * @param {boolean} [asReader] - Resolving a read or ack rather than a send.
@@ -4814,7 +4813,7 @@ function exchangeCaller(req, projectId, asReader = false) {
   // Scoped to `projectId == null` (the route's own TARGET has no project —
   // true only on the Master's own mount) so a Master-role caller hitting a
   // PROJECT's mount still resolves `unbound` there rather than being
-  // credited as a verified sender of that project's mail (A475-W1D-R1).
+  // credited as a verified sender of that project's mail.
   if (c.kind === 'master' && projectId == null) return { kind: 'master' };
   return { kind: 'unbound' };
 }

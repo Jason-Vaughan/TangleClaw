@@ -59,7 +59,7 @@ function sendPmToBuilder(body = {}, hubId = 'hub-1') {
  * `sessionId: null` matches `localParticipant`'s real resolution for the
  * Master (its registry candidate carries no session record), so the reply
  * match in `createSendIntent` is proven against what production actually
- * writes, not a session id the Master happens to share with itself (A475-W1D-R1).
+ * writes, not a session id the Master happens to share with itself.
  * @param {object} [body] - Send body
  * @param {string} [hubId] - Hub id to bind
  * @returns {object} The exchange row
@@ -340,7 +340,7 @@ describe('medusa-exchanges (#1839)', () => {
       assert.equal(reply.in_reply_to, original.exchange_id);
     });
 
-    it("records the Master's own reply as actor 'master' on both the send and the original's replied fact (A475-W1D-R1)", () => {
+    it("records the Master's own reply as actor 'master' on both the send and the original's replied fact", () => {
       const original = sendBuilderToMaster();
       const reply = mx.createSendIntent({
         meta: mx.validateSendMeta({ inReplyTo: 'hub-to-master' }, MASTER, null),

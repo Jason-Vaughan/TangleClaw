@@ -810,7 +810,7 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
    * `localParticipant` actually resolves for it in production (its registry
    * candidate carries no session record) — the reply match in
    * `createSendIntent` is proven against that shape, not a convenient test
-   * stand-in (A475-W1D-R1). Requires the Master's listener already started.
+   * stand-in. Requires the Master's listener already started.
    * @param {{projectId: number}} sender - The sending project
    * @param {string} hubId - Hub id to bind
    * @returns {object} The exchange row
@@ -853,7 +853,7 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
     assert.equal(data.code, 'REPLY_TARGET_UNKNOWN');
   });
 
-  it('exchangeCaller resolves a verified Master only when the route target has no project (A475-W1D-R1)', () => {
+  it('exchangeCaller resolves a verified Master only when the route target has no project', () => {
     // Every current consumer of {kind: 'master'} (validateSendMeta's
     // _isVerifiedMaster, close()'s _isMasterSend) independently re-derives
     // this same restriction from the sender/row shape, so no HTTP response
