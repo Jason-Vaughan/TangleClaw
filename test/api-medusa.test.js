@@ -597,6 +597,7 @@ describe('lib/medusa — service layer', () => {
       assert.equal(status.state, 'off');
       assert.equal(status.lastErrorCode, 'WS_URL_REFUSED');
       assert.match(status.lastError, /MEDUSA_BRIDGE_WS_URL/);
+      assert.match(status.lastError, /192\.168\.1\.50/, 'the rejected value itself is named, not just the variable');
       assert.match(status.lastError, /non-loopback/);
       assert.equal(medusa.activeListenerCount(), before, 'no listener should have been created');
     });
@@ -998,6 +999,7 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
       assert.equal(data.state, 'off');
       assert.equal(data.lastErrorCode, 'WS_URL_REFUSED');
       assert.match(data.lastError, /MEDUSA_BRIDGE_WS_URL/);
+      assert.match(data.lastError, /192\.168\.1\.50/, 'the rejected value itself is named');
       assert.match(data.lastError, /non-loopback/);
       // The health preflight the toggle also runs must agree, not report a
       // healthy default Bridge while no listener started.
@@ -1018,6 +1020,7 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
       assert.equal(data.state, 'off');
       assert.equal(data.lastErrorCode, 'WS_URL_REFUSED');
       assert.match(data.lastError, /MEDUSA_BRIDGE_WS_URL/);
+      assert.match(data.lastError, /192\.168\.1\.50/, 'the rejected value itself is named');
     } finally {
       medusa._setBridgeWsUrl();
     }

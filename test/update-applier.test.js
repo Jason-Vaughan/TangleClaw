@@ -553,6 +553,22 @@ describe('update-applier (UB #228/#229)', () => {
       assert.match(r.error, /do not update or restart/);
     });
 
+    it('still runs the abort and restores cleanly when listing the conflicted files itself fails', () => {
+      // THE MUTATION THIS CATCHES: a `git diff` failure thrown ahead of `git
+      // rebase --abort` would skip the abort entirely, leaving the rebase
+      // stuck — this pins that diff failing never costs the abort call.
+      applier._internal.git = gitStub({
+        ...REBASE_BASE,
+        'rebase v9.9.9': new Error('CONFLICT (content): Merge conflict in lib/x.js'),
+        'diff --name-only --diff-filter=U': new Error('fatal: ambiguous argument'),
+        'rebase --abort': ''
+      });
+      const r = applier.applyUpdate();
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'rebase-conflict');
+      assert.deepEqual(r.conflicts, []);
+    });
+
     it('falls through to the ordinary wrong-ref refusal when the branch shares no history with local main', () => {
       applier._internal.git = gitStub({
         ...HAPPY,
