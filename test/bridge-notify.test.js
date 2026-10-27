@@ -290,6 +290,36 @@ describe('bridge notifications (#2031)', () => {
       reports(alpha, 'complete');
       assert.equal(bridgeNotify.reconcile().workUnblocked, 1, 'a later block clearing is its own event');
     });
+
+    it('clears an episode whose announced receipt is not the immediate predecessor: blocked, blocked again, then working (PR #2629 review C1/C2)', () => {
+      const alpha = liveSession('Alpha');
+      enable();
+      const firstBlockedSeq = reports(alpha, 'blocked');
+      assert.equal(bridgeNotify.reconcile().workBlocked, 1, 'the first blocked receipt of the run is announced');
+      reports(alpha, 'blocked');
+      assert.equal(bridgeNotify.reconcile().workBlocked, 0, 'a repeat blocked report is not a new event, and is never announced itself');
+      const clearSeq = reports(alpha, 'working');
+      assert.equal(bridgeNotify.reconcile().workUnblocked, 1, 'clearing still finds the run\'s announced receipt, not the unannounced repeat');
+      const firstBlockedReceiptId = bridgeStore.receipts.workloadForLaunch(alpha.launchId, firstBlockedSeq).receiptId;
+      const clearReceiptId = bridgeStore.receipts.workloadForLaunch(alpha.launchId, clearSeq).receiptId;
+      assert.deepEqual(notifications().map((r) => r.key), [
+        `notify:work-blocked:receipt:${firstBlockedReceiptId}`, `notify:work-unblocked:receipt:${clearReceiptId}`
+      ]);
+    });
+
+    it('never announces a recovery that is already stale by the time the pass runs: blocked, working, blocked again, all before one reconcile (PR #2629 review C1)', () => {
+      const alpha = liveSession('Alpha');
+      enable();
+      reports(alpha, 'blocked');
+      assert.equal(bridgeNotify.reconcile().workBlocked, 1);
+      reports(alpha, 'working');
+      const reblockSeq = reports(alpha, 'blocked');
+      const result = bridgeNotify.reconcile();
+      assert.deepEqual({ workBlocked: result.workBlocked, workUnblocked: result.workUnblocked }, { workBlocked: 1, workUnblocked: 0 },
+        'the lane is blocked again by the time this pass runs, so the recovery in between is not announced -- it would read as "all clear" while the lane is blocked');
+      const reblockReceiptId = bridgeStore.receipts.workloadForLaunch(alpha.launchId, reblockSeq).receiptId;
+      assert.deepEqual(notifications().map((r) => r.key).slice(-1), [`notify:work-blocked:receipt:${reblockReceiptId}`]);
+    });
   });
 
   describe('operator-needed', () => {
@@ -430,6 +460,21 @@ describe('bridge notifications (#2031)', () => {
         store.projectConfig.save(charlie.project.path, selfCfg);
         alertedExchange(charlie);
         assert.equal(bridgeNotify.reconcile().operatorNeeded, 1, 'naming itself as coordinator still pages directly');
+      } finally {
+        exchanges._internal.now = realNow;
+      }
+    });
+
+    it('does not page Discord for an opted-out recipient, even when the watchdog raised the exchange (PR #2629 review C2)', () => {
+      const alpha = liveSession('Alpha');
+      bridgeStore.optouts.set(alpha.project.id);
+      const realNow = exchanges._internal.now;
+      exchanges._internal.now = () => new Date(clock);
+      try {
+        enable();
+        alertedExchange(alpha);
+        assert.equal(bridgeNotify.reconcile().operatorNeeded, 0);
+        assert.deepEqual(notifications(), []);
       } finally {
         exchanges._internal.now = realNow;
       }
@@ -1371,11 +1416,12 @@ describe('bridge notifications (#2031)', () => {
       reads('down');
       bridgeNotify.reconcile();
       later(5 * MINUTE);
-      // working then blocked again, in the same un-reconciled stretch: the first clears the
-      // announced block (work-unblocked) and the second opens a new one (work-blocked).
+      // working then blocked again, in the same un-reconciled stretch: by the time this pass
+      // runs the lane is blocked again, so the now-stale recovery for the working receipt in
+      // between is suppressed (PR #2629 review C1) -- only the new block is announced.
       reports(alpha, 'working');
       reports(alpha, 'blocked');
-      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, workUnblocked: 1, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 1 });
+      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, workUnblocked: 0, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 1 });
     });
 
     it('reads the helper\'s report from the gateway itself when nothing else is supplied', () => {
