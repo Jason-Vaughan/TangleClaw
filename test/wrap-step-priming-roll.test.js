@@ -603,13 +603,20 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
     fs.mkdirSync(tcDir, { recursive: true });
     const cfg = path.join(tcDir, 'project.json');
     fs.writeFileSync(cfg, JSON.stringify({ activePlan: 'ghost.md', other: 'kept' }));
-    const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+    const ctx = buildContext({ id: 'next-session-prime' });
+    const result = await primingRoll.run(ctx);
     assert.equal(result.ok, false);
     assert.equal(result.status, 'blocked');
     assert.match(result.blockers[0], /Multiple in-progress plans/);
     assert.equal(result.output.staleActivePlan, 'ghost.md');
-    assert.deepEqual(JSON.parse(fs.readFileSync(cfg, 'utf8')), { other: 'kept' },
-      'the stale pin is cleared; every other key is preserved');
+    // The clear is STAGED (single-transaction discipline, ADR 0002), not
+    // written directly — the handler touches the filesystem only to read.
+    assert.deepEqual(JSON.parse(fs.readFileSync(cfg, 'utf8')), { activePlan: 'ghost.md', other: 'kept' },
+      'the real file is untouched until the commit step flushes staged writes');
+    const staged = ctx.staged['next-session-prime:active-plan-clear'];
+    assert.equal(staged.primingPath, cfg);
+    assert.deepEqual(JSON.parse(staged.newContent), { other: 'kept' },
+      'the staged write clears the pin; every other key is preserved');
   });
 
   describe('plans whose cited issues are all closed (#1516)', () => {
@@ -751,7 +758,7 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
       assert.equal(result.output.candidates.length, 2);
     });
 
-    it('an activePlan naming a since-archived plan falls through to resolution, says so, and clears the stale pin (#1757)', async () => {
+    it('an activePlan naming a since-archived plan falls through to resolution, says so, and STAGES the stale pin\'s clear (#1757)', async () => {
       writePlan('live.md', '### Chunk 1: A\n');
       writePlan('shipped-done.md', '### Chunk 1: A ✅\n');
       const archive = path.join(projectPath, '.claude', 'plans', 'archive');
@@ -761,16 +768,20 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
       fs.mkdirSync(path.dirname(cfg), { recursive: true });
       fs.writeFileSync(cfg, JSON.stringify({ activePlan: 'picked-before.md', other: 'kept' }));
       fakeLookup(() => { throw new Error('no issues cited'); });
-      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      const ctx = buildContext({ id: 'next-session-prime' });
+      const result = await primingRoll.run(ctx);
       assert.equal(result.status, 'done');
       assert.match(result.output.planPath, /live\.md$/);
       assert.equal(result.output.staleActivePlan, 'picked-before.md');
       assert.equal(result.output.warning, true);
       assert.match(result.output.note, /activePlan "picked-before\.md".*archived/);
-      // #1757 (Required Fix Update) — a stale pin must not keep poisoning
-      // every later wrap, so it is cleared from project.json; every other
-      // key survives.
-      assert.deepEqual(JSON.parse(fs.readFileSync(cfg, 'utf8')), { other: 'kept' });
+      // #1757 (Required Fix Update) — single-transaction discipline (ADR
+      // 0002): the clear is STAGED for the commit step, never written
+      // directly. The real file on disk is untouched by this call.
+      assert.deepEqual(JSON.parse(fs.readFileSync(cfg, 'utf8')), { activePlan: 'picked-before.md', other: 'kept' });
+      const staged = ctx.staged['next-session-prime:active-plan-clear'];
+      assert.equal(staged.primingPath, cfg);
+      assert.deepEqual(JSON.parse(staged.newContent), { other: 'kept' });
     });
 
     it('an activePlan whose explicit path (not a bare filename) resolves into archive/ is treated as stale too (#1757)', async () => {
@@ -781,32 +792,36 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
       const cfg = path.join(projectPath, '.tangleclaw', 'project.json');
       fs.mkdirSync(path.dirname(cfg), { recursive: true });
       fs.writeFileSync(cfg, JSON.stringify({ activePlan: '.claude/plans/archive/old.md' }));
-      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      const ctx = buildContext({ id: 'next-session-prime' });
+      const result = await primingRoll.run(ctx);
       assert.equal(result.status, 'done');
       assert.match(result.output.planPath, /live\.md$/);
       assert.equal(result.output.staleActivePlan, '.claude/plans/archive/old.md');
-      assert.deepEqual(JSON.parse(fs.readFileSync(cfg, 'utf8')), {});
+      assert.deepEqual(JSON.parse(ctx.staged['next-session-prime:active-plan-clear'].newContent), {});
     });
 
-    it('a one-shot activePlan pin is cleared once the plan it names is fully done', async () => {
+    it('a one-shot activePlan pin is staged for clearing once the plan it names is fully done', async () => {
       writePlan('finished.md', '### Chunk 1: A ✅\n');
       const cfg = path.join(projectPath, '.tangleclaw', 'project.json');
       fs.mkdirSync(path.dirname(cfg), { recursive: true });
       fs.writeFileSync(cfg, JSON.stringify({ activePlan: 'finished.md', other: 'kept' }));
-      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      const ctx = buildContext({ id: 'next-session-prime' });
+      const result = await primingRoll.run(ctx);
       assert.equal(result.status, 'done');
       assert.equal(result.output.activePlanCleared, true);
-      assert.deepEqual(JSON.parse(fs.readFileSync(cfg, 'utf8')), { other: 'kept' });
+      assert.deepEqual(JSON.parse(ctx.staged['next-session-prime:active-plan-clear'].newContent), { other: 'kept' });
     });
 
-    it('activePlanCleared is false when the pinned plan still has an undone chunk', async () => {
+    it('activePlanCleared is false when the pinned plan still has an undone chunk, and nothing is staged', async () => {
       writePlan('live.md', '### Chunk 1: A\n');
       const cfg = path.join(projectPath, '.tangleclaw', 'project.json');
       fs.mkdirSync(path.dirname(cfg), { recursive: true });
       fs.writeFileSync(cfg, JSON.stringify({ activePlan: 'live.md' }));
-      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      const ctx = buildContext({ id: 'next-session-prime' });
+      const result = await primingRoll.run(ctx);
       assert.equal(result.status, 'done');
       assert.equal(result.output.activePlanCleared, false);
+      assert.equal(ctx.staged['next-session-prime:active-plan-clear'], undefined);
       assert.deepEqual(JSON.parse(fs.readFileSync(cfg, 'utf8')), { activePlan: 'live.md' });
     });
   });
