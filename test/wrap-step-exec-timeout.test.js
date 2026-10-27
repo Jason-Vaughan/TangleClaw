@@ -26,7 +26,7 @@ const { spawn } = require('node:child_process');
 const testStep = require('../lib/wrap-steps/test');
 const lintStep = require('../lib/wrap-steps/lint');
 const exec = require('../lib/exec');
-const { execFileArgs } = exec;
+const { execFileArgs, TIMEOUT_EXIT_CODE } = exec;
 
 /** Short enough to keep the suite fast, long enough not to race the spawn. */
 const SHORT_TIMEOUT_MS = 300;
@@ -285,6 +285,57 @@ describe('wrap exec shell — a killed command is named as killed (#894)', () =>
       } finally {
         cleanup();
       }
+    });
+  });
+
+  describe('timeoutFired classification survives a graceful exit (#1503 round 4)', () => {
+    // `wasTimedOut(err)` infers a timeout from the SIGNAL the child died by —
+    // but a child that TRAPS the `SIGTERM` this sends and calls its OWN
+    // `exit()` in its handler produces a `code`/`signal` pair indistinguishable
+    // from one that was never signalled at all: by the time the close event
+    // fires, there is no signal left to read. Without tracking that OUR OWN
+    // timeout fired, independent of the child's eventual exit shape, this
+    // reports a graceful shutdown in response to a kill as whatever that exit
+    // looked like — success, or an ordinary failure — losing the fact that
+    // the command ran too long and WAS stopped.
+    for (const [label, step] of [['test', testStep], ['lint', lintStep]]) {
+      it(`${label} step: still timedOut:true when the trap answers with exit 0`, async () => {
+        const result = await step._internal.execShell(
+          "trap 'exit 0' TERM; sleep 30",
+          { cwd: os.tmpdir(), timeoutMs: SHORT_TIMEOUT_MS }
+        );
+
+        assert.equal(result.timedOut, true,
+          'the timeout fired and killed this — a graceful exit(0) in the trap must not erase that');
+        assert.equal(result.exitCode, TIMEOUT_EXIT_CODE);
+      });
+
+      it(`${label} step: still timedOut:true when the trap answers with a nonzero exit`, async () => {
+        const result = await step._internal.execShell(
+          "trap 'exit 7' TERM; sleep 30",
+          { cwd: os.tmpdir(), timeoutMs: SHORT_TIMEOUT_MS }
+        );
+
+        assert.equal(result.timedOut, true,
+          'a nonzero exit from the trap must not be misread as an ordinary failure — it is still a stop');
+        assert.equal(result.exitCode, TIMEOUT_EXIT_CODE);
+      });
+    }
+
+    it('execFileArgs: still timedOut:true when the child traps SIGTERM and exits 0', async () => {
+      const result = await execFileArgs(
+        'sh', ['-c', "trap 'exit 0' TERM; sleep 30"],
+        { cwd: os.tmpdir(), timeoutMs: SHORT_TIMEOUT_MS }
+      );
+
+      assert.equal(result.timedOut, true);
+      assert.equal(result.exitCode, TIMEOUT_EXIT_CODE);
+    });
+
+    it('leaves an ordinary exit(0) with no timeout set alone — timeoutFired is not a free pass to always claim a stop', async () => {
+      const result = await exec.execShell('exit 0', { cwd: os.tmpdir() });
+      assert.equal(result.timedOut, false);
+      assert.equal(result.exitCode, 0);
     });
   });
 
