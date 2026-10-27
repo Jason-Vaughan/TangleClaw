@@ -204,6 +204,44 @@ describe('wrap exec shell — a killed command is named as killed (#894)', () =>
         assert.notEqual(result.exitCode, 0);
         assert.match(result.error, /maxBuffer/, 'the operator must be told what actually happened');
       });
+
+      it('kills the whole process group on an output overflow too, not just the one child (#1503 round 2 hardening)', async () => {
+        // A grandchild sharing the group but writing to neither pipe. The
+        // real pre-hardening symptom here is not (only) the grandchild
+        // outliving the result — it is that resolution ITSELF stalls: a lone
+        // `SIGTERM` to just the direct shell is not reliably prompt once that
+        // shell has an outstanding backgrounded job (confirmed empirically —
+        // bash defers signal handling in that state), so without a follow-up
+        // `SIGKILL` the "fast bound on a chatty command" that an overflow
+        // guard is supposed to be instead becomes a hang tied to the
+        // background job's OWN natural lifetime (here, `sleep 30`'s full 30s).
+        // The group kill's `SIGKILL` escalation forces this quickly instead.
+        const markerFile = path.join(os.tmpdir(), `tc-exec-overflow-group-${label}-${process.pid}.pid`);
+        try {
+          const startedAt = Date.now();
+          const result = await step._internal.execShell(
+            `sleep 30 & echo $! > ${markerFile}; yes hello | head -c 200000`,
+            { cwd: os.tmpdir(), maxBufferBytes: 1024 }
+          );
+          const elapsed = Date.now() - startedAt;
+
+          assert.equal(result.timedOut, false, 'an overflow is not a timeout');
+          assert.match(result.error, /maxBuffer/);
+          assert.ok(elapsed < 5000,
+            `overflow handling took ${elapsed}ms — should resolve in well under the backgrounded job's 30s lifetime`);
+
+          const grandchildPid = Number(fs.readFileSync(markerFile, 'utf8').trim());
+          assert.ok(Number.isInteger(grandchildPid) && grandchildPid > 0, 'the backgrounded grandchild pid was captured');
+
+          // Not required to be dead the INSTANT the promise resolves (this
+          // cleanup is deliberately fire-and-forget, unlike the timeout
+          // path's confirmed-before-resolving guarantee) — but it must still
+          // actually happen.
+          await _assertGoneSoon(grandchildPid, 2000);
+        } finally {
+          fs.rmSync(markerFile, { force: true });
+        }
+      });
     });
   }
 
