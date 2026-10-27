@@ -167,6 +167,21 @@ describe('shared-doc broadcasts stay inside the doc\'s group (#1222)', () => {
   const wsFor = (project) => `ws-${store.sessions.getActive(project.id).id}`;
 
   /**
+   * A sent notice's payload, with its `sentAt` (#2350 — nondeterministic,
+   * read off the wall clock) checked for shape and then dropped, so the rest
+   * can be compared exactly.
+   * @param {string} message - The raw JSON notice text.
+   * @returns {object} The payload minus `sentAt`.
+   */
+  const noticeBody = (message) => {
+    const parsed = JSON.parse(message);
+    assert.ok(typeof parsed.sentAt === 'string' && !Number.isNaN(Date.parse(parsed.sentAt)),
+      'every notice carries a parseable sentAt, which the staleness bound reads');
+    const { sentAt, ...rest } = parsed;
+    return rest;
+  };
+
+  /**
    * A subscription at the group scope.
    * @param {object} project - Project record.
    * @returns {void}
@@ -297,10 +312,10 @@ describe('shared-doc broadcasts stay inside the doc\'s group (#1222)', () => {
       'the fields it always answered, plus the revision it recorded');
     assert.equal(res.body.success, true);
     assert.equal(res.body.duplicate, false);
-    assert.deepEqual(sent, [{
+    assert.deepEqual(sent.map((m) => ({ to: m.to, message: noticeBody(m.message) })), [{
       to: wsFor(inGroup),
-      message: JSON.stringify({ type: 'system', event: 'shared_doc_updated', doc: 'SHARED', docId })
-    }], 'the notice is byte-identical');
+      message: { type: 'system', event: 'shared_doc_updated', doc: 'SHARED', docId }
+    }], 'the notice is identical apart from its sentAt');
     const revision = store.sharedDocEvents.latest(docId);
     assert.equal(res.body.seq, revision.seq);
     assert.equal(revision.authorSource, 'unknown', 'the notify caller is never made the author');
@@ -384,9 +399,9 @@ describe('shared-doc broadcasts stay inside the doc\'s group (#1222)', () => {
     setMasterScope('all');
     const res = await change();
     assert.equal(res.status, 200);
-    assert.deepEqual(sent, [{
+    assert.deepEqual(sent.map((m) => ({ to: m.to, message: noticeBody(m.message) })), [{
       to: 'ws-master',
-      message: JSON.stringify({ type: 'system', event: 'shared_doc_updated', doc: 'SHARED', docId })
+      message: { type: 'system', event: 'shared_doc_updated', doc: 'SHARED', docId }
     }], 'no project subscribed, so the Master — scope all — is the only recipient');
     assert.equal(res.body.notifiedCount, 1);
   });
