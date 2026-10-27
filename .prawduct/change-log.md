@@ -41,6 +41,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-27 — v5.40.0 W2-C: wire the TCC tmux bootstrap into the live launch path
+
+<!-- prawduct: type=fixed | scope=w2c-2352-2625 -->
+
+- **#2625:** `lib/sessions.js`'s real session-creation call site now calls `tmux.createSessionWithTccBootstrap` instead of `tmux.createSession` — the mechanism added in the entry below is live: a TCC-protected launch no longer hangs in production. Per Architect Ruling A475-W2C-R3 (authorizing `lib/sessions.js` into this car's scope, since no other active Wave 2 car touches it). Closes the follow-up filed as #2636.
+
 ## 2026-10-27 — v5.40.0 W2-C Chunks 02-04: permission-request routes/UI, Discord-bridge decisions, TCC tmux bootstrap
 
 <!-- prawduct: type=feature | scope=w2c-2352-2625 -->
