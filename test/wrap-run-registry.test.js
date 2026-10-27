@@ -473,6 +473,41 @@ describe('wrap-run-registry (#583)', () => {
       assert.equal(registry.anyRunning(), 'proj-live');
     });
 
+    // #1321 — found at Critic cumulative review (rev-20261027T200007Z-2b646b7e):
+    // a stale project's warning must not fire when a DIFFERENT project is
+    // live, because the restart `anyRunning` gates is refused by that live
+    // project regardless — warning there would claim an action happened that
+    // did not (warnStale's own contract: only when actually permitting
+    // something a live run would have refused).
+    it('anyRunning does not warn about a stale project when another project is live — the restart was not actually permitted', () => {
+      const warnings = [];
+      const origWrite = process.stdout.write.bind(process.stdout);
+      const { setLevel: setLvl } = require('../lib/logger');
+      setLvl('warn');
+      process.stdout.write = (chunk, ...rest) => {
+        const text = String(chunk);
+        if (text.includes('Stale wrap run permitted an action')) warnings.push(text);
+        return origWrite(chunk, ...rest);
+      };
+      try {
+        registry.begin('proj-wedged', 1);
+        fakeNow += registry.STALE_RUN_MS;
+        registry.begin('proj-live', 2);
+        assert.equal(registry.anyRunning(), 'proj-live', 'the restart IS refused, by the live project');
+        assert.equal(warnings.length, 0, 'proj-wedged did not get to "permit" anything — the live project already blocked it');
+
+        // Once the live project also settles, the stale one really is what
+        // lets the restart through, and NOW it warns.
+        registry.finish('proj-live', registry.get('proj-live').runId, { ok: true });
+        assert.equal(registry.anyRunning(), null);
+        assert.equal(warnings.length, 1);
+        assert.match(warnings[0], /proj-wedged/);
+      } finally {
+        process.stdout.write = origWrite;
+        setLvl('error');
+      }
+    });
+
     it('subscribe closes a stream opened on a wedged run instead of hanging it', () => {
       const claim = registry.begin('proj-a', 1);
       emit('proj-a', { type: 'run-start', steps: [] });

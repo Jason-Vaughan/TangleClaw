@@ -41,6 +41,15 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-27 — W1-A: wrap-run resilience (#1321, #1805, #1816)
+
+<!-- prawduct: type=fix | scope=w1a-1321-1805-1816 -->
+
+- **#1321:** `anyRunning` (the restart gate) and the wake monitor's `wrapRunning` check both silently changed their verdict once a wrap run went stale, with no record of either transition. `wrapRunRegistry.warnStale(projectName, site)` now logs once per run per call site the moment either one permits something a live run would have refused.
+- **#1805:** a stale takeover used to replace a project's run unconditionally even though the pipeline behind it might still be executing, letting two pipelines run for one project. `begin()` now splits on whether the stale run had reached its own cancel boundary (`cancellable`): short of it, the takeover proceeds automatically and the displaced pipeline is told to stop (`_displacedCancelled`, consulted by `admitStep`/`isCancelRequested` before the usual project-keyed lookup, since the takeover already replaced the entry those calls would otherwise be checked against); past it — it may already be committing, branching or pushing — the takeover refuses instead, with no override, because no request can make two concurrent git mutations safe. Found during review that an earlier `options.confirmStaleTakeover` design left a cross-component dead end (no UI caller) — redesigned around the existing `cancellable` boundary instead, closing it with zero cross-component dependency.
+- **#1816:** a server restart lost the in-memory wrap run with no durable trace, leaving the session reaped as crashed with no handoff. `begin`/`emit`/`admitStep`/`finish` now write a checkpoint trail via the activity log (`wrap.run_checkpoint` / `wrap.run_settled`); `get()` recovers it once this process holds no run for a project, reporting `interrupted: true` with the last step reached and whether commit had started. Surfaced via `GET /wrap/status`'s new `interrupted`/`interruptedStepId`/`interruptedCommitStarted`/`interruptedAt` fields, and `public/wrap-run-controller.js` gained the pure reducer support (`interrupted` phase/signal) for it.
+- Known gap, escalated to three filed follow-ups (outside this car's authorized 11-file scope under Charter A476): `public/session.js` needs to dispatch the new `interrupted` signal at page load (#2642); `lib/launch-recovery-held.js#_uncertainWork` needs a part for an interrupted wrap run alongside its existing `strandedWraps`/`stagedHandoff` parts (#2643); `docs/configuration-reference.md` needs the new `/wrap/status` and `/wrap` 409 fields documented (#2645, dropped from this PR's diff per PM pre-PR scope guard).
+
 ## 2026-10-27 — v5.41.0 W1-C PR #2640: Medusa mail carried forward across a wrap-ended session; injectCommand refuses mid-wrap
 
 <!-- prawduct: type=fixed | scope=w1c-1806-2269 -->
