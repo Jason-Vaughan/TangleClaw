@@ -41,6 +41,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-27 — v5.41.0 W4-REL: prepare the release candidate
+
+<!-- prawduct: type=internal | scope=v541-w4-rel -->
+
+- Promoted the 13 accepted wrap-resilience, plan-resolution, handoff, Medusa and session-range fragments into `CHANGELOG.md`'s 5.41.0 section and removed their consumed files. Set `version.json` to 5.41.0, updated both README clone pins, extended the released-section hash lock through `scripts/release-prepare.js`, and recorded the candidate's pending release, production and activation finish lines in `docs/releases/v5.41-status.md`. Publication remains subject to the Operator's exact-target release approval.
+
 ## 2026-10-27 — v5.41.0 W3-REC: reconcile the shipped wrap record
 
 <!-- prawduct: type=internal | scope=v541-w3-rec -->

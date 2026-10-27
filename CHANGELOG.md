@@ -4,6 +4,88 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.41.0] - 2026-10-27
+
+### Added
+- The `ai-content` wrap step's 5-minute wait budget now scales up for a project carrying many
+  build plans (the proxy for "how heavy is this repo's `next-session-prime` scan"), up to a
+  4x ceiling, instead of a fixed cap that a heavy repository could run close to on legitimate
+  work alone. A step that still takes over 80% of its own (possibly scaled) budget before
+  finishing now logs a warning and marks its result `output.warning`, so the wrap drawer shows
+  "completed with warnings" and names the plan count — the same signal whether the wrap is
+  watched live in the browser or read from the server log afterward (#1782).
+
+### Changed
+- `priming-roll`'s plan resolution no longer falls back to the legacy `.claude/plans` directory: with the Operator's explicit authorization, all plan files across the 12 local projects that still used it (`RentalClaw-Project`, `TangleBrain-Builder`, `WhitePapers`, `ScrapeGoat`, `Notse`, `Medusa`, `TangleClaw-Builder1`, `Volta`, `Kobold`, `PV-AI-Guidebook`, `UCI`, `Monad-1`) were migrated to `.tangleclaw/plans`, and `lib/wrap-steps/priming-roll.js`'s `_resolvePlansDir` now checks only the TC-owned location. `lib/plan-docs.js` still serves a plan from the legacy location for any project this migration did not cover (it is scoped to the 12 named projects, not every TangleClaw-managed one) — only wrap-time plan *resolution* retired the fallback (#1050).
+
+### Fixed
+- A stale wrap run that lets `POST /api/server/restart` proceed, or lets the
+  wake monitor resume nudging a project, now logs a one-shot warning naming the
+  project, run id and last step — previously neither action left any trace
+  (#1321).
+- A timed-out wrap-step command no longer leaves its child processes running: `execShell`/`execFileArgs`
+  (`lib/exec.js`) now spawn the command detached in its own process group and kill the whole group
+  (`SIGTERM`, then `SIGKILL` after a short grace period) on timeout, instead of signalling only the
+  shell Node held a handle to. The returned promise now also waits for the group to be CONFIRMED gone
+  (polled, not just signalled) before resolving, so a descendant that ignores `SIGTERM` can no longer
+  outlive the point where the caller is told the command has stopped — and if that confirmation itself
+  cannot be verified within a bounded window, the result now says so explicitly (`groupKillConfirmed:
+  false`, plus a caveat in the error text) instead of silently claiming a clean stop. A command is also
+  now correctly reported as timed out when it traps the `SIGTERM` this sends and answers with its own
+  `exit()` (0 or otherwise) — previously indistinguishable from an ordinary success or failure once the
+  signal itself left no trace in the exit code. The same group kill now also applies when a command is
+  cut off for producing too much output (`maxBuffer`): a backgrounded job sharing the group could
+  otherwise outlive the result, or — if the shell itself was deferring the signal while it had an
+  outstanding job of its own — turn what should be a fast overflow guard into a hang tied to that job's
+  own lifetime (#1503).
+- `priming-roll`'s shipped-plan filter now also applies when a project's plans directory holds exactly one `.md` file: a lone plan whose cited issues are all closed is reported as an archive candidate and skipped instead of being rolled silently, matching the filter that already applied when several plans coexist (#1522).
+- `publishHandoff` now re-validates the staged handoff file's digest inside its `BEGIN IMMEDIATE`
+  transaction, matching `recordPromotedHandoff`, instead of checking it before the transaction opens —
+  closing the window where a file replaced between that check and the rename would have been published
+  (#1651).
+- The `handoff-stage` wrap step now mirrors `.prawduct/.handoff-notes.md` into a TangleClaw-owned
+  snapshot (`.tangleclaw/handoff-notes-continuity.md`) at the end of every wrap, and the Claude
+  SessionStart prime hook recovers from that snapshot when the live file is already gone or empty by
+  the time a session boots — so prawduct's forward notes survive destructive consumption of the live
+  file instead of leaving the next session without them. The mirror is also kept from outliving its
+  relevance: a wrap that ends with no live notes to carry clears any stale earlier mirror, and the
+  SessionStart hook deletes the mirror once it has shown it, so recovered notes are replayed at most
+  once rather than at every boot until the next wrap happens to overwrite them (#1733).
+- `priming-roll` no longer blocks a wrap on a stale `activePlan` pointer in `.tangleclaw/project.json`: a pin that is missing, resolves into a plans directory's `archive/`, or names a now-fully-done plan is cleared and resolution falls through as if it had never been set, so a one-shot pick from the multi-plan picker stops silently poisoning later wraps. An explicit `step.planPath` resolving into `archive/` is now rejected the same way a missing file is. A genuine ambiguity (two or more still-live in-progress plans) still blocks for the operator to pick, unchanged (#1757).
+- A stale wrap run that has not yet started committing is still taken over
+  automatically when a new wrap starts — but the displaced pipeline is now
+  told to stop before it can branch, commit or push, closing the window where
+  two pipelines ran for one project. A stale run already past that point (it
+  may already be committing, branching or pushing) refuses the new wrap
+  instead, with `stale: true`, until that pipeline actually finishes or the
+  server restarts: no request can make two concurrent git mutations safe
+  (#1805).
+- A Medusa session listener's still-unhandled inbox is no longer lost when a wrap ends the
+  session: `forgetSession` now captures it before the workspace id is retired, and the
+  project's next listener is seeded with it, oldest first, so mail that arrived while a wrap
+  was running (and so was never nudged into the pane) survives into the successor session
+  instead of being stranded against an identity nobody will ever reconnect as (#1806).
+- A wrap run cut off by a server restart is now durably recorded: `GET
+  /wrap/status` reports `interrupted: true` with the step the run last reached
+  and whether it had started committing, instead of silently reading as no run
+  at all (#1816). The session page's own display of this is tracked
+  separately (#2642).
+- `injectCommand` now refuses to type into a pane whose project has a wrap running in
+  `wrap-run-registry`, the same way it already refuses a pane showing an engine startup
+  dialog, answering HTTP 409 `WRAP_RUNNING`. `medusa-wake` and `workload-nudge` already
+  checked the registry themselves before calling in; this closes the gap for every other
+  caller of the command route — a coordinator clearing a Builder, an Observer's restart
+  prompt — which previously had no such check (#2269).
+
+### Internal
+- `resolveSessionRange`/`resolveSessionRangeAsync` (`lib/wrap-steps/_git-range.js`) now log a warning
+  naming the stale or orphaned boundary whenever a recorded `lastWrapSha` or `launchSha` was given
+  but the session range still fell back to the trunk branch — previously silent, so an operator
+  debugging "why didn't the changelog-coverage gate engage for my session?" had no signal that a
+  downgrade happened. A project's genuine first wrap (nothing recorded at all) still logs nothing;
+  the two existing callers see no change to the resolver's return shape (#670).
+
+
 ## [5.40.0] - 2026-10-27
 
 ### Added
