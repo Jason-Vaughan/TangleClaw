@@ -1700,13 +1700,31 @@ function togglePermissionRequestsPanel() {
  * already decided or expired elsewhere first), surfaces `api.lastError` as a
  * toast — the same feedback every other mutate call in this file gives — so
  * a refused click is never silently indistinguishable from a slow one.
+ *
+ * Calls `api()` directly rather than the shared `apiMutate()`: the decide
+ * route is gated by `_requireOperatorWrite` (`lib/routes/_callers.js`),
+ * which on an OPEN (no-login) install additionally requires
+ * `X-TC-Open-Token` — a header `apiMutate()` never attaches, since no
+ * earlier write this file made ever reached an `_requireOperatorWrite`-gated
+ * route. Following the same `GET /api/auth/me` + `me.openInstallToken`
+ * pattern `public/ui.js`/`public/landing.js` already use at their own
+ * `_requireOperatorWrite` call sites, so a login-configured install (which
+ * has no such token) is unaffected — `me.openInstallToken` is simply absent
+ * there, and the header is left off.
  * @param {string} requestId
  * @param {string} decision - `'grant'` or `'refuse'`
  * @param {string} expectedScope
  * @returns {Promise<void>}
  */
 async function decidePermissionRequestFromUi(requestId, decision, expectedScope) {
-  const result = await apiMutate(`/api/permissions/requests/${encodeURIComponent(requestId)}/decide`, 'POST', { decision, expectedScope });
+  const me = await api('/api/auth/me');
+  const headers = { 'Content-Type': 'application/json' };
+  if (me && me.openInstallToken) headers['X-TC-Open-Token'] = me.openInstallToken;
+  const result = await api(`/api/permissions/requests/${encodeURIComponent(requestId)}/decide`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ decision, expectedScope })
+  });
   if (!result) {
     showBannerActionToast(`Couldn't ${decision === 'grant' ? 'grant' : 'refuse'} the permission request: ${api.lastError || 'the server rejected it'}`, true);
   }

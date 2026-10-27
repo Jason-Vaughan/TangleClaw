@@ -30,7 +30,7 @@ const REQUEST_A = {
  * holding their two elements, and recording `api`/`apiMutate`/toast stubs.
  * @param {object} [options]
  * @param {object[]} [options.permissionRequests] - Seeds `sessionState.permissionRequests`
- * @param {Function} [options.apiImpl] - `api()` stub; defaults to resolving `{requests: []}`
+ * @param {Function} [options.apiImpl] - `api(url, fetchOpts)` stub; defaults to resolving `{requests: []}`
  * @param {Function} [options.apiMutateImpl] - `apiMutate()` stub; defaults to resolving `{ok: true}`
  * @returns {object} `{doc, el, calls, toasts, sandbox}`
  */
@@ -47,9 +47,9 @@ function load(options = {}) {
     encodeURIComponent,
     sessionState: { permissionRequests: options.permissionRequests || [] },
     projectName: 'demo-project',
-    api: async (url) => {
-      calls.api.push(url);
-      return (options.apiImpl || (() => ({ requests: [] })))(url);
+    api: async (url, fetchOpts) => {
+      calls.api.push({ url, fetchOpts });
+      return (options.apiImpl || (() => ({ requests: [] })))(url, fetchOpts);
     },
     apiMutate: async (url, method, body) => {
       calls.apiMutate.push({ url, method, body });
@@ -163,34 +163,66 @@ describe('#2352 session page: pending-permissions chip + panel', () => {
   it('a successful decide refreshes the panel from the server and shows no toast', async () => {
     let served = [REQUEST_A];
     const { sandbox, calls, toasts } = load({
-      apiImpl: () => ({ requests: served }),
-      apiMutateImpl: (url, method, body) => {
-        assert.match(url, /\/api\/permissions\/requests\/perm_aaa111\/decide$/);
-        assert.equal(method, 'POST');
-        // Not assert.deepEqual: `body` is built inside the vm context, whose
-        // Object differs from this realm's — deepStrictEqual across realms
-        // never matches even on identical structure. Compare the two fields.
-        assert.equal(body.decision, 'grant');
-        assert.equal(body.expectedScope, 'repo-write');
-        served = []; // the server now reports it decided
-        return { ok: true, request: { ...REQUEST_A, state: 'granted' } };
+      apiImpl: (url, fetchOpts) => {
+        if (url === '/api/auth/me') return { openInstallToken: null };
+        if (/\/decide$/.test(url)) {
+          assert.equal(fetchOpts.method, 'POST');
+          const body = JSON.parse(fetchOpts.body);
+          assert.equal(body.decision, 'grant');
+          assert.equal(body.expectedScope, 'repo-write');
+          served = []; // the server now reports it decided
+          return { ok: true, request: { ...REQUEST_A, state: 'granted' } };
+        }
+        return { requests: served };
       }
     });
     await sandbox.decidePermissionRequestFromUi('perm_aaa111', 'grant', 'repo-write');
-    assert.equal(calls.apiMutate.length, 1);
-    assert.equal(calls.api.length, 1, 'refreshed via the same poll path after deciding');
+    // /api/auth/me, the decide POST, and pollPermissionRequests's own GET.
+    assert.equal(calls.api.length, 3, 'fetched the open-install token, decided, then refreshed via the same poll path');
     assert.equal(toasts.length, 0);
   });
 
   it('a failed decide shows a toast naming the server\'s error, and still refreshes', async () => {
     const { sandbox, calls, toasts } = load({
-      apiMutateImpl: () => { sandbox.api.lastError = 'already decided'; return null; }
+      apiImpl: (url) => {
+        if (url === '/api/auth/me') return { openInstallToken: null };
+        if (/\/decide$/.test(url)) { sandbox.api.lastError = 'already decided'; return null; }
+        return { requests: [] };
+      }
     });
     await sandbox.decidePermissionRequestFromUi('perm_aaa111', 'refuse', 'repo-write');
     assert.equal(toasts.length, 1);
     assert.equal(toasts[0].isError, true);
     assert.match(toasts[0].message, /refuse the permission request: already decided/);
-    assert.equal(calls.api.length, 1, 'still refreshes so the row\'s real state shows');
+    assert.equal(calls.api.length, 3, 'still fetched the token, decided, and refreshed so the row\'s real state shows');
+  });
+
+  it('attaches X-TC-Open-Token on the decide request when the install has one, so Grant/Refuse works on an open install (PRR-B, live-browser verification)', async () => {
+    const { sandbox, calls } = load({
+      apiImpl: (url) => {
+        if (url === '/api/auth/me') return { openInstallToken: 'tok_abc123' };
+        if (/\/decide$/.test(url)) return { ok: true, request: { ...REQUEST_A, state: 'granted' } };
+        return { requests: [] };
+      }
+    });
+    await sandbox.decidePermissionRequestFromUi('perm_aaa111', 'grant', 'repo-write');
+    const decideCall = calls.api.find((c) => /\/decide$/.test(c.url));
+    assert.ok(decideCall, 'the decide request was made');
+    assert.equal(decideCall.fetchOpts.headers['X-TC-Open-Token'], 'tok_abc123');
+  });
+
+  it('omits X-TC-Open-Token on an armed (login-configured) install, where /api/auth/me reports none', async () => {
+    const { sandbox, calls } = load({
+      apiImpl: (url) => {
+        if (url === '/api/auth/me') return { openInstallToken: null };
+        if (/\/decide$/.test(url)) return { ok: true, request: { ...REQUEST_A, state: 'granted' } };
+        return { requests: [] };
+      }
+    });
+    await sandbox.decidePermissionRequestFromUi('perm_aaa111', 'grant', 'repo-write');
+    const decideCall = calls.api.find((c) => /\/decide$/.test(c.url));
+    assert.ok(decideCall, 'the decide request was made');
+    assert.equal(decideCall.fetchOpts.headers['X-TC-Open-Token'], undefined);
   });
 
   it('pollPermissionRequests renders both the chip and an OPEN panel, but leaves a closed one alone', async () => {

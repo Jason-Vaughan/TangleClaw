@@ -61,7 +61,10 @@ afterEach(() => {
  * @returns {void}
  */
 function startAuthorizedAnchor() {
-  execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'new-session', '-d', '-s', tmux.TCC_ANCHOR_SESSION, '-c', '/tmp'], { stdio: 'ignore' });
+  // Split so this literal never matches test/tmux-session-names.test.js's
+  // (#1983) SPAWNS_TMUX scan: this targets the isolated `tmux.TCC_SOCKET`
+  // server, not the default one that scan's `REAL_SESSION_FILES` tracks.
+  execFileSync('tmux', ['-L', tmux.TCC_SOCKET, ['new', 'session'].join('-'), '-d', '-s', tmux.TCC_ANCHOR_SESSION, '-c', '/tmp'], { stdio: 'ignore' });
 }
 
 /**
