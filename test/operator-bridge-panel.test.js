@@ -358,6 +358,63 @@ describe('the Operator Bridge panel (#2031)', () => {
       assert.deepEqual(gateway.allowlist(), { ...IDS, dmChannelId: null, dmEnabled: false });
       assert.equal(await panel.act('nonsense'), 'unknown');
     });
+
+    const DM_ID = '400000000000000004';
+
+    it('refuses a DM channel id that is not a Discord id, then pins and turns on the DM surface, then turns it off (#2433)', async () => {
+      const wires = real(SIGNED_IN);
+      const { panel } = controller(wires);
+      await panel.load();
+      assert.equal(await panel.act('dm-allowlist', { dmChannelId: 'not-a-chat-id' }), 'blocked');
+      assert.match(panel.state.notice.text, /DM channel id must be the number Discord shows for it/);
+      assert.equal(gateway.allowlist(), null, 'the guild allowlist still is not set -- the DM check ran first and blocked before anything was sent');
+
+      await panel.act('allowlist', IDS);
+      assert.equal(await panel.act('dm-allowlist', { dmChannelId: DM_ID }), 'done');
+      assert.deepEqual(gateway.allowlist(), { ...IDS, dmChannelId: DM_ID, dmEnabled: true });
+      assert.match(panel.html(), /DM surface[\s\S]*channel 400000000000000004, <strong>on<\/strong>/);
+
+      assert.equal(await panel.act('dm-allowlist-off'), 'done');
+      assert.deepEqual(gateway.allowlist(), { ...IDS, dmChannelId: DM_ID, dmEnabled: false }, 'the pinned channel id is unchanged, only the switch moved');
+      assert.match(panel.html(), /DM surface[\s\S]*channel 400000000000000004, off/);
+    });
+
+    it('resets the guild and DM circuits independently, naming which surface in the confirmation (#2433)', async () => {
+      const wires = real(SIGNED_IN);
+      // A distinct randomId sequence: the default rand0001abcdef... pattern is
+      // deterministic per fresh panel, and this test's circuit-reset request
+      // ids share the shared store's idempotency table with every other
+      // test's own fresh-panel requests -- a same-decision collision on the
+      // first-generated id (rand0001abcdef) made a later, unrelated test's
+      // reset silently replay this one's instead of applying.
+      let n = 0;
+      const { panel, asked } = controller(wires, { randomId: () => `dm2433-${String(++n).padStart(4, '0')}` });
+      await panel.act('allowlist', IDS);
+      await panel.act('dm-allowlist', { dmChannelId: DM_ID });
+      await panel.load();
+      const atGuild = store.getDb().prepare(
+        "INSERT INTO bridge_outbound (idem_key, kind, notify_type, surface_kind, source_label, text, digest, state, created_at, updated_at) "
+        + "VALUES ('notify:operator-needed:panel-guild', 'notification', 'operator-needed', 'guild-channel', 'TangleClaw', 'x', ?, 'ready', ?, ?)"
+      ).run('a'.repeat(64), gateway._deps.now(), gateway._deps.now()).lastInsertRowid;
+      const atDm = store.getDb().prepare(
+        "INSERT INTO bridge_outbound (idem_key, kind, notify_type, surface_kind, source_label, text, digest, state, created_at, updated_at) "
+        + "VALUES ('notify:operator-needed:panel-dm', 'notification', 'operator-needed', 'bot-dm', 'TangleClaw', 'x', ?, 'ready', ?, ?)"
+      ).run('b'.repeat(64), gateway._deps.now(), gateway._deps.now()).lastInsertRowid;
+      bridgeStore.circuit.trip('chat-channel-missing', Number(atGuild), { at: gateway._deps.now() });
+      bridgeStore.circuit.trip('chat-permission-denied', Number(atDm), { at: gateway._deps.now() });
+      await panel.load();
+      const drawn = panel.html();
+      assert.match(drawn, /Configuration circuit \(guild channel\)[\s\S]*chat-channel-missing/);
+      assert.match(drawn, /Configuration circuit \(DM surface\)[\s\S]*chat-permission-denied/);
+
+      assert.equal(await panel.act('circuit-reset', { episodeId: bridgeStore.circuit.open('bot-dm').episodeId, decision: 'requeue', surfaceKind: 'bot-dm' }), 'done');
+      assert.match(asked.at(-1), /Reset the bot-dm circuit and put what it set aside back/);
+      assert.equal(bridgeStore.circuit.open('bot-dm'), null, 'the DM circuit is closed');
+      assert.ok(bridgeStore.circuit.open('guild-channel'), 'the guild circuit is untouched by resetting the DM one');
+      // Clean up the guild circuit too, so no later test in this shared store inherits it open.
+      await panel.act('circuit-reset', { episodeId: bridgeStore.circuit.open('guild-channel').episodeId, decision: 'requeue', surfaceKind: 'guild-channel' });
+      assert.equal(bridgeStore.circuit.open('guild-channel'), null);
+    });
   });
 
   describe('truthful status', () => {
@@ -370,10 +427,10 @@ describe('the Operator Bridge panel (#2031)', () => {
       assert.match(drawn, /Helper token[\s\S]*<strong>none<\/strong>/);
       assert.match(drawn, /Nothing is set aside\./);
       // Each allowlist input says what it is to someone who cannot see its placeholder.
-      for (const [id, name] of [['obAuthorId', 'Discord author id'], ['obSpaceId', 'Discord server id'], ['obChannelId', 'Discord channel id']]) {
+      for (const [id, name] of [['obAuthorId', 'Discord author id'], ['obSpaceId', 'Discord server id'], ['obChannelId', 'Discord channel id'], ['obDmChannelId', 'Discord DM channel id']]) {
         assert.match(drawn, new RegExp(`<input [^>]*id="${id}"[^>]*aria-label="${name}"`), `${id} is named "${name}"`);
       }
-      assert.equal((drawn.match(/<input /g) || []).length, 3, 'and there is no input without a name');
+      assert.equal((drawn.match(/<input /g) || []).length, 4, 'and there is no input without a name');
       assert.match(drawn, /data-bridge-action="primer-on" disabled/, 'the primer cannot be switched on while the bridge is off');
       // Enabling is refused by the server until the allowlist and a token exist, and the panel says why.
       assert.equal(await panel.act('enable'), 'failed');

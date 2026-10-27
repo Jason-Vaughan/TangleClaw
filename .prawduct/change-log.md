@@ -41,6 +41,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-27 — v5.40.0 W2-A Chunk 3: Operator Bridge DM surface panel, docs, and rollback (#2433 complete)
+
+<!-- prawduct: type=feature | scope=w2a-operator-bridge-dm-ingress -->
+
+- **#2433 (chunk 3 of 3, final):** The operator's global-settings panel gets a DM surface section (pin/enable, turn-off, pinned channel id) alongside the existing guild allowlist, and the configuration-circuit controls split into two independently resettable sub-sections — guild channel and DM surface — each passing its own `surfaceKind` through `operator/circuit/reset`. `docs/operator-bridge-helper.md` documents configuring and pinning the DM surface (both the helper's local config and the server-side allowlist must agree) and rolling it back alone (disabling DM without touching the guild channel, preserving DM routes/receipts, reconciling in-flight items before downgrade). This closes #2433: pinned DM ingress and source-bound replies now exist end to end — schema/inbound (chunk 1), per-destination outbound dispatch and failure isolation (chunk 2), and this operator-facing surface (chunk 3) — on one PR per Architect Ruling A475-W2A-R1. **Browser Check not completed:** the mandated Screens Isolation check (Rule #271 item 3) was attempted against an isolated scratch server but the Claude-in-Chrome browser extension would not connect; recorded as BLOCKED rather than skipped silently, with the user's explicit sign-off to proceed without it — see the build plan's Status section for the full account. The panel's logic remains covered by `node --test test/operator-bridge-panel.test.js` (jsdom-style lift), which is not a substitute for an actual rendered-browser check.
+
 ## 2026-10-27 — v5.40.0 W2-A Chunk 2: Operator Bridge per-destination outbound dispatch and failure isolation
 
 <!-- prawduct: type=feature | scope=w2a-operator-bridge-dm-ingress -->

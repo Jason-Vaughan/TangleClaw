@@ -173,6 +173,8 @@ describe('bridge API: the Master surface (#2031)', () => {
     // The true count: a disabled bridge's open routes are what the Master is there to close.
     assert.deepEqual(status.body, {
       enabled: false, masterGeneration: generation, proof: 'master-launch', scope: { kind: 'all' }, openRoutes: before, configurationCircuit: null,
+      // The DM surface's own circuit, additive beside the guild-only field above (#2433).
+      configurationCircuitDm: null,
       // No helper has reported in this file: the reading says so in as many words (#2272).
       discordGateway: { reading: 'never-reported', state: null, since: null, fatalCloseCode: null, reportedAt: null, sinceText: null, reportedAtText: null }
     });

@@ -108,6 +108,36 @@ describe('bridge helper: its commands (#2031)', () => {
     assert.equal(fs.readFileSync(file, 'utf8'), before, 'the config that passed still stands');
   });
 
+  it('configure carries the DM pair over from the config on disk when neither flag is given, unlike every other field (#2433)', async () => {
+    await configured();
+    const file = paths(home).config;
+    const DM_ID = '400000000000000004';
+    const base = ['--base-url', 'http://127.0.0.1:3102', '--author', IDS.author, '--guild', IDS.guild, '--channel', IDS.channel];
+
+    assert.equal(await main(['configure', ...base, '--dm-channel', DM_ID, '--dm-enabled', '--dm-disabled'], env()), EXIT.usage,
+      '--dm-enabled and --dm-disabled together is a usage error, before anything is written');
+    assert.equal(fs.existsSync(file), true, 'the earlier configured() write still stands, untouched');
+
+    assert.equal(await main(['configure', ...base, '--dm-channel', DM_ID], env()), EXIT.ok, 'pinned, left off');
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).dmChannelId, DM_ID);
+    assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).dmEnabled, false);
+
+    // A later call that repeats none of the DM flags carries the pinned id and the switch forward -- unlike pollSeconds, which this same call resets to its default.
+    assert.equal(await main(['configure', ...base], env()), EXIT.ok);
+    assert.deepEqual([JSON.parse(fs.readFileSync(file, 'utf8')).dmChannelId, JSON.parse(fs.readFileSync(file, 'utf8')).dmEnabled], [DM_ID, false]);
+
+    assert.equal(await main(['configure', ...base, '--dm-enabled'], env()), EXIT.ok, 'turning it on needs no channel id repeated');
+    assert.deepEqual([JSON.parse(fs.readFileSync(file, 'utf8')).dmChannelId, JSON.parse(fs.readFileSync(file, 'utf8')).dmEnabled], [DM_ID, true]);
+
+    assert.equal(await main(['configure', ...base, '--dm-disabled'], env()), EXIT.ok);
+    assert.deepEqual([JSON.parse(fs.readFileSync(file, 'utf8')).dmChannelId, JSON.parse(fs.readFileSync(file, 'utf8')).dmEnabled], [DM_ID, false], 'the pinned id survives being turned off');
+
+    // Repinning to a new channel and enabling in the same call both works at once.
+    const otherId = '400000000000000005';
+    assert.equal(await main(['configure', ...base, '--dm-channel', otherId, '--dm-enabled'], env()), EXIT.ok);
+    assert.deepEqual([JSON.parse(fs.readFileSync(file, 'utf8')).dmChannelId, JSON.parse(fs.readFileSync(file, 'utf8')).dmEnabled], [otherId, true]);
+  });
+
   it('set-secret reads the token from standard input, stores it, reads it back, and never prints it', async () => {
     assert.equal(await main(['set-secret', 'helper'], env({ stdin: Readable.from([`${HELPER_TOKEN}\n`]) })), EXIT.ok);
     assert.equal(await main(['set-secret', 'bot'], env({ stdin: Readable.from([BOT_TOKEN.slice(0, 20), `${BOT_TOKEN.slice(20)}\r\n`]) })), EXIT.ok);
