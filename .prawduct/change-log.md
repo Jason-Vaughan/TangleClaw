@@ -48,6 +48,22 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 - **#2141:** `operator-needed` Discord alerts now name the sender, priority, age and exchange id instead of a bare recipient-only sentence, and are suppressed for an opted-out recipient or one whose `coordinatorProject` has a live session — the same opt-out and coordinator-first suppression `work-blocked` already had (#2620). A `work-unblocked` recovery notice is now raised once its block notice is actually `delivered` to Discord — never while that notice is still queued, set aside, or was let go uncollected or withdrawn, and never when a newer block has already superseded the clearing (Architect Ruling A475-W1A-R1: it rides under `work-blocked`'s own admitted `notify_type` and retention in `bridge_outbound`, so no schema migration was needed).
 - **#2334:** Documented the Discord helper's periodic Gateway resume (`gateway-connecting` to `gateway-resumed` in about a quarter second, no `gateway-closed` line, no event lost) as Discord's own documented op 7 Reconnect, not an outage or a defect.
 
+## 2026-10-27 — v5.40.0 W1-B: update rebase-onto-tag and Medusa Bridge fail-closed
+
+<!-- prawduct: type=feature | scope=v540-w1b-2399-2354 -->
+
+- **#2399:** The in-app update now rebases a checkout's local commits onto the latest release tag instead of refusing outright, when the branch's fork point from `main` is reachable from that tag. A rebase conflict aborts cleanly and refuses with the conflicted files named; every other branch shape keeps the existing `wrong-ref` refusal.
+- **#2354:** An explicit `MEDUSA_BRIDGE_WS_URL` that the resolver refuses (unparseable, wrong scheme, a fragment, a non-loopback host) now fails closed — no session listener starts, and its status names the refused value and reason — instead of silently falling back to the default Bridge. A derived or unset WS URL is unaffected.
+
+Dispatch (mx_4d00fbbd / PM) named `lib/updater.js`, `routes/update.js`, `test/updater.test.js`, `test/medusa.test.js`; none exist in this repo. Corrected scope confirmed by PM (mx_0M9uk1K0QYRtpeWD): `lib/update-applier.js`, `lib/medusa.js`, `test/update-applier.test.js`, `test/api-medusa.test.js`. Critic also required touching `lib/medusa-listener.js` (new `WS_URL_REFUSED` code), `public/api-helper.js` and `public/update-beacon.js` (surfacing the new codes to the operator), `public/session.js` and two docs (`docs/configuration-reference.md`, `docs/adr/0010-one-update-mechanism.md`) to keep existing contract tests and documentation accurate.
+
+## 2026-10-27 — v5.40.0 W1-C: Master shared-doc notices and stale-coalescing fix
+
+<!-- prawduct: type=feature | scope=v540-w1c-2350-1084 -->
+
+- **#1084:** The Project Master now receives shared-doc change notices when it is listening and its configured scope covers the doc's group — best-effort, coalesced the same way a project session's notice is.
+- **#2350:** Coalescing an un-handled notice no longer hides a reader going silent forever: past a 10-minute staleness bound the next write sends anyway instead of coalescing, and a warning names the doc and session so the gap is visible before it reaches hours.
+
 ## 2026-10-26 — v5.39.0 W1-B: CI evidence and mandatory fragments
 
 <!-- prawduct: type=internal | scope=v539-w1b-2371-1220 -->

@@ -393,7 +393,27 @@ describe('lib/medusa — service layer', () => {
         });
         produced.add(r.code);
       }
+      // BRIDGE_WS_URL_REFUSED (#2354) has no (kind, ws) shape above that
+      // produces it — it fires on the resolver, before either transport is
+      // probed — so it needs its own call with an explicit, refused override.
+      medusa._setBridgeWsUrl('ws://192.168.1.50:3010');
+      const refused = await medusa.checkBridgeHealth({
+        fetchImpl: fetchImplThat('hissing'), connectImpl: connectImplThat(true)
+      });
+      produced.add(refused.code);
       assert.deepEqual([...produced].sort(), Object.values(medusa.BRIDGE_HEALTH_CODES).sort());
+    });
+
+    it('fails closed on an explicit, refused WS override rather than probing the default (#2354)', async () => {
+      medusa._setBridgeWsUrl('ws://192.168.1.50:3010');
+      const r = await medusa.checkBridgeHealth({
+        fetchImpl: fetchImplThat('hissing'), connectImpl: connectImplThat(true)
+      });
+      assert.equal(r.code, 'BRIDGE_WS_URL_REFUSED');
+      assert.equal(r.healthy, false);
+      assert.match(r.detail, /MEDUSA_BRIDGE_WS_URL/);
+      assert.match(r.detail, /192\.168\.1\.50/);
+      assert.match(r.detail, /no session listener will start/);
     });
 
     it('reads the WS half from the resolver, so an override moves the probe too', async () => {
@@ -511,6 +531,22 @@ describe('lib/medusa — service layer', () => {
       return seen;
     }
 
+    /**
+     * Start a listener and return the `startSession` result directly — for the
+     * explicit-override, fail-closed assertions (#2354), where there may be no
+     * socket factory call to observe at all.
+     * @param {string} sid - Unique session id.
+     * @returns {object} The `startSession` result.
+     */
+    function statusFor(sid) {
+      const status = medusa.startSession({
+        projectPath: tempDir, sessionId: sid, name: 'Ws Url',
+        wsFactory: (url) => new FakeWS(url)
+      });
+      medusa.stopSession(sid); // no-op when nothing started
+      return status;
+    }
+
     afterEach(() => {
       // Both no-arg: the WS seam defines `null` as "force derivation" and no
       // argument as "reset to the env value" — on a host that really sets
@@ -550,22 +586,37 @@ describe('lib/medusa — service layer', () => {
       assert.equal(seen, 'ws://localhost:8888');
     });
 
-    it('refuses a non-loopback WS override and uses the default — the WS path is unauthenticated', () => {
+    it('fails closed on a non-loopback explicit WS override — the WS path is unauthenticated (#2354)', () => {
+      // An explicit, refused override no longer falls back to the default
+      // Bridge: on a rehearsal install that set the variable specifically to
+      // stay off the live Bridge, silently redirecting there is the hazard
+      // #2354 exists to close.
+      const before = medusa.activeListenerCount();
       medusa._setBridgeWsUrl('ws://192.168.1.50:3010');
-      assert.equal(urlFor('ws-url-remote'), 'ws://localhost:3010');
+      const status = statusFor('ws-url-remote');
+      assert.equal(status.state, 'off');
+      assert.equal(status.lastErrorCode, 'WS_URL_REFUSED');
+      assert.match(status.lastError, /MEDUSA_BRIDGE_WS_URL/);
+      assert.match(status.lastError, /192\.168\.1\.50/, 'the rejected value itself is named, not just the variable');
+      assert.match(status.lastError, /non-loopback/);
+      assert.equal(medusa.activeListenerCount(), before, 'no listener should have been created');
     });
 
     it('refuses to DERIVE a non-loopback WS URL from a non-loopback HTTP base', () => {
       // The HTTP side accepts a remote base; the WS side must not inherit it,
-      // which is the one place the two gates are deliberately asymmetric.
+      // which is the one place the two gates are deliberately asymmetric. Not
+      // an explicit WS override, so the unchanged fallback-to-default applies.
       medusa._setBridgeHttpUrl('http://medusa.example.com:3009');
       assert.equal(urlFor('ws-url-remote-derived'), 'ws://localhost:3010');
     });
 
-    it('falls back rather than throwing when a gate holds an unparseable URL', () => {
+    it('fails closed when the explicit WS override is unparseable (#2354)', () => {
       medusa._setBridgeWsUrl('not-a-url');
-      assert.equal(urlFor('ws-url-garbage'), 'ws://localhost:3010');
-      medusa._setBridgeWsUrl(null);
+      assert.equal(statusFor('ws-url-garbage').lastErrorCode, 'WS_URL_REFUSED');
+    });
+
+    it('falls back rather than throwing when the HTTP-derived gate holds an unparseable URL', () => {
+      // Not an explicit WS override, so this stays on the unchanged fallback path.
       medusa._setBridgeHttpUrl('also-not-a-url');
       assert.equal(urlFor('ws-url-garbage-http'), 'ws://localhost:3010');
     });
@@ -586,11 +637,20 @@ describe('lib/medusa — service layer', () => {
       ['a bare trailing hash', 'ws', 'ws://localhost:3010/#'],
       ['a non-ws scheme', 'ws', 'ftp://localhost:3010']
     ]) {
-      it(`refuses ${label} rather than retrying a URL the WebSocket client rejects`, () => {
-        if (gate === 'ws') medusa._setBridgeWsUrl(value);
-        else medusa._setBridgeHttpUrl(value);
-        assert.equal(urlFor(`ws-url-reject-${label.replace(/\W+/g, '-')}`), 'ws://localhost:3010');
-      });
+      const sid = `ws-url-reject-${label.replace(/\W+/g, '-')}`;
+      if (gate === 'ws') {
+        // An explicit WS override carrying one of these fails closed (#2354) —
+        // it never reaches the retry-loop hazard the derived path still guards.
+        it(`fails closed on an explicit WS override carrying ${label} (#2354)`, () => {
+          medusa._setBridgeWsUrl(value);
+          assert.equal(statusFor(sid).lastErrorCode, 'WS_URL_REFUSED');
+        });
+      } else {
+        it(`refuses ${label} rather than retrying a derived URL the WebSocket client rejects`, () => {
+          medusa._setBridgeHttpUrl(value);
+          assert.equal(urlFor(sid), 'ws://localhost:3010');
+        });
+      }
     }
 
     it('the members above really are rejected by the WebSocket client', () => {
@@ -622,17 +682,16 @@ describe('lib/medusa — service layer', () => {
     }
 
     it('names the rejected value in the log, exactly once for repeated resolutions', () => {
-      // The refusal is otherwise INVISIBLE: getStatus() reports a healthy
-      // listener on the default URL, indistinguishable from an unconfigured
-      // install, so this line is the whole of the operator's feedback. Two
-      // resolutions with no seam call between them — the seams clear the
-      // once-per-value cache — so a flood regression shows up as two lines.
+      // The fail-closed status IS the operator's feedback now (#2354); this
+      // line is the server-side trail alongside it. Two resolutions with no
+      // seam call between them — the seams clear the once-per-value cache —
+      // so a flood regression shows up as two lines.
       medusa._setBridgeWsUrl('ws://192.168.1.50:3010');
       const lines = captureLog(() => {
-        urlFor('ws-url-log-a');
-        urlFor('ws-url-log-b');
+        statusFor('ws-url-log-a');
+        statusFor('ws-url-log-b');
       });
-      const refusals = lines.filter((l) => l.includes('Refusing a Medusa Bridge WS URL'));
+      const refusals = lines.filter((l) => l.includes('Refusing an explicit Medusa Bridge WS URL'));
       assert.equal(refusals.length, 1, `expected one refusal line, got ${refusals.length}`);
       assert.match(refusals[0], /192\.168\.1\.50/);
       assert.match(refusals[0], /MEDUSA_BRIDGE_WS_URL/);
@@ -642,11 +701,11 @@ describe('lib/medusa — service layer', () => {
     it('a different bad value gets its own line — the cache keys on the value, not on having reported', () => {
       const lines = captureLog(() => {
         medusa._setBridgeWsUrl('ws://192.168.1.50:3010');
-        urlFor('ws-url-log-c');
+        statusFor('ws-url-log-c');
         medusa._setBridgeWsUrl('ftp://localhost:3010');
-        urlFor('ws-url-log-d');
+        statusFor('ws-url-log-d');
       });
-      const refusals = lines.filter((l) => l.includes('Refusing a Medusa Bridge WS URL'));
+      const refusals = lines.filter((l) => l.includes('Refusing an explicit Medusa Bridge WS URL'));
       assert.equal(refusals.length, 2);
       assert.match(refusals[1], /bad-scheme/);
     });
@@ -664,13 +723,13 @@ describe('lib/medusa — service layer', () => {
       assert.match(refusals[0], /non-loopback-http-base/);
     });
 
-    it('reads the parsed hostname, so userinfo and suffix bypasses fail closed', () => {
+    it('reads the parsed hostname, so userinfo and suffix bypasses fail closed (#2354)', () => {
       // Both would be ACCEPTED by a naive substring or startsWith check on the
       // raw string, and both point at a remote host on an unauthenticated path.
       medusa._setBridgeWsUrl('ws://localhost@evil.com:3010');
-      assert.equal(urlFor('ws-url-userinfo'), 'ws://localhost:3010');
+      assert.equal(statusFor('ws-url-userinfo').lastErrorCode, 'WS_URL_REFUSED');
       medusa._setBridgeWsUrl('ws://localhost.evil.com:3010');
-      assert.equal(urlFor('ws-url-suffix'), 'ws://localhost:3010');
+      assert.equal(statusFor('ws-url-suffix').lastErrorCode, 'WS_URL_REFUSED');
     });
 
     it('maps an https base to wss, deriving from its explicit port', () => {
@@ -926,6 +985,55 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
     assert.equal(data.workspaceId, before.workspaceId);
     // No second register frame — the existing socket was reused, not replaced.
     assert.equal(fake.sent.filter((f) => JSON.parse(f).type === 'register').length, 1);
+  });
+
+  it('toggle {enabled:true} surfaces WS_URL_REFUSED, not a generic off, on an explicit refused WS override (#2354)', async () => {
+    // startSession() returns the refusal directly, but the route re-derives
+    // its response from getStatus() right after (server.js) — this pins that
+    // the SAME refusal survives that re-fetch rather than reading back a
+    // bare, unexplained `off`.
+    medusa._setBridgeWsUrl('ws://192.168.1.50:3010');
+    try {
+      const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: true }, dashboard());
+      assert.equal(status, 200);
+      assert.equal(data.state, 'off');
+      assert.equal(data.lastErrorCode, 'WS_URL_REFUSED');
+      assert.match(data.lastError, /MEDUSA_BRIDGE_WS_URL/);
+      assert.match(data.lastError, /192\.168\.1\.50/, 'the rejected value itself is named');
+      assert.match(data.lastError, /non-loopback/);
+      // The health preflight the toggle also runs must agree, not report a
+      // healthy default Bridge while no listener started.
+      assert.equal(data.bridge.code, 'BRIDGE_WS_URL_REFUSED');
+      assert.equal(data.bridge.healthy, false);
+      assert.equal(medusa.activeListenerCount(), 0, 'no listener was created');
+    } finally {
+      medusa._setBridgeWsUrl();
+    }
+  });
+
+  it('a later GET status poll still reports the refusal, not a bare off (#2354)', async () => {
+    medusa._setBridgeWsUrl('ws://192.168.1.50:3010');
+    try {
+      medusa.startSession({ projectPath: project.path, sessionId: active.id, name: project.name });
+      const { status, data } = await req('/api/sessions/switchboard/medusa/status', 'GET');
+      assert.equal(status, 200);
+      assert.equal(data.state, 'off');
+      assert.equal(data.lastErrorCode, 'WS_URL_REFUSED');
+      assert.match(data.lastError, /MEDUSA_BRIDGE_WS_URL/);
+      assert.match(data.lastError, /192\.168\.1\.50/, 'the rejected value itself is named');
+    } finally {
+      medusa._setBridgeWsUrl();
+    }
+  });
+
+  it('an explicit toggle {enabled:false} clears a recorded refusal back to a clean off (#2354)', async () => {
+    medusa._setBridgeWsUrl('ws://192.168.1.50:3010');
+    medusa.startSession({ projectPath: project.path, sessionId: active.id, name: project.name });
+    assert.equal(medusa.getStatus(active.id).lastErrorCode, 'WS_URL_REFUSED');
+    medusa._setBridgeWsUrl();
+    const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: false }, dashboard());
+    assert.equal(status, 200);
+    assert.deepEqual(data, { state: 'off', listeningSince: null, workspaceId: null, unread: 0, lastError: null, lastErrorCode: null });
   });
 
   it('toggle with no body flips off→on (starts a listener)', async () => {
