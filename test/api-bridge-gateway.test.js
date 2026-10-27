@@ -6,7 +6,7 @@
 // to the helper; the Hub and the Master pane are stand-ins. Three callers,
 // three proofs, and none of them opens another's door.
 
-const { describe, it, before, after, beforeEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -3870,7 +3870,7 @@ describe('bridge API: the round trip (#2031)', () => {
 
     it('a signed-in operator\'s changes are audited with who made them, and never with a secret', async () => {
       const status = await asOperator('GET', '/api/bridge/operator/status');
-      assert.deepEqual([status.status, status.body.enabled, status.body.allowlist], [200, true, ALLOWED]);
+      assert.deepEqual([status.status, status.body.enabled, status.body.allowlist], [200, true, { ...ALLOWED, dmChannelId: null, dmEnabled: false }]);
       assert.deepEqual(status.body.droppedArrivals, { count: 0, recent: [] });
       assert.ok(!JSON.stringify(status.body).includes(helperToken));
 
@@ -3954,6 +3954,99 @@ describe('bridge API: the round trip (#2031)', () => {
       }
       const closed = await masterWrites(routeId, 'close', { expectedVersion: bridgeStore.routes.get(routeId).version });
       assert.equal(closed.body.route.state, 'closed', 'a held message can still be let go while the bridge is off');
+    });
+  });
+
+  describe('the second pinned ingress surface, surface_kind (#2433)', () => {
+    const DM_ID = 'dm-chan-1';
+
+    /**
+     * Pin the DM surface through the operator's own route.
+     * @param {boolean} enabled - Whether to turn it on.
+     * @param {string} [dmChannelId] - The DM channel id to pin; defaults to {@link DM_ID}.
+     * @returns {Promise<{status: number, body: object}>}
+     */
+    function setDmAllowlist(enabled, dmChannelId = DM_ID) {
+      return asOperator('POST', '/api/bridge/operator/dm-allowlist', { body: { dmChannelId, dmEnabled: enabled } });
+    }
+
+    afterEach(async () => {
+      await setDmAllowlist(false, null);
+    });
+
+    it('records the pinned DM channel and switch, independent of the guild allowlist', async () => {
+      assert.equal((await asOperator('POST', '/api/bridge/operator/dm-allowlist', { body: { dmEnabled: true } })).status, 400, 'no channel id of its own and none on file');
+      assert.equal((await asOperator('POST', '/api/bridge/operator/dm-allowlist', { body: { dmChannelId: 'not a chat id!', dmEnabled: true } })).body.code, 'BAD_ALLOWLIST', 'not a chat id');
+      assert.deepEqual((await setDmAllowlist(false)).body, { allowlist: { ...ALLOWED, dmChannelId: DM_ID, dmEnabled: false } }, 'pinned, still off');
+      assert.equal((await asOperator('POST', '/api/bridge/operator/dm-allowlist', { body: { dmEnabled: true } })).status, 200, 'enabling with none given falls back to the one already on file');
+      assert.deepEqual((await setDmAllowlist(true)).body, { allowlist: { ...ALLOWED, dmChannelId: DM_ID, dmEnabled: true } });
+      assert.deepEqual(gateway.allowlist(), { ...ALLOWED, dmChannelId: DM_ID, dmEnabled: true });
+    });
+
+    it('accepts a message on the pinned DM channel from the pinned author once the surface is on, tagged bot-dm', async () => {
+      await setDmAllowlist(true);
+      const externalId = `dm${++seq}`;
+      const accepted = await call('POST', '/api/bridge/helper/inbound', {
+        headers: asHelper(), body: { externalId, authorId: ALLOWED.authorId, spaceId: DM_ID, channelId: DM_ID, text: 'a DM to the bridge' }
+      });
+      assert.equal(accepted.status, 202, JSON.stringify(accepted.body));
+      const row = bridgeStore.routes.get(accepted.body.routeId);
+      assert.deepEqual([row.context.spaceId, row.context.channelId, row.surfaceKind], [DM_ID, DM_ID, 'bot-dm']);
+    });
+
+    it('refuses the same DM channel and author while the surface is off, and refuses the wrong author on the pinned DM channel', async () => {
+      const off = await call('POST', '/api/bridge/helper/inbound', {
+        headers: asHelper(), body: { externalId: `dm${++seq}`, authorId: ALLOWED.authorId, spaceId: DM_ID, channelId: DM_ID, text: 'nobody pinned me yet' }
+      });
+      assert.deepEqual([off.status, off.body.code], [403, 'NOT_ALLOWLISTED']);
+
+      await setDmAllowlist(true);
+      const wrongAuthor = await call('POST', '/api/bridge/helper/inbound', {
+        headers: asHelper(), body: { externalId: `dm${++seq}`, authorId: 'someone-else', spaceId: DM_ID, channelId: DM_ID, text: 'let me in' }
+      });
+      assert.deepEqual([wrongAuthor.status, wrongAuthor.body.code], [403, 'NOT_ALLOWLISTED']);
+    });
+
+    it('never lets a DM-surface item fall back to the guild channel, nor the reverse (routes keep the surface they arrived on)', async () => {
+      await setDmAllowlist(true);
+      const guild = await operatorSays(`m${++seq}`, 'from the guild');
+      const dmAccepted = await call('POST', '/api/bridge/helper/inbound', {
+        headers: asHelper(), body: { externalId: `dm${++seq}`, authorId: ALLOWED.authorId, spaceId: DM_ID, channelId: DM_ID, text: '@master from the DM' }
+      });
+      assert.equal(dmAccepted.status, 202);
+      const guildRoute = bridgeStore.routes.get(guild.body.routeId);
+      const dmRoute = bridgeStore.routes.get(dmAccepted.body.routeId);
+      assert.deepEqual([guildRoute.surfaceKind, dmRoute.surfaceKind], ['guild-channel', 'bot-dm']);
+    });
+
+    it('keys the inbound rate limit by surface, not just caller, so a flood on one cannot spend the other\'s budget', async () => {
+      await setDmAllowlist(true);
+      const caller = { tokenId: 'tok-dm-test' };
+      const key = bridgeApi.RATE_LIMITS.inbound.key;
+      assert.equal(key(caller, { channelId: DM_ID }), 'inbound:tok-dm-test:dm');
+      assert.equal(key(caller, { channelId: ALLOWED.channelId }), 'inbound:tok-dm-test:guild');
+      assert.equal(key(caller, {}), 'inbound:tok-dm-test:guild', 'no channel id reads as guild -- no more permissive than before the DM surface existed');
+      assert.equal(key(caller, undefined), 'inbound:tok-dm-test:guild');
+      await setDmAllowlist(false, null);
+      // Off: the DM channel id is nobody's pinned channel, so it reads as guild too.
+      assert.equal(key(caller, { channelId: DM_ID }), 'inbound:tok-dm-test:guild', 'the surface must be enabled, not merely pinned, to key separately');
+    });
+
+    it('exposes the DM surface\'s own open episode additively at both the operator and Master status routes, leaving configurationCircuit unchanged', async () => {
+      const beforeOp = await asOperator('GET', '/api/bridge/operator/status');
+      const beforeMaster = await call('GET', '/api/bridge/master/status', { headers: asMaster() });
+      assert.deepEqual([beforeOp.body.configurationCircuitDm, beforeMaster.body.configurationCircuitDm], [null, null], 'nothing open yet');
+      const dmOutboundId = Number(store.getDb().prepare(
+        "INSERT INTO bridge_outbound (idem_key, kind, notify_type, surface_kind, source_label, text, digest, state, created_at, updated_at) "
+        + "VALUES (?, 'notification', 'operator-needed', 'bot-dm', 'TangleClaw', 'x', ?, 'ready', ?, ?)"
+      ).run(`notify:operator-needed:dm-circuit-${++seq}`, bridgeStore.digest('x'), gateway._deps.now(), gateway._deps.now()).lastInsertRowid);
+      bridgeStore.circuit.trip('chat-channel-missing', dmOutboundId, { at: gateway._deps.now() });
+      const afterOp = await asOperator('GET', '/api/bridge/operator/status');
+      const afterMaster = await call('GET', '/api/bridge/master/status', { headers: asMaster() });
+      for (const body of [afterOp.body, afterMaster.body]) {
+        assert.deepEqual([body.configurationCircuitDm.reason, body.configurationCircuitDm.outboundId], ['chat-channel-missing', dmOutboundId]);
+        assert.equal(body.configurationCircuit, null, 'the guild surface has no episode of its own -- unaffected, same shape as before #2433');
+      }
     });
   });
 });

@@ -615,7 +615,7 @@ describe('bridge helper: the relay against the real server (#2031)', () => {
       const two = await answered('second');
       discord.script.push({ status: 403, body: { code: 50013 } });
       const relay = outbound();
-      assert.deepEqual(await relay.pass(), { ok: false, posted: 0, acked: 0, held: 0 });
+      assert.deepEqual(await relay.pass(), { ok: true, posted: 0, acked: 0, held: 0 });
       assert.deepEqual(discord.posts, [], 'the second was not tried');
       assert.deepEqual([atBridge(one.outboundId)[0], bridgeStore.outbound.get(one.outboundId).blockCode, atBridge(two.outboundId)[0]],
         ['blocked', 'chat-permission-denied', 'ready']);
@@ -653,7 +653,7 @@ describe('bridge helper: the relay against the real server (#2031)', () => {
     it('a 403 with no code is the bot not being allowed: it opens the circuit', async () => {
       const one = await answered('first');
       discord.script.push({ status: 403, body: {} });
-      assert.deepEqual(await outbound().pass(), { ok: false, posted: 0, acked: 0, held: 0 });
+      assert.deepEqual(await outbound().pass(), { ok: true, posted: 0, acked: 0, held: 0 });
       assert.deepEqual([atBridge(one.outboundId)[0], bridgeStore.outbound.get(one.outboundId).blockCode, bridgeStore.circuit.open().reason],
         ['blocked', 'chat-permission-denied', 'chat-permission-denied']);
       assert.deepEqual(discord.posts, []);
@@ -678,7 +678,7 @@ describe('bridge helper: the relay against the real server (#2031)', () => {
       const gone = await answered('into the void');
       discord.script.push({ status: 404, body: {} }, { status: 404, body: {} });
       const calls = discord.calls();
-      assert.deepEqual(await outbound().pass(), { ok: false, posted: 0, acked: 0, held: 0 });
+      assert.deepEqual(await outbound().pass(), { ok: true, posted: 0, acked: 0, held: 0 });
       assert.equal(discord.calls() - calls, 2);
       assert.deepEqual([atBridge(gone.outboundId)[0], bridgeStore.outbound.get(gone.outboundId).blockCode, bridgeStore.circuit.open().reason],
         ['blocked', 'chat-channel-missing', 'chat-channel-missing']);
@@ -693,7 +693,7 @@ describe('bridge helper: the relay against the real server (#2031)', () => {
       }).outboundId;
       discord.script.push({ status: 404, body: {} });
       const calls = discord.calls();
-      assert.deepEqual(await outbound().pass(), { ok: false, posted: 0, acked: 0, held: 0 });
+      assert.deepEqual(await outbound().pass(), { ok: true, posted: 0, acked: 0, held: 0 });
       assert.equal(discord.calls() - calls, 1, 'there is no reply target to drop, so nothing to retry');
       assert.deepEqual([atBridge(id)[0], bridgeStore.outbound.get(id).blockCode, bridgeStore.circuit.open().reason], ['blocked', 'chat-channel-missing', 'chat-channel-missing']);
     });
@@ -1169,6 +1169,118 @@ describe('bridge helper: the relay against the real server (#2031)', () => {
     });
   });
 
+  describe('the DM surface: per-destination dispatch and failure isolation (#2433)', () => {
+    const DM_ID = '300000000000000099';
+
+    /**
+     * A DM MESSAGE_CREATE: no `guild_id` at all, on the pinned DM channel.
+     * @param {string} content - The text.
+     * @param {object} [over] - Overrides.
+     * @returns {object}
+     */
+    function dmMessage(content, over = {}) {
+      return operatorMessage(content, { guild_id: undefined, channel_id: DM_ID, ...over });
+    }
+
+    /**
+     * The helper's DM-aware inbound handler.
+     * @returns {Function}
+     */
+    function dmInbound() {
+      return createInbound({ allow: { ...IDS, dmChannelId: DM_ID, dmEnabled: true }, bridge, rest: restClient(), log, sleep: async () => {} });
+    }
+
+    /**
+     * Pin and enable the DM surface server-side.
+     * @param {boolean} [enabled] - Whether to turn it on.
+     * @returns {Promise<void>}
+     */
+    async function setDmAllowlist(enabled = true) {
+      assert.equal((await asOperator('POST', '/api/bridge/operator/dm-allowlist', { body: { dmChannelId: DM_ID, dmEnabled: enabled } })).status, 200);
+    }
+
+    /**
+     * The operator writes a DM, the helper hands it over, and the Master routes it to itself and answers.
+     * @param {string} text - The Master's answer.
+     * @returns {Promise<{routeId: string, outboundId: number}>}
+     */
+    async function dmAnswered(text) {
+      const message = dmMessage(`dm question ${++seq}`);
+      assert.equal(await dmInbound()(message, { selfId: BOT_ID }), 'inbound-accepted');
+      const route = bridgeStore.routes.getByExternalId(message.id);
+      assert.equal(route.surfaceKind, 'bot-dm');
+      const version = await masterTakesIt(route.routeId);
+      const res = await fetch(`${origin}/api/bridge/master/routes/${route.routeId}/answer`, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-tangleclaw-bridge-credential': masterCredential },
+        body: JSON.stringify({ requestId: `req-dm-answer-${seq}-0000`, expectedVersion: version, text })
+      });
+      assert.equal(res.status, 200, JSON.stringify(await res.clone().json()));
+      const item = store.getDb().prepare("SELECT outbound_id FROM bridge_outbound WHERE route_id = ? AND kind = 'reply'").get(route.routeId);
+      return { routeId: route.routeId, outboundId: item.outbound_id };
+    }
+
+    it('posts a DM-surface reply to the pinned DM channel, not the guild channel', async () => {
+      await setDmAllowlist(true);
+      const { outboundId } = await dmAnswered('a DM answer');
+      const relay = outbound({ dmChannelId: DM_ID });
+      assert.deepEqual(await relay.pass(), { ok: true, posted: 1, acked: 1, held: 0 });
+      assert.deepEqual([discord.posts[0].channelId, atBridge(outboundId)[0]], [DM_ID, 'delivered']);
+    });
+
+    it('never posts a DM item whose destination the helper has not itself verified (#2433)', async () => {
+      await setDmAllowlist(true);
+      const { outboundId } = await dmAnswered('an answer with no local DM pin');
+      // No dmChannelId passed: this run never verified a DM channel locally,
+      // even though the bridge itself is happy to hand the item over.
+      const relay = outbound();
+      assert.deepEqual(await relay.pass(), { ok: true, posted: 0, acked: 0, held: 0 });
+      assert.equal(discord.posts.length, 0, 'nothing was posted on the bridge\'s say-so alone');
+      assert.ok(logged().includes('outbound-foreign-channel'));
+      assert.equal(bridgeStore.outbound.get(outboundId).state, 'ready', 'left for a run that has actually verified the DM pin');
+    });
+
+    it('never posts a DM item to a destination that disagrees with the helper\'s own verified pin (#2433)', async () => {
+      await setDmAllowlist(true);
+      const { outboundId } = await dmAnswered('an answer naming a channel this run never pinned');
+      // The bridge named DM_ID; this run verified a DIFFERENT DM channel.
+      const relay = outbound({ dmChannelId: '300000000000000077' });
+      assert.deepEqual(await relay.pass(), { ok: true, posted: 0, acked: 0, held: 0 });
+      assert.equal(discord.posts.length, 0);
+      assert.ok(logged().includes('outbound-foreign-channel'));
+      assert.equal(bridgeStore.outbound.get(outboundId).state, 'ready');
+    });
+
+    it('a DM delivery failure does not stop a concurrently queued guild item, and the reverse', async () => {
+      await setDmAllowlist(true);
+      // The DM item is enqueued first (lower outbound_id, claimed and posted
+      // first) so the one scripted failure answers its post, not the guild
+      // item's -- items are posted in outbound_id order.
+      const { outboundId: dmId } = await dmAnswered('a DM answer that will fail');
+      const guildText = `notice guild ${++seq}`;
+      const guildId = bridgeStore.outbound.enqueue({
+        idemKey: `notify:operator-needed:guild-${seq}`, kind: 'notification', notifyType: 'operator-needed', sourceLabel: 'TangleClaw', text: guildText, digest: bridgeStore.digest(guildText)
+      }).outboundId;
+      // The DM channel is gone; the guild channel is fine.
+      discord.script.push({ status: 404, body: { code: 10003 } });
+      const relay = outbound({ dmChannelId: DM_ID });
+      const result = await relay.pass();
+      assert.equal(result.acked, 1, 'the guild item still got through');
+      assert.deepEqual(atBridge(guildId), ['delivered', String(discord.posts.find((p) => p.channelId === IDS.channelId).id)]);
+      assert.equal(bridgeStore.outbound.get(dmId).state, 'blocked', 'the DM item alone is set aside');
+      assert.equal(bridgeStore.circuit.open('bot-dm').reason, 'chat-channel-missing');
+      assert.equal(bridgeStore.circuit.open('guild-channel'), null, 'the guild surface has no episode of its own');
+    });
+
+    it('disabling the DM surface holds its ready items for reconciliation; it never reposts them to the guild channel', async () => {
+      await setDmAllowlist(true);
+      const { outboundId } = await dmAnswered('a DM answer, about to be held');
+      await setDmAllowlist(false);
+      const relay = outbound();
+      assert.deepEqual(await relay.pass(), { ok: true, posted: 0, acked: 0, held: 0 }, 'nothing of the disabled surface is handed over');
+      assert.deepEqual([bridgeStore.outbound.get(outboundId).state, discord.posts.length], ['ready', 0], 'held exactly as it was, not posted anywhere');
+    });
+  });
+
   describe('an acknowledgement the bridge does not apply', () => {
     it('is not asked again, and does not hold up the next item', async () => {
       const notice = (n) => bridgeStore.outbound.enqueue({
@@ -1279,6 +1391,36 @@ describe('bridge helper: the relay against the real server (#2031)', () => {
       await bridge.fail(id, item.leaseId, 'chat-channel-missing', [], 1);
       await failing({}, ['FAIL bridge-circuit: configuration-circuit-open']);
     });
+
+    const DM_ID = '300000000000000099';
+
+    it('checks the pinned DM channel only when the DM surface is enabled, and refuses one that is not a usable DM (#2433)', async () => {
+      discord.reads.channelsById[DM_ID] = [200, { id: DM_ID, guild_id: null, type: 1, recipients: [{ id: IDS.authorId }] }];
+      const { code, lines } = await preflight({ ids: { dmChannelId: DM_ID, dmEnabled: true } });
+      assert.equal(code, EXIT.ok, lines.join('\n'));
+      assert.ok(lines.map((l) => l.replace(/\s+/g, ' ')).includes('ok discord-dm-channel'));
+      delete discord.reads.channelsById[DM_ID];
+    });
+
+    it('is not asked at all when the DM surface is off, even with a channel id on file', async () => {
+      const { code, lines } = await preflight({ ids: { dmChannelId: DM_ID } });
+      assert.equal(code, EXIT.ok, lines.join('\n'));
+      assert.ok(!lines.some((l) => l.includes('discord-dm-channel')), 'off means unasked, not skipped-and-shown');
+    });
+
+    it('fails on a pinned DM channel that is not a DM, is in a guild, or answers for someone else', async () => {
+      const failingDm = async (channel, expected) => {
+        bridgeApi._resetRateLimits();
+        discord.reads.channelsById[DM_ID] = channel;
+        const { code, lines } = await preflight({ ids: { dmChannelId: DM_ID, dmEnabled: true } });
+        assert.equal(code, EXIT.failed, expected);
+        assert.ok(lines.map((l) => l.replace(/\s+/g, ' ')).includes(expected), lines.join(' | '));
+      };
+      await failingDm([200, { id: DM_ID, guild_id: null, type: 0, recipients: [{ id: IDS.authorId }] }], 'FAIL discord-dm-channel: dm-channel-not-a-dm');
+      await failingDm([200, { id: DM_ID, guild_id: '200000000000000002', type: 1, recipients: [{ id: IDS.authorId }] }], 'FAIL discord-dm-channel: dm-channel-in-a-guild');
+      await failingDm([200, { id: DM_ID, guild_id: null, type: 1, recipients: [{ id: '100000000000000099' }] }], 'FAIL discord-dm-channel: dm-channel-wrong-recipient');
+      delete discord.reads.channelsById[DM_ID];
+    });
   });
 
   describe('the helper process, end to end', () => {
@@ -1371,6 +1513,47 @@ describe('bridge helper: the relay against the real server (#2031)', () => {
         ['helper-start', 'inbound-accepted', 'outbound-posted', 'outbound-acked', 'helper-stop']);
       const everything = lines.join('\n');
       for (const secret of [BOT_TOKEN, helperToken, 'fleet', 'sessions', 'let me in', '100000000000000099']) assert.ok(!everything.includes(secret), secret);
+    });
+
+    it('a DM channel Discord cannot confirm at startup (403/404/network) disables the DM surface alone, never the whole helper, and still gives the lock back (#2433)', async () => {
+      const home = path.join(tmpDir, `home-${++seq}`);
+      const DM_ID = '300000000000000099';
+      writeConfig(paths(home).config, { baseUrl: origin, ...IDS, dmChannelId: DM_ID, dmEnabled: true, pollSeconds: 5 });
+      discord.reads.channelsById[DM_ID] = [403, { code: 50001 }];
+      const ws = fakeWebSocket();
+      const lines = [];
+      const sleeps = [];
+      let stop;
+      const exit = main(['run'], {
+        home, repoDir: path.join(__dirname, '..'), nodePath: process.execPath, uid: 501, pid: process.pid,
+        out: () => {}, errLine: (line) => lines.push(line), stdin: null, launchctl: async () => 0,
+        onStop: (fn) => { stop = fn; },
+        secrets: { readSecret: async (name) => ({ bot: BOT_TOKEN, helper: helperToken }[name]) },
+        WebSocket: ws.WebSocket, discordApi: discord.api,
+        isAlive: () => false,
+        timers: { setTimeout: (resolve, ms) => sleeps.push({ ms, resolve }), clearTimeout: () => {} }
+      });
+
+      // The thrown DM check does not stop the guild surface from starting.
+      const socket = await until(() => ws.sockets[0], 'the Gateway connection');
+      socket.receive({ op: OP.HELLO, d: { heartbeat_interval: 40000 } });
+      socket.receive({ op: OP.DISPATCH, t: 'READY', s: 1, d: { session_id: 's', resume_gateway_url: 'wss://resume-test.discord.gg', user: { id: BOT_ID } } });
+      const message = operatorMessage('does the guild surface still work?');
+      socket.receive({ op: OP.DISPATCH, t: 'MESSAGE_CREATE', s: 2, d: message });
+      await until(() => bridgeStore.routes.getByExternalId(message.id), 'the guild route, proving the guild surface is unaffected');
+      await until(() => discord.reactions.length === 1, 'the reaction');
+
+      await until(() => sleeps.length >= 1, 'the helper to wait for its next pass');
+      stop();
+      assert.equal(await exit, EXIT.ok, 'run() completed normally; the thrown check never aborted it');
+      assert.equal(fs.existsSync(paths(home).lock), false, 'the lock is given back, not leaked on the DM check\'s exception path');
+
+      const records = lines.map((line) => JSON.parse(line));
+      for (const record of records) assert.ok(Object.prototype.hasOwnProperty.call(CODES, record.code) && record.code !== 'unknown-code', record.code);
+      const disabled = records.find((r) => r.code === 'dm-surface-disabled-at-startup');
+      assert.ok(disabled, 'the disable reason was logged under its own code, not lost as unknown-code');
+      assert.equal(disabled.reason, 'status-403');
+      delete discord.reads.channelsById[DM_ID];
     });
   });
 });

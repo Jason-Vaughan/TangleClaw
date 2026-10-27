@@ -170,9 +170,10 @@ check: `ok`, `FAIL` with a closed word, or `unproven`.
 | `config`, `secret-bot`, `secret-helper` | The config passes; both Keychain items are present and shaped like their tokens. |
 | `state-file` | The record of posts, if there is one, is readable and owner-only, in an owner-only directory. |
 | `lock-free` | No helper is running. |
-| `bridge-token`, `bridge-allowlist`, `bridge-circuit` | The bridge takes the helper token; the three configured ids are the allowlisted ones; the configuration circuit is closed. |
+| `bridge-token`, `bridge-allowlist`, `bridge-circuit` | The bridge takes the helper token; the three configured ids are the allowlisted ones; the guild channel's own configuration circuit is closed. |
 | `bridge-enabled` | `unproven` until the operator enables the bridge, which comes after preflight. |
 | `discord-token`, `discord-channel` | Discord takes the bot token as a bot's; the channel is visible to it and is in the configured server. |
+| `discord-dm-channel` | Only checked when the DM surface is on ([below](#6-the-dm-surface-a-second-ingress-2433)): the pinned channel really is a DM, tied to no guild, with the allowlisted author as its one other party. |
 | `discord-post` | Always `unproven`: whether the bot may post there cannot be read without posting. The first controlled message proves it. |
 
 It exits non-zero if any check fails. It prints no secret and no id.
@@ -192,6 +193,36 @@ This writes `~/Library/LaunchAgents/com.tangleclaw.bridge-helper.plist` from
 `deploy/com.tangleclaw.bridge-helper.plist` and loads it. The job carries paths and a label
 only. launchd starts the helper at login and restarts it if it exits, at most once every 30
 seconds. `--no-load` writes the job without loading it.
+
+### 6. The DM surface, a second ingress (#2433)
+
+Optional, and off by default. A second, independent ingress and reply surface: one direct-message
+channel from the same verified author pinned in step 1-2, alongside the guild channel the rest of
+this guide is about. A DM is accepted or refused entirely on its own — a DM failure never falls
+back to posting in the guild channel, and the reverse — so turning this on changes nothing about
+the guild surface's own behavior.
+
+Both sides must agree before it is live: the helper's own config (below) names the pinned DM
+channel; the operator separately pins and enables it in the dashboard (**Operator bridge
+(Discord)** → **DM surface**, or `POST /api/bridge/operator/dm-allowlist`). Either alone is not
+enough — the helper checks the pinned DM channel really is one (not a group DM, not tied to a
+guild) and that its one other party is the allowlisted author, both before it is enabled and again
+on every helper startup; a channel that fails that check never goes live, while the guild surface
+keeps running regardless.
+
+```sh
+"${TC_CHECKOUT:?set TC_CHECKOUT to the checkout the service runs from}/bin/tc-bridge-helper" configure --base-url 'http://127.0.0.1:3102' \
+  --author <your user id> --guild <server id> --channel <channel id> \
+  --dm-channel <DM channel id> --dm-enabled
+```
+
+Re-run `configure` with the same `--base-url`/`--author`/`--guild`/`--channel` it already has
+(every `configure` call writes the whole file, so these are still required); `--dm-channel` and
+`--dm-enabled` are the only new flags. Unlike those required ones, the DM pair alone carries
+forward from the file already on disk when neither flag is given: pin `--dm-channel` without
+`--dm-enabled` to configure it ahead of time, off, then turn it on later with a plain
+`--dm-enabled` re-run that still names `--base-url`/`--author`/`--guild`/`--channel` but needs no
+`--dm-channel` repeated. `preflight`'s `discord-dm-channel` check only runs once the surface is on.
 
 ## Where it connects
 
@@ -327,6 +358,26 @@ rm -r ~/.tangleclaw/bridge-helper
 `~/.tangleclaw/bridge-helper` only when `status` shows nothing held: it holds the record of
 posts in progress. Then have the operator revoke the helper token at the bridge. The bot
 token's Keychain item is not the helper's to remove: other things on this install use it.
+
+### Rolling back the DM surface alone (#2433)
+
+Turning the DM surface off is its own, much smaller rollback than removing the helper — it does
+not touch the guild surface, which keeps relaying throughout:
+
+```sh
+"${TC_CHECKOUT:?set TC_CHECKOUT to the checkout the service runs from}/bin/tc-bridge-helper" configure --base-url 'http://127.0.0.1:3102' \
+  --author <your user id> --guild <server id> --channel <channel id> --dm-disabled
+```
+
+and, in the dashboard, **Operator bridge (Discord)** → **DM surface** → **Turn off** (or
+`POST /api/bridge/operator/dm-allowlist` with `{"dmEnabled": false}`). Either side alone leaves
+the surface half-off: the helper-side flag stops the local process from accepting new DMs, and
+the server-side flag stops the server from accepting them even if a stale helper still tries, so
+turn both off to be sure. Neither clears the pinned DM channel id, and neither touches a DM route
+or receipt already recorded — a disabled surface holds its queued DM work for reconciliation
+rather than withdrawing or reposting it, and the existing DM routes stay in the record exactly as
+they are. Nothing is ever replayed from the DM surface to the guild channel, before, during or
+after this rollback: the two are isolated at every layer, which is the point of `surface_kind`.
 
 ## How an item is delivered
 
@@ -481,7 +532,8 @@ TangleClaw's answer is echoed.
 | `outbound-rejected`, `outbound-part-conflict` | The bridge was asked to set an item aside; see "Items set aside". |
 | `outbound-report-failed` | The bridge could not be told that an item could not be posted. It is told again on the next pass. |
 | `outbound-ack-failed` | A posted item could not be reported or acknowledged: the bridge did not answer, the helper's lease on it is no longer live, or the item was withdrawn or set aside at the bridge in the meantime (`409 ACK_NOT_APPLIED`). The helper does not post it again. If the item is still waiting it is handed over again and acknowledged then. |
-| `outbound-digest-mismatch`, `outbound-foreign-channel` | An item did not pass the helper's checks and was not posted. Either is a defect to report. |
+| `outbound-digest-mismatch` | An item did not pass the helper's checks and was not posted. A defect to report. |
+| `outbound-foreign-channel` | An item named a destination the helper did not post to: no other channel it names, a reply whose original is elsewhere, or (#2433) a surface with no verified local pin (the DM surface is off or unverified here) or a bridge-claimed destination that disagrees with this run's own pin. The helper never posts on the bridge's say-so alone — a defect to report, and worth checking whether the DM surface's pin agrees on both sides (helper config and operator panel) if it names a DM item. |
 | `outbound-pass-failed` | A pass ended on a failure the helper did not expect. The line gives the failure's type and never its message. Report it, with the lines around it. |
 
 ## What is not proven here

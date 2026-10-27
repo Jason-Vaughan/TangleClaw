@@ -41,6 +41,36 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-27 — v5.40.0 W2-A: the helper verifies its own posting destination, not just the bridge's (#2433, PR #2635, Architect Ruling A475-W2A-R4)
+
+<!-- prawduct: type=fixed | scope=w2a-operator-bridge-dm-ingress -->
+
+- **#2433:** The helper no longer posts an item to whatever `destinationChannelId` the bridge resolved without checking it first. `outbound.js`'s `relay()` now cross-checks the bridge's claim against this run's OWN verified local pin for that item's surface — the configured guild channel, or the DM channel this run's own startup check confirmed (`createOutbound`'s new `dmChannelId` param, wired from `cli.js`'s `allow` state). A surface with no verified local pin, or a named destination that disagrees with one, fails closed (`outbound-foreign-channel`) rather than posting on the bridge's say-so alone — closing the gap where a changed or unverified server-side pin could otherwise redirect a post. `bridge-gateway.js#_forHelper()` now also hands the item's own `surfaceKind` to the helper (previously only `destinationChannelId`), which this check needs to tell a DM item from a guild one client-side.
+
+## 2026-10-27 — v5.40.0 W2-A: DM startup check no longer takes the whole helper down (#2433, PR #2635)
+
+<!-- prawduct: type=fixed | scope=w2a-operator-bridge-dm-ingress -->
+
+- **#2433:** `cli.js`'s startup DM-channel check (`verifyDmChannel`) called Discord's REST API with no `try`/`catch`; a 403/404 (channel revoked, bot removed) or a network failure threw uncaught, aborting `run()` before the guild gateway and outbound loop ever started — taking down the healthy guild surface over a DM-only problem, and skipping `lock.release()` on the way out (a leaked PID lock the next `run()` would have to out-wait). Now any thrown REST/network failure disables the DM surface alone, the same as a returned closed reason, and the guild surface starts normally. Also fixes `dm-surface-disabled-at-startup` never having been registered in `lib/bridge-helper/log.js`'s `CODES`, which silently rewrote every one of its log lines to `unknown-code` — the very code this fix's own log line depends on to say why DM was disabled. Found independently while verifying a third-party claim about this code path that turned out to cite an unverifiable approval; the claim's other half (a defense-in-depth re-check of the server-resolved `destinationChannelId` in `outbound.js`) was not implemented — it contradicts this module's own documented server-authoritative design and no independent Critic reviewer flagged it, so it is flagged for the Integrator/PM rather than built on an unverified say-so.
+
+## 2026-10-27 — v5.40.0 W2-A Chunk 3: Operator Bridge DM surface panel, docs, and rollback (#2433 complete)
+
+<!-- prawduct: type=feature | scope=w2a-operator-bridge-dm-ingress -->
+
+- **#2433 (chunk 3 of 3, final):** The operator's global-settings panel gets a DM surface section (pin/enable, turn-off, pinned channel id) alongside the existing guild allowlist, and the configuration-circuit controls split into two independently resettable sub-sections — guild channel and DM surface — each passing its own `surfaceKind` through `operator/circuit/reset`. `docs/operator-bridge-helper.md` documents configuring and pinning the DM surface (both the helper's local config and the server-side allowlist must agree) and rolling it back alone (disabling DM without touching the guild channel, preserving DM routes/receipts, reconciling in-flight items before downgrade). This closes #2433: pinned DM ingress and source-bound replies now exist end to end — schema/inbound (chunk 1), per-destination outbound dispatch and failure isolation (chunk 2), and this operator-facing surface (chunk 3) — on one PR per Architect Ruling A475-W2A-R1. **Browser Check not completed:** the mandated Screens Isolation check (Rule #271 item 3) was attempted against an isolated scratch server but the Claude-in-Chrome browser extension would not connect; recorded as BLOCKED rather than skipped silently, with the user's explicit sign-off to proceed without it — see the build plan's Status section for the full account. The panel's logic remains covered by `node --test test/operator-bridge-panel.test.js` (jsdom-style lift), which is not a substitute for an actual rendered-browser check.
+
+## 2026-10-27 — v5.40.0 W2-A Chunk 2: Operator Bridge per-destination outbound dispatch and failure isolation
+
+<!-- prawduct: type=feature | scope=w2a-operator-bridge-dm-ingress -->
+
+- **#2433 (chunk 2 of 3):** The helper now posts each outbound item to its own bound ingress surface's channel (resolved server-side, never left for the helper to guess), instead of the one fixed guild channel. The configuration circuit breaker is now scoped per surface (schema v70/bridge v65: `surface_kind` on `bridge_config_circuit`, its one-open-episode uniqueness rescoped from global to per-surface) — a DM channel outage no longer stops guild delivery, and the reverse, at both claim time (the SQL exclusion is per-surface) and within a single already-claimed batch (a circuit-classified post failure no longer aborts the whole relay pass; only items of the SAME destination in that batch are skipped). Disabling the DM surface holds its ready items for reconciliation without reposting them to the guild channel. `operator/circuit/reset` and `master/circuit/reset` take an optional `surfaceKind`. Outbound dispatch binding was the one piece chunk 1 explicitly deferred; the operator panel/docs/rollback instructions remain chunk 3.
+
+## 2026-10-27 — v5.40.0 W2-A Chunk 1: Operator Bridge pinned DM ingress, schema and inbound half
+
+<!-- prawduct: type=feature | scope=w2a-operator-bridge-dm-ingress -->
+
+- **#2433 (chunk 1 of 3):** Schema v69 (bridge schema v64) adds `surface_kind` to `bridge_routes` and `bridge_outbound`, migrated via the bridge's own generic `upgradeBridgeTables` rebuild (existing rows default `guild-channel`). The helper's config (`dmChannelId`, `dmEnabled`), Discord REST (`getChannel` now reads a DM's `recipientId`), and preflight/startup (`verifyDmChannel`) gain the second pinned ingress surface: one type-1 DM channel from the same verified author, off by default. `inbound.js` accepts a matching DM alongside the existing guild channel, rejects every other DM shape (bot, webhook, group-DM, wrong author) before reading content, and replies refusals on the surface a message arrived on. Server-side, a new `POST operator/dm-allowlist` route and `bridge-gateway.js#acceptInbound`'s own independent allowlist check admit the DM surface in parallel with the guild one, deciding `surface_kind` itself rather than trusting the helper's say-so. `routes.accept()`'s existing replay-mismatch check now also catches a changed surface. Outbound dispatch binding to a route's surface (so a DM failure can never fall back to the guild channel) and the operator panel/docs are chunks 2 and 3, not in this PR.
+
 ## 2026-10-27 — v5.40.0 W2-D: records-only Tests: anchor verifier (P1)
 
 <!-- prawduct: type=internal | scope=v540-w2d-p1-features-index -->

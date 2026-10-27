@@ -157,8 +157,11 @@ describe('store: operator bridge schema (v52 to v54, #2031)', () => {
     // as a whole moves on without the bridge (v55 is the recovery state table),
     // so the store's version is held only to be no older than the bridge's.
     // v62 is the bridge's again: the outbound queue admits `lane-silent`. v63
-    // is too: it admits `gateway-down` and `gateway-recovered`.
-    assert.equal(bridgeSchema.BRIDGE_SCHEMA_VERSION, 63);
+    // is too: it admits `gateway-down` and `gateway-recovered`. v64 is too:
+    // `bridge_routes` and `bridge_outbound` gain `surface_kind` (#2433). v65
+    // is too: `bridge_config_circuit` gains `surface_kind` so an episode
+    // opens per surface, not globally (#2433).
+    assert.equal(bridgeSchema.BRIDGE_SCHEMA_VERSION, 65);
     assert.ok(store.CURRENT_SCHEMA_VERSION >= bridgeSchema.BRIDGE_SCHEMA_VERSION);
     assert.deepEqual(bridgeSchema.bridgeSchemaProblems(store.getDb()), []);
     const have = bridgeObjects();
@@ -1066,6 +1069,207 @@ describe('store: the outbound queue admits gateway-down and gateway-recovered (v
     rewindToV62();
     reopen();
     for (const version of [52, 53, 54, 61, 62, 63]) assert.deepEqual(bridgeSchema.bridgeSchemaProblems(store.getDb(), null, version), [], `v${version}`);
+  });
+});
+
+describe('store: a second pinned ingress surface, surface_kind (v64, #2433)', () => {
+  afterEach(() => {
+    store.close();
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+    tmpDir = null;
+  });
+
+  /**
+   * Turn the open store into one as schema v63 left it: `bridge_routes` and
+   * `bridge_outbound` without `surface_kind`, every row, id and index as it
+   * was. Each v63 table's SQL is the current table's with the `surface_kind`
+   * column (and its CHECK) taken out, which is the only thing v64 changed.
+   * The stamp is 63.
+   * @param {() => void} [populate] - Fill the store first, through its own writers.
+   * @returns {void}
+   */
+  function rewindToV63(populate) {
+    const db = store.getDb();
+    if (populate) populate();
+    const beforeQueue = queueSnapshot(db);
+    const strip = (sql) => sql.replace(/\s*surface_kind\s+TEXT\s+NOT NULL DEFAULT 'guild-channel' CHECK \(surface_kind IN \([^)]*\)\),\n/, '\n');
+    const routesWas = strip(db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'bridge_routes'").get().sql);
+    const outboundWas = strip(db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'bridge_outbound'").get().sql);
+    assert.ok(!/surface_kind/.test(routesWas) && !/surface_kind/.test(outboundWas), 'the v63 tables know nothing of the surface column');
+    db.exec('BEGIN');
+    for (const object of bridgeSchema.BRIDGE_SCHEMA_OBJECTS.filter((o) => o.type === 'trigger')) db.exec(`DROP TRIGGER IF EXISTS ${object.name}`);
+    db.exec('ALTER TABLE bridge_routes RENAME TO bridge_routes_v64');
+    db.exec(routesWas.replace('CREATE TABLE IF NOT EXISTS bridge_routes', 'CREATE TABLE bridge_routes'));
+    const routeCols = db.prepare('PRAGMA table_info(bridge_routes)').all().map((c) => c.name);
+    db.exec(`INSERT INTO bridge_routes (${routeCols.join(', ')}) SELECT ${routeCols.join(', ')} FROM bridge_routes_v64`);
+    db.exec('DROP TABLE bridge_routes_v64');
+    db.exec('ALTER TABLE bridge_outbound RENAME TO bridge_outbound_v64');
+    db.exec(outboundWas.replace('CREATE TABLE IF NOT EXISTS bridge_outbound', 'CREATE TABLE bridge_outbound'));
+    const outboundCols = db.prepare('PRAGMA table_info(bridge_outbound)').all().map((c) => c.name);
+    db.exec(`INSERT INTO bridge_outbound (${outboundCols.join(', ')}) SELECT ${outboundCols.join(', ')} FROM bridge_outbound_v64`);
+    if (beforeQueue.sequence) db.prepare("UPDATE sqlite_sequence SET seq = ? WHERE name = 'bridge_outbound'").run(beforeQueue.sequence);
+    db.exec('DROP TABLE bridge_outbound_v64');
+    db.exec(bridgeSchema.bridgeIndexDdl());
+    db.exec('DELETE FROM schema_version WHERE version >= 64');
+    db.exec('INSERT INTO schema_version (version) VALUES (63)');
+    db.exec('COMMIT');
+    assert.deepEqual(bridgeSchema.bridgeSchemaProblems(db, null, 63), [], 'a sound v63 store');
+    assert.ok(bridgeSchema.bridgeSchemaProblems(db).length > 0, 'and not yet a v64 one');
+    assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 63);
+    store.close();
+  }
+
+  it('upgrades a v63 store: both tables gain surface_kind, existing rows default to guild-channel, and an item inherits its route', () => {
+    freshStore('v63-upgrade');
+    const fresh = bridgeObjects();
+    const at = '2026-10-27T00:00:00.000Z';
+    rewindToV63(() => {
+      store.getDb().prepare(
+        "INSERT INTO bridge_routes (route_id, external_id, author_id, space_id, channel_id, body_digest, state, created_at, updated_at) VALUES ('r1', 'ext-r1', 'a', 's', 'c', ?, 'accepted', ?, ?)"
+      ).run('a'.repeat(64), at, at);
+      store.getDb().prepare(
+        'INSERT INTO bridge_outbound (idem_key, kind, route_id, source_label, text, digest, state, created_at, updated_at) '
+        + "VALUES ('route:r1:failure', 'failure', 'r1', 'TangleClaw', 'x', ?, 'ready', ?, ?)"
+      ).run('a'.repeat(64), at, at);
+    });
+    reopen();
+    const db = store.getDb();
+    assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION);
+    assert.deepEqual([...bridgeObjects()], [...fresh], 'the upgraded store has exactly the shape of a fresh one');
+    assert.equal(db.prepare("SELECT surface_kind FROM bridge_routes WHERE route_id = 'r1'").get().surface_kind, 'guild-channel', 'a pre-existing route reads guild-channel: the only surface there was');
+    assert.equal(db.prepare("SELECT surface_kind FROM bridge_outbound WHERE idem_key = 'route:r1:failure'").get().surface_kind, 'guild-channel');
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name LIKE '%_v64'").get().n, 0);
+
+    // The rebuilt tables still work through the ordinary writers, and a DM
+    // route's own outbound item inherits its surface rather than the default.
+    const dm = bridgeStore.routes.accept({ routeId: 'r2', externalId: 'ext-r2', authorId: 'a', spaceId: 'dm-chan', channelId: 'dm-chan', surfaceKind: 'bot-dm', text: 'hi', digest: 'b'.repeat(64), at });
+    assert.equal(dm.route.surfaceKind, 'bot-dm');
+    const item = bridgeStore.outbound.enqueue({ idemKey: 'reply:r2', kind: 'reply', routeId: 'r2', releasedGeneration: 1, sourceLabel: 'TangleClaw', text: 'hi', digest: 'b'.repeat(64), at });
+    assert.equal(item.surfaceKind, 'bot-dm');
+  });
+
+  it('booting a v64 store again rebuilds nothing', () => {
+    freshStore('v64-again');
+    rewindToV63();
+    reopen();
+    const once = [...bridgeObjects()];
+    const rootpage = () => store.getDb().prepare("SELECT rootpage FROM sqlite_master WHERE name = 'bridge_routes'").get().rootpage;
+    const page = rootpage();
+    assert.deepEqual(bridgeSchema.upgradeBridgeTables(store.getDb(), 64), [], 'a store already in the v64 shape has nothing to rebuild');
+    store.close();
+    reopen();
+    assert.deepEqual([...bridgeObjects()], once);
+    assert.equal(rootpage(), page, 'the table is the same table, not a copy of it');
+  });
+
+  it('a fresh store defaults every route and outbound item to guild-channel and admits bot-dm', () => {
+    freshStore('v64-fresh');
+    const db = store.getDb();
+    assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION);
+    assert.deepEqual([...bridgeSchema.SURFACE_KINDS], ['guild-channel', 'bot-dm']);
+    assert.throws(() => db.prepare(
+      'INSERT INTO bridge_routes (route_id, external_id, author_id, space_id, channel_id, surface_kind, body_digest, state, created_at, updated_at) '
+      + "VALUES ('rx', 'ext-x', 'a', 's', 'c', 'carrier-pigeon', ?, 'accepted', 'x', 'x')"
+    ).run('a'.repeat(64)), /CHECK/, 'a surface outside the list is refused');
+  });
+
+  it('refuses a v63 store that is not sound, before touching it', () => {
+    freshStore('v63-unsound');
+    rewindToV63();
+    const raw = new DatabaseSync(path.join(tmpDir, 'tangleclaw.db'));
+    raw.exec('DROP INDEX idx_bridge_outbound_status');
+    raw.close();
+    store._setBasePath(tmpDir);
+    assert.throws(() => store.init(), /not a sound v63 store.*idx_bridge_outbound_status/);
+    store.close();
+    const check = new DatabaseSync(path.join(tmpDir, 'tangleclaw.db'));
+    assert.equal(check.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 63);
+    check.close();
+  });
+});
+
+describe('store: the configuration circuit opens per surface, not globally (v65, #2433)', () => {
+  afterEach(() => {
+    store.close();
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+    tmpDir = null;
+  });
+
+  /**
+   * Turn the open store into one as schema v64 left it: `bridge_config_circuit`
+   * without `surface_kind` and its index unscoped by it, every row and id as
+   * it was. The stamp is 64.
+   * @param {() => void} [populate] - Fill the store first, through its own writers.
+   * @returns {void}
+   */
+  function rewindToV64(populate) {
+    const db = store.getDb();
+    if (populate) populate();
+    const was = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'bridge_config_circuit'").get().sql
+      .replace(/\s*surface_kind\s+TEXT\s+NOT NULL DEFAULT 'guild-channel' CHECK \(surface_kind IN \([^)]*\)\),\n/, '\n');
+    assert.ok(!/surface_kind/.test(was), 'the v64 table knows nothing of the surface column');
+    db.exec('BEGIN');
+    for (const object of bridgeSchema.BRIDGE_SCHEMA_OBJECTS.filter((o) => o.type === 'trigger')) db.exec(`DROP TRIGGER IF EXISTS ${object.name}`);
+    db.exec('ALTER TABLE bridge_config_circuit RENAME TO bridge_config_circuit_v65');
+    db.exec(was.replace('CREATE TABLE IF NOT EXISTS bridge_config_circuit', 'CREATE TABLE bridge_config_circuit'));
+    db.exec('DROP INDEX IF EXISTS idx_bridge_config_circuit_open');
+    db.exec("CREATE UNIQUE INDEX idx_bridge_config_circuit_open ON bridge_config_circuit((closed_at IS NULL)) WHERE closed_at IS NULL");
+    const cols = db.prepare('PRAGMA table_info(bridge_config_circuit)').all().map((c) => c.name);
+    db.exec(`INSERT INTO bridge_config_circuit (${cols.join(', ')}) SELECT ${cols.join(', ')} FROM bridge_config_circuit_v65`);
+    db.exec('DROP TABLE bridge_config_circuit_v65');
+    db.exec(bridgeSchema.bridgeIndexDdl());
+    db.exec('DELETE FROM schema_version WHERE version >= 65');
+    db.exec('INSERT INTO schema_version (version) VALUES (64)');
+    db.exec('COMMIT');
+    assert.ok(bridgeSchema.bridgeSchemaProblems(db).length > 0, 'not yet a v65 store');
+    assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 64);
+    store.close();
+  }
+
+  it('upgrades a v64 store: the circuit table gains surface_kind, an existing open episode reads guild-channel', () => {
+    freshStore('v64-upgrade');
+    const fresh = bridgeObjects();
+    const at = '2026-10-27T00:00:00.000Z';
+    rewindToV64(() => {
+      store.getDb().prepare(
+        "INSERT INTO bridge_config_circuit (reason, outbound_id, opened_at) VALUES ('chat-channel-missing', 1, ?)"
+      ).run(at);
+    });
+    reopen();
+    const db = store.getDb();
+    assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION);
+    assert.deepEqual([...bridgeObjects()], [...fresh], 'the upgraded store has exactly the shape of a fresh one');
+    assert.equal(db.prepare("SELECT surface_kind FROM bridge_config_circuit WHERE closed_at IS NULL").get().surface_kind, 'guild-channel');
+    assert.equal(bridgeStore.circuit.open('guild-channel').reason, 'chat-channel-missing');
+    assert.equal(bridgeStore.circuit.open('bot-dm'), null, 'no episode is open for a surface that never had one');
+  });
+
+  it('booting a v65 store again rebuilds nothing', () => {
+    freshStore('v65-again');
+    rewindToV64();
+    reopen();
+    const once = [...bridgeObjects()];
+    assert.deepEqual(bridgeSchema.upgradeBridgeTables(store.getDb(), 65), [], 'a store already in the v65 shape has nothing to rebuild');
+  });
+
+  it('a fresh store allows one open episode per surface, not one globally', () => {
+    freshStore('v65-fresh');
+    const db = store.getDb();
+    const at = '2026-10-27T00:00:00.000Z';
+    db.prepare(
+      'INSERT INTO bridge_config_circuit (reason, outbound_id, opened_at, surface_kind) VALUES (?, 1, ?, ?)'
+    ).run('chat-channel-missing', at, 'guild-channel');
+    // A second episode on the SAME surface is refused: one at a time per surface.
+    assert.throws(() => db.prepare(
+      'INSERT INTO bridge_config_circuit (reason, outbound_id, opened_at, surface_kind) VALUES (?, 2, ?, ?)'
+    ).run('chat-permission-denied', at, 'guild-channel'), /UNIQUE/);
+    // A DIFFERENT surface opens its own episode freely -- this is the whole point of #2433.
+    db.prepare(
+      'INSERT INTO bridge_config_circuit (reason, outbound_id, opened_at, surface_kind) VALUES (?, 3, ?, ?)'
+    ).run('chat-channel-missing', at, 'bot-dm');
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM bridge_config_circuit WHERE closed_at IS NULL").get().n, 2, 'both stay open at once');
+    assert.equal(bridgeStore.circuit.open('guild-channel').outboundId, 1);
+    assert.equal(bridgeStore.circuit.open('bot-dm').outboundId, 3);
   });
 });
 
