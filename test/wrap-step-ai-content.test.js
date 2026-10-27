@@ -10,7 +10,11 @@
 
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
-const { setLevel } = require('../lib/logger');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const logger = require('../lib/logger');
+const { setLevel } = logger;
 
 setLevel('error');
 
@@ -1999,5 +2003,204 @@ describe('wrap-step ai-content — optionalCaptureFields (#1379)', () => {
       const res = await aic.run(ctx());
       assert.deepEqual(res.output.uncapturedOptional, ['delta']);
     });
+  });
+});
+
+// #1782 — a heavy repository (many build plans for `next-session-prime` to
+// scan, heavy memory-updates) can run an ai-content step close to MAX_WAIT_MS
+// on nothing but legitimate work. The timeout now scales with the project's
+// plan-file count, and a slow step logs a warning before it actually blocks.
+describe('wrap-step ai-content — #1782 plan-count-scaled timeout', () => {
+  let tempDir;
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ai-content-plans-'));
+  });
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  /**
+   * Write N `.md` files into a directory, creating it first.
+   * @param {string} dir - Directory to create and fill.
+   * @param {number} count - How many files.
+   * @param {string} [prefix] - Filename prefix.
+   * @returns {void}
+   */
+  function writePlans(dir, count, prefix = 'plan') {
+    fs.mkdirSync(dir, { recursive: true });
+    for (let i = 0; i < count; i++) {
+      fs.writeFileSync(path.join(dir, `${prefix}-${i}.md`), '# plan\n');
+    }
+  }
+
+  describe('_countPlanFiles', () => {
+    it('counts zero when no plans directory exists', () => {
+      assert.equal(aic._countPlanFiles(tempDir), 0);
+    });
+
+    it('counts .md files in .tangleclaw/plans, ignoring non-.md entries', () => {
+      const dir = path.join(tempDir, '.tangleclaw', 'plans');
+      writePlans(dir, 5);
+      fs.writeFileSync(path.join(dir, 'notes.txt'), 'not a plan');
+      assert.equal(aic._countPlanFiles(tempDir), 5);
+    });
+
+    it('adds the archive subdirectory\'s .md files to the count', () => {
+      const dir = path.join(tempDir, '.tangleclaw', 'plans');
+      writePlans(dir, 3);
+      writePlans(path.join(dir, 'archive'), 50);
+      assert.equal(aic._countPlanFiles(tempDir), 53, 'matches the #1782 issue\'s own example count');
+    });
+
+    it('falls back to the legacy .claude/plans when .tangleclaw/plans does not exist', () => {
+      writePlans(path.join(tempDir, '.claude', 'plans'), 4);
+      assert.equal(aic._countPlanFiles(tempDir), 4);
+    });
+
+    it('prefers .tangleclaw/plans over .claude/plans — never sums both', () => {
+      writePlans(path.join(tempDir, '.tangleclaw', 'plans'), 2);
+      writePlans(path.join(tempDir, '.claude', 'plans'), 100);
+      assert.equal(aic._countPlanFiles(tempDir), 2);
+    });
+  });
+
+  describe('_effectiveMaxWaitMs', () => {
+    it('is the unscaled default at or below the plan-count threshold', () => {
+      writePlans(path.join(tempDir, '.tangleclaw', 'plans'), aic.PLAN_SCALE_THRESHOLD);
+      assert.equal(aic._effectiveMaxWaitMs({ path: tempDir }), aic.MAX_WAIT_MS);
+    });
+
+    it('scales past the default once the plan count exceeds the threshold', () => {
+      writePlans(path.join(tempDir, '.tangleclaw', 'plans'), aic.PLAN_SCALE_THRESHOLD + 10);
+      const expected = aic.MAX_WAIT_MS + 10 * aic.PLAN_SCALE_INCREMENT_MS;
+      assert.equal(aic._effectiveMaxWaitMs({ path: tempDir }), expected);
+    });
+
+    it('matches the issue\'s own "53 plans" example — a real extension, not a rounding change', () => {
+      writePlans(path.join(tempDir, '.tangleclaw', 'plans'), 53);
+      const expected = aic.MAX_WAIT_MS + (53 - aic.PLAN_SCALE_THRESHOLD) * aic.PLAN_SCALE_INCREMENT_MS;
+      assert.equal(aic._effectiveMaxWaitMs({ path: tempDir }), expected);
+      assert.ok(expected > aic.MAX_WAIT_MS);
+    });
+
+    it('never exceeds the ceiling, however large the plan count', () => {
+      // 500 plans already overshoots the ceiling by the raw linear formula
+      // (500 - threshold) * increment is comfortably past MAX_WAIT_CEILING_MS
+      // for this module's actual constants — no need to create near enough
+      // files to prove "no cap" to make the point, which only wastes time.
+      writePlans(path.join(tempDir, '.tangleclaw', 'plans'), 500);
+      assert.ok((500 - aic.PLAN_SCALE_THRESHOLD) * aic.PLAN_SCALE_INCREMENT_MS + aic.MAX_WAIT_MS > aic.MAX_WAIT_CEILING_MS,
+        'sanity: the chosen count must actually exceed the ceiling before scaling, or this test proves nothing');
+      assert.equal(aic._effectiveMaxWaitMs({ path: tempDir }), aic.MAX_WAIT_CEILING_MS);
+    });
+
+    it('defaults to the unscaled wait when the project carries no path', () => {
+      assert.equal(aic._effectiveMaxWaitMs(null), aic.MAX_WAIT_MS);
+      assert.equal(aic._effectiveMaxWaitMs({}), aic.MAX_WAIT_MS);
+    });
+  });
+});
+
+describe('wrap-step ai-content — #1782 the poll loop uses the effective (scaled) wait', () => {
+  let saved;
+  beforeEach(() => { saved = { ...aic._internal }; });
+  afterEach(() => {
+    Object.assign(aic._internal, saved);
+    logger.setConsoleStream(null);
+    setLevel('error');
+  });
+
+  const ctxWith = (overrides = {}) => ({
+    project: { name: 'proj', path: '/tmp/proj' },
+    session: { tmuxSession: 'sess' },
+    step: { id: 'memory-update', kind: 'ai-content', prompt: 'go' },
+    previousResults: [],
+    staged: {},
+    options: {},
+    ...overrides
+  });
+
+  /**
+   * Capture warn-and-above log lines while `fn` runs.
+   * @param {() => Promise<void>} fn - Work to run while capturing.
+   * @returns {Promise<string[]>}
+   */
+  async function captureWarnLog(fn) {
+    const lines = [];
+    setLevel('warn');
+    logger.setConsoleStream({ write: (line) => lines.push(line) });
+    await fn();
+    return lines;
+  }
+
+  it('times out at the SCALED effective wait, not the unscaled default', async () => {
+    let clock = 0;
+    aic._internal.sendKeys = () => {};
+    aic._internal.sleep = async () => { clock += 6 * 60 * 1000; }; // one jump clears the unscaled 5-min default
+    aic._internal.now = () => clock;
+    aic._internal.readPaneTail = (() => { let n = 0; return () => `still working ${n++}`; })(); // moving pane: no marker, never quiet
+    aic._internal.effectiveMaxWaitMs = () => 10 * 60 * 1000; // scaled: 10 minutes
+
+    const res = await aic.run(ctxWith());
+
+    assert.equal(res.status, 'blocked', 'it does eventually time out, just at the wider, scaled bound');
+    assert.match(res.blockers[0], /memory-update/);
+    assert.match(res.blockers[0], /600s/, 'the reported wait is the EFFECTIVE (scaled) one — a single 6-minute jump alone would already exceed the unscaled 300s default');
+  });
+
+  it('warns exactly once past 80% of the effective wait, and never again for the same run', async () => {
+    let clock = 0;
+    aic._internal.sendKeys = () => {};
+    aic._internal.sleep = async () => { clock += 8000; };
+    aic._internal.now = () => clock;
+    aic._internal.readPaneTail = (() => { let n = 0; return () => `still working ${n++}`; })();
+    aic._internal.effectiveMaxWaitMs = () => 100000; // small, for a fast test; 80% = 80000ms
+
+    const lines = await captureWarnLog(() => aic.run(ctxWith()));
+
+    const warnings = lines.filter((l) => l.includes('taking a while'));
+    assert.equal(warnings.length, 1, `expected exactly one slow warning across the whole run, got: ${lines.join(' | ')}`);
+    assert.ok(warnings[0].includes('memory-update'));
+  });
+
+  it('never warns when the step finishes well within budget', async () => {
+    aic._internal.sendKeys = () => {};
+    aic._internal.sleep = async () => {};
+    aic._internal.newNonce = () => 'n0nce';
+    aic._internal.readPaneTail = () => 'TCWRAP-DONE n0nce';
+    aic._internal.capturePane = () => ({ lines: ['plenty of words here to clear the min-chars gate'] });
+    aic._internal.effectiveMaxWaitMs = () => 100000;
+    aic._internal.now = () => 0;
+
+    const lines = await captureWarnLog(async () => {
+      const res = await aic.run(ctxWith());
+      assert.equal(res.status, 'done');
+      assert.equal(res.output.warning, undefined, 'a step that finished promptly carries no slow-step warning');
+    });
+    assert.deepEqual(lines.filter((l) => l.includes('taking a while')), []);
+  });
+
+  it('stamps output.warning on a step that completes AFTER crossing the slow threshold, for the wrap drawer', async () => {
+    // The log (above) fires live, during the wait. This is the separate,
+    // user-visible half #1782 also asked for: "so the operator is aware" —
+    // the wrap drawer renders `output.warning` as "completed with warnings",
+    // which an operator watching a live wrap actually sees, unlike a server log.
+    let clock = 0;
+    aic._internal.sendKeys = () => {};
+    aic._internal.sleep = async () => { clock += 8000; };
+    aic._internal.now = () => clock;
+    aic._internal.newNonce = () => 'n0nce';
+    // The marker appears only once the clock has crossed the slow threshold —
+    // before that, a moving (non-quiet, non-marker) pane.
+    aic._internal.readPaneTail = () => (clock >= 85000 ? 'TCWRAP-DONE n0nce' : `still working ${clock}`);
+    aic._internal.capturePane = () => ({ lines: ['plenty of words here to clear the min-chars gate'] });
+    aic._internal.effectiveMaxWaitMs = () => 100000; // 80% = 80000ms
+
+    const res = await aic.run(ctxWith());
+
+    assert.equal(res.status, 'done', 'it did finish — via the marker — just after the slow threshold');
+    assert.equal(res.output.completedVia, 'marker');
+    assert.equal(res.output.warning, true);
+    assert.match(res.output.slowNote, /took over 80% of its 100s wait budget/);
   });
 });
