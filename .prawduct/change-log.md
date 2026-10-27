@@ -41,6 +41,35 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-27 — v5.41.0 W3-REC: reconcile the shipped wrap record
+
+<!-- prawduct: type=internal | scope=v541-w3-rec -->
+
+- Reconciled all 13 v5.41.0 issues in `FEATURES.md` with real test citations, filled the W1-B, W1-D and W2-A change-log gaps below, and updated the operator's wrap guidance in `docs/user-guide.md`. This records the already-merged code; it changes no runtime behavior.
+
+## 2026-10-27 — v5.41.0 W1-D: process groups and handoff continuity (#1503, #1651, #1733)
+
+<!-- prawduct: type=fix | scope=w1d-1503-1651-1733 -->
+
+- **#1503:** Timed-out and over-buffer wrap-step commands now stop their whole process group, confirm it is gone before resolving, and report uncertainty if confirmation cannot be established. A command that catches `SIGTERM` and exits still reports the timeout that occurred.
+- **#1651:** `publishHandoff` rechecks the staged file digest inside its `BEGIN IMMEDIATE` transaction before publication.
+- **#1733:** A wrap mirrors live `.prawduct/.handoff-notes.md` for the next Claude SessionStart hook. Successful reading consumes the mirror; a failed read preserves it, and a later wrap with no notes clears an obsolete mirror.
+
+## 2026-10-27 — v5.41.0 W1-B: plan resolution and legacy-plan retirement (#1050, #1522, #1757)
+
+<!-- prawduct: type=fix | scope=w1b-1050-1522-1757 -->
+
+- **#1050:** Migrated the 12 authorized local projects from `.claude/plans` to `.tangleclaw/plans` and retired the legacy directory as a fallback for TangleClaw's own wrap plan resolution. The plan-docs service still reads legacy locations for managed projects it serves.
+- **#1522:** The shipped-issue filter now runs when a plans directory contains exactly one Markdown plan, as it already did for multiple plans.
+- **#1757:** A missing, archived or completed `activePlan` pin no longer blocks selection. Its removal is staged with the wrap transaction; a genuine choice among multiple live plans still asks the operator.
+
+## 2026-10-27 — v5.41.0 W2-A: session-range evidence and heavy-repo wait budget (#670, #1782)
+
+<!-- prawduct: type=internal | scope=w2a-670-1782 -->
+
+- **#670:** Session-range resolution now warns when a recorded `lastWrapSha` or `launchSha` cannot be used and the range falls back to trunk, naming the stale or orphaned boundary. A genuine first wrap emits no downgrade warning.
+- **#1782:** The `ai-content` wait budget scales with the project's plan-file count, up to 20 minutes. A step completing after 80% of its budget logs and surfaces a warning in the wrap result.
+
 ## 2026-10-27 — W1-A: wrap-run resilience (#1321, #1805, #1816)
 
 <!-- prawduct: type=fix | scope=w1a-1321-1805-1816 -->
