@@ -97,7 +97,7 @@ describe('probeTccReadable (#2625)', () => {
 });
 
 describe('createSessionWithTccBootstrap (#2625)', () => {
-  it('delegates straight to createSession for an unprotected cwd: no tc-tcc server involved', () => {
+  it('delegates straight to createSession for an unprotected cwd: no TCC-authorized server involved', () => {
     const name = uniqueSessionName('tcc_unprotected');
     createdDefault.push(name);
     const created = tmux.createSessionWithTccBootstrap(name, { cwd: os.tmpdir() });
