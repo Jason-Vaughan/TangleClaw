@@ -700,5 +700,68 @@ describe('bridge candidates (#2031)', () => {
         submittedByThisLaunch: true, outcome: 'discarded', reason: 'expired'
       });
     });
+
+    it('PRR-A B1: a failed approve attempt before the real one is not mistaken for the terminal audit row', async () => {
+      const session = liveSession();
+      const receiptSeq = reports(session);
+      const id = (await offers(session, { receipts: [{ kind: 'workload', seq: receiptSeq }] })).body.candidateId;
+      // A stale expectedVersion fails first, auditing the same op/candidateId with outcome != 'applied'.
+      const stale = await master(id, 'approve', { expectedVersion: 99 });
+      assert.deepEqual([stale.status, stale.body.code], [409, 'VERSION_CONFLICT']);
+      assert.equal((await master(id, 'approve', { text: 'The real approval.' })).status, 200);
+      const outboundId = candidateItems().find((i) => i.candidate_id === id).outbound_id;
+      store.getDb().prepare(
+        "UPDATE bridge_outbound SET state = 'delivered', delivered_ref = 'discord:1', delivered_at = ?, text = NULL WHERE outbound_id = ?"
+      ).run(new Date().toISOString(), outboundId);
+      const read = await reads(session, id);
+      assert.deepEqual([read.status, read.body.outcome, read.body.wording, read.body.deliveredRef], [200, 'posted', 'master', 'discord:1']);
+    });
+
+    it('PRR-A B1: a failed merge attempt before the real one still reports the real survivor', async () => {
+      const session = liveSession();
+      const receiptSeq = reports(session);
+      const foldedId = (await offers(session, { receipts: [{ kind: 'workload', seq: receiptSeq }] })).body.candidateId;
+      const survivorId = (await offers(session, { receipts: [{ kind: 'workload', seq: receiptSeq }] })).body.candidateId;
+      // A stale expectedVersion fails first: audited under the same op/candidateId, with no `into` at all.
+      const stale = await master(foldedId, 'merge', { into: survivorId, expectedVersion: 99 });
+      assert.deepEqual([stale.status, stale.body.code], [409, 'VERSION_CONFLICT']);
+      assert.equal((await master(foldedId, 'merge', { into: survivorId })).status, 200);
+      const read = await reads(session, foldedId);
+      assert.deepEqual([read.status, read.body.outcome, read.body.reason, read.body.mergedInto, read.body.mergedOutcome.outcome],
+        [200, 'discarded', 'merged', survivorId, 'waiting']);
+    });
+
+    it('PRR-A B1: a withdraw that failed because the candidate had already expired is never read as withdrawn', async () => {
+      const session = liveSession();
+      const receiptSeq = reports(session);
+      const id = (await offers(session, { receipts: [{ kind: 'workload', seq: receiptSeq }] })).body.candidateId;
+      const db = store.getDb();
+      db.prepare("UPDATE bridge_candidates SET created_at = '2020-01-01T00:00:00.000Z' WHERE candidate_id = ?").run(id);
+      bridgeStore.expire({});
+      assert.equal(bridgeStore.candidates.get(id).state, 'rejected', 'expired by the gateway, not yet decided by anyone');
+      // The operator's withdraw now fails: the candidate is no longer waiting. Audited under the
+      // same op/candidateId as a real withdraw, with outcome 'not-waiting'.
+      const failed = await withdraws(id);
+      assert.deepEqual([failed.status, failed.body.code], [409, 'NOT_WAITING']);
+      const read = await reads(session, id);
+      assert.deepEqual([read.status, read.body.outcome, read.body.reason], [200, 'discarded', 'expired']);
+    });
+
+    it('PRR-A B2: a candidate merged into another project\'s survivor redacts that survivor, never its id or delivery', async () => {
+      const session = liveSession();
+      const receiptSeq = reports(session);
+      const other = liveSession();
+      const otherSeq = reports(other);
+      const foldedId = (await offers(session, { receipts: [{ kind: 'workload', seq: receiptSeq }] })).body.candidateId;
+      const foreignSurvivorId = (await offers(other, { receipts: [{ kind: 'workload', seq: otherSeq }] })).body.candidateId;
+      // bridge-api.js's mergeCandidate never checks sourceProjectId equality, so this succeeds.
+      assert.equal((await master(foldedId, 'merge', { into: foreignSurvivorId })).status, 200);
+      const read = await reads(session, foldedId);
+      assert.deepEqual(read.body, {
+        candidateId: foldedId, kind: 'milestone', createdAt: bridgeStore.candidates.get(foldedId).createdAt,
+        submittedByThisLaunch: true, outcome: 'discarded', reason: 'merged', mergedInto: null, mergedCrossProject: true, mergedOutcome: null
+      });
+      assert.equal(JSON.stringify(read.body).includes(foreignSurvivorId), false, 'the other project\'s candidate id never appears in the response');
+    });
   });
 });
