@@ -602,27 +602,45 @@ describe('bridge candidates (#2031)', () => {
       const waitingCli = await statusCli(session, waitingId);
       assert.match(waitingCli.stdout, /waiting for the Master/);
 
-      // Approved, with the Master's own wording, and posted.
+      // Approved, with the Master's own wording, and posted in two parts.
       const postedId = (await offers(session, { receipts: [{ kind: 'workload', seq: receiptSeq }] })).body.candidateId;
       assert.equal((await master(postedId, 'approve', { text: 'A session needs your sign-off.' })).status, 200);
       const postedOutboundId = candidateItems().find((i) => i.candidate_id === postedId).outbound_id;
-      store.getDb().prepare(
+      const db = store.getDb();
+      db.prepare(
         "UPDATE bridge_outbound SET state = 'delivered', delivered_ref = 'discord:999', delivered_at = ?, text = NULL WHERE outbound_id = ?"
       ).run(new Date().toISOString(), postedOutboundId);
+      db.prepare(
+        "INSERT INTO bridge_outbound_parts (part_external_id, outbound_id, part_index, part_count, kind, delivered_at) VALUES (?, ?, ?, ?, 'candidate', ?)"
+      ).run('discord:999:0', postedOutboundId, 0, 2, new Date().toISOString());
+      db.prepare(
+        "INSERT INTO bridge_outbound_parts (part_external_id, outbound_id, part_index, part_count, kind, delivered_at) VALUES (?, ?, ?, ?, 'candidate', ?)"
+      ).run('discord:999:1', postedOutboundId, 1, 2, new Date().toISOString());
       const postedRead = await reads(session, postedId);
       assert.deepEqual(
-        [postedRead.status, postedRead.body.outcome, postedRead.body.wording, postedRead.body.deliveredRef],
-        [200, 'posted', 'master', 'discord:999']
+        [postedRead.status, postedRead.body.outcome, postedRead.body.wording, postedRead.body.deliveredRef, postedRead.body.parts.length],
+        [200, 'posted', 'master', 'discord:999', 2]
       );
+      assert.deepEqual(postedRead.body.parts.map((p) => p.partId), ['discord:999:0', 'discord:999:1']);
       assert.equal(JSON.stringify(postedRead.body).includes('A session needs your sign-off'), false, 'the posted read never carries the reworded text');
       const postedCli = await statusCli(session, postedId);
-      assert.match(postedCli.stdout, /posted as discord:999/);
+      assert.match(postedCli.stdout, /posted in 2 parts as discord:999/);
 
       // Approved with the session's own wording, left ready (not yet posted).
       const approvedId = (await offers(session, { receipts: [{ kind: 'workload', seq: receiptSeq }] })).body.candidateId;
       assert.equal((await master(approvedId, 'approve')).status, 200);
       const approvedRead = await reads(session, approvedId);
       assert.deepEqual([approvedRead.status, approvedRead.body.outcome, approvedRead.body.wording], [200, 'approved', 'session']);
+
+      // Approved, but the resulting item is currently set aside (blocked).
+      const blockedId = (await offers(session, { receipts: [{ kind: 'workload', seq: receiptSeq }] })).body.candidateId;
+      assert.equal((await master(blockedId, 'approve')).status, 200);
+      const blockedOutboundId = candidateItems().find((i) => i.candidate_id === blockedId).outbound_id;
+      db.prepare("UPDATE bridge_outbound SET state = 'blocked', block_code = 'rejected-by-chat' WHERE outbound_id = ?").run(blockedOutboundId);
+      const blockedRead = await reads(session, blockedId);
+      assert.deepEqual([blockedRead.status, blockedRead.body.outcome, blockedRead.body.blockCode], [200, 'approved', 'rejected-by-chat']);
+      const blockedCli = await statusCli(session, blockedId);
+      assert.match(blockedCli.stdout, /approved, blocked \(rejected-by-chat\)/);
 
       // Rejected by the Master: decided_generation is set.
       const rejectedId = (await offers(session, { receipts: [{ kind: 'workload', seq: receiptSeq }] })).body.candidateId;
@@ -665,7 +683,7 @@ describe('bridge candidates (#2031)', () => {
       // The whole-list read names every one of this launch's candidates, in order.
       const list = await reads(session);
       assert.deepEqual(list.body.candidates.map((c) => c.candidateId),
-        [waitingId, postedId, approvedId, rejectedId, withdrawnId, foldedId, survivorId]);
+        [waitingId, postedId, approvedId, blockedId, rejectedId, withdrawnId, foldedId, survivorId]);
       const listCli = await statusCli(session);
       assert.match(listCli.stdout, new RegExp(`${survivorId}.*waiting`));
     });
