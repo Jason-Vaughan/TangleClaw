@@ -417,6 +417,7 @@ The top banner shows:
 - **Engine badge** — which engine is running; its colour follows the engine's published status (green operational, amber degraded, red outage)
 - **Group pill** — the project group this project belongs to; in two or more groups, one pill counts them ("3 groups") and its popover lists each group with its members
 - **Your name** — who is signed in to TangleClaw; click it for **Sign out**. On a phone the pill is the 👤 icon alone. Not shown on an install with no login
+- **Pending permission requests** — when this project has requests awaiting a decision, a chip opens a panel with each request's scope and **Grant** or **Refuse**. The chip disappears after the pending requests are decided.
 
 Every pill follows one contract: **hover** shows what kind of thing it is (*Project version*, *Session status*, *AI engine*, *Project group*, *Signed in to TangleClaw*), and **click** shows what it currently says — the engine's status message, the session's connection state, a group's member projects, or who is signed in with a Sign out button. On a phone there is no hover; the click popover repeats the label, so nothing is lost.
 
@@ -656,6 +657,16 @@ TangleClaw's switchboard lets sessions message **each other** — agent to agent
 
 The **Project Master** participates too: its control bar mounts the same switchboard control on its own workspace id, with outbound messaging gated by the Master's access level.
 
+In v5.40.0, the Project Master can reply to a Medusa message addressed to its verified launch. A read-only Master instead receives a nudge to describe the reply the operator needs to send. Shared-document changes also notify a listening Master whose scope covers that document; if a notice stays unread, a later write sends another after the ten-minute coalescing limit. When a lane asks for operator help, the alert names its sender, priority, age and exchange id; a live coordinator or an opt-out suppresses a direct alert. A recovery notice follows a delivered block alert when the lane becomes unblocked.
+
+Sessions that submit a Project Master candidate can run `tc candidate status` (or `tc candidate status <candidate-id>`) to see whether it is waiting, approved, posted or discarded. A submission already wakes the Master. The status is scoped to the submitting project and does not reveal the Master's rewritten message.
+
+### Scoped permission requests
+
+A project session can request one named permission scope. On that project's session page, open the **Pending permission requests** chip and inspect each request before pressing **Grant** or **Refuse**. The decision is durable and the requesting session receives a one-time receipt live when reachable; it can read the outcome later as well. A reply through the pinned Discord operator bridge can decide a request only when it names that exact request and decision. A general “yes” or “approve all” does not grant anything.
+
+On macOS, a session launched from `~/Documents`, `~/Desktop` or `~/Downloads` may need a tmux server with permission to read that folder. If the default server cannot read it, TangleClaw starts a separate server through Terminal.app and checks that it can read the folder before creating the session there. If that check still fails, launch stops with an error. This does not grant Full Disk Access to TangleClaw's background server; follow the Full Disk Access guidance in [System Health](#system-health-panel) for that separate condition.
+
 ### Session History
 
 Each project maintains a session history showing:
@@ -818,6 +829,10 @@ settings, and enabling it is a cutover each install makes for itself.
 - [Activate the operator bridge](runbooks/activate-the-operator-bridge.md): the cutover
   runbook.
 
+In v5.40.0 the bridge can also use one pinned direct-message channel with the same verified operator, independently of the guild channel. It is off by default. To turn it on, configure and verify the DM channel in the helper, then pin and enable the same channel in **Global Settings → Operator bridge (Discord) → DM surface**. Both sides must agree. The helper checks the channel and recipient before enabling and at each startup. Replies stay on the surface where the message arrived; a failed DM cannot fall back to the guild channel. To turn the DM surface off, disable it in both the helper and the panel. The [helper guide](operator-bridge-helper.md#6-the-dm-surface-a-second-ingress-2433) has the commands and rollback steps.
+
+A periodic Discord Gateway resume may change the helper's “connected since” time without losing a message or indicating an outage. The helper guide explains the expected `gateway-connecting` → `gateway-resumed` sequence. If you set `MEDUSA_BRIDGE_WS_URL` explicitly to a malformed, non-WebSocket or non-loopback URL, the session listener refuses to start and reports the value and reason; it does not silently use the default Bridge.
+
 ## Mobile Tips
 
 ### iPhone Safari
@@ -893,16 +908,14 @@ TangleClaw proxies to it — so this costs you nothing and needs no action.
 
 ### Update Refuses to Run from the Current Branch
 
-**Update now** deliberately refuses to move a development or recovery
-branch. An error such as:
+**Update now** can carry a small number of local commits onto the latest release tag when the branch's fork point from `main` is reachable from that tag. It rebases those commits; a conflict aborts the rebase and names the conflicted files. Other branch shapes are still refused. An error such as:
 
 ```text
 Update not applied: refusing to update from "docs/example-recovery"
 — checkout main (or a release tag) first
 ```
 
-means the TangleClaw source checkout is on a branch that the self-updater will
-not replace. This protects branch work; it does not mean the release is broken.
+means this checkout did not qualify for that rebase path. It protects branch work; it does not mean the release is broken.
 
 First find the TangleClaw source checkout, then inspect it before changing
 branches:
