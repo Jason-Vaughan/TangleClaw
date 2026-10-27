@@ -235,7 +235,8 @@
       <span>TangleClaw Autonomous Sprint Reports</span>
     </div>
     <div class="nav-links">
-      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.40.0/">v5.40.0 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.41.0/">v5.41.0 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.40.0/">v5.40.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.39.0/">v5.39.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.38.0/">v5.38.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.37.0/">v5.37.0</a>
@@ -257,13 +258,13 @@
       <div class="kpi-grid">
         <div class="kpi-card">
           <div class="kpi-label">Published Sprint Reports</div>
-          <div class="kpi-val">7 Releases</div>
-          <div class="kpi-sub"><code>v5.34.0</code> · <code>v5.35.0</code> · <code>v5.36.0</code> · <code>v5.37.0</code> · <code>v5.38.0</code> · <code>v5.39.0</code> · <code>v5.40.0</code></div>
+          <div class="kpi-val">8 Releases</div>
+          <div class="kpi-sub"><code>v5.34.0</code> · <code>v5.35.0</code> · <code>v5.36.0</code> · <code>v5.37.0</code> · <code>v5.38.0</code> · <code>v5.39.0</code> · <code>v5.40.0</code> · <code>v5.41.0</code></div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Cumulative Sprint PRs</div>
-          <div class="kpi-val">145 PRs Merged</div>
-          <div class="kpi-sub"><strong>46 waves</strong> across seven reports · v5.40.0 merged 10 PRs (100% 1st-pass CI)</div>
+          <div class="kpi-val">152 PRs Merged</div>
+          <div class="kpi-sub"><strong>50 waves</strong> across eight reports · v5.41.0 merged 7 PRs in 2h 57m (100% 1st-pass CI)</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Records &amp; Release Gate CI</div>
@@ -272,18 +273,44 @@
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Latest Production Release</div>
-          <div class="kpi-val" style="color:var(--green);">v5.40.0 Live</div>
-          <div class="kpi-sub">Tag <code>v5.40.0 @ 26d14a80</code> · Milestone #25 <code>13/13</code> Closed</div>
+          <div class="kpi-val" style="color:var(--green);">v5.41.0 Live</div>
+          <div class="kpi-sub">Tag <code>v5.41.0 @ e71e1104</code> · Milestone #26 <code>13/13</code> Closed</div>
         </div>
       </div>
     </section>
 
     <div class="report-list">
-      <!-- v5.40.0 Card -->
+      <!-- v5.41.0 Card -->
       <article class="report-card">
         <div class="report-header">
           <div>
             <span class="badge badge-green">● Latest Release · Oct 27, 2026</span>
+            <h2 class="report-title"><a href="./v5.41.0/">TangleClaw <code>v5.41.0</code>: “Wrap that survives interruption”</a></h2>
+          </div>
+          <span class="badge badge-cyan">Tag v5.41.0 @ e71e1104</span>
+        </div>
+        <p style="color:#cbd5e1; margin:0;">
+          Four execution waves merged <strong>7 PRs in 2 hours 57 minutes</strong> across 4 parallel Claude Sonnet 5 Builder lanes (<code>0%</code> Opus) and closed Milestone <code>#26</code> (<strong>13/13 issues</strong> plus <code>#2642, #2643, #2645</code>). Shipped process-group termination in <code>execShell</code> (<code>#1503</code>), mid-wrap server restart checkpoint persistence (<code>#1816</code>), stale-slot takeover confirmation (<code>#1805</code>), Medusa mail preservation across wrap session teardown (<code>#1806</code>), mid-wrap <code>injectCommand</code> refusal (<code>#2269</code>), <code>.prawduct/.handoff-notes.md</code> wrap continuity mirror (<code>#1733</code>), transactional <code>publishHandoff</code> check (<code>#1651</code>), <code>priming-roll</code> single-file shipped filter &amp; stale <code>activePlan</code> cleanup (<code>#1522, #1757</code>), legacy <code>.claude/plans</code> retirement across 12 local repos (<code>#1050</code>), and heavy-repo wrap timeout scaling (<code>#1782, #670</code>). Validated disjoint merge pipelining (<code>#2647</code> &amp; <code>#2646</code> merged <strong>5m 18s apart</strong> without rebase), passed <code>W3-REC</code> in <strong>39s</strong> and <code>W4-REL</code> in <strong>38s</strong>, and achieved a <strong>7th consecutive zero-regression release</strong>.
+        </p>
+        <div class="meta-pills">
+          <span class="badge badge-cyan">4 Waves · 7 PRs · 2h 57m Wall Time</span>
+          <span class="badge badge-green">Milestone #26: 13/13 Closed</span>
+          <span class="badge badge-purple">Disjoint Merge Pipelining (5m 18s)</span>
+          <span class="badge badge-cyan">Charter A476 · 39s/38s Gate</span>
+          <span class="badge badge-green">23,873 Passing (+142 Net New)</span>
+        </div>
+        <div class="actions">
+          <a class="btn btn-primary" href="./v5.41.0/">📊 Open v5.41.0 Interactive Sprint Report →</a>
+          <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/releases/tag/v5.41.0" target="_blank" rel="noopener">🚀 GitHub Release v5.41.0</a>
+          <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/blob/v5.41.0/CHANGELOG.md" target="_blank" rel="noopener">📜 CHANGELOG.md</a>
+        </div>
+      </article>
+
+      <!-- v5.40.0 Card -->
+      <article class="report-card">
+        <div class="report-header">
+          <div>
+            <span class="badge badge-purple">Release · Oct 27, 2026</span>
             <h2 class="report-title"><a href="./v5.40.0/">TangleClaw <code>v5.40.0</code>: “Master and bridge replies”</a></h2>
           </div>
           <span class="badge badge-cyan">Tag v5.40.0 @ 26d14a80</span>
