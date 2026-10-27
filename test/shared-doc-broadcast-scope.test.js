@@ -41,6 +41,7 @@ setLevel('error');
 
 const store = require('../lib/store');
 const medusa = require('../lib/medusa');
+const master = require('../lib/master');
 const { createServer } = require('../server');
 const { operatorHeaders } = require('./_shared-docs-callers');
 const sharedDocRecord = require('../lib/shared-docs');
@@ -147,9 +148,14 @@ describe('shared-doc broadcasts stay inside the doc\'s group (#1222)', () => {
     sent = [];
     realSend = realSend || medusa.sendSystemMessage;
     realGetStatus = realGetStatus || medusa.getStatus;
-    medusa.getStatus = (sessionId) => ({
-      state: 'listening', workspaceId: `ws-${sessionId}`, unread: 0, lastError: null
-    });
+    // The Master defaults to `off` here: this file is about which PROJECT
+    // sessions a doc's group reaches, and every existing assertion below was
+    // written before the Master could be a recipient (#1084) — a blanket
+    // "everyone is listening" stub would otherwise notify it too, since its
+    // default scope is `'all'`. The Master-specific tests turn it on deliberately.
+    medusa.getStatus = (sessionId) => (sessionId === master.MASTER_MEDUSA_KEY
+      ? { state: 'off', workspaceId: null, unread: 0, lastError: null }
+      : { state: 'listening', workspaceId: `ws-${sessionId}`, unread: 0, lastError: null });
     medusa.sendSystemMessage = async ({ to, message }) => { sent.push({ to, message }); };
   });
 
@@ -159,6 +165,21 @@ describe('shared-doc broadcasts stay inside the doc\'s group (#1222)', () => {
    * @returns {string} Its workspace id.
    */
   const wsFor = (project) => `ws-${store.sessions.getActive(project.id).id}`;
+
+  /**
+   * A sent notice's payload, with its `sentAt` (#2350 — nondeterministic,
+   * read off the wall clock) checked for shape and then dropped, so the rest
+   * can be compared exactly.
+   * @param {string} message - The raw JSON notice text.
+   * @returns {object} The payload minus `sentAt`.
+   */
+  const noticeBody = (message) => {
+    const parsed = JSON.parse(message);
+    assert.ok(typeof parsed.sentAt === 'string' && !Number.isNaN(Date.parse(parsed.sentAt)),
+      'every notice carries a parseable sentAt, which the staleness bound reads');
+    const { sentAt, ...rest } = parsed;
+    return rest;
+  };
 
   /**
    * A subscription at the group scope.
@@ -291,10 +312,10 @@ describe('shared-doc broadcasts stay inside the doc\'s group (#1222)', () => {
       'the fields it always answered, plus the revision it recorded');
     assert.equal(res.body.success, true);
     assert.equal(res.body.duplicate, false);
-    assert.deepEqual(sent, [{
+    assert.deepEqual(sent.map((m) => ({ to: m.to, message: noticeBody(m.message) })), [{
       to: wsFor(inGroup),
-      message: JSON.stringify({ type: 'system', event: 'shared_doc_updated', doc: 'SHARED', docId })
-    }], 'the notice is byte-identical');
+      message: { type: 'system', event: 'shared_doc_updated', doc: 'SHARED', docId }
+    }], 'the notice is identical apart from its sentAt');
     const revision = store.sharedDocEvents.latest(docId);
     assert.equal(res.body.seq, revision.seq);
     assert.equal(revision.authorSource, 'unknown', 'the notify caller is never made the author');
@@ -348,5 +369,75 @@ describe('shared-doc broadcasts stay inside the doc\'s group (#1222)', () => {
     assert.deepEqual(sent, [],
       'an empty membership is zero recipients — the broken code made it every session on the machine');
     assert.equal(res.body.notifiedCount, 0);
+  });
+
+  /**
+   * Make the Master appear listening for the rest of this test, on top of
+   * the per-project stub `beforeEach` already installed.
+   * @returns {void}
+   */
+  const masterListens = () => {
+    const base = medusa.getStatus;
+    medusa.getStatus = (sessionId) => (sessionId === master.MASTER_MEDUSA_KEY
+      ? { state: 'listening', workspaceId: 'ws-master', unread: 0, lastError: null }
+      : base(sessionId));
+  };
+
+  /**
+   * Set the Master's configured scope for this test.
+   * @param {string|{type: string, groupId: string}} scope - Normalized scope value
+   * @returns {void}
+   */
+  const setMasterScope = (scope) => {
+    const config = store.config.load();
+    config.master = { ...(config.master || {}), scope };
+    store.config.save(config);
+  };
+
+  it('notifies the Master when it is listening and its scope is \'all\' (#1084), even with no project recipient', async () => {
+    masterListens();
+    setMasterScope('all');
+    const res = await change();
+    assert.equal(res.status, 200);
+    assert.deepEqual(sent.map((m) => ({ to: m.to, message: noticeBody(m.message) })), [{
+      to: 'ws-master',
+      message: { type: 'system', event: 'shared_doc_updated', doc: 'SHARED', docId }
+    }], 'no project subscribed, so the Master — scope all — is the only recipient');
+    assert.equal(res.body.notifiedCount, 1);
+  });
+
+  it('notifies the Master when its scope names the doc\'s own group', async () => {
+    masterListens();
+    setMasterScope({ type: 'group', groupId: store.sharedDocs.get(docId).groupId });
+    const res = await change();
+    assert.ok(sent.some((m) => m.to === 'ws-master'), 'the Master\'s scope names this exact group');
+    assert.equal(res.body.notifiedCount, 1);
+  });
+
+  it('does not notify the Master when its scope names a different group', async () => {
+    masterListens();
+    const other = store.projectGroups.create({ name: 'elsewhere' });
+    setMasterScope({ type: 'group', groupId: other.id });
+    await change();
+    assert.ok(!sent.some((m) => m.to === 'ws-master'), 'the Master is scoped to a group this doc is not in');
+  });
+
+  it('does not notify the Master when it is not listening, however wide its scope', async () => {
+    // No masterListens() call: the Master stays `off`, per this file's default stub.
+    setMasterScope('all');
+    await change();
+    assert.ok(!sent.some((m) => m.to === 'ws-master'), 'an offline Master is not sent to, scope notwithstanding');
+  });
+
+  it('does not notify the Master of a doc\'s first observation — there is no prior baseline to have changed from', async () => {
+    masterListens();
+    setMasterScope('all');
+    const freshPath = path.join(tmpDir, 'FRESH.md');
+    fs.writeFileSync(freshPath, '# fresh\n');
+    const fresh = store.sharedDocs.create({ groupId: store.sharedDocs.get(docId).groupId, name: 'FRESH', filePath: freshPath });
+    const res = await post(server, `/api/shared-docs/${fresh.id}/notify`);
+    assert.equal(res.body.duplicate, false, 'first-seen is not the duplicate exit — it is its own exit, with the same effect');
+    assert.deepEqual(sent, [],
+      'first-seen selects zero project recipients for the same reason (#2389); the Master must not become a side door around it');
   });
 });
