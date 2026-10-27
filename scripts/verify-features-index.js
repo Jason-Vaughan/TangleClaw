@@ -39,14 +39,33 @@
  * Usage: node scripts/verify-features-index.js --base <ref>
  *   --base <ref>  REQUIRED. For `W<N>-REC`, the wave's starting commit —
  *                 never `origin/main` at check time.
- * Exit 0 when every newly-added `Tests:` anchor names a touched file, or
- * none were added; 1 otherwise, naming each violation.
+ * A consolidated records PR (e.g. a `W<N>-REC` citing tests from several
+ * already-merged waves) has no single `--base` that makes every cited test
+ * file "touched" -- those files landed through each wave's own code PRs,
+ * which merged before the records PR even branched. For that case, when
+ * the WHOLE diff classifies as docs/records-only
+ * (`scripts/docs-records-only-diff.js`'s roster -- no executable/test file
+ * touched), an otherwise-unproven citation is accepted when the file is
+ * real: present on disk at `HEAD` and containing an actual test
+ * registration, not merely a dangling claim. Any diff that also touches
+ * an executable or test file keeps the original strict "must be touched"
+ * requirement, unchanged.
+ *
+ * Exit 0 when every newly-added `Tests:` anchor names a touched file (or,
+ * on a docs-only diff, a real file on disk), or none were added; 1
+ * otherwise, naming each violation.
  */
 
 const { execFileSync } = require('node:child_process');
+const fs = require('node:fs');
 const path = require('node:path');
 
+const { evaluate: evaluateDocsOnly } = require('./docs-records-only-diff');
+
 const ROOT = path.join(__dirname, '..');
+
+/** A test registration call -- `it(`/`test(`, this repo's node:test convention. */
+const TEST_CALL_RE = /\b(?:it|test)\s*\(/;
 
 /** One `Tests:` clause's backtick-quoted file list. */
 const TESTS_CLAUSE_RE = /Tests:\s*((?:`[^`]+`,?\s*)+)\.?/g;
@@ -90,6 +109,38 @@ function git(args) {
 function touchedFiles(base, io = {}) {
   const run = io.git || git;
   return new Set(run(['diff', '--name-only', `${base}...HEAD`]).split('\n').filter(Boolean));
+}
+
+/**
+ * Whether `relPath` exists on disk at `HEAD`, repo-relative.
+ *
+ * @param {string} relPath
+ * @param {{existsSync?: function(string): boolean}} [io] - Injection seam
+ * @returns {boolean}
+ */
+function existsOnDisk(relPath, io = {}) {
+  const exists = io.existsSync || fs.existsSync;
+  return exists(path.join(ROOT, relPath));
+}
+
+/**
+ * Whether `relPath`'s on-disk content contains a real test registration —
+ * a lightweight sanity check that the citation names actual test code, not
+ * a run of the suite.
+ *
+ * @param {string} relPath
+ * @param {{readFileSync?: function(string, string): string}} [io] - Injection seam
+ * @returns {boolean}
+ */
+function hasRealTests(relPath, io = {}) {
+  const read = io.readFileSync || fs.readFileSync;
+  let content;
+  try {
+    content = read(path.join(ROOT, relPath), 'utf8');
+  } catch {
+    return false;
+  }
+  return TEST_CALL_RE.test(content);
 }
 
 /**
@@ -138,7 +189,8 @@ function parseArgs(argv) {
  * Run the check end to end and return the process exit code.
  *
  * @param {string[]} argv - Arguments after the script name
- * @param {{stdout?: {write: function(string): any}, git?: function(string[]): string}} [io] - Injection seams
+ * @param {{stdout?: {write: function(string): any}, git?: function(string[]): string,
+ *   existsSync?: function(string): boolean, readFileSync?: function(string, string): string}} [io] - Injection seams
  * @returns {number} The exit code
  */
 function main(argv, io = {}) {
@@ -156,7 +208,16 @@ function main(argv, io = {}) {
     return 0;
   }
   const touched = touchedFiles(parsed.base, io);
-  const unproven = [...new Set(cited)].filter((f) => !touched.has(f));
+  let unproven = [...new Set(cited)].filter((f) => !touched.has(f));
+
+  // A docs/records-only diff never touches the test files its citations
+  // name (see module docstring) -- for that case only, fall back to an
+  // on-disk reality check instead of diff membership. A diff that also
+  // touches an executable/test file keeps the strict check below unchanged.
+  if (unproven.length > 0 && evaluateDocsOnly([...touched]).ok) {
+    unproven = unproven.filter((f) => !(existsOnDisk(f, io) && hasRealTests(f, io)));
+  }
+
   if (unproven.length > 0) {
     out.write(`REFUSED: Tests: anchor(s) newly added to FEATURES.md cite a file this diff does not touch: ${unproven.join(', ')}\n`);
     return 1;
@@ -165,7 +226,7 @@ function main(argv, io = {}) {
   return 0;
 }
 
-module.exports = { testsCitedOn, touchedFiles, newlyCitedTests, parseArgs, main };
+module.exports = { testsCitedOn, touchedFiles, newlyCitedTests, existsOnDisk, hasRealTests, parseArgs, main };
 
 if (require.main === module) {
   process.exitCode = main(process.argv.slice(2));

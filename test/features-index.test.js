@@ -15,7 +15,9 @@
  * Also covers `scripts/verify-features-index.js` (#2597): a `Tests:`
  * clause newly added to FEATURES.md by a wave's diff must name a file
  * that same diff touches, so a records PR can't cite pre-existing
- * coverage as proof of the wave's own work.
+ * coverage as proof of the wave's own work -- except on a true
+ * docs/records-only diff (LANE_QUEUE v5.40.0 process rule P1), where an
+ * otherwise-unproven citation is accepted if the file is real on disk.
  */
 
 const { describe, it } = require('node:test');
@@ -252,5 +254,89 @@ describe('verify-features-index: W<N>-REC must diff against the wave\'s own star
     };
     const out = sink();
     assert.equal(verifyFeaturesIndex.main(['--base', '<wave-start-sha>'], { stdout: out, git }), 0);
+  });
+});
+
+describe('verify-features-index: docs-only fallback accepts a real on-disk citation outside the diff (LANE_QUEUE v5.40.0 P1)', () => {
+  const featuresDiff = '+- New entry. Tests: `test/wave-owned.test.js`.';
+
+  function gitFor(touchedList) {
+    return (args) => {
+      if (args[0] === 'diff' && args.includes('FEATURES.md')) return featuresDiff;
+      if (args[0] === 'diff' && args.includes('--name-only')) return `${touchedList.join('\n')}\n`;
+      throw new Error(`unexpected git ${args.join(' ')}`);
+    };
+  }
+
+  it('passes when a docs-only diff cites a real, existing test file outside the diff', () => {
+    const out = sink();
+    const existsSync = (p) => p.endsWith('test/wave-owned.test.js');
+    const readFileSync = () => "it('does a thing', () => {});\n";
+    const code = verifyFeaturesIndex.main(
+      ['--base', 'origin/main'],
+      { stdout: out, git: gitFor(['FEATURES.md']), existsSync, readFileSync }
+    );
+    assert.equal(code, 0);
+    assert.match(out.text(), /1 newly added Tests: anchor\(s\)/);
+  });
+
+  it('refuses when the cited file does not exist on disk, even on a docs-only diff', () => {
+    const out = sink();
+    const existsSync = () => false;
+    const code = verifyFeaturesIndex.main(
+      ['--base', 'origin/main'],
+      { stdout: out, git: gitFor(['FEATURES.md']), existsSync }
+    );
+    assert.equal(code, 1);
+    assert.match(out.text(), /REFUSED: .*test\/wave-owned\.test\.js/);
+  });
+
+  it('refuses when the cited file exists but has no test registration', () => {
+    const out = sink();
+    const existsSync = () => true;
+    const readFileSync = () => '// just a comment, no tests here\n';
+    const code = verifyFeaturesIndex.main(
+      ['--base', 'origin/main'],
+      { stdout: out, git: gitFor(['FEATURES.md']), existsSync, readFileSync }
+    );
+    assert.equal(code, 1);
+    assert.match(out.text(), /REFUSED: .*test\/wave-owned\.test\.js/);
+  });
+
+  it('keeps the strict requirement when the diff also touches a code file (not docs-only), even though the file is real on disk', () => {
+    const out = sink();
+    const existsSync = () => true;
+    const readFileSync = () => "test('x', () => {});\n";
+    const code = verifyFeaturesIndex.main(
+      ['--base', 'origin/main'],
+      { stdout: out, git: gitFor(['FEATURES.md', 'scripts/unrelated.js']), existsSync, readFileSync }
+    );
+    assert.equal(code, 1, 'a diff touching an executable file must not get the docs-only fallback');
+    assert.match(
+      out.text(),
+      /REFUSED: Tests: anchor\(s\) newly added to FEATURES\.md cite a file this diff does not touch: test\/wave-owned\.test\.js/
+    );
+  });
+});
+
+describe('existsOnDisk and hasRealTests: on-disk reality seams', () => {
+  it('existsOnDisk delegates to the injected check', () => {
+    assert.equal(verifyFeaturesIndex.existsOnDisk('a.js', { existsSync: (p) => p.endsWith('a.js') }), true);
+    assert.equal(verifyFeaturesIndex.existsOnDisk('a.js', { existsSync: () => false }), false);
+  });
+
+  it('hasRealTests matches it(/test( registrations', () => {
+    const io = { readFileSync: () => "describe('x', () => { it('y', () => {}); });\n" };
+    assert.equal(verifyFeaturesIndex.hasRealTests('a.test.js', io), true);
+  });
+
+  it('hasRealTests is false for content with no registration call', () => {
+    const io = { readFileSync: () => '// nothing to see here\n' };
+    assert.equal(verifyFeaturesIndex.hasRealTests('a.test.js', io), false);
+  });
+
+  it('hasRealTests is false when the file cannot be read', () => {
+    const io = { readFileSync: () => { throw new Error('ENOENT'); } };
+    assert.equal(verifyFeaturesIndex.hasRealTests('missing.test.js', io), false);
   });
 });

@@ -41,6 +41,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-27 — v5.40.0 W2-D: records-only Tests: anchor verifier (P1)
+
+<!-- prawduct: type=internal | scope=v540-w2d-p1-features-index -->
+
+- **#2632:** `scripts/verify-features-index.js` no longer refuses a `Tests:` anchor newly added to `FEATURES.md` solely because the cited test file lands outside a records-only diff. When the whole diff classifies as docs/records-only (`scripts/docs-records-only-diff.js`'s roster), the citation is proven instead by checking the file exists on disk at `HEAD` and contains a real test registration (`it(`/`test(`) — a lightweight on-disk check, not a test run. Any diff that also touches an executable or test file keeps the original strict "must be touched by this diff" requirement, byte-for-byte unchanged. No caller is wired to this script yet for any mode (pre-existing; out of scope here). Filed #2632 to give this LANE_QUEUE-dispatched chunk a citable issue — the PM dispatch's suggested fragment name (`p1-features-index-records-gate`) wasn't a valid issue number for `changelog.d/`'s grammar.
+
 ## 2026-10-27 — v5.40.0 W1-A: operator-needed alert context and Gateway resume docs
 
 <!-- prawduct: type=changed | scope=v540-w1a-2141-2334 -->
