@@ -41,7 +41,11 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
-## 2026-10-27 — v5.40.0 W2-C PR #2637 Round 6: fix a real open-install Grant/Refuse bug found by live browser verification, plus a CI static-check regression
+## 2026-10-27 — v5.40.0 W2-C PR #2637 Round 7 (test-only): never let the TCC-authorized test suite kill a real production server
+
+<!-- prawduct: type=internal | scope=w2c-2352-2625 -->
+
+- **#2625:** `lib/tmux.js` bound `TCC_SOCKET` as a fixed closure-local constant throughout — `test/tmux-tcc.test.js`'s `afterEach` runs `tmux -L <socket> kill-server` unconditionally every test, so once #2625 is live on a host with a real TCC-authorized server already running real sessions, running this suite there would destroy them. Every function that creates or checks the TCC-authorized server now reads `module.exports.TCC_SOCKET` instead (same pattern as `module.exports.createSession`), so a test can retarget the whole bootstrap path by reassigning one property. `test/tmux-tcc.test.js` now overrides `tmux.TCC_SOCKET` to a fresh, unique socket name per test (`beforeEach`) and restores it after each test's own cleanup (`afterEach`, which now only ever kills that test's isolated socket). New test proves both the default production name (`tangleclaw-tcc-authorized`) and that a real session on it survives a full test lifecycle untouched. Caught by TC-Lane-PRR-B's Round 7 review.
 
 <!-- prawduct: type=fixed | scope=w2c-2352-2625 -->
 
