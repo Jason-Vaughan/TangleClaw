@@ -320,23 +320,60 @@ describe('verify-features-index: docs-only fallback accepts a real on-disk citat
 });
 
 describe('existsOnDisk and hasRealTests: on-disk reality seams', () => {
+  const realTestIo = { existsSync: () => true, readFileSync: () => "describe('x', () => { it('y', () => {}); });\n" };
+
   it('existsOnDisk delegates to the injected check', () => {
     assert.equal(verifyFeaturesIndex.existsOnDisk('a.js', { existsSync: (p) => p.endsWith('a.js') }), true);
     assert.equal(verifyFeaturesIndex.existsOnDisk('a.js', { existsSync: () => false }), false);
   });
 
-  it('hasRealTests matches it(/test( registrations', () => {
-    const io = { readFileSync: () => "describe('x', () => { it('y', () => {}); });\n" };
-    assert.equal(verifyFeaturesIndex.hasRealTests('a.test.js', io), true);
+  it('hasRealTests matches it(/test( registrations on a real test/ path', () => {
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/a.test.js', realTestIo), true);
   });
 
   it('hasRealTests is false for content with no registration call', () => {
-    const io = { readFileSync: () => '// nothing to see here\n' };
-    assert.equal(verifyFeaturesIndex.hasRealTests('a.test.js', io), false);
+    const io = { existsSync: () => true, readFileSync: () => '// nothing to see here\n' };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/a.test.js', io), false);
   });
 
   it('hasRealTests is false when the file cannot be read', () => {
-    const io = { readFileSync: () => { throw new Error('ENOENT'); } };
-    assert.equal(verifyFeaturesIndex.hasRealTests('missing.test.js', io), false);
+    const io = { existsSync: () => true, readFileSync: () => { throw new Error('ENOENT'); } };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/missing.test.js', io), false);
+  });
+
+  it('hasRealTests rejects a path outside test/ even with a real registration and existsSync true (PRR-B review, #2632)', () => {
+    assert.equal(verifyFeaturesIndex.hasRealTests('lib/foo.js', realTestIo), false);
+    assert.equal(verifyFeaturesIndex.hasRealTests('docs/foo.md', realTestIo), false);
+  });
+
+  it('hasRealTests never calls readFileSync for a path outside test/ (path checked before any read)', () => {
+    let read = false;
+    const io = { existsSync: () => true, readFileSync: () => { read = true; return "it('y', () => {});"; } };
+    assert.equal(verifyFeaturesIndex.hasRealTests('lib/foo.js', io), false);
+    assert.equal(read, false, 'a non-test path must be rejected by the path check alone, never reaching a read');
+  });
+
+  it('hasRealTests rejects a test/ file whose only it(/test( text is commented out (PRR-B review, #2632)', () => {
+    const io = {
+      existsSync: () => true,
+      readFileSync: () => '// it("should pass", () => {});\n/* also test("fake", () => {}); */\n'
+    };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/commented-out.test.js', io), false);
+  });
+
+  it('hasRealTests rejects a test/ file whose only it(/test( text is a string literal', () => {
+    const io = { existsSync: () => true, readFileSync: () => 'const example = "it(\'should pass\')";\n' };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/string-only.test.js', io), false);
+  });
+
+  it('stripCommentsAndStrings blanks line comments, block comments, and string/template literals, leaving real code intact', () => {
+    const stripped = verifyFeaturesIndex.stripCommentsAndStrings(
+      "it('real', () => {}); // it('fake, in a line comment')\n"
+      + "/* test('fake, in a block comment') */\n"
+      + 'const s = "it(\'fake, in a string\')";\n'
+      + 'const t = `test(fake, in a template, ${1 + 1})`;'
+    );
+    assert.match(stripped, /it\(/, 'the real call survives stripping');
+    assert.ok(!/fake/.test(stripped), `no "fake" text should survive: ${JSON.stringify(stripped)}`);
   });
 });

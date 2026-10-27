@@ -45,11 +45,15 @@
  * even branched. For that case, when the WHOLE diff classifies as
  * docs/records-only (`scripts/docs-records-only-diff.js`'s roster — no
  * executable/test file touched), an otherwise-unproven citation is
- * accepted when the file is real: present on disk at `HEAD` and
- * containing an actual test registration, not merely a dangling claim.
- * Any diff that also touches an executable or test file keeps the
- * original strict "must be touched" requirement, unchanged. This is the
- * fallback the Records Gate's existing invocation benefits from directly.
+ * accepted when the file is real: a path under `test/` ending in
+ * `.test.js`, present on disk at `HEAD`, and containing an actual test
+ * registration once comments and string/template literals are stripped
+ * out — a citation to `lib/foo.js` or `docs/foo.md`, or to a test file
+ * whose only `it(`/`test(` text is commented out, is not evidence of
+ * coverage no matter how the raw bytes read. Any diff that also touches
+ * an executable or test file keeps the original strict "must be touched"
+ * requirement, unchanged. This is the fallback the Records Gate's
+ * existing invocation benefits from directly.
  *
  * Usage: node scripts/verify-features-index.js --base <ref>
  *   --base <ref>  REQUIRED. For `W<N>-REC`, the wave's starting commit —
@@ -69,6 +73,13 @@ const ROOT = path.join(__dirname, '..');
 
 /** A test registration call -- `it(`/`test(`, this repo's node:test convention. */
 const TEST_CALL_RE = /\b(?:it|test)\s*\(/;
+
+/**
+ * A docs-only fallback citation must itself look like a test file -- `lib/foo.js`
+ * or `docs/foo.md` mentioning `it(`/`test(` in prose is not evidence of coverage,
+ * however real that text reads after comment/string stripping below.
+ */
+const TEST_PATH_RE = /^test\/.+\.test\.js$/;
 
 /** One `Tests:` clause's backtick-quoted file list. */
 const TESTS_CLAUSE_RE = /Tests:\s*((?:`[^`]+`,?\s*)+)\.?/g;
@@ -127,15 +138,39 @@ function existsOnDisk(relPath, io = {}) {
 }
 
 /**
- * Whether `relPath`'s on-disk content contains a real test registration —
- * a lightweight sanity check that the citation names actual test code, not
- * a run of the suite.
+ * Blank out string/template literal contents and comments, so `it(`/`test(`
+ * appearing only in prose, a quoted example, or commented-out code cannot
+ * read as a real registration. Order matters: strings are blanked first so
+ * a `//`/`/*` sequence inside a string can't later confuse the comment
+ * regexes; whitespace (not full removal) keeps line numbers irrelevant to
+ * this lightweight check while never letting code on either side collide.
+ *
+ * @param {string} src - JavaScript source
+ * @returns {string} The same source with those regions replaced by spaces
+ */
+function stripCommentsAndStrings(src) {
+  const blank = (m) => m.replace(/[^\n]/g, ' ');
+  return src
+    .replace(/`(?:\\.|[^`\\])*`/g, blank)
+    .replace(/"(?:\\.|[^"\\\n])*"/g, blank)
+    .replace(/'(?:\\.|[^'\\\n])*'/g, blank)
+    .replace(/\/\*[\s\S]*?\*\//g, blank)
+    .replace(/\/\/[^\n]*/g, blank);
+}
+
+/**
+ * Whether `relPath` looks like a real test file: a path under `test/`
+ * ending in `.test.js`, existing on disk, whose content (comments and
+ * string/template literals stripped first) contains a real test
+ * registration — a lightweight sanity check, not a test run.
  *
  * @param {string} relPath
- * @param {{readFileSync?: function(string, string): string}} [io] - Injection seam
+ * @param {{existsSync?: function(string): boolean, readFileSync?: function(string, string): string}} [io] - Injection seams
  * @returns {boolean}
  */
 function hasRealTests(relPath, io = {}) {
+  if (!TEST_PATH_RE.test(relPath)) return false;
+  if (!existsOnDisk(relPath, io)) return false;
   const read = io.readFileSync || fs.readFileSync;
   let content;
   try {
@@ -143,7 +178,7 @@ function hasRealTests(relPath, io = {}) {
   } catch {
     return false;
   }
-  return TEST_CALL_RE.test(content);
+  return TEST_CALL_RE.test(stripCommentsAndStrings(content));
 }
 
 /**
@@ -218,7 +253,7 @@ function main(argv, io = {}) {
   // on-disk reality check instead of diff membership. A diff that also
   // touches an executable/test file keeps the strict check below unchanged.
   if (unproven.length > 0 && evaluateDocsOnly([...touched]).ok) {
-    unproven = unproven.filter((f) => !(existsOnDisk(f, io) && hasRealTests(f, io)));
+    unproven = unproven.filter((f) => !hasRealTests(f, io));
   }
 
   if (unproven.length > 0) {
@@ -229,7 +264,9 @@ function main(argv, io = {}) {
   return 0;
 }
 
-module.exports = { testsCitedOn, touchedFiles, newlyCitedTests, existsOnDisk, hasRealTests, parseArgs, main };
+module.exports = {
+  testsCitedOn, touchedFiles, newlyCitedTests, existsOnDisk, hasRealTests, stripCommentsAndStrings, parseArgs, main
+};
 
 if (require.main === module) {
   process.exitCode = main(process.argv.slice(2));
