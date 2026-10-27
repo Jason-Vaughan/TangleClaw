@@ -528,6 +528,31 @@ describe('update-applier (UB #228/#229)', () => {
       assert.match(r.error, /v9\.9\.9/);
     });
 
+    it('returns recovery-failed, never a clean rebase-conflict, when the abort itself fails', () => {
+      let statusCalls = 0;
+      applier._internal.git = (args) => {
+        const key = args.join(' ');
+        if (key === 'status --porcelain') {
+          statusCalls++;
+          // Clean at the step-3 dirty-tree guard; left dirty by the failed abort.
+          return statusCalls === 1 ? '' : ' M lib/x.js\n';
+        }
+        if (key === 'rebase v9.9.9') throw new Error('CONFLICT (content): Merge conflict in lib/x.js');
+        if (key === 'diff --name-only --diff-filter=U') return 'lib/x.js\n';
+        if (key === 'rebase --abort') throw new Error('fatal: no rebase in progress?');
+        if (!(key in REBASE_BASE)) throw new Error(`unexpected git call: ${key}`);
+        const v = REBASE_BASE[key];
+        if (v instanceof Error) throw v;
+        return v;
+      };
+      const r = applier.applyUpdate();
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'recovery-failed');
+      assert.equal(r.recovery.failedStep, 'rebase');
+      assert.match(r.error, /could not be verified as put back/);
+      assert.match(r.error, /do not update or restart/);
+    });
+
     it('falls through to the ordinary wrong-ref refusal when the branch shares no history with local main', () => {
       applier._internal.git = gitStub({
         ...HAPPY,

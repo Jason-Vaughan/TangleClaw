@@ -393,7 +393,27 @@ describe('lib/medusa — service layer', () => {
         });
         produced.add(r.code);
       }
+      // BRIDGE_WS_URL_REFUSED (#2354) has no (kind, ws) shape above that
+      // produces it — it fires on the resolver, before either transport is
+      // probed — so it needs its own call with an explicit, refused override.
+      medusa._setBridgeWsUrl('ws://192.168.1.50:3010');
+      const refused = await medusa.checkBridgeHealth({
+        fetchImpl: fetchImplThat('hissing'), connectImpl: connectImplThat(true)
+      });
+      produced.add(refused.code);
       assert.deepEqual([...produced].sort(), Object.values(medusa.BRIDGE_HEALTH_CODES).sort());
+    });
+
+    it('fails closed on an explicit, refused WS override rather than probing the default (#2354)', async () => {
+      medusa._setBridgeWsUrl('ws://192.168.1.50:3010');
+      const r = await medusa.checkBridgeHealth({
+        fetchImpl: fetchImplThat('hissing'), connectImpl: connectImplThat(true)
+      });
+      assert.equal(r.code, 'BRIDGE_WS_URL_REFUSED');
+      assert.equal(r.healthy, false);
+      assert.match(r.detail, /MEDUSA_BRIDGE_WS_URL/);
+      assert.match(r.detail, /192\.168\.1\.50/);
+      assert.match(r.detail, /no session listener will start/);
     });
 
     it('reads the WS half from the resolver, so an override moves the probe too', async () => {
@@ -964,6 +984,53 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
     assert.equal(data.workspaceId, before.workspaceId);
     // No second register frame — the existing socket was reused, not replaced.
     assert.equal(fake.sent.filter((f) => JSON.parse(f).type === 'register').length, 1);
+  });
+
+  it('toggle {enabled:true} surfaces WS_URL_REFUSED, not a generic off, on an explicit refused WS override (#2354)', async () => {
+    // startSession() returns the refusal directly, but the route re-derives
+    // its response from getStatus() right after (server.js) — this pins that
+    // the SAME refusal survives that re-fetch rather than reading back a
+    // bare, unexplained `off`.
+    medusa._setBridgeWsUrl('ws://192.168.1.50:3010');
+    try {
+      const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: true }, dashboard());
+      assert.equal(status, 200);
+      assert.equal(data.state, 'off');
+      assert.equal(data.lastErrorCode, 'WS_URL_REFUSED');
+      assert.match(data.lastError, /MEDUSA_BRIDGE_WS_URL/);
+      assert.match(data.lastError, /non-loopback/);
+      // The health preflight the toggle also runs must agree, not report a
+      // healthy default Bridge while no listener started.
+      assert.equal(data.bridge.code, 'BRIDGE_WS_URL_REFUSED');
+      assert.equal(data.bridge.healthy, false);
+      assert.equal(medusa.activeListenerCount(), 0, 'no listener was created');
+    } finally {
+      medusa._setBridgeWsUrl();
+    }
+  });
+
+  it('a later GET status poll still reports the refusal, not a bare off (#2354)', async () => {
+    medusa._setBridgeWsUrl('ws://192.168.1.50:3010');
+    try {
+      medusa.startSession({ projectPath: project.path, sessionId: active.id, name: project.name });
+      const { status, data } = await req('/api/sessions/switchboard/medusa/status', 'GET');
+      assert.equal(status, 200);
+      assert.equal(data.state, 'off');
+      assert.equal(data.lastErrorCode, 'WS_URL_REFUSED');
+      assert.match(data.lastError, /MEDUSA_BRIDGE_WS_URL/);
+    } finally {
+      medusa._setBridgeWsUrl();
+    }
+  });
+
+  it('an explicit toggle {enabled:false} clears a recorded refusal back to a clean off (#2354)', async () => {
+    medusa._setBridgeWsUrl('ws://192.168.1.50:3010');
+    medusa.startSession({ projectPath: project.path, sessionId: active.id, name: project.name });
+    assert.equal(medusa.getStatus(active.id).lastErrorCode, 'WS_URL_REFUSED');
+    medusa._setBridgeWsUrl();
+    const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: false }, dashboard());
+    assert.equal(status, 200);
+    assert.deepEqual(data, { state: 'off', listeningSince: null, workspaceId: null, unread: 0, lastError: null, lastErrorCode: null });
   });
 
   it('toggle with no body flips off→on (starts a listener)', async () => {
