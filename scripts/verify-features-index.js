@@ -71,15 +71,26 @@ const { evaluate: evaluateDocsOnly } = require('./docs-records-only-diff');
 
 const ROOT = path.join(__dirname, '..');
 
-/** A test registration call -- `it(`/`test(`, this repo's node:test convention. */
-const TEST_CALL_RE = /\b(?:it|test)\s*\(/;
+/**
+ * A test registration call whose first argument is a string/template literal
+ * -- `it(`/`test(`, this repo's node:test convention, including the
+ * `.only`/`.skip`/`.todo` variants. Matched against content where
+ * {@link stripCommentsAndStrings} has already turned every string/template
+ * literal into a literal `""`, so this can require that `""` right after the
+ * call -- `it(foo)` or a bare `/it(foo)/` regex literal never produces that
+ * shape, only a real `it('name', fn)`/`test(\`name\`, fn)` does.
+ */
+const TEST_CALL_RE = /\b(?:it|test)(?:\s*\.\s*(?:only|skip|todo))?\s*\(\s*""/;
 
 /**
  * A docs-only fallback citation must itself look like a test file -- `lib/foo.js`
  * or `docs/foo.md` mentioning `it(`/`test(` in prose is not evidence of coverage,
- * however real that text reads after comment/string stripping below.
+ * however real that text reads after comment/string stripping below. This
+ * shape check alone does NOT rule out `test/../x.test.js` -- `.` and `/` are
+ * both in the allowed character class -- {@link isRealTestPath} combines it
+ * with an explicit `..` rejection and a resolved-path containment check.
  */
-const TEST_PATH_RE = /^test\/.+\.test\.js$/;
+const TEST_PATH_RE = /^test\/[A-Za-z0-9_./-]+\.test\.js$/;
 
 /** One `Tests:` clause's backtick-quoted file list. */
 const TESTS_CLAUSE_RE = /Tests:\s*((?:`[^`]+`,?\s*)+)\.?/g;
@@ -138,38 +149,60 @@ function existsOnDisk(relPath, io = {}) {
 }
 
 /**
- * Blank out string/template literal contents and comments, so `it(`/`test(`
- * appearing only in prose, a quoted example, or commented-out code cannot
- * read as a real registration. Order matters: strings are blanked first so
- * a `//`/`/*` sequence inside a string can't later confuse the comment
- * regexes; whitespace (not full removal) keeps line numbers irrelevant to
- * this lightweight check while never letting code on either side collide.
+ * Blank out comments, and collapse every string/template literal down to a
+ * bare `""` -- so a real call's string first argument can be matched by
+ * shape (`it("", ...)`) regardless of what the argument text said, while
+ * `it(`/`test(` appearing in prose, inside a `/regex/` literal, or followed
+ * by a non-string argument never produces a `""` right after the call.
+ * Order matters: strings are collapsed first so a `//`/`/*` sequence inside
+ * one can't later confuse the comment regexes.
  *
  * @param {string} src - JavaScript source
- * @returns {string} The same source with those regions replaced by spaces
+ * @returns {string} The same source with comments replaced by spaces and
+ *   every string/template literal replaced by the two characters `""`
  */
 function stripCommentsAndStrings(src) {
   const blank = (m) => m.replace(/[^\n]/g, ' ');
   return src
-    .replace(/`(?:\\.|[^`\\])*`/g, blank)
-    .replace(/"(?:\\.|[^"\\\n])*"/g, blank)
-    .replace(/'(?:\\.|[^'\\\n])*'/g, blank)
+    .replace(/`(?:\\.|[^`\\])*`/g, '""')
+    .replace(/"(?:\\.|[^"\\\n])*"/g, '""')
+    .replace(/'(?:\\.|[^'\\\n])*'/g, '""')
     .replace(/\/\*[\s\S]*?\*\//g, blank)
     .replace(/\/\/[^\n]*/g, blank);
 }
 
 /**
- * Whether `relPath` looks like a real test file: a path under `test/`
- * ending in `.test.js`, existing on disk, whose content (comments and
- * string/template literals stripped first) contains a real test
- * registration — a lightweight sanity check, not a test run.
+ * Whether `relPath` is a real test file path: no `..` segment or backslash,
+ * already normalized (`path.posix.normalize` changes nothing), matches the
+ * `test/*.test.js` shape, AND resolves (relative to {@link ROOT}) inside the
+ * `test/` directory -- the shape check alone cannot see `test/../x.test.js`
+ * escaping `test/` by surviving character-class matching (`.` and `/` are
+ * both allowed characters), so this adds the resolved-path containment
+ * check the shape check cannot perform on its own.
+ *
+ * @param {string} relPath - A repo-relative path, as cited in `FEATURES.md`
+ * @returns {boolean}
+ */
+function isRealTestPath(relPath) {
+  if (relPath.includes('..') || relPath.includes('\\')) return false;
+  if (path.posix.normalize(relPath) !== relPath) return false;
+  if (!TEST_PATH_RE.test(relPath)) return false;
+  const testDir = path.resolve(ROOT, 'test') + path.sep;
+  return path.resolve(ROOT, relPath).startsWith(testDir);
+}
+
+/**
+ * Whether `relPath` looks like a real test file: a genuine path under
+ * `test/` (see {@link isRealTestPath}), existing on disk, whose content
+ * (comments and string/template literals stripped first) contains a real
+ * test registration — a lightweight sanity check, not a test run.
  *
  * @param {string} relPath
  * @param {{existsSync?: function(string): boolean, readFileSync?: function(string, string): string}} [io] - Injection seams
  * @returns {boolean}
  */
 function hasRealTests(relPath, io = {}) {
-  if (!TEST_PATH_RE.test(relPath)) return false;
+  if (!isRealTestPath(relPath)) return false;
   if (!existsOnDisk(relPath, io)) return false;
   const read = io.readFileSync || fs.readFileSync;
   let content;
@@ -265,7 +298,8 @@ function main(argv, io = {}) {
 }
 
 module.exports = {
-  testsCitedOn, touchedFiles, newlyCitedTests, existsOnDisk, hasRealTests, stripCommentsAndStrings, parseArgs, main
+  testsCitedOn, touchedFiles, newlyCitedTests, existsOnDisk, isRealTestPath, hasRealTests,
+  stripCommentsAndStrings, parseArgs, main
 };
 
 if (require.main === module) {

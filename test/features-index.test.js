@@ -376,4 +376,30 @@ describe('existsOnDisk and hasRealTests: on-disk reality seams', () => {
     assert.match(stripped, /it\(/, 'the real call survives stripping');
     assert.ok(!/fake/.test(stripped), `no "fake" text should survive: ${JSON.stringify(stripped)}`);
   });
+
+  it('isRealTestPath rejects a path that escapes test/ via .. even though it matches the shape regex (PRR-B review round 2, #2632)', () => {
+    assert.equal(verifyFeaturesIndex.isRealTestPath('test/../docs/fake.test.js'), false);
+    assert.equal(verifyFeaturesIndex.isRealTestPath('test/../../outside.test.js'), false);
+  });
+
+  it('isRealTestPath rejects a backslash path and accepts a genuine test/ path', () => {
+    assert.equal(verifyFeaturesIndex.isRealTestPath('test\\a.test.js'), false);
+    assert.equal(verifyFeaturesIndex.isRealTestPath('test/a.test.js'), true);
+    assert.equal(verifyFeaturesIndex.isRealTestPath('test/sub/a.test.js'), true);
+  });
+
+  it('hasRealTests rejects a traversal path even with a real registration and existsSync true (PRR-B review round 2, #2632)', () => {
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/../docs/fake.test.js', realTestIo), false);
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/../../outside.test.js', realTestIo), false);
+  });
+
+  it('hasRealTests rejects a test/ file whose only it(/test( text is a bare regex literal, not a real call (PRR-B review round 2, #2632)', () => {
+    const io = { existsSync: () => true, readFileSync: () => 'const matcher = /it(foo)/;\n' };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/regex-only.test.js', io), false);
+  });
+
+  it('hasRealTests matches it.only/.skip/.todo variants once stripped to a string-literal first argument', () => {
+    const io = { existsSync: () => true, readFileSync: () => "it.only('y', () => {});\n" };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/only.test.js', io), true);
+  });
 });
