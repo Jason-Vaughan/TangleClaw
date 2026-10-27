@@ -26,6 +26,7 @@ const tmux = require('../lib/tmux');
 const sessions = require('../lib/sessions');
 const wrapPipeline = require('../lib/wrap-pipeline');
 const wrapRunRegistry = require('../lib/wrap-run-registry');
+const medusa = require('../lib/medusa');
 const { handleRequest } = require('../server');
 const drawer = require('../public/wrap-drawer');
 const { liftDeclaration } = require('./helpers/lift');
@@ -353,6 +354,107 @@ describe('a finished wrap ends the session (#1558)', () => {
       assert.equal(res.statusCode, 400);
       assert.equal(JSON.parse(res.body).code, 'BAD_REQUEST');
       assert.ok(store.sessions.getActive(project.id), 'the session is untouched');
+    });
+  });
+
+  describe('Medusa mail carried forward through a wrap that ends the session (#1806)', () => {
+    /** WebSocket readyState constants (subset used by the listener). */
+    const READY = { CONNECTING: 0, OPEN: 1, CLOSED: 3 };
+
+    /** Minimal fake WebSocket for `medusa.startSession`'s `wsFactory` test seam. */
+    class FakeSocket {
+      constructor(url) {
+        this.url = url;
+        this.readyState = READY.CONNECTING;
+        this.sent = [];
+        this._listeners = Object.create(null);
+      }
+
+      addEventListener(type, handler) { (this._listeners[type] || (this._listeners[type] = [])).push(handler); }
+
+      send(data) { this.sent.push(data); }
+
+      close() { this.readyState = READY.CLOSED; }
+
+      _fire(type, event) { for (const h of this._listeners[type] || []) h(event); }
+
+      _open() { this.readyState = READY.OPEN; this._fire('open', {}); }
+
+      _message(obj) { this._fire('message', { data: JSON.stringify(obj) }); }
+    }
+
+    /**
+     * A `wsFactory` that records every socket it creates.
+     * @returns {{factory: (url: string) => FakeSocket, sockets: FakeSocket[]}}
+     */
+    function fakeMedusaFactory() {
+      const sockets = [];
+      return { factory: (url) => { const s = new FakeSocket(url); sockets.push(s); return s; }, sockets };
+    }
+
+    /**
+     * Bring the latest socket to `listening` and deliver one `new_message`.
+     * @param {object[]} sockets - From `fakeMedusaFactory`
+     * @param {object} message - The message body to deliver
+     * @returns {void}
+     */
+    function deliver(sockets, message) {
+      const s = sockets[sockets.length - 1];
+      s._open();
+      s._message({ type: 'registered' });
+      s._message({ type: 'new_message', messageId: `env-${message.id}`, message });
+    }
+
+    it('seeds the next session\'s listener with mail still unhandled when the wrap ended the predecessor', async () => {
+      const session = startSession();
+      const { factory, sockets } = fakeMedusaFactory();
+      medusa.startSession({ projectPath: project.path, sessionId: session.id, name: project.name, wsFactory: factory });
+      deliver(sockets, { id: 'm1', type: 'direct', from: 'peer-x', to: 'self', message: 'first', timestamp: 1 });
+      deliver(sockets, { id: 'm2', type: 'direct', from: 'peer-x', to: 'self', message: 'second', timestamp: 2 });
+      assert.equal(medusa.getMessages(session.id).length, 2, 'both arrived before the wrap');
+
+      stubRuns(FINISHED_CLEAN);
+      const result = await sessions.triggerWrap(project.name);
+      assert.equal(result.lifecycleCompleted, true, 'the wrap ended the session');
+      assert.equal(medusa.getStatus(session.id).state, 'off', 'the predecessor\'s listener is gone');
+
+      const successor = startSession();
+      const factory2 = fakeMedusaFactory().factory;
+      medusa.startSession({ projectPath: project.path, sessionId: successor.id, name: project.name, wsFactory: factory2 });
+      try {
+        assert.deepEqual(medusa.getMessages(successor.id).map((m) => m.id), ['m1', 'm2'],
+          'the successor\'s listener is seeded with the predecessor\'s unhandled mail, oldest first');
+        assert.equal(medusa.getStatus(successor.id).unread, 2, 'the carried mail counts toward unread');
+
+        // Handled by the SUCCESSOR's own id, matched on the message body's own
+        // `id` — the carried entries have no envelope id from a connection
+        // this listener never held.
+        medusa.markHandled(successor.id, ['m1', 'm2']);
+        assert.equal(medusa.getMessages(successor.id).length, 0);
+      } finally {
+        medusa.forgetSession({ projectPath: project.path, sessionId: successor.id });
+      }
+    });
+
+    it('carries nothing forward when every message was handled before the wrap ended the session', async () => {
+      const session = startSession();
+      const { factory, sockets } = fakeMedusaFactory();
+      medusa.startSession({ projectPath: project.path, sessionId: session.id, name: project.name, wsFactory: factory });
+      deliver(sockets, { id: 'handled-1', type: 'direct', from: 'peer-x', to: 'self', message: 'done', timestamp: 1 });
+      medusa.markHandled(session.id, ['handled-1']);
+      assert.equal(medusa.getMessages(session.id).length, 0);
+
+      stubRuns(FINISHED_CLEAN);
+      await sessions.triggerWrap(project.name);
+
+      const successor = startSession();
+      const factory2 = fakeMedusaFactory().factory;
+      medusa.startSession({ projectPath: project.path, sessionId: successor.id, name: project.name, wsFactory: factory2 });
+      try {
+        assert.deepEqual(medusa.getMessages(successor.id), [], 'nothing to carry: everything was already handled');
+      } finally {
+        medusa.forgetSession({ projectPath: project.path, sessionId: successor.id });
+      }
     });
   });
 });

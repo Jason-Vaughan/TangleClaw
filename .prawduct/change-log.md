@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-27 — v5.41.0 W1-C PR #2640: Medusa mail carried forward across a wrap-ended session; injectCommand refuses mid-wrap
+
+<!-- prawduct: type=fixed | scope=w1c-1806-2269 -->
+
+- **#1806:** A wrap that ends the session was losing Medusa messages still unhandled in the listener's in-memory inbox: `medusa.forgetSession` now captures them before the workspace id is retired (`_captureCarriedMail`), and `medusa.startSession` seeds the project's next listener with them, oldest first (`MedusaListener#seedCarriedMail`), before opening its socket. Carried entries have no envelope id, so `markHandled` clears them locally without acking a connection that never held them; a consumer still matches them by the message body's own `id`.
+- **#2269:** `injectCommand` (`lib/sessions.js`) now refuses to type into a pane whose project has a wrap running in `wrap-run-registry` (`_refuseAtRunningWrap`), the same shape as its existing startup-dialog refusal; an unreadable registry withholds the send, same as `medusa-wake`'s own fail-closed check. `lib/routes/sessions.js` maps the new refusal to HTTP 409 `WRAP_RUNNING`, added to this car's scope under a Round 2 Charter A476 addendum (confirmed 100% disjoint from every other active car) after TC-Lane-PRR-B flagged the gap in PR #2640 Round 1.
+- Round 2 also corrected the branch's own changelog fragment: the original `changelog.d/1806-2269-sessions-wrap-medusa-guard.md` never matched `lib/changelog-fragments.js`'s one-issue-per-file name grammar, and its `### Fixed` heading violated the fragment body's no-heading rule. Replaced with `changelog.d/1806.wrap-medusa-mail.fixed.md` and `changelog.d/2269.inject-command-wrap-guard.fixed.md`, each a single bullet. Caught by TC-Lane-PRR-B as BLOCKING (CI run 40569582765 failed the fragment-name gate).
+
 ## 2026-10-27 — v5.40.0 W4-REL: prepare the release candidate
 
 - Compiled 15 accepted changelog fragments into the dated `[5.40.0]` section, removed those consumed files, changed `version.json` to 5.40.0, and ran `scripts/release-prepare.js` to update README pins and extend the released-section lock. The merge that changes `version.json` will trigger the release workflow; this preparation does not tag or publish.
