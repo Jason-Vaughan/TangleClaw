@@ -41,6 +41,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-27 — v5.40.0 W2-C Chunk 01: permission-request schema foundation
+
+<!-- prawduct: type=internal | scope=w2c-2352-2625 -->
+
+- **#2352:** Added the durable permission-request record and its fail-closed state machine (`lib/permission-requests.js`): additive `permission_requests`/`permission_request_events` tables (`ensurePermissionSchema`, idempotent, no edit to `lib/store.js`/`lib/store/_schema.js`), lazy expiry (`PERMISSION_REQUEST_EXPIRED`) and launch-supersession (`PERMISSION_LAUNCH_SUPERSEDED`) transitions, and the shared `decidePermissionRequest` grant/refuse primitive (idempotent replay, `PERMISSION_DECISION_CONFLICT` on a conflicting decision) that Chunks 02/03's dashboard and Discord-bridge trust boundaries will call once each has proven who is deciding. No route or UI surface yet — this chunk is the storage foundation only; `test/permission-requests.test.js` covers it.
+
 ## 2026-10-27 — v5.40.0 W1-A: operator-needed alert context and Gateway resume docs
 
 <!-- prawduct: type=changed | scope=v540-w1a-2141-2334 -->
