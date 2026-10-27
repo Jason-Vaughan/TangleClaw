@@ -419,4 +419,23 @@ describe('existsOnDisk and hasRealTests: on-disk reality seams', () => {
     const io = { existsSync: () => true, readFileSync: () => "it.only('y', () => {});\n" };
     assert.equal(verifyFeaturesIndex.hasRealTests('test/only.test.js', io), true);
   });
+
+  it('hasRealTests rejects a regex literal following a regex-preceding keyword like return/throw/case (PRR-B review round 4, #2632)', () => {
+    const returnIo = { existsSync: () => true, readFileSync: () => 'function matcher() { return /;it("fake")/; }\n' };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/return-regex.test.js', returnIo), false);
+    const throwIo = { existsSync: () => true, readFileSync: () => 'function f() { throw /;test("fake")/; }\n' };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/throw-regex.test.js', throwIo), false);
+    const caseIo = { existsSync: () => true, readFileSync: () => 'switch (x) { case /it("fake")/.test(y): break; }\n' };
+    assert.equal(verifyFeaturesIndex.hasRealTests('test/case-regex.test.js', caseIo), false);
+  });
+
+  it('stripCommentsAndStrings treats / after return as a regex literal, not division (PRR-B review round 4, #2632)', () => {
+    const stripped = verifyFeaturesIndex.stripCommentsAndStrings('function matcher() { return /;it("fake")/; }');
+    assert.ok(!/it\(\s*""/.test(stripped), `the regex literal after return must not collapse into an it("") shape: ${JSON.stringify(stripped)}`);
+  });
+
+  it('stripCommentsAndStrings does not treat a keyword used as a property name as a regex-preceding context', () => {
+    const stripped = verifyFeaturesIndex.stripCommentsAndStrings('const x = obj.return / 2; it(\'real\', () => {});');
+    assert.match(stripped, /it\(\s*""/, 'obj.return is a property access, so the following / divides and the real call after it must still match');
+  });
 });

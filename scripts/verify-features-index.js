@@ -156,26 +156,46 @@ function existsOnDisk(relPath, io = {}) {
 const REGEX_PRECEDES_RE = /[=([{,;:!&|?~^%+\-*/<>]/;
 
 /**
+ * Keywords after which a bare `/` is unambiguously a regex literal, never
+ * division -- `return /x/`, `typeof /x/`, etc. Checked against the most
+ * recent identifier token, not the last character, because the token itself
+ * (`n`, `w`, ...) is not an operator/punctuation character and so would
+ * otherwise read as an ordinary expression continuing (the exact round-4
+ * bug: `return /;it("fake")/` left `return`'s `/` unrecognized because
+ * `prevNonWs` was `'n'`).
+ */
+const REGEX_PRECEDING_KEYWORDS = new Set([
+  'return', 'case', 'throw', 'typeof', 'void', 'delete', 'in', 'instanceof', 'new', 'yield', 'await', 'of', 'else', 'do'
+]);
+
+/** Identifier/keyword token characters. */
+const ID_START_RE = /[A-Za-z_$]/;
+const ID_PART_RE = /[A-Za-z0-9_$]/;
+
+/**
  * Blank out comments and regex literals, and collapse every string/template
  * literal down to a bare `""` -- so a real call's string first argument can
  * be matched by shape (`it("", ...)`) regardless of what the argument text
  * said, while `it(`/`test(` appearing in prose, inside a comment, inside a
  * `/regex/` literal (including one whose body itself contains quote
- * characters, e.g. `/it("fake")/`), or followed by a non-string argument
- * never produces a `""` right after the call.
+ * characters, e.g. `/it("fake")/`, or follows a regex-preceding keyword like
+ * `return`), or followed by a non-string argument never produces a `""`
+ * right after the call.
  *
  * A single left-to-right scan, not independent regex passes: a regex
  * literal can contain quote characters and a string can contain `/`
  * characters, so each construct must be recognized in the context of what
  * has already been consumed, not pattern-matched against the raw source in
- * isolation (that was the exact bug a round of review caught -- the
- * standalone string regex read the quotes inside `/it("fake")/` as a
+ * isolation (that was the exact bug an earlier round of review caught --
+ * the standalone string regex read the quotes inside `/it("fake")/` as a
  * string literal before anything recognized the surrounding `/.../` as a
- * regex). A `/` opens a regex literal only when the last non-whitespace
+ * regex). A `/` opens a regex literal when the last non-whitespace
  * character emitted could not have ended an expression (start of source,
- * or an operator/punctuation character per {@link REGEX_PRECEDES_RE}) --
- * the same heuristic real tokenizers use to disambiguate regex-literal
- * start from division.
+ * or an operator/punctuation character per {@link REGEX_PRECEDES_RE}), OR
+ * when the most recent identifier token is a {@link REGEX_PRECEDING_KEYWORDS}
+ * entry that is itself not a property access (`obj.return /2` divides;
+ * `return /x/` does not) -- the same heuristics real tokenizers use to
+ * disambiguate regex-literal start from division.
  *
  * @param {string} src - JavaScript source
  * @returns {string} The same source with comments and regex literals
@@ -186,6 +206,8 @@ function stripCommentsAndStrings(src) {
   let out = '';
   let i = 0;
   let prevNonWs = '';
+  let prevWord = '';
+  let prevWordIsProperty = false;
   const n = src.length;
   while (i < n) {
     const ch = src[i];
@@ -216,10 +238,14 @@ function stripCommentsAndStrings(src) {
       out += '""';
       i = j < n ? j + 1 : j;
       prevNonWs = ')'; // a completed string behaves like an expression, never regex-preceding
+      prevWord = '';
+      prevWordIsProperty = false;
       continue;
     }
 
-    if (ch === '/' && next !== '/' && next !== '*' && (prevNonWs === '' || REGEX_PRECEDES_RE.test(prevNonWs))) {
+    if (ch === '/' && next !== '/' && next !== '*'
+        && (prevNonWs === '' || REGEX_PRECEDES_RE.test(prevNonWs)
+          || (!prevWordIsProperty && REGEX_PRECEDING_KEYWORDS.has(prevWord)))) {
       let j = i + 1;
       let inClass = false;
       let closed = false;
@@ -234,13 +260,31 @@ function stripCommentsAndStrings(src) {
         for (let k = i; k <= j; k += 1) out += ' ';
         i = j + 1;
         prevNonWs = ')'; // a completed regex literal behaves like an expression too
+        prevWord = '';
+        prevWordIsProperty = false;
         continue;
       }
       // No closing `/` on this line: not a regex literal after all, fall through below.
     }
 
+    if (ID_START_RE.test(ch)) {
+      let j = i + 1;
+      while (j < n && ID_PART_RE.test(src[j])) j += 1;
+      const word = src.slice(i, j);
+      out += word;
+      prevWordIsProperty = prevNonWs === '.';
+      prevWord = word;
+      prevNonWs = word[word.length - 1];
+      i = j;
+      continue;
+    }
+
     out += ch;
-    if (!/\s/.test(ch)) prevNonWs = ch;
+    if (!/\s/.test(ch)) {
+      prevNonWs = ch;
+      prevWord = '';
+      prevWordIsProperty = false;
+    }
     i += 1;
   }
   return out;
