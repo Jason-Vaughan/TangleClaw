@@ -1672,10 +1672,13 @@ describe('projects', () => {
     });
 
     // #428: per-project active-plan pick (the drawer plan-picker → activePlan).
+    // Fixture lives under `.tangleclaw/plans` (#1050): the validator resolves
+    // the same directory `_resolvePlansDir` does, which no longer falls back
+    // to the legacy `.claude/plans` location now that it has been retired.
     describe('activePlan (#428)', () => {
       let planDir;
       before(() => {
-        planDir = path.join(projectsDir, 'new-project', '.claude', 'plans');
+        planDir = path.join(projectsDir, 'new-project', '.tangleclaw', 'plans');
         fs.mkdirSync(planDir, { recursive: true });
         fs.writeFileSync(path.join(planDir, 'chosen.md'), '### Chunk 1: A\n');
       });
@@ -1702,24 +1705,14 @@ describe('projects', () => {
         assert.equal(cfg.activePlan, undefined, 'null must delete the key, not store null');
       });
 
-      // #612: the validator must check the SAME directory the wrap step
-      // resolves. Pinned to the legacy path it made the operator escape hatch
-      // unsettable for any project following the current layout — the drawer
-      // would offer plan candidates whose save was guaranteed to fail.
-      it('accepts a plan in the TangleClaw-owned plans directory', async () => {
-        const tcPlans = path.join(projectsDir, 'new-project', '.tangleclaw', 'plans');
-        fs.mkdirSync(tcPlans, { recursive: true });
-        fs.writeFileSync(path.join(tcPlans, 'current.md'), '### Chunk 1: A\n');
-        try {
-          const result = await projects.updateProject('new-project', { activePlan: 'current.md' });
-          assert.ok(result.project, `expected accept, got: ${JSON.stringify(result.errors)}`);
-          const cfg = projectConfigModule.load(result.project.path);
-          assert.equal(cfg.activePlan, 'current.md');
-          await projects.updateProject('new-project', { activePlan: null });
-        } finally {
-          fs.rmSync(tcPlans, { recursive: true, force: true });
-        }
-      });
+      // #612's own test (originally: "accepts a plan in the TangleClaw-owned
+      // plans directory") is RETIRED (#1050): it existed to prove the
+      // validator accepts `.tangleclaw/plans` as well as the then-also-valid
+      // legacy `.claude/plans` — two distinct directories. Now that legacy
+      // resolution is retired, `.tangleclaw/plans` IS the shared `planDir`
+      // fixture above, so every other test in this block already covers it;
+      // a dedicated test here would `rmSync` the shared fixture directory
+      // out from under the tests that run after it.
 
       it('rejects a filename that does not exist under the resolved plans directory', async () => {
         const result = await projects.updateProject('new-project', { activePlan: 'ghost.md' });
