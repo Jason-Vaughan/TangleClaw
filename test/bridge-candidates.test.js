@@ -765,5 +765,29 @@ describe('bridge candidates (#2031)', () => {
       const cli = await statusCli(session, foldedId);
       assert.match(cli.stdout, /discarded \(merged\)/);
     });
+
+    it('PRR-A round 2: a cross-project hop right at the depth-limit boundary still redacts, not just an immediate one', async () => {
+      const session = liveSession();
+      const receiptSeq = reports(session);
+      const other = liveSession();
+      const otherSeq = reports(other);
+      // A same-project merge chain exactly MAX_MERGE_DEPTH + 1 long (ids[0]..ids[10]), with the
+      // final hop (ids[10] -> foreign) crossing into another project right where the old code's
+      // depth >= MAX_MERGE_DEPTH check returned mergedInto before ever looking at target ownership.
+      // Submitted and merged one hop at a time, never more than 2 open at once -- MAX_OPEN_CANDIDATES_PER_LAUNCH is 5.
+      const ids = [(await offers(session, { receipts: [{ kind: 'workload', seq: receiptSeq }] })).body.candidateId];
+      for (let i = 0; i < 10; i++) {
+        ids.push((await offers(session, { receipts: [{ kind: 'workload', seq: receiptSeq }] })).body.candidateId);
+        const version = bridgeStore.candidates.get(ids[i]).version;
+        assert.equal((await master(ids[i], 'merge', { into: ids[i + 1], expectedVersion: version })).status, 200, `hop ${i}`);
+      }
+      const foreign = (await offers(other, { receipts: [{ kind: 'workload', seq: otherSeq }] })).body.candidateId;
+      const lastVersion = bridgeStore.candidates.get(ids[ids.length - 1]).version;
+      assert.equal((await master(ids[ids.length - 1], 'merge', { into: foreign, expectedVersion: lastVersion })).status, 200);
+
+      const read = await reads(session, ids[0]);
+      assert.equal(read.status, 200);
+      assert.equal(JSON.stringify(read.body).includes(foreign), false, 'the foreign id never surfaces even at the exact depth-limit hop');
+    });
   });
 });

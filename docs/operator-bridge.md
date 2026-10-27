@@ -668,7 +668,10 @@ not depend on whether Discord delivery is currently switched on. The answer sepa
   text itself, decided or posted.
 - **`discarded`**, with the reason: `rejected` (by the Master), `withdrawn` (by the operator),
   `expired` (undecided past its limit, or approved and never collected), or `merged` (with
-  `mergedInto` and that candidate's own current outcome, `mergedOutcome`).
+  `mergedInto` and that candidate's own current outcome, `mergedOutcome`). A merge the Master made
+  into a candidate from **another** project — `mergeCandidate` does not check that the two share a
+  project — answers with `mergedInto: null, mergedOutcome: null` instead of resolving the survivor:
+  the submitting launch never learns another project's candidate id, delivery reference, or parts.
 
 Refusal: `403 VERIFIED_LAUNCH_REQUIRED` for anything that is not a verified project launch,
 including the Master's own credential and the operator's dashboard. Another project's candidate
