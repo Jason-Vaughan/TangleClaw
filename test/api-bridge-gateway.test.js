@@ -4031,5 +4031,22 @@ describe('bridge API: the round trip (#2031)', () => {
       // Off: the DM channel id is nobody's pinned channel, so it reads as guild too.
       assert.equal(key(caller, { channelId: DM_ID }), 'inbound:tok-dm-test:guild', 'the surface must be enabled, not merely pinned, to key separately');
     });
+
+    it('exposes the DM surface\'s own open episode additively at both the operator and Master status routes, leaving configurationCircuit unchanged', async () => {
+      const beforeOp = await asOperator('GET', '/api/bridge/operator/status');
+      const beforeMaster = await call('GET', '/api/bridge/master/status', { headers: asMaster() });
+      assert.deepEqual([beforeOp.body.configurationCircuitDm, beforeMaster.body.configurationCircuitDm], [null, null], 'nothing open yet');
+      const dmOutboundId = Number(store.getDb().prepare(
+        "INSERT INTO bridge_outbound (idem_key, kind, notify_type, surface_kind, source_label, text, digest, state, created_at, updated_at) "
+        + "VALUES (?, 'notification', 'operator-needed', 'bot-dm', 'TangleClaw', 'x', ?, 'ready', ?, ?)"
+      ).run(`notify:operator-needed:dm-circuit-${++seq}`, bridgeStore.digest('x'), gateway._deps.now(), gateway._deps.now()).lastInsertRowid);
+      bridgeStore.circuit.trip('chat-channel-missing', dmOutboundId, { at: gateway._deps.now() });
+      const afterOp = await asOperator('GET', '/api/bridge/operator/status');
+      const afterMaster = await call('GET', '/api/bridge/master/status', { headers: asMaster() });
+      for (const body of [afterOp.body, afterMaster.body]) {
+        assert.deepEqual([body.configurationCircuitDm.reason, body.configurationCircuitDm.outboundId], ['chat-channel-missing', dmOutboundId]);
+        assert.equal(body.configurationCircuit, null, 'the guild surface has no episode of its own -- unaffected, same shape as before #2433');
+      }
+    });
   });
 });
