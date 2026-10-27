@@ -47,6 +47,23 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 - **#2632:** `scripts/verify-features-index.js` no longer refuses a `Tests:` anchor newly added to `FEATURES.md` solely because the cited test file lands outside a records-only diff. When the whole diff classifies as docs/records-only (`scripts/docs-records-only-diff.js`'s roster), the citation is proven instead by checking the file exists on disk at `HEAD` and contains a real test registration (`it(`/`test(`) — a lightweight on-disk check, not a test run. Any diff that also touches an executable or test file keeps the original strict "must be touched by this diff" requirement, byte-for-byte unchanged. `.github/workflows/test.yml`'s Records Gate already calls this script on every docs-only PR, so the fallback is live immediately, not dormant code (Critic caught an earlier draft of this entry claiming otherwise — corrected). Filed #2632 to give this LANE_QUEUE-dispatched chunk a citable issue — the PM dispatch's suggested fragment name (`p1-features-index-records-gate`) wasn't a valid issue number for `changelog.d/`'s grammar.
 
+## 2026-10-27 — v5.40.0 W2-B: session candidate-status read, and the #2133 duplicate closed
+
+<!-- prawduct: type=added | scope=w2b-2133-2214 -->
+
+- **#2214:** A session can now read what became of a candidate it submitted to the Project
+  Master — `tc candidate status [<candidate-id>]` and `GET /api/bridge/session/candidates[/:candidateId]`
+  — separating waiting, approved (ready/blocked), posted (with the Discord message id and
+  parts), and discarded (rejected, withdrawn, expired, or merged with the survivor's own
+  outcome). New `lib/bridge-candidates.js`, mounted in `server.js` right after the
+  `bridgeApi.ROUTES` loop; reads `bridge_candidates`/`bridge_outbound`/`bridge_outbound_parts`/`bridge_audit`
+  directly, with zero changes to `lib/bridge-api.js` or `lib/bridge-store.js` (A475-W2-PACK).
+- **#2133:** Closed as a duplicate, not rebuilt — the wake-Master-on-submission behavior it
+  asked for already shipped under #2547 (commit `8343e1c5`, `_tellMasterOfCandidates()` in
+  `lib/bridge-gateway.js`'s tick pass). Verified end to end alongside #2214 in
+  `test/bridge-candidates.test.js` (Architect Ruling A475-W2B-R2: no second, parallel notify
+  mechanism was built, so the one source of truth can never double-notify or race).
+
 ## 2026-10-27 — v5.40.0 W1-A: operator-needed alert context and Gateway resume docs
 
 <!-- prawduct: type=changed | scope=v540-w1a-2141-2334 -->
