@@ -4018,5 +4018,18 @@ describe('bridge API: the round trip (#2031)', () => {
       const dmRoute = bridgeStore.routes.get(dmAccepted.body.routeId);
       assert.deepEqual([guildRoute.surfaceKind, dmRoute.surfaceKind], ['guild-channel', 'bot-dm']);
     });
+
+    it('keys the inbound rate limit by surface, not just caller, so a flood on one cannot spend the other\'s budget', async () => {
+      await setDmAllowlist(true);
+      const caller = { tokenId: 'tok-dm-test' };
+      const key = bridgeApi.RATE_LIMITS.inbound.key;
+      assert.equal(key(caller, { channelId: DM_ID }), 'inbound:tok-dm-test:dm');
+      assert.equal(key(caller, { channelId: ALLOWED.channelId }), 'inbound:tok-dm-test:guild');
+      assert.equal(key(caller, {}), 'inbound:tok-dm-test:guild', 'no channel id reads as guild -- no more permissive than before the DM surface existed');
+      assert.equal(key(caller, undefined), 'inbound:tok-dm-test:guild');
+      await setDmAllowlist(false, null);
+      // Off: the DM channel id is nobody's pinned channel, so it reads as guild too.
+      assert.equal(key(caller, { channelId: DM_ID }), 'inbound:tok-dm-test:guild', 'the surface must be enabled, not merely pinned, to key separately');
+    });
   });
 });
