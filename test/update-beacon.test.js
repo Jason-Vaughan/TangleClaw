@@ -616,6 +616,29 @@ describe('#1730 files to reconcile, a failed recovery, and carried edits', () =>
     // applied: <error>" alert, which drops every per-file action.
   });
 
+  it('a rebase-conflict refusal names the conflicted files and offers no discard (#2399)', async () => {
+    const REBASE_CONFLICT = {
+      ok: false,
+      code: 'rebase-conflict',
+      error: 'local commits on "fix/local-commits" could not be replayed onto v9.9.9 — resolve the conflicts below and retry',
+      fromSha: 'abc', toRef: null, toSha: null,
+      conflicts: ['lib/x.js', 'docs/y.md']
+    };
+    const ctx = loadBeacon({ fetchImpl: () => jsonRes(409, REBASE_CONFLICT) });
+    await ctx.beacon.apply(AVAILABLE);
+
+    assert.equal(ctx.calls.confirms.length, 1, 'only the update confirm: nothing here may be discarded');
+    assert.equal(ctx.calls.fetches.length, 1, 'and no second apply');
+    const shown = ctx.calls.alerts.join('\n');
+    for (const path of REBASE_CONFLICT.conflicts) {
+      assert.ok(shown.includes(path), `names ${path}`);
+    }
+    assert.match(shown, /nothing was changed/);
+    assert.equal(ctx.inFlight, false, 'the latch is released');
+    // THE MUTATION THIS CATCHES: falling through to the generic "Update not
+    // applied: <error>" alert, which drops the conflicted-file list.
+  });
+
   it('a failed recovery says the install was not put back, and names the copies', async () => {
     const ctx = loadBeacon({
       fetchImpl: () => jsonRes(500, {

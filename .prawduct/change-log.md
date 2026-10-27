@@ -41,6 +41,15 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-27 — v5.40.0 W1-B: update rebase-onto-tag and Medusa Bridge fail-closed
+
+<!-- prawduct: type=feature | scope=v540-w1b-2399-2354 -->
+
+- **#2399:** The in-app update now rebases a checkout's local commits onto the latest release tag instead of refusing outright, when the branch's fork point from `main` is reachable from that tag. A rebase conflict aborts cleanly and refuses with the conflicted files named; every other branch shape keeps the existing `wrong-ref` refusal.
+- **#2354:** An explicit `MEDUSA_BRIDGE_WS_URL` that the resolver refuses (unparseable, wrong scheme, a fragment, a non-loopback host) now fails closed — no session listener starts, and its status names the refused value and reason — instead of silently falling back to the default Bridge. A derived or unset WS URL is unaffected.
+
+Dispatch (mx_4d00fbbd / PM) named `lib/updater.js`, `routes/update.js`, `test/updater.test.js`, `test/medusa.test.js`; none exist in this repo. Corrected scope confirmed by PM (mx_0M9uk1K0QYRtpeWD): `lib/update-applier.js`, `lib/medusa.js`, `test/update-applier.test.js`, `test/api-medusa.test.js`. Critic also required touching `lib/medusa-listener.js` (new `WS_URL_REFUSED` code), `public/api-helper.js` and `public/update-beacon.js` (surfacing the new codes to the operator), `public/session.js` and two docs (`docs/configuration-reference.md`, `docs/adr/0010-one-update-mechanism.md`) to keep existing contract tests and documentation accurate.
+
 ## 2026-10-26 — v5.39.0 W1-B: CI evidence and mandatory fragments
 
 <!-- prawduct: type=internal | scope=v539-w1b-2371-1220 -->
