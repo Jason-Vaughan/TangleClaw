@@ -320,6 +320,19 @@ describe('bridge notifications (#2031)', () => {
       const reblockReceiptId = bridgeStore.receipts.workloadForLaunch(alpha.launchId, reblockSeq).receiptId;
       assert.deepEqual(notifications().map((r) => r.key).slice(-1), [`notify:work-blocked:receipt:${reblockReceiptId}`]);
     });
+
+    it('is not announced when the block notice it would clear was dropped (let go uncollected, or withdrawn) before the operator saw it (PR #2629 review, second round)', () => {
+      for (const dropCode of ['uncollected-expired', 'withdrawn']) {
+        const alpha = liveSession(`Alpha-${dropCode}`);
+        enable();
+        reports(alpha, 'blocked');
+        bridgeNotify.reconcile();
+        store.getDb().prepare("UPDATE bridge_outbound SET state = 'dropped', drop_code = ?, text = NULL, updated_at = ? WHERE notify_type = 'work-blocked'")
+          .run(dropCode, clock);
+        reports(alpha, 'working');
+        assert.equal(bridgeNotify.reconcile().workUnblocked, 0, `${dropCode}: the operator never saw the block, so no recovery either`);
+      }
+    });
   });
 
   describe('operator-needed', () => {
