@@ -616,6 +616,7 @@ html[data-tc-keyboard] body {
 .permission-request-row:last-child { border-bottom: none; }
 .permission-request-summary { font-weight: 600; color: var(--text); font-size: 12px; }
 .permission-request-detail { color: var(--text-muted); font-size: 11px; margin: 2px 0 4px; }
+.permission-request-expected { color: var(--text-muted); font-size: 11px; font-style: italic; margin: 0 0 4px; }
 .permission-request-actions { display: flex; align-items: center; gap: 8px; }
 .permission-request-grant,
 .permission-request-refuse {

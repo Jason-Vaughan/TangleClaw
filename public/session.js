@@ -1629,9 +1629,12 @@ function renderPermissionRequestsChip(requests) {
 }
 
 /**
- * The panel: one row per pending request, each with Grant/Refuse. All
- * server-supplied text is escaped — a permission request's `actionSummary`
- * and `scope`/`scopeTarget` are product text, not markup.
+ * The panel: one row per pending request, each with Grant/Refuse, the
+ * asker's own `expectedAnswer` shown when it set one (PRR-B: the stored
+ * record carries it, so the deciding Operator should see it too, not just
+ * the scope/summary). All server-supplied text is escaped — a permission
+ * request's `actionSummary`, `scope`/`scopeTarget` and `expectedAnswer` are
+ * product text, not markup.
  * @param {object[]} requests
  * @returns {void}
  */
@@ -1648,6 +1651,7 @@ function renderPermissionRequestsPanel(requests) {
     <div class="permission-request-row" data-request-id="${esc(r.requestId)}" data-scope="${esc(r.scope)}">
       <div class="permission-request-summary">${esc(r.actionSummary)}</div>
       <div class="permission-request-detail">${esc(r.scope)} on ${esc(r.scopeTarget)}</div>
+      ${r.expectedAnswer ? `<div class="permission-request-expected">Asker expects: ${esc(r.expectedAnswer)}</div>` : ''}
       <div class="permission-request-actions">
         <button type="button" class="permission-request-grant" data-decision="grant">Grant</button>
         <button type="button" class="permission-request-refuse" data-decision="refuse">Refuse</button>

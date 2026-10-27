@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-27 — v5.40.0 W2-C PR #2637 Round 2: bind the bridge decision to the persisted message, bootstrap the TCC-authorized server via Terminal.app
+
+<!-- prawduct: type=fixed | scope=w2c-2352-2625 -->
+
+- **#2352:** `decideFromBridge` (`lib/permission-requests.js`) no longer takes grant/refuse from the caller-supplied `reply.decision` once the request id itself is proven — it now parses the ONE decision the persisted inbound message itself names (`_persistedBridgeDecision`: literal `'grant'`/`'refuse'`, same non-inferential check `_isAmbiguousBridgeReply` already used for the request id), refusing `PERMISSION_BRIDGE_DECISION_AMBIGUOUS` when the persisted text names neither or both, and `PERMISSION_BRIDGE_DECISION_MISMATCH` when it names the OTHER one than the caller claims. Caught by TC-Lane-PRR-B's Round 2 review: a persisted "refuse perm_X" reply was previously still appliable as a grant because the prior fix only checked that the decision WORD appeared somewhere in the text, not that it was the text's own, sole decision.
+- **#2625:** `createSessionWithTccBootstrap` (`lib/tmux.js`) no longer calls `tmux -L tangleclaw-tcc-authorized new-session` unconditionally once the default server can't read a protected `cwd` — doing so against an absent socket silently starts an unprivileged, launchd-owned server on it, defeating the whole point of a separate authorized socket. It now checks the authorized server is actually running and can itself read `cwd` (`_tccServerRunning` + `probeTccReadable`'s new `options.socket`), and if not, bootstraps it inside a real Terminal.app window via `osascript` (`bootstrapTccAuthorizedServer`, injectable so tests never open one), re-probes once, and fails closed (throws) if the server still can't read the path. Caught by the same PRR-B Round 2 review.
+- Confirmed already satisfied by the prior round: `public/session.js`'s pending-permission-request panel already rendered and HTML-escaped the stored `expectedAnswer`, with its own test — no change needed.
+
 ## 2026-10-27 — v5.40.0 W2-C: wire the TCC tmux bootstrap into the live launch path
 
 <!-- prawduct: type=fixed | scope=w2c-2352-2625 -->

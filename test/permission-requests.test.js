@@ -570,6 +570,59 @@ describe('decideFromBridge', () => {
     assert.equal(decision.code, 'PERMISSION_BRIDGE_BODY_MISMATCH');
   });
 
+  it('refuses when the persisted message names the request but the OTHER decision: a "refuse" reply cannot be applied as a grant (PRR-B)', () => {
+    const { result } = create();
+    // The real, persisted Discord message says refuse — a caller claiming
+    // 'grant' for this same request/route must not be honored just because
+    // the request id matches; the decision word itself must match too.
+    insertBridgeRoute({ routeId: 'route-2d', authorId: 'author-1', externalId: 'ext-2d', inboundText: `refuse ${result.request.requestId}` });
+    pinOperatorAuthor('author-1');
+    const decision = permissionRequests.decideFromBridge(result.request.requestId, {
+      decision: 'grant', bridgeRouteId: 'route-2d', replyText: `refuse ${result.request.requestId}`
+    });
+    assert.equal(decision.ok, false);
+    assert.equal(decision.code, 'PERMISSION_BRIDGE_DECISION_MISMATCH');
+    // The request is untouched — still pending, not silently granted.
+    assert.equal(permissionRequests.getPermissionRequest(result.request.requestId).state, STATES.PENDING);
+  });
+
+  it('refuses when the persisted message names the request but no decision word at all ("see perm_X") — never defaults to the caller\'s claim (PRR-B Round 2)', () => {
+    const { result } = create();
+    insertBridgeRoute({ routeId: 'route-2f', authorId: 'author-1', externalId: 'ext-2f', inboundText: `see ${result.request.requestId}` });
+    pinOperatorAuthor('author-1');
+    const decision = permissionRequests.decideFromBridge(result.request.requestId, {
+      decision: 'grant', bridgeRouteId: 'route-2f', replyText: `see ${result.request.requestId}`
+    });
+    assert.equal(decision.ok, false);
+    assert.equal(decision.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
+    assert.equal(permissionRequests.getPermissionRequest(result.request.requestId).state, STATES.PENDING);
+  });
+
+  it('refuses when the persisted message names BOTH decision words — naming both is as unclear as naming neither (PRR-B Round 2)', () => {
+    const { result } = create();
+    insertBridgeRoute({
+      routeId: 'route-2g', authorId: 'author-1', externalId: 'ext-2g',
+      inboundText: `grant ${result.request.requestId} actually no refuse it`
+    });
+    pinOperatorAuthor('author-1');
+    const decision = permissionRequests.decideFromBridge(result.request.requestId, {
+      decision: 'grant', bridgeRouteId: 'route-2g', replyText: `grant ${result.request.requestId} actually no refuse it`
+    });
+    assert.equal(decision.ok, false);
+    assert.equal(decision.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
+  });
+
+  it('a persisted "refuse" message correctly refuses when the caller\'s decision also says refuse', () => {
+    const { result } = create();
+    insertBridgeRoute({ routeId: 'route-2e', authorId: 'author-1', externalId: 'ext-2e', inboundText: `refuse ${result.request.requestId}` });
+    pinOperatorAuthor('author-1');
+    const decision = permissionRequests.decideFromBridge(result.request.requestId, {
+      decision: 'refuse', bridgeRouteId: 'route-2e', replyText: `refuse ${result.request.requestId}`
+    });
+    assert.equal(decision.ok, true);
+    assert.equal(decision.request.state, STATES.REFUSED);
+  });
+
   it('refuses when the bridge route has no persisted inbound body at all (fails closed, never falls back to the caller\'s claim)', () => {
     const { result } = create();
     insertBridgeRoute({ routeId: 'route-2c', authorId: 'author-1', externalId: 'ext-2c', inboundText: null });

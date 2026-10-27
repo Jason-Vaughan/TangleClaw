@@ -176,4 +176,55 @@ describe('permission-request routes (#2352)', () => {
     assert.equal(res.status, 400);
     assert.equal(res.data.code, 'PERMISSION_REQUEST_INVALID');
   });
+
+  /**
+   * Insert a minimal, valid `bridge_routes` row plus its persisted inbound
+   * `bridge_route_bodies` row — both tables are created by `store.init()`
+   * itself (`lib/bridge-schema.js`), so this HTTP-layer test needs no bridge
+   * module of its own. Mirrors `test/permission-requests.test.js`'s own
+   * helper of the same shape.
+   * @param {{routeId: string, authorId: string, externalId: string, inboundText: string}} fields
+   * @returns {void}
+   */
+  function insertBridgeRoute({ routeId, authorId, externalId, inboundText }) {
+    const now = new Date().toISOString();
+    store.getDb().prepare(
+      `INSERT INTO bridge_routes
+         (route_id, external_id, author_id, space_id, channel_id, body_digest, state, version, created_at, updated_at)
+       VALUES (?, ?, ?, 'space-1', 'channel-1', ?, 'accepted', 1, ?, ?)`
+    ).run(routeId, externalId, authorId, '0'.repeat(64), now, now);
+    store.getDb().prepare(
+      "INSERT INTO bridge_route_bodies (route_id, role, text, digest, created_at) VALUES (?, 'inbound', ?, ?, ?)"
+    ).run(routeId, inboundText, '0'.repeat(64), now);
+  }
+
+  it('409s PERMISSION_BRIDGE_DECISION_MISMATCH over HTTP: a persisted "refuse" message cannot be applied as a grant (PRR-B Round 2)', async () => {
+    const created = await createAs(binding.headers, { requestId: 'req-for-bridge-contradiction' });
+    const requestId = created.data.request.requestId;
+    insertBridgeRoute({ routeId: 'api-route-contradiction', authorId: 'api-author-1', externalId: 'api-ext-contradiction', inboundText: `refuse ${requestId}` });
+    store.getDb().prepare(
+      "INSERT OR REPLACE INTO bridge_settings (key, value, updated_by, updated_at) VALUES ('allow.author', ?, 'operator', ?)"
+    ).run('api-author-1', new Date().toISOString());
+
+    const res = await sendAs(server, 'POST', `/api/permissions/requests/${encodeURIComponent(requestId)}/decide`,
+      { decision: 'grant', bridgeRouteId: 'api-route-contradiction', replyText: `refuse ${requestId}` },
+      { 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': MASTER_LAUNCH_ID });
+    assert.equal(res.status, 409);
+    assert.equal(res.data.code, 'PERMISSION_BRIDGE_DECISION_MISMATCH');
+  });
+
+  it('409s PERMISSION_BRIDGE_DECISION_AMBIGUOUS over HTTP: a persisted message naming no decision word cannot be applied either way (PRR-B Round 2)', async () => {
+    const created = await createAs(binding.headers, { requestId: 'req-for-bridge-no-decision' });
+    const requestId = created.data.request.requestId;
+    insertBridgeRoute({ routeId: 'api-route-no-decision', authorId: 'api-author-1', externalId: 'api-ext-no-decision', inboundText: `see ${requestId}` });
+    store.getDb().prepare(
+      "INSERT OR REPLACE INTO bridge_settings (key, value, updated_by, updated_at) VALUES ('allow.author', ?, 'operator', ?)"
+    ).run('api-author-1', new Date().toISOString());
+
+    const res = await sendAs(server, 'POST', `/api/permissions/requests/${encodeURIComponent(requestId)}/decide`,
+      { decision: 'grant', bridgeRouteId: 'api-route-no-decision', replyText: `see ${requestId}` },
+      { 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': MASTER_LAUNCH_ID });
+    assert.equal(res.status, 409);
+    assert.equal(res.data.code, 'PERMISSION_BRIDGE_DECISION_AMBIGUOUS');
+  });
 });

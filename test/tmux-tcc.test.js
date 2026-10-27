@@ -23,6 +23,14 @@ const REAL_TMUX = execFileSync('which', ['tmux'], { encoding: 'utf8' }).trim();
 /** Session names + fake-home dirs this file's tests created, cleaned up in `afterEach`. */
 let createdDefault = [];
 let createdFakeHome = null;
+const realBootstrap = tmux.bootstrapTccAuthorizedServer;
+
+// `_tccSeams.settle` is real production behavior (giving Terminal.app a
+// moment to actually start the server) — this file stubs
+// `bootstrapTccAuthorizedServer` itself, so there is never a real
+// Terminal.app launch to wait on, and the real 2s wait would just slow every
+// test in this file down for nothing.
+tmux._tccSeams.settle = () => {};
 
 afterEach(() => {
   for (const name of createdDefault) {
@@ -35,7 +43,24 @@ afterEach(() => {
   }
   delete tmux._tccSeams.homedir;
   tmux._tccSeams.homedir = () => os.homedir();
+  tmux.bootstrapTccAuthorizedServer = realBootstrap;
+  // Best-effort: some tests intentionally leave the TCC-authorized server
+  // without a session the test itself tracks (the fail-closed case never
+  // creates one; others clean up their own named session already).
+  try { execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'kill-server'], { stdio: 'ignore' }); } catch { /* already gone */ }
 });
+
+/**
+ * Pre-start a real session on the TCC-authorized server, simulating "the
+ * server is already running" so `createSessionWithTccBootstrap` never calls
+ * `bootstrapTccAuthorizedServer` (which this file always stubs to avoid a
+ * real Terminal.app/`osascript` launch) in tests that are not themselves
+ * exercising the bootstrap path.
+ * @returns {void}
+ */
+function startAuthorizedAnchor() {
+  execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'new-session', '-d', '-s', tmux.TCC_ANCHOR_SESSION, '-c', '/tmp'], { stdio: 'ignore' });
+}
 
 /**
  * Run `fn` with a `tmux` shim prepended to PATH that sleeps past any
@@ -86,7 +111,7 @@ describe('probeTccReadable (#2625)', () => {
   });
 
   it('reports NOT readable when the server never answers (a real stalling tmux)', () => {
-    withSelectivelySlowTmux('*"new-session -d -s tc-tcc-probe-"*', () => {
+    withSelectivelySlowTmux('"new-session -d -s tc-tcc-probe-"*', () => {
       assert.equal(tmux.probeTccReadable(os.tmpdir(), { timeoutMs: 300 }), false);
     });
   });
@@ -120,7 +145,12 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
     const cwd = fakeProtectedCwd('Documents/blocked-proj');
     const name = uniqueSessionName('tcc_protected_blocked');
     createdDefault.push(name);
-    withSelectivelySlowTmux('*"new-session -d -s tc-tcc-probe-"*', () => {
+    // The TCC-authorized server is already up (and can read this scratch
+    // cwd for real) — the already-running path never calls
+    // bootstrapTccAuthorizedServer, proven by making it throw if it did.
+    startAuthorizedAnchor();
+    tmux.bootstrapTccAuthorizedServer = () => { throw new Error('must not bootstrap when the authorized server is already running and can read cwd'); };
+    withSelectivelySlowTmux('"new-session -d -s tc-tcc-probe-"*', () => {
       const created = tmux.createSessionWithTccBootstrap(name, { cwd });
       assert.equal(created, true);
     });
@@ -133,19 +163,70 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
     assert.match(proxyCommand, new RegExp(`tmux -L '?${tmux.TCC_SOCKET}'? -u attach -t`));
     const statusOption = execFileSync('tmux', ['show-option', '-t', name, 'status'], { encoding: 'utf8' }).trim();
     assert.equal(statusOption, 'status off');
-    // Cleanup: the proxy (afterEach) and the real session on the TCC-authorized server, whose
-    // server then exits on its own (tmux's default: no sessions, no server).
-    execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'kill-session', '-t', name], { stdio: 'ignore' });
+    // Cleanup: the proxy (afterEach), and the TCC-authorized server itself
+    // (afterEach's own kill-server) since the anchor session keeps it alive
+    // past the real session's own lifetime.
   });
 
   it('a second call against an already-bootstrapped name is a no-op, like createSession', () => {
     const cwd = fakeProtectedCwd('Documents/blocked-proj-2');
     const name = uniqueSessionName('tcc_protected_blocked_repeat');
     createdDefault.push(name);
-    withSelectivelySlowTmux('*"new-session -d -s tc-tcc-probe-"*', () => {
+    startAuthorizedAnchor();
+    withSelectivelySlowTmux('"new-session -d -s tc-tcc-probe-"*', () => {
       assert.equal(tmux.createSessionWithTccBootstrap(name, { cwd }), true);
       assert.equal(tmux.createSessionWithTccBootstrap(name, { cwd }), false, 'the proxy already exists on the default server');
     });
-    execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'kill-session', '-t', name], { stdio: 'ignore' });
+  });
+
+  it('bootstraps the TCC-authorized server via Terminal.app/osascript when it is entirely absent (PRR-B Round 2)', () => {
+    const cwd = fakeProtectedCwd('Documents/absent-server-proj');
+    const name = uniqueSessionName('tcc_absent_server_bootstrap');
+    createdDefault.push(name);
+    let bootstrapCalls = 0;
+    // Simulates what the real osascript/Terminal.app bootstrap eventually
+    // does — starts the anchor session for real — without ever opening a
+    // real Terminal.app window from this test.
+    tmux.bootstrapTccAuthorizedServer = () => { bootstrapCalls++; startAuthorizedAnchor(); };
+    withSelectivelySlowTmux('"new-session -d -s tc-tcc-probe-"*', () => {
+      const created = tmux.createSessionWithTccBootstrap(name, { cwd });
+      assert.equal(created, true);
+    });
+    assert.equal(bootstrapCalls, 1, 'bootstraps exactly once when the authorized server was absent');
+    assert.doesNotThrow(() => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }));
+    assert.equal(tmux.hasSession(name), true, 'the default server still gets its attach proxy');
+  });
+
+  it('fails closed, never auto-starting an unauthorized server, when the authorized server still cannot read cwd after a bootstrap attempt (PRR-B Round 2)', () => {
+    const cwd = fakeProtectedCwd('Documents/bootstrap-still-unreadable-proj');
+    const name = uniqueSessionName('tcc_bootstrap_fails_closed');
+    // Deliberately does nothing — simulating Terminal.app/osascript failing
+    // silently (no Terminal.app installed, the AppleScript itself erroring,
+    // etc). The authorized server stays absent.
+    let bootstrapCalls = 0;
+    tmux.bootstrapTccAuthorizedServer = () => { bootstrapCalls++; };
+    withSelectivelySlowTmux('"new-session -d -s tc-tcc-probe-"*', () => {
+      assert.throws(
+        () => tmux.createSessionWithTccBootstrap(name, { cwd }),
+        /still absent or cannot read/
+      );
+    });
+    assert.equal(bootstrapCalls, 1, 'attempted exactly one bootstrap before failing closed');
+    // Never fell through to a bare `new-session` against the absent socket,
+    // which would have silently started an unauthorized server.
+    assert.throws(() => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' }));
+    assert.equal(tmux.hasSession(name), false, 'no proxy was created on the default server either');
+  });
+
+  it('preserves UTF-8 on the attach proxy (tmux -u -L <socket> attach -t <name>) when bootstrapping through an already-running authorized server', () => {
+    const cwd = fakeProtectedCwd('Documents/utf8-proj');
+    const name = uniqueSessionName('tcc_utf8_attach');
+    createdDefault.push(name);
+    startAuthorizedAnchor();
+    withSelectivelySlowTmux('"new-session -d -s tc-tcc-probe-"*', () => {
+      assert.equal(tmux.createSessionWithTccBootstrap(name, { cwd }), true);
+    });
+    const proxyCommand = execFileSync('tmux', ['list-panes', '-t', name, '-F', '#{pane_start_command}'], { encoding: 'utf8' }).trim();
+    assert.match(proxyCommand, /-u/, 'the proxy attaches with -u so the real session\'s UTF-8 content survives the hop');
   });
 });

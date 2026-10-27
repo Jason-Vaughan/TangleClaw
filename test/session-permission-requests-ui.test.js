@@ -112,6 +112,19 @@ describe('#2352 session page: pending-permissions chip + panel', () => {
     assert.match(el.permissionRequestsPanel.innerHTML, /data-decision="refuse"/);
   });
 
+  it('shows the asker\'s expectedAnswer, escaped, when the request set one (PRR-B)', () => {
+    const { el, sandbox } = load();
+    sandbox.renderPermissionRequestsPanel([{ ...REQUEST_A, expectedAnswer: '<b>yes please</b>' }]);
+    assert.doesNotMatch(el.permissionRequestsPanel.innerHTML, /<b>yes please/);
+    assert.match(el.permissionRequestsPanel.innerHTML, /Asker expects: &lt;b&gt;yes please&lt;\/b&gt;/);
+  });
+
+  it('omits the expected-answer line entirely when the request never set one', () => {
+    const { el, sandbox } = load();
+    sandbox.renderPermissionRequestsPanel([REQUEST_A]);
+    assert.doesNotMatch(el.permissionRequestsPanel.innerHTML, /permission-request-expected/);
+  });
+
   it('shows an empty-state message with no pending requests', () => {
     const { el, sandbox } = load();
     sandbox.renderPermissionRequestsPanel([]);
