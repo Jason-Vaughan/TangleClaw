@@ -58,4 +58,43 @@ if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "$WRAP_ADVISORY" ] && [ -r "$WRAP_AD
   cat "$WRAP_ADVISORY" || true
 fi
 
+# Recovery fallback for prawduct's forward notes (#1733). The `handoff-stage`
+# wrap step mirrors `.prawduct/.handoff-notes.md` into this file at the end of
+# every wrap, before anything can consume the live file. If the live file is
+# gone or empty by the time a session boots — whatever source fired this
+# SessionStart — the mirror is read instead, so the notes are not lost. The
+# live file wins whenever it still has content: this is a fallback, not a
+# second copy to show alongside it.
+#
+# Consumed once ingested (round 2): without removing it here, the SAME mirror
+# would be replayed at every later SessionStart until the next wrap happens to
+# overwrite or clear it — including a `/clear` or a fresh launch that has
+# nothing to do with the session the notes were written for. Removing it the
+# moment it is shown bounds the replay to exactly once, matching prawduct's
+# own "only `/clear` consumes it" contract for the live file.
+#
+# Deletion is gated on a SUCCESSFUL read (round 3), not merely on passing the
+# `[ -r ]` check above: a read can still fail after that check races true (the
+# file vanishes, a transient I/O error) — `cat ... || true` alone would then
+# delete notes that were never actually shown anywhere. The read is captured
+# into a variable rather than streamed straight to stdout so its own exit
+# status can gate the deletion; a trailing sentinel (`TC_READ_OK_8f3a`, chosen
+# to be vanishingly unlikely to collide with real content) stops command
+# substitution from stripping the trailing newlines `cat` itself would have
+# preserved, and is peeled back off below.
+HANDOFF_NOTES_LIVE="${CLAUDE_PROJECT_DIR:-}/.prawduct/.handoff-notes.md"
+HANDOFF_NOTES_MIRROR="${CLAUDE_PROJECT_DIR:-}/.tangleclaw/handoff-notes-continuity.md"
+if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "$HANDOFF_NOTES_MIRROR" ] && [ -r "$HANDOFF_NOTES_MIRROR" ] && [ ! -s "$HANDOFF_NOTES_LIVE" ]; then
+  if HANDOFF_NOTES_CONTENT="$(cat "$HANDOFF_NOTES_MIRROR" 2>/dev/null && printf 'TC_READ_OK_8f3a')"; then
+    HANDOFF_NOTES_CONTENT="${HANDOFF_NOTES_CONTENT%TC_READ_OK_8f3a}"
+    rm -f "$HANDOFF_NOTES_MIRROR" || true
+    echo ""
+    echo "---"
+    echo ""
+    echo "# Forward notes from the last wrap (recovered — .prawduct/.handoff-notes.md was already gone)"
+    echo ""
+    printf '%s' "$HANDOFF_NOTES_CONTENT"
+  fi
+fi
+
 exit 0

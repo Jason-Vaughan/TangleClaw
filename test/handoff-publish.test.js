@@ -151,6 +151,28 @@ describe('publishing a handoff (#1585)', () => {
     assert.ok(row.eligibleAt, 'it completed, so the record keeps saying so');
   });
 
+  it('re-validates the staged file INSIDE the transaction, not before it (#1651)', () => {
+    // `_fileMismatch`'s check used to run before `BEGIN IMMEDIATE` opened, so a
+    // write landing in the window between that check and the rename below
+    // would go unseen. Simulated here by mutating the file as a side effect of
+    // `newerPublished` — a call `publishHandoff` only ever makes from inside
+    // the transaction — so a file swapped at that point is still caught only
+    // if the real validation happens at or after that point too.
+    const pid = stageAttempt();
+    const savedNewerPublished = store.handoffs.newerPublished;
+    store.handoffs.newerPublished = function (...args) {
+      fs.writeFileSync(lockfile.stagedPath(project, pid), '{"schema":"tc.handoff/1","publicationId":"x","kind":"final"}\n', 'utf8');
+      return savedNewerPublished.apply(this, args);
+    };
+    try {
+      const res = publishHandoff(project, pid);
+      assert.equal(res.published, false, 'a file swapped mid-transaction must not be published');
+      assert.match(res.reason, /staged file/);
+    } finally {
+      store.handoffs.newerPublished = savedNewerPublished;
+    }
+  });
+
   it('refuses an abandoned attempt', () => {
     const pid = stageAttempt({ bind: false });
     abandonHandoff(pid, 'lost-to-kill');
@@ -306,6 +328,105 @@ describe('the handoff-stage wrap step', () => {
   it('skips when there is no session to hand off from', async () => {
     const res = await stageStep.run(ctx({ session: null }));
     assert.equal(res.status, 'skipped');
+  });
+
+  describe('mirroring prawduct forward notes for continuity (#1733)', () => {
+    const MIRROR_NAME = stageStep.HANDOFF_NOTES_MIRROR_NAME;
+    const mirrorPath = () => path.join(project.path, '.tangleclaw', MIRROR_NAME);
+    const notesPath = () => path.join(project.path, '.prawduct', '.handoff-notes.md');
+
+    it('mirrors a live .prawduct/.handoff-notes.md into .tangleclaw at the end of a wrap', async () => {
+      fs.mkdirSync(path.join(project.path, '.prawduct'), { recursive: true });
+      fs.writeFileSync(notesPath(), '# Forward notes\nship chunk 03\n');
+
+      await stageStep.run(ctx());
+
+      assert.equal(fs.readFileSync(mirrorPath(), 'utf8'), '# Forward notes\nship chunk 03\n');
+    });
+
+    it('writes no mirror when the project has no .prawduct/.handoff-notes.md', async () => {
+      await stageStep.run(ctx());
+      assert.equal(fs.existsSync(mirrorPath()), false);
+    });
+
+    it('still mirrors when there is no wrap run id to bind a handoff to', async () => {
+      // The mirror is independent of whether this attempt can be staged at
+      // all: a wrap with no run id still just finished a session that may
+      // have written forward notes.
+      fs.mkdirSync(path.join(project.path, '.prawduct'), { recursive: true });
+      fs.writeFileSync(notesPath(), 'notes despite no run id\n');
+
+      const res = await stageStep.run(ctx({ wrapRunId: null }));
+
+      assert.equal(res.status, 'skipped');
+      assert.equal(fs.readFileSync(mirrorPath(), 'utf8'), 'notes despite no run id\n');
+    });
+
+    it('never writes to or deletes the live file', async () => {
+      fs.mkdirSync(path.join(project.path, '.prawduct'), { recursive: true });
+      fs.writeFileSync(notesPath(), 'untouched\n');
+
+      await stageStep.run(ctx());
+
+      assert.equal(fs.readFileSync(notesPath(), 'utf8'), 'untouched\n',
+        'the live file is prawduct\'s to manage — this only ever reads it');
+    });
+
+    it('clears an earlier mirror once a LATER wrap has no live notes to carry (#1733 round 2)', async () => {
+      // Wrap #1 wrote real notes and they were correctly mirrored.
+      fs.mkdirSync(path.join(project.path, '.prawduct'), { recursive: true });
+      fs.writeFileSync(notesPath(), '# stale\nold handoff from wrap 1\n');
+      await stageStep.run(ctx({ wrapRunId: 'run-1' }));
+      assert.equal(fs.readFileSync(mirrorPath(), 'utf8'), '# stale\nold handoff from wrap 1\n');
+
+      // The session consumed/cleared the live notes itself before wrap #2 —
+      // this wrap's own end state is "nothing to hand off".
+      fs.rmSync(notesPath());
+
+      await stageStep.run(ctx({ wrapRunId: 'run-2' }));
+
+      assert.equal(fs.existsSync(mirrorPath()), false,
+        'a mirror from an earlier wrap must not outlive a later wrap that had nothing to carry — ' +
+        'otherwise it would be replayed at every SessionStart indefinitely, with nothing left to ever clear it');
+    });
+
+    it('also clears an earlier mirror when the live file is present but blank', async () => {
+      fs.mkdirSync(path.join(project.path, '.prawduct'), { recursive: true });
+      fs.writeFileSync(notesPath(), 'real notes\n');
+      await stageStep.run(ctx({ wrapRunId: 'run-1' }));
+      assert.equal(fs.existsSync(mirrorPath()), true);
+
+      fs.writeFileSync(notesPath(), '   \n');
+      await stageStep.run(ctx({ wrapRunId: 'run-2' }));
+
+      assert.equal(fs.existsSync(mirrorPath()), false);
+    });
+
+    it('leaves an existing mirror alone on a non-ENOENT read failure — that is not a legitimate "absent"', async () => {
+      fs.mkdirSync(path.join(project.path, '.prawduct'), { recursive: true });
+      fs.writeFileSync(notesPath(), 'real notes\n');
+      await stageStep.run(ctx({ wrapRunId: 'run-1' }));
+      assert.equal(fs.readFileSync(mirrorPath(), 'utf8'), 'real notes\n');
+
+      // A directory where the live file should be: EISDIR, not ENOENT — an
+      // ambiguous failure that says nothing about whether notes exist.
+      fs.rmSync(notesPath());
+      fs.mkdirSync(notesPath());
+
+      await stageStep.run(ctx({ wrapRunId: 'run-2' }));
+
+      assert.equal(fs.readFileSync(mirrorPath(), 'utf8'), 'real notes\n',
+        'a non-ENOENT read failure must not be treated the same as a legitimate absence');
+    });
+
+    it('_mirrorPrawductHandoffNotes is best-effort: a write failure is swallowed, not thrown', () => {
+      fs.mkdirSync(path.join(project.path, '.prawduct'), { recursive: true });
+      fs.writeFileSync(notesPath(), 'x\n');
+      // Put a FILE where the mirror's directory needs to be, so mkdirSync fails.
+      fs.writeFileSync(path.join(project.path, '.tangleclaw'), 'not a directory');
+
+      assert.doesNotThrow(() => stageStep._mirrorPrawductHandoffNotes(project));
+    });
   });
 
   // The rows below carry EXACTLY the runner's recorded shape — `{stepId, kind,

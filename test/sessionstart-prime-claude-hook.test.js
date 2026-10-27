@@ -192,6 +192,108 @@ describe('sessionstart-prime-claude.sh hook script (#103)', () => {
     assert.ok(Date.now() - started < 5000, 'the stdin read is bounded');
   });
 
+  // ── #1733: recover prawduct's forward notes if the live file is already gone ──
+
+  /**
+   * Write the prime (required for any output) and optionally the live
+   * prawduct notes file and/or the TangleClaw mirror of it.
+   * @param {object} [opts] - `{live, mirror}` — content strings, or undefined to omit the file
+   */
+  function writeHandoffNotesFixture({ live, mirror } = {}) {
+    fs.mkdirSync(path.join(projectDir, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(path.join(projectDir, '.tangleclaw', 'session-prime.md'), '# Session Prime\n');
+    if (live !== undefined) {
+      fs.mkdirSync(path.join(projectDir, '.prawduct'), { recursive: true });
+      fs.writeFileSync(path.join(projectDir, '.prawduct', '.handoff-notes.md'), live);
+    }
+    if (mirror !== undefined) {
+      fs.writeFileSync(path.join(projectDir, '.tangleclaw', 'handoff-notes-continuity.md'), mirror);
+    }
+  }
+
+  it('recovers the mirror when the live notes file is gone', () => {
+    writeHandoffNotesFixture({ mirror: '# Forward notes\nship it\n' });
+    const out = runHook(null);
+    assert.equal(out,
+      '# Session Prime\n\n---\n\n# Forward notes from the last wrap (recovered — .prawduct/.handoff-notes.md was already gone)\n\n# Forward notes\nship it\n');
+  });
+
+  it('recovers the mirror when the live notes file exists but is empty', () => {
+    writeHandoffNotesFixture({ live: '', mirror: '# Forward notes\nship it\n' });
+    const out = runHook(null);
+    assert.match(out, /# Forward notes\nship it\n$/);
+  });
+
+  it('does NOT show the mirror when the live file still has content — the live file wins', () => {
+    writeHandoffNotesFixture({ live: 'still live\n', mirror: '# stale mirror\n' });
+    const out = runHook(null);
+    assert.equal(out, '# Session Prime\n');
+  });
+
+  it('shows nothing extra when there is no mirror at all (ordinary project, never wrapped under #1733)', () => {
+    writeHandoffNotesFixture({});
+    const out = runHook(null);
+    assert.equal(out, '# Session Prime\n');
+  });
+
+  it('recovers the mirror on a plain startup, not just clear/compact — a fresh launch is exactly the case #1733 reports', () => {
+    writeHandoffNotesFixture({ mirror: 'recovered\n' });
+    const out = runHook(JSON.stringify({ source: 'startup' }));
+    assert.match(out, /recovered\n$/);
+  });
+
+  it('consumes the mirror once ingested, so a LATER SessionStart does not replay it (#1733 round 2)', () => {
+    writeHandoffNotesFixture({ mirror: 'one-time notes\n' });
+    const mirrorPath = path.join(projectDir, '.tangleclaw', 'handoff-notes-continuity.md');
+
+    const first = runHook(null);
+    assert.match(first, /one-time notes\n$/, 'shown the first time');
+    assert.equal(fs.existsSync(mirrorPath), false,
+      'the mirror must be removed once shown — otherwise it has no way to ever stop being replayed');
+
+    const second = runHook(null);
+    assert.equal(second, '# Session Prime\n',
+      'a session booting again before the next wrap must not see the same notes twice');
+  });
+
+  it('leaves the mirror intact when it cannot be read, rather than destroying un-ingested notes (#1733 round 3)', () => {
+    // This case is ALSO caught by the pre-existing `[ -r ]` guard, so on its
+    // own it passes unchanged against the pre-round-3 script too — it does
+    // NOT by itself prove the round-3 fix. What actually regression-guards
+    // round 3 — the TOCTOU between passing `[ -r ]` and the read itself still
+    // failing — is not reproducible on demand in a portable test, so that is
+    // covered instead by the structural test below, which pins `rm -f` to be
+    // nested inside the success-gated block rather than a sibling of the
+    // `[ -r ]` check. This test stays for the adjacent, worth-having property
+    // it DOES prove end-to-end: an unreadable mirror is never shown and never
+    // deleted, whichever check catches it.
+    writeHandoffNotesFixture({ mirror: 'must survive\n' });
+    const mirrorPath = path.join(projectDir, '.tangleclaw', 'handoff-notes-continuity.md');
+    fs.chmodSync(mirrorPath, 0o000);
+    try {
+      if (fs.readFileSync(mirrorPath, 'utf8')) return; // this uid can read 0o000 files (root) — not a meaningful run
+    } catch { /* expected: unreadable, as intended */ }
+
+    const out = runHook(null);
+
+    assert.equal(out, '# Session Prime\n', 'nothing is shown for content that could not be read');
+    assert.equal(fs.existsSync(mirrorPath), true,
+      'a mirror that could not be read must not be deleted — it was never actually ingested');
+  });
+
+  it('gates rm -f on the read\'s own success, not merely on having passed the readability check', () => {
+    // Structural pin for the shape of the round-3 fix itself: `rm -f` must be
+    // nested inside the block that only runs once the capture succeeded, not
+    // a second, independent condition alongside it — the exact distinction
+    // between "checked once, acted twice" (the round-2 bug) and "acted once,
+    // gated on that same action's own result" (the fix).
+    const src = fs.readFileSync(HOOK_SCRIPT, 'utf8');
+    const match = src.match(/if HANDOFF_NOTES_CONTENT=.*?\n([\s\S]*?)\n\s*fi\n/);
+    assert.ok(match, 'expected an `if HANDOFF_NOTES_CONTENT=...; then ... fi` block');
+    assert.match(match[1], /rm -f "\$HANDOFF_NOTES_MIRROR"/,
+      'rm -f must be inside the success-gated block, not a sibling of it');
+  });
+
   it('survives an empty CLAUDE_PROJECT_DIR (set, but blank)', () => {
     // Distinct from the unset case: an explicitly-blank env var would set
     // PRIME_FILE='/.tangleclaw/session-prime.md' (root-level path) under naive
