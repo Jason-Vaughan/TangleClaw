@@ -1908,9 +1908,18 @@ describe('bridge gateway (#2031)', () => {
       const ordinaryNotice = about.find((n) => n.idem_key.endsWith(ordinaryId));
       // Why it was raised depends on what is holding it; the sentence is the one for that reason.
       assert.ok(['prolonged-unread', 'prolonged-actionable', 'configuration-hold'].includes(alert.code), alert.code);
-      assert.equal(ordinaryNotice.text, bridgeNotify.TEMPLATES['operator-needed']({ project: 'Beta', why: alert.code }));
+      // #2141: the text now also carries the sender, priority, age and exchange id, so the fixed
+      // reason sentence is extracted from the template with marker values rather than compared
+      // against the whole text, which depends on the real exchange's own sender/priority/age.
+      const row = store.getDb().prepare('SELECT sender_project_id, sender_workspace_id, priority FROM medusa_exchanges WHERE exchange_id = ?').get(ordinaryId);
+      const senderLabel = row.sender_project_id != null ? store.projects.get(row.sender_project_id).name : row.sender_workspace_id;
+      const reasonOf = (why) => bridgeNotify.TEMPLATES['operator-needed']({ project: 'Beta', why, sender: 'SENDERMARK', priority: 'PRIORITYMARK', age: null, exchangeId: 'IDMARK' })
+        .slice('A PRIORITYMARK message from SENDERMARK to Beta '.length, -' (exchange IDMARK)'.length);
+      const reason = reasonOf(alert.code);
+      assert.ok(ordinaryNotice.text.startsWith(`A ${row.priority} message from ${senderLabel} to Beta ${reason}`), ordinaryNotice.text);
+      assert.ok(ordinaryNotice.text.endsWith(`(exchange ${ordinaryId})`), ordinaryNotice.text);
       assert.ok(!/unanswered/.test(ordinaryNotice.text), `nobody read it, so it is not called unanswered: ${ordinaryNotice.text}`);
-      assert.notEqual(ordinaryNotice.text, 'A message to Beta needs you.', 'and the reason has a sentence of its own');
+      assert.notEqual(reason, reasonOf('something-with-no-sentence-of-its-own'), 'and the reason has a sentence of its own');
       // The route got its one status notice and nothing else.
       const forRoute = store.getDb().prepare('SELECT idem_key FROM bridge_outbound WHERE route_id = ?').all(r.body.routeId).map((x) => x.idem_key);
       assert.deepEqual(forRoute, [`route:${r.body.routeId}:pending`]);

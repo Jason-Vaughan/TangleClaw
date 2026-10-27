@@ -140,7 +140,7 @@ describe('bridge notifications (#2031)', () => {
       bridgeStore.settings.set('enabled', 'false');
       reports(alpha, 'working');
       reports(alpha, 'blocked');
-      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 0, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 0 }, 'nothing while disabled');
+      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 0, workUnblocked: 0, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 0 }, 'nothing while disabled');
       later(60000);
       enable();
       assert.equal(bridgeNotify.reconcile().workBlocked, 0, 'and nothing afterwards for what happened while it was off');
@@ -219,16 +219,97 @@ describe('bridge notifications (#2031)', () => {
     });
   });
 
+  describe('work-unblocked (#2141)', () => {
+    it('tells the operator once when an announced block clears, bound to the clearing receipt', () => {
+      const alpha = liveSession('Alpha');
+      enable();
+      reports(alpha, 'working');
+      const blockedSeq = reports(alpha, 'blocked');
+      assert.equal(bridgeNotify.reconcile().workBlocked, 1);
+      const clearSeq = reports(alpha, 'working');
+      assert.equal(bridgeNotify.reconcile().workUnblocked, 1);
+      assert.equal(bridgeNotify.reconcile().workUnblocked, 0, 'a second pass finds it already made');
+      const blockedReceiptId = bridgeStore.receipts.workloadForLaunch(alpha.launchId, blockedSeq).receiptId;
+      const clearReceiptId = bridgeStore.receipts.workloadForLaunch(alpha.launchId, clearSeq).receiptId;
+      const rows = notifications();
+      assert.deepEqual(rows.map((r) => r.type), ['work-blocked', 'work-blocked'],
+        'Architect Ruling A475-W1A-R1: work-unblocked rides under the work-blocked notify_type');
+      assert.deepEqual(rows.map((r) => r.key), [
+        `notify:work-blocked:receipt:${blockedReceiptId}`, `notify:work-unblocked:receipt:${clearReceiptId}`
+      ], 'the idem_key still tells the two apart');
+      assert.equal(rows[1].text, 'Alpha reports its work is no longer blocked.');
+    });
+
+    it('clears to any non-blocked state: complete and waiting-external both count', () => {
+      for (const clearTo of ['complete', 'waiting-external']) {
+        const alpha = liveSession(`Alpha-${clearTo}`);
+        enable();
+        reports(alpha, 'blocked');
+        bridgeNotify.reconcile();
+        reports(alpha, clearTo);
+        assert.equal(bridgeNotify.reconcile().workUnblocked, 1, clearTo);
+      }
+    });
+
+    it('is not announced when the block it would clear was never announced (opted-out project)', () => {
+      const alpha = liveSession('Alpha');
+      bridgeStore.optouts.set(alpha.project.id);
+      enable();
+      reports(alpha, 'blocked');
+      assert.equal(bridgeNotify.reconcile().workBlocked, 0, 'precondition: the block itself was not announced');
+      reports(alpha, 'working');
+      assert.equal(bridgeNotify.reconcile().workUnblocked, 0);
+      assert.deepEqual(notifications(), []);
+    });
+
+    it('is not announced when the block it would clear was never announced (a live coordinator managed it)', () => {
+      const coordinator = liveSession('TC-Lane-PM');
+      const alpha = liveSession('TC-Lane-A');
+      const cfg = store.projectConfig.load(alpha.project.path);
+      cfg.workloadNudge = { coordinatorProject: coordinator.project.name };
+      store.projectConfig.save(alpha.project.path, cfg);
+      enable();
+      reports(alpha, 'blocked');
+      assert.equal(bridgeNotify.reconcile().workBlocked, 0, 'precondition: the block itself was not announced');
+      reports(alpha, 'working');
+      assert.equal(bridgeNotify.reconcile().workUnblocked, 0);
+      assert.deepEqual(notifications(), []);
+    });
+
+    it('does not repeat while the lane stays clear, and announces again for a later block that clears', () => {
+      const alpha = liveSession('Alpha');
+      enable();
+      reports(alpha, 'blocked');
+      bridgeNotify.reconcile();
+      reports(alpha, 'working');
+      assert.equal(bridgeNotify.reconcile().workUnblocked, 1);
+      reports(alpha, 'working');
+      assert.equal(bridgeNotify.reconcile().workUnblocked, 0, 'already clear is not a new event');
+      reports(alpha, 'blocked');
+      bridgeNotify.reconcile();
+      reports(alpha, 'complete');
+      assert.equal(bridgeNotify.reconcile().workUnblocked, 1, 'a later block clearing is its own event');
+    });
+  });
+
   describe('operator-needed', () => {
     /**
      * An exchange between two workspaces, then raised to the operator rung as the watchdog does.
      * @param {object} recipient - The recipient session.
+     * @param {object} [opts] - `senderProjectId`, `senderWorkspaceId` and `priority` to vary the exchange (#2141).
      * @returns {string} The exchange id.
      */
-    function alertedExchange(recipient) {
+    function alertedExchange(recipient, opts = {}) {
       const row = exchanges.createSendIntent({
-        meta: exchanges.validateSendMeta({ to: 'ws-recipient', message: 'x', requestId: `req-ex-${++n}-0000` }, { kind: 'system' }, null, {}),
-        sender: { projectId: null, sessionId: 'someone', workspaceId: 'ws-sender' },
+        meta: exchanges.validateSendMeta(
+          { to: 'ws-recipient', message: 'x', requestId: `req-ex-${++n}-0000`, priority: opts.priority },
+          { kind: 'system' }, null, {}
+        ),
+        sender: {
+          projectId: Object.prototype.hasOwnProperty.call(opts, 'senderProjectId') ? opts.senderProjectId : null,
+          sessionId: 'someone',
+          workspaceId: Object.prototype.hasOwnProperty.call(opts, 'senderWorkspaceId') ? opts.senderWorkspaceId : 'ws-sender'
+        },
         recipient: { workspaceId: 'ws-recipient', projectId: recipient.project.id, sessionId: recipient.sessionId },
         tracking: 'tracked'
       });
@@ -236,7 +317,7 @@ describe('bridge notifications (#2031)', () => {
       return row.exchange_id;
     }
 
-    it('tells the operator once per exchange the watchdog raised to its operator rung', () => {
+    it('tells the operator once per exchange the watchdog raised to its operator rung, with sender/priority/age/exchange id (#2141)', () => {
       const alpha = liveSession('Alpha');
       const realNow = exchanges._internal.now;
       exchanges._internal.now = () => new Date(clock);
@@ -244,29 +325,111 @@ describe('bridge notifications (#2031)', () => {
         enable();
         later(1000);
         const exchangeId = alertedExchange(alpha);
+        later(5 * 60000);
         assert.equal(bridgeNotify.reconcile().operatorNeeded, 1);
         assert.equal(bridgeNotify.reconcile().operatorNeeded, 0);
         assert.deepEqual(notifications(), [{
           type: 'operator-needed', key: `notify:operator-needed:exchange:${exchangeId}`,
-          text: 'A message to Alpha was read and has gone unanswered long enough to need you.', label: 'TangleClaw', routeId: null
+          text: `A normal message from ws-sender to Alpha was read and has gone unanswered long enough to need you. It was sent 5 minutes ago. (exchange ${exchangeId})`,
+          label: 'TangleClaw', routeId: null
         }]);
         // Each reason the watchdog gives has its own fixed sentence, and none says more than is known.
-        const said = (code) => bridgeNotify.TEMPLATES['operator-needed']({ project: 'Alpha', why: code });
-        assert.equal(said('unread'), 'A message to Alpha has gone unread long enough to need you.');
+        const said = (code) => bridgeNotify.TEMPLATES['operator-needed']({ project: 'Alpha', why: code, sender: 'Bravo', priority: 'normal', age: null, exchangeId: 'ex1' });
+        assert.equal(said('unread'), 'A normal message from Bravo to Alpha has gone unread long enough to need you. (exchange ex1)');
         assert.equal(said('prolonged-unread'), said('unread'));
         assert.equal(said('prolonged-unanswered'), said('unanswered'));
         assert.match(said('blocking-unread'), /is blocking its sender and has gone unread/);
         assert.match(said('critical-unread'), /is critical and has gone unread/);
-        assert.match(said('configuration-hold'), /cannot be delivered until its recipient's setup is put right/);
-        assert.match(said('engine-thread-unknown-stalled'), /is stalled: its recipient's engine cannot be identified/);
+        assert.match(said('configuration-hold'), /cannot be delivered until its recipient.s setup is put right/);
+        assert.match(said('engine-thread-unknown-stalled'), /is stalled: its recipient.s engine cannot be identified/);
         assert.match(said('prolonged-actionable'), /has waited long enough on a recipient that should have taken it/);
         assert.match(said('no-escalation-route'), /has nobody else it can be escalated to/);
         for (const unknown of ['something-new', undefined, null, '__proto__', 'constructor']) {
-          assert.equal(said(unknown), 'A message to Alpha needs you.', `${unknown}: a reason with no sentence of its own says only that`);
+          assert.equal(said(unknown), 'A normal message from Bravo to Alpha needs you. (exchange ex1)', `${unknown}: a reason with no sentence of its own says only that`);
         }
         for (const code of ['unread', 'prolonged-unread', 'blocking-unread', 'critical-unread', 'configuration-hold', 'engine-thread-unknown-stalled', 'no-escalation-route', 'prolonged-actionable']) {
           assert.ok(!/unanswered/.test(said(code)), `${code} is not called unanswered`);
         }
+        assert.equal(
+          bridgeNotify.TEMPLATES['operator-needed']({ project: 'Alpha', why: 'unread', sender: 'Bravo', priority: 'blocking', age: '5 minutes', exchangeId: 'ex1' }),
+          'A blocking message from Bravo to Alpha has gone unread long enough to need you. It was sent 5 minutes ago. (exchange ex1)'
+        );
+      } finally {
+        exchanges._internal.now = realNow;
+      }
+    });
+
+    it('resolves the sender to its project name, else its raw workspace id, else says the sender is unknown (#2141)', () => {
+      const alpha = liveSession('Alpha');
+      const bravo = liveSession('Bravo');
+      const realNow = exchanges._internal.now;
+      exchanges._internal.now = () => new Date(clock);
+      try {
+        enable();
+        alertedExchange(alpha, { senderProjectId: bravo.project.id, senderWorkspaceId: 'ws-bravo' });
+        assert.equal(bridgeNotify.reconcile().operatorNeeded, 1);
+        assert.match(notifications()[0].text, /^A normal message from Bravo to Alpha /);
+
+        alertedExchange(alpha, { senderProjectId: null, senderWorkspaceId: 'ws-unregistered' });
+        assert.equal(bridgeNotify.reconcile().operatorNeeded, 1);
+        assert.match(notifications()[1].text, /^A normal message from ws-unregistered to Alpha /);
+
+        alertedExchange(alpha, { senderProjectId: null, senderWorkspaceId: null });
+        assert.equal(bridgeNotify.reconcile().operatorNeeded, 1);
+        assert.match(notifications()[2].text, /^A normal message from an unknown sender to Alpha /);
+
+        // createSendIntent does not validate sender.workspaceId against WORKSPACE_ID_RE
+        // (only the recipient's is checked), so this module cleans it itself before
+        // it reaches Discord, the same as a project name.
+        alertedExchange(alpha, { senderProjectId: null, senderWorkspaceId: 'Evil\u202Eabc' });
+        assert.equal(bridgeNotify.reconcile().operatorNeeded, 1);
+        assert.ok(!notifications()[3].text.includes('\u202E'));
+        assert.match(notifications()[3].text, /^A normal message from Evilabc to Alpha /);
+      } finally {
+        exchanges._internal.now = realNow;
+      }
+    });
+
+    it('does not page Discord directly for a recipient whose coordinatorProject has a live session (#2141, mirrors #2620)', () => {
+      const coordinator = liveSession('TC-Lane-PM');
+      const alpha = liveSession('TC-Lane-A');
+      const cfg = store.projectConfig.load(alpha.project.path);
+      cfg.workloadNudge = { coordinatorProject: coordinator.project.name };
+      store.projectConfig.save(alpha.project.path, cfg);
+      const realNow = exchanges._internal.now;
+      exchanges._internal.now = () => new Date(clock);
+      try {
+        enable();
+        alertedExchange(alpha);
+        assert.equal(bridgeNotify.reconcile().operatorNeeded, 0);
+        assert.deepEqual(notifications(), []);
+      } finally {
+        exchanges._internal.now = realNow;
+      }
+    });
+
+    it('pages Discord when coordinatorProject has no live session, is unset, or names itself (#2141, mirrors #2620)', () => {
+      const alpha = liveSession('TC-Lane-A');
+      const cfg = store.projectConfig.load(alpha.project.path);
+      cfg.workloadNudge = { coordinatorProject: 'no-such-project-anywhere' };
+      store.projectConfig.save(alpha.project.path, cfg);
+      const realNow = exchanges._internal.now;
+      exchanges._internal.now = () => new Date(clock);
+      try {
+        enable();
+        alertedExchange(alpha);
+        assert.equal(bridgeNotify.reconcile().operatorNeeded, 1, 'an unresolvable coordinator still pages directly');
+
+        const bravo = liveSession('TC-Lane-B');
+        alertedExchange(bravo);
+        assert.equal(bridgeNotify.reconcile().operatorNeeded, 1, 'no coordinatorProject configured still pages directly');
+
+        const charlie = liveSession('TC-Lane-C');
+        const selfCfg = store.projectConfig.load(charlie.project.path);
+        selfCfg.workloadNudge = { coordinatorProject: 'TC-Lane-C' };
+        store.projectConfig.save(charlie.project.path, selfCfg);
+        alertedExchange(charlie);
+        assert.equal(bridgeNotify.reconcile().operatorNeeded, 1, 'naming itself as coordinator still pages directly');
       } finally {
         exchanges._internal.now = realNow;
       }
@@ -457,7 +620,7 @@ describe('bridge notifications (#2031)', () => {
       enable();
       reports(alpha, 'blocked');
       bridgeNotify._deps.lanes = () => { throw new Error('the lane reader failed'); };
-      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 0 });
+      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, workUnblocked: 0, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 0 });
     });
 
     it('reads lanes through the fleet\'s own composition: only a fresh, finished, clear lane at rest is AVAILABLE', () => {
@@ -660,7 +823,7 @@ describe('bridge notifications (#2031)', () => {
       const realList = store.workloadNudgeFacts.listOperatorEscalations;
       store.workloadNudgeFacts.listOperatorEscalations = () => { throw new Error('database is locked'); };
       try {
-        assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 0 });
+        assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, workUnblocked: 0, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 0 });
       } finally {
         store.workloadNudgeFacts.listOperatorEscalations = realList;
       }
@@ -1201,16 +1364,18 @@ describe('bridge notifications (#2031)', () => {
       const alpha = liveSession('Alpha');
       reports(alpha, 'blocked');
       bridgeNotify._deps.discordReading = () => { throw new Error('the gateway could not be read'); };
-      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 0 });
+      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, workUnblocked: 0, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 0 });
       assert.deepEqual(notifications().map((x) => x.type), ['work-blocked']);
       // And with an outage announced in the same pass, each kind counts its own.
       Object.assign(bridgeNotify._deps, { discordReading: () => reading });
       reads('down');
       bridgeNotify.reconcile();
       later(5 * MINUTE);
+      // working then blocked again, in the same un-reconciled stretch: the first clears the
+      // announced block (work-unblocked) and the second opens a new one (work-blocked).
       reports(alpha, 'working');
       reports(alpha, 'blocked');
-      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 1 });
+      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, workUnblocked: 1, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 1 });
     });
 
     it('reads the helper\'s report from the gateway itself when nothing else is supplied', () => {
@@ -1248,8 +1413,16 @@ describe('bridge notifications (#2031)', () => {
   });
 
   it('every notification text comes from a fixed template that takes no free text', () => {
-    assert.deepEqual(Object.keys(bridgeNotify.TEMPLATES).sort(), ['fleet-idle', 'gateway-down', 'gateway-recovered', 'lane-silent', 'operator-needed', 'work-blocked']);
-    assert.deepEqual(Object.keys(bridgeNotify.TEMPLATES).sort(), [...bridgeSchema.NOTIFICATION_TYPES].sort(), 'every admitted type has a template, and no other does');
+    assert.deepEqual(Object.keys(bridgeNotify.TEMPLATES).sort(),
+      ['fleet-idle', 'gateway-down', 'gateway-recovered', 'lane-silent', 'operator-needed', 'work-blocked', 'work-unblocked']);
+    // work-unblocked is the one deliberate exception (#2141, Architect Ruling A475-W1A-R1): it has
+    // its own template but is never a notify_type NOTIFICATION_TYPES admits, because _emit stores
+    // it under work-blocked's own admitted type and retention instead of adding a new one.
+    assert.deepEqual(
+      Object.keys(bridgeNotify.TEMPLATES).filter((t) => t !== 'work-unblocked').sort(),
+      [...bridgeSchema.NOTIFICATION_TYPES].sort(),
+      'every admitted type has a template, and no other does except the one deliberate exception'
+    );
     // A project name is the only string a template shows, and it is cleaned and bounded.
     // The store refuses such a name; this is one it would never have written.
     const hostile = store.projects.create({ name: 'Evil', path: path.join(tmpDir, 'evil') });
