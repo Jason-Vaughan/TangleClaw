@@ -230,6 +230,36 @@ describe('api-sessions', () => {
         store.sessions.kill(session.id, 'test cleanup');
       }
     });
+
+    it('returns 409 WRAP_RUNNING, typing nothing, while the project\'s wrap is running (#2269)', async () => {
+      const tmux = require('../lib/tmux');
+      const wrapRunRegistry = require('../lib/wrap-run-registry');
+      const real = { hasSession: tmux.hasSession, capturePane: tmux.capturePane, sendKeys: tmux.sendKeys, probeSession: tmux.probeSession };
+      const project = store.projects.getByName('api-sess-test');
+      const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'api-sess-wrap-running' });
+      let typed = 0;
+      tmux.hasSession = () => true;
+      tmux.probeSession = () => ({ answered: true, live: true, cause: null });
+      tmux.sendKeys = () => { typed += 1; };
+      // No dialog on the pane — a clean Claude Code composer — so the
+      // startup-dialog guard clears and the wrap-running guard is what answers.
+      tmux.capturePane = () => ({ lines: ['──────────', '❯ ', '──────────', '  ? for shortcuts'], alternateScreen: false });
+      const claim = wrapRunRegistry.begin('api-sess-test', null, {});
+      assert.equal(claim.ok, true);
+      try {
+        const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/command', { command: 'ls' });
+        assert.equal(res.status, 409);
+        assert.equal(res.body.code, 'WRAP_RUNNING');
+        assert.equal(res.body.wrapRunning.code, 'WRAP_RUNNING');
+        assert.match(res.body.error, /^WRAP_RUNNING: /);
+        assert.equal(typed, 0);
+      } finally {
+        wrapRunRegistry.finish('api-sess-test', claim.runId, null);
+        wrapRunRegistry._resetForTests();
+        Object.assign(tmux, real);
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
   });
 
   describe('sessions.injectCommand — refused while this project\'s wrap is running (#2269)', () => {
