@@ -41,6 +41,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-27 — v5.40.0 W2-C PR #2637 Round 8 (test-only): the production-socket isolation test itself still touched the production socket
+
+<!-- prawduct: type=internal | scope=w2c-2352-2625 -->
+
+- **#2625:** The Round 7 test verifying `test/tmux-tcc.test.js` never touches the real `TCC_SOCKET` ironically touched it directly — it simulated "a pre-existing production session" by creating and killing a real session ON the literal `'tangleclaw-tcc-authorized'` socket, the exact thing the whole fix exists to prevent. Fixed by simulating the pre-existing session on a SECOND isolated/fake socket name instead, so the test suite never invokes `tmux -L` against the real production name at all, anywhere. Caught by Architect Ruling A475-W2C-R7, upholding PRR-B Round 7.
+
 ## 2026-10-27 — v5.40.0 W2-C PR #2637 Round 7 (test-only): never let the TCC-authorized test suite kill a real production server
 
 <!-- prawduct: type=internal | scope=w2c-2352-2625 -->

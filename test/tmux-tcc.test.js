@@ -292,31 +292,35 @@ describe('createSessionWithTccBootstrap (#2625)', () => {
     assert.equal(tmux.hasSession(name), true, 'the default server still gets its attach proxy');
   });
 
-  it('defaults to the real production socket name, and never touches a pre-existing session there — only this test\'s own isolated socket (PRR-B Round 7, #2625)', () => {
+  it('defaults to the real production socket name, and never touches a pre-existing session on ANOTHER socket — only this test\'s own isolated one (PRR-B Round 7/Architect A475-W2C-R7, #2625)', () => {
     assert.equal(REAL_TCC_SOCKET, 'tangleclaw-tcc-authorized');
-    // Simulate a real, already-running production TCC-authorized server
-    // with a real session on it — created directly on the REAL default
-    // socket name, never through `tmux.TCC_SOCKET`, which `beforeEach` has
-    // already overridden to this test's own isolated socket.
+    // Simulate a real, already-running server with a real session on a
+    // DIFFERENT, still-isolated socket — never `REAL_TCC_SOCKET` itself:
+    // this file's own suite running `tmux -L tangleclaw-tcc-authorized
+    // new-session`/`kill-server` for real on every run is exactly the
+    // hazard this test exists to rule out, so the test itself must never
+    // touch that literal socket name either (Architect A475-W2C-R7 — an
+    // earlier version of this test did, against its own stated purpose).
+    const otherSocket = uniqueSessionName('tcc_other_sock');
     const prodSessionName = uniqueSessionName('tcc_prod_session');
-    execFileSync('tmux', ['-L', REAL_TCC_SOCKET, ['new', 'session'].join('-'), '-d', '-s', prodSessionName, '-c', '/tmp'], { stdio: 'ignore' });
+    execFileSync('tmux', ['-L', otherSocket, ['new', 'session'].join('-'), '-d', '-s', prodSessionName, '-c', '/tmp'], { stdio: 'ignore' });
     try {
       // Exercise the isolated-socket path for real, through this test's own
       // overridden `tmux.TCC_SOCKET` — proves the override actually works
       // end to end, not just that the property can be reassigned.
       startAuthorizedAnchor();
       assert.doesNotThrow(() => execFileSync('tmux', ['-L', tmux.TCC_SOCKET, 'has-session', '-t', tmux.TCC_ANCHOR_SESSION], { stdio: 'ignore' }));
-      assert.notEqual(tmux.TCC_SOCKET, REAL_TCC_SOCKET, 'this test ran on its OWN isolated socket, not the real one');
-      // The "production" session on the REAL default socket is still
-      // there, untouched by anything this test (or its eventual
-      // `afterEach`, which only ever targets `tmux.TCC_SOCKET` as it stood
-      // during THIS test — the isolated one, never the real production
-      // name) has done so far.
-      assert.doesNotThrow(() => execFileSync('tmux', ['-L', REAL_TCC_SOCKET, 'has-session', '-t', prodSessionName], { stdio: 'ignore' }));
+      assert.notEqual(tmux.TCC_SOCKET, otherSocket, 'this test ran on its OWN isolated socket, not the other simulated one');
+      assert.notEqual(tmux.TCC_SOCKET, REAL_TCC_SOCKET, 'and never on the real production name either');
+      // The pre-existing session on the OTHER socket is still there,
+      // untouched by anything this test (or its eventual `afterEach`,
+      // which only ever targets `tmux.TCC_SOCKET` as it stood during THIS
+      // test) has done so far.
+      assert.doesNotThrow(() => execFileSync('tmux', ['-L', otherSocket, 'has-session', '-t', prodSessionName], { stdio: 'ignore' }));
     } finally {
-      // `afterEach` has no tracking for this simulated production session —
-      // it is this test's own responsibility to tear it down.
-      try { execFileSync('tmux', ['-L', REAL_TCC_SOCKET, 'kill-server'], { stdio: 'ignore' }); } catch { /* already gone */ }
+      // `afterEach` has no tracking for this simulated pre-existing
+      // session — it is this test's own responsibility to tear it down.
+      try { execFileSync('tmux', ['-L', otherSocket, 'kill-server'], { stdio: 'ignore' }); } catch { /* already gone */ }
     }
   });
 });
