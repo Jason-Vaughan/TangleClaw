@@ -4,6 +4,66 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.40.0] - 2026-10-27
+
+### Added
+- The Project Master now receives shared-doc change notices (#1084) when it is listening and its configured scope covers the doc's group — `'all'`, or a named group. Best-effort, coalesced the same way a project session's notice is: a doc write with no live project recipient still reaches the Master alone.
+- A session can now read what became of a candidate it submitted to the Project Master
+  (`tc candidate status [<candidate-id>]`, `GET /api/bridge/session/candidates[/:candidateId]`):
+  still waiting, approved and ready/blocked, posted with the Discord message id, or discarded —
+  rejected, withdrawn, expired, or merged into another candidate with that candidate's own
+  outcome. Scoped to the submitting project; never the Master's reworded text (#2214).
+- Durable scoped permission requests (#2352): a project session can ask for a single-scope permission, the Operator sees it on the session page and can grant or refuse it, and a Discord-bridge reply naming the exact request and decision can decide one too (never a broad "yes" or "approve all" — bound to the pinned operator's own authored reply). Every decision gets a durable, one-time receipt, delivered to the requesting session live where possible and readable afterward either way.
+- An explicit `MEDUSA_BRIDGE_WS_URL` that is refused (unparseable, wrong scheme, a fragment,
+  or a non-loopback host) now fails closed: no session listener starts, and its status reports
+  the refused value and reason, instead of silently falling back to the default Bridge. A
+  derived or unset Bridge WS URL is unaffected and keeps falling back as before (#2354).
+- The in-app update now rebases a checkout's local commits onto the latest release tag
+  instead of refusing outright, when the branch's fork point from `main` is reachable from
+  that tag — a checkout carrying a few small local fixes can keep using the update button. A
+  rebase conflict aborts cleanly and refuses with the conflicted files named; every other
+  branch shape keeps the existing refusal (#2399).
+- The Operator Bridge can now relay direct messages as a second, independently-enabled ingress and reply surface alongside the existing pinned guild channel (#2433). Off by default; the operator pins one DM channel from the same verified author and must explicitly enable it after a recipient check. A DM failure is isolated from the guild channel and never falls back to it, and the reverse.
+
+### Changed
+- `operator-needed` Discord alerts now name the sender, priority, age and exchange id instead of a
+  bare sentence naming only the recipient, and are suppressed for an opted-out recipient or one
+  whose `coordinatorProject` has a live session — the same opt-out and coordinator-first
+  suppression `work-blocked` already had (#2620) — so an opted-out project or a lane under a live
+  coordinator is not paged to Discord. A new `work-unblocked` recovery notice is raised once its
+  block notice is actually delivered to Discord, so the operator is told when a blocked lane is
+  clear again, not just when it blocked, and never for a block it was never actually shown
+  (#2141).
+
+### Fixed
+- The Project Master's verified launch can now reply to a Medusa message
+  addressed to it (`inReplyTo`); it previously refused with
+  `EXCHANGE_BINDING_REQUIRED`/`REPLY_TARGET_UNKNOWN` because the Master was
+  never recognized as a verified caller on the send route (#1988).
+- The Medusa wake nudge no longer tells a read-only Project Master to POST a
+  reply its access level refuses; it now tells it to describe the needed
+  reply for the operator instead, matching whatever the Master's current
+  access level actually permits (#2176).
+- Shared-doc notice coalescing no longer suppresses writes forever when a reader stops handling its inbox: past a 10-minute staleness bound the next write sends again instead of coalescing, and a warning names the doc and session so the gap is visible long before it compounds (#2350).
+- A session launched inside a TCC-protected home folder (`~/Documents`, `~/Desktop`, `~/Downloads`) on macOS no longer hangs when the default tmux server has no Full Disk Access: it now transparently bootstraps the real session onto a separate, TCC-authorized tmux server and proxies the usual attach to it, with no change to how the session is used or addressed (`lib/sessions.js` now calls `tmux.createSessionWithTccBootstrap`, per Architect Ruling A475-W2C-R3) (#2625).
+
+### Internal
+- Closed as a duplicate: the wake-Master-on-submission behavior #2133 asked for already shipped
+  under #2547 (commit `8343e1c5`), which added `_tellMasterOfCandidates()` to the operator
+  bridge's tick pass. Verified end to end alongside #2214's read rather than rebuilt (#2133).
+- Documented the Discord helper's periodic Gateway resume (`gateway-connecting` to
+  `gateway-resumed` in about a quarter second, no `gateway-closed` line, no event lost) so a
+  `connected since` change roughly every one to two hours reads as the Gateway's own documented
+  Reconnect opcode, not an outage or a missed reply (#2334).
+- Add the durable permission-request record and its fail-closed state machine (`lib/permission-requests.js`): additive `permission_requests`/`permission_request_events` tables, expiry/supersession transitions, and the shared grant/refuse primitive the dashboard and Discord-bridge trust boundaries will call. No route or UI surface yet — this chunk is the storage foundation only (#2352).
+- `scripts/verify-features-index.js` no longer refuses a `Tests:` anchor newly added to
+  `FEATURES.md` solely because the cited test file lands outside a records-only diff. When
+  the whole diff classifies as docs/records-only (`scripts/docs-records-only-diff.js`'s
+  roster), the citation is proven instead by checking the file exists on disk at `HEAD` and
+  contains a real test registration (`it(`/`test(`). Any diff that also touches an
+  executable or test file keeps the original strict "must be touched by this diff"
+  requirement, unchanged (#2632).
+
 ## [5.39.0] - 2026-10-26
 
 ### Added
