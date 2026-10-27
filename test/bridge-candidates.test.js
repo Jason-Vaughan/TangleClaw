@@ -759,9 +759,11 @@ describe('bridge candidates (#2031)', () => {
       const read = await reads(session, foldedId);
       assert.deepEqual(read.body, {
         candidateId: foldedId, kind: 'milestone', createdAt: bridgeStore.candidates.get(foldedId).createdAt,
-        submittedByThisLaunch: true, outcome: 'discarded', reason: 'merged', mergedInto: null, mergedCrossProject: true, mergedOutcome: null
+        submittedByThisLaunch: true, outcome: 'discarded', reason: 'merged', mergedInto: null, mergedOutcome: null
       });
       assert.equal(JSON.stringify(read.body).includes(foreignSurvivorId), false, 'the other project\'s candidate id never appears in the response');
+      const cli = await statusCli(session, foldedId);
+      assert.match(cli.stdout, /discarded \(merged\)/);
     });
   });
 });
