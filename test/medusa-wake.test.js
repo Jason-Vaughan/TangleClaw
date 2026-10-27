@@ -1468,6 +1468,119 @@ describe('medusa-wake — gates (each one blocks alone)', () => {
     }
   });
 
+  // #1321 — the wake gate silently resuming nudges past a stale run (the same
+  // transition the test above drives) is exactly the moment `warnStale` must
+  // record once. This drives the REAL `wrapRunning` AND `warnStaleWrap` seams
+  // against the REAL registry, through a full tick — not a direct function call —
+  // so the gate's own call site is what is pinned, not just the registry's export.
+  it('warns once, via the real registry, the tick that first resumes nudging a stale wrap (#1321)', () => {
+    const registry = require('../lib/wrap-run-registry');
+    const realWrapRunning = wake._internal.wrapRunning;
+    const realWarnStaleWrap = wake._internal.warnStaleWrap;
+    const realNow = registry._internal.now;
+    let fakeNow = realNow();
+    registry._internal.now = () => fakeNow;
+    const warnings = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    const { setLevel: setLvl } = require('../lib/logger');
+    try {
+      registry._resetForTests();
+      // `installWorld` stubs `wrapRunning` to its own `world.wrapRunning` flag
+      // (and declares no `warnStaleWrap` seam at all) — both real seams must be
+      // restored AFTER it runs, or this test exercises the stub, not the gate.
+      const world = installWorld({ project: { id: 10, name: 'wedged-project', path: '/tmp/wedged-project' } });
+      wake._internal.wrapRunning = realWrapRunning;
+      wake._internal.warnStaleWrap = realWarnStaleWrap;
+      const claim = registry.begin('wedged-project', 1);
+
+      tickThroughDebounce();
+      assert.equal(world.injected.length, 0, 'still live — no nudge, no warning yet');
+
+      fakeNow += registry.STALE_RUN_MS;
+      setLvl('warn');
+      process.stdout.write = (chunk, ...rest) => {
+        const text = String(chunk);
+        if (text.includes('Stale wrap run permitted an action')) warnings.push(text);
+        return origWrite(chunk, ...rest);
+      };
+      tickThroughDebounce();
+      assert.equal(world.injected.length, 1, 'the wedged run no longer withholds the nudge');
+      assert.equal(warnings.length, 1, 'warned exactly once for this run at the wake site');
+      assert.match(warnings[0], /wedged-project/);
+      assert.match(warnings[0], new RegExp(claim.runId));
+
+      // Debounce needs a fresh mail edge to nudge again; staleness itself does
+      // not re-fire the wake, but the gate still re-evaluates `wrapRunning`
+      // every tick — the latch, not the lack of ticks, is what keeps this at one.
+      tickThroughDebounce();
+      assert.equal(warnings.length, 1, 'one-shot — not re-warned on a later tick for the same run');
+    } finally {
+      process.stdout.write = origWrite;
+      setLvl('error');
+      registry._internal.now = realNow;
+      registry._resetForTests();
+      wake._internal.wrapRunning = realWrapRunning;
+      wake._internal.warnStaleWrap = realWarnStaleWrap;
+    }
+  });
+
+  // #1321 — PRR-A, PR #2646 review: the warning must not fire merely because
+  // the WRAP gate stopped withholding the nudge — a LATER gate (rotation,
+  // here) can still withhold it on that same tick, and the one-shot latch
+  // would then suppress the warning on the tick that actually nudges. Held
+  // first by rotation (no warning), then nudged once rotation clears (exactly
+  // one warning, on the tick the nudge actually happens).
+  it('does not warn while a stale run is held by a LATER gate, and warns on the tick that actually nudges', () => {
+    const registry = require('../lib/wrap-run-registry');
+    const realWrapRunning = wake._internal.wrapRunning;
+    const realWarnStaleWrap = wake._internal.warnStaleWrap;
+    const realNow = registry._internal.now;
+    let fakeNow = realNow();
+    registry._internal.now = () => fakeNow;
+    const warnings = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    const { setLevel: setLvl } = require('../lib/logger');
+    try {
+      registry._resetForTests();
+      const world = installWorld({
+        project: { id: 10, name: 'held-then-nudged', path: '/tmp/held-then-nudged' },
+        rotating: true
+      });
+      wake._internal.wrapRunning = realWrapRunning;
+      wake._internal.warnStaleWrap = realWarnStaleWrap;
+      const claim = registry.begin('held-then-nudged', 1);
+      fakeNow += registry.STALE_RUN_MS;
+
+      setLvl('warn');
+      process.stdout.write = (chunk, ...rest) => {
+        const text = String(chunk);
+        if (text.includes('Stale wrap run permitted an action')) warnings.push(text);
+        return origWrite(chunk, ...rest);
+      };
+
+      // The wrap gate no longer withholds (the run is stale), but rotation
+      // still does — this tick must not warn.
+      tickThroughDebounce();
+      assert.equal(world.injected.length, 0, 'held by rotation, not nudged');
+      assert.equal(warnings.length, 0, 'the wrap gate passing is not the same as the nudge happening');
+
+      // Rotation clears; THIS tick is the one that actually nudges.
+      world.rotating = false;
+      tickThroughDebounce();
+      assert.equal(world.injected.length, 1, 'now nudged');
+      assert.equal(warnings.length, 1, 'warned exactly once, on the tick that actually permitted the nudge');
+      assert.match(warnings[0], /held-then-nudged/);
+      assert.match(warnings[0], new RegExp(claim.runId));
+    } finally {
+      process.stdout.write = origWrite;
+      setLvl('error');
+      registry._internal.now = realNow;
+      registry._resetForTests();
+      wake._internal.wrapRunning = realWrapRunning;
+      wake._internal.warnStaleWrap = realWarnStaleWrap;
+    }
+  });
+
   it('holds the nudge when the wrap registry cannot be read', () => {
     // The gate withholds a nudge, so an unreadable registry is a reason to
     // withhold one — never a reason to send it. Reversing this is silent: the

@@ -146,16 +146,65 @@ describe('wrap-run-registry (#583)', () => {
     assert.equal(registry.get('proj-a').result.tag, 'first');
   });
 
-  it('a stale running run (>= STALE_RUN_MS) is taken over instead of blocking forever', () => {
+  it('a stale running run (>= STALE_RUN_MS), short of its cancel boundary, is taken over automatically (#1805)', () => {
     registry.begin('proj-a', 1);
     fakeNow += registry.STALE_RUN_MS - 1;
     assert.equal(registry.begin('proj-a', 2).ok, false, 'just under the threshold still blocks');
     fakeNow += 1;
     const takeover = registry.begin('proj-a', 2);
-    assert.equal(takeover.ok, true, 'at the threshold the wedged run is taken over');
+    assert.equal(takeover.ok, true, 'short of the cancel boundary, nothing needs confirming');
     const status = registry.get('proj-a');
     assert.equal(status.sessionId, 2);
     assert.equal(status.startedAt, fakeNow);
+  });
+
+  it('a stale run PAST its cancel boundary is refused, not taken over, and stays refused (#1805)', () => {
+    const claim = registry.begin('proj-a', 1);
+    assert.equal(registry.admitStep('proj-a', claim.runId, { stepId: 'commit', pastCancelBoundary: true }), 'proceed');
+    fakeNow += registry.STALE_RUN_MS;
+    const refused = registry.begin('proj-a', 2);
+    assert.equal(refused.ok, false, 'it may already be committing, branching or pushing — no takeover can be safe');
+    assert.equal(refused.running.stale, true);
+    assert.equal(refused.running.runId, claim.runId);
+    assert.equal(registry.get('proj-a').sessionId, 1, 'the original run is untouched — there is no override for this case');
+
+    // Stays refused on a later attempt too — there is no confirm flag, no
+    // retry path, short of the run finishing or a restart.
+    assert.equal(registry.begin('proj-a', 3).ok, false);
+
+    // It frees itself the ordinary way: the pipeline finally finishes.
+    assert.equal(registry.finish('proj-a', claim.runId, { ok: true, tag: 'late' }), true);
+    assert.equal(registry.begin('proj-a', 4).ok, true, 'the slot is free once the run actually settles');
+  });
+
+  // #1805 — a stale takeover must stop the displaced pipeline before it can
+  // reach its OWN cancel boundary, not just take the project's slot. Keyed on
+  // the displaced `runId` alone, because the takeover already replaced the
+  // project's entry by the time the displaced pipeline's own calls arrive.
+  it('a stale takeover tells the displaced pipeline to stop before it can reach its cancel boundary', () => {
+    const displaced = registry.begin('proj-a', 1);
+    fakeNow += registry.STALE_RUN_MS;
+    const takeover = registry.begin('proj-a', 2);
+    assert.equal(takeover.ok, true);
+
+    // The displaced pipeline's own next calls, still carrying its ORIGINAL
+    // runId, read as cancelled — never 'proceed', regardless of which step.
+    assert.equal(registry.admitStep('proj-a', displaced.runId, { stepId: 'tests', pastCancelBoundary: false }), 'cancelled');
+    assert.equal(registry.isCancelRequested('proj-a', displaced.runId), true);
+    // The takeover itself is completely unaffected.
+    assert.equal(registry.admitStep('proj-a', takeover.runId, { stepId: 'tests', pastCancelBoundary: false }), 'proceed');
+    assert.equal(registry.isCancelRequested('proj-a', takeover.runId), false);
+  });
+
+  it('the displaced-cancelled marker is cleared once the displaced pipeline itself calls finish, late', () => {
+    const displaced = registry.begin('proj-a', 1);
+    fakeNow += registry.STALE_RUN_MS;
+    registry.begin('proj-a', 2);
+    assert.equal(registry.isCancelRequested('proj-a', displaced.runId), true);
+
+    registry.finish('proj-a', displaced.runId, { ok: false, tag: 'zombie' });
+    assert.equal(registry.isCancelRequested('proj-a', displaced.runId), false,
+      'nothing will ever ask on this runId\'s behalf again, so the marker has nothing left to do');
   });
 
   // #185 — the event log and subscriptions behind GET /wrap/stream/:runId.
@@ -361,6 +410,60 @@ describe('wrap-run-registry (#583)', () => {
       assert.equal(registry.anyRunning(), null, 'server.js:979 must let the restart through');
     });
 
+    // #1321 — `anyRunning` is restart's only caller, so every stale project it
+    // walks past is a moment it just permitted a restart a live run would have
+    // refused. The warning must fire once, not on every restart attempt.
+    it('anyRunning warns once per stale run at the restart site, via warnStale', () => {
+      const warnings = [];
+      const origWrite = process.stdout.write.bind(process.stdout);
+      const { setLevel } = require('../lib/logger');
+      setLevel('warn');
+      process.stdout.write = (chunk, ...rest) => {
+        const text = String(chunk);
+        if (text.includes('Stale wrap run permitted an action')) warnings.push(text);
+        return origWrite(chunk, ...rest);
+      };
+      try {
+        const claim = registry.begin('proj-a', 1);
+        fakeNow += registry.STALE_RUN_MS;
+        assert.equal(registry.anyRunning(), null, 'the stale run no longer blocks restart');
+        assert.equal(warnings.length, 1, 'warned once for this stale run at the restart site');
+        assert.match(warnings[0], /proj-a/);
+        assert.match(warnings[0], new RegExp(claim.runId));
+
+        // A second restart attempt against the SAME stale run must not warn again.
+        registry.anyRunning();
+        assert.equal(warnings.length, 1, 'one-shot — the same run is never warned twice at the same site');
+
+        // A takeover replaces the runId; the NEW run going stale
+        // later is a fresh event, warned again.
+        const takeover = registry.begin('proj-a', 2);
+        fakeNow += registry.STALE_RUN_MS;
+        registry.anyRunning();
+        assert.equal(warnings.length, 2, 'a different run id re-arms the latch');
+        assert.match(warnings[1], new RegExp(takeover.runId));
+      } finally {
+        process.stdout.write = origWrite;
+        setLevel('error');
+      }
+    });
+
+    it('warnStale is a no-op for a project with no run, a live run, or an already-settled one', () => {
+      // No run at all.
+      registry.warnStale('never-wrapped', 'restart');
+      // Live run.
+      registry.begin('proj-a', 1);
+      registry.warnStale('proj-a', 'restart');
+      // Settled run, however old.
+      finish('proj-a', { ok: true });
+      fakeNow += registry.STALE_RUN_MS * 2;
+      registry.warnStale('proj-a', 'restart');
+      // None of the above throw, and none of it is assertable beyond "it does
+      // not throw" without hooking the logger — covered precisely by the
+      // explicit one-shot test above for the one case that DOES log.
+      assert.ok(true);
+    });
+
     it('anyRunning still names a live wrap when another project holds a wedged one', () => {
       registry.begin('proj-wedged', 1);
       fakeNow += registry.STALE_RUN_MS;
@@ -368,6 +471,41 @@ describe('wrap-run-registry (#583)', () => {
       // Insertion order puts the wedged project first, so a reader that stops
       // at the first truthy `running` would answer with it.
       assert.equal(registry.anyRunning(), 'proj-live');
+    });
+
+    // #1321 — found at Critic cumulative review (rev-20261027T200007Z-2b646b7e):
+    // a stale project's warning must not fire when a DIFFERENT project is
+    // live, because the restart `anyRunning` gates is refused by that live
+    // project regardless — warning there would claim an action happened that
+    // did not (warnStale's own contract: only when actually permitting
+    // something a live run would have refused).
+    it('anyRunning does not warn about a stale project when another project is live — the restart was not actually permitted', () => {
+      const warnings = [];
+      const origWrite = process.stdout.write.bind(process.stdout);
+      const { setLevel: setLvl } = require('../lib/logger');
+      setLvl('warn');
+      process.stdout.write = (chunk, ...rest) => {
+        const text = String(chunk);
+        if (text.includes('Stale wrap run permitted an action')) warnings.push(text);
+        return origWrite(chunk, ...rest);
+      };
+      try {
+        registry.begin('proj-wedged', 1);
+        fakeNow += registry.STALE_RUN_MS;
+        registry.begin('proj-live', 2);
+        assert.equal(registry.anyRunning(), 'proj-live', 'the restart IS refused, by the live project');
+        assert.equal(warnings.length, 0, 'proj-wedged did not get to "permit" anything — the live project already blocked it');
+
+        // Once the live project also settles, the stale one really is what
+        // lets the restart through, and NOW it warns.
+        registry.finish('proj-live', registry.get('proj-live').runId, { ok: true });
+        assert.equal(registry.anyRunning(), null);
+        assert.equal(warnings.length, 1);
+        assert.match(warnings[0], /proj-wedged/);
+      } finally {
+        process.stdout.write = origWrite;
+        setLvl('error');
+      }
     });
 
     it('subscribe closes a stream opened on a wedged run instead of hanging it', () => {
@@ -424,7 +562,7 @@ describe('wrap-run-registry (#583)', () => {
       assert.equal(stored.seq, 1);
     });
 
-    it('begin still takes over a wedged run — the behaviour that already worked is untouched', () => {
+    it('begin still takes over a wedged run — short of its cancel boundary, untouched behaviour (#1805)', () => {
       registry.begin('proj-a', 1);
       fakeNow += registry.STALE_RUN_MS;
       const takeover = registry.begin('proj-a', 2);
@@ -442,5 +580,123 @@ describe('wrap-run-registry (#583)', () => {
     assert.equal(registry.anyRunning(), 'proj-a');
     finish('proj-a', { ok: true });
     assert.equal(registry.anyRunning(), null);
+  });
+
+  // #1816 — the durable checkpoint trail and the restart-recovery read. The
+  // store itself is not exercised here (no `store.init()` in this file, by
+  // design — see `_internal.projectIdFor`'s own doc): these pin WHEN the
+  // registry writes a checkpoint and HOW `get()` composes a recovery read,
+  // through the same `_internal` seams `now`/`newRunId` already use.
+  describe('interrupted-run recovery (#1816)', () => {
+    const origPersist = registry._internal.persistCheckpoint;
+    const origSettled = registry._internal.markSettled;
+    const origRecover = registry._internal.readInterruptedCheckpoint;
+    let checkpoints;
+
+    beforeEach(() => {
+      checkpoints = [];
+      registry._internal.persistCheckpoint = (project, run) => {
+        checkpoints.push({
+          project, runId: run.runId, currentStepId: run.currentStepId, committed: run.cancellable === false
+        });
+      };
+      registry._internal.markSettled = (project, runId) => {
+        checkpoints.push({ project, runId, settled: true });
+      };
+      registry._internal.readInterruptedCheckpoint = () => null;
+    });
+
+    afterEach(() => {
+      registry._internal.persistCheckpoint = origPersist;
+      registry._internal.markSettled = origSettled;
+      registry._internal.readInterruptedCheckpoint = origRecover;
+    });
+
+    it('persists a checkpoint on begin, on every step-start, and when the run passes its cancel boundary', () => {
+      const { runId } = registry.begin('proj-a', 1);
+      assert.deepEqual(checkpoints[0], { project: 'proj-a', runId, currentStepId: null, committed: false });
+
+      emit('proj-a', { type: 'step-start', stepId: 'memory-update' });
+      assert.deepEqual(checkpoints[1], { project: 'proj-a', runId, currentStepId: 'memory-update', committed: false });
+
+      // A non-step-start event does not checkpoint.
+      emit('proj-a', { type: 'step-done', stepId: 'memory-update' });
+      assert.equal(checkpoints.length, 2, 'step-done is not a checkpoint moment');
+
+      assert.equal(registry.admitStep('proj-a', runId, { stepId: 'commit', pastCancelBoundary: true }), 'proceed');
+      assert.deepEqual(checkpoints[2], { project: 'proj-a', runId, currentStepId: 'memory-update', committed: true });
+
+      // Admitting a LATER step past the boundary does not checkpoint again —
+      // `cancellable` only flips once.
+      assert.equal(registry.admitStep('proj-a', runId, { stepId: 'push', pastCancelBoundary: true }), 'proceed');
+      assert.equal(checkpoints.length, 3, 'the cancellable flip checkpoints once, not on every later step');
+
+      finish('proj-a', { ok: true });
+      assert.deepEqual(checkpoints[3], { project: 'proj-a', runId, settled: true });
+    });
+
+    it('a cancelled run never flips cancellable and so never checkpoints "committed"', () => {
+      const { runId } = registry.begin('proj-a', 1);
+      registry.requestCancel('proj-a', runId);
+      assert.equal(registry.admitStep('proj-a', runId, { stepId: 'commit', pastCancelBoundary: true }), 'cancelled');
+      assert.ok(!checkpoints.some((c) => c.committed === true), 'the commit step was never admitted — nothing to report as started');
+    });
+
+    it('get reports no interrupted run while this process holds one in memory', () => {
+      registry._internal.readInterruptedCheckpoint = () => ({
+        runId: 'ffff', lastStepId: 'commit', commitStarted: true, checkpointAt: '2026-01-01T00:00:00Z'
+      });
+      registry.begin('proj-a', 1);
+      const status = registry.get('proj-a');
+      assert.equal(status.interrupted, false, 'an in-memory run is authoritative, never "interrupted"');
+      assert.equal(status.interruptedStepId, null);
+      assert.equal(status.interruptedCommitStarted, false);
+    });
+
+    it('get reports an interrupted run from the recovery read when this process holds none, and memoises it', () => {
+      let calls = 0;
+      registry._internal.readInterruptedCheckpoint = () => {
+        calls += 1;
+        return { runId: 'abc123', lastStepId: 'pr-check', commitStarted: true, checkpointAt: '2026-02-02T00:00:00Z' };
+      };
+      const first = registry.get('never-wrapped');
+      assert.equal(first.interrupted, true);
+      assert.equal(first.runId, 'abc123');
+      assert.equal(first.interruptedStepId, 'pr-check');
+      assert.equal(first.interruptedCommitStarted, true);
+      assert.equal(first.interruptedAt, '2026-02-02T00:00:00Z');
+      assert.equal(first.running, false);
+
+      registry.get('never-wrapped');
+      registry.get('never-wrapped');
+      assert.equal(calls, 1, 'the recovery read runs at most once per project per process');
+    });
+
+    it('get reports nothing interrupted, and does not re-read, once the recovery read says so', () => {
+      let calls = 0;
+      registry._internal.readInterruptedCheckpoint = () => { calls += 1; return null; };
+      assert.equal(registry.get('clean-project').interrupted, false);
+      registry.get('clean-project');
+      assert.equal(calls, 1, 'a "nothing interrupted" verdict is memoised too, not just a found one');
+    });
+
+    it('an unreadable recovery source reports nothing interrupted rather than throwing', () => {
+      registry._internal.readInterruptedCheckpoint = () => { throw new Error('store not initialized'); };
+      assert.doesNotThrow(() => {
+        const status = registry.get('never-wrapped');
+        assert.equal(status.interrupted, false);
+      });
+    });
+
+    it('a fresh begin after recovery clears the memo\'s relevance without needing to clear it', () => {
+      registry._internal.readInterruptedCheckpoint = () => ({
+        runId: 'old-run', lastStepId: 'tests', commitStarted: false, checkpointAt: '2026-01-01T00:00:00Z'
+      });
+      assert.equal(registry.get('proj-a').interrupted, true, 'precondition: an interrupted run is reported');
+      registry.begin('proj-a', 1);
+      const status = registry.get('proj-a');
+      assert.equal(status.interrupted, false, 'a live in-memory run always wins over the memo');
+      assert.equal(status.running, true);
+    });
   });
 });

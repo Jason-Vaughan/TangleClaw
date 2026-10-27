@@ -27,6 +27,10 @@
  *   - `lost`      — the run was being followed and the server no longer holds
  *                   it (a restart): nothing it did can be read back.
  *   - `refused`   — the POST was refused before any run was claimed.
+ *   - `interrupted` — a restart cut a run off before it settled, discovered
+ *                   from `GET /wrap/status` with nothing live to follow
+ *                   (#1816): `interruptedStepId`/`interruptedCommitStarted`
+ *                   say where it got to, not `live`/`result`, which stay empty.
  *
  * Loaded by the browser as a plain script after `wrap-drawer.js` (it folds
  * stream events through that file's `applyWrapStreamEvent`), and by tests.
@@ -46,10 +50,15 @@
 
   /**
    * The state of a page following no run.
-   * @returns {{phase: 'idle', runId: null, retry: false, transport: null, live: null, result: null, error: null, visible: false, handback: null}}
+   * @returns {{phase: 'idle', runId: null, retry: false, transport: null, live: null, result: null, error: null, visible: false, handback: null, interruptedStepId: null, interruptedCommitStarted: false}}
    */
   function initialWrapRun() {
-    return { phase: 'idle', runId: null, retry: false, transport: null, live: null, result: null, error: null, visible: false, handback: null };
+    return {
+      phase: 'idle', runId: null, retry: false, transport: null, live: null, result: null, error: null, visible: false, handback: null,
+      // #1816 — only ever set by the `interrupted` signal; every other phase
+      // keeps these at their default so the state shape stays uniform.
+      interruptedStepId: null, interruptedCommitStarted: false
+    };
   }
 
   /**
@@ -156,6 +165,13 @@
    *   - `handback` `{runId, handback}` — the state of the fix sent to the
    *     session for the settled run's blocked step (`POST /wrap/handback`, its
    *     stream, or `GET /wrap/status`).
+   *   - `interrupted` `{runId, lastStepId, commitStarted}` — a page load (or a
+   *     poll with nothing followed yet) read `GET /wrap/status` and found a
+   *     run the server reports `interrupted: true` for (#1816): a restart cut
+   *     it off before `finish`. There is nothing live to follow — `runId`
+   *     names the run only so the report can be dismissed. Ignored once
+   *     anything else is already being followed: an interrupted report is only
+   *     ever the first thing a page learns about a project's wrap.
    *
    * Signals naming a `runId` other than the followed one are ignored: a late
    * frame from a previous run must not repaint the current one.
@@ -256,6 +272,26 @@
         if (hb !== null && (!hb || typeof hb !== 'object' || typeof hb.state !== 'string')) return s;
         return { ...s, handback: hb };
       }
+
+      case 'interrupted':
+        // Only from `idle`: once a page is following, settled on, or already
+        // showing something for this project's wrap, a late discovery of an
+        // old interrupted run must not override it.
+        if (s.phase !== 'idle' || typeof signal.runId !== 'string') return s;
+        return {
+          ...s,
+          phase: 'interrupted',
+          runId: signal.runId,
+          retry: false,
+          transport: null,
+          live: null,
+          result: null,
+          error: null,
+          visible: true,
+          handback: null,
+          interruptedStepId: typeof signal.lastStepId === 'string' ? signal.lastStepId : null,
+          interruptedCommitStarted: signal.commitStarted === true
+        };
 
       default:
         return s;
