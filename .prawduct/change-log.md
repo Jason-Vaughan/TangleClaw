@@ -41,6 +41,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-27 — v5.40.0 W2-A: DM startup check no longer takes the whole helper down (#2433, PR #2635)
+
+<!-- prawduct: type=fixed | scope=w2a-operator-bridge-dm-ingress -->
+
+- **#2433:** `cli.js`'s startup DM-channel check (`verifyDmChannel`) called Discord's REST API with no `try`/`catch`; a 403/404 (channel revoked, bot removed) or a network failure threw uncaught, aborting `run()` before the guild gateway and outbound loop ever started — taking down the healthy guild surface over a DM-only problem, and skipping `lock.release()` on the way out (a leaked PID lock the next `run()` would have to out-wait). Now any thrown REST/network failure disables the DM surface alone, the same as a returned closed reason, and the guild surface starts normally. Also fixes `dm-surface-disabled-at-startup` never having been registered in `lib/bridge-helper/log.js`'s `CODES`, which silently rewrote every one of its log lines to `unknown-code` — the very code this fix's own log line depends on to say why DM was disabled. Found independently while verifying a third-party claim about this code path that turned out to cite an unverifiable approval; the claim's other half (a defense-in-depth re-check of the server-resolved `destinationChannelId` in `outbound.js`) was not implemented — it contradicts this module's own documented server-authoritative design and no independent Critic reviewer flagged it, so it is flagged for the Integrator/PM rather than built on an unverified say-so.
+
 ## 2026-10-27 — v5.40.0 W2-A Chunk 3: Operator Bridge DM surface panel, docs, and rollback (#2433 complete)
 
 <!-- prawduct: type=feature | scope=w2a-operator-bridge-dm-ingress -->

@@ -1491,5 +1491,46 @@ describe('bridge helper: the relay against the real server (#2031)', () => {
       const everything = lines.join('\n');
       for (const secret of [BOT_TOKEN, helperToken, 'fleet', 'sessions', 'let me in', '100000000000000099']) assert.ok(!everything.includes(secret), secret);
     });
+
+    it('a DM channel Discord cannot confirm at startup (403/404/network) disables the DM surface alone, never the whole helper, and still gives the lock back (#2433)', async () => {
+      const home = path.join(tmpDir, `home-${++seq}`);
+      const DM_ID = '300000000000000099';
+      writeConfig(paths(home).config, { baseUrl: origin, ...IDS, dmChannelId: DM_ID, dmEnabled: true, pollSeconds: 5 });
+      discord.reads.channelsById[DM_ID] = [403, { code: 50001 }];
+      const ws = fakeWebSocket();
+      const lines = [];
+      const sleeps = [];
+      let stop;
+      const exit = main(['run'], {
+        home, repoDir: path.join(__dirname, '..'), nodePath: process.execPath, uid: 501, pid: process.pid,
+        out: () => {}, errLine: (line) => lines.push(line), stdin: null, launchctl: async () => 0,
+        onStop: (fn) => { stop = fn; },
+        secrets: { readSecret: async (name) => ({ bot: BOT_TOKEN, helper: helperToken }[name]) },
+        WebSocket: ws.WebSocket, discordApi: discord.api,
+        isAlive: () => false,
+        timers: { setTimeout: (resolve, ms) => sleeps.push({ ms, resolve }), clearTimeout: () => {} }
+      });
+
+      // The thrown DM check does not stop the guild surface from starting.
+      const socket = await until(() => ws.sockets[0], 'the Gateway connection');
+      socket.receive({ op: OP.HELLO, d: { heartbeat_interval: 40000 } });
+      socket.receive({ op: OP.DISPATCH, t: 'READY', s: 1, d: { session_id: 's', resume_gateway_url: 'wss://resume-test.discord.gg', user: { id: BOT_ID } } });
+      const message = operatorMessage('does the guild surface still work?');
+      socket.receive({ op: OP.DISPATCH, t: 'MESSAGE_CREATE', s: 2, d: message });
+      await until(() => bridgeStore.routes.getByExternalId(message.id), 'the guild route, proving the guild surface is unaffected');
+      await until(() => discord.reactions.length === 1, 'the reaction');
+
+      await until(() => sleeps.length >= 1, 'the helper to wait for its next pass');
+      stop();
+      assert.equal(await exit, EXIT.ok, 'run() completed normally; the thrown check never aborted it');
+      assert.equal(fs.existsSync(paths(home).lock), false, 'the lock is given back, not leaked on the DM check\'s exception path');
+
+      const records = lines.map((line) => JSON.parse(line));
+      for (const record of records) assert.ok(Object.prototype.hasOwnProperty.call(CODES, record.code) && record.code !== 'unknown-code', record.code);
+      const disabled = records.find((r) => r.code === 'dm-surface-disabled-at-startup');
+      assert.ok(disabled, 'the disable reason was logged under its own code, not lost as unknown-code');
+      assert.equal(disabled.reason, 'status-403');
+      delete discord.reads.channelsById[DM_ID];
+    });
   });
 });
