@@ -3446,7 +3446,8 @@
       CLOSED_UNEXPECTEDLY: 'The connection was accepted and then dropped. Something is on the port; whether it is the Bridge is worth checking.',
       HANDSHAKE_TIMEOUT: 'The Bridge accepted the connection but never completed registration — it may be starting up, or something other than the Bridge owns that port.',
       BRIDGE_ERROR: 'The Bridge answered with an error. Its own logs will say why.',
-      BAD_FRAME: 'The Bridge sent something this version could not read — a version mismatch is likely.'
+      BAD_FRAME: 'The Bridge sent something this version could not read — a version mismatch is likely.',
+      WS_URL_REFUSED: 'An explicit MEDUSA_BRIDGE_WS_URL was refused, so no listener was started — check the server log for the rejected value and why.'
     });
 
     /**

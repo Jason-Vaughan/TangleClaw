@@ -11,7 +11,7 @@
 
   // Refusal codes whose body carries more than a sentence, read from the api
   // helper's `lastBody` side channel because `api()` returns null on a 4xx/5xx.
-  const STRUCTURED_REFUSALS = new Set(['dirty-tree', 'reconcile-required', 'recovery-failed']);
+  const STRUCTURED_REFUSALS = new Set(['dirty-tree', 'reconcile-required', 'recovery-failed', 'rebase-conflict']);
 
   /**
    * Whether an `/api/update-status` payload is an ANSWER — something a surface
@@ -506,6 +506,22 @@
             + 'changed.\n\n'
             + r.reconcile.map((item) => `${item.path} (${item.reason})\n  ${item.action}`).join('\n\n')
             + '\n\nUpdate again once they are sorted out.');
+          return true;
+        }
+
+        // A local branch's commits could not be replayed onto the release tag
+        // (#2399): the rebase was aborted and the branch is exactly as it was.
+        // The conflicted paths are the operator's to resolve by hand.
+        if (r && !r.ok && r.code === 'rebase-conflict') {
+          setInFlight(false);
+          setApplyLabel('Update now', false);
+          const conflicts = Array.isArray(r.conflicts) ? r.conflicts : [];
+          global.alert('Update not applied: your local commits could not be replayed onto the new '
+            + 'release, and nothing was changed.\n\n'
+            + (conflicts.length
+              ? `Conflicted files:\n${conflicts.map((c) => `  ${c}`).join('\n')}\n\n`
+              : '')
+            + 'Resolve the conflicts in a checkout by hand, then update again.');
           return true;
         }
 
