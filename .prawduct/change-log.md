@@ -41,11 +41,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-27 — v5.40.0 W2-C Chunks 02-04: permission-request routes/UI, Discord-bridge decisions, TCC tmux bootstrap
+
+<!-- prawduct: type=feature | scope=w2c-2352-2625 -->
+
+- **#2352:** The permission-request record now has an HTTP surface and a session-page UI (`lib/routes/sessions.js`, `public/session.{js,html,css}`): a verified project launch can ask for a scoped permission, the Operator sees pending requests on the session page and can grant or refuse them (CSRF-checked write proof), and a verified Master relay carrying a Discord-bridge reply can decide one too — `decideFromBridge` refuses a reply that does not literally name the exact request id (zero free-form inference), refuses an author who is not the pinned operator, and enforces that one bridge reply decides at most one request. Every real decision fires a best-effort, one-time Medusa receipt notice to the requesting session's live workspace; a session with no live listener gets the same receipt on its next read instead.
+- **#2625:** Added the mechanism for a TCC-protected launch to bootstrap its real tmux session onto a separate, already-authorized tmux server instead of hanging (`lib/tmux.js#createSessionWithTccBootstrap`, fully tested) — **not yet wired into the live launch path** (`lib/sessions.js:872` is outside this car's authorized file scope; tracked as a one-line follow-up, not a silent gap).
+
 ## 2026-10-27 — v5.40.0 W2-C Chunk 01: permission-request schema foundation
 
 <!-- prawduct: type=internal | scope=w2c-2352-2625 -->
 
-- **#2352:** Added the durable permission-request record and its fail-closed state machine (`lib/permission-requests.js`): additive `permission_requests`/`permission_request_events` tables (`ensurePermissionSchema`, idempotent, no edit to `lib/store.js`/`lib/store/_schema.js`), lazy expiry (`PERMISSION_REQUEST_EXPIRED`) and launch-supersession (`PERMISSION_LAUNCH_SUPERSEDED`) transitions, and the shared `decidePermissionRequest` grant/refuse primitive (idempotent replay, `PERMISSION_DECISION_CONFLICT` on a conflicting decision) that Chunks 02/03's dashboard and Discord-bridge trust boundaries will call once each has proven who is deciding. No route or UI surface yet — this chunk is the storage foundation only; `test/permission-requests.test.js` covers it.
+- **#2352:** Added the durable permission-request record and its fail-closed state machine (`lib/permission-requests.js`): additive `permission_requests`/`permission_request_events` tables (`ensurePermissionSchema`, idempotent, no edit to `lib/store.js`/`lib/store/_schema.js`), lazy expiry (`PERMISSION_REQUEST_EXPIRED`) and launch-supersession (`PERMISSION_LAUNCH_SUPERSEDED`) transitions, and the shared `decidePermissionRequest` grant/refuse primitive (idempotent replay, `PERMISSION_DECISION_CONFLICT` on a conflicting decision) that the dashboard and Discord-bridge trust boundaries call once each has proven who is deciding. No route or UI surface yet — this chunk is the storage foundation only; `test/permission-requests.test.js` covers it.
 
 ## 2026-10-27 — v5.40.0 W1-A: operator-needed alert context and Gateway resume docs
 

@@ -4,7 +4,7 @@
 // its fail-closed state machine. Every write goes through the real store on a
 // temporary database; each expiry/supersession test drives the module's own
 // clock rather than sleeping, and each conflict/replay test asserts the exact
-// code a trust-boundary caller (Chunks 02/03) will branch on.
+// code a trust-boundary caller will branch on.
 
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');

@@ -171,6 +171,7 @@
     "test/session-banner-phone-actions.test.js",
     "test/session-checkout-chip.test.js",
     "test/session-header-cleanup.test.js",
+    "test/session-permission-requests-ui.test.js",
     "test/session-reentry.test.js",
     "test/session-relaunch-page.test.js",
     "test/session-relaunch.test.js",

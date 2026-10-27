@@ -1668,17 +1668,23 @@ function togglePermissionRequestsPanel() {
 }
 
 /**
- * Grant or refuse a pending permission request from the panel, then refresh
- * it. A refusal (e.g. it was decided/expired elsewhere first) is reported via
- * `api.lastError`/`api.lastBody`, exactly as every other mutate call reports
- * one — the panel re-fetch afterward is what shows the row's new state.
+ * Grant or refuse a pending permission request from the panel. On success,
+ * refreshes the panel so the row's new state shows. On failure (e.g. it was
+ * already decided or expired elsewhere first), surfaces `api.lastError` as a
+ * toast — the same feedback every other mutate call in this file gives — so
+ * a refused click is never silently indistinguishable from a slow one.
  * @param {string} requestId
  * @param {string} decision - `'grant'` or `'refuse'`
  * @param {string} expectedScope
  * @returns {Promise<void>}
  */
 async function decidePermissionRequestFromUi(requestId, decision, expectedScope) {
-  await apiMutate(`/api/permissions/requests/${encodeURIComponent(requestId)}/decide`, 'POST', { decision, expectedScope });
+  const result = await apiMutate(`/api/permissions/requests/${encodeURIComponent(requestId)}/decide`, 'POST', { decision, expectedScope });
+  if (!result) {
+    showBannerActionToast(`Couldn't ${decision === 'grant' ? 'grant' : 'refuse'} the permission request: ${api.lastError || 'the server rejected it'}`, true);
+  }
+  // Refresh either way: a failure here is often "already decided elsewhere",
+  // and the re-fetch is what makes that row's real state show.
   await pollPermissionRequests();
 }
 
