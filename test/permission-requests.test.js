@@ -95,12 +95,51 @@ beforeEach(() => {
   clockAt(0);
 });
 
+const realGetStatus = permissionRequests._deps.getStatus;
+const realSendSystemMessage = permissionRequests._deps.sendSystemMessage;
+
 afterEach(() => {
   permissionRequests._internal.now = realNow;
+  permissionRequests._deps.getStatus = realGetStatus;
+  permissionRequests._deps.sendSystemMessage = realSendSystemMessage;
   store.close();
   if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
   tmpDir = null;
 });
+
+/** Let a fire-and-forget promise chain (the receipt notice) settle before asserting on it. */
+function flush() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+/**
+ * Insert a minimal, valid `bridge_routes` row directly (the table is created
+ * by `store.init()` itself — `lib/store.js` wires `lib/bridge-schema.js` at
+ * startup, so this test needs no bridge module of its own).
+ * @param {{routeId: string, authorId: string, externalId: string}} fields
+ * @returns {void}
+ */
+function insertBridgeRoute({ routeId, authorId, externalId }) {
+  const now = permissionRequests._internal.now();
+  store.getDb().prepare(
+    `INSERT INTO bridge_routes
+       (route_id, external_id, author_id, space_id, channel_id, body_digest, state, version, created_at, updated_at)
+     VALUES (?, ?, ?, 'space-1', 'channel-1', ?, 'accepted', 1, ?, ?)`
+  ).run(routeId, externalId, authorId, '0'.repeat(64), now, now);
+}
+
+/**
+ * Pin the operator's allowlisted Discord author id, the way
+ * `POST /api/bridge/operator/allowlist` does (`lib/bridge-api.js`).
+ * @param {string} authorId
+ * @returns {void}
+ */
+function pinOperatorAuthor(authorId) {
+  const now = permissionRequests._internal.now();
+  store.getDb().prepare(
+    "INSERT INTO bridge_settings (key, value, updated_by, updated_at) VALUES ('allow.author', ?, 'operator', ?)"
+  ).run(authorId, now);
+}
 
 describe('ensurePermissionSchema', () => {
   it('is idempotent: applying it twice against the same db throws nothing and leaves the tables queryable', () => {
@@ -399,5 +438,170 @@ describe('permission_request_events', () => {
       .all(result.request.requestId)
       .map((row) => row.kind);
     assert.deepEqual(kindsAfterExpiry, ['created', 'receipt-delivered', 'expired']);
+  });
+});
+
+describe('decideFromBridge', () => {
+  it('grants from a reply that names the exact request id, binding decision_bridge_external_id', () => {
+    const { result } = create();
+    insertBridgeRoute({ routeId: 'route-1', authorId: 'author-1', externalId: 'ext-1' });
+    pinOperatorAuthor('author-1');
+    const decision = permissionRequests.decideFromBridge(result.request.requestId, {
+      decision: 'grant', bridgeRouteId: 'route-1', replyText: `yes, grant ${result.request.requestId}`
+    });
+    assert.equal(decision.ok, true);
+    assert.equal(decision.request.state, STATES.GRANTED);
+    assert.equal(decision.request.decidedBySurface, 'discord-bridge');
+    assert.equal(decision.request.decidedByActor, 'author-1');
+    assert.equal(decision.request.decisionBridgeExternalId, 'ext-1');
+  });
+
+  it('refuses a broad reply that never names the exact request id (zero free-form inference)', () => {
+    const { result } = create();
+    insertBridgeRoute({ routeId: 'route-2', authorId: 'author-1', externalId: 'ext-2' });
+    pinOperatorAuthor('author-1');
+    const decision = permissionRequests.decideFromBridge(result.request.requestId, {
+      decision: 'grant', bridgeRouteId: 'route-2', replyText: 'yes, approve all'
+    });
+    assert.equal(decision.ok, false);
+    assert.equal(decision.code, 'AMBIGUOUS_PERMISSION_REPLY');
+  });
+
+  it('refuses a reply from an author who is not the pinned operator', () => {
+    const { result } = create();
+    insertBridgeRoute({ routeId: 'route-3', authorId: 'someone-else', externalId: 'ext-3' });
+    pinOperatorAuthor('author-1');
+    const decision = permissionRequests.decideFromBridge(result.request.requestId, {
+      decision: 'grant', bridgeRouteId: 'route-3', replyText: `grant ${result.request.requestId}`
+    });
+    assert.equal(decision.ok, false);
+    assert.equal(decision.code, 'PERMISSION_BRIDGE_UNAUTHORIZED');
+  });
+
+  it('refuses when no operator author is pinned at all', () => {
+    const { result } = create();
+    insertBridgeRoute({ routeId: 'route-4', authorId: 'author-1', externalId: 'ext-4' });
+    const decision = permissionRequests.decideFromBridge(result.request.requestId, {
+      decision: 'grant', bridgeRouteId: 'route-4', replyText: `grant ${result.request.requestId}`
+    });
+    assert.equal(decision.ok, false);
+    assert.equal(decision.code, 'PERMISSION_BRIDGE_UNAUTHORIZED');
+  });
+
+  it('answers PERMISSION_REQUEST_INVALID for an unknown bridge route', () => {
+    const { result } = create();
+    const decision = permissionRequests.decideFromBridge(result.request.requestId, {
+      decision: 'grant', bridgeRouteId: 'no-such-route', replyText: `grant ${result.request.requestId}`
+    });
+    assert.equal(decision.ok, false);
+    assert.equal(decision.code, 'PERMISSION_REQUEST_INVALID');
+  });
+
+  it('refuses a second request decided by the same bridge external_id (one reply decides at most one request)', () => {
+    // Different projects, so starting the second session does not supersede
+    // the first's launch (two sessions of the SAME project would: the second
+    // becomes that project's current one) — this test is about external_id
+    // uniqueness, not supersession.
+    const first = create({ projectId: PROJECT_A, launchId: 'launch-dup-1' }).result;
+    const second = create({ projectId: PROJECT_B, launchId: 'launch-dup-2' }).result;
+    insertBridgeRoute({ routeId: 'route-5', authorId: 'author-1', externalId: 'ext-5' });
+    pinOperatorAuthor('author-1');
+    const firstDecision = permissionRequests.decideFromBridge(first.request.requestId, {
+      decision: 'grant', bridgeRouteId: 'route-5', replyText: `grant ${first.request.requestId}`
+    });
+    assert.equal(firstDecision.ok, true);
+    const secondDecision = permissionRequests.decideFromBridge(second.request.requestId, {
+      decision: 'grant', bridgeRouteId: 'route-5', replyText: `grant ${second.request.requestId}`
+    });
+    assert.equal(secondDecision.ok, false);
+    assert.equal(secondDecision.code, 'PERMISSION_BRIDGE_DUPLICATE_DECISION');
+  });
+
+  it('is idempotent on a true replay: the same route deciding the same request twice the same way', () => {
+    const { result } = create();
+    insertBridgeRoute({ routeId: 'route-6', authorId: 'author-1', externalId: 'ext-6' });
+    pinOperatorAuthor('author-1');
+    const first = permissionRequests.decideFromBridge(result.request.requestId, {
+      decision: 'grant', bridgeRouteId: 'route-6', replyText: `grant ${result.request.requestId}`
+    });
+    const second = permissionRequests.decideFromBridge(result.request.requestId, {
+      decision: 'grant', bridgeRouteId: 'route-6', replyText: `grant ${result.request.requestId}`
+    });
+    assert.equal(first.ok, true);
+    assert.equal(second.ok, true);
+    assert.equal(second.replay, true);
+  });
+});
+
+describe('receipt notice delivery (best-effort, one-time, on a real decision only)', () => {
+  it('pushes a notice when the requesting session is listening, and marks the receipt delivered', async () => {
+    const { result, session } = create();
+    const sent = [];
+    permissionRequests._deps.getStatus = (sessionId) => {
+      assert.equal(sessionId, session.id);
+      return { state: 'listening', workspaceId: 'ws-123' };
+    };
+    permissionRequests._deps.sendSystemMessage = async (params) => { sent.push(params); return { status: 'sent' }; };
+
+    const decision = permissionRequests.decidePermissionRequest(result.request.requestId, {
+      decision: 'grant', decidedBySurface: 'dashboard', decidedByActor: 'operator', decisionProof: 'p'
+    });
+    assert.equal(decision.ok, true);
+    await flush();
+
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].to, 'ws-123');
+    assert.match(sent[0].message, new RegExp(result.request.requestId));
+    const read = permissionRequests.getPermissionRequest(result.request.requestId);
+    assert.ok(read.receiptDeliveredAt, 'receipt was marked delivered after the push succeeded');
+  });
+
+  it('sends no notice when the requesting session is not listening ("opted in" means a live listener)', async () => {
+    const { result } = create();
+    let called = false;
+    permissionRequests._deps.getStatus = () => ({ state: 'off', workspaceId: null });
+    permissionRequests._deps.sendSystemMessage = async () => { called = true; return { status: 'sent' }; };
+
+    permissionRequests.decidePermissionRequest(result.request.requestId, {
+      decision: 'refuse', decidedBySurface: 'dashboard', decidedByActor: 'operator', decisionProof: 'p'
+    });
+    await flush();
+
+    assert.equal(called, false);
+    const read = permissionRequests.getPermissionRequest(result.request.requestId);
+    assert.equal(read.receiptDeliveredAt, null, 'falls back to the next GET read instead');
+  });
+
+  it('does not push again on a replayed (idempotent) decision', async () => {
+    const { result, session } = create();
+    let sendCount = 0;
+    permissionRequests._deps.getStatus = () => ({ state: 'listening', workspaceId: 'ws-123' });
+    permissionRequests._deps.sendSystemMessage = async () => { sendCount += 1; return { status: 'sent' }; };
+
+    permissionRequests.decidePermissionRequest(result.request.requestId, {
+      decision: 'grant', decidedBySurface: 'dashboard', decidedByActor: 'operator', decisionProof: 'p'
+    });
+    await flush();
+    permissionRequests.decidePermissionRequest(result.request.requestId, {
+      decision: 'grant', decidedBySurface: 'dashboard', decidedByActor: 'operator', decisionProof: 'p'
+    });
+    await flush();
+
+    assert.equal(sendCount, 1, 'the replay is a no-op and sends no second notice');
+    void session;
+  });
+
+  it('leaves the receipt undelivered when the push itself fails, for the next GET read to pick up', async () => {
+    const { result } = create();
+    permissionRequests._deps.getStatus = () => ({ state: 'listening', workspaceId: 'ws-123' });
+    permissionRequests._deps.sendSystemMessage = async () => { throw new Error('bridge unreachable'); };
+
+    permissionRequests.decidePermissionRequest(result.request.requestId, {
+      decision: 'grant', decidedBySurface: 'dashboard', decidedByActor: 'operator', decisionProof: 'p'
+    });
+    await flush();
+
+    const read = permissionRequests.getPermissionRequest(result.request.requestId);
+    assert.equal(read.receiptDeliveredAt, null);
   });
 });
