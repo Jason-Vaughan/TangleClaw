@@ -3712,8 +3712,9 @@ route('POST', '/api/update/check', (_req, res, _params, body) => {
 // POST /api/update/apply — the self-update ACTION (#228/#229, UB). Fetches +
 // checks out the latest release tag; does NOT restart. The client chains
 // POST /api/server/restart on a 200. A refused safety guard (dirty tree, no
-// update, wrong ref, not a git checkout, files to reconcile) returns 409 with a
-// stable `code`, and the checkout is as it was. The two 500s are the failures
+// update, wrong ref, not a git checkout, files to reconcile, a conflicted
+// rebase attempt on a local branch) returns 409 with a stable `code`, and the
+// checkout is as it was. The two 500s are the failures
 // where that cannot be promised: `git-error`, an unexpected git failure with the
 // pre-update `fromSha`, and `recovery-failed`, where putting the checkout back
 // after a failed step did not fully succeed and `recovery` says what is where.

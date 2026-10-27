@@ -488,6 +488,118 @@ describe('update-applier (UB #228/#229)', () => {
     });
   });
 
+  describe('_tryRebaseOntoTag (#2399)', () => {
+    // A local branch forked from `main`, whose fork point is an ancestor of
+    // the latest tag — the shape `_tryRebaseOntoTag` is eligible to handle.
+    const REBASE_BASE = {
+      'rev-parse HEAD': 'bbbbbbb1111111111111111111111111111111\n',
+      'status --porcelain': '',
+      'rev-parse --abbrev-ref HEAD': 'fix/local-commits\n',
+      'fetch --tags origin': '',
+      'ls-remote --tags origin': 'sha1\trefs/tags/v9.9.9\nsha2\trefs/tags/v1.0.0\n',
+      'merge-base fix/local-commits main': 'ccccccc2222222222222222222222222222222\n',
+      'merge-base --is-ancestor ccccccc2222222222222222222222222222222 v9.9.9': '',
+      // Stub's rev-parse HEAD is static, so "after rebase" reads the same sha
+      // back — the self-diff below is what the happy main-path test does too.
+      'diff --name-only bbbbbbb1111111111111111111111111111111 bbbbbbb1111111111111111111111111111111': ''
+    };
+
+    it('rebases local commits onto the release tag when the fork point is an ancestor of it', () => {
+      applier._internal.git = gitStub({ ...REBASE_BASE, 'rebase v9.9.9': '' });
+      const r = applier.applyUpdate();
+      assert.equal(r.ok, true);
+      assert.equal(r.rebased, true);
+      assert.equal(r.toRef, 'v9.9.9');
+      assert.deepEqual(r.carried, []);
+    });
+
+    it('aborts and refuses with rebase-conflict, naming the conflicted files, on a failed rebase', () => {
+      applier._internal.git = gitStub({
+        ...REBASE_BASE,
+        'rebase v9.9.9': new Error('CONFLICT (content): Merge conflict in lib/x.js'),
+        'diff --name-only --diff-filter=U': 'lib/x.js\n',
+        'rebase --abort': ''
+      });
+      const r = applier.applyUpdate();
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'rebase-conflict');
+      assert.deepEqual(r.conflicts, ['lib/x.js']);
+      assert.match(r.error, /fix\/local-commits/);
+      assert.match(r.error, /v9\.9\.9/);
+    });
+
+    it('returns recovery-failed, never a clean rebase-conflict, when the abort itself fails', () => {
+      let statusCalls = 0;
+      applier._internal.git = (args) => {
+        const key = args.join(' ');
+        if (key === 'status --porcelain') {
+          statusCalls++;
+          // Clean at the step-3 dirty-tree guard; left dirty by the failed abort.
+          return statusCalls === 1 ? '' : ' M lib/x.js\n';
+        }
+        if (key === 'rebase v9.9.9') throw new Error('CONFLICT (content): Merge conflict in lib/x.js');
+        if (key === 'diff --name-only --diff-filter=U') return 'lib/x.js\n';
+        if (key === 'rebase --abort') throw new Error('fatal: no rebase in progress?');
+        if (!(key in REBASE_BASE)) throw new Error(`unexpected git call: ${key}`);
+        const v = REBASE_BASE[key];
+        if (v instanceof Error) throw v;
+        return v;
+      };
+      const r = applier.applyUpdate();
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'recovery-failed');
+      assert.equal(r.recovery.failedStep, 'rebase');
+      assert.match(r.error, /could not be verified as put back/);
+      assert.match(r.error, /do not update or restart/);
+    });
+
+    it('still runs the abort and restores cleanly when listing the conflicted files itself fails', () => {
+      // THE MUTATION THIS CATCHES: a `git diff` failure thrown ahead of `git
+      // rebase --abort` would skip the abort entirely, leaving the rebase
+      // stuck — this pins that diff failing never costs the abort call.
+      applier._internal.git = gitStub({
+        ...REBASE_BASE,
+        'rebase v9.9.9': new Error('CONFLICT (content): Merge conflict in lib/x.js'),
+        'diff --name-only --diff-filter=U': new Error('fatal: ambiguous argument'),
+        'rebase --abort': ''
+      });
+      const r = applier.applyUpdate();
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'rebase-conflict');
+      assert.deepEqual(r.conflicts, []);
+    });
+
+    it('falls through to the ordinary wrong-ref refusal when the branch shares no history with local main', () => {
+      applier._internal.git = gitStub({
+        ...HAPPY,
+        'rev-parse --abbrev-ref HEAD': 'fix/orphan\n',
+        'merge-base fix/orphan main': new Error('fatal: no merge base')
+      });
+      const r = applier.applyUpdate();
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'wrong-ref');
+    });
+
+    it('falls through to wrong-ref when the fork point is not an ancestor of the latest tag', () => {
+      applier._internal.git = gitStub({
+        ...REBASE_BASE,
+        'merge-base --is-ancestor ccccccc2222222222222222222222222222222 v9.9.9': new Error('not an ancestor')
+      });
+      const r = applier.applyUpdate();
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'wrong-ref');
+    });
+
+    it('refuses reconcile-required when the pre-update SQLite backup fails during a rebase attempt', () => {
+      applier._internal.git = gitStub(REBASE_BASE);
+      applier._internal.vacuumDb = () => { throw new Error('disk full'); };
+      const r = applier.applyUpdate();
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'reconcile-required');
+      assert.equal(r.reconcile[0].reason, 'backup-failed');
+    });
+  });
+
   describe('_headState', () => {
     it('updatable on main', () => {
       applier._internal.git = gitStub({ 'rev-parse --abbrev-ref HEAD': 'main\n' });

@@ -84,9 +84,16 @@ for the installs where that relationship does not hold; when set, it wins.
 the workspace layer — anything that can reach the port can register as any
 workspace, spoof a `from`, and drain another workspace's queue — so the override
 moves a *port*, not a host. A resolved host that is not `localhost`,
-`127.0.0.0/8` or `::1` is refused, the loopback default is used, and the refusal
-is logged once per distinct value, naming the value and the variable that carried
-it. To reach a Bridge on another machine, tunnel it to loopback.
+`127.0.0.0/8` or `::1` is refused, and the refusal is logged once per distinct
+value, naming the value and the variable that carried it. What happens next
+depends on which gate carried the refused value (#2354): a value **derived**
+from `MEDUSA_BRIDGE_HTTP_URL` (nothing explicit set for the WS side) falls back
+to the loopback default, same as every refusal below. A value set **explicitly**
+in `MEDUSA_BRIDGE_WS_URL` instead fails closed — no listener starts at all, and
+the session's status names the refused value and why — because an install that
+set the variable on purpose, to stay off a live Bridge it can see from a
+rehearsal or second install, must not have a typo silently register it there
+anyway. To reach a Bridge on another machine, tunnel it to loopback.
 
 **The HTTP side is not guarded, and is not safer.** `MEDUSA_BRIDGE_HTTP_URL` will
 accept a remote base today. That is a gap, not a reassurance: the Bridge's HTTP
@@ -108,12 +115,16 @@ scheme default would give `http://localhost` → port 81 and `https://localhost`
 port 444: arithmetic on a number the operator never chose, and a port no Medusa
 serves. Give the HTTP base an explicit port, or set `MEDUSA_BRIDGE_WS_URL`.
 
-**Every refusal falls back rather than throwing**, so a typo cannot stop the
-Switchboard from starting — including a value the WebSocket client itself would
-reject (a `#fragment`, a non-`ws` scheme, a port past 65535), which would
-otherwise be retried on a reconnect loop forever. The cost is that the default is
-a normal-looking value for a read that did not succeed, so the log line is the
-operator's only signal that an override was ignored.
+**Every refusal of a derived value falls back rather than throwing**, so a typo
+in `MEDUSA_BRIDGE_HTTP_URL` cannot stop the Switchboard from starting —
+including a value the WebSocket client itself would reject (a `#fragment`, a
+non-`ws` scheme, a port past 65535), which would otherwise be retried on a
+reconnect loop forever. The cost is that the default is a normal-looking value
+for a read that did not succeed, so the log line is the operator's only signal
+that the derivation was ignored. **A refusal of an explicit `MEDUSA_BRIDGE_WS_URL`
+fails closed instead** (#2354) — no listener starts, and the session's status
+carries the refused value and reason, so a typo there is reported rather than
+silently redirected.
 
 ### Turning off or tuning the ttyd watcher (macOS)
 

@@ -71,10 +71,11 @@ Concretely:
    outright. An agent told merely to "report the error" will often try to *satisfy* the guard by
    stashing or switching branches, destroying exactly what the guard was protecting.
 5. Where a surface reports refusal codes, it enumerates all of them (`dirty-tree`,
-   `reconcile-required`, `wrong-ref`, `no-update`, `no-tag`, `no-git`, `git-error`,
-   `recovery-failed`). A partial list is worse than none: it tells a caller that an unlisted code
-   cannot happen. `reconcile-required` and `recovery-failed` were added by #1730, under the
-   Architect's ruling that a new code must reach both consumers and every list.
+   `reconcile-required`, `wrong-ref`, `rebase-conflict`, `no-update`, `no-tag`, `no-git`,
+   `git-error`, `recovery-failed`). A partial list is worse than none: it tells a caller that an
+   unlisted code cannot happen. `reconcile-required` and `recovery-failed` were added by #1730,
+   `rebase-conflict` by #2399, under the Architect's ruling that a new code must reach both
+   consumers and every list.
 
 ## Consequences
 
