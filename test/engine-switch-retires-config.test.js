@@ -366,7 +366,7 @@ describe('#858 an engine switch retires the previous engine\'s config file', () 
     assert.ok(r.error, 'a mid-write failure is a reported failure, not a silent skip');
     assert.equal(fs.readFileSync(agents, 'utf8'), before,
       'the co-owned carrier is untouched — no truncation, no partial write');
-    assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes('.tmp-')), [],
+    assert.deepEqual(fs.readdirSync(dir).filter((f) => f.startsWith('.tc-engine-config-')), [],
       'no dangling temp file left behind');
   });
 
