@@ -35,6 +35,7 @@ const store = require('../lib/store');
 const medusa = require('../lib/medusa');
 const master = require('../lib/master');
 const medusaExchanges = require('../lib/medusa-exchanges');
+const controlApi = require('../lib/control-api');
 const { createServer, _exchangeCaller } = require('../server');
 const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
 
@@ -637,6 +638,47 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
     const { status, data } = await req(`/api/sessions/${encodeURIComponent(project.name)}/medusa/send`, 'POST', { to: 'live-ws', message: 'hi' }, MASTER_PANE);
     assert.equal(status, 403);
     assert.equal(data.code, 'SENDER_PROJECT_MISMATCH');
+  });
+
+  it('a project literally named "Project Master" cannot pass as the Master, and the Master\'s own send still works despite '
+    + 'it existing', async () => {
+    // `masterMedusaTarget()` names the Master's own participant `master.MASTER_MEDUSA_NAME`
+    // ('Project Master'), and project creation permits that exact string — the
+    // collision `targetProjectId()` must not resolve through a by-name lookup for.
+    const collider = store.projects.create({
+      name: master.MASTER_MEDUSA_NAME, path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-collide-')), engine: 'claude'
+    });
+    const colliderPane = bindProject(collider);
+    // The Master's own listener must actually be running for this to exercise
+    // the gate rather than a prior NOT_LISTENING refusal — the collision bug
+    // is specifically about a live Master being impersonated.
+    const ws = startListening();
+    const from = JSON.parse(ws.sent[0]).workspaceId;
+    const before = bridge.received.length;
+    const asCollider = await req('/api/master/medusa/send', 'POST', { to: 'live-ws', message: 'impersonating the Master' }, colliderPane.headers);
+    assert.equal(asCollider.status, 403);
+    assert.equal(asCollider.data.code, 'SENDER_PROJECT_MISMATCH');
+    assert.equal(bridge.received.length, before, 'the colliding project\'s send never reached the Bridge');
+
+    const asMaster = await req('/api/master/medusa/send', 'POST', { to: 'live-ws', message: 'the real Master' }, MASTER_PANE);
+    assert.equal(asMaster.status, 200);
+    assert.equal(asMaster.data.status, 'received');
+    assert.equal(bridge.received.at(-1).from, from, 'the Master\'s own send still works with the colliding project in place');
+
+    // The same collision could mis-credit the colliding project with having
+    // observed a control notice, the moment the Master marks its own mail handled.
+    const real = controlApi.noticesHandled;
+    const calls = [];
+    controlApi.noticesHandled = (ids, projectId) => { calls.push({ ids, projectId }); return real(ids, projectId); };
+    try {
+      const read = await req('/api/master/medusa/read', 'POST', { ids: ['m1'] }, MASTER_PANE);
+      assert.equal(read.status, 200);
+      // The Master has no project of its own, so this must never be recorded
+      // as any project observing a notice — least of all the colliding one.
+      assert.equal(calls.length, 0, 'the Master\'s own read must never be attributed to any project, the colliding one included');
+    } finally {
+      controlApi.noticesHandled = real;
+    }
   });
 
   it('send is 403 ACCESS_LEVEL at read-only, and the Bridge never hears about it', async () => {

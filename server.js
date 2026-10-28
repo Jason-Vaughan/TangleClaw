@@ -4858,11 +4858,21 @@ function registerMedusaRoutes(prefix, resolve) {
   /**
    * The project a resolved switchboard participant belongs to, or null (the
    * Project Master belongs to none).
+   *
+   * The Master is told apart by its reserved session key, never by its
+   * display name: `masterMedusaTarget()` names it `'Project Master'`, and
+   * project creation permits that exact string, so looking it up by name
+   * would resolve to that colliding project's id instead of null for the
+   * Master's own mount — a project with a valid launch of its own would then
+   * pass `senderAuthRefused` on the Master's mount, sending from the
+   * Master's listener while the exchange attributed the sender to that
+   * project, and the Master's own launch would be refused.
    * @param {object|null} target - Resolved target.
    * @returns {number|null}
    */
   function targetProjectId(target) {
-    if (!target || !target.name || !target.projectPath) return null;
+    if (!target || target.sessionId === master.MASTER_MEDUSA_KEY) return null;
+    if (!target.name || !target.projectPath) return null;
     const project = store.projects.getByName(target.name);
     return project ? project.id : null;
   }
@@ -5101,8 +5111,10 @@ function registerMedusaRoutes(prefix, resolve) {
         }
       }
       // #1861: a control notice marked handled is the target observing it.
-      const readerProject = ids && r.target.name ? store.projects.getByName(r.target.name) : null;
-      if (readerProject) controlApi.noticesHandled(ids, readerProject.id);
+      // `targetProjectId` (not an independent by-name lookup) so the Master's
+      // own mount is never mistaken for a project named 'Project Master'.
+      const readerProjectId = ids ? targetProjectId(r.target) : null;
+      if (readerProjectId) controlApi.noticesHandled(ids, readerProjectId);
     }
     jsonResponse(res, 200, medusa.getStatus(sessionId));
   });
