@@ -3830,6 +3830,15 @@ route('POST', '/api/update/pull', async (req, res) => {
   // #1861 — the same caller gate as restart and update-apply: a held caller
   // never mutates the checkout.
   if (controlRefused(res, { surface: 'update-pull', subject: { kind: 'caller', caller: resolveControlCaller(req) } })) return;
+  // The render-time gate (canFastForwardPull) already hides the button when
+  // the operator turned the behind-origin check off — this closes the same
+  // gap for a DIRECT call to the route, which skips that button entirely. An
+  // operator who set the kill switch (metered connection, privacy, or a test
+  // process that must not touch `.git`) must not have this install merge
+  // anyway just because something else knows the route exists.
+  if (!behindOrigin.isCheckEnabled(store.config.load())) {
+    return errorResponse(res, 409, 'The behind-origin check is turned off for this install.', 'CHECK_DISABLED');
+  }
   const result = await behindOrigin.pullFastForward();
   if (!result.ok) {
     return errorResponse(res, result.code === 'GIT_ERROR' ? 500 : 409, result.error, result.code);

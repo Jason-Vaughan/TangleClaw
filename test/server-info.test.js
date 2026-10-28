@@ -1444,4 +1444,32 @@ describe('POST /api/update/pull (#1223)', () => {
     assert.equal(r.status, 200);
     assert.equal(r.data.restartMechanism, null);
   });
+
+  it('409 CHECK_DISABLED when the operator turned the behind-origin check off — a direct call must not merge anyway just because it skipped the gated button', async () => {
+    const cfg = store.config.load();
+    store.config.save({ ...cfg, behindOriginCheckEnabled: false });
+    let merged = false;
+    behindOrigin.pullFastForward = async () => { merged = true; return { ok: true, code: null, error: null, fromSha: 'a'.repeat(40), toSha: 'b'.repeat(40) }; };
+    try {
+      const r = await send(op);
+      assert.equal(r.status, 409);
+      assert.equal(r.data.code, 'CHECK_DISABLED');
+      assert.equal(merged, false, 'pullFastForward must never be reached once the switch is off');
+    } finally {
+      store.config.save(cfg);
+    }
+  });
+
+  it('409 CHECK_DISABLED under the TC_BEHIND_ORIGIN_DISABLED env kill switch too (CI, sandboxes)', async () => {
+    const saved = process.env[behindOrigin.ENV_KILL_SWITCH];
+    process.env[behindOrigin.ENV_KILL_SWITCH] = '1';
+    try {
+      const r = await send(op);
+      assert.equal(r.status, 409);
+      assert.equal(r.data.code, 'CHECK_DISABLED');
+    } finally {
+      if (saved === undefined) delete process.env[behindOrigin.ENV_KILL_SWITCH];
+      else process.env[behindOrigin.ENV_KILL_SWITCH] = saved;
+    }
+  });
 });
