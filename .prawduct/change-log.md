@@ -41,6 +41,25 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-28 — v5.43.0 W1-A: reset-admin --disable, and the dry-run exit-code fix (#1458, #1286)
+
+<!-- prawduct: type=feature | scope=w1a-1458-1286-reset-admin -->
+
+- **#1458:** `scripts/reset-admin.js --disable --user <name> [--force]` revokes a TangleClaw
+  account's login through the existing `store.users.disable` primitive (destroys its sessions,
+  deletes its recovery codes) without deleting the account. Refuses to disable the only currently
+  enabled account unless `--force` is passed, and reports clearly when the gate transitions to
+  `locked` (shared `describeGateLines` helper, now covering `LOCKED` explicitly). Re-enable with
+  the existing `--store --user <name>`.
+- **#1286:** `--create-gate --dry-run` now exits 1 when its preview predicts the run would refuse,
+  matching the exit code a predicted password refusal already gave — previously it exited 0, a
+  false green light during the lockout this tool exists to recover from. The single rule ("a
+  preview that predicts a refusal exits 1, in every mode") is now stated in `docs/setup-guide.md`.
+- Updated `docs/recovery.md`'s "Every account is disabled" section, which previously said no
+  command to disable an account existed, and added behavioral test coverage with real store writes
+  (`test/reset-admin-store.test.js`) alongside CLI-subprocess exit-code pins
+  (`test/reset-admin.test.js`).
+
 ## 2026-10-28 — v5.42.0 W3-REC: reconcile Wave 1 and Wave 2 launch records
 
 <!-- prawduct: type=internal | scope=v542-w3-rec -->

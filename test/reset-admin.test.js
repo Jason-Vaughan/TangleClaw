@@ -16,7 +16,7 @@ describe('reset-admin', () => {
       // (#1418) rather than letting it default in unnoticed.
       assert.deepEqual(parseArgs([]), {
         user: null, dryRun: false, passwordStdin: false, help: false,
-        createGate: false, store: false
+        createGate: false, store: false, disable: false, force: false
       });
     });
 
@@ -26,6 +26,13 @@ describe('reset-admin', () => {
       // and a plain password reset must never land on the wrong one.
       assert.equal(parseArgs(['--store']).store, true);
       assert.equal(parseArgs(['--user', 'jason']).store, false);
+    });
+
+    it('parses --disable and --force, which are off unless asked for', () => {
+      assert.equal(parseArgs(['--disable']).disable, true);
+      assert.equal(parseArgs(['--user', 'jason']).disable, false);
+      assert.equal(parseArgs(['--disable', '--force']).force, true);
+      assert.equal(parseArgs(['--disable']).force, false);
     });
 
     it('parses --create-gate, which is off unless asked for', () => {
@@ -238,14 +245,17 @@ describe('the preview cannot promise what the run refuses', () => {
       'the preview must ask the shared predicate, not assume success');
   });
 
-  it('reports the refusal and stops, instead of describing the steps anyway', () => {
+  it('reports the refusal, exits 1, and stops, instead of describing the steps anyway', () => {
     const refusalAt = dryRun.indexOf('would REFUSE');
     const stepsAt = dryRun.indexOf(WOULD_DO);
     assert.ok(refusalAt > -1, 'a refused preview must say so');
     assert.ok(refusalAt < stepsAt,
       'the refusal must be handled before the would-do description is printed');
-    assert.match(dryRun.slice(refusalAt, stepsAt), /return;/,
-      'and it must stop, not fall through into describing a rebuild that will not happen');
+    // #1286's ratified reading: a preview that predicts a refusal exits 1, the
+    // same code the real run would give — not 0, which the CLI subprocess
+    // tests below pin end to end.
+    assert.match(dryRun.slice(refusalAt, stepsAt), /process\.exit\(1\)/,
+      'and it must exit 1, not fall through into describing a rebuild that will not happen');
   });
 });
 
@@ -350,6 +360,9 @@ describe('the rehearsal refuses what the run refuses (#929)', () => {
     const gated = run(['--create-gate', '--user', 'newadmin', '--password-stdin', '--dry-run'],
       'a-perfectly-fine-passphrase\n');
     assert.match(gated.stdout, /would REFUSE: this install is not in caddy ingress mode/);
+    // #1286: this preview predicts a refusal with an acceptable password, so it
+    // must exit 1 like any other predicted refusal — not the 0 it used to give.
+    assert.equal(gated.status, 1);
   });
 
   /**
@@ -416,6 +429,8 @@ describe('the rehearsal refuses what the run refuses (#929)', () => {
     const rehearsal = runArmed(['--create-gate', '--user', 'jason', '--password-stdin', '--dry-run'],
       'a-perfectly-fine-passphrase\n');
     assert.match(rehearsal.stdout, /would REFUSE: TangleClaw's own login guards this install \(armed\)/);
+    // #1286: the rehearsal must exit with the run's code (1), not 0.
+    assert.equal(rehearsal.status, 1);
     const real = runArmed(['--create-gate', '--user', 'jason', '--password-stdin'],
       'a-perfectly-fine-passphrase\n');
     assert.equal(real.status, 1);
@@ -431,5 +446,61 @@ describe('the rehearsal refuses what the run refuses (#929)', () => {
     assert.equal(r.status, 0);
     assert.match(r.stdout, /would: prompt new password/);
     assert.equal(r.caddyfile, GATED_CADDYFILE);
+  });
+});
+
+describe('--disable, at the CLI level (#1458)', () => {
+  // Store writes (create/last-enabled refusal/--force/gate-locked report) are
+  // covered behaviourally in test/reset-admin-store.test.js alongside the
+  // existing --store suite, for the same reason that file states: real store
+  // writes, not a source probe. This block covers argument handling, which a
+  // subprocess run exercises more honestly than calling runDisableMode in
+  // isolation would.
+  const { spawnSync } = require('node:child_process');
+
+  /**
+   * Run the script against a fresh, empty TangleClaw home.
+   * @param {string[]} args - CLI arguments.
+   * @returns {{status:number, stdout:string, stderr:string}}
+   */
+  function run(args) {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-reset-disable-cli-'));
+    try {
+      const r = spawnSync(process.execPath,
+        [path.join(__dirname, '..', 'scripts', 'reset-admin.js'), ...args],
+        { input: '', encoding: 'utf8', env: { ...process.env, TANGLECLAW_HOME: home } });
+      return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  }
+
+  it('needs a username, and says how to give one', () => {
+    const r = run(['--disable']);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /--disable needs a username/);
+    assert.match(r.stderr, /--user <name>/);
+  });
+
+  it('refuses an unknown account', () => {
+    const r = run(['--disable', '--user', 'nobody']);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /no TangleClaw account 'nobody'/);
+  });
+
+  it('--disable and --create-gate are different operations — refused, not guessed', () => {
+    const r = run(['--disable', '--create-gate', '--user', 'jason']);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /different operations — choose one/);
+    assert.match(r.stderr, /--create-gate/);
+  });
+
+  it('--disable and --store are different operations — refused, not silently ignoring --store', () => {
+    // Without this refusal, --disable --store --user x ran disable-only with
+    // no warning that --store was ignored.
+    const r = run(['--disable', '--store', '--user', 'jason']);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /different operations — choose one/);
+    assert.match(r.stderr, /--store/);
   });
 });
