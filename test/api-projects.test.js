@@ -213,20 +213,17 @@ describe('api-projects', () => {
     });
 
     it('returns 404 for unknown project', async () => {
-      const { status } = await request('PATCH', '/api/projects/nonexistent', {
+      const { status, data } = await request('PATCH', '/api/projects/nonexistent', {
         tags: []
       }, asOperator());
       assert.equal(status, 404);
+      assert.equal(data.code, 'NOT_FOUND');
     });
 
-    // The route picks its status by SEARCHING the first error for `not found`
-    // (server.js), so the code a client sees is decided by prose the validator
-    // happened to write. These record what that produces today rather than
-    // endorsing it: an engine typo answers 404 on a route whose 404 otherwise
-    // means the PROJECT is gone, so a client branching on status reports
-    // "project not found" for a misspelled engine. #1288 carries the fix; the
-    // pin exists because the contract artifact described this wrong until a
-    // review checked it against the route, and only a route-level test can.
+    // The route branches on the structured `code` `updateProject` returns
+    // (server.js), not on searching the first error for "not found" — #1288
+    // fixed exactly the case below, where an engine typo's message happens to
+    // say "not found" too, but the project it names is the CONFIG, not gone.
     it('answers 400 for a field the validator refuses on shape', async () => {
       const { status, data } = await request('PATCH', '/api/projects/api-test-project', {
         featureIndexEnabled: 'not-a-boolean'
@@ -235,12 +232,29 @@ describe('api-projects', () => {
       assert.ok(data.error.includes('featureIndexEnabled'));
     });
 
-    it('answers 404 — not 400 — for an unknown engine, because the message says "not found"', async () => {
+    it('answers 400 — not 404 — for an unknown engine, even though the message says "not found" (#1288)', async () => {
       const { status, data } = await request('PATCH', '/api/projects/api-test-project', {
         engine: 'no-such-engine'
       }, asOperator());
-      assert.equal(status, 404, 'today\'s behavior, tracked as wrong in #1288');
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
       assert.ok(data.error.includes('Engine "no-such-engine" not found'));
+    });
+
+    // #1289 — a `project.json` that parses but is not a plain object (here,
+    // an array) must refuse the save rather than validate and write against
+    // the defaults `project-config.js#load` would otherwise fall back to,
+    // which would silently discard whatever the file actually held.
+    it('answers 409 when project.json cannot be read as an object', async () => {
+      await request('POST', '/api/projects', { name: 'api-unreadable-config' }, asOperator());
+      const projPath = path.join(projectsDir, 'api-unreadable-config');
+      fs.writeFileSync(path.join(projPath, '.tangleclaw', 'project.json'), '[1,2,3]');
+
+      const { status, data } = await request('PATCH', '/api/projects/api-unreadable-config', {
+        tags: ['x']
+      }, asOperator());
+      assert.equal(status, 409);
+      assert.equal(data.code, 'PROJECT_CONFIG_UNREADABLE');
     });
 
     // #1148 — a rename's after-the-fact warning (a LaunchAgent still naming
@@ -1153,6 +1167,37 @@ describe('api-projects', () => {
         lag.disable();
         dirScanner.request = real;
       }
+    });
+  });
+
+  // Last in the file deliberately: it registers projects with no tags, which
+  // would break an earlier "every project has tag X" assertion that runs
+  // against the whole (shared, cumulative) project list.
+  describe('POST /api/projects/import (#2180)', () => {
+    it('skips a name that fails validateName, with a warning, and does not register it', async () => {
+      const badDir = path.join(projectsDir, 'bad name!');
+      fs.mkdirSync(badDir, { recursive: true });
+
+      const { status, data } = await request('POST', '/api/projects/import', {
+        names: ['bad name!']
+      }, asOperator());
+
+      assert.equal(status, 200);
+      assert.deepEqual(data.imported, []);
+      assert.ok(data.warnings.some((w) => w.includes('Skipped "bad name!"')));
+      assert.equal(store.projects.getByName('bad name!'), null);
+    });
+
+    it('imports a validly-named existing directory', async () => {
+      const dir = path.join(projectsDir, 'api-import-ok');
+      fs.mkdirSync(dir, { recursive: true });
+
+      const { status, data } = await request('POST', '/api/projects/import', {
+        names: ['api-import-ok']
+      }, asOperator());
+
+      assert.equal(status, 200);
+      assert.deepEqual(data.imported, ['api-import-ok']);
     });
   });
 });

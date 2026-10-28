@@ -41,6 +41,15 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-28 — v5.45.0 W1-D: project-save unreadable-config refusal, structured PATCH status codes, engine-row validators (#1288, #1289, #2180, #2216)
+
+<!-- prawduct: type=fix | scope=w1d-1288-1289-2180-2216 -->
+
+- **#1289:** `lib/project-config.js#load` now refuses to return defaults silently for a `project.json` that parses to a non-plain-object root (array, string, number, `null`) — only a missing file (`ENOENT`/`ENOTDIR`) stays silent; every other failure calls `onError`. `PATCH /api/projects/:name` loads config via the new `lib/projects.js#loadConfigForWrite`, which throws `err.code = PROJECT_CONFIG_UNREADABLE` on any such failure instead of validating and saving over it with defaults; the route maps this to `409 PROJECT_CONFIG_UNREADABLE`.
+- **#1288:** `updateProject` now returns a structured `code` (`NOT_FOUND` only when the named project itself is missing; `BAD_REQUEST` for every validator rejection). `PATCH /api/projects/:name` branches on that code instead of searching the first error for "not found" — an unknown `engine` or missing `activePlan` on an existing project now answers `400 BAD_REQUEST` rather than a `404` that implied the project was gone.
+- **#2216:** New `intendedEngineAfterUpdate(updates, project)` helper is now the single source the four engine-gated `PROJECT_UPDATE_VALIDATORS` rows (`silentPrime`, `evalAuditMode`, `defaultLaunchMode`, and the hidden-picker eyes-open guard) read for "what engine will this project have" — the project ROW, never `project.json`'s `engine` mirror, which can diverge from it.
+- **#2180:** `POST /api/projects/import` now checks `projects.validateName(name)` before registering a batch-imported name, skipping an invalid one with a warning rather than passing it through unchecked. `lib/projects.js#resolveProjectsDir`/`#createProjectsDir` resolve the home directory through `lib/tangleclaw-home.js#userHome()` instead of a bare `process.env.HOME || ''` (consistent with the rest of the product; `lib/project-paths.js#expandHomePath` named in the dispatch does not yet exist on this base commit — W1-A's deliverable, not yet merged — so both sites use `userHome()` directly rather than inventing the missing helper).
+
 ## 2026-10-28 — v5.44.0 W4-REL: prepare the update and restart release candidate
 
 <!-- prawduct: type=internal | scope=v544-w4-rel -->

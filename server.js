@@ -4484,6 +4484,16 @@ route('POST', '/api/projects/import', (req, res, _params, body) => {
     || store.DEFAULT_CONFIG.defaultEngine;
 
   for (const name of body.names) {
+    // #2180 — a name that fails shape validation (too long, disallowed
+    // characters) must not reach `store.projects.create`, which would either
+    // throw or register a row the rest of the product cannot address the
+    // same way every other registration path does.
+    const nameCheck = projects.validateName(name);
+    if (!nameCheck.valid) {
+      warnings.push(`Skipped "${name}": ${nameCheck.error}`);
+      continue;
+    }
+
     // Case-insensitive identity (#221) — symmetric with createProject /
     // attachProject so import can't introduce a case-collision the other
     // paths would reject.
@@ -4672,6 +4682,13 @@ route('PATCH', '/api/projects/:name', async (req, res, params, body) => {
       ? { recoveryDecisionBy: _operatorProofOf(req).clearance }
       : {});
   } catch (err) {
+    // #1289 — `project.json` became unreadable between the up-front load and
+    // a reload inside phase two (a TOCTOU remove/permission change). Nothing
+    // was validated or written against a value this request never actually
+    // saw, so it is refused the same way the up-front check refuses it below.
+    if (err.code === projects.PROJECT_CONFIG_UNREADABLE) {
+      return errorResponse(res, 409, err.message, projects.PROJECT_CONFIG_UNREADABLE);
+    }
     // A failure thrown after the recovery decision reached the store. The
     // dispatcher would answer a bare 500, and the operator would take the mode
     // for unchanged while it applies from the next launch. Any other throw is
@@ -4686,6 +4703,13 @@ route('PATCH', '/api/projects/:name', async (req, res, params, body) => {
 
   if (result.errors.length > 0 && !result.project) {
     const firstError = result.errors[0];
+    // #1289 — the project's own `project.json` could not be read, before
+    // anything was validated against it. Distinct from a validator's BAD_REQUEST:
+    // the request may well have been fine, so 409 says the project's own state
+    // is the obstacle, not the body.
+    if (result.code === projects.PROJECT_CONFIG_UNREADABLE) {
+      return errorResponse(res, 409, firstError, projects.PROJECT_CONFIG_UNREADABLE);
+    }
     // A returned failure after the recovery decision reached the store (a
     // directory rename that would not move): the same statement, on the same
     // field, with the status the failure always had.
@@ -4698,11 +4722,12 @@ route('PATCH', '/api/projects/:name', async (req, res, params, body) => {
     if (result.code === projects.RECOVERY_DECISION_NOT_SAVED) {
       return errorResponse(res, 500, result.errors.join(' '), projects.RECOVERY_DECISION_NOT_SAVED);
     }
-    if (firstError.includes('not found')) {
+    // #1288 — branches on the structured code `updateProject` returns, not on
+    // searching the message for "not found": an unknown engine or a missing
+    // activePlan says "not found" too, and is a BAD_REQUEST on an existing
+    // project, not a 404 that claims the project itself is gone.
+    if (result.code === 'NOT_FOUND') {
       return errorResponse(res, 404, firstError, 'NOT_FOUND');
-    }
-    if (firstError.includes('Core rules')) {
-      return errorResponse(res, 400, firstError, 'BAD_REQUEST');
     }
     return errorResponse(res, 400, firstError, 'BAD_REQUEST');
   }

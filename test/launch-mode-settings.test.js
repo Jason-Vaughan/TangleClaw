@@ -52,13 +52,10 @@ describe('launch-mode settings', () => {
     const projPath = path.join(projectsDir, name);
     fs.mkdirSync(projPath, { recursive: true });
     store.projects.create({ name, path: projPath, engine });
-    // The config's engine is what the validators read first, so a project made
-    // on another engine has to say so there as well as on its row.
-    if (engine !== 'claude') {
-      const cfg = store.projectConfig.load(projPath);
-      cfg.engine = engine;
-      store.projectConfig.save(projPath, cfg);
-    }
+    // The validators judge the intended engine from the project ROW
+    // (`intendedEngineAfterUpdate`, #2216), never from `project.json`'s
+    // `engine` mirror — so unlike before this helper no longer needs to keep
+    // the two in sync for the engine-gated validators to see the right engine.
     return store.projects.getByName(name);
   }
 
@@ -125,6 +122,66 @@ describe('launch-mode settings', () => {
       mkProject('lm-empty');
       assert.match((await projects.updateProject('lm-empty', { defaultLaunchMode: '  ' })).errors[0], /non-empty string/);
       assert.match((await projects.updateProject('lm-empty', { defaultLaunchMode: 42 })).errors[0], /non-empty string/);
+    });
+  });
+
+  // #2216: all four engine-gated rows (silentPrime, evalAuditMode,
+  // defaultLaunchMode, and the defaultLaunchMode/showLaunchModePicker guard)
+  // must judge the engine the project ROW holds, never project.json's mirror
+  // of it — the two can diverge (a stale hand-edit, a checkout that missed an
+  // engine switch), and judging the mirror let a save be wrongly accepted OR
+  // wrongly refused for an engine the project does not actually have.
+  describe('validator engine resolution — judges the row, not project.json (#2216)', () => {
+    /**
+     * Write a DIFFERENT engine into `project.json` than the project's row
+     * holds — simulating a stale mirror.
+     * @param {object} project - As returned by `mkProject`.
+     * @param {string} staleEngine - The engine id to write into project.json.
+     */
+    function divergeConfigEngine(project, staleEngine) {
+      const cfg = store.projectConfig.load(project.path);
+      cfg.engine = staleEngine;
+      store.projectConfig.save(project.path, cfg);
+    }
+
+    it('silentPrime: accepts against the row\'s engine, though project.json names one that does not support it', async () => {
+      const project = mkProject('lm-row-silentprime', 'claude');
+      divergeConfigEngine(project, 'codex'); // codex: supportsSilentPrime false
+      const result = await projects.updateProject('lm-row-silentprime', { silentPrime: true });
+      assert.deepEqual(result.errors, []);
+      assert.equal(result.project.silentPrime, true);
+    });
+
+    it('evalAuditMode: the rejection names the row\'s engine, not project.json\'s', async () => {
+      const project = mkProject('lm-row-evalaudit', 'codex');
+      divergeConfigEngine(project, 'claude');
+      const result = await projects.updateProject('lm-row-evalaudit', { evalAuditMode: { enabled: true } });
+      assert.equal(result.project, null);
+      assert.match(result.errors[0], /Codex does not feed Eval Audit/);
+      assert.doesNotMatch(result.errors[0], /Claude/);
+    });
+
+    it('defaultLaunchMode: accepts a mode valid on the row\'s engine, though project.json names one that does not define it', async () => {
+      const project = mkProject('lm-row-mode', 'claude');
+      divergeConfigEngine(project, 'codex'); // codex has no "plan" mode
+      const result = await projects.updateProject('lm-row-mode', { defaultLaunchMode: 'plan' });
+      assert.deepEqual(result.errors, []);
+      assert.equal(result.project.defaultLaunchMode, 'plan');
+    });
+
+    it('eyes-open guard: judges the stored mode\'s warning against the row\'s engine, not project.json\'s', async () => {
+      const project = mkProject('lm-row-guard', 'codex');
+      // codex's "fullAuto" is warning-carrying; claude does not define it at
+      // all, so judging against the diverged "claude" would reconcile it away
+      // to the warning-free "default" and miss the refusal entirely.
+      const cfg = store.projectConfig.load(project.path);
+      cfg.defaultLaunchMode = 'fullAuto';
+      store.projectConfig.save(project.path, cfg);
+      divergeConfigEngine(project, 'claude');
+
+      const result = await projects.updateProject('lm-row-guard', { showLaunchModePicker: false });
+      assert.equal(result.project, null);
+      assert.match(result.errors[0], /fullAuto/);
     });
   });
 
