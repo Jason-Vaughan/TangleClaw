@@ -166,6 +166,82 @@ describe('per-project wrap step overrides', () => {
     });
   });
 
+  describe('a prompt override preserves the framework\'s Verification: contract (#660)', () => {
+    const BUNDLED = {
+      id: 'changelog-update',
+      kind: 'ai-content',
+      prompt: 'Record this session\'s work.\n\nVerification: the step passes if the changelog was maintained.'
+    };
+    const BUNDLED_CONTRACT = 'Verification: the step passes if the changelog was maintained.';
+
+    it('a conventions-only override (no Verification: paragraph) gets the bundled one appended', () => {
+      const r = overrides.resolveStep(BUNDLED, {
+        'changelog-update': { prompt: 'Follow this project\'s own house style for the entry.' }
+      });
+      assert.equal(
+        r.step.prompt,
+        `Follow this project's own house style for the entry.\n\n${BUNDLED_CONTRACT}`
+      );
+      assert.equal(r.step.promptContractUpdated, true);
+    });
+
+    it('a stale Verification: paragraph in the override is replaced with the current bundled one', () => {
+      const r = overrides.resolveStep(BUNDLED, {
+        'changelog-update': {
+          prompt: 'Follow this project\'s own house style.\n\nVerification: an older, now-stale contract.'
+        }
+      });
+      assert.equal(
+        r.step.prompt,
+        `Follow this project's own house style.\n\n${BUNDLED_CONTRACT}`
+      );
+      assert.equal(r.step.promptContractUpdated, true);
+    });
+
+    it('a matching Verification: paragraph is left alone, not duplicated', () => {
+      const overridePrompt = `Follow this project's own house style.\n\n${BUNDLED_CONTRACT}`;
+      const r = overrides.resolveStep(BUNDLED, { 'changelog-update': { prompt: overridePrompt } });
+      assert.equal(r.step.prompt, overridePrompt);
+      assert.ok(!r.step.promptContractUpdated, 'an already-current contract is not a change');
+    });
+
+    it('an empty string override still self-skips the step, untouched by contract preservation', () => {
+      const r = overrides.resolveStep(BUNDLED, { 'changelog-update': { prompt: '' } });
+      assert.equal(r.step.prompt, '', 'empty string must survive exactly — it is the skip marker');
+      assert.ok(!r.step.promptContractUpdated);
+    });
+
+    it('a non-ai-content step\'s prompt override is applied verbatim, with no contract logic', () => {
+      const step = { id: 'other', kind: 'other-kind', prompt: 'bundled\n\nVerification: x.' };
+      const r = overrides.resolveStep(step, { other: { prompt: 'project wording only' } });
+      assert.equal(r.step.prompt, 'project wording only');
+    });
+  });
+
+  describe('extractVerificationContract', () => {
+    it('finds the Verification: paragraph scanning from the end, even when another paragraph follows it', () => {
+      const prompt = 'Step body.\n\nVerification: the contract.\n\nWhen done, reply with ## Result.';
+      assert.equal(overrides.extractVerificationContract(prompt), 'Verification: the contract.');
+    });
+
+    it('returns null when the prompt has no Verification: paragraph', () => {
+      assert.equal(overrides.extractVerificationContract('Just do the thing.'), null);
+    });
+
+    it('returns null for a non-string prompt', () => {
+      for (const bad of [null, undefined, 42]) {
+        assert.equal(overrides.extractVerificationContract(bad), null);
+      }
+    });
+  });
+
+  describe('applyPromptOverride', () => {
+    it('leaves the override untouched when the bundled prompt has no contract to enforce', () => {
+      const r = overrides.applyPromptOverride('no contract here', 'project wording');
+      assert.deepEqual(r, { prompt: 'project wording', promptContractUpdated: false });
+    });
+  });
+
   describe('validateOverrides (the settings API gate)', () => {
     it('accepts an empty or absent map', () => {
       for (const v of [undefined, null, {}]) assert.equal(overrides.validateOverrides(v).ok, true);

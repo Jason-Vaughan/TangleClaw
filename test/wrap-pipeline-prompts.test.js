@@ -53,24 +53,31 @@ describe('wrap pipeline ai-content prompts', () => {
     assert.match(step.prompt, /## Result/);
   });
 
-  it('changelog-update prompt keeps the subsection list open to project-defined ones', () => {
-    // #1617. A project's rules may define subsections beyond Keep a Changelog
-    // — TangleClaw's own `### Internal` is what selects a patch-tier bump — and
-    // a prompt that lists only the six tells the AI a narrower set than the
-    // project actually uses. The instruction to consult the engine config for
-    // the rest is the fix, and nothing else fails when it is dropped: a prompt
-    // edit produces a worse entry, never an error. Hence a pin.
+  it('changelog-update prompt keeps the AI pointed at the engine config for subsection guidance', () => {
+    // #1617's original concern: a prompt that lists only the standard six
+    // Keep a Changelog subsections reads as a closed set, when a project's own
+    // rules (this one's `### Internal`, which selects a patch-tier bump) may
+    // use more. The fix was an open-ended "plus any this project defines" in
+    // the prompt's DIRECT-CHANGELOG.md-edit instructions (step 5) — the one
+    // path where a project genuinely COULD name an arbitrary extra subsection,
+    // since hand-editing markdown isn't constrained by a fixed grammar.
+    //
+    // #2523 closed that direct-edit path entirely: every fragment now carries
+    // a `<type>` from a fixed, code-enforced set of seven
+    // (`lib/changelog-fragments.js`'s `TYPES`), with no project extension
+    // mechanism — a project cannot define an eighth. "Plus any this project
+    // defines" would now be a FALSE promise for fragment writing, so dropping
+    // it is the correct fix, not a weakened pin: the prompt instead lists
+    // all seven types by name, which test/wrap-default-pipeline.test.js
+    // already pins per-type. What stays true, and still pinned here, is that
+    // the AI is sent to the engine config to learn how THIS project chooses
+    // among those seven (e.g. which kind of change counts as `internal`).
     const step = getAiContentStep('changelog-update');
     assert.match(step.prompt, /\{engineConfigFile\}/);
     assert.match(
       step.prompt,
-      /plus any this project defines/,
-      'the subsection list must not read as closed: a project may define more'
-    );
-    assert.match(
-      step.prompt,
       /beyond the standard set/,
-      'the prompt must send the AI to the engine config for subsections beyond the standard six'
+      'the prompt must send the AI to the engine config for subsection-choice guidance'
     );
   });
 

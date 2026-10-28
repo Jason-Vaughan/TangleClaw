@@ -615,11 +615,18 @@ describe('changelog-coverage — changelog fragments (#1220)', () => {
     assert.deepEqual(out.uncovered.map((c) => c.sha), ['aaa1111']);
   });
 
-  it('a direct CHANGELOG.md edit still satisfies coverage (the transition keeps both routes)', () => {
+  it('a direct CHANGELOG.md edit no longer satisfies coverage once changelog.d/ is declared (#2523)', () => {
     scenario(UNLOGGED, ['CHANGELOG.md']);
-    assert.equal(cov.evaluate('/p', DECLARED).verdict, cov.VERDICTS.COVERED);
+    assert.equal(cov.evaluate('/p', DECLARED).verdict, cov.VERDICTS.UNCOVERED);
     scenario([{ sha: 'aaa1111', subject: 'Logged directly (#1)', files: ['lib/a.js', 'CHANGELOG.md'] }]);
-    assert.equal(cov.evaluate('/p', DECLARED).verdict, cov.VERDICTS.COVERED);
+    assert.equal(cov.evaluate('/p', DECLARED).verdict, cov.VERDICTS.UNCOVERED);
+  });
+
+  it('a direct CHANGELOG.md edit still satisfies coverage for a caller that declares only CHANGELOG.md', () => {
+    scenario(UNLOGGED, ['CHANGELOG.md']);
+    assert.equal(cov.evaluate('/p', ['CHANGELOG.md']).verdict, cov.VERDICTS.COVERED);
+    scenario([{ sha: 'aaa1111', subject: 'Logged directly (#1)', files: ['lib/a.js', 'CHANGELOG.md'] }]);
+    assert.equal(cov.evaluate('/p', ['CHANGELOG.md']).verdict, cov.VERDICTS.COVERED);
   });
 
   it('a fragment counts whether or not the step declared changelog.d/ — the contract, not the declaration, decides', () => {
