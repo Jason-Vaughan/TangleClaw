@@ -324,6 +324,53 @@ describe('the fixture tracks the settings modal, not a remembered list', () => {
         + 'give it a table entry, or add it to the declared-unvalidated set');
     }
   });
+
+  /**
+   * `createProject`'s source, sliced at both ends — the create-side mirror of
+   * `applyPhaseSource()` above.
+   *
+   * @returns {string} The function's source, from its declaration to its closing brace.
+   */
+  function createProjectSource() {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'projects.js'), 'utf8');
+    const start = src.indexOf('function createProject(data) {');
+    if (start < 0) throw new Error('createProject not found in lib/projects.js');
+    const end = src.indexOf('\n}\n', start);
+    if (end < start) throw new Error('createProject has no findable closing brace');
+    return src.slice(start, end);
+  }
+
+  // R1 A-Gate review (PR #2684, #1374 bullet 3): the derived check above
+  // guards the UPDATE path only. `createProject` runs the SAME
+  // `PROJECT_UPDATE_VALIDATORS` table (#1374), so it needs the same guard —
+  // otherwise a field createProject starts reading straight off `data`
+  // without a table entry (or a declared exemption) could reach disk with no
+  // verdict at all, exactly the gap #1338/#1374 closed for `tags`.
+  const CREATE_ONLY_FIELDS = new Set(['gitInit']);
+
+  it('every data.<field> read in createProject, beside the declared create-only fields, is known to the validator table', () => {
+    const create = createProjectSource();
+    const known = new Set(projects._PROJECT_UPDATE_VALIDATORS
+      .flatMap((v) => [...v.keys, ...(v.reads || [])]));
+    const fields = [...new Set([...create.matchAll(/\bdata\.([A-Za-z][A-Za-z0-9]*)/g)].map((m) => m[1]))];
+    assert.ok(fields.length >= 5, `only found ${fields.length}: ${fields.join(', ')}`);
+    assert.ok(fields.includes('tags') && fields.includes('engine'));
+    for (const field of fields) {
+      if (CREATE_ONLY_FIELDS.has(field)) continue;
+      assert.ok(known.has(field),
+        `"${field}" is read in createProject and no validator names it — `
+        + 'give it a table entry, or add it to CREATE_ONLY_FIELDS if it is create-only mechanics');
+    }
+  });
+
+  it('createProject runs _validateProjectUpdates before its first fs.mkdirSync, so a rejected field leaves nothing on disk', () => {
+    const create = createProjectSource();
+    const validateAt = create.indexOf('_validateProjectUpdates(');
+    const mkdirAt = create.indexOf('fs.mkdirSync(');
+    assert.ok(validateAt !== -1, 'createProject must call _validateProjectUpdates');
+    assert.ok(mkdirAt !== -1, 'createProject must call fs.mkdirSync');
+    assert.ok(validateAt < mkdirAt, 'validation must run before the first write');
+  });
 });
 
 describe('createProject runs the same PROJECT_UPDATE_VALIDATORS table updateProject does (#1374)', () => {

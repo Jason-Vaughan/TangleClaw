@@ -948,12 +948,18 @@ describe('the schema module and the facade seam (#2248)', () => {
   });
 
   // #2232 — a present-but-unusable project.json (parses, but not a plain
-  // object; or does not parse at all) must be left exactly as it is: counted,
-  // logged, and never overwritten with the seeded defaults. Before this, the
-  // migration's own raw read only caught a JSON.parse failure — a value that
-  // parsed fine but wasn't an object (`[1,2,3]`) fell through the
+  // object; does not parse at all; or parses as a plain object whose merge
+  // still fails deeper) must be left exactly as it is: counted, logged, and
+  // never overwritten with the seeded defaults. Before this, the migration's
+  // own raw read only caught a JSON.parse failure — a value that parsed fine
+  // but wasn't an object (`[1,2,3]`) fell through the
   // `onDisk.wrapOverridesSeeded` check (reads `undefined` on an array, same as
-  // "not yet seeded") all the way to the save that clobbers it.
+  // "not yet seeded") all the way to the save that clobbers it. The R1 review
+  // round (PR #2684) caught a second, deeper gap: an object-shaped root
+  // (`{"rules":null,...}`) passes that top-level guard, but the second,
+  // lax `projectConfigApi.load(row.path)` call — with no `onError` — can
+  // still throw internally on a field like `rules.core` and silently hand
+  // back defaults, which the migration then saved over the original file.
   it('a pre-v28 project with a non-object or corrupt project.json is skipped, not clobbered', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-drop-methodology-unreadable-'));
     try {
@@ -965,6 +971,17 @@ describe('the schema module and the facade seam (#2248)', () => {
       const corruptProjectDir = path.join(tmpDir, 'corrupt-project');
       fs.mkdirSync(path.join(corruptProjectDir, '.tangleclaw'), { recursive: true });
       fs.writeFileSync(path.join(corruptProjectDir, '.tangleclaw', 'project.json'), '{not valid json');
+
+      // R1 A-Gate/R-Gate regression (PR #2684): an OBJECT-shaped root passes
+      // the migration's own top-level guard, but `project-config.js#load`'s
+      // merge can still throw deeper — `rules: null` fails merging
+      // `rules.core` — and the lax loader used to catch that internally and
+      // hand back silent defaults, which the migration then saved over this
+      // exact file, discarding `operatorValue`.
+      const deepMergeFailDir = path.join(tmpDir, 'deep-merge-fail-project');
+      fs.mkdirSync(path.join(deepMergeFailDir, '.tangleclaw'), { recursive: true });
+      const deepMergeFailBody = JSON.stringify({ rules: null, operatorValue: 'preserve' });
+      fs.writeFileSync(path.join(deepMergeFailDir, '.tangleclaw', 'project.json'), deepMergeFailBody);
 
       const seed = new DatabaseSync(path.join(tmpDir, 'tangleclaw.db'));
       seed.exec(`
@@ -988,6 +1005,8 @@ describe('the schema module and the facade seam (#2248)', () => {
           VALUES (1, 'array-project', '${arrayProjectDir.replace(/'/g, "''")}', 'minimal');
         INSERT INTO projects (id, name, path, methodology)
           VALUES (2, 'corrupt-project', '${corruptProjectDir.replace(/'/g, "''")}', 'minimal');
+        INSERT INTO projects (id, name, path, methodology)
+          VALUES (3, 'deep-merge-fail-project', '${deepMergeFailDir.replace(/'/g, "''")}', 'minimal');
         CREATE TABLE sessions (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -1012,12 +1031,14 @@ describe('the schema module and the facade seam (#2248)', () => {
 
       const db = store.getDb();
       assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION,
-        'the ladder still runs to completion despite two unusable configs');
+        'the ladder still runs to completion despite three unusable configs');
 
       assert.equal(fs.readFileSync(path.join(arrayProjectDir, '.tangleclaw', 'project.json'), 'utf8'), '[1,2,3]',
         'a non-object project.json must survive byte-for-byte');
       assert.equal(fs.readFileSync(path.join(corruptProjectDir, '.tangleclaw', 'project.json'), 'utf8'), '{not valid json',
         'a corrupt project.json must survive byte-for-byte');
+      assert.equal(fs.readFileSync(path.join(deepMergeFailDir, '.tangleclaw', 'project.json'), 'utf8'), deepMergeFailBody,
+        'an object-shaped config whose merge fails deeper must survive byte-for-byte, including operatorValue');
     } finally {
       try { store.close(); } catch { /* already closed */ }
       fs.rmSync(tmpDir, { recursive: true, force: true });
