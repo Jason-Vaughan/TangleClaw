@@ -4535,7 +4535,7 @@ function syncWrapReleaseControls() {
   if (!cutting) bumpEl.value = '';
   const hint = document.getElementById('wrapReleaseHint');
   if (hint) {
-    hint.textContent = mode === 'ask'
+    hint.textContent = mode === 'operator'
       ? 'Auto: this project asks, so a wrap with a release to cut stops at the version bump for you to choose Cut or Hold.'
       : 'Auto: cuts when the release checks pass, holds when the plan is unfinished, and asks when they can’t tell.';
   }

@@ -58,10 +58,15 @@ describe('release recommendation helpers', () => {
   const EMPTY_UNRELEASED = '# Changelog\n\n## [Unreleased]\n\n## [1.0.0]\n- x\n';
 
   describe('releaseDecisionOpen', () => {
-    it('is open for an auto or ask project with entries to release', () => {
+    it('is open for an agent or operator project with entries to release', () => {
+      assert.deepEqual(rec.releaseDecisionOpen(makeProject({ config: { releaseMode: 'agent' } }), {}), { open: true });
+      assert.deepEqual(rec.releaseDecisionOpen(makeProject({ config: { releaseMode: 'operator' } }), {}), { open: true });
+      assert.deepEqual(rec.releaseDecisionOpen(makeProject(), {}), { open: true }, 'no config resolves to agent');
+    });
+
+    it('is open for the legacy auto/ask spellings too, permanently aliased (#1701)', () => {
       assert.deepEqual(rec.releaseDecisionOpen(makeProject({ config: { releaseMode: 'auto' } }), {}), { open: true });
       assert.deepEqual(rec.releaseDecisionOpen(makeProject({ config: { releaseMode: 'ask' } }), {}), { open: true });
-      assert.deepEqual(rec.releaseDecisionOpen(makeProject(), {}), { open: true }, 'no config resolves to auto');
     });
 
     it('is closed when releaseMode is off, including the legacy flag', () => {
@@ -73,7 +78,7 @@ describe('release recommendation helpers', () => {
     });
 
     it('is closed once the operator has decided', () => {
-      const project = makeProject({ config: { releaseMode: 'auto' } });
+      const project = makeProject({ config: { releaseMode: 'agent' } });
       assert.match(rec.releaseDecisionOpen(project, { release: 'cut' }).reason, /you chose Cut/);
       assert.match(rec.releaseDecisionOpen(project, { release: 'hold' }).reason, /you chose Hold/);
       assert.match(rec.releaseDecisionOpen(project, { bumpLevel: 'patch' }).reason, /picked a patch release/);

@@ -1999,13 +1999,14 @@ function openSettings(name, options) {
   const initialEvalAuditChecked = !!(project.evalAudit && project.evalAudit.storedEnabled);
   // Project Map toggle (PIDX #360, #356) — always rendered, same as above.
   const initialProjectMapChecked = !!project.projectMapEnabled;
-  // Release mode (#1492, replacing the #318 on/off checkbox) — engine-agnostic.
-  // `enrichProject` resolves it, legacy `versionBumpEnabled: false` included, so
-  // the select shows what the wrap will actually do.
-  const initialReleaseMode = ['off', 'auto', 'ask'].includes(project.releaseMode) ? project.releaseMode : 'auto';
+  // Release mode (#1492, replacing the #318 on/off checkbox; renamed
+  // auto/ask -> agent/operator by #1701) — engine-agnostic. `enrichProject`
+  // resolves it, legacy `versionBumpEnabled: false` and `auto`/`ask` included,
+  // so the select shows what the wrap will actually do.
+  const initialReleaseMode = ['off', 'agent', 'operator'].includes(project.releaseMode) ? project.releaseMode : 'agent';
   const releaseModeOpts = [
-    ['auto', 'Auto — cut when the release checks pass'],
-    ['ask', 'Ask — stop the wrap and let me choose'],
+    ['agent', 'Agent — cut when the release checks pass'],
+    ['operator', 'Operator — stop the wrap and let me choose'],
     ['off', 'Off — this project manages its own versioning']
   ].map(([v, label]) => `<option value="${v}"${v === initialReleaseMode ? ' selected' : ''}>${label}</option>`).join('');
   // Medusa session-comms auto-enable (MED-2K9P Chunk 02) — engine-agnostic;
@@ -2058,7 +2059,7 @@ function openSettings(name, options) {
       <div class="form-group">
         <label class="form-label" for="settingsReleaseMode">Release mode</label>
         <select class="form-select" id="settingsReleaseMode">${releaseModeOpts}</select>
-        <div class="form-hint">Whether a wrap cuts a release: promote CHANGELOG <code>[Unreleased]</code> and bump the project's semver — from the Version file path setting if set, otherwise <code>version.json</code> then <code>package.json</code>. <strong>Auto</strong> cuts when the release checks pass (entries in <code>[Unreleased]</code>, the active build plan finished), holds mid-plan, and asks when it can't tell. <strong>Ask</strong> stops any wrap that has a release to cut at the version bump, for you to choose Cut or Hold. <strong>Off</strong> never cuts, for projects that manage their own versioning. The wrap dialog's Release choice overrides Auto and Ask for one wrap.</div>
+        <div class="form-hint">Whether a wrap cuts a release: promote CHANGELOG <code>[Unreleased]</code> and bump the project's semver — from the Version file path setting if set, otherwise <code>version.json</code> then <code>package.json</code>. <strong>Agent</strong> cuts when the release checks pass (entries in <code>[Unreleased]</code>, the active build plan finished), holds mid-plan, and asks when it can't tell. <strong>Operator</strong> stops any wrap that has a release to cut at the version bump, for you to choose Cut or Hold. <strong>Off</strong> never cuts, for projects that manage their own versioning. The wrap dialog's Release choice overrides Agent and Operator for one wrap.</div>
       </div>
       <div class="form-group">
         <label class="form-label" for="settingsVersionFilePath">Version file path</label>
