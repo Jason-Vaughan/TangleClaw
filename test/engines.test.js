@@ -658,6 +658,24 @@ describe('engines', () => {
       assert.equal(engines.detectEngine(profile).available, false,
         'a re-resolved PATH must re-ask, not replay');
     });
+
+    it('also forces a bundled-engines sync pass (#737) — not just a PATH re-probe', async () => {
+      // THE MUTATION THIS CATCHES: `refreshDetectionPath` re-resolving PATH
+      // without also calling `store.engines.syncBundled()`. The "Check
+      // again" button is the operator's one explicit "give me current
+      // state" ask — a release update that changed `data/engines/*.json`
+      // since boot should be visible the moment they press it, not only on
+      // the next `store.engines.list()`/`.get()` call.
+      const realSyncBundled = store.engines.syncBundled;
+      let calls = 0;
+      store.engines.syncBundled = () => { calls += 1; };
+      try {
+        await engines.refreshDetectionPath();
+        assert.equal(calls, 1, 'refreshDetectionPath must force exactly one syncBundled() pass');
+      } finally {
+        store.engines.syncBundled = realSyncBundled;
+      }
+    });
   });
 
   describe('detectEngine', () => {
