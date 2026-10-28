@@ -280,4 +280,233 @@ describe('#858 an engine switch retires the previous engine\'s config file', () 
         `${engine}'s generated header carries GENERATED_HEADER_MARK (${profile.configFormat.filename})`);
     }
   });
+
+  describe('_atomicWriteConfigFile: temp-file + rename, read-only refused up front (#1291)', () => {
+    /**
+     * A throwaway directory outside the project fixtures above, so a chmod
+     * here can never collide with another test's own permission dance.
+     * @returns {string}
+     */
+    function tmp() {
+      return fs.mkdtempSync(path.join(os.tmpdir(), 'tc-atomic-write-'));
+    }
+
+    it('writes a brand-new target with no prior file to preserve a mode from', () => {
+      const dir = tmp();
+      const target = path.join(dir, 'AGENTS.md');
+      engines._atomicWriteConfigFile(target, 'brand new\n');
+      assert.equal(fs.readFileSync(target, 'utf8'), 'brand new\n');
+      assert.deepEqual(fs.readdirSync(dir), ['AGENTS.md'], 'no dangling temp file');
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('overwrites an existing target via rename, preserving its mode', () => {
+      const dir = tmp();
+      const target = path.join(dir, 'AGENTS.md');
+      fs.writeFileSync(target, 'old\n', { mode: 0o640 });
+      engines._atomicWriteConfigFile(target, 'new\n');
+      assert.equal(fs.readFileSync(target, 'utf8'), 'new\n');
+      assert.equal(fs.statSync(target).mode & 0o777, 0o640, 'the pre-existing mode survives the rename');
+      assert.deepEqual(fs.readdirSync(dir), ['AGENTS.md'], 'no dangling temp file');
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('refuses a chmod 0o444 target with EACCES before any temp file is created', () => {
+      const dir = tmp();
+      const target = path.join(dir, 'AGENTS.md');
+      fs.writeFileSync(target, 'protected\n');
+      fs.chmodSync(target, 0o444);
+      try {
+        assert.throws(() => engines._atomicWriteConfigFile(target, 'new\n'), (err) => err.code === 'EACCES');
+      } finally {
+        fs.chmodSync(target, 0o644);
+      }
+      assert.equal(fs.readFileSync(target, 'utf8'), 'protected\n', 'the read-only target is byte-identical');
+      assert.deepEqual(fs.readdirSync(dir), ['AGENTS.md'], 'no temp file was created before the refusal');
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('a mid-write failure (ENOSPC-shaped: temp-file creation itself fails) leaves the target byte-identical and no dangling temp file', () => {
+      const dir = tmp();
+      const target = path.join(dir, 'AGENTS.md');
+      fs.writeFileSync(target, 'original content\n');
+      // The target file itself stays writable; only the DIRECTORY loses its
+      // write bit, so creating the sibling temp file fails exactly the way a
+      // disk-full write would — after the read-only-target check passes, before
+      // any bytes of the new content reach disk.
+      fs.chmodSync(dir, 0o555);
+      try {
+        assert.throws(() => engines._atomicWriteConfigFile(target, 'new content\n'));
+      } finally {
+        fs.chmodSync(dir, 0o755);
+      }
+      assert.equal(fs.readFileSync(target, 'utf8'), 'original content\n',
+        'a crash mid-write leaves the carrier wholly old, never truncated');
+      assert.deepEqual(fs.readdirSync(dir), ['AGENTS.md'], 'no dangling temp file left behind');
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('a symlinked target: writes the referent, leaves the symlink itself intact (R-Gate)', () => {
+      // fs.renameSync on a symlink path does not follow the link — it deletes
+      // the link and puts the new file in its place. Writing straight to the
+      // link would sever an operator-managed symlinked carrier while leaving
+      // its true referent stale; the write must land on the referent instead.
+      const dir = tmp();
+      const referent = path.join(dir, 'real-config.md');
+      const link = path.join(dir, 'AGENTS.md');
+      fs.writeFileSync(referent, 'old referent content\n');
+      fs.symlinkSync(referent, link);
+      engines._atomicWriteConfigFile(link, 'new referent content\n');
+      assert.equal(fs.lstatSync(link).isSymbolicLink(), true, 'the symlink itself survives the write');
+      assert.equal(fs.readlinkSync(link), referent, 'the symlink still points at the same referent');
+      assert.equal(fs.readFileSync(referent, 'utf8'), 'new referent content\n', 'the referent holds the new content');
+      assert.equal(fs.readFileSync(link, 'utf8'), 'new referent content\n', 'reading through the link sees it too');
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('refuses a chmod 0o444 referent through the symlink, without severing the link', () => {
+      const dir = tmp();
+      const referent = path.join(dir, 'real-config.md');
+      const link = path.join(dir, 'AGENTS.md');
+      fs.writeFileSync(referent, 'protected referent\n');
+      fs.chmodSync(referent, 0o444);
+      fs.symlinkSync(referent, link);
+      try {
+        assert.throws(() => engines._atomicWriteConfigFile(link, 'new\n'), (err) => err.code === 'EACCES');
+      } finally {
+        fs.chmodSync(referent, 0o644);
+      }
+      assert.equal(fs.lstatSync(link).isSymbolicLink(), true, 'the symlink survives the refusal');
+      assert.equal(fs.readFileSync(referent, 'utf8'), 'protected referent\n', 'the referent is byte-identical');
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('writes through a dangling symlink by creating its referent, not replacing the link', () => {
+      const dir = tmp();
+      const referent = path.join(dir, 'not-yet-created.md');
+      const link = path.join(dir, 'AGENTS.md');
+      fs.symlinkSync(referent, link);
+      engines._atomicWriteConfigFile(link, 'brand new via a dangling link\n');
+      assert.equal(fs.lstatSync(link).isSymbolicLink(), true, 'the symlink survives');
+      assert.equal(fs.readFileSync(referent, 'utf8'), 'brand new via a dangling link\n');
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('a multi-hop DANGLING chain follows every intermediate link, never replaces one (#1291 R-Gate round 2)', () => {
+      // AGENTS.md -> middle.md -> missing.md, and missing.md does not exist.
+      // `fs.realpathSync` throws ENOENT on the whole chain with no way to tell
+      // how many hops it already resolved; a single-hop fallback would land
+      // the write on `middle.md` itself (a symlink) and the rename would sever
+      // IT instead of creating `missing.md` — the bug a one-hop readlink
+      // fallback left behind.
+      const dir = tmp();
+      const missing = path.join(dir, 'missing.md');
+      const middle = path.join(dir, 'middle.md');
+      const link = path.join(dir, 'AGENTS.md');
+      fs.symlinkSync(missing, middle);
+      fs.symlinkSync(middle, link);
+
+      engines._atomicWriteConfigFile(link, 'content for the end of the chain\n');
+
+      assert.equal(fs.lstatSync(link).isSymbolicLink(), true, 'AGENTS.md is still a symlink');
+      assert.equal(fs.readlinkSync(link), middle, 'AGENTS.md still points at middle.md');
+      assert.equal(fs.lstatSync(middle).isSymbolicLink(), true, 'middle.md is STILL a symlink too — not replaced');
+      assert.equal(fs.readlinkSync(middle), missing, 'middle.md still points at missing.md');
+      assert.equal(fs.readFileSync(missing, 'utf8'), 'content for the end of the chain\n',
+        'the write landed on the chain\'s final referent, which now exists');
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('a symlink cycle is refused with ELOOP rather than looping forever', () => {
+      const dir = tmp();
+      const a = path.join(dir, 'a.md');
+      const b = path.join(dir, 'b.md');
+      fs.symlinkSync(b, a);
+      fs.symlinkSync(a, b);
+      assert.throws(() => engines._atomicWriteConfigFile(a, 'content\n'), (err) => err.code === 'ELOOP');
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+  });
+
+  it('retirement through a symlinked AGENTS.md updates the referent, never severs the link (#1291 R-Gate)', () => {
+    const dir = seed('retire-symlinked', 'antigravity');
+    const agents = path.join(dir, 'AGENTS.md');
+    const originalContent = fs.readFileSync(agents, 'utf8');
+    const referent = path.join(dir, 'real-agents.md');
+    fs.renameSync(agents, referent);
+    fs.symlinkSync(referent, agents);
+
+    const r = engines.retireInactiveEngineConfig(dir, 'antigravity', 'claude');
+    assert.equal(r.retired, true);
+    assert.equal(fs.lstatSync(agents).isSymbolicLink(), true, 'the symlink itself survives retirement');
+    assert.equal(fs.readlinkSync(agents), referent);
+    const after = fs.readFileSync(referent, 'utf8');
+    assert.match(after, /INACTIVE engine config/);
+    assert.notEqual(after, originalContent);
+  });
+
+  it('a mid-write failure during retirement leaves the existing co-owned carrier byte-identical (#1291)', () => {
+    const dir = seed('retire-midwrite-fail', 'antigravity');
+    const agents = path.join(dir, 'AGENTS.md');
+    const before = fs.readFileSync(agents, 'utf8');
+    // AGENTS.md itself stays writable; the directory loses its write bit, so
+    // the sibling temp file the atomic write needs can never be created —
+    // the same failure shape a disk-full write produces, exercised through
+    // the real retire path rather than the helper directly.
+    fs.chmodSync(dir, 0o555);
+    let r;
+    try {
+      r = engines.retireInactiveEngineConfig(dir, 'antigravity', 'claude');
+    } finally {
+      fs.chmodSync(dir, 0o755);
+    }
+    assert.equal(r.retired, false);
+    assert.ok(r.error, 'a mid-write failure is a reported failure, not a silent skip');
+    assert.equal(fs.readFileSync(agents, 'utf8'), before,
+      'the co-owned carrier is untouched — no truncation, no partial write');
+    assert.deepEqual(fs.readdirSync(dir).filter((f) => f.startsWith('.tc-engine-config-')), [],
+      'no dangling temp file left behind');
+  });
+
+  describe('syncEngineHooks accepts a projConfigOverride to skip a redundant project-config read (#2232)', () => {
+    /**
+     * An unregistered, store-unaware project directory: `getByPath` resolves
+     * null here, which is the only case `projConfig` (override or loaded) is
+     * actually consulted for the engine id.
+     * @returns {string}
+     */
+    function unregisteredProjectDir() {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-sync-hooks-override-'));
+      fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+      return dir;
+    }
+
+    it('consults the override instead of calling store.projectConfig.load again', () => {
+      const dir = unregisteredProjectDir();
+      const originalLoad = store.projectConfig.load;
+      let loadCalls = 0;
+      store.projectConfig.load = (...args) => { loadCalls += 1; return originalLoad(...args); };
+      try {
+        engines.syncEngineHooks(dir, undefined, { engine: 'codex' });
+      } finally {
+        store.projectConfig.load = originalLoad;
+      }
+      assert.equal(loadCalls, 0, 'a caller that already loaded the config must not trigger a second, redundant read');
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('omitting the override preserves the existing store.projectConfig.load fallback', () => {
+      const dir = unregisteredProjectDir();
+      const originalLoad = store.projectConfig.load;
+      let loadCalls = 0;
+      store.projectConfig.load = (...args) => { loadCalls += 1; return originalLoad(...args); };
+      try {
+        engines.syncEngineHooks(dir);
+      } finally {
+        store.projectConfig.load = originalLoad;
+      }
+      assert.equal(loadCalls, 1, 'omitting projConfigOverride must still read the project config from disk as before');
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+  });
 });

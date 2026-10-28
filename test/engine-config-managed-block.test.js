@@ -7,6 +7,7 @@ const path = require('node:path');
 const os = require('node:os');
 
 const engines = require('../lib/engines');
+const store = require('../lib/store');
 const { useThrowawayStore } = require('./_engine-store');
 
 // A real store on a THROWAWAY base path, file-scoped. Without this, the
@@ -283,6 +284,111 @@ describe('writeEngineConfig honors mergeStrategy', () => {
     assert.equal(result.written, false, 'nothing was written');
     assert.match(result.error, /managed-block merge refused/);
     assert.equal(fs.readFileSync(file, 'utf8'), seed, 'the operator file is byte-identical after a refusal');
+  });
+});
+
+describe('writeEngineConfig writes atomically and refuses a read-only target (#1291)', () => {
+  const profile = {
+    configFormat: { filename: 'AGENTS.md', syntax: 'markdown', generator: 'antigravity-md', mergeStrategy: 'managed-block' },
+    capabilities: { supportsConfigFile: true }
+  };
+
+  test('a chmod 0o444 AGENTS.md refuses the write before any temp file is created, byte-identical after', (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-managed-block-ro-'));
+    const file = path.join(dir, 'AGENTS.md');
+    fs.writeFileSync(file, FOREIGN_FILE);
+    fs.chmodSync(file, 0o444);
+    t.after(() => { fs.chmodSync(file, 0o644); fs.rmSync(dir, { recursive: true, force: true }); });
+
+    const result = engines.writeEngineConfig('antigravity', dir, {}, profile);
+    assert.equal(result.skipped, false, `fixture did not reach the write path: ${result.skipReason}`);
+    assert.equal(result.written, false);
+    assert.match(result.error, /read-only/);
+    assert.equal(fs.readFileSync(file, 'utf8'), FOREIGN_FILE, 'the read-only carrier is byte-identical');
+    assert.deepEqual(fs.readdirSync(dir).filter((f) => f.startsWith('.tc-engine-config-')), [], 'no temp file was left behind');
+  });
+
+  test('a mid-write failure leaves the existing co-owned carrier byte-identical, no dangling temp file', (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-managed-block-midfail-'));
+    const file = path.join(dir, 'AGENTS.md');
+    fs.writeFileSync(file, FOREIGN_FILE);
+    // AGENTS.md itself stays writable; the directory loses its write bit, so
+    // the sibling temp file the atomic write needs can never be created —
+    // the same failure shape a disk-full write produces (#1291), through the
+    // real writeEngineConfig path rather than the helper directly.
+    fs.chmodSync(dir, 0o555);
+    t.after(() => { fs.chmodSync(dir, 0o755); fs.rmSync(dir, { recursive: true, force: true }); });
+
+    const result = engines.writeEngineConfig('antigravity', dir, {}, profile);
+    assert.equal(result.skipped, false, `fixture did not reach the write path: ${result.skipReason}`);
+    assert.equal(result.written, false);
+    assert.ok(result.error, 'the failure is surfaced, not silently swallowed');
+    assert.equal(fs.readFileSync(file, 'utf8'), FOREIGN_FILE,
+      'the co-owned carrier was never truncated — a crash mid-write leaves it wholly old');
+  });
+
+  test('a symlinked AGENTS.md is merged into on the referent — the link itself is never severed (R-Gate)', (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-managed-block-symlink-'));
+    const referent = path.join(dir, 'real-agents.md');
+    const link = path.join(dir, 'AGENTS.md');
+    fs.writeFileSync(referent, FOREIGN_FILE);
+    fs.symlinkSync(referent, link);
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    const result = engines.writeEngineConfig('antigravity', dir, {}, profile);
+    assert.equal(result.skipped, false, `fixture did not reach the write path: ${result.skipReason}`);
+    assert.equal(result.written, true);
+    assert.equal(result.error, null);
+
+    assert.equal(fs.lstatSync(link).isSymbolicLink(), true, 'AGENTS.md is still a symlink after the write');
+    assert.equal(fs.readlinkSync(link), referent, 'the link still points at the same referent');
+    const after = fs.readFileSync(referent, 'utf8');
+    assert.ok(after.includes('BEGIN:nextjs-agent-rules'), 'foreign content preserved through the symlinked write');
+    assert.ok(after.includes(BEGIN), 'our block landed in the referent');
+  });
+
+  test('a multi-hop DANGLING symlink chain follows every intermediate link, through the real write path (R-Gate round 2)', (t) => {
+    // AGENTS.md -> middle.md -> missing.md, missing.md does not exist yet.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-managed-block-chain-'));
+    const missing = path.join(dir, 'missing.md');
+    const middle = path.join(dir, 'middle.md');
+    const link = path.join(dir, 'AGENTS.md');
+    fs.symlinkSync(missing, middle);
+    fs.symlinkSync(middle, link);
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    const result = engines.writeEngineConfig('antigravity', dir, {}, profile);
+    assert.equal(result.skipped, false, `fixture did not reach the write path: ${result.skipReason}`);
+    assert.equal(result.written, true);
+    assert.equal(result.error, null);
+
+    assert.equal(fs.lstatSync(link).isSymbolicLink(), true, 'AGENTS.md is still a symlink');
+    assert.equal(fs.readlinkSync(link), middle);
+    assert.equal(fs.lstatSync(middle).isSymbolicLink(), true, 'middle.md is STILL a symlink, not replaced');
+    assert.equal(fs.readlinkSync(middle), missing);
+    assert.ok(fs.readFileSync(missing, 'utf8').includes(BEGIN), 'the write landed on the chain\'s final referent');
+  });
+
+  test('the whole-file path (no provenance surface) refuses a read-only target too — not just managed-block', (t) => {
+    // claude's CLAUDE.md is whole-file, ungoverned, and has no provenance
+    // surface (provenanceSurfaces only cover codex/aider), so it reaches
+    // _atomicWriteConfigFile through writeEngineConfig's OTHER branch — the
+    // one neither the managed-block tests above nor retireInactiveEngineConfig's
+    // own tests exercise.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-wholefile-ro-'));
+    const file = path.join(dir, 'CLAUDE.md');
+    const before = '# CLAUDE.md — Generated by TangleClaw\n\nstale\n';
+    fs.writeFileSync(file, before);
+    fs.chmodSync(file, 0o444);
+    t.after(() => { fs.chmodSync(file, 0o644); fs.rmSync(dir, { recursive: true, force: true }); });
+
+    const claudeProfile = store.engines.get('claude');
+    const result = engines.writeEngineConfig('claude', dir, {}, claudeProfile);
+    assert.equal(result.skipped, false, `fixture did not reach the write path: ${result.skipReason}`);
+    assert.equal(result.written, false);
+    assert.match(result.error, /read-only/);
+    assert.equal(fs.readFileSync(file, 'utf8'), before, 'the read-only carrier is byte-identical');
+    assert.deepEqual(fs.readdirSync(dir).filter((f) => f.startsWith('.tc-engine-config-')), [], 'no temp file was left behind');
   });
 });
 
