@@ -314,9 +314,10 @@ describe('lib/server-info (#199 stale-server detection)', () => {
   });
 
   describe('detectRestartMechanism (#235)', () => {
-    it("returns 'launchctl' on macOS when the per-user plist exists", () => {
+    it("returns 'launchctl' on macOS when the per-user plist exists AND launchd owns this process", () => {
       serverInfo._internal.platform = () => 'darwin';
       serverInfo._internal.existsSync = (p) => p === serverInfo.MACOS_PLIST_PATH;
+      serverInfo._internal.env = () => ({ XPC_SERVICE_NAME: 'com.tangleclaw.server' });
       try {
         assert.equal(serverInfo.detectRestartMechanism(), 'launchctl');
       } finally {
@@ -327,6 +328,7 @@ describe('lib/server-info (#199 stale-server detection)', () => {
     it('returns null on macOS when the plist is absent (e.g. node started manually)', () => {
       serverInfo._internal.platform = () => 'darwin';
       serverInfo._internal.existsSync = () => false;
+      serverInfo._internal.env = () => ({ XPC_SERVICE_NAME: 'com.tangleclaw.server' });
       try {
         assert.equal(serverInfo.detectRestartMechanism(), null);
       } finally {
@@ -334,16 +336,34 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       }
     });
 
+    it('returns null on macOS when the plist exists but this process was started by hand, not launchd (#1555)', () => {
+      for (const xpc of [undefined, '0']) {
+        serverInfo.__unsafeResetForTest();
+        serverInfo._internal.platform = () => 'darwin';
+        serverInfo._internal.existsSync = (p) => p === serverInfo.MACOS_PLIST_PATH;
+        serverInfo._internal.env = () => (xpc === undefined ? {} : { XPC_SERVICE_NAME: xpc });
+        try {
+          assert.equal(serverInfo.detectRestartMechanism(), null, `XPC_SERVICE_NAME=${xpc}`);
+        } finally {
+          restoreInternal();
+        }
+      }
+    });
+
     // Stub a Linux host whose `systemctl --user show` prints `props` (an
     // object, rendered as key=value lines) or fails (an Error). Records each
     // call so a test can pin what was run. `clock.now` drives the re-query
-    // interval.
-    function stubSystemd(props, { pid = 4242, clock = { now: 1_000_000 } } = {}) {
+    // interval. `env` defaults to showing systemd membership (#1555) so every
+    // existing SAFE-path test keeps exercising the MainPID/KillMode/reload
+    // logic without also having to stub membership; pass `env: {}` (and stub
+    // `readFileSync` if needed) to exercise the membership check itself.
+    function stubSystemd(props, { pid = 4242, clock = { now: 1_000_000 }, env = { INVOCATION_ID: 'test-invocation' } } = {}) {
       const calls = [];
       serverInfo._internal.platform = () => 'linux';
       serverInfo._internal.pid = () => pid;
       serverInfo._internal.now = () => clock.now;
       serverInfo._internal.existsSync = () => { throw new Error('Linux detection must not stat files'); };
+      serverInfo._internal.env = () => env;
       serverInfo._internal.execFileAsync = async (file, args, opts) => {
         calls.push({ file, args, opts });
         const current = typeof props === 'function' ? props() : props;
@@ -591,6 +611,38 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       }
     });
 
+    it('refuses a MainPID match with no systemd membership of its own (#1555)', async () => {
+      stubSystemd(SAFE, { env: {} });
+      serverInfo._internal.readFileSync = () => { throw Object.assign(new Error('no such file'), { code: 'ENOENT' }); };
+      try {
+        const result = await serverInfo.probeSystemdUserUnit();
+        assert.equal(result.ok, false);
+        assert.match(result.reason, /systemd membership/);
+      } finally {
+        restoreInternal();
+      }
+    });
+
+    it('accepts systemd membership shown by /proc/self/cgroup when INVOCATION_ID is unset', async () => {
+      stubSystemd(SAFE, { env: {} });
+      serverInfo._internal.readFileSync = () => '0::/user.slice/user-501.slice/user@501.service/tangleclaw.service\n';
+      try {
+        assert.deepEqual(await serverInfo.probeSystemdUserUnit(), { ok: true, reason: null });
+      } finally {
+        restoreInternal();
+      }
+    });
+
+    it('accepts systemd membership shown by INVOCATION_ID alone, without reading /proc', async () => {
+      stubSystemd(SAFE, { env: { INVOCATION_ID: 'abc123' } });
+      serverInfo._internal.readFileSync = () => { throw new Error('INVOCATION_ID alone must be enough'); };
+      try {
+        assert.deepEqual(await serverInfo.probeSystemdUserUnit(), { ok: true, reason: null });
+      } finally {
+        restoreInternal();
+      }
+    });
+
     it('does not cross platforms — a launchd plist on Linux enables nothing, and macOS never asks systemd', async () => {
       serverInfo.__unsafeResetForTest();
       stubSystemd({ LoadState: 'not-found' });
@@ -614,10 +666,58 @@ describe('lib/server-info (#199 stale-server detection)', () => {
     });
 
     describe('confirmRestartMechanism — the re-check before a restart', () => {
-      it('passes launchd through without asking anything', async () => {
+      it('passes launchd through without asking systemd anything, when the plist still exists and launchd owns this process', async () => {
         serverInfo._internal.execFileAsync = () => { throw new Error('launchd must not be re-probed'); };
+        serverInfo._internal.existsSync = (p) => p === serverInfo.MACOS_PLIST_PATH;
+        serverInfo._internal.env = () => ({ XPC_SERVICE_NAME: 'com.tangleclaw.server' });
         try {
           assert.deepEqual(await serverInfo.confirmRestartMechanism('launchctl'), { ok: true, reason: null });
+        } finally {
+          restoreInternal();
+        }
+      });
+
+      it('refuses launchctl, explaining a manual start, when launchd does not own this process (#1555)', async () => {
+        // existsSync/execFileAsync are re-stubbed INSIDE the loop, not once
+        // before it: restoreInternal() in the loop's own finally wipes them
+        // after the first iteration, so a stub set only before the loop
+        // silently falls through to the REAL filesystem on iteration two —
+        // which happened to pass on a macOS dev machine with the real
+        // plist installed, and failed on Linux CI where it is not (caught
+        // by GitHub Actions on PR #2671, not locally).
+        for (const xpc of [undefined, '0']) {
+          serverInfo._internal.execFileAsync = () => { throw new Error('launchd must not be re-probed'); };
+          serverInfo._internal.existsSync = (p) => p === serverInfo.MACOS_PLIST_PATH;
+          serverInfo._internal.env = () => (xpc === undefined ? {} : { XPC_SERVICE_NAME: xpc });
+          try {
+            const result = await serverInfo.confirmRestartMechanism('launchctl');
+            assert.equal(result.ok, false, `XPC_SERVICE_NAME=${xpc}`);
+            assert.match(result.reason, /started manually|launchd is not managing/);
+          } finally {
+            restoreInternal();
+          }
+        }
+      });
+
+      it('refuses launchctl when the plist was uninstalled after the cached detection ran (R1, #1555)', async () => {
+        // The exact scenario PRR-B's R-Gate caught: detectRestartMechanism
+        // caches 'launchctl' for the process lifetime once the plist exists
+        // AND ownership holds; an operator who uninstalls the LaunchAgent
+        // afterward must not still get a 202 restart launchd can't perform.
+        serverInfo.__unsafeResetForTest();
+        serverInfo._internal.platform = () => 'darwin';
+        serverInfo._internal.existsSync = (p) => p === serverInfo.MACOS_PLIST_PATH;
+        serverInfo._internal.env = () => ({ XPC_SERVICE_NAME: 'com.tangleclaw.server' });
+        try {
+          assert.equal(serverInfo.detectRestartMechanism(), 'launchctl', 'precondition: cached while the plist exists');
+
+          serverInfo._internal.existsSync = () => false; // the operator ran the uninstaller
+          serverInfo._internal.execFileAsync = () => { throw new Error('launchd must not be re-probed'); };
+          assert.equal(serverInfo.detectRestartMechanism(), 'launchctl', 'precondition: the cache is not re-read by detect alone');
+
+          const result = await serverInfo.confirmRestartMechanism('launchctl');
+          assert.equal(result.ok, false, 'the confirmation must catch what the cache missed');
+          assert.match(result.reason, /no longer exists|uninstalled/);
         } finally {
           restoreInternal();
         }
@@ -689,6 +789,7 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       let existsCalls = 0;
       serverInfo._internal.platform = () => 'darwin';
       serverInfo._internal.existsSync = () => { existsCalls++; return true; };
+      serverInfo._internal.env = () => ({ XPC_SERVICE_NAME: 'com.tangleclaw.server' });
       try {
         assert.equal(serverInfo.detectRestartMechanism(), 'launchctl');
         assert.equal(serverInfo.detectRestartMechanism(), 'launchctl');
@@ -732,6 +833,7 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       serverInfo._internal.execSync = () => 'sha-1\n';
       serverInfo._internal.platform = () => 'darwin';
       serverInfo._internal.existsSync = (p) => p === serverInfo.MACOS_PLIST_PATH;
+      serverInfo._internal.env = () => ({ XPC_SERVICE_NAME: 'com.tangleclaw.server' });
       try {
         serverInfo.captureStartup();
         const info = serverInfo.getServerInfo();
@@ -745,6 +847,7 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       serverInfo._internal.execSync = () => 'sha-1\n';
       serverInfo._internal.platform = () => 'linux';
       serverInfo._internal.pid = () => 77;
+      serverInfo._internal.env = () => ({ INVOCATION_ID: 'test-invocation' });
       serverInfo._internal.execFileAsync = async () => ({ stdout: 'LoadState=loaded\nMainPID=77\nKillMode=process\nNeedDaemonReload=no\n' });
       try {
         serverInfo.captureStartup();

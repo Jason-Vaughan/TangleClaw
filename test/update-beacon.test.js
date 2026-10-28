@@ -515,6 +515,126 @@ describe('#931 "Update now" runs the guarded apply flow, through the real api ch
   });
 });
 
+describe('#1555 a failed restart is distinguished from a slow one', () => {
+  /**
+   * Fire the registered `setInterval` poll callback `times` times, in
+   * order, stopping early if the poll cleared itself (reload or give-up).
+   * @param {object} ctx - A `loadBeacon()` sandbox.
+   * @param {number} times
+   * @returns {Promise<void>}
+   */
+  async function runPolls(ctx, times) {
+    const interval = ctx.calls.intervals[ctx.calls.intervals.length - 1];
+    for (let i = 0; i < times && !interval.cleared; i++) {
+      await interval.fn();
+    }
+  }
+
+  it('reaches the new process and reloads — the baseline happy path still works', async () => {
+    const ctx = loadBeacon({
+      fetchImpl: (n) => {
+        if (n === 1) return jsonRes(200, { ok: true, toRef: 'v5.1.2' });
+        if (n === 2) return jsonRes(200, { startedAt: 'old' });
+        if (n === 3) return jsonRes(200, { ok: true, mechanism: 'systemctl' });
+        return jsonRes(200, { startedAt: 'new' });
+      }
+    });
+    await ctx.beacon.apply(AVAILABLE);
+    await runPolls(ctx, 1);
+
+    assert.equal(ctx.calls.reloads, 1, 'a fresh startedAt reloads on the first poll that sees it');
+    assert.equal(ctx.calls.alerts.length, 0, 'no give-up alert on the success path');
+  });
+
+  it('30 polls that keep seeing the OLD start time read as a failed restart, not a slow one', async () => {
+    const ctx = loadBeacon({
+      fetchImpl: (n) => {
+        if (n === 1) return jsonRes(200, { ok: true, toRef: 'v5.1.2' });
+        if (n === 2) return jsonRes(200, { startedAt: 'old' });
+        if (n === 3) return jsonRes(200, { ok: true, mechanism: 'systemctl' });
+        return jsonRes(200, { startedAt: 'old' }); // the "restarted" process never actually changed
+      }
+    });
+    await ctx.beacon.apply(AVAILABLE);
+    await runPolls(ctx, 30);
+
+    assert.equal(ctx.calls.reloads, 0, 'startedAt never changed — nothing to reload onto');
+    const alert = ctx.calls.alerts[ctx.calls.alerts.length - 1];
+    assert.match(alert, /failed/i);
+    assert.match(alert, /never (was )?replaced|pre-restart start time/i);
+    assert.match(alert, /journalctl --user -u tangleclaw\.service/, 'names the systemd mechanism\'s diagnostic command');
+    assert.doesNotMatch(alert, /may still be coming back/i,
+      'a provably-failed restart must not be reported as merely slow');
+    assert.equal(ctx.inFlight, false, 'the latch is released on give-up');
+  });
+
+  it('30 polls that never connect at all read as a failed restart, naming launchd\'s own diagnostic', async () => {
+    const ctx = loadBeacon({
+      fetchImpl: (n) => {
+        if (n === 1) return jsonRes(200, { ok: true, toRef: 'v5.1.2' });
+        if (n === 2) return jsonRes(200, { startedAt: 'old' });
+        if (n === 3) return jsonRes(200, { ok: true, mechanism: 'launchctl' });
+        throw new Error('fetch failed'); // the server never answers again
+      }
+    });
+    await ctx.beacon.apply(AVAILABLE);
+    await runPolls(ctx, 30);
+
+    assert.equal(ctx.calls.reloads, 0);
+    const alert = ctx.calls.alerts[ctx.calls.alerts.length - 1];
+    assert.match(alert, /failed/i);
+    assert.match(alert, /never came back online/i);
+    assert.match(alert, /Library\/Logs\/TangleClaw|launchctl print gui/,
+      'names launchd\'s own diagnostic, not systemd\'s');
+    assert.doesNotMatch(alert, /journalctl/);
+  });
+
+  it('a restart response with no mechanism still gives up honestly, just without naming a log command', async () => {
+    const ctx = loadBeacon({
+      fetchImpl: (n) => {
+        if (n === 1) return jsonRes(200, { ok: true, toRef: 'v5.1.2' });
+        if (n === 2) return jsonRes(200, { startedAt: 'old' });
+        if (n === 3) return jsonRes(200, { ok: true }); // no `mechanism` field
+        return jsonRes(200, { startedAt: 'old' });
+      }
+    });
+    await ctx.beacon.apply(AVAILABLE);
+    await runPolls(ctx, 30);
+
+    const alert = ctx.calls.alerts[ctx.calls.alerts.length - 1];
+    assert.match(alert, /failed/i);
+    assert.doesNotMatch(alert, /journalctl|Library\/Logs\/TangleClaw|launchctl print/);
+  });
+
+  it('one early old-start-time poll followed by every later poll failing to connect is NOT reported as "never replaced" (PRR-B R-Gate WARNING W1)', async () => {
+    // The ordinary shape of a restart in progress: the old process answers
+    // once more while it's exiting, then the dead window begins. Reporting
+    // this as a definitive "never replaced" (based on ANY poll ever seeing
+    // the old startedAt) would be wrong — only the LAST poll's own outcome
+    // may make that claim.
+    const ctx = loadBeacon({
+      fetchImpl: (n) => {
+        if (n === 1) return jsonRes(200, { ok: true, toRef: 'v5.1.2' });
+        if (n === 2) return jsonRes(200, { startedAt: 'old' });
+        if (n === 3) return jsonRes(200, { ok: true, mechanism: 'systemctl' });
+        if (n === 4) return jsonRes(200, { startedAt: 'old' }); // the one early still-old poll
+        throw new Error('fetch failed'); // every poll after that never connects again
+      }
+    });
+    await ctx.beacon.apply(AVAILABLE);
+    await runPolls(ctx, 30);
+
+    assert.equal(ctx.calls.reloads, 0);
+    const alert = ctx.calls.alerts[ctx.calls.alerts.length - 1];
+    assert.doesNotMatch(alert, /never (was )?replaced|pre-restart start time/i,
+      'one early old-startedAt poll must not be read as proof the process was never replaced');
+    assert.match(alert, /failed/i);
+    assert.match(alert, /exited and never came back online/i,
+      'it DID answer at poll 4, then stopped — a different failure than never answering at all');
+    assert.match(alert, /journalctl --user -u tangleclaw\.service/);
+  });
+});
+
 describe('#931 the dirty-tree escape survived the move (#711 / #928 R-1)', () => {
   const DIRTY_ALL_TC = {
     ok: false,

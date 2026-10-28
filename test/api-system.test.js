@@ -389,8 +389,14 @@ describe('API — system, engines, tmux', () => {
 
     it('returns 202 + mechanism in the body when a mechanism is available', async () => {
       const origDetect = serverInfo.detectRestartMechanism;
+      const origConfirm = serverInfo.confirmRestartMechanism;
       const origBuild = serverInfo.buildRestartCommand;
       serverInfo.detectRestartMechanism = () => 'launchctl';
+      // confirmRestartMechanism's own re-check for 'launchctl' now asks
+      // whether THIS process (the test runner) was started by launchd
+      // (#1555) — never true here — so it must be stubbed alongside
+      // detectRestartMechanism, the way the re-check test below already does.
+      serverInfo.confirmRestartMechanism = () => ({ ok: true, reason: null });
       // `true` is the POSIX shell builtin that exits 0. Using it as
       // the restart command means the route's setTimeout-fired exec
       // is a no-op that completes instantly — no chance of killing
@@ -411,6 +417,7 @@ describe('API — system, engines, tmux', () => {
         await new Promise((resolve) => setTimeout(resolve, 400));
       } finally {
         serverInfo.detectRestartMechanism = origDetect;
+        serverInfo.confirmRestartMechanism = origConfirm;
         serverInfo.buildRestartCommand = origBuild;
       }
     });
