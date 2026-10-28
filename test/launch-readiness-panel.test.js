@@ -53,6 +53,7 @@ function render(sequences, opts) {
   vm.runInContext(liftDeclaration(UI_SRC, 'function startupFireLabel'), ctx);
   vm.runInContext(liftDeclaration(UI_SRC, 'function launchStartupControlHtml'), ctx);
   vm.runInContext(liftDeclaration(UI_SRC, 'function launchReconciliationControlHtml'), ctx);
+  vm.runInContext(liftDeclaration(UI_SRC, 'function launchPasteOutcomeHtml'), ctx);
   vm.runInContext(liftDeclaration(UI_SRC, 'function renderProjectLaunchSequences'), ctx);
   if (opts === undefined) ctx.renderProjectLaunchSequences(sequences);
   else ctx.renderProjectLaunchSequences(sequences, opts);
@@ -79,6 +80,7 @@ function row(overrides = {}) {
     nudgeCount: 0,
     lastNudgedAt: null,
     rulesDelivery: null,
+    pasteOutcome: null,
     recovery: 'none',
     recoveryMode: 'operator',
     recoveryRevision: 1,
@@ -111,6 +113,25 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
     const failed = render([row({ rulesDelivery: { outcome: 'skipped', channel: 'none', skipReason: 'no prime channel' } })]);
     assert.match(failed, /Rules channel: skipped \(none\): no prime channel/);
     assert.doesNotMatch(failed, /no record/);
+  });
+
+  it('says nothing about a pointer paste for a launch the server reports none for (#1597)', () => {
+    // Most launches never carry a pointer — unlike `rulesDelivery`, absence
+    // here is the normal case, not a fact worth a "no record" line on every row.
+    const html = render([row({ pasteOutcome: null })]);
+    assert.doesNotMatch(html, /Pointer paste/);
+  });
+
+  it('shows a delivered pointer paste as a pass, with the engine named', () => {
+    const html = render([row({ pasteOutcome: { outcome: 'delivered', engineId: 'claude', detail: null } })]);
+    assert.match(html, /<small class="session-rule-meta">Pointer paste: delivered \(claude\)<\/small>/);
+  });
+
+  it('marks a withheld or timed-out pointer paste as an error, with the detail shown', () => {
+    const html = render([row({
+      pasteOutcome: { outcome: 'timed_out', engineId: 'codex', detail: 'the pane never settled' }
+    })]);
+    assert.match(html, /rules-status-err">Pointer paste: timed_out \(codex\): the pane never settled/);
   });
 
   it('marks an attested launch as the only pass', () => {
