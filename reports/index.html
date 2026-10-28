@@ -235,7 +235,9 @@
       <span>TangleClaw Autonomous Sprint Reports</span>
     </div>
     <div class="nav-links">
-      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.41.0/">v5.41.0 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.43.0/">v5.43.0 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.42.0/">v5.42.0</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.41.0/">v5.41.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.40.0/">v5.40.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.39.0/">v5.39.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.38.0/">v5.38.0</a>
@@ -258,28 +260,54 @@
       <div class="kpi-grid">
         <div class="kpi-card">
           <div class="kpi-label">Published Sprint Reports</div>
-          <div class="kpi-val">9 Releases</div>
-          <div class="kpi-sub"><code>v5.34.0</code> · <code>v5.35.0</code> · <code>v5.36.0</code> · <code>v5.37.0</code> · <code>v5.38.0</code> · <code>v5.39.0</code> · <code>v5.40.0</code> · <code>v5.41.0</code> · <code>v5.42.0</code></div>
+          <div class="kpi-val">10 Releases</div>
+          <div class="kpi-sub"><code>v5.34.0</code> · <code>v5.35.0</code> · <code>v5.36.0</code> · <code>v5.37.0</code> · <code>v5.38.0</code> · <code>v5.39.0</code> · <code>v5.40.0</code> · <code>v5.41.0</code> · <code>v5.42.0</code> · <code>v5.43.0</code></div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Cumulative Sprint PRs</div>
-          <div class="kpi-val">160 PRs Merged</div>
-          <div class="kpi-sub"><strong>54 waves</strong> across nine reports · v5.42.0 merged 8 PRs in 5h 22m (Milestone #27 10/10)</div>
+          <div class="kpi-val">168 PRs Merged</div>
+          <div class="kpi-sub"><strong>58 waves</strong> across ten reports · v5.43.0 merged W1+W2 in 2h 11m (Milestone #28 10/10)</div>
         </div>
         <div class="kpi-card">
-          <div class="kpi-label">Records &amp; Release Gate CI</div>
-          <div class="kpi-val">39s &amp; 30s CI</div>
-          <div class="kpi-sub"><strong>16 newly cited <code>Tests:</code> anchors</strong> validated via <code>P1 (#2633)</code> · Schema v71</div>
+          <div class="kpi-label">Disjoint Merge Pipelining</div>
+          <div class="kpi-val">0 Rebases</div>
+          <div class="kpi-sub"><strong>5/5 sibling merges</strong> landed via <code>W1-F1_v542</code> · 8 R-Gate blockers caught pre-merge</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Latest Production Release</div>
-          <div class="kpi-val" style="color:var(--green);">v5.42.0 Live</div>
-          <div class="kpi-sub">Tag <code>v5.42.0 @ ccfaf342</code> · Milestone #27 <code>10/10</code> Closed</div>
+          <div class="kpi-val" style="color:var(--green);">v5.43.0 Live</div>
+          <div class="kpi-sub">Tag <code>v5.43.0 @ 66ca411e</code> · Milestone #28 <code>10/10</code> Closed</div>
         </div>
       </div>
     </section>
 
     <div class="report-list">
+      <!-- v5.43.0 Card -->
+      <article class="report-card">
+        <div class="report-header">
+          <div>
+            <span class="badge badge-green">● Latest Release · Oct 28, 2026</span>
+            <h2 class="report-title"><a href="./v5.43.0/">TangleClaw <code>v5.43.0</code>: “Verified senders and callers”</a></h2>
+          </div>
+          <span class="badge badge-cyan">Tag v5.43.0 @ 66ca411e</span>
+        </div>
+        <p style="color:#cbd5e1; margin:0;">
+          Four execution waves merged <strong>6 Wave 1 &amp; Wave 2 PR cars (#2661, #2662, #2664, #2665, #2666, #2667) in 2 hours 11 minutes</strong> (plus <code>W3-REC #2668</code> &amp; <code>W4-REL</code>) across 4 parallel Claude Sonnet 5 Builder lanes and closed Milestone <code>#28</code> (<strong>10/10 issues: 100%</strong>). Shipped bound handoff launch preflight identity by <code>projectId</code> alone &amp; staged test runner per-stage log (<code>#1611, #1682</code>), operator-proof launch/readiness UI helpers &amp; route auth matrix negative coverage + <code>W1-F3_v542</code> Linux/IPC test hardening (<code>#2148, #2021</code>), Medusa sender launch authentication &amp; ordinary send launch binding (<code>#1865, #1875</code>), verified scoped caller identity &amp; compound <code>(project, sessionId)</code> watchdog keys on <code>POST /api/audit/heartbeat</code> (<code>#2239</code>), <code>scripts/reset-admin.js --disable</code> with atomic <code>BEGIN IMMEDIATE</code> last-account safeguard &amp; <code>--dry-run</code> exit code 1 (<code>#1458, #1286</code>), and hardened <code>POST /api/sessions/:project/command</code> with operator-only leading-slash gate, non-forgeable sender stamp + receipt, <code>replyGuidance</code>, and <code>suppressNonActionableWakes</code> (<code>#2402</code>). Validated <code>W1-F1_v542</code> disjoint merge pipelining across all 5 post-first cars with <strong>0 ancestor rebases</strong> and delivered a <strong>9th consecutive zero-regression release</strong>.
+        </p>
+        <div class="meta-pills">
+          <span class="badge badge-cyan">4 Waves · 8 PRs · 2h 11m W1+W2 Wall Time</span>
+          <span class="badge badge-green">Milestone #28: 10/10 Closed</span>
+          <span class="badge badge-purple">W1-F1_v542: 5/5 Disjoint Merges (0 Rebases)</span>
+          <span class="badge badge-cyan">Charter A478 · 8 R-Gate Blockers Caught</span>
+          <span class="badge badge-green">O-Gate PASS (O478-V543-PASS)</span>
+        </div>
+        <div class="actions">
+          <a class="btn btn-primary" href="./v5.43.0/">📊 Open v5.43.0 Interactive Sprint Report →</a>
+          <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/releases/tag/v5.43.0" target="_blank" rel="noopener">🚀 GitHub Release v5.43.0</a>
+          <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/blob/v5.43.0/CHANGELOG.md" target="_blank" rel="noopener">📜 CHANGELOG.md</a>
+        </div>
+      </article>
+
       <!-- v5.42.0 Card -->
       <article class="report-card">
         <div class="report-header">
