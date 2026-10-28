@@ -470,7 +470,7 @@ describe('tc start (car 21.3)', () => {
     assert.ok(!advisory.includes(recoveryHint), 'an advisory launch is not held, so a stray sentence is not printed');
   });
 
-  it('prints the reconciliation a launch still owes, and none once READY is attested, whatever the server sends (#2146)', () => {
+  it('prints the reconciliation a launch still owes pre-READY, and a post-READY one owed against live drift (#2146, #2191)', () => {
     /**
      * Render a status whose readiness block is the variable under test.
      * @param {object} readiness - The readiness block
@@ -485,11 +485,41 @@ describe('tc start (car 21.3)', () => {
     const owed = render({ readyAt: null, reconciliationRequired: 'the governing rules changed' });
     assert.match(owed, /READY: not attested yet\./);
     assert.match(owed, /Your attestation will need a reconciliation: the governing rules changed\./);
-    // An older server still sends the reason after READY; the pane must not
-    // repeat it as an obligation.
-    const attested = render({ readyAt: '2026-10-15 22:27:28', reconciliationRequired: 'the governing rules changed' });
+    // `status` now recomputes this field fresh against LIVE drift once READY
+    // is attested (#2191, `_postReadyReconciliation`), so a non-null value
+    // alongside `readyAt` is a genuine, currently-owed obligation, not a stale
+    // echo of the pre-READY reason — the `#2146` worry a prior version of this
+    // test encoded. Rendered with different wording from the pre-READY case:
+    // the attestation on record is never rewritten by recording one.
+    const attested = render({ readyAt: '2026-10-15 22:27:28', reconciliationRequired: 'the governing rules changed since this launch attested READY — x' });
     assert.match(attested, /READY attested 2026-10-15 22:27:28\./);
-    assert.doesNotMatch(attested, /will need a reconciliation/);
+    assert.match(attested, /A post-READY reconciliation is owed: the governing rules changed since this launch attested READY — x\./);
+    assert.match(attested, /tc start ready --reconciliation/);
+    // Nothing outstanding post-READY (`_postReadyReconciliation` answered
+    // null): the line is silent, same as before #2191 existed.
+    const clear = render({ readyAt: '2026-10-15 22:27:28', reconciliationRequired: null });
+    assert.doesNotMatch(clear, /reconciliation/i);
+  });
+
+  it('lists recorded post-READY reconciliations beside the readiness receipt (#2191)', () => {
+    const printed = tcVerbs.renderStartStatus({
+      sequence: 'present', sessionId: 7, sequenceId: 3, revision: 2, applicability: 'applicable',
+      preflight: { verdict: 'ok' }, pageBudget: 7800, toolOutput: null, pending: null,
+      readiness: { readyAt: '2026-10-15 22:27:28', unreadyAt: null, nudgeCount: 0, lastNudgedAt: null, reconciliationRequired: null },
+      postReadyReconciliations: [
+        { revision: 1, driftDigest: 'abc123', recordedAt: '2026-10-20 10:00:00' }
+      ],
+      status: { cursor: 4, ready: true, recovery: 'none', unready: false }, steps: []
+    });
+    assert.match(printed, /Recorded post-READY reconciliation\(s\): 1\./);
+    assert.match(printed, /revision 1, drift abc123, recorded 2026-10-20 10:00:00\./);
+    const none = tcVerbs.renderStartStatus({
+      sequence: 'present', sessionId: 7, sequenceId: 3, revision: 1, applicability: 'applicable',
+      preflight: { verdict: 'ok' }, pageBudget: 7800, toolOutput: null, pending: null,
+      readiness: { readyAt: null, unreadyAt: null, nudgeCount: 0, lastNudgedAt: null, reconciliationRequired: null },
+      status: { cursor: 0, ready: false, recovery: 'none', unready: false }, steps: []
+    });
+    assert.doesNotMatch(none, /post-READY reconciliation/i, 'an older server that sends none prints nothing');
   });
 
   it('prints the missing render context, because a re-render can then be thinner', () => {
@@ -769,6 +799,21 @@ describe('tc start (car 21.3)', () => {
         () => ({ schema: 'tc.ready/1', accepted: true, duplicate: true, readyAt: '2026-09-17 19:00:00' }));
       assert.match(out.stdout, /already attested READY at 2026-09-17 19:00:00/);
       assert.match(out.stdout, /unchanged/);
+    });
+
+    it('reports an appended post-READY reconciliation as recorded, not as a fresh READY attestation (#2191)', async () => {
+      const out = await runReady(
+        ['ready', '--verdict', 'ok', '--first-action', 'carry on', '--reconciliation', 'a shared document changed after I attested and I read it'],
+        () => ({
+          schema: 'tc.ready/1', accepted: true, reconciled: true, readyAt: '2026-09-17 19:00:00',
+          reconciliation: { recordedAt: '2026-10-20 10:00:00', driftDigest: 'abc123' }
+        })
+      );
+      assert.equal(out.code, 0);
+      assert.match(out.stdout, /A post-READY reconciliation was recorded \(drift abc123, 2026-10-20 10:00:00\)/);
+      assert.match(out.stdout, /original attestation at 2026-09-17 19:00:00 stands unchanged/);
+      assert.doesNotMatch(out.stdout, /^Launch sequence attested READY/,
+        'this is not reported as a fresh attestation — the original one is untouched');
     });
 
     it('rejects an unknown argument rather than guessing what was meant', async () => {

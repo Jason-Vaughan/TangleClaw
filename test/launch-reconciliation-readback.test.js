@@ -353,19 +353,14 @@ describe('the launch reconciliation readback (#1937)', () => {
 
     it('includes a reconciliation appended after READY against live drift (#2191), beside the original', async () => {
       const fixture = reconciled();
-      const row = store.getDb().prepare('SELECT source_manifest FROM launch_sequences WHERE id = ?').get(fixture.sequence.id);
-      const manifest = JSON.parse(row.source_manifest);
-      manifest.ruleDrift = {
-        recorded: true,
-        added: [{ source: 'shared', id: 'doc-1', label: 'a shared document' }],
-        removed: [], changed: [],
-        perSource: { project: 'unchanged', global: 'unchanged', shared: 'changed' },
-        unmeasured: { before: [], after: [] },
-        hasDrift: true,
-        comparedSources: ['project', 'global', 'shared']
-      };
-      store.getDb().prepare('UPDATE launch_sequences SET source_manifest = ? WHERE id = ?')
-        .run(JSON.stringify(manifest), fixture.sequence.id);
+      // A real project rule added after READY, not a direct mutation of
+      // `launch_sequences.source_manifest`: `_liveGoverningDrift` recomputes
+      // the live manifest and diffs it against `sourceManifest.attestedManifest`,
+      // so the drift here has to come from an actual change `manifestFingerprints`
+      // can see.
+      store.sessionRules.create({
+        projectId: fixture.project.id, content: 'a governing rule added after READY', createdBy: 'operator', approvedByOperator: true
+      });
       const POST_READY_TEXT = `${SENTINEL}-POST-READY A shared document was added after I attested; I read it and nothing depends on it.`;
       const appended = launchSequence.ready({
         ...fixture.id,

@@ -419,4 +419,56 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
       assert.equal(res.body.code, 'BAD_REQUEST');
     }
   });
+
+  describe('GET /api/sessions/:project/launch/readiness (#1877 follow-up, #2191)', () => {
+    const readinessUrl = (name) => `/api/sessions/${encodeURIComponent(name)}/launch/readiness`;
+
+    it('answers 404 for a project that does not exist', async () => {
+      const res = await get(server, readinessUrl('no-such-project'));
+      assert.equal(res.status, 404);
+      assert.equal(res.body.code, 'NOT_FOUND');
+    });
+
+    it('answers 404 for a project with no attested launch', async () => {
+      // `other`'s only sequence is not-applicable and never attested.
+      const res = await get(server, readinessUrl(other.name));
+      assert.equal(res.status, 404);
+      assert.equal(res.body.code, 'NOT_READY');
+    });
+
+    it('reads the durable readiness receipt and recorded reconciliations by PROJECT NAME, with no auth binding and no reconciliation text', async () => {
+      const ready = bind(project);
+      // Seeded directly through the store, the same way this file seeds other
+      // read-surface fixtures above: the point under test is the READ, not the
+      // attestation flow that produces the state it reads.
+      store.launchSequences.markReady(
+        ready.sequence.id, ready.sequence.revision,
+        { schema: 'tc.ready/1', preflightVerdict: 'ok', proposedFirstAction: 'carry on' },
+        'digest-readiness-route'
+      );
+      store.launchReconciliations.append({
+        sequenceId: ready.sequence.id, sessionId: ready.session.id, projectId: project.id,
+        revision: ready.sequence.revision, driftDigest: 'digest-live-drift',
+        reconciliation: 'A reconciliation of at least forty characters, recorded after READY.'
+      });
+
+      // No `x-tangleclaw-*` headers at all: unlike the operator-only
+      // reconciliation-text readback, this route asks nothing of a pane's own
+      // launch binding — it is the surface a DIFFERENT project's session (the
+      // PM) reads after the lane it watches has already wrapped.
+      const res = await get(server, readinessUrl(project.name));
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assert.equal(res.body.sequenceId, ready.sequence.id);
+      assert.equal(res.body.sessionId, ready.session.id);
+      assert.ok(res.body.readyAt);
+      assert.equal(res.body.reconciliations.length, 1);
+      assert.equal(res.body.reconciliations[0].driftDigest, 'digest-live-drift');
+      assert.equal(res.body.reconciliations[0].revision, ready.sequence.revision);
+      assert.ok(res.body.reconciliations[0].recordedAt);
+      assert.equal('reconciliation' in res.body.reconciliations[0], false,
+        'the reconciliation TEXT stays on the operator-only route; this surface never carries it');
+      assert.ok(!JSON.stringify(res.body).includes('recorded after READY'),
+        'the reconciliation prose itself never reaches this surface');
+    });
+  });
 });

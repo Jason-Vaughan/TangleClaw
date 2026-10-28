@@ -439,8 +439,8 @@ describe('the launch never fails on drift', () => {
   });
 
   it('returns null when the preflight offered no manifest', () => {
-    assert.equal(sessions._launchRuleDrift({ id: 1, name: 'p' }, { handoffManifest: null }), null);
-    assert.equal(sessions._launchRuleDrift({ id: 1, name: 'p' }, undefined), null);
+    assert.equal(sessions._launchRuleDrift({ id: 1, name: 'p' }, { handoffManifest: null }).drift, null);
+    assert.equal(sessions._launchRuleDrift({ id: 1, name: 'p' }, undefined).drift, null);
   });
 
   it('reaches the body and produces a diff when the manifest is offered', () => {
@@ -449,9 +449,18 @@ describe('the launch never fails on drift', () => {
     const result = sessions._launchRuleDrift(
       { id: -999, name: 'nope' },
       { handoffManifest: { rules: [{ id: 1, source: 'project', revision: 1, contentHash: 'a' }], manifestSources: ['project'] } }
-    );
+    ).drift;
     assert.notEqual(result, null);
     assert.ok(Array.isArray(result.added));
+  });
+
+  it('also returns the live manifest it read, for a later post-READY check to diff against (#2191)', () => {
+    const result = sessions._launchRuleDrift(
+      { id: -999, name: 'nope' },
+      { handoffManifest: { rules: [{ id: 1, source: 'project', revision: 1, contentHash: 'a' }], manifestSources: ['project'] } }
+    );
+    assert.ok(result.attestedManifest, 'the live read this launch took is handed back, not discarded');
+    assert.ok(Array.isArray(result.attestedManifest.rules));
   });
 
   it('names the failure instead of throwing when the composer itself throws', () => {
@@ -468,8 +477,9 @@ describe('the launch never fails on drift', () => {
         { id: 1, name: 'p' },
         { handoffManifest: { rules: [{ id: 1, source: 'project', revision: 1, contentHash: 'a' }], manifestSources: ['project'] } }
       );
-      assert.match(result.unavailable, /could not compare them/);
-      assert.match(result.unavailable, /composer exploded/);
+      assert.match(result.drift.unavailable, /could not compare them/);
+      assert.match(result.drift.unavailable, /composer exploded/);
+      assert.equal(result.attestedManifest, null, 'nothing to diff a later check against when the live read itself failed');
     } finally {
       launchSequence.manifestFingerprints = real;
     }
@@ -495,12 +505,12 @@ describe('a failed measurement is distinguishable from a clean slate', () => {
   it('the preflight says WHY it has no manifest, so the two cannot collapse', () => {
     // A document that exists and could not be read is a failed measurement.
     assert.equal(
-      sessions._launchRuleDrift({ id: 1, name: 'p' }, { handoffManifest: null, handoffManifestUnavailable: 'boom' }).unavailable,
+      sessions._launchRuleDrift({ id: 1, name: 'p' }, { handoffManifest: null, handoffManifestUnavailable: 'boom' }).drift.unavailable,
       'boom'
     );
     // A project with no handoff at all has nothing to say.
     assert.equal(
-      sessions._launchRuleDrift({ id: 1, name: 'p' }, { handoffManifest: null, handoffManifestUnavailable: null }),
+      sessions._launchRuleDrift({ id: 1, name: 'p' }, { handoffManifest: null, handoffManifestUnavailable: null }).drift,
       null
     );
   });
