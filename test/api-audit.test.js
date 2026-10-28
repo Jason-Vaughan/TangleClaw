@@ -8,6 +8,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
+const evalAudit = require('../lib/eval-audit');
 const { createServer } = require('../server');
 const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
 
@@ -356,7 +357,37 @@ describe('API /api/audit', () => {
       session_id: otherSession.id
     }, bound.headers);
     assert.equal(status, 403);
-    assert.equal(data.code, 'OTHER_PROJECT');
+    assert.equal(data.code, 'OTHER_SESSION');
+  });
+
+  it('POST /api/audit/heartbeat refuses a project session naming a DIFFERENT, superseded-but-active session of its OWN project — R-Gate R1 finding, #2239', async () => {
+    const project = store.projects.getByName('audit-bound');
+    // A second active session of the SAME project `bound` is not bound to —
+    // same project, still not this caller's own session.
+    const siblingSession = store.sessions.start({ projectId: project.id, engineId: 'claude' });
+    const bound = bindProject(project);
+    const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+      session_id: siblingSession.id
+    }, bound.headers);
+    assert.equal(status, 403);
+    assert.equal(data.code, 'OTHER_SESSION');
+  });
+
+  it('POST /api/audit/heartbeat refuses connection A\'s valid secret naming a session_id already watched under connection B\'s project — R-Gate R1 finding, #2239', async () => {
+    // B already watches this session_id under its OWN project (as ingest, or
+    // a prior heartbeat of B's, would have left it) — A's secret is valid,
+    // but valid for `audit-bound`, a DIFFERENT project than the one this key
+    // is watched under.
+    evalAudit.watchSession('shared-session-key', 'audit-project-b');
+    try {
+      const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+        session_id: 'shared-session-key'
+      }, { Authorization: `Bearer ${auditSecret}` });
+      assert.equal(status, 403);
+      assert.equal(data.code, 'OTHER_PROJECT');
+    } finally {
+      evalAudit.unwatchSession('shared-session-key');
+    }
   });
 
   // ── Telemetry ──

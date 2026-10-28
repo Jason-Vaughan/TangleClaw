@@ -9,6 +9,7 @@ const http = require('node:http');
 const net = require('node:net');
 
 const store = require('../lib/store');
+const evalAudit = require('../lib/eval-audit');
 const { createServer } = require('../server');
 const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
 
@@ -422,7 +423,32 @@ describe('launch-binding floor in the dispatcher (#2233)', () => {
       const otherSession = store.sessions.start({ projectId: other.id, engineId: 'claude' });
       const res = await send('POST', '/api/audit/heartbeat', { session_id: otherSession.id }, binding.headers);
       assert.equal(res.status, 403);
-      assert.equal(res.data.code, 'OTHER_PROJECT');
+      assert.equal(res.data.code, 'OTHER_SESSION');
+    });
+
+    it('refuses a valid launch binding naming a DIFFERENT, superseded-but-active session of its OWN project — R-Gate R1, #2239', async () => {
+      // A throwaway project, bound twice in order: the FIRST bind's session
+      // is immediately superseded (still ACTIVE, no longer current) by the
+      // SECOND's. The second binding is the one that reaches the handler
+      // current/verified; the first is the target this test names.
+      const dir = fs.mkdtempSync(path.join(tmpDir, 'floor-supersede-'));
+      const supersedeProject = store.projects.create({ name: `floor-supersede-${Date.now()}`, path: dir, engine: 'claude' });
+      const first = bindProject(supersedeProject);
+      const second = bindProject(supersedeProject);
+      const res = await send('POST', '/api/audit/heartbeat', { session_id: first.sessionId }, second.headers);
+      assert.equal(res.status, 403);
+      assert.equal(res.data.code, 'OTHER_SESSION');
+    });
+
+    it('refuses connection A\'s valid secret naming a session_id already watched under a different project — R-Gate R1, #2239', async () => {
+      evalAudit.watchSession('floor-shared-key', 'floor-some-other-project');
+      try {
+        const res = await send('POST', '/api/audit/heartbeat', { session_id: 'floor-shared-key' }, { Authorization: `Bearer ${AUDIT_SECRET}` });
+        assert.equal(res.status, 403);
+        assert.equal(res.data.code, 'OTHER_PROJECT');
+      } finally {
+        evalAudit.unwatchSession('floor-shared-key');
+      }
     });
 
     it('accepts the operator\'s dashboard naming any project\'s session', async () => {
