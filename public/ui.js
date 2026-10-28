@@ -3736,9 +3736,7 @@ function wireStartupFires(list) {
         _setProjectRulesStatus(api.lastError || 'The startup prompt could not be read, so nothing was fired', false);
         return;
       }
-      const me = await api('/api/auth/me');
-      const headers = { 'Content-Type': 'application/json' };
-      if (me && me.openInstallToken) headers['X-TC-Open-Token'] = me.openInstallToken;
+      const headers = await tcOperatorProofHeaders(api);
       const key = `panel-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
       const answer = await api(
         `/api/sessions/${encodeURIComponent(projectName)}/startup-prompt/fire`,
@@ -4135,19 +4133,7 @@ function wireLaunchRecoveryClears(list) {
       const projectName = projectRulesTargetName;
       if (!projectName) return;
       btn.disabled = true;
-      // An open install has no session and therefore no CSRF token, so the
-      // route takes a page token instead. Fetched per click rather than kept on
-      // the page: it is needed nowhere else, and one held across a gate that
-      // has since been armed would be sent to a route that is right to ignore
-      // it. On an armed install `openInstallToken` is null and `api()`'s own
-      // CSRF header is what the route reads.
-      const me = await api('/api/auth/me');
-      // `Content-Type` is not optional here: a body sent without it is labelled
-      // `text/plain` by the browser, and the perimeter refuses an undeclared
-      // browser body on `/api/` with 415 before any route runs (#860). Every
-      // other body-carrying write on this page sets it for the same reason.
-      const headers = { 'Content-Type': 'application/json' };
-      if (me && me.openInstallToken) headers['X-TC-Open-Token'] = me.openInstallToken;
+      const headers = await tcOperatorProofHeaders(api);
       const answer = await api(
         `/api/sessions/${encodeURIComponent(projectName)}/launch/recovery-clear`,
         {

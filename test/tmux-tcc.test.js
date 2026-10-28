@@ -49,6 +49,13 @@ tmux._tccSeams.settle = () => {};
 // isolated per-test socket with no other test code needing to change.
 beforeEach(() => {
   tmux.TCC_SOCKET = uniqueSessionName('tcc_sock');
+  // A test that does not care about the default server's state must not race
+  // an empty one: on a CI runner with no default tmux server up yet,
+  // `_tmuxServerRunning()` can read `false` between tests and send a test that
+  // never meant to exercise the TCC bootstrap path into `osascript`, which
+  // does not exist off macOS (W1-F3_v542). Tests that DO care (e.g. the
+  // fail-closed case) override this themselves after `beforeEach` runs.
+  tmux._tccSeams.defaultServerRunning = () => true;
 });
 
 afterEach(() => {

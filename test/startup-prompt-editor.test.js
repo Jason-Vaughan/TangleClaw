@@ -18,6 +18,7 @@ const { liftDeclaration } = require('./helpers/lift');
 const PUB = path.join(__dirname, '..', 'public');
 const LANDING_SRC = fs.readFileSync(path.join(PUB, 'landing.js'), 'utf8');
 const UI_SRC = fs.readFileSync(path.join(PUB, 'ui.js'), 'utf8');
+const API_HELPER_SRC = fs.readFileSync(path.join(PUB, 'api-helper.js'), 'utf8');
 const INDEX = fs.readFileSync(path.join(PUB, 'index.html'), 'utf8');
 
 /**
@@ -75,6 +76,7 @@ function sandbox(prompt, projects, { putAnswer = null, openToken = 'tok', putRef
   vm.createContext(ctx);
   vm.runInContext([
     liftDeclaration(LANDING_SRC, 'function esc('),
+    liftDeclaration(API_HELPER_SRC, 'async function tcOperatorProofHeaders'),
     liftDeclaration(LANDING_SRC, 'async function loadStartupPrompt('),
     liftDeclaration(LANDING_SRC, 'async function saveStartupPrompt(')
   ].join('\n'), ctx);

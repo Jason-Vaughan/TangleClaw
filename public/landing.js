@@ -1611,13 +1611,10 @@ async function saveStartupPrompt() {
   const firerProjectIds = Array.from(document.querySelectorAll('#startupPromptFirers input[type="checkbox"]:checked'))
     .map((box) => Number(box.value));
   btn.disabled = true;
-  // The route is a strict operator write. On an open install that means the
-  // page token, fetched per click for the same reason the recovery clear does;
-  // on an armed install `api()` sends the CSRF header itself. `Content-Type`
-  // is required, or the perimeter refuses the body with 415 (#860).
-  const me = await api('/api/auth/me');
-  const headers = { 'Content-Type': 'application/json' };
-  if (me && me.openInstallToken) headers['X-TC-Open-Token'] = me.openInstallToken;
+  // The route is a strict operator write, so it needs the operator-proof
+  // headers (`#2148`): the open-install page token when there is no login,
+  // or nothing further when `api()`'s own CSRF header is what the route reads.
+  const headers = await tcOperatorProofHeaders(api);
   const saved = await api('/api/startup-prompt', {
     method: 'PUT',
     headers,

@@ -253,6 +253,31 @@
     return true;
   }
 
+  /**
+   * The fetch headers for a write that is an operator's decision and must
+   * still work on an install with no login (#2148).
+   *
+   * `Content-Type` is always set — a body sent without it is labelled
+   * `text/plain` by the browser, and the perimeter refuses an undeclared
+   * browser body on `/api/` with 415 before any route runs (#860). The page
+   * token is added only when `/api/auth/me` reports one: on an open install
+   * that is the anti-forgery proof the route takes in place of a session: on
+   * an armed install `openInstallToken` is null and `api()`'s own CSRF header
+   * (`tcWithCsrf`) is what the route reads, so nothing further is added here.
+   * Fetched fresh on every call rather than cached on the page: a token held
+   * across a gate that has since been armed would be sent to a route that is
+   * right to ignore it.
+   *
+   * @param {Function} api - The page's `api()` from `tcCreateApi`
+   * @returns {Promise<object>} Headers for api()'s `headers` option
+   */
+  async function tcOperatorProofHeaders(api) {
+    var me = await api('/api/auth/me');
+    var headers = { 'Content-Type': 'application/json' };
+    if (me && me.openInstallToken) headers['X-TC-Open-Token'] = me.openInstallToken;
+    return headers;
+  }
+
   function tcCreateApi(opts) {
     const setConnected = (opts && opts.setConnected) || function () {};
 
@@ -1781,6 +1806,7 @@
   global.tcWithCsrf = tcWithCsrf;
   global.tcFetch = tcFetch;
   global.tcSignOut = tcSignOut;
+  global.tcOperatorProofHeaders = tcOperatorProofHeaders;
   global.tcCreateRestartFlow = tcCreateRestartFlow;
   global.tcCopyToClipboard = tcCopyToClipboard;
   global.tcCopyOutcome = tcCopyOutcome;
