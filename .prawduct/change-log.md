@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-28 — v5.42.0 W3-REC: reconcile Wave 1 and Wave 2 launch records
+
+<!-- prawduct: type=internal | scope=v542-w3-rec -->
+
+- Reconciled all ten Charter A477 sprint issues in `FEATURES.md`: unready verdict visibility (#1596), prime-paste outcome (#1597), damaged handoff recovery (#1623), startup admission (#1633), the shared pane writer (#1669), opening order (#1693), durable READY receipt (#1877), frozen recovery gate context (#2150), live Medusa binding (#2153), and append-only READY reconciliation (#2191).
+- Updated `docs/user-guide.md` to explain startup task admission, the step-read READY fence, sequence-less damaged-handoff recovery, the unready monitor's recorded verdict, and launch opening order. This records merged behavior; it changes no runtime code.
+- Verified every new `FEATURES.md` `Tests:` path exists, checked the feature index and test-stage suites, and confirmed this file introduces no duplicate archive section.
+
 ## 2026-10-28 — v5.42.0 W2-A: single opening-order owner, and the recovery gate's own follow-ups (#1693, #2150)
 
 <!-- prawduct: type=internal | scope=w2a-1693-2150 -->
