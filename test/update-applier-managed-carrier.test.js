@@ -170,6 +170,24 @@ describe('_classifyDirty routes carriers on containment, not on path (#1241)', (
     assert.deepEqual(d.realWork, ['.tangleclaw/x', '.claude/settings.local.json', 'lib/a.js']);
     assert.deepEqual(asked, ['.claude/settings.json']);
   });
+
+  it('never treats a STAGED carrier as discardable, even when the proof returns true (#1246)', () => {
+    // Index status 'M' (staged), worktree status ' ' (clean on top of the
+    // index): the proof is never even consulted, mirroring the untracked
+    // case above — a staged edit is the caller's authored work by
+    // construction, whatever `_managedRegionOnlyDiff` would say about the
+    // worktree-vs-HEAD delta it never looks at the index for.
+    let asked = false;
+    const d = applier._classifyDirty('M  CLAUDE.md\n', () => { asked = true; return true; });
+    assert.deepEqual(d.realWork, ['CLAUDE.md']);
+    assert.equal(asked, false, 'a staged carrier must not be probed');
+  });
+
+  it('treats a carrier staged AND further modified in the worktree as real work too (#1246)', () => {
+    const d = applier._classifyDirty('MM CLAUDE.md\n', () => true);
+    assert.deepEqual(d.discardable, []);
+    assert.deepEqual(d.realWork, ['CLAUDE.md']);
+  });
 });
 
 describe('the self-update path does not drag in the engine layer', () => {
@@ -271,7 +289,7 @@ describe('applyUpdate wires the containment test in (#1241)', () => {
         const key = args.join(' ');
         calls.push(key);
         if (key === 'status --porcelain') return n++ === 0 ? porcelain : '';
-        if (key.startsWith('checkout -- ') || key.startsWith('clean -fd -- ')) return '';
+        if (key.startsWith('checkout HEAD -- ') || key.startsWith('clean -fd -- ')) return '';
         if (key.startsWith('show HEAD:')) return CONTAINED_HEAD;
         if (!(key in HAPPY)) throw new Error(`unexpected git call: ${key}`);
         return HAPPY[key];
@@ -288,11 +306,13 @@ describe('applyUpdate wires the containment test in (#1241)', () => {
    *
    * @param {string} work - Working-tree content for the carrier.
    * @param {object} opts - Passed to applyUpdate.
+   * @param {string} [porcelain] - `status --porcelain` line for the carrier;
+   *   defaults to an unstaged modification.
    * @returns {object} `{ result, calls }`
    */
-  function run(work, opts) {
+  function run(work, opts, porcelain = ' M CLAUDE.md\n') {
     const real = { ...applier._internal };
-    const { fn, calls } = gitStub(' M CLAUDE.md\n');
+    const { fn, calls } = gitStub(porcelain);
     applier._internal.git = fn;
     applier._internal.readFile = () => work;
     applier._internal.checkForUpdate = () => ({ updateAvailable: true, latestVersion: '9.9.9' });
@@ -315,7 +335,7 @@ describe('applyUpdate wires the containment test in (#1241)', () => {
   it('discards it and proceeds when asked', () => {
     const { result, calls } = run(CONTAINED_WORK, { discardDirty: true });
     assert.equal(result.ok, true, 'the update must proceed once the tree is provably clean');
-    assert.ok(calls.includes('checkout -- CLAUDE.md'),
+    assert.ok(calls.includes('checkout HEAD -- CLAUDE.md'),
       'the carrier is restored from HEAD, and TC rewrites its own region on next boot');
   });
 
@@ -323,7 +343,42 @@ describe('applyUpdate wires the containment test in (#1241)', () => {
     const { result, calls } = run(EDITED_WORK, { discardDirty: true });
     assert.equal(result.ok, false);
     assert.deepEqual(result.dirty, { discardable: [], realWork: ['CLAUDE.md'], carried: [] });
-    assert.equal(calls.some((c) => c.startsWith('checkout -- ')), false,
+    assert.equal(calls.some((c) => c.startsWith('checkout HEAD -- ')), false,
       'a hand edit outside the markers must never be discarded');
+  });
+
+  it('refuses a carrier with a staged edit confined to the block, even though containment says true (#1246)', () => {
+    // Index status 'M', worktree status ' ': staged, nothing further on top.
+    // _managedRegionOnlyDiff only ever compares worktree-vs-HEAD, so a staged
+    // edit that landed entirely inside the block would still prove contained
+    // — this is the gap #1246 closes: a staged change is real/authored work
+    // regardless of what containment says.
+    const { result, calls } = run(CONTAINED_WORK, { discardDirty: true },
+      'M  CLAUDE.md\n');
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.dirty, { discardable: [], realWork: ['CLAUDE.md'], carried: [] });
+    assert.equal(calls.some((c) => c.startsWith('checkout HEAD -- ')), false,
+      'a staged edit must never be discarded, even one containment alone would pass');
+  });
+
+  it('refuses a carrier with a staged edit outside the block (#1246)', () => {
+    // Index status 'M', worktree status ' ': staged, and the staged content
+    // itself (mirrored into the working tree by the stub) differs outside
+    // the markers — refused on both grounds.
+    const { result, calls } = run(EDITED_WORK, { discardDirty: true }, 'M  CLAUDE.md\n');
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.dirty, { discardable: [], realWork: ['CLAUDE.md'], carried: [] });
+    assert.equal(calls.some((c) => c.startsWith('checkout HEAD -- ')), false,
+      'a staged edit outside the markers must never be discarded');
+  });
+
+  it('still discards an UNSTAGED managed-region-only edit, restored against HEAD (#1246)', () => {
+    // Index status ' ', worktree status 'M': the ordinary case every other
+    // test in this describe block exercises — named explicitly here so the
+    // staged-refusal above is pinned against its mirror-image success case.
+    const { result, calls } = run(CONTAINED_WORK, { discardDirty: true }, ' M CLAUDE.md\n');
+    assert.equal(result.ok, true);
+    assert.ok(calls.includes('checkout HEAD -- CLAUDE.md'),
+      'an unstaged managed-region-only edit is still restored, and from HEAD');
   });
 });
