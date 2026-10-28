@@ -343,6 +343,14 @@ describe('launch sequence attestation (Train 21, Chunk 02)', () => {
       });
       assert.equal(reconciled.status, 200);
       assert.equal(reconciled.body.artifact.reconciliation.length >= launchSequence.MIN_RECONCILIATION_CHARS, true);
+      // The rule added above is the ONLY governing-text change there has been;
+      // it was already shown to the session (via the revision) and reconciled
+      // (via the artifact above) before READY. A post-READY drift check that
+      // still reports it would be re-litigating something this launch already
+      // settled (#2191 regression: `attestedManifest` carried stale across the
+      // revision instead of being refreshed to what the revision re-rendered).
+      assert.equal(launchSequence.status(id).body.readiness.reconciliationRequired, null,
+        'nothing changed since the revision this launch attested against, so nothing is owed');
     });
 
     it('re-renders with the launch-time facts only the launch had', () => {

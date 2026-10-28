@@ -469,6 +469,17 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
         'the reconciliation TEXT stays on the operator-only route; this surface never carries it');
       assert.ok(!JSON.stringify(res.body).includes('recorded after READY'),
         'the reconciliation prose itself never reaches this surface');
+
+      // A newer launch starting on the SAME project, still unready, must not
+      // hide the attested one's receipt — a PM polling this route after the
+      // lane it watches wrapped should keep reading its receipt even once a
+      // fresh (unready) session has started on top of it.
+      const unreadyAfter = bind(project);
+      assert.equal(unreadyAfter.sequence.readyAt, null, 'the newest sequence is not the attested one');
+      const stillReadable = await get(server, readinessUrl(project.name));
+      assert.equal(stillReadable.status, 200, JSON.stringify(stillReadable.body));
+      assert.equal(stillReadable.body.sequenceId, ready.sequence.id,
+        'the most recent ATTESTED sequence, not merely the most recent sequence');
     });
   });
 });
