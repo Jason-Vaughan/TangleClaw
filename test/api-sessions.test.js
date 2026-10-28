@@ -148,6 +148,101 @@ describe('api-sessions', () => {
     });
   });
 
+  /**
+   * Bind a launch sequence to a freshly started session of a project, without
+   * starting a pane — mirrors `test/api-launch-sequences.test.js`'s own
+   * `bind` helper, which this admission gate's effects are read beside.
+   * @param {object} project - Project record
+   * @param {{applicable: boolean, reason: string|null}} [applicability]
+   * @param {{verdict: string, requiresRecovery: boolean, reason: string}} [preflight]
+   * @returns {{sequence: object, session: object}}
+   */
+  function bindLaunchSequence(project, applicability = { applicable: true, reason: null }, preflight) {
+    const launchSequence = require('../lib/launch-sequence');
+    const sessionsLib = require('../lib/sessions');
+    const engine = store.engines.get('claude');
+    const launchId = launchSequence.mintLaunchId();
+    const rendered = applicability.applicable ? sessionsLib.renderLaunchSteps(project, engine, {}) : null;
+    const snapshot = launchSequence.buildSnapshot({
+      launchId, project, engineProfile: engine, applicability, rendered, rules: [], ...(preflight ? { preflight } : {})
+    });
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', launchSequence: snapshot });
+    return { sequence: store.launchSequences.getBySession(session.id), session };
+  }
+
+  describe('GET /api/sessions/:project/status — startupReadiness (#1633)', () => {
+    it('reads "starting", with the step cursor, fresh off a launch', async () => {
+      const project = store.projects.getByName('api-sess-test');
+      const { session } = bindLaunchSequence(project);
+      try {
+        const res = await request(server, 'GET', '/api/sessions/api-sess-test/status');
+        assert.equal(res.status, 200);
+        assert.equal(res.body.startupReadiness.state, 'starting');
+        assert.equal(res.body.startupReadiness.step, 'Starting — step 1 of 4');
+        assert.equal(res.body.startupReadiness.readyAt, null);
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+
+    it('reads "ready" once the session has attested READY', async () => {
+      const project = store.projects.getByName('api-sess-test');
+      const { session, sequence } = bindLaunchSequence(project);
+      try {
+        store.launchSequences.markReady(sequence.id, sequence.revision, { kind: 'tc.ready/1' }, 'deadbeef');
+        const res = await request(server, 'GET', '/api/sessions/api-sess-test/status');
+        assert.equal(res.body.startupReadiness.state, 'ready');
+        assert.ok(res.body.startupReadiness.readyAt);
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+
+    it('reads "needs-attention" once the unready monitor has marked the launch unready', async () => {
+      const project = store.projects.getByName('api-sess-test');
+      const { session, sequence } = bindLaunchSequence(project);
+      try {
+        store.launchSequences.markUnready(sequence.id);
+        const res = await request(server, 'GET', '/api/sessions/api-sess-test/status');
+        assert.equal(res.body.startupReadiness.state, 'needs-attention');
+        assert.equal(res.body.startupReadiness.blocker, 'unready');
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+
+    it('reads "needs-attention" for a sequence-less launch with a damaged handoff (#1623)', async () => {
+      const project = store.projects.getByName('api-sess-test');
+      const { session } = bindLaunchSequence(
+        project,
+        { applicable: false, reason: 'the engine declares no launch-sequence support' },
+        { verdict: 'handoff-corrupt', requiresRecovery: true, reason: 'the handoff file could not be parsed' }
+      );
+      try {
+        const res = await request(server, 'GET', '/api/sessions/api-sess-test/status');
+        assert.equal(res.body.startupReadiness.state, 'needs-attention');
+        assert.equal(res.body.startupReadiness.blocker, 'handoff-corrupt');
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+
+    it('reads "ready" for a sequence-less launch with a clean preflight', async () => {
+      const project = store.projects.getByName('api-sess-test');
+      const { session } = bindLaunchSequence(
+        project,
+        { applicable: false, reason: 'the engine declares no launch-sequence support' },
+        { verdict: 'ok', requiresRecovery: false, reason: 'a current eligible publication' }
+      );
+      try {
+        const res = await request(server, 'GET', '/api/sessions/api-sess-test/status');
+        assert.equal(res.body.startupReadiness.state, 'ready');
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+  });
+
   describe('GET /api/sessions/:project/history', () => {
     it('returns empty history for new project', async () => {
       const res = await request(server, 'GET', '/api/sessions/api-sess-test/history');
@@ -257,6 +352,61 @@ describe('api-sessions', () => {
         wrapRunRegistry.finish('api-sess-test', claim.runId, null);
         wrapRunRegistry._resetForTests();
         Object.assign(tmux, real);
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+  });
+
+  describe('POST /api/sessions/:project/command — startup admission gate (#1633)', () => {
+    it('refuses ordinary task submission with 409 STARTUP_NOT_READY while the launch is starting', async () => {
+      const project = store.projects.getByName('api-sess-test');
+      const { session } = bindLaunchSequence(project);
+      try {
+        const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/command', { command: 'ls' });
+        assert.equal(res.status, 409);
+        assert.equal(res.body.code, 'STARTUP_NOT_READY');
+        assert.equal(res.body.startupReadiness.state, 'starting');
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+
+    it('admits a startupIntervention send while the launch is starting', async () => {
+      const project = store.projects.getByName('api-sess-test');
+      const { session } = bindLaunchSequence(project);
+      try {
+        const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/command', {
+          command: 'ls', startupIntervention: true
+        });
+        assert.notEqual(res.body.code, 'STARTUP_NOT_READY');
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+
+    it('admits ordinary task submission once the launch is READY', async () => {
+      const project = store.projects.getByName('api-sess-test');
+      const { session, sequence } = bindLaunchSequence(project);
+      try {
+        store.launchSequences.markReady(sequence.id, sequence.revision, { kind: 'tc.ready/1' }, 'deadbeef');
+        const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/command', { command: 'ls' });
+        assert.notEqual(res.body.code, 'STARTUP_NOT_READY');
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+
+    it('admits ordinary task submission for a sequence-less launch with a clean preflight', async () => {
+      const project = store.projects.getByName('api-sess-test');
+      const { session } = bindLaunchSequence(
+        project,
+        { applicable: false, reason: 'the engine declares no launch-sequence support' },
+        { verdict: 'ok', requiresRecovery: false, reason: 'a current eligible publication' }
+      );
+      try {
+        const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/command', { command: 'ls' });
+        assert.notEqual(res.body.code, 'STARTUP_NOT_READY');
+      } finally {
         store.sessions.kill(session.id, 'test cleanup');
       }
     });
