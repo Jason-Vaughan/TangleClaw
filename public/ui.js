@@ -2003,12 +2003,22 @@ function openSettings(name, options) {
   // auto/ask -> agent/operator by #1701) — engine-agnostic. `enrichProject`
   // resolves it, legacy `versionBumpEnabled: false` and `auto`/`ask` included,
   // so the select shows what the wrap will actually do.
-  const initialReleaseMode = ['off', 'agent', 'operator'].includes(project.releaseMode) ? project.releaseMode : 'agent';
+  const initialReleaseMode = ['off', 'agent', 'operator'].includes(project.releaseMode) ? project.releaseMode : 'operator';
   const releaseModeOpts = [
     ['agent', 'Agent — cut when the release checks pass'],
     ['operator', 'Operator — stop the wrap and let me choose'],
     ['off', 'Off — this project manages its own versioning']
   ].map(([v, label]) => `<option value="${v}"${v === initialReleaseMode ? ' selected' : ''}>${label}</option>`).join('');
+  // #1697: group release authority — read-only here; transferred via the
+  // group's own settings, never duplicated as a second control on this modal.
+  const releaseOwnerGroup = (project.groups || []).find(g => g.releaseOwnerProjectId !== null);
+  let releaseOwnerHint = '';
+  if (releaseOwnerGroup) {
+    releaseOwnerHint = releaseOwnerGroup.releaseOwnerProjectId === project.id
+      ? `<div class="form-hint" id="settingsReleaseOwnerHint">This project holds release authority for group "${esc(releaseOwnerGroup.name)}".</div>`
+      : `<div class="form-hint" id="settingsReleaseOwnerHint" style="color:var(--danger)">Release authority for group "${esc(releaseOwnerGroup.name)}" belongs to `
+        + `"${esc(releaseOwnerGroup.releaseOwnerName || `project #${releaseOwnerGroup.releaseOwnerProjectId}`)}" — transfer it via the group settings before setting this project to Agent or Operator.</div>`;
+  }
   // Medusa session-comms auto-enable (MED-2K9P Chunk 02) — engine-agnostic;
   // default OFF (only an explicit true opts in).
   const initialMedusaChecked = !!project.medusaEnabled;
@@ -2060,6 +2070,7 @@ function openSettings(name, options) {
         <label class="form-label" for="settingsReleaseMode">Release mode</label>
         <select class="form-select" id="settingsReleaseMode">${releaseModeOpts}</select>
         <div class="form-hint">Whether a wrap cuts a release: promote CHANGELOG <code>[Unreleased]</code> and bump the project's semver — from the Version file path setting if set, otherwise <code>version.json</code> then <code>package.json</code>. <strong>Agent</strong> cuts when the release checks pass (entries in <code>[Unreleased]</code>, the active build plan finished), holds mid-plan, and asks when it can't tell. <strong>Operator</strong> stops any wrap that has a release to cut at the version bump, for you to choose Cut or Hold. <strong>Off</strong> never cuts, for projects that manage their own versioning. The wrap dialog's Release choice overrides Agent and Operator for one wrap.</div>
+        ${releaseOwnerHint}
       </div>
       <div class="form-group">
         <label class="form-label" for="settingsVersionFilePath">Version file path</label>
@@ -6081,6 +6092,7 @@ async function openGroupModal(groupId) {
     document.getElementById('groupDeleteBtn').classList.remove('hidden');
 
     renderGroupMembers(data.members || [], groupId);
+    renderGroupReleaseOwner(data.members || [], data.releaseOwnerProjectId);
 
     // Show docs section (edit only — need a group to attach docs to)
     const docsSection = document.getElementById('groupDocsSection');
@@ -6092,6 +6104,7 @@ async function openGroupModal(groupId) {
     document.getElementById('groupSharedDir').value = '';
     document.getElementById('groupDeleteBtn').classList.add('hidden');
     document.getElementById('groupDocsSection').classList.add('hidden');
+    document.getElementById('groupReleaseOwnerSection').classList.add('hidden');
 
     // Show all projects unchecked for new group
     renderGroupMembers([], null);
@@ -6135,6 +6148,36 @@ function renderGroupMembers(currentMembers, groupId) {
 }
 
 /**
+ * Render the release-authority select in the group edit modal (#1697).
+ * Hidden when the group has no members — there is nothing to hold
+ * authority yet.
+ * @param {object[]} currentMembers - Current group members ({id, name})
+ * @param {number|null} releaseOwnerProjectId - The group's current owner, if any
+ */
+function renderGroupReleaseOwner(currentMembers, releaseOwnerProjectId) {
+  const section = document.getElementById('groupReleaseOwnerSection');
+  const select = document.getElementById('groupReleaseOwnerSelect');
+  if (currentMembers.length === 0) {
+    section.classList.add('hidden');
+    return;
+  }
+  section.classList.remove('hidden');
+  const options = ['<option value="">— none —</option>']
+    .concat(currentMembers.map(m => `<option value="${m.id}"${m.id === releaseOwnerProjectId ? ' selected' : ''}>${esc(m.name)}</option>`));
+  select.innerHTML = options.join('');
+}
+
+/**
+ * Transfer (or clear) a group's release authority (#1697).
+ * @param {string} value - The selected project id, or '' to clear
+ */
+async function setGroupReleaseOwner(value) {
+  if (!groupEditId) return;
+  const releaseOwnerProjectId = value === '' ? null : Number(value);
+  await apiMutate(`/api/groups/${groupEditId}`, 'PUT', { releaseOwnerProjectId });
+}
+
+/**
  * Render shared docs list in group edit modal.
  * @param {object[]} docs
  */
@@ -6167,6 +6210,10 @@ async function toggleGroupMembership(groupId, projectId, add) {
   } else {
     await apiMutate(`/api/groups/${groupId}/members/${projectId}`, 'DELETE', {});
   }
+  // Refresh the release-owner select: membership (and possibly ownership,
+  // if the removed member held it — #1697) just changed.
+  const data = await api(`/api/groups/${groupId}`);
+  if (data) renderGroupReleaseOwner(data.members || [], data.releaseOwnerProjectId);
 }
 
 /**

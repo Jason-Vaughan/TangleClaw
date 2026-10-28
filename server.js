@@ -4756,6 +4756,12 @@ route('PATCH', '/api/projects/:name', async (req, res, params, body) => {
     if (result.code === 'NOT_FOUND') {
       return errorResponse(res, 404, firstError, 'NOT_FOUND');
     }
+    // #1697 — a validator may now name its own code (group release-ownership
+    // conflict); 409 says the project's current group state is the obstacle,
+    // not the request body (Architect B1).
+    if (result.code === 'CONFLICT') {
+      return errorResponse(res, 409, firstError, 'CONFLICT');
+    }
     return errorResponse(res, 400, firstError, 'BAD_REQUEST');
   }
 
@@ -6045,6 +6051,10 @@ route('PUT', '/api/groups/:id', (req, res, params, body) => {
     }
     if (err.code === 'CONFLICT') {
       return errorResponse(res, 409, err.message, 'CONFLICT');
+    }
+    // #1697: releaseOwnerProjectId naming a non-member project.
+    if (err.code === 'BAD_REQUEST') {
+      return errorResponse(res, 400, err.message, 'BAD_REQUEST');
     }
     throw err;
   }

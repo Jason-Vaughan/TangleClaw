@@ -77,6 +77,62 @@ describe('release recommendation helpers', () => {
       }
     });
 
+    it('is closed for a non-owner group member, even with an explicit agent/operator config (Critic R-2)', () => {
+      const owner = makeProject({ config: { releaseMode: 'agent' } });
+      const other = makeProject({ config: { releaseMode: 'agent' } });
+      const ownerRow = store.projects.create({ name: owner.name, path: owner.path });
+      const otherRow = store.projects.create({ name: other.name, path: other.path });
+      const group = store.projectGroups.create({ name: 'rr-fleet-1' });
+      store.projectGroups.addMember(group.id, ownerRow.id);
+      store.projectGroups.addMember(group.id, otherRow.id);
+      store.projectGroups.claimReleaseOwnerIfVacant(group.id, ownerRow.id);
+
+      const out = rec.releaseDecisionOpen(other, {});
+      assert.equal(out.open, false);
+      assert.match(out.reason, /releaseMode is off/);
+    });
+
+    it('is closed for a non-owner worktree-scoped project too, in both planning and execution (PRR-A B5)', () => {
+      // Worktree wraps have `path` = the work tree (where CHANGELOG.md
+      // actually lives) and `configPath` = the registered checkout (where
+      // `.tangleclaw/project.json` lives, and the only path `store.projects`
+      // has a row for) — the group membership lookup must resolve via
+      // `configPath`, not the (unregistered) worktree `path`.
+      const ownerConfigDir = makeProject({ config: { releaseMode: 'agent' } });
+      const otherConfigDir = makeProject({ config: { releaseMode: 'agent' } });
+      const ownerRow = store.projects.create({ name: ownerConfigDir.name, path: ownerConfigDir.path });
+      const otherRow = store.projects.create({ name: otherConfigDir.name, path: otherConfigDir.path });
+      const group = store.projectGroups.create({ name: 'rr-fleet-worktree' });
+      store.projectGroups.addMember(group.id, ownerRow.id);
+      store.projectGroups.addMember(group.id, otherRow.id);
+      store.projectGroups.claimReleaseOwnerIfVacant(group.id, ownerRow.id);
+
+      // Separate "worktree" dirs — CHANGELOG.md, no .tangleclaw/ at all.
+      const otherWorktree = makeProject({ config: undefined });
+      const ownerWorktree = makeProject({ config: undefined });
+      const worktreeOther = { name: otherConfigDir.name, path: otherWorktree.path, configPath: otherConfigDir.path };
+      const worktreeOwner = { name: ownerConfigDir.name, path: ownerWorktree.path, configPath: ownerConfigDir.path };
+
+      assert.equal(rec.releaseDecisionOpen(worktreeOther, {}).open, false, 'non-owner execution phase');
+      assert.equal(rec.releaseDecisionOpen(worktreeOther, {}, { planning: true }).open, false, 'non-owner planning phase');
+      assert.equal(rec.releaseDecisionOpen(worktreeOwner, {}).open, true, 'owner execution phase');
+      assert.equal(rec.releaseDecisionOpen(worktreeOwner, {}, { planning: true }).open, true, 'owner planning phase');
+    });
+
+    it('fails closed when the group ownership lookup throws on an initialized store (Architect R2, mirrors version-bump.js B3)', () => {
+      const project = makeProject({ config: { releaseMode: 'agent' } });
+      store.projects.create({ name: project.name, path: project.path });
+      const savedFind = store.projectGroups.findReleaseOwnerElsewhere;
+      store.projectGroups.findReleaseOwnerElsewhere = () => { throw new Error('simulated DB failure'); };
+      try {
+        const out = rec.releaseDecisionOpen(project, {});
+        assert.equal(out.open, false);
+        assert.match(out.reason, /could not verify group release authority/);
+      } finally {
+        store.projectGroups.findReleaseOwnerElsewhere = savedFind;
+      }
+    });
+
     it('is closed once the operator has decided', () => {
       const project = makeProject({ config: { releaseMode: 'agent' } });
       assert.match(rec.releaseDecisionOpen(project, { release: 'cut' }).reason, /you chose Cut/);

@@ -91,7 +91,9 @@ describe('wrap CHANGELOG transaction — the AI edit survives into the release',
   beforeEach(() => {
     savedInternal = { ...vb._internal };
     savedLoad = store.projectConfig.load;
-    store.projectConfig.load = () => ({});
+    // #1702 changed the unconfigured default to operator — this block's
+    // subject is the changelog/version-bump transaction, not release mode.
+    store.projectConfig.load = () => ({ releaseMode: 'agent' });
     vb._internal.todayIso = () => '2026-07-19';
   });
 
@@ -215,7 +217,10 @@ function makeFragmentRepo({ config = {}, resolve = true, fragments = { '7.featur
   fs.mkdirSync(path.join(dir, 'changelog.d'));
   for (const [name, body] of Object.entries(fragments)) fs.writeFileSync(path.join(dir, 'changelog.d', name), body);
   fs.mkdirSync(path.join(dir, '.tangleclaw'));
-  fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), JSON.stringify(config));
+  // #1702 changed the unconfigured default to operator — this file's own
+  // subject is the fragment/commit transaction, not release mode, so the
+  // default here pins agent explicitly; an explicit `config` still wins.
+  fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), JSON.stringify({ releaseMode: 'agent', ...config }));
   git(dir, 'add', '-A');
   git(dir, 'commit', '-q', '-m', 'init');
   git(dir, 'checkout', '-q', '-b', 'feat/session');

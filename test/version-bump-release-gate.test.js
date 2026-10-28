@@ -146,8 +146,11 @@ describe('version-bump release gate', () => {
       assert.match(result.output.detail, /cut on the operator's patch pick \(readiness: not-ready\)/);
     });
 
-    it('is the default, and a project with no plan cuts as it always did', async () => {
-      const { result } = await run(makeProject());
+    it('a project with no plan still cuts, under an EXPLICIT agent config', async () => {
+      // Pre-#1702 this scenario needed no config at all — `agent` was the
+      // unconfigured default. It is now `operator` (see the describe block
+      // below), so an explicit agent config is what exercises this path.
+      const { result } = await run(makeProject({ config: { releaseMode: 'agent' } }));
       assert.equal(result.status, 'done');
       assert.equal(result.output.releaseMode, 'agent');
       assert.equal(result.output.decidedBy, 'readiness');
@@ -162,6 +165,14 @@ describe('version-bump release gate', () => {
   });
 
   describe('operator', () => {
+    it('is now the unconfigured default (#1702) — no config at all halts and asks, same as explicit operator', async () => {
+      const { result, staged } = await run(makeProject({ plan: '- [x] done' }));
+      assert.equal(result.status, 'needs-operator');
+      assert.equal(result.output.releaseMode, 'operator');
+      assert.match(result.output.reason, /releaseMode is operator/);
+      assert.deepEqual(staged, {});
+    });
+
     it('halts even when ready, and asks the operator with what would be cut', async () => {
       const { result, staged } = await run(makeProject({ config: { releaseMode: 'operator' }, plan: '- [x] done' }));
       assert.equal(result.status, 'needs-operator');
@@ -502,6 +513,127 @@ describe('version-bump release gate', () => {
         + '[1.2.3]: https://github.com/example/repo/compare/v1.0.0...v1.2.3\n';
       const out = versionBump._promoteUnreleased(text, '1.3.0', ISO);
       assert.equal(out.split('[1.3.0]:').length - 1, 1, 'exactly one [1.3.0]: definition, not a second');
+    });
+  });
+
+  describe('group release authority (#1697)', () => {
+    /**
+     * Registers `project` as a real `store.projects` row (version-bump's
+     * group lookup resolves by path), so it can be put in a group.
+     * @param {{name:string, path:string}} project - From `makeProject`
+     * @returns {object} The stored project row
+     */
+    function registerProject(project) {
+      return store.projects.create({ name: project.name, path: project.path });
+    }
+
+    it('skips naming the owner when a different project holds the group\'s release authority', async () => {
+      const owner = makeProject({ config: { releaseMode: 'agent' }, plan: '- [x] done' });
+      const other = makeProject({ config: { releaseMode: 'agent' }, plan: '- [x] done' });
+      const ownerRow = registerProject(owner);
+      const otherRow = registerProject(other);
+      const group = store.projectGroups.create({ name: 'vbg-fleet-1' });
+      store.projectGroups.addMember(group.id, ownerRow.id);
+      store.projectGroups.addMember(group.id, otherRow.id);
+      store.projectGroups.claimReleaseOwnerIfVacant(group.id, ownerRow.id);
+
+      const { result } = await run(other);
+      assert.equal(result.status, 'skipped');
+      assert.match(result.output.reason, new RegExp(`group release authority belongs to "${owner.name}"`));
+    });
+
+    it('does not skip the project that actually holds the group\'s release authority', async () => {
+      const owner = makeProject({ config: { releaseMode: 'agent' }, plan: '- [x] done' });
+      const other = makeProject({ config: { releaseMode: 'agent' }, plan: '- [x] done' });
+      const ownerRow = registerProject(owner);
+      const otherRow = registerProject(other);
+      const group = store.projectGroups.create({ name: 'vbg-fleet-2' });
+      store.projectGroups.addMember(group.id, ownerRow.id);
+      store.projectGroups.addMember(group.id, otherRow.id);
+      store.projectGroups.claimReleaseOwnerIfVacant(group.id, ownerRow.id);
+
+      const { result } = await run(owner);
+      assert.equal(result.status, 'done');
+    });
+
+    it('skips even when the non-owner member explicitly configured itself agent on disk', async () => {
+      // The whole point of #1697's run-time guard: a hand-edited or
+      // already-configured project.json does not override group authority.
+      const owner = makeProject({ config: { releaseMode: 'agent' }, plan: '- [x] done' });
+      const other = makeProject({ config: { releaseMode: 'agent' }, plan: '- [x] done' });
+      const ownerRow = registerProject(owner);
+      const otherRow = registerProject(other);
+      const group = store.projectGroups.create({ name: 'vbg-fleet-3' });
+      store.projectGroups.addMember(group.id, ownerRow.id);
+      store.projectGroups.addMember(group.id, otherRow.id);
+      store.projectGroups.claimReleaseOwnerIfVacant(group.id, ownerRow.id);
+
+      const { result } = await run(other, { release: 'cut' });
+      assert.equal(result.status, 'skipped');
+      assert.match(result.output.reason, /group release authority belongs to/);
+    });
+
+    it('is unaffected by a project not registered in the store at all (no group to check)', async () => {
+      const unregistered = makeProject({ config: { releaseMode: 'agent' }, plan: '- [x] done' });
+      const { result } = await run(unregistered);
+      assert.equal(result.status, 'done');
+    });
+
+    it('is unaffected by a project with no group membership', async () => {
+      const solo = makeProject({ config: { releaseMode: 'agent' }, plan: '- [x] done' });
+      registerProject(solo);
+      const { result } = await run(solo);
+      assert.equal(result.status, 'done');
+    });
+
+    it('a release:"cut" override on a non-owner member does not bypass group ownership (PRR-A B1)', async () => {
+      // The owner's own releaseMode is 'off' here specifically to exercise
+      // the #1497 override path (release:'cut' turning an off project on)
+      // — the exact interaction PRR-A found did not check group ownership.
+      const owner = makeProject({ config: { releaseMode: 'agent' }, plan: '- [x] done' });
+      const other = makeProject({ config: { releaseMode: 'off' }, plan: '- [x] done' });
+      const ownerRow = registerProject(owner);
+      const otherRow = registerProject(other);
+      const group = store.projectGroups.create({ name: 'vbg-fleet-override' });
+      store.projectGroups.addMember(group.id, ownerRow.id);
+      store.projectGroups.addMember(group.id, otherRow.id);
+      store.projectGroups.claimReleaseOwnerIfVacant(group.id, ownerRow.id);
+
+      const { result } = await run(other, { release: 'cut' });
+      assert.equal(result.status, 'skipped');
+      assert.match(result.output.reason, /group release authority belongs to/);
+    });
+
+    it('fails closed (skips) when the group ownership lookup throws, rather than proceeding as unowned (PRR-A B3)', async () => {
+      const solo = makeProject({ config: { releaseMode: 'agent' }, plan: '- [x] done' });
+      registerProject(solo);
+      const savedGetByProject = store.projectGroups.getByProject;
+      store.projectGroups.getByProject = () => { throw new Error('simulated DB failure'); };
+      try {
+        const { result } = await run(solo);
+        assert.equal(result.status, 'skipped');
+        assert.match(result.output.reason, /could not resolve group release authority/);
+      } finally {
+        store.projectGroups.getByProject = savedGetByProject;
+      }
+    });
+
+    it('resolves group membership through the registered checkout, not a worktree path (PRR-A B2)', async () => {
+      const owner = makeProject({ config: { releaseMode: 'agent' }, plan: '- [x] done' });
+      const other = makeProject({ config: { releaseMode: 'agent' }, plan: '- [x] done' });
+      const ownerRow = registerProject(owner);
+      const otherRow = registerProject(other);
+      const group = store.projectGroups.create({ name: 'vbg-fleet-worktree' });
+      store.projectGroups.addMember(group.id, ownerRow.id);
+      store.projectGroups.addMember(group.id, otherRow.id);
+      store.projectGroups.claimReleaseOwnerIfVacant(group.id, ownerRow.id);
+
+      // Simulate a worktree wrap: `path` is a fake work-tree directory, the
+      // registered checkout lives at `configPath`.
+      const worktreeProject = { ...other, path: '/tmp/nonexistent-worktree-path', configPath: other.path };
+      const { result } = await run(worktreeProject);
+      assert.equal(result.status, 'skipped');
+      assert.match(result.output.reason, /group release authority belongs to/);
     });
   });
 });
