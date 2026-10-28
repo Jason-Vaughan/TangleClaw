@@ -65,6 +65,21 @@ mirrored rule stays as written because it is correct everywhere else.
   in `.claude/plans` is no longer rolled by this repo's own wrap. `lib/plan-docs.js` still SERVES a
   plan from the legacy location — for any TangleClaw-managed project this migration did not cover —
   so only the wrap-resolution half of the mirrored rule is an exception here, not the serving half.
+- **This repo's own PR merge strategy is merge commits, not "the methodology layer's call."**
+  The mirrored Branches & Pull Requests rule below leaves the merge strategy to each managed
+  project's own governance and prescribes nothing itself — correct for the projects TangleClaw
+  manages. For this repo, Integrator Rule #282 settles it instead: every PR here merges with
+  `gh pr merge --merge --match-head-commit <sha>` — a true merge commit, never a fallback to
+  squash — because Prawduct's review evidence is recorded against trees and composes across a true
+  merge, while a squash rewrites the branch and strands anything built on it. Never fall back to
+  `--squash` if `--merge` is refused: stop and report (#2162).
+  `.prawduct/artifacts/project-preferences.md`'s "PR merge strategy" row is the fuller record.
+  This is independent of `wrapMergeMethod` in a managed project's `.tangleclaw/project.json`
+  (`"squash" | "merge" | "rebase"`, defaulting to `"squash"` when unconfigured) — the flag the wrap
+  pipeline's own auto-PR close-loop uses to merge OTHER managed projects' wrap-committed PRs
+  (#1172, `lib/wrap-steps/pr-merge.js`'s `resolveWrapMergeMethod`). This repo's own
+  `wrapAutoPrEnabled` is off, so its PRs are never opened or merged by that close-loop in the first
+  place; they are opened and merged directly, per Rule #282 above.
 
 # Global Rules
 
