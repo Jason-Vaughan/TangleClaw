@@ -678,9 +678,16 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       });
 
       it('refuses launchctl, explaining a manual start, when launchd does not own this process (#1555)', async () => {
-        serverInfo._internal.execFileAsync = () => { throw new Error('launchd must not be re-probed'); };
-        serverInfo._internal.existsSync = (p) => p === serverInfo.MACOS_PLIST_PATH;
+        // existsSync/execFileAsync are re-stubbed INSIDE the loop, not once
+        // before it: restoreInternal() in the loop's own finally wipes them
+        // after the first iteration, so a stub set only before the loop
+        // silently falls through to the REAL filesystem on iteration two —
+        // which happened to pass on a macOS dev machine with the real
+        // plist installed, and failed on Linux CI where it is not (caught
+        // by GitHub Actions on PR #2671, not locally).
         for (const xpc of [undefined, '0']) {
+          serverInfo._internal.execFileAsync = () => { throw new Error('launchd must not be re-probed'); };
+          serverInfo._internal.existsSync = (p) => p === serverInfo.MACOS_PLIST_PATH;
           serverInfo._internal.env = () => (xpc === undefined ? {} : { XPC_SERVICE_NAME: xpc });
           try {
             const result = await serverInfo.confirmRestartMechanism('launchctl');
