@@ -12,7 +12,7 @@ setLevel('error');
 
 const store = require('../lib/store');
 const { createServer } = require('../server');
-const { operatorHeaders } = require('./_shared-docs-callers');
+const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
 
 /**
  * Make an HTTP request to the test server.
@@ -395,6 +395,134 @@ describe('api-sessions', () => {
         store.sessions.kill(session.id, 'test cleanup');
       }
     });
+  });
+
+  describe('POST /api/sessions/:project/command — verified-caller hardening (#2402)', () => {
+    /**
+     * Start a live-looking session for 'api-sess-test' and stub tmux so the
+     * injection actually "succeeds", capturing exactly the text that would
+     * have been typed into the pane.
+     * @returns {{session: object, real: object, typed: string[], cleanup: () => void}}
+     */
+    function primeInjectableSession() {
+      const tmux = require('../lib/tmux');
+      const real = { hasSession: tmux.hasSession, capturePane: tmux.capturePane, sendKeys: tmux.sendKeys, probeSession: tmux.probeSession };
+      const project = store.projects.getByName('api-sess-test');
+      const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: `api-sess-2402-${Math.random().toString(36).slice(2)}` });
+      const typed = [];
+      tmux.hasSession = () => true;
+      tmux.probeSession = () => ({ answered: true, live: true, cause: null });
+      tmux.sendKeys = (_s, text) => { typed.push(text); };
+      tmux.capturePane = () => ({ lines: ['──────────', '❯ ', '──────────', '  ? for shortcuts'], alternateScreen: false });
+      return {
+        session, typed,
+        cleanup: () => { Object.assign(tmux, real); store.sessions.kill(session.id, 'test cleanup'); }
+      };
+    }
+
+    it('refuses a leading slash from a verified peer project with 403 SLASH_COMMAND_OPERATOR_ONLY', async () => {
+      const caller = store.projects.create({ name: `caller-2402-${Math.random().toString(36).slice(2)}`, path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-2402-')), engine: 'claude' });
+      const bound = bindProject(caller);
+      const primed = primeInjectableSession();
+      try {
+        const res = await request(server, 'POST', '/api/sessions/api-sess-test/command',
+          { command: '/clear', startupIntervention: true }, bound.headers);
+        assert.equal(res.status, 403);
+        assert.equal(res.body.code, 'SLASH_COMMAND_OPERATOR_ONLY');
+        assert.equal(primed.typed.length, 0, 'the recipient pane is never typed into');
+      } finally {
+        primed.cleanup();
+      }
+    });
+
+    it('refuses a leading slash from the Master with 403 SLASH_COMMAND_OPERATOR_ONLY', async () => {
+      const master = require('../lib/master');
+      const real = master.liveMasterLaunchId;
+      master.liveMasterLaunchId = () => ({ launchId: 'master-2402-launch', answered: true, cause: null });
+      const primed = primeInjectableSession();
+      try {
+        const res = await request(server, 'POST', '/api/sessions/api-sess-test/command',
+          { command: ' /clear', startupIntervention: true },
+          { 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': 'master-2402-launch' });
+        assert.equal(res.status, 403);
+        assert.equal(res.body.code, 'SLASH_COMMAND_OPERATOR_ONLY');
+        assert.equal(primed.typed.length, 0);
+      } finally {
+        master.liveMasterLaunchId = real;
+        primed.cleanup();
+      }
+    });
+
+    it('an unbound (no-header) caller never reaches the slash guard — the launch binding floor (#2233) refuses it first', async () => {
+      // `lib/launch-binding-guard.js` already floors every mutating route,
+      // this one included, to operator/project/Master. A bare request is
+      // refused there before the handler — and so before this car's
+      // slash-guard — ever runs. Documented here as a regression guard: were
+      // that floor ever to exempt this route, the slash guard is the layer
+      // this test would then need to rely on instead.
+      const primed = primeInjectableSession();
+      try {
+        const res = await request(server, 'POST', '/api/sessions/api-sess-test/command',
+          { command: '/clear', startupIntervention: true }, {});
+        assert.equal(res.status, 403);
+        assert.equal(res.body.code, 'LAUNCH_BINDING_REQUIRED');
+        assert.equal(primed.typed.length, 0);
+      } finally {
+        primed.cleanup();
+      }
+    });
+
+    it('still lets the operator send a leading-slash command, unstamped', async () => {
+      const primed = primeInjectableSession();
+      try {
+        const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/command', { command: '/clear', startupIntervention: true });
+        assert.equal(res.status, 200);
+        assert.deepEqual(primed.typed, ['/clear']);
+        assert.equal(res.body.receipt.stamped, false);
+        assert.deepEqual(res.body.receipt.verifiedCaller, { kind: 'operator' });
+        assert.equal(typeof res.body.receipt.submittedAt, 'string');
+      } finally {
+        primed.cleanup();
+      }
+    });
+
+    it('stamps an ordinary command from a verified peer project with a non-forgeable prefix, and returns a receipt', async () => {
+      const caller = store.projects.create({ name: `caller-2402b-${Math.random().toString(36).slice(2)}`, path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-2402b-')), engine: 'claude' });
+      const bound = bindProject(caller);
+      const primed = primeInjectableSession();
+      try {
+        const res = await request(server, 'POST', '/api/sessions/api-sess-test/command',
+          { command: 'ls -la', startupIntervention: true }, bound.headers);
+        assert.equal(res.status, 200);
+        assert.equal(primed.typed.length, 1);
+        assert.match(primed.typed[0], new RegExp(`^\\[DIRECT INPUT from project "${caller.name}" session ${bound.sessionId}, verified by TangleClaw\\]\\nls -la$`));
+        assert.equal(res.body.command, 'ls -la', 'the receipt echoes the submitted command, not the stamped text');
+        assert.equal(res.body.receipt.stamped, true);
+        assert.deepEqual(res.body.receipt.verifiedCaller, { kind: 'project', projectId: caller.id, sessionId: bound.sessionId });
+      } finally {
+        primed.cleanup();
+      }
+    });
+
+    it('stamps an ordinary command from the Master, and returns a receipt', async () => {
+      const master = require('../lib/master');
+      const real = master.liveMasterLaunchId;
+      master.liveMasterLaunchId = () => ({ launchId: 'master-2402b-launch', answered: true, cause: null });
+      const primed = primeInjectableSession();
+      try {
+        const res = await request(server, 'POST', '/api/sessions/api-sess-test/command',
+          { command: 'ls -la', startupIntervention: true },
+          { 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': 'master-2402b-launch' });
+        assert.equal(res.status, 200);
+        assert.equal(primed.typed.length, 1);
+        assert.equal(primed.typed[0], '[DIRECT INPUT from the Project Master, verified by TangleClaw]\nls -la');
+        assert.deepEqual(res.body.receipt.verifiedCaller, { kind: 'master' });
+      } finally {
+        master.liveMasterLaunchId = real;
+        primed.cleanup();
+      }
+    });
+
   });
 
   describe('POST /api/sessions/:project/command — startup admission gate (#1633)', () => {

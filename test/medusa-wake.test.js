@@ -1288,6 +1288,79 @@ describe('medusa-wake — nudge addresses the judged session (MED-7Q4C)', () => 
   });
 });
 
+describe('medusa-wake — #2402 reply-guidance override and non-actionable-notice suppression', () => {
+  let saved;
+  beforeEach(() => { wake.stop(); saved = { ...wake._internal }; });
+  afterEach(() => { Object.assign(wake._internal, saved); wake.stop(); });
+
+  it('uses the project\'s replyGuidance override in the nudge instead of the default tc message instruction', () => {
+    const world = installWorld({ config: { medusaWake: true, replyGuidance: 'Answer by direct input: POST /api/sessions/proj-a/command' } });
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 1);
+    assert.match(world.injected[0].command, /Answer by direct input: POST \/api\/sessions\/proj-a\/command/);
+    assert.ok(!world.injected[0].command.includes('tc message send --in-reply-to'),
+      'the default instruction is replaced, not merely appended alongside');
+  });
+
+  it('keeps the default instruction when replyGuidance is unset', () => {
+    const world = installWorld();
+    tickThroughDebounce();
+    assert.match(world.injected[0].command, /tc message send --in-reply-to <message-id>/);
+  });
+
+  it('keeps the default instruction when replyGuidance is invalid (e.g. multi-line), rather than injecting something unvalidated', () => {
+    const world = installWorld({ config: { medusaWake: true, replyGuidance: 'two\nlines' } });
+    tickThroughDebounce();
+    assert.match(world.injected[0].command, /tc message send --in-reply-to <message-id>/);
+  });
+
+  it('suppresses the nudge when every unhandled message is a shared_doc_updated notice and the project opted in', () => {
+    const world = installWorld({
+      config: { medusaWake: true, suppressNonActionableWakes: true },
+      inbox: [{ type: 'system', event: 'shared_doc_updated', doc: 'NETWORK', docId: 'd1', sentAt: '2026-10-28T00:00:00Z' }]
+    });
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 0);
+    assert.equal(world.recorded.some((r) => r.skipReason === 'non-actionable-notice-only'), true);
+  });
+
+  it('still nudges for an all-notice inbox when the project has not opted in', () => {
+    const world = installWorld({
+      config: { medusaWake: true },
+      inbox: [{ type: 'system', event: 'shared_doc_updated', doc: 'NETWORK', docId: 'd1', sentAt: '2026-10-28T00:00:00Z' }]
+    });
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 1, 'default preserves today\'s behavior — opt-in only');
+  });
+
+  it('still nudges when a real message sits alongside a notice, even opted in', () => {
+    const world = installWorld({
+      config: { medusaWake: true, suppressNonActionableWakes: true },
+      inbox: [
+        { type: 'system', event: 'shared_doc_updated', doc: 'NETWORK', docId: 'd1', sentAt: '2026-10-28T00:00:00Z' },
+        { id: 'm1', from: 'peer', message: 'hello' }
+      ],
+      status: { state: 'listening', workspaceId: 'proj-a-abc123', unread: 2, lastError: null }
+    });
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 1, 'a real message alongside a notice still nudges');
+  });
+
+  it('never suppresses for the Master, which has no project config to read the setting from', () => {
+    const world = installWorld({
+      sessions: [],
+      masterRecord: {
+        id: 'master', isMaster: true, name: 'Project Master', tmuxSession: 'tangleclaw-master',
+        engineId: 'claude', sessionMode: 'tmux', status: 'active', medusaWake: true,
+        apiBase: '/api/master/medusa'
+      },
+      inbox: [{ type: 'system', event: 'shared_doc_updated', doc: 'NETWORK', docId: 'd1', sentAt: '2026-10-28T00:00:00Z' }]
+    });
+    tickThroughDebounce();
+    assert.equal(world.masterInjected.length, 1, 'the Master branch is unaffected by a setting it cannot read');
+  });
+});
+
 describe('medusa-wake — gates (each one blocks alone)', () => {
   let saved;
   beforeEach(() => { wake.stop(); saved = { ...wake._internal }; });

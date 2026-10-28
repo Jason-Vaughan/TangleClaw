@@ -147,6 +147,7 @@ files = [
   "test/plan-docs.test.js",
   "test/plan-progress-card.test.js",
   "test/plan-train-card.test.js",
+  "test/project-config.test.js",
   "test/project-deliveries-ledger.test.js",
   "test/project-paths.test.js",
   "test/project-rules-modal.test.js",
