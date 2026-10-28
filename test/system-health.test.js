@@ -868,12 +868,40 @@ describe('POST /api/server/restart — non-blocking exec (#2140)', () => {
     }
   });
 
+  it('still logs when the command genuinely hangs and node has to kill it on timeout — the guard must not swallow a real failure', async () => {
+    // Distinguishes the two signal: 'SIGTERM' cases: a child that
+    // self-terminates (killed: false, the test above) is the expected
+    // shutdown path, but a command that just hangs and gets killed by
+    // node's own `{ timeout: 5000 }` (killed: true) is a genuine failure —
+    // the previous execSync path always logged this, and a guard that
+    // conflates the two would silently drop it.
+    const origDetect = serverInfo.detectRestartMechanism;
+    const origBuild = serverInfo.buildRestartCommand;
+    const origError = console.error;
+    const logged = [];
+    serverInfo.detectRestartMechanism = () => 'launchctl';
+    serverInfo.buildRestartCommand = () => 'sleep 30';
+    console.error = (...args) => { logged.push(args.join(' ')); };
+    try {
+      const { status } = await request('POST', '/api/server/restart');
+      assert.equal(status, 202);
+      // Past the route's 300ms delay plus the exec's own 5000ms timeout.
+      await new Promise((resolve) => setTimeout(resolve, 5600));
+      const line = logged.find((l) => l.includes('[server-restart] exec failed'));
+      assert.ok(line, `a node-enforced timeout kill must still be logged, got: ${JSON.stringify(logged)}`);
+    } finally {
+      console.error = origError;
+      serverInfo.detectRestartMechanism = origDetect;
+      serverInfo.buildRestartCommand = origBuild;
+    }
+  });
+
   it('wires exec (not execSync) with the signal/killed guard (source probe)', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
     const route = src.slice(src.indexOf("route('POST', '/api/server/restart'"));
     const body = route.slice(0, route.indexOf('\n});\n'));
     assert.doesNotMatch(body, /execSync\(/, 'the restart exec must not block the event loop');
     assert.match(body, /require\('node:child_process'\)\.exec\(command, \{ timeout: 5000 \}/);
-    assert.match(body, /if \(err\.killed \|\| err\.signal === 'SIGTERM'\) return;/);
+    assert.match(body, /if \(err\.signal === 'SIGTERM' && !err\.killed\) return;/);
   });
 });

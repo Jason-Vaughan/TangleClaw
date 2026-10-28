@@ -1345,9 +1345,12 @@ route('POST', '/api/server/restart', async (req, res, _params, body) => {
     require('node:child_process').exec(command, { timeout: 5000 }, (err, _stdout, stderr) => {
       if (!err) return;
       // This process is already shutting down as part of the restart it just
-      // triggered — the child dying with it is the expected success path, not
-      // a failure to log.
-      if (err.killed || err.signal === 'SIGTERM') return;
+      // triggered — the child dying to a SIGTERM IT raised against itself (not
+      // one `timeout: 5000` above enforced, which also sets signal: 'SIGTERM'
+      // but with killed: true) is the expected success path, not a failure to
+      // log. A genuinely hung command that node had to kill on timeout still
+      // logs — that is a real failure, not a shutdown.
+      if (err.signal === 'SIGTERM' && !err.killed) return;
       // No process manager took the restart, so this process lives on:
       // log the command's own reason (a missing unit, no user bus) rather
       // than just its exit status, and don't crash.
