@@ -2556,6 +2556,14 @@ route('GET', '/api/launch-sequences', (req, res) => {
     // ledger is keyed by session, and a session may have no row at all, which is
     // a fact to show rather than a row to invent.
     const rulesRow = store.sessionRuleDeliveries.listForSession(sequence.sessionId)[0] || null;
+    // The pointer paste's own outcome (#1597): a pull-pointer launch's prime
+    // carries no rule text, so it writes no `rulesDelivery` row for the paste
+    // itself — this is kept in `activity_log` instead, and is simply absent
+    // for every other launch, which is why a missing row here means null
+    // rather than "unverified".
+    const pasteOutcomeRow = store.activity.query({
+      sessionId: sequence.sessionId, eventType: sessions.POINTER_PASTE_OUTCOME_EVENT, limit: 1
+    })[0] || null;
     return {
       sequenceId: sequence.id,
       sessionId: sequence.sessionId,
@@ -2601,6 +2609,10 @@ route('GET', '/api/launch-sequences', (req, res) => {
       rulesDelivery: rulesRow
         ? { outcome: rulesRow.outcome, channel: rulesRow.channel, skipReason: rulesRow.skipReason || null }
         : null,
+      // The paste's own fate, shown beside `rulesDelivery` rather than inside
+      // it — the activity-log detail already carries exactly the shape
+      // `launchPasteOutcomeHtml` (public/ui.js) reads.
+      pasteOutcome: pasteOutcomeRow ? pasteOutcomeRow.detail : null,
       // Which path put this launch's context in front of the engine (#1825 B3):
       // `native` means the startup prompt was fired through the engine's own
       // channel and nothing was typed into the pane; `legacy` is the paste or

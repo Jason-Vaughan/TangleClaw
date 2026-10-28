@@ -56,6 +56,7 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
   let other;
   let pulled;
   let hooked;
+  let pointered;
   let bind;
 
   before(async () => {
@@ -107,7 +108,15 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
       digest: 'abc',
       outcome: 'written'
     });
-    bind(other, { applicable: false, reason: 'the engine declares no launch-sequence support' });
+    pointered = bind(other, { applicable: false, reason: 'the engine declares no launch-sequence support' });
+
+    // A pull-pointer launch's prime carries no rule text (#1597), so its paste
+    // writes no `session_rule_deliveries` row — only this `activity_log` one.
+    // Piggybacked on `pointered` rather than a fourth launch of `project`, so
+    // the newest-first listing above keeps its own two-row expectation.
+    require('../lib/store/session-rules').recordPointerPasteOutcome({
+      sessionId: pointered.session.id, projectId: other.id, engineId: 'claude', outcome: 'delivered'
+    });
 
     // #1825 B3: the startupControl evidence of `hooked` — a channel that never
     // started, an automatic attempt that recorded why, and a denied fire by a
@@ -242,6 +251,17 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
       'a launch with no ledger row at all is reported as null, not omitted');
     assert.deepEqual(byId.get(hooked.sequence.id).rulesDelivery,
       { outcome: 'written', channel: 'rules-hook', skipReason: null });
+  });
+
+  it('carries the pointer paste\'s own outcome beside rule delivery, and null when no paste was recorded (#1597)', async () => {
+    const res = await get(server, `/api/launch-sequences?projectId=${project.id}`);
+    const byId = new Map(res.body.sequences.map((s) => [s.sequenceId, s]));
+    assert.equal(byId.get(pulled.sequence.id).pasteOutcome, null,
+      'a launch with no recorded paste is reported as null, not omitted');
+
+    const theirs = await get(server, `/api/launch-sequences?projectId=${other.id}`);
+    assert.deepEqual(theirs.body.sequences[0].pasteOutcome,
+      { engineId: 'claude', outcome: 'delivered', detail: null });
   });
 
   it('carries the preflight CAUSE, not only its verdict word', async () => {
