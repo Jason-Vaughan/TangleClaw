@@ -19,7 +19,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { setLevel } = require('../lib/logger');
+const { setLevel, setConsoleStream } = require('../lib/logger');
 
 setLevel('error');
 
@@ -335,6 +335,53 @@ describe('the default recovery mode a launch freezes (#1937)', () => {
     });
   });
 
+  describe('the gate state at the freeze (#2150)', () => {
+    /**
+     * Run `fn`, capturing its `info`-level log lines.
+     * @param {function(): void} fn
+     * @returns {string[]}
+     */
+    function capturingInfo(fn) {
+      const lines = [];
+      setLevel('info');
+      setConsoleStream({ write: (s) => lines.push(String(s)) });
+      try {
+        fn();
+      } finally {
+        setConsoleStream(null);
+        setLevel('error');
+      }
+      return lines;
+    }
+
+    it('names the gate state alongside the frozen mode and source, in the log', () => {
+      gate(ARMED);
+      const project = makeProject({ fileMode: 'operator', damaged: false });
+      const lines = capturingInfo(() => launch(project));
+      const frozen = lines.filter((l) => l.includes('Launch recovery mode frozen'));
+      assert.equal(frozen.length, 1, lines.join(''));
+      assert.match(frozen[0], /\bmode=advisory\b/);
+      assert.match(frozen[0], /\bsource=inherited\b/);
+      assert.match(frozen[0], new RegExp(`\\bgateState=${ARMED}\\b`));
+    });
+
+    it('names a null gate state for a process that cannot ask', () => {
+      gate(null);
+      const project = makeProject({ fileMode: 'operator', damaged: false });
+      const lines = capturingInfo(() => launch(project));
+      const frozen = lines.filter((l) => l.includes('Launch recovery mode frozen'));
+      assert.equal(frozen.length, 1, lines.join(''));
+      assert.match(frozen[0], /\bmode=operator\b/);
+      assert.match(frozen[0], /\bgateState=null\b/);
+    });
+
+    it('has one predicate for "this launch is operator-held", shared by the READY refusal and the bridge wait', () => {
+      assert.equal(launchSequence._operatorHeld({ recovery: 'required', recoveryMode: 'operator' }), true);
+      assert.equal(launchSequence._operatorHeld({ recovery: 'required', recoveryMode: 'advisory' }), false);
+      assert.equal(launchSequence._operatorHeld({ recovery: 'none', recoveryMode: 'operator' }), false);
+    });
+  });
+
   describe('the sentence an operator-held launch is told', () => {
     const reasons = {
       pinned: { projectRecoveryMode: 'operator', projectRecoverySource: 'pinned' },
@@ -448,6 +495,33 @@ describe('the default recovery mode a launch freezes (#1937)', () => {
       assert.equal('advisoryDefaultNotice' in launchSequence.next(second.id).body, false,
         'the first launch ended with its task step unread, and the notice was still its own');
       assert.equal(noticeLaunch(project), first.sequence.launchId);
+    });
+
+    it('serves the task step without the notice, and logs it, when the marker cannot be read — vs. true for the same readable row (#2150)', () => {
+      gate(ARMED);
+      const project = makeProject({ fileMode: 'operator', damaged: false });
+      const launched = launch(project);
+      ackThroughState(launched.id);
+      // The readable case: the row this launch claimed names it.
+      const task = launchSequence.next(launched.id).body;
+      assert.equal(task.advisoryDefaultNotice, true, 'readable row, same launch: the claim is honoured');
+
+      const realGet = store.projectRecoveryState.get;
+      store.projectRecoveryState.get = () => { throw new Error('database is locked'); };
+      const lines = [];
+      setLevel('warn');
+      setConsoleStream({ write: (s) => lines.push(String(s)) });
+      let unreadable;
+      try {
+        unreadable = launchSequence.next(launched.id).body;
+      } finally {
+        store.projectRecoveryState.get = realGet;
+        setConsoleStream(null);
+        setLevel('error');
+      }
+      assert.equal('advisoryDefaultNotice' in unreadable, false,
+        'an unreadable marker fails closed to no notice, not to a crash or a stale true');
+      assert.ok(lines.some((l) => l.includes('notice marker could not be read')), lines.join(''));
     });
   });
 
