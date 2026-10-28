@@ -1353,6 +1353,51 @@ describe('engines', () => {
       );
       assert.ok(lines.length > 0 && lines.every((l) => l.startsWith('#')), 'comment form must be all #-prefixed');
     });
+
+    describe('replyGuidance override (#2402)', () => {
+      it('_getRulesContent carries null by default — every carrier keeps its built-in text', () => {
+        assert.equal(engines._getRulesContent({}).replyGuidance, null);
+      });
+
+      it('_getRulesContent carries a validated project override', () => {
+        const rules = engines._getRulesContent({ replyGuidance: 'Answer by direct input: POST /api/sessions/<project>/command' });
+        assert.equal(rules.replyGuidance, 'Answer by direct input: POST /api/sessions/<project>/command');
+      });
+
+      it('the engine-private md form uses the override in place of the default instruction', () => {
+        const lines = engines._medusaSwitchboardLines(
+          {
+            medusaEnabled: true, medusaProjectName: 'p', serverProtocol: 'http', serverPort: 3102,
+            replyGuidance: 'Answer by direct input: POST /api/sessions/p/command'
+          },
+          'md', { committedCarrier: false }
+        );
+        assert.ok(lines.includes('Answer by direct input: POST /api/sessions/p/command'));
+        assert.ok(!lines.some((l) => l.includes('tc message send --in-reply-to')),
+          'the default instruction is replaced, not merely appended alongside');
+      });
+
+      it('the engine-private comment form uses the override too', () => {
+        const lines = engines._medusaSwitchboardLines(
+          {
+            medusaEnabled: true, medusaProjectName: 'p', serverProtocol: 'http', serverPort: 3102,
+            replyGuidance: 'Answer by direct input: POST /api/sessions/p/command'
+          },
+          'comment', { committedCarrier: false }
+        );
+        assert.ok(lines.some((l) => l.includes('Answer by direct input: POST /api/sessions/p/command')));
+      });
+
+      it('the committed (checkout-neutral) form never carries a per-project override', () => {
+        // _medusaDiscoveryLines takes no project at all, by design (#1619): the
+        // committed carrier must read identically in every checkout.
+        const lines = engines._medusaSwitchboardLines(
+          { medusaEnabled: true, medusaProjectName: 'p', serverProtocol: 'http', serverPort: 3102, replyGuidance: 'Answer by direct input' },
+          'md', { committedCarrier: true }
+        );
+        assert.ok(!lines.some((l) => l.includes('Answer by direct input')));
+      });
+    });
   });
 
   describe('AUTH-4b — service-token injection', () => {
