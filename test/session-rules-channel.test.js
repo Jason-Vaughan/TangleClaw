@@ -3,7 +3,7 @@
 // Startup rules delivery channel (#749) — the second channel that stops rules
 // competing with the prime for one hook's output.
 
-const { describe, it, before, after } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -304,6 +304,321 @@ describe('session rules channel (#749)', () => {
       const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-rules-none-'));
       assert.equal(channel.pruneShards(empty, 0), 0);
       fs.rmSync(empty, { recursive: true, force: true });
+    });
+  });
+});
+
+// #1597 — the pointer paste's own outcome. Housed here (rather than beside
+// `lib/sessions.js`'s _primePasteOutcome in test/prime-readiness-gate.test.js,
+// or beside `lib/store/session-rules.js`'s delivery ledger in
+// test/session-rule-delivery.test.js — this file's own subject, #749's
+// startup-hook sharding, is a different channel from the one #1597 adds) per
+// this car's dispatched authorized file scope, which names this file for the
+// feature rather than either of those two.
+describe('the pointer paste\'s own outcome (#1597)', () => {
+  const sessions = require('../lib/sessions');
+  const store = require('../lib/store');
+
+  describe('_pointerPasteOutcome — mirrors _primePasteOutcome\'s precedence for a pull-pointer launch', () => {
+    it('maps a ready gate to delivered with no detail', () => {
+      assert.deepEqual(
+        sessions._pointerPasteOutcome({ gated: true, ready: true, waitedMs: 1500 }),
+        { outcome: 'delivered', detail: null }
+      );
+    });
+
+    it('maps a timed-out gated readiness to timed_out, carrying the gate reason', () => {
+      const res = sessions._pointerPasteOutcome({ gated: true, ready: false, reason: 'marker never rendered' });
+      assert.equal(res.outcome, 'timed_out');
+      assert.equal(res.detail, 'marker never rendered');
+    });
+
+    it('maps a blind (ungated) paste to blind, not timed_out', () => {
+      const res = sessions._pointerPasteOutcome({ gated: false, reason: 'no at-rest marker — pasted blind' });
+      assert.equal(res.outcome, 'blind');
+      assert.match(res.detail, /pasted blind/);
+    });
+
+    it('an announced rejection outranks the gate, same as #1134 for the rule-delivery ledger', () => {
+      const res = sessions._pointerPasteOutcome(
+        { gated: true, ready: true },
+        { observed: 'rejected', reason: 'engine announced discarding the paste' }
+      );
+      assert.deepEqual(res, { outcome: 'rejected', detail: 'engine announced discarding the paste' });
+    });
+
+    it('a watch that saw no rejection leaves the gate\'s verdict exactly as it was', () => {
+      const delivered = sessions._pointerPasteOutcome({ gated: true, ready: true }, { observed: 'unknown', reason: 'could not look' });
+      assert.equal(delivered.outcome, 'delivered');
+    });
+  });
+
+  describe('_pointerPasteWithheldOutcome — the word for a pointer withheld before any readiness gate ran', () => {
+    it('reports pane_gone when the pane is known to have ended, whatever the gated-ness', () => {
+      assert.deepEqual(
+        sessions._pointerPasteWithheldOutcome({ paneGone: true, reason: 'tmux session ended before the prime was pasted' }),
+        { outcome: 'pane_gone', detail: 'tmux session ended before the prime was pasted' }
+      );
+    });
+
+    it('falls back to gated-ness alone when the pane\'s fate was never established', () => {
+      const gated = sessions._pointerPasteWithheldOutcome({ gated: true, reason: 'a startup dialog was on screen' });
+      assert.equal(gated.outcome, 'readiness-gated');
+      const blind = sessions._pointerPasteWithheldOutcome({ gated: false, reason: 'a startup dialog was on screen' });
+      assert.equal(blind.outcome, 'blind');
+    });
+
+    it('looks up gated-ness from the engine id when not given explicitly', () => {
+      // 'claude' declares no idleMarker, so this must resolve the same as `gated: false` above.
+      assert.equal(sessions._pointerPasteIsGated('claude'), false, 'precondition: claude declares no idleMarker');
+      const res = sessions._pointerPasteWithheldOutcome({ engineId: 'claude', reason: 'a typing refusal withheld the send' });
+      assert.equal(res.outcome, 'blind');
+      assert.equal(res.detail, 'a typing refusal withheld the send');
+    });
+  });
+
+  describe('_pointerPasteIsGated', () => {
+    it('is false for an engine id the wake table has nothing for', () => {
+      assert.equal(sessions._pointerPasteIsGated('not-a-real-engine'), false);
+    });
+  });
+
+  describe('recordPointerPasteOutcome (lib/store/session-rules.js)', () => {
+    let tmpDir, projectsDir, sessions2;
+
+    before(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pointer-paste-outcome-'));
+      store._setBasePath(tmpDir);
+      store.init();
+      projectsDir = path.join(tmpDir, 'projects');
+      fs.mkdirSync(projectsDir, { recursive: true });
+      const config = store.config.load();
+      config.projectsDir = projectsDir;
+      store.config.save(config);
+      sessions2 = require('../lib/sessions');
+    });
+
+    after(() => {
+      store.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('refuses an outcome outside POINTER_PASTE_OUTCOMES, and a missing sessionId', () => {
+      const sessionRulesStore = require('../lib/store/session-rules');
+      assert.throws(
+        () => sessionRulesStore.recordPointerPasteOutcome({ outcome: 'delivered' }),
+        (err) => err.code === 'INVALID_POINTER_PASTE_OUTCOME'
+      );
+      assert.throws(
+        () => sessionRulesStore.recordPointerPasteOutcome({ sessionId: 1, outcome: 'not-a-real-outcome' }),
+        (err) => err.code === 'INVALID_POINTER_PASTE_OUTCOME'
+      );
+    });
+
+    it('writes an activity_log row under POINTER_PASTE_OUTCOME_EVENT, keyed to the session', () => {
+      const sessionRulesStore = require('../lib/store/session-rules');
+      const tmux = require('../lib/tmux');
+      const enginesModule = require('../lib/engines');
+      const realHasSession = tmux.hasSession;
+      const realDetect = enginesModule.detectEngine;
+      tmux.hasSession = () => false;
+      tmux.createSession = () => true;
+      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+      let project, result;
+      try {
+        const name = `ptr-unit-${Date.now()}`;
+        const projDir = path.join(projectsDir, name);
+        fs.mkdirSync(projDir, { recursive: true });
+        project = store.projects.create({ name, path: projDir, engine: 'claude' });
+        // No prime paste owed: this test is about the record write, not the
+        // deferred launch path a real pull-pointer paste would take.
+        result = sessions2.launchSession(name, { primePrompt: false });
+      } finally {
+        tmux.hasSession = realHasSession;
+        enginesModule.detectEngine = realDetect;
+      }
+      sessionRulesStore.recordPointerPasteOutcome({
+        sessionId: result.session.id, projectId: project.id, engineId: 'claude', outcome: 'blind', detail: 'pasted blind'
+      });
+      const rows = store.activity.query({ sessionId: result.session.id, eventType: sessionRulesStore.POINTER_PASTE_OUTCOME_EVENT });
+      assert.equal(rows.length, 1);
+      assert.deepEqual(rows[0].detail, { engineId: 'claude', outcome: 'blind', detail: 'pasted blind' });
+      store.sessions.kill(result.session.id, 'test cleanup');
+    });
+  });
+
+  describe('end to end through a real pull-pointer launch', () => {
+    let tmpDir, projectsDir, sessions2;
+    const _restores = [];
+    function stub(obj, key, value) {
+      _restores.push([obj, key, Object.getOwnPropertyDescriptor(obj, key)]);
+      obj[key] = value;
+      return value;
+    }
+
+    before(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pointer-e2e-'));
+      store._setBasePath(tmpDir);
+      store.init();
+      projectsDir = path.join(tmpDir, 'projects');
+      fs.mkdirSync(projectsDir, { recursive: true });
+      const config = store.config.load();
+      config.projectsDir = projectsDir;
+      store.config.save(config);
+      sessions2 = require('../lib/sessions');
+    });
+
+    after(() => {
+      store.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    afterEach(() => {
+      while (_restores.length) {
+        const [obj, key, descriptor] = _restores.pop();
+        if (descriptor) Object.defineProperty(obj, key, descriptor);
+        else delete obj[key];
+      }
+    });
+
+    let _uidCounter = 0;
+    const uid = () => (++_uidCounter);
+
+    /**
+     * Have a launch's boot watch (#2128) answer at once, synchronously — same
+     * seam test/session-rule-delivery.test.js uses for its own paste tests.
+     * @param {string} outcome - A `startupDialog.OUTCOME_MEANINGS` key
+     */
+    function bootWatchAnswers(outcome) {
+      const startupDialog = require('../lib/startup-dialog');
+      stub(startupDialog, 'watch', () => ({
+        then(next) {
+          next({ outcome, meaning: startupDialog.OUTCOME_MEANINGS[outcome], dialog: null, waitedMs: 0 });
+          return { catch() {} };
+        }
+      }));
+    }
+
+    /**
+     * Create a throwaway project on the default (pull-pointer) launch-sequence
+     * settings — left unset deliberately, since #1597 is specifically about
+     * what the shipped default ('pull') does to the paste.
+     * @param {string} name
+     * @returns {object}
+     */
+    function makeProject(name) {
+      const projDir = path.join(projectsDir, name);
+      fs.mkdirSync(projDir, { recursive: true });
+      return store.projects.create({ name, path: projDir, engine: 'claude' });
+    }
+
+    /** The one pointer-paste-outcome row `activity_log` holds for a session, or null. */
+    function pasteOutcomeFor(sessionId) {
+      const rows = store.activity.query({ sessionId, eventType: sessions2.POINTER_PASTE_OUTCOME_EVENT });
+      return rows[0] ? rows[0].detail : null;
+    }
+
+    it('records blind for a markerless engine\'s pointer paste, and leaves the rule-delivery ledger at its own skip', (t) => {
+      const tmux = require('../lib/tmux');
+      const enginesModule = require('../lib/engines');
+      let created = false;
+      stub(tmux, 'hasSession', () => created);
+      stub(tmux, 'probeSession', () => ({ live: created, answered: true, cause: null }));
+      stub(tmux, 'createSession', () => { created = true; return true; });
+      stub(tmux, 'sendKeys', () => true);
+      stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      bootWatchAnswers('timeout');
+
+      const launched = makeProject(`ptrblind-${uid()}`);
+      store.sessionRules.create({ content: 'served by the launch sequence', projectId: launched.id });
+      const projConfig = store.projectConfig.load(launched.path);
+      projConfig.silentPrime = false;
+      store.projectConfig.save(launched.path, projConfig);
+
+      const result = sessions2.launchSession(launched.name);
+      assert.equal(pasteOutcomeFor(result.session.id), null,
+        'nothing may be recorded before the paste actually happens');
+
+      const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
+      assert.equal(rows.length, 1, 'the launch\'s own skip is recorded at once, synchronously');
+      assert.equal(rows[0].channel, 'none');
+      assert.equal(rows[0].outcome, 'skipped');
+      assert.match(rows[0].skipReason, /launch sequence/);
+
+      t.mock.timers.tick(60_000);
+
+      const outcome = pasteOutcomeFor(result.session.id);
+      assert.ok(outcome, 'the deferred paste records its own outcome once it fires');
+      assert.equal(outcome.outcome, 'blind');
+      assert.equal(outcome.engineId, 'claude');
+      assert.match(outcome.detail, /pasted blind/);
+      assert.deepEqual(store.sessionRuleDeliveries.listForSession(result.session.id), rows,
+        'the rule-delivery ledger gains no second row for the same paste');
+
+      store.sessions.kill(result.session.id, 'test cleanup');
+    });
+
+    it('does not record pane_gone when tmux never answered (#908, applied to the pointer-paste record)', (t) => {
+      const tmux = require('../lib/tmux');
+      const enginesModule = require('../lib/engines');
+      let created = false;
+      stub(tmux, 'hasSession', () => created);
+      // The wedge: the probe is killed by our own timeout and establishes nothing.
+      stub(tmux, 'probeSession', () => ({ live: false, answered: false, cause: 'read-timed-out' }));
+      stub(tmux, 'createSession', () => { created = true; return true; });
+      stub(tmux, 'sendKeys', () => { throw new Error('must not paste into a pane we could not find'); });
+      stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      bootWatchAnswers('timeout');
+
+      const launched = makeProject(`ptrunknown-${uid()}`);
+      store.sessionRules.create({ content: 'never arrives', projectId: launched.id });
+      const projConfig = store.projectConfig.load(launched.path);
+      projConfig.silentPrime = false;
+      store.projectConfig.save(launched.path, projConfig);
+
+      const result = sessions2.launchSession(launched.name);
+      t.mock.timers.tick(60_000);
+
+      const outcome = pasteOutcomeFor(result.session.id);
+      assert.ok(outcome, 'the skip is still recorded — silence would be worse');
+      // THE MUTATION THIS CATCHES: writing `pane_gone` unconditionally, which
+      // is what `!hasSession(...)` did before #908 and #911.
+      assert.notEqual(outcome.outcome, 'pane_gone', 'a pane whose state was never established did not "end"');
+      assert.equal(outcome.outcome, 'blind', 'claude is markerless, so the fallback is the gated-ness word, not an invented certainty');
+      assert.match(outcome.detail, /could not establish|did not answer/i);
+
+      store.sessions.kill(result.session.id, 'test cleanup');
+    });
+
+    it('still records pane_gone when tmux ANSWERED that the session had ended (#908, applied to the pointer-paste record)', (t) => {
+      const tmux = require('../lib/tmux');
+      const enginesModule = require('../lib/engines');
+      let created = false;
+      stub(tmux, 'hasSession', () => created);
+      stub(tmux, 'probeSession', () => ({ live: false, answered: true, cause: null }));
+      stub(tmux, 'createSession', () => { created = true; return true; });
+      stub(tmux, 'sendKeys', () => true);
+      stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      bootWatchAnswers('timeout');
+
+      const launched = makeProject(`ptrended-${uid()}`);
+      store.sessionRules.create({ content: 'never arrives', projectId: launched.id });
+      const projConfig = store.projectConfig.load(launched.path);
+      projConfig.silentPrime = false;
+      store.projectConfig.save(launched.path, projConfig);
+
+      const result = sessions2.launchSession(launched.name);
+      t.mock.timers.tick(60_000);
+
+      const outcome = pasteOutcomeFor(result.session.id);
+      assert.ok(outcome);
+      assert.equal(outcome.outcome, 'pane_gone', 'an observed ending is still reported as one');
+      assert.match(outcome.detail, /session ended/);
+
+      store.sessions.kill(result.session.id, 'test cleanup');
     });
   });
 });

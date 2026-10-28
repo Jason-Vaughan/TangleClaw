@@ -102,7 +102,7 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
   it('a native launch is bootstrapped, never pasted, never kicked off, and its inline-rules row reads skipped', async () => {
     sessions._deferEngineInit(
       'tc-b1', 'TangleClaw-Builder1', ENGINE, PROFILE,
-      'the prime with rules inline', null, false, { ...DELIVERY },
+      'the prime with rules inline', null, false, { ...DELIVERY }, null,
       { sessionId: 99, projectId: 3, hasSequence: true, startupDelivery: 'native' }
     );
     await settle();
@@ -123,7 +123,7 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
   it('a legacy launch keeps its paste and its kickoff, and is still handed to the bootstrap to be recorded', async () => {
     sessions._deferEngineInit(
       'tc-b1', 'TangleClaw-Builder1', ENGINE, PROFILE,
-      'the prime', null, false, { ...DELIVERY },
+      'the prime', null, false, { ...DELIVERY }, null,
       { sessionId: 99, projectId: 3, hasSequence: true, startupDelivery: 'legacy' }
     );
     await settle();
@@ -140,7 +140,7 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
   it('a native launch gets no preKeys either: a keystroke that would accept a trust dialog is exactly what F2 refuses', async () => {
     sessions._deferEngineInit(
       'tc-b1', 'TangleClaw-Builder1', ENGINE, PROFILE_WITH_PREKEYS,
-      'the prime', null, false, null,
+      'the prime', null, false, null, null,
       { sessionId: 99, projectId: 3, hasSequence: true, startupDelivery: 'native' }
     );
     await settle();
@@ -151,7 +151,7 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
     rawKeys = [];
     sessions._deferEngineInit(
       'tc-b1', 'TangleClaw-Builder1', ENGINE, PROFILE_WITH_PREKEYS,
-      'the prime', null, false, null,
+      'the prime', null, false, null, null,
       { sessionId: 98, projectId: 3, hasSequence: true, startupDelivery: 'legacy' }
     );
     // The second preKey is scheduled 500 ms after the first, as it always was.
@@ -162,7 +162,7 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
   it('a launch that never said which path it took is the keystroke path', async () => {
     sessions._deferEngineInit(
       'tc-b1', 'TangleClaw-Builder1', ENGINE, PROFILE,
-      'the prime', null, true, null,
+      'the prime', null, true, null, null,
       { sessionId: 99, projectId: 3, hasSequence: true }
     );
     await settle();
@@ -185,7 +185,7 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
 
     it('the prime is not pasted into a declared prompt, and the ledger says which prompt and what to do', async () => {
       tmux.capturePane = () => ({ lines: UPDATE_PROMPT });
-      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, DECLARING, 'the prime', null, false, { ...DELIVERY }, LEGACY);
+      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, DECLARING, 'the prime', null, false, { ...DELIVERY }, null, LEGACY);
       await settle();
 
       assert.deepEqual(pastes, [], 'a paste ends in Enter, and Enter takes the prompt\'s default');
@@ -198,7 +198,7 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
 
     it('the prime is not pasted blind into a screen the launch cannot recognise', async () => {
       tmux.capturePane = () => ({ lines: ['Signing in…'] });
-      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, DECLARING, 'the prime', null, false, { ...DELIVERY }, LEGACY);
+      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, DECLARING, 'the prime', null, false, { ...DELIVERY }, null, LEGACY);
       await settle();
 
       assert.deepEqual(pastes, []);
@@ -209,7 +209,7 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
     it('the prime is not pasted when the pane cannot be read', async () => {
       // What `tmux.capturePane` really answers when `tmux capture-pane` fails.
       tmux.capturePane = () => ({ lines: [], alternateScreen: false });
-      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, DECLARING, 'the prime', null, false, { ...DELIVERY }, LEGACY);
+      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, DECLARING, 'the prime', null, false, { ...DELIVERY }, null, LEGACY);
       await settle();
 
       assert.deepEqual(pastes, []);
@@ -218,19 +218,19 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
 
     it('a preKey is withheld while a declared prompt is up, and sent once it is not', async () => {
       tmux.capturePane = () => ({ lines: UPDATE_PROMPT });
-      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, DECLARING_WITH_PREKEYS, null, null, false, null, LEGACY);
+      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, DECLARING_WITH_PREKEYS, null, null, false, null, null, LEGACY);
       await new Promise((resolve) => setTimeout(resolve, 650));
       assert.deepEqual(rawKeys, [], 'no Enter reaches the update prompt');
 
       tmux.capturePane = () => ({ lines: ['some other dialog'] });
-      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, DECLARING_WITH_PREKEYS, null, null, false, null, { ...LEGACY, sessionId: 98 });
+      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, DECLARING_WITH_PREKEYS, null, null, false, null, null, { ...LEGACY, sessionId: 98 });
       await new Promise((resolve) => setTimeout(resolve, 650));
       assert.deepEqual(rawKeys.map((k) => k.key), ['Enter', 'Enter'], 'a preKey still answers the screen its profile wrote it for');
     });
 
     it('a preKey is withheld when the pane cannot be read', async () => {
       tmux.capturePane = () => ({ lines: [], alternateScreen: false });
-      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, DECLARING_WITH_PREKEYS, null, null, false, null, LEGACY);
+      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, DECLARING_WITH_PREKEYS, null, null, false, null, null, LEGACY);
       await new Promise((resolve) => setTimeout(resolve, 650));
       assert.deepEqual(rawKeys, []);
     });
@@ -238,7 +238,7 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
     it('a profile whose guarded dialog cannot be read gets no preKey and no paste, even over a composer', async () => {
       const BROKEN = Object.freeze({ name: 'Fake', capabilities: { supportsPrimePrompt: true }, launch: { startupDelay: 5, preKeys: ['Enter'], preKeyDelay: 5, guardedDialogs: [{ id: 'update', match: 'Update available (' }] } });
       tmux.capturePane = () => ({ lines: ['> '] });
-      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, BROKEN, 'the prime', null, false, { ...DELIVERY }, LEGACY);
+      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, BROKEN, 'the prime', null, false, { ...DELIVERY }, null, LEGACY);
       // The paste is scheduled after the preKey slot, as on any launch with preKeys.
       await new Promise((resolve) => setTimeout(resolve, 700));
       assert.deepEqual(rawKeys, [], 'the key would have answered the prompt the broken entry named');
@@ -249,7 +249,7 @@ describe('the launch path reaches the bootstrap (#1825 B3)', () => {
     it('an engine that declares none keeps its paste without its pane being read', async () => {
       let reads = 0;
       tmux.capturePane = () => { reads++; return { lines: UPDATE_PROMPT }; };
-      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, PROFILE, 'the prime', null, false, { ...DELIVERY }, LEGACY);
+      sessions._deferEngineInit('tc-b1', 'TangleClaw-Builder1', ENGINE, PROFILE, 'the prime', null, false, { ...DELIVERY }, null, LEGACY);
       await settle();
       assert.equal(pastes.length, 1);
       assert.equal(reads, 0);

@@ -3957,6 +3957,26 @@ function wireLaunchReconciliationReads(list) {
 }
 
 /**
+ * The pointer paste's own outcome line (#1597).
+ *
+ * Shown only when the server sent one: `pasteOutcome` is non-null exactly for
+ * a pull-pointer launch, whose `rulesDelivery` is deliberately a `skipped` row
+ * (#1584 — the pointer carries no rule text to claim delivery of). Every other
+ * launch has nothing here at all, which is why this renders nothing rather
+ * than a "no record" line the way `rulesDelivery` does: absence is the normal
+ * case for those, not a fact worth saying on every row.
+ * @param {object} s - A sequence row from `GET /api/launch-sequences`
+ * @returns {string} Markup, or an empty string when the row carries no outcome
+ */
+function launchPasteOutcomeHtml(s) {
+  if (!s.pasteOutcome) return '';
+  const cls = s.pasteOutcome.outcome === 'delivered' ? '' : ' rules-status-err';
+  const engine = s.pasteOutcome.engineId ? ` (${esc(s.pasteOutcome.engineId)})` : '';
+  const detail = s.pasteOutcome.detail ? `: ${esc(s.pasteOutcome.detail)}` : '';
+  return `<br><small class="session-rule-meta${cls}">Pointer paste: ${esc(s.pasteOutcome.outcome)}${engine}${detail}</small>`;
+}
+
+/**
  * Render the launch-readiness rows.
  *
  * Every row says all three things, including the ones that are nothing: a
@@ -4004,6 +4024,7 @@ function renderProjectLaunchSequences(sequences, opts) {
       <div class="session-rule-content">
         <strong>${esc(s.sessionId)}</strong>: <span class="${cls}">${state}</span>
         <br><small class="session-rule-meta">Rules channel: ${rules}</small>
+        ${launchPasteOutcomeHtml(s)}
         <br><small class="session-rule-meta">Served: ${esc(served)}/${esc(s.of)} step(s) | Acknowledged: ${esc(acked)}/${esc(s.of)} | ${nudges}</small>
         <br><small class="session-rule-meta">Launched ${esc(s.createdAt)} | revision ${esc(s.revision)}</small>
         ${launchRecoveryHtml(s, projectMode)}
