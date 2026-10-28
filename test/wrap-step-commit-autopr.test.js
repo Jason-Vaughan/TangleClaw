@@ -435,6 +435,51 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
     });
   });
 
+  describe('#1172 — configurable wrap merge method', () => {
+    it('passes a configured wrapMergeMethod through to `gh pr merge`', async () => {
+      commitSettings(projectPath, JSON.stringify({ wrapMergeMethod: 'merge' }));
+      interceptExec();
+      const result = await commitStep.run(buildContext());
+      assert.equal(result.output.autoPr.autoMergeArmed, true);
+      assert.deepEqual(calls.find((c) => c.key === 'gh-merge').args,
+        ['pr', 'merge', PR_URL, '--auto', '--merge', '--delete-branch']);
+    });
+
+    it('passes --rebase through when configured', async () => {
+      commitSettings(projectPath, JSON.stringify({ wrapMergeMethod: 'rebase' }));
+      interceptExec();
+      const result = await commitStep.run(buildContext());
+      assert.equal(result.output.autoPr.autoMergeArmed, true);
+      assert.deepEqual(calls.find((c) => c.key === 'gh-merge').args,
+        ['pr', 'merge', PR_URL, '--auto', '--rebase', '--delete-branch']);
+    });
+
+    it('falls back to --squash for an unrecognized configured value, without failing the wrap', async () => {
+      commitSettings(projectPath, JSON.stringify({ wrapMergeMethod: 'octopus' }));
+      interceptExec();
+      const result = await commitStep.run(buildContext());
+      assert.equal(result.output.autoPr.autoMergeArmed, true);
+      assert.deepEqual(calls.find((c) => c.key === 'gh-merge').args,
+        ['pr', 'merge', PR_URL, '--auto', '--squash', '--delete-branch']);
+    });
+
+    it('falls back to a PR merge strategy row in .prawduct/artifacts/project-preferences.md when project.json configures nothing', async () => {
+      // Committed ahead of the dirtied work.txt, so it reads as pre-existing
+      // project history rather than an unasked-about foreign file (#1724).
+      fs.mkdirSync(path.join(projectPath, '.prawduct', 'artifacts'), { recursive: true });
+      fs.writeFileSync(
+        path.join(projectPath, '.prawduct', 'artifacts', 'project-preferences.md'),
+        '- **PR merge strategy**: merge commit — `gh pr merge --merge --match-head-commit <sha>`.\n'
+      );
+      execSync('git add .prawduct && git commit --quiet -m prefs', { cwd: projectPath, shell: '/bin/sh' });
+      interceptExec();
+      const result = await commitStep.run(buildContext());
+      assert.equal(result.output.autoPr.autoMergeArmed, true);
+      assert.deepEqual(calls.find((c) => c.key === 'gh-merge').args,
+        ['pr', 'merge', PR_URL, '--auto', '--merge', '--delete-branch']);
+    });
+  });
+
   it('wrapAutoPrEnabled:false skips the close-loop entirely (no push attempted)', async () => {
     optOutOfAutoPr(projectPath);
 

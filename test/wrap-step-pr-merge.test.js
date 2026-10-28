@@ -106,6 +106,31 @@ describe('wrap-step pr-merge — handler', () => {
     assert.equal(result.output.applied['42'].ok, true);
   });
 
+  it('defaults to squash when the project configures nothing (#1172)', async () => {
+    const seen = [];
+    prMerge._internal.enqueueAutoMerge = async (cwd, number, method) => { seen.push(method); return { ok: true, reason: null }; };
+    const result = await prMerge.run(ctx({ 42: 'merge' }));
+    assert.equal(result.ok, true);
+    assert.deepEqual(seen, ['squash']);
+  });
+
+  it('passes a configured wrapMergeMethod through to enqueueAutoMerge (#1172)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pr-merge-method-run-'));
+    fs.mkdirSync(path.join(dir, '.tangleclaw'));
+    fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), JSON.stringify({ wrapMergeMethod: 'merge' }));
+    const seen = [];
+    prMerge._internal.enqueueAutoMerge = async (cwd, number, method) => { seen.push(method); return { ok: true, reason: null }; };
+    const c = ctx({ 42: 'merge' });
+    c.project.path = dir;
+    try {
+      const result = await prMerge.run(c);
+      assert.equal(result.ok, true);
+      assert.deepEqual(seen, ['merge']);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('pushes the branch before enqueueing — a PR merged without the wrap commit is unrecoverable', async () => {
     // `commit` only pushes on the auto-branch path, and a session-scoped PR is
     // by definition on a feature branch — the path where the wrap commit stays
@@ -447,6 +472,94 @@ describe('wrap-step pr-merge — a project whose merges are not its own to decid
   });
 });
 
+describe('wrap-step pr-merge — resolveWrapMergeMethod (#1172)', () => {
+  let tmpDir;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pr-merge-method-'));
+  });
+
+  after(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('exposes the fixed flag set and the squash default', () => {
+    assert.deepEqual(prMerge.VALID_MERGE_METHODS, ['squash', 'merge', 'rebase']);
+    assert.equal(prMerge.DEFAULT_MERGE_METHOD, 'squash');
+  });
+
+  it('defaults to squash when nothing is configured', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'none-'));
+    assert.deepEqual(prMerge.resolveWrapMergeMethod(dir), { method: 'squash', source: 'default', warning: null });
+  });
+
+  it('an explicit option wins over a configured project.json', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'explicit-'));
+    fs.mkdirSync(path.join(dir, '.tangleclaw'));
+    fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), JSON.stringify({ wrapMergeMethod: 'rebase' }));
+    assert.deepEqual(
+      prMerge.resolveWrapMergeMethod(dir, { wrapMergeMethod: 'merge' }),
+      { method: 'merge', source: 'explicit', warning: null }
+    );
+  });
+
+  it('falls back to the default and warns on an unrecognized explicit option', () => {
+    const r = prMerge.resolveWrapMergeMethod('/does-not-matter', { mergeMethod: 'nonsense' });
+    assert.equal(r.method, 'squash');
+    assert.equal(r.source, 'default');
+    assert.match(r.warning, /unrecognized wrap merge method "nonsense"/);
+  });
+
+  it('reads wrapMergeMethod from .tangleclaw/project.json', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'config-'));
+    fs.mkdirSync(path.join(dir, '.tangleclaw'));
+    fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), JSON.stringify({ wrapMergeMethod: 'merge' }));
+    assert.deepEqual(prMerge.resolveWrapMergeMethod(dir), { method: 'merge', source: 'project-config', warning: null });
+  });
+
+  it('falls back to the default and warns on an unrecognized project.json value', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'bad-config-'));
+    fs.mkdirSync(path.join(dir, '.tangleclaw'));
+    fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), JSON.stringify({ wrapMergeMethod: 'octopus' }));
+    const r = prMerge.resolveWrapMergeMethod(dir);
+    assert.equal(r.method, 'squash');
+    assert.equal(r.source, 'default');
+    assert.match(r.warning, /unrecognized wrapMergeMethod "octopus"/);
+  });
+
+  it('falls back to a PR merge strategy row in .prawduct/artifacts/project-preferences.md', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'prefs-'));
+    fs.mkdirSync(path.join(dir, '.prawduct', 'artifacts'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, '.prawduct', 'artifacts', 'project-preferences.md'),
+      '- **PR merge strategy**: merge commit — `gh pr merge --merge --match-head-commit <sha>`.\n'
+    );
+    assert.deepEqual(
+      prMerge.resolveWrapMergeMethod(dir),
+      { method: 'merge', source: 'project-preferences', warning: null }
+    );
+  });
+
+  it('project.json takes precedence over project-preferences.md', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'both-'));
+    fs.mkdirSync(path.join(dir, '.tangleclaw'));
+    fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), JSON.stringify({ wrapMergeMethod: 'rebase' }));
+    fs.mkdirSync(path.join(dir, '.prawduct', 'artifacts'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.prawduct', 'artifacts', 'project-preferences.md'), '- **PR merge strategy**: squash.\n');
+    assert.deepEqual(prMerge.resolveWrapMergeMethod(dir), { method: 'rebase', source: 'project-config', warning: null });
+  });
+
+  it('a pre-loaded options.projectConfig skips re-reading the file', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'preloaded-'));
+    fs.mkdirSync(path.join(dir, '.tangleclaw'));
+    fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), JSON.stringify({ wrapMergeMethod: 'rebase' }));
+    assert.deepEqual(
+      prMerge.resolveWrapMergeMethod(dir, { projectConfig: { wrapMergeMethod: 'merge' } }),
+      { method: 'merge', source: 'project-config', warning: null }
+    );
+  });
+});
+
 describe('wrap-step pr-merge — remote error text carries no credential', () => {
   // Three producers in two files turn a failed remote command's stderr into
   // operator-facing text. `git push` echoes the remote it could not reach, and
@@ -503,5 +616,32 @@ describe('wrap-step pr-merge — remote error text carries no credential', () =>
     const r = await mod._internal.enqueueAutoMerge('/tmp', 42);
 
     assert.match(r.reason, /stopped before it answered/);
+  });
+
+  it('enqueueAutoMerge builds the gh command with the resolved merge method (#1172)', async () => {
+    const commands = [];
+    mod._internal.execShell = async (command) => { commands.push(command); return { exitCode: 0, stdout: '', stderr: '' }; };
+
+    await mod._internal.enqueueAutoMerge('/tmp', 42, 'rebase');
+
+    assert.equal(commands[0], 'gh pr merge 42 --auto --rebase --delete-branch');
+  });
+
+  it('defaults to --squash when no merge method is passed', async () => {
+    const commands = [];
+    mod._internal.execShell = async (command) => { commands.push(command); return { exitCode: 0, stdout: '', stderr: '' }; };
+
+    await mod._internal.enqueueAutoMerge('/tmp', 42);
+
+    assert.equal(commands[0], 'gh pr merge 42 --auto --squash --delete-branch');
+  });
+
+  it('falls back to --squash for an unrecognized merge method rather than passing it through to gh', async () => {
+    const commands = [];
+    mod._internal.execShell = async (command) => { commands.push(command); return { exitCode: 0, stdout: '', stderr: '' }; };
+
+    await mod._internal.enqueueAutoMerge('/tmp', 42, 'bogus');
+
+    assert.equal(commands[0], 'gh pr merge 42 --auto --squash --delete-branch');
   });
 });
