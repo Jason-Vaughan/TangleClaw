@@ -16,6 +16,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const { DatabaseSync } = require('node:sqlite');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -342,6 +343,14 @@ describe('launch sequence attestation (Train 21, Chunk 02)', () => {
       });
       assert.equal(reconciled.status, 200);
       assert.equal(reconciled.body.artifact.reconciliation.length >= launchSequence.MIN_RECONCILIATION_CHARS, true);
+      // The rule added above is the ONLY governing-text change there has been;
+      // it was already shown to the session (via the revision) and reconciled
+      // (via the artifact above) before READY. A post-READY drift check that
+      // still reports it would be re-litigating something this launch already
+      // settled (#2191 regression: `attestedManifest` carried stale across the
+      // revision instead of being refreshed to what the revision re-rendered).
+      assert.equal(launchSequence.status(id).body.readiness.reconciliationRequired, null,
+        'nothing changed since the revision this launch attested against, so nothing is owed');
     });
 
     it('re-renders with the launch-time facts only the launch had', () => {
@@ -642,5 +651,421 @@ describe('launch sequence attestation (Train 21, Chunk 02)', () => {
       assert.equal(listed[0].sessionId, mine.session.id);
       assert.ok(!listed.some((s) => s.sessionId === theirs.session.id));
     });
+  });
+
+  describe('a post-READY reconciliation against live drift (#2191, Architect ruling A477-COSIGN-20261027T2307Z)', () => {
+    /**
+     * Add a real project rule after the launch already attested READY — the
+     * one `_reconciliationRequired` trigger that can still be outstanding
+     * after READY (every other trigger clears inside the READY transaction
+     * itself, before this car). Deliberately a genuine governing-text change
+     * through the normal write path, not a direct mutation of
+     * `launch_sequences.source_manifest`: `_liveGoverningDrift` recomputes
+     * the live manifest and diffs it against `sourceManifest.attestedManifest`,
+     * so the drift this test exercises has to come from an actual change
+     * `manifestFingerprints` can see, not from stamping a frozen field it no
+     * longer reads.
+     * @param {object} project - The launched project
+     * @returns {void}
+     */
+    function addLiveRule(project) {
+      store.sessionRules.create({
+        projectId: project.id, content: 'a governing rule added after READY', createdBy: 'operator', approvedByOperator: true
+      });
+    }
+
+    it('appends a reconciliation against live drift rather than refusing, and never rewrites the original attestation', () => {
+      const { id, project } = launched('post-ready-append');
+      ackEverything(id);
+      const sequence = store.launchSequences.getByLaunchId(id.launchId);
+      const artifact = artifactFor(sequence);
+      const first = launchSequence.ready({ ...id, artifact });
+      assert.equal(first.status, 200);
+      const originalReadyAt = first.body.readyAt;
+      const originalArtifact = store.launchSequences.getByLaunchId(id.launchId).readyArtifact;
+
+      addLiveRule(project);
+      const before = launchSequence.status(id).body;
+      assert.match(before.readiness.reconciliationRequired, /the governing rules changed/,
+        'status now reports the live drift, even though this launch is already attested');
+
+      const text = 'A shared document was added after I attested; I read it and nothing I committed to depends on its content.';
+      const appended = launchSequence.ready({ ...id, artifact: artifactFor(sequence, { reconciliation: text }) });
+      assert.equal(appended.status, 200);
+      assert.equal(appended.body.reconciled, true);
+      assert.equal(appended.body.readyAt, originalReadyAt, 'the original attestation timestamp is untouched');
+
+      const stored = store.launchSequences.getByLaunchId(id.launchId);
+      assert.deepEqual(stored.readyArtifact, originalArtifact, 'ready_artifact is never rewritten by an appended reconciliation');
+      assert.equal(stored.readyAt, originalReadyAt);
+
+      const after = launchSequence.status(id).body;
+      assert.equal(after.readiness.reconciliationRequired, null, 'recording it clears the line');
+
+      const recorded = store.launchReconciliations.listForSequence(sequence.id);
+      assert.equal(recorded.length, 1);
+      assert.equal(recorded[0].reconciliation, text);
+    });
+
+    it('is idempotent: appending the same drift twice records it once', () => {
+      const { id, project } = launched('post-ready-append-idempotent');
+      ackEverything(id);
+      const sequence = store.launchSequences.getByLaunchId(id.launchId);
+      launchSequence.ready({ ...id, artifact: artifactFor(sequence) });
+      addLiveRule(project);
+      const text = 'A reconciliation of at least forty characters about the drift stamped above.';
+      const first = launchSequence.ready({ ...id, artifact: artifactFor(sequence, { reconciliation: text }) });
+      assert.equal(first.status, 200);
+      const second = launchSequence.ready({ ...id, artifact: artifactFor(sequence, { reconciliation: text }) });
+      assert.equal(second.status, 200);
+      assert.equal(store.launchReconciliations.listForSequence(sequence.id).length, 1,
+        'the same (sequence, revision, drift digest) is not recorded twice');
+    });
+
+    it('falls through to the ordinary conflict check when there is no live drift to reconcile', () => {
+      const { id } = launched('post-ready-no-drift');
+      ackEverything(id);
+      const sequence = store.launchSequences.getByLaunchId(id.launchId);
+      launchSequence.ready({ ...id, artifact: artifactFor(sequence) });
+      // Reconciliation text supplied, but no drift stamped: there is nothing
+      // outstanding to append against, so this is read as re-attesting with a
+      // different artifact — a genuine conflict, not a reconciliation.
+      const replay = launchSequence.ready({
+        ...id,
+        artifact: artifactFor(sequence, { reconciliation: 'A reconciliation nobody asked for, forty-plus characters long.' })
+      });
+      assert.equal(replay.status, 409);
+      assert.equal(replay.body.code, 'READY_CONFLICT');
+      assert.equal(store.launchReconciliations.listForSequence(sequence.id).length, 0);
+    });
+
+    it('still refuses a conflicting artifact with no reconciliation once drift is live', () => {
+      const { id, project } = launched('post-ready-conflict-baseline');
+      ackEverything(id);
+      const sequence = store.launchSequences.getByLaunchId(id.launchId);
+      const artifact = artifactFor(sequence);
+      assert.equal(launchSequence.ready({ ...id, artifact }).status, 200);
+      addLiveRule(project);
+      const conflict = launchSequence.ready({ ...id, artifact: { ...artifact, proposedFirstAction: 'something else entirely' } });
+      assert.equal(conflict.status, 409);
+      assert.equal(conflict.body.code, 'READY_CONFLICT');
+    });
+  });
+
+  describe('the durable readiness receipt (#1877, same ruling)', () => {
+    it('emits exactly one receipt on a fresh READY, resolving the recipient from durable control_assignments/coordinator_roles data', () => {
+      const pm = makeProject('pm-project-for-receipt');
+      store.coordinatorRoles.grant({
+        roleId: 'role-pm-receipt-1', projectId: pm.id, role: 'project-manager', note: null, now: new Date(0).toISOString()
+      });
+      const { id, project } = launched('receipt-fresh-ready');
+      store.control.insertAssignment({
+        assignment_id: 'asg-receipt-1', project_id: project.id,
+        authority_json: JSON.stringify({ lifecycle: [`project:${pm.id}`] }),
+        state: 'active', state_generation: 1, created_by_kind: 'operator'
+      });
+      ackEverything(id);
+      const sequence = store.launchSequences.getByLaunchId(id.launchId);
+      const answer = launchSequence.ready({ ...id, artifact: artifactFor(sequence) });
+      assert.equal(answer.status, 200);
+
+      const receipts = store.launchReadinessReceipts.listForSequence(sequence.id);
+      assert.equal(receipts.length, 1, 'exactly one receipt for this READY');
+      assert.equal(receipts[0].assignmentId, 'asg-receipt-1');
+      assert.equal(receipts[0].recipientProjectId, pm.id,
+        'the recipient is resolved from the durable assignment/coordinator-role data, not a nickname');
+      assert.equal(receipts[0].revision, sequence.revision);
+      assert.equal(receipts[0].readyDigest, store.launchSequences.getByLaunchId(id.launchId).readyDigest);
+
+      const status = launchSequence.status(id).body;
+      assert.ok(status.readinessReceipt, 'the PM-visible surface this car exposes it on');
+      assert.equal(status.readinessReceipt.recipientProjectId, pm.id);
+    });
+
+    it('does not emit a second receipt row when READY is answered again (replay or race)', () => {
+      const { id } = launched('receipt-no-duplicate');
+      ackEverything(id);
+      const sequence = store.launchSequences.getByLaunchId(id.launchId);
+      const artifact = artifactFor(sequence);
+      assert.equal(launchSequence.ready({ ...id, artifact }).status, 200);
+      assert.equal(launchSequence.ready({ ...id, artifact: { ...artifact } }).body.duplicate, true);
+      assert.equal(store.launchReadinessReceipts.listForSequence(sequence.id).length, 1);
+    });
+
+    it('records a receipt with no recipient, rather than failing READY, when no coordinator role resolves', () => {
+      const { id } = launched('receipt-no-recipient');
+      ackEverything(id);
+      const sequence = store.launchSequences.getByLaunchId(id.launchId);
+      const answer = launchSequence.ready({ ...id, artifact: artifactFor(sequence) });
+      assert.equal(answer.status, 200, 'READY succeeds whether or not a recipient can be resolved');
+      const receipts = store.launchReadinessReceipts.listForSequence(sequence.id);
+      assert.equal(receipts.length, 1);
+      assert.equal(receipts[0].recipientProjectId, null);
+      assert.equal(receipts[0].projectionState, 'skipped', 'nothing to project with no recipient');
+    });
+
+    it('the store layer is idempotent on (sequenceId, revision, assignmentId), independent of the ready() call site', () => {
+      const { id } = launched('receipt-store-idempotent');
+      ackEverything(id);
+      const sequence = store.launchSequences.getByLaunchId(id.launchId);
+      const fields = {
+        receiptId: 'receipt-idempotent-1', sequenceId: sequence.id, launchId: sequence.launchId,
+        sessionId: sequence.sessionId, projectId: sequence.projectId, assignmentId: null,
+        revision: sequence.revision, readyDigest: 'digest-a', recipientProjectId: null,
+        recipientWorkspaceId: null, projectionState: 'skipped'
+      };
+      const first = store.launchReadinessReceipts.emit(fields);
+      assert.equal(first.created, true);
+      const second = store.launchReadinessReceipts.emit({ ...fields, receiptId: 'receipt-idempotent-2', readyDigest: 'digest-b' });
+      assert.equal(second.created, false, 'the same (sequence, revision, assignment) key returns the existing row');
+      assert.equal(second.row.receiptId, 'receipt-idempotent-1');
+      assert.equal(second.row.readyDigest, 'digest-a', 'the existing row, not a second write');
+    });
+  });
+});
+
+/**
+ * v70→71: `launch_reconciliations` (post-READY additive reconciliation
+ * against live drift, #2191) and `launch_readiness_receipts` (idempotent
+ * durable READY receipt, #1877), plus `last_unready_verdict` /
+ * `last_unready_verdict_at` provisioned on `launch_sequences` for #1596
+ * (Architect ruling A477-COSIGN-20261027T2307Z).
+ *
+ * The property under test is the same one `launch-recovery-migration.test.js`
+ * checks for the v42→43 columns: a store upgraded today and a store created
+ * today must be indistinguishable afterwards, and the postcondition has to
+ * actually look at the DDL — `PRAGMA table_info` cannot see a CHECK, a
+ * UNIQUE constraint or a trigger, so a half-applied upgrade that merely adds
+ * the column/table names would otherwise pass silently.
+ */
+
+const migrationTmpDirs = [];
+
+/** `launch_sequences` as v70 shipped it — before the two unready-verdict columns. */
+const V70_LAUNCH_SEQUENCES_DDL = `
+  CREATE TABLE launch_sequences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, launch_id TEXT NOT NULL UNIQUE, session_id INTEGER NOT NULL,
+    project_id INTEGER NOT NULL, engine_id TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1,
+    cursor INTEGER NOT NULL DEFAULT 0, page_budget INTEGER NOT NULL,
+    applicability TEXT NOT NULL CHECK (applicability IN ('applicable','not-applicable')),
+    not_applicable_reason TEXT, preflight TEXT NOT NULL, source_manifest TEXT NOT NULL,
+    ready_at TEXT, ready_artifact TEXT, ready_digest TEXT, unready_at TEXT,
+    nudge_count INTEGER NOT NULL DEFAULT 0, last_nudged_at TEXT,
+    recovery TEXT NOT NULL DEFAULT 'none' CHECK (recovery IN ('none','required','cleared')),
+    recovery_mode TEXT NOT NULL DEFAULT 'operator' CHECK (recovery_mode IN ('operator','advisory')),
+    recovery_revision INTEGER NOT NULL DEFAULT 1,
+    recovery_cleared_at TEXT, recovery_cleared_by TEXT,
+    recovery_clearance TEXT CHECK (recovery_clearance IN ('operator-verified','open-install-unverified','agent-reconciled')),
+    startup_delivery TEXT NOT NULL DEFAULT 'legacy' CHECK (startup_delivery IN ('legacy','native')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    CHECK (applicability = 'applicable' OR not_applicable_reason IS NOT NULL)
+  );
+  CREATE UNIQUE INDEX idx_launch_sequences_session ON launch_sequences(session_id);`;
+
+/** One in-flight launch, recorded before this gate existed. */
+const MIGRATION_IN_FLIGHT_ROW = `
+  INSERT INTO launch_sequences (launch_id, session_id, project_id, engine_id, page_budget,
+    applicability, preflight, source_manifest)
+  VALUES ('pre-v71-launch', 7, 1, 'claude', 8000, 'applicable', '{"verdict":"ok"}', '{}');`;
+
+/**
+ * Seed a database at v70 with the pre-v71 `launch_sequences` table.
+ * @param {string} [extraSql] - Further DDL/rows for the case under test
+ * @returns {string} The store's base directory
+ */
+function seedV70(extraSql = '') {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-readiness-mig-'));
+  migrationTmpDirs.push(dir);
+  const seed = new DatabaseSync(path.join(dir, 'tangleclaw.db'));
+  seed.exec(`
+    CREATE TABLE schema_version (version INTEGER NOT NULL, applied_at TEXT NOT NULL DEFAULT (datetime('now')));
+    INSERT INTO schema_version (version) VALUES (70);
+    ${V70_LAUNCH_SEQUENCES_DDL}
+    ${extraSql}
+  `);
+  seed.close();
+  return dir;
+}
+
+/**
+ * Open a seeded directory as the live store.
+ * @param {string} dir - Base directory
+ * @returns {void}
+ */
+function openMigrationStore(dir) {
+  store._setBasePath(dir);
+  store.init();
+}
+
+/**
+ * A table or index's DDL as SQLite stores it — the only place a CHECK,
+ * UNIQUE or trigger body is visible.
+ * @param {string} name - sqlite_master name
+ * @returns {string}
+ */
+function ddl(name) {
+  const row = store.getDb().prepare('SELECT sql FROM sqlite_master WHERE name = ?').get(name);
+  return (row && row.sql) || '';
+}
+
+/**
+ * The column names `launch_sequences` carries right now.
+ * @returns {Set<string>}
+ */
+function launchSequenceColumns() {
+  return new Set(store.getDb().prepare('PRAGMA table_info(launch_sequences)').all().map((c) => c.name));
+}
+
+describe('v70→71 launch_reconciliations, launch_readiness_receipts, unready-verdict columns', () => {
+  after(() => {
+    store.close();
+    for (const dir of migrationTmpDirs) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('adds both unready-verdict columns and both new tables to a store upgrading from v70', () => {
+    openMigrationStore(seedV70(MIGRATION_IN_FLIGHT_ROW));
+    const cols = launchSequenceColumns();
+    assert.ok(cols.has('last_unready_verdict'), 'v70→71 did not add last_unready_verdict');
+    assert.ok(cols.has('last_unready_verdict_at'), 'v70→71 did not add last_unready_verdict_at');
+    assert.ok(ddl('launch_reconciliations'), 'v70→71 did not create launch_reconciliations');
+    assert.ok(ddl('launch_readiness_receipts'), 'v70→71 did not create launch_readiness_receipts');
+  });
+
+  it('leaves a pre-existing launch with no unready verdict recorded', () => {
+    openMigrationStore(seedV70(MIGRATION_IN_FLIGHT_ROW));
+    const row = store.getDb().prepare("SELECT * FROM launch_sequences WHERE launch_id = 'pre-v71-launch'").get();
+    assert.equal(row.last_unready_verdict, null);
+    assert.equal(row.last_unready_verdict_at, null);
+  });
+
+  it('gives an upgraded store the same shape as a fresh one', () => {
+    openMigrationStore(seedV70(MIGRATION_IN_FLIGHT_ROW));
+    const upgraded = {
+      cols: [...launchSequenceColumns()].sort(),
+      reconciliations: ddl('launch_reconciliations').replace(/\s+/g, ' '),
+      receipts: ddl('launch_readiness_receipts').replace(/\s+/g, ' ')
+    };
+    const fresh = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-readiness-fresh-'));
+    migrationTmpDirs.push(fresh);
+    openMigrationStore(fresh);
+    assert.deepEqual({
+      cols: [...launchSequenceColumns()].sort(),
+      reconciliations: ddl('launch_reconciliations').replace(/\s+/g, ' '),
+      receipts: ddl('launch_readiness_receipts').replace(/\s+/g, ' ')
+    }, upgraded);
+  });
+
+  it('keeps the CHECK that admits only a recognized unready verdict', () => {
+    openMigrationStore(seedV70(MIGRATION_IN_FLIGHT_ROW));
+    assert.match(ddl('launch_sequences'), /last_unready_verdict[^,]*CHECK/);
+    assert.throws(
+      () => store.getDb().exec("UPDATE launch_sequences SET last_unready_verdict = 'made-up-verdict' WHERE launch_id = 'pre-v71-launch'"),
+      /CHECK constraint failed/,
+      'an unready verdict that means nothing is refused by the database'
+    );
+    store.getDb().exec("UPDATE launch_sequences SET last_unready_verdict = 'nudged' WHERE launch_id = 'pre-v71-launch'");
+  });
+
+  it('keeps launch_reconciliations append-only and idempotent on (sequence_id, revision, drift_digest)', () => {
+    openMigrationStore(seedV70(MIGRATION_IN_FLIGHT_ROW));
+    const db = store.getDb();
+    db.exec(`
+      INSERT INTO launch_reconciliations (sequence_id, session_id, project_id, revision, drift_digest, reconciliation)
+      VALUES (1, 7, 1, 1, 'abc123', 'A reconciliation of at least forty characters, honestly.');
+    `);
+    assert.throws(
+      () => db.exec(`
+        INSERT INTO launch_reconciliations (sequence_id, session_id, project_id, revision, drift_digest, reconciliation)
+        VALUES (1, 7, 1, 1, 'abc123', 'A second, different reconciliation text of forty-plus chars.');
+      `),
+      /UNIQUE constraint failed/,
+      'a second row for the same (sequence, revision, drift) is refused by the database'
+    );
+    assert.throws(
+      () => db.exec("UPDATE launch_reconciliations SET reconciliation = 'edited' WHERE sequence_id = 1"),
+      /append-only/
+    );
+    assert.throws(
+      () => db.exec('DELETE FROM launch_reconciliations WHERE sequence_id = 1'),
+      /append-only/
+    );
+    assert.throws(
+      () => db.exec(`
+        INSERT INTO launch_reconciliations (sequence_id, session_id, project_id, revision, drift_digest, reconciliation)
+        VALUES (1, 7, 1, 1, 'xyz789', 'too short')
+      `),
+      /CHECK constraint failed/,
+      'a reconciliation under 40 characters is refused by the database, not merely by a caller'
+    );
+  });
+
+  it('keeps launch_readiness_receipts idempotent on (sequence_id, revision, assignment_id)', () => {
+    openMigrationStore(seedV70(MIGRATION_IN_FLIGHT_ROW));
+    const db = store.getDb();
+    db.exec(`
+      INSERT INTO launch_readiness_receipts
+        (receipt_id, sequence_id, launch_id, session_id, project_id, revision, ready_digest)
+      VALUES ('receipt-one', 1, 'pre-v71-launch', 7, 1, 1, 'digest-one');
+    `);
+    assert.throws(
+      () => db.exec(`
+        INSERT INTO launch_readiness_receipts
+          (receipt_id, sequence_id, launch_id, session_id, project_id, revision, ready_digest)
+        VALUES ('receipt-two', 1, 'pre-v71-launch', 7, 1, 1, 'digest-two');
+      `),
+      /UNIQUE constraint failed/,
+      'a second receipt for the same (sequence, revision, no assignment) is refused by the database'
+    );
+    assert.throws(
+      () => db.exec(`
+        INSERT INTO launch_readiness_receipts
+          (receipt_id, sequence_id, launch_id, session_id, project_id, revision, ready_digest, projection_state)
+        VALUES ('receipt-bad', 2, 'pre-v71-launch', 7, 1, 1, 'digest-three', 'bogus-state');
+      `),
+      /CHECK constraint failed/,
+      'an unrecognised projection_state is refused by the database'
+    );
+  });
+
+  it('stamps the current version and nothing between', () => {
+    openMigrationStore(seedV70(MIGRATION_IN_FLIGHT_ROW));
+    const stamped = store.getDb().prepare('SELECT version FROM schema_version ORDER BY version').all()
+      .map((r) => r.version);
+    assert.deepEqual(stamped, [70, store.CURRENT_SCHEMA_VERSION]);
+  });
+
+  it('is a no-op on a store that already took it', () => {
+    const dir = seedV70(MIGRATION_IN_FLIGHT_ROW);
+    openMigrationStore(dir);
+    const before = { seq: ddl('launch_sequences'), rec: ddl('launch_reconciliations'), rcp: ddl('launch_readiness_receipts') };
+    store.close();
+    openMigrationStore(dir);
+    assert.deepEqual(
+      { seq: ddl('launch_sequences'), rec: ddl('launch_reconciliations'), rcp: ddl('launch_readiness_receipts') },
+      before
+    );
+    assert.equal(
+      store.getDb().prepare('SELECT COUNT(*) AS n FROM schema_version WHERE version = ?')
+        .get(store.CURRENT_SCHEMA_VERSION).n, 1,
+      'a re-run does not stamp the current version twice'
+    );
+  });
+
+  it('refuses to advance over an unready-verdict column that carries no CHECK', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-readiness-refuse-'));
+    migrationTmpDirs.push(dir);
+    const seed = new DatabaseSync(path.join(dir, 'tangleclaw.db'));
+    seed.exec(`
+      CREATE TABLE schema_version (version INTEGER NOT NULL, applied_at TEXT NOT NULL DEFAULT (datetime('now')));
+      INSERT INTO schema_version (version) VALUES (70);
+      ${V70_LAUNCH_SEQUENCES_DDL}
+      ALTER TABLE launch_sequences ADD COLUMN last_unready_verdict TEXT;
+    `);
+    seed.close();
+    assert.throws(() => openMigrationStore(dir), /last_unready_verdict without its CHECK.*Refusing to advance schema_version/);
+    const after = new DatabaseSync(path.join(dir, 'tangleclaw.db'));
+    const stamped = after.prepare('SELECT version FROM schema_version ORDER BY version').all().map((r) => r.version);
+    after.close();
+    assert.ok(!stamped.includes(71), 'a failed migration advertises no v71');
   });
 });
