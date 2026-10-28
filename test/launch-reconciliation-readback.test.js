@@ -328,7 +328,8 @@ describe('the launch reconciliation readback (#1937)', () => {
           clearedBy: null
         },
         reconciliation: RECONCILIATION,
-        provenance: 'agent-authored-unverified'
+        provenance: 'agent-authored-unverified',
+        postReadyReconciliations: []
       });
       assert.ok(sequence.readyAt && sequence.readyDigest && sequence.recoveryClearedAt,
         'and none of those facts is an empty stand-in');
@@ -348,6 +349,36 @@ describe('the launch reconciliation readback (#1937)', () => {
       assert.equal(json(res).recovery.state, 'none');
       assert.equal(json(res).recovery.clearance, null);
       assert.equal(json(res).provenance, 'agent-authored-unverified');
+    });
+
+    it('includes a reconciliation appended after READY against live drift (#2191), beside the original', async () => {
+      const fixture = reconciled();
+      // A real project rule added after READY, not a direct mutation of
+      // `launch_sequences.source_manifest`: `_liveGoverningDrift` recomputes
+      // the live manifest and diffs it against `sourceManifest.attestedManifest`,
+      // so the drift here has to come from an actual change `manifestFingerprints`
+      // can see.
+      store.sessionRules.create({
+        projectId: fixture.project.id, content: 'a governing rule added after READY', createdBy: 'operator', approvedByOperator: true
+      });
+      const POST_READY_TEXT = `${SENTINEL}-POST-READY A shared document was added after I attested; I read it and nothing depends on it.`;
+      const appended = launchSequence.ready({
+        ...fixture.id,
+        artifact: {
+          schema: 'tc.ready/1', preflightVerdict: fixture.sequence.preflight.verdict,
+          proposedFirstAction: 'start the chunk', reconciliation: POST_READY_TEXT
+        }
+      });
+      assert.equal(appended.status, 200, appended.body.error);
+      assert.equal(appended.body.reconciled, true);
+
+      const res = await send('POST', readUrl(fixture.project), { body: fixture.body, headers: await asOperator() });
+      assert.equal(res.statusCode, 200, res.body);
+      const read = json(res);
+      assert.equal(read.reconciliation, RECONCILIATION, 'the ORIGINAL attestation text is untouched');
+      assert.equal(read.postReadyReconciliations.length, 1);
+      assert.equal(read.postReadyReconciliations[0].reconciliation, POST_READY_TEXT);
+      assert.equal(read.postReadyReconciliations[0].revision, fixture.sequence.revision);
     });
 
     it('says the provenance is the session\'s whoever cleared the recovery', async () => {
