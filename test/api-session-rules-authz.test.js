@@ -13,7 +13,7 @@
  * nothing in the store.
  */
 
-const { describe, it, before, after, beforeEach } = require('node:test');
+const { describe, it, before, after, beforeEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const fs = require('node:fs');
@@ -21,6 +21,7 @@ const path = require('node:path');
 const os = require('node:os');
 const store = require('../lib/store');
 const projects = require('../lib/projects');
+const master = require('../lib/master');
 const { createServer } = require('../server');
 const { setLevel } = require('../lib/logger');
 const { bindProject, signInOperator } = require('./_shared-docs-callers');
@@ -809,6 +810,54 @@ describe('api/session-rules caller gate (#2013)', () => {
           `${key} changed a rule, a learning or the global rules while refusing`);
       });
     }
+
+    describe('the Project Master changes no rule through the API (#2021)', () => {
+      // `operatorProjectCaller` (NEEDS.OPERATOR) has no own-project branch at
+      // all, so a route gated by it answers the Master OPERATOR_ONLY, not
+      // PROJECT_READ_ONLY — that code is `sessionRuleCaller`'s own-project
+      // refusal (NEEDS.OWN_PROJECT), and only the six `/api/session-rules`
+      // mutation routes below go through it.
+      const OPERATOR_ONLY_GATED = new Set([
+        'POST /api/master/rules/restore-defaults', 'PUT /api/rules/global', 'POST /api/rules/global/reset',
+        'PUT /api/learnings/:id/tier'
+      ]);
+      const MASTER_ID = 'api-session-rules-master-launch';
+      const MASTER = { 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': MASTER_ID };
+      let live;
+
+      before(() => {
+        live = mock.method(master, 'liveMasterLaunchId', () => ({ launchId: MASTER_ID, answered: true, cause: null }));
+      });
+
+      after(() => live.mock.restore());
+
+      for (const key of registered) {
+        if (NOT_A_MUTATION[key]) continue;
+        const expectedCode = OPERATOR_ONLY_GATED.has(key) ? 'OPERATOR_ONLY' : 'PROJECT_READ_ONLY';
+        it(`${key} answers 403 ${expectedCode} and changes nothing`, async () => {
+          const [method, pattern] = key.split(' ');
+          const target = activeRule(own.id, `master sweep target ${key} ${Math.random()}`);
+          const learning = store.learnings.create({ projectId: own.id, content: `master sweep learning ${Math.random()}` });
+          const urlPath = pattern.replace(':id', String(pattern.startsWith('/api/learnings') ? learning.id : target.id));
+          const snapshot = JSON.stringify([store.sessionRules.list({}), store.learnings.list(own.id), store.globalRules.load()]);
+          const res = await request(method, urlPath,
+            { content: 'master-swept', projectId: own.id, status: 'rejected', enabled: false, versionNo: 1, learningId: learning.id, tier: 'active' },
+            MASTER);
+          assert.equal(res.status, 403, `${key} answered ${res.status}`);
+          assert.equal(res.data.code, expectedCode, `${key} answered ${res.data.code}`);
+          assert.equal(JSON.stringify([store.sessionRules.list({}), store.learnings.list(own.id), store.globalRules.load()]), snapshot,
+            `${key} changed a rule, a learning or the global rules while refusing`);
+        });
+      }
+
+      it('a bound session is refused restore-defaults too — it is the operator\'s alone', async () => {
+        const masterRules = store.sessionRules.list({ kind: 'master' });
+        const res = await request('POST', '/api/master/rules/restore-defaults', {}, asOwn);
+        assert.equal(res.status, 403);
+        assert.equal(res.data.code, 'OPERATOR_ONLY');
+        assert.deepEqual(store.sessionRules.list({ kind: 'master' }), masterRules);
+      });
+    });
   });
 
   describe('POST /api/session-rules/:id/restore', () => {

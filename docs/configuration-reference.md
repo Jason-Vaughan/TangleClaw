@@ -817,8 +817,8 @@ Each `POST` here needs an identified caller (see "Who may write" above). A servi
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/rules/global` | GET | Get global rules content |
-| `/api/rules/global` | PUT | Save global rules content |
-| `/api/rules/global/reset` | POST | Back-compat no-op since #240: returns the current content unchanged (the UI no longer calls it, #243) |
+| `/api/rules/global` | PUT | Save global rules content. Operator-only: a bound caller that is not the operator, including the Project Master, gets `403 OPERATOR_ONLY` and nothing is saved; an unbound caller is refused earlier, by the launch binding guard, with `403 LAUNCH_BINDING_REQUIRED` (#2021) |
+| `/api/rules/global/reset` | POST | Back-compat no-op since #240: returns the current content unchanged (the UI no longer calls it, #243). Operator-only: a bound caller that is not the operator, including the Project Master, gets `403 OPERATOR_ONLY`; an unbound caller is refused earlier, by the launch binding guard, with `403 LAUNCH_BINDING_REQUIRED` (#2021) |
 | `/api/activity` | GET | Activity log |
 | `/api/upload` | POST | Upload a file to a project directory (15 MB limit) |
 | `/api/uploads` | GET | List uploads for a project (`?project=name`) |

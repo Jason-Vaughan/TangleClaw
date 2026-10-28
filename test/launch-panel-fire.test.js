@@ -18,6 +18,7 @@ const vm = require('node:vm');
 const { liftDeclaration } = require('./helpers/lift');
 
 const UI_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+const API_HELPER_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
 
 /**
  * A sandbox with one rendered Fire button and a scripted server.
@@ -55,6 +56,7 @@ function sandbox({ prompt = { revision: 4, text: 'x' }, fireAnswer = { fire: { i
     refreshProjectLaunchSequences: async (id) => { refreshes.push(id); }
   };
   vm.createContext(ctx);
+  vm.runInContext(liftDeclaration(API_HELPER_SRC, 'async function tcOperatorProofHeaders'), ctx);
   vm.runInContext(liftDeclaration(UI_SRC, 'function wireStartupFires('), ctx);
   ctx.wireStartupFires(list);
   assert.ok(handler, 'the button was wired');
