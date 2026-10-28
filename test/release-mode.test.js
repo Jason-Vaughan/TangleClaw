@@ -1,8 +1,10 @@
 'use strict';
 
-// `releaseMode` resolution (#1492 L4). Migration is on read: a project's file
-// is never rewritten to move it from `versionBumpEnabled` to `releaseMode`, so
-// the resolver is the whole migration and is tested through the real reader.
+// `releaseMode` resolution (#1492 L4, renamed auto/ask -> agent/operator by
+// #1701). Migration is on read: a project's file is never rewritten to move
+// it from `versionBumpEnabled` to `releaseMode`, nor from the legacy
+// `auto`/`ask` spellings to `agent`/`operator` — the resolver is the whole
+// migration in both cases, and is tested through the real reader.
 
 const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
@@ -14,29 +16,40 @@ const projectConfig = require('../lib/project-config');
 
 describe('resolveReleaseMode', () => {
   it('honours every explicit valid mode', () => {
-    for (const mode of ['off', 'auto', 'ask']) {
+    for (const mode of ['off', 'agent', 'operator']) {
       assert.deepEqual(projectConfig.resolveReleaseMode({ releaseMode: mode }), { mode, source: 'releaseMode' });
     }
   });
 
+  it('migrates the legacy auto/ask spellings permanently, on every read (#1701)', () => {
+    assert.deepEqual(projectConfig.resolveReleaseMode({ releaseMode: 'auto' }), { mode: 'agent', source: 'releaseMode' });
+    assert.deepEqual(projectConfig.resolveReleaseMode({ releaseMode: 'ask' }), { mode: 'operator', source: 'releaseMode' });
+    // Not a one-time nudge: the same file read again still aliases the same way.
+    assert.deepEqual(projectConfig.resolveReleaseMode({ releaseMode: 'auto' }), { mode: 'agent', source: 'releaseMode' });
+  });
+
+  it('exposes the alias table itself', () => {
+    assert.deepEqual(projectConfig.RELEASE_MODE_ALIASES, { auto: 'agent', ask: 'operator' });
+  });
+
   it('lets an explicit mode beat the legacy flag in both directions', () => {
-    assert.equal(projectConfig.resolveReleaseMode({ releaseMode: 'auto', versionBumpEnabled: false }).mode, 'auto');
+    assert.equal(projectConfig.resolveReleaseMode({ releaseMode: 'agent', versionBumpEnabled: false }).mode, 'agent');
     assert.equal(projectConfig.resolveReleaseMode({ releaseMode: 'off', versionBumpEnabled: true }).mode, 'off');
   });
 
-  it('derives off from a legacy versionBumpEnabled:false, and auto otherwise', () => {
+  it('derives off from a legacy versionBumpEnabled:false, and agent otherwise', () => {
     assert.deepEqual(projectConfig.resolveReleaseMode({ versionBumpEnabled: false }), { mode: 'off', source: 'versionBumpEnabled' });
-    assert.deepEqual(projectConfig.resolveReleaseMode({ versionBumpEnabled: true }), { mode: 'auto', source: 'default' });
-    assert.deepEqual(projectConfig.resolveReleaseMode({}), { mode: 'auto', source: 'default' });
-    assert.deepEqual(projectConfig.resolveReleaseMode(null), { mode: 'auto', source: 'default' });
+    assert.deepEqual(projectConfig.resolveReleaseMode({ versionBumpEnabled: true }), { mode: 'agent', source: 'default' });
+    assert.deepEqual(projectConfig.resolveReleaseMode({}), { mode: 'agent', source: 'default' });
+    assert.deepEqual(projectConfig.resolveReleaseMode(null), { mode: 'agent', source: 'default' });
   });
 
-  it('reads an unrecognized explicit value as ask, with a warning', () => {
+  it('reads an unrecognized explicit value as operator, with a warning', () => {
     for (const bad of ['Auto', '', 'always', true, 0]) {
       const r = projectConfig.resolveReleaseMode({ releaseMode: bad, versionBumpEnabled: true });
-      assert.equal(r.mode, 'ask', `value ${JSON.stringify(bad)}`);
+      assert.equal(r.mode, 'operator', `value ${JSON.stringify(bad)}`);
       assert.equal(r.source, 'invalid');
-      assert.match(r.warning, /treating it as ask/);
+      assert.match(r.warning, /treating it as operator/);
     }
   });
 
@@ -60,32 +73,46 @@ describe('resolveReleaseMode through the config reader', () => {
     assert.equal(projectConfig.resolveReleaseMode(projectConfig.load(root)).mode, 'off');
   });
 
-  it('reads a project with no config file as auto', () => {
-    assert.equal(projectConfig.resolveReleaseMode(projectConfig.load(root)).mode, 'auto');
+  it('reads a project with no config file as agent', () => {
+    assert.equal(projectConfig.resolveReleaseMode(projectConfig.load(root)).mode, 'agent');
   });
 
   it('reads an explicit releaseMode from disk', () => {
+    write({ releaseMode: 'operator', versionBumpEnabled: true });
+    assert.equal(projectConfig.resolveReleaseMode(projectConfig.load(root)).mode, 'operator');
+  });
+
+  it('reads a legacy on-disk auto/ask spelling as its alias, from disk (#1701)', () => {
     write({ releaseMode: 'ask', versionBumpEnabled: true });
-    assert.equal(projectConfig.resolveReleaseMode(projectConfig.load(root)).mode, 'ask');
+    assert.equal(projectConfig.resolveReleaseMode(projectConfig.load(root)).mode, 'operator');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, '.tangleclaw', 'project.json'), 'utf8')).releaseMode, 'ask',
+      'the file itself is never rewritten by the read-time migration');
   });
 });
 
 describe('nextReleaseMode', () => {
   it('takes an explicit releaseMode as sent', () => {
-    assert.equal(projectConfig.nextReleaseMode('auto', { releaseMode: 'ask' }), 'ask');
-    assert.equal(projectConfig.nextReleaseMode('off', { releaseMode: 'auto' }), 'auto');
+    assert.equal(projectConfig.nextReleaseMode('agent', { releaseMode: 'operator' }), 'operator');
+    assert.equal(projectConfig.nextReleaseMode('off', { releaseMode: 'agent' }), 'agent');
   });
 
-  it('reads the legacy boolean without undoing ask', () => {
-    assert.equal(projectConfig.nextReleaseMode('ask', { versionBumpEnabled: false }), 'off');
-    assert.equal(projectConfig.nextReleaseMode('off', { versionBumpEnabled: true }), 'auto');
-    assert.equal(projectConfig.nextReleaseMode('ask', { versionBumpEnabled: true }), 'ask');
-    assert.equal(projectConfig.nextReleaseMode('auto', { versionBumpEnabled: true }), 'auto');
-    assert.equal(projectConfig.nextReleaseMode('ask', {}), 'ask');
+  it('normalizes a legacy auto/ask spelling supplied on either side (#1701)', () => {
+    assert.equal(projectConfig.nextReleaseMode('auto', { releaseMode: 'ask' }), 'operator');
+    assert.equal(projectConfig.nextReleaseMode('ask', { releaseMode: 'auto' }), 'agent');
+    assert.equal(projectConfig.nextReleaseMode('ask', {}), 'operator', 'the current mode alone is normalized too');
+    assert.equal(projectConfig.nextReleaseMode('off', { releaseMode: 'auto' }), 'agent');
+  });
+
+  it('reads the legacy boolean without undoing operator', () => {
+    assert.equal(projectConfig.nextReleaseMode('operator', { versionBumpEnabled: false }), 'off');
+    assert.equal(projectConfig.nextReleaseMode('off', { versionBumpEnabled: true }), 'agent');
+    assert.equal(projectConfig.nextReleaseMode('operator', { versionBumpEnabled: true }), 'operator');
+    assert.equal(projectConfig.nextReleaseMode('agent', { versionBumpEnabled: true }), 'agent');
+    assert.equal(projectConfig.nextReleaseMode('operator', {}), 'operator');
   });
 });
 
-describe('updateProject — releaseMode (#1492)', () => {
+describe('updateProject — releaseMode (#1492, #1701)', () => {
   const store = require('../lib/store');
   const projects = require('../lib/projects');
   let tmpDir;
@@ -106,16 +133,16 @@ describe('updateProject — releaseMode (#1492)', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('reports auto for a new project, and releaseMode beside the legacy shadow', async () => {
+  it('reports agent for a new project, and releaseMode beside the legacy shadow', async () => {
     projects.createProject({ name: 'rm-default' });
     const p = await projects.getProject('rm-default');
-    assert.equal(p.releaseMode, 'auto');
+    assert.equal(p.releaseMode, 'agent');
     assert.equal(p.versionBumpEnabled, true);
   });
 
   it('persists each mode, keeping the legacy key in step for an older reader', async () => {
     projects.createProject({ name: 'rm-persist' });
-    for (const [mode, legacy] of [['ask', false], ['off', false], ['auto', true]]) {
+    for (const [mode, legacy] of [['operator', false], ['off', false], ['agent', true]]) {
       const update = await projects.updateProject('rm-persist', { releaseMode: mode });
       assert.deepEqual(update.errors, []);
       const onDisk = JSON.parse(fs.readFileSync(path.join(update.project.path, '.tangleclaw', 'project.json'), 'utf8'));
@@ -127,44 +154,53 @@ describe('updateProject — releaseMode (#1492)', () => {
     }
   });
 
-  it('keeps ask when the settings modal saves its checkbox as true', async () => {
-    projects.createProject({ name: 'rm-modal' });
-    await projects.updateProject('rm-modal', { releaseMode: 'ask' });
-    const update = await projects.updateProject('rm-modal', { versionBumpEnabled: true, tags: ['x'] });
+  it('accepts a legacy auto/ask spelling in a PATCH and persists the canonical mode (#1701)', async () => {
+    projects.createProject({ name: 'rm-alias-patch' });
+    const update = await projects.updateProject('rm-alias-patch', { releaseMode: 'ask' });
     assert.deepEqual(update.errors, []);
-    assert.equal((await projects.getProject('rm-modal')).releaseMode, 'ask');
+    const onDisk = JSON.parse(fs.readFileSync(path.join(update.project.path, '.tangleclaw', 'project.json'), 'utf8'));
+    assert.equal(onDisk.releaseMode, 'operator', 'the alias is normalized before it is written, not stored verbatim');
+    assert.equal((await projects.getProject('rm-alias-patch')).releaseMode, 'operator');
   });
 
-  it('turns a legacy opt-out back on as auto', async () => {
+  it('keeps operator when the settings modal saves its checkbox as true', async () => {
+    projects.createProject({ name: 'rm-modal' });
+    await projects.updateProject('rm-modal', { releaseMode: 'operator' });
+    const update = await projects.updateProject('rm-modal', { versionBumpEnabled: true, tags: ['x'] });
+    assert.deepEqual(update.errors, []);
+    assert.equal((await projects.getProject('rm-modal')).releaseMode, 'operator');
+  });
+
+  it('turns a legacy opt-out back on as agent', async () => {
     projects.createProject({ name: 'rm-legacy' });
     await projects.updateProject('rm-legacy', { versionBumpEnabled: false });
     assert.equal((await projects.getProject('rm-legacy')).releaseMode, 'off');
     await projects.updateProject('rm-legacy', { versionBumpEnabled: true });
-    assert.equal((await projects.getProject('rm-legacy')).releaseMode, 'auto');
+    assert.equal((await projects.getProject('rm-legacy')).releaseMode, 'agent');
   });
 
   it('refuses an unknown mode and a contradictory pair, writing nothing', async () => {
     projects.createProject({ name: 'rm-refuse' });
-    await projects.updateProject('rm-refuse', { releaseMode: 'ask' });
+    await projects.updateProject('rm-refuse', { releaseMode: 'operator' });
     const cases = [
-      [{ releaseMode: 'Auto' }, /releaseMode must be one of off, auto, ask/],
+      [{ releaseMode: 'Auto' }, /releaseMode must be one of off, agent, operator/],
       [{ releaseMode: null }, /releaseMode must be one of/],
       [{ releaseMode: 'off', versionBumpEnabled: true }, /contradicts/],
-      [{ releaseMode: 'auto', versionBumpEnabled: false }, /contradicts/],
-      [{ releaseMode: 'ask', tags: ['a'], versionBumpEnabled: 'yes' }, /versionBumpEnabled must be a boolean/]
+      [{ releaseMode: 'agent', versionBumpEnabled: false }, /contradicts/],
+      [{ releaseMode: 'operator', tags: ['a'], versionBumpEnabled: 'yes' }, /versionBumpEnabled must be a boolean/]
     ];
     for (const [body, pattern] of cases) {
       const update = await projects.updateProject('rm-refuse', body);
       assert.equal(update.project, null, JSON.stringify(body));
       assert.match(update.errors[0], pattern);
     }
-    assert.equal((await projects.getProject('rm-refuse')).releaseMode, 'ask');
+    assert.equal((await projects.getProject('rm-refuse')).releaseMode, 'operator');
   });
 
   it('accepts a consistent pair', async () => {
     projects.createProject({ name: 'rm-pair' });
-    const update = await projects.updateProject('rm-pair', { releaseMode: 'ask', versionBumpEnabled: true });
+    const update = await projects.updateProject('rm-pair', { releaseMode: 'operator', versionBumpEnabled: true });
     assert.deepEqual(update.errors, []);
-    assert.equal((await projects.getProject('rm-pair')).releaseMode, 'ask');
+    assert.equal((await projects.getProject('rm-pair')).releaseMode, 'operator');
   });
 });

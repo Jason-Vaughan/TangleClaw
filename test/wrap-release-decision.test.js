@@ -47,9 +47,9 @@ const haltedBump = () => ({
   stepId: 'version-bump',
   kind: 'version-bump',
   status: 'needs-operator',
-  blockers: ['release decision needed: releaseMode is ask'],
+  blockers: ['release decision needed: releaseMode is operator'],
   output: {
-    releaseMode: 'ask',
+    releaseMode: 'operator',
     held: true,
     needsOperator: true,
     readiness: {
@@ -61,8 +61,8 @@ const haltedBump = () => ({
       ]
     },
     wouldBump: { from: '1.2.3', to: '1.3.0', bumpLevel: 'minor' },
-    reason: 'release decision needed: releaseMode is ask',
-    detail: 'release decision needed: releaseMode is ask',
+    reason: 'release decision needed: releaseMode is operator',
+    detail: 'release decision needed: releaseMode is operator',
     remediation: 'Choose Cut or Hold below, then Retry.'
   }
 });
@@ -140,7 +140,7 @@ describe('releaseDecisionWidget', () => {
     assert.equal(w.from, '1.2.3');
     assert.equal(w.to, '1.3.0');
     assert.equal(w.bumpLevel, 'minor');
-    assert.equal(w.releaseMode, 'ask');
+    assert.equal(w.releaseMode, 'operator');
     assert.equal(w.verdict, 'ready');
     assert.equal(w.signals.length, 2);
     assert.equal(w.signals[1].state, 'n/a');
@@ -235,11 +235,11 @@ describe('the wrap modal release controls (run)', () => {
   }
 
   it('offers the level only while Release is Cut', () => {
-    const cut = sync('auto', 'cut');
+    const cut = sync('agent', 'cut');
     assert.equal(cut.wrapBumpGroup.classList.contains('hidden'), false);
     assert.equal(cut.wrapBumpLevel.value, 'minor');
     for (const release of ['', 'hold']) {
-      const el = sync('auto', release);
+      const el = sync('agent', release);
       assert.equal(el.wrapBumpGroup.classList.contains('hidden'), true, `hidden with ${release || 'Auto'}`);
       assert.equal(el.wrapBumpLevel.value, '', 'and cleared, so a level picked under Cut does not survive a switch to Hold');
     }
@@ -253,8 +253,8 @@ describe('the wrap modal release controls (run)', () => {
   });
 
   it('says what Auto will do in each mode', () => {
-    assert.match(sync('ask', '').wrapReleaseHint.textContent, /stops at the version bump/);
-    assert.match(sync('auto', '').wrapReleaseHint.textContent, /cuts when the release checks pass/);
+    assert.match(sync('operator', '').wrapReleaseHint.textContent, /stops at the version bump/);
+    assert.match(sync('agent', '').wrapReleaseHint.textContent, /cuts when the release checks pass/);
   });
 
   it('the markup has the three choices, labelled, with the level group starting hidden', () => {
@@ -295,19 +295,19 @@ ${liftDeclaration(SESSION_SRC, 'async function refreshWrapReleaseMode()')}`, ctx
   }
 
   it('a mode switched from off in another tab brings the Release control back', async () => {
-    const { changed, el, ctx } = await refresh('off', { releaseMode: 'auto' });
+    const { changed, el, ctx } = await refresh('off', { releaseMode: 'agent' });
     assert.equal(changed, true);
-    assert.equal(ctx.sessionState.project.releaseMode, 'auto');
+    assert.equal(ctx.sessionState.project.releaseMode, 'agent');
     assert.equal(el.wrapReleaseGroup.classList.contains('hidden'), false, 'Hold is offered again');
     assert.equal(el.wrapReleaseOff.classList.contains('hidden'), true);
   });
 
   it('reports no change when the mode is the same, or the read fails', async () => {
-    assert.equal((await refresh('ask', { releaseMode: 'ask' })).changed, false);
-    const failed = await refresh('ask', new Error('offline'));
+    assert.equal((await refresh('operator', { releaseMode: 'operator' })).changed, false);
+    const failed = await refresh('operator', new Error('offline'));
     assert.equal(failed.changed, false);
-    assert.equal(failed.ctx.sessionState.project.releaseMode, 'ask');
-    assert.equal((await refresh('ask', { name: 'no mode here' })).changed, false);
+    assert.equal(failed.ctx.sessionState.project.releaseMode, 'operator');
+    assert.equal((await refresh('operator', { name: 'no mode here' })).changed, false);
   });
 
   it('confirmWrap refreshes before reading the choice, and stops when the mode moved', () => {
@@ -380,7 +380,7 @@ describe('renderReleaseDecisionWidget (run)', () => {
     assert.equal(root.dataset.optionsKey, 'release');
     const text = all(root).map((n) => n.textContent || '').join('\n');
     assert.match(text, /It would be 1\.2\.3 → 1\.3\.0 \(minor\)/);
-    assert.match(text, /Release mode ask\. Release checks: ready/);
+    assert.match(text, /Release mode operator\. Release checks: ready/);
     assert.match(text, /build-plan-status: n\/a — no active build plan/);
   });
 
@@ -394,9 +394,9 @@ describe('renderReleaseDecisionWidget (run)', () => {
 
   it('says why there is no AI recommendation', () => {
     const text = all(render((o) => {
-      o.recommendation = { state: 'absent', reason: 'releaseMode is ask' };
+      o.recommendation = { state: 'absent', reason: 'releaseMode is operator' };
     })).map((n) => n.textContent || '').join('\n');
-    assert.match(text, /No AI recommendation: releaseMode is ask/);
+    assert.match(text, /No AI recommendation: releaseMode is operator/);
     assert.match(all(render()).map((n) => n.textContent || '').join('\n'), /No AI recommendation\./);
   });
 
@@ -409,11 +409,11 @@ describe('renderReleaseDecisionWidget (run)', () => {
 });
 
 describe('the settings modal Release mode (source pins)', () => {
-  it('renders Off / Auto / Ask, selected from the resolved mode', () => {
+  it('renders Off / Agent / Operator, selected from the resolved mode', () => {
     assert.match(UI_SRC, /<select class="form-select" id="settingsReleaseMode">\$\{releaseModeOpts\}<\/select>/);
     assert.match(UI_SRC, /<label class="form-label" for="settingsReleaseMode">Release mode<\/label>/);
-    for (const v of ['auto', 'ask', 'off']) assert.match(UI_SRC, new RegExp(`\\['${v}', '`));
-    assert.match(UI_SRC, /\['off', 'auto', 'ask'\]\.includes\(project\.releaseMode\) \? project\.releaseMode : 'auto'/);
+    for (const v of ['agent', 'operator', 'off']) assert.match(UI_SRC, new RegExp(`\\['${v}', '`));
+    assert.match(UI_SRC, /\['off', 'agent', 'operator'\]\.includes\(project\.releaseMode\) \? project\.releaseMode : 'agent'/);
   });
 
   it('saves releaseMode alone, and the legacy checkbox is gone', () => {
