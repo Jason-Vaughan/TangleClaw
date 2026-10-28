@@ -335,6 +335,19 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
       'pages served is a count, not the page list — the panel shows a ratio');
   });
 
+  it('projects the unready monitor\'s last verdict and when it was reached, and null before any tick (#1596)', async () => {
+    const before = await get(server, `/api/launch-sequences?projectId=${project.id}`);
+    const unticked = before.body.sequences.find((s) => s.sequenceId === pulled.sequence.id);
+    assert.equal(unticked.lastUnreadyVerdict, null);
+    assert.equal(unticked.lastUnreadyVerdictAt, null);
+
+    store.launchSequences.recordUnreadyVerdict(pulled.sequence.id, 'nudged');
+    const res = await get(server, `/api/launch-sequences?projectId=${project.id}`);
+    const seq = res.body.sequences.find((s) => s.sequenceId === pulled.sequence.id);
+    assert.equal(seq.lastUnreadyVerdict, 'nudged');
+    assert.ok(seq.lastUnreadyVerdictAt);
+  });
+
   it('reports a launch that got no sequence, with the reason and no steps', async () => {
     const res = await get(server, `/api/launch-sequences?projectId=${other.id}`);
     const seq = res.body.sequences[0];

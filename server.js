@@ -2577,6 +2577,10 @@ route('GET', '/api/launch-sequences', (req, res) => {
       unreadyAt: sequence.unreadyAt,
       nudgeCount: sequence.nudgeCount,
       lastNudgedAt: sequence.lastNudgedAt,
+      // The unready monitor's latest tick read for this launch (#1596), one of
+      // `launch-unready.js`'s `VERDICT_MEANINGS` codes; null before its first tick.
+      lastUnreadyVerdict: sequence.lastUnreadyVerdict,
+      lastUnreadyVerdictAt: sequence.lastUnreadyVerdictAt,
       // Recovery, as five separate facts rather than one word. The panel has to
       // say which of the three clearances it was — an open install's clear is
       // never shown as an operator's — and it has to know the mode, because a

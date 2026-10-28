@@ -310,6 +310,25 @@ describe('unready-launch monitor (Train 21, car 21.5)', () => {
     assert.equal(verdictFor(sequence, 60 * MINUTE), undefined, 'an attested launch is not judged at all');
   });
 
+  // #1596: the tick's verdict is durable, not just the in-memory map `tick`
+  // returns to its caller — a dashboard reading the store between ticks must
+  // see the same answer the last tick reached.
+  it('persists each tick\'s verdict on the sequence row, and overwrites it next tick', () => {
+    const { sequence } = bindSequence('unready-verdict-persisted');
+    assert.equal(verdictFor(sequence, 5 * MINUTE), 'within-window');
+    let row = store.launchSequences.getByLaunchId(sequence.launchId);
+    assert.equal(row.lastUnreadyVerdict, 'within-window');
+    assert.ok(row.lastUnreadyVerdictAt, 'the tick stamped when it reached this verdict');
+
+    assert.equal(verdictFor(sequence, 11 * MINUTE), 'nudged');
+    row = store.launchSequences.getByLaunchId(sequence.launchId);
+    assert.equal(row.lastUnreadyVerdict, 'nudged', 'the later tick\'s verdict replaces the earlier one');
+
+    assert.equal(verdictFor(sequence, 30 * MINUTE), 'already-nudged');
+    row = store.launchSequences.getByLaunchId(sequence.launchId);
+    assert.equal(row.lastUnreadyVerdict, 'already-nudged');
+  });
+
   describe('the verdict vocabulary', () => {
     it('explains every code the monitor can return, and returns every code it explains', () => {
       // Derived from the source, not from a list written here: a new branch

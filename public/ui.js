@@ -3993,6 +3993,27 @@ function renderProjectLaunchSequences(sequences, opts) {
   // including no options at all, renders the control and lets the server decide.
   const noLogin = Boolean(opts && opts.noLogin === true);
   const projectMode = opts ? opts.projectRecoveryMode : null;
+  // What each unready-monitor tick verdict means (#1596), mirrored from
+  // `lib/launch-unready.js`'s `VERDICT_MEANINGS` — the server has no route
+  // that serves this map, so the panel keeps its own copy to label
+  // `lastUnreadyVerdict`. Scoped to this function, not module level: a
+  // lifted-function test runs this declaration with nothing else from the
+  // file in scope.
+  const UNREADY_VERDICT_MEANINGS = {
+    'within-window': 'the session still has time to attest; nothing is owed yet',
+    nudged: 'the window passed and the session was nudged once, in its pane',
+    'already-nudged': 'this launch has had its one nudge; the session owns it now',
+    'no-project': 'the sequence names a project this install no longer has',
+    'unreadable-created-at': 'the sequence has no readable creation time, so no window can be measured',
+    'session-gone': 'the session ended between the query and this tick',
+    'no-pane': 'the session has no tmux pane to nudge (a web UI session)',
+    'native-startup': 'this launch selected its engine\'s native startup channel, so nothing is ever typed into its pane; the operator can Fire from the launch panel',
+    'unprofiled-engine': 'the engine has no live-probed pane signature, so nothing may be typed into it safely',
+    'pane-capture-failed': 'the pane could not be read this tick; the next tick tries again',
+    'pane-busy': 'the pane is working or holds unsent input; the next tick tries again',
+    'inject-failed': 'typing the nudge into the pane failed; the next tick tries again',
+    'control-held': 'the lane is held or stopped by its control assignment, so nothing is typed into it; the next tick checks again'
+  };
   const list = document.getElementById('projLaunchSequencesList');
   if (!list) return;
   if (sequences.length === 0) {
@@ -4002,10 +4023,16 @@ function renderProjectLaunchSequences(sequences, opts) {
   list.innerHTML = sequences.map((s) => {
     const cls = window.tcLaunchReadinessClass(s);
     if (s.applicability === 'not-applicable') {
+      // A sequence-less launch still carries whatever preflight ran before
+      // applicability was decided (#1623): a damaged handoff must not vanish
+      // behind "no launch sequence" just because there is no sequence to show
+      // alongside it. `launchRecoveryHtml` already renders nothing when there
+      // is no recovery to report, so it is safe to always include here too.
       return `<div class="session-rule-item">
         <div class="session-rule-content">
           <strong>${esc(s.sessionId)}</strong>: <span class="${cls}">no launch sequence</span>
           <br><small class="session-rule-meta">${esc(s.notApplicableReason || 'no reason recorded')}</small>
+          ${launchRecoveryHtml(s, projectMode)}
         </div>
       </div>`;
     }
@@ -4020,12 +4047,15 @@ function renderProjectLaunchSequences(sequences, opts) {
     const nudges = s.nudgeCount > 0
       ? `nudged ${esc(s.nudgeCount)}×, last ${esc(s.lastNudgedAt)}`
       : 'not nudged';
+    const unreadyVerdict = s.lastUnreadyVerdict
+      ? ` | monitor: ${esc(s.lastUnreadyVerdict)} — ${esc(UNREADY_VERDICT_MEANINGS[s.lastUnreadyVerdict] || 'unrecognized verdict')} (${esc(s.lastUnreadyVerdictAt)})`
+      : '';
     return `<div class="session-rule-item">
       <div class="session-rule-content">
         <strong>${esc(s.sessionId)}</strong>: <span class="${cls}">${state}</span>
         <br><small class="session-rule-meta">Rules channel: ${rules}</small>
         ${launchPasteOutcomeHtml(s)}
-        <br><small class="session-rule-meta">Served: ${esc(served)}/${esc(s.of)} step(s) | Acknowledged: ${esc(acked)}/${esc(s.of)} | ${nudges}</small>
+        <br><small class="session-rule-meta">Served: ${esc(served)}/${esc(s.of)} step(s) | Acknowledged: ${esc(acked)}/${esc(s.of)} | ${nudges}${unreadyVerdict}</small>
         <br><small class="session-rule-meta">Launched ${esc(s.createdAt)} | revision ${esc(s.revision)}</small>
         ${launchRecoveryHtml(s, projectMode)}
         ${launchReconciliationControlHtml(s, noLogin)}

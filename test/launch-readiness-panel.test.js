@@ -79,6 +79,8 @@ function row(overrides = {}) {
     unreadyAt: null,
     nudgeCount: 0,
     lastNudgedAt: null,
+    lastUnreadyVerdict: null,
+    lastUnreadyVerdictAt: null,
     rulesDelivery: null,
     pasteOutcome: null,
     recovery: 'none',
@@ -166,6 +168,57 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
     assert.match(html, /no launch sequence/);
     assert.match(html, /the engine declares no launch-sequence support/);
     assert.doesNotMatch(html, /Served:/, 'there is nothing to count');
+  });
+
+  // #1623: a sequence-less launch still carries whatever preflight ran before
+  // applicability was decided, and a damaged handoff must not vanish behind
+  // "no launch sequence" just because there is no sequence to show beside it.
+  it('surfaces a damaged handoff and the operator\'s clear on a launch that got no sequence (#1623)', () => {
+    const html = render([row({
+      applicability: 'not-applicable',
+      notApplicableReason: 'the engine declares no launch-sequence support',
+      steps: [],
+      recovery: 'required',
+      recoveryMode: 'operator',
+      recoveryRevision: 5,
+      preflightVerdict: 'handoff-behind',
+      preflightReason: 'the handoff directory could not be read (ENOTDIR)',
+      preflightEvaluationFailed: true
+    })]);
+    assert.match(html, /no launch sequence/, 'the not-applicable fact is still said');
+    assert.match(html, /Recovery required/);
+    assert.match(html, /handoff-behind/);
+    assert.match(html, /could not be read \(ENOTDIR\)/);
+    assert.match(html, /data-launch-recovery-clear="9"/,
+      'the operator still gets a Clear button on a sequence-less launch');
+  });
+
+  it('says nothing extra about recovery on a sequence-less launch that owes none', () => {
+    const html = render([row({
+      applicability: 'not-applicable',
+      notApplicableReason: 'the engine declares no launch-sequence support',
+      steps: []
+    })]);
+    assert.doesNotMatch(html, /Recovery/);
+    assert.doesNotMatch(html, /data-launch-recovery-clear/);
+  });
+
+  // #1596: the unready monitor's last tick, read beside the nudge count it
+  // already renders alongside.
+  it('renders the unready monitor\'s last verdict and its meaning beside the nudge count', () => {
+    const html = render([row({
+      unreadyAt: '2026-09-17 19:10:00',
+      nudgeCount: 1,
+      lastNudgedAt: '2026-09-17 19:10:05',
+      lastUnreadyVerdict: 'already-nudged',
+      lastUnreadyVerdictAt: '2026-09-17 19:25:00'
+    })]);
+    assert.match(html, /monitor: already-nudged — this launch has had its one nudge; the session owns it now \(2026-09-17 19:25:00\)/);
+  });
+
+  it('says nothing about the monitor before its first tick', () => {
+    const html = render([row()]);
+    assert.doesNotMatch(html, /monitor:/);
   });
 
   it('states the empty case as a fact about the record', () => {
