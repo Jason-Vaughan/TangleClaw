@@ -951,6 +951,19 @@ html[data-tc-keyboard] body {
 }
 .engine-error-banner .engine-error-note { color: var(--text-muted); }
 
+/* ── Startup readiness banner (#1633) ──
+   Same banner family as above (minted at runtime — session.html is outside
+   this chunk's scope), but the merely-`starting` state is not an alarm: a
+   launch stepping through its sequence is expected, not a fault, so it gets
+   the amber `startup-pending` variant instead of the family's default red.
+   `needs-attention` keeps the default danger styling unchanged. */
+.engine-error-banner.startup-pending {
+  background: rgba(255, 179, 0, 0.12);
+  border-left: 4px solid var(--warning, #ffb300);
+  border-bottom: 1px solid rgba(255, 179, 0, 0.35);
+}
+.engine-error-banner.startup-pending strong { color: var(--warning, #ffb300); }
+
 /* ── Session Wrapping Bar ── */
 .session-wrapping {
   flex-shrink: 0;
