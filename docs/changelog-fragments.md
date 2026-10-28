@@ -120,19 +120,23 @@ above, and to leave `CHANGELOG.md` alone. Its verification then passes by any
 of these, judged by `lib/wrap-steps/changelog-coverage.js`:
 
 - a correctly named fragment was created, rewritten or removed directly under
-  `changelog.d/` during the step (the step declares the directory as a produced
-  path, and the wrap reads it as a digest of the entries the contract names, so
-  a new fragment is a change the same way an edit to `CHANGELOG.md` is, while a
-  misnamed file written there is not the step's output and reads as no change);
+  `changelog.d/` during the step (the step declares the directory, and only the
+  directory, as its produced path, and the wrap reads it as a digest of the
+  entries the contract names, so a new fragment is a change to that digest,
+  while a misnamed file written there is not the step's output and reads as no
+  change);
 - a correctly named fragment is uncommitted in the working tree, or a commit
   in the session's range added one: the changelog was maintained as the
   session worked, and the step has nothing to add;
 - or the project declares a `coveragePaths` glob matched instead (a
-  monorepo's nested changelog). A session's direct edit to `CHANGELOG.md`'s
-  `[Unreleased]` section does NOT satisfy this step — that transition exception
-  has ended (#2523). `CHANGELOG.md` stays declared only so the release wrap's
-  own compiled promotion of fragments into `[Unreleased]` still satisfies the
-  step when that wrap runs.
+  monorepo's nested changelog).
+
+A session's direct edit to `CHANGELOG.md`'s `[Unreleased]` section does NOT
+satisfy this step, with no exception — that transition exception has ended
+(#2523), and the step no longer declares `CHANGELOG.md` at all. The release's
+own compilation of every fragment into `[Unreleased]` happens afterward, in
+the separate `version-bump` step (`lib/wrap-steps/version-bump.js`), which is
+not gated by `changelog-update`'s verification.
 
 Only the **name** is judged here, by `parseFragmentName`. A file under
 `changelog.d/` that is not a fragment (`README.md`, `0.x.added.md`,

@@ -102,22 +102,57 @@ describe('wrap-default-pipeline — the code-owned pipeline', () => {
   // carries the fix to an install, so pin it here rather than only at the gate.
   it('changelog-update declares the coverage predicate alongside its mutation check', () => {
     const step = defaultPipeline.steps().find((s) => s.id === 'changelog-update');
-    assert.deepEqual(step.verifyChanged, ['CHANGELOG.md', 'changelog.d/']);
+    assert.deepEqual(step.verifyChanged, ['changelog.d/']);
     assert.equal(step.verifySatisfiedBy, 'changelog-coverage');
   });
 
   // #1220 — the step's work product is a fragment under changelog.d/, so the
   // declaration names the directory (the file's name is not known in advance).
-  // CHANGELOG.md stays declared only for the release wrap's own promotion of
-  // fragments into [Unreleased] (#2523); a session's direct edit no longer
-  // satisfies this step.
+  // CHANGELOG.md is NOT declared at all (#2523): leaving it declared let
+  // ai-content.js's route-1 mutation check pass a bare direct edit the instant
+  // ANY declared path changed, with no fragment required — closing that hole
+  // is the whole point of #2523. The release's own compiled promotion of
+  // fragments into [Unreleased] happens in the separate, later version-bump
+  // step and is not gated by this one.
   describe('changelog-update asks for a changelog fragment (#1220)', () => {
     const step = () => defaultPipeline.steps().find((s) => s.id === 'changelog-update');
 
-    it('declares changelog.d/ as a second produced path, CHANGELOG.md still first', () => {
-      assert.deepEqual(step().verifyChanged, ['CHANGELOG.md', 'changelog.d/']);
+    it('declares changelog.d/ as its ONLY produced path — CHANGELOG.md is not declared (#2523)', () => {
+      assert.deepEqual(step().verifyChanged, ['changelog.d/']);
       assert.ok(aiContent._watchedOutputPaths(step()).includes('changelog.d/'),
         'the file-settle completion signal watches the directory too');
+    });
+
+    it('a direct CHANGELOG.md edit alone no longer passes the real gate end to end (#2523)', () => {
+      // The integrated regression test PRR-A's review asked for: exercise the
+      // REAL ai-content.js gate (`_verifyChangedGate`) against the REAL
+      // shipped step spec — not just the changelog-coverage predicate in
+      // isolation — proving a bare direct CHANGELOG.md edit (no fragment at
+      // all; `changelog.d/` untouched) is rejected rather than silently
+      // passing via route 1's mutation check. Before the fix, the step
+      // declared BOTH `CHANGELOG.md` and `changelog.d/`, so route 1 passed
+      // the instant `CHANGELOG.md` changed, with no awareness that
+      // `changelog.d/` never did — this test fails against that shape and
+      // passes only once `CHANGELOG.md` is dropped from `verifyChanged`.
+      const realStep = step();
+      const saved = { readForVerify: aiContent._internal.readForVerify, cov: aiContent._internal.changelogCoverage };
+      // `changelog.d/` unchanged before/after — no fragment was written.
+      aiContent._internal.readForVerify = () => 'same-digest';
+      // The real predicate would read git/working-tree state; stub it to the
+      // UNCOVERED verdict a direct-edit-only session actually gets, so this
+      // test is deterministic and isolated from this checkout's own history.
+      aiContent._internal.changelogCoverage = () => ({
+        verdict: 'uncovered', uncovered: [{ sha: 'deadbee', subject: 'direct CHANGELOG.md edit' }],
+        uncommittedWork: [], checkedCount: 1, range: 'base..HEAD', reason: null
+      });
+      try {
+        const block = aiContent._verifyChangedGate('/p', realStep, { 'changelog.d/': 'same-digest' });
+        assert.ok(block, 'a direct CHANGELOG.md edit with changelog.d/ untouched must BLOCK, not pass silently');
+        assert.match(block.blocker, /changelog-update/);
+      } finally {
+        aiContent._internal.readForVerify = saved.readForVerify;
+        aiContent._internal.changelogCoverage = saved.cov;
+      }
     });
 
     it('the prompt asks for a fragment by the name contract, not for a CHANGELOG.md edit', () => {

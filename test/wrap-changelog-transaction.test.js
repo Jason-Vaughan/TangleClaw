@@ -50,13 +50,20 @@ describe('wrap CHANGELOG transaction — step order is load-bearing', () => {
   it('every ai-content step that must change CHANGELOG.md runs BEFORE version-bump', () => {
     // The general invariant, not just today's step names: version-bump stages a
     // whole-file CHANGELOG snapshot, so any agent step contracted to edit that
-    // file must have already done so.
+    // file must have already done so. Zero such steps exist today — #2523
+    // dropped `changelog-update`'s own CHANGELOG.md declaration, because
+    // leaving it declared let ai-content.js's route-1 mutation check pass a
+    // bare direct edit with no fragment at all, defeating the point of the
+    // fix. CHANGELOG.md's real promotion happens entirely inside version-bump
+    // itself (it reads and compiles every fragment there), which this
+    // invariant does not need to cover since nothing ELSE claims to edit it.
+    // The loop stays general on purpose, so it still catches a future step
+    // that adds the declaration back.
     const vbIdx = idx('version-bump');
     assert.ok(vbIdx >= 0, 'precondition: the pipeline has a version-bump step');
     const changelogEditors = steps
       .map((s, i) => ({ s, i }))
       .filter(({ s }) => Array.isArray(s.verifyChanged) && s.verifyChanged.includes('CHANGELOG.md'));
-    assert.ok(changelogEditors.length > 0, 'precondition: some step is contracted to edit CHANGELOG.md');
     for (const { s, i } of changelogEditors) {
       assert.ok(i < vbIdx,
         `"${s.id}" edits CHANGELOG.md but runs at ${i}, after version-bump at ${vbIdx} — `
