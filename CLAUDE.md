@@ -185,12 +185,9 @@ Substantive milestones become tagged GitHub Releases — permanent citeable URLs
 - Semver: MAJOR breaking, MINOR features, PATCH fixes (pre-1.0 may use 0.x freely).
 - After a substantive merge, suggest `git tag -a vX.Y.Z -m "..." && git push --tags`, then `gh release create vX.Y.Z --notes-from-tag` (or `-F <notes-file>` for curated CHANGELOG notes).
 
-**Rule: Update CHANGELOG.md — but by the project's OWN convention, never by inventing one.** Naming `CHANGELOG.md` in this rule is shorthand for "the project's changelog," not a literal instruction to create a root file of that name. Before writing anything, detect what the repository already does and follow it:
-- A `changelog.d/` fragment directory, or another project-local convention a file like CLAUDE.md or CONTRIBUTING.md names — use it as documented there.
-- A nested per-package changelog (e.g. `plugin/CHANGELOG.md` in a monorepo) — log against the package the change actually touches, not the repo root.
-- A root `CHANGELOG.md` already tracked in git, with no fragment/nested convention layered on top — edit it in Keep a Changelog format: each merged PR adds to `[Unreleased]`; releases promote those entries to a dated section.
-- **Never create an untracked root `CHANGELOG.md` stub merely because this rule's name mentions the file.** A repository with no tracked changelog has not opted into one, and inventing a root file nobody asked for surprises the project more than skipping the entry would.
-- **If no tracked changelog exists and no convention is detectable, or the right destination is genuinely ambiguous** (e.g. two plausible nested changelogs, or project instructions that conflict), safely no-op — write nothing — and say so visibly in the session output: what was checked, and why it was ambiguous or absent. A silent skip is indistinguishable from forgetting; a silent guess risks logging the change in the wrong place.
+**Rule: Update CHANGELOG.md by the project's OWN convention — never invent one.** Detect it first: `changelog.d/` fragments, a convention CLAUDE.md/CONTRIBUTING.md names, a nested per-package changelog (log against the package touched), or a tracked root `CHANGELOG.md` in Keep a Changelog format.
+- **Never create an untracked root `CHANGELOG.md` stub just because the rule names it** — no tracked changelog means the project hasn't opted in.
+- **If none exists or the destination is ambiguous, safely no-op and say why**, rather than guess or stay silent.
 
 **Rule: TC's `version-bump` wrap step picks the bump level from `[Unreleased]` content — author entries under the subsection that produces the intended bump.**
 
