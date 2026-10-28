@@ -257,6 +257,7 @@ test('the release workflow references an extractor path that exists', () => {
 // above and is the other half of the same release-notes machinery.
 const releaseAutomation = require('../lib/release-automation');
 const { execFileSync: realExecFileSync, spawnSync: realSpawnSync } = require('node:child_process');
+const { initRepo } = require('./_temp-repo');
 
 /**
  * A throwaway project directory with a real git repo, so classifyRemote and
@@ -265,7 +266,7 @@ const { execFileSync: realExecFileSync, spawnSync: realSpawnSync } = require('no
  */
 function makeTempProject() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-release-automation-'));
-  realExecFileSync('git', ['init', '-q'], { cwd: dir });
+  initRepo(dir);
   realExecFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
   realExecFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir });
   return dir;

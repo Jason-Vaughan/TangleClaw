@@ -44,6 +44,7 @@
         "lib/wrap-steps/**",
         "lib/changelog-*.js",
         "lib/release-readiness.js",
+        "lib/release-automation.js",
         "lib/staged-write.js"
       ]
     },
