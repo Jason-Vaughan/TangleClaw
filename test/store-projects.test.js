@@ -72,6 +72,35 @@ describe('store.projects', () => {
       });
       assert.equal(project.engineId, 'claude');
     });
+
+    it('rejects an unknown option key instead of silently ignoring it (#1225)', () => {
+      assert.throws(() => {
+        store.projects.create({ name: 'p', path: '/tmp/p', groupId: 'g1' });
+      }, (err) => {
+        assert.ok(err instanceof store.StoreError);
+        assert.equal(err.code, 'BAD_REQUEST');
+        assert.match(err.message, /Unknown option "groupId" for projects\.create/);
+        return true;
+      });
+    });
+
+    it('rejects a snake_case unknown option key the same way (#1225)', () => {
+      assert.throws(() => {
+        store.projects.create({ name: 'p', path: '/tmp/p', group_id: 'g1' });
+      }, /Unknown option "group_id" for projects\.create/);
+    });
+
+    it('rejects a null data bag', () => {
+      assert.throws(() => {
+        store.projects.create(null);
+      }, /projects\.create requires an object/);
+    });
+
+    it('rejects an array data bag', () => {
+      assert.throws(() => {
+        store.projects.create(['name', 'path']);
+      }, /projects\.create requires an object/);
+    });
   });
 
   describe('get / getByName', () => {
@@ -150,6 +179,29 @@ describe('store.projects', () => {
       const list = store.projects.list({ tag: 'special' });
       assert.ok(list.some((p) => p.name === 'tagged'));
     });
+
+    it('rejects an unknown option key instead of silently ignoring it (#1225)', () => {
+      assert.throws(() => {
+        store.projects.list({ groupId: 'g1' });
+      }, (err) => {
+        assert.ok(err instanceof store.StoreError);
+        assert.equal(err.code, 'BAD_REQUEST');
+        assert.match(err.message, /Unknown option "groupId" for projects\.list/);
+        return true;
+      });
+    });
+
+    it('rejects a null options bag', () => {
+      assert.throws(() => {
+        store.projects.list(null);
+      }, /projects\.list requires an object/);
+    });
+
+    it('rejects an array options bag', () => {
+      assert.throws(() => {
+        store.projects.list(['archived']);
+      }, /projects\.list requires an object/);
+    });
   });
 
   describe('update', () => {
@@ -176,6 +228,25 @@ describe('store.projects', () => {
       const created = store.projects.create({ name: 'no-update', path: '/tmp/no-update' });
       const result = store.projects.update(created.id, {});
       assert.equal(result.name, 'no-update');
+    });
+
+    it('rejects an unknown data key instead of silently ignoring it — sibling hazard to create/list (#1225)', () => {
+      const created = store.projects.create({ name: 'update-unknown', path: '/tmp/update-unknown' });
+      assert.throws(() => {
+        store.projects.update(created.id, { groupId: 'g1' });
+      }, (err) => {
+        assert.ok(err instanceof store.StoreError);
+        assert.equal(err.code, 'BAD_REQUEST');
+        assert.match(err.message, /Unknown option "groupId" for projects\.update/);
+        return true;
+      });
+    });
+
+    it('rejects the column\'s wrapper name "engine" (the row column is engine_id) rather than silently no-op-ing it', () => {
+      const created = store.projects.create({ name: 'update-engine-alias', path: '/tmp/update-engine-alias' });
+      assert.throws(() => {
+        store.projects.update(created.id, { engine: 'codex' });
+      }, /Unknown option "engine" for projects\.update/);
     });
   });
 

@@ -1759,7 +1759,7 @@ describe('master memory scaffold', () => {
   it('lists registered projects (including archived, labeled) in the fleet map', () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-fleet-'));
     try {
-      const p = store.projects.create({ name: 'fleet-proj', path: '/tmp/fleet-proj', engineId: 'claude' });
+      const p = store.projects.create({ name: 'fleet-proj', path: '/tmp/fleet-proj', engine: 'claude' });
       store.projects.archive(p.id);
       master._refreshMasterMemory(home);
       const fleet = fs.readFileSync(path.join(home, 'memory', 'FLEET.md'), 'utf8');

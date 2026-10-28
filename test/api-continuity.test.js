@@ -48,7 +48,7 @@ describe('API /api/continuity (CC-5 operator search)', () => {
     projDir = path.join(tmpDir, projectName);
     fs.mkdirSync(projDir, { recursive: true });
     store.projects.create({
-      name: projectName, path: projDir, engine: 'claude', methodology: 'prawduct', tags: [], ports: {}
+      name: projectName, path: projDir, engine: 'claude', tags: [], ports: {}
     });
 
     // Seed the continuity store: two sessions + a cold transcript for 42.

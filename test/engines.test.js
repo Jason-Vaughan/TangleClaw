@@ -2883,7 +2883,7 @@ describe('engines', () => {
       const project = store.projects.create({
         name: 'test-shared-proj',
         path: projPath,
-        engineId: 'claude'
+        engine: 'claude'
       });
       projectId = project.id;
 

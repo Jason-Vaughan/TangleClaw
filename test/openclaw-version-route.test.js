@@ -109,7 +109,7 @@ describe('GET /api/openclaw/connections/:id/version (#1527)', () => {
     const name = 'version-probe-2557';
     const dir = path.join(tmpDir, name);
     fs.mkdirSync(dir, { recursive: true });
-    store.projects.create({ name, path: dir, engineId: 'claude' });
+    store.projects.create({ name, path: dir, engine: 'claude' });
 
     let probes = 0;
     ocv._internal.execAsync = () => {

@@ -1154,7 +1154,7 @@ describe('api-projects', () => {
         const name = `slow-scan-2557-${i}`;
         const dir = path.join(projectsDir, name);
         fs.mkdirSync(dir, { recursive: true });
-        store.projects.create({ name, path: dir, engineId: 'claude' });
+        store.projects.create({ name, path: dir, engine: 'claude' });
         names.push(name);
       }
 
