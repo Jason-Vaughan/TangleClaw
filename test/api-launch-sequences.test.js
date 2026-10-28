@@ -319,7 +319,11 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
 
   it('carries the served and acknowledged state per step', async () => {
     const id = { launchId: pulled.sequence.launchId, projectId: project.id };
-    const first = launchSequence.next(id).body;
+    // Drive to the step's LAST page before acking — `ack` is only present
+    // there (lib/launch-sequence.js), and a step's page count is a function
+    // of its rendered content length, not a constant this test may assume.
+    let first = launchSequence.next(id).body;
+    while (!first.ack) first = launchSequence.next({ ...id, page: first.page.index + 1 }).body;
     launchSequence.next({ ...id, ack: { step: first.step.id, revision: first.revision, digest: first.ack.digest } });
 
     const res = await get(server, `/api/launch-sequences?projectId=${project.id}`);
