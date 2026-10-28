@@ -394,3 +394,112 @@ describe('store.sessions (store layer)', () => {
     assert.deepEqual(sessions, []);
   });
 });
+
+describe('store options-key guard audit (#2681)', () => {
+  let tmpDir;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-store-options-guard-'));
+    store._setBasePath(tmpDir);
+    store.init();
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function assertsBadRequest(fn, key, fnName) {
+    assert.throws(fn, (err) => {
+      assert.ok(err instanceof store.StoreError);
+      assert.equal(err.code, 'BAD_REQUEST');
+      assert.match(err.message, new RegExp(`Unknown option "${key}" for ${fnName}`));
+      return true;
+    });
+  }
+
+  it('projectConfig.load rejects an unknown option key, accepts a known one', () => {
+    assertsBadRequest(() => store.projectConfig.load(tmpDir, { bogus: 1 }), 'bogus', 'projectConfig\\.load');
+    assert.doesNotThrow(() => store.projectConfig.load(tmpDir, { onError: () => {} }));
+  });
+
+  it('learnings.list rejects an unknown option key, accepts a known one', () => {
+    assertsBadRequest(() => store.learnings.list(1, { bogus: 1 }), 'bogus', 'learnings\\.list');
+    assert.deepEqual(store.learnings.list(1, { tier: 'active' }), []);
+  });
+
+  it('medusaDeliveries.listForSession rejects an unknown option key, accepts a known one', () => {
+    assertsBadRequest(() => store.medusaDeliveries.listForSession('s1', { bogus: 1 }), 'bogus', 'medusaDeliveries\\.listForSession');
+    assert.deepEqual(store.medusaDeliveries.listForSession('s1', { limit: 5 }), []);
+  });
+
+  it('awarenessReceipts.listForProject rejects an unknown option key, accepts a known one', () => {
+    assertsBadRequest(() => store.awarenessReceipts.listForProject(1, { bogus: 1 }), 'bogus', 'awarenessReceipts\\.listForProject');
+    assert.deepEqual(store.awarenessReceipts.listForProject(1, { limit: 5 }), []);
+  });
+
+  it('awarenessReceipts.fleetAwareness rejects an unknown option key, accepts a known one', () => {
+    assertsBadRequest(() => store.awarenessReceipts.fleetAwareness({ bogus: 1 }), 'bogus', 'awarenessReceipts\\.fleetAwareness');
+    assert.doesNotThrow(() => store.awarenessReceipts.fleetAwareness({ sessionsPerProject: 2 }));
+  });
+
+  it('portLeases.list rejects an unknown option key, accepts known ones', () => {
+    assertsBadRequest(() => store.portLeases.list({ bogus: 1 }), 'bogus', 'portLeases\\.list');
+    assert.deepEqual(store.portLeases.list({ project: 'x', status: 'active', host: 'localhost' }), []);
+  });
+
+  it('portLeases.release rejects an unknown option key, accepts known ones', () => {
+    assertsBadRequest(() => store.portLeases.release(9901, 'localhost', { bogus: 1 }), 'bogus', 'portLeases\\.release');
+    assert.doesNotThrow(() => store.portLeases.release(9901, 'localhost', { project: 'x', force: true }));
+  });
+
+  it('portLeases.releaseByProject rejects an unknown option key, accepts known ones', () => {
+    assertsBadRequest(() => store.portLeases.releaseByProject('nonexistent', { bogus: 1 }), 'bogus', 'portLeases\\.releaseByProject');
+    assert.equal(store.portLeases.releaseByProject('nonexistent', { reason: 'orphan-sweep', ownerKind: 'project' }), 0);
+  });
+
+  it('portLeases.setOwnerKind rejects an unknown option key, accepts a known one', () => {
+    assertsBadRequest(() => store.portLeases.setOwnerKind('nonexistent', 'project', { bogus: 1 }), 'bogus', 'portLeases\\.setOwnerKind');
+    assert.equal(store.portLeases.setOwnerKind('nonexistent', 'project', { host: 'localhost' }), 0);
+  });
+
+  it('portLeases.heartbeat rejects an unknown option key, accepts a known one', () => {
+    assertsBadRequest(() => store.portLeases.heartbeat(9902, 'localhost', { bogus: 1 }), 'bogus', 'portLeases\\.heartbeat');
+    assert.equal(store.portLeases.heartbeat(9902, 'localhost', { project: 'x' }), null);
+  });
+
+  it('sharedDocs.list rejects an unknown option key, accepts a known one', () => {
+    assertsBadRequest(() => store.sharedDocs.list({ bogus: 1 }), 'bogus', 'sharedDocs\\.list');
+    assert.deepEqual(store.sharedDocs.list({ groupId: 'g1' }), []);
+  });
+
+  it('openclawConnections.list rejects an unknown option key, accepts a known one', () => {
+    assertsBadRequest(() => store.openclawConnections.list({ bogus: 1 }), 'bogus', 'openclawConnections\\.list');
+    assert.deepEqual(store.openclawConnections.list({ availableAsEngine: true }), []);
+  });
+
+  it('evalExchanges.list/count/listSessions reject an unknown option key, accept known ones', () => {
+    assertsBadRequest(() => store.evalExchanges.list({ bogus: 1 }), 'bogus', 'evalExchanges\\.list');
+    assert.deepEqual(store.evalExchanges.list({ sessionId: 's1', project: 'p1', scored: 0, from: '2024-01-01', to: '2024-12-31', limit: 10 }), []);
+
+    assertsBadRequest(() => store.evalExchanges.count({ bogus: 1 }), 'bogus', 'evalExchanges\\.count');
+    assert.equal(store.evalExchanges.count({ project: 'p1', sessionId: 's1' }), 0);
+
+    assertsBadRequest(() => store.evalExchanges.listSessions('p1', { bogus: 1 }), 'bogus', 'evalExchanges\\.listSessions');
+    assert.deepEqual(store.evalExchanges.listSessions('p1', { limit: 5 }), []);
+  });
+
+  it('evalScores.list/listByProject reject an unknown option key, accept known ones', () => {
+    assertsBadRequest(() => store.evalScores.list({ bogus: 1 }), 'bogus', 'evalScores\\.list');
+    assert.deepEqual(store.evalScores.list({ from: '2024-01-01', to: '2024-12-31', anomaliesOnly: true, limit: 10 }), []);
+
+    assertsBadRequest(() => store.evalScores.listByProject('p1', { bogus: 1 }), 'bogus', 'evalScores\\.listByProject');
+    assert.deepEqual(store.evalScores.listByProject('p1', { from: '2024-01-01', to: '2024-12-31', anomaliesOnly: true, limit: 10 }), []);
+  });
+
+  it('evalIncidents.list rejects an unknown option key, accepts known ones and no options at all', () => {
+    assertsBadRequest(() => store.evalIncidents.list('p1', { bogus: 1 }), 'bogus', 'evalIncidents\\.list');
+    assert.deepEqual(store.evalIncidents.list('p1', { status: 'open', type: 'drift', limit: 10 }), []);
+    assert.deepEqual(store.evalIncidents.list('p1'), []);
+  });
+});

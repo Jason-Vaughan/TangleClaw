@@ -256,4 +256,254 @@ describe('gatherReleaseSignals', () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it('stays the offline 2-signal call when no linked-issue option is given, even with one on disk (#1495)', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-readiness-g2-'));
+    try {
+      const signals = rr.gatherReleaseSignals(root, { changelog: { found: true, sectionFound: true, hasEntries: true } });
+      assert.deepEqual(signals.map((s) => s.id), ['unreleased-entries', 'build-plan-status']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('appends linked-issue-closed when a linked-issue option is given (#1495)', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-readiness-g3-'));
+    try {
+      const signals = rr.gatherReleaseSignals(root, {
+        changelog: { found: true, sectionFound: true, hasEntries: true },
+        issueNumber: 7,
+        fetchIssueState: () => ({ state: 'closed' })
+      });
+      assert.deepEqual(signals.map((s) => s.id), ['unreleased-entries', 'build-plan-status', 'linked-issue-closed']);
+      assert.equal(rr.evaluateReleaseReadiness(signals).verdict, 'ready');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('appends linked-issue-closed on includeLinkedIssue alone, even with no issue found (n/a, not dropped)', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-readiness-g4-'));
+    try {
+      const signals = rr.gatherReleaseSignals(root, {
+        changelog: { found: true, sectionFound: true, hasEntries: true },
+        includeLinkedIssue: true
+      });
+      assert.deepEqual(signals.map((s) => s.id), ['unreleased-entries', 'build-plan-status', 'linked-issue-closed']);
+      assert.equal(signals[2].state, 'n/a');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('linkedIssueClosedSignal (#1495)', () => {
+  let root;
+  beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-readiness-issue-')); });
+  afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
+
+  const writeState = (body) => {
+    fs.mkdirSync(path.join(root, '.prawduct'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.prawduct', 'project-state.yaml'), body);
+  };
+  const writePlan = (rel, body) => {
+    const p = path.join(root, '.prawduct', rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, body);
+  };
+
+  describe('discovery', () => {
+    it('is n/a when no issue can be found anywhere', () => {
+      const s = rr.linkedIssueClosedSignal(root, { fetchIssueState: () => ({ state: 'closed' }) });
+      assert.equal(s.state, 'n/a');
+      assert.equal(s.detail, 'no linked issue found');
+    });
+
+    it('prefers an explicit issueNumber over everything else', () => {
+      writeState('active_build_plan: artifacts/p.md\n');
+      writePlan('artifacts/p.md', '# Plan\n\n**Issue:** #111\n');
+      const seen = [];
+      rr.linkedIssueClosedSignal(root, {
+        issueNumber: 222,
+        commits: ['Fixes #333'],
+        fetchIssueState: (n) => { seen.push(n); return { state: 'closed' }; }
+      });
+      assert.deepEqual(seen, [222]);
+    });
+
+    it('accepts issueNumbers (plural) for multiple linked issues', () => {
+      const seen = [];
+      const s = rr.linkedIssueClosedSignal(root, {
+        issueNumbers: [1, 2],
+        fetchIssueState: (n) => { seen.push(n); return { state: 'closed' }; }
+      });
+      assert.deepEqual(seen.sort(), [1, 2]);
+      assert.equal(s.state, 'pass');
+    });
+
+    it('falls back to the active plan\'s Issue: header line', () => {
+      writeState('active_build_plan: artifacts/p.md\n');
+      writePlan('artifacts/p.md', '# Plan\n\n**Issue:** #456\n\nSome body\n');
+      const seen = [];
+      rr.linkedIssueClosedSignal(root, { fetchIssueState: (n) => { seen.push(n); return { state: 'closed' }; } });
+      assert.deepEqual(seen, [456]);
+    });
+
+    it('matches the Issue header line in Issue:, **Issue:**, or bare Issue # spellings', () => {
+      writeState('active_build_plan: artifacts/p.md\n');
+      for (const [spelling, expected] of [
+        ['Issue: #10\n', 10],
+        ['**Issue:** #11\n', 11],
+        ['Issue #12\n', 12]
+      ]) {
+        writePlan('artifacts/p.md', `# Plan\n\n${spelling}`);
+        const seen = [];
+        rr.linkedIssueClosedSignal(root, { fetchIssueState: (n) => { seen.push(n); return { state: 'closed' }; } });
+        assert.deepEqual(seen, [expected], `spelling ${JSON.stringify(spelling)}`);
+      }
+    });
+
+    it('falls back to commits\' Fixes/Closes/Resolves #N when no plan names one', () => {
+      const seen = [];
+      rr.linkedIssueClosedSignal(root, {
+        commits: ['fix: thing\n\nFixes #42', 'docs: note\n\nCloses #43', 'chore: x\n\nResolves #44'],
+        fetchIssueState: (n) => { seen.push(n); return { state: 'closed' }; }
+      });
+      assert.deepEqual(seen.sort(), [42, 43, 44]);
+    });
+
+    it('matches Fixes/Closes/Resolves case-insensitively', () => {
+      const seen = [];
+      rr.linkedIssueClosedSignal(root, {
+        commits: ['fixes #5', 'CLOSES #6'],
+        fetchIssueState: (n) => { seen.push(n); return { state: 'closed' }; }
+      });
+      assert.deepEqual(seen.sort(), [5, 6]);
+    });
+
+    it('plan takes precedence over commits when both are available', () => {
+      writeState('active_build_plan: artifacts/p.md\n');
+      writePlan('artifacts/p.md', '# Plan\n\n**Issue:** #900\n');
+      const seen = [];
+      rr.linkedIssueClosedSignal(root, {
+        commits: ['Fixes #901'],
+        fetchIssueState: (n) => { seen.push(n); return { state: 'closed' }; }
+      });
+      assert.deepEqual(seen, [900]);
+    });
+  });
+
+  describe('states', () => {
+    it('is unknown, never pass, when an issue is linked but no lookup is configured', () => {
+      const s = rr.linkedIssueClosedSignal(root, { issueNumber: 1 });
+      assert.equal(s.state, 'unknown');
+      assert.match(s.detail, /GitHub issue state unavailable/);
+    });
+
+    it('is unknown, never pass, when the lookup throws', () => {
+      const s = rr.linkedIssueClosedSignal(root, {
+        issueNumber: 1,
+        fetchIssueState: () => { throw new Error('rate limited'); }
+      });
+      assert.equal(s.state, 'unknown');
+      assert.match(s.detail, /rate limited/);
+    });
+
+    it('is unknown on an unrecognized state string', () => {
+      const s = rr.linkedIssueClosedSignal(root, {
+        issueNumber: 1,
+        fetchIssueState: () => ({ state: 'merged' })
+      });
+      assert.equal(s.state, 'unknown');
+      assert.match(s.detail, /unrecognized state/);
+    });
+
+    it('is pass when the linked issue is closed, case-insensitively', () => {
+      for (const state of ['closed', 'CLOSED', 'Closed']) {
+        const s = rr.linkedIssueClosedSignal(root, { issueNumber: 1, fetchIssueState: () => ({ state }) });
+        assert.equal(s.state, 'pass');
+        assert.equal(s.detail, 'linked issue #1 is closed');
+      }
+    });
+
+    it('accepts a bare state string from fetchIssueState, not just {state}', () => {
+      const s = rr.linkedIssueClosedSignal(root, { issueNumber: 1, fetchIssueState: () => 'closed' });
+      assert.equal(s.state, 'pass');
+    });
+
+    it('is fail when the linked issue is open, case-insensitively', () => {
+      const s = rr.linkedIssueClosedSignal(root, { issueNumber: 1, fetchIssueState: () => ({ state: 'OPEN' }) });
+      assert.equal(s.state, 'fail');
+      assert.equal(s.detail, 'linked issue #1 is still open');
+    });
+
+    it('fails if ANY linked issue is open, even when others are closed', () => {
+      const s = rr.linkedIssueClosedSignal(root, {
+        issueNumbers: [1, 2],
+        fetchIssueState: (n) => ({ state: n === 1 ? 'closed' : 'open' })
+      });
+      assert.equal(s.state, 'fail');
+      assert.match(s.detail, /#2 is still open/);
+    });
+
+    it('passes only when ALL linked issues are closed', () => {
+      const s = rr.linkedIssueClosedSignal(root, {
+        issueNumbers: [1, 2, 3],
+        fetchIssueState: () => ({ state: 'closed' })
+      });
+      assert.equal(s.state, 'pass');
+      assert.match(s.detail, /linked issues #1, #2, #3 are closed/);
+    });
+
+    it('runs the exact gh issue view command through options.execGh', () => {
+      const commands = [];
+      const s = rr.linkedIssueClosedSignal(root, {
+        issueNumber: 9,
+        checkGithub: true,
+        execGh: (cmd) => { commands.push(cmd); return JSON.stringify({ state: 'CLOSED' }); }
+      });
+      assert.deepEqual(commands, ['gh issue view 9 --json state']);
+      assert.equal(s.state, 'pass');
+    });
+
+    it('execGh alone (without checkGithub) is enough to run the lookup', () => {
+      const s = rr.linkedIssueClosedSignal(root, {
+        issueNumber: 9,
+        execGh: () => JSON.stringify({ state: 'OPEN' })
+      });
+      assert.equal(s.state, 'fail');
+    });
+
+    it('checkGithub alone, with no execGh, has nothing to run and stays unknown', () => {
+      const s = rr.linkedIssueClosedSignal(root, { issueNumber: 9, checkGithub: true });
+      assert.equal(s.state, 'unknown');
+    });
+
+    it('fetchIssueState takes precedence over execGh when both are given', () => {
+      const s = rr.linkedIssueClosedSignal(root, {
+        issueNumber: 9,
+        fetchIssueState: () => ({ state: 'closed' }),
+        execGh: () => { throw new Error('should not be called'); }
+      });
+      assert.equal(s.state, 'pass');
+    });
+  });
+
+  it('feeds cleanly into evaluateReleaseReadiness', () => {
+    const open = rr.linkedIssueClosedSignal(root, { issueNumber: 1, fetchIssueState: () => ({ state: 'open' }) });
+    assert.equal(rr.evaluateReleaseReadiness([open]).verdict, 'not-ready');
+
+    const closed = rr.linkedIssueClosedSignal(root, { issueNumber: 1, fetchIssueState: () => ({ state: 'closed' }) });
+    assert.equal(rr.evaluateReleaseReadiness([closed]).verdict, 'ready');
+
+    const notFound = rr.linkedIssueClosedSignal(root, {});
+    assert.equal(rr.evaluateReleaseReadiness([notFound]).verdict, 'unknown');
+
+    const noLookup = rr.linkedIssueClosedSignal(root, { issueNumber: 1 });
+    assert.equal(rr.evaluateReleaseReadiness([noLookup]).verdict, 'unknown');
+  });
+
+  it('exports linkedIssueSignal as an alias of linkedIssueClosedSignal', () => {
+    assert.equal(rr.linkedIssueSignal, rr.linkedIssueClosedSignal);
+  });
 });
