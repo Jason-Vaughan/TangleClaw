@@ -429,19 +429,21 @@ describe('resolveVersion — fail-closed probe, read from the COMMITTED blob (#7
     assert.match(result.reason, /no version could be resolved/);
   });
 
-  it('B2: refuses a gitignored, never-committed version.json — git status alone cannot see it', () => {
+  it('B2: never resolves a gitignored, never-committed version.json — existence is checked at headSha, not on disk', () => {
     const dir = makeTempProject();
     fs.writeFileSync(path.join(dir, '.gitignore'), 'version.json\n');
     const sha = commitAll(dir); // commits .gitignore, no version.json yet
     // Written AFTER the commit: gitignored, untracked, invisible to `git
-    // status --porcelain` (the dirty check), which is exactly the gap a
-    // committed-blob read closes.
+    // status --porcelain`. `_probeVersion` checks existence at headSha (not
+    // fs.existsSync), so this file is correctly treated as ABSENT from the
+    // commit — the probe moves on rather than reading its disk content.
     fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '9.9.9' }));
     const statusOut = realExecFileSync('git', ['status', '--porcelain'], { cwd: dir, encoding: 'utf8' });
     assert.equal(statusOut.trim(), '', 'the fixture is not actually testing anything if git status sees the file');
     const result = releaseAutomation.resolveVersion(dir, sha);
     assert.equal(result.ok, false);
-    assert.match(result.reason, /version\.json is not committed/);
+    assert.match(result.reason, /no version could be resolved/);
+    assert.doesNotMatch(result.reason, /9\.9\.9/, 'must never silently use the gitignored file\'s on-disk version');
   });
 
   it('B3: a configured pyproject.toml with a valid [project] version resolves it', () => {
@@ -466,6 +468,37 @@ describe('resolveVersion — fail-closed probe, read from the COMMITTED blob (#7
     const result = releaseAutomation.resolveVersion(dir, sha);
     assert.equal(result.ok, false);
     assert.match(result.reason, /has no usable static \[project\] version/);
+  });
+
+  for (const [label, badVersion] of [['numeric', 123], ['object', {}], ['boolean', true]]) {
+    it(`B1 R6: a ${label} package.json "version" field refuses — it must NOT be treated as versionless and fall through to pyproject.toml`, () => {
+      const dir = makeTempProject();
+      fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'x', version: badVersion }));
+      fs.writeFileSync(path.join(dir, 'pyproject.toml'), '[project]\nversion = "5.5.5"\n');
+      const sha = commitAll(dir);
+      const result = releaseAutomation.resolveVersion(dir, sha);
+      assert.equal(result.ok, false);
+      assert.match(result.reason, /package\.json "version" field is present but not a usable string/);
+      assert.doesNotMatch(result.reason, /5\.5\.5/, 'must not silently fall through to pyproject.toml');
+    });
+  }
+
+  it('B2 R6: a committed version.json DELETED in the working tree does not fall through to package.json', () => {
+    const dir = makeTempProject();
+    fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '9.0.0' }));
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'x', version: '1.2.3' }));
+    const sha = commitAll(dir);
+    fs.rmSync(path.join(dir, 'version.json'));
+    const statusOut = realExecFileSync('git', ['status', '--porcelain'], { cwd: dir, encoding: 'utf8' });
+    assert.match(statusOut, /^\s*D\s+version\.json/m, 'the fixture is not actually testing a deleted tracked file');
+
+    const result = releaseAutomation.resolveVersion(dir, sha);
+    // Existence is checked at headSha, so version.json is still the chosen
+    // candidate (and still resolves — resolveVersion reads from the commit,
+    // not the working tree); package.json's 1.2.3 must never be reached.
+    assert.equal(result.ok, true);
+    assert.equal(result.version, '9.0.0');
+    assert.equal(result.source, 'version.json');
   });
 });
 
