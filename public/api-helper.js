@@ -1487,6 +1487,39 @@
   }
 
   /**
+   * The give-up message `pollServerBackAndReload` shows when 15 seconds of
+   * polling never saw the new process (#1555). Distinguishes a FAILED
+   * restart — the process manager never replaced the running process, or
+   * the server never answered again at all — from a merely SLOW one, so an
+   * operator reading "did not complete… may still be coming back" isn't
+   * told to wait on a restart that already definitively did not happen.
+   * Names the platform's own diagnostic log command so there's somewhere
+   * to look next.
+   *
+   * @param {object} signals
+   * @param {string|null} signals.mechanism - `'launchctl'` or `'systemctl'`,
+   *   from the restart response, or null when unknown.
+   * @param {boolean} signals.sawOldProcessStillRunning - A poll connected
+   *   and reported `startedAt` unchanged — the old process never exited.
+   * @param {boolean} signals.sawAnyResponse - Any poll got a response at all.
+   * @returns {string}
+   */
+  function tcRestartGiveUpMessage(signals) {
+    const diagnostic = signals.mechanism === 'systemctl'
+      ? ' Check `journalctl --user -u tangleclaw.service` for why.'
+      : signals.mechanism === 'launchctl'
+        ? ' Check ~/Library/Logs/TangleClaw/ (or `launchctl print gui/$(id -u)/com.tangleclaw.server`) for why.'
+        : '';
+    if (signals.sawOldProcessStillRunning) {
+      return `Restart failed: the server kept reporting its pre-restart start time for 15 seconds — the running process was never replaced.${diagnostic}`;
+    }
+    if (!signals.sawAnyResponse) {
+      return `Restart failed: the server never came back online within 15 seconds.${diagnostic}`;
+    }
+    return 'Restart did not complete within 15 seconds. The server may still be coming back — refresh in a moment.';
+  }
+
+  /**
    * Create the restart plumbing a page needs to put the server through a
    * restart and come back onto it.
    *
@@ -1508,6 +1541,11 @@
     const api = deps.api;
     const apiMutate = deps.apiMutate;
     const win = deps.win;
+    // The mechanism the last successful restart response named ('launchctl'
+    // or 'systemctl'), so pollServerBackAndReload's give-up message can name
+    // the right platform's diagnostic log command (#1555) without either
+    // caller having to thread it through.
+    let lastRestartMechanism = null;
 
     /**
      * POST the restart, honoring the wrap-in-progress guard (#602). A wrap
@@ -1528,6 +1566,7 @@
         if (!proceed) return null;
         resp = await apiMutate('/api/server/restart', 'POST', { force: true });
       }
+      if (resp && typeof resp.mechanism === 'string') lastRestartMechanism = resp.mechanism;
       return resp;
     }
 
@@ -1544,7 +1583,11 @@
      *
      * 30 polls at 500ms = 15s of patience; the restart itself typically takes
      * ~3s. Each poll tolerates a failed fetch (the in-between window when the
-     * old process is dead but the new one hasn't bound the port yet).
+     * old process is dead but the new one hasn't bound the port yet) — but
+     * also records it, since 15 straight failures (or 15 straight successes
+     * reporting the OLD start time) mean the restart did not merely run long,
+     * it did not happen (#1555): the give-up message says so instead of
+     * reading "may still be coming back."
      *
      * @param {string|null} oldStartedAt - Pre-restart `startedAt` baseline.
      * @param {() => void} restore - Clears the caller's in-flight latch and
@@ -1560,20 +1603,30 @@
       const POLL_INTERVAL_MS = 500;
       const POLL_MAX_ATTEMPTS = 30;
       let attempt = 0;
+      let sawOldProcessStillRunning = false;
+      let sawAnyResponse = false;
       const poll = win.setInterval(async () => {
         attempt++;
         try {
           const info = await api('/api/server-info');
-          if (info && info.startedAt && info.startedAt !== oldStartedAt) {
-            win.clearInterval(poll);
-            win.location.reload();
-            return;
+          if (info) {
+            sawAnyResponse = true;
+            if (info.startedAt && info.startedAt !== oldStartedAt) {
+              win.clearInterval(poll);
+              win.location.reload();
+              return;
+            }
+            if (info.startedAt === oldStartedAt) sawOldProcessStillRunning = true;
           }
         } catch { /* expected during the dead window */ }
         if (attempt >= POLL_MAX_ATTEMPTS) {
           win.clearInterval(poll);
           restore();
-          win.alert('Restart did not complete within 15 seconds. The server may still be coming back — refresh in a moment.');
+          win.alert(tcRestartGiveUpMessage({
+            mechanism: lastRestartMechanism,
+            sawOldProcessStillRunning,
+            sawAnyResponse
+          }));
         }
       }, POLL_INTERVAL_MS);
     }
