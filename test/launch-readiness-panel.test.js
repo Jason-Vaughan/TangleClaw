@@ -501,6 +501,7 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
       ctx.projectRulesTargetName = 'my project';
       ctx._setProjectRulesStatus = (text, ok) => status.push({ text, ok });
       ctx.refreshProjectLaunchSequences = async () => true;
+      vm.runInContext(liftDeclaration(API_HELPER_SRC, 'async function tcOperatorProofHeaders'), ctx);
       vm.runInContext(liftDeclaration(UI_SRC, 'function wireLaunchRecoveryClears'), ctx);
       ctx.wireLaunchRecoveryClears({ querySelectorAll: () => [btn] });
       return { run: async () => { await btn._click(); return { calls, status, btn }; } };
