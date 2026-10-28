@@ -344,3 +344,119 @@ describe('launch bootstrap (#1825 B3)', () => {
     });
   });
 });
+
+describe('the launch opening order (#1693)', () => {
+  it('names all four stages, in the order every surface narrates them', () => {
+    assert.deepEqual(launchBootstrap.OPENING_ORDER, ['banner', 'sequence', 'freshness', 'propose']);
+  });
+
+  it('is frozen, so a renderer cannot reorder it by mutating the array it imported', () => {
+    assert.ok(Object.isFrozen(launchBootstrap.OPENING_ORDER));
+  });
+
+  describe('openingOrderIndex', () => {
+    it('finds every declared stage at its position in OPENING_ORDER', () => {
+      launchBootstrap.OPENING_ORDER.forEach((id, i) => {
+        assert.equal(launchBootstrap.openingOrderIndex(id), i);
+      });
+    });
+
+    it('answers -1 for a stage the order does not declare', () => {
+      assert.equal(launchBootstrap.openingOrderIndex('kickoff'), -1);
+    });
+  });
+
+  describe('openingOrderLetter', () => {
+    it('labels each stage by its position, lettered from (a)', () => {
+      assert.deepEqual(
+        launchBootstrap.OPENING_ORDER.map((id) => launchBootstrap.openingOrderLetter(id)),
+        ['(a)', '(b)', '(c)', '(d)']
+      );
+    });
+
+    it('refuses to letter a stage OPENING_ORDER does not recognize, rather than silently returning NaN or undefined', () => {
+      assert.throws(() => launchBootstrap.openingOrderLetter('kickoff'), /not a stage in OPENING_ORDER/);
+    });
+  });
+
+  it('exposes the verbatim fragments the four call sites share (RESUME_AND_STOP, READY_VERDICT_PLACEHOLDER, STEP_COMMAND_CLOSE)', () => {
+    assert.equal(typeof launchBootstrap.RESUME_AND_STOP, 'string');
+    assert.match(launchBootstrap.RESUME_AND_STOP, /resume proposal/);
+    assert.match(launchBootstrap.RESUME_AND_STOP, /stop there for the operator/);
+    assert.equal(typeof launchBootstrap.READY_VERDICT_PLACEHOLDER, 'string');
+    assert.match(launchBootstrap.READY_VERDICT_PLACEHOLDER, /preflight verdict/);
+    assert.equal(typeof launchBootstrap.STEP_COMMAND_CLOSE, 'string');
+    assert.match(launchBootstrap.STEP_COMMAND_CLOSE, /command that step prints/);
+  });
+
+  describe('the four rendering surfaces agree with OPENING_ORDER', () => {
+    it('lib/sessions.js: LAUNCH_BOOTSTRAP_LINES letters its stages by OPENING_ORDER position, in order', () => {
+      const sessions = require('../lib/sessions');
+      const identity = sessions.LAUNCH_BOOTSTRAP_LINES.join('\n');
+      const order = identity.slice(identity.indexOf('Your opening runs in this order:'));
+      const letters = ['(a)', '(b)', '(c)', '(d)'];
+      const positions = letters.map((l) => order.indexOf(`\n${l} `));
+      assert.ok(positions.every((p) => p > -1), 'all four lettered stages are present');
+      assert.deepEqual(positions, [...positions].sort((a, b) => a - b), 'and in order');
+    });
+
+    it('lib/launch-kickoff.js: kickoffLine puts freshness before the shared resume-and-stop close', () => {
+      const launchKickoff = require('../lib/launch-kickoff');
+      const line = launchKickoff.kickoffLine({ cursor: 0 }, 4);
+      const freshnessIdx = line.indexOf('freshness checks');
+      const readyIdx = line.indexOf('tc start ready');
+      const stopIdx = line.indexOf(launchBootstrap.RESUME_AND_STOP);
+      assert.ok(freshnessIdx > -1 && readyIdx > freshnessIdx, 'freshness is asked for before the attestation');
+      assert.ok(stopIdx > readyIdx, 'and the resume-and-stop close follows the attestation');
+    });
+  });
+
+  describe('kickoff and the launch-sequence pages derive stage order from OPENING_ORDER, not a fixed order (R2 fix)', () => {
+    let original;
+    beforeEach(() => {
+      original = launchBootstrap.OPENING_ORDER;
+    });
+    afterEach(() => {
+      launchBootstrap.OPENING_ORDER = original;
+    });
+
+    it('lib/launch-kickoff.js: kickoffLine reorders its stages when OPENING_ORDER does, not just the prose it uses', () => {
+      const launchKickoff = require('../lib/launch-kickoff');
+      launchBootstrap.OPENING_ORDER = ['banner', 'propose', 'freshness', 'sequence'];
+      const line = launchKickoff.kickoffLine({ cursor: 0 }, 4);
+      const proposeIdx = line.indexOf(launchBootstrap.RESUME_AND_STOP);
+      const freshnessIdx = line.indexOf('freshness checks');
+      const sequenceIdx = line.indexOf('tc start next');
+      assert.ok(proposeIdx > -1 && freshnessIdx > -1 && sequenceIdx > -1, 'all three narrated stages are present');
+      assert.ok(
+        proposeIdx < freshnessIdx && freshnessIdx < sequenceIdx,
+        'propose, then freshness, then sequence — following the reordered array, not the default one'
+      );
+    });
+
+    it('lib/launch-sequence.js: _allAckedContent reorders freshness/propose when OPENING_ORDER does', () => {
+      const launchSequence = require('../lib/launch-sequence');
+      launchBootstrap.OPENING_ORDER = ['banner', 'sequence', 'propose', 'freshness'];
+      const content = launchSequence._allAckedContent();
+      const proposeIdx = content.indexOf('READY records initialization');
+      const freshnessIdx = content.indexOf('freshness checks');
+      assert.ok(proposeIdx > -1 && freshnessIdx > -1, 'both stages are present');
+      assert.ok(proposeIdx < freshnessIdx, 'propose now precedes freshness, following the reordered array');
+    });
+
+    it('lib/launch-sequence.js: _alreadyAttestedContent selects its one stage by walking OPENING_ORDER, not unconditionally', () => {
+      const launchSequence = require('../lib/launch-sequence');
+      launchBootstrap.OPENING_ORDER = ['propose'];
+      assert.match(
+        launchSequence._alreadyAttestedContent('2026-10-28T00:00:00Z'),
+        /attested READY at 2026-10-28T00:00:00Z/
+      );
+      launchBootstrap.OPENING_ORDER = [];
+      assert.equal(
+        launchSequence._alreadyAttestedContent('2026-10-28T00:00:00Z'),
+        '',
+        'a stage absent from OPENING_ORDER is never narrated, even past tense'
+      );
+    });
+  });
+});
