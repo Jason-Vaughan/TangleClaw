@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TangleClaw v5.42.0 — Autonomous Multi-Agent Sprint &amp; Post-Mortem Report</title>
+  <style>
+    :root {
+      --bg: #070b14; --bg-card: #0f172a; --bg-card-alt: #131c31;
+      --border: #1e293b; --border-hi: #334155; --text: #f8fafc; --text-muted: #94a3b8;
+      --cyan: #38bdf8; --green: #34d399; --purple: #c084fc; --amber: #fbbf24; --rose: #fb7185; --indigo: #818cf8;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; background: radial-gradient(circle at 15% 0%, #0f1f3d 0%, var(--bg) 45%); color: var(--text); line-height: 1.55; }
+    a { color: var(--cyan); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; background: rgba(148,163,184,0.14); padding: 0.12rem 0.38rem; border-radius: 5px; color: #e2e8f0; }
+    .topnav { position: sticky; top: 0; z-index: 100; background: rgba(7,11,20,0.88); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); padding: 0.7rem 1.5rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem; }
+    .brand { display: flex; align-items: center; gap: 0.65rem; font-weight: 800; font-size: 1.05rem; color: var(--text); }
+    .brand-dot { width: 11px; height: 11px; border-radius: 50%; background: linear-gradient(135deg, var(--cyan), var(--green)); box-shadow: 0 0 12px var(--cyan); }
+    .nav-links { display: flex; gap: 1.1rem; flex-wrap: wrap; font-size: 0.86rem; font-weight: 600; }
+    .nav-links a { color: var(--text-muted); }
+    .nav-links a:hover { color: var(--cyan); text-decoration: none; }
+    .container { max-width: 1220px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+    .hero { background: linear-gradient(145deg, rgba(15,23,42,0.96), rgba(30,27,75,0.72)); border: 1px solid var(--border-hi); border-radius: 18px; padding: 2.25rem 2rem; margin-bottom: 2rem; box-shadow: 0 20px 50px rgba(0,0,0,0.45); }
+    .hero-eyebrow { display: inline-flex; align-items: center; gap: 0.5rem; background: rgba(56,189,248,0.12); border: 1px solid rgba(56,189,248,0.4); color: var(--cyan); font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; padding: 0.28rem 0.75rem; border-radius: 999px; margin-bottom: 0.9rem; }
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-top: 1.4rem; }
+    .kpi-card { background: rgba(15,23,42,0.85); border: 1px solid var(--border); border-radius: 14px; padding: 1rem 1.15rem; position: relative; overflow: hidden; }
+    .kpi-card::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, var(--cyan), var(--green)); }
+    .kpi-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); font-weight: 600; }
+    .kpi-val { font-size: 1.55rem; font-weight: 800; margin: 0.25rem 0 0.15rem; color: var(--text); }
+    .kpi-sub { font-size: 0.8rem; color: #cbd5e1; }
+    section.panel { background: var(--bg-card); border: 1px solid var(--border-hi); border-radius: 16px; padding: 1.65rem 1.75rem; margin-bottom: 1.75rem; }
+    h2 { margin-top: 0; font-size: 1.35rem; border-bottom: 1px solid var(--border); padding-bottom: 0.6rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin-top: 0.75rem; }
+    th, td { padding: 0.65rem 0.75rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    th { color: var(--text-muted); font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.04em; background: rgba(15,23,42,0.6); }
+    .issue-pill, .pr-link, .sha-link { display: inline-block; padding: 0.12rem 0.45rem; border-radius: 6px; font-size: 0.78rem; font-weight: 700; margin: 0.1rem; }
+    .issue-pill { background: rgba(52,211,153,0.14); color: var(--green); border: 1px solid rgba(52,211,153,0.35); }
+    .pr-link { background: rgba(56,189,248,0.14); color: var(--cyan); border: 1px solid rgba(56,189,248,0.35); }
+    .sha-link { background: rgba(192,132,252,0.14); color: var(--purple); border: 1px solid rgba(192,132,252,0.35); font-family: ui-monospace, monospace; }
+    .legend { display: flex; gap: 1rem; flex-wrap: wrap; font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem; }
+    .filter-bar { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
+    .filter-btn { background: var(--bg-card-alt); color: var(--text); border: 1px solid var(--border-hi); border-radius: 8px; padding: 0.4rem 0.8rem; cursor: pointer; font-size: 0.82rem; font-weight: 600; }
+    .filter-btn.active, .filter-btn:hover { border-color: var(--cyan); color: var(--cyan); }
+  </style>
+</head>
+<body>
+  <nav class="topnav">
+    <div class="brand"><span class="brand-dot"></span><span>TangleClaw v5.42.0 Sprint Report</span></div>
+    <div class="nav-links">
+      <a href="#executive-summary">1. Executive Summary</a>
+      <a href="#architecture">2. Swarm Architecture</a>
+      <a href="#velocity-charts">3. Velocity &amp; SVG Telemetry</a>
+      <a href="#pr-explorer">4. Interactive PR Explorer</a>
+      <a href="#observer-audit">5. 16-Point Observer Audit</a>
+      <a href="#post-mortem">6. Post-Mortem Rulings</a>
+      <a href="#release-gates">7. Release &amp; O-Gate</a>
+      <a href="../index.html">← All Sprint Reports</a>
+    </div>
+  </nav>
+  <main class="container">
+    <section class="hero" id="executive-summary">
+      <div class="hero-eyebrow">● Release v5.42.0 · Milestone #27 · Charter A477 · O-Gate PASS (O477-V542-PASS)</div>
+      <h1>TangleClaw <code>v5.42.0</code>: “Launch says where it stands”</h1>
+      <p>Four execution waves merged <strong>8 PRs (#2651–#2654, #2656–#2659) in 5 hours 08 minutes</strong> across 4 parallel Claude Sonnet 5 Builder lanes, closing <strong>10/10 Milestone #27 issues (100%)</strong> with <strong>0 code merge conflicts</strong> and <strong>0 post-merge regressions</strong> (8th consecutive zero-regression release).</p>
+      <div class="kpi-grid">
+        <div class="kpi-card"><div class="kpi-label">Sprint Wall Time</div><div class="kpi-val">5h 08m</div><div class="kpi-sub">W1: 2h 58m · W2: 1h 51m · W3: 13m · W4: 6m</div></div>
+        <div class="kpi-card"><div class="kpi-label">Milestone #27 Issues</div><div class="kpi-val">10 / 10 Closed</div><div class="kpi-sub">100% completion across 6 code PRs</div></div>
+        <div class="kpi-card"><div class="kpi-label">Wave 1 Mean Build</div><div class="kpi-val">51.6m</div><div class="kpi-sub">Fastest 3 cars opened in 30.4m–36.3m</div></div>
+        <div class="kpi-card"><div class="kpi-label">Same-Wave Overlap</div><div class="kpi-val">0 Files</div><div class="kpi-sub">W1-A∩B∩C∩D = ∅ · W2-A∩B = ∅</div></div>
+        <div class="kpi-card"><div class="kpi-label">Store Schema</div><div class="kpi-val">Schema v71</div><div class="kpi-sub">Receipts + reconciliations + unready verdict</div></div>
+        <div class="kpi-card"><div class="kpi-label">W3-REC P1 Verifier</div><div class="kpi-val">16 / 16 Tests</div><div class="kpi-sub">47/47 features-index assertions green</div></div>
+        <div class="kpi-card"><div class="kpi-label">AskUserQuestion Stalls</div><div class="kpi-val">0 Stalls</div><div class="kpi-sub">P0 single-turn plan+build across 6 cars</div></div>
+        <div class="kpi-card"><div class="kpi-label">O-Gate Verdict</div><div class="kpi-val" style="color:var(--green);">PASS</div><div class="kpi-sub">Stamp <code>O477-V542-PASS</code> · 0 Regressions</div></div>
+      </div>
+    </section>
+
+    <section class="panel" id="architecture">
+      <h2>2. 10-Lane Swarm Architecture &amp; Shared-File Hotspot Separation</h2>
+      <p>Nine of the ten Milestone #27 issues targeted the Launch / Startup Readiness subsystem. Charter <code>A477</code> partitioned all 5 production hotspot files across Wave 1 and Wave 2 with <strong>0 same-wave file overlap</strong>.</p>
+      <svg viewBox="0 0 900 180" width="100%" height="180" role="img" aria-label="Wave 1 to Wave 4 Pipeline">
+        <title>v5.42.0 4-Wave Execution Pipeline (W1 178m -> W2 111m -> W3 13m -> W4 6m)</title>
+        <rect x="10" y="25" width="210" height="120" rx="12" fill="#131c31" stroke="#38bdf8" stroke-width="2"><title>Wave 1: 4 Parallel Cars (W1-A..W1-D) — 178.2m</title></rect>
+        <text x="25" y="55" fill="#38bdf8" font-size="14" font-weight="bold">Wave 1 (4 Cars · 178.2m)</text>
+        <text x="25" y="80" fill="#f8fafc" font-size="12">W1-D #2653 · W1-A #2652</text>
+        <text x="25" y="100" fill="#f8fafc" font-size="12">W1-C #2654 · W1-B #2651 (v71)</text>
+        <rect x="245" y="25" width="210" height="120" rx="12" fill="#131c31" stroke="#34d399" stroke-width="2"><title>Wave 2: 2 Parallel Cars (W2-A..W2-B) — 111.2m</title></rect>
+        <text x="260" y="55" fill="#34d399" font-size="14" font-weight="bold">Wave 2 (2 Cars · 111.2m)</text>
+        <text x="260" y="80" fill="#f8fafc" font-size="12">W2-A #2657 (#1693, #2150)</text>
+        <text x="260" y="100" fill="#f8fafc" font-size="12">W2-B #2656 (#1596,#1623,#1633)</text>
+        <rect x="480" y="25" width="190" height="120" rx="12" fill="#131c31" stroke="#c084fc" stroke-width="2"><title>Wave 3: W3-REC (#2658) — 13.2m</title></rect>
+        <text x="495" y="55" fill="#c084fc" font-size="14" font-weight="bold">Wave 3 (W3-REC · 13.2m)</text>
+        <text x="495" y="80" fill="#f8fafc" font-size="12">PR #2658 · 16 Tests: (P1)</text>
+        <text x="495" y="100" fill="#f8fafc" font-size="12">0 Duplicate Headings (P10)</text>
+        <rect x="695" y="25" width="190" height="120" rx="12" fill="#131c31" stroke="#fbbf24" stroke-width="2"><title>Wave 4: W4-REL (#2659) + O-Gate PASS — 6.0m</title></rect>
+        <text x="710" y="55" fill="#fbbf24" font-size="14" font-weight="bold">Wave 4 (W4-REL · ~6m)</text>
+        <text x="710" y="80" fill="#f8fafc" font-size="12">PR #2659 · 10 Fragments</text>
+        <text x="710" y="100" fill="#34d399" font-size="12">O-Gate PASS (O477-V542)</text>
+      </svg>
+      <div class="legend"><span>● Cyan: Wave 1 Disjoint Cars</span><span>● Green: Wave 2 Hotspot-Paired Cars</span><span>● Purple: Wave 3 Records Gate</span><span>● Amber: Wave 4 Release Cut</span></div>
+    </section>
+
+    <section class="panel" id="velocity-charts">
+      <h2>3. Car Build vs. Total Open-to-Merge Telemetry</h2>
+      <svg viewBox="0 0 900 220" width="100%" height="220" role="img" aria-label="Car Build vs Total Time Bar Chart">
+        <title>Build Time vs Open-to-Merge Time across v5.42.0 Cars</title>
+        <rect x="120" y="20" width="110" height="18" fill="#38bdf8"><title>W1-D (#2653): 36.3m build / 54.7m total</title></rect>
+        <text x="10" y="34" fill="#f8fafc" font-size="12">W1-D (#2653)</text><text x="240" y="34" fill="#94a3b8" font-size="12">36.3m build / 54.7m total</text>
+        <rect x="120" y="45" width="102" height="18" fill="#38bdf8"><title>W1-A (#2652): 33.6m build / 105.0m total</title></rect>
+        <text x="10" y="59" fill="#f8fafc" font-size="12">W1-A (#2652)</text><text x="232" y="59" fill="#94a3b8" font-size="12">33.6m build / 105.0m total</text>
+        <rect x="120" y="70" width="318" height="18" fill="#38bdf8"><title>W1-C (#2654): 106.2m build / 132.6m total</title></rect>
+        <text x="10" y="84" fill="#f8fafc" font-size="12">W1-C (#2654)</text><text x="448" y="84" fill="#94a3b8" font-size="12">106.2m build / 132.6m total</text>
+        <rect x="120" y="95" width="91" height="18" fill="#38bdf8"><title>W1-B (#2651): 30.4m build / 178.2m total</title></rect>
+        <text x="10" y="109" fill="#f8fafc" font-size="12">W1-B (#2651)</text><text x="220" y="109" fill="#94a3b8" font-size="12">30.4m build / 178.2m total (Schema v71)</text>
+        <rect x="120" y="120" width="42" height="18" fill="#34d399"><title>W2-A (#2657): 13.5m post-W1 / 51.0m total</title></rect>
+        <text x="10" y="134" fill="#f8fafc" font-size="12">W2-A (#2657)</text><text x="172" y="134" fill="#94a3b8" font-size="12">13.5m post-W1 / 51.0m total</text>
+        <rect x="120" y="145" width="35" height="18" fill="#34d399"><title>W2-B (#2656): 11.3m post-W1 / 111.2m total</title></rect>
+        <text x="10" y="159" fill="#f8fafc" font-size="12">W2-B (#2656)</text><text x="165" y="159" fill="#94a3b8" font-size="12">11.3m post-W1 / 111.2m total</text>
+        <rect x="120" y="170" width="12" height="18" fill="#c084fc"><title>W3-REC (#2658): 2.1m build / 13.2m total</title></rect>
+        <text x="10" y="184" fill="#f8fafc" font-size="12">W3-REC (#2658)</text><text x="142" y="184" fill="#94a3b8" font-size="12">2.1m build / 13.2m total</text>
+      </svg>
+      <div class="legend"><span>● Build Duration (Dispatch to PR Open)</span><span>● Mean Wave 1 Build: 51.6m</span></div>
+    </section>
+
+    <section class="panel" id="pr-explorer">
+      <h2>4. Interactive PR &amp; Issue Explorer (8/8 Sprint PRs · 10/10 Issues Closed)</h2>
+      <div class="filter-bar">
+        <button class="filter-btn active" onclick="filterRows('all')">All Waves (8)</button>
+        <button class="filter-btn" onclick="filterRows('W1')">Wave 1 (4)</button>
+        <button class="filter-btn" onclick="filterRows('W2')">Wave 2 (2)</button>
+        <button class="filter-btn" onclick="filterRows('W3')">Wave 3 (1)</button>
+        <button class="filter-btn" onclick="filterRows('W4')">Wave 4 (1)</button>
+      </div>
+      <table id="pr-table">
+        <thead>
+          <tr><th>Wave / Car</th><th>Lane</th><th>PR &amp; Head</th><th>Issues</th><th>Build / Total</th><th>Gates</th><th>Merge Commit</th></tr>
+        </thead>
+        <tbody>
+          <tr data-wave="W1"><td><strong>W1-D</strong></td><td><code>TC-Lane-D</code></td><td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2653">#2653</a> <span class="sha-link">350d271f</span></td><td><span class="issue-pill">#2153</span></td><td>36.3m / 54.7m</td><td>CI 40604774870 · PRR-B R2 · A-Gate R2</td><td><span class="sha-link">95fdb7cd</span></td></tr>
+          <tr data-wave="W1"><td><strong>W1-A</strong></td><td><code>TC-Lane-A</code></td><td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2652">#2652</a> <span class="sha-link">07b4ed82</span></td><td><span class="issue-pill">#1669</span></td><td>33.6m / 105.0m</td><td>CI 40606656254 · PRR-A R2 · A-Gate R2</td><td><span class="sha-link">51533b8f</span></td></tr>
+          <tr data-wave="W1"><td><strong>W1-C</strong></td><td><code>TC-Lane-C</code></td><td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2654">#2654</a> <span class="sha-link">c10eaa76</span></td><td><span class="issue-pill">#1597</span></td><td>106.2m / 132.6m</td><td>CI 40613102306 · PRR-B R2 · A-Gate R2</td><td><span class="sha-link">24c901f1</span></td></tr>
+          <tr data-wave="W1"><td><strong>W1-B</strong></td><td><code>TC-Lane-B</code></td><td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2651">#2651</a> <span class="sha-link">0e94dc37</span></td><td><span class="issue-pill">#2191</span> <span class="issue-pill">#1877</span></td><td>30.4m / 178.2m</td><td>CI 40614970375 · PRR-A R4 · A-Gate R4</td><td><span class="sha-link">a171f11a</span></td></tr>
+          <tr data-wave="W2"><td><strong>W2-A</strong></td><td><code>TC-Lane-A</code></td><td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2657">#2657</a> <span class="sha-link">ec20c467</span></td><td><span class="issue-pill">#1693</span> <span class="issue-pill">#2150</span></td><td>13.5m / 51.0m</td><td>CI 40622069271 · PRR-A R2 · A-Gate R2</td><td><span class="sha-link">71602b9f</span></td></tr>
+          <tr data-wave="W2"><td><strong>W2-B</strong></td><td><code>TC-Lane-D</code></td><td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2656">#2656</a> <span class="sha-link">96336a7b</span></td><td><span class="issue-pill">#1596</span> <span class="issue-pill">#1623</span> <span class="issue-pill">#1633</span></td><td>11.3m / 111.2m</td><td>CI 40628402756 · PRR-B R6 · A-Gate R6</td><td><span class="sha-link">1593213d</span></td></tr>
+          <tr data-wave="W3"><td><strong>W3-REC</strong></td><td><code>TC-Lane-INT</code></td><td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2658">#2658</a> <span class="sha-link">359f7e07</span></td><td>Records (16 Tests:)</td><td>2.1m / 13.2m</td><td>CI 40630104712 · R3 ACCEPT · A3 APPROVED</td><td><span class="sha-link">0b0cb290</span></td></tr>
+          <tr data-wave="W4"><td><strong>W4-REL</strong></td><td><code>TC-Lane-INT</code></td><td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2659">#2659</a> <span class="sha-link">7b162c75</span></td><td>Release v5.42.0</td><td>1.4m / ~6m</td><td>CI 40631215192 · R2 ACCEPT · A2 APPROVED · O-Gate PASS</td><td><span class="sha-link">v5.42.0</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel" id="observer-audit">
+      <h2>5. Rule #283 16-Point Empirical Observer Audit</h2>
+      <svg viewBox="0 0 900 100" width="100%" height="100" role="img" aria-label="Gate Audit Summary">
+        <title>16-Point Observer Audit &amp; 4 Exit Gates Summary</title>
+        <rect x="10" y="15" width="205" height="65" rx="10" fill="#131c31" stroke="#34d399"><title>0 Unplanned Operator Rescues</title></rect>
+        <text x="25" y="42" fill="#34d399" font-size="13" font-weight="bold">1. Interventions: 1 Planned</text>
+        <text x="25" y="62" fill="#cbd5e1" font-size="11">Rule #282 YES only · 0 rescues</text>
+        <rect x="230" y="15" width="205" height="65" rx="10" fill="#131c31" stroke="#38bdf8"><title>100% Builder Parallelism</title></rect>
+        <text x="245" y="42" fill="#38bdf8" font-size="13" font-weight="bold">3. Parallelism: 4/4 W1, 2/2 W2</text>
+        <text x="245" y="62" fill="#cbd5e1" font-size="11">0 file conflicts · 0 TUI stalls</text>
+        <rect x="450" y="15" width="205" height="65" rx="10" fill="#131c31" stroke="#c084fc"><title>0 Post-Merge Regressions</title></rect>
+        <text x="465" y="42" fill="#c084fc" font-size="13" font-weight="bold">8. Regressions: 0 on main</text>
+        <text x="465" y="62" fill="#cbd5e1" font-size="11">8th consecutive clean sprint</text>
+        <rect x="670" y="15" width="215" height="65" rx="10" fill="#131c31" stroke="#fbbf24"><title>4/4 Maintenance Gates PASS</title></rect>
+        <text x="685" y="42" fill="#fbbf24" font-size="13" font-weight="bold">16. Exit Gates: 4/4 PASS</text>
+        <text x="685" y="62" fill="#cbd5e1" font-size="11">O477-V542-PASS ratified</text>
+      </svg>
+      <div class="legend"><span>● All 16 Rule #283 Empirical Measures Audited</span><span>● Full ledger in v542-batch-observer-report.md</span></div>
+    </section>
+
+    <section class="panel" id="post-mortem">
+      <h2>6. Top 3 Post-Mortem Findings &amp; Process Recommendations for v5.43.0</h2>
+      <ol>
+        <li><strong><code>W1-F1_v542</code> — Reconcile <code>Rule #282</code> Current-<code>main</code> Containment with <code>P12</code> Disjoint Merge Pipelining:</strong> Define wave-base containment so file-disjoint sibling PRs (<code>W1-A ∩ W1-B ∩ W1-C ∩ W1-D = ∅</code>) with <code>mergeable: MERGEABLE</code> can guard-merge back-to-back without 4 redundant ancestor syncs and re-review cycles.</li>
+        <li><strong><code>W1-F2_v542</code> — Auto-Include Manifest Files or Fold Into Existing Test Files When Adding Unit Tests:</strong> Running <code>node scripts/test-tiers.js --check</code> pre-PR prevents manifest-parity CI failures like <code>W1-A (#2652 @ 96885e45)</code>.</li>
+        <li><strong><code>W1-F3_v542</code> — Harden Linux CI Guard in <code>test/tmux-tcc.test.js</code> and Isolate <code>test/tailnet-cutover.test.js</code> IPC:</strong> Eliminates the <code>osascript: not found</code> and Node IPC deserialization runner flakes that required CI reruns on <code>#2651</code> and <code>main</code>.</li>
+      </ol>
+    </section>
+
+    <section class="panel" id="release-gates">
+      <h2>7. Release Verification &amp; O-Gate Ruling (<code>O477-V542-PASS</code>)</h2>
+      <p><strong>Verdict:</strong> <code>O-Gate PASS (O477-V542-PASS)</code>. All 10 Milestone #27 issues are closed, <code>W3-REC (#2658)</code> verified 16/16 <code>Tests:</code> anchors via <code>P1</code>, and <code>W4-REL (#2659 @ 7b162c75)</code> passed <code>R-Gate R2 ACCEPT</code>, <code>A-Gate R2 APPROVED</code>, and exact-head CI <code>40631215192</code>.</p>
+    </section>
+  </main>
+  <script>
+    function filterRows(wave) {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      event.target.classList.add('active');
+      document.querySelectorAll('#pr-table tbody tr').forEach(tr => {
+        tr.style.display = (wave === 'all' || tr.dataset.wave === wave) ? '' : 'none';
+      });
+    }
+  </script>
+</body>
+</html>
