@@ -41,6 +41,33 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-28 — v5.45.0 W2-A: guard project config writers and share creation validators (#2232, #1374)
+
+<!-- prawduct: type=fixed | scope=w2a-2232-1374-config-writers -->
+
+- **#2232:** The legacy methodology migration reads `project.json` directly and treats an unreadable, malformed or non-object file as unreachable instead of loading defaults and overwriting it. Attach, setup batch attach and bulk import load existing config through the guarded write path and create a missing file exclusively, so an existing or concurrently created file is not clobbered. `createProject` also uses exclusive directory creation; a `409 PROJECT_CONFIG_UNREADABLE` during update explains that the project row's engine and tags are written last. Tests cover malformed roots, byte preservation and the load-to-write race.
+- **#1374:** `createProject` now runs `PROJECT_UPDATE_VALIDATORS` against a pre-create context. Create and update therefore apply the same checks for `silentPrime`, `showLaunchModePicker`, `defaultLaunchMode`, the hidden-picker confirmation and tags.
+
+## 2026-10-28 — v5.45.0 W2-B: atomic engine config writes and loaded-config reuse (#1291, #2232)
+
+<!-- prawduct: type=fixed | scope=w2b-1291-2232-engine-config -->
+
+- **#1291:** Managed-block, whole-file and inactive-engine config writes use a temp file and rename so an interrupted write leaves a complete old or new carrier. Read-only targets are refused before a temp file is created. Symlink chains, including dangling final targets, are followed to the referent without replacing a link; cycles return `ELOOP`.
+- **#2232:** `syncEngineHooks(projectPath, engineIdOverride, projConfigOverride)` accepts an already loaded project config, avoiding a second lax read after a guarded load.
+
+## 2026-10-28 — v5.45.0 W1-B: reject unknown project store keys (#1225)
+
+<!-- prawduct: type=fixed | scope=w1b-1225-project-store-options -->
+
+- **#1225:** `store.projects.list`, `create` and `update` reject unknown option or data keys with a `BAD_REQUEST` `StoreError` instead of silently dropping a misspelled field such as `groupId`.
+
+## 2026-10-28 — v5.45.0 W1-C: validate quick commands and setup batch names (#1339, #2180)
+
+<!-- prawduct: type=fixed | scope=w1c-1339-2180-config-setup -->
+
+- **#1339:** `PATCH /api/config` refuses a `quickCommands` value unless it is an array of objects with string `label` and `command` fields, preventing invalid data from reaching the dashboard command list. The config route also resolves protected roots through `userHome()` when `HOME` is unset.
+- **#2180:** `POST /api/setup/complete` validates every batch-attached project name and skips invalid names with a warning. The bulk-import half is recorded under W1-D.
+
 ## 2026-10-28 — v5.45.0 W1-A: unify operator `~` path expansion (#1284) + P21 operator-verification repair
 
 <!-- prawduct: type=fixed | scope=w1a-1284-expand-home -->

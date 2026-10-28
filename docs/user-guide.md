@@ -331,6 +331,11 @@ Tap **+ New** to open the create project drawer:
 
 The project is created in your configured `projectsDir` (default: `~/Projects`). TangleClaw scaffolds the project directory, registers ports with PortHub (if available), and generates the engine-specific config file. See the [Engine Guide](engine-guide.md) for details on custom engines.
 
+Creation applies the same setting checks as a later project edit, including whether the selected
+engine supports the requested launch mode or silent prime and whether tags are valid. If a folder
+with the chosen name appears while creation is in progress, TangleClaw refuses to write into it;
+choose another name or inspect the folder before trying again.
+
 ### Deleting a Project
 
 Tap the delete button on a project card. If a `deletePassword` is configured, you'll need to enter it. Deletion releases registered ports and removes the project from TangleClaw's database. The project directory itself is preserved on disk.
@@ -347,6 +352,31 @@ Tap **Attach** to register a directory as a TangleClaw project. This:
 - Creates a `.tangleclaw/project.json` if one doesn't exist
 
 You can also attach projects in bulk during the first-run setup wizard, or via the API: `POST /api/projects/attach { "name": "project-dir-name" }`. Attaching is the operator's: a call from a session's pane or a plain script gets `403 OPERATOR_ONLY`. Use the dashboard, or send it as the signed-in operator.
+
+Setup batch attachment and bulk import skip a name that fails the project-name rules and log a
+warning. Attaching an existing project reads its `.tangleclaw/project.json`; if that file is
+unreadable or malformed, TangleClaw refuses to replace it with defaults. When no file exists,
+attachment creates one only if it is still absent at write time.
+
+### Project Settings and Config Integrity
+
+Project settings are stored in both TangleClaw's project row and the project's
+`.tangleclaw/project.json`. When you save a project change, validation uses the project row's
+engine, including an engine selected in that same change; a stale engine value in `project.json`
+cannot make an unsupported setting appear valid. An invalid setting on an existing project is a
+`400 BAD_REQUEST`. A missing project is `404 NOT_FOUND`.
+
+If `project.json` exists but cannot be read or is not a plain JSON object, the settings update stops
+with `409 PROJECT_CONFIG_UNREADABLE` instead of saving defaults over it. Inspect and repair that
+file, then retry. If it becomes unreadable partway through an update, engine files may already
+have changed on disk; the project row's engine and tags are written last, so check the reported
+state before retrying. Legacy config migration likewise leaves an unusable file in place and
+reports it as unreachable.
+
+Generated engine config files are written by replacing a complete file, so an interrupted write
+does not leave a truncated carrier. TangleClaw refuses a read-only target and follows a symlink
+chain to its final file rather than replacing a link; a symlink loop is refused. Fix the file's
+permissions or link target before retrying an engine-setting change.
 
 ### Auto-Detection of Existing Projects
 
@@ -468,6 +498,9 @@ Open it from the banner's **⋯** menu → **Command bar** (the ⋯ button stays
 - **Quick command pills** appear below the input — tap to inject common commands
 - Engine-specific slash commands are included as pills (e.g., `/compact`, `/review` for Claude Code)
 - Commands are sent to the tmux session via `send-keys`
+
+The global `quickCommands` setting must be a list of objects with string `label` and `command`
+fields. An invalid list is refused when saved, so it cannot break the command pills.
 
 Direct command submissions through `POST /api/sessions/:project/command` reserve leading `/` input for the operator. A peer project or the Project Master gets `403 SLASH_COMMAND_OPERATOR_ONLY` for one, even if its launch is verified. When a peer or Master submits ordinary input, TangleClaw adds a sender line from its verified launch rather than trusting text in the request, and the response includes a submission receipt naming the verified caller and submission time. The caller's command can use the full 4,096-character limit; the server-added sender line does not consume that allowance (#2402). The command bar's operator slash-command pills remain available.
 
