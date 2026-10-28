@@ -198,7 +198,151 @@ describe('launchagent-scan (#1148)', () => {
     });
   });
 
+  describe('readWorkingDirectory (#1369)', () => {
+    it('extracts the WorkingDirectory string', () => {
+      const file = writePlist(dir, 'com.tangleclaw.server', { Label: 'com.tangleclaw.server', WorkingDirectory: OLD });
+      assert.equal(scan.readWorkingDirectory(fs.readFileSync(file, 'utf8')), OLD);
+    });
+
+    it('is null when the key is absent', () => {
+      const file = writePlist(dir, 'no-wd', { Label: 'no-wd', ProgramArguments: ['/bin/true'] });
+      assert.equal(scan.readWorkingDirectory(fs.readFileSync(file, 'utf8')), null);
+    });
+
+    it('is null for non-string input, never throwing', () => {
+      assert.equal(scan.readWorkingDirectory(undefined), null);
+      assert.equal(scan.readWorkingDirectory(null), null);
+      assert.equal(scan.readWorkingDirectory(42), null);
+    });
+  });
+
+  describe('auditStartupPaths (#1369)', () => {
+    const CWD = '/Users/op/Projects/tangleclaw';
+
+    it('reports no mismatch, and scans nothing, when no server plist exists', () => {
+      const audit = scan.auditStartupPaths({ cwd: CWD, launchAgentsDir: dir });
+      assert.equal(audit.mismatched, false);
+      assert.equal(audit.plistWorkingDir, null);
+      assert.deepEqual(audit.matches, []);
+    });
+
+    it('reports no mismatch when the plist WorkingDirectory matches cwd', () => {
+      writePlist(dir, 'com.tangleclaw.server', { Label: 'com.tangleclaw.server', WorkingDirectory: CWD });
+      const audit = scan.auditStartupPaths({ cwd: CWD, launchAgentsDir: dir });
+      assert.equal(audit.mismatched, false);
+    });
+
+    it('flags a mismatch and scans the OLD WorkingDirectory against the LaunchAgents dir', () => {
+      const file = writePlist(dir, 'com.tangleclaw.server', { Label: 'com.tangleclaw.server', WorkingDirectory: OLD });
+      writePlist(dir, 'com.example.other', { Label: 'com.example.other', WorkingDirectory: OLD });
+      const audit = scan.auditStartupPaths({ cwd: CWD, launchAgentsDir: dir });
+      assert.equal(audit.mismatched, true);
+      assert.equal(audit.plistWorkingDir, OLD);
+      assert.equal(audit.plistFile, file);
+      // Both the server's own plist and the other LaunchAgent still name OLD.
+      assert.deepEqual(audit.matches.map((m) => m.label).sort(),
+        ['com.example.other', 'com.tangleclaw.server']);
+    });
+
+    it('names a config path still under the old WorkingDirectory as a configMatch', () => {
+      writePlist(dir, 'com.tangleclaw.server', { Label: 'com.tangleclaw.server', WorkingDirectory: OLD });
+      const audit = scan.auditStartupPaths({
+        cwd: CWD, launchAgentsDir: dir,
+        config: { httpsCertPath: `${OLD}/certs/cert.pem`, httpsKeyPath: '/elsewhere/key.pem' }
+      });
+      assert.deepEqual(audit.configMatches, [{ key: 'httpsCertPath', value: `${OLD}/certs/cert.pem` }]);
+    });
+
+    it('does not flag a config path merely prefixed by the old path (boundary rule)', () => {
+      writePlist(dir, 'com.tangleclaw.server', { Label: 'com.tangleclaw.server', WorkingDirectory: OLD });
+      const audit = scan.auditStartupPaths({
+        cwd: CWD, launchAgentsDir: dir,
+        config: { httpsCertPath: `${OLD}-2/cert.pem` }
+      });
+      assert.deepEqual(audit.configMatches, []);
+    });
+
+    it('flags a config path whose file AND parent directory are both gone, independent of any plist', () => {
+      const missingDir = path.join(dir, 'gone', 'certs');
+      const audit = scan.auditStartupPaths({
+        cwd: CWD, launchAgentsDir: dir,
+        config: { httpsCertPath: path.join(missingDir, 'cert.pem') }
+      });
+      assert.deepEqual(audit.staleConfigPaths, [{ key: 'httpsCertPath', value: path.join(missingDir, 'cert.pem') }]);
+    });
+
+    it('does not flag a config path whose file is missing but whose parent directory still exists', () => {
+      // The file simply hasn't been issued yet — not evidence of a move.
+      const audit = scan.auditStartupPaths({
+        cwd: CWD, launchAgentsDir: dir,
+        config: { httpsCertPath: path.join(dir, 'not-yet-issued.pem') }
+      });
+      assert.deepEqual(audit.staleConfigPaths, []);
+    });
+
+    it('never throws on a missing LaunchAgentsDir, a bad config shape, or missing args', () => {
+      assert.doesNotThrow(() => scan.auditStartupPaths());
+      assert.doesNotThrow(() => scan.auditStartupPaths({ cwd: CWD, launchAgentsDir: path.join(dir, 'nope'), config: 'not-an-object' }));
+    });
+
+    it('treats an unreadable server plist the same as an absent one', () => {
+      const bogus = path.join(dir, 'com.tangleclaw.server.plist');
+      fs.mkdirSync(bogus);
+      const audit = scan.auditStartupPaths({ cwd: CWD, launchAgentsDir: dir });
+      assert.equal(audit.mismatched, false);
+      assert.equal(audit.plistFile, null);
+    });
+  });
+
+  describe('formatStartupWarning (#1369)', () => {
+    it('is null when nothing is mismatched or stale', () => {
+      assert.equal(scan.formatStartupWarning({ mismatched: false, staleConfigPaths: [] }), null);
+      assert.equal(scan.formatStartupWarning(null), null);
+    });
+
+    it('names the mismatched WorkingDirectory, the plist, and every affected LaunchAgent', () => {
+      const msg = scan.formatStartupWarning({
+        mismatched: true,
+        plistFile: '/Users/op/Library/LaunchAgents/com.tangleclaw.server.plist',
+        plistWorkingDir: OLD,
+        cwd: '/Users/op/Projects/tangleclaw',
+        matches: [{ file: '/Users/op/Library/LaunchAgents/com.tangleclaw.server.plist', label: 'com.tangleclaw.server' }],
+        unreadable: [],
+        configMatches: [],
+        staleConfigPaths: []
+      });
+      assert.match(msg, /still names WorkingDirectory \/Users\/me\/Projects\/calendar-sync/);
+      assert.match(msg, /running from \/Users\/op\/Projects\/tangleclaw/);
+      assert.match(msg, /com\.tangleclaw\.server/);
+    });
+
+    it('names a stale config.json path even with no plist mismatch', () => {
+      const msg = scan.formatStartupWarning({
+        mismatched: false, matches: [], unreadable: [], configMatches: [],
+        staleConfigPaths: [{ key: 'httpsCertPath', value: '/old/certs/cert.pem' }]
+      });
+      assert.match(msg, /config\.json names a path whose directory no longer exists: httpsCertPath \(\/old\/certs\/cert\.pem\)/);
+    });
+
+    it('names a config.json path still under the old WorkingDirectory', () => {
+      const msg = scan.formatStartupWarning({
+        mismatched: true, plistFile: '/x/com.tangleclaw.server.plist', plistWorkingDir: OLD, cwd: '/new/path',
+        matches: [], unreadable: [], staleConfigPaths: [],
+        configMatches: [{ key: 'httpsKeyPath', value: `${OLD}/key.pem` }]
+      });
+      assert.match(msg, /config\.json still points at the old path: httpsKeyPath \(\/Users\/me\/Projects\/calendar-sync\/key\.pem\)/);
+    });
+  });
+
   describe('the warning reaches the operator (source probes)', () => {
+    it('server.js audits startup paths at boot and logs the warning (#1369)', () => {
+      const src = read('server.js');
+      assert.match(src, /^\s*const startupAudit = launchAgentScan\.auditStartupPaths\(\{$/m);
+      assert.match(src, /^\s*cwd: __dirname,$/m);
+      assert.match(src, /^\s*launchAgentsDir: launchAgentScan\.defaultLaunchAgentsDir\(\),$/m);
+      assert.match(src, /^\s*if \(startupWarning\) log\.warn\(startupWarning\);$/m);
+    });
+
     it('the rename branch of updateProject scans the OLD path against the real LaunchAgents dir and pushes into warnings', () => {
       const src = read('lib/projects.js');
       // Anchored at line start so a commented-out statement does not satisfy

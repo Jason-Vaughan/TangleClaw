@@ -694,3 +694,186 @@ describe('the Medusa Bridge condition (#1130)', () => {
     });
   });
 });
+
+describe('GET /api/health — public assets (#1368)', () => {
+  // #1368 — a moved or renamed install directory leaves the server running
+  // but serving no UI: every route under public/ 404s while the API itself
+  // stays up. _checkPublicAssets is the detector; GET /api/health is where
+  // it surfaces. The route always resolves PUBLIC_DIR to this repo's real
+  // `public/` directory (which is always present in CI), so the degraded
+  // branch is exercised directly against `_checkPublicAssets`, which takes
+  // the directory as a parameter for exactly this reason; the wiring from
+  // that helper into the route's `allOk`/`services.assets` is pinned by
+  // source probes below rather than by moving the real directory out from
+  // under a server that's live in another test file.
+  const { _checkPublicAssets } = require('../server');
+
+  describe('_checkPublicAssets', () => {
+    let dir;
+    beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-public-assets-')); });
+    afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+    it('is true when the directory and index.html both exist', () => {
+      fs.writeFileSync(path.join(dir, 'index.html'), '<html></html>');
+      assert.equal(_checkPublicAssets(dir), true);
+    });
+
+    it('is false when the directory itself is missing', () => {
+      assert.equal(_checkPublicAssets(path.join(dir, 'no-such-dir')), false);
+    });
+
+    it('is false when the directory exists but index.html does not', () => {
+      assert.equal(_checkPublicAssets(dir), false);
+    });
+
+    it('defaults to this install\'s real public/ directory, which exists in this checkout', () => {
+      assert.equal(_checkPublicAssets(), true);
+    });
+  });
+
+  describe('GET /api/health response shape', () => {
+    const { createServer } = require('../server');
+    const store = require('../lib/store');
+    let server, port, tempDir;
+
+    before(async () => {
+      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tangleclaw-health-assets-test-'));
+      store._setBasePath(tempDir);
+      store.init();
+      server = createServer();
+      await new Promise((resolve) => { server.listen(0, () => { port = server.address().port; resolve(); }); });
+    });
+
+    after(async () => {
+      await new Promise((resolve) => server.close(resolve));
+      store.close();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    it('reports services.assets ok against this checkout\'s real public/ directory', async () => {
+      const { data } = await new Promise((resolve, reject) => {
+        http.get({ hostname: '127.0.0.1', port, path: '/api/health' }, (res) => {
+          const chunks = [];
+          res.on('data', (c) => chunks.push(c));
+          res.on('end', () => resolve({ status: res.statusCode, data: JSON.parse(Buffer.concat(chunks).toString('utf8')) }));
+        }).on('error', reject);
+      });
+      assert.equal(data.services.assets, 'ok');
+    });
+  });
+
+  describe('the degraded verdict and the boot warning reach the operator (source probes)', () => {
+    const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+
+    it('GET /api/health folds assetsOk into allOk and reports services.assets', () => {
+      const src = read('server.js');
+      assert.match(src, /^\s*const allOk = dbStatus === 'ok' && ttyd === 'ok' && assetsOk;$/m);
+      assert.match(src, /^\s*assets: assetsOk \? 'ok' : 'unavailable'$/m);
+    });
+
+    it('boot logs an error naming the install-moved cause when assets are missing', () => {
+      const src = read('server.js');
+      assert.match(src, /if \(!_checkPublicAssets\(\)\) \{/);
+      assert.match(src, /log\.error\('Static asset directory \(public\/index\.html\) is missing or unreadable — UI routes will 404; '/);
+      assert.match(src, /check if the install directory was moved or renamed while running/);
+    });
+  });
+});
+
+// #2140 — the restart route's 300ms-later exec regressed to a false
+// "spawnSync /bin/sh ETIMEDOUT" failure log on a SUCCESSFUL restart: the
+// synchronous execSync held the event loop for up to its own 5s timeout,
+// which kept this process from handling the SIGTERM the restart mechanism
+// sent it the instant the new process came up. Landed here (not in
+// test/api-system.test.js, where POST /api/server/restart's other
+// contract tests live) because this car's authorized file scope names only
+// test/system-health.test.js and test/launchagent-scan.test.js — flagged in
+// the PR body as a dispatch gap rather than expanding scope mid-build.
+describe('POST /api/server/restart — non-blocking exec (#2140)', () => {
+  const { createServer } = require('../server');
+  const store = require('../lib/store');
+  const serverInfo = require('../lib/server-info');
+  const { operatorHeaders } = require('./_shared-docs-callers');
+  let server, port, tempDir;
+
+  before(async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tangleclaw-restart-nonblocking-test-'));
+    store._setBasePath(tempDir);
+    store.init();
+    server = createServer();
+    await new Promise((resolve) => { server.listen(0, () => { port = server.address().port; resolve(); }); });
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  function request(method, urlPath) {
+    return new Promise((resolve, reject) => {
+      const req = http.request({ hostname: '127.0.0.1', port, path: urlPath, method, headers: operatorHeaders(server) }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({ status: res.statusCode, data: JSON.parse(Buffer.concat(chunks).toString('utf8')) }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  it('answers a concurrent request while the scheduled exec is in flight — the mutation this catches is execSync back on the event loop', async () => {
+    const origDetect = serverInfo.detectRestartMechanism;
+    const origBuild = serverInfo.buildRestartCommand;
+    serverInfo.detectRestartMechanism = () => 'launchctl';
+    // Long enough that a blocking execSync would still be holding the event
+    // loop when the concurrent GET below is sent.
+    serverInfo.buildRestartCommand = () => 'sleep 2';
+    try {
+      const { status } = await request('POST', '/api/server/restart');
+      assert.equal(status, 202);
+      await new Promise((resolve) => setTimeout(resolve, 350)); // past the route's 300ms delay; the exec is now running
+      const started = Date.now();
+      const version = await request('GET', '/api/version');
+      assert.equal(version.status, 200);
+      assert.ok(Date.now() - started < 500, 'a concurrent request must not wait on the pending restart exec');
+    } finally {
+      serverInfo.detectRestartMechanism = origDetect;
+      serverInfo.buildRestartCommand = origBuild;
+      await new Promise((resolve) => setTimeout(resolve, 1700)); // drain the sleep before after() tears the server down
+    }
+  });
+
+  it('does not log an exec-failed line when the child dies to the process\'s own SIGTERM (the expected successful-restart path)', async () => {
+    const origDetect = serverInfo.detectRestartMechanism;
+    const origBuild = serverInfo.buildRestartCommand;
+    const origError = console.error;
+    const logged = [];
+    serverInfo.detectRestartMechanism = () => 'launchctl';
+    // Simulates what a real restart mechanism does to this process: deliver
+    // SIGTERM to the child exec spawned, without the child ever reporting a
+    // non-zero exit for any OTHER reason.
+    serverInfo.buildRestartCommand = () => 'kill -TERM $$; sleep 1';
+    console.error = (...args) => { logged.push(args.join(' ')); };
+    try {
+      const { status } = await request('POST', '/api/server/restart');
+      assert.equal(status, 202);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      assert.ok(!logged.some((l) => l.includes('[server-restart] exec failed')),
+        `a SIGTERM-killed child must not be logged as a failure, got: ${JSON.stringify(logged)}`);
+    } finally {
+      console.error = origError;
+      serverInfo.detectRestartMechanism = origDetect;
+      serverInfo.buildRestartCommand = origBuild;
+    }
+  });
+
+  it('wires exec (not execSync) with the signal/killed guard (source probe)', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    const route = src.slice(src.indexOf("route('POST', '/api/server/restart'"));
+    const body = route.slice(0, route.indexOf('\n});\n'));
+    assert.doesNotMatch(body, /execSync\(/, 'the restart exec must not block the event loop');
+    assert.match(body, /require\('node:child_process'\)\.exec\(command, \{ timeout: 5000 \}/);
+    assert.match(body, /if \(err\.killed \|\| err\.signal === 'SIGTERM'\) return;/);
+  });
+});

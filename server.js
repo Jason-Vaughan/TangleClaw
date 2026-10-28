@@ -181,6 +181,7 @@ const { resolveControlCaller, isOperatorShaped } = require('./lib/control-auth')
 const medusaExchanges = require('./lib/medusa-exchanges');
 const medusaWatchdog = require('./lib/medusa-watchdog');
 const medusaSend = require('./lib/medusa-send');
+const launchAgentScan = require('./lib/launchagent-scan');
 
 const log = createLogger('server');
 
@@ -748,6 +749,18 @@ const CONTENT_TYPES = {
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 /**
+ * Whether the static UI assets this install serves are present on disk
+ * (#1368). A missing `public/index.html` means the install directory was
+ * moved or renamed while the server kept running on the old path — every
+ * UI route then 404s though the API stays up.
+ * @param {string} [publicDir=PUBLIC_DIR]
+ * @returns {boolean}
+ */
+function _checkPublicAssets(publicDir = PUBLIC_DIR) {
+  return fs.existsSync(publicDir) && fs.existsSync(path.join(publicDir, 'index.html'));
+}
+
+/**
  * Ask the durable HOLD/STOP gate (#1861) immediately before a governed
  * mutation, and answer its refusal if there is one.
  * @param {http.ServerResponse} res
@@ -1039,6 +1052,8 @@ route('GET', '/api/health', (_req, res) => {
     }
   }
 
+  const assetsOk = _checkPublicAssets();
+
   // tmux check (synchronous)
   let tmuxStatus = 'unavailable';
   try {
@@ -1062,7 +1077,7 @@ route('GET', '/api/health', (_req, res) => {
   return new Promise((resolve) => {
     const respond = (ttyd) => {
       const version = _getVersion();
-      const allOk = dbStatus === 'ok' && ttyd === 'ok';
+      const allOk = dbStatus === 'ok' && ttyd === 'ok' && assetsOk;
       const status = dbStatus !== 'ok' ? 'degraded' : (allOk ? 'ok' : 'degraded');
       const httpStatus = dbStatus !== 'ok' ? 503 : 200;
 
@@ -1073,7 +1088,8 @@ route('GET', '/api/health', (_req, res) => {
         services: {
           database: dbStatus,
           ttyd: ttyd,
-          tmux: tmuxStatus
+          tmux: tmuxStatus,
+          assets: assetsOk ? 'ok' : 'unavailable'
         }
       });
       resolve();
@@ -1321,16 +1337,24 @@ route('POST', '/api/server/restart', async (req, res, _params, body) => {
   // visually instantaneous). Bumped from 80ms after Critic-flagged
   // remote-truncation risk on #235.
   setTimeout(() => {
-    try {
-      require('node:child_process').execSync(command, { stdio: ['ignore', 'ignore', 'pipe'], timeout: 5000 });
-    } catch (err) {
+    // #2140 — execSync blocked the event loop for up to its own 5s timeout,
+    // which kept this process from receiving SIGTERM the instant the restart
+    // actually lands, so a successful restart could still spawnSync-ETIMEDOUT
+    // against a process manager that was already tearing this one down.
+    // Async exec keeps the loop free to receive that signal immediately.
+    require('node:child_process').exec(command, { timeout: 5000 }, (err, _stdout, stderr) => {
+      if (!err) return;
+      // This process is already shutting down as part of the restart it just
+      // triggered — the child dying with it is the expected success path, not
+      // a failure to log.
+      if (err.killed || err.signal === 'SIGTERM') return;
       // No process manager took the restart, so this process lives on:
       // log the command's own reason (a missing unit, no user bus) rather
       // than just its exit status, and don't crash.
-      const reason = err && err.stderr ? String(err.stderr).trim() : '';
+      const reason = stderr ? String(stderr).trim() : '';
       // eslint-disable-next-line no-console
-      console.error('[server-restart] exec failed:', err && err.message, reason ? `— ${reason}` : '');
-    }
+      console.error('[server-restart] exec failed:', err.message, reason ? `— ${reason}` : '');
+    });
   }, 300);
 });
 
@@ -7664,6 +7688,30 @@ if (require.main === module) {
   controlGate.prime();
   const config = store.config.load();
 
+  // #1368 — the install directory may have moved or been renamed while a
+  // process manager kept this server running on the old path; the clearest
+  // symptom is every UI route 404ing while the API itself stays up, which is
+  // why /api/health degrades on this too.
+  if (!_checkPublicAssets()) {
+    log.error('Static asset directory (public/index.html) is missing or unreadable — UI routes will 404; '
+      + 'check if the install directory was moved or renamed while running', { publicDir: PUBLIC_DIR });
+  }
+
+  // #1369 — the same move/rename leaves a LaunchAgent plist's WorkingDirectory
+  // and any persisted cert/key paths pointing at the OLD install directory.
+  // Read-only and never-throwing, like the scan it builds on (#1148).
+  try {
+    const startupAudit = launchAgentScan.auditStartupPaths({
+      cwd: __dirname,
+      launchAgentsDir: launchAgentScan.defaultLaunchAgentsDir(),
+      config
+    });
+    const startupWarning = launchAgentScan.formatStartupWarning(startupAudit);
+    if (startupWarning) log.warn(startupWarning);
+  } catch (err) {
+    log.warn('Startup LaunchAgent/config path audit failed', { error: err.message });
+  }
+
   // Clear out sessions nobody is coming back for (#1418). At boot rather than
   // on a timer because `authSessions.resolve` already deletes an expired row the
   // moment it meets one, so the rows this catches are only those from browsers
@@ -8306,4 +8354,4 @@ if (require.main === module) {
 }
 
 
-module.exports = { _routePatterns, createServer, _recoveryGateProbeFor, _operatorProofOf, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers, _activityObserver: activityObserver, _exchangeCaller: exchangeCaller };
+module.exports = { _routePatterns, createServer, _recoveryGateProbeFor, _operatorProofOf, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers, _activityObserver: activityObserver, _exchangeCaller: exchangeCaller, _checkPublicAssets };
