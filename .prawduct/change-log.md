@@ -41,6 +41,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-28 — v5.43.0 W4-REL: prepare the verified senders and callers release candidate
+
+<!-- prawduct: type=internal | scope=v543-w4-rel -->
+
+- Prepared the v5.43.0 release candidate from `main@01dde223624cde633d6b8c18210dcdc1f636120c` after W3-REC PR #2668 merged. Promoted all ten accepted changelog fragments into the dated release section and removed the consumed files.
+- Updated `version.json` and the README clone pins to v5.43.0, extended the released-section lock without changing older locked sections, and recorded the pending code-release, production-update, and activation finish lines in `docs/releases/v5.43-status.md`. This entry records preparation, not a tag, publication, or production update.
+
 ## 2026-10-28 — v5.43.0 W3-REC: reconcile verified identity and direct-input records
 
 <!-- prawduct: type=internal | scope=v543-w3-rec -->
