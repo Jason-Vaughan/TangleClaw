@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TangleClaw v5.43.0 — Autonomous Multi-Agent Sprint &amp; Post-Mortem Report</title>
+  <style>
+    :root {
+      --bg: #070b14; --bg-card: #0f172a; --bg-card-alt: #131c31;
+      --border: #1e293b; --border-hi: #334155; --text: #f8fafc; --text-muted: #94a3b8;
+      --cyan: #38bdf8; --green: #34d399; --purple: #c084fc; --amber: #fbbf24; --rose: #fb7185; --indigo: #818cf8;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; background: radial-gradient(circle at 15% 0%, #0f1f3d 0%, var(--bg) 45%); color: var(--text); line-height: 1.55; }
+    a { color: var(--cyan); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; background: rgba(148,163,184,0.14); padding: 0.12rem 0.38rem; border-radius: 5px; color: #e2e8f0; }
+    .topnav { position: sticky; top: 0; z-index: 100; background: rgba(7,11,20,0.88); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); padding: 0.7rem 1.5rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem; }
+    .brand { display: flex; align-items: center; gap: 0.65rem; font-weight: 800; font-size: 1.05rem; color: var(--text); }
+    .brand-dot { width: 11px; height: 11px; border-radius: 50%; background: linear-gradient(135deg, var(--cyan), var(--green)); box-shadow: 0 0 12px var(--cyan); }
+    .nav-links { display: flex; gap: 1.1rem; flex-wrap: wrap; font-size: 0.86rem; font-weight: 600; }
+    .nav-links a { color: var(--text-muted); }
+    .nav-links a:hover { color: var(--cyan); text-decoration: none; }
+    .container { max-width: 1220px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+    .hero { background: linear-gradient(145deg, rgba(15,23,42,0.96), rgba(30,27,75,0.72)); border: 1px solid var(--border-hi); border-radius: 18px; padding: 2.25rem 2rem; margin-bottom: 2rem; box-shadow: 0 20px 50px rgba(0,0,0,0.45); }
+    .hero-eyebrow { display: inline-flex; align-items: center; gap: 0.5rem; background: rgba(56,189,248,0.12); border: 1px solid rgba(56,189,248,0.4); color: var(--cyan); font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; padding: 0.28rem 0.75rem; border-radius: 999px; margin-bottom: 0.9rem; }
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-top: 1.4rem; }
+    .kpi-card { background: rgba(15,23,42,0.85); border: 1px solid var(--border); border-radius: 14px; padding: 1rem 1.15rem; position: relative; overflow: hidden; }
+    .kpi-card::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, var(--cyan), var(--green)); }
+    .kpi-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); font-weight: 600; }
+    .kpi-val { font-size: 1.55rem; font-weight: 800; margin: 0.25rem 0 0.15rem; color: var(--text); }
+    .kpi-sub { font-size: 0.8rem; color: #cbd5e1; }
+    section.panel { background: var(--bg-card); border: 1px solid var(--border-hi); border-radius: 16px; padding: 1.65rem 1.75rem; margin-bottom: 1.75rem; }
+    h2 { margin-top: 0; font-size: 1.35rem; border-bottom: 1px solid var(--border); padding-bottom: 0.6rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin-top: 0.75rem; }
+    th, td { padding: 0.65rem 0.75rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    th { color: var(--text-muted); font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.04em; background: rgba(15,23,42,0.6); }
+    .issue-pill, .pr-link, .sha-link { display: inline-block; padding: 0.12rem 0.45rem; border-radius: 6px; font-size: 0.78rem; font-weight: 700; margin: 0.1rem; }
+    .issue-pill { background: rgba(52,211,153,0.14); color: var(--green); border: 1px solid rgba(52,211,153,0.35); }
+    .pr-link { background: rgba(56,189,248,0.14); color: var(--cyan); border: 1px solid rgba(56,189,248,0.35); }
+    .sha-link { background: rgba(192,132,252,0.14); color: var(--purple); border: 1px solid rgba(192,132,252,0.35); font-family: ui-monospace, monospace; }
+    .legend { display: flex; gap: 1rem; flex-wrap: wrap; font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem; }
+    .filter-bar { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
+    .filter-btn { background: var(--bg-card-alt); color: var(--text); border: 1px solid var(--border-hi); border-radius: 8px; padding: 0.4rem 0.8rem; cursor: pointer; font-size: 0.82rem; font-weight: 600; }
+    .filter-btn.active, .filter-btn:hover { border-color: var(--cyan); color: var(--cyan); }
+  </style>
+</head>
+<body>
+  <nav class="topnav">
+    <div class="brand"><span class="brand-dot"></span><span>TangleClaw v5.43.0 Sprint Report</span></div>
+    <div class="nav-links">
+      <a href="#executive-summary">1. Executive Summary</a>
+      <a href="#architecture">2. Swarm Architecture</a>
+      <a href="#velocity-charts">3. Velocity &amp; SVG Telemetry</a>
+      <a href="#pr-explorer">4. Interactive PR Explorer</a>
+      <a href="#gate-findings">5. R-Gate &amp; A-Gate Findings</a>
+      <a href="#observer-audit">6. 16-Point Observer Audit</a>
+      <a href="#post-mortem">7. Disjoint Merge &amp; Post-Mortem</a>
+      <a href="#release-gates">8. Release &amp; O-Gate</a>
+      <a href="../index.html">← All Sprint Reports</a>
+    </div>
+  </nav>
+  <main class="container">
+    <section class="hero" id="executive-summary">
+      <div class="hero-eyebrow">● Release v5.43.0 · Milestone #28 · Charter A478 (A478-COSIGN-20261028T0445Z) · O-Gate PASS (O478-V543-PASS)</div>
+      <h1>TangleClaw <code>v5.43.0</code>: “Verified senders and callers”</h1>
+      <p>Four execution waves merged <strong>6 Wave 1 &amp; Wave 2 code PR cars (#2661, #2662, #2664, #2665, #2666, #2667) in 2 hours 11 minutes</strong> (plus <code>W3-REC #2668</code> &amp; <code>W4-REL</code>) across 4 parallel Claude Sonnet 5 Builder lanes, closing <strong>10/10 Milestone #28 issues (100%)</strong> at <code>main @ 66ca411e1b187ab27b63d541558d9abd6c80d06a</code> with <strong>0 code merge conflicts</strong>, full <code>W1-F1_v542</code> disjoint merge pipelining, and <strong>0 post-merge regressions</strong> (9th consecutive zero-regression release).</p>
+      <div class="kpi-grid">
+        <div class="kpi-card"><div class="kpi-label">W1 + W2 Code Wall Time</div><div class="kpi-val">2h 11m</div><div class="kpi-sub">04:45Z cosign → 06:56:37Z W2-A merge (62% faster vs v5.42.0)</div></div>
+        <div class="kpi-card"><div class="kpi-label">Milestone #28 Issues</div><div class="kpi-val">10 / 10 Closed</div><div class="kpi-sub">100% completion across 6 code PRs + W1-F3_v542</div></div>
+        <div class="kpi-card"><div class="kpi-label">Fastest 3 W1 Builds</div><div class="kpi-val">32.6m–47.2m</div><div class="kpi-sub">W1-C (32.6m) · W1-D (35.4m) · W1-B (47.2m)</div></div>
+        <div class="kpi-card"><div class="kpi-label">Disjoint Merge Pipelining</div><div class="kpi-val">0 Rebases</div><div class="kpi-sub">W1-F1_v542: 5/5 sibling merges landed without ancestor sync</div></div>
+        <div class="kpi-card"><div class="kpi-label">R-Gate Security Catches</div><div class="kpi-val">8 Blockers Caught</div><div class="kpi-sub">100% caught pre-merge across R2–R5 review rounds</div></div>
+        <div class="kpi-card"><div class="kpi-label">Charter Co-Sign</div><div class="kpi-val">A478 Verified</div><div class="kpi-sub"><code>fd3b185cffdb4121...</code> · Base <code>ccfaf342</code></div></div>
+        <div class="kpi-card"><div class="kpi-label">CI Runner Flakes</div><div class="kpi-val">0 Flakes</div><div class="kpi-sub">W1-F3_v542 resolved Linux osascript &amp; IPC flakes</div></div>
+        <div class="kpi-card"><div class="kpi-label">O-Gate Verdict</div><div class="kpi-val" style="color:var(--green);">PASS</div><div class="kpi-sub">Stamp <code>O478-V543-PASS</code> · 9th Clean Sprint</div></div>
+      </div>
+    </section>
+    <section class="panel" id="architecture">
+      <h2>2. 10-Lane Swarm Architecture, Charter A478 &amp; <code>W1-F1_v542</code> Disjoint Merge Execution</h2>
+      <p>Charter <code>A478</code> (co-signed <code>A478-COSIGN-20261028T0445Z</code> by <code>PM</code> and <code>TC-Lane-Arc</code>, SHA-256 <code>fd3b185cffdb412173767dd7b24cb54805f00682d3bc8fee3c7c5d5c7901cdcb</code>) partitioned all 10 Milestone #28 caller-authentication, Medusa launch-binding, command-gate, and audit-heartbeat issues across 4 Wave 1 cars and 2 Wave 2 cars with <strong>0 same-wave file overlap</strong>. Applying post-mortem recommendation <code>W1-F1_v542</code>, file-disjoint sibling PRs merged back-to-back without redundant ancestor rebases—cutting Wave 1 + Wave 2 wall time from <code>4h 49m</code> in v5.42.0 to <strong>2h 11m</strong> in v5.43.0.</p>
+      <svg viewBox="0 0 900 180" width="100%" height="180" role="img" aria-label="Wave 1 to Wave 4 Pipeline">
+        <title>v5.43.0 4-Wave Execution Pipeline (W1+W2 overlapped 131.6m -> W3-REC -> W4-REL)</title>
+        <rect x="10" y="25" width="215" height="125" rx="12" fill="#131c31" stroke="#38bdf8" stroke-width="2"><title>Wave 1: 4 File-Disjoint Cars (W1-C, W1-D, W1-B, W1-A)</title></rect>
+        <text x="24" y="52" fill="#38bdf8" font-size="14" font-weight="bold">Wave 1 (4 Cars · 8 Issues)</text>
+        <text x="24" y="75" fill="#f8fafc" font-size="12">W1-C #2661 (#1611, #1682)</text>
+        <text x="24" y="95" fill="#f8fafc" font-size="12">W1-D #2662 (#2148, #2021, F3)</text>
+        <text x="24" y="115" fill="#f8fafc" font-size="12">W1-B #2664 · W1-A #2666</text>
+        <text x="24" y="135" fill="#94a3b8" font-size="11">0 same-wave file overlap</text>
+        <rect x="245" y="25" width="215" height="125" rx="12" fill="#131c31" stroke="#34d399" stroke-width="2"><title>Wave 2: 2 Parallel Cars Dispatched on Lane Release (W2-B, W2-A)</title></rect>
+        <text x="260" y="52" fill="#34d399" font-size="14" font-weight="bold">Wave 2 (2 Cars · 2 Issues)</text>
+        <text x="260" y="75" fill="#f8fafc" font-size="12">W2-B #2665 (#2239 Heartbeat)</text>
+        <text x="260" y="95" fill="#f8fafc" font-size="12">W2-A #2667 (#2402 /command)</text>
+        <text x="260" y="115" fill="#f8fafc" font-size="12">Pipelined post-W1-D &amp; W1-C</text>
+        <text x="260" y="135" fill="#94a3b8" font-size="11">Merged @ 66ca411e (2h 11m)</text>
+        <rect x="480" y="25" width="190" height="125" rx="12" fill="#131c31" stroke="#c084fc" stroke-width="2"><title>Wave 3: W3-REC (#2668) — Records &amp; P1 Verification</title></rect>
+        <text x="495" y="52" fill="#c084fc" font-size="14" font-weight="bold">Wave 3 (W3-REC #2668)</text>
+        <text x="495" y="75" fill="#f8fafc" font-size="12">FEATURES.md + change-log</text>
+        <text x="495" y="95" fill="#f8fafc" font-size="12">docs/user-guide.md</text>
+        <text x="495" y="115" fill="#f8fafc" font-size="12">P1 Tests: Verifier Green</text>
+        <text x="495" y="135" fill="#94a3b8" font-size="11">CI 40647645846 PASS</text>
+        <rect x="690" y="25" width="195" height="125" rx="12" fill="#131c31" stroke="#fbbf24" stroke-width="2"><title>Wave 4: W4-REL + Interactive Sprint Report + O-Gate PASS</title></rect>
+        <text x="705" y="52" fill="#fbbf24" font-size="14" font-weight="bold">Wave 4 (W4-REL + O-Gate)</text>
+        <text x="705" y="75" fill="#f8fafc" font-size="12">10/10 Changelog Fragments</text>
+        <text x="705" y="95" fill="#f8fafc" font-size="12">v5.43.0 Interactive Report</text>
+        <text x="705" y="115" fill="#34d399" font-size="12">O-Gate PASS (O478-V543)</text>
+        <text x="705" y="135" fill="#94a3b8" font-size="11">Tag v5.43.0 Release Cut</text>
+      </svg>
+      <div class="legend"><span>● Cyan: Wave 1 Disjoint Cars</span><span>● Green: Wave 2 Per-Lane Pipelined Cars</span><span>● Purple: Wave 3 Records Gate</span><span>● Amber: Wave 4 Release Cut</span></div>
+    </section>
+
+    <section class="panel" id="velocity-charts">
+      <h2>3. Car Build vs. Open-to-Merge Telemetry (UTC Timeline: 04:45Z–06:56Z)</h2>
+      <svg viewBox="0 0 900 220" width="100%" height="220" role="img" aria-label="Car Build vs Total Time Bar Chart">
+        <title>Build Duration vs Open-to-Merge Duration across v5.43.0 Cars</title>
+        <rect x="130" y="20" width="98" height="18" fill="#38bdf8"><title>W1-C (#2661): 32.6m build / 18.6m review-to-merge (51.2m total)</title></rect>
+        <rect x="228" y="20" width="56" height="18" fill="rgba(56,189,248,0.4)"><title>W1-C (#2661): 18.6m open-to-merge (R2 ACCEPT)</title></rect>
+        <text x="10" y="34" fill="#f8fafc" font-size="12">W1-C (#2661)</text><text x="294" y="34" fill="#94a3b8" font-size="12">32.6m build + 18.6m review = 51.2m (merged 05:36:09Z @ 4277e156)</text>
+
+        <rect x="130" y="46" width="106" height="18" fill="#38bdf8"><title>W1-D (#2662): 35.4m build / 19.0m review-to-merge (54.4m total)</title></rect>
+        <rect x="236" y="46" width="57" height="18" fill="rgba(56,189,248,0.4)"><title>W1-D (#2662): 19.0m open-to-merge (R2 ACCEPT, merged 3m 17s after #2661)</title></rect>
+        <text x="10" y="60" fill="#f8fafc" font-size="12">W1-D (#2662)</text><text x="303" y="60" fill="#94a3b8" font-size="12">35.4m build + 19.0m review = 54.4m (merged 05:39:26Z @ 37a3f807)</text>
+
+        <rect x="130" y="72" width="142" height="18" fill="#38bdf8"><title>W1-B (#2664): 47.2m build / 29.0m review-to-merge (76.2m total)</title></rect>
+        <rect x="272" y="72" width="87" height="18" fill="rgba(56,189,248,0.4)"><title>W1-B (#2664): 29.0m open-to-merge (R2 ACCEPT)</title></rect>
+        <text x="10" y="86" fill="#f8fafc" font-size="12">W1-B (#2664)</text><text x="369" y="86" fill="#94a3b8" font-size="12">47.2m build + 29.0m review = 76.2m (merged 06:01:12Z @ 47840864)</text>
+
+        <rect x="130" y="98" width="44" height="18" fill="#34d399"><title>W2-B (#2665): 14.7m post-W1-D build / 50.8m review-to-merge (65.5m total)</title></rect>
+        <rect x="174" y="98" width="152" height="18" fill="rgba(52,211,153,0.4)"><title>W2-B (#2665): 50.8m open-to-merge (R5 ACCEPT)</title></rect>
+        <text x="10" y="112" fill="#f8fafc" font-size="12">W2-B (#2665)</text><text x="336" y="112" fill="#94a3b8" font-size="12">14.7m build + 50.8m review (R5) = 65.5m (merged 06:44:54Z @ ea417265)</text>
+
+        <rect x="130" y="124" width="285" height="18" fill="#38bdf8"><title>W1-A (#2666): 95.1m build / 30.6m review-to-merge (125.7m total)</title></rect>
+        <rect x="415" y="124" width="92" height="18" fill="rgba(56,189,248,0.4)"><title>W1-A (#2666): 30.6m open-to-merge (R2 ACCEPT)</title></rect>
+        <text x="10" y="138" fill="#f8fafc" font-size="12">W1-A (#2666)</text><text x="517" y="138" fill="#94a3b8" font-size="12">95.1m build + 30.6m review = 125.7m (merged 06:50:41Z @ 7f1eedf2)</text>
+
+        <rect x="130" y="150" width="144" height="18" fill="#34d399"><title>W2-A (#2667): 47.9m post-W1-C build / 32.6m review-to-merge (80.5m total)</title></rect>
+        <rect x="274" y="150" width="98" height="18" fill="rgba(52,211,153,0.4)"><title>W2-A (#2667): 32.6m open-to-merge (R3 ACCEPT)</title></rect>
+        <text x="10" y="164" fill="#f8fafc" font-size="12">W2-A (#2667)</text><text x="382" y="164" fill="#94a3b8" font-size="12">47.9m build + 32.6m review (R3) = 80.5m (merged 06:56:37Z @ 66ca411e)</text>
+
+        <rect x="130" y="176" width="21" height="18" fill="#c084fc"><title>W3-REC (#2668): 6.9m build from W2-A merge</title></rect>
+        <text x="10" y="190" fill="#f8fafc" font-size="12">W3-REC (#2668)</text><text x="161" y="190" fill="#94a3b8" font-size="12">6.9m build · CI 40647645846 PASS · Features &amp; Docs Reconciled</text>
+      </svg>
+      <div class="legend"><span>● Solid Bar: Build Duration (Dispatch to PR Open)</span><span>● Translucent Bar: Review &amp; CI Duration (PR Open to Guard-Merge)</span><span>● Mean W1+W2 Build: 45.5m</span></div>
+    </section>
+    <section class="panel" id="pr-explorer">
+      <h2>4. Interactive PR &amp; Issue Explorer (8/8 Sprint PRs · 10/10 Milestone #28 Issues Closed)</h2>
+      <div class="filter-bar">
+        <button class="filter-btn active" onclick="filterRows('all')">All Waves (8)</button>
+        <button class="filter-btn" onclick="filterRows('W1')">Wave 1 (4)</button>
+        <button class="filter-btn" onclick="filterRows('W2')">Wave 2 (2)</button>
+        <button class="filter-btn" onclick="filterRows('W3')">Wave 3 (1)</button>
+        <button class="filter-btn" onclick="filterRows('W4')">Wave 4 (1)</button>
+      </div>
+      <table id="pr-table">
+        <thead>
+          <tr><th>Wave / Car</th><th>Lane</th><th>PR &amp; Head</th><th>Issues &amp; Scope</th><th>Build / Total</th><th>Gates &amp; CI</th><th>Merge Commit</th></tr>
+        </thead>
+        <tbody>
+          <tr data-wave="W1"><td><strong>W1-C</strong></td><td><code>TC-Lane-C</code></td><td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2661">#2661</a> <span class="sha-link">a6b03ebc</span></td><td><span class="issue-pill">#1611</span> <span class="issue-pill">#1682</span> Bound handoff launch preflight identity (<code>projectId</code> alone) + staged test runner per-stage log</td><td>32.6m / 51.2m</td><td>CI 40637825851 · PRR-B R2 ACCEPT · A-Gate R2 APPROVED</td><td><span class="sha-link">4277e156</span></td></tr>
+          <tr data-wave="W1"><td><strong>W1-D</strong></td><td><code>TC-Lane-D</code></td><td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2662">#2662</a> <span class="sha-link">be2ad28c</span></td><td><span class="issue-pill">#2148</span> <span class="issue-pill">#2021</span> Operator-proof launch/readiness UI helpers + route auth matrix docs parity + <code>W1-F3_v542</code></td><td>35.4m / 54.4m</td><td>CI 40637939858 · PRR-B R2 ACCEPT · A-Gate R2 APPROVED</td><td><span class="sha-link">37a3f807</span></td></tr>
+          <tr data-wave="W1"><td><strong>W1-B</strong></td><td><code>TC-Lane-B</code></td><td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2664">#2664</a> <span class="sha-link">9d5e0d11</span></td><td><span class="issue-pill">#1865</span> <span class="issue-pill">#1875</span> Medusa sender launch identity authentication + ordinary Medusa send launch binding</td><td>47.2m / 76.2m</td><td>CI 40640090902 · PRR-A R2 ACCEPT · A-Gate R2 APPROVED</td><td><span class="sha-link">47840864</span></td></tr>
+          <tr data-wave="W2"><td><strong>W2-B</strong></td><td><code>TC-Lane-D</code></td><td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2665">#2665</a> <span class="sha-link">ed3eb101</span></td><td><span class="issue-pill">#2239</span> Verified scoped caller identity &amp; compound <code>(project, sessionId)</code> watchdog keys on <code>POST /api/audit/heartbeat</code></td><td>14.7m / 65.5m</td><td>CI 40644534657 · PRR-B R5 ACCEPT · A-Gate R5 APPROVED</td><td><span class="sha-link">ea417265</span></td></tr>
+          <tr data-wave="W1"><td><strong>W1-A</strong></td><td><code>TC-Lane-A</code></td><td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2666">#2666</a> <span class="sha-link">36429fad</span></td><td><span class="issue-pill">#1458</span> <span class="issue-pill">#1286</span> <code>scripts/reset-admin.js --disable</code> with atomic <code>BEGIN IMMEDIATE</code> last-account safeguard + <code>--dry-run</code> exit code 1</td><td>95.1m / 125.7m</td><td>CI 40645002587 · PRR-A R2 ACCEPT · A-Gate R2 APPROVED</td><td><span class="sha-link">7f1eedf2</span></td></tr>
+          <tr data-wave="W2"><td><strong>W2-A</strong></td><td><code>TC-Lane-C</code></td><td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2667">#2667</a> <span class="sha-link">3a9bfc2b</span></td><td><span class="issue-pill">#2402</span> <code>POST /api/sessions/:project/command</code> operator-only leading-slash gate, non-forgeable sender stamp + receipt, <code>replyGuidance</code>, <code>suppressNonActionableWakes</code></td><td>47.9m / 80.5m</td><td>CI 40645585504 · PRR-A R3 ACCEPT · A-Gate R3 APPROVED</td><td><span class="sha-link">66ca411e</span></td></tr>
+          <tr data-wave="W3"><td><strong>W3-REC</strong></td><td><code>TC-Lane-INT</code></td><td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2668">#2668</a> <span class="sha-link">e195af50</span></td><td>Records Reconciliation (<code>FEATURES.md</code>, <code>.prawduct/change-log.md</code>, <code>docs/user-guide.md</code>)</td><td>6.9m / ~12m</td><td>CI 40647645846 · PRR-A ACCEPT · A-Gate APPROVED</td><td><span class="sha-link">W3-REC</span></td></tr>
+          <tr data-wave="W4"><td><strong>W4-REL</strong></td><td><code>TC-Lane-INT</code> + <code>Obsr</code></td><td><span class="pr-link">W4-REL</span></td><td>Release <code>v5.43.0</code> Cut + 10 Changelog Fragments + Interactive Sprint Report</td><td>Pre-warmed</td><td>R-Gate ACCEPT · A-Gate APPROVED · O-Gate PASS (<code>O478-V543-PASS</code>)</td><td><span class="sha-link">v5.43.0</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel" id="gate-findings">
+      <h2>5. Multi-Round R-Gate &amp; A-Gate Security/Correctness Ledger</h2>
+      <p>Dual-gate review (<code>TC-Lane-PRR-A</code>, <code>TC-Lane-PRR-B</code>, and <code>TC-Lane-Arc</code>) intercepted and resolved <strong>8 concrete correctness &amp; security findings</strong> across the 6 code cars before merge:</p>
+      <table>
+        <thead>
+          <tr><th>Car / PR</th><th>Reviewer</th><th>Rounds</th><th>Key Findings Caught &amp; Resolved Pre-Merge</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>W1-C (#2661)</strong></td><td><code>PRR-B</code> + <code>Arc</code></td><td>R1 → <strong>R2 ACCEPT</strong></td><td><strong>R1 Blocker:</strong> <code>test/launch-preflight-context.test.js</code> tested internal helpers without exercising the public <code>evaluate(project, { workspacePath })</code> contract directly. Resolved at <code>a6b03ebc</code>.</td></tr>
+          <tr><td><strong>W1-D (#2662)</strong></td><td><code>PRR-B</code> + <code>Arc</code></td><td>R1 → <strong>R2 ACCEPT</strong></td><td><strong>R1 Blocker:</strong> <code>docs/configuration-reference.md</code> overstated non-operator caller refusal on <code>PUT /api/rules/global</code> vs route auth matrix behavior. Resolved at <code>be2ad28c</code>.</td></tr>
+          <tr><td><strong>W1-B (#2664)</strong></td><td><code>PRR-A</code> + <code>Arc</code></td><td>R1 → <strong>R2 ACCEPT</strong></td><td><strong>R1 Blocker:</strong> Master mount participant resolution could collide with a project named <code>Project Master</code>. Hardened <code>targetProjectId()</code> to distinguish Master mount identity at <code>9d5e0d11</code>.</td></tr>
+          <tr><td><strong>W2-B (#2665)</strong></td><td><code>PRR-B</code> + <code>Arc</code></td><td>R1 → <strong>R5 ACCEPT</strong></td><td><strong>R1–R3 Blockers:</strong> (R1) Bearer token bound-project cross-scope heartbeat spoofing; (R2) unwatched OpenClaw <code>session_id</code> treated as caller-owned; (R3) unauthenticated global watch creation on unwatched <code>body.session_id</code>; (R4→R5) compound key cleanup in <code>evalAudit.unwatchSession</code> tests at <code>ed3eb101</code>.</td></tr>
+          <tr><td><strong>W1-A (#2666)</strong></td><td><code>PRR-A</code> + <code>Arc</code></td><td>R1 → <strong>R2 ACCEPT</strong></td><td><strong>R1 Blocker:</strong> Unforced “last enabled account” check in <code>scripts/reset-admin.js --disable</code> had a check-then-write TOCTOU race. Wrapped in an atomic SQLite <code>BEGIN IMMEDIATE</code> write transaction at <code>36429fad</code>.</td></tr>
+          <tr><td><strong>W2-A (#2667)</strong></td><td><code>PRR-A</code> + <code>Arc</code></td><td>R1 → <strong>R3 ACCEPT</strong></td><td><strong>R1 Blocker:</strong> <code>lib/medusa-wake.js</code> shared-doc notice suppression checked synthetic fields rather than real <code>from === 'system'</code> inbox envelopes. Resolved in R2 (<code>2a44afa1</code>) and extended with <code>non-actionable-notice-only</code> disposition in R3 (<code>3a9bfc2b</code>).</td></tr>
+        </tbody>
+      </table>
+    </section>
+    <section class="panel" id="observer-audit">
+      <h2>6. Rule #283 16-Point Empirical Observer Audit</h2>
+      <svg viewBox="0 0 900 100" width="100%" height="100" role="img" aria-label="Gate Audit Summary">
+        <title>16-Point Observer Audit &amp; 4 Exit Gates Summary</title>
+        <rect x="10" y="15" width="205" height="65" rx="10" fill="#131c31" stroke="#34d399"><title>0 Unplanned Operator Rescues</title></rect>
+        <text x="25" y="42" fill="#34d399" font-size="13" font-weight="bold">1. Interventions: 0 Rescues</text>
+        <text x="25" y="62" fill="#cbd5e1" font-size="11">100% autonomous W1–W4 execution</text>
+        <rect x="230" y="15" width="205" height="65" rx="10" fill="#131c31" stroke="#38bdf8"><title>100% Disjoint Merge Pipelining</title></rect>
+        <text x="245" y="42" fill="#38bdf8" font-size="13" font-weight="bold">3. Pipelining: 5/5 Disjoint</text>
+        <text x="245" y="62" fill="#cbd5e1" font-size="11">0 ancestor rebases · 0 conflicts</text>
+        <rect x="450" y="15" width="205" height="65" rx="10" fill="#131c31" stroke="#c084fc"><title>0 Post-Merge Regressions</title></rect>
+        <text x="465" y="42" fill="#c084fc" font-size="13" font-weight="bold">8. Regressions: 0 on main</text>
+        <text x="465" y="62" fill="#cbd5e1" font-size="11">9th consecutive clean sprint</text>
+        <rect x="670" y="15" width="215" height="65" rx="10" fill="#131c31" stroke="#fbbf24"><title>4/4 Maintenance Gates PASS</title></rect>
+        <text x="685" y="42" fill="#fbbf24" font-size="13" font-weight="bold">16. Exit Gates: 4/4 PASS</text>
+        <text x="685" y="62" fill="#cbd5e1" font-size="11">O478-V543-PASS ratified</text>
+      </svg>
+      <div class="legend"><span>● All 16 Rule #283 Empirical Measures Audited</span><span>● 0 AskUserQuestion Stalls · 0 Unplanned CI Reruns</span></div>
+    </section>
+
+    <section class="panel" id="post-mortem">
+      <h2>7. <code>W1-F1_v542</code> Validation &amp; Process Recommendations for v5.44.0</h2>
+      <ol>
+        <li><strong>Validated in Production — <code>W1-F1_v542</code> Disjoint Merge Pipelining Eliminated Ancestor Rebase Cascades:</strong> All 5 post-first code cars (<code>#2662, #2664, #2665, #2666, #2667</code>) merged directly onto advancing <code>main</code> without redundant branch rebases or re-review loops, saving ~90 minutes of wall time and enabling back-to-back merges separated by as little as <strong>3m 17s</strong> (<code>#2661 → #2662</code>) and <strong>5m 47s</strong> (<code>#2665 → #2666</code>).</li>
+        <li><strong><code>W1-F1_v543</code> — Pre-Dispatch Route Auth &amp; Caller-Scope Checklist for Security Cars:</strong> Multi-round security cars like <code>W2-B (#2665, R5)</code> and <code>W2-A (#2667, R3)</code> converged rapidly once R-Gate tested cross-project Bearer tokens and real <code>from === 'system'</code> envelopes. Including a 3-item caller-scope invariant checklist in security car dispatch prompts will shift those checks to R1.</li>
+        <li><strong><code>W1-F2_v543</code> — SQLite Write-Transaction Invariant for Multi-Step Admin CLI Guards:</strong> Following <code>W1-A (#2666)</code>'s R2 fix wrapping last-account checks in <code>BEGIN IMMEDIATE</code>, codify atomic transaction boundaries for all CLI state-mutation safeguards.</li>
+      </ol>
+    </section>
+
+    <section class="panel" id="release-gates">
+      <h2>8. Release Verification &amp; O-Gate Ruling (<code>O478-V543-PASS</code>)</h2>
+      <p><strong>Verdict:</strong> <code>O-Gate PASS (O478-V543-PASS)</code>. All 10 Milestone #28 issues (<code>#1286, #1458, #1611, #1682, #1865, #1875, #2021, #2148, #2239, #2402</code>) are closed across the 6 merged code PRs at <code>main @ 66ca411e1b187ab27b63d541558d9abd6c80d06a</code>, Charter <code>A478</code> (<code>A478-COSIGN-20261028T0445Z</code>, SHA-256 <code>fd3b185cffdb412173767dd7b24cb54805f00682d3bc8fee3c7c5d5c7901cdcb</code>) invariants held with 0 same-wave overlaps, and <code>W3-REC (#2668)</code> + <code>W4-REL</code> completed full documentation and release reconciliation.</p>
+    </section>
+  </main>
+  <script>
+    function filterRows(wave) {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      event.target.classList.add('active');
+      document.querySelectorAll('#pr-table tbody tr').forEach(tr => {
+        tr.style.display = (wave === 'all' || tr.dataset.wave === wave) ? '' : 'none';
+      });
+    }
+  </script>
+</body>
+</html>
