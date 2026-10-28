@@ -127,8 +127,12 @@ of these, judged by `lib/wrap-steps/changelog-coverage.js`:
 - a correctly named fragment is uncommitted in the working tree, or a commit
   in the session's range added one: the changelog was maintained as the
   session worked, and the step has nothing to add;
-- `CHANGELOG.md` was edited by the same routes, for the transition
-  (`docs/release-process.md` names the boundary).
+- or the project declares a `coveragePaths` glob matched instead (a
+  monorepo's nested changelog). A session's direct edit to `CHANGELOG.md`'s
+  `[Unreleased]` section does NOT satisfy this step — that transition exception
+  has ended (#2523). `CHANGELOG.md` stays declared only so the release wrap's
+  own compiled promotion of fragments into `[Unreleased]` still satisfies the
+  step when that wrap runs.
 
 Only the **name** is judged here, by `parseFragmentName`. A file under
 `changelog.d/` that is not a fragment (`README.md`, `0.x.added.md`,

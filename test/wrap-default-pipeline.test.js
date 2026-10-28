@@ -107,8 +107,10 @@ describe('wrap-default-pipeline — the code-owned pipeline', () => {
   });
 
   // #1220 — the step's work product is a fragment under changelog.d/, so the
-  // declaration names the directory (the file's name is not known in advance)
-  // and keeps CHANGELOG.md for branches opened before the transition.
+  // declaration names the directory (the file's name is not known in advance).
+  // CHANGELOG.md stays declared only for the release wrap's own promotion of
+  // fragments into [Unreleased] (#2523); a session's direct edit no longer
+  // satisfies this step.
   describe('changelog-update asks for a changelog fragment (#1220)', () => {
     const step = () => defaultPipeline.steps().find((s) => s.id === 'changelog-update');
 
@@ -125,7 +127,10 @@ describe('wrap-default-pipeline — the code-owned pipeline', () => {
         assert.ok(prompt.includes(`\`${type}\``), `names the type ${type}`);
       }
       assert.ok(prompt.includes('Do not edit CHANGELOG.md'), 'the direct edit is the exception, not the instruction');
-      assert.ok(prompt.includes('opened before the project moved to fragments'), 'states the transition');
+      assert.ok(!prompt.includes('opened before the project moved to fragments'),
+        'the pre-boundary transition exception is gone (#2523)');
+      assert.ok(prompt.includes('is not accepted for session work'),
+        'states plainly that a direct [Unreleased] edit is not accepted');
       assert.ok(prompt.includes('{sessionScope}') && prompt.includes('{engineConfigFile}'),
         'keeps the interpolated tokens the handler supplies');
     });
