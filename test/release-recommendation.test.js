@@ -92,6 +92,33 @@ describe('release recommendation helpers', () => {
       assert.match(out.reason, /releaseMode is off/);
     });
 
+    it('is closed for a non-owner worktree-scoped project too, in both planning and execution (PRR-A B5)', () => {
+      // Worktree wraps have `path` = the work tree (where CHANGELOG.md
+      // actually lives) and `configPath` = the registered checkout (where
+      // `.tangleclaw/project.json` lives, and the only path `store.projects`
+      // has a row for) — the group membership lookup must resolve via
+      // `configPath`, not the (unregistered) worktree `path`.
+      const ownerConfigDir = makeProject({ config: { releaseMode: 'agent' } });
+      const otherConfigDir = makeProject({ config: { releaseMode: 'agent' } });
+      const ownerRow = store.projects.create({ name: ownerConfigDir.name, path: ownerConfigDir.path });
+      const otherRow = store.projects.create({ name: otherConfigDir.name, path: otherConfigDir.path });
+      const group = store.projectGroups.create({ name: 'rr-fleet-worktree' });
+      store.projectGroups.addMember(group.id, ownerRow.id);
+      store.projectGroups.addMember(group.id, otherRow.id);
+      store.projectGroups.claimReleaseOwnerIfVacant(group.id, ownerRow.id);
+
+      // Separate "worktree" dirs — CHANGELOG.md, no .tangleclaw/ at all.
+      const otherWorktree = makeProject({ config: undefined });
+      const ownerWorktree = makeProject({ config: undefined });
+      const worktreeOther = { name: otherConfigDir.name, path: otherWorktree.path, configPath: otherConfigDir.path };
+      const worktreeOwner = { name: ownerConfigDir.name, path: ownerWorktree.path, configPath: ownerConfigDir.path };
+
+      assert.equal(rec.releaseDecisionOpen(worktreeOther, {}).open, false, 'non-owner execution phase');
+      assert.equal(rec.releaseDecisionOpen(worktreeOther, {}, { planning: true }).open, false, 'non-owner planning phase');
+      assert.equal(rec.releaseDecisionOpen(worktreeOwner, {}).open, true, 'owner execution phase');
+      assert.equal(rec.releaseDecisionOpen(worktreeOwner, {}, { planning: true }).open, true, 'owner planning phase');
+    });
+
     it('is closed once the operator has decided', () => {
       const project = makeProject({ config: { releaseMode: 'agent' } });
       assert.match(rec.releaseDecisionOpen(project, { release: 'cut' }).reason, /you chose Cut/);
