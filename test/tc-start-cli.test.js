@@ -239,16 +239,37 @@ describe('tc start (car 21.3)', () => {
     assert.equal(rows[0].verb, 'start.next');
     assert.equal(rows[0].source, 'tc-cli');
     assert.equal(tcVerbs.receiptVerbLabel('start', ['status']), 'start.status');
+
+    // This test's only goal is the receipt row above, but the POST it sends
+    // to get one is the real `/api/tc/start/next` route, on the SAME shared
+    // `sequence` the rest of this file's tests serve pages from (`before`
+    // above). That marks the identity step's first page served as a side
+    // effect, which a later test (serving pages for real) must not inherit —
+    // undo it, the same way the DELETE above undoes this test's receipt row.
+    store.getDb().prepare(
+      "UPDATE launch_sequence_steps SET pages_served = '[]', served_at = NULL WHERE sequence_id = ? AND step_id = 'identity'"
+    ).run(sequence.id);
   });
 
   it('a spawned tc prints a page an agent can act on, and acknowledges it', async () => {
-    const served = await runTc(['start', 'next'], paneEnv);
+    let served = await runTc(['start', 'next'], paneEnv);
     assert.equal(served.code, 0, served.stderr);
     assert.match(served.stdout, /# Session Start — start-project/);
     assert.match(served.stdout, /\[tc start · step 1\/4 identity · page \d+\/\d+ · revision 1\]/);
 
-    const command = /tc start next --ack (\S+)/.exec(served.stdout);
-    assert.ok(command, 'the page prints the exact command to acknowledge it');
+    // Drive to the step's LAST page before acking — the ack command only
+    // prints there (lib/launch-page.js), and a step's page count is a
+    // function of its rendered content length, not a constant this test
+    // may assume. A page short of the last prints "Next page: tc start
+    // next" instead, which re-fetches with no args.
+    let command = /tc start next --ack (\S+)/.exec(served.stdout);
+    while (!command) {
+      assert.match(served.stdout, /Next page: tc start next\b/,
+        'expected either an ack command or a next-page prompt');
+      served = await runTc(['start', 'next'], paneEnv);
+      assert.equal(served.code, 0, served.stderr);
+      command = /tc start next --ack (\S+)/.exec(served.stdout);
+    }
     const acked = await runTc(['start', 'next', '--ack', command[1]], paneEnv);
     assert.equal(acked.code, 0, acked.stderr);
     assert.match(acked.stdout, /step 2\/4 governance/);
@@ -684,12 +705,26 @@ describe('tc start (car 21.3)', () => {
     it('a spawned tc re-reads the attested context and leaves the sequence where it was', async () => {
       const pane = await attestedPane();
       const statusBefore = await runTc(['start', 'status'], pane.env);
-      const first = await runTc(['start', 'review'], pane.env);
+      let first = await runTc(['start', 'review'], pane.env);
       assert.equal(first.code, 0, first.stderr);
       assert.match(first.stdout, /^\[read-only re-read of the launch context this session attested READY at /);
       assert.match(first.stdout, /# Session Start — review-/);
-      assert.match(first.stdout, /Next page: tc start review --step governance/);
       assert.doesNotMatch(first.stdout, /--ack/);
+
+      // Drive through every page of the identity step before expecting the
+      // transition to the next STEP (governance) — a step's page count
+      // depends on its rendered content length, not a constant this test
+      // may assume.
+      let nextLine = /^Next page: (tc start review .+)$/m.exec(first.stdout);
+      assert.ok(nextLine, 'expected a "Next page" prompt');
+      while (/--step identity\b/.test(nextLine[1])) {
+        const args = nextLine[1].split(/\s+/).slice(1); // drop the leading "tc"
+        const paged = await runTc(args, pane.env);
+        assert.equal(paged.code, 0, paged.stderr);
+        nextLine = /^Next page: (tc start review .+)$/m.exec(paged.stdout);
+        assert.ok(nextLine, 'expected a further "Next page" prompt');
+      }
+      assert.match(nextLine[1], /--step governance/);
 
       const task = await runTc(['start', 'review', '--step', 'task'], pane.env);
       assert.equal(task.code, 0, task.stderr);

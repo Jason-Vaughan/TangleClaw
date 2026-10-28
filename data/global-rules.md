@@ -101,7 +101,10 @@ Substantive milestones become tagged GitHub Releases — permanent citeable URLs
 **Rule: Tag with semver and create GitHub Releases with CHANGELOG-driven notes.**
 - Semver: MAJOR breaking, MINOR features, PATCH fixes (pre-1.0 may use 0.x freely).
 - After a substantive merge, suggest `git tag -a vX.Y.Z -m "..." && git push --tags`, then `gh release create vX.Y.Z --notes-from-tag` (or `-F <notes-file>` for curated CHANGELOG notes).
-- Keep `CHANGELOG.md` in Keep a Changelog format: each merged PR adds to `[Unreleased]`; releases promote those entries to a dated section.
+
+**Rule: Update CHANGELOG.md by the project's OWN convention — never invent one.** Detect it first: `changelog.d/` fragments, a convention CLAUDE.md/CONTRIBUTING.md names, a nested per-package changelog (log against the package touched), or a tracked root `CHANGELOG.md` in Keep a Changelog format.
+- **Never create an untracked root `CHANGELOG.md` stub just because the rule names it** — no tracked changelog means the project hasn't opted in.
+- **If none exists or the destination is ambiguous, safely no-op and say why**, rather than guess or stay silent.
 
 **Rule: TC's `version-bump` wrap step picks the bump level from `[Unreleased]` content — author entries under the subsection that produces the intended bump.**
 

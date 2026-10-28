@@ -98,21 +98,20 @@ fixed or removed.
 not as an edit under `[Unreleased]`: `docs/changelog-fragments.md` is the contract and `CONTRIBUTING.md`
 says how to write one. The wrap's `changelog-update` step asks for a fragment and its coverage gate
 accepts one, dirty or committed. The bump table below reads the compiled text, so a pending fragment
-counts exactly as an entry written under `[Unreleased]` would. **Transition:** a pull request created
-before PR #2520 merged (merge commit `c774d21d630145b54504b8ce2393fb93dc1c313b`, 2026-10-21T18:39:01Z)
-may still add its entry directly under `[Unreleased]`, and the gate accepts both routes.
+counts exactly as an entry written under `[Unreleased]` would.
 
 A release cut commits all of its files or none. If the wrap's file decisions leave any release file out of
 the commit (`CHANGELOG.md`, the version file or a compiled fragment), the commit step refuses before
 anything is branched or staged, puts the cut back, and asks you to include every release file or choose
 Release: Hold; a half-committed cut would consume fragments that never publish.
 
-The wrap's own `changelog-update` coverage gate still accepts either route — a fragment or a direct
-`[Unreleased]` edit — as proof the changelog was maintained for a session; that is session-level
-governance, independent of which pull requests get asked for a fragment, and is not what the PR
-fragment gate below narrows. No pull request may add its entry directly under `[Unreleased]`
-instead of a fragment: the transition period that allowed it ended once the two pre-boundary pull
-requests open on 2026-10-21 (#2385, #2217) had both closed.
+The wrap's own `changelog-update` coverage gate accepts only a fragment as proof the changelog was
+maintained for a session — a direct `[Unreleased]` edit no longer satisfies it, now that the step
+no longer declares `CHANGELOG.md` among its own paths (`lib/wrap-steps/changelog-coverage.js`). That
+is session-level governance, independent of which pull requests get asked for a fragment, and is not
+what the PR fragment gate below narrows. No pull request may add its entry directly under
+`[Unreleased]` instead of a fragment: the transition period that allowed it ended once the two
+pre-boundary pull requests open on 2026-10-21 (#2385, #2217) had both closed.
 
 Whether a wrap cuts at all is the project's `releaseMode` (`docs/configuration-reference.md`):
 
@@ -330,10 +329,79 @@ in any hand-recovery: tagging a tree whose `version.json` is older than the tag 
 see a permanent "update available" it can never satisfy — it applies the update and still reads the
 old version.
 
+## Release automation for managed projects (#721)
+
+Everything above is TangleClaw's OWN release chain — this repo, tagged by `.github/workflows/release.yml`.
+A project TangleClaw merely MANAGES gets none of that: its wrap can bump `version.json` and promote
+`[Unreleased]`, but nothing afterward tags the result, so the update path (which polls tags, not
+commits) never sees the release. `lib/release-automation.js` is the opt-in, reusable core that closes
+that gap for a managed project, without assuming it is this repo.
+
+**Why it cannot just be this repo's workflow, copied.** `.github/workflows/release.yml` hardcodes
+`version.json` and shells out to `scripts/release-tag-gate.js` / `scripts/release-notes-gate.js`,
+neither of which exists outside this repo. A managed project may not be on GitHub at all, may not use
+Actions even when it is, may keep its version in `package.json` or a configured path, and almost
+certainly never asked for an automated tag — auto-tagging is a destructive surprise the moment it
+publishes something nobody asked for.
+
+**Strict opt-in.** Nothing here runs unless the project's `.tangleclaw/project.json` sets
+`releaseAutomationEnabled: true`. There is no heuristic default-on.
+
+**Version source mirrors `version-bump`'s own rungs — and is just as strict about a configured
+one.** `resolveVersion` checks `versionFilePath` first; when it is configured, that file is the
+ONLY candidate — it resolves or `planRelease` refuses outright, with NO fallback to `version.json`,
+`package.json` or `pyproject.toml`. This matches `lib/wrap-steps/version-bump.js`'s own
+`_resolveVersionSource` semantics for the exact same setting, and deliberately does NOT reuse
+`lib/project-version-files.js`'s `readConfiguredVersion` (that reader is written for the dashboard's
+lenient DISPLAY case and degrades to the probe on a bad configured file — correct for a display
+value, wrong here: silently tagging a DIFFERENT file than the one the operator named is exactly the
+failure class `version-bump`'s own docstring records a real incident of — a case-sensitive-filesystem
+mismatch that bumped the wrong file). Only with no `versionFilePath`
+configured does `resolveVersion` fall through to the probe (`version.json`, then `package.json`, then
+`pyproject.toml`).
+
+**Changelog path is configurable the same way.** `releaseAutomationChangelogPath` (project config)
+names the changelog relative to the project root — for a monorepo's nested changelog, say — resolved
+through the same containment-safe path check `versionFilePath` uses. Unset, it is `CHANGELOG.md` at
+the project root. `lib/changelog-notes.js`'s `extractReleaseNotes` reads it, unmodified, which is why
+it was written as a pure function with no assumption about where the file lives.
+
+**The plan captures the exact commit, and reads release inputs from THAT commit, never the working
+tree (#721).** `planRelease` reads `HEAD` once, at planning time, and refuses outright if the
+resolved version file or changelog carries an uncommitted change — a quick, friendly check with
+`git status --porcelain`. It then reads both files' actual content with `git show <headSha>:<path>`
+rather than the working tree, which closes a gap the status check alone cannot: a gitignored file
+that was never committed is invisible to `git status` (empty status reads as "clean"), so only a
+read against the real commit can catch it. The captured sha travels with the plan as `headSha`, and
+`applyRelease` tags THAT commit explicitly (`git tag <name> <sha>`, never implicit `HEAD`) — so a
+commit landing on the branch between planning and applying can never silently retarget what gets
+released.
+
+**Non-GitHub remotes degrade; they are not refused.** `classifyRemote` reads `origin` and tells a
+`github.com` remote from any other kind. `planRelease` turns that into one of three actions:
+`tag-and-release` (GitHub: tag, then `gh release create`), `tag-only` (any other remote: the tag the
+update-checker's poll needs, with an honest note that no Release can be published there), or a `skip`
+with a stated reason — no version resolves, no changelog section for it, an uncommitted release input,
+or no `origin` configured at all. `planRelease` performs no side effects; `applyRelease` carries out
+what it decided, and refuses outright if the tag already exists on `origin` rather than attempting to
+heal it.
+
+**Scaffolding a workflow is a separate, caller-driven choice.** `generateReleaseWorkflow` returns a
+self-contained GitHub Actions workflow (its own inline version read and notes extraction, no
+dependency on this repo's `scripts/`) for a project that would rather run its tagging on GitHub's
+infrastructure. It only returns text — writing it into a project's `.github/workflows/` is never
+automatic, because that grants CI write permissions and spends that project's own Actions minutes.
+
+**Not yet wired to anything that calls it automatically.** This chunk ships the library and its tests;
+a wrap step or server route that calls `planRelease`/`applyRelease` after a release-cutting wrap is
+future work, and `docs/configuration-reference.md`'s settings table is updated when that lands.
+
 ## Related
 
 - `docs/adr/0002-wrap-pipeline-contract.md` — the wrap pipeline's step contract.
 - `lib/changelog-notes.js` — release-notes extraction, shared by the workflow and its tests.
+- `lib/release-automation.js` — opt-in release automation for managed projects (#721): version/changelog
+  resolution, remote classification, tag-and-publish, and workflow template generation.
 - `scripts/release-notes-gate.js` — refuses empty or oversized release notes before tagging.
 - `scripts/release-tag-gate.js` — decides whether a tag on origin dereferences to the released
   commit; `test/release-workflow.test.js` pins how the workflow calls it and what publishing waits on.
