@@ -16,7 +16,7 @@ On the scratch dashboard, choose tag and engine filters, reload, and confirm the
 
 Using a safely isolated session on Windows, focus xterm and verify Ctrl+V and voice dictation insert the intended text once. Exercise the Master Paste button from both the dashboard panel and session drawer: confirm clipboard insertion, the prompt fallback when clipboard reading is unavailable, and no duplicate paste. The Wave 2 scratch pass confirmed the session route, terminal frame, served Windows paste wiring, and Master Paste control source; it did not synthesize Windows input or operate a live terminal.
 
-**Accepted:** 2026-10-28 — rationale: Tracked in open issues #2458 / #2091; malformed status line repaired per Charter A480 P21.
+**Accepted:** 2026-10-28 — rationale: Tracking issue #2458 was closed on 2026-10-25; legacy malformed status line repaired and accepted per Operator pre-approval of v5.44.0 post-mortem recommendation P21 (Charter A480).
 
 ## VRF-007 — #2091 VoiceOver/NVDA announcement on panel focus restore
 
@@ -24,7 +24,7 @@ Using a safely isolated session on Windows, focus xterm and verify Ctrl+V and vo
 
 On the Groups or OpenClaw panel with VoiceOver or NVDA active, focus a fold toggle or an Edit group, Kill Tunnel, Web UI, SSH, or Remove control. Leave the panel open through a full 30-second poll cycle. Record whether the screen reader announces the focused control again on each restore or remains silent when its accessible meaning has not changed. If it repeats, file the follow-up to avoid an unnecessary focus event or preserve the DOM node across the poll. Automated tests for PR #2611 verify focus placement and stale-response guards; they cannot observe spoken announcements.
 
-**Accepted:** 2026-10-28 — rationale: Tracked in open issues #2458 / #2091; malformed status line repaired per Charter A480 P21.
+**Accepted:** 2026-10-28 — rationale: Tracking issue #2091 was closed on 2026-10-26; legacy malformed status line repaired and accepted per Operator pre-approval of v5.44.0 post-mortem recommendation P21 (Charter A480).
 
 ## #2588 — needs-operator wrap pause, Keep local, and Retry
 
