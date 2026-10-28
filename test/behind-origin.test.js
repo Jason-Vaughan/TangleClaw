@@ -404,9 +404,38 @@ describe('lib/behind-origin (#227)', () => {
       for (const cfg of [{}, { behindOriginCheckEnabled: false }]) {
         const snap = behindOrigin.snapshot(cfg);
         assert.equal(snap.repoRoot, repoRoot);
-        assert.equal(snap.pullCommand, `cd "${repoRoot}" && git pull`,
-          'quoted — an install path with a space must not split into a bad cd argument');
+        assert.equal(snap.pullCommand, `cd ${behindOrigin.shellQuote(repoRoot)} && git pull`,
+          'single-quoted — double quotes alone still let /bin/sh expand $var, `cmd` and $(cmd)');
       }
+    });
+  });
+
+  describe('shellQuote (#1367) — proven by executing it, not by inspecting its shape', () => {
+    it('round-trips every shell metacharacter through a real /bin/sh unchanged', () => {
+      const { execFileSync } = require('node:child_process');
+      const dangerous = [
+        'a b',                 // space — the original double-quote fix's own case
+        "it's a path",         // embedded single quote — the hard case for this idiom
+        '$HOME',                // variable expansion
+        '$(echo pwned)',        // command substitution ($() form)
+        '`echo pwned`',         // command substitution (backtick form)
+        '"quoted"',             // embedded double quotes — what the PREVIOUS double-quote fix broke on
+        '; rm -rf /'            // a bare command separator
+      ];
+      for (const value of dangerous) {
+        const quoted = behindOrigin.shellQuote(value);
+        // `printf '%s'` on the quoted value: if /bin/sh interpreted anything
+        // inside it (expanded $HOME, ran the substitution, split on the
+        // semicolon), the echoed bytes would NOT equal the original string —
+        // this is the one assertion that actually proves nothing was
+        // interpreted, as opposed to a regex over `quoted`'s source text.
+        const out = execFileSync('/bin/sh', ['-c', `printf '%s' ${quoted}`], { encoding: 'utf8' });
+        assert.equal(out, value, `shellQuote(${JSON.stringify(value)}) must survive /bin/sh unchanged — got ${JSON.stringify(out)}`);
+      }
+    });
+
+    it('escapes an embedded single quote with the standard close/escape/reopen idiom', () => {
+      assert.equal(behindOrigin.shellQuote("it's"), "'it'\\''s'");
     });
   });
 
