@@ -282,6 +282,27 @@ describe('unready-launch monitor (Train 21, car 21.5)', () => {
     assert.equal(store.launchSequences.getByLaunchId(sequence.launchId).nudgeCount, 0);
   });
 
+  it('keeps the moment a repeated verdict first held, and only moves it when the verdict changes (#1596)', async () => {
+    const { sequence } = bindSequence('unready-verdict-onset');
+    store.launchSequences.recordUnreadyVerdict(sequence.id, 'already-nudged');
+    const first = store.launchSequences.getByLaunchId(sequence.launchId).lastUnreadyVerdictAt;
+    assert.ok(first);
+
+    // Past the second boundary `datetime('now')` stamps with, so an unfixed
+    // "always re-stamp" write would visibly move the timestamp here.
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+
+    store.launchSequences.recordUnreadyVerdict(sequence.id, 'already-nudged');
+    const repeated = store.launchSequences.getByLaunchId(sequence.launchId);
+    assert.equal(repeated.lastUnreadyVerdict, 'already-nudged');
+    assert.equal(repeated.lastUnreadyVerdictAt, first, 'an unchanged verdict keeps its onset timestamp');
+
+    store.launchSequences.recordUnreadyVerdict(sequence.id, 'nudged');
+    const changed = store.launchSequences.getByLaunchId(sequence.launchId);
+    assert.equal(changed.lastUnreadyVerdict, 'nudged');
+    assert.notEqual(changed.lastUnreadyVerdictAt, first, 'a changed verdict is re-stamped to when it changed');
+  });
+
   it('honours each project\'s own window', () => {
     const { sequence } = bindSequence('unready-short-window', {
       config: { launchSequence: { unreadyWindowMinutes: 2 } }
@@ -308,6 +329,25 @@ describe('unready-launch monitor (Train 21, car 21.5)', () => {
       }
     }).status, 200);
     assert.equal(verdictFor(sequence, 60 * MINUTE), undefined, 'an attested launch is not judged at all');
+  });
+
+  // #1596: the tick's verdict is durable, not just the in-memory map `tick`
+  // returns to its caller — a dashboard reading the store between ticks must
+  // see the same answer the last tick reached.
+  it('persists each tick\'s verdict on the sequence row, and overwrites it next tick', () => {
+    const { sequence } = bindSequence('unready-verdict-persisted');
+    assert.equal(verdictFor(sequence, 5 * MINUTE), 'within-window');
+    let row = store.launchSequences.getByLaunchId(sequence.launchId);
+    assert.equal(row.lastUnreadyVerdict, 'within-window');
+    assert.ok(row.lastUnreadyVerdictAt, 'the tick stamped when it reached this verdict');
+
+    assert.equal(verdictFor(sequence, 11 * MINUTE), 'nudged');
+    row = store.launchSequences.getByLaunchId(sequence.launchId);
+    assert.equal(row.lastUnreadyVerdict, 'nudged', 'the later tick\'s verdict replaces the earlier one');
+
+    assert.equal(verdictFor(sequence, 30 * MINUTE), 'already-nudged');
+    row = store.launchSequences.getByLaunchId(sequence.launchId);
+    assert.equal(row.lastUnreadyVerdict, 'already-nudged');
   });
 
   describe('the verdict vocabulary', () => {

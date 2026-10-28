@@ -79,6 +79,11 @@ function installWorld(overrides = {}) {
     // #792's ledger. Captured rather than written to a database, so these tests
     // assert what the monitor DECIDED to record without needing a store.
     recorded: [],
+    // The session's launch sequence (#1633 R3). `not-applicable` with no
+    // preflight reads as ready and not damaged, which keeps every
+    // pre-existing test exactly as it was; the admission-gate tests below
+    // override this to exercise the hold.
+    launchSequence: { applicability: 'not-applicable', readyAt: null, recovery: 'none', preflight: null, recoveryClearedAt: null },
     ...overrides
   };
   wake._internal.recordDelivery = (entry) => { world.recorded.push(entry); };
@@ -104,6 +109,12 @@ function installWorld(overrides = {}) {
   // changes with whatever they happen to have typed. `world.cursor` is null by
   // default, which exercises the text-check fallback.
   wake._internal.cursorInfo = () => world.cursor;
+  wake._internal.launchSequence = () => world.launchSequence;
+  wake._internal.isNotApplicableDamagedHandoff = (sequence) =>
+    sequence.applicability === 'not-applicable'
+    && sequence.recovery === 'none'
+    && !!(sequence.preflight && sequence.preflight.requiresRecovery)
+    && !sequence.recoveryClearedAt;
   wake._internal.injectCommand = (projectName, command, options) => {
     world.injected.push({ projectName, command, options });
     return world.injectResult;
@@ -1439,6 +1450,47 @@ describe('medusa-wake — gates (each one blocks alone)', () => {
     wake._internal.rotationOpen = () => { throw new Error('store locked'); };
     tickThroughDebounce();
     assert.equal(world.injected.length, 0);
+  });
+
+  // #1633 R3. `lib/sessions.js#activeStartupReadiness` reads a session with no
+  // bound launch sequence at all as `needs-attention` — every launch binds one
+  // at start — so the wake gate must hold on exactly the same shape, not treat
+  // a missing row as "nothing to wait on".
+  it('never nudges a session with no launch sequence bound at all, and nudges once one attests READY (#1633 R3)', () => {
+    const world = installWorld({ launchSequence: null });
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 0, 'no sequence row — held, never read as ready');
+    assert.ok(world.recorded.some((r) => r.skipReason === 'startup-not-ready'),
+      'the hold is recorded, not silent, under the same code the other two startup holds use');
+
+    world.launchSequence = { applicability: 'not-applicable', readyAt: null, recovery: 'none', preflight: null, recoveryClearedAt: null };
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 1, 'the held nudge fires once the session has a sequence');
+  });
+
+  // #1633 R3. A `not-applicable` sequence is ordinarily ready immediately, but
+  // `lib/launch-recovery-clear.js#isNotApplicableDamagedHandoff` reads the same
+  // preflight the recovery-clear route and the readiness panel do — a damaged
+  // sequence-less handoff must hold here too, or the wake gate would nudge a
+  // session the panel is still showing "Needs attention".
+  it('never nudges a not-applicable session with an uncleared damaged handoff, and nudges once it clears (#1633 R3)', () => {
+    const world = installWorld({
+      launchSequence: {
+        applicability: 'not-applicable', readyAt: null, recovery: 'none',
+        preflight: { requiresRecovery: true }, recoveryClearedAt: null
+      }
+    });
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 0, 'a damaged handoff holds the nudge even though applicability is not-applicable');
+    assert.ok(world.recorded.some((r) => r.skipReason === 'startup-not-ready'),
+      'the hold is recorded, not silent');
+
+    world.launchSequence = {
+      applicability: 'not-applicable', readyAt: null, recovery: 'none',
+      preflight: { requiresRecovery: true }, recoveryClearedAt: '2026-10-28T00:00:00.000Z'
+    };
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 1, 'the held nudge fires once the damaged handoff is cleared');
   });
 
   // #1314 — every test above stubs `_internal.wrapRunning`, so none of them can

@@ -2577,6 +2577,10 @@ route('GET', '/api/launch-sequences', (req, res) => {
       unreadyAt: sequence.unreadyAt,
       nudgeCount: sequence.nudgeCount,
       lastNudgedAt: sequence.lastNudgedAt,
+      // The unready monitor's latest tick read for this launch (#1596), one of
+      // `launch-unready.js`'s `VERDICT_MEANINGS` codes; null before its first tick.
+      lastUnreadyVerdict: sequence.lastUnreadyVerdict,
+      lastUnreadyVerdictAt: sequence.lastUnreadyVerdictAt,
       // Recovery, as five separate facts rather than one word. The panel has to
       // say which of the three clearances it was — an open install's clear is
       // never shown as an operator's — and it has to know the mode, because a
@@ -2602,6 +2606,10 @@ route('GET', '/api/launch-sequences', (req, res) => {
       preflightReason: (sequence.preflight && sequence.preflight.reason) || null,
       preflightEvaluationFailed: !!(sequence.preflight && sequence.preflight.evaluationFailed),
       preflightEvaluationMissing: !!(sequence.preflight && sequence.preflight.evaluationMissing),
+      // Read from the measured predicate, never the verdict word (#1623): a
+      // `not-applicable` row's `recovery` is always `'none'`, so this is the
+      // only signal the panel has that its handoff was damaged anyway.
+      preflightRequiresRecovery: !!(sequence.preflight && sequence.preflight.requiresRecovery),
       // Named `rulesDelivery`, not `hook`: the row it comes from records
       // whichever channel the prime used for the rule text — the startup hook,
       // a paste, or the deliberate skip a pulled launch writes. Calling it the

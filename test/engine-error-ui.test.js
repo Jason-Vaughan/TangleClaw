@@ -162,3 +162,42 @@ describe('#2128 a live session waiting at an engine startup dialog', () => {
     assert.match(SESSION_SRC, /renderLaunchBlockerBanner\(data\.launchBlocker\)/, 'the status poll drives it');
   });
 });
+
+describe('#1633 R2 Fix 4 — project card startup readiness badge', () => {
+  /** The real badge renderer with the real `esc`. */
+  function load() {
+    const sandbox = { Number, console };
+    vm.createContext(sandbox);
+    vm.runInContext([
+      liftDeclaration(LANDING_SRC, 'function esc(str)'),
+      liftDeclaration(UI_SRC, 'function renderStartupReadinessBadge(project)'),
+      'globalThis.badge = renderStartupReadinessBadge;'
+    ].join('\n'), sandbox);
+    return sandbox.badge;
+  }
+
+  it('shows the step while starting, and "Needs attention" once it owes one', () => {
+    const badge = load();
+    assert.match(
+      badge({ session: { startupReadiness: { state: 'starting', step: 'Starting — step 2 of 4' } } }),
+      /class="badge badge-startup-readiness" title="Starting — step 2 of 4">Starting — step 2 of 4</
+    );
+    assert.match(
+      badge({ session: { startupReadiness: { state: 'needs-attention', blocker: 'missing-launch-sequence' } } }),
+      /class="badge badge-startup-readiness" title="Needs attention">Needs attention</
+    );
+  });
+
+  it('renders nothing once ready, or with no reading at all', () => {
+    const badge = load();
+    assert.equal(badge({ session: { startupReadiness: { state: 'ready' } } }), '');
+    assert.equal(badge({ session: { startupReadiness: null } }), '');
+    assert.equal(badge({ session: null }), '');
+    assert.equal(badge({}), '');
+  });
+
+  it('is placed in the card row beside the launch-blocker badge', () => {
+    assert.match(UI_SRC, /const startupReadinessBadge = typeof renderStartupReadinessBadge === 'function' \? renderStartupReadinessBadge\(project\) : '';/);
+    assert.match(UI_SRC, /\$\{launchBlockerBadge\}\s*\$\{startupReadinessBadge\}/);
+  });
+});

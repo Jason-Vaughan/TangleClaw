@@ -185,6 +185,14 @@ describe('#1839 exit: an unreadable blocking message escalates, then clears once
     wake._internal.loadProjectConfig = () => ({ medusaWake: true });
     wake._internal.wrapRunning = () => false;
     wake._internal.rotationOpen = () => false;
+    // #1633 R5 — `bindProject` (test/_shared-docs-callers.js) mints its
+    // not-applicable test binding through the real `buildSnapshot`, whose
+    // default preflight (no result passed in) is `requiresRecovery: true` —
+    // a real damaged-handoff shape under `isNotApplicableDamagedHandoff`, not
+    // a stub artifact. This suite is about composer-draft detection, not
+    // startup readiness, so it stubs a clean sequence rather than asserting
+    // on `bindProject`'s fixture shape.
+    wake._internal.launchSequence = () => ({ applicability: 'not-applicable', readyAt: null, recovery: 'none', preflight: null, recoveryClearedAt: null });
     wake._internal.capturePane = () => ({ lines: DRAFT_PANE });
     wake._internal.cursorInfo = () => DRAFT_CURSOR;
     wake._internal.masterWakeRecord = () => null;

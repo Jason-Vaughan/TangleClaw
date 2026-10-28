@@ -320,6 +320,24 @@ function renderLaunchBlockerBadge(project) {
 }
 
 /**
+ * The card badge for a session whose launch has not reached READY yet
+ * (#1633 R2 Fix 4): "Starting — step X of 4" while it steps through its
+ * launch sequence, or "Needs attention" once it owes a recovery, a damaged
+ * handoff, or has no bound launch sequence at all. The same `startupReadiness`
+ * the session page's own banner reads, so the project card and the session it
+ * opens never disagree about whether ordinary work is admitted yet.
+ * @param {object} project - Project data carrying an optional `session`.
+ * @returns {string} HTML for the badge, or '' once ready (or with no reading at all).
+ */
+function renderStartupReadinessBadge(project) {
+  const session = project && project.session;
+  const readiness = session && session.startupReadiness;
+  if (!readiness || readiness.state === 'ready') return '';
+  const label = readiness.state === 'starting' ? (readiness.step || 'Starting') : 'Needs attention';
+  return `<span class="badge badge-startup-readiness" title="${esc(label)}">${esc(label)}</span>`;
+}
+
+/**
  * The card's session status dot.
  *
  * Four outcomes where there used to be three. Each is a distinct SHAPE, not a
@@ -509,6 +527,11 @@ function renderCard(project) {
 
   const engineErrorBadge = renderEngineErrorBadge(project);
   const launchBlockerBadge = renderLaunchBlockerBadge(project);
+  // Guarded like the other optional-lift seams in this file (#1633 R5):
+  // test/card-detail-disclosure.test.js lifts renderCard in isolation without
+  // also lifting renderStartupReadinessBadge, so an unguarded call there is an
+  // undeclared-identifier throw rather than a missing badge.
+  const startupReadinessBadge = typeof renderStartupReadinessBadge === 'function' ? renderStartupReadinessBadge(project) : '';
 
   // Group badges
   const groupBadges = (project.groups || []).map(g =>
@@ -574,6 +597,7 @@ function renderCard(project) {
       ${engineBadge}
       ${engineErrorBadge}
       ${launchBlockerBadge}
+      ${startupReadinessBadge}
       ${groupBadges}
       ${auditBadge}
       ${driftBadge}
@@ -3768,14 +3792,18 @@ function launchClearanceLabel(s) {
 /**
  * The recovery line for one launch, and the operator's control when it is theirs.
  *
- * The button appears for exactly one state: a recovery still `required` on a
- * launch in `operator` mode whose session has not ended. An `advisory` launch
- * clears its own by reconciling, so offering a button there would offer a
- * decision the route refuses (`RECOVERY_MODE_ADVISORY`) — a control that cannot
- * work is worse than none. A launch whose session has ended is refused the same
- * way (`SESSION_ENDED`), so its row says that in place of the button. Only the
- * server's explicit `sessionActive: false` removes the button: a row from a
- * server that reports no such field keeps it, and the route still decides.
+ * The button appears for exactly two states, and both withhold it the same way
+ * once the session has ended: a recovery still `required` on a launch in
+ * `operator` mode, and a `not-applicable` launch whose handoff was damaged
+ * anyway (#1623). An `advisory` launch clears its own by reconciling, so
+ * offering a button there would offer a decision the route refuses
+ * (`RECOVERY_MODE_ADVISORY`) — a control that cannot work is worse than none.
+ * A launch whose session has ended is refused the same way (`SESSION_ENDED`),
+ * so its row says that in place of the button, in EITHER state (#1633 R3: the
+ * not-applicable branch used to check applicability before the ended-session
+ * check ran, so it offered a Clear the route would refuse). Only the server's
+ * explicit `sessionActive: false` removes the button: a row from a server that
+ * reports no such field keeps it, and the route still decides.
  *
  * The mode named is the one this launch froze. The project's setting may have
  * changed since, and a changed setting does not reach back into a launch, so
@@ -3785,7 +3813,14 @@ function launchClearanceLabel(s) {
  * @returns {string} Markup, or an empty string when there is nothing to say
  */
 function launchRecoveryHtml(s, projectMode) {
-  if (!s.recovery || s.recovery === 'none') return '';
+  // A `not-applicable` launch's `recovery` is always `'none'` (#1623) — it has
+  // no step to withhold — so `preflightRequiresRecovery` (read from the
+  // measured predicate, not the verdict word) is the only sign its handoff
+  // was damaged anyway. Without this carve-out the row would say nothing and
+  // offer no Clear, which is exactly the early-return this function used to
+  // take for every `'none'` row.
+  const notApplicableDamagedHandoff = s.applicability === 'not-applicable' && s.recovery === 'none' && !!s.preflightRequiresRecovery;
+  if (!s.recovery || (s.recovery === 'none' && !notApplicableDamagedHandoff)) return '';
   const verdict = s.preflightVerdict ? `<code>${esc(s.preflightVerdict)}</code>` : 'an unrecorded verdict';
   // The verdict WORD alone asks you to clear a launch without saying what
   // happened to it. The cause, and where to go looking for it. The two are not
@@ -3802,6 +3837,20 @@ function launchRecoveryHtml(s, projectMode) {
   if (s.recovery === 'cleared') {
     return `<br><small class="session-rule-meta">Recovery: ${verdict} — ${launchClearanceLabel(s)}`
       + `${s.recoveryClearedAt ? ` at ${esc(s.recoveryClearedAt)}` : ''}</small>`;
+  }
+  if (notApplicableDamagedHandoff && s.sessionActive === false) {
+    return `<br><small class="session-rule-meta rules-status-err">Handoff warning: ${verdict}.${cause}${whereToLook} `
+      + `This launch has no task step to withhold${s.notApplicableReason ? ` (${esc(s.notApplicableReason)})` : ''}, `
+      + 'but the handoff its preflight read was damaged. Its session has ended, so there is nothing here to clear: '
+      + 'a new session of this project has a launch of its own.</small>';
+  }
+  if (notApplicableDamagedHandoff) {
+    return `<br><small class="session-rule-meta rules-status-err">Handoff warning: ${verdict}.${cause}${whereToLook} `
+      + `This launch has no task step to withhold${s.notApplicableReason ? ` (${esc(s.notApplicableReason)})` : ''}, `
+      + 'but the handoff its preflight read was damaged. Clear it to dismiss this warning.</small>'
+      + `<br><button type="button" class="btn btn-sm" data-launch-recovery-clear="${esc(s.sequenceId)}" `
+      + `data-session-id="${esc(s.sessionId)}" data-recovery-revision="${esc(s.recoveryRevision)}">`
+      + 'Clear recovery</button>';
   }
   if (s.recoveryMode === 'advisory') {
     const next = projectMode === 'operator'
@@ -3993,6 +4042,27 @@ function renderProjectLaunchSequences(sequences, opts) {
   // including no options at all, renders the control and lets the server decide.
   const noLogin = Boolean(opts && opts.noLogin === true);
   const projectMode = opts ? opts.projectRecoveryMode : null;
+  // What each unready-monitor tick verdict means (#1596), mirrored from
+  // `lib/launch-unready.js`'s `VERDICT_MEANINGS` — the server has no route
+  // that serves this map, so the panel keeps its own copy to label
+  // `lastUnreadyVerdict`. Scoped to this function, not module level: a
+  // lifted-function test runs this declaration with nothing else from the
+  // file in scope.
+  const UNREADY_VERDICT_MEANINGS = {
+    'within-window': 'the session still has time to attest; nothing is owed yet',
+    nudged: 'the window passed and the session was nudged once, in its pane',
+    'already-nudged': 'this launch has had its one nudge; the session owns it now',
+    'no-project': 'the sequence names a project this install no longer has',
+    'unreadable-created-at': 'the sequence has no readable creation time, so no window can be measured',
+    'session-gone': 'the session ended between the query and this tick',
+    'no-pane': 'the session has no tmux pane to nudge (a web UI session)',
+    'native-startup': 'this launch selected its engine\'s native startup channel, so nothing is ever typed into its pane; the operator can Fire from the launch panel',
+    'unprofiled-engine': 'the engine has no live-probed pane signature, so nothing may be typed into it safely',
+    'pane-capture-failed': 'the pane could not be read this tick; the next tick tries again',
+    'pane-busy': 'the pane is working or holds unsent input; the next tick tries again',
+    'inject-failed': 'typing the nudge into the pane failed; the next tick tries again',
+    'control-held': 'the lane is held or stopped by its control assignment, so nothing is typed into it; the next tick checks again'
+  };
   const list = document.getElementById('projLaunchSequencesList');
   if (!list) return;
   if (sequences.length === 0) {
@@ -4002,10 +4072,16 @@ function renderProjectLaunchSequences(sequences, opts) {
   list.innerHTML = sequences.map((s) => {
     const cls = window.tcLaunchReadinessClass(s);
     if (s.applicability === 'not-applicable') {
+      // A sequence-less launch still carries whatever preflight ran before
+      // applicability was decided (#1623): a damaged handoff must not vanish
+      // behind "no launch sequence" just because there is no sequence to show
+      // alongside it. `launchRecoveryHtml` already renders nothing when there
+      // is no recovery to report, so it is safe to always include here too.
       return `<div class="session-rule-item">
         <div class="session-rule-content">
           <strong>${esc(s.sessionId)}</strong>: <span class="${cls}">no launch sequence</span>
           <br><small class="session-rule-meta">${esc(s.notApplicableReason || 'no reason recorded')}</small>
+          ${launchRecoveryHtml(s, projectMode)}
         </div>
       </div>`;
     }
@@ -4020,12 +4096,15 @@ function renderProjectLaunchSequences(sequences, opts) {
     const nudges = s.nudgeCount > 0
       ? `nudged ${esc(s.nudgeCount)}×, last ${esc(s.lastNudgedAt)}`
       : 'not nudged';
+    const unreadyVerdict = s.lastUnreadyVerdict
+      ? ` | monitor: ${esc(s.lastUnreadyVerdict)} — ${esc(UNREADY_VERDICT_MEANINGS[s.lastUnreadyVerdict] || 'unrecognized verdict')} (${esc(s.lastUnreadyVerdictAt)})`
+      : '';
     return `<div class="session-rule-item">
       <div class="session-rule-content">
         <strong>${esc(s.sessionId)}</strong>: <span class="${cls}">${state}</span>
         <br><small class="session-rule-meta">Rules channel: ${rules}</small>
         ${launchPasteOutcomeHtml(s)}
-        <br><small class="session-rule-meta">Served: ${esc(served)}/${esc(s.of)} step(s) | Acknowledged: ${esc(acked)}/${esc(s.of)} | ${nudges}</small>
+        <br><small class="session-rule-meta">Served: ${esc(served)}/${esc(s.of)} step(s) | Acknowledged: ${esc(acked)}/${esc(s.of)} | ${nudges}${unreadyVerdict}</small>
         <br><small class="session-rule-meta">Launched ${esc(s.createdAt)} | revision ${esc(s.revision)}</small>
         ${launchRecoveryHtml(s, projectMode)}
         ${launchReconciliationControlHtml(s, noLogin)}

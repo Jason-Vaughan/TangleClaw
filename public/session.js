@@ -321,6 +321,63 @@ function renderLaunchBlockerBanner(blocker) {
 }
 
 /**
+ * The startup readiness banner's element, created on first use rather than
+ * declared in session.html (#1633) — this chunk's authorized scope does not
+ * include that file, so the element is minted here and anchored beside the
+ * launch-blocker banner it reuses the same visual family as.
+ * @returns {HTMLElement}
+ */
+function ensureStartupReadinessBannerEl() {
+  let el = document.getElementById('startupReadinessBanner');
+  if (el) return el;
+  el = document.createElement('div');
+  el.id = 'startupReadinessBanner';
+  el.className = 'engine-error-banner hidden';
+  el.setAttribute('role', 'status');
+  el.setAttribute('aria-live', 'polite');
+  const anchor = document.getElementById('launchBlockerBanner') || document.getElementById('engineErrorBanner');
+  if (anchor && anchor.parentNode) {
+    anchor.parentNode.insertBefore(el, anchor.nextSibling);
+  } else {
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+/**
+ * Show or clear the banner for the startup admission gate (#1633) — the
+ * status poll's `startupReadiness`, computed server-side by the same
+ * `_startupReadiness` that gates `POST .../command` and the Medusa wake, so
+ * this banner and the 409 it would otherwise explain can never disagree.
+ * `'starting'` gets the amber `startup-pending` variant (a launch stepping
+ * through is not an alarm); `'needs-attention'` keeps the banner family's
+ * default danger styling, the same as a genuine engine error.
+ * @param {{state: 'starting'|'needs-attention'|'ready', step: string|null,
+ *   blocker: string|null}|null|undefined} readiness - The status payload's
+ *   `startupReadiness`, or nothing.
+ * @returns {void}
+ */
+function renderStartupReadinessBanner(readiness) {
+  const el = ensureStartupReadinessBannerEl();
+  if (!readiness || readiness.state === 'ready') {
+    el.classList.add('hidden');
+    el.classList.remove('startup-pending');
+    el.innerHTML = '';
+    return;
+  }
+  if (readiness.state === 'starting') {
+    el.classList.add('startup-pending');
+    el.innerHTML = `<strong>${esc(readiness.step || 'Starting up')}</strong>`
+      + `<span class="engine-error-note"> Ordinary commands wait until this launch finishes.</span>`;
+  } else {
+    el.classList.remove('startup-pending');
+    el.innerHTML = `<strong>Needs attention</strong>`
+      + `<span class="engine-error-note"> This session's launch is not ready (${esc(readiness.blocker || 'unready')}). Ordinary commands wait until it clears.</span>`;
+  }
+  el.classList.remove('hidden');
+}
+
+/**
  * The explicit retry the banner offers. The background loop keeps running
  * regardless; this exists so the operator has an action that answers NOW
  * rather than at the end of the current interval.
@@ -2341,6 +2398,10 @@ async function pollStatus() {
   // An engine startup dialog nobody has answered (#2128) rides it too.
   renderLaunchBlockerBanner(data.launchBlocker);
 
+  // The startup admission gate's own state (#1633) — the same read that
+  // gates ordinary commands and the Medusa wake server-side.
+  renderStartupReadinessBanner(data.startupReadiness);
+
   // Handle wrapping state
   if (data.wrapping && !sessionState.wrapping) {
     showWrappingState();
@@ -3213,6 +3274,18 @@ function toggleCommandBar() {
  */
 async function sendCommand(command) {
   if (!command || sessionState.ended) return;
+  // The startup admission gate (#1633): the server refuses this exact send
+  // with 409 STARTUP_NOT_READY anyway, but checking here first means the
+  // operator reads why before a round-trip, not after — and the draft is
+  // left untouched either way, same as the refusal path below.
+  const readiness = sessionState.session && sessionState.session.startupReadiness;
+  if (readiness && readiness.state !== 'ready') {
+    showBannerActionToast(
+      `This session's launch is not ready yet (${readiness.state}) — ordinary commands wait until it clears.`,
+      true
+    );
+    return;
+  }
   const result = await apiMutate(
     `/api/sessions/${encodeURIComponent(projectName)}/command`,
     'POST',
