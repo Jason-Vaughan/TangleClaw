@@ -3788,14 +3788,18 @@ function launchClearanceLabel(s) {
 /**
  * The recovery line for one launch, and the operator's control when it is theirs.
  *
- * The button appears for exactly one state: a recovery still `required` on a
- * launch in `operator` mode whose session has not ended. An `advisory` launch
- * clears its own by reconciling, so offering a button there would offer a
- * decision the route refuses (`RECOVERY_MODE_ADVISORY`) — a control that cannot
- * work is worse than none. A launch whose session has ended is refused the same
- * way (`SESSION_ENDED`), so its row says that in place of the button. Only the
- * server's explicit `sessionActive: false` removes the button: a row from a
- * server that reports no such field keeps it, and the route still decides.
+ * The button appears for exactly two states, and both withhold it the same way
+ * once the session has ended: a recovery still `required` on a launch in
+ * `operator` mode, and a `not-applicable` launch whose handoff was damaged
+ * anyway (#1623). An `advisory` launch clears its own by reconciling, so
+ * offering a button there would offer a decision the route refuses
+ * (`RECOVERY_MODE_ADVISORY`) — a control that cannot work is worse than none.
+ * A launch whose session has ended is refused the same way (`SESSION_ENDED`),
+ * so its row says that in place of the button, in EITHER state (#1633 R3: the
+ * not-applicable branch used to check applicability before the ended-session
+ * check ran, so it offered a Clear the route would refuse). Only the server's
+ * explicit `sessionActive: false` removes the button: a row from a server that
+ * reports no such field keeps it, and the route still decides.
  *
  * The mode named is the one this launch froze. The project's setting may have
  * changed since, and a changed setting does not reach back into a launch, so
@@ -3829,6 +3833,12 @@ function launchRecoveryHtml(s, projectMode) {
   if (s.recovery === 'cleared') {
     return `<br><small class="session-rule-meta">Recovery: ${verdict} — ${launchClearanceLabel(s)}`
       + `${s.recoveryClearedAt ? ` at ${esc(s.recoveryClearedAt)}` : ''}</small>`;
+  }
+  if (notApplicableDamagedHandoff && s.sessionActive === false) {
+    return `<br><small class="session-rule-meta rules-status-err">Handoff warning: ${verdict}.${cause}${whereToLook} `
+      + `This launch has no task step to withhold${s.notApplicableReason ? ` (${esc(s.notApplicableReason)})` : ''}, `
+      + 'but the handoff its preflight read was damaged. Its session has ended, so there is nothing here to clear: '
+      + 'a new session of this project has a launch of its own.</small>';
   }
   if (notApplicableDamagedHandoff) {
     return `<br><small class="session-rule-meta rules-status-err">Handoff warning: ${verdict}.${cause}${whereToLook} `

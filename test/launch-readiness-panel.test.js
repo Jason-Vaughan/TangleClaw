@@ -215,6 +215,32 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
     assert.doesNotMatch(html, /data-launch-recovery-clear/, 'a cleared row offers no Clear button');
   });
 
+  // #1633 R3: this branch used to check applicability before the ended-session
+  // check ran, so a damaged not-applicable handoff on an ENDED session still
+  // rendered the Clear button — a control the route would refuse as
+  // SESSION_ENDED (`lib/launch-recovery-clear.js`'s `sessionIsActive`).
+  it('offers no clear and states the session ended on a not-applicable launch with a damaged handoff whose session ended', () => {
+    const html = render([row({
+      applicability: 'not-applicable',
+      notApplicableReason: 'the engine declares no launch-sequence support',
+      steps: [],
+      recovery: 'none',
+      recoveryMode: 'operator',
+      recoveryRevision: 5,
+      preflightVerdict: 'handoff-behind',
+      preflightReason: 'the handoff directory could not be read (ENOTDIR)',
+      preflightEvaluationFailed: true,
+      preflightRequiresRecovery: true,
+      sessionActive: false
+    })]);
+    assert.doesNotMatch(html, /data-launch-recovery-clear/, 'the route would refuse this clear as SESSION_ENDED');
+    assert.doesNotMatch(html, /<button[^>]*>Clear recovery/);
+    assert.match(html, /Handoff warning/);
+    assert.match(html, /handoff-behind/, 'the verdict is still shown');
+    assert.match(html, /Its session has ended, so there is nothing here to clear/);
+    assert.match(html, /a new session of this project has a launch of its own/);
+  });
+
   it('says nothing extra about recovery on a sequence-less launch that owes none', () => {
     const html = render([row({
       applicability: 'not-applicable',
