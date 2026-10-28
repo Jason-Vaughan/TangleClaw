@@ -556,11 +556,15 @@ async function main() {
   store.init();
 
   if (disable) {
-    // Refused rather than guessed: --disable and --create-gate name two
-    // different doors, same as --store and --create-gate below.
-    if (createGate) {
-      process.stderr.write('ERROR: --disable and --create-gate are different doors — choose one\n'
+    // Refused rather than guessed: --disable is its own operation, same as
+    // --store and --create-gate refuse each other below. Without this, a
+    // stray --store alongside --disable silently did disable-only with no
+    // warning that --store was ignored.
+    if (createGate || storeMode) {
+      const other = createGate ? '--create-gate' : '--store';
+      process.stderr.write(`ERROR: --disable and ${other} are different operations — choose one\n`
         + '  --disable     revoke a TangleClaw account\'s login (the users table)\n'
+        + '  --store       create or reset a TangleClaw account (the users table)\n'
         + '  --create-gate Caddy\'s basic_auth gate (the Caddyfile, caddy mode only)\n');
       store.close();
       process.exit(1);

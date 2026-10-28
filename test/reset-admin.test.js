@@ -488,9 +488,19 @@ describe('--disable, at the CLI level (#1458)', () => {
     assert.match(r.stderr, /no TangleClaw account 'nobody'/);
   });
 
-  it('--disable and --create-gate are different doors — refused, not guessed', () => {
+  it('--disable and --create-gate are different operations — refused, not guessed', () => {
     const r = run(['--disable', '--create-gate', '--user', 'jason']);
     assert.equal(r.status, 1);
-    assert.match(r.stderr, /different doors — choose one/);
+    assert.match(r.stderr, /different operations — choose one/);
+    assert.match(r.stderr, /--create-gate/);
+  });
+
+  it('--disable and --store are different operations — refused, not silently ignoring --store', () => {
+    // Without this refusal, --disable --store --user x ran disable-only with
+    // no warning that --store was ignored.
+    const r = run(['--disable', '--store', '--user', 'jason']);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /different operations — choose one/);
+    assert.match(r.stderr, /--store/);
   });
 });
