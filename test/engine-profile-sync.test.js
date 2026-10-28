@@ -411,4 +411,32 @@ describe('engine profile sync — live propagation without a restart (#737)', ()
     const list = store.engines.list();
     assert.deepStrictEqual(list.find((p) => p.id === 'my-custom-737'), customProfile);
   });
+
+  it('retries the sync on the next read after a transient write failure, instead of caching a false "nothing changed" (PRR-B R-Gate R1)', () => {
+    // THE BUG THIS CATCHES: recording `_bundledEnginesFingerprint` at the
+    // START of `_syncBundledEngines` (before the write that actually
+    // catches destDir up to srcDir) would stamp this bundled change as
+    // "already synced" the moment the attempt BEGAN, even though the
+    // write below fails and destDir never catches up — so a later read,
+    // after the transient failure clears, would silently keep serving the
+    // stale pre-change content forever.
+    const runtimePath = path.join(tmpDir, 'engines', 'fixture-engine.json');
+
+    writeFixture('fixture-engine', { name: 'Fixture Engine v2' });
+
+    // Make the runtime copy temporarily unwritable so the drift-overwrite
+    // write inside `_syncBundledEngines` throws partway through the sync.
+    fs.chmodSync(runtimePath, 0o444);
+    try {
+      assert.throws(() => store.engines.get('fixture-engine'),
+        'a write failure mid-sync must surface, not be swallowed');
+    } finally {
+      fs.chmodSync(runtimePath, 0o600);
+    }
+
+    const recovered = store.engines.get('fixture-engine');
+    assert.equal(recovered.name, 'Fixture Engine v2',
+      'once the transient failure clears, the next read must retry the sync and succeed — '
+      + 'not serve stale content because the failed attempt was already marked "synced"');
+  });
 });
