@@ -4,6 +4,64 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.43.0] - 2026-10-28
+
+### Added
+- `scripts/reset-admin.js --disable --user <name> [--force]` revokes a TangleClaw account's login
+  (signs it out everywhere, deletes its recovery codes) without deleting the account. It refuses to
+  disable the only enabled account unless `--force` is passed, and reports clearly when the gate
+  transitions to `locked`. Re-enable an account with the existing `--store --user <name>` (#1458).
+- `POST /api/sessions/:project/command` now refuses a leading `/` from anyone but the operator (403 `SLASH_COMMAND_OPERATOR_ONLY`), since it would otherwise run as a slash command in the recipient; stamps a non-forgeable verified-caller prefix onto an injection from a peer project or the Project Master, drawn from the launch binding rather than anything the request claims; and returns a submission receipt naming the verified caller and when it was submitted. Projects can now override the "how to reply" guidance baked into the Medusa prime, the wake nudge, and the engine-private carrier (`replyGuidance` project setting), and can opt a `shared_doc_updated`-only inbox out of waking the session (`suppressNonActionableWakes`) (#2402).
+
+### Fixed
+- `scripts/reset-admin.js --create-gate --dry-run` now exits 1 when its preview predicts the run
+  would refuse, matching the exit code a predicted password refusal already gave — previously it
+  exited 0, reporting a false green light during the lockout this tool exists to recover from
+  (#1286).
+- The launch preflight's identity check no longer compares a handoff's `workspaceId` against the launching workspace — wiring that comparison in would normally produce a false mismatch for a Medusa-enabled project, since `medusa.mintWorkspaceId` mints a fresh id on every launch and the comparison never actually ran against a deployed launch anyway. `projectId` is now the whole of the check; `workspaceId` stays in the frozen handoff document as diagnostic, digest-covered metadata (#1611).
+- A staged handoff file the launch preflight could not read is now logged (naming the publication and the read failure) and exposed as `skippedStagedFiles` on the gathered launch context, instead of being silently dropped from consideration (#1682).
+- Medusa's `POST /api/sessions/:project/medusa/send` and `POST /api/master/medusa/send` now
+  refuse a sender whose verified launch does not match the route it is calling — a project with
+  its own valid, current launch sending through a *different* project's route, or a verified
+  Project Master sending through a *project's* route (and the reverse), are all rejected with
+  403 `SENDER_PROJECT_MISMATCH` before the message ever reaches the Hub. Previously the URL's
+  `:project` segment alone decided who a send was attributed to, so a verified caller could post
+  as another project's session (#1865).
+- An ordinary (`normal`-priority) Medusa send is no longer trusted on the URL's claimed sender
+  alone: `/send` on both the project and Master mounts now checks the caller's own verified
+  launch against that specific route before the message is accepted, recording
+  `SENDER_LAUNCH_REQUIRED` / `SENDER_PROJECT_MISMATCH` on a 403 refusal. A send with no launch
+  binding at all, or from a launch whose session has since ended, was already refused by the
+  existing dispatcher launch-binding floor (#2233); this closes the remaining gap, where a
+  caller's own binding was real and current but for a different participant than the route it
+  called (#1875).
+
+### Security
+- **`POST /api/audit/heartbeat` now authenticates its caller and scopes its effect, instead of trusting `body.session_id` outright (#2239).** A caller with a verified TangleClaw launch binding could previously heartbeat (and so silence or spoof) any session's watchdog entry, including a different, superseded-but-still-active session of its own project, by naming it in `session_id`; nothing checked that the two agreed. Two proofs are now accepted, neither granting any Operator, Master, Medusa or PortHub authority:
+  1. An OpenClaw webhook's own `audit_secret` Bearer token, the same proof `/api/audit/ingest` already takes (`401 UNAUTHORIZED` on a missing or wrong one, `409 CONNECTION_UNBOUND` on a valid one with no project bound to it) — this also closes a separate gap: since #2233's launch-binding floor, a remote engine's heartbeat with no binding at all was refused outright (`403 LAUNCH_BINDING_REQUIRED`), so OpenClaw's own heartbeat could never actually reach the watchdog before now.
+  2. A verified TangleClaw project launch binding or the operator/Project Master, resolved exactly as every other mutating route resolves one (refusing a stale, unbound or invalid binding with the same code the floor would). `session_id` on this path is TangleClaw's own numeric session id, looked up server-side: a project session may heartbeat only **its own session** — matched to the binding's own session id, not merely to its project (`403 OTHER_SESSION` otherwise), an unknown id is `404 NOT_FOUND`, and an ended one is `409 SESSION_ENDED`. The operator and Master may name any project's session.
+
+  `lib/launch-binding-guard.js`'s `EXCEPTIONS` lists the route as `OWN_PRINCIPAL`, the same way and for the same reason `/api/audit/ingest` already is.
+
+  **The watchdog itself (`lib/eval-audit.js`) is now keyed by `(project, session_id)`, never `session_id` alone.** A `session_id` is caller-supplied and, on the OpenClaw path, has no TangleClaw record to verify it against, so two different projects' sessions can legitimately — or maliciously — collide on the identical string. A flat key cannot be policed by a claim check: whoever presents a given string first always wins it, letting one project pre-empt or silence another's telemetry before it ever starts, no matter how carefully later claims are refused. Scoping by project removes the collision outright — project A's watch on `"x"` and project B's watch on `"x"` are independent entries that cannot reset, preempt or block one another — and, as a consequence, also fixes a dead-watchdog bug uncovered along the way: nothing in production ever called the watchdog's own `watchSession()`, only `heartbeat()` (which only resets an *existing* watch), so a brand-new session's first heartbeat or first ingested exchange always answered success while `GET /api/audit/telemetry` stayed empty. The first valid heartbeat or ingest for a `(project, session_id)` pair now creates its watch; a later one for the same pair resets it.
+
+### Internal
+- Added negative-auth coverage for the Project Master against every `/api/session-rules` mutation
+  route (`403 PROJECT_READ_ONLY`, nothing changed) and for a project-bound session against
+  `POST /api/master/rules/restore-defaults` (`403 OPERATOR_ONLY`), in `test/api-session-rules-authz.test.js`.
+  Documented `PUT /api/rules/global` and `POST /api/rules/global/reset` as operator-only in
+  `docs/configuration-reference.md`'s API table and in `lib/engines.js`'s `_generateClaudeMd` JSDoc,
+  which also corrected that JSDoc's stale "10 KB body cap" to the route's actual 256 KB (#2021).
+- Extracted `tcOperatorProofHeaders()` (`public/api-helper.js`), the shared client helper for a
+  write that is an operator's decision and must still work on an install with no login, into the
+  three call sites that duplicated it verbatim (`wireStartupFires`, `wireLaunchRecoveryClears` in
+  `public/ui.js`, `saveStartupPrompt` in `public/landing.js`); `wireLaunchReconciliationReads` was
+  left as is, since its route refuses an open-install token outright and the function's own comment
+  already says so. Extracted `_resolveLaunchTarget()` (`lib/routes/launch-recovery.js`), the shared
+  body-validation and project-lookup resolution behind the recovery-clear and reconciliation routes'
+  identical 400/404 refusals; recovery-clear's own sequence lookup stays `clearOneLaunch`'s, since its
+  ADVISORY/STALE_RECOVERY/SESSION_ENDED outcomes depend on having found it first (#2148).
+
 ## [5.42.0] - 2026-10-27
 
 ### Added
