@@ -211,21 +211,22 @@ an Architect, some Builders, a PR reviewer — on a machine that already runs Ta
 
     | project | `releaseMode` | why |
     |---|---|---|
-    | the release owner | `auto` **or** `ask` | either may author the bump — the difference is who is consulted, below |
+    | the release owner | `agent` **or** `operator` | either may author the bump — the difference is who is consulted, below |
     | every other project, **including PM and Architect** | `off` | they contribute changelog entries, never version files |
 
     **The mode names describe who is *consulted*, not how much is automated** — read them carefully,
-    because `auto` does not mean unattended:
+    because `agent` does not mean unattended. (`auto`/`ask` are the pre-#1701 spellings; they still
+    work, permanently aliased to `agent`/`operator` on read and write.)
 
     | mode | who decides |
     |---|---|
-    | `auto` | the **AI**. The `release-recommendation` wrap step runs and its answer is weighed against the readiness verdict. If the two disagree, it escalates to the operator — neither overrules the other. It proceeds on its own only when readiness says `ready` and the AI does not say hold. |
-    | `ask` | the **operator**. The wrap cuts only on an explicit Cut; the AI's view is demoted to a hint in the reason. |
+    | `agent` | the **AI**. The `release-recommendation` wrap step runs and its answer is weighed against the readiness verdict. If the two disagree, it escalates to the operator — neither overrules the other. It proceeds on its own only when readiness says `ready` and the AI does not say hold. |
+    | `operator` | the **operator**. The wrap cuts only on an explicit Cut; the AI's view is demoted to a hint in the reason. |
     | `off` | nobody — the step stops before any of this. |
 
-    In both `auto` and `ask` a decision made in the wrap modal wins outright, so the operator sees a
-    confirmation either way. Pick `auto` when you want the agent's judgement in the loop, `ask` when
-    you want every cut to be your own call.
+    In both `agent` and `operator` a decision made in the wrap modal wins outright, so the operator
+    sees a confirmation either way. Pick `agent` when you want the agent's judgement in the loop,
+    `operator` when you want every cut to be your own call.
 
     Verify against the group's **actual members**, not a name prefix, and read the mode from
     `GET /api/projects` — the PATCH response omits `releaseMode`, so it cannot confirm this.
@@ -250,7 +251,7 @@ an Architect, some Builders, a PR reviewer — on a machine that already runs Ta
     print(f"SELF {mine['name']}: {mode}")
     for m in members:
         if m["id"]!=me: print(f"  {m['name']}: not readable from this pane")
-    if mode in ("ask","auto"): print("SELF_OK owner")
+    if mode in ("operator","agent"): print("SELF_OK owner")
     elif mode=="off": print("SELF_OK off")
     else: print("SELF_WRONG", {"releaseMode":mode}); sys.exit(1)
     EOF_SCRIPT
@@ -258,9 +259,9 @@ an Architect, some Builders, a PR reviewer — on a machine that already runs Ta
     Expected: `SELF <project>: <mode>`, the group's other members each as `not readable from this
     pane`, then `SELF_OK owner` or `SELF_OK off`. Not being able to read another member is not
     agreement: this pane has said nothing about them.
-    `SELF_WRONG` means this pane's mode is not `off`, `ask` or `auto` (a `null` or unrecognised mode
-    counts), or that the pane could not read its own row because `BIND` was not sent. Fix it before
-    any Builder wraps.
+    `SELF_WRONG` means this pane's mode is not `off`, `operator` or `agent` (a `null` or unrecognised
+    mode counts), or that the pane could not read its own row because `BIND` was not sent. Fix it
+    before any Builder wraps.
 
     **Then roll up across the group.** Collect one `SELF_OK` line from **every** member that
     `GET /api/groups/$GID/members` lists. The group is right when **exactly one** of them is
@@ -289,8 +290,8 @@ an Architect, some Builders, a PR reviewer — on a machine that already runs Ta
     missing=[m["id"] for m in members if m["id"] not in projects]
     rows=[(m["name"], projects[m["id"]].get("releaseMode")) for m in members if m["id"] in projects]
     for n,mode in rows: print(f"  {n}: {mode}")
-    owners=[n for n,mode in rows if mode in ("ask","auto")]
-    bad=[(n,mode) for n,mode in rows if mode not in ("ask","auto") and mode != "off"]
+    owners=[n for n,mode in rows if mode in ("operator","agent")]
+    bad=[(n,mode) for n,mode in rows if mode not in ("operator","agent") and mode != "off"]
     if missing or len(owners)!=1 or bad:
         print("OWNER_CONFLICT", {"unresolved":missing,"owners":owners,"not_off":bad}); sys.exit(1)
     print("OWNERS_OK")
@@ -302,8 +303,9 @@ an Architect, some Builders, a PR reviewer — on a machine that already runs Ta
     member id that resolves to no project, more or fewer than one owner, or a non-owner whose mode
     is not `off` (a `null` or unrecognised mode counts). Fix it before any Builder wraps.
 
-    Valid values are `off`, `auto`, `ask`; anything else is treated as `ask` with a warning, which
-    is itself how a second owner appears by accident — an unrecognised mode is not `off`.
+    Valid values are `off`, `agent`, `operator` (plus the permanently-aliased legacy spellings
+    `auto`/`ask`); anything else is treated as `operator` with a warning, which is itself how a
+    second owner appears by accident — an unrecognised mode is not `off`.
 
     Leave changelog updating **enabled everywhere**: each Builder still writes its own entry under
     `[Unreleased]`. Only the promotion of those entries and the `version.json` bump belong to the
@@ -316,7 +318,7 @@ an Architect, some Builders, a PR reviewer — on a machine that already runs Ta
     before a release exists. Record the SHA either way. Core authors neither.
 
     > **This is convention, not enforcement.** Nothing in the product stops a second project being
-    > set to `ask` or `auto`, and `version-bump` compares against the *local* changelog rather than
+    > set to `operator` or `agent`, and `version-bump` compares against the *local* changelog rather than
     > `origin/main` — so two owners produce colliding bumps that surface as merge conflicts. One
     > owner is the whole mechanism. Group-aware release ownership is filed as **#1697**.
     >
