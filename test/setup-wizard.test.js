@@ -716,6 +716,24 @@ describe('Setup Wizard', () => {
       assert.equal(store.projects.getByName('phantom-proj'), null);
     });
 
+    it('should skip a batch-attached project whose name fails validateName (#2180)', async () => {
+      const projDir = path.join(projectsDir, 'bad name with $ymbols');
+      fs.mkdirSync(projDir, { recursive: true });
+
+      const { status, data } = await request(server, 'POST', '/api/setup/complete', {
+        projects: [
+          { name: 'bad name with $ymbols', path: projDir }
+        ]
+      });
+
+      assert.equal(status, 200);
+      assert.equal(data.attached.length, 0, 'Should not attach a project with an invalid name');
+      assert.ok(data.warnings.some(w => w.includes('Skipped "bad name with $ymbols"')), 'Should warn about the skipped project');
+
+      // Verify it wasn't registered
+      assert.equal(store.projects.getByName('bad name with $ymbols'), null);
+    });
+
     it('should handle duplicates gracefully in the same batch', async () => {
       const projDir = path.join(projectsDir, 'dup-batch-test');
       fs.mkdirSync(projDir, { recursive: true });

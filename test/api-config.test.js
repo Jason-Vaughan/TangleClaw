@@ -467,6 +467,63 @@ describe('API endpoints', () => {
       assert.equal(data.code, 'BAD_REQUEST');
     });
 
+    it('should accept a valid quickCommands list (#1339)', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        quickCommands: [{ label: 'Build', command: 'npm run build' }]
+      });
+      assert.equal(status, 200);
+      assert.deepEqual(data.config.quickCommands, [{ label: 'Build', command: 'npm run build' }]);
+      const reloaded = store.config.load();
+      assert.deepEqual(reloaded.quickCommands, [{ label: 'Build', command: 'npm run build' }]);
+      await request(server, 'PATCH', '/api/config', { quickCommands: [] });
+    });
+
+    it('should reject a string quickCommands (#1339)', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        quickCommands: 'npm run build'
+      });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
+
+    it('should reject a number quickCommands (#1339)', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        quickCommands: 42
+      });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
+
+    it('should reject a bare object quickCommands, not wrapped in an array (#1339)', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        quickCommands: { label: 'Build', command: 'npm run build' }
+      });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
+
+    it('should reject a quickCommands array containing null (#1339)', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        quickCommands: [null]
+      });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
+
+    it('should reject a quickCommands element missing label or command (#1339)', async () => {
+      const missingLabel = await request(server, 'PATCH', '/api/config', {
+        quickCommands: [{ command: 'npm run build' }]
+      });
+      assert.equal(missingLabel.status, 400);
+      assert.equal(missingLabel.data.code, 'BAD_REQUEST');
+
+      const missingCommand = await request(server, 'PATCH', '/api/config', {
+        quickCommands: [{ label: 'Build' }]
+      });
+      assert.equal(missingCommand.status, 400);
+      assert.equal(missingCommand.data.code, 'BAD_REQUEST');
+    });
+
     it('should accept portScannerEnabled boolean', async () => {
       const { status, data } = await request(server, 'PATCH', '/api/config', {
         portScannerEnabled: false
