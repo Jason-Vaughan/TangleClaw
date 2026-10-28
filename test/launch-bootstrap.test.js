@@ -410,4 +410,53 @@ describe('the launch opening order (#1693)', () => {
       assert.ok(stopIdx > readyIdx, 'and the resume-and-stop close follows the attestation');
     });
   });
+
+  describe('kickoff and the launch-sequence pages derive stage order from OPENING_ORDER, not a fixed order (R2 fix)', () => {
+    let original;
+    beforeEach(() => {
+      original = launchBootstrap.OPENING_ORDER;
+    });
+    afterEach(() => {
+      launchBootstrap.OPENING_ORDER = original;
+    });
+
+    it('lib/launch-kickoff.js: kickoffLine reorders its stages when OPENING_ORDER does, not just the prose it uses', () => {
+      const launchKickoff = require('../lib/launch-kickoff');
+      launchBootstrap.OPENING_ORDER = ['banner', 'propose', 'freshness', 'sequence'];
+      const line = launchKickoff.kickoffLine({ cursor: 0 }, 4);
+      const proposeIdx = line.indexOf(launchBootstrap.RESUME_AND_STOP);
+      const freshnessIdx = line.indexOf('freshness checks');
+      const sequenceIdx = line.indexOf('tc start next');
+      assert.ok(proposeIdx > -1 && freshnessIdx > -1 && sequenceIdx > -1, 'all three narrated stages are present');
+      assert.ok(
+        proposeIdx < freshnessIdx && freshnessIdx < sequenceIdx,
+        'propose, then freshness, then sequence — following the reordered array, not the default one'
+      );
+    });
+
+    it('lib/launch-sequence.js: _allAckedContent reorders freshness/propose when OPENING_ORDER does', () => {
+      const launchSequence = require('../lib/launch-sequence');
+      launchBootstrap.OPENING_ORDER = ['banner', 'sequence', 'propose', 'freshness'];
+      const content = launchSequence._allAckedContent();
+      const proposeIdx = content.indexOf('READY records initialization');
+      const freshnessIdx = content.indexOf('freshness checks');
+      assert.ok(proposeIdx > -1 && freshnessIdx > -1, 'both stages are present');
+      assert.ok(proposeIdx < freshnessIdx, 'propose now precedes freshness, following the reordered array');
+    });
+
+    it('lib/launch-sequence.js: _alreadyAttestedContent selects its one stage by walking OPENING_ORDER, not unconditionally', () => {
+      const launchSequence = require('../lib/launch-sequence');
+      launchBootstrap.OPENING_ORDER = ['propose'];
+      assert.match(
+        launchSequence._alreadyAttestedContent('2026-10-28T00:00:00Z'),
+        /attested READY at 2026-10-28T00:00:00Z/
+      );
+      launchBootstrap.OPENING_ORDER = [];
+      assert.equal(
+        launchSequence._alreadyAttestedContent('2026-10-28T00:00:00Z'),
+        '',
+        'a stage absent from OPENING_ORDER is never narrated, even past tense'
+      );
+    });
+  });
 });
