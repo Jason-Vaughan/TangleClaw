@@ -327,6 +327,26 @@ describe('writeEngineConfig writes atomically and refuses a read-only target (#1
       'the co-owned carrier was never truncated — a crash mid-write leaves it wholly old');
   });
 
+  test('a symlinked AGENTS.md is merged into on the referent — the link itself is never severed (R-Gate)', (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-managed-block-symlink-'));
+    const referent = path.join(dir, 'real-agents.md');
+    const link = path.join(dir, 'AGENTS.md');
+    fs.writeFileSync(referent, FOREIGN_FILE);
+    fs.symlinkSync(referent, link);
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    const result = engines.writeEngineConfig('antigravity', dir, {}, profile);
+    assert.equal(result.skipped, false, `fixture did not reach the write path: ${result.skipReason}`);
+    assert.equal(result.written, true);
+    assert.equal(result.error, null);
+
+    assert.equal(fs.lstatSync(link).isSymbolicLink(), true, 'AGENTS.md is still a symlink after the write');
+    assert.equal(fs.readlinkSync(link), referent, 'the link still points at the same referent');
+    const after = fs.readFileSync(referent, 'utf8');
+    assert.ok(after.includes('BEGIN:nextjs-agent-rules'), 'foreign content preserved through the symlinked write');
+    assert.ok(after.includes(BEGIN), 'our block landed in the referent');
+  });
+
   test('the whole-file path (no provenance surface) refuses a read-only target too — not just managed-block', (t) => {
     // claude's CLAUDE.md is whole-file, ungoverned, and has no provenance
     // surface (provenanceSurfaces only cover codex/aider), so it reaches

@@ -345,6 +345,69 @@ describe('#858 an engine switch retires the previous engine\'s config file', () 
       assert.deepEqual(fs.readdirSync(dir), ['AGENTS.md'], 'no dangling temp file left behind');
       fs.rmSync(dir, { recursive: true, force: true });
     });
+
+    it('a symlinked target: writes the referent, leaves the symlink itself intact (R-Gate)', () => {
+      // fs.renameSync on a symlink path does not follow the link — it deletes
+      // the link and puts the new file in its place. Writing straight to the
+      // link would sever an operator-managed symlinked carrier while leaving
+      // its true referent stale; the write must land on the referent instead.
+      const dir = tmp();
+      const referent = path.join(dir, 'real-config.md');
+      const link = path.join(dir, 'AGENTS.md');
+      fs.writeFileSync(referent, 'old referent content\n');
+      fs.symlinkSync(referent, link);
+      engines._atomicWriteConfigFile(link, 'new referent content\n');
+      assert.equal(fs.lstatSync(link).isSymbolicLink(), true, 'the symlink itself survives the write');
+      assert.equal(fs.readlinkSync(link), referent, 'the symlink still points at the same referent');
+      assert.equal(fs.readFileSync(referent, 'utf8'), 'new referent content\n', 'the referent holds the new content');
+      assert.equal(fs.readFileSync(link, 'utf8'), 'new referent content\n', 'reading through the link sees it too');
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('refuses a chmod 0o444 referent through the symlink, without severing the link', () => {
+      const dir = tmp();
+      const referent = path.join(dir, 'real-config.md');
+      const link = path.join(dir, 'AGENTS.md');
+      fs.writeFileSync(referent, 'protected referent\n');
+      fs.chmodSync(referent, 0o444);
+      fs.symlinkSync(referent, link);
+      try {
+        assert.throws(() => engines._atomicWriteConfigFile(link, 'new\n'), (err) => err.code === 'EACCES');
+      } finally {
+        fs.chmodSync(referent, 0o644);
+      }
+      assert.equal(fs.lstatSync(link).isSymbolicLink(), true, 'the symlink survives the refusal');
+      assert.equal(fs.readFileSync(referent, 'utf8'), 'protected referent\n', 'the referent is byte-identical');
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('writes through a dangling symlink by creating its referent, not replacing the link', () => {
+      const dir = tmp();
+      const referent = path.join(dir, 'not-yet-created.md');
+      const link = path.join(dir, 'AGENTS.md');
+      fs.symlinkSync(referent, link);
+      engines._atomicWriteConfigFile(link, 'brand new via a dangling link\n');
+      assert.equal(fs.lstatSync(link).isSymbolicLink(), true, 'the symlink survives');
+      assert.equal(fs.readFileSync(referent, 'utf8'), 'brand new via a dangling link\n');
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+  });
+
+  it('retirement through a symlinked AGENTS.md updates the referent, never severs the link (#1291 R-Gate)', () => {
+    const dir = seed('retire-symlinked', 'antigravity');
+    const agents = path.join(dir, 'AGENTS.md');
+    const originalContent = fs.readFileSync(agents, 'utf8');
+    const referent = path.join(dir, 'real-agents.md');
+    fs.renameSync(agents, referent);
+    fs.symlinkSync(referent, agents);
+
+    const r = engines.retireInactiveEngineConfig(dir, 'antigravity', 'claude');
+    assert.equal(r.retired, true);
+    assert.equal(fs.lstatSync(agents).isSymbolicLink(), true, 'the symlink itself survives retirement');
+    assert.equal(fs.readlinkSync(agents), referent);
+    const after = fs.readFileSync(referent, 'utf8');
+    assert.match(after, /INACTIVE engine config/);
+    assert.notEqual(after, originalContent);
   });
 
   it('a mid-write failure during retirement leaves the existing co-owned carrier byte-identical (#1291)', () => {
