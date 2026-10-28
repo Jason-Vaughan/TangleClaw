@@ -197,7 +197,7 @@ describe('#1633 R2 Fix 4 — project card startup readiness badge', () => {
   });
 
   it('is placed in the card row beside the launch-blocker badge', () => {
-    assert.match(UI_SRC, /const startupReadinessBadge = renderStartupReadinessBadge\(project\);/);
+    assert.match(UI_SRC, /const startupReadinessBadge = typeof renderStartupReadinessBadge === 'function' \? renderStartupReadinessBadge\(project\) : '';/);
     assert.match(UI_SRC, /\$\{launchBlockerBadge\}\s*\$\{startupReadinessBadge\}/);
   });
 });
