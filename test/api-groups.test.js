@@ -293,12 +293,20 @@ describe('API /api/groups/:id releaseOwnerProjectId (#1697)', () => {
     store._setBasePath(tmpDir);
     store.init();
 
+    // #1702 made 'operator' (release-capable) the unconfigured default, so
+    // addMember's own auto-claim (#1697) would otherwise claim ownership the
+    // moment either project joins. Pin both explicitly to 'off' so this
+    // suite's PUT/GET route coverage starts from a genuinely vacant group.
     const memberPath = path.join(tmpDir, 'owner-proj');
     fs.mkdirSync(memberPath, { recursive: true });
+    fs.mkdirSync(path.join(memberPath, '.tangleclaw'));
+    fs.writeFileSync(path.join(memberPath, '.tangleclaw', 'project.json'), JSON.stringify({ releaseMode: 'off' }));
     memberId = store.projects.create({ name: 'owner-proj', path: memberPath, engine: 'claude' }).id;
 
     const otherPath = path.join(tmpDir, 'nonmember-proj');
     fs.mkdirSync(otherPath, { recursive: true });
+    fs.mkdirSync(path.join(otherPath, '.tangleclaw'));
+    fs.writeFileSync(path.join(otherPath, '.tangleclaw', 'project.json'), JSON.stringify({ releaseMode: 'off' }));
     otherId = store.projects.create({ name: 'nonmember-proj', path: otherPath, engine: 'claude' }).id;
 
     const group = store.projectGroups.create({ name: 'ReleaseOwnerGroup' });
@@ -355,6 +363,55 @@ describe('API /api/groups/:id releaseOwnerProjectId (#1697)', () => {
     });
     assert.equal(status, 200);
     assert.equal(data.releaseOwnerProjectId, null);
+  });
+});
+
+describe('PATCH /api/projects/:name releaseMode group-ownership conflict (#1697, Architect B1)', () => {
+  let tmpDir;
+  let server;
+  let ownerName;
+  let otherName;
+
+  before(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-patch-conflict-'));
+    store._setBasePath(tmpDir);
+    store.init();
+
+    const ownerPath = path.join(tmpDir, 'patch-owner');
+    fs.mkdirSync(ownerPath, { recursive: true });
+    ownerName = store.projects.create({ name: 'patch-owner', path: ownerPath, engine: 'claude' }).name;
+    const otherPath = path.join(tmpDir, 'patch-other');
+    fs.mkdirSync(otherPath, { recursive: true });
+    otherName = store.projects.create({ name: 'patch-other', path: otherPath, engine: 'claude' }).name;
+
+    const ownerId = store.projects.getByName(ownerName).id;
+    const otherId2 = store.projects.getByName(otherName).id;
+    const group = store.projectGroups.create({ name: 'PatchConflictGroup' });
+    store.projectGroups.addMember(group.id, ownerId);
+    store.projectGroups.addMember(group.id, otherId2);
+    store.projectGroups.claimReleaseOwnerIfVacant(group.id, ownerId);
+
+    store.config.save({ ...store.config.load(), authEnabled: true, basicAuthUser: null, basicAuthHash: null });
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('PATCH /api/projects/:name returns 409 CONFLICT for a non-owner going release-capable', async () => {
+    const { status, data } = await request(server, 'PATCH', `/api/projects/${otherName}`, { releaseMode: 'agent' });
+    assert.equal(status, 409);
+    assert.equal(data.code, 'CONFLICT');
+    assert.match(data.error, /PatchConflictGroup/);
+  });
+
+  it('PATCH /api/projects/:name allows the actual owner through', async () => {
+    const { status } = await request(server, 'PATCH', `/api/projects/${ownerName}`, { releaseMode: 'agent' });
+    assert.equal(status, 200);
   });
 });
 

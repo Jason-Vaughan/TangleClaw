@@ -77,6 +77,21 @@ describe('release recommendation helpers', () => {
       }
     });
 
+    it('is closed for a non-owner group member, even with an explicit agent/operator config (Critic R-2)', () => {
+      const owner = makeProject({ config: { releaseMode: 'agent' } });
+      const other = makeProject({ config: { releaseMode: 'agent' } });
+      const ownerRow = store.projects.create({ name: owner.name, path: owner.path });
+      const otherRow = store.projects.create({ name: other.name, path: other.path });
+      const group = store.projectGroups.create({ name: 'rr-fleet-1' });
+      store.projectGroups.addMember(group.id, ownerRow.id);
+      store.projectGroups.addMember(group.id, otherRow.id);
+      store.projectGroups.claimReleaseOwnerIfVacant(group.id, ownerRow.id);
+
+      const out = rec.releaseDecisionOpen(other, {});
+      assert.equal(out.open, false);
+      assert.match(out.reason, /releaseMode is off/);
+    });
+
     it('is closed once the operator has decided', () => {
       const project = makeProject({ config: { releaseMode: 'agent' } });
       assert.match(rec.releaseDecisionOpen(project, { release: 'cut' }).reason, /you chose Cut/);

@@ -281,6 +281,11 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
         <div class="gs-section-label">Members</div>
         <div id="groupMembersList" class="group-members-list"></div>
       </div>
+      <div id="groupReleaseOwnerSection" class="hidden" style="margin-top:8px">
+        <div class="gs-section-label">Release Authority</div>
+        <select class="form-select" id="groupReleaseOwnerSelect" onchange="setGroupReleaseOwner(this.value)"></select>
+        <div class="form-hint">Which member's wrap may cut a release for this group (#1697). A member set to Agent or Operator claims this automatically if nobody holds it yet; transferring it here is how an operator moves it deliberately.</div>
+      </div>
       <div id="groupDocsSection" class="hidden">
         <div class="gs-section-label">Shared Documents</div>
         <div id="groupDocsList" class="group-docs-list"></div>

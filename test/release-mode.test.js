@@ -256,6 +256,12 @@ describe('updateProject — group release authority (#1697)', () => {
   it('the first member to go release-capable auto-claims the group, silently', async () => {
     projects.createProject({ name: 'rg-a' });
     projects.createProject({ name: 'rg-b' });
+    // #1702 made 'operator' the unconfigured default (release-capable), so
+    // addMember's own auto-claim (#1697, tested separately below) would
+    // otherwise fire the moment either project joins. Pin both 'off' first
+    // so THIS test isolates the updateProject-triggered claim specifically.
+    await projects.updateProject('rg-a', { releaseMode: 'off' });
+    await projects.updateProject('rg-b', { releaseMode: 'off' });
     const a = await projects.getProject('rg-a');
     const b = await projects.getProject('rg-b');
     const group = store.projectGroups.create({ name: 'rg-fleet-1' });
@@ -292,6 +298,29 @@ describe('updateProject — group release authority (#1697)', () => {
     assert.deepEqual(offUpdate.errors, []);
   });
 
+  it('fails closed (409) when the group ownership lookup throws, rather than allowing the save (PRR-A B3)', async () => {
+    projects.createProject({ name: 'rg-o' });
+    const savedFind = store.projectGroups.findReleaseOwnerElsewhere;
+    store.projectGroups.findReleaseOwnerElsewhere = () => { throw new Error('simulated DB failure'); };
+    try {
+      const update = await projects.updateProject('rg-o', { releaseMode: 'agent' });
+      assert.equal(update.project, null);
+      assert.equal(update.code, 'CONFLICT');
+      assert.match(update.errors[0], /could not verify group release authority/);
+    } finally {
+      store.projectGroups.findReleaseOwnerElsewhere = savedFind;
+    }
+    // Setting to 'off' is never racy, so an unresolvable lookup must not
+    // block it even though the same guard fires for agent/operator above.
+    store.projectGroups.findReleaseOwnerElsewhere = () => { throw new Error('simulated DB failure'); };
+    try {
+      const offUpdate = await projects.updateProject('rg-o', { releaseMode: 'off' });
+      assert.deepEqual(offUpdate.errors, []);
+    } finally {
+      store.projectGroups.findReleaseOwnerElsewhere = savedFind;
+    }
+  });
+
   it('a transfer via the group settings unblocks the formerly-refused member', async () => {
     projects.createProject({ name: 'rg-e' });
     projects.createProject({ name: 'rg-f' });
@@ -323,5 +352,62 @@ describe('updateProject — group release authority (#1697)', () => {
     // rg-h never configured releaseMode and sits in a group rg-g now owns.
     const h = await projects.getProject('rg-h');
     assert.equal(h.releaseMode, 'off');
+  });
+
+  it('addMember auto-claims for a project already configured release-capable, before any updateProject call (Critic R-1)', async () => {
+    projects.createProject({ name: 'rg-i' });
+    projects.createProject({ name: 'rg-j' });
+    // Configure BOTH to agent before either ever joins a group — the
+    // ordering #1697's own problem statement describes (an existing fleet
+    // grouped together after the fact), as opposed to configuring after
+    // grouping, which the earlier tests above already cover.
+    await projects.updateProject('rg-i', { releaseMode: 'agent' });
+    await projects.updateProject('rg-j', { releaseMode: 'agent' });
+    const i = await projects.getProject('rg-i');
+    const j = await projects.getProject('rg-j');
+    const group = store.projectGroups.create({ name: 'rg-fleet-5' });
+
+    store.projectGroups.addMember(group.id, i.id);
+    // Claimed by the addMember call itself — no updateProject involved.
+    assert.equal(store.projectGroups.get(group.id).releaseOwnerProjectId, i.id);
+
+    store.projectGroups.addMember(group.id, j.id);
+    // Already owned by i; j's join does not overwrite it.
+    assert.equal(store.projectGroups.get(group.id).releaseOwnerProjectId, i.id);
+  });
+
+  it('removeMember clears release_owner_project_id when the departing project is the owner (Critic R-5)', async () => {
+    projects.createProject({ name: 'rg-k' });
+    projects.createProject({ name: 'rg-l' });
+    const k = await projects.getProject('rg-k');
+    const l = await projects.getProject('rg-l');
+    const group = store.projectGroups.create({ name: 'rg-fleet-6' });
+    store.projectGroups.addMember(group.id, k.id);
+    store.projectGroups.addMember(group.id, l.id);
+    await projects.updateProject('rg-k', { releaseMode: 'agent' });
+    assert.equal(store.projectGroups.get(group.id).releaseOwnerProjectId, k.id);
+
+    store.projectGroups.removeMember(group.id, k.id);
+    assert.equal(store.projectGroups.get(group.id).releaseOwnerProjectId, null,
+      'dangling owner pointing at a non-member must not persist');
+
+    // The remaining member can now claim it — it was not permanently stuck.
+    const update = await projects.updateProject('rg-l', { releaseMode: 'agent' });
+    assert.deepEqual(update.errors, []);
+    assert.equal(store.projectGroups.get(group.id).releaseOwnerProjectId, l.id);
+  });
+
+  it('removeMember leaves release_owner_project_id alone when the departing project is not the owner', async () => {
+    projects.createProject({ name: 'rg-m' });
+    projects.createProject({ name: 'rg-n' });
+    const m = await projects.getProject('rg-m');
+    const n = await projects.getProject('rg-n');
+    const group = store.projectGroups.create({ name: 'rg-fleet-7' });
+    store.projectGroups.addMember(group.id, m.id);
+    store.projectGroups.addMember(group.id, n.id);
+    await projects.updateProject('rg-m', { releaseMode: 'agent' });
+
+    store.projectGroups.removeMember(group.id, n.id);
+    assert.equal(store.projectGroups.get(group.id).releaseOwnerProjectId, m.id);
   });
 });
