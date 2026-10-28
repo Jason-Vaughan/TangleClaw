@@ -342,7 +342,7 @@ describe('API /api/audit', () => {
       assert.equal(again.status, 200);
       assert.equal(evalAudit.getTelemetryStatus().filter((w) => w.sessionId === key).length, 1);
     } finally {
-      evalAudit.unwatchSession(key);
+      evalAudit.unwatchSession(key, 'audit-bound');
     }
   });
 
@@ -358,7 +358,7 @@ describe('API /api/audit', () => {
     const watch = evalAudit.getTelemetryStatus().find((w) => w.sessionId === bound.sessionId);
     assert.ok(watch, 'the first valid heartbeat for a new TangleClaw session id must establish a watch, not no-op');
     assert.equal(watch.project, 'audit-bound');
-    evalAudit.unwatchSession(bound.sessionId);
+    evalAudit.unwatchSession(bound.sessionId, 'audit-bound');
   });
 
   it('POST /api/audit/heartbeat refuses an invalid Bearer token outright, without falling back to the binding check', async () => {
