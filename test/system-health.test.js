@@ -824,8 +824,13 @@ describe('POST /api/server/restart — non-blocking exec (#2140)', () => {
 
   it('answers a concurrent request while the scheduled exec is in flight — the mutation this catches is execSync back on the event loop', async () => {
     const origDetect = serverInfo.detectRestartMechanism;
+    const origConfirm = serverInfo.confirmRestartMechanism;
     const origBuild = serverInfo.buildRestartCommand;
     serverInfo.detectRestartMechanism = () => 'launchctl';
+    // confirmRestartMechanism's re-check for 'launchctl' asks whether THIS
+    // process (the test runner) was started by launchd (#1555) — never true
+    // here — so it must be stubbed alongside detectRestartMechanism.
+    serverInfo.confirmRestartMechanism = () => ({ ok: true, reason: null });
     // Long enough that a blocking execSync would still be holding the event
     // loop when the concurrent GET below is sent.
     serverInfo.buildRestartCommand = () => 'sleep 2';
@@ -839,6 +844,7 @@ describe('POST /api/server/restart — non-blocking exec (#2140)', () => {
       assert.ok(Date.now() - started < 500, 'a concurrent request must not wait on the pending restart exec');
     } finally {
       serverInfo.detectRestartMechanism = origDetect;
+      serverInfo.confirmRestartMechanism = origConfirm;
       serverInfo.buildRestartCommand = origBuild;
       await new Promise((resolve) => setTimeout(resolve, 1700)); // drain the sleep before after() tears the server down
     }
@@ -846,10 +852,12 @@ describe('POST /api/server/restart — non-blocking exec (#2140)', () => {
 
   it('does not log an exec-failed line when the child dies to the process\'s own SIGTERM (the expected successful-restart path)', async () => {
     const origDetect = serverInfo.detectRestartMechanism;
+    const origConfirm = serverInfo.confirmRestartMechanism;
     const origBuild = serverInfo.buildRestartCommand;
     const origError = console.error;
     const logged = [];
     serverInfo.detectRestartMechanism = () => 'launchctl';
+    serverInfo.confirmRestartMechanism = () => ({ ok: true, reason: null });
     // Simulates what a real restart mechanism does to this process: deliver
     // SIGTERM to the child exec spawned, without the child ever reporting a
     // non-zero exit for any OTHER reason.
@@ -864,6 +872,7 @@ describe('POST /api/server/restart — non-blocking exec (#2140)', () => {
     } finally {
       console.error = origError;
       serverInfo.detectRestartMechanism = origDetect;
+      serverInfo.confirmRestartMechanism = origConfirm;
       serverInfo.buildRestartCommand = origBuild;
     }
   });
@@ -876,10 +885,12 @@ describe('POST /api/server/restart — non-blocking exec (#2140)', () => {
     // the previous execSync path always logged this, and a guard that
     // conflates the two would silently drop it.
     const origDetect = serverInfo.detectRestartMechanism;
+    const origConfirm = serverInfo.confirmRestartMechanism;
     const origBuild = serverInfo.buildRestartCommand;
     const origError = console.error;
     const logged = [];
     serverInfo.detectRestartMechanism = () => 'launchctl';
+    serverInfo.confirmRestartMechanism = () => ({ ok: true, reason: null });
     serverInfo.buildRestartCommand = () => 'sleep 30';
     console.error = (...args) => { logged.push(args.join(' ')); };
     try {
@@ -892,6 +903,7 @@ describe('POST /api/server/restart — non-blocking exec (#2140)', () => {
     } finally {
       console.error = origError;
       serverInfo.detectRestartMechanism = origDetect;
+      serverInfo.confirmRestartMechanism = origConfirm;
       serverInfo.buildRestartCommand = origBuild;
     }
   });
