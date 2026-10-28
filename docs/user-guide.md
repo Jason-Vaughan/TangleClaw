@@ -228,6 +228,8 @@ Below the ports panel, there's a collapsible **Global Rules** panel. These are m
 - **Revert**: restore it from git (`data/global-rules.md` is tracked). There is no Reset button: the old one called an endpoint that, since the canonical-source model (#240), returns the current content unchanged, so it looked like a revert and did nothing (#243)
 - **API**: `GET /api/rules/global`, `PUT /api/rules/global` (the operator's, like the panel). `POST /api/rules/global/reset` still exists as a back-compat no-op since #240 — it returns the current content unchanged
 
+Both global-rule API writes, including the compatibility reset route, require the operator. The Project Master may read project session rules but cannot mutate them; a project session cannot restore the Master's default rules (#2021).
+
 Global rules live in one git-tracked file, `data/global-rules.md` in the TangleClaw repo (#240). Saving from the panel writes that file directly; there is no bundled default and no per-install copy under `~/.tangleclaw/`. A leftover `~/.tangleclaw/global-rules.md` from an older install is ignored — if its content differs, TangleClaw backs it up next to itself and logs a warning on startup so you can merge what you still want.
 
 ### Startup Prompt
@@ -403,6 +405,8 @@ In **Launch readiness**, the unready monitor shows its latest verdict and time b
 
 If a handoff is damaged, corrupt, behind, or unclassified, the launch row shows the warning even when there is no applicable launch sequence. An active session in operator-cleared recovery offers **Clear recovery** to the operator; an ended session keeps the explanation but has no Clear button because clearing it cannot resume an ended session. A new session has its own launch and recovery decision (#1623).
 
+A handoff from the previous session may carry a different Medusa workspace id: each launch receives a fresh one. Preflight matches the handoff's project identity and keeps the previous workspace id only for diagnosis. If a staged handoff file cannot be read, the launch log names the publication and read failure, and the gathered launch context lists it under `skippedStagedFiles` (#1611, #1682). Startup fire, recovery clear, and startup-prompt save use the same operator proof handling, including on an install without a login; the server still decides whether the requested action is authorized (#2148).
+
 ### The `tc` command
 
 `tc` is the command a session uses to talk to TangleClaw from inside its own terminal. The AI
@@ -443,6 +447,8 @@ Open it from the banner's **⋯** menu → **Command bar** (the ⋯ button stays
 - **Quick command pills** appear below the input — tap to inject common commands
 - Engine-specific slash commands are included as pills (e.g., `/compact`, `/review` for Claude Code)
 - Commands are sent to the tmux session via `send-keys`
+
+Direct command submissions through `POST /api/sessions/:project/command` reserve leading `/` input for the operator. A peer project or the Project Master gets `403 SLASH_COMMAND_OPERATOR_ONLY` for one, even if its launch is verified. When a peer or Master submits ordinary input, TangleClaw adds a sender line from its verified launch rather than trusting text in the request, and the response includes a submission receipt naming the verified caller and submission time. The caller's command can use the full 4,096-character limit; the server-added sender line does not consume that allowance (#2402). The command bar's operator slash-command pills remain available.
 
 #### Peek
 
@@ -495,6 +501,14 @@ browser signed in to your account is signed out. Your recovery codes keep workin
 Forgotten the current password? Set a new one with a recovery code from the sign-in page, or at a
 terminal on the machine with `node scripts/reset-admin.js --store --user <name>` (see
 [Getting back into TangleClaw](recovery.md)). Either one signs out every browser on the account.
+
+An operator at the host terminal can disable an account without deleting it using
+`node scripts/reset-admin.js --disable --user <name>`. This signs that account out everywhere and
+deletes its recovery codes. The command refuses to disable the last enabled account unless
+`--force` is supplied; its count and write are protected by one transaction. Re-enable an account
+with `node scripts/reset-admin.js --store --user <name>`. For a preview, add `--dry-run` to the
+disable command. A predicted refusal exits 1, as it does for `--create-gate --dry-run`, so a
+script does not mistake a refused preview for success (#1458, #1286).
 
 #### Adding a login later
 
@@ -665,6 +679,10 @@ TangleClaw's switchboard lets sessions message **each other** — agent to agent
 
 **What the agents themselves do.** Each opted-in session is primed at launch with its workspace id and the API to read mail, mark it handled, send, and list peers. Handled mail leaves the inbox and is acknowledged upstream, so nothing re-delivers after a restart. If a peer session restarted and its workspace id rotated, sends re-resolve against the live roster and retry automatically.
 
+Sending through a project's or the Project Master's Medusa route requires a current verified launch for that same participant. A session with a valid launch for another project cannot send as the project named in the URL, and a project cannot send as the Master. A mismatch is refused with `403 SENDER_PROJECT_MISMATCH` before delivery; an ordinary-priority send follows the same rule (#1865, #1875).
+
+A project can set `replyGuidance` to replace the default reply instructions in its Medusa prime, wake nudge, and engine-private carrier. With `suppressNonActionableWakes` enabled, an inbox containing only `shared_doc_updated` system notices stays readable without waking an idle session; a peer-authored message does not qualify for that skip (#2402).
+
 **Wake nudges.** When mail arrives for a session that is sitting idle, a wake monitor types a short nudge into its terminal telling it to check the inbox — but only when the pane is *provably* idle: a moving transcript, a running subagent fleet, or a half-typed line in the composer all block the nudge (your unsent draft is preserved, not submitted). A busy session is never interrupted; it simply finds its mail when it next checks.
 
 **Nothing goes missing silently.** Every nudge outcome — delivered, failed, or skipped and why — lands in a delivery ledger. `GET /api/medusa/deliveries` answers the fleet question "whose newest mail was never announced," so an unannounced inbox and an empty one are distinguishable.
@@ -676,6 +694,8 @@ The **Project Master** participates too: its control bar mounts the same switchb
 In v5.40.0, the Project Master can reply to a Medusa message addressed to its verified launch. A read-only Master instead receives a nudge to describe the reply the operator needs to send. Shared-document changes also notify a listening Master whose scope covers that document; if a notice stays unread, a later write sends another after the ten-minute coalescing limit. When a lane asks for operator help, the alert names its sender, priority, age and exchange id; a live coordinator or an opt-out suppresses a direct alert. A recovery notice follows a delivered block alert when the lane becomes unblocked.
 
 Sessions that submit a Project Master candidate can run `tc candidate status` (or `tc candidate status <candidate-id>`) to see whether it is waiting, approved, posted or discarded. A submission already wakes the Master. The status is scoped to the submitting project and does not reveal the Master's rewritten message.
+
+**Audit heartbeat callers.** `POST /api/audit/heartbeat` requires either the `audit_secret` Bearer token of a bound OpenClaw connection or an authorized TangleClaw caller. A project session using its verified launch can heartbeat only its own live session; the operator and Project Master can name another project's session. OpenClaw's first valid heartbeat or ingested exchange starts the watch, and watches are separated by project as well as session id, so identical remote ids in two projects cannot reset each other's telemetry. A heartbeat does not grant the caller operator or switchboard authority (#2239).
 
 ### Scoped permission requests
 
