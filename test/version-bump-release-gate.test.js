@@ -1,9 +1,10 @@
 'use strict';
 
 // version-bump's release gate (#1492 L1 + L3 + L4): `releaseMode` decides whether a
-// wrap may cut, the readiness verdict decides whether `auto` does, and the
+// wrap may cut, the readiness verdict decides whether `agent` does, and the
 // operator's Cut or Hold overrides both. A question only the operator can answer
-// halts the wrap with `needs-operator`.
+// halts the wrap with `needs-operator`. (#1701 renamed the modes auto -> agent,
+// ask -> operator; both legacy spellings are permanently aliased on read.)
 // Every case uses a fully bumpable project, so the only thing that can stop the
 // cut is the gate under test.
 
@@ -44,13 +45,15 @@ describe('version-bump release gate', () => {
    * @param {object} [opts.config] - `.tangleclaw/project.json` contents; omitted = no file
    * @param {string} [opts.plan] - `## Status` boxes for `.prawduct/artifacts/p.md`; omitted = no plan
    * @param {string} [opts.pointer] - `active_build_plan:` value; defaults to the plan when one is given
+   * @param {string} [opts.changelog] - CHANGELOG.md text override, for #1051 link-def cases
    * @returns {{name:string, path:string}}
    */
-  function makeProject({ config, plan, pointer } = {}) {
+  function makeProject({ config, plan, pointer, changelog } = {}) {
     const dir = fs.mkdtempSync(path.join(tmpDir, 'p-'));
     fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '1.2.3' }));
     fs.writeFileSync(path.join(dir, 'CHANGELOG.md'),
-      '# Changelog\n\n## [Unreleased]\n\n### Added\n- a feature\n\n## [1.2.3] - 2026-09-01\n\n### Fixed\n- a fix\n');
+      changelog !== undefined ? changelog
+        : '# Changelog\n\n## [Unreleased]\n\n### Added\n- a feature\n\n## [1.2.3] - 2026-09-01\n\n### Fixed\n- a fix\n');
     if (config) {
       fs.mkdirSync(path.join(dir, '.tangleclaw'));
       fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), JSON.stringify(config));
@@ -71,19 +74,19 @@ describe('version-bump release gate', () => {
     return versionBump.run(context).then((result) => ({ result, staged: context.staged }));
   };
 
-  describe('auto', () => {
+  describe('agent', () => {
     it('cuts on a ready verdict, and records why', async () => {
-      const { result, staged } = await run(makeProject({ config: { releaseMode: 'auto' }, plan: '- [x] done' }));
+      const { result, staged } = await run(makeProject({ config: { releaseMode: 'agent' }, plan: '- [x] done' }));
       assert.equal(result.status, 'done');
       assert.equal(result.output.to, '1.3.0');
-      assert.equal(result.output.releaseMode, 'auto');
+      assert.equal(result.output.releaseMode, 'agent');
       assert.equal(result.output.decidedBy, 'readiness');
       assert.equal(result.output.readiness.verdict, 'ready');
       assert.ok(staged['version-bump:changelog']);
     });
 
     it('holds mid-plan, stages nothing, and names the unticked plan', async () => {
-      const { result, staged } = await run(makeProject({ config: { releaseMode: 'auto' }, plan: '- [x] one\n- [ ] two' }));
+      const { result, staged } = await run(makeProject({ config: { releaseMode: 'agent' }, plan: '- [x] one\n- [ ] two' }));
       assert.equal(result.status, 'skipped');
       assert.equal(result.ok, true, 'a hold never blocks the wrap');
       assert.deepEqual(result.blockers, []);
@@ -97,7 +100,7 @@ describe('version-bump release gate', () => {
     });
 
     it('halts on an unknown verdict and asks the operator', async () => {
-      const { result, staged } = await run(makeProject({ config: { releaseMode: 'auto' }, pointer: 'artifacts/missing.md' }));
+      const { result, staged } = await run(makeProject({ config: { releaseMode: 'agent' }, pointer: 'artifacts/missing.md' }));
       assert.equal(result.status, 'needs-operator');
       assert.equal(result.ok, false, 'an unanswered operator question stops the wrap');
       assert.equal(result.output.readiness.verdict, 'unknown');
@@ -108,7 +111,7 @@ describe('version-bump release gate', () => {
     });
 
     it('holds on a Hold even when ready, and records it as the operator\'s call', async () => {
-      const { result, staged } = await run(makeProject({ config: { releaseMode: 'auto' }, plan: '- [x] done' }), { release: 'hold' });
+      const { result, staged } = await run(makeProject({ config: { releaseMode: 'agent' }, plan: '- [x] done' }), { release: 'hold' });
       assert.equal(result.status, 'skipped');
       assert.equal(result.ok, true);
       assert.equal(result.output.held, true);
@@ -120,7 +123,7 @@ describe('version-bump release gate', () => {
     });
 
     it('answers an unknown verdict with Cut, at the CHANGELOG level', async () => {
-      const { result } = await run(makeProject({ config: { releaseMode: 'auto' }, pointer: 'artifacts/missing.md' }), { release: 'cut' });
+      const { result } = await run(makeProject({ config: { releaseMode: 'agent' }, pointer: 'artifacts/missing.md' }), { release: 'cut' });
       assert.equal(result.status, 'done');
       assert.equal(result.output.to, '1.3.0');
       assert.equal(result.output.decidedBy, 'operator');
@@ -129,14 +132,14 @@ describe('version-bump release gate', () => {
     });
 
     it('answers an unknown verdict with Hold, and the wrap continues', async () => {
-      const { result } = await run(makeProject({ config: { releaseMode: 'auto' }, pointer: 'artifacts/missing.md' }), { release: 'hold' });
+      const { result } = await run(makeProject({ config: { releaseMode: 'agent' }, pointer: 'artifacts/missing.md' }), { release: 'hold' });
       assert.equal(result.status, 'skipped');
       assert.equal(result.ok, true);
       assert.equal(result.output.decidedBy, 'operator');
     });
 
     it('cuts mid-plan when the operator picked a level, and says so', async () => {
-      const { result } = await run(makeProject({ config: { releaseMode: 'auto' }, plan: '- [ ] open' }), { bumpLevel: 'patch' });
+      const { result } = await run(makeProject({ config: { releaseMode: 'agent' }, plan: '- [ ] open' }), { bumpLevel: 'patch' });
       assert.equal(result.status, 'done');
       assert.equal(result.output.to, '1.2.4');
       assert.equal(result.output.decidedBy, 'operator');
@@ -146,28 +149,35 @@ describe('version-bump release gate', () => {
     it('is the default, and a project with no plan cuts as it always did', async () => {
       const { result } = await run(makeProject());
       assert.equal(result.status, 'done');
-      assert.equal(result.output.releaseMode, 'auto');
+      assert.equal(result.output.releaseMode, 'agent');
+      assert.equal(result.output.decidedBy, 'readiness');
+    });
+
+    it('is what the legacy "auto" spelling still means, permanently aliased (#1701)', async () => {
+      const { result } = await run(makeProject({ config: { releaseMode: 'auto' }, plan: '- [x] done' }));
+      assert.equal(result.status, 'done');
+      assert.equal(result.output.releaseMode, 'agent', 'the output reports the canonical name, never the alias');
       assert.equal(result.output.decidedBy, 'readiness');
     });
   });
 
-  describe('ask', () => {
+  describe('operator', () => {
     it('halts even when ready, and asks the operator with what would be cut', async () => {
-      const { result, staged } = await run(makeProject({ config: { releaseMode: 'ask' }, plan: '- [x] done' }));
+      const { result, staged } = await run(makeProject({ config: { releaseMode: 'operator' }, plan: '- [x] done' }));
       assert.equal(result.status, 'needs-operator');
       assert.equal(result.ok, false);
       assert.equal(result.output.held, true);
       assert.equal(result.output.needsOperator, true);
       assert.equal(result.output.decidedBy, undefined, 'nobody has decided yet');
       assert.equal(result.output.readiness.verdict, 'ready');
-      assert.match(result.output.reason, /releaseMode is ask/);
+      assert.match(result.output.reason, /releaseMode is operator/);
       assert.equal(result.output.remediation, 'Choose Cut or Hold below, then Retry.');
       assert.deepEqual(result.output.wouldBump, { from: '1.2.3', to: '1.3.0', bumpLevel: 'minor' });
       assert.deepEqual(staged, {});
     });
 
     it('cuts on Cut, at the CHANGELOG level', async () => {
-      const { result, staged } = await run(makeProject({ config: { releaseMode: 'ask' }, plan: '- [x] done' }), { release: 'cut' });
+      const { result, staged } = await run(makeProject({ config: { releaseMode: 'operator' }, plan: '- [x] done' }), { release: 'cut' });
       assert.equal(result.status, 'done');
       assert.equal(result.output.to, '1.3.0');
       assert.equal(result.output.decidedBy, 'operator');
@@ -175,13 +185,13 @@ describe('version-bump release gate', () => {
     });
 
     it('cuts on Cut with a picked level', async () => {
-      const { result } = await run(makeProject({ config: { releaseMode: 'ask' } }), { release: 'cut', bumpLevel: 'patch' });
+      const { result } = await run(makeProject({ config: { releaseMode: 'operator' } }), { release: 'cut', bumpLevel: 'patch' });
       assert.equal(result.status, 'done');
       assert.equal(result.output.to, '1.2.4');
     });
 
     it('holds on Hold without halting', async () => {
-      const { result, staged } = await run(makeProject({ config: { releaseMode: 'ask' } }), { release: 'hold' });
+      const { result, staged } = await run(makeProject({ config: { releaseMode: 'operator' } }), { release: 'hold' });
       assert.equal(result.status, 'skipped');
       assert.equal(result.ok, true);
       assert.equal(result.output.decidedBy, 'operator');
@@ -190,7 +200,7 @@ describe('version-bump release gate', () => {
     });
 
     it('cuts on the operator\'s pick', async () => {
-      const { result } = await run(makeProject({ config: { releaseMode: 'ask' } }), { bumpLevel: 'major' });
+      const { result } = await run(makeProject({ config: { releaseMode: 'operator' } }), { bumpLevel: 'major' });
       assert.equal(result.status, 'done');
       assert.equal(result.output.to, '2.0.0');
       assert.equal(result.output.decidedBy, 'operator');
@@ -199,8 +209,15 @@ describe('version-bump release gate', () => {
     it('is what an unrecognized releaseMode means, with the warning carried', async () => {
       const { result } = await run(makeProject({ config: { releaseMode: 'Auto' } }));
       assert.equal(result.status, 'needs-operator');
-      assert.equal(result.output.releaseMode, 'ask');
-      assert.match(result.output.releaseModeWarning, /"Auto" is not one of off, auto, ask/);
+      assert.equal(result.output.releaseMode, 'operator');
+      assert.match(result.output.releaseModeWarning, /"Auto" is not one of off, agent, operator/);
+    });
+
+    it('is what the legacy "ask" spelling still means, permanently aliased (#1701)', async () => {
+      const { result } = await run(makeProject({ config: { releaseMode: 'ask' }, plan: '- [x] done' }));
+      assert.equal(result.status, 'needs-operator');
+      assert.equal(result.output.releaseMode, 'operator', 'the output reports the canonical name, never the alias');
+      assert.match(result.output.reason, /releaseMode is operator/);
     });
   });
 
@@ -226,13 +243,13 @@ describe('version-bump release gate', () => {
     });
 
     it('loses to an explicit releaseMode beside the legacy flag', async () => {
-      const { result } = await run(makeProject({ config: { versionBumpEnabled: false, releaseMode: 'auto' } }));
+      const { result } = await run(makeProject({ config: { versionBumpEnabled: false, releaseMode: 'agent' } }));
       assert.equal(result.status, 'done');
     });
   });
 
   it('in a worktree with no Prawduct state, holds on the registered checkout\'s unfinished plan', async () => {
-    const registered = makeProject({ config: { releaseMode: 'auto' }, plan: '- [ ] open' });
+    const registered = makeProject({ config: { releaseMode: 'agent' }, plan: '- [ ] open' });
     const worktree = makeProject();
     const { result, staged } = await run({ name: registered.name, path: worktree.path, configPath: registered.path });
     assert.equal(result.status, 'skipped');
@@ -242,7 +259,7 @@ describe('version-bump release gate', () => {
 
   describe('the release decision fails closed', () => {
     it('skips on a value outside cut/hold, naming it, before any file is read', async () => {
-      const project = makeProject({ config: { releaseMode: 'ask' } });
+      const project = makeProject({ config: { releaseMode: 'operator' } });
       fs.rmSync(path.join(project.path, 'CHANGELOG.md'));
       const { result, staged } = await run(project, { release: 'Cut' });
       assert.equal(result.status, 'skipped');
@@ -252,20 +269,20 @@ describe('version-bump release gate', () => {
     });
 
     it('skips on Hold with a level, rather than choosing a half', async () => {
-      const { result, staged } = await run(makeProject({ config: { releaseMode: 'auto' }, plan: '- [x] done' }), { release: 'hold', bumpLevel: 'minor' });
+      const { result, staged } = await run(makeProject({ config: { releaseMode: 'agent' }, plan: '- [x] done' }), { release: 'hold', bumpLevel: 'minor' });
       assert.equal(result.status, 'skipped');
       assert.match(result.output.reason, /contradictory release decision: hold with bumpLevel "minor"/);
       assert.deepEqual(staged, {});
     });
 
     it('treats a null release as no decision', async () => {
-      const { result } = await run(makeProject({ config: { releaseMode: 'ask' } }), { release: null });
+      const { result } = await run(makeProject({ config: { releaseMode: 'operator' } }), { release: null });
       assert.equal(result.status, 'needs-operator');
     });
   });
 
   it('asks nothing of a project that can never be cut: a foreign scheme still skips', async () => {
-    const project = makeProject({ config: { releaseMode: 'ask' } });
+    const project = makeProject({ config: { releaseMode: 'operator' } });
     fs.writeFileSync(path.join(project.path, 'version.json'), JSON.stringify({ version: '1.2.3.4' }));
     const { result } = await run(project);
     assert.equal(result.status, 'skipped');
@@ -273,7 +290,7 @@ describe('version-bump release gate', () => {
   });
 
   it('keeps fail-closed guards ahead of the gate, so a hold never hides them', async () => {
-    const project = makeProject({ config: { releaseMode: 'auto' }, plan: '- [ ] open' });
+    const project = makeProject({ config: { releaseMode: 'agent' }, plan: '- [ ] open' });
     fs.writeFileSync(path.join(project.path, 'version.json'), JSON.stringify({ version: '1.2.3.4' }));
     const { result } = await run(project);
     assert.equal(result.status, 'skipped');
@@ -293,8 +310,8 @@ describe('version-bump release gate', () => {
       { stepId: 'changelog-update', status: 'done', output: {} },
       { stepId: 'release-recommendation', status: 'done', output: { parsedFields: { releaseRecommendation: value, ...extra } } }
     ];
-    const ready = () => makeProject({ config: { releaseMode: 'auto' }, plan: '- [x] done' });
-    const notReady = () => makeProject({ config: { releaseMode: 'auto' }, plan: '- [x] one\n- [ ] two' });
+    const ready = () => makeProject({ config: { releaseMode: 'agent' }, plan: '- [x] done' });
+    const notReady = () => makeProject({ config: { releaseMode: 'agent' }, plan: '- [x] one\n- [ ] two' });
 
     it('halts when the checks say ready and the AI recommends holding, quoting the operator', async () => {
       const { result, staged } = await run(ready(), {},
@@ -352,19 +369,19 @@ describe('version-bump release gate', () => {
     });
 
     it('still halts on an unknown verdict, naming the AI\'s view as a hint', async () => {
-      const project = makeProject({ config: { releaseMode: 'auto' }, pointer: 'artifacts/missing.md' });
+      const project = makeProject({ config: { releaseMode: 'agent' }, pointer: 'artifacts/missing.md' });
       const { result } = await run(project, {}, advised('cut', { reason: 'feature complete' }));
       assert.equal(result.status, 'needs-operator');
       assert.equal(result.output.disagreement, undefined, 'no verdict to disagree with');
       assert.match(result.output.reason, /readiness is unknown .*; the AI recommends cut: feature complete$/);
     });
 
-    it('in ask, carries the recommendation as a hint and never cuts on it', async () => {
-      const project = makeProject({ config: { releaseMode: 'ask' }, plan: '- [x] done' });
+    it('in operator mode, carries the recommendation as a hint and never cuts on it', async () => {
+      const project = makeProject({ config: { releaseMode: 'operator' }, plan: '- [x] done' });
       const { result, staged } = await run(project, {}, advised('cut'));
       assert.equal(result.status, 'needs-operator');
       assert.equal(result.output.disagreement, undefined);
-      assert.match(result.output.reason, /releaseMode is ask.*; the AI recommends cut\)$/);
+      assert.match(result.output.reason, /releaseMode is operator.*; the AI recommends cut\)$/);
       assert.deepEqual(staged, {});
     });
 
@@ -389,8 +406,8 @@ describe('version-bump release gate', () => {
       return versionBump.run(context).then((result) => ({ result, staged: context.staged }));
     };
 
-    it('holds a ready auto cut: stages nothing, version and [Unreleased] unchanged', async () => {
-      const project = makeProject({ config: { releaseMode: 'auto' }, plan: '- [x] done' });
+    it('holds a ready agent cut: stages nothing, version and [Unreleased] unchanged', async () => {
+      const project = makeProject({ config: { releaseMode: 'agent' }, plan: '- [x] done' });
       const ledger = path.join(project.path, '.prawduct', 'change-log.md');
       // The ledger is not what proves the hold: no version-bump run writes it (ADR 0011). The version and CHANGELOG assertions do.
       const ledgerText = '<!-- prawduct: id=X status=merged -->\n';
@@ -406,7 +423,7 @@ describe('version-bump release gate', () => {
     });
 
     it('holds even when the operator asked for a Cut', async () => {
-      const { result, staged } = await runOn(makeProject({ config: { releaseMode: 'ask' } }), { release: 'cut' }, dormant);
+      const { result, staged } = await runOn(makeProject({ config: { releaseMode: 'operator' } }), { release: 'cut' }, dormant);
       assert.equal(result.status, 'capability-unavailable');
       assert.deepEqual(staged, {});
     });
@@ -419,9 +436,72 @@ describe('version-bump release gate', () => {
 
     it('cuts as before when the engine can run the methodology', async () => {
       const available = { ...dormant, available: true, disposition: 'available', engineId: 'claude' };
-      const { result } = await runOn(makeProject({ config: { releaseMode: 'auto' }, plan: '- [x] done' }), {}, available);
+      const { result } = await runOn(makeProject({ config: { releaseMode: 'agent' }, plan: '- [x] done' }), {}, available);
       assert.equal(result.status, 'done');
       assert.equal(result.output.to, '1.3.0');
+    });
+  });
+
+  // #1051 — _promoteUnreleased also extends a Keep-a-Changelog bottom-of-file
+  // link-reference-definition block, inferring the URL pattern already in use.
+  describe('_promoteUnreleased — changelog link-reference definitions (#1051)', () => {
+    const ISO = '2026-09-14';
+    const UNRELEASED = '## [Unreleased]\n\n### Added\n- a feature\n';
+
+    it('Case A: retargets [Unreleased] and inserts a compare link, when one exists', () => {
+      const text = `# Changelog\n\n${UNRELEASED}\n## [1.2.3] - 2026-09-01\n\n- first\n\n`
+        + '[Unreleased]: https://github.com/example/repo/compare/v1.2.3...HEAD\n'
+        + '[1.2.3]: https://github.com/example/repo/compare/v1.0.0...v1.2.3\n';
+      const out = versionBump._promoteUnreleased(text, '1.3.0', ISO);
+      const lines = out.split('\n');
+      assert.ok(lines.includes('[Unreleased]: https://github.com/example/repo/compare/v1.3.0...HEAD'));
+      assert.ok(lines.includes('[1.3.0]: https://github.com/example/repo/compare/v1.2.3...v1.3.0'));
+      const unreleasedIdx = lines.indexOf('[Unreleased]: https://github.com/example/repo/compare/v1.3.0...HEAD');
+      assert.equal(lines[unreleasedIdx + 1], '[1.3.0]: https://github.com/example/repo/compare/v1.2.3...v1.3.0',
+        'the new version link sits directly below the retargeted Unreleased line');
+      assert.ok(!out.includes('compare/v1.2.3...HEAD'), 'the old Unreleased target is gone, not just appended to');
+    });
+
+    it('Case B: inserts a compare link above the topmost one, when there is no [Unreleased] link', () => {
+      const text = `# Changelog\n\n${UNRELEASED}\n## [1.2.3] - 2026-09-01\n\n- first\n\n`
+        + '[1.2.3]: https://github.com/example/repo/compare/v1.0.0...v1.2.3\n'
+        + '[1.0.0]: https://github.com/example/repo/compare/v0.9.0...v1.0.0\n';
+      const out = versionBump._promoteUnreleased(text, '1.3.0', ISO);
+      const lines = out.split('\n').filter((l) => l.startsWith('['));
+      assert.deepEqual(lines, [
+        '[1.3.0]: https://github.com/example/repo/compare/v1.2.3...v1.3.0',
+        '[1.2.3]: https://github.com/example/repo/compare/v1.0.0...v1.2.3',
+        '[1.0.0]: https://github.com/example/repo/compare/v0.9.0...v1.0.0'
+      ]);
+    });
+
+    it('Case C: inserts a direct tag link above the topmost one, when the block uses tag URLs', () => {
+      const text = `# Changelog\n\n${UNRELEASED}\n## [1.2.3] - 2026-09-01\n\n- first\n\n`
+        + '[1.2.3]: https://github.com/example/repo/releases/tag/v1.2.3\n'
+        + '[1.0.0]: https://github.com/example/repo/releases/tag/v1.0.0\n';
+      const out = versionBump._promoteUnreleased(text, '1.3.0', ISO);
+      const lines = out.split('\n').filter((l) => l.startsWith('['));
+      assert.deepEqual(lines, [
+        '[1.3.0]: https://github.com/example/repo/releases/tag/v1.3.0',
+        '[1.2.3]: https://github.com/example/repo/releases/tag/v1.2.3',
+        '[1.0.0]: https://github.com/example/repo/releases/tag/v1.0.0'
+      ]);
+    });
+
+    it('does nothing to the bottom of the file when there is no link-reference-definition block', () => {
+      const text = `# Changelog\n\n${UNRELEASED}\n## [1.2.3] - 2026-09-01\n\n- first\n`;
+      const out = versionBump._promoteUnreleased(text, '1.3.0', ISO);
+      assert.doesNotMatch(out, /^\[[^\]]+\]:\s/m, 'no link-def syntax appears where none existed');
+      assert.match(out, /## \[1\.3\.0\] - 2026-09-14/, 'the promotion itself still happened');
+    });
+
+    it('never duplicates a definition that already names the new version', () => {
+      const text = `# Changelog\n\n${UNRELEASED}\n## [1.2.3] - 2026-09-01\n\n- first\n\n`
+        + '[Unreleased]: https://github.com/example/repo/compare/v1.2.3...HEAD\n'
+        + '[1.3.0]: https://github.com/example/repo/compare/v1.2.3...v1.3.0\n'
+        + '[1.2.3]: https://github.com/example/repo/compare/v1.0.0...v1.2.3\n';
+      const out = versionBump._promoteUnreleased(text, '1.3.0', ISO);
+      assert.equal(out.split('[1.3.0]:').length - 1, 1, 'exactly one [1.3.0]: definition, not a second');
     });
   });
 });

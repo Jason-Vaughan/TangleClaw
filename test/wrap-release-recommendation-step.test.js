@@ -168,7 +168,7 @@ describe('release-recommendation step', () => {
     });
 
     it('prompts when the decision is open, and reads the capture back', async () => {
-      const project = makeProject({ config: { releaseMode: 'auto' } });
+      const project = makeProject({ config: { releaseMode: 'agent' } });
       aic._internal.readCaptureFile = () => '## ReleaseRecommendation\nhold\n\n## OperatorIntent\n"just saving state"\n\n## Reason\nmid-feature\n';
       aic._internal.removeCaptureFile = () => {};
       aic._internal.captureFileExists = () => false;
@@ -188,6 +188,11 @@ describe('release-recommendation step', () => {
       wrapPipeline._planAiContentPrompts(defaultPipeline.steps(), null, options, session, project);
 
     it('counts the step when the decision can still be open', () => {
+      assert.deepEqual(plan(makeProject({ config: { releaseMode: 'operator' } })),
+        ['changelog-update', 'release-recommendation', 'learnings-capture', 'memory-update']);
+    });
+
+    it('counts it the same for the legacy "ask" spelling, permanently aliased (#1701)', () => {
       assert.deepEqual(plan(makeProject({ config: { releaseMode: 'ask' } })),
         ['changelog-update', 'release-recommendation', 'learnings-capture', 'memory-update']);
     });
@@ -241,7 +246,7 @@ describe('release-recommendation step', () => {
     });
 
     /**
-     * Register an `auto` project that would cut 1.0.0 → 1.1.0 on ready checks.
+     * Register an `agent` project that would cut 1.0.0 → 1.1.0 on ready checks.
      *
      * @param {string} name
      * @returns {void}
@@ -249,7 +254,7 @@ describe('release-recommendation step', () => {
     function registerProject(name) {
       const dir = path.join(tmpDir, name);
       fs.mkdirSync(path.join(dir, '.tangleclaw'), { recursive: true });
-      fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), JSON.stringify({ releaseMode: 'auto' }));
+      fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), JSON.stringify({ releaseMode: 'agent' }));
       fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '1.0.0' }));
       fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), '# Changelog\n\n## [Unreleased]\n\n### Added\n- a feature\n\n## [1.0.0] - 2026-09-01\n\n- first\n');
       store.projects.create({ name, path: dir });
