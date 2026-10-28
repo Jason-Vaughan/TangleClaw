@@ -1277,7 +1277,7 @@ describe('the session keeps its blocker (#2128)', () => {
     // one is used only where the pre-key itself is the subject.
     const WITH_PREKEY = Object.freeze({ ...CLAUDE, launch: { ...CLAUDE.launch, startupDelay: 1, preKeys: ['Enter'], preKeyDelay: 1 } });
     const launch = (s, { silentPrime = false, profile = PROFILE, startupDelivery } = {}) => sessions._deferEngineInit(
-      s.tmuxSession, project.name, 'claude', profile, 'the prime', null, silentPrime, null,
+      s.tmuxSession, project.name, 'claude', profile, 'the prime', null, silentPrime, null, null,
       { sessionId: s.id, projectId: project.id, hasSequence: true, startupDelivery }
     );
 
@@ -1436,7 +1436,7 @@ describe('the session keeps its blocker (#2128)', () => {
         });
         sessions._deferEngineInit(
           s.tmuxSession, project.name, 'claude', profile, 'the prime', null, false,
-          { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' },
+          { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' }, null,
           { sessionId: s.id, projectId: project.id, hasSequence: true }
         );
         await done;
@@ -1499,7 +1499,7 @@ describe('the session keeps its blocker (#2128)', () => {
         store.sessions.get = () => { throw new Error('store gone'); };
         sessions._deferEngineInit(
           s.tmuxSession, project.name, 'claude', PROFILE, 'the prime', null, false,
-          { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' },
+          { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' }, null,
           { sessionId: s.id, projectId: project.id, hasSequence: true }
         );
         await turns();
@@ -1573,7 +1573,7 @@ describe('the session keeps its blocker (#2128)', () => {
           const done = new Promise((resolve) => { launchFinished = resolve; });
           sessions._deferEngineInit(
             s.tmuxSession, project.name, 'claude', profile, 'the prime', null, false,
-            { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' },
+            { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' }, null,
             { sessionId: s.id, projectId: project.id, hasSequence: true }
           );
           await done;
@@ -1670,7 +1670,7 @@ describe('the session keeps its blocker (#2128)', () => {
         const done = new Promise((resolve) => { launchFinished = resolve; });
         sessions._deferEngineInit(
           s.tmuxSession, project.name, 'claude', WITH_PREKEY, 'the prime', null, false,
-          { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' },
+          { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' }, null,
           { sessionId: s.id, projectId: project.id, hasSequence: true }
         );
         await done;
@@ -1721,7 +1721,7 @@ describe('the session keeps its blocker (#2128)', () => {
         const done = new Promise((resolve) => { launchFinished = resolve; });
         sessions._deferEngineInit(
           s.tmuxSession, project.name, 'claude', PROFILE, 'the prime', null, false,
-          { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' },
+          { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' }, null,
           { sessionId: s.id, projectId: project.id, hasSequence: true }
         );
         await done;
@@ -3591,7 +3591,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
         const done = new Promise((resolve) => { launchFinished = resolve; });
         sessions._deferEngineInit(
           s.tmuxSession, project.name, 'claude', profile, 'the prime', null, false,
-          { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' },
+          { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' }, null,
           { sessionId: s.id, projectId: project.id, hasSequence: true }
         );
         await done;
@@ -3745,7 +3745,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
             const done = new Promise((resolve) => { launchFinished = resolve; });
             sessions._deferEngineInit(
               s.tmuxSession, project.name, 'claude', profile, 'the prime', null, false,
-              { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' },
+              { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' }, null,
               { sessionId: s.id, projectId: project.id, hasSequence: true }
             );
             await done;
@@ -3805,7 +3805,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
         startupDialog.watch = async () => { watched += 1; return { outcome: 'clear', dialog: null, waitedMs: 0 }; };
         launchKickoff.kickoff = () => Promise.resolve('sent');
         const done = new Promise((resolve) => { launchFinished = resolve; });
-        sessions._deferEngineInit(s.tmuxSession, project.name, 'claude', optedOut, 'the prime', null, false, null, { sessionId: s.id, projectId: project.id, hasSequence: true });
+        sessions._deferEngineInit(s.tmuxSession, project.name, 'claude', optedOut, 'the prime', null, false, null, null, { sessionId: s.id, projectId: project.id, hasSequence: true });
         await done;
         await new Promise((resolve) => setTimeout(resolve, 5));
         await turns();
@@ -3846,7 +3846,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
           const done = new Promise((resolve) => { launchFinished = resolve; });
           sessions._deferEngineInit(
             s.tmuxSession, project.name, 'claude-sonnet-reviewer', variant, 'the prime', null, false,
-            { sessionId: s.id, projectId: project.id, engineId: 'claude-sonnet-reviewer', kind: 'startup', ruleIds: [1], digest: 'd' },
+            { sessionId: s.id, projectId: project.id, engineId: 'claude-sonnet-reviewer', kind: 'startup', ruleIds: [1], digest: 'd' }, null,
             { sessionId: s.id, projectId: project.id, hasSequence: true }
           );
           await done;
@@ -3889,7 +3889,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
             const done = new Promise((resolve) => { launchFinished = resolve; });
             sessions._deferEngineInit(
               s.tmuxSession, project.name, profile.id, profile, 'the prime', null, false,
-              { sessionId: s.id, projectId: project.id, engineId: profile.id, kind: 'startup', ruleIds: [1], digest: 'd' },
+              { sessionId: s.id, projectId: project.id, engineId: profile.id, kind: 'startup', ruleIds: [1], digest: 'd' }, null,
               { sessionId: s.id, projectId: project.id, hasSequence: true }
             );
             await done;
@@ -4364,7 +4364,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
             try {
               const done = new Promise((resolve) => { launchFinished = resolve; });
               sessions._deferEngineInit(s.tmuxSession, project.name, 'claude', ALL_BAD, 'the prime', null, false,
-                { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' },
+                { sessionId: s.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [1], digest: 'd' }, null,
                 { sessionId: s.id, projectId: project.id, hasSequence: true });
               await done;
               await new Promise((resolve) => setTimeout(resolve, 5));

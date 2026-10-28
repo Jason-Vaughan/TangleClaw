@@ -239,6 +239,24 @@ describe('startupControl at launch and teardown (codex)', () => {
     assert.equal(store.startupControlChannels.getOpenBySession(unverified.session.id), null);
   });
 
+  it('a native launch never attempts the pointer paste at all, so it writes no paste-outcome row (#1597)', () => {
+    // Native delivery supersedes the paste entirely (B3): the prime's rules
+    // ride the fired startup prompt, not a pasted pointer, so `_runEngineInit`
+    // never reaches phase 2 for this launch. The project's default pasteRules
+    // ('pull') plus an applicable sequence is what makes this a pull-pointer
+    // launch in the first place — the same combination the launch sequence
+    // records with its own `RULES_SERVED_BY_LAUNCH_SEQUENCE` skip.
+    healthySeams();
+    const native = launched({ primePrompt: true });
+    assert.equal(native.sequence.applicability, 'applicable');
+    assert.equal(native.sequence.startupDelivery, 'native');
+    assert.deepEqual(
+      store.activity.query({ sessionId: native.session.id, eventType: sessions.POINTER_PASTE_OUTCOME_EVENT }),
+      [],
+      'nothing to record a pointer-paste outcome FOR — the paste was never owed, not merely withheld'
+    );
+  });
+
   it('a channel whose row could not be recorded is closed out as unavailable, so a native launch never shows no channel at all', () => {
     healthySeams();
     const realAttach = codex.attachLaunch;

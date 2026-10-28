@@ -675,7 +675,7 @@ describe('the launch path reaches the kickoff (#1635)', () => {
   it('hands the kickoff the launch it was given', async () => {
     sessions._deferEngineInit(
       'tc-builder1', 'TangleClaw-Builder1', 'claude', ENGINE_PROFILE,
-      'the prime', null, true, null,
+      'the prime', null, true, null, null,
       { sessionId: 99, projectId: 3, hasSequence: true }
     );
     await settle();
@@ -697,7 +697,7 @@ describe('the launch path reaches the kickoff (#1635)', () => {
     // place decides, so there is one place to read when the answer is wrong.
     sessions._deferEngineInit(
       'tc-builder1', 'TangleClaw-Builder1', 'claude', ENGINE_PROFILE,
-      'the prime', null, true, null,
+      'the prime', null, true, null, null,
       { sessionId: 99, projectId: 3, hasSequence: false }
     );
     await settle();
@@ -712,7 +712,7 @@ describe('the launch path reaches the kickoff (#1635)', () => {
     // unreachable in production — a declared outcome only tests could see.
     sessions._deferEngineInit(
       'tc-builder1', 'TangleClaw-Builder1', 'claude', ENGINE_PROFILE,
-      'the prime', null, false, null,
+      'the prime', null, false, null, null,
       { sessionId: 99, projectId: 3, hasSequence: true }
     );
     await settle();

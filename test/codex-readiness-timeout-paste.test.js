@@ -69,7 +69,7 @@ async function launchCodex(t, panes) {
   const startedAt = Date.now();
   try {
     sessions._deferEngineInit('tc-codex-2223', 'codex-2223', 'codex', CODEX_PROFILE, 'the prime', null, false,
-      { sessionId: 2223, projectId: 2223, engineId: 'codex', kind: 'startup', ruleIds: [1], digest: 'd2223' },
+      { sessionId: 2223, projectId: 2223, engineId: 'codex', kind: 'startup', ruleIds: [1], digest: 'd2223' }, null,
       { sessionId: 2223, projectId: 2223, hasSequence: true, startupDelivery: 'legacy' });
     // One production poll interval per tick, so the row's fake time is known
     // to within one poll of when the gate gave up.
