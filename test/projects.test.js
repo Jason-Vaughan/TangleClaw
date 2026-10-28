@@ -772,6 +772,41 @@ describe('projects', () => {
       assert.ok(!fs.existsSync(path.join(projectsDir, 'no-git', '.git')));
     });
 
+    // #2232 — a directory that lands between the up-front `fs.existsSync`
+    // check and the actual `mkdirSync` (another process, or a second
+    // concurrent create for the same name) used to be invisible: `mkdirSync`
+    // with `recursive: true` succeeds silently on an existing directory, so
+    // `createProject` would carry on and overwrite whatever `project.json`
+    // was already there with fresh defaults.
+    it('refuses rather than silently succeeding when the directory is created in the check-to-mkdir race', async () => {
+      const name = 'create-race-dir';
+      const racePath = path.join(projectsDir, name);
+      fs.mkdirSync(path.join(racePath, '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(path.join(racePath, '.tangleclaw', 'project.json'),
+        JSON.stringify({ engine: 'claude', tags: ['keep-me'] }));
+
+      // Lie exactly once, to the up-front check only — standing in for a
+      // directory that lands in the window between that check and the write.
+      const realExistsSync = fs.existsSync;
+      let lied = false;
+      fs.existsSync = (p) => {
+        if (p === racePath && !lied) { lied = true; return false; }
+        return realExistsSync(p);
+      };
+      let result;
+      try {
+        result = projects.createProject({ name });
+      } finally {
+        fs.existsSync = realExistsSync;
+      }
+
+      assert.equal(result.project, null, 'a raced create must refuse rather than silently succeed');
+      assert.ok(result.errors[0].includes('Failed to create directory'));
+      assert.equal(store.projects.getByName(name), null, 'the refused create never reached storage');
+      const onDisk = JSON.parse(fs.readFileSync(path.join(racePath, '.tangleclaw', 'project.json'), 'utf8'));
+      assert.deepEqual(onDisk.tags, ['keep-me'], 'the pre-existing project.json must survive untouched');
+    });
+
     describe('case-insensitive duplicate rejection (#221, sibling to #188)', () => {
       it('rejects creating "Foo-Case" when "foo-case" already exists (lowercase first)', async () => {
         const first = projects.createProject({ name: 'foo-case' });
@@ -2778,6 +2813,55 @@ describe('projects', () => {
       const result = await projects.attachProject('bad name!');
       assert.equal(result.project, null);
       assert.ok(result.errors.length > 0);
+    });
+
+    // #2232 — a present-but-unusable project.json (valid JSON, wrong shape)
+    // must never be overwritten with defaults: `loadConfigForWrite` catches it
+    // the same way `updateProject` does, attach falls back to the resolved
+    // default engine, and the unusable file survives on disk untouched.
+    it('attaches over a present-but-unusable project.json without overwriting it', async () => {
+      const attachDir = path.join(projectsDir, 'bad-config');
+      fs.mkdirSync(path.join(attachDir, '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(path.join(attachDir, '.tangleclaw', 'project.json'), '[1,2,3]');
+
+      const result = await projects.attachProject('bad-config');
+      assert.ok(result.project);
+      assert.ok(result.errors.some((e) => e.includes('Failed to read existing project.json')));
+      const onDisk = fs.readFileSync(path.join(attachDir, '.tangleclaw', 'project.json'), 'utf8');
+      assert.equal(onDisk, '[1,2,3]', 'the unusable file must survive untouched');
+    });
+
+    // #2232 — a project.json that lands between the load above and the
+    // exclusive write below (another process attaching concurrently, or one
+    // already there) must make the write fail EEXIST rather than clobber it.
+    it('does not overwrite a project.json that appears in the check-to-write race', async () => {
+      const attachDir = path.join(projectsDir, 'race-config');
+      fs.mkdirSync(attachDir, { recursive: true });
+      fs.mkdirSync(path.join(attachDir, '.git'));
+
+      const realLoad = store.projectConfig.load;
+      store.projectConfig.load = (p, opts) => {
+        // The real answer first (absent, so attach resolves the default
+        // engine), THEN the race: a project.json lands in the window between
+        // that read and the exclusive write below.
+        const answer = realLoad(p, opts);
+        if (p === attachDir) {
+          fs.mkdirSync(path.join(attachDir, '.tangleclaw'), { recursive: true });
+          fs.writeFileSync(path.join(attachDir, '.tangleclaw', 'project.json'),
+            JSON.stringify({ engine: 'codex', tags: ['raced-in'] }));
+        }
+        return answer;
+      };
+      let result;
+      try {
+        result = await projects.attachProject('race-config');
+      } finally {
+        store.projectConfig.load = realLoad;
+      }
+
+      assert.ok(result.project);
+      const onDisk = JSON.parse(fs.readFileSync(path.join(attachDir, '.tangleclaw', 'project.json'), 'utf8'));
+      assert.deepEqual(onDisk.tags, ['raced-in'], 'the file that won the race must survive untouched');
     });
   });
 

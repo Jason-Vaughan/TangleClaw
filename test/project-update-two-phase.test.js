@@ -324,6 +324,145 @@ describe('the fixture tracks the settings modal, not a remembered list', () => {
         + 'give it a table entry, or add it to the declared-unvalidated set');
     }
   });
+
+  /**
+   * `createProject`'s source, sliced at both ends — the create-side mirror of
+   * `applyPhaseSource()` above.
+   *
+   * @returns {string} The function's source, from its declaration to its closing brace.
+   */
+  function createProjectSource() {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'projects.js'), 'utf8');
+    const start = src.indexOf('function createProject(data) {');
+    if (start < 0) throw new Error('createProject not found in lib/projects.js');
+    const end = src.indexOf('\n}\n', start);
+    if (end < start) throw new Error('createProject has no findable closing brace');
+    return src.slice(start, end);
+  }
+
+  // R1 A-Gate review (PR #2684, #1374 bullet 3): the derived check above
+  // guards the UPDATE path only. `createProject` runs the SAME
+  // `PROJECT_UPDATE_VALIDATORS` table (#1374), so it needs the same guard —
+  // otherwise a field createProject starts reading straight off `data`
+  // without a table entry (or a declared exemption) could reach disk with no
+  // verdict at all, exactly the gap #1338/#1374 closed for `tags`.
+  const CREATE_ONLY_FIELDS = new Set(['gitInit']);
+
+  it('every data.<field> read in createProject, beside the declared create-only fields, is known to the validator table', () => {
+    const create = createProjectSource();
+    const known = new Set(projects._PROJECT_UPDATE_VALIDATORS
+      .flatMap((v) => [...v.keys, ...(v.reads || [])]));
+    const fields = [...new Set([...create.matchAll(/\bdata\.([A-Za-z][A-Za-z0-9]*)/g)].map((m) => m[1]))];
+    assert.ok(fields.length >= 5, `only found ${fields.length}: ${fields.join(', ')}`);
+    assert.ok(fields.includes('tags') && fields.includes('engine'));
+    for (const field of fields) {
+      if (CREATE_ONLY_FIELDS.has(field)) continue;
+      assert.ok(known.has(field),
+        `"${field}" is read in createProject and no validator names it — `
+        + 'give it a table entry, or add it to CREATE_ONLY_FIELDS if it is create-only mechanics');
+    }
+  });
+
+  it('createProject runs _validateProjectUpdates before its first fs.mkdirSync, so a rejected field leaves nothing on disk', () => {
+    const create = createProjectSource();
+    const validateAt = create.indexOf('_validateProjectUpdates(');
+    const mkdirAt = create.indexOf('fs.mkdirSync(');
+    assert.ok(validateAt !== -1, 'createProject must call _validateProjectUpdates');
+    assert.ok(mkdirAt !== -1, 'createProject must call fs.mkdirSync');
+    assert.ok(validateAt < mkdirAt, 'validation must run before the first write');
+  });
+});
+
+describe('createProject runs the same PROJECT_UPDATE_VALIDATORS table updateProject does (#1374)', () => {
+  // Before this, `createProject` hand-copied its own checks for silentPrime,
+  // showLaunchModePicker, defaultLaunchMode and the eyes-open guard — a second
+  // copy of each rule, free to drift from the table `updateProject` runs (the
+  // same shape #1338 closed for `tags`, pinned below in
+  // `test/projects.test.js`'s "create and update refuse/accept the SAME
+  // shapes"). These pin the same symmetry for the fields #1338 left open, plus
+  // the two-phase property itself: a refused create leaves nothing on disk.
+  let tmpDir;
+  let projectsDir;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-create-validators-'));
+    projectsDir = path.join(tmpDir, 'projects');
+    fs.mkdirSync(projectsDir, { recursive: true });
+    store._setBasePath(path.join(tmpDir, 'tangleclaw'));
+    store.init();
+    const config = store.config.load();
+    config.projectsDir = projectsDir;
+    store.config.save(config);
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('refuses silentPrime=true on an engine lacking the capability, identically on create and update', async () => {
+    // codex declares no `supportsSilentPrime` capability.
+    const created = projects.createProject({ name: 'cv-silent-create', engine: 'codex', silentPrime: true });
+    assert.equal(created.project, null);
+    assert.equal(fs.existsSync(path.join(projectsDir, 'cv-silent-create')), false,
+      'the refusal runs before the first mkdir, so it leaves nothing on disk');
+
+    projects.createProject({ name: 'cv-silent-update', engine: 'codex' });
+    const updated = await projects.updateProject('cv-silent-update', { silentPrime: true });
+    assert.equal(updated.project, null);
+    assert.deepEqual(created.errors, updated.errors, 'create and update give the same rejection');
+  });
+
+  it('refuses an unknown defaultLaunchMode identically on create and update', async () => {
+    const created = projects.createProject({ name: 'cv-mode-create', engine: 'claude', defaultLaunchMode: 'no-such-mode' });
+    assert.equal(created.project, null);
+    assert.equal(fs.existsSync(path.join(projectsDir, 'cv-mode-create')), false);
+
+    projects.createProject({ name: 'cv-mode-update', engine: 'claude' });
+    const updated = await projects.updateProject('cv-mode-update', { defaultLaunchMode: 'no-such-mode' });
+    assert.equal(updated.project, null);
+    assert.deepEqual(created.errors, updated.errors, 'create and update give the same rejection');
+  });
+
+  it('refuses showLaunchModePicker false + a warning-carrying mode with no confirm, identically on create and update', async () => {
+    const created = projects.createProject({
+      name: 'cv-eyes-create', engine: 'claude', showLaunchModePicker: false, defaultLaunchMode: 'bypassPermissions'
+    });
+    assert.equal(created.project, null);
+    assert.equal(fs.existsSync(path.join(projectsDir, 'cv-eyes-create')), false);
+
+    projects.createProject({ name: 'cv-eyes-update', engine: 'claude' });
+    const updated = await projects.updateProject('cv-eyes-update', {
+      showLaunchModePicker: false, defaultLaunchMode: 'bypassPermissions'
+    });
+    assert.equal(updated.project, null);
+    assert.deepEqual(created.errors, updated.errors, 'create and update give the same rejection');
+  });
+
+  it('accepts the same combination once confirmBypassHidden is sent', async () => {
+    const created = projects.createProject({
+      name: 'cv-eyes-confirmed', engine: 'claude', showLaunchModePicker: false,
+      defaultLaunchMode: 'bypassPermissions', confirmBypassHidden: true
+    });
+    assert.ok(created.project, `create must succeed: ${created.errors.join('; ')}`);
+    // `createProject` returns the raw DB row, not an enriched one — the two
+    // settings it accepted here live on disk, not on the row.
+    const onDisk = JSON.parse(fs.readFileSync(
+      path.join(created.project.path, '.tangleclaw', 'project.json'), 'utf8'));
+    assert.equal(onDisk.showLaunchModePicker, false);
+    assert.equal(onDisk.defaultLaunchMode, 'bypassPermissions');
+  });
+
+  it('refuses a non-boolean showLaunchModePicker identically on create and update', async () => {
+    const created = projects.createProject({ name: 'cv-show-create', showLaunchModePicker: 'yes' });
+    assert.equal(created.project, null);
+    assert.equal(fs.existsSync(path.join(projectsDir, 'cv-show-create')), false);
+
+    projects.createProject({ name: 'cv-show-update' });
+    const updated = await projects.updateProject('cv-show-update', { showLaunchModePicker: 'yes' });
+    assert.equal(updated.project, null);
+    assert.deepEqual(created.errors, updated.errors, 'create and update give the same rejection');
+  });
 });
 
 describe('the apply phase cannot refuse a field', () => {
