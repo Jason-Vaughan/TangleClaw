@@ -41,6 +41,7 @@ const { setLevel } = require('../lib/logger');
 setLevel('error');
 
 const store = require('../lib/store');
+const medusaRegistry = require('../lib/medusa-registry');
 const { createServer } = require('../server');
 const { outsidePane } = require('./_tc-env');
 const { bindProject } = require('./_shared-docs-callers');
@@ -131,6 +132,53 @@ describe('tc CLI vertical slice (ambient-awareness Chunk 02)', () => {
       assert.match(sb.detail, /CANNOT message/i, 'absence is stated, not omitted');
       assert.match(sb.detail, /rather than improvising/,
         'the anti-fabrication instruction rides the absence');
+    });
+
+    it('resolves the LIVE registry binding even when the caller\'s own claim is empty/stale (#2153)', async () => {
+      store.projectConfig.save(project.path, { medusaEnabled: true });
+      const bound = bindProject(project);
+      const registered = medusaRegistry.ensureWorkspaceId(project.path, bound.sessionId, 'tc-cli-proj');
+      try {
+        // No ?workspaceId= at all — the pane's env var reads empty/stale, as
+        // it does for a window after a session restart (the reported bug).
+        const res = await request(server, 'GET', `/api/tc/whoami?projectId=${project.id}`);
+        assert.equal(res.status, 200);
+        assert.equal(res.body.workspaceId, registered,
+          'the live registry binding is reported, not a false absence');
+        const sb = res.body.capabilities.find((c) => c.id === 'switchboard');
+        assert.equal(sb.enabled, true, 'switchboard is NOT falsely reported disabled');
+        assert.match(sb.detail, new RegExp(registered.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+
+        // A stale claim disagreeing with the registry: the registry still wins.
+        const res2 = await request(server, 'GET', `/api/tc/whoami?projectId=${project.id}&workspaceId=stale-ws-id`);
+        assert.equal(res2.status, 200);
+        assert.equal(res2.body.workspaceId, registered, 'the registry outranks a stale caller claim');
+      } finally {
+        store.sessions.kill(bound.sessionId, 'test cleanup');
+        store.projectConfig.save(project.path, { medusaEnabled: false });
+      }
+    });
+
+    it('a resolved session with no registry binding reports workspaceId null, never a stale claim (R-Gate round 2)', async () => {
+      store.projectConfig.save(project.path, { medusaEnabled: true });
+      const bound = bindProject(project);
+      try {
+        // No ensureWorkspaceId call: the registry has nothing recorded for
+        // this session — the exact state right after a session starts,
+        // before Medusa first mints it an id. The real send path needs a
+        // live listener for this session (lib/medusa.js), so a stale claim
+        // must not make whoami advertise a binding that cannot work.
+        const res = await request(server, 'GET', `/api/tc/whoami?projectId=${project.id}&workspaceId=stale-ws-id`);
+        assert.equal(res.status, 200);
+        assert.equal(res.body.workspaceId, null,
+          'an absent registry entry for a resolved session must not fall back to the caller\'s stale claim');
+        const sb = res.body.capabilities.find((c) => c.id === 'switchboard');
+        assert.equal(sb.enabled, false,
+          'switchboard reports disabled rather than advertising a binding the send path cannot corroborate');
+      } finally {
+        store.sessions.kill(bound.sessionId, 'test cleanup');
+        store.projectConfig.save(project.path, { medusaEnabled: false });
+      }
     });
 
     it('an unresolvable project still records a receipt — the signal is "the CLI was invoked at all"', async () => {
