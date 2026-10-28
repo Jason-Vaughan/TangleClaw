@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-28 — W1-C: configurable wrap merge method; settle this repo's own PR merge strategy (#1172, #2162)
+
+<!-- prawduct: type=fixed | scope=w1c-1172-2162-wrap-merge-method -->
+
+- **#1172:** `lib/wrap-steps/pr-merge.js` exports `resolveWrapMergeMethod(projectPath, options)`, `VALID_MERGE_METHODS`, and `DEFAULT_MERGE_METHOD`. Both auto-merge call sites (`pr-merge.js`'s session-scoped enqueue and `commit.js`'s auto-branched-commit close-loop) resolve the `gh pr merge` flag through it instead of a hard-coded `--squash`, in precedence order: explicit option → `.tangleclaw/project.json`'s `wrapMergeMethod` → a `PR merge strategy` row in `.prawduct/artifacts/project-preferences.md` → `"squash"` default. The preferences-row parser anchors a recognized method name to a word boundary (whitespace or end-of-value) rather than a bare prefix match, so an invalid value like `"mergeish"` or `"rebase-disabled"` falls back to the default with a warning instead of silently resolving to `merge`/`rebase` — caught by PRR-B review on this PR before merge.
+- **#2162:** `CLAUDE.md`'s "This Repo's Exceptions To The Global Rules Below" now states this repo's own PR merge strategy explicitly — merge commits, per Integrator Rule #282 — and `docs/user-guide.md`, `FEATURES.md`, and `docs/adr/0002-wrap-pipeline-contract.md` describe the configurable wrap merge method (FEATURES.md/docs edits authorized by PM+Architect co-sign A481-R3, token A481-R3-COSIGN-20261028T1831Z).
+- Fragment-only per P27 for `CHANGELOG.md`: `changelog.d/1172.wrap-merge-method-configurable.fixed.md` and `changelog.d/2162.settle-pr-merge-strategy-merge-commit.changed.md`.
+
 ## 2026-10-28 — v5.45.0 W4-REL: prepare the project-settings integrity release candidate
 
 <!-- prawduct: type=internal | scope=v545-w4-rel -->
