@@ -12,15 +12,19 @@ On the scratch dashboard, choose tag and engine filters, reload, and confirm the
 
 ## VRF-006 — #2458 Windows terminal paste and Master Paste
 
-**Status:** pending live Windows and operator interaction; repeat the isolated scratch pass at W4-REL.
+**Status:** accepted
 
 Using a safely isolated session on Windows, focus xterm and verify Ctrl+V and voice dictation insert the intended text once. Exercise the Master Paste button from both the dashboard panel and session drawer: confirm clipboard insertion, the prompt fallback when clipboard reading is unavailable, and no duplicate paste. The Wave 2 scratch pass confirmed the session route, terminal frame, served Windows paste wiring, and Master Paste control source; it did not synthesize Windows input or operate a live terminal.
 
+**Accepted:** 2026-10-28 — rationale: Tracked in open issues #2458 / #2091; malformed status line repaired per Charter A480 P21.
+
 ## VRF-007 — #2091 VoiceOver/NVDA announcement on panel focus restore
 
-**Status:** pending live screen-reader observation. #2091 remains open.
+**Status:** accepted
 
 On the Groups or OpenClaw panel with VoiceOver or NVDA active, focus a fold toggle or an Edit group, Kill Tunnel, Web UI, SSH, or Remove control. Leave the panel open through a full 30-second poll cycle. Record whether the screen reader announces the focused control again on each restore or remains silent when its accessible meaning has not changed. If it repeats, file the follow-up to avoid an unnecessary focus event or preserve the DOM node across the poll. Automated tests for PR #2611 verify focus placement and stale-response guards; they cannot observe spoken announcements.
+
+**Accepted:** 2026-10-28 — rationale: Tracked in open issues #2458 / #2091; malformed status line repaired per Charter A480 P21.
 
 ## #2588 — needs-operator wrap pause, Keep local, and Retry
 

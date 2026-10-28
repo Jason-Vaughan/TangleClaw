@@ -8,13 +8,13 @@
 // site later refuses produces a setting that saves cleanly and silently does
 // nothing.
 
-const { describe, it, beforeEach, afterEach } = require('node:test');
+const { describe, it, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 
-const { resolveWithinProject, isInsideProject, checkContainment, normalizeConfiguredPath, resolveConfiguredFile } = require('../lib/project-paths');
+const { resolveWithinProject, isInsideProject, checkContainment, normalizeConfiguredPath, resolveConfiguredFile, tildeHomePath, expandHomePath } = require('../lib/project-paths');
 
 const ROOT = '/tmp/proj';
 
@@ -365,5 +365,81 @@ describe('containment policy is explicit in both directions', () => {
         assert.equal(isInsideProject(bad, path.join(root, 'a.json')), false);
       });
     }
+  });
+});
+
+describe('expandHomePath', () => {
+  let originalHome;
+
+  beforeEach(() => {
+    originalHome = process.env.HOME;
+  });
+
+  afterEach(() => {
+    mock.restoreAll();
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+  });
+
+  describe('with a resolvable home', () => {
+    beforeEach(() => {
+      mock.method(os, 'homedir', () => '/Users/jane');
+    });
+
+    it('expands a bare ~', () => {
+      assert.equal(expandHomePath('~'), '/Users/jane');
+    });
+
+    it('expands ~/foo/bar', () => {
+      assert.equal(expandHomePath('~/foo/bar'), path.join('/Users/jane', 'foo/bar'));
+    });
+
+    it('leaves ~otheruser/foo unchanged', () => {
+      assert.equal(expandHomePath('~otheruser/foo'), '~otheruser/foo');
+    });
+
+    it('leaves non-tilde paths unchanged', () => {
+      assert.equal(expandHomePath('/tmp/x'), '/tmp/x');
+      assert.equal(expandHomePath('relative/path'), 'relative/path');
+    });
+
+    it('leaves empty string and non-string input unchanged', () => {
+      assert.equal(expandHomePath(''), '');
+      assert.equal(expandHomePath(null), null);
+      assert.equal(expandHomePath(undefined), undefined);
+    });
+
+    it('is the exact inverse of tildeHomePath', () => {
+      const abs = path.join('/Users/jane', 'Documents/x');
+      assert.equal(expandHomePath(tildeHomePath(abs)), abs);
+      assert.equal(expandHomePath(tildeHomePath('/Users/jane')), '/Users/jane');
+    });
+  });
+
+  describe('when os.homedir() is unset but $HOME is set', () => {
+    beforeEach(() => {
+      mock.method(os, 'homedir', () => '');
+      process.env.HOME = '/home/fallback';
+    });
+
+    it('falls back to $HOME, the same source userHome() uses', () => {
+      assert.equal(expandHomePath('~/x'), path.join('/home/fallback', 'x'));
+      assert.equal(expandHomePath('~'), '/home/fallback');
+    });
+  });
+
+  describe('when no home can be resolved at all (both os.homedir() and $HOME empty)', () => {
+    beforeEach(() => {
+      mock.method(os, 'homedir', () => '');
+      delete process.env.HOME;
+    });
+
+    it('leaves ~ unchanged rather than interpolating an empty segment', () => {
+      assert.equal(expandHomePath('~'), '~');
+    });
+
+    it('leaves ~/foo unchanged rather than stripping the tilde to a root-absolute path', () => {
+      assert.equal(expandHomePath('~/foo'), '~/foo');
+    });
   });
 });
