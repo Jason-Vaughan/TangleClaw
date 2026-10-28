@@ -527,7 +527,11 @@ function renderCard(project) {
 
   const engineErrorBadge = renderEngineErrorBadge(project);
   const launchBlockerBadge = renderLaunchBlockerBadge(project);
-  const startupReadinessBadge = renderStartupReadinessBadge(project);
+  // Guarded like the other optional-lift seams in this file (#1633 R5):
+  // test/card-detail-disclosure.test.js lifts renderCard in isolation without
+  // also lifting renderStartupReadinessBadge, so an unguarded call there is an
+  // undeclared-identifier throw rather than a missing badge.
+  const startupReadinessBadge = typeof renderStartupReadinessBadge === 'function' ? renderStartupReadinessBadge(project) : '';
 
   // Group badges
   const groupBadges = (project.groups || []).map(g =>
