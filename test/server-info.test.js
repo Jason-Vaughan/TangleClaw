@@ -1391,15 +1391,25 @@ describe('POST /api/update/pull (#1223)', () => {
     assert.equal(r.data.code, 'LAUNCH_BINDING_REQUIRED');
   });
 
-  it('the held Builder is refused with 423 — the same caller gate restart and update-apply use (#1861)', async () => {
-    const r = await send(bBuilder.headers);
-    assert.equal(r.status, 423);
-    assert.equal(r.data.code, 'CONTROL_HELD');
+  it('a clear project caller is refused 403 OPERATOR_ONLY — this route is operator-only, unlike restart/update-apply (P20)', async () => {
+    const r = await send(bPM.headers);
+    assert.equal(r.status, 403);
+    assert.equal(r.data.code, 'OPERATOR_ONLY');
   });
 
-  it('a clear caller reaches the action; 409 PULL_NOT_SAFE when the fresh recheck fails', async () => {
+  it('the held Builder is ALSO refused 403 OPERATOR_ONLY, not 423 — the identity gate runs first, so a refused caller learns nothing else', async () => {
+    const r = await send(bBuilder.headers);
+    assert.equal(r.status, 403);
+    assert.equal(r.data.code, 'OPERATOR_ONLY');
+  });
+
+  it('a clear caller (the operator) reaches the action; 409 PULL_NOT_SAFE when the fresh recheck fails', async () => {
+    // Also proves the operator is not refused by a hold scoped to a different
+    // project (`builder`, here) — the same control-gate behavior
+    // test/control-surfaces.test.js's "operator passes a readable held lane"
+    // case pins for /api/server/restart and /api/update/apply.
     behindOrigin.pullFastForward = async () => ({ ok: false, code: 'PULL_NOT_SAFE', error: 'the working tree is not clean', fromSha: null, toSha: null });
-    const r = await send(bPM.headers);
+    const r = await send(op);
     assert.equal(r.status, 409);
     assert.equal(r.data.code, 'PULL_NOT_SAFE');
     assert.match(r.data.error, /not clean/);

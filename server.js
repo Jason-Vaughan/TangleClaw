@@ -3821,6 +3821,12 @@ route('POST', '/api/update/apply', (req, res, _params, body) => {
 // and a `restartMechanism` so the client can immediately offer the restart
 // this clone (the live install) now needs.
 route('POST', '/api/update/pull', async (req, res) => {
+  // P20 names this route operator-only, unlike its siblings /api/server/restart
+  // and /api/update/apply (which admit any clear project caller too) — a git
+  // merge against the live checkout's own working tree is a step up from
+  // restarting or re-checking out a release tag. Before any other check, so
+  // a refused caller learns nothing else about the route (#1746/#1752 pattern).
+  if (!operatorProjectCaller(req, res, 'pull origin/main into this checkout')) return;
   // #1861 — the same caller gate as restart and update-apply: a held caller
   // never mutates the checkout.
   if (controlRefused(res, { surface: 'update-pull', subject: { kind: 'caller', caller: resolveControlCaller(req) } })) return;

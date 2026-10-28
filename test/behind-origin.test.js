@@ -404,7 +404,8 @@ describe('lib/behind-origin (#227)', () => {
       for (const cfg of [{}, { behindOriginCheckEnabled: false }]) {
         const snap = behindOrigin.snapshot(cfg);
         assert.equal(snap.repoRoot, repoRoot);
-        assert.equal(snap.pullCommand, `cd ${repoRoot} && git pull`);
+        assert.equal(snap.pullCommand, `cd "${repoRoot}" && git pull`,
+          'quoted — an install path with a space must not split into a bad cd argument');
       }
     });
   });
