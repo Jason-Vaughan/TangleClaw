@@ -347,10 +347,18 @@ publishes something nobody asked for.
 **Strict opt-in.** Nothing here runs unless the project's `.tangleclaw/project.json` sets
 `releaseAutomationEnabled: true`. There is no heuristic default-on.
 
-**Version source is shared with `version-bump`, not re-derived.** `resolveVersion` reads the exact
-same rungs `version-bump` writes through (`lib/project-version-files.js`): a configured
-`versionFilePath`, else `version.json`, then `package.json`, then `pyproject.toml`. The tag this
-module cuts and the file the wrap bumped can never disagree, because both read the same source.
+**Version source mirrors `version-bump`'s own rungs — and is just as strict about a configured
+one.** `resolveVersion` checks `versionFilePath` first; when it is configured, that file is the
+ONLY candidate — it resolves or `planRelease` refuses outright, with NO fallback to `version.json`,
+`package.json` or `pyproject.toml`. This matches `lib/wrap-steps/version-bump.js`'s own
+`_resolveVersionSource` semantics for the exact same setting, and deliberately does NOT reuse
+`lib/project-version-files.js`'s `readConfiguredVersion` (that reader is written for the dashboard's
+lenient DISPLAY case and degrades to the probe on a bad configured file — correct for a display
+value, wrong here: silently tagging a DIFFERENT file than the one the operator named is exactly the
+failure class `version-bump`'s own docstring records a real incident of — a case-sensitive-filesystem
+mismatch that bumped the wrong file). Only with no `versionFilePath`
+configured does `resolveVersion` fall through to the probe (`version.json`, then `package.json`, then
+`pyproject.toml`).
 
 **Changelog path is configurable the same way.** `releaseAutomationChangelogPath` (project config)
 names the changelog relative to the project root — for a monorepo's nested changelog, say — resolved
@@ -358,13 +366,22 @@ through the same containment-safe path check `versionFilePath` uses. Unset, it i
 the project root. `lib/changelog-notes.js`'s `extractReleaseNotes` reads it, unmodified, which is why
 it was written as a pure function with no assumption about where the file lives.
 
+**The plan captures the exact commit, and refuses a dirty input (#721).** `planRelease` reads
+`HEAD` once, at planning time, and refuses outright if the resolved version file or changelog carries
+an uncommitted change — tagging `HEAD` in that state would tag a commit whose actually-committed files
+disagree with the version/notes the plan just read, the same "tag and version must agree" invariant
+above. The captured sha travels with the plan as `headSha`, and `applyRelease` tags THAT commit
+explicitly (`git tag <name> <sha>`, never implicit `HEAD`) — so a commit landing on the branch between
+planning and applying can never silently retarget what gets released.
+
 **Non-GitHub remotes degrade; they are not refused.** `classifyRemote` reads `origin` and tells a
 `github.com` remote from any other kind. `planRelease` turns that into one of three actions:
 `tag-and-release` (GitHub: tag, then `gh release create`), `tag-only` (any other remote: the tag the
 update-checker's poll needs, with an honest note that no Release can be published there), or a `skip`
-with a stated reason — no version resolves, no changelog section for it, or no `origin` configured at
-all. `planRelease` performs no side effects; `applyRelease` carries out what it decided, and refuses
-outright if the tag already exists on `origin` rather than attempting to heal it.
+with a stated reason — no version resolves, no changelog section for it, an uncommitted release input,
+or no `origin` configured at all. `planRelease` performs no side effects; `applyRelease` carries out
+what it decided, and refuses outright if the tag already exists on `origin` rather than attempting to
+heal it.
 
 **Scaffolding a workflow is a separate, caller-driven choice.** `generateReleaseWorkflow` returns a
 self-contained GitHub Actions workflow (its own inline version read and notes extraction, no

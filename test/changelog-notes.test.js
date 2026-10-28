@@ -289,28 +289,113 @@ describe('isEnabled — strict opt-in', () => {
   });
 });
 
-describe('resolveVersion — reuses the version-bump readers', () => {
+describe('resolveVersion — reuses the version-bump readers, fails closed on a configured path', () => {
+  function setVersionFilePath(dir, configuredPath) {
+    fs.mkdirSync(path.join(dir, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), JSON.stringify({ versionFilePath: configuredPath }));
+  }
+
   it('reads version.json', () => {
     const dir = makeTempProject();
     fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '2.3.4' }));
-    assert.deepEqual(releaseAutomation.resolveVersion(dir), { version: '2.3.4', source: 'version.json' });
+    const result = releaseAutomation.resolveVersion(dir);
+    assert.equal(result.ok, true);
+    assert.equal(result.version, '2.3.4');
+    assert.equal(result.source, 'version.json');
+    assert.equal(result.path, path.join(dir, 'version.json'));
   });
+
   it('falls through to package.json when there is no version.json', () => {
     const dir = makeTempProject();
     fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'x', version: '0.5.0' }));
-    assert.deepEqual(releaseAutomation.resolveVersion(dir), { version: '0.5.0', source: 'package.json' });
+    const result = releaseAutomation.resolveVersion(dir);
+    assert.equal(result.ok, true);
+    assert.equal(result.version, '0.5.0');
+    assert.equal(result.source, 'package.json');
   });
+
+  it('reads past an unusable version.json to package.json — matches the probe\'s own documented leniency', () => {
+    // #721 B1 asked for coverage of "invalid primary probes": readProbedVersion
+    // (lib/project-version-files.js) deliberately reads past a version.json with
+    // no usable version to package.json (its own docstring, #58) — this pins that
+    // this module inherits that documented behavior rather than silently
+    // diverging from it.
+    const dir = makeTempProject();
+    fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ notVersion: true }));
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'x', version: '0.5.0' }));
+    const result = releaseAutomation.resolveVersion(dir);
+    assert.equal(result.ok, true);
+    assert.equal(result.version, '0.5.0');
+    assert.equal(result.source, 'package.json');
+  });
+
+  it('refuses when the ONLY primary probe candidate is invalid and nothing follows it', () => {
+    const dir = makeTempProject();
+    fs.writeFileSync(path.join(dir, 'version.json'), '{ not valid json');
+    const result = releaseAutomation.resolveVersion(dir);
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /version\.json exists but has no usable "version" field/);
+  });
+
   it('honors a configured versionFilePath over the probe', () => {
     const dir = makeTempProject();
     fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '1.0.0' }));
     fs.writeFileSync(path.join(dir, 'VERSION.json'), JSON.stringify({ version: '9.9.9' }));
-    fs.mkdirSync(path.join(dir, '.tangleclaw'));
-    fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), JSON.stringify({ versionFilePath: 'VERSION.json' }));
-    assert.deepEqual(releaseAutomation.resolveVersion(dir), { version: '9.9.9', source: 'VERSION.json' });
+    setVersionFilePath(dir, 'VERSION.json');
+    const result = releaseAutomation.resolveVersion(dir);
+    assert.equal(result.ok, true);
+    assert.equal(result.version, '9.9.9');
+    assert.equal(result.source, 'VERSION.json');
   });
-  it('returns null when nothing resolves', () => {
+
+  it('B1: FAILS CLOSED when the configured path does not exist, rather than falling back to the probe', () => {
     const dir = makeTempProject();
-    assert.equal(releaseAutomation.resolveVersion(dir), null);
+    // A real, valid version.json sits right there — the bug this guards against
+    // is silently using IT once the configured file is missing. A name that
+    // cannot collide with it even on a case-insensitive filesystem (macOS
+    // default), unlike "VERSION.json", which IS "version.json" there.
+    fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '1.0.0' }));
+    setVersionFilePath(dir, 'missing-version.json');
+    const result = releaseAutomation.resolveVersion(dir);
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /missing-version\.json unreadable/);
+    assert.doesNotMatch(result.reason, /1\.0\.0/, 'must not silently report the probe\'s version.json value');
+  });
+
+  it('B1: fails closed when the configured path is malformed JSON', () => {
+    const dir = makeTempProject();
+    fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '1.0.0' }));
+    fs.writeFileSync(path.join(dir, 'VERSION.json'), '{ not valid json');
+    setVersionFilePath(dir, 'VERSION.json');
+    const result = releaseAutomation.resolveVersion(dir);
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /unreadable as JSON/);
+  });
+
+  it('B1: fails closed when the configured path has no "version" field', () => {
+    const dir = makeTempProject();
+    fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '1.0.0' }));
+    fs.writeFileSync(path.join(dir, 'VERSION.json'), JSON.stringify({ name: 'x' }));
+    setVersionFilePath(dir, 'VERSION.json');
+    const result = releaseAutomation.resolveVersion(dir);
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /has no "version" field/);
+  });
+
+  it('B1: fails closed when the configured path escapes the project root (unsafe)', () => {
+    const dir = makeTempProject();
+    fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '1.0.0' }));
+    setVersionFilePath(dir, '../../etc/passwd');
+    const result = releaseAutomation.resolveVersion(dir);
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /configured versionFilePath ".*etc\/passwd" is not usable/);
+  });
+
+  it('returns a refusal, not a throw, when nothing resolves', () => {
+    const dir = makeTempProject();
+    const result = releaseAutomation.resolveVersion(dir);
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /no version could be resolved/);
   });
 });
 
@@ -371,7 +456,7 @@ describe('tagNameFor', () => {
 });
 
 describe('planRelease — pure decision, no side effects', () => {
-  function seedProject({ enabled = true, version = '1.0.0', changelog = true, remote = 'github' } = {}) {
+  function seedProject({ enabled = true, version = '1.0.0', changelog = true, remote = 'github', commit = true } = {}) {
     const dir = makeTempProject();
     if (version) fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version }));
     if (changelog) {
@@ -384,6 +469,12 @@ describe('planRelease — pure decision, no side effects', () => {
       realExecFileSync('git', ['remote', 'add', 'origin', 'https://github.com/acme/widgets.git'], { cwd: dir });
     } else if (remote === 'other') {
       realExecFileSync('git', ['remote', 'add', 'origin', 'https://gitlab.example.com/acme/widgets.git'], { cwd: dir });
+    }
+    if (commit) {
+      realExecFileSync('git', ['add', '-A'], { cwd: dir });
+      // --allow-empty: some seedProject callers (e.g. "no version resolves")
+      // write nothing at all, and a commit is still needed so HEAD exists.
+      realExecFileSync('git', ['commit', '-q', '-m', 'seed', '--allow-empty'], { cwd: dir });
     }
     const config = { releaseAutomationEnabled: enabled };
     return { dir, config };
@@ -405,21 +496,25 @@ describe('planRelease — pure decision, no side effects', () => {
   });
 
   it('skips when the changelog has no section for the version', () => {
-    const { dir, config } = seedProject({ changelog: false });
+    const { dir, config } = seedProject({ changelog: false, commit: false });
     fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), '# Changelog\n\n## [Unreleased]\n');
+    realExecFileSync('git', ['add', '-A'], { cwd: dir });
+    realExecFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd: dir });
     const plan = releaseAutomation.planRelease(dir, { config });
     assert.equal(plan.ok, false);
     assert.match(plan.reason, /no CHANGELOG\.md section found/);
   });
 
-  it('plans tag-and-release for a github remote', () => {
+  it('plans tag-and-release for a github remote, capturing HEAD', () => {
     const { dir, config } = seedProject({});
+    const headSha = realExecFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
     const plan = releaseAutomation.planRelease(dir, { config });
     assert.equal(plan.ok, true);
     assert.equal(plan.action, 'tag-and-release');
     assert.equal(plan.tagName, 'v1.0.0');
     assert.match(plan.notes, /A fix\./);
     assert.equal(plan.remote.repo, 'acme/widgets');
+    assert.equal(plan.headSha, headSha);
   });
 
   it('plans tag-only for a non-github remote', () => {
@@ -428,6 +523,7 @@ describe('planRelease — pure decision, no side effects', () => {
     assert.equal(plan.ok, true);
     assert.equal(plan.action, 'tag-only');
     assert.match(plan.reason, /not a github\.com remote/);
+    assert.ok(plan.headSha);
   });
 
   it('skips when there is no remote at all', () => {
@@ -435,6 +531,64 @@ describe('planRelease — pure decision, no side effects', () => {
     const plan = releaseAutomation.planRelease(dir, { config });
     assert.equal(plan.ok, false);
     assert.match(plan.reason, /no origin remote is configured/);
+  });
+
+  it('B2: refuses an uncommitted bump — version.json differs from what HEAD carries', () => {
+    const { dir, config } = seedProject({});
+    // An uncommitted edit must refuse even when the version NUMBER it reads is
+    // unchanged — the invariant is "matches what's committed", not "the number
+    // still parses the same", so this adds a field rather than changing the
+    // version string itself.
+    fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '1.0.0', extra: true }));
+    const plan = releaseAutomation.planRelease(dir, { config });
+    assert.equal(plan.ok, false);
+    assert.match(plan.reason, /version\.json has uncommitted changes/);
+  });
+
+  it('B2: refuses an uncommitted CHANGELOG edit the same way', () => {
+    const { dir, config } = seedProject({});
+    fs.appendFileSync(path.join(dir, 'CHANGELOG.md'), '\n- extra uncommitted line\n');
+    const plan = releaseAutomation.planRelease(dir, { config });
+    assert.equal(plan.ok, false);
+    assert.match(plan.reason, /CHANGELOG\.md has uncommitted changes/);
+  });
+
+  it('B2: a plan survives HEAD moving afterward — applyRelease still tags the PLANNED commit, not the new one', () => {
+    // tag-only (a non-github remote): applyRelease for tag-and-release would
+    // also shell out to the real `gh` CLI for anything this stub doesn't
+    // intercept, which has no real GitHub repo to talk to here. tag-only
+    // exercises exactly the thing under test — what commit the tag names —
+    // with no such dependency.
+    const { dir, config } = seedProject({ remote: 'other' });
+    const plan = releaseAutomation.planRelease(dir, { config });
+    assert.equal(plan.ok, true);
+    const plannedSha = plan.headSha;
+
+    // HEAD moves on, as it would if another commit landed on this branch
+    // between planning and applying.
+    fs.writeFileSync(path.join(dir, 'README.md'), 'later work\n');
+    realExecFileSync('git', ['add', '-A'], { cwd: dir });
+    realExecFileSync('git', ['commit', '-q', '-m', 'later work'], { cwd: dir });
+    const newHead = realExecFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+    assert.notEqual(newHead, plannedSha, 'the test did not actually move HEAD');
+
+    // No real `origin` to push to here — this test only asserts WHAT COMMIT
+    // the local tag object names, not that it reaches a remote.
+    const original = releaseAutomation._internal.execFileSync;
+    releaseAutomation._internal.execFileSync = (cmd, args, opts) => {
+      if (cmd === 'git' && args[0] === 'ls-remote') return '';
+      if (cmd === 'git' && args[0] === 'push') return '';
+      return original(cmd, args, opts);
+    };
+    try {
+      const result = releaseAutomation.applyRelease(dir, plan);
+      assert.equal(result.ok, true);
+    } finally {
+      releaseAutomation._internal.execFileSync = original;
+    }
+
+    const taggedSha = realExecFileSync('git', ['rev-list', '-n', '1', plan.tagName], { cwd: dir, encoding: 'utf8' }).trim();
+    assert.equal(taggedSha, plannedSha, 'the tag must name the commit that was PLANNED, not the one HEAD moved to');
   });
 });
 
@@ -469,8 +623,29 @@ describe('applyRelease — stubbed git/gh, no real network', () => {
     assert.match(result.reason, /not ok/);
   });
 
+  it('B2: refuses a plan with no headSha, rather than tagging an implicit HEAD', () => {
+    const plan = { ok: true, action: 'tag-only', tagName: 'v1.0.0', notes: 'notes', remote: { url: 'other' } };
+    const result = releaseAutomation.applyRelease('/tmp/whatever', plan);
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /no headSha/);
+  });
+
+  it('B2: tags the plan\'s captured headSha explicitly, not implicit HEAD', () => {
+    const plan = { ok: true, action: 'tag-only', tagName: 'v1.0.0', notes: 'notes', remote: { url: 'other' }, headSha: 'cafef00d' };
+    withStubbedExec([
+      () => '', // ls-remote: nothing
+      () => '', // git tag -a
+      () => ''  // git push
+    ], (calls) => {
+      releaseAutomation.applyRelease('/tmp/whatever', plan);
+      const tagCall = calls[1][1];
+      assert.equal(tagCall[0], 'tag');
+      assert.ok(tagCall.includes('cafef00d'), `expected the explicit sha in the tag command, got: ${tagCall.join(' ')}`);
+    });
+  });
+
   it('refuses to re-tag an already-existing tag', () => {
-    const plan = { ok: true, action: 'tag-and-release', tagName: 'v1.0.0', notes: 'notes', remote: { repo: 'acme/widgets' } };
+    const plan = { ok: true, action: 'tag-and-release', tagName: 'v1.0.0', notes: 'notes', remote: { repo: 'acme/widgets' }, headSha: 'deadbeef' };
     withStubbedExec([
       () => 'refs/tags/v1.0.0\tabc123\n' // ls-remote finds it
     ], () => {
@@ -481,7 +656,7 @@ describe('applyRelease — stubbed git/gh, no real network', () => {
   });
 
   it('tags and pushes only, for tag-only (non-github)', () => {
-    const plan = { ok: true, action: 'tag-only', tagName: 'v1.0.0', notes: 'notes', remote: { url: 'other' } };
+    const plan = { ok: true, action: 'tag-only', tagName: 'v1.0.0', notes: 'notes', remote: { url: 'other' }, headSha: 'deadbeef' };
     withStubbedExec([
       () => '', // ls-remote: nothing
       () => '', // git tag -a
@@ -497,7 +672,7 @@ describe('applyRelease — stubbed git/gh, no real network', () => {
   });
 
   it('tags, pushes and publishes for tag-and-release (github)', () => {
-    const plan = { ok: true, action: 'tag-and-release', tagName: 'v1.0.0', notes: 'notes', remote: { repo: 'acme/widgets' } };
+    const plan = { ok: true, action: 'tag-and-release', tagName: 'v1.0.0', notes: 'notes', remote: { repo: 'acme/widgets' }, headSha: 'deadbeef' };
     withStubbedExec([
       () => '', // ls-remote: nothing
       () => '', // git tag -a
@@ -513,7 +688,7 @@ describe('applyRelease — stubbed git/gh, no real network', () => {
   });
 
   it('reports the tag as pushed even when gh release create fails', () => {
-    const plan = { ok: true, action: 'tag-and-release', tagName: 'v1.0.0', notes: 'notes', remote: { repo: 'acme/widgets' } };
+    const plan = { ok: true, action: 'tag-and-release', tagName: 'v1.0.0', notes: 'notes', remote: { repo: 'acme/widgets' }, headSha: 'deadbeef' };
     withStubbedExec([
       () => '',
       () => '',
