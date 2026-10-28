@@ -400,42 +400,47 @@ describe('lib/behind-origin (#227)', () => {
 
     it('snapshot() always carries repoRoot and the copy/paste pullCommand (#1367), enabled or not', () => {
       const path = require('node:path');
+      const { shellWord } = require('../lib/shell-word');
       const repoRoot = path.resolve(__dirname, '..');
       for (const cfg of [{}, { behindOriginCheckEnabled: false }]) {
         const snap = behindOrigin.snapshot(cfg);
         assert.equal(snap.repoRoot, repoRoot);
-        assert.equal(snap.pullCommand, `cd ${behindOrigin.shellQuote(repoRoot)} && git pull`,
-          'single-quoted — double quotes alone still let /bin/sh expand $var, `cmd` and $(cmd)');
+        assert.equal(snap.pullCommand, `cd ${shellWord(repoRoot)} && git pull`,
+          'single-quoted via the canonical shellWord escaper (#1399) — double quotes alone still let /bin/sh expand $var, `cmd` and $(cmd)');
       }
     });
   });
 
-  describe('shellQuote (#1367) — proven by executing it, not by inspecting its shape', () => {
-    it('round-trips every shell metacharacter through a real /bin/sh unchanged', () => {
-      const { execFileSync } = require('node:child_process');
-      const dangerous = [
-        'a b',                 // space — the original double-quote fix's own case
-        "it's a path",         // embedded single quote — the hard case for this idiom
-        '$HOME',                // variable expansion
-        '$(echo pwned)',        // command substitution ($() form)
-        '`echo pwned`',         // command substitution (backtick form)
-        '"quoted"',             // embedded double quotes — what the PREVIOUS double-quote fix broke on
-        '; rm -rf /'            // a bare command separator
-      ];
-      for (const value of dangerous) {
-        const quoted = behindOrigin.shellQuote(value);
-        // `printf '%s'` on the quoted value: if /bin/sh interpreted anything
-        // inside it (expanded $HOME, ran the substitution, split on the
-        // semicolon), the echoed bytes would NOT equal the original string —
-        // this is the one assertion that actually proves nothing was
-        // interpreted, as opposed to a regex over `quoted`'s source text.
-        const out = execFileSync('/bin/sh', ['-c', `printf '%s' ${quoted}`], { encoding: 'utf8' });
-        assert.equal(out, value, `shellQuote(${JSON.stringify(value)}) must survive /bin/sh unchanged — got ${JSON.stringify(out)}`);
-      }
+  describe('pullCommand uses the canonical shellWord escaper, not a private one (#1367, #1399)', () => {
+    // shellWord's own correctness (including the real /bin/sh round-trip
+    // proof) is lib/shell-word.js's test coverage (test/openclaw-approve.test.js
+    // and test/engines-hook-shell-safety.test.js) — spawning a process here to
+    // re-prove it would push this file past its declared `medium` test tier
+    // (test/tiers.json) for no new coverage. What belongs here is narrower:
+    // that PULL_COMMAND is actually built FROM shellWord, for every
+    // metacharacter a real install path could contain.
+    const { shellWord } = require('../lib/shell-word');
+
+    it('PULL_COMMAND embeds repoRoot via shellWord(repoRoot), not a private escaper', () => {
+      const path = require('node:path');
+      const repoRoot = path.resolve(__dirname, '..');
+      assert.equal(behindOrigin.PULL_COMMAND, `cd ${shellWord(repoRoot)} && git pull`);
     });
 
-    it('escapes an embedded single quote with the standard close/escape/reopen idiom', () => {
-      assert.equal(behindOrigin.shellQuote("it's"), "'it'\\''s'");
+    it('shellWord single-quotes every metacharacter a repoRoot could realistically contain', () => {
+      const cases = [
+        'a b',          // space
+        "it's a path",  // embedded single quote — the hard case for this idiom
+        '$HOME',        // variable expansion
+        '$(echo x)',    // command substitution ($() form)
+        '`echo x`',     // command substitution (backtick form)
+        '"quoted"',     // embedded double quotes
+        '; rm -rf /'    // a bare command separator
+      ];
+      for (const value of cases) {
+        assert.equal(shellWord(value), `'${value.replace(/'/g, "'\\''")}'`,
+          `shellWord(${JSON.stringify(value)}) must single-quote it, escaping only an embedded single quote`);
+      }
     });
   });
 
