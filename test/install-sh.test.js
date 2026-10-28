@@ -310,10 +310,11 @@ describe('deploy/install.sh', () => {
         'the config value must go through expand_tilde before classification');
     });
 
-    it('answers for an existing config the way the server does (#880)', () => {
-      // Run the installer's own inline reader against real files. An install
-      // whose config has no projectsDir key is kept on the old directory by
-      // lib/store.js, so the note must be judged against that directory too.
+    it('answers for an existing config the way the server does (#880, #2145)', () => {
+      // Run the installer's own inline reader against real files, and check
+      // each case directly against store.config.load() on the SAME file —
+      // never a hardcoded constant — so the two readers cannot silently drift
+      // apart again (#2145).
       const { execFileSync } = require('node:child_process');
       const os = require('node:os');
       const store = require('../lib/store');
@@ -326,9 +327,16 @@ describe('deploy/install.sh', () => {
         fs.writeFileSync(file, body);
         return execFileSync(process.execPath, ['-e', m[1], file], { encoding: 'utf8' });
       };
-      assert.equal(read(JSON.stringify({ serverPort: 3101 })), store.LEGACY_PROJECTS_DIR, 'no key: the old directory');
-      assert.equal(read(JSON.stringify({ projectsDir: '~/code' })), '~/code', 'a chosen directory is read as written');
-      assert.equal(read(JSON.stringify({ projectsDir: '' })), store.DEFAULT_CONFIG.projectsDir, 'an empty value is not a pre-#880 file');
+      const savedBasePath = store._getBasePath();
+      store._setBasePath(dir);
+      try {
+        assert.equal(read(JSON.stringify({ serverPort: 3101 })), store.config.load().projectsDir, 'no key: the server\'s own fallback');
+        assert.equal(read(JSON.stringify({ projectsDir: '~/code' })), '~/code', 'a chosen directory is read as written');
+        assert.equal(read(JSON.stringify({ projectsDir: '' })), store.config.load().projectsDir, 'a blank value answers the way the server does');
+        assert.equal(read(JSON.stringify({ projectsDir: '   ' })), store.config.load().projectsDir, 'a whitespace-only value answers the way the server does too');
+      } finally {
+        store._setBasePath(savedBasePath);
+      }
       assert.equal(read('not json'), store.DEFAULT_CONFIG.projectsDir, 'an unreadable file falls back to the shipped default');
       assert.equal(
         runShellFn('/Users/tester', `tcc_protected_path "$(expand_tilde "${store.LEGACY_PROJECTS_DIR}")" && echo YES || echo NO`),

@@ -356,7 +356,16 @@ if [ "$(uname)" = "Darwin" ]; then
       try {
         const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
         const has = Object.prototype.hasOwnProperty.call(c, "projectsDir");
-        process.stdout.write(typeof c.projectsDir === "string" && c.projectsDir ? c.projectsDir : (has ? "~/Projects" : "~/Documents/Projects"));
+        const v = c.projectsDir;
+        // A blank/whitespace-only value answers the same way as a missing key
+        // (#2145): it never named a directory either, and lib/store.js config.load()
+        // agrees.
+        const isBlank = typeof v === "string" && v.trim() === "";
+        process.stdout.write(
+          (typeof v === "string" && v.trim()) ? v
+          : (!has || isBlank) ? "~/Documents/Projects"
+          : "~/Projects"
+        );
       } catch { process.stdout.write("~/Projects"); }
     ' "$HOME/.tangleclaw/config.json" 2>/dev/null || echo "$HOME/Projects")"
   fi
