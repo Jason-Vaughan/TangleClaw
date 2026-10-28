@@ -241,6 +241,46 @@ describe('api-sessions', () => {
         store.sessions.kill(session.id, 'test cleanup');
       }
     });
+
+    it('reads "ready" once a sequence-less damaged handoff\'s recovery is cleared (#1633 R2 Fix 4)', async () => {
+      const project = store.projects.getByName('api-sess-test');
+      const { session, sequence } = bindLaunchSequence(
+        project,
+        { applicable: false, reason: 'the engine declares no launch-sequence support' },
+        { verdict: 'handoff-corrupt', requiresRecovery: true, reason: 'the handoff file could not be parsed' }
+      );
+      try {
+        store.launchSequences.clearRecoveryAsOperator(sequence.id, {
+          sessionId: session.id, recoveryRevision: sequence.recoveryRevision,
+          clearance: 'operator-verified', clearedBy: 'test'
+        });
+        const res = await request(server, 'GET', '/api/sessions/api-sess-test/status');
+        assert.equal(res.body.startupReadiness.state, 'ready');
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+
+    it('fails CLOSED with "needs-attention" (missing-launch-sequence) for an active session with no bound launch sequence, and refuses commands with 409 STARTUP_NOT_READY', async () => {
+      const project = store.projects.getByName('api-sess-test');
+      // No `tmuxSession`, matching `bindLaunchSequence` above: one names a
+      // pane tmux would have to confirm, and confirming it live is not what
+      // this fixture is testing, so the status route's tmux-liveness reap
+      // must stay out of the way and leave the session active.
+      const session = store.sessions.start({ projectId: project.id, engineId: 'claude' });
+      assert.equal(store.launchSequences.getBySession(session.id), null, 'the fixture must actually carry no launch_sequences row');
+      try {
+        const status = await request(server, 'GET', '/api/sessions/api-sess-test/status');
+        assert.equal(status.body.startupReadiness.state, 'needs-attention');
+        assert.equal(status.body.startupReadiness.blocker, 'missing-launch-sequence');
+
+        const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/command', { command: 'ls' });
+        assert.equal(res.status, 409);
+        assert.equal(res.body.code, 'STARTUP_NOT_READY');
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
   });
 
   describe('GET /api/sessions/:project/history', () => {
@@ -311,7 +351,7 @@ describe('api-sessions', () => {
         alternateScreen: false
       });
       try {
-        const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/command', { command: 'ls' });
+        const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/command', { command: 'ls', startupIntervention: true });
         assert.equal(res.status, 409);
         assert.equal(res.body.code, 'STARTUP_DIALOG');
         assert.equal(res.body.startupDialog.code, 'trust_required');
@@ -342,7 +382,7 @@ describe('api-sessions', () => {
       const claim = wrapRunRegistry.begin('api-sess-test', null, {});
       assert.equal(claim.ok, true);
       try {
-        const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/command', { command: 'ls' });
+        const res = await operatorRequest(server, 'POST', '/api/sessions/api-sess-test/command', { command: 'ls', startupIntervention: true });
         assert.equal(res.status, 409);
         assert.equal(res.body.code, 'WRAP_RUNNING');
         assert.equal(res.body.wrapRunning.code, 'WRAP_RUNNING');

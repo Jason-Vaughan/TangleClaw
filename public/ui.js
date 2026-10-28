@@ -320,6 +320,24 @@ function renderLaunchBlockerBadge(project) {
 }
 
 /**
+ * The card badge for a session whose launch has not reached READY yet
+ * (#1633 R2 Fix 4): "Starting — step X of 4" while it steps through its
+ * launch sequence, or "Needs attention" once it owes a recovery, a damaged
+ * handoff, or has no bound launch sequence at all. The same `startupReadiness`
+ * the session page's own banner reads, so the project card and the session it
+ * opens never disagree about whether ordinary work is admitted yet.
+ * @param {object} project - Project data carrying an optional `session`.
+ * @returns {string} HTML for the badge, or '' once ready (or with no reading at all).
+ */
+function renderStartupReadinessBadge(project) {
+  const session = project && project.session;
+  const readiness = session && session.startupReadiness;
+  if (!readiness || readiness.state === 'ready') return '';
+  const label = readiness.state === 'starting' ? (readiness.step || 'Starting') : 'Needs attention';
+  return `<span class="badge badge-startup-readiness" title="${esc(label)}">${esc(label)}</span>`;
+}
+
+/**
  * The card's session status dot.
  *
  * Four outcomes where there used to be three. Each is a distinct SHAPE, not a
@@ -509,6 +527,7 @@ function renderCard(project) {
 
   const engineErrorBadge = renderEngineErrorBadge(project);
   const launchBlockerBadge = renderLaunchBlockerBadge(project);
+  const startupReadinessBadge = renderStartupReadinessBadge(project);
 
   // Group badges
   const groupBadges = (project.groups || []).map(g =>
@@ -574,6 +593,7 @@ function renderCard(project) {
       ${engineBadge}
       ${engineErrorBadge}
       ${launchBlockerBadge}
+      ${startupReadinessBadge}
       ${groupBadges}
       ${auditBadge}
       ${driftBadge}

@@ -2221,6 +2221,14 @@ body.master-popout-mode #masterPanelFullscreenBtn {
   color: #ce93d8;
   font-size: 9px;
 }
+/* Startup readiness badge (#1633 R2 Fix 4) — "Starting — step X of 4" or
+   "Needs attention" while a session's launch has not reached READY. One
+   style for both: the text itself, not the colour, is what tells them
+   apart, the same reasoning `renderStatusDot`'s glyphs give. */
+.badge-startup-readiness {
+  background: rgba(255, 179, 0, 0.15);
+  color: var(--amber);
+}
 .git-dirty {
   display: inline-block;
   width: 5px;
