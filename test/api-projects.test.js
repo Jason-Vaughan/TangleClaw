@@ -790,6 +790,46 @@ describe('api-projects', () => {
           assert.equal(store.projectRecoveryState.get(id).pinnedMode, 'operator', 'and it was');
         });
 
+        // PRR-B R1 finding (#1289 x #1937 interaction): a mid-apply reload of
+        // `project.json` can fail AFTER the recovery decision already reached
+        // the store — `_applyProjectUpdates` reloads via `loadConfigForWrite`
+        // more than once. That must answer the SAME way any other post-decision
+        // failure does (500 `RECOVERY_DECISION_SAVED_UPDATE_FAILED`, carrying
+        // `recoveryMode`), never the bare 409 `PROJECT_CONFIG_UNREADABLE` a
+        // config failure gets when no decision is in play — losing
+        // `recoveryMode` from the response would read as "nothing happened"
+        // when the mode was, in fact, saved and applies from the next launch.
+        it('says the decision was saved when project.json becomes unreadable on a later reload in the same request', async () => {
+          const id = store.projects.getByName('gate-a').id;
+          await request('PATCH', '/api/projects/gate-a', { launchSequence: { recoveryMode: 'advisory' } }, asOperator());
+          const real = store.projectConfig.load;
+          let calls = 0;
+          // Call 1 is `updateProject`'s up-front `loadConfigForWrite` — must
+          // succeed, or the decision is never reached at all. Every call
+          // after that simulates the file going unreadable mid-apply.
+          store.projectConfig.load = (projPath, opts = {}) => {
+            calls += 1;
+            if (calls === 1) return real(projPath, opts);
+            if (typeof opts.onError === 'function') {
+              opts.onError(new Error('injected unreadable config'), projPath);
+            }
+            return store.DEFAULT_PROJECT_CONFIG;
+          };
+          let answer;
+          try {
+            answer = await request('PATCH', '/api/projects/gate-a',
+              { launchSequence: { recoveryMode: 'operator' } }, asOperator());
+          } finally {
+            store.projectConfig.load = real;
+          }
+          assert.equal(answer.status, 500);
+          assert.equal(answer.data.code, 'RECOVERY_DECISION_SAVED_UPDATE_FAILED');
+          assert.match(answer.data.error, /The recovery mode itself was saved as operator before this failed/);
+          assert.equal(answer.data.recoveryMode.mode, 'operator');
+          assert.equal(answer.data.recoveryMode.pinnedMode, 'operator');
+          assert.equal(store.projectRecoveryState.get(id).pinnedMode, 'operator', 'and it was');
+        });
+
         /**
          * A project with no session, so a rename of it reaches the move
          * itself. `gate-a` has a live binding, and its rename is refused in

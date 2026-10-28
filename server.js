@@ -4682,23 +4682,32 @@ route('PATCH', '/api/projects/:name', async (req, res, params, body) => {
       ? { recoveryDecisionBy: _operatorProofOf(req).clearance }
       : {});
   } catch (err) {
+    // A failure thrown after the recovery decision reached the store — checked
+    // FIRST, ahead of PROJECT_CONFIG_UNREADABLE below: a mid-apply config
+    // reload can fail AFTER the store write lands (`_applyProjectUpdates`
+    // reloads via `loadConfigForWrite` repeatedly), and that decision already
+    // stands whatever this request answers with. Answering 409 first would
+    // drop `recoveryDecisionSaved`/`recoveryMode` from the response and the
+    // operator would read "config unreadable" with no sign the mode they just
+    // chose was, in fact, saved and applies from the next launch. The
+    // dispatcher would otherwise answer a bare 500 for this case, same risk.
+    if (err.recoveryDecisionSaved) {
+      log.error('A project update failed after its recovery-mode decision was saved', {
+        project: params.name, error: err.message
+      });
+      return errorResponse(res, 500, `The update failed. ${err.recoveryDecisionSavedMessage}`,
+        projects.RECOVERY_DECISION_SAVED_UPDATE_FAILED, { recoveryMode: err.recoveryDecisionSaved });
+    }
     // #1289 — `project.json` became unreadable between the up-front load and
-    // a reload inside phase two (a TOCTOU remove/permission change). Nothing
-    // was validated or written against a value this request never actually
-    // saw, so it is refused the same way the up-front check refuses it below.
+    // a reload inside phase two (a TOCTOU remove/permission change), with no
+    // recovery decision in play. Nothing was validated or written against a
+    // value this request never actually saw, so it is refused the same way
+    // the up-front check refuses it below.
     if (err.code === projects.PROJECT_CONFIG_UNREADABLE) {
       return errorResponse(res, 409, err.message, projects.PROJECT_CONFIG_UNREADABLE);
     }
-    // A failure thrown after the recovery decision reached the store. The
-    // dispatcher would answer a bare 500, and the operator would take the mode
-    // for unchanged while it applies from the next launch. Any other throw is
-    // the dispatcher's, as before.
-    if (!err.recoveryDecisionSaved) throw err;
-    log.error('A project update failed after its recovery-mode decision was saved', {
-      project: params.name, error: err.message
-    });
-    return errorResponse(res, 500, `The update failed. ${err.recoveryDecisionSavedMessage}`,
-      projects.RECOVERY_DECISION_SAVED_UPDATE_FAILED, { recoveryMode: err.recoveryDecisionSaved });
+    // Any other throw is the dispatcher's, as before.
+    throw err;
   }
 
   if (result.errors.length > 0 && !result.project) {
