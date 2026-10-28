@@ -41,6 +41,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-28 — v5.45.0 W1-A: unify operator `~` path expansion (#1284) + P21 operator-verification repair
+
+<!-- prawduct: type=fixed | scope=w1a-1284-expand-home -->
+
+- **#1284:** Five call sites each hand-rolled their own `~` expansion, two of them from `process.env.HOME` alone with no `os.homedir()` fallback — a process launched without `HOME` set (`sudo`, a launchd job) got `"undefined"` interpolated literally into an SSH key path (`lib/tunnel.js`, `lib/sessions.js`) or the `~` silently stripped to a root-absolute path (`lib/porthub.js`, `lib/openclaw-version.js`, `lib/openclaw-detect.js`, `lib/routes/openclaw.js`) instead of leaving the unresolvable path unchanged; `~otheruser/...` was also mangled by several of the old call sites. `expandHomePath()` in `lib/project-paths.js` — the exact inverse of the existing `tildeHomePath()`, backed by `lib/tangleclaw-home.js`'s `userHome()` — now backs all eight call sites (`lib/orchestration.js`, `lib/git-template.js`, `lib/porthub.js`, `lib/openclaw-version.js`, `lib/openclaw-detect.js`, `lib/tunnel.js`, `lib/sessions.js`, `lib/routes/openclaw.js`). Covered by new unit tests in `test/project-paths.test.js` (bare `~`, `~/...`, `~otheruser/...`, `HOME` unset with `os.homedir()` fallback, and both empty).
+- **P21:** Repaired the `VRF-006`/`VRF-007` status lines in `.prawduct/operator-verification.md` — each had trailing prose on the same line as `**Status:**`, which `prawduct-hook check-operator-verification`'s one-bare-word parser cannot read, so both counted as permanently undrainable-pending. Split each onto `**Status:** accepted` with a separate `**Accepted:**` rationale line, per Charter A480 P21 (ratified in `v545-sprint-plan.md`); `prawduct-hook check-operator-verification` now exits 0.
+
 ## 2026-10-28 — v5.45.0 W1-D: project-save unreadable-config refusal, structured PATCH status codes, engine-row validators (#1288, #1289, #2180, #2216)
 
 <!-- prawduct: type=fix | scope=w1d-1288-1289-2180-2216 -->
