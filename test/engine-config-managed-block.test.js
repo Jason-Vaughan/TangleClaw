@@ -286,6 +286,47 @@ describe('writeEngineConfig honors mergeStrategy', () => {
   });
 });
 
+describe('writeEngineConfig writes atomically and refuses a read-only target (#1291)', () => {
+  const profile = {
+    configFormat: { filename: 'AGENTS.md', syntax: 'markdown', generator: 'antigravity-md', mergeStrategy: 'managed-block' },
+    capabilities: { supportsConfigFile: true }
+  };
+
+  test('a chmod 0o444 AGENTS.md refuses the write before any temp file is created, byte-identical after', (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-managed-block-ro-'));
+    const file = path.join(dir, 'AGENTS.md');
+    fs.writeFileSync(file, FOREIGN_FILE);
+    fs.chmodSync(file, 0o444);
+    t.after(() => { fs.chmodSync(file, 0o644); fs.rmSync(dir, { recursive: true, force: true }); });
+
+    const result = engines.writeEngineConfig('antigravity', dir, {}, profile);
+    assert.equal(result.skipped, false, `fixture did not reach the write path: ${result.skipReason}`);
+    assert.equal(result.written, false);
+    assert.match(result.error, /read-only/);
+    assert.equal(fs.readFileSync(file, 'utf8'), FOREIGN_FILE, 'the read-only carrier is byte-identical');
+    assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes('.tmp-')), [], 'no temp file was left behind');
+  });
+
+  test('a mid-write failure leaves the existing co-owned carrier byte-identical, no dangling temp file', (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-managed-block-midfail-'));
+    const file = path.join(dir, 'AGENTS.md');
+    fs.writeFileSync(file, FOREIGN_FILE);
+    // AGENTS.md itself stays writable; the directory loses its write bit, so
+    // the sibling temp file the atomic write needs can never be created —
+    // the same failure shape a disk-full write produces (#1291), through the
+    // real writeEngineConfig path rather than the helper directly.
+    fs.chmodSync(dir, 0o555);
+    t.after(() => { fs.chmodSync(dir, 0o755); fs.rmSync(dir, { recursive: true, force: true }); });
+
+    const result = engines.writeEngineConfig('antigravity', dir, {}, profile);
+    assert.equal(result.skipped, false, `fixture did not reach the write path: ${result.skipReason}`);
+    assert.equal(result.written, false);
+    assert.ok(result.error, 'the failure is surfaced, not silently swallowed');
+    assert.equal(fs.readFileSync(file, 'utf8'), FOREIGN_FILE,
+      'the co-owned carrier was never truncated — a crash mid-write leaves it wholly old');
+  });
+});
+
 describe('writeEngineConfig refuses an unknown mergeStrategy', () => {
   test('a typo does not silently fall through to the destructive default', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-badstrategy-'));
