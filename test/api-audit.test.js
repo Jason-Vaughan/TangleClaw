@@ -8,8 +8,9 @@ const path = require('node:path');
 const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
+const evalAudit = require('../lib/eval-audit');
 const { createServer } = require('../server');
-const { operatorHeaders } = require('./_shared-docs-callers');
+const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
 
 setLevel('error');
 
@@ -258,13 +259,17 @@ describe('API /api/audit', () => {
 
   // ── Heartbeat ──
 
-  // The heartbeat carries no credential of its own, so it is held to the
-  // launch-binding floor like any other write (#2233). These two exercise the
-  // handler as a caller the floor admits; that an unidentified caller is
-  // refused is asserted below and in `launch-binding-dispatch.test.js`.
-  it('POST /api/audit/heartbeat accepts valid heartbeat', async () => {
+  // The heartbeat is marked `ownPrincipal` (#2239), so the launch-binding
+  // floor steps aside for it entirely and the handler proves one of two
+  // callers itself: an OpenClaw webhook's own audit secret (the same Bearer
+  // check ingest uses), or a verified launch binding/operator whose project
+  // owns the named session — never an opaque string trusted from the body,
+  // which is the vulnerability #2239 closes.
+  it('POST /api/audit/heartbeat accepts a valid heartbeat for a real session, as the operator', async () => {
+    const project = store.projects.getByName('audit-bound');
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude' });
     const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
-      session_id: 'sess-1'
+      session_id: session.id
     }, operatorHeaders(server));
     assert.equal(status, 200);
     assert.equal(data.ok, true);
@@ -279,6 +284,184 @@ describe('API /api/audit', () => {
     const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', { session_id: 'sess-1' });
     assert.equal(status, 403);
     assert.equal(data.code, 'LAUNCH_BINDING_REQUIRED');
+  });
+
+  it('POST /api/audit/heartbeat refuses an operator-shaped caller naming a session_id that is not a TangleClaw id', async () => {
+    const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+      session_id: 'sess-1'
+    }, operatorHeaders(server));
+    assert.equal(status, 400);
+    assert.equal(data.code, 'BAD_REQUEST');
+  });
+
+  it('POST /api/audit/heartbeat refuses an operator-shaped caller naming a session that does not exist', async () => {
+    const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+      session_id: 999999999
+    }, operatorHeaders(server));
+    assert.equal(status, 404);
+    assert.equal(data.code, 'NOT_FOUND');
+  });
+
+  it('POST /api/audit/heartbeat refuses an operator-shaped caller naming an ended session', async () => {
+    const project = store.projects.getByName('audit-bound');
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude' });
+    store.sessions.kill(session.id, 'test');
+    const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+      session_id: session.id
+    }, operatorHeaders(server));
+    assert.equal(status, 409);
+    assert.equal(data.code, 'SESSION_ENDED');
+  });
+
+  it('POST /api/audit/heartbeat succeeds via a valid audit-secret Bearer token, with no launch binding at all', async () => {
+    const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+      session_id: 'sess-1'
+    }, { Authorization: `Bearer ${auditSecret}` });
+    assert.equal(status, 200);
+    assert.equal(data.ok, true);
+  });
+
+  it('POST /api/audit/heartbeat actually registers telemetry for a brand-new, previously-unwatched session_id — R-Gate R3, #2239', async () => {
+    const key = `r3-establish-${Date.now()}`;
+    assert.equal(evalAudit.getTelemetryStatus().some((w) => w.sessionId === key), false, 'precondition: not yet watched');
+    const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+      session_id: key
+    }, { Authorization: `Bearer ${auditSecret}` });
+    assert.equal(status, 200);
+    assert.equal(data.ok, true);
+    try {
+      const watch = evalAudit.getTelemetryStatus().find((w) => w.sessionId === key);
+      assert.ok(watch, 'the first valid heartbeat for a new key must establish a watch, not no-op');
+      assert.equal(watch.project, 'audit-bound');
+      assert.equal(watch.status, 'green');
+      // A second heartbeat for the SAME key, from the SAME project, resets
+      // the existing watch rather than refusing or re-claiming it.
+      const again = await request(server, 'POST', '/api/audit/heartbeat', {
+        session_id: key
+      }, { Authorization: `Bearer ${auditSecret}` });
+      assert.equal(again.status, 200);
+      assert.equal(evalAudit.getTelemetryStatus().filter((w) => w.sessionId === key).length, 1);
+    } finally {
+      evalAudit.unwatchSession(key, 'audit-bound');
+    }
+  });
+
+  it('POST /api/audit/heartbeat actually registers telemetry for a brand-new session_id via a project launch binding too', async () => {
+    const project = store.projects.getByName('audit-bound');
+    const bound = bindProject(project);
+    assert.equal(evalAudit.getTelemetryStatus().some((w) => w.sessionId === bound.sessionId), false, 'precondition: not yet watched');
+    const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+      session_id: bound.sessionId
+    }, bound.headers);
+    assert.equal(status, 200);
+    assert.equal(data.ok, true);
+    const watch = evalAudit.getTelemetryStatus().find((w) => w.sessionId === bound.sessionId);
+    assert.ok(watch, 'the first valid heartbeat for a new TangleClaw session id must establish a watch, not no-op');
+    assert.equal(watch.project, 'audit-bound');
+    evalAudit.unwatchSession(bound.sessionId, 'audit-bound');
+  });
+
+  it('POST /api/audit/heartbeat refuses an invalid Bearer token outright, without falling back to the binding check', async () => {
+    const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+      session_id: 'sess-1'
+    }, { Authorization: 'Bearer not-a-real-secret' });
+    assert.equal(status, 401);
+    assert.equal(data.code, 'UNAUTHORIZED');
+  });
+
+  it('POST /api/audit/heartbeat refuses a valid Bearer token whose connection has no bound project', async () => {
+    const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+      session_id: 'sess-1'
+    }, { Authorization: `Bearer ${unboundSecret}` });
+    assert.equal(status, 409);
+    assert.equal(data.code, 'CONNECTION_UNBOUND');
+  });
+
+  it('POST /api/audit/heartbeat lets a project session heartbeat itself', async () => {
+    const project = store.projects.getByName('audit-bound');
+    const bound = bindProject(project);
+    const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+      session_id: bound.sessionId
+    }, bound.headers);
+    assert.equal(status, 200);
+    assert.equal(data.ok, true);
+  });
+
+  it('POST /api/audit/heartbeat refuses a project session naming another project\'s session — this is the vulnerability #2239 closes', async () => {
+    const otherDir = fs.mkdtempSync(path.join(tmpDir, 'audit-other-'));
+    const other = store.projects.create({ name: `audit-other-${Date.now()}`, path: otherDir, engine: 'claude' });
+    const otherSession = store.sessions.start({ projectId: other.id, engineId: 'claude' });
+    const project = store.projects.getByName('audit-bound');
+    const bound = bindProject(project);
+    const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+      session_id: otherSession.id
+    }, bound.headers);
+    assert.equal(status, 403);
+    assert.equal(data.code, 'OTHER_SESSION');
+  });
+
+  it('POST /api/audit/heartbeat refuses a project session naming a DIFFERENT, superseded-but-active session of its OWN project — R-Gate R1 finding, #2239', async () => {
+    const project = store.projects.getByName('audit-bound');
+    // A second active session of the SAME project `bound` is not bound to —
+    // same project, still not this caller's own session.
+    const siblingSession = store.sessions.start({ projectId: project.id, engineId: 'claude' });
+    const bound = bindProject(project);
+    const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+      session_id: siblingSession.id
+    }, bound.headers);
+    assert.equal(status, 403);
+    assert.equal(data.code, 'OTHER_SESSION');
+  });
+
+  it('POST /api/audit/heartbeat under connection A cannot touch, preempt or be blocked by connection B\'s identical session_id string — R-Gate R4, #2239', async () => {
+    // B already watches this exact string under its OWN project (as ingest,
+    // or a prior heartbeat of B's, would have left it). A's secret is valid
+    // for a DIFFERENT project (`audit-bound`) and sends the identical
+    // session_id string. Under (project, session_id) scoping this must
+    // succeed for A — A's own entry, under A's own project — and must leave
+    // B's entry completely untouched: neither can preempt or 403 the other,
+    // whichever sent first (R2's original cross-connection finding and R3's
+    // exposed preemption/DoS gap are both closed by the SAME scoping).
+    evalAudit.watchSession('shared-session-key', 'audit-project-b');
+    try {
+      const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+        session_id: 'shared-session-key'
+      }, { Authorization: `Bearer ${auditSecret}` });
+      assert.equal(status, 200, JSON.stringify(data));
+      assert.equal(data.ok, true);
+      const statuses = evalAudit.getTelemetryStatus().filter((w) => w.sessionId === 'shared-session-key');
+      assert.equal(statuses.length, 2, 'both projects\' watches coexist under the identical string');
+      assert.deepEqual(statuses.map((w) => w.project).sort(), ['audit-bound', 'audit-project-b']);
+    } finally {
+      evalAudit.unwatchSession('shared-session-key', 'audit-bound');
+      evalAudit.unwatchSession('shared-session-key', 'audit-project-b');
+    }
+  });
+
+  it('POST /api/audit/heartbeat: connection A sending an unwatched session_id FIRST cannot preempt connection B\'s later, genuine first contact for the same string — R-Gate R4, #2239', async () => {
+    const key = `r4-race-${Date.now()}`;
+    const bDir = fs.mkdtempSync(path.join(tmpDir, 'audit-b-'));
+    const bSecret = `b-secret-${Date.now()}`;
+    const bConn = store.openclawConnections.create({
+      name: 'audit-b-openclaw', host: '192.0.2.23', sshUser: 'user', sshKeyPath: '/tmp/key', auditSecret: bSecret
+    });
+    const bProject = store.projects.create({ name: `audit-b-${Date.now()}`, path: bDir, engine: `openclaw:${bConn.id}` });
+    try {
+      // A (audit-bound) sends the key first — with no prior record of B's
+      // ownership, this is indistinguishable from a genuine first contact.
+      const first = await request(server, 'POST', '/api/audit/heartbeat', { session_id: key }, { Authorization: `Bearer ${auditSecret}` });
+      assert.equal(first.status, 200);
+      // B's own later, genuine first heartbeat for the identical string must
+      // still succeed and register ITS OWN telemetry — A's earlier claim
+      // must not have blocked or absorbed it.
+      const second = await request(server, 'POST', '/api/audit/heartbeat', { session_id: key }, { Authorization: `Bearer ${bSecret}` });
+      assert.equal(second.status, 200, JSON.stringify(second.data));
+      const bWatch = evalAudit.getTelemetryStatus().find((w) => w.sessionId === key && w.project === bProject.name);
+      assert.ok(bWatch, 'B\'s own watch must exist, unaffected by A sending the same string first');
+    } finally {
+      evalAudit.unwatchSession(key, 'audit-bound');
+      evalAudit.unwatchSession(key, bProject.name);
+    }
   });
 
   // ── Telemetry ──

@@ -29,6 +29,7 @@ const admitted = MUTATING
 // route to this list is a decision about who may change state without saying
 // who they are; it is made here, in review, and not by registering a route.
 const LISTED = Object.freeze([
+  'POST /api/audit/heartbeat',
   'POST /api/audit/ingest',
   'POST /api/auth/login',
   'POST /api/auth/logout',
@@ -137,9 +138,12 @@ describe('launch-binding guard: every mutating route is guarded or listed (#2233
     }
   });
 
-  it('keeps the audit heartbeat guarded: it has no credential of its own', () => {
+  it('admits the audit heartbeat unidentified, exactly as ingest is, now that it proves its own credential too (#2239)', () => {
     assert.ok(MUTATING.some((r) => key(r) === 'POST /api/audit/heartbeat'));
-    assert.ok(!admitted.includes('POST /api/audit/heartbeat'));
+    assert.ok(admitted.includes('POST /api/audit/heartbeat'),
+      'an unidentified caller must reach the handler so a valid audit-secret Bearer token can be checked there; ' +
+      'the handler itself refuses a caller with neither that token nor a verified launch binding/operator proof ' +
+      '(test/api-audit.test.js covers the handler-level refusal)');
   });
 });
 

@@ -233,7 +233,13 @@ Sessions are monitored via heartbeat. Default interval: 5 minutes.
 
 ### Endpoints
 
-- `POST /api/audit/heartbeat` — keep watchdog alive. It carries no credential, so since #2233 a call from a remote engine is refused with `403 LAUNCH_BINDING_REQUIRED` and the instance shows as silent in telemetry until the heartbeat is given one (#2239). Ingest is unaffected: it proves its connection's audit secret.
+- `POST /api/audit/heartbeat` — keep watchdog alive. Body: `{session_id}`. Authenticated one of two ways (#2239), never by trusting `session_id` alone:
+  1. **A remote OpenClaw instance** sends `Authorization: Bearer <audit_secret>`, the same proof `/api/audit/ingest` takes (and from the same connection — a connection with no project bound to it is refused `409 CONNECTION_UNBOUND`, same as ingest). `session_id` here is OpenClaw's own opaque id.
+  2. **A TangleClaw-launched project session, or the operator/Project Master dashboard**, sends its usual launch binding (`X-TangleClaw-Launch-Id` + `X-TangleClaw-Project-Id`) or signed-in session, with no `Authorization` header. `session_id` here must be a real TangleClaw session id (an integer): it is looked up server-side, never trusted from the body. A project session may heartbeat only **its own session** — matched to the binding's own session id, not merely to its project, so one bound session cannot heartbeat a *different*, superseded-but-still-active session of that same project either (`403 OTHER_SESSION`). The operator and Master may name any project's session. An unknown id is `404 NOT_FOUND`; an ended one is `409 SESSION_ENDED`.
+
+  **Watch lifecycle, and why it is scoped by project (#2239 R4).** The watchdog's in-memory key is `(project, session_id)`, never `session_id` alone. A `session_id` is caller-supplied and, for the OpenClaw path, has no TangleClaw record to verify it against, so two different projects' sessions can legitimately — or maliciously — collide on the identical string; a flat key cannot be policed by a claim check, because whoever presents a given string FIRST would always win it, letting one project pre-empt or silence another's telemetry before it ever starts. Scoping by project removes the collision outright: project A's watch on `"x"` and project B's watch on `"x"` are independent entries that cannot reset, preempt or block one another, whichever claims it first. The first valid heartbeat (or the first `/api/audit/ingest` exchange) for a `(project, session_id)` pair creates its watch; every later one for the SAME pair just resets its timer — this is what makes a first contact actually register in `GET /api/audit/telemetry` rather than silently no-op, which a flat-keyed, claim-refusing design (#2239 R2/R3) could not do without reintroducing the preemption risk.
+
+  Before #2239 this route also carried no credential of its own, so a remote engine's call was refused outright with `403 LAUNCH_BINDING_REQUIRED` since #2233 (the floor's default for any unlisted mutating route) and the instance showed as permanently silent in telemetry for that reason too. Giving the route a credential for path 1 reopened it to remote engines; path 2 exists so a TangleClaw-launched session or the operator can keep the watchdog alive too, scoped to the caller's own session and project in both paths so nobody can silence or spoof another caller's telemetry by naming its session id. Neither path grants any Operator, Master, Medusa or PortHub authority beyond this one heartbeat.
 - `GET /api/audit/telemetry` — status of all watched sessions (green/yellow/red)
 
 ---
@@ -363,12 +369,12 @@ All settings live in the project config under `evalAuditMode`:
 
 ## API Reference
 
-Every `POST`, `PUT`, `PATCH` and `DELETE` here must come from an identified caller before its route runs: see "Who may write" in `docs/configuration-reference.md`. Ingest is the listed exception: it proves its connection's audit secret.
+Every `POST`, `PUT`, `PATCH` and `DELETE` here must come from an identified caller before its route runs: see "Who may write" in `docs/configuration-reference.md`. Ingest and heartbeat are the listed exceptions: each proves a connection's audit secret itself (#2239 gives heartbeat a second, caller-scoped path too — see "Telemetry & Heartbeat" above).
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
 | POST | `/api/audit/ingest` | Receive exchange from OpenClaw webhook |
-| POST | `/api/audit/heartbeat` | Keep telemetry watchdog alive |
+| POST | `/api/audit/heartbeat` | Keep telemetry watchdog alive (audit secret, or a verified launch binding/operator scoped to its own session) |
 | GET | `/api/audit/telemetry` | Telemetry status of all watched sessions |
 | GET | `/api/audit/:project/scores` | List scores (filterable) |
 | GET | `/api/audit/:project/anomalies` | List anomalous scores |

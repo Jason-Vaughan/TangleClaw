@@ -236,22 +236,55 @@ describe('eval-audit: heartbeat watchdog', () => {
     assert.equal(statuses[0].sessionId, 'sess-1');
     assert.equal(statuses[0].project, 'ProjectA');
     assert.equal(statuses[0].status, 'green');
-    evalAudit.unwatchSession('sess-1');
+    evalAudit.unwatchSession('sess-1', 'ProjectA');
   });
 
   it('heartbeat resets the last received time', () => {
     evalAudit.watchSession('sess-2', 'ProjectB');
-    evalAudit.heartbeat('sess-2');
+    evalAudit.heartbeat('sess-2', 'ProjectB');
     const statuses = evalAudit.getTelemetryStatus();
     assert.equal(statuses[0].status, 'green');
-    evalAudit.unwatchSession('sess-2');
+    evalAudit.unwatchSession('sess-2', 'ProjectB');
   });
 
   it('unwatchSession removes from tracking', () => {
     evalAudit.watchSession('sess-3', 'ProjectC');
-    evalAudit.unwatchSession('sess-3');
+    evalAudit.unwatchSession('sess-3', 'ProjectC');
     const statuses = evalAudit.getTelemetryStatus();
     assert.equal(statuses.filter(s => s.sessionId === 'sess-3').length, 0);
+  });
+
+  it('two projects sharing the identical session_id string are independent watches — #2239 R4', () => {
+    evalAudit.watchSession('shared-key', 'ProjectX');
+    evalAudit.watchSession('shared-key', 'ProjectY');
+    try {
+      const statuses = evalAudit.getTelemetryStatus().filter((s) => s.sessionId === 'shared-key');
+      assert.equal(statuses.length, 2, 'both projects\' watches coexist under the identical session_id');
+      assert.deepEqual(statuses.map((s) => s.project).sort(), ['ProjectX', 'ProjectY']);
+      // A heartbeat scoped to X must not touch Y's entry.
+      evalAudit.heartbeat('shared-key', 'ProjectX');
+      const y = evalAudit.getTelemetryStatus().find((s) => s.sessionId === 'shared-key' && s.project === 'ProjectY');
+      assert.ok(y, 'ProjectY\'s watch must still exist');
+      // Unwatching X's must not remove Y's.
+      evalAudit.unwatchSession('shared-key', 'ProjectX');
+      assert.equal(evalAudit.getTelemetryStatus().filter((s) => s.sessionId === 'shared-key').length, 1);
+      assert.equal(evalAudit.getTelemetryStatus().find((s) => s.sessionId === 'shared-key').project, 'ProjectY');
+    } finally {
+      evalAudit.unwatchSession('shared-key', 'ProjectX');
+      evalAudit.unwatchSession('shared-key', 'ProjectY');
+    }
+  });
+
+  it('heartbeat is a no-op for a project that never called watchSession on this key', () => {
+    evalAudit.watchSession('established-key', 'RealOwner');
+    try {
+      evalAudit.heartbeat('established-key', 'Impostor');
+      const statuses = evalAudit.getTelemetryStatus().filter((s) => s.sessionId === 'established-key');
+      assert.equal(statuses.length, 1, 'heartbeat under the wrong project must not create a second watch');
+      assert.equal(statuses[0].project, 'RealOwner');
+    } finally {
+      evalAudit.unwatchSession('established-key', 'RealOwner');
+    }
   });
 
   it('startWatchdog and stopWatchdog without error', () => {
