@@ -591,6 +591,33 @@ describe('wrap-step pr-merge — resolveWrapMergeMethod (#1172)', () => {
     assert.match(r.warning, /unrecognized PR merge strategy "octopus merge"/);
   });
 
+  // PM revision dispatch (A481-R3) named these two exact value strings.
+  it('PR merge strategy: octopus — falls back to the default squash', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'prefs-pm-octopus-'));
+    fs.mkdirSync(path.join(dir, '.prawduct', 'artifacts'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, '.prawduct', 'artifacts', 'project-preferences.md'),
+      '- **PR merge strategy**: octopus\n'
+    );
+    const r = prMerge.resolveWrapMergeMethod(dir);
+    assert.equal(r.method, 'squash');
+    assert.equal(r.source, 'default');
+    assert.match(r.warning, /unrecognized PR merge strategy "octopus"/);
+  });
+
+  it('PR merge strategy: merge commit (never squash) — resolves to merge', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'prefs-pm-never-squash-'));
+    fs.mkdirSync(path.join(dir, '.prawduct', 'artifacts'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, '.prawduct', 'artifacts', 'project-preferences.md'),
+      '- **PR merge strategy**: merge commit (never squash)\n'
+    );
+    assert.deepEqual(
+      prMerge.resolveWrapMergeMethod(dir),
+      { method: 'merge', source: 'project-preferences', warning: null }
+    );
+  });
+
   it('project.json takes precedence over project-preferences.md', () => {
     const dir = fs.mkdtempSync(path.join(tmpDir, 'both-'));
     fs.mkdirSync(path.join(dir, '.tangleclaw'));
