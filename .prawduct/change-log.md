@@ -41,6 +41,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-28 — v5.46.0 W3-REC: reconcile the release-authority and merge-policy feature batch
+
+<!-- prawduct: type=internal | scope=v546-w3-rec -->
+
+- Consolidated the four Wave 1 and two Wave 2 code cars on merged `main@3ed2247fa9cc40a1b82103fb8d78fa8cc1f34a4a`: store option validation and linked-issue release readiness (#2681, #1495); fragment-only changelog coverage and preserved wrap prompt contracts (#2523, #660); configurable wrap PR merge policy and this repository's merge-commit rule (#1172, #2162); agent/operator release-mode names and changelog link definitions (#1701, #1051); group release ownership and an operator default for unconfigured projects (#1697, #1702); and opt-in managed-project release automation with changelog-convention detection (#721, #2022). The code changes are recorded in their `changelog.d/` fragments and will be promoted into `CHANGELOG.md` by W4-REL.
+- Updated the feature index and user guide for the merged behavior, and documented `wrapMergeMethod` in the project configuration table to close the follow-up raised on W1-C (#2693). This records the batch; no release tag or production activation is claimed.
+
 ## 2026-10-28 — v5.45.0 W4-REL: prepare the project-settings integrity release candidate
 
 <!-- prawduct: type=internal | scope=v545-w4-rel -->
