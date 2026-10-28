@@ -392,6 +392,61 @@ describe('store', () => {
         assert.equal(store.config.get('custom.nested.value'), 42);
       });
     });
+
+    describe('load projectsDir fallback (#2145)', () => {
+      const { getLevel, setConsoleStream } = require('../lib/logger');
+      let lines;
+      let priorLevel;
+
+      /**
+       * Captured lines naming the keyless/blank-projectsDir legacy fallback.
+       * @returns {string[]}
+       */
+      const fallbackLines = () => lines.filter((l) => /legacy ~\/Documents\/Projects fallback/.test(l));
+
+      beforeEach(() => {
+        lines = [];
+        priorLevel = getLevel();
+        setLevel('info');
+        setConsoleStream({ write: (s) => lines.push(String(s)) });
+      });
+
+      afterEach(() => {
+        setConsoleStream(null);
+        setLevel(priorLevel);
+      });
+
+      it('treats a blank projectsDir the same as a missing key', () => {
+        fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify({ projectsDir: '' }));
+        assert.equal(store.config.load().projectsDir, store.LEGACY_PROJECTS_DIR);
+      });
+
+      it('treats a whitespace-only projectsDir the same as a missing key', () => {
+        fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify({ projectsDir: '   ' }));
+        assert.equal(store.config.load().projectsDir, store.LEGACY_PROJECTS_DIR);
+      });
+
+      it('stays on a chosen directory', () => {
+        fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify({ projectsDir: '~/code' }));
+        assert.equal(store.config.load().projectsDir, '~/code');
+      });
+
+      it('logs the fallback only when init() asks for it, never on an ordinary load()', () => {
+        fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify({ serverPort: 3101 }));
+        store.config.load();
+        assert.deepEqual(fallbackLines(), [], 'a plain load() stays silent');
+        store.init();
+        assert.equal(fallbackLines().length, 1, 'init() logs the fallback once');
+        assert.match(fallbackLines()[0], /no projectsDir key/);
+      });
+
+      it('names the blank case distinctly from the missing-key case', () => {
+        fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify({ projectsDir: '' }));
+        store.init();
+        assert.equal(fallbackLines().length, 1);
+        assert.match(fallbackLines()[0], /blank projectsDir/);
+      });
+    });
   });
 
   describe('engines', () => {

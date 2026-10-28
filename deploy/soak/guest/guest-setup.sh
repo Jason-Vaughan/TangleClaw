@@ -765,10 +765,13 @@ echo "== 5/6 finish setup with the Operator login, attach projects"
 # removed once used, and all of them when setup ends.
 #
 # A fresh install opens on its first-run wizard, which covers the dashboard
-# until setup finishes, and keeps the default projects directory under
-# ~/Documents, which macOS privacy protection stops a launchd server reading
-# without a prompt nobody can answer. So a first run finishes setup here, in
-# three calls:
+# until setup finishes. Since #880 a fresh install defaults its projects
+# directory to ~/Projects, outside macOS's protected folders; only an
+# existing config.json with no projectsDir key, or a blank/whitespace-only
+# one, falls back to the pre-#880 default under ~/Documents/Projects (#2145),
+# which macOS privacy protection stops a launchd server reading without a
+# prompt nobody can answer. So a
+# first run finishes setup here, in three calls:
 #   1. setup/complete with no login and the soak's projects root. Setup with an
 #      account would not do: the guest has Caddy, and an account at setup
 #      starts the cutover that puts Caddy in front and restarts the server.
