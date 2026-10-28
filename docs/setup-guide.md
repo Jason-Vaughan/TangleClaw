@@ -240,6 +240,13 @@ rather than blessed by a plan that never read it:
 echo 'the-new-password' | node scripts/reset-admin.js --password-stdin --dry-run
 ```
 
+**The single rule for every preview's exit code:** a `--dry-run` exits 1 whenever the preview
+predicts a refusal — a bad password, an unresolvable user, a gate it cannot build, or (for
+`--disable`, below) the only enabled account without `--force` — exactly as the real run would. It
+exits 0 only when there is nothing to refuse. That holds across every mode this tool has
+(`--dry-run`, `--create-gate --dry-run`, `--store --dry-run`, `--disable --dry-run`), so a 0 from
+any of them is a genuine green light, never a preview that merely described a plan.
+
 ### If there is no login to reset
 
 An install that finished setup before a login was required — and later moved to Caddy
@@ -259,6 +266,20 @@ file yourself, the tool will refuse rather than rewrite your work — add a
 a password, not a name, and running `--create-gate` a second time refuses because a
 login now exists. Restore the backup the run printed — its path is in the output —
 and create it again with the right name.
+
+### Disabling an account
+
+To revoke one account's login without deleting it — a laptop with a saved session goes missing, or
+someone's access should end — run:
+
+```sh
+node scripts/reset-admin.js --disable --user <name>
+```
+
+It signs that account out everywhere, deletes its recovery codes, and marks it disabled; the
+account itself stays, and a later `reset-admin.js --store --user <name>` brings it back. It refuses
+to disable the **only enabled account** — the run that would leave nothing able to sign in —
+unless you add `--force`. Preview either way with `--dry-run`, which touches nothing.
 
 ---
 

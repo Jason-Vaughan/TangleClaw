@@ -72,9 +72,19 @@ everywhere: at least 12 characters, not a common password, not containing the us
 ## Every account is disabled
 
 The login is `locked`: accounts exist, none can sign in, and a recovery code cannot turn one back on,
-because a disabled account is meant to stay off until someone at the machine turns it back on.
-TangleClaw has no command to disable an account yet (#1458), so an install reaches this state only
-through an edit to its database. Re-enable an account at the terminal by resetting it:
+because a disabled account is meant to stay off until someone at the machine turns it back on. An
+install reaches this state by running, at the terminal:
+
+```sh
+node scripts/reset-admin.js --disable --user <name>
+```
+
+which signs that account out everywhere, deletes its recovery codes, and marks it disabled — the
+account itself is not deleted. It refuses to disable the **only enabled account** (the run that
+would lock out every account-based login) unless you add `--force`; add `--dry-run` to see what it
+would do first, without changing anything.
+
+Re-enable an account at the terminal by resetting it:
 
 ```sh
 node scripts/reset-admin.js --store --user <name>

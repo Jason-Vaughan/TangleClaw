@@ -19,6 +19,9 @@
 //                                                 completed setup without one
 //   node scripts/reset-admin.js --store --user jason
 //                                                 create or reset a TANGLECLAW account
+//   node scripts/reset-admin.js --disable --user jason [--force]
+//                                                 revoke a TANGLECLAW account's login without
+//                                                 deleting it; --store re-enables it later
 //
 // TWO DOORS, AND THIS TOOL OPENS BOTH (#1418). Without `--store` every mode
 // above operates on the CADDY basic_auth gate: bcrypt, a Caddyfile, a reload.
@@ -68,17 +71,20 @@ const USAGE =
   'Usage: node scripts/reset-admin.js [--user <name>] [--password-stdin] [--dry-run]\n' +
   '       node scripts/reset-admin.js --create-gate --user <name>\n' +
   '       node scripts/reset-admin.js --store --user <name> [--password-stdin] [--dry-run]\n' +
+  '       node scripts/reset-admin.js --disable --user <name> [--force] [--dry-run]\n' +
   '  Resets the Caddy basic_auth admin password (break-glass recovery), or with\n' +
   '  --create-gate puts a first login on an install that completed setup without one.\n' +
   '  With --store, creates or resets a TangleClaw account instead (scrypt, the users\n' +
   '  table) — the gate TangleClaw enforces itself, on any ingress mode.\n' +
+  '  With --disable, revokes a TangleClaw account\'s login without deleting it; refuses\n' +
+  '  on the only enabled account unless --force. Re-enable it with --store.\n' +
   '  Run this at a terminal ON the TangleClaw host.\n';
 
 /**
  * Parse CLI args. Pure — no I/O — so it is unit-testable.
  * @param {string[]} argv - process.argv.slice(2)
  * @returns {{ user: string|null, dryRun: boolean, passwordStdin: boolean, help: boolean,
- *   createGate: boolean, store: boolean }}
+ *   createGate: boolean, store: boolean, disable: boolean, force: boolean }}
  */
 function parseArgs(argv) {
   let user = null;
@@ -87,6 +93,8 @@ function parseArgs(argv) {
   let help = false;
   let createGate = false;
   let store = false;
+  let disable = false;
+  let force = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--user') { user = argv[++i] || null; }
@@ -94,9 +102,11 @@ function parseArgs(argv) {
     else if (a === '--password-stdin') { passwordStdin = true; }
     else if (a === '--create-gate') { createGate = true; }
     else if (a === '--store') { store = true; }
+    else if (a === '--disable') { disable = true; }
+    else if (a === '--force') { force = true; }
     else if (a === '--help' || a === '-h') { help = true; }
   }
-  return { user, dryRun, passwordStdin, help, createGate, store };
+  return { user, dryRun, passwordStdin, help, createGate, store, disable, force };
 }
 
 /**
@@ -290,6 +300,9 @@ function describeGateLines(live, preview) {
   } else if (live.gateState === authGate.GATE_STATES.UNREADABLE) {
     lines.push('  ⚠ TangleClaw could not read its login state, so it refuses every sign-in.',
       '    Its log names the read error.');
+  } else if (live.gateState === authGate.GATE_STATES.LOCKED) {
+    lines.push(`  ⚠ The TangleClaw login gate ${would} LOCKED: every account exists, but none can sign in.`,
+      '    Re-enable one at the terminal: node scripts/reset-admin.js --store --user <name>');
   } else {
     lines.push(`  The TangleClaw login gate ${would} ${live.gateState}.`);
   }
@@ -449,8 +462,90 @@ function clearOptOutIfGuarded(store, live) {
   }
 }
 
+/**
+ * Disable a TangleClaw account (`--disable`), revoking its login without
+ * deleting it.
+ *
+ * Refuses to disable the only currently ENABLED account unless `--force` is
+ * passed: this is the break-glass recovery tool, and unconditionally letting
+ * the last working credential be revoked would leave nobody a way back in
+ * through it. `--force` exists because that refusal must still be
+ * overridable — an operator migrating off TangleClaw's login, or who knows
+ * Caddy's password still stands in front, needs a way through it.
+ *
+ * `store.users.disable` already destroys the account's live sessions and
+ * deletes its recovery codes; this function reports that, never repeats it.
+ *
+ * @param {object} deps
+ * @param {object} deps.store - The initialised store module
+ * @param {string|null} deps.user - The `--user` value
+ * @param {boolean} deps.dryRun
+ * @param {boolean} deps.force
+ * @returns {Promise<number>} Process exit code
+ */
+async function runDisableMode({ store, user, dryRun, force }) {
+  if (!user) {
+    process.stderr.write('ERROR: --disable needs a username\n'
+      + '  node scripts/reset-admin.js --disable --user <name>\n');
+    return 1;
+  }
+  const existing = store.users.getByName(user);
+  if (!existing) {
+    process.stderr.write(`ERROR: no TangleClaw account '${user}'\n`);
+    return 1;
+  }
+  const alreadyDisabled = !!existing.disabled_at;
+  const enabledCount = store.users.list().filter((u) => !u.disabled_at).length;
+  const isLastEnabled = !alreadyDisabled && enabledCount === 1;
+
+  if (isLastEnabled && !force) {
+    const reason = `'${user}' is the only enabled TangleClaw account — disabling it would lock `
+      + 'every account-based login (use --force to override)';
+    if (dryRun) {
+      process.stdout.write(`\n[dry-run] disable TangleClaw account\n`);
+      process.stdout.write(`  store:   ${store._getBasePath()}\n`);
+      process.stdout.write(`  account: ${user}\n`);
+      process.stdout.write(`  would REFUSE: ${reason}\n\n`);
+      // The ratified #1286 reading: a preview that predicts a refusal exits 1,
+      // the same code the real run gives, in every mode this tool has.
+      return 1;
+    }
+    process.stderr.write(`ERROR: ${reason}\n`);
+    return 1;
+  }
+
+  if (dryRun) {
+    process.stdout.write(`\n[dry-run] disable TangleClaw account\n`);
+    process.stdout.write(`  store:   ${store._getBasePath()}\n`);
+    process.stdout.write(`  account: ${user}${alreadyDisabled ? ' (already DISABLED)' : ''}\n`);
+    if (alreadyDisabled) {
+      process.stdout.write('  would: nothing — the account is already disabled\n\n');
+      return 0;
+    }
+    process.stdout.write('  would: destroy every live session for this account\n');
+    process.stdout.write('         → delete this account\'s recovery codes\n');
+    process.stdout.write('         → mark the account disabled\n');
+    // The state the run would leave: this account gone from the enabled count,
+    // whatever else exists.
+    const wouldRemainEnabled = enabledCount - 1;
+    const after = { accountPresence: () => ({ exists: true, loginable: wouldRemainEnabled > 0 }) };
+    process.stdout.write(`${describeGateLines(describeLiveGate(store, after), true)}\n`);
+    return 0;
+  }
+
+  const changed = store.users.disable(user);
+  if (!changed) {
+    process.stdout.write(`\nAccount '${user}' is already disabled; nothing changed.\n`);
+    return 0;
+  }
+  process.stdout.write(`\nTangleClaw account disabled for '${user}'.\n`);
+  process.stdout.write(`  Store: ${store._getBasePath()}\n`);
+  process.stdout.write(`${describeGateLines(describeLiveGate(store), false)}\n`);
+  return 0;
+}
+
 async function main() {
-  const { user, dryRun, passwordStdin, help, createGate, store: storeMode } =
+  const { user, dryRun, passwordStdin, help, createGate, store: storeMode, disable, force } =
     parseArgs(process.argv.slice(2));
   if (help) {
     process.stdout.write(USAGE);
@@ -459,6 +554,26 @@ async function main() {
 
   const store = require(path.join(REPO_DIR, 'lib', 'store'));
   store.init();
+
+  if (disable) {
+    // Refused rather than guessed: --disable and --create-gate name two
+    // different doors, same as --store and --create-gate below.
+    if (createGate) {
+      process.stderr.write('ERROR: --disable and --create-gate are different doors — choose one\n'
+        + '  --disable     revoke a TangleClaw account\'s login (the users table)\n'
+        + '  --create-gate Caddy\'s basic_auth gate (the Caddyfile, caddy mode only)\n');
+      store.close();
+      process.exit(1);
+    }
+    let code;
+    try {
+      code = await runDisableMode({ store, user, dryRun, force });
+    } finally {
+      store.close();
+    }
+    if (code !== 0) process.exit(code);
+    return;
+  }
 
   if (storeMode) {
     // Refused rather than silently preferring one: the two flags name two
@@ -571,7 +686,10 @@ async function main() {
     if (!verdict.allowed) {
       process.stdout.write(`  would REFUSE: ${verdict.reason}\n\n`);
       store.close();
-      return;
+      // Ratified #1286 reading: a preview that predicts a refusal exits 1,
+      // the same code the real run would give — not 0, which reads as a
+      // green light during the lockout this tool exists for.
+      process.exit(1);
     }
     // Named from the flag rather than assumed. Saying "prompt new password"
     // under `--password-stdin` described a step the run does not take, about a
@@ -671,5 +789,5 @@ if (require.main === module) {
 
 module.exports = {
   parseArgs, resolveTargetUser, reloadCaddyArgs, writeValidatedCaddyfile, runStoreMode,
-  describeLiveGate, describeGateLines
+  runDisableMode, describeLiveGate, describeGateLines
 };

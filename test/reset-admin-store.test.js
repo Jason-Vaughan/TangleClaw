@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const store = require('../lib/store');
-const { runStoreMode, parseArgs } = require('../scripts/reset-admin');
+const { runStoreMode, runDisableMode, parseArgs } = require('../scripts/reset-admin');
 
 // `reset-admin.js --store` — the break-glass tool for TangleClaw's OWN door
 // (#1418; moved here from #1417 because a recovery path for a door that was not
@@ -449,6 +449,176 @@ describe('reset-admin --store (#1418)', () => {
       const code = await run({ user: 'rosie', dryRun: true });
       assert.equal(code, 0);
       assert.match(out, /prompt new password/);
+    });
+
+    it('still needs a username', async () => {
+      const code = await run({ user: null, dryRun: true });
+      assert.equal(code, 1);
+    });
+  });
+});
+
+describe('reset-admin --disable (#1458)', () => {
+  // Real store writes, for the same reason reset-admin --store is tested this
+  // way rather than through a source probe: whether an account can actually
+  // sign in afterward is the thing that matters.
+  let tempDir;
+  let prevBase;
+  let out;
+  let err;
+  let writeOut;
+  let writeErr;
+
+  before(() => {
+    prevBase = store._getBasePath();
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-reset-disable-test-'));
+    store.close();
+    store._setBasePath(tempDir);
+    store.init();
+    writeOut = process.stdout.write.bind(process.stdout);
+    writeErr = process.stderr.write.bind(process.stderr);
+  });
+
+  after(() => {
+    process.stdout.write = writeOut;
+    process.stderr.write = writeErr;
+    store.close();
+    store._setBasePath(prevBase);
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    store.getDb().prepare('DELETE FROM auth_sessions').run();
+    for (const u of store.users.list()) {
+      store.getDb().prepare('DELETE FROM users WHERE id = ?').run(u.id);
+    }
+    const cfg = store.config.load();
+    cfg.authEnabled = false;
+    store.config.save(cfg);
+    out = '';
+    err = '';
+    process.stdout.write = (s) => { out += s; return true; };
+    process.stderr.write = (s) => { err += s; return true; };
+  });
+
+  const run = (opts) => runDisableMode({ store, dryRun: false, force: false, ...opts });
+
+  it('disables an enabled account that is not the only one', async () => {
+    const rosie = store.users.create('rosie', PASSWORD);
+    store.users.create('other', PASSWORD);
+    const code = await run({ user: 'rosie' });
+    assert.equal(code, 0);
+    assert.ok(store.users.getByName('rosie').disabled_at, 'rosie must now be disabled');
+    assert.equal(store.users.verify('rosie', PASSWORD), null);
+    assert.ok(store.users.verify('other', PASSWORD), 'the other account is untouched');
+    assert.equal(rosie.id, store.users.getByName('rosie').id);
+  });
+
+  it('destroys live sessions and recovery codes for the disabled account', async () => {
+    const rosie = store.users.create('rosie', PASSWORD);
+    store.users.create('other', PASSWORD);
+    const s = store.authSessions.create(rosie);
+    const codes = store.recoveryCodes.replaceForUser(rosie.id);
+    await run({ user: 'rosie' });
+    assert.equal(store.authSessions.resolve(s.token), null);
+    assert.equal(store.recoveryCodes.peek(codes[0]), null);
+  });
+
+  it('refuses to disable the only enabled account without --force', async () => {
+    store.users.create('rosie', PASSWORD);
+    const code = await run({ user: 'rosie' });
+    assert.equal(code, 1);
+    assert.match(err, /only enabled TangleClaw account/);
+    assert.match(err, /--force/);
+    assert.equal(store.users.getByName('rosie').disabled_at, null, 'nothing must change on refusal');
+  });
+
+  it('disables the only enabled account when --force is passed', async () => {
+    store.users.create('rosie', PASSWORD);
+    const code = await run({ user: 'rosie', force: true });
+    assert.equal(code, 0);
+    assert.ok(store.users.getByName('rosie').disabled_at);
+  });
+
+  it('does not count an already-disabled account as the enabled one it is protecting', async () => {
+    store.users.create('rosie', PASSWORD);
+    const other = store.users.create('other', PASSWORD);
+    store.users.disable('other');
+    // Only 'rosie' is enabled; disabling it is the real "last enabled" case
+    // even though two accounts exist.
+    const code = await run({ user: 'rosie' });
+    assert.equal(code, 1);
+    assert.equal(store.users.getByName('other').id, other.id);
+  });
+
+  it('is a no-op, exit 0, when the account is already disabled', async () => {
+    store.users.create('rosie', PASSWORD);
+    store.users.create('other', PASSWORD);
+    store.users.disable('rosie');
+    out = '';
+    const code = await run({ user: 'rosie' });
+    assert.equal(code, 0);
+    assert.match(out, /already disabled; nothing changed/);
+  });
+
+  it('refuses an unknown account, writing nothing', async () => {
+    const code = await run({ user: 'ghost' });
+    assert.equal(code, 1);
+    assert.match(err, /no TangleClaw account 'ghost'/);
+  });
+
+  it('needs a username', async () => {
+    const code = await run({ user: null });
+    assert.equal(code, 1);
+    assert.match(err, /--disable needs a username/);
+  });
+
+  it('reports the gate transitioning to LOCKED when disabling leaves no account enabled', async () => {
+    store.users.create('rosie', PASSWORD);
+    const cfg = store.config.load();
+    cfg.authEnabled = true;
+    store.config.save(cfg);
+    const code = await run({ user: 'rosie', force: true });
+    assert.equal(code, 0);
+    assert.match(out, /LOCKED/);
+    assert.match(out, /--store --user <name>/);
+  });
+
+  describe('--dry-run', () => {
+    it('touches nothing and says what it would do', async () => {
+      store.users.create('rosie', PASSWORD);
+      store.users.create('other', PASSWORD);
+      const code = await run({ user: 'rosie', dryRun: true });
+      assert.equal(code, 0);
+      assert.equal(store.users.getByName('rosie').disabled_at, null, 'a preview must write nothing');
+      assert.match(out, /\[dry-run\]/);
+      assert.match(out, /disable TangleClaw account/);
+    });
+
+    it('predicts the last-enabled refusal and exits 1, per the #1286 ratified reading', async () => {
+      store.users.create('rosie', PASSWORD);
+      const code = await run({ user: 'rosie', dryRun: true });
+      assert.equal(code, 1);
+      assert.match(out, /would REFUSE/);
+      assert.match(out, /only enabled TangleClaw account/);
+      assert.equal(store.users.getByName('rosie').disabled_at, null);
+    });
+
+    it('previews --force overriding the last-enabled refusal, and still writes nothing', async () => {
+      store.users.create('rosie', PASSWORD);
+      const code = await run({ user: 'rosie', dryRun: true, force: true });
+      assert.equal(code, 0);
+      assert.doesNotMatch(out, /would REFUSE/);
+      assert.equal(store.users.getByName('rosie').disabled_at, null);
+    });
+
+    it('reports an already-disabled account as a no-op preview', async () => {
+      store.users.create('rosie', PASSWORD);
+      store.users.create('other', PASSWORD);
+      store.users.disable('rosie');
+      const code = await run({ user: 'rosie', dryRun: true });
+      assert.equal(code, 0);
+      assert.match(out, /already DISABLED/);
     });
 
     it('still needs a username', async () => {
