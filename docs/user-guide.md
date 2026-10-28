@@ -393,6 +393,16 @@ Tap the **Launch** button on a project card. TangleClaw:
 4. Injects the prime prompt (if the engine supports it)
 5. Redirects you to the session wrapper
 
+### Launch readiness before ordinary work
+
+A newly launched session finishes its startup steps before TangleClaw treats it as ready for ordinary tasks. The session banner and project card show **Starting** with a step cursor, **Needs attention** with a blocker, or **Ready**. While it is starting or needs attention, the session page leaves a typed ordinary command in place instead of sending it. The server also refuses ordinary task commands with `STARTUP_NOT_READY`, and Medusa holds task-triggering nudges. An explicit startup intervention can still be sent to resolve the blocker (#1633).
+
+Read the launch sequence in its stated order: banner, sequence, freshness and attestation, then propose the first action and stop. The prime, kickoff, and attestation pages use this same ordering (#1693). `tc start ready` is the fence after the steps have been read and acknowledged at the current revision. The attestation must state the preflight verdict shown in step 3; if it does not match, reread that step rather than guessing. READY records a durable receipt, and a later rule or shared-document drift is recorded as a separate reconciliation without changing the original READY (#1877, #2191).
+
+In **Launch readiness**, the unready monitor shows its latest verdict and time beside the nudge count. A verdict such as `pane-busy` explains why no nudge was sent; `nudged` and `already-nudged` distinguish delivery from a repeat check (#1596). For a pull-pointer prime that contains no rule text, the panel still shows whether its paste was delivered, rejected, timed out, withheld before the readiness gate, or lost its pane. That paste outcome is separate from the rule-delivery ledger (#1597).
+
+If a handoff is damaged, corrupt, behind, or unclassified, the launch row shows the warning even when there is no applicable launch sequence. An active session in operator-cleared recovery offers **Clear recovery** to the operator; an ended session keeps the explanation but has no Clear button because clearing it cannot resume an ended session. A new session has its own launch and recovery decision (#1623).
+
 ### The `tc` command
 
 `tc` is the command a session uses to talk to TangleClaw from inside its own terminal. The AI
