@@ -403,6 +403,11 @@ describe('delivery disposition — the sender-facing answer uses the same classi
       wake._internal.getProject = () => ({ id: 10, name: 'proj-a', path: '/tmp/proj-a' });
       wake._internal.wrapRunning = () => false;
       wake._internal.rotationOpen = () => false;
+      // #1633 R3 — a not-applicable, undamaged sequence is ready, so this test
+      // reaches the opt-in check it is actually about instead of holding on
+      // 'startup-not-ready' first.
+      wake._internal.launchSequence = () => ({ applicability: 'not-applicable', readyAt: null, recovery: 'none', preflight: null, recoveryClearedAt: null });
+      wake._internal.isNotApplicableDamagedHandoff = () => false;
       wake._internal.loadProjectConfig = () => ({ medusaWake: false });
       wake._internal.getStatus = () => ({ state: 'listening', workspaceId: 'peer-ws', unread: 1, lastError: null });
       wake._internal.getMessages = () => [{ id: 'm1', from: 'x', message: 'hi' }];

@@ -1460,8 +1460,8 @@ describe('medusa-wake — gates (each one blocks alone)', () => {
     const world = installWorld({ launchSequence: null });
     tickThroughDebounce();
     assert.equal(world.injected.length, 0, 'no sequence row — held, never read as ready');
-    assert.ok(world.recorded.some((r) => r.skipReason === 'missing-launch-sequence'),
-      'the hold is recorded, not silent');
+    assert.ok(world.recorded.some((r) => r.skipReason === 'startup-not-ready'),
+      'the hold is recorded, not silent, under the same code the other two startup holds use');
 
     world.launchSequence = { applicability: 'not-applicable', readyAt: null, recovery: 'none', preflight: null, recoveryClearedAt: null };
     tickThroughDebounce();
