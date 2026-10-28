@@ -347,6 +347,28 @@ describe('writeEngineConfig writes atomically and refuses a read-only target (#1
     assert.ok(after.includes(BEGIN), 'our block landed in the referent');
   });
 
+  test('a multi-hop DANGLING symlink chain follows every intermediate link, through the real write path (R-Gate round 2)', (t) => {
+    // AGENTS.md -> middle.md -> missing.md, missing.md does not exist yet.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-managed-block-chain-'));
+    const missing = path.join(dir, 'missing.md');
+    const middle = path.join(dir, 'middle.md');
+    const link = path.join(dir, 'AGENTS.md');
+    fs.symlinkSync(missing, middle);
+    fs.symlinkSync(middle, link);
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    const result = engines.writeEngineConfig('antigravity', dir, {}, profile);
+    assert.equal(result.skipped, false, `fixture did not reach the write path: ${result.skipReason}`);
+    assert.equal(result.written, true);
+    assert.equal(result.error, null);
+
+    assert.equal(fs.lstatSync(link).isSymbolicLink(), true, 'AGENTS.md is still a symlink');
+    assert.equal(fs.readlinkSync(link), middle);
+    assert.equal(fs.lstatSync(middle).isSymbolicLink(), true, 'middle.md is STILL a symlink, not replaced');
+    assert.equal(fs.readlinkSync(middle), missing);
+    assert.ok(fs.readFileSync(missing, 'utf8').includes(BEGIN), 'the write landed on the chain\'s final referent');
+  });
+
   test('the whole-file path (no provenance surface) refuses a read-only target too — not just managed-block', (t) => {
     // claude's CLAUDE.md is whole-file, ungoverned, and has no provenance
     // surface (provenanceSurfaces only cover codex/aider), so it reaches

@@ -391,6 +391,41 @@ describe('#858 an engine switch retires the previous engine\'s config file', () 
       assert.equal(fs.readFileSync(referent, 'utf8'), 'brand new via a dangling link\n');
       fs.rmSync(dir, { recursive: true, force: true });
     });
+
+    it('a multi-hop DANGLING chain follows every intermediate link, never replaces one (#1291 R-Gate round 2)', () => {
+      // AGENTS.md -> middle.md -> missing.md, and missing.md does not exist.
+      // `fs.realpathSync` throws ENOENT on the whole chain with no way to tell
+      // how many hops it already resolved; a single-hop fallback would land
+      // the write on `middle.md` itself (a symlink) and the rename would sever
+      // IT instead of creating `missing.md` — the bug a one-hop readlink
+      // fallback left behind.
+      const dir = tmp();
+      const missing = path.join(dir, 'missing.md');
+      const middle = path.join(dir, 'middle.md');
+      const link = path.join(dir, 'AGENTS.md');
+      fs.symlinkSync(missing, middle);
+      fs.symlinkSync(middle, link);
+
+      engines._atomicWriteConfigFile(link, 'content for the end of the chain\n');
+
+      assert.equal(fs.lstatSync(link).isSymbolicLink(), true, 'AGENTS.md is still a symlink');
+      assert.equal(fs.readlinkSync(link), middle, 'AGENTS.md still points at middle.md');
+      assert.equal(fs.lstatSync(middle).isSymbolicLink(), true, 'middle.md is STILL a symlink too — not replaced');
+      assert.equal(fs.readlinkSync(middle), missing, 'middle.md still points at missing.md');
+      assert.equal(fs.readFileSync(missing, 'utf8'), 'content for the end of the chain\n',
+        'the write landed on the chain\'s final referent, which now exists');
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('a symlink cycle is refused with ELOOP rather than looping forever', () => {
+      const dir = tmp();
+      const a = path.join(dir, 'a.md');
+      const b = path.join(dir, 'b.md');
+      fs.symlinkSync(b, a);
+      fs.symlinkSync(a, b);
+      assert.throws(() => engines._atomicWriteConfigFile(a, 'content\n'), (err) => err.code === 'ELOOP');
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
   });
 
   it('retirement through a symlinked AGENTS.md updates the referent, never severs the link (#1291 R-Gate)', () => {
