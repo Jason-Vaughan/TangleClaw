@@ -41,6 +41,34 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-28 — v5.43.0 W3-REC: reconcile verified identity and direct-input records
+
+<!-- prawduct: type=internal | scope=v543-w3-rec -->
+
+- **W1-B (#1865, #1875):** Project and Master Medusa `/send` routes now match the caller's
+  current verified launch to the route's participant before accepting even an ordinary message.
+  A valid launch for a different participant gets `403 SENDER_PROJECT_MISMATCH`; the message does
+  not reach the Hub.
+- **W1-C (#1611, #1682):** Launch preflight matches handoffs by project identity, leaving the
+  prior workspace id as digest-covered diagnostic metadata rather than comparing it with a fresh
+  launch id. Unreadable staged handoff files are named in the launch log and reported as
+  `skippedStagedFiles`.
+- **W1-D (#2148, #2021):** Startup fire, recovery clear, and startup-prompt save share operator
+  proof handling; recovery clear and reconciliation reads share target resolution. Session-rule
+  mutation routes reject the Project Master, and global-rule writes and reset are documented as
+  operator-only with matching authorization tests.
+- **W2-B (#2239):** Audit heartbeats now prove a bound OpenClaw connection through its audit
+  secret or resolve an authorized TangleClaw caller. A project launch can heartbeat only its own
+  live session. Watchdog entries are scoped by `(project, session_id)`, and the first valid
+  heartbeat or ingest establishes a watch.
+- **W2-A (#2402):** Direct session commands reserve leading slash input for the operator, stamp
+  peer and Master injections with a server-owned verified sender, and return a submission
+  receipt. Project `replyGuidance` can replace Medusa reply instructions, while
+  `suppressNonActionableWakes` skips a nudge for an inbox containing only shared-document notices.
+- Reconciled the six merged cars in `FEATURES.md` and `docs/user-guide.md`, using the v5.43.0
+  wave-start commit for the feature-index verifier. W1-A (#1458, #1286) already has its own
+  entry below; this entry does not duplicate it or add an Archive section.
+
 ## 2026-10-28 — v5.43.0 W1-A: reset-admin --disable, and the dry-run exit-code fix (#1458, #1286)
 
 <!-- prawduct: type=feature | scope=w1a-1458-1286-reset-admin -->
