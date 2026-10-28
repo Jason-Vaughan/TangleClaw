@@ -666,8 +666,9 @@ describe('lib/server-info (#199 stale-server detection)', () => {
     });
 
     describe('confirmRestartMechanism — the re-check before a restart', () => {
-      it('passes launchd through without asking systemd anything, when launchd owns this process', async () => {
+      it('passes launchd through without asking systemd anything, when the plist still exists and launchd owns this process', async () => {
         serverInfo._internal.execFileAsync = () => { throw new Error('launchd must not be re-probed'); };
+        serverInfo._internal.existsSync = (p) => p === serverInfo.MACOS_PLIST_PATH;
         serverInfo._internal.env = () => ({ XPC_SERVICE_NAME: 'com.tangleclaw.server' });
         try {
           assert.deepEqual(await serverInfo.confirmRestartMechanism('launchctl'), { ok: true, reason: null });
@@ -678,6 +679,7 @@ describe('lib/server-info (#199 stale-server detection)', () => {
 
       it('refuses launchctl, explaining a manual start, when launchd does not own this process (#1555)', async () => {
         serverInfo._internal.execFileAsync = () => { throw new Error('launchd must not be re-probed'); };
+        serverInfo._internal.existsSync = (p) => p === serverInfo.MACOS_PLIST_PATH;
         for (const xpc of [undefined, '0']) {
           serverInfo._internal.env = () => (xpc === undefined ? {} : { XPC_SERVICE_NAME: xpc });
           try {
@@ -687,6 +689,30 @@ describe('lib/server-info (#199 stale-server detection)', () => {
           } finally {
             restoreInternal();
           }
+        }
+      });
+
+      it('refuses launchctl when the plist was uninstalled after the cached detection ran (R1, #1555)', async () => {
+        // The exact scenario PRR-B's R-Gate caught: detectRestartMechanism
+        // caches 'launchctl' for the process lifetime once the plist exists
+        // AND ownership holds; an operator who uninstalls the LaunchAgent
+        // afterward must not still get a 202 restart launchd can't perform.
+        serverInfo.__unsafeResetForTest();
+        serverInfo._internal.platform = () => 'darwin';
+        serverInfo._internal.existsSync = (p) => p === serverInfo.MACOS_PLIST_PATH;
+        serverInfo._internal.env = () => ({ XPC_SERVICE_NAME: 'com.tangleclaw.server' });
+        try {
+          assert.equal(serverInfo.detectRestartMechanism(), 'launchctl', 'precondition: cached while the plist exists');
+
+          serverInfo._internal.existsSync = () => false; // the operator ran the uninstaller
+          serverInfo._internal.execFileAsync = () => { throw new Error('launchd must not be re-probed'); };
+          assert.equal(serverInfo.detectRestartMechanism(), 'launchctl', 'precondition: the cache is not re-read by detect alone');
+
+          const result = await serverInfo.confirmRestartMechanism('launchctl');
+          assert.equal(result.ok, false, 'the confirmation must catch what the cache missed');
+          assert.match(result.reason, /no longer exists|uninstalled/);
+        } finally {
+          restoreInternal();
         }
       });
 

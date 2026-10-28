@@ -1489,19 +1489,27 @@
   /**
    * The give-up message `pollServerBackAndReload` shows when 15 seconds of
    * polling never saw the new process (#1555). Distinguishes a FAILED
-   * restart — the process manager never replaced the running process, or
-   * the server never answered again at all — from a merely SLOW one, so an
-   * operator reading "did not complete… may still be coming back" isn't
-   * told to wait on a restart that already definitively did not happen.
+   * restart from a merely SLOW one by the ACTUAL SEQUENCE, not merely
+   * whether any one poll ever saw the old start time: an early poll
+   * reporting the pre-restart `startedAt` is the expected, normal shape of
+   * a restart in progress (the old process is still exiting), so a single
+   * early old-start-time response followed by every later poll failing to
+   * connect is the ordinary dead-window pattern, not proof the process was
+   * never replaced — conflating the two was PRR-B's R-Gate WARNING W1.
+   * Only the LAST poll's own outcome can say "still answering as the old
+   * process, right up to the 15s mark" vs. "never answered after that."
    * Names the platform's own diagnostic log command so there's somewhere
    * to look next.
    *
    * @param {object} signals
    * @param {string|null} signals.mechanism - `'launchctl'` or `'systemctl'`,
    *   from the restart response, or null when unknown.
-   * @param {boolean} signals.sawOldProcessStillRunning - A poll connected
-   *   and reported `startedAt` unchanged — the old process never exited.
-   * @param {boolean} signals.sawAnyResponse - Any poll got a response at all.
+   * @param {boolean} signals.everConnected - Any poll got a response at all.
+   * @param {'old'|'no-response'|null} signals.lastOutcome - What the MOST
+   *   RECENT poll saw: `'old'` (connected, still the pre-restart
+   *   `startedAt`) or `'no-response'` (failed to connect or gave no
+   *   `startedAt`). Never `'new'` — that outcome reloads immediately and
+   *   never reaches a give-up message.
    * @returns {string}
    */
   function tcRestartGiveUpMessage(signals) {
@@ -1510,13 +1518,18 @@
       : signals.mechanism === 'launchctl'
         ? ' Check ~/Library/Logs/TangleClaw/ (or `launchctl print gui/$(id -u)/com.tangleclaw.server`) for why.'
         : '';
-    if (signals.sawOldProcessStillRunning) {
-      return `Restart failed: the server kept reporting its pre-restart start time for 15 seconds — the running process was never replaced.${diagnostic}`;
+    // 15 seconds and 30 polls have already elapsed by the time this runs —
+    // "may still be slow" is not an available reading at this point, only
+    // WHICH failure: the process that answered right up to the end never
+    // exited, or it did exit (or never started answering at all) and never
+    // came back.
+    if (signals.lastOutcome === 'old') {
+      return `Restart failed: the server was still reporting its pre-restart start time at the 15-second mark — the running process was never replaced.${diagnostic}`;
     }
-    if (!signals.sawAnyResponse) {
-      return `Restart failed: the server never came back online within 15 seconds.${diagnostic}`;
+    if (signals.everConnected) {
+      return `Restart failed: the server exited and never came back online within 15 seconds.${diagnostic}`;
     }
-    return 'Restart did not complete within 15 seconds. The server may still be coming back — refresh in a moment.';
+    return `Restart failed: the server never came back online within 15 seconds.${diagnostic}`;
   }
 
   /**
@@ -1583,11 +1596,13 @@
      *
      * 30 polls at 500ms = 15s of patience; the restart itself typically takes
      * ~3s. Each poll tolerates a failed fetch (the in-between window when the
-     * old process is dead but the new one hasn't bound the port yet) — but
-     * also records it, since 15 straight failures (or 15 straight successes
-     * reporting the OLD start time) mean the restart did not merely run long,
-     * it did not happen (#1555): the give-up message says so instead of
-     * reading "may still be coming back."
+     * old process is dead but the new one hasn't bound the port yet), but
+     * also records its own outcome, overwriting the last one — only the
+     * MOST RECENT poll's outcome is trustworthy evidence of the end state
+     * (#1555): an early success reporting the OLD start time is the
+     * expected shape of a restart in progress, not proof the process never
+     * exited, so the give-up message is built from the last poll alone,
+     * never "any poll ever."
      *
      * @param {string|null} oldStartedAt - Pre-restart `startedAt` baseline.
      * @param {() => void} restore - Clears the caller's in-flight latch and
@@ -1603,29 +1618,36 @@
       const POLL_INTERVAL_MS = 500;
       const POLL_MAX_ATTEMPTS = 30;
       let attempt = 0;
-      let sawOldProcessStillRunning = false;
-      let sawAnyResponse = false;
+      let everConnected = false;
+      // What the MOST RECENT poll saw — overwritten every attempt, so the
+      // give-up message reflects the sequence's end state, not whether any
+      // earlier poll (expectedly) saw the old process mid-exit (#1555 W1).
+      let lastOutcome = null;
       const poll = win.setInterval(async () => {
         attempt++;
         try {
           const info = await api('/api/server-info');
           if (info) {
-            sawAnyResponse = true;
+            everConnected = true;
             if (info.startedAt && info.startedAt !== oldStartedAt) {
               win.clearInterval(poll);
               win.location.reload();
               return;
             }
-            if (info.startedAt === oldStartedAt) sawOldProcessStillRunning = true;
+            lastOutcome = 'old';
+          } else {
+            lastOutcome = 'no-response';
           }
-        } catch { /* expected during the dead window */ }
+        } catch {
+          lastOutcome = 'no-response'; // expected during the dead window
+        }
         if (attempt >= POLL_MAX_ATTEMPTS) {
           win.clearInterval(poll);
           restore();
           win.alert(tcRestartGiveUpMessage({
             mechanism: lastRestartMechanism,
-            sawOldProcessStillRunning,
-            sawAnyResponse
+            everConnected,
+            lastOutcome
           }));
         }
       }, POLL_INTERVAL_MS);

@@ -605,6 +605,34 @@ describe('#1555 a failed restart is distinguished from a slow one', () => {
     assert.match(alert, /failed/i);
     assert.doesNotMatch(alert, /journalctl|Library\/Logs\/TangleClaw|launchctl print/);
   });
+
+  it('one early old-start-time poll followed by every later poll failing to connect is NOT reported as "never replaced" (PRR-B R-Gate WARNING W1)', async () => {
+    // The ordinary shape of a restart in progress: the old process answers
+    // once more while it's exiting, then the dead window begins. Reporting
+    // this as a definitive "never replaced" (based on ANY poll ever seeing
+    // the old startedAt) would be wrong — only the LAST poll's own outcome
+    // may make that claim.
+    const ctx = loadBeacon({
+      fetchImpl: (n) => {
+        if (n === 1) return jsonRes(200, { ok: true, toRef: 'v5.1.2' });
+        if (n === 2) return jsonRes(200, { startedAt: 'old' });
+        if (n === 3) return jsonRes(200, { ok: true, mechanism: 'systemctl' });
+        if (n === 4) return jsonRes(200, { startedAt: 'old' }); // the one early still-old poll
+        throw new Error('fetch failed'); // every poll after that never connects again
+      }
+    });
+    await ctx.beacon.apply(AVAILABLE);
+    await runPolls(ctx, 30);
+
+    assert.equal(ctx.calls.reloads, 0);
+    const alert = ctx.calls.alerts[ctx.calls.alerts.length - 1];
+    assert.doesNotMatch(alert, /never (was )?replaced|pre-restart start time/i,
+      'one early old-startedAt poll must not be read as proof the process was never replaced');
+    assert.match(alert, /failed/i);
+    assert.match(alert, /exited and never came back online/i,
+      'it DID answer at poll 4, then stopped — a different failure than never answering at all');
+    assert.match(alert, /journalctl --user -u tangleclaw\.service/);
+  });
 });
 
 describe('#931 the dirty-tree escape survived the move (#711 / #928 R-1)', () => {
