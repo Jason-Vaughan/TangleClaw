@@ -41,6 +41,25 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-28 — v5.44.0 W1-B: managed-carrier discard refuses staged edits, restores against HEAD (#1246)
+
+<!-- prawduct: type=fix | scope=w1b-1246 -->
+
+- The self-updater's managed-carrier discard (`CLAUDE.md`, `.claude/settings.json`) now refuses a
+  carrier with a staged index change regardless of what the containment proof answers:
+  `_managedRegionOnlyDiff` only ever compares the working tree against HEAD, so a staged edit
+  confined entirely inside TangleClaw's managed block used to pass containment even though an
+  explicit `git add` is the strongest signal of authored work this parser can see. `_classifyDirty`
+  now reads porcelain's index column (`xy[0]`) and treats anything other than `' '`/`'?'` as real
+  work, never consulting the proof.
+- `_discardTcFiles` now restores via `git checkout HEAD -- <path>` instead of the bare
+  index-relative `git checkout -- <path>`, so the restore target is identical to the reference
+  `_managedRegionOnlyDiff` actually proved containment against, rather than relying on the index
+  happening to match HEAD.
+- New regression tests cover a staged-only edit inside the block, a staged edit outside the block,
+  a staged-plus-further-modified entry, and the unstaged managed-region-only case still restoring
+  cleanly against HEAD.
+
 ## 2026-10-28 — v5.43.0 W4-REL: prepare the verified senders and callers release candidate
 
 <!-- prawduct: type=internal | scope=v543-w4-rel -->
