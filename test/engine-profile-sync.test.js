@@ -315,3 +315,159 @@ describe('engine profile sync — snapshot (#251 issue: pin bundled value reache
     }
   });
 });
+
+describe('engine profile sync — live propagation without a restart (#737)', () => {
+  // Redirects BUNDLED_ENGINES_DIR to a tmp dir (`_setBundledEnginesDirForTesting`,
+  // same seam as `globalRules._setBundledGlobalRulesPath`) so these tests can
+  // simulate a release/`git pull` changing `data/engines/*.json` after
+  // store.init() has already run, without touching the real, git-tracked
+  // directory.
+  let tmpBundledDir;
+
+  function writeFixture(name, overrides) {
+    fs.writeFileSync(
+      path.join(tmpBundledDir, `${name}.json`),
+      JSON.stringify({
+        id: name,
+        name: 'Fixture Engine',
+        launch: { shellCommand: `${name}-cli`, args: [] },
+        capabilities: {},
+        ...overrides
+      }, null, 2)
+    );
+  }
+
+  beforeEach(() => {
+    tmpBundledDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-bundled-engines-test-'));
+    writeFixture('fixture-engine', { name: 'Fixture Engine v1' });
+    store.engines._setBundledEnginesDirForTesting(tmpBundledDir);
+    store.init();
+  });
+
+  afterEach(() => {
+    store.engines._resetBundledEnginesDirForTesting();
+    fs.rmSync(tmpBundledDir, { recursive: true, force: true });
+  });
+
+  it('store.engines.list() picks up a bundled profile added after store.init(), with no restart', () => {
+    assert.equal(store.engines.get('fixture-engine').name, 'Fixture Engine v1');
+
+    writeFixture('new-engine', { name: 'New Engine' });
+
+    const list = store.engines.list();
+    assert.ok(list.some((p) => p.id === 'new-engine'),
+      'a bundled profile added after store.init() must appear in list() without a restart');
+  });
+
+  it('store.engines.get() picks up a VALUE change to an existing bundled profile, with no restart', () => {
+    writeFixture('fixture-engine', { name: 'Fixture Engine v2' });
+
+    const updated = store.engines.get('fixture-engine');
+    assert.equal(updated.name, 'Fixture Engine v2',
+      'a value change to a bundled profile must propagate on the next get() without a restart');
+  });
+
+  it('store.engines.syncBundled() forces an immediate sync pass', () => {
+    writeFixture('fixture-engine', { name: 'Fixture Engine v3' });
+
+    store.engines.syncBundled();
+
+    // Read the runtime file directly rather than through `.get()`, which
+    // would also trigger `_syncBundledEnginesIfChanged` and mask whether
+    // `syncBundled()` itself did the work.
+    const runtimePath = path.join(tmpDir, 'engines', 'fixture-engine.json');
+    const runtime = JSON.parse(fs.readFileSync(runtimePath, 'utf8'));
+    assert.equal(runtime.name, 'Fixture Engine v3');
+  });
+
+  it('re-tombstones a retired engine id that reappeared in the runtime dir, even with the bundled dir unchanged (#457/#458)', () => {
+    const runtimeEnginesDir = path.join(tmpDir, 'engines');
+    fs.writeFileSync(
+      path.join(runtimeEnginesDir, 'gemini.json'),
+      JSON.stringify({ id: 'gemini', name: 'Resurrected Gemini' })
+    );
+
+    // Nothing in tmpBundledDir changed since store.init() — only the
+    // retired-id reappearance should trigger the re-sync here.
+    assert.equal(store.engines.get('gemini'), null,
+      'a resurrected retired-engine file must be re-tombstoned on the next read');
+  });
+
+  it('does not disturb an operator-added profile when the bundled dir is unchanged', () => {
+    const customProfile = {
+      id: 'my-custom-737',
+      name: 'Custom',
+      launch: { shellCommand: 'custom-cli', args: [] },
+      capabilities: {}
+    };
+    store.engines.save(customProfile);
+
+    // list() re-checks the bundled fingerprint on every call; since
+    // tmpBundledDir hasn't changed, the custom profile saved directly via
+    // `store.engines.save()` must survive untouched — pins the dispatch's
+    // "unit tests that mutate ~/.tangleclaw/engines/*.json ... remain
+    // untouched" requirement through the auto-resync path itself, not just
+    // through `_syncBundledEngines`'s pre-existing union semantics.
+    const list = store.engines.list();
+    assert.deepStrictEqual(list.find((p) => p.id === 'my-custom-737'), customProfile);
+  });
+
+  it('retries the sync on the next read after a transient write failure, instead of caching a false "nothing changed" (PRR-B R-Gate R1)', () => {
+    // THE BUG THIS CATCHES: recording `_bundledEnginesFingerprint` at the
+    // START of `_syncBundledEngines` (before the write that actually
+    // catches destDir up to srcDir) would stamp this bundled change as
+    // "already synced" the moment the attempt BEGAN, even though the
+    // write below fails and destDir never catches up — so a later read,
+    // after the transient failure clears, would silently keep serving the
+    // stale pre-change content forever.
+    const runtimePath = path.join(tmpDir, 'engines', 'fixture-engine.json');
+
+    writeFixture('fixture-engine', { name: 'Fixture Engine v2' });
+
+    // Make the runtime copy temporarily unwritable so the drift-overwrite
+    // write inside `_syncBundledEngines` throws partway through the sync.
+    fs.chmodSync(runtimePath, 0o444);
+    try {
+      assert.throws(() => store.engines.get('fixture-engine'),
+        'a write failure mid-sync must surface, not be swallowed');
+    } finally {
+      fs.chmodSync(runtimePath, 0o600);
+    }
+
+    const recovered = store.engines.get('fixture-engine');
+    assert.equal(recovered.name, 'Fixture Engine v2',
+      'once the transient failure clears, the next read must retry the sync and succeed — '
+      + 'not serve stale content because the failed attempt was already marked "synced"');
+  });
+
+  it('retries the sync on the next read after a transient SOURCE read failure, instead of caching a false "nothing changed" (PRR-B R-Gate R2)', () => {
+    // THE BUG THIS CATCHES: a bundled-profile read failure is deliberately
+    // fail-soft (log.warn + `continue`, not thrown) so one unreadable
+    // profile doesn't abort syncing the rest. R1's fix only guards the
+    // THROW case — committing the fingerprint unconditionally at the end
+    // of a pass that swallowed a read failure would still mark srcDir's
+    // current (v2) state as "caught up" even though destDir was never
+    // updated for this file. Restoring read access, with no mtime/size
+    // change, would then read as "nothing changed" forever.
+    const bundledPath = path.join(tmpBundledDir, 'fixture-engine.json');
+
+    writeFixture('fixture-engine', { name: 'Fixture Engine v2' });
+
+    // Make the BUNDLED (source) file temporarily unreadable. Unlike the R1
+    // case, the sync's read of it is caught internally, so this does not
+    // throw — it just must not silently commit the unsynced v2 state.
+    fs.chmodSync(bundledPath, 0o000);
+    try {
+      const stale = store.engines.get('fixture-engine');
+      assert.equal(stale.name, 'Fixture Engine v1',
+        'a swallowed source-read failure must not silently commit the unsynced bundled change');
+    } finally {
+      fs.chmodSync(bundledPath, 0o644);
+    }
+
+    const recovered = store.engines.get('fixture-engine');
+    assert.equal(recovered.name, 'Fixture Engine v2',
+      'once the source is readable again, the next read must retry and succeed — not stay '
+      + 'cached because the earlier failed attempt was already marked "synced"');
+  });
+});
