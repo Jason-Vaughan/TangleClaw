@@ -50,6 +50,7 @@ const GUARD_SOURCES = [
   path.join('scripts', 'install-primary-guard.js'),
   path.join('lib', 'checkout-layout.js'),
   path.join('lib', 'project-paths.js'),
+  path.join('lib', 'tangleclaw-home.js'),
   path.join('lib', 'shell-word.js')
 ];
 
