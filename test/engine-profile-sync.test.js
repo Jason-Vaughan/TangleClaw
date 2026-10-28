@@ -439,4 +439,35 @@ describe('engine profile sync — live propagation without a restart (#737)', ()
       'once the transient failure clears, the next read must retry the sync and succeed — '
       + 'not serve stale content because the failed attempt was already marked "synced"');
   });
+
+  it('retries the sync on the next read after a transient SOURCE read failure, instead of caching a false "nothing changed" (PRR-B R-Gate R2)', () => {
+    // THE BUG THIS CATCHES: a bundled-profile read failure is deliberately
+    // fail-soft (log.warn + `continue`, not thrown) so one unreadable
+    // profile doesn't abort syncing the rest. R1's fix only guards the
+    // THROW case — committing the fingerprint unconditionally at the end
+    // of a pass that swallowed a read failure would still mark srcDir's
+    // current (v2) state as "caught up" even though destDir was never
+    // updated for this file. Restoring read access, with no mtime/size
+    // change, would then read as "nothing changed" forever.
+    const bundledPath = path.join(tmpBundledDir, 'fixture-engine.json');
+
+    writeFixture('fixture-engine', { name: 'Fixture Engine v2' });
+
+    // Make the BUNDLED (source) file temporarily unreadable. Unlike the R1
+    // case, the sync's read of it is caught internally, so this does not
+    // throw — it just must not silently commit the unsynced v2 state.
+    fs.chmodSync(bundledPath, 0o000);
+    try {
+      const stale = store.engines.get('fixture-engine');
+      assert.equal(stale.name, 'Fixture Engine v1',
+        'a swallowed source-read failure must not silently commit the unsynced bundled change');
+    } finally {
+      fs.chmodSync(bundledPath, 0o644);
+    }
+
+    const recovered = store.engines.get('fixture-engine');
+    assert.equal(recovered.name, 'Fixture Engine v2',
+      'once the source is readable again, the next read must retry and succeed — not stay '
+      + 'cached because the earlier failed attempt was already marked "synced"');
+  });
 });
