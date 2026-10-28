@@ -36,7 +36,7 @@ const medusa = require('../lib/medusa');
 const master = require('../lib/master');
 const medusaExchanges = require('../lib/medusa-exchanges');
 const { createServer, _exchangeCaller } = require('../server');
-const { operatorHeaders } = require('./_shared-docs-callers');
+const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
 
 const NO_FLEET = async () => ({ refreshed: false, count: 0 });
 const OPEN = 1;
@@ -615,6 +615,28 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
     assert.equal(status, 200);
     assert.equal(data.status, 'received');
     assert.equal(bridge.received.at(-1).from, from);
+  });
+
+  it('send refuses a project\'s own verified launch on the Master\'s own mount — 403 (#1865, #1875)', async () => {
+    const project = store.projects.create({
+      name: `project-on-master-mount-${Date.now()}`, path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-proj-')), engine: 'claude'
+    });
+    const pane = bindProject(project);
+    const before = bridge.received.length;
+    const { status, data } = await req('/api/master/medusa/send', 'POST', { to: 'live-ws', message: 'hi' }, pane.headers);
+    assert.equal(status, 403);
+    assert.equal(data.code, 'SENDER_PROJECT_MISMATCH');
+    assert.equal(bridge.received.length, before);
+  });
+
+  it('send refuses the Master\'s own live launch on a PROJECT\'s mount — 403 (#1865: a Master caller hitting a project route)', async () => {
+    const project = store.projects.create({
+      name: `master-on-project-mount-${Date.now()}`, path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-on-proj-')), engine: 'claude'
+    });
+    bindProject(project); // gives the project an active session, so the route resolves (not 409) before the gate runs
+    const { status, data } = await req(`/api/sessions/${encodeURIComponent(project.name)}/medusa/send`, 'POST', { to: 'live-ws', message: 'hi' }, MASTER_PANE);
+    assert.equal(status, 403);
+    assert.equal(data.code, 'SENDER_PROJECT_MISMATCH');
   });
 
   it('send is 403 ACCESS_LEVEL at read-only, and the Bridge never hears about it', async () => {
