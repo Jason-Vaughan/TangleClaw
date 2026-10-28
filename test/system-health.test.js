@@ -726,13 +726,33 @@ describe('GET /api/health — public assets (#1368)', () => {
       assert.equal(_checkPublicAssets(dir), false);
     });
 
+    it('is false when index.html is a directory, not a file — mere existence is not health (R-Gate R1)', () => {
+      fs.mkdirSync(path.join(dir, 'index.html'));
+      assert.equal(_checkPublicAssets(dir), false);
+    });
+
+    it('is false when index.html exists but is unreadable (R-Gate R1)', (t) => {
+      if (process.getuid && process.getuid() === 0) {
+        t.skip('root bypasses file permissions, so chmod 0 does not make the file unreadable');
+        return;
+      }
+      const indexPath = path.join(dir, 'index.html');
+      fs.writeFileSync(indexPath, '<html></html>');
+      fs.chmodSync(indexPath, 0o000);
+      try {
+        assert.equal(_checkPublicAssets(dir), false);
+      } finally {
+        fs.chmodSync(indexPath, 0o644); // restore so afterEach's rmSync can clean up
+      }
+    });
+
     it('defaults to this install\'s real public/ directory, which exists in this checkout', () => {
       assert.equal(_checkPublicAssets(), true);
     });
   });
 
   describe('GET /api/health response shape', () => {
-    const { createServer } = require('../server');
+    const { createServer, _setPublicDir } = require('../server');
     const store = require('../lib/store');
     let server, port, tempDir;
 
@@ -750,15 +770,34 @@ describe('GET /api/health — public assets (#1368)', () => {
       fs.rmSync(tempDir, { recursive: true, force: true });
     });
 
-    it('reports services.assets ok against this checkout\'s real public/ directory', async () => {
-      const { data } = await new Promise((resolve, reject) => {
+    function getHealth() {
+      return new Promise((resolve, reject) => {
         http.get({ hostname: '127.0.0.1', port, path: '/api/health' }, (res) => {
           const chunks = [];
           res.on('data', (c) => chunks.push(c));
           res.on('end', () => resolve({ status: res.statusCode, data: JSON.parse(Buffer.concat(chunks).toString('utf8')) }));
         }).on('error', reject);
       });
+    }
+
+    it('reports services.assets ok against this checkout\'s real public/ directory', async () => {
+      const { data } = await getHealth();
       assert.equal(data.services.assets, 'ok');
+    });
+
+    it('degrades when the live PUBLIC_DIR\'s index.html is a directory (R-Gate R1, route-level)', async () => {
+      const brokenDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-broken-public-'));
+      fs.mkdirSync(path.join(brokenDir, 'index.html'));
+      _setPublicDir(brokenDir);
+      try {
+        const { status, data } = await getHealth();
+        assert.equal(data.services.assets, 'unavailable');
+        assert.equal(data.status, 'degraded');
+        assert.equal(status, 200, 'assets alone must not flip the HTTP status to 503 — only the db check does that');
+      } finally {
+        _setPublicDir(null);
+        fs.rmSync(brokenDir, { recursive: true, force: true });
+      }
     });
   });
 

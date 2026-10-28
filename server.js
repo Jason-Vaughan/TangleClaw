@@ -746,7 +746,17 @@ const CONTENT_TYPES = {
   '.webmanifest': 'application/manifest+json'
 };
 
-const PUBLIC_DIR = path.join(__dirname, 'public');
+let PUBLIC_DIR = path.join(__dirname, 'public');
+
+/**
+ * Test-only override of `PUBLIC_DIR` — the route-level #1368 degradation
+ * tests need a real server to serve a BROKEN `public/` without touching the
+ * repo's own, which every other test file's server shares.
+ * @param {string|null} dir - Pass `null` to restore the real `public/`.
+ */
+function _setPublicDir(dir) {
+  PUBLIC_DIR = dir || path.join(__dirname, 'public');
+}
 
 /**
  * Whether the static UI assets this install serves are present on disk
@@ -757,7 +767,15 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
  * @returns {boolean}
  */
 function _checkPublicAssets(publicDir = PUBLIC_DIR) {
-  return fs.existsSync(publicDir) && fs.existsSync(path.join(publicDir, 'index.html'));
+  const indexPath = path.join(publicDir, 'index.html');
+  try {
+    if (!fs.statSync(publicDir).isDirectory()) return false;
+    if (!fs.statSync(indexPath).isFile()) return false;
+    fs.accessSync(indexPath, fs.constants.R_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -8357,4 +8375,4 @@ if (require.main === module) {
 }
 
 
-module.exports = { _routePatterns, createServer, _recoveryGateProbeFor, _operatorProofOf, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers, _activityObserver: activityObserver, _exchangeCaller: exchangeCaller, _checkPublicAssets };
+module.exports = { _routePatterns, createServer, _recoveryGateProbeFor, _operatorProofOf, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers, _activityObserver: activityObserver, _exchangeCaller: exchangeCaller, _checkPublicAssets, _setPublicDir };
