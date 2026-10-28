@@ -321,6 +321,46 @@ describe('API /api/audit', () => {
     assert.equal(data.ok, true);
   });
 
+  it('POST /api/audit/heartbeat actually registers telemetry for a brand-new, previously-unwatched session_id — R-Gate R3, #2239', async () => {
+    const key = `r3-establish-${Date.now()}`;
+    assert.equal(evalAudit.getTelemetryStatus().some((w) => w.sessionId === key), false, 'precondition: not yet watched');
+    const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+      session_id: key
+    }, { Authorization: `Bearer ${auditSecret}` });
+    assert.equal(status, 200);
+    assert.equal(data.ok, true);
+    try {
+      const watch = evalAudit.getTelemetryStatus().find((w) => w.sessionId === key);
+      assert.ok(watch, 'the first valid heartbeat for a new key must establish a watch, not no-op');
+      assert.equal(watch.project, 'audit-bound');
+      assert.equal(watch.status, 'green');
+      // A second heartbeat for the SAME key, from the SAME project, resets
+      // the existing watch rather than refusing or re-claiming it.
+      const again = await request(server, 'POST', '/api/audit/heartbeat', {
+        session_id: key
+      }, { Authorization: `Bearer ${auditSecret}` });
+      assert.equal(again.status, 200);
+      assert.equal(evalAudit.getTelemetryStatus().filter((w) => w.sessionId === key).length, 1);
+    } finally {
+      evalAudit.unwatchSession(key);
+    }
+  });
+
+  it('POST /api/audit/heartbeat actually registers telemetry for a brand-new session_id via a project launch binding too', async () => {
+    const project = store.projects.getByName('audit-bound');
+    const bound = bindProject(project);
+    assert.equal(evalAudit.getTelemetryStatus().some((w) => w.sessionId === bound.sessionId), false, 'precondition: not yet watched');
+    const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+      session_id: bound.sessionId
+    }, bound.headers);
+    assert.equal(status, 200);
+    assert.equal(data.ok, true);
+    const watch = evalAudit.getTelemetryStatus().find((w) => w.sessionId === bound.sessionId);
+    assert.ok(watch, 'the first valid heartbeat for a new TangleClaw session id must establish a watch, not no-op');
+    assert.equal(watch.project, 'audit-bound');
+    evalAudit.unwatchSession(bound.sessionId);
+  });
+
   it('POST /api/audit/heartbeat refuses an invalid Bearer token outright, without falling back to the binding check', async () => {
     const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
       session_id: 'sess-1'
