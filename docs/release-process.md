@@ -366,13 +366,16 @@ through the same containment-safe path check `versionFilePath` uses. Unset, it i
 the project root. `lib/changelog-notes.js`'s `extractReleaseNotes` reads it, unmodified, which is why
 it was written as a pure function with no assumption about where the file lives.
 
-**The plan captures the exact commit, and refuses a dirty input (#721).** `planRelease` reads
-`HEAD` once, at planning time, and refuses outright if the resolved version file or changelog carries
-an uncommitted change — tagging `HEAD` in that state would tag a commit whose actually-committed files
-disagree with the version/notes the plan just read, the same "tag and version must agree" invariant
-above. The captured sha travels with the plan as `headSha`, and `applyRelease` tags THAT commit
-explicitly (`git tag <name> <sha>`, never implicit `HEAD`) — so a commit landing on the branch between
-planning and applying can never silently retarget what gets released.
+**The plan captures the exact commit, and reads release inputs from THAT commit, never the working
+tree (#721).** `planRelease` reads `HEAD` once, at planning time, and refuses outright if the
+resolved version file or changelog carries an uncommitted change — a quick, friendly check with
+`git status --porcelain`. It then reads both files' actual content with `git show <headSha>:<path>`
+rather than the working tree, which closes a gap the status check alone cannot: a gitignored file
+that was never committed is invisible to `git status` (empty status reads as "clean"), so only a
+read against the real commit can catch it. The captured sha travels with the plan as `headSha`, and
+`applyRelease` tags THAT commit explicitly (`git tag <name> <sha>`, never implicit `HEAD`) — so a
+commit landing on the branch between planning and applying can never silently retarget what gets
+released.
 
 **Non-GitHub remotes degrade; they are not refused.** `classifyRemote` reads `origin` and tells a
 `github.com` remote from any other kind. `planRelease` turns that into one of three actions:

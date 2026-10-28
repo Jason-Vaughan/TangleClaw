@@ -290,16 +290,24 @@ describe('isEnabled — strict opt-in', () => {
   });
 });
 
-describe('resolveVersion — reuses the version-bump readers, fails closed on a configured path', () => {
+describe('resolveVersion — fail-closed probe, read from the COMMITTED blob (#721 B1/B2/B3)', () => {
   function setVersionFilePath(dir, configuredPath) {
     fs.mkdirSync(path.join(dir, '.tangleclaw'), { recursive: true });
     fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), JSON.stringify({ versionFilePath: configuredPath }));
   }
 
+  /** Stage and commit everything in `dir`, returning the resulting HEAD sha. */
+  function commitAll(dir, message = 'fixture') {
+    realExecFileSync('git', ['add', '-A'], { cwd: dir });
+    realExecFileSync('git', ['commit', '-q', '-m', message, '--allow-empty'], { cwd: dir });
+    return realExecFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+  }
+
   it('reads version.json', () => {
     const dir = makeTempProject();
     fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '2.3.4' }));
-    const result = releaseAutomation.resolveVersion(dir);
+    const sha = commitAll(dir);
+    const result = releaseAutomation.resolveVersion(dir, sha);
     assert.equal(result.ok, true);
     assert.equal(result.version, '2.3.4');
     assert.equal(result.source, 'version.json');
@@ -309,44 +317,61 @@ describe('resolveVersion — reuses the version-bump readers, fails closed on a 
   it('falls through to package.json when there is no version.json', () => {
     const dir = makeTempProject();
     fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'x', version: '0.5.0' }));
-    const result = releaseAutomation.resolveVersion(dir);
+    const sha = commitAll(dir);
+    const result = releaseAutomation.resolveVersion(dir, sha);
     assert.equal(result.ok, true);
     assert.equal(result.version, '0.5.0');
     assert.equal(result.source, 'package.json');
   });
 
-  it('reads past an unusable version.json to package.json — matches the probe\'s own documented leniency', () => {
-    // #721 B1 asked for coverage of "invalid primary probes": readProbedVersion
-    // (lib/project-version-files.js) deliberately reads past a version.json with
-    // no usable version to package.json (its own docstring, #58) — this pins that
-    // this module inherits that documented behavior rather than silently
-    // diverging from it.
+  it('B1: REFUSES on an unusable version.json — never falls through to package.json', () => {
+    // version-bump's own _resolveVersionSource treats version.json, once
+    // present, as the ONLY candidate: any problem with it refuses outright.
+    // lib/project-version-files.js's readProbedVersion (a DIFFERENT, more
+    // lenient reader built for the dashboard's display case) reads past this
+    // exact scenario to package.json — reusing it here was the original B1
+    // bug. A valid package.json sits right there so a regression that falls
+    // through again would silently "pass" with the wrong version.
     const dir = makeTempProject();
     fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ notVersion: true }));
     fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'x', version: '0.5.0' }));
-    const result = releaseAutomation.resolveVersion(dir);
-    assert.equal(result.ok, true);
-    assert.equal(result.version, '0.5.0');
-    assert.equal(result.source, 'package.json');
+    const sha = commitAll(dir);
+    const result = releaseAutomation.resolveVersion(dir, sha);
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /version\.json has no "version" field/);
+    assert.doesNotMatch(result.reason, /0\.5\.0/, 'must not silently fall through to package.json\'s version');
   });
 
-  it('refuses when the ONLY primary probe candidate is invalid and nothing follows it', () => {
+  it('a package.json with no version field DOES fall through to pyproject.toml (the one true exception)', () => {
+    const dir = makeTempProject();
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'tooling-only' }));
+    fs.writeFileSync(path.join(dir, 'pyproject.toml'), '[project]\nversion = "3.1.4"\n');
+    const sha = commitAll(dir);
+    const result = releaseAutomation.resolveVersion(dir, sha);
+    assert.equal(result.ok, true);
+    assert.equal(result.version, '3.1.4');
+    assert.equal(result.source, 'pyproject.toml');
+  });
+
+  it('B1: refuses when the ONLY primary probe candidate is invalid and nothing follows it', () => {
     const dir = makeTempProject();
     fs.writeFileSync(path.join(dir, 'version.json'), '{ not valid json');
-    const result = releaseAutomation.resolveVersion(dir);
+    const sha = commitAll(dir);
+    const result = releaseAutomation.resolveVersion(dir, sha);
     assert.equal(result.ok, false);
-    assert.match(result.reason, /version\.json exists but has no usable "version" field/);
+    assert.match(result.reason, /version\.json unreadable as JSON/);
   });
 
   it('honors a configured versionFilePath over the probe', () => {
     const dir = makeTempProject();
     fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '1.0.0' }));
-    fs.writeFileSync(path.join(dir, 'VERSION.json'), JSON.stringify({ version: '9.9.9' }));
-    setVersionFilePath(dir, 'VERSION.json');
-    const result = releaseAutomation.resolveVersion(dir);
+    fs.writeFileSync(path.join(dir, 'custom-version.json'), JSON.stringify({ version: '9.9.9' }));
+    setVersionFilePath(dir, 'custom-version.json');
+    const sha = commitAll(dir);
+    const result = releaseAutomation.resolveVersion(dir, sha);
     assert.equal(result.ok, true);
     assert.equal(result.version, '9.9.9');
-    assert.equal(result.source, 'VERSION.json');
+    assert.equal(result.source, 'custom-version.json');
   });
 
   it('B1: FAILS CLOSED when the configured path does not exist, rather than falling back to the probe', () => {
@@ -357,18 +382,20 @@ describe('resolveVersion — reuses the version-bump readers, fails closed on a 
     // default), unlike "VERSION.json", which IS "version.json" there.
     fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '1.0.0' }));
     setVersionFilePath(dir, 'missing-version.json');
-    const result = releaseAutomation.resolveVersion(dir);
+    const sha = commitAll(dir);
+    const result = releaseAutomation.resolveVersion(dir, sha);
     assert.equal(result.ok, false);
-    assert.match(result.reason, /missing-version\.json unreadable/);
+    assert.match(result.reason, /missing-version\.json is not committed/);
     assert.doesNotMatch(result.reason, /1\.0\.0/, 'must not silently report the probe\'s version.json value');
   });
 
   it('B1: fails closed when the configured path is malformed JSON', () => {
     const dir = makeTempProject();
     fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '1.0.0' }));
-    fs.writeFileSync(path.join(dir, 'VERSION.json'), '{ not valid json');
-    setVersionFilePath(dir, 'VERSION.json');
-    const result = releaseAutomation.resolveVersion(dir);
+    fs.writeFileSync(path.join(dir, 'custom-version.json'), '{ not valid json');
+    setVersionFilePath(dir, 'custom-version.json');
+    const sha = commitAll(dir);
+    const result = releaseAutomation.resolveVersion(dir, sha);
     assert.equal(result.ok, false);
     assert.match(result.reason, /unreadable as JSON/);
   });
@@ -376,9 +403,10 @@ describe('resolveVersion — reuses the version-bump readers, fails closed on a 
   it('B1: fails closed when the configured path has no "version" field', () => {
     const dir = makeTempProject();
     fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '1.0.0' }));
-    fs.writeFileSync(path.join(dir, 'VERSION.json'), JSON.stringify({ name: 'x' }));
-    setVersionFilePath(dir, 'VERSION.json');
-    const result = releaseAutomation.resolveVersion(dir);
+    fs.writeFileSync(path.join(dir, 'custom-version.json'), JSON.stringify({ name: 'x' }));
+    setVersionFilePath(dir, 'custom-version.json');
+    const sha = commitAll(dir);
+    const result = releaseAutomation.resolveVersion(dir, sha);
     assert.equal(result.ok, false);
     assert.match(result.reason, /has no "version" field/);
   });
@@ -387,16 +415,57 @@ describe('resolveVersion — reuses the version-bump readers, fails closed on a 
     const dir = makeTempProject();
     fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '1.0.0' }));
     setVersionFilePath(dir, '../../etc/passwd');
-    const result = releaseAutomation.resolveVersion(dir);
+    const sha = commitAll(dir);
+    const result = releaseAutomation.resolveVersion(dir, sha);
     assert.equal(result.ok, false);
     assert.match(result.reason, /configured versionFilePath ".*etc\/passwd" is not usable/);
   });
 
   it('returns a refusal, not a throw, when nothing resolves', () => {
     const dir = makeTempProject();
-    const result = releaseAutomation.resolveVersion(dir);
+    const sha = commitAll(dir);
+    const result = releaseAutomation.resolveVersion(dir, sha);
     assert.equal(result.ok, false);
     assert.match(result.reason, /no version could be resolved/);
+  });
+
+  it('B2: refuses a gitignored, never-committed version.json — git status alone cannot see it', () => {
+    const dir = makeTempProject();
+    fs.writeFileSync(path.join(dir, '.gitignore'), 'version.json\n');
+    const sha = commitAll(dir); // commits .gitignore, no version.json yet
+    // Written AFTER the commit: gitignored, untracked, invisible to `git
+    // status --porcelain` (the dirty check), which is exactly the gap a
+    // committed-blob read closes.
+    fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '9.9.9' }));
+    const statusOut = realExecFileSync('git', ['status', '--porcelain'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(statusOut.trim(), '', 'the fixture is not actually testing anything if git status sees the file');
+    const result = releaseAutomation.resolveVersion(dir, sha);
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /version\.json is not committed/);
+  });
+
+  it('B3: a configured pyproject.toml with a valid [project] version resolves it', () => {
+    const dir = makeTempProject();
+    fs.writeFileSync(path.join(dir, 'pyproject.toml'), '[project]\nversion = "7.8.9"\n');
+    setVersionFilePath(dir, 'pyproject.toml');
+    const sha = commitAll(dir);
+    const result = releaseAutomation.resolveVersion(dir, sha);
+    assert.equal(result.ok, true);
+    assert.equal(result.version, '7.8.9');
+    assert.equal(typeof result.version, 'string',
+      'must be the version STRING, not parsePyprojectVersion\'s {ok, version, start, end} object');
+  });
+
+  it('B3: a configured pyproject.toml with no usable version fails closed, not with a wrapped object', () => {
+    const dir = makeTempProject();
+    // dynamic version: parsePyprojectVersion's {ok:false} case — regresses the
+    // bug where `{ok:false,...}` (always truthy) was wrapped as the version.
+    fs.writeFileSync(path.join(dir, 'pyproject.toml'), '[project]\ndynamic = ["version"]\n');
+    setVersionFilePath(dir, 'pyproject.toml');
+    const sha = commitAll(dir);
+    const result = releaseAutomation.resolveVersion(dir, sha);
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /has no usable static \[project\] version/);
   });
 });
 
@@ -552,6 +621,26 @@ describe('planRelease — pure decision, no side effects', () => {
     const plan = releaseAutomation.planRelease(dir, { config });
     assert.equal(plan.ok, false);
     assert.match(plan.reason, /CHANGELOG\.md has uncommitted changes/);
+  });
+
+  it('B2: refuses a gitignored, never-committed CHANGELOG.md — git status alone cannot see it', () => {
+    const dir = makeTempProject();
+    fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '1.0.0' }));
+    fs.writeFileSync(path.join(dir, '.gitignore'), 'CHANGELOG.md\n');
+    realExecFileSync('git', ['remote', 'add', 'origin', 'https://github.com/acme/widgets.git'], { cwd: dir });
+    realExecFileSync('git', ['add', '-A'], { cwd: dir });
+    realExecFileSync('git', ['commit', '-q', '-m', 'seed', '--allow-empty'], { cwd: dir });
+    // Written AFTER the commit: gitignored, untracked, invisible to `git
+    // status --porcelain`, which the dirty check alone would read as clean.
+    fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), [
+      '# Changelog', '', '## [1.0.0] - 2026-01-01', '', '### Fixed', '- A fix.', ''
+    ].join('\n'));
+    const statusOut = realExecFileSync('git', ['status', '--porcelain'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(statusOut.trim(), '', 'the fixture is not actually testing anything if git status sees the file');
+
+    const plan = releaseAutomation.planRelease(dir, { config: { releaseAutomationEnabled: true } });
+    assert.equal(plan.ok, false);
+    assert.match(plan.reason, /CHANGELOG\.md is not committed/);
   });
 
   it('B2: a plan survives HEAD moving afterward — applyRelease still tags the PLANNED commit, not the new one', () => {
