@@ -4,6 +4,53 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.42.0] - 2026-10-27
+
+### Added
+- The unready-launch monitor's per-tick verdict (`VERDICT_MEANINGS`, e.g. `nudged`, `already-nudged`, `pane-busy`) is now persisted on the launch sequence row, projected on `GET /api/launch-sequences` as `lastUnreadyVerdict`/`lastUnreadyVerdictAt`, and shown with its meaning beside the nudge count on the Launch readiness panel — previously the monitor's read of a stuck launch was visible only in the server log.
+- A pull-pointer launch's prime carries no rule text, so its paste writes no rule-delivery row (#1584) — but the paste still happens, and what became of it (delivered, rejected, timed out, withheld before a readiness gate ran, or the pane was gone) is now recorded in its own right and shown on the launch-readiness panel, kept apart from the rule-delivery ledger.
+- A session's startup admission gate (#1633): `GET /api/sessions/:project/status` now projects `startupReadiness` (`starting` with a step cursor, `needs-attention` with a blocker, or `ready`), `POST /api/sessions/:project/command` refuses ordinary task submission with `409 STARTUP_NOT_READY` while a launch is not yet ready (unless `startupIntervention: true` is explicitly sent), and the Medusa wake monitor holds task-triggering nudges until the active launch is ready. An applicable sequence requires READY attestation; a clean `not-applicable` sequence is ready without `readyAt`. The session page shows the same state in a banner ("Starting — step X of 4" / "Needs attention") and refuses to send an ordinary command client-side first, leaving the typed draft untouched either way.
+- `tc start ready` now emits an idempotent durable readiness receipt, keyed to the launch's sequence,
+  revision and open control assignment, and visible on `tc start status`. The recipient is resolved
+  strictly from durable `control_assignments`/`coordinator_roles` data, never a nickname or workspace
+  prefix; a repeated READY returns the same receipt rather than writing a second one (#1877).
+
+### Fixed
+- `applicability === 'not-applicable'` launches that report a damaged/corrupt/behind/unclassified handoff (#1623) now render the warning instead of returning before the recovery line renders. The operator's Clear action appears while the session is active; an ended session retains the warning without a Clear action.
+- `tc capabilities`/`tc whoami` no longer falsely report the switchboard as unbound when a pane's
+  `TANGLECLAW_WORKSPACE_ID` env var is empty or stale (e.g. for a window after a session restart,
+  before the pane's env catches up). The server now resolves the live Medusa workspace binding from
+  the authoritative session registry for the resolved session, and reconciles it against the caller's
+  own claim rather than trusting the claim alone (#2153).
+- An attested launch can now append a reconciliation against live governing-rule/shared-doc drift
+  discovered after `tc start ready`: `tc start ready --reconciliation` no longer answers `READY_CONFLICT`
+  for this case, and `tc start status` stops asking for one once it is recorded. The original attestation
+  (`ready_at`/`ready_artifact`/`ready_digest`) is never rewritten — the reconciliation is a new, additive,
+  append-only record (#2191).
+
+### Internal
+- Extracted the pane-capture, idle-assessment (with its best-effort cursor
+  fallback), injection-classification and activity-logging mechanics shared by
+  `launch-unready.js` and `launch-kickoff.js` into `lib/launch-pane-writer.js`,
+  leaving each module's own one-shot state machine (nudge counting, fire-once
+  claiming) untouched (#1669).
+- The launch's opening order — banner, sequence, freshness/attest, propose-and-stop — now has one
+  owner, `lib/launch-bootstrap.js`'s `OPENING_ORDER` (plus the `RESUME_AND_STOP`,
+  `READY_VERDICT_PLACEHOLDER` and `STEP_COMMAND_CLOSE` fragments it shares verbatim). The four
+  surfaces that narrate it — the prime's ordering block (`lib/sessions.js`), the all-acked and
+  already-attested pages (`lib/launch-sequence.js`), and the kickoff line (`lib/launch-kickoff.js`)
+  — render from it instead of four hand-written copies that drifted three times across #1680's
+  review. No observable text changed (#1693).
+- A launch's log now names the login gate state its recovery mode was resolved against, alongside
+  the frozen mode and source (`lib/sessions.js#_resolveLaunchRecoveryMode`/`_buildLaunchSnapshot`),
+  so an operator asking "why was this launch held" has the input that decided it, not just the
+  verdict. `_validateReady` (`lib/launch-sequence.js`) and the bridge's `_awaitLaunch`
+  (`lib/bridge-gateway.js`) now both read the same `_operatorHeld` predicate instead of three
+  independent copies of the same condition. `projectRecoveryNow`'s JSDoc no longer claims every
+  field is null for a project this install does not have — `projectRecoveryGateState` is the
+  install's, not the project's, and is reported either way. Added coverage for
+  `_claimedInheritedNotice`'s unreadable-row fail-closed path, which had none (#2150).
+
 ## [5.41.0] - 2026-10-27
 
 ### Added
