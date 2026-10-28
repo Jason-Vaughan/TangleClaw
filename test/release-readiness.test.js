@@ -246,28 +246,48 @@ describe('prawductRootFor', () => {
 });
 
 describe('gatherReleaseSignals', () => {
-  it('returns both signals, and a project without a plan can be ready', () => {
+  it('includes linked-issue-closed by default (A481-R5), and a project with no plan/issue can still be ready', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-readiness-g-'));
     try {
       const signals = rr.gatherReleaseSignals(root, { changelog: { found: true, sectionFound: true, hasEntries: true } });
-      assert.deepEqual(signals.map((s) => s.id), ['unreleased-entries', 'build-plan-status']);
+      assert.deepEqual(signals.map((s) => s.id), ['unreleased-entries', 'build-plan-status', 'linked-issue-closed']);
+      assert.equal(signals[2].state, 'n/a', 'no plan on disk means no issue found, so n/a -- never a real gh call');
       assert.equal(rr.evaluateReleaseReadiness(signals).verdict, 'ready');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it('stays the offline 2-signal call when no linked-issue option is given, even with one on disk (#1495)', () => {
+  it('a project with no linked issue never touches the network, even with no options at all (#1495, A481-R5)', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-readiness-g2-'));
+    const calls = [];
+    const orig = rr._internal.execFileSync;
+    rr._internal.execFileSync = (...args) => { calls.push(args); throw new Error('must not be called'); };
     try {
       const signals = rr.gatherReleaseSignals(root, { changelog: { found: true, sectionFound: true, hasEntries: true } });
+      assert.deepEqual(signals.map((s) => s.id), ['unreleased-entries', 'build-plan-status', 'linked-issue-closed']);
+      assert.equal(signals[2].state, 'n/a');
+      assert.deepEqual(calls, []);
+    } finally {
+      rr._internal.execFileSync = orig;
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('includeLinkedIssue: false omits the third signal entirely', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-readiness-g4-'));
+    try {
+      const signals = rr.gatherReleaseSignals(root, {
+        changelog: { found: true, sectionFound: true, hasEntries: true },
+        includeLinkedIssue: false
+      });
       assert.deepEqual(signals.map((s) => s.id), ['unreleased-entries', 'build-plan-status']);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it('appends linked-issue-closed when a linked-issue option is given (#1495)', () => {
+  it('passes a linked-issue option straight through to linkedIssueClosedSignal (#1495)', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-readiness-g3-'));
     try {
       const signals = rr.gatherReleaseSignals(root, {
@@ -276,22 +296,26 @@ describe('gatherReleaseSignals', () => {
         fetchIssueState: () => ({ state: 'closed' })
       });
       assert.deepEqual(signals.map((s) => s.id), ['unreleased-entries', 'build-plan-status', 'linked-issue-closed']);
+      assert.equal(signals[2].state, 'pass');
       assert.equal(rr.evaluateReleaseReadiness(signals).verdict, 'ready');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it('appends linked-issue-closed on includeLinkedIssue alone, even with no issue found (n/a, not dropped)', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-readiness-g4-'));
+  it("production's exact call shape (lib/wrap-steps/version-bump.js:726, no linked-issue options) never calls gh (A481-R5)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-readiness-g5-'));
+    const orig = rr._internal.execFileSync;
+    rr._internal.execFileSync = () => { throw new Error('must not be called: version-bump.js has no plan/issue fixtures'); };
     try {
       const signals = rr.gatherReleaseSignals(root, {
-        changelog: { found: true, sectionFound: true, hasEntries: true },
-        includeLinkedIssue: true
+        changelog: { found: true, sectionFound: true, hasEntries: true, fragments: { ok: true, count: 1 } },
+        configRoot: root
       });
       assert.deepEqual(signals.map((s) => s.id), ['unreleased-entries', 'build-plan-status', 'linked-issue-closed']);
       assert.equal(signals[2].state, 'n/a');
     } finally {
+      rr._internal.execFileSync = orig;
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
@@ -394,8 +418,8 @@ describe('linkedIssueClosedSignal (#1495)', () => {
   });
 
   describe('states', () => {
-    it('is unknown, never pass, when an issue is linked but no lookup is configured', () => {
-      const s = rr.linkedIssueClosedSignal(root, { issueNumber: 1 });
+    it('is unknown, never pass, when an issue is linked but checkGithub: false disables the lookup', () => {
+      const s = rr.linkedIssueClosedSignal(root, { issueNumber: 1, checkGithub: false });
       assert.equal(s.state, 'unknown');
       assert.match(s.detail, /GitHub issue state unavailable/);
     });
@@ -474,9 +498,59 @@ describe('linkedIssueClosedSignal (#1495)', () => {
       assert.equal(s.state, 'fail');
     });
 
-    it('checkGithub alone, with no execGh, has nothing to run and stays unknown', () => {
-      const s = rr.linkedIssueClosedSignal(root, { issueNumber: 9, checkGithub: true });
-      assert.equal(s.state, 'unknown');
+    it('with no injected lookup, defaults to a real `gh issue view <n> --json state` call bounded by a timeout (A481-R5)', () => {
+      const calls = [];
+      const orig = rr._internal.execFileSync;
+      rr._internal.execFileSync = (cmd, args, opts) => {
+        calls.push({ cmd, args, opts });
+        return JSON.stringify({ state: 'CLOSED' });
+      };
+      try {
+        const s = rr.linkedIssueClosedSignal(root, { issueNumber: 9 });
+        assert.equal(s.state, 'pass');
+        assert.equal(calls.length, 1);
+        assert.equal(calls[0].cmd, 'gh');
+        assert.deepEqual(calls[0].args, ['issue', 'view', '9', '--json', 'state']);
+        assert.equal(calls[0].opts.cwd, root);
+        assert.equal(calls[0].opts.timeout, rr.GH_ISSUE_VIEW_TIMEOUT_MS);
+        assert.deepEqual(calls[0].opts.stdio, ['ignore', 'pipe', 'pipe']);
+      } finally {
+        rr._internal.execFileSync = orig;
+      }
+    });
+
+    it('checkGithub: false disables the default gh call without disabling discovery', () => {
+      const orig = rr._internal.execFileSync;
+      rr._internal.execFileSync = () => { throw new Error('must not be called'); };
+      try {
+        const s = rr.linkedIssueClosedSignal(root, { issueNumber: 9, checkGithub: false });
+        assert.equal(s.state, 'unknown');
+      } finally {
+        rr._internal.execFileSync = orig;
+      }
+    });
+
+    it('a thrown/unparseable default gh call is unknown, never pass', () => {
+      const orig = rr._internal.execFileSync;
+      rr._internal.execFileSync = () => { throw new Error('gh: command not found'); };
+      try {
+        const s = rr.linkedIssueClosedSignal(root, { issueNumber: 9 });
+        assert.equal(s.state, 'unknown');
+        assert.match(s.detail, /gh: command not found/);
+      } finally {
+        rr._internal.execFileSync = orig;
+      }
+    });
+
+    it('fetchIssueState takes precedence over the default gh call', () => {
+      const orig = rr._internal.execFileSync;
+      rr._internal.execFileSync = () => { throw new Error('must not be called'); };
+      try {
+        const s = rr.linkedIssueClosedSignal(root, { issueNumber: 9, fetchIssueState: () => ({ state: 'closed' }) });
+        assert.equal(s.state, 'pass');
+      } finally {
+        rr._internal.execFileSync = orig;
+      }
     });
 
     it('fetchIssueState takes precedence over execGh when both are given', () => {
@@ -499,7 +573,7 @@ describe('linkedIssueClosedSignal (#1495)', () => {
     const notFound = rr.linkedIssueClosedSignal(root, {});
     assert.equal(rr.evaluateReleaseReadiness([notFound]).verdict, 'unknown');
 
-    const noLookup = rr.linkedIssueClosedSignal(root, { issueNumber: 1 });
+    const noLookup = rr.linkedIssueClosedSignal(root, { issueNumber: 1, checkGithub: false });
     assert.equal(rr.evaluateReleaseReadiness([noLookup]).verdict, 'unknown');
   });
 
