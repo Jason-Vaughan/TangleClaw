@@ -199,7 +199,7 @@ describe('API /api/groups/:id/members', () => {
     const project = store.projects.create({
       name: 'test-proj',
       path: projPath,
-      engineId: 'claude'
+      engine: 'claude'
     });
     projectId = project.id;
 

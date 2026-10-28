@@ -164,7 +164,7 @@ describe('scanForOrphanHooks (#145, chunk 2)', () => {
     const projectPath = path.join(projectsDir, name);
     fs.mkdirSync(projectPath, { recursive: true });
     store.projects.create({
-      name, path: projectPath, engine: 'claude', methodology: 'minimal', tags: [], ports: {}
+      name, path: projectPath, engine: 'claude', tags: [], ports: {}
     });
     return projectPath;
   }
@@ -331,7 +331,7 @@ describe('repairOrphanHooks (#145, chunk 2)', () => {
     const projectPath = path.join(projectsDir, name);
     fs.mkdirSync(projectPath, { recursive: true });
     store.projects.create({
-      name, path: projectPath, engine: 'claude', methodology: 'minimal', tags: [], ports: {}
+      name, path: projectPath, engine: 'claude', tags: [], ports: {}
     });
     return projectPath;
   }
@@ -540,7 +540,7 @@ describe('orphan-hooks API (#145, chunk 2)', () => {
     const projectPath = path.join(projectsDir, name);
     fs.mkdirSync(projectPath, { recursive: true });
     store.projects.create({
-      name, path: projectPath, engine: 'claude', methodology: 'minimal', tags: [], ports: {}
+      name, path: projectPath, engine: 'claude', tags: [], ports: {}
     });
     return projectPath;
   }

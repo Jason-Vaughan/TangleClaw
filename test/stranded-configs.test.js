@@ -222,7 +222,7 @@ describe('scanForStrandedConfigs (#592)', () => {
     fs.mkdirSync(projectPath, { recursive: true });
     const name = rel.replace(/[/\\]/g, '-');
     store.projects.create({
-      name, path: projectPath, engine: 'claude', methodology: 'minimal', tags: [], ports: {}
+      name, path: projectPath, engine: 'claude', tags: [], ports: {}
     });
     if (archived) {
       store.projects.archive(store.projects.getByName(name).id);
@@ -345,7 +345,7 @@ describe('stranded-configs API (#592)', () => {
     const inner = path.join(projectsDir, 'outer', 'inner-repo');
     fs.mkdirSync(inner, { recursive: true });
     store.projects.create({
-      name: 'inner-repo', path: inner, engine: 'claude', methodology: 'minimal', tags: [], ports: {}
+      name: 'inner-repo', path: inner, engine: 'claude', tags: [], ports: {}
     });
     fs.writeFileSync(path.join(projectsDir, 'outer', 'CLAUDE.md'), 'stale\n');
 

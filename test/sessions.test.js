@@ -677,10 +677,7 @@ describe('sessions', () => {
       const project = store.projects.getByName('prime-test');
       const engine = store.engines.get('claude');
 
-      store.projects.update(project.id, { methodology: 'minimal' });
-      const updatedProject = store.projects.getByName('prime-test');
-
-      const prompt = sessions.generatePrimePrompt(updatedProject, engine);
+      const prompt = sessions.generatePrimePrompt(project, engine);
       assert.equal(prompt.includes('## Methodology:'), false, 'prime should not carry methodology heading');
       assert.equal(prompt.includes('## Current Phase:'), false, 'prime should not carry current phase heading');
     });
@@ -791,35 +788,26 @@ describe('sessions', () => {
       const project = store.projects.getByName('prime-test');
       const engine = store.engines.get('claude');
 
-      store.projects.update(project.id, { methodology: 'prawduct' });
-      const updated = store.projects.getByName('prime-test');
-
-      const prompt = sessions.generatePrimePrompt(updated, engine);
+      const prompt = sessions.generatePrimePrompt(project, engine);
       assert.ok(!prompt.includes('Session Playbook'), 'playbook should not be in prime prompt');
       assert.ok(!prompt.includes('Janitor Pass'), 'playbook details should not be in prime prompt');
       assert.equal(prompt.includes('Methodology: Prawduct'), false, 'methodology heading should not be in prime (#102)');
-
-      store.projects.update(project.id, { methodology: 'minimal' });
     });
 
     it('does not inject Active Extension Rules with definitions (#102 — already in CLAUDE.md)', () => {
       const project = store.projects.getByName('prime-test');
       const engine = store.engines.get('claude');
 
-      store.projects.update(project.id, { methodology: 'prawduct' });
-      const updated = store.projects.getByName('prime-test');
-      const projConfig = store.projectConfig.load(updated.path);
+      const projConfig = store.projectConfig.load(project.path);
       projConfig.rules = projConfig.rules || { extensions: {} };
       projConfig.rules.extensions.independentCritic = true;
       projConfig.rules.extensions.docsParity = true;
-      store.projectConfig.save(updated.path, projConfig);
+      store.projectConfig.save(project.path, projConfig);
 
-      const prompt = sessions.generatePrimePrompt(updated, engine);
+      const prompt = sessions.generatePrimePrompt(project, engine);
       assert.equal(prompt.includes('## Active Extension Rules'), false, 'no Active Extension Rules heading');
       assert.equal(prompt.includes('**independentCritic**:'), false, 'no rule definitions');
       assert.equal(prompt.includes('**docsParity**:'), false, 'no rule definitions');
-
-      store.projects.update(project.id, { methodology: 'minimal' });
     });
 
     it('does not list plain rule names either (#102 — extension rules block fully removed)', () => {
@@ -903,13 +891,8 @@ describe('sessions', () => {
       const project = store.projects.getByName('prime-test');
       const engine = store.engines.get('claude');
 
-      store.projects.update(project.id, { methodology: 'prawduct' });
-      const prawductPrompt = sessions.generatePrimePrompt(store.projects.getByName('prime-test'), engine);
-      assert.equal(prawductPrompt.includes('## Project Version Recording'), false, 'prawduct prime should not include version recording');
-
-      store.projects.update(project.id, { methodology: 'minimal' });
-      const minimalPrompt = sessions.generatePrimePrompt(store.projects.getByName('prime-test'), engine);
-      assert.equal(minimalPrompt.includes('## Project Version Recording'), false, 'minimal prime should not include version recording');
+      const prompt = sessions.generatePrimePrompt(project, engine);
+      assert.equal(prompt.includes('## Project Version Recording'), false, 'prime should not include version recording');
     });
 
     describe('Resume directive (CC-1 — READ half of the Continuity Contract)', () => {
@@ -2828,10 +2811,9 @@ describe('sessions', () => {
     afterEach(() => {
       tmux.sendKeys = originalSendKeys;
       tmux.hasSession = originalHasSession;
-      // Cleanup live sessions and restore methodology
+      // Cleanup live sessions
       const project = store.projects.getByName('prime-test');
       if (project) {
-        store.projects.update(project.id, { methodology: 'minimal' });
         const active = store.sessions.getActive(project.id);
         if (active) store.sessions.kill(active.id, 'test cleanup');
       }
@@ -2912,7 +2894,6 @@ describe('sessions', () => {
 
     it('routes through the wrap pipeline runner and does NOT send tmux command (#139 Chunk 3)', async () => {
       const project = store.projects.getByName('prime-test');
-      store.projects.update(project.id, { methodology: 'prawduct' });
       store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
@@ -2958,7 +2939,6 @@ describe('sessions', () => {
 
     it('#334 — webui session (null tmux) routes to the wrap pipeline; ai-content steps SKIP (not halt)', async () => {
       const project = store.projects.getByName('prime-test');
-      store.projects.update(project.id, { methodology: 'prawduct' });
       const origCfg = store.projectConfig.load(project.path);
       // WebUI/OpenClaw session: no tmux pane by design (sessions.js records
       // tmuxSession:null, sessionMode:'webui').
@@ -3044,7 +3024,6 @@ describe('sessions', () => {
     // run's result retrievable after the triggering connection is gone.
     it('#583 — second triggerWrap while a wrap pipeline is in flight is rejected and starts NO second pipeline', async () => {
       const project = store.projects.getByName('prime-test');
-      store.projects.update(project.id, { methodology: 'prawduct' });
       store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
@@ -3107,7 +3086,6 @@ describe('sessions', () => {
 
     it('#1404 — a Retry after a blocked wrap hands the runner the captured content steps, from the server\'s own record', async () => {
       const project = store.projects.getByName('prime-test');
-      store.projects.update(project.id, { methodology: 'prawduct' });
       store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'trigger-wrap-resume-test' });
       const wrapPipelineMod = require('../lib/wrap-pipeline');
       const wrapRunRegistry = require('../lib/wrap-run-registry');
@@ -3152,7 +3130,6 @@ describe('sessions', () => {
 
     it('#583 — a pipeline that throws still frees the single-flight slot and records the failure', async () => {
       const project = store.projects.getByName('prime-test');
-      store.projects.update(project.id, { methodology: 'prawduct' });
       store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
@@ -3194,7 +3171,6 @@ describe('sessions', () => {
       // teardown, the shape lookup — left the slot claimed until the 30-minute
       // stale takeover and every SSE socket hanging with no terminal frame.
       const project = store.projects.getByName('prime-test');
-      store.projects.update(project.id, { methodology: 'prawduct' });
       store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
@@ -3345,7 +3321,6 @@ describe('sessions', () => {
 
     it('forwards triggerWrap options to runWrapPipeline (#139 Chunk 10)', async () => {
       const project = store.projects.getByName('prime-test');
-      store.projects.update(project.id, { methodology: 'prawduct' });
       store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
@@ -3432,7 +3407,6 @@ describe('sessions', () => {
       wrapPipelineMod.runWrapPipeline = async () => EMPTY_PIPELINE_RESULT;
 
       const project = store.projects.getByName('prime-test');
-      store.projects.update(project.id, { methodology: 'prawduct' });
       const cfgPath = path.join(project.path, '.tangleclaw', 'project.json');
       fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
       // Persist a config that explicitly OMITS wrapV2.
@@ -3482,7 +3456,6 @@ describe('sessions', () => {
         store.documentLocks.releaseBySession = (sid) => { releaseCalls.push(sid); return 0; };
 
         const project = store.projects.getByName('prime-test');
-        store.projects.update(project.id, { methodology: 'prawduct' });
       });
 
       afterEach(() => {
@@ -3950,7 +3923,6 @@ describe('sessions', () => {
         wrapPipelineMod.runWrapPipeline = async () => EMPTY_PIPELINE_RESULT;
 
         const project = store.projects.getByName('prime-test');
-        store.projects.update(project.id, { methodology: 'prawduct' });
 
         // Wipe any prior project.json so this test asserts the
         // fresh-project path.

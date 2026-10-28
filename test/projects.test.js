@@ -1249,7 +1249,7 @@ describe('projects', () => {
       fs.rmSync(govDir, { recursive: true, force: true });
     });
 
-    function makeProject(name, { engine = 'claude', methodology = 'prawduct', settings, vendored } = {}) {
+    function makeProject(name, { engine = 'claude', settings, vendored } = {}) {
       const projPath = path.join(govDir, name);
       fs.mkdirSync(projPath, { recursive: true });
       if (settings) {
@@ -1260,7 +1260,7 @@ describe('projects', () => {
         fs.mkdirSync(path.join(projPath, 'tools'), { recursive: true });
         fs.writeFileSync(path.join(projPath, 'tools', 'product-hook'), '#!/usr/bin/env python3\n');
       }
-      store.projects.create({ name, path: projPath, engine, methodology });
+      store.projects.create({ name, path: projPath, engine });
       return projPath;
     }
 
@@ -1317,7 +1317,7 @@ describe('projects', () => {
       }, null, 2) + '\n');
 
       const created = store.projects.create({
-        name: 'archived-legacy-hook', path: projPath, engineId: 'claude'
+        name: 'archived-legacy-hook', path: projPath, engine: 'claude'
       });
       store.projects.archive(created.id);
 
@@ -3037,7 +3037,7 @@ describe('projects', () => {
       fs.mkdirSync(projPath, { recursive: true });
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '2.5.0' }));
 
-      const registered = store.projects.create({ name: 'ver-test-1', path: projPath, engineId: 'claude-code' });
+      const registered = store.projects.create({ name: 'ver-test-1', path: projPath, engine: 'claude-code' });
       const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '2.5.0');
     });
@@ -3046,7 +3046,7 @@ describe('projects', () => {
       const projPath = path.join(versionDir, 'no-pkg');
       fs.mkdirSync(projPath, { recursive: true });
 
-      const registered = store.projects.create({ name: 'ver-test-2', path: projPath, engineId: 'claude-code' });
+      const registered = store.projects.create({ name: 'ver-test-2', path: projPath, engine: 'claude-code' });
       const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, null);
     });
@@ -3056,7 +3056,7 @@ describe('projects', () => {
       fs.mkdirSync(projPath, { recursive: true });
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ name: 'test' }));
 
-      const registered = store.projects.create({ name: 'ver-test-3', path: projPath, engineId: 'claude-code' });
+      const registered = store.projects.create({ name: 'ver-test-3', path: projPath, engine: 'claude-code' });
       const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, null);
     });
@@ -3066,7 +3066,7 @@ describe('projects', () => {
       fs.mkdirSync(projPath, { recursive: true });
       fs.writeFileSync(path.join(projPath, 'package.json'), 'not json{{{');
 
-      const registered = store.projects.create({ name: 'ver-test-4', path: projPath, engineId: 'claude-code' });
+      const registered = store.projects.create({ name: 'ver-test-4', path: projPath, engine: 'claude-code' });
       const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, null);
     });
@@ -3081,7 +3081,7 @@ describe('projects', () => {
         'version: 9.9.9-rc1\nrecorded_at: 2026-04-10T20:00:00Z\nsource: CHANGELOG.md\n'
       );
 
-      const registered = store.projects.create({ name: 'ver-cache-1', path: projPath, engineId: 'claude-code' });
+      const registered = store.projects.create({ name: 'ver-cache-1', path: projPath, engine: 'claude-code' });
       const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '9.9.9-rc1');
     });
@@ -3104,7 +3104,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'version.json'), JSON.stringify({ version: '3.0.0-from-versionjson' }));
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '4.0.0-from-packagejson' }));
 
-      const registered = store.projects.create({ name: 'ver-cache-2', path: projPath, engineId: 'claude-code' });
+      const registered = store.projects.create({ name: 'ver-cache-2', path: projPath, engine: 'claude-code' });
       const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '2.0.0-from-changelog');
     });
@@ -3119,7 +3119,7 @@ describe('projects', () => {
       );
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '5.5.5' }));
 
-      const registered = store.projects.create({ name: 'ver-cache-3', path: projPath, engineId: 'claude-code' });
+      const registered = store.projects.create({ name: 'ver-cache-3', path: projPath, engine: 'claude-code' });
       const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '5.5.5');
     });
@@ -3132,7 +3132,7 @@ describe('projects', () => {
         '# Changelog\n\n## [Unreleased]\n\n### Added\n- thing\n\n## [3.12.7] - 2026-04-05\n\n## [3.12.6] - 2026-04-04\n'
       );
 
-      const registered = store.projects.create({ name: 'ver-cl-1', path: projPath, engineId: 'claude-code' });
+      const registered = store.projects.create({ name: 'ver-cl-1', path: projPath, engine: 'claude-code' });
       const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '3.12.7');
     });
@@ -3143,7 +3143,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'CHANGELOG.md'), '# Changelog\n\n## [Unreleased]\n\n### Added\n- not yet released\n');
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '0.1.0' }));
 
-      const registered = store.projects.create({ name: 'ver-cl-2', path: projPath, engineId: 'claude-code' });
+      const registered = store.projects.create({ name: 'ver-cl-2', path: projPath, engine: 'claude-code' });
       const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '0.1.0');
     });
@@ -3155,7 +3155,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'version.json'), JSON.stringify({ version: '3.0.0' }));
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '4.0.0' }));
 
-      const registered = store.projects.create({ name: 'ver-cl-3', path: projPath, engineId: 'claude-code' });
+      const registered = store.projects.create({ name: 'ver-cl-3', path: projPath, engine: 'claude-code' });
       const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '2.0.0');
     });
@@ -3165,7 +3165,7 @@ describe('projects', () => {
       fs.mkdirSync(projPath, { recursive: true });
       fs.writeFileSync(path.join(projPath, 'version.json'), JSON.stringify({ version: '3.12.7' }));
 
-      const registered = store.projects.create({ name: 'ver-vj-1', path: projPath, engineId: 'claude-code' });
+      const registered = store.projects.create({ name: 'ver-vj-1', path: projPath, engine: 'claude-code' });
       const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '3.12.7');
     });
@@ -3176,7 +3176,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'version.json'), JSON.stringify({ version: '3.0.0' }));
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '4.0.0' }));
 
-      const registered = store.projects.create({ name: 'ver-vj-2', path: projPath, engineId: 'claude-code' });
+      const registered = store.projects.create({ name: 'ver-vj-2', path: projPath, engine: 'claude-code' });
       const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '3.0.0');
     });
@@ -3185,7 +3185,7 @@ describe('projects', () => {
       const projPath = path.join(versionDir, 'nothing');
       fs.mkdirSync(projPath, { recursive: true });
 
-      const registered = store.projects.create({ name: 'ver-none', path: projPath, engineId: 'claude-code' });
+      const registered = store.projects.create({ name: 'ver-none', path: projPath, engine: 'claude-code' });
       const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, null);
     });
@@ -3281,7 +3281,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'version.json'), JSON.stringify({ version: 123 }));
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '1.0.0' }));
 
-      const registered = store.projects.create({ name: 'ver-vj-num', path: projPath, engineId: 'claude-code' });
+      const registered = store.projects.create({ name: 'ver-vj-num', path: projPath, engine: 'claude-code' });
       const enriched = await projects.enrichProject(registered);
       // Should fall through to package.json since version.json had non-string
       assert.equal(enriched.version, '1.0.0');
@@ -3321,7 +3321,7 @@ describe('projects', () => {
       );
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '2.2.2' }));
 
-      const registered = store.projects.create({ name: 'ver-cache-ws', path: projPath, engineId: 'claude-code' });
+      const registered = store.projects.create({ name: 'ver-cache-ws', path: projPath, engine: 'claude-code' });
       const enriched = await projects.enrichProject(registered);
       // Cache file should be rejected as empty → fall through to package.json
       assert.equal(enriched.version, '2.2.2');
@@ -3343,7 +3343,7 @@ describe('projects', () => {
       fs.mkdirSync(projPath, { recursive: true });
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '4.4.4' }));
 
-      const registered = store.projects.create({ name: 'ver-layer4', path: projPath, engineId: 'claude-code' });
+      const registered = store.projects.create({ name: 'ver-layer4', path: projPath, engine: 'claude-code' });
       const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '4.4.4');
     });
@@ -3584,7 +3584,7 @@ describe('projects', () => {
       // is now the default. See lib/store.js:DEFAULT_PROJECT_CONFIG.
       const projPath = path.join(primeDir, 'sp-default');
       fs.mkdirSync(projPath, { recursive: true });
-      const registered = store.projects.create({ name: 'sp-default', path: projPath, engineId: 'claude' });
+      const registered = store.projects.create({ name: 'sp-default', path: projPath, engine: 'claude' });
       const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.silentPrime, true);
     });
@@ -3592,7 +3592,7 @@ describe('projects', () => {
     it('enrichProject reflects silentPrime: true once set in projectConfig', async () => {
       const projPath = path.join(primeDir, 'sp-on');
       fs.mkdirSync(projPath, { recursive: true });
-      const registered = store.projects.create({ name: 'sp-on', path: projPath, engineId: 'claude' });
+      const registered = store.projects.create({ name: 'sp-on', path: projPath, engine: 'claude' });
       const projConfig = projectConfigModule.load(projPath);
       projConfig.silentPrime = true;
       store.projectConfig.save(projPath, projConfig);
@@ -3603,7 +3603,7 @@ describe('projects', () => {
     it('updateProject persists silentPrime=true when engine supports it', async () => {
       const projPath = path.join(primeDir, 'sp-update-on');
       fs.mkdirSync(projPath, { recursive: true });
-      store.projects.create({ name: 'sp-update-on', path: projPath, engineId: 'claude' });
+      store.projects.create({ name: 'sp-update-on', path: projPath, engine: 'claude' });
       const result = await projects.updateProject('sp-update-on', { silentPrime: true });
       assert.deepEqual(result.errors, []);
       assert.equal(result.project.silentPrime, true);
@@ -3614,7 +3614,7 @@ describe('projects', () => {
     it('updateProject persists silentPrime=false (clearing the flag)', async () => {
       const projPath = path.join(primeDir, 'sp-update-off');
       fs.mkdirSync(projPath, { recursive: true });
-      store.projects.create({ name: 'sp-update-off', path: projPath, engineId: 'claude' });
+      store.projects.create({ name: 'sp-update-off', path: projPath, engine: 'claude' });
       // Pre-seed to true so we can confirm the false update reaches disk
       const seed = projectConfigModule.load(projPath);
       seed.silentPrime = true;
@@ -3646,7 +3646,7 @@ describe('projects', () => {
     it('updateProject rejects non-boolean silentPrime', async () => {
       const projPath = path.join(primeDir, 'sp-update-nonbool');
       fs.mkdirSync(projPath, { recursive: true });
-      store.projects.create({ name: 'sp-update-nonbool', path: projPath, engineId: 'claude' });
+      store.projects.create({ name: 'sp-update-nonbool', path: projPath, engine: 'claude' });
       const result = await projects.updateProject('sp-update-nonbool', { silentPrime: 'yes' });
       assert.equal(result.project, null);
       assert.ok(result.errors[0].toLowerCase().includes('boolean'));
@@ -3701,7 +3701,7 @@ describe('projects', () => {
     it('updateProject syncs SessionStart hook to .claude/settings.local.json on silentPrime=true (#137)', async () => {
       const projPath = path.join(primeDir, 'sp-sync-on');
       fs.mkdirSync(projPath, { recursive: true });
-      store.projects.create({ name: 'sp-sync-on', path: projPath, engineId: 'claude' });
+      store.projects.create({ name: 'sp-sync-on', path: projPath, engine: 'claude' });
 
       const settingsFile = path.join(projPath, '.claude', 'settings.local.json');
       assert.equal(fs.existsSync(settingsFile), false, 'baseline: no settings.local.json yet');
@@ -3729,7 +3729,7 @@ describe('projects', () => {
     it('updateProject removes SessionStart hook from .claude/settings.local.json on silentPrime=false (#137)', async () => {
       const projPath = path.join(primeDir, 'sp-sync-off');
       fs.mkdirSync(projPath, { recursive: true });
-      store.projects.create({ name: 'sp-sync-off', path: projPath, engineId: 'claude' });
+      store.projects.create({ name: 'sp-sync-off', path: projPath, engine: 'claude' });
 
       // Seed silentPrime=true via PATCH so the baseline matches the on-disk shape PATCH would produce.
       await projects.updateProject('sp-sync-off', { silentPrime: true });
@@ -3752,7 +3752,7 @@ describe('projects', () => {
     it('updateProject removes stale .tangleclaw/session-prime.md on silentPrime=false (#137)', async () => {
       const projPath = path.join(primeDir, 'sp-prime-cleanup');
       fs.mkdirSync(projPath, { recursive: true });
-      store.projects.create({ name: 'sp-prime-cleanup', path: projPath, engineId: 'claude' });
+      store.projects.create({ name: 'sp-prime-cleanup', path: projPath, engine: 'claude' });
 
       // Pre-seed silentPrime=true and write a stale prime file directly.
       const seed = projectConfigModule.load(projPath);
@@ -3773,7 +3773,7 @@ describe('projects', () => {
     it('updateProject clears orphan SessionStart hook when engine flips claude → non-claude (#140)', async () => {
       const projPath = path.join(primeDir, 'sp-engine-flip-orphan');
       fs.mkdirSync(projPath, { recursive: true });
-      store.projects.create({ name: 'sp-engine-flip-orphan', path: projPath, engineId: 'claude' });
+      store.projects.create({ name: 'sp-engine-flip-orphan', path: projPath, engine: 'claude' });
 
       // Seed silentPrime=true via PATCH so the SessionStart hook is materialized
       // as the canonical pre-flip state — same shape an existing install would
@@ -3839,7 +3839,7 @@ describe('projects', () => {
     it('updateProject silentPrime=false is a no-op for prime cleanup when file is absent (#137)', async () => {
       const projPath = path.join(primeDir, 'sp-prime-absent');
       fs.mkdirSync(projPath, { recursive: true });
-      store.projects.create({ name: 'sp-prime-absent', path: projPath, engineId: 'claude' });
+      store.projects.create({ name: 'sp-prime-absent', path: projPath, engine: 'claude' });
 
       const primeFile = path.join(projPath, '.tangleclaw', 'session-prime.md');
       assert.equal(fs.existsSync(primeFile), false, 'baseline: no prime file');
