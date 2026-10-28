@@ -244,7 +244,7 @@ describe('update-applier (UB #228/#229)', () => {
           statusIdx++;
           return v;
         }
-        if (key.startsWith('checkout -- ') || key.startsWith('clean -fd -- ')) return '';
+        if (key.startsWith('checkout HEAD -- ') || key.startsWith('clean -fd -- ')) return '';
         if (!(key in table)) throw new Error(`unexpected git call: ${key}`);
         const v = table[key];
         if (v instanceof Error) throw v;
@@ -263,7 +263,7 @@ describe('update-applier (UB #228/#229)', () => {
       assert.equal(r.code, 'dirty-tree');
       assert.deepEqual(r.dirty, {
         discardable: ['.claude/settings.json'], realWork: ['lib/projects.js'], carried: [] });
-      assert.equal(calls.some((c) => c.startsWith('checkout --') || c.startsWith('clean')), false,
+      assert.equal(calls.some((c) => c.startsWith('checkout') || c.startsWith('clean')), false,
         'one real-work path anywhere means NOTHING is discarded, flag or no flag');
     });
 
@@ -303,7 +303,7 @@ describe('update-applier (UB #228/#229)', () => {
       const r = applier.applyUpdate({ discardDirty: true });
       assert.equal(r.ok, true, 'the update must proceed once the tree is provably clean');
       assert.equal(r.toRef, 'v9.9.9');
-      assert.ok(calls.includes('checkout -- .claude/settings.json'),
+      assert.ok(calls.includes('checkout HEAD -- .claude/settings.json'),
         'tracked TC files are restored from HEAD');
       assert.equal(calls.some((c) => c.startsWith('clean')), false,
         'the updater never deletes a file');
@@ -318,7 +318,7 @@ describe('update-applier (UB #228/#229)', () => {
       const r = applier.applyUpdate({ discardDirty: 'yes' });
       assert.equal(r.ok, false, 'a truthy string must not authorize a discard');
       assert.equal(r.code, 'dirty-tree');
-      assert.equal(calls.some((c) => c.startsWith('checkout --')), false);
+      assert.equal(calls.some((c) => c.startsWith('checkout')), false);
     });
 
     it('without the flag, an all-TC tree still refuses', () => {
@@ -327,7 +327,7 @@ describe('update-applier (UB #228/#229)', () => {
       applier._internal.readFile = () => SETTINGS_RETIRED;
       const r = applier.applyUpdate();
       assert.equal(r.ok, false);
-      assert.equal(calls.some((c) => c.startsWith('checkout --')), false,
+      assert.equal(calls.some((c) => c.startsWith('checkout')), false,
         'the discard is opt-in per request, never a default');
     });
 
@@ -362,7 +362,7 @@ describe('update-applier (UB #228/#229)', () => {
       const r = applier.applyUpdate({ discardDirty: true });
       assert.equal(r.ok, false);
       assert.deepEqual(r.dirty, { discardable: [], realWork: ['.claude/settings.json'], carried: [] });
-      assert.equal(calls.some((c) => c.startsWith('checkout --')), false,
+      assert.equal(calls.some((c) => c.startsWith('checkout')), false,
         'an operator permission must never be discarded under "nothing of yours"');
     });
 
