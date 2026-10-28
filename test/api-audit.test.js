@@ -9,7 +9,7 @@ const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const { createServer } = require('../server');
-const { operatorHeaders } = require('./_shared-docs-callers');
+const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
 
 setLevel('error');
 
@@ -258,13 +258,17 @@ describe('API /api/audit', () => {
 
   // ── Heartbeat ──
 
-  // The heartbeat carries no credential of its own, so it is held to the
-  // launch-binding floor like any other write (#2233). These two exercise the
-  // handler as a caller the floor admits; that an unidentified caller is
-  // refused is asserted below and in `launch-binding-dispatch.test.js`.
-  it('POST /api/audit/heartbeat accepts valid heartbeat', async () => {
+  // The heartbeat is marked `ownPrincipal` (#2239), so the launch-binding
+  // floor steps aside for it entirely and the handler proves one of two
+  // callers itself: an OpenClaw webhook's own audit secret (the same Bearer
+  // check ingest uses), or a verified launch binding/operator whose project
+  // owns the named session — never an opaque string trusted from the body,
+  // which is the vulnerability #2239 closes.
+  it('POST /api/audit/heartbeat accepts a valid heartbeat for a real session, as the operator', async () => {
+    const project = store.projects.getByName('audit-bound');
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude' });
     const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
-      session_id: 'sess-1'
+      session_id: session.id
     }, operatorHeaders(server));
     assert.equal(status, 200);
     assert.equal(data.ok, true);
@@ -279,6 +283,80 @@ describe('API /api/audit', () => {
     const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', { session_id: 'sess-1' });
     assert.equal(status, 403);
     assert.equal(data.code, 'LAUNCH_BINDING_REQUIRED');
+  });
+
+  it('POST /api/audit/heartbeat refuses an operator-shaped caller naming a session_id that is not a TangleClaw id', async () => {
+    const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+      session_id: 'sess-1'
+    }, operatorHeaders(server));
+    assert.equal(status, 400);
+    assert.equal(data.code, 'BAD_REQUEST');
+  });
+
+  it('POST /api/audit/heartbeat refuses an operator-shaped caller naming a session that does not exist', async () => {
+    const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+      session_id: 999999999
+    }, operatorHeaders(server));
+    assert.equal(status, 404);
+    assert.equal(data.code, 'NOT_FOUND');
+  });
+
+  it('POST /api/audit/heartbeat refuses an operator-shaped caller naming an ended session', async () => {
+    const project = store.projects.getByName('audit-bound');
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude' });
+    store.sessions.kill(session.id, 'test');
+    const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+      session_id: session.id
+    }, operatorHeaders(server));
+    assert.equal(status, 409);
+    assert.equal(data.code, 'SESSION_ENDED');
+  });
+
+  it('POST /api/audit/heartbeat succeeds via a valid audit-secret Bearer token, with no launch binding at all', async () => {
+    const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+      session_id: 'sess-1'
+    }, { Authorization: `Bearer ${auditSecret}` });
+    assert.equal(status, 200);
+    assert.equal(data.ok, true);
+  });
+
+  it('POST /api/audit/heartbeat refuses an invalid Bearer token outright, without falling back to the binding check', async () => {
+    const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+      session_id: 'sess-1'
+    }, { Authorization: 'Bearer not-a-real-secret' });
+    assert.equal(status, 401);
+    assert.equal(data.code, 'UNAUTHORIZED');
+  });
+
+  it('POST /api/audit/heartbeat refuses a valid Bearer token whose connection has no bound project', async () => {
+    const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+      session_id: 'sess-1'
+    }, { Authorization: `Bearer ${unboundSecret}` });
+    assert.equal(status, 409);
+    assert.equal(data.code, 'CONNECTION_UNBOUND');
+  });
+
+  it('POST /api/audit/heartbeat lets a project session heartbeat itself', async () => {
+    const project = store.projects.getByName('audit-bound');
+    const bound = bindProject(project);
+    const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+      session_id: bound.sessionId
+    }, bound.headers);
+    assert.equal(status, 200);
+    assert.equal(data.ok, true);
+  });
+
+  it('POST /api/audit/heartbeat refuses a project session naming another project\'s session — this is the vulnerability #2239 closes', async () => {
+    const otherDir = fs.mkdtempSync(path.join(tmpDir, 'audit-other-'));
+    const other = store.projects.create({ name: `audit-other-${Date.now()}`, path: otherDir, engine: 'claude' });
+    const otherSession = store.sessions.start({ projectId: other.id, engineId: 'claude' });
+    const project = store.projects.getByName('audit-bound');
+    const bound = bindProject(project);
+    const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
+      session_id: otherSession.id
+    }, bound.headers);
+    assert.equal(status, 403);
+    assert.equal(data.code, 'OTHER_PROJECT');
   });
 
   // ── Telemetry ──

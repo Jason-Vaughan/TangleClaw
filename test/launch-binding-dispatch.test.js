@@ -394,12 +394,42 @@ describe('launch-binding floor in the dispatcher (#2233)', () => {
       assert.ok(rows.some((row) => row.project === 'floor-audited'), JSON.stringify(last));
     });
 
-    it('keeps the heartbeat guarded: it carries no credential', async () => {
+    it('reaches the handler unidentified (a listed OWN_PRINCIPAL exception, #2239) — and the handler refuses it there, not the floor', async () => {
       const res = await send('POST', '/api/audit/heartbeat', { session_id: 'floor-sess-1' });
       assert.equal(res.status, 403);
       assert.equal(res.data.code, 'LAUNCH_BINDING_REQUIRED');
-      const withSecret = await send('POST', '/api/audit/heartbeat', { session_id: 'floor-sess-1' }, { Authorization: `Bearer ${AUDIT_SECRET}` });
-      assert.equal(withSecret.status, 403, 'the audit secret is the ingest route\'s proof only');
+    });
+
+    it('accepts the connection\'s own secret, the same proof ingest takes', async () => {
+      const res = await send('POST', '/api/audit/heartbeat', { session_id: 'floor-sess-1' }, { Authorization: `Bearer ${AUDIT_SECRET}` });
+      assert.equal(res.status, 200, JSON.stringify(res.data));
+      assert.equal(res.data.ok, true);
+    });
+
+    it('refuses a wrong secret outright, with no fallback to the binding/operator check', async () => {
+      const res = await send('POST', '/api/audit/heartbeat', { session_id: 'floor-sess-1' }, { Authorization: `Bearer ${'x'.repeat(AUDIT_SECRET.length)}` });
+      assert.equal(res.status, 401);
+      assert.equal(res.data.code, 'UNAUTHORIZED');
+    });
+
+    it('accepts a valid launch binding heartbeating its own session', async () => {
+      const res = await send('POST', '/api/audit/heartbeat', { session_id: binding.sessionId }, binding.headers);
+      assert.equal(res.status, 200, JSON.stringify(res.data));
+      assert.equal(res.data.ok, true);
+    });
+
+    it('refuses a valid launch binding naming another project\'s session — the cross-project gap #2239 closes', async () => {
+      const otherSession = store.sessions.start({ projectId: other.id, engineId: 'claude' });
+      const res = await send('POST', '/api/audit/heartbeat', { session_id: otherSession.id }, binding.headers);
+      assert.equal(res.status, 403);
+      assert.equal(res.data.code, 'OTHER_PROJECT');
+    });
+
+    it('accepts the operator\'s dashboard naming any project\'s session', async () => {
+      const otherSession = store.sessions.start({ projectId: other.id, engineId: 'claude' });
+      const res = await send('POST', '/api/audit/heartbeat', { session_id: otherSession.id }, operatorHeaders(server));
+      assert.equal(res.status, 200, JSON.stringify(res.data));
+      assert.equal(res.data.ok, true);
     });
   });
 });
