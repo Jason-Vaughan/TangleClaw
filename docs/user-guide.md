@@ -68,6 +68,12 @@ through initial configuration:
 
 The wizard only appears once; subsequent launches go straight to the landing page.
 
+Bundled engine profiles in `data/engines/` are checked when TangleClaw lists or reads engines.
+After an update changes those files, the profiles sync into the runtime directory without a
+server restart. The wizard's **Check again** also forces a profile sync alongside its executable
+PATH check. If a source file or runtime write is temporarily unavailable, a later read retries
+the sync after access is restored.
+
 #### The login step, and when it appears
 
 TangleClaw puts a login in front of itself by default. There is **no default credential**. The login
@@ -181,6 +187,21 @@ TangleClaw tells each session who it is through four environment variables: `TAN
 Nothing needs doing for TangleClaw's own sessions: every launch sets each of the four variables itself, so no pane TangleClaw launches inherits one from the global environment. Removing a stray variable matters for sessions on that tmux server that TangleClaw did not launch.
 
 The banner has no dismiss button. The read is made only when the server starts, so after you remove the variables the banner stays until the next server restart. The same report is on `GET /api/server-info` as `launchIdentityNotice`; see [The ambient-awareness floor (`tc` on PATH)](engine-guide.md#the-ambient-awareness-floor-tc-on-path) in the engine guide.
+
+### Behind-Origin Pull Banner
+
+When this checkout is on a branch and behind `origin/main`, the dashboard names the number of
+upstream commits and shows a command for this install's actual directory, such as
+`cd '/path/to/TangleClaw' && git pull`. Copy the command shown on your dashboard; its path is
+quoted for that particular install. A checkout detached at a release tag uses **Update now**
+instead and does not show this banner.
+
+The banner offers **Pull** only when the checkout is on `main`, has no local commits ahead, is
+strictly behind `origin/main`, and has no tracked or untracked changes. Pressing it asks the
+server to measure those conditions again before a fast-forward merge. If anything changed, the
+pull is refused and the checkout stays put. A successful pull offers the server restart when a
+managed restart is available, so the running process can load the new code. The Pull action is
+operator-only.
 
 ### Fleet Workload
 
@@ -1125,6 +1146,13 @@ remains stale.
 Before completing a later move, update or reinstall the LaunchAgent so its
 `WorkingDirectory` refers to the final, fully copied location. Keep the original
 copy until the health check succeeds from that location.
+
+At startup on macOS, TangleClaw also compares its server LaunchAgent plist's
+`WorkingDirectory` with the directory it is actually running from. A mismatch logs a warning
+that names the plist, any other LaunchAgent plists still pointing to the old path, and stale
+`httpsCertPath` or `httpsKeyPath` entries in `config.json`. This audit only reads files; update
+the named paths and reload the affected LaunchAgents yourself. The warning also names HTTPS
+certificate or key paths whose parent directory no longer exists.
 
 ### Dashboard Loads Blank — No Project List, Session Tabs Still Work
 
