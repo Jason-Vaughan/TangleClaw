@@ -480,10 +480,13 @@ function hideStaleServerBanner() {
  * of `/api/server-info`: "N new commit(s) upstream on origin/main. This
  * checkout is behind — pull them when convenient."
  *
- * The remedy is deliberately NOT a verbatim git command (#730 guard): an
- * install the self-updater left detached at a release tag is moved to a
- * non-tag commit by a raw pull, which the applier then refuses — so the
- * banner names the action and points tagged installs at *Update now*.
+ * The banner now embeds the exact copy/paste remedy (#1367) and, when
+ * `canFastForwardPull` says it is provably safe, a Pull button (#1223).
+ * Neither contradicts the original #730 guard the module docstring explains:
+ * this module skips a detached HEAD *before it even fetches*, so a tagged
+ * install — the one case a raw pull would wrongly move — never reaches a
+ * state where this banner renders at all. By the time `commitsAhead > 0`
+ * gets here, the install is already on a branch.
  *
  * State-driven, like the stale-server banner: it mirrors the latest poll and
  * self-clears once a pull brings the count to 0. Hidden — never shown
@@ -492,12 +495,14 @@ function hideStaleServerBanner() {
  * leaks a non-numeric count; the count is clamped to an integer before it
  * reaches `innerHTML`, matching `renderStaleServerBanner`'s boundary cast.
  *
- * @param {{enabled?: boolean, commitsAhead?: number, checkedAt?: string|null}|null|undefined} info
+ * @param {{enabled?: boolean, commitsAhead?: number, checkedAt?: string|null,
+ *   pullCommand?: string|null, canFastForwardPull?: boolean}|null|undefined} info
  * @returns {void}
  */
 function renderBehindOriginBanner(info) {
   const banner = document.getElementById('behindOriginBanner');
   const textEl = document.getElementById('behindOriginBannerText');
+  const pullBtn = document.getElementById('behindOriginPullBtn');
   if (!banner || !textEl) return;
 
   const commitsAhead = info && info.enabled !== false
@@ -505,13 +510,74 @@ function renderBehindOriginBanner(info) {
     : 0;
   if (commitsAhead === 0) {
     banner.classList.add('hidden');
+    if (pullBtn) pullBtn.classList.add('hidden');
     return;
   }
+  const command = typeof info.pullCommand === 'string' && info.pullCommand ? info.pullCommand : null;
+  const remedy = command ? `Run: <code>${esc(command)}</code>` : 'pull them when convenient.';
   textEl.innerHTML =
     `ℹ <strong>${commitsAhead} new commit${commitsAhead === 1 ? '' : 's'} upstream on origin/main.</strong> ` +
-    'This checkout is behind — pull them when convenient. ' +
+    `This checkout is behind — ${remedy} ` +
     '(An install pinned to a release tag updates through <em>Update now</em> instead.)';
   banner.classList.remove('hidden');
+  if (pullBtn) pullBtn.classList.toggle('hidden', info.canFastForwardPull !== true);
+}
+
+/**
+ * Click handler for the safe fast-forward Pull button (#1223): POST
+ * `/api/update/pull`, which re-verifies the preconditions server-side before
+ * doing anything. On success, hands off to the existing restart flow
+ * (`triggerServerRestart`, unchanged) when a mechanism is available, so the
+ * operator does not trade the behind-origin banner for the stale-server one.
+ * On refusal (the recheck failed, or the merge itself did) or on a network
+ * failure, restores the button and alerts — the next poll will say whether
+ * the button should still be offered.
+ *
+ * @returns {Promise<void>}
+ */
+async function _handleBehindOriginPullClick() {
+  const btn = document.getElementById('behindOriginPullBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Pulling…'; }
+  let result;
+  try {
+    result = await apiMutate('/api/update/pull', 'POST', {});
+  } catch (err) { // prawduct:allow prawduct/broad-except -- a throw here must not strand the button disabled
+    window.alert(`Pull failed: ${err && err.message ? err.message : 'request did not complete'}`);
+    if (btn) { btn.disabled = false; btn.textContent = 'Pull'; }
+    return;
+  }
+  if (!result || !result.ok) {
+    const msg = (result && result.error) || api.lastError || 'unknown error';
+    window.alert(`Pull not started: ${msg}`);
+    if (btn) { btn.disabled = false; btn.textContent = 'Pull'; }
+    return;
+  }
+  if (btn) { btn.disabled = false; btn.textContent = 'Pull'; }
+  if (typeof result.restartMechanism === 'string' && result.restartMechanism) {
+    await triggerServerRestart();
+  } else {
+    // No restart mechanism — leave it to the next poll to clear the banner
+    // (commitsAhead will read 0 once the fetch behind it re-measures).
+    await loadServerInfo();
+  }
+}
+
+/**
+ * Wire the behind-origin banner's Pull button (#1223). Idempotent — called
+ * once at page init. Visibility is managed separately in
+ * `renderBehindOriginBanner()` based on the server's `canFastForwardPull`.
+ * @returns {void}
+ */
+function wireBehindOriginPullBtn() {
+  const btn = document.getElementById('behindOriginPullBtn');
+  if (btn) {
+    btn.addEventListener('click', () => {
+      _handleBehindOriginPullClick().catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('behind-origin pull failed', err);
+      });
+    });
+  }
 }
 
 /**
@@ -2949,6 +3015,7 @@ async function init() {
 
   wireOrphanHooksBanner();
   wireStaleServerBanner();
+  wireBehindOriginPullBtn();
   wireVersionCheck();
   await loadProjects();
   consumeLaunchQueryParam();

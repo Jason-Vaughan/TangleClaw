@@ -1298,3 +1298,178 @@ describe('GET /api/server-info states the outcome of the launch identity read (#
     assert.equal(notice.observedAt, null);
   });
 });
+
+// #1223 — the safe fast-forward Pull action. `test/control-surfaces.test.js`
+// is the repo's usual home for a new mutation route's control-gate coverage
+// (#1861) but is outside this car's authorized file scope, so that coverage
+// — plus the route's own success/refusal shapes — lives here instead,
+// mirroring that file's setup for `/api/server/restart` and
+// `/api/update/apply` exactly. `behindOrigin.pullFastForward` is stubbed
+// throughout: the actual precondition logic and the merge itself are
+// `lib/behind-origin.js`'s own unit tests (`test/behind-origin.test.js`).
+describe('POST /api/update/pull (#1223)', () => {
+  const { before, after } = require('node:test');
+  const http = require('node:http');
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const store = require('../lib/store');
+  const control = require('../lib/control-state');
+  const gate = require('../lib/control-gate');
+  const behindOrigin = require('../lib/behind-origin');
+  const { createServer } = require('../server');
+  const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
+
+  const OPERATOR = { principal: 'operator', operatorProof: 'verified-session' };
+  let tmpDir, server, op, bBuilder, bPM, savedPull, savedDetect;
+  let n = 0;
+  const rid = () => { n += 1; return `pull-${n}`; };
+
+  before(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-update-pull-'));
+    store._setBasePath(tmpDir);
+    store.init();
+    gate._resetForTests();
+    const mk = (name) => {
+      const dir = path.join(tmpDir, name);
+      fs.mkdirSync(dir);
+      return store.projects.create({ name, path: dir, engine: 'claude' });
+    };
+    const builder = mk('builder');
+    const pm = mk('pm');
+    bBuilder = bindProject(builder);
+    bPM = bindProject(pm);
+    const assignmentId = control.create({ projectId: builder.id, requestId: rid(), authority: { hold: [`project:${pm.id}`] } }, OPERATOR).assignment.assignmentId;
+    control.hold({ assignmentId, requestId: rid(), reasonCode: 'boundary' }, { principal: `project:${pm.id}` });
+
+    savedPull = behindOrigin.pullFastForward;
+    savedDetect = serverInfo.detectRestartMechanism;
+    // Default stub for every test that doesn't override it, so a test that
+    // forgets to set its own expectation cannot fall through to a real spawn.
+    behindOrigin.pullFastForward = async () => ({ ok: false, code: 'PULL_NOT_SAFE', error: 'unstubbed test default', fromSha: null, toSha: null });
+    serverInfo.detectRestartMechanism = () => null;
+
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    op = operatorHeaders(server);
+  });
+
+  after(async () => {
+    behindOrigin.pullFastForward = savedPull;
+    serverInfo.detectRestartMechanism = savedDetect;
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /**
+   * @returns {Promise<{status: number, data: object|null}>}
+   */
+  function send(headers) {
+    return new Promise((resolve, reject) => {
+      const r = http.request({
+        hostname: '127.0.0.1', port: server.address().port, path: '/api/update/pull', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': 0, ...headers }
+      }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          const raw = Buffer.concat(chunks).toString('utf8');
+          let data;
+          try { data = JSON.parse(raw); } catch { data = null; }
+          resolve({ status: res.statusCode, data });
+        });
+      });
+      r.on('error', reject);
+      r.end('');
+    });
+  }
+
+  it('an unattributable caller is refused before the control gate (#2233)', async () => {
+    const r = await send({});
+    assert.equal(r.status, 403);
+    assert.equal(r.data.code, 'LAUNCH_BINDING_REQUIRED');
+  });
+
+  it('a clear project caller is refused 403 OPERATOR_ONLY — this route is operator-only, unlike restart/update-apply (P20)', async () => {
+    const r = await send(bPM.headers);
+    assert.equal(r.status, 403);
+    assert.equal(r.data.code, 'OPERATOR_ONLY');
+  });
+
+  it('the held Builder is ALSO refused 403 OPERATOR_ONLY, not 423 — the identity gate runs first, so a refused caller learns nothing else', async () => {
+    const r = await send(bBuilder.headers);
+    assert.equal(r.status, 403);
+    assert.equal(r.data.code, 'OPERATOR_ONLY');
+  });
+
+  it('a clear caller (the operator) reaches the action; 409 PULL_NOT_SAFE when the fresh recheck fails', async () => {
+    // Also proves the operator is not refused by a hold scoped to a different
+    // project (`builder`, here) — the same control-gate behavior
+    // test/control-surfaces.test.js's "operator passes a readable held lane"
+    // case pins for /api/server/restart and /api/update/apply.
+    behindOrigin.pullFastForward = async () => ({ ok: false, code: 'PULL_NOT_SAFE', error: 'the working tree is not clean', fromSha: null, toSha: null });
+    const r = await send(op);
+    assert.equal(r.status, 409);
+    assert.equal(r.data.code, 'PULL_NOT_SAFE');
+    assert.match(r.data.error, /not clean/);
+  });
+
+  it('409 MERGE_FAILED when the ff-only merge itself refuses', async () => {
+    behindOrigin.pullFastForward = async () => ({ ok: false, code: 'MERGE_FAILED', error: 'fatal: Not possible to fast-forward, aborting.', fromSha: 'a'.repeat(40), toSha: null });
+    const r = await send(op);
+    assert.equal(r.status, 409);
+    assert.equal(r.data.code, 'MERGE_FAILED');
+  });
+
+  it('500 GIT_ERROR when git itself is unavailable', async () => {
+    behindOrigin.pullFastForward = async () => ({ ok: false, code: 'GIT_ERROR', error: 'git not found', fromSha: null, toSha: null });
+    const r = await send(op);
+    assert.equal(r.status, 500);
+    assert.equal(r.data.code, 'GIT_ERROR');
+  });
+
+  it('200 with the SHA range and a restartMechanism on success', async () => {
+    behindOrigin.pullFastForward = async () => ({ ok: true, code: null, error: null, fromSha: 'a'.repeat(40), toSha: 'b'.repeat(40) });
+    serverInfo.detectRestartMechanism = () => 'launchd';
+    const r = await send(op);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.data, { ok: true, fromSha: 'a'.repeat(40), toSha: 'b'.repeat(40), restartMechanism: 'launchd' });
+  });
+
+  it('restartMechanism is null, not omitted, when no mechanism is available (bare-node)', async () => {
+    behindOrigin.pullFastForward = async () => ({ ok: true, code: null, error: null, fromSha: 'c'.repeat(40), toSha: 'd'.repeat(40) });
+    serverInfo.detectRestartMechanism = () => null;
+    const r = await send(op);
+    assert.equal(r.status, 200);
+    assert.equal(r.data.restartMechanism, null);
+  });
+
+  it('409 CHECK_DISABLED when the operator turned the behind-origin check off — a direct call must not merge anyway just because it skipped the gated button', async () => {
+    const cfg = store.config.load();
+    store.config.save({ ...cfg, behindOriginCheckEnabled: false });
+    let merged = false;
+    behindOrigin.pullFastForward = async () => { merged = true; return { ok: true, code: null, error: null, fromSha: 'a'.repeat(40), toSha: 'b'.repeat(40) }; };
+    try {
+      const r = await send(op);
+      assert.equal(r.status, 409);
+      assert.equal(r.data.code, 'CHECK_DISABLED');
+      assert.equal(merged, false, 'pullFastForward must never be reached once the switch is off');
+    } finally {
+      store.config.save(cfg);
+    }
+  });
+
+  it('409 CHECK_DISABLED under the TC_BEHIND_ORIGIN_DISABLED env kill switch too (CI, sandboxes)', async () => {
+    const saved = process.env[behindOrigin.ENV_KILL_SWITCH];
+    process.env[behindOrigin.ENV_KILL_SWITCH] = '1';
+    try {
+      const r = await send(op);
+      assert.equal(r.status, 409);
+      assert.equal(r.data.code, 'CHECK_DISABLED');
+    } finally {
+      if (saved === undefined) delete process.env[behindOrigin.ENV_KILL_SWITCH];
+      else process.env[behindOrigin.ENV_KILL_SWITCH] = saved;
+    }
+  });
+});
