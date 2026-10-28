@@ -387,6 +387,42 @@ describe('linkedIssueClosedSignal (#1495)', () => {
       }
     });
 
+    it('resolves to the line\'s OWN issue, not a later cross-reference on the same line (Critic finding, real plan line verbatim)', () => {
+      // This repo's actual `Issue:` convention: a bare GitHub URL (no `#`)
+      // naming the plan's own issue, followed by prose that can carry its
+      // OWN `#N` cross-references (a build-order note, a sibling issue) --
+      // verbatim from .prawduct/artifacts/build-plan-2322-integrator-merge-queue.md,
+      // whose own issue is #2322 but whose line also mentions "#2323 chunk 01".
+      writeState('active_build_plan: artifacts/p.md\n');
+      const realLine = 'Issue: https://github.com/Jason-Vaughan/TangleClaw/issues/2322 (OPEN when read 2026-10-11 21:24 PDT; labels `enhancement`, `release:v5.33`; milestone "v5.33.0: Newer Codex versions"; no comments). Planned from `origin/main` `e4dfaf47`. Build order: this plan\'s chunk 01 (v64), then #2323 chunk 01 (v65), then this plan\'s chunk 02.';
+      writePlan('artifacts/p.md', `# Plan\n\n${realLine}\n`);
+      const seen = [];
+      rr.linkedIssueClosedSignal(root, { fetchIssueState: (n) => { seen.push(n); return { state: 'closed' }; } });
+      assert.deepEqual(seen, [2322], 'must discover the line\'s own issue (#2322), not the later cross-reference (#2323)');
+    });
+
+    it('a bare number is trusted only when it is the entire line, never a stray digit in prose', () => {
+      writeState('active_build_plan: artifacts/p.md\n');
+      writePlan('artifacts/p.md', '# Plan\n\nIssue: 789\n');
+      const seen = [];
+      rr.linkedIssueClosedSignal(root, { fetchIssueState: (n) => { seen.push(n); return { state: 'closed' }; } });
+      assert.deepEqual(seen, [789]);
+
+      writePlan('artifacts/p.md', '# Plan\n\nIssue: this references 42 other things\n');
+      const seen2 = [];
+      const s2 = rr.linkedIssueClosedSignal(root, { fetchIssueState: (n) => { seen2.push(n); return { state: 'closed' }; } });
+      assert.deepEqual(seen2, [], 'no #/URL marker and not a bare number -- nothing trusted');
+      assert.equal(s2.state, 'n/a');
+    });
+
+    it('a leading comma-separated run of issues is still discovered in full', () => {
+      writeState('active_build_plan: artifacts/p.md\n');
+      writePlan('artifacts/p.md', '# Plan\n\nIssue: #100, #200 and other prose mentioning #300\n');
+      const seen = [];
+      rr.linkedIssueClosedSignal(root, { fetchIssueState: (n) => { seen.push(n); return { state: 'closed' }; } });
+      assert.deepEqual(seen.sort((a, b) => a - b), [100, 200], 'the leading run (#100, #200) is trusted; the later #300 in prose is not');
+    });
+
     it('falls back to commits\' Fixes/Closes/Resolves #N when no plan names one', () => {
       const seen = [];
       rr.linkedIssueClosedSignal(root, {
@@ -575,9 +611,5 @@ describe('linkedIssueClosedSignal (#1495)', () => {
 
     const noLookup = rr.linkedIssueClosedSignal(root, { issueNumber: 1, checkGithub: false });
     assert.equal(rr.evaluateReleaseReadiness([noLookup]).verdict, 'unknown');
-  });
-
-  it('exports linkedIssueSignal as an alias of linkedIssueClosedSignal', () => {
-    assert.equal(rr.linkedIssueSignal, rr.linkedIssueClosedSignal);
   });
 });
