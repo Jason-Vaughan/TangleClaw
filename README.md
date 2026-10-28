@@ -17,7 +17,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
 </p>
 
-**Release candidate:** v5.44.0, “Update and restart you can trust” ([status and release scope](docs/releases/v5.44-status.md)). The Release badge above continues to show the latest published release until this candidate is approved and published.
+**Release candidate:** v5.45.0, “Project settings that cannot corrupt” ([status and release scope](docs/releases/v5.45-status.md)). The Release badge above continues to show the latest published release until this candidate is approved and published.
 
 One AI coding agent is easy. Five are not. They forget what the last session decided, edit the same files, fight over the same ports, and wait silently for an answer you did not know they needed. You end up watching terminals.
 
@@ -51,7 +51,7 @@ TangleClaw is developed with TangleClaw. Its own Builder, Project Manager and re
 
 ```bash
 # macOS. What the installer does, and what you need first: Quick Start, below
-git clone --branch v5.44.0 https://github.com/Jason-Vaughan/TangleClaw.git
+git clone --branch v5.45.0 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw && ./deploy/install.sh
 ```
 
@@ -173,7 +173,7 @@ Most importantly, TangleClaw enforces strict safety boundaries, ensuring that wh
 ## Quick Start
 
 ```bash
-git clone --branch v5.44.0 https://github.com/Jason-Vaughan/TangleClaw.git
+git clone --branch v5.45.0 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw
 ./deploy/install.sh
 ```

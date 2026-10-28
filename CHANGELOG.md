@@ -4,6 +4,40 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.45.0] - 2026-10-28
+
+### Changed
+- `createProject` now runs the shared `PROJECT_UPDATE_VALIDATORS` table against a pre-create context instead of hand-copying its own checks for `silentPrime`, `showLaunchModePicker`, `defaultLaunchMode`, the hidden-picker eyes-open guard, and `tags` — so creating and updating a project can no longer drift to different verdicts for the same value (#1374).
+
+### Fixed
+- `store.projects.list` and `store.projects.create` now reject an unknown option/data
+  key (e.g. a mistyped `groupId`) with a `BAD_REQUEST` `StoreError` instead of silently
+  dropping it; `store.projects.update` gets the same guard as a sibling of the same
+  hazard class (#1225).
+- Operator `~` paths no longer expand two different ways when `HOME` is unset (a `sudo` invocation,
+  or a launchd job whose plist omits it): `expandHomePath()` in `lib/project-paths.js`, the exact
+  inverse of `tildeHomePath()`, now backs every tilde expansion that previously hand-rolled its own
+  (`lib/orchestration.js`, `lib/git-template.js`, `lib/porthub.js`, `lib/openclaw-version.js`,
+  `lib/openclaw-detect.js`, `lib/tunnel.js`, `lib/sessions.js`, `lib/routes/openclaw.js`). Two of the
+  old call sites (`lib/tunnel.js`, `lib/sessions.js`) interpolated the literal string `"undefined"`
+  into an SSH key path when `HOME` was unset instead of leaving the path alone; the rest silently
+  stripped `~` to the filesystem root. `expandHomePath()` leaves an unresolvable `~`/`~/...` path
+  unchanged instead, and correctly leaves `~otheruser/...` untouched, which several of the old
+  call sites did not (#1284).
+- `PATCH /api/projects/:name` now answers 404 only when the named project itself does not exist, and 400 for every other rejected field — previously an unknown `engine` or a missing `activePlan` on an existing project answered 404 too, because the route picked its status by searching the error text for "not found" (#1288).
+- A `PATCH /api/projects/:name` save against a project whose `.tangleclaw/project.json` cannot be read or does not parse to a plain object now refuses the request (409 `PROJECT_CONFIG_UNREADABLE`) instead of silently validating and writing over it with defaults, which previously discarded whatever the file actually held (#1289).
+- Engine config writes (`writeEngineConfig`'s managed-block and whole-file paths, and `retireInactiveEngineConfig`) now go through a temp-file-then-rename atomic write, so a crash or disk-full error mid-write leaves a co-owned carrier like `AGENTS.md` wholly old or wholly new, never truncated — and a read-only target (e.g. `chmod 0o444`) is refused before any temp file is created, preserving the existing "could not write it" refusal rather than silently overwriting it (#1291).
+- A symlinked config carrier (e.g. an operator-managed `AGENTS.md` pointing at a file shared across checkouts) is now written to through the link, including a multi-hop chain ending in a not-yet-existing file: the atomic write walks the whole chain hop by hop before the read-only check and the write itself, so every intermediate symlink is preserved and only the chain's final referent is created or updated — never a plain file replacing a link partway down. A symlink cycle is refused (`ELOOP`) rather than looped forever (#1291).
+- `syncEngineHooks(projectPath, engineIdOverride, projConfigOverride)` now accepts an optional `projConfigOverride`, so a caller that already loaded the project config (e.g. via `loadConfigForWrite`) does not perform a second, redundant lax read (#2232).
+- `PATCH /api/config` now rejects a `quickCommands` value that is not an array of `{ label, command }` objects with string fields, instead of persisting it unchecked into the global list the dashboard renders (#1339). `_protectedRoots()` in the same route family also now resolves HOME through `tangleclaw-home.js`'s `userHome()` instead of the bare `process.env.HOME || ''` that `userHome()` exists to replace, per #1339's own requirements. Also closes #2180's setup-wizard half: `POST /api/setup/complete` now validates each batch-attached project's name the same way a single create does, skipping an invalid one with a warning instead of registering it.
+- `POST /api/projects/import` now validates each name with `validateName` before registering it, skipping an invalid one with a warning instead of passing it through to project creation unchecked (#2180).
+- The four engine-gated project-settings validators (`silentPrime`, `evalAuditMode`, `defaultLaunchMode`, and the hidden-picker eyes-open guard) now judge a save against the project's own row engine instead of `.tangleclaw/project.json`'s `engine` mirror, which could diverge from the row and let a save be wrongly accepted or wrongly refused for an engine the project does not actually have (#2216).
+- Every load-then-save and conditional writer of `.tangleclaw/project.json` has been audited for overwriting a file it could not read (#2232):
+  - The legacy `_migrateDropMethodology` migration (`lib/store/_schema.js`) now reads `project.json` directly via `fs.readFileSync` and rejects a parsed value that is not a plain object, rather than pairing `fs.existsSync` with the defaults-on-failure `projectConfigApi.load` — a present-but-unusable or non-object `project.json` (`[]`, `42`, `"str"`, corrupt JSON) is now logged at warn and counted as unreachable instead of being silently overwritten with seeded defaults.
+  - `PATCH /api/projects/:name`'s 409 `PROJECT_CONFIG_UNREADABLE` message (when `project.json` becomes unreadable mid-apply, after validation) now says the project row's `engine` and `tags` are written last, so the operator understands a stop partway through can leave the new engine's files on disk while the project row still names the old engine.
+  - `createProject` now creates its project directory with exclusive (non-recursive) `mkdirSync` rather than `{ recursive: true }`, closing a check-to-write race where a directory landing between the existence check and the write would previously be silently accepted and then have its `project.json` overwritten with defaults.
+  - `attachProject` (`lib/projects.js`) now resolves its existing `.tangleclaw/project.json` through the same unreadable/non-object detection the update path uses (`loadConfigForWrite`), rather than a raw `existsSync` + `JSON.parse`. `attachProject`, the setup wizard's batch attach (`lib/routes/setup.js`), and `POST /api/projects/import`'s bulk import (`server.js`) all now WRITE a new `project.json` with exclusive-creation semantics (`flag: 'wx'`) instead of a separate existence check followed by an unconditional save — an existing, unusable, or concurrently-created `project.json` can no longer be clobbered by defaults.
+
 ## [5.44.0] - 2026-10-28
 
 ### Added
