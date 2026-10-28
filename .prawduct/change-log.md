@@ -41,6 +41,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-28 — v5.44.0 W4-REL: prepare the update and restart release candidate
+
+<!-- prawduct: type=internal | scope=v544-w4-rel -->
+
+- Prepared the v5.44.0 release candidate from `main@0954a82873158b3b28d561b3263e2be050011d57` after W3-REC PR #2676 merged. Compiled all nine accepted Wave 1 and Wave 2 changelog fragments into the dated `[5.44.0]` release section and removed the consumed files.
+- Updated `version.json` and README clone pins to v5.44.0, extended the released-section lock with `scripts/release-prepare.js`, and recorded the release scope and pending code-release, production-update, and activation finish lines in `docs/releases/v5.44-status.md`. This records release preparation; no tag, publication, or production update is claimed.
+
 ## 2026-10-28 — v5.44.0 W3-REC: reconcile Wave 1 and Wave 2 update and recovery records
 
 <!-- prawduct: type=internal | scope=v544-w3-rec -->
