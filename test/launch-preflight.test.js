@@ -267,13 +267,76 @@ describe('runPreflight — integrity comes before every exception', () => {
     assert.match(r.reasons.join(' '), /projectId 99/);
   });
 
-  it('does not call a null workspaceId a mismatch', () => {
-    // A handoff written before the workspace id was resolvable records null.
-    // Refusing those would turn old-but-sound handoffs into identity incidents.
-    const r = runPreflight(ctx({
-      file: { state: FILE_STATES.VALID, doc: doc({ workspaceId: null }), digest: DIGEST }
-    }));
-    assert.equal(r.verdict, VERDICTS.OK);
+  // #1611 (Architect ruling train-21-handoff-identity-ruling). `projectId` is
+  // the whole of the identity check now: `doc.workspaceId` names the SESSION
+  // that wrote the handoff, re-minted on every launch, so it can never equal
+  // the launching workspace even for a handoff this same project produced.
+  // Every case below holds `projectId` matched and varies only `workspaceId`,
+  // so the only thing that could withhold `ok` is a workspaceId comparison
+  // this check must no longer make.
+  describe('the workspaceId half of identity is diagnostic only, never compared', () => {
+    it('matches on both sides', () => {
+      const r = runPreflight(ctx({ workspaceId: WORKSPACE, file: { state: FILE_STATES.VALID, doc: doc({ workspaceId: WORKSPACE }), digest: DIGEST } }));
+      assert.equal(r.verdict, VERDICTS.OK);
+    });
+
+    it('differs on both sides — the exact shape #1611 exists to stop misreading as a mismatch', () => {
+      const r = runPreflight(ctx({
+        workspaceId: 'tangleclaw-builder-aaaaaaaa',
+        file: { state: FILE_STATES.VALID, doc: doc({ workspaceId: 'tangleclaw-builder-bbbbbbbb' }), digest: DIGEST }
+      }));
+      assert.equal(r.verdict, VERDICTS.OK);
+    });
+
+    it('is null on the document, set on the launch', () => {
+      const r = runPreflight(ctx({
+        workspaceId: WORKSPACE,
+        file: { state: FILE_STATES.VALID, doc: doc({ workspaceId: null }), digest: DIGEST }
+      }));
+      assert.equal(r.verdict, VERDICTS.OK);
+    });
+
+    it('is set on the document, null on the launch', () => {
+      const r = runPreflight(ctx({
+        workspaceId: null,
+        file: { state: FILE_STATES.VALID, doc: doc({ workspaceId: WORKSPACE }), digest: DIGEST }
+      }));
+      assert.equal(r.verdict, VERDICTS.OK);
+    });
+
+    it('is null on both sides', () => {
+      const r = runPreflight(ctx({
+        workspaceId: null,
+        file: { state: FILE_STATES.VALID, doc: doc({ workspaceId: null }), digest: DIGEST }
+      }));
+      assert.equal(r.verdict, VERDICTS.OK);
+    });
+
+    it('never adds a second reason when projectId also mismatches', () => {
+      // A foreign document with a different workspaceId too must still report
+      // exactly one reason — a workspaceId clause that fires alongside the
+      // projectId one would be the comparison back, just reached a different way.
+      const r = runPreflight(ctx({
+        workspaceId: 'tangleclaw-builder-aaaaaaaa',
+        file: {
+          state: FILE_STATES.VALID,
+          doc: doc({ projectId: 99, workspaceId: 'tangleclaw-builder-bbbbbbbb' }),
+          digest: DIGEST
+        }
+      }));
+      assert.equal(r.verdict, VERDICTS.IDENTITY_MISMATCH);
+      assert.equal(r.reasons.length, 1);
+      assert.match(r.reasons[0], /projectId 99/);
+    });
+
+    it('reports identity-mismatch on projectId alone even when every workspaceId matches', () => {
+      const r = runPreflight(ctx({
+        workspaceId: WORKSPACE,
+        file: { state: FILE_STATES.VALID, doc: doc({ projectId: 99, workspaceId: WORKSPACE }), digest: DIGEST }
+      }));
+      assert.equal(r.verdict, VERDICTS.IDENTITY_MISMATCH);
+      assert.equal(r.reasons.length, 1);
+    });
   });
 });
 

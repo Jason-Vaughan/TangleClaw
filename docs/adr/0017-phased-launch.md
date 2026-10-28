@@ -352,7 +352,7 @@ stated as a table so no row can be read as the other.
 | Recovery gate, clear route, operator UI control | yes (v43) | — |
 | Per-rule drift reconciliation in step 3 | yes (#1588) | — |
 | Identity check — **projectId half** | yes, exact | — |
-| Identity check — **workspaceId half** | **NO.** `lib/sessions.js` calls `evaluate(project, {workspaceId: null})`, so the comparison in `lib/launch-preflight.js` never fires in production | The launching side needs something stable to compare against. `medusa.mintWorkspaceId` draws fresh random bytes every launch, so comparing it would report `identity-mismatch` on every launch of every Medusa project. **#1611**, open |
+| Identity check — **workspaceId half** | **Resolved, not shipped (#1611, Architect ruling train-21-handoff-identity-ruling).** `doc.projectId === ctx.projectId` is the whole of the identity check. `doc.workspaceId` is never compared: `medusa.mintWorkspaceId` draws fresh random bytes every launch, so the launching side has nothing stable to compare a recorded session's workspace id against, and comparing them would report `identity-mismatch` on every launch of every Medusa project. `doc.workspaceId` stays in the frozen handoff document — diagnostic, digest-covered metadata, never an identity assertion. | — |
 | A launch with **no sequence** is gated on a damaged handoff | **NO** — the gate lives on the sequence, so a launch that has none is gated by nothing | **#1623**, open |
 | Engine parity **certification** — a pass bound to engine id and version, config fingerprint, runtime identity, launch/session/revision, and assistance attribution | **NO — cancelled by scope**, operator amendment 2026-09-20, because no current downstream consumer needs durable certification. Not blocked, not owed | **None. There is no desired state for this row.** It is not deferred, unscheduled or unowned — it was cancelled. An Architect-ruled design is archived at #1720, and it is history, not a plan. See below |
 | Retention for the launch-sequence tables | **NO** — unbounded for Train 21 | **#1595**, open |
@@ -468,7 +468,7 @@ a launch. Any session with an attested sequence that can run `tc` can pull the w
 An engine with no SessionStart source and no way to run `tc` is still blind after a clear. That
 limit is stated rather than papered over.
 
-**Left open:** #1611, #1623, #1595, #1712, #1713. They are listed in the shipped/desired table rather
+**Left open:** #1623, #1595, #1712, #1713. They are listed in the shipped/desired table rather
 than in prose so that none of them can be mistaken for delivered.
 
 **Not left open — cancelled:** engine parity certification. It is absent from that list deliberately.

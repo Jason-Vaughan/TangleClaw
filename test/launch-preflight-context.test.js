@@ -23,9 +23,29 @@ const path = require('node:path');
 const store = require('../lib/store.js');
 const continuity = require('../lib/continuity.js');
 const lockfile = require('../lib/handoff-lockfile.js');
+const logger = require('../lib/logger.js');
 const { VERDICTS } = require('../lib/launch-preflight.js');
 const { buildContext, evaluate, probeWorktree } = require('../lib/launch-preflight-context.js');
 const { buildHandoffDocument, newPublicationId } = require('../lib/handoff-publication.js');
+
+/**
+ * Capture info-and-above log lines while `fn` runs, restoring the quiet
+ * test posture afterward.
+ * @param {() => void} fn - Work to run while capturing.
+ * @returns {string[]} The captured lines.
+ */
+function captureLog(fn) {
+  const lines = [];
+  logger.setLevel('info');
+  logger.setConsoleStream({ write: (line) => lines.push(line) });
+  try {
+    fn();
+  } finally {
+    logger.setConsoleStream(null);
+    logger.setLevel('error');
+  }
+  return lines;
+}
 
 const tmpDirs = [];
 let project;
@@ -138,6 +158,57 @@ describe('the context describes the project as it is', () => {
 
     const ctx = buildContext(project);
     assert.deepEqual(ctx.stagedFiles.map((f) => f.publicationId), [pid]);
+  });
+
+  // #1682. A staged row the DB knows about, but whose bytes on disk cannot be
+  // read as a handoff, used to vanish with a bare `continue`: not counted in
+  // `stagedFiles`, and nothing anywhere said it was skipped or why. Both cases
+  // below now have to be LOGGED and NAMED on the returned context, because the
+  // reconciliation path otherwise reasons about the remaining staged files as
+  // though they were all of them.
+  it('names a corrupt staged file instead of silently dropping it', () => {
+    const publicationId = newPublicationId();
+    store.handoffs.stage({
+      publicationId, projectId: project.id, sessionId: 1, wrapRunId: 'run-1',
+      kind: 'final', fileDigest: 'sha256:whatever', stagedAt: new Date().toISOString()
+    });
+    fs.mkdirSync(lockfile.handoffDir(project), { recursive: true });
+    fs.writeFileSync(lockfile.stagedPath(project, publicationId), 'not json at all', 'utf8');
+
+    let ctx;
+    const lines = captureLog(() => { ctx = buildContext(project); });
+
+    assert.deepEqual(ctx.stagedFiles.map((f) => f.publicationId), [],
+      'an unreadable staged file is not offered as evidence of an attempt');
+    assert.equal(ctx.skippedStagedFiles.length, 1);
+    assert.equal(ctx.skippedStagedFiles[0].publicationId, publicationId);
+    assert.match(ctx.skippedStagedFiles[0].reason, /not JSON/);
+    assert.ok(lines.some((l) => l.includes(publicationId) && l.includes('not JSON')),
+      'an operator debugging a recovery has something to look at');
+  });
+
+  it('names a staged file it could not even open', () => {
+    const publicationId = newPublicationId();
+    store.handoffs.stage({
+      publicationId, projectId: project.id, sessionId: 1, wrapRunId: 'run-1',
+      kind: 'final', fileDigest: 'sha256:whatever', stagedAt: new Date().toISOString()
+    });
+    fs.mkdirSync(lockfile.handoffDir(project), { recursive: true });
+    const file = lockfile.stagedPath(project, publicationId);
+    fs.writeFileSync(file, '{}', 'utf8');
+    fs.chmodSync(file, 0o000);
+
+    try {
+      let ctx;
+      const lines = captureLog(() => { ctx = buildContext(project); });
+      if (ctx.skippedStagedFiles.length === 0) return; // root or a filesystem that ignores 0o000
+      assert.deepEqual(ctx.stagedFiles, []);
+      assert.equal(ctx.skippedStagedFiles[0].publicationId, publicationId);
+      assert.match(ctx.skippedStagedFiles[0].reason, /EACCES|read failed/);
+      assert.ok(lines.some((l) => l.includes(publicationId)));
+    } finally {
+      fs.chmodSync(file, 0o644);
+    }
   });
 
   it('includes a publication\'s producing session even when it falls outside the window', () => {
