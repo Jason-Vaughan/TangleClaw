@@ -1813,6 +1813,45 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     assert.equal(data.code, 'EMPTY_MESSAGE');
   });
 
+  it('send refuses a caller presenting no launch headers at all — 403 before the Bridge ever hears about it, via the '
+    + 'dispatcher\'s own launch-binding floor (#2233), which already covers this half of #1875', async () => {
+    const { status, data } = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'live-ws', message: 'hi' }, {});
+    assert.equal(status, 403);
+    assert.equal(data.code, 'LAUNCH_BINDING_REQUIRED');
+    assert.equal(bridge.received.length, 0);
+  });
+
+  it('send refuses another project\'s verified launch claiming to be this one — 403, the Bridge never hears about it '
+    + '(#1865 — the project-74 → project-96 impersonation this issue reproduces)', async () => {
+    const otherProject = store.projects.create({
+      name: 'other-sender', path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-c03-other-')), engine: 'claude'
+    });
+    const otherPane = bindProject(otherProject);
+    const { status, data } = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'live-ws', message: 'hi' }, otherPane.headers);
+    assert.equal(status, 403);
+    assert.equal(data.code, 'SENDER_PROJECT_MISMATCH');
+    assert.equal(bridge.received.length, 0);
+  });
+
+  it('send refuses a launch whose session has since ended, even while its project has a newer active one — 403, again '
+    + 'via the dispatcher\'s own launch-binding floor (#2233), which already covers this half of #1865 too', async () => {
+    const staleProject = store.projects.create({
+      name: 'stale-sender', path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-c03-stale-')), engine: 'claude'
+    });
+    const retiredPane = bindProject(staleProject);
+    store.sessions.kill(retiredPane.sessionId, 'test: ended for #1865/#1875');
+    bindProject(staleProject); // a fresh launch, so the project still has an active session
+    const { status, data } = await req('/api/sessions/stale-sender/medusa/send', 'POST', { to: 'live-ws', message: 'hi' }, retiredPane.headers);
+    assert.equal(status, 403);
+    assert.equal(data.code, 'LAUNCH_BINDING_INVALID');
+  });
+
+  it('send still works for the operator — the gate does not require a project launch (#1865, #1875)', async () => {
+    const { status, data } = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'live-ws', message: 'from the dashboard' }, dashboard());
+    assert.equal(status, 200);
+    assert.equal(data.status, 'received');
+  });
+
   it('roster returns the other workspaces, excluding self', async () => {
     bridge.setRoster([
       { id: 'live-ws', name: 'Live' },

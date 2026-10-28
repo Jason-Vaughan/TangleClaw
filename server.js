@@ -4858,11 +4858,21 @@ function registerMedusaRoutes(prefix, resolve) {
   /**
    * The project a resolved switchboard participant belongs to, or null (the
    * Project Master belongs to none).
+   *
+   * The Master is told apart by its reserved session key, never by its
+   * display name: `masterMedusaTarget()` names it `'Project Master'`, and
+   * project creation permits that exact string, so looking it up by name
+   * would resolve to that colliding project's id instead of null for the
+   * Master's own mount — a project with a valid launch of its own would then
+   * pass `senderAuthRefused` on the Master's mount, sending from the
+   * Master's listener while the exchange attributed the sender to that
+   * project, and the Master's own launch would be refused.
    * @param {object|null} target - Resolved target.
    * @returns {number|null}
    */
   function targetProjectId(target) {
-    if (!target || !target.name || !target.projectPath) return null;
+    if (!target || target.sessionId === master.MASTER_MEDUSA_KEY) return null;
+    if (!target.name || !target.projectPath) return null;
     const project = store.projects.getByName(target.name);
     return project ? project.id : null;
   }
@@ -4910,6 +4920,49 @@ function registerMedusaRoutes(prefix, resolve) {
       return true;
     }
     return false;
+  }
+
+  /**
+   * The sender-identity gate on `/send` (#1865, #1875) — refused before the
+   * Hub ever sees the message, never just labelled after the fact. The URL's
+   * `:project` segment is a destination, not a credential: this re-derives
+   * the same verdict `exchangeCaller` computes for attribution and acts on
+   * it. `senderProjectId` is this mount's own identity (null on the Master's
+   * mount), so a caller must be verified for THIS route, not merely verified
+   * for some project or the Master. True when the route has already responded.
+   *
+   * `/send` is a mutating route, so `lib/launch-binding-guard.js` (#2233)
+   * already refuses an unbound or stale/ended/superseded launch before the
+   * dispatcher ever reaches this handler — that floor is caller-agnostic
+   * about which route is being called, not sender-aware. What it does NOT
+   * check is whether the caller's OWN verified project or Master identity
+   * matches THIS route's: a project with a perfectly current launch of its
+   * own, or a verified Master, both pass that floor regardless of whose
+   * `/send` they hit. This gate is what closes that remaining gap, so the
+   * `unbound` branch below is believed unreachable via HTTP today — kept as
+   * the explicit, direct contract P13 names, and as a seam this function
+   * keeps working correctly if that floor's route list ever changes.
+   * @param {import('http').ServerResponse} res - Response.
+   * @param {import('http').IncomingMessage} req - Request.
+   * @param {number|null} senderProjectId - The project this mount sends as (null on the Master's mount).
+   * @returns {boolean}
+   */
+  function senderAuthRefused(res, req, senderProjectId) {
+    const c = resolveControlCaller(req);
+    if (c.kind === 'operator') return false;
+    if (c.kind === 'project' && senderProjectId != null && c.projectId === senderProjectId) return false;
+    if (c.kind === 'master' && senderProjectId == null) return false;
+    if (c.kind === 'unbound') {
+      errorResponse(res, 403,
+        'Sending needs a verified launch — send x-tangleclaw-launch-id and x-tangleclaw-project-id (tc message send does this for you).',
+        'SENDER_LAUNCH_REQUIRED');
+      return true;
+    }
+    // Something verified was presented (another project's own current launch,
+    // or a verified Master) but it is not THIS route's own participant: a
+    // cross-project send, or a Master/project claim on the other's mount.
+    errorResponse(res, 403, "Your verified launch does not send as this route's participant.", 'SENDER_PROJECT_MISMATCH');
+    return true;
   }
 
   // GET <prefix>/status — listener status (MED-2K9P Chunk 01). No live
@@ -5058,8 +5111,10 @@ function registerMedusaRoutes(prefix, resolve) {
         }
       }
       // #1861: a control notice marked handled is the target observing it.
-      const readerProject = ids && r.target.name ? store.projects.getByName(r.target.name) : null;
-      if (readerProject) controlApi.noticesHandled(ids, readerProject.id);
+      // `targetProjectId` (not an independent by-name lookup) so the Master's
+      // own mount is never mistaken for a project named 'Project Master'.
+      const readerProjectId = ids ? targetProjectId(r.target) : null;
+      if (readerProjectId) controlApi.noticesHandled(ids, readerProjectId);
     }
     jsonResponse(res, 200, medusa.getStatus(sessionId));
   });
@@ -5135,10 +5190,12 @@ function registerMedusaRoutes(prefix, resolve) {
   });
 
   // POST <prefix>/send — send a direct message to another workspace (MED-2K9P
-  // Chunk 03). Body `{ to, message }`. Requires a live participant (409) whose
-  // level may send (403). Returns the HONEST result — `received` (delivered
-  // live) or `queued` (recipient offline) — never a blanket "sent"; validation
-  // and Bridge failures surface as errors, not false successes.
+  // Chunk 03). Body `{ to, message }`. Requires a live participant (409), a
+  // verified sender identity for THIS mount (403 — #1865, #1875), and a
+  // level that may send (403). Returns the HONEST result — `received`
+  // (delivered live) or `queued` (recipient offline) — never a blanket
+  // "sent"; validation and Bridge failures surface as errors, not false
+  // successes.
   //
   // #1839: the body may also carry delivery metadata (`priority`,
   // `replyRequired`, `escalateAfterMinutes`, `reason`, `inReplyTo`,
@@ -5149,8 +5206,9 @@ function registerMedusaRoutes(prefix, resolve) {
   route('POST', `${prefix}/send`, async (req, res, params, body) => {
     const r = resolve(params);
     if (refused(res, r, 'send from')) return;
-    if (outboundRefused(res, r.target)) return;
     const senderProjectId = targetProjectId(r.target);
+    if (senderAuthRefused(res, req, senderProjectId)) return;
+    if (outboundRefused(res, r.target)) return;
     // #2032: a coordinator bound to a rotation epoch sends only from its bound
     // replacement thread, and while reconciling only replies within its
     // checkpoint's interval.
