@@ -1165,6 +1165,9 @@ route('GET', '/api/server-info', (_req, res) => {
   // fetch, and the payload says which.
   info.liveCheckout = checkoutState.withUpstreamObservation(
     checkoutState.snapshot(serverInfo.getRepoRoot()), info.behindOrigin);
+  // #1223: whether the Pull button should render — provably safe (on main,
+  // strictly behind, clean tree) from this same poll's liveCheckout.
+  info.behindOrigin.canFastForwardPull = behindOrigin.canFastForwardPull(info.liveCheckout, info.behindOrigin);
   // #1949: which checkout this server runs from, as a digest of its real path,
   // so release certification can prove the server is the worktree it certifies.
   info.checkoutId = serverInfo.getCheckoutId();
@@ -3805,6 +3808,32 @@ route('POST', '/api/update/apply', (req, res, _params, body) => {
     return;
   }
   jsonResponse(res, result.code === 'git-error' || result.code === 'recovery-failed' ? 500 : 409, result);
+});
+
+// POST /api/update/pull — the safe fast-forward Pull action (#1223). Shown
+// only when the dashboard's last poll said `canFastForwardPull: true`; this
+// route re-verifies the same three preconditions against a FRESH
+// measurement rather than trusting that poll (`behindOrigin.pullFastForward`),
+// because the poll that rendered the button can be up to 15 minutes old.
+// Returns 409 `PULL_NOT_SAFE` if the recheck fails, 409 `MERGE_FAILED` if
+// `git merge --ff-only` itself refuses (the checkout moved again in the gap),
+// 500 `GIT_ERROR` if git itself is unavailable, or 200 with the SHAs moved
+// and a `restartMechanism` so the client can immediately offer the restart
+// this clone (the live install) now needs.
+route('POST', '/api/update/pull', async (req, res) => {
+  // #1861 — the same caller gate as restart and update-apply: a held caller
+  // never mutates the checkout.
+  if (controlRefused(res, { surface: 'update-pull', subject: { kind: 'caller', caller: resolveControlCaller(req) } })) return;
+  const result = await behindOrigin.pullFastForward();
+  if (!result.ok) {
+    return errorResponse(res, result.code === 'GIT_ERROR' ? 500 : 409, result.error, result.code);
+  }
+  jsonResponse(res, 200, {
+    ok: true,
+    fromSha: result.fromSha,
+    toSha: result.toSha,
+    restartMechanism: serverInfo.detectRestartMechanism()
+  });
 });
 
 // POST /api/tmux/mouse — set a session-level mouse value, or `unset: true`

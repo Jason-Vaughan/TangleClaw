@@ -239,7 +239,10 @@ html[data-tc-keyboard] body {
 }
 /* Behind-origin variant (#227). Info tone — deliberately NOT --danger: the
    clone lagging origin/main is a heads-up, and the stale-server banner above
-   it must stay the one that reads as urgent when both surface together. */
+   it must stay the one that reads as urgent when both surface together.
+   The Pull button (#1223) reuses .orphan-banner-btn as-is — its dark
+   background already reads fine against this banner's blue, same as it does
+   against the stale-server banner's red. */
 .behind-origin-banner {
   background: var(--root-accent, #4a9eff);
   color: #fff;

@@ -51,9 +51,14 @@ function makeDom(ids) {
     els[id] = {
       innerHTML: '',
       _hidden: true,
+      disabled: false,
+      textContent: '',
+      _listeners: {},
+      addEventListener(type, fn) { (this._listeners[type] = this._listeners[type] || []).push(fn); },
       classList: {
         add(c) { if (c === 'hidden') els[id]._hidden = true; },
-        remove(c) { if (c === 'hidden') els[id]._hidden = false; }
+        remove(c) { if (c === 'hidden') els[id]._hidden = false; },
+        toggle(c, force) { if (c === 'hidden') els[id]._hidden = force; }
       }
     };
   }
@@ -316,16 +321,19 @@ describe('lib/behind-origin (#227)', () => {
       const calls = stubGit({ fetch: null, revList: '5\n' });
 
       // First poll: nothing measured yet, honest about it, fetch started.
-      const first = behindOrigin.snapshot({});
+      // repoRoot/pullCommand (#1367) are destructured out — stable but not this test's concern.
+      const { repoRoot: r1, pullCommand: p1, ...first } = behindOrigin.snapshot({});
       assert.deepEqual(first, { enabled: true, commitsAhead: 0, skipped: null, checkedAt: null, state: 'pending', reason: 'not measured yet' });
+      assert.ok(r1 && p1);
       assert.equal(calls.fetches(), 1);
       // A second poll before it completes must not start a second fetch.
       behindOrigin.snapshot({});
       assert.equal(calls.fetches(), 1);
 
       await behindOrigin.refresh(); // joins the in-flight measurement
-      const second = behindOrigin.snapshot({});
+      const { repoRoot: r2, pullCommand: p2, ...second } = behindOrigin.snapshot({});
       assert.deepEqual(second, { enabled: true, commitsAhead: 5, skipped: null, checkedAt: '2026-01-01T00:00:00.000Z', state: 'measured', reason: null });
+      assert.ok(r2 && p2);
       assert.equal(calls.fetches(), 1, 'a fresh cache is served without touching the network');
 
       now += behindOrigin.CACHE_TTL_MS + 1;
@@ -347,8 +355,9 @@ describe('lib/behind-origin (#227)', () => {
 
     it('a disabled check reports enabled:false and never starts a fetch, even with an expired cache', async () => {
       const calls = stubGit({ fetch: null, revList: '7\n' });
-      const snap = behindOrigin.snapshot({ behindOriginCheckEnabled: false });
+      const { repoRoot, pullCommand, ...snap } = behindOrigin.snapshot({ behindOriginCheckEnabled: false });
       assert.deepEqual(snap, { enabled: false, commitsAhead: 0, skipped: null, checkedAt: null, state: 'disabled', reason: 'check turned off' });
+      assert.ok(repoRoot && pullCommand);
       assert.equal(calls.fetches(), 0);
     });
 
@@ -388,6 +397,121 @@ describe('lib/behind-origin (#227)', () => {
       assert.equal(snap.commitsAhead, 0, 'the flag is the operator\'s word; a cache must not override it');
       assert.equal(snap.enabled, false);
     });
+
+    it('snapshot() always carries repoRoot and the copy/paste pullCommand (#1367), enabled or not', () => {
+      const path = require('node:path');
+      const repoRoot = path.resolve(__dirname, '..');
+      for (const cfg of [{}, { behindOriginCheckEnabled: false }]) {
+        const snap = behindOrigin.snapshot(cfg);
+        assert.equal(snap.repoRoot, repoRoot);
+        assert.equal(snap.pullCommand, `cd ${repoRoot} && git pull`);
+      }
+    });
+  });
+
+  describe('canFastForwardPull (#1223)', () => {
+    const SAFE = {
+      state: 'measured', detached: false, branch: 'main', relation: 'behind',
+      ahead: 0, behind: 3, dirtyTracked: 0, untracked: 0
+    };
+    const ENABLED = { enabled: true };
+
+    it('true only when on main, strictly behind, nothing ahead, and clean', () => {
+      assert.equal(behindOrigin.canFastForwardPull(SAFE, ENABLED), true);
+    });
+
+    it('false when the behind-origin check itself is disabled, or the snapshot is missing', () => {
+      assert.equal(behindOrigin.canFastForwardPull(SAFE, { enabled: false }), false);
+      assert.equal(behindOrigin.canFastForwardPull(SAFE, null), false);
+    });
+
+    it('false when detached, or on a branch other than main', () => {
+      assert.equal(behindOrigin.canFastForwardPull({ ...SAFE, detached: true, branch: null }, ENABLED), false);
+      assert.equal(behindOrigin.canFastForwardPull({ ...SAFE, branch: 'feature/x' }, ENABLED), false);
+    });
+
+    it('false unless strictly behind with nothing ahead (equal, ahead, or diverged all refuse)', () => {
+      assert.equal(behindOrigin.canFastForwardPull({ ...SAFE, relation: 'equal', behind: 0 }, ENABLED), false);
+      assert.equal(behindOrigin.canFastForwardPull({ ...SAFE, relation: 'ahead', ahead: 2, behind: 0 }, ENABLED), false);
+      assert.equal(behindOrigin.canFastForwardPull({ ...SAFE, relation: 'diverged', ahead: 1 }, ENABLED), false,
+        'ahead > 0 must refuse even if relation never updates: a pull here is not a fast-forward');
+    });
+
+    it('false when the tree is not completely clean', () => {
+      assert.equal(behindOrigin.canFastForwardPull({ ...SAFE, dirtyTracked: 1 }, ENABLED), false);
+      assert.equal(behindOrigin.canFastForwardPull({ ...SAFE, untracked: 1 }, ENABLED), false);
+    });
+
+    it('false when the checkout state is not measured (pending, unknown, no-git)', () => {
+      assert.equal(behindOrigin.canFastForwardPull({ ...SAFE, state: 'pending' }, ENABLED), false);
+      assert.equal(behindOrigin.canFastForwardPull(null, ENABLED), false);
+    });
+  });
+
+  describe('pullFastForward (#1223)', () => {
+    const SAFE = {
+      state: 'measured', detached: false, branch: 'main', relation: 'behind',
+      ahead: 0, behind: 3, dirtyTracked: 0, untracked: 0, headSha: 'a'.repeat(40)
+    };
+
+    it('refuses with PULL_NOT_SAFE on a fresh recheck, without ever touching git merge', async () => {
+      let merges = 0;
+      behindOrigin._internal.measureCheckout = async () => ({ ...SAFE, dirtyTracked: 1 });
+      behindOrigin._internal.gitMerge = (cb) => { merges++; cb(null); };
+      const r = await behindOrigin.pullFastForward();
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'PULL_NOT_SAFE');
+      assert.match(r.error, /clean/);
+      assert.equal(r.fromSha, null);
+      assert.equal(r.toSha, null);
+      assert.equal(merges, 0, 'an unsafe checkout must never reach the merge');
+    });
+
+    it('fast-forwards, refreshes both caches, and reports the SHA range on success', async () => {
+      stubGit({ fetch: null, revList: '0\n' }); // what refresh()'s own measure() sees post-merge
+      behindOrigin._internal.measureCheckout = async () => SAFE;
+      let mergeArgs = null;
+      behindOrigin._internal.gitMerge = (cb) => { mergeArgs = true; cb(null); };
+      let refreshedDir = null;
+      behindOrigin._internal.refreshCheckout = async (dir) => { refreshedDir = dir; return { ...SAFE, behind: 0, relation: 'equal', headSha: 'b'.repeat(40) }; };
+
+      const r = await behindOrigin.pullFastForward();
+      assert.ok(mergeArgs, 'git merge --ff-only must have run');
+      assert.equal(r.ok, true);
+      assert.equal(r.code, null);
+      assert.equal(r.error, null);
+      assert.equal(r.fromSha, SAFE.headSha);
+      assert.equal(r.toSha, 'b'.repeat(40));
+      assert.ok(refreshedDir, 'checkout-state cache must be refreshed so the next poll is fresh');
+      assert.equal(behindOrigin.snapshot({}).commitsAhead, 0, 'behind-origin\'s own cache is refreshed too');
+    });
+
+    it('MERGE_FAILED when the ff-only merge itself refuses (a race since the precondition check)', async () => {
+      behindOrigin._internal.measureCheckout = async () => SAFE;
+      behindOrigin._internal.gitMerge = (cb) => cb(Object.assign(new Error('fatal: Not possible to fast-forward, aborting.'), { code: 128 }));
+      const r = await behindOrigin.pullFastForward();
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'MERGE_FAILED');
+      assert.match(r.error, /fast-forward/);
+      assert.equal(r.fromSha, SAFE.headSha, 'fromSha is already known from the precondition check');
+      assert.equal(r.toSha, null);
+    });
+
+    it('GIT_ERROR, not MERGE_FAILED, when git itself is unavailable', async () => {
+      behindOrigin._internal.measureCheckout = async () => SAFE;
+      behindOrigin._internal.gitMerge = (cb) => cb(Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' }));
+      const r = await behindOrigin.pullFastForward();
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'GIT_ERROR');
+    });
+
+    it('never rejects, even when measureCheckout itself throws', async () => {
+      behindOrigin._internal.measureCheckout = async () => { throw new Error('boom'); };
+      const r = await behindOrigin.pullFastForward();
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'PULL_NOT_SAFE');
+      assert.match(r.error, /could not be read/);
+    });
   });
 });
 
@@ -398,11 +522,11 @@ describe('behind-origin banner (#227) — executed against a DOM stub', () => {
    * @returns {{banner: object, text: object}}
    */
   function render(payload) {
-    const dom = makeDom(['behindOriginBanner', 'behindOriginBannerText']);
+    const dom = makeDom(['behindOriginBanner', 'behindOriginBannerText', 'behindOriginPullBtn']);
     const ctx = vm.createContext({ document: dom.document, esc: (s) => String(s) });
     vm.runInContext(`${extract('renderBehindOriginBanner')}\nrenderBehindOriginBanner(payload);`,
       Object.assign(ctx, { payload }));
-    return { banner: dom.els.behindOriginBanner, text: dom.els.behindOriginBannerText };
+    return { banner: dom.els.behindOriginBanner, text: dom.els.behindOriginBannerText, pullBtn: dom.els.behindOriginPullBtn };
   }
 
   it('shows the count and the remedy when the clone is behind', () => {
@@ -414,10 +538,50 @@ describe('behind-origin banner (#227) — executed against a DOM stub', () => {
       'a tagged install must be pointed at the guarded applier, not a raw pull');
   });
 
-  it('never hands anyone a verbatim git mutation — the #730 guard applies here too', () => {
+  it('falls back to plain prose, no verbatim command, when pullCommand is absent (older server)', () => {
     const { text } = render({ enabled: true, commitsAhead: 2, checkedAt: 'T' });
-    assert.doesNotMatch(text.innerHTML, /git (pull|reset|stash)/,
-      'a raw pull from an install detached at a release tag moves HEAD to a non-tag commit the applier refuses');
+    assert.doesNotMatch(text.innerHTML, /git (pull|reset|stash)/);
+  });
+
+  it('embeds the exact copy/paste command (#1367) when the server carries pullCommand', () => {
+    const { text } = render({ enabled: true, commitsAhead: 2, checkedAt: 'T', pullCommand: 'cd /abs/path && git pull' });
+    assert.match(text.innerHTML, /Run: <code>cd \/abs\/path && git pull<\/code>/);
+  });
+
+  it('escapes pullCommand before it reaches innerHTML', () => {
+    // render()'s shared `esc` stub is an identity function (every other test
+    // here only checks that esc() was CALLED, via the template shape) — a
+    // real escaper is needed to prove the escaping itself, not just the call.
+    const realEsc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const dom = makeDom(['behindOriginBanner', 'behindOriginBannerText', 'behindOriginPullBtn']);
+    const ctx = vm.createContext({ document: dom.document, esc: realEsc });
+    vm.runInContext(`${extract('renderBehindOriginBanner')}\nrenderBehindOriginBanner(payload);`,
+      Object.assign(ctx, { payload: { enabled: true, commitsAhead: 2, checkedAt: 'T', pullCommand: '<img src=x onerror=1>' } }));
+    assert.doesNotMatch(dom.els.behindOriginBannerText.innerHTML, /<img/);
+    assert.match(dom.els.behindOriginBannerText.innerHTML, /&lt;img/);
+  });
+
+  it('this banner rendering a verbatim command never contradicts the #730 guard: a tagged install never reaches this render at all', () => {
+    // #730's guard is upstream of this function entirely — a detached HEAD
+    // skips the fetch before any measurement happens (see the other describe
+    // block's "skips a detached HEAD" test), so commitsAhead stays 0 and this
+    // function never renders for that install, command or no command.
+    assert.equal(render({ enabled: true, commitsAhead: 0, skipped: 'detached-head', pullCommand: 'cd /x && git pull', checkedAt: 'T' }).banner._hidden, true);
+  });
+
+  it('shows the Pull button only when canFastForwardPull is true, and hides it otherwise', () => {
+    assert.equal(render({ enabled: true, commitsAhead: 2, checkedAt: 'T', canFastForwardPull: true }).pullBtn._hidden, false);
+    assert.equal(render({ enabled: true, commitsAhead: 2, checkedAt: 'T', canFastForwardPull: false }).pullBtn._hidden, true);
+    assert.equal(render({ enabled: true, commitsAhead: 2, checkedAt: 'T' }).pullBtn._hidden, true,
+      'absent (older server) must not be read as true');
+  });
+
+  it('hides the Pull button along with the banner once the count comes down', () => {
+    const dom = makeDom(['behindOriginBanner', 'behindOriginBannerText', 'behindOriginPullBtn']);
+    dom.els.behindOriginPullBtn._hidden = false;
+    const ctx = vm.createContext({ document: dom.document, esc: (s) => String(s) });
+    vm.runInContext(`${extract('renderBehindOriginBanner')}\nrenderBehindOriginBanner({ enabled: true, commitsAhead: 0, checkedAt: 'T' });`, ctx);
+    assert.equal(dom.els.behindOriginPullBtn._hidden, true);
   });
 
   it('pluralises honestly for one commit', () => {
@@ -455,6 +619,7 @@ describe('behind-origin banner (#227) — executed against a DOM stub', () => {
     assert.match(INDEX_SRC, /id="behindOriginBanner" class="orphan-banner behind-origin-banner hidden" role="status"/,
       'hidden at rest; role=status not alert — the remedy is not urgent');
     assert.match(INDEX_SRC, /id="behindOriginBannerText"/);
+    assert.match(INDEX_SRC, /id="behindOriginPullBtn"/, 'the Pull button (#1223) must exist in the markup, even hidden at rest');
 
     const rule = STYLE_SRC.match(/\.behind-origin-banner \{([^}]*)\}/);
     assert.ok(rule, 'style.css must style .behind-origin-banner');
@@ -470,5 +635,116 @@ describe('behind-origin banner (#227) — executed against a DOM stub', () => {
     assert.ok(staleBranch > -1);
     assert.ok(call < staleBranch,
       'a checkout both behind upstream and ahead of the process must show both banners');
+  });
+});
+
+describe('behind-origin Pull button click handler (#1223) — executed against stubs', () => {
+  /**
+   * Run the real `_handleBehindOriginPullClick` against a stubbed
+   * `apiMutate`/`api`/`window`/`triggerServerRestart`/`loadServerInfo`.
+   * @param {{apiMutateImpl: Function, apiLastError?: string|null}} opts
+   * @returns {{btn: object, calls: {restart: number, loadInfo: number, alerts: string[]}, promise: Promise<void>}}
+   */
+  function run({ apiMutateImpl, apiLastError }) {
+    const dom = makeDom(['behindOriginPullBtn']);
+    const btn = dom.els.behindOriginPullBtn;
+    btn.disabled = false;
+    btn.textContent = 'Pull';
+    const calls = { restart: 0, loadInfo: 0, alerts: [] };
+    const ctx = vm.createContext({
+      document: dom.document,
+      apiMutate: apiMutateImpl,
+      api: { lastError: apiLastError || null },
+      window: { alert: (msg) => calls.alerts.push(msg) },
+      triggerServerRestart: async () => { calls.restart++; },
+      loadServerInfo: async () => { calls.loadInfo++; },
+      console
+    });
+    const promise = vm.runInContext(
+      `${extract('_handleBehindOriginPullClick')}\n_handleBehindOriginPullClick();`, ctx);
+    return { btn, calls, promise };
+  }
+
+  it('on success with a restartMechanism, hands off to triggerServerRestart and re-enables the button', async () => {
+    const { btn, calls, promise } = run({
+      apiMutateImpl: async () => ({ ok: true, fromSha: 'a'.repeat(40), toSha: 'b'.repeat(40), restartMechanism: 'launchd' })
+    });
+    await promise;
+    assert.equal(calls.restart, 1);
+    assert.equal(calls.loadInfo, 0, 'the restart flow makes its own fresh poll — a second one here would be redundant');
+    assert.equal(btn.disabled, false);
+    assert.equal(btn.textContent, 'Pull');
+  });
+
+  it('on success with no restartMechanism, re-polls server-info instead of offering a restart', async () => {
+    const { calls, promise } = run({
+      apiMutateImpl: async () => ({ ok: true, fromSha: 'a'.repeat(40), toSha: 'b'.repeat(40), restartMechanism: null })
+    });
+    await promise;
+    assert.equal(calls.restart, 0, 'no mechanism on this host — nothing to hand off to');
+    assert.equal(calls.loadInfo, 1, 'the banner must clear itself from a fresh poll, not wait for the next timer tick');
+  });
+
+  it('on a 409 refusal, alerts with the server error and restores the button — no restart offered', async () => {
+    const { btn, calls, promise } = run({
+      apiMutateImpl: async () => ({ ok: false, code: 'PULL_NOT_SAFE', error: 'the working tree is not clean' })
+    });
+    await promise;
+    assert.equal(calls.restart, 0);
+    assert.equal(calls.loadInfo, 0);
+    assert.equal(calls.alerts.length, 1);
+    assert.match(calls.alerts[0], /not clean/);
+    assert.equal(btn.disabled, false, 'a refusal must not leave the button stuck disabled');
+    assert.equal(btn.textContent, 'Pull');
+  });
+
+  it('on a network failure (apiMutate resolves null), alerts from api.lastError and restores the button', async () => {
+    const { btn, calls, promise } = run({ apiMutateImpl: async () => null, apiLastError: 'offline' });
+    await promise;
+    assert.equal(calls.alerts.length, 1);
+    assert.match(calls.alerts[0], /offline/);
+    assert.equal(btn.disabled, false);
+  });
+
+  it('on apiMutate throwing, alerts with the error message and restores the button', async () => {
+    const { btn, calls, promise } = run({ apiMutateImpl: async () => { throw new Error('boom'); } });
+    await promise;
+    assert.equal(calls.alerts.length, 1);
+    assert.match(calls.alerts[0], /boom/);
+    assert.equal(btn.disabled, false);
+  });
+
+  it('disables the button and shows "Pulling…" immediately, before the request resolves', () => {
+    const dom = makeDom(['behindOriginPullBtn']);
+    const btn = dom.els.behindOriginPullBtn;
+    let resolveFetch;
+    const ctx = vm.createContext({
+      document: dom.document,
+      apiMutate: () => new Promise((resolve) => { resolveFetch = resolve; }),
+      api: { lastError: null },
+      window: { alert: () => {} },
+      triggerServerRestart: async () => {},
+      loadServerInfo: async () => {},
+      console
+    });
+    vm.runInContext(`${extract('_handleBehindOriginPullClick')}\n_handleBehindOriginPullClick();`, ctx);
+    assert.equal(btn.disabled, true);
+    assert.equal(btn.textContent, 'Pulling…');
+    resolveFetch({ ok: true, fromSha: 'a'.repeat(40), toSha: 'b'.repeat(40), restartMechanism: null });
+  });
+
+  it('wireBehindOriginPullBtn attaches a click listener that invokes the handler', () => {
+    const dom = makeDom(['behindOriginPullBtn']);
+    let handlerCalls = 0;
+    const ctx = vm.createContext({
+      document: dom.document,
+      _handleBehindOriginPullClick: async () => { handlerCalls++; },
+      console
+    });
+    vm.runInContext(`${extract('wireBehindOriginPullBtn')}\nwireBehindOriginPullBtn();`, ctx);
+    const listeners = dom.els.behindOriginPullBtn._listeners.click || [];
+    assert.equal(listeners.length, 1, 'exactly one click listener — called once at init (idempotent)');
+    listeners[0]();
+    assert.equal(handlerCalls, 1);
   });
 });

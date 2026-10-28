@@ -416,9 +416,12 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
     </div>
     <!-- Behind-origin banner (#227). Hidden until /api/server-info reports
          behindOrigin.commitsAhead > 0. Info tone, role=status: the remedy is a
-         `git pull` at the operator's convenience, not an alert. -->
+         `git pull` at the operator's convenience, not an alert. The banner
+         text embeds the copy/pasteable command (#1367); the Pull button
+         (#1223) is rendered only when behindOrigin.canFastForwardPull is true. -->
     <div id="behindOriginBanner" class="orphan-banner behind-origin-banner hidden" role="status">
       <span class="orphan-banner-text" id="behindOriginBannerText"></span>
+      <button type="button" class="btn btn-small orphan-banner-btn hidden" id="behindOriginPullBtn">Pull</button>
     </div>
     <!-- Medusa escalation banner (#1839). Hidden until /api/server-info reports
          medusaEscalations: messages the delivery watchdog escalated to the

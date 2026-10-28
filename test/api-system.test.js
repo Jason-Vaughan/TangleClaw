@@ -253,8 +253,15 @@ describe('API — system, engines, tmux', () => {
       try {
         const { status, data } = await request('GET', '/api/server-info');
         assert.equal(status, 200);
-        assert.deepEqual(data.behindOrigin, { enabled: true, commitsAhead: 0, skipped: null, checkedAt: null, state: 'pending', reason: 'not measured yet' },
+        // repoRoot/pullCommand/canFastForwardPull (#1367, #1223) are destructured out
+        // rather than folded into the literal: canFastForwardPull is computed from the
+        // REAL checkout this test runs in (not stubbed here), so only its type is stable.
+        const { repoRoot, pullCommand, canFastForwardPull, ...core } = data.behindOrigin;
+        assert.deepEqual(core, { enabled: true, commitsAhead: 0, skipped: null, checkedAt: null, state: 'pending', reason: 'not measured yet' },
           'unmeasured yet: enabled, nothing to say, and honest about not having measured');
+        assert.equal(typeof repoRoot, 'string');
+        assert.match(pullCommand, /^cd .+ && git pull$/);
+        assert.equal(typeof canFastForwardPull, 'boolean');
         assert.equal(fetches, 1, 'an expired cache starts exactly one background fetch');
       } finally {
         Object.assign(behindOrigin._internal, orig);
@@ -272,7 +279,11 @@ describe('API — system, engines, tmux', () => {
         const patched = await request('PATCH', '/api/config', { behindOriginCheckEnabled: false });
         assert.equal(patched.status, 200);
         const { data } = await request('GET', '/api/server-info');
-        assert.deepEqual(data.behindOrigin, { enabled: false, commitsAhead: 0, skipped: null, checkedAt: null, state: 'disabled', reason: 'check turned off' });
+        const { repoRoot, pullCommand, canFastForwardPull, ...core } = data.behindOrigin;
+        assert.deepEqual(core, { enabled: false, commitsAhead: 0, skipped: null, checkedAt: null, state: 'disabled', reason: 'check turned off' });
+        assert.equal(typeof repoRoot, 'string');
+        assert.match(pullCommand, /^cd .+ && git pull$/);
+        assert.equal(canFastForwardPull, false, 'the behind-origin check is disabled, so no action is derived from it');
         assert.equal(fetches, 0, 'the flag is the operator\'s word that this machine must not call out');
       } finally {
         await request('PATCH', '/api/config', { behindOriginCheckEnabled: true });
