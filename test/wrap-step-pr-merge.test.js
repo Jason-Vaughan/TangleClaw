@@ -618,6 +618,32 @@ describe('wrap-step pr-merge — resolveWrapMergeMethod (#1172)', () => {
     );
   });
 
+  it('PR merge strategy: mergeish — falls back to the default, not merge', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'prefs-mergeish-'));
+    fs.mkdirSync(path.join(dir, '.prawduct', 'artifacts'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, '.prawduct', 'artifacts', 'project-preferences.md'),
+      '- **PR merge strategy**: mergeish\n'
+    );
+    const r = prMerge.resolveWrapMergeMethod(dir);
+    assert.equal(r.method, 'squash');
+    assert.equal(r.source, 'default');
+    assert.match(r.warning, /unrecognized PR merge strategy "mergeish"/);
+  });
+
+  it('PR merge strategy: rebase-disabled — falls back to the default, not rebase', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'prefs-rebase-disabled-'));
+    fs.mkdirSync(path.join(dir, '.prawduct', 'artifacts'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, '.prawduct', 'artifacts', 'project-preferences.md'),
+      '- **PR merge strategy**: rebase-disabled\n'
+    );
+    const r = prMerge.resolveWrapMergeMethod(dir);
+    assert.equal(r.method, 'squash');
+    assert.equal(r.source, 'default');
+    assert.match(r.warning, /unrecognized PR merge strategy "rebase-disabled"/);
+  });
+
   it('project.json takes precedence over project-preferences.md', () => {
     const dir = fs.mkdtempSync(path.join(tmpDir, 'both-'));
     fs.mkdirSync(path.join(dir, '.tangleclaw'));
