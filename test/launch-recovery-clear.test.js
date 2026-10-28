@@ -32,6 +32,7 @@ const { handleRequest, _recoveryGateProbeFor } = require('../server');
 const recoveryDefault = require('../lib/recovery-default');
 const authGate = require('../lib/auth-gate');
 const launchSequence = require('../lib/launch-sequence');
+const launchRecoveryClear = require('../lib/launch-recovery-clear');
 
 const PASSWORD = 'correct-horse-battery';
 const HOST = 'localhost:3102';
@@ -196,6 +197,39 @@ describe('the recovery-clear route (Train 21, #1587)', () => {
       sequence,
       body: { sessionId: sequence.sessionId, sequenceId: sequence.id, recoveryRevision: sequence.recoveryRevision }
     };
+  }
+
+  /**
+   * A sequence-less launch (#1623): `applicability: 'not-applicable'`, so
+   * `recovery` is `'none'` no matter what the preflight found — never bound
+   * through the real engine-detection path, because applicability turns on
+   * the engine's declared capability, not on anything a test fixture can
+   * reach without one.
+   * @param {boolean} [damagedHandoff] - Whether the preflight the launch froze asked for recovery
+   * @returns {{project: object, session: object, sequence: object}}
+   */
+  function bindNotApplicableLaunch(damagedHandoff) {
+    const name = `not-applicable-${counter}-${Math.random().toString(36).slice(2, 8)}`;
+    const dir = path.join(projectsDir, name);
+    fs.mkdirSync(dir, { recursive: true });
+    const project = store.projects.create({ name, path: dir, engine: 'claude' });
+    const engine = store.engines.get('claude');
+    const launchId = launchSequence.mintLaunchId();
+    const snapshot = launchSequence.buildSnapshot({
+      launchId,
+      project,
+      engineProfile: engine,
+      applicability: { applicable: false, reason: 'test fixture: no launch-sequence support' },
+      rendered: null,
+      rules: [],
+      preflight: damagedHandoff
+        ? { verdict: 'handoff-corrupt', reason: 'the handoff could not be read', requiresRecovery: true, requiresReconciliation: false, worktreeDirty: null, evaluationFailed: false, evaluationMissing: false }
+        : { verdict: 'ok', reason: 'nothing was left behind', requiresRecovery: false, requiresReconciliation: false, worktreeDirty: false, evaluationFailed: false, evaluationMissing: false }
+    });
+    const session = store.sessions.start({
+      projectId: project.id, engineId: 'claude', tmuxSession: `tc-${name}`, launchSequence: snapshot
+    });
+    return { project, session, sequence: store.launchSequences.getBySession(session.id) };
   }
 
   /**
@@ -708,5 +742,46 @@ describe('the recovery-clear route (Train 21, #1587)', () => {
         assert.ok(stillHeld(sequence), 'nothing cleared it');
       });
     }
+  });
+
+  describe('a not-applicable launch with a damaged handoff (#1623)', () => {
+    it('clears through clearOneLaunch even though recovery was never "required"', () => {
+      const { project, session, sequence } = bindNotApplicableLaunch(true);
+      assert.equal(sequence.applicability, 'not-applicable');
+      assert.equal(sequence.recovery, 'none', 'the fixture must actually carry the unrealistic-looking shape #1623 fixed');
+      assert.equal(sequence.preflight.requiresRecovery, true);
+
+      const result = launchRecoveryClear.clearOneLaunch({
+        project, sessionId: session.id, sequenceId: sequence.id, recoveryRevision: sequence.recoveryRevision,
+        clearance: 'operator-verified', clearedBy: 'rosie'
+      });
+      assert.equal(result.outcome, launchRecoveryClear.OUTCOMES.CLEARED);
+
+      const cleared = store.launchSequences.getBySession(session.id);
+      assert.equal(cleared.recovery, 'cleared');
+      assert.ok(cleared.recoveryClearedAt);
+      assert.equal(cleared.recoveryClearedBy, 'rosie');
+      assert.equal(cleared.recoveryClearance, 'operator-verified');
+    });
+
+    it('refuses as not-required when the not-applicable launch\'s preflight never asked for recovery', () => {
+      const { project, session, sequence } = bindNotApplicableLaunch(false);
+      const result = launchRecoveryClear.clearOneLaunch({
+        project, sessionId: session.id, sequenceId: sequence.id, recoveryRevision: sequence.recoveryRevision,
+        clearance: 'operator-verified', clearedBy: 'rosie'
+      });
+      assert.equal(result.outcome, launchRecoveryClear.OUTCOMES.NOT_REQUIRED);
+      assert.equal(store.launchSequences.getBySession(session.id).recovery, 'none');
+    });
+
+    it('refuses a second clear of the same row as not-required, once it is already cleared', () => {
+      const { project, session, sequence } = bindNotApplicableLaunch(true);
+      const args = {
+        project, sessionId: session.id, sequenceId: sequence.id, recoveryRevision: sequence.recoveryRevision,
+        clearance: 'operator-verified', clearedBy: 'rosie'
+      };
+      assert.equal(launchRecoveryClear.clearOneLaunch(args).outcome, launchRecoveryClear.OUTCOMES.CLEARED);
+      assert.equal(launchRecoveryClear.clearOneLaunch(args).outcome, launchRecoveryClear.OUTCOMES.NOT_REQUIRED);
+    });
   });
 });

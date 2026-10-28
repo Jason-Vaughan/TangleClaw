@@ -3785,7 +3785,14 @@ function launchClearanceLabel(s) {
  * @returns {string} Markup, or an empty string when there is nothing to say
  */
 function launchRecoveryHtml(s, projectMode) {
-  if (!s.recovery || s.recovery === 'none') return '';
+  // A `not-applicable` launch's `recovery` is always `'none'` (#1623) — it has
+  // no step to withhold — so `preflightRequiresRecovery` (read from the
+  // measured predicate, not the verdict word) is the only sign its handoff
+  // was damaged anyway. Without this carve-out the row would say nothing and
+  // offer no Clear, which is exactly the early-return this function used to
+  // take for every `'none'` row.
+  const notApplicableDamagedHandoff = s.applicability === 'not-applicable' && s.recovery === 'none' && !!s.preflightRequiresRecovery;
+  if (!s.recovery || (s.recovery === 'none' && !notApplicableDamagedHandoff)) return '';
   const verdict = s.preflightVerdict ? `<code>${esc(s.preflightVerdict)}</code>` : 'an unrecorded verdict';
   // The verdict WORD alone asks you to clear a launch without saying what
   // happened to it. The cause, and where to go looking for it. The two are not
@@ -3802,6 +3809,14 @@ function launchRecoveryHtml(s, projectMode) {
   if (s.recovery === 'cleared') {
     return `<br><small class="session-rule-meta">Recovery: ${verdict} — ${launchClearanceLabel(s)}`
       + `${s.recoveryClearedAt ? ` at ${esc(s.recoveryClearedAt)}` : ''}</small>`;
+  }
+  if (notApplicableDamagedHandoff) {
+    return `<br><small class="session-rule-meta rules-status-err">Handoff warning: ${verdict}.${cause}${whereToLook} `
+      + `This launch has no task step to withhold${s.notApplicableReason ? ` (${esc(s.notApplicableReason)})` : ''}, `
+      + 'but the handoff its preflight read was damaged. Clear it to dismiss this warning.</small>'
+      + `<br><button type="button" class="btn btn-sm" data-launch-recovery-clear="${esc(s.sequenceId)}" `
+      + `data-session-id="${esc(s.sessionId)}" data-recovery-revision="${esc(s.recoveryRevision)}">`
+      + 'Clear recovery</button>';
   }
   if (s.recoveryMode === 'advisory') {
     const next = projectMode === 'operator'

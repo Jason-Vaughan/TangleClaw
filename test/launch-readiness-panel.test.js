@@ -173,24 +173,46 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
   // #1623: a sequence-less launch still carries whatever preflight ran before
   // applicability was decided, and a damaged handoff must not vanish behind
   // "no launch sequence" just because there is no sequence to show beside it.
+  // A REAL not-applicable snapshot always freezes `recovery: 'none'`
+  // (`lib/launch-sequence.js#buildSnapshot`) — it has no step to withhold —
+  // so `preflightRequiresRecovery` is the only sign of a damaged handoff this
+  // row carries, never `recovery: 'required'`.
   it('surfaces a damaged handoff and the operator\'s clear on a launch that got no sequence (#1623)', () => {
     const html = render([row({
       applicability: 'not-applicable',
       notApplicableReason: 'the engine declares no launch-sequence support',
       steps: [],
-      recovery: 'required',
+      recovery: 'none',
       recoveryMode: 'operator',
       recoveryRevision: 5,
       preflightVerdict: 'handoff-behind',
       preflightReason: 'the handoff directory could not be read (ENOTDIR)',
-      preflightEvaluationFailed: true
+      preflightEvaluationFailed: true,
+      preflightRequiresRecovery: true
     })]);
     assert.match(html, /no launch sequence/, 'the not-applicable fact is still said');
-    assert.match(html, /Recovery required/);
+    assert.match(html, /Handoff warning/);
     assert.match(html, /handoff-behind/);
     assert.match(html, /could not be read \(ENOTDIR\)/);
     assert.match(html, /data-launch-recovery-clear="9"/,
       'the operator still gets a Clear button on a sequence-less launch');
+  });
+
+  it('renders the cleared state on a not-applicable row once its damaged handoff is cleared (#1623)', () => {
+    const html = render([row({
+      applicability: 'not-applicable',
+      notApplicableReason: 'the engine declares no launch-sequence support',
+      steps: [],
+      recovery: 'cleared',
+      recoveryMode: 'operator',
+      recoveryRevision: 5,
+      recoveryClearance: 'operator-verified',
+      recoveryClearedAt: '2026-09-17 19:30:00',
+      preflightVerdict: 'handoff-behind',
+      preflightRequiresRecovery: true
+    })]);
+    assert.match(html, /Recovery: .* at 2026-09-17 19:30:00/);
+    assert.doesNotMatch(html, /data-launch-recovery-clear/, 'a cleared row offers no Clear button');
   });
 
   it('says nothing extra about recovery on a sequence-less launch that owes none', () => {
