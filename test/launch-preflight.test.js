@@ -269,8 +269,9 @@ describe('runPreflight — integrity comes before every exception', () => {
 
   // #1611 (Architect ruling train-21-handoff-identity-ruling). `projectId` is
   // the whole of the identity check now: `doc.workspaceId` names the SESSION
-  // that wrote the handoff, re-minted on every launch, so it can never equal
-  // the launching workspace even for a handoff this same project produced.
+  // that wrote the handoff, re-minted on every launch, so it is not expected
+  // to equal the launching workspace even for a handoff this same project
+  // produced — the two ids are independently random, not provably unequal.
   // Every case below holds `projectId` matched and varies only `workspaceId`,
   // so the only thing that could withhold `ok` is a workspaceId comparison
   // this check must no longer make.

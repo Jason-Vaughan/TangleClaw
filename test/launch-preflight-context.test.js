@@ -349,6 +349,19 @@ describe('evaluate', () => {
     assert.equal(typeof result.verdict, 'string');
     assert.equal(result.repaired, false);
   });
+
+  // #1611 (Architect ruling train-21-handoff-identity-ruling), R-Gate R2. The
+  // pure-evaluator cases above exercise `runPreflight` directly; this one goes
+  // through the public `evaluate`/`buildContext` path the ruling also requires
+  // coverage for, so a stale `options.workspaceId` wiring could not quietly
+  // restore the comparison one layer up from the pure check.
+  it('reaches ok through the public evaluate() path when the recorded workspace id differs from the launching one', () => {
+    const session = addSession('wrapped');
+    const pid = stageAttempt({ sessionId: session.id, extra: { workspaceId: 'tangleclaw-other-producer-id' } });
+    const result = evaluate(project, { workspaceId: 'tangleclaw-this-launch-id' });
+    assert.equal(result.verdict, VERDICTS.OK);
+    assert.equal(lockfile.readHandoffFile(lockfile.currentPath(project)).doc.publicationId, pid);
+  });
 });
 
 describe('what the launch record keeps', () => {
