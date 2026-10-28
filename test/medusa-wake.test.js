@@ -1314,10 +1314,26 @@ describe('medusa-wake — #2402 reply-guidance override and non-actionable-notic
     assert.match(world.injected[0].command, /tc message send --in-reply-to <message-id>/);
   });
 
+  /**
+   * A `shared_doc_updated` notice exactly as the real producer envelopes it
+   * (`lib/shared-docs.js#sendIntents` via `medusa.sendSystemMessage`): `from`
+   * is the system sender, and the notice itself is JSON-encoded INTO
+   * `message` — never top-level `type`/`event` fields on the entry.
+   * @param {object} [overrides] - Fields to merge into the decoded payload.
+   * @returns {object} An inbox entry.
+   */
+  function systemNotice(overrides = {}) {
+    return {
+      id: `n-${Math.random().toString(36).slice(2)}`,
+      from: 'system',
+      message: JSON.stringify({ type: 'system', event: 'shared_doc_updated', doc: 'NETWORK', docId: 'd1', sentAt: '2026-10-28T00:00:00Z', ...overrides })
+    };
+  }
+
   it('suppresses the nudge when every unhandled message is a shared_doc_updated notice and the project opted in', () => {
     const world = installWorld({
       config: { medusaWake: true, suppressNonActionableWakes: true },
-      inbox: [{ type: 'system', event: 'shared_doc_updated', doc: 'NETWORK', docId: 'd1', sentAt: '2026-10-28T00:00:00Z' }]
+      inbox: [systemNotice()]
     });
     tickThroughDebounce();
     assert.equal(world.injected.length, 0);
@@ -1327,7 +1343,7 @@ describe('medusa-wake — #2402 reply-guidance override and non-actionable-notic
   it('still nudges for an all-notice inbox when the project has not opted in', () => {
     const world = installWorld({
       config: { medusaWake: true },
-      inbox: [{ type: 'system', event: 'shared_doc_updated', doc: 'NETWORK', docId: 'd1', sentAt: '2026-10-28T00:00:00Z' }]
+      inbox: [systemNotice()]
     });
     tickThroughDebounce();
     assert.equal(world.injected.length, 1, 'default preserves today\'s behavior — opt-in only');
@@ -1336,14 +1352,27 @@ describe('medusa-wake — #2402 reply-guidance override and non-actionable-notic
   it('still nudges when a real message sits alongside a notice, even opted in', () => {
     const world = installWorld({
       config: { medusaWake: true, suppressNonActionableWakes: true },
-      inbox: [
-        { type: 'system', event: 'shared_doc_updated', doc: 'NETWORK', docId: 'd1', sentAt: '2026-10-28T00:00:00Z' },
-        { id: 'm1', from: 'peer', message: 'hello' }
-      ],
+      inbox: [systemNotice(), { id: 'm1', from: 'peer', message: 'hello' }],
       status: { state: 'listening', workspaceId: 'proj-a-abc123', unread: 2, lastError: null }
     });
     tickThroughDebounce();
     assert.equal(world.injected.length, 1, 'a real message alongside a notice still nudges');
+  });
+
+  it('a peer carrying notice-like JSON must still wake — only the system sender is trusted', () => {
+    // `noticeDocId`'s own rationale (`lib/shared-docs.js`): a peer could type
+    // the same JSON into its own message body, and a peer message has a
+    // sender waiting on it — treating it as a redundant notice would
+    // suppress a reply somebody is blocked on.
+    const world = installWorld({
+      config: { medusaWake: true, suppressNonActionableWakes: true },
+      inbox: [{
+        id: 'm1', from: 'peer-workspace-id',
+        message: JSON.stringify({ type: 'system', event: 'shared_doc_updated', doc: 'NETWORK', docId: 'd1', sentAt: '2026-10-28T00:00:00Z' })
+      }]
+    });
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 1, 'notice-shaped JSON from a non-system sender still wakes the session');
   });
 
   it('never suppresses for the Master, which has no project config to read the setting from', () => {
@@ -1354,7 +1383,7 @@ describe('medusa-wake — #2402 reply-guidance override and non-actionable-notic
         engineId: 'claude', sessionMode: 'tmux', status: 'active', medusaWake: true,
         apiBase: '/api/master/medusa'
       },
-      inbox: [{ type: 'system', event: 'shared_doc_updated', doc: 'NETWORK', docId: 'd1', sentAt: '2026-10-28T00:00:00Z' }]
+      inbox: [systemNotice()]
     });
     tickThroughDebounce();
     assert.equal(world.masterInjected.length, 1, 'the Master branch is unaffected by a setting it cannot read');

@@ -504,6 +504,43 @@ describe('api-sessions', () => {
       }
     });
 
+    it('a 4096-char command from a verified peer project still succeeds — the stamp must not count against the caller\'s own limit', async () => {
+      // R2 fix: the route used to concatenate the stamp onto `body.command`
+      // and hand the combined text to `injectCommand`, whose OWN 4096-char
+      // check then rejected it — and the route reported that as 500
+      // INTERNAL_ERROR, not even the right status for a caller-size problem.
+      // A documented-size submission from a verified peer must succeed exactly
+      // as it would for the operator.
+      const caller = store.projects.create({ name: `caller-2402c-${Math.random().toString(36).slice(2)}`, path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-2402c-')), engine: 'claude' });
+      const bound = bindProject(caller);
+      const primed = primeInjectableSession();
+      const atLimit = 'x'.repeat(4096);
+      try {
+        const res = await request(server, 'POST', '/api/sessions/api-sess-test/command',
+          { command: atLimit, startupIntervention: true }, bound.headers);
+        assert.equal(res.status, 200);
+        assert.equal(primed.typed.length, 1);
+        assert.equal(primed.typed[0], `[DIRECT INPUT from project "${caller.name}" session ${bound.sessionId}, verified by TangleClaw]\n${atLimit}`);
+        assert.equal(res.body.command, atLimit);
+      } finally {
+        primed.cleanup();
+      }
+    });
+
+    it('still refuses a command over 4096 characters from a verified peer project with 400, not 500', async () => {
+      const caller = store.projects.create({ name: `caller-2402d-${Math.random().toString(36).slice(2)}`, path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-2402d-')), engine: 'claude' });
+      const bound = bindProject(caller);
+      const primed = primeInjectableSession();
+      try {
+        const res = await request(server, 'POST', '/api/sessions/api-sess-test/command',
+          { command: 'x'.repeat(4097), startupIntervention: true }, bound.headers);
+        assert.equal(res.status, 400);
+        assert.equal(primed.typed.length, 0);
+      } finally {
+        primed.cleanup();
+      }
+    });
+
     it('stamps an ordinary command from the Master, and returns a receipt', async () => {
       const master = require('../lib/master');
       const real = master.liveMasterLaunchId;
