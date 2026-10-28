@@ -235,7 +235,8 @@
       <span>TangleClaw Autonomous Sprint Reports</span>
     </div>
     <div class="nav-links">
-      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.44.0/">v5.44.0 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.45.0/">v5.45.0 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.44.0/">v5.44.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.43.0/">v5.43.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.42.0/">v5.42.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.41.0/">v5.41.0</a>
@@ -261,33 +262,59 @@
       <div class="kpi-grid">
         <div class="kpi-card">
           <div class="kpi-label">Published Sprint Reports</div>
-          <div class="kpi-val">11 Releases</div>
-          <div class="kpi-sub"><code>v5.34.0</code> · <code>v5.35.0</code> · <code>v5.36.0</code> · <code>v5.37.0</code> · <code>v5.38.0</code> · <code>v5.39.0</code> · <code>v5.40.0</code> · <code>v5.41.0</code> · <code>v5.42.0</code> · <code>v5.43.0</code> · <code>v5.44.0</code></div>
+          <div class="kpi-val">12 Releases</div>
+          <div class="kpi-sub"><code>v5.34.0</code> · <code>v5.35.0</code> · <code>v5.36.0</code> · <code>v5.37.0</code> · <code>v5.38.0</code> · <code>v5.39.0</code> · <code>v5.40.0</code> · <code>v5.41.0</code> · <code>v5.42.0</code> · <code>v5.43.0</code> · <code>v5.44.0</code> · <code>v5.45.0</code></div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Cumulative Sprint PRs</div>
-          <div class="kpi-val">176 PRs Merged</div>
-          <div class="kpi-sub"><strong>62 waves</strong> across eleven reports · v5.44.0 merged 8 PRs with 36.5m mean build (Milestone #29 9/9)</div>
+          <div class="kpi-val">184 PRs Merged</div>
+          <div class="kpi-sub"><strong>66 waves</strong> across twelve reports · v5.45.0 merged 8 PRs with 32.1m mean build (Milestone #30 10/10)</div>
         </div>
         <div class="kpi-card">
-          <div class="kpi-label">Disjoint Merge Pipelining</div>
-          <div class="kpi-val">0 Rebases</div>
-          <div class="kpi-sub"><strong>6/6 Builder cars</strong> landed with 0 same-wave rebases via <code>W1-F1_v542</code> · 7 R-Gate blockers caught</div>
+          <div class="kpi-label">Mean Builder Build Time</div>
+          <div class="kpi-val">32.1m Avg</div>
+          <div class="kpi-sub"><strong>All-time record 6-car mean</strong> (19.2m–44.7m) · <strong>0 rebases in Wave 2</strong> · 6 R-Gate catches</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Latest Production Release</div>
-          <div class="kpi-val" style="color:var(--green);">v5.44.0 Live</div>
-          <div class="kpi-sub">Tag <code>v5.44.0 @ e814e948</code> · Milestone #29 <code>9/9</code> Closed</div>
+          <div class="kpi-val" style="color:var(--green);">v5.45.0 Live</div>
+          <div class="kpi-sub">Tag <code>v5.45.0 @ 04d77afd</code> · Milestone #30 <code>10/10</code> Closed</div>
         </div>
       </div>
     </section>
 
     <div class="report-list">
-      <!-- v5.44.0 Card -->
+      <!-- v5.45.0 Card -->
       <article class="report-card">
         <div class="report-header">
           <div>
             <span class="badge badge-green">● Latest Release · Oct 28, 2026</span>
+            <h2 class="report-title"><a href="./v5.45.0/">TangleClaw <code>v5.45.0</code>: “Project settings that cannot corrupt”</a></h2>
+          </div>
+          <span class="badge badge-cyan">Tag v5.45.0 @ 04d77afd</span>
+        </div>
+        <p style="color:#cbd5e1; margin:0;">
+          Four execution waves merged <strong>8 PRs (#2678–#2680, #2682–#2686) in 2 hours 33 minutes</strong> (with an all-time record <strong>32.1-minute mean Builder build time</strong> and <strong>6.0-minute Wave 3 reconciliation</strong>) across 4 parallel Claude Sonnet 5 Builder lanes and closed Milestone <code>#30</code> (<strong>10/10 issues: 100%</strong>). Shipped shared <code>lib/tangleclaw-home.js</code> leading-tilde expansion across 12 runtime/deploy files (<code>#1284</code>), fail-closed unknown-key rejection on <code>store.projects.add()</code> / <code>update()</code> (<code>#1225</code>), strict <code>quickCommands</code> validation and <code>validateProjectName()</code> in batch setup attach &amp; bulk import (<code>#1339, #2180</code>), two-phase pre-validated <code>PUT /api/projects/:name</code> with <code>409 PROJECT_CONFIG_UNREADABLE</code>, <code>404 NOT_FOUND</code>, and <code>400 BAD_REQUEST</code> semantics (<code>#1289, #1288, #2216</code>), atomic <code>stagedWrite.writeAtomic</code> engine-config replacement with hop-by-hop symlink-chain preservation &amp; read-only <code>resolveProjectEngine()</code> (<code>#1291, #2232</code>), and guarded <code>loadConfigForWrite()</code> across all 8 <code>.tangleclaw/project.json</code> writers + shared creation/update validation + exclusive <code>createProject</code> directory/config creation (<code>#2232, #1374</code>). Achieved <strong>0 rebases in Wave 2</strong> and delivered an <strong>11th consecutive zero-regression release</strong>.
+        </p>
+        <div class="meta-pills">
+          <span class="badge badge-cyan">4 Waves · 8 PRs · 2h 33m Wall Time (32.1m Mean Build)</span>
+          <span class="badge badge-green">Milestone #30: 10/10 Closed</span>
+          <span class="badge badge-purple">8 Guarded Writers · Symlink-Safe Atomic Sync</span>
+          <span class="badge badge-cyan">Charter A480 · 6 R-Gate Blockers Caught</span>
+          <span class="badge badge-green">23,423 Passing (+67 Net New)</span>
+        </div>
+        <div class="actions">
+          <a class="btn btn-primary" href="./v5.45.0/">📊 Open v5.45.0 Interactive Sprint Report →</a>
+          <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/releases/tag/v5.45.0" target="_blank" rel="noopener">🚀 GitHub Release v5.45.0</a>
+          <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/blob/v5.45.0/CHANGELOG.md" target="_blank" rel="noopener">📜 CHANGELOG.md</a>
+        </div>
+      </article>
+
+      <!-- v5.44.0 Card -->
+      <article class="report-card">
+        <div class="report-header">
+          <div>
+            <span class="badge badge-purple">Release · Oct 28, 2026</span>
             <h2 class="report-title"><a href="./v5.44.0/">TangleClaw <code>v5.44.0</code>: “Update and restart you can trust”</a></h2>
           </div>
           <span class="badge badge-cyan">Tag v5.44.0 @ e814e948</span>
