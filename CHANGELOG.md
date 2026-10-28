@@ -4,6 +4,49 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.44.0] - 2026-10-28
+
+### Added
+- **#1223:** A **Pull** button now appears on the behind-origin banner when it is provably safe — on `main`, strictly behind with nothing ahead, and a clean working tree — instead of leaving the operator with nothing to click. `POST /api/update/pull` re-verifies the same three preconditions against a fresh measurement at click time (never a cached one) before running `git merge --ff-only origin/main`, and offers the server restart the pull itself now needs. The tagged-install path (`Update now`) is unchanged.
+- **#1367:** The "checkout is behind origin/main" banner now embeds the exact copy/pasteable `cd <repoRoot> && git pull` command, so a remote operator no longer has to work out the install's path by hand to sync it. `behindOrigin.snapshot()` carries `repoRoot` and `pullCommand`; `GET /api/server-info` reflects both.
+- **#1369:** At boot, the server now audits its own LaunchAgent plist's `WorkingDirectory` against the
+  directory it is actually running from, and warns when they disagree — naming every LaunchAgent
+  plist still referencing the old path and any `httpsCertPath`/`httpsKeyPath` config entry left
+  stale by the same move or rename (#1369).
+
+### Fixed
+- **#737:** Engine-profile changes shipped in a release (`data/engines/*.json`) no longer require a server
+  restart to take effect: `store.engines.list()` and `store.engines.get(id)` now re-check a
+  lightweight fingerprint of the bundled engines directory on every call and re-sync when it has
+  changed (or when a retired engine id has reappeared on disk), and `GET /api/engines?refresh=1`
+  (the "Check again" button) now forces an immediate sync pass via the new
+  `store.engines.syncBundled()` as well as its existing PATH re-probe (#737).
+- **#1246:** The self-updater's managed-carrier discard (`CLAUDE.md`, `.claude/settings.json`) now refuses a
+  carrier with a staged index change instead of silently restoring over it: the containment proof
+  only ever compares the working tree against HEAD, so a staged edit confined to TangleClaw's
+  managed block used to pass that proof even though it represents an explicit, authored `git add`.
+  The restore itself now names `HEAD` explicitly (`git checkout HEAD -- <path>`) rather than the
+  bare index-relative form, so the file it restores is identical to the reference the proof was
+  run against (#1246).
+- **#1368:** `GET /api/health` now reports `status: "degraded"` and `services.assets: "unavailable"` when the
+  install's `public/index.html` is missing or unreadable, and the server logs an error at startup
+  naming the cause — a moved or renamed install directory left the UI 404ing while the API itself
+  stayed up with no signal (#1368).
+- **#1555:** The "Restart TangleClaw" button no longer appears when the process manager did not actually
+  start this server — a macOS launchd plist on disk, or a Linux systemd unit, is no longer enough
+  by itself: `detectRestartMechanism`/`confirmRestartMechanism` now also require that THIS process
+  was launched by that mechanism (`XPC_SERVICE_NAME` for launchd; `INVOCATION_ID` or
+  `/proc/self/cgroup` membership for systemd), so a server started by hand from a shell with the
+  plist merely installed no longer offers a restart it cannot perform. A restart that times out
+  after 15 seconds is now also reported honestly: the server never answering again, or kept
+  reporting its pre-restart start time, reads as a failed restart (with the platform's own
+  diagnostic log command named) rather than "may still be coming back" (#1555).
+- **#2140:** `POST /api/server/restart` no longer logs a false `spawnSync /bin/sh ETIMEDOUT` failure on a
+  successful restart: the scheduled exec is now asynchronous, so the event loop stays free to
+  receive the restart mechanism's own SIGTERM immediately instead of being held by a blocking call
+  (#2140).
+- **#2145:** `deploy/install.sh` and `lib/store.js` now agree on a blank/whitespace-only `projectsDir` in `config.json`, reading it the same as a missing key (the legacy `~/Documents/Projects` fallback) instead of disagreeing; `store.init()` logs one `info` line at boot naming the resolved directory and why when that fallback applies; a stale comment in `deploy/soak/guest/guest-setup.sh` about a fresh install's default directory is corrected. The Full Disk Access hint follow-up is already resolved by #1351 (one owner in `lib/dir-scanner.js`), so nothing further was built for it here.
+
 ## [5.43.0] - 2026-10-28
 
 ### Added
