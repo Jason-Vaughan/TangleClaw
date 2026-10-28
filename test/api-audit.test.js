@@ -413,20 +413,54 @@ describe('API /api/audit', () => {
     assert.equal(data.code, 'OTHER_SESSION');
   });
 
-  it('POST /api/audit/heartbeat refuses connection A\'s valid secret naming a session_id already watched under connection B\'s project — R-Gate R1 finding, #2239', async () => {
-    // B already watches this session_id under its OWN project (as ingest, or
-    // a prior heartbeat of B's, would have left it) — A's secret is valid,
-    // but valid for `audit-bound`, a DIFFERENT project than the one this key
-    // is watched under.
+  it('POST /api/audit/heartbeat under connection A cannot touch, preempt or be blocked by connection B\'s identical session_id string — R-Gate R4, #2239', async () => {
+    // B already watches this exact string under its OWN project (as ingest,
+    // or a prior heartbeat of B's, would have left it). A's secret is valid
+    // for a DIFFERENT project (`audit-bound`) and sends the identical
+    // session_id string. Under (project, session_id) scoping this must
+    // succeed for A — A's own entry, under A's own project — and must leave
+    // B's entry completely untouched: neither can preempt or 403 the other,
+    // whichever sent first (R2's original cross-connection finding and R3's
+    // exposed preemption/DoS gap are both closed by the SAME scoping).
     evalAudit.watchSession('shared-session-key', 'audit-project-b');
     try {
       const { status, data } = await request(server, 'POST', '/api/audit/heartbeat', {
         session_id: 'shared-session-key'
       }, { Authorization: `Bearer ${auditSecret}` });
-      assert.equal(status, 403);
-      assert.equal(data.code, 'OTHER_PROJECT');
+      assert.equal(status, 200, JSON.stringify(data));
+      assert.equal(data.ok, true);
+      const statuses = evalAudit.getTelemetryStatus().filter((w) => w.sessionId === 'shared-session-key');
+      assert.equal(statuses.length, 2, 'both projects\' watches coexist under the identical string');
+      assert.deepEqual(statuses.map((w) => w.project).sort(), ['audit-bound', 'audit-project-b']);
     } finally {
-      evalAudit.unwatchSession('shared-session-key');
+      evalAudit.unwatchSession('shared-session-key', 'audit-bound');
+      evalAudit.unwatchSession('shared-session-key', 'audit-project-b');
+    }
+  });
+
+  it('POST /api/audit/heartbeat: connection A sending an unwatched session_id FIRST cannot preempt connection B\'s later, genuine first contact for the same string — R-Gate R4, #2239', async () => {
+    const key = `r4-race-${Date.now()}`;
+    const bDir = fs.mkdtempSync(path.join(tmpDir, 'audit-b-'));
+    const bSecret = `b-secret-${Date.now()}`;
+    const bConn = store.openclawConnections.create({
+      name: 'audit-b-openclaw', host: '192.0.2.23', sshUser: 'user', sshKeyPath: '/tmp/key', auditSecret: bSecret
+    });
+    const bProject = store.projects.create({ name: `audit-b-${Date.now()}`, path: bDir, engine: `openclaw:${bConn.id}` });
+    try {
+      // A (audit-bound) sends the key first — with no prior record of B's
+      // ownership, this is indistinguishable from a genuine first contact.
+      const first = await request(server, 'POST', '/api/audit/heartbeat', { session_id: key }, { Authorization: `Bearer ${auditSecret}` });
+      assert.equal(first.status, 200);
+      // B's own later, genuine first heartbeat for the identical string must
+      // still succeed and register ITS OWN telemetry — A's earlier claim
+      // must not have blocked or absorbed it.
+      const second = await request(server, 'POST', '/api/audit/heartbeat', { session_id: key }, { Authorization: `Bearer ${bSecret}` });
+      assert.equal(second.status, 200, JSON.stringify(second.data));
+      const bWatch = evalAudit.getTelemetryStatus().find((w) => w.sessionId === key && w.project === bProject.name);
+      assert.ok(bWatch, 'B\'s own watch must exist, unaffected by A sending the same string first');
+    } finally {
+      evalAudit.unwatchSession(key, 'audit-bound');
+      evalAudit.unwatchSession(key, bProject.name);
     }
   });
 

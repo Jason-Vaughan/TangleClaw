@@ -440,14 +440,16 @@ describe('launch-binding floor in the dispatcher (#2233)', () => {
       assert.equal(res.data.code, 'OTHER_SESSION');
     });
 
-    it('refuses connection A\'s valid secret naming a session_id already watched under a different project — R-Gate R1, #2239', async () => {
+    it('a connection\'s heartbeat cannot touch or be blocked by another project\'s identical session_id string — R-Gate R4, #2239', async () => {
       evalAudit.watchSession('floor-shared-key', 'floor-some-other-project');
       try {
         const res = await send('POST', '/api/audit/heartbeat', { session_id: 'floor-shared-key' }, { Authorization: `Bearer ${AUDIT_SECRET}` });
-        assert.equal(res.status, 403);
-        assert.equal(res.data.code, 'OTHER_PROJECT');
+        assert.equal(res.status, 200, JSON.stringify(res.data));
+        const other = evalAudit.getTelemetryStatus().find((w) => w.sessionId === 'floor-shared-key' && w.project === 'floor-some-other-project');
+        assert.ok(other, 'the other project\'s watch must still exist, untouched');
       } finally {
-        evalAudit.unwatchSession('floor-shared-key');
+        evalAudit.unwatchSession('floor-shared-key', 'floor-audited');
+        evalAudit.unwatchSession('floor-shared-key', 'floor-some-other-project');
       }
     });
 
