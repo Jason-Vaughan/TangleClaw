@@ -4093,6 +4093,10 @@ describe('wrap-step version-bump — integration with commit._flushStagedWrites 
     // pin proves the two composite-keyed entries both make it to
     // disk in a single flush call.
     const projDir = fs.mkdtempSync(path.join(tmpRoot, 'proj-'));
+    // #1702 changed the unconfigured default to operator — this test is
+    // about the flush path, not release mode, so pin agent explicitly.
+    fs.mkdirSync(path.join(projDir, '.tangleclaw'));
+    fs.writeFileSync(path.join(projDir, '.tangleclaw', 'project.json'), JSON.stringify({ releaseMode: 'agent' }));
     fs.writeFileSync(path.join(projDir, 'version.json'), JSON.stringify({ version: '3.16.2', name: 'sample' }));
     fs.writeFileSync(path.join(projDir, 'CHANGELOG.md'),
       '## [Unreleased]\n\n### Added\n- A new feature\n\n## [3.16.0] - 2026-05-12\n');
@@ -4159,6 +4163,10 @@ describe('wrap-step version-bump — never writes inside .prawduct/ (ADR 0011)',
 
   it('a promote with a status=merged prawduct ledger stages and flushes only version + CHANGELOG', async () => {
     const dir = fs.mkdtempSync(path.join(tmpRoot, 'proj-'));
+    // #1702 changed the unconfigured default to operator — this test is
+    // about the ADR 0011 write boundary, not release mode.
+    fs.mkdirSync(path.join(dir, '.tangleclaw'));
+    fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), JSON.stringify({ releaseMode: 'agent' }));
     fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '1.2.3' }));
     fs.writeFileSync(path.join(dir, 'CHANGELOG.md'),
       '## [Unreleased]\n\n### Fixed\n- a fix\n\n## [1.2.3] - 2026-07-01\n');
@@ -4205,6 +4213,14 @@ describe('wrap-step version-bump — handler (open-queue #3, post-#139)', () => 
   function makeProject(name) {
     const dir = fs.mkdtempSync(path.join(tmpDir, `${name}-`));
     return { name, path: dir };
+  }
+
+  // #1702 changed the unconfigured default to operator — tests in this block
+  // whose subject is the bump mechanics (not release mode itself) opt into
+  // agent explicitly, the same way they always configured it before #1702.
+  function setAgentMode(project) {
+    fs.mkdirSync(path.join(project.path, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(path.join(project.path, '.tangleclaw', 'project.json'), JSON.stringify({ releaseMode: 'agent' }));
   }
 
   function freshContext(project, options) {
@@ -4307,6 +4323,7 @@ describe('wrap-step version-bump — handler (open-queue #3, post-#139)', () => 
 
   it('done path stages both writes and returns output with from/to/bumpLevel/detail', async () => {
     const project = makeProject('happy');
+    setAgentMode(project);
     fs.writeFileSync(path.join(project.path, 'version.json'),
       JSON.stringify({ version: '3.16.2', name: 'sample' }));
     fs.writeFileSync(path.join(project.path, 'CHANGELOG.md'),
@@ -4370,6 +4387,7 @@ describe('wrap-step version-bump — handler (open-queue #3, post-#139)', () => 
   it('proceeds when newVersion equals top-released +1 patch (boundary — not a drift)', async () => {
     // version.json 3.16.2, top released 3.16.2, patch bump → 3.16.3 > 3.16.2: OK.
     const project = makeProject('boundary-ok');
+    setAgentMode(project);
     fs.writeFileSync(path.join(project.path, 'version.json'), JSON.stringify({ version: '3.16.2' }));
     fs.writeFileSync(path.join(project.path, 'CHANGELOG.md'),
       '## [Unreleased]\n\n### Fixed\n- a bug\n\n## [3.16.2] - 2026-05-13\n### Fixed\n- earlier\n');
@@ -4392,6 +4410,7 @@ describe('wrap-step version-bump — handler (open-queue #3, post-#139)', () => 
 
   it('BREAKING marker forces major bump without override', async () => {
     const project = makeProject('breaking');
+    setAgentMode(project);
     fs.writeFileSync(path.join(project.path, 'version.json'), JSON.stringify({ version: '3.16.2' }));
     fs.writeFileSync(path.join(project.path, 'CHANGELOG.md'),
       '## [Unreleased]\n### Fixed\n- BREAKING: a transformative fix\n\n## [3.16.0] - 2026-05-12\n');
@@ -4403,6 +4422,7 @@ describe('wrap-step version-bump — handler (open-queue #3, post-#139)', () => 
 
   it('idempotent on re-wrap: after a bump, a second run skips ("no entries")', async () => {
     const project = makeProject('idempotent');
+    setAgentMode(project);
     fs.writeFileSync(path.join(project.path, 'version.json'), JSON.stringify({ version: '3.16.2' }));
     fs.writeFileSync(path.join(project.path, 'CHANGELOG.md'),
       '## [Unreleased]\n### Added\n- One feature\n\n## [3.16.0] - 2026-05-12\n');
@@ -4427,6 +4447,7 @@ describe('wrap-step version-bump — handler (open-queue #3, post-#139)', () => 
 
   it('only Fixed in [Unreleased] → patch bump', async () => {
     const project = makeProject('patch-only');
+    setAgentMode(project);
     fs.writeFileSync(path.join(project.path, 'version.json'), JSON.stringify({ version: '3.16.2' }));
     fs.writeFileSync(path.join(project.path, 'CHANGELOG.md'),
       '## [Unreleased]\n### Fixed\n- Bug fix\n\n## [3.16.0] - 2026-05-12\n');
@@ -4443,6 +4464,7 @@ describe('wrap-step version-bump — handler (open-queue #3, post-#139)', () => 
       { setup: () => freshContext(makeProject('no-vj')) },
       { setup: () => {
           const p = makeProject('happy-sweep');
+          setAgentMode(p);
           fs.writeFileSync(path.join(p.path, 'version.json'), JSON.stringify({ version: '3.16.2' }));
           fs.writeFileSync(path.join(p.path, 'CHANGELOG.md'),
             '## [Unreleased]\n### Added\n- x\n\n## [3.16.0] - 2026-05-12\n');

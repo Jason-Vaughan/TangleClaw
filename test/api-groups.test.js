@@ -281,6 +281,83 @@ describe('API /api/groups/:id/members', () => {
   });
 });
 
+describe('API /api/groups/:id releaseOwnerProjectId (#1697)', () => {
+  let tmpDir;
+  let server;
+  let groupId;
+  let memberId;
+  let otherId;
+
+  before(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-release-owner-'));
+    store._setBasePath(tmpDir);
+    store.init();
+
+    const memberPath = path.join(tmpDir, 'owner-proj');
+    fs.mkdirSync(memberPath, { recursive: true });
+    memberId = store.projects.create({ name: 'owner-proj', path: memberPath, engine: 'claude' }).id;
+
+    const otherPath = path.join(tmpDir, 'nonmember-proj');
+    fs.mkdirSync(otherPath, { recursive: true });
+    otherId = store.projects.create({ name: 'nonmember-proj', path: otherPath, engine: 'claude' }).id;
+
+    const group = store.projectGroups.create({ name: 'ReleaseOwnerGroup' });
+    groupId = group.id;
+    store.projectGroups.addMember(groupId, memberId);
+
+    store.config.save({ ...store.config.load(), authEnabled: true, basicAuthUser: null, basicAuthHash: null });
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('GET /api/groups/:id reports releaseOwnerProjectId null before any owner is set', async () => {
+    const { status, data } = await request(server, 'GET', `/api/groups/${groupId}`);
+    assert.equal(status, 200);
+    assert.equal(data.releaseOwnerProjectId, null);
+  });
+
+  it('PUT /api/groups/:id sets releaseOwnerProjectId to a current member', async () => {
+    const { status, data } = await request(server, 'PUT', `/api/groups/${groupId}`, {
+      releaseOwnerProjectId: memberId
+    });
+    assert.equal(status, 200);
+    assert.equal(data.releaseOwnerProjectId, memberId);
+
+    const getRes = await request(server, 'GET', `/api/groups/${groupId}`);
+    assert.equal(getRes.data.releaseOwnerProjectId, memberId);
+  });
+
+  it('GET /api/groups includes releaseOwnerProjectId in the list view', async () => {
+    const { data } = await request(server, 'GET', '/api/groups');
+    const group = data.groups.find(g => g.id === groupId);
+    assert.equal(group.releaseOwnerProjectId, memberId);
+  });
+
+  it('PUT /api/groups/:id rejects a non-member project id with 400', async () => {
+    const { status } = await request(server, 'PUT', `/api/groups/${groupId}`, {
+      releaseOwnerProjectId: otherId
+    });
+    assert.equal(status, 400);
+    // The earlier, valid owner is unaffected by the rejected request.
+    const getRes = await request(server, 'GET', `/api/groups/${groupId}`);
+    assert.equal(getRes.data.releaseOwnerProjectId, memberId);
+  });
+
+  it('PUT /api/groups/:id clears releaseOwnerProjectId with an explicit null', async () => {
+    const { status, data } = await request(server, 'PUT', `/api/groups/${groupId}`, {
+      releaseOwnerProjectId: null
+    });
+    assert.equal(status, 200);
+    assert.equal(data.releaseOwnerProjectId, null);
+  });
+});
+
 describe('API /api/groups/:id/sync', () => {
   let tmpDir;
   let server;

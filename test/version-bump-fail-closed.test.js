@@ -93,7 +93,11 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
   beforeEach(() => {
     savedInternal = { ...vb._internal };
     savedLoad = projectConfigModule.load;
-    projectConfigModule.load = () => ({});
+    // This file's cases are about versionFilePath/drift-guard/bumpLevel
+    // behavior, not release mode (#1702 changed the unconfigured default to
+    // operator, which would halt these with needs-operator instead) — pin it
+    // explicitly so these cases keep exercising the agent/cut path.
+    projectConfigModule.load = () => ({ releaseMode: 'agent' });
     vb._internal.todayIso = () => '2026-07-19';
   });
 
@@ -112,7 +116,7 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
         if (p.endsWith('package.json')) return PKG_UNRELATED;
         return CHANGELOG_3OCTET;
       };
-      projectConfigModule.load = () => ({ versionFilePath: 'VERSION.json' });
+      projectConfigModule.load = () => ({ versionFilePath: 'VERSION.json', releaseMode: 'agent' });
 
       const s = vb._resolveVersionSource('/p/version.json', '/p/package.json', '/p/VERSION.json');
       assert.equal(s.kind, 'VERSION.json');
@@ -153,7 +157,7 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
         if (p.endsWith('package.json')) return PKG_UNRELATED;
         return CHANGELOG_3OCTET;
       };
-      projectConfigModule.load = () => ({ versionFilePath: 'VERSION.json' });
+      projectConfigModule.load = () => ({ versionFilePath: 'VERSION.json', releaseMode: 'agent' });
 
       const c = ctx();
       const r = await vb.run(c);
@@ -172,7 +176,7 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
       it(`skips on ${JSON.stringify(escape)}`, async () => {
         vb._internal.existsSync = () => true;
         vb._internal.readFileSync = () => '{"version":"1.0.0"}';
-        projectConfigModule.load = () => ({ versionFilePath: escape });
+        projectConfigModule.load = () => ({ versionFilePath: escape, releaseMode: 'agent' });
 
         const c = ctx();
         const r = await vb.run(c);
@@ -187,7 +191,7 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
       vb._internal.existsSync = (p) => p.endsWith('meta/VERSION.json') || p.endsWith('CHANGELOG.md');
       vb._internal.readFileSync = (p) => (p.endsWith('VERSION.json')
         ? '{"version":"1.4.2"}' : CHANGELOG_3OCTET);
-      projectConfigModule.load = () => ({ versionFilePath: 'meta/VERSION.json' });
+      projectConfigModule.load = () => ({ versionFilePath: 'meta/VERSION.json', releaseMode: 'agent' });
 
       const c = ctx();
       const r = await vb.run(c);
@@ -261,7 +265,7 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
       vb._internal.existsSync = (p) => p.endsWith('VERSION.json') || p.endsWith('CHANGELOG.md');
       vb._internal.readFileSync = (p) => (p.endsWith('VERSION.json')
         ? VERSION_JSON_4OCTET : CHANGELOG_4OCTET);
-      projectConfigModule.load = () => ({ versionFilePath: 'VERSION.json' });
+      projectConfigModule.load = () => ({ versionFilePath: 'VERSION.json', releaseMode: 'agent' });
 
       const c = ctx();
       const r = await vb.run(c);
@@ -415,7 +419,7 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
       const PKG = '{\n  "name": "demo",\n  "version": "1.4.2",\n  "scripts": { "build": "x" }\n}\n';
       vb._internal.existsSync = (p) => p.endsWith('package.json') || p.endsWith('CHANGELOG.md');
       vb._internal.readFileSync = (p) => (p.endsWith('package.json') ? PKG : CHANGELOG_3OCTET);
-      projectConfigModule.load = () => ({ versionFilePath: 'package.json' });
+      projectConfigModule.load = () => ({ versionFilePath: 'package.json', releaseMode: 'agent' });
 
       const c = ctx();
       const r = await vb.run(c);
@@ -641,7 +645,10 @@ describe('4. a refused changelog fragment stops the cut (#1220)', () => {
   beforeEach(() => {
     savedInternal = { ...vb._internal };
     savedLoad = projectConfigModule.load;
-    projectConfigModule.load = () => ({});
+    // #1702 changed the unconfigured default to operator; this block's own
+    // subject is the fragment-refusal gate, not release mode, so pin agent
+    // explicitly (the one test below that wants needs-operator sets it itself).
+    projectConfigModule.load = () => ({ releaseMode: 'agent' });
     vb._internal.todayIso = () => '2026-07-19';
     vb._internal.existsSync = (p) => p.endsWith('version.json') || p.endsWith('CHANGELOG.md');
     vb._internal.readFileSync = (p) => (p.endsWith('version.json') ? '{"version":"1.4.2"}' : CHANGELOG_3OCTET);

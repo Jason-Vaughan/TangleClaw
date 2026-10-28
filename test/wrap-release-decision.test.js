@@ -413,7 +413,9 @@ describe('the settings modal Release mode (source pins)', () => {
     assert.match(UI_SRC, /<select class="form-select" id="settingsReleaseMode">\$\{releaseModeOpts\}<\/select>/);
     assert.match(UI_SRC, /<label class="form-label" for="settingsReleaseMode">Release mode<\/label>/);
     for (const v of ['agent', 'operator', 'off']) assert.match(UI_SRC, new RegExp(`\\['${v}', '`));
-    assert.match(UI_SRC, /\['off', 'agent', 'operator'\]\.includes\(project\.releaseMode\) \? project\.releaseMode : 'agent'/);
+    // #1702: the fallback (an unrecognized/missing project.releaseMode) is
+    // the cautious default now, matching resolveReleaseMode's own change.
+    assert.match(UI_SRC, /\['off', 'agent', 'operator'\]\.includes\(project\.releaseMode\) \? project\.releaseMode : 'operator'/);
   });
 
   it('saves releaseMode alone, and the legacy checkbox is gone', () => {

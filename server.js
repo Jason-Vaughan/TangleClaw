@@ -6046,6 +6046,10 @@ route('PUT', '/api/groups/:id', (req, res, params, body) => {
     if (err.code === 'CONFLICT') {
       return errorResponse(res, 409, err.message, 'CONFLICT');
     }
+    // #1697: releaseOwnerProjectId naming a non-member project.
+    if (err.code === 'BAD_REQUEST') {
+      return errorResponse(res, 400, err.message, 'BAD_REQUEST');
+    }
     throw err;
   }
 });

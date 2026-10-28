@@ -37,11 +37,38 @@ describe('resolveReleaseMode', () => {
     assert.equal(projectConfig.resolveReleaseMode({ releaseMode: 'off', versionBumpEnabled: true }).mode, 'off');
   });
 
-  it('derives off from a legacy versionBumpEnabled:false, and agent otherwise', () => {
+  it('derives off from a legacy versionBumpEnabled:false, and the cautious operator default otherwise (#1702)', () => {
     assert.deepEqual(projectConfig.resolveReleaseMode({ versionBumpEnabled: false }), { mode: 'off', source: 'versionBumpEnabled' });
-    assert.deepEqual(projectConfig.resolveReleaseMode({ versionBumpEnabled: true }), { mode: 'agent', source: 'default' });
-    assert.deepEqual(projectConfig.resolveReleaseMode({}), { mode: 'agent', source: 'default' });
-    assert.deepEqual(projectConfig.resolveReleaseMode(null), { mode: 'agent', source: 'default' });
+    assert.deepEqual(projectConfig.resolveReleaseMode({ versionBumpEnabled: true }), { mode: 'operator', source: 'default' });
+    assert.deepEqual(projectConfig.resolveReleaseMode({}), { mode: 'operator', source: 'default' });
+    assert.deepEqual(projectConfig.resolveReleaseMode(null), { mode: 'operator', source: 'default' });
+  });
+
+  it('resolves the unconfigured default to off when a different project owns the group\'s release authority (#1697)', () => {
+    assert.deepEqual(
+      projectConfig.resolveReleaseMode({}, { groupOwnerElsewhere: true }),
+      { mode: 'off', source: 'group-owner-elsewhere' }
+    );
+    assert.deepEqual(
+      projectConfig.resolveReleaseMode(null, { groupOwnerElsewhere: true }),
+      { mode: 'off', source: 'group-owner-elsewhere' }
+    );
+    // No context, or a false one, is the same as today's unconfigured default.
+    assert.deepEqual(projectConfig.resolveReleaseMode({}, { groupOwnerElsewhere: false }), { mode: 'operator', source: 'default' });
+    assert.deepEqual(projectConfig.resolveReleaseMode({}), { mode: 'operator', source: 'default' });
+  });
+
+  it('lets an explicit value or the legacy off-flag win over group-owner-elsewhere context', () => {
+    // An explicit mode always wins, group context or not.
+    assert.deepEqual(
+      projectConfig.resolveReleaseMode({ releaseMode: 'agent' }, { groupOwnerElsewhere: true }),
+      { mode: 'agent', source: 'releaseMode' }
+    );
+    // Already off via the legacy flag — group context changes nothing (still off, still that source).
+    assert.deepEqual(
+      projectConfig.resolveReleaseMode({ versionBumpEnabled: false }, { groupOwnerElsewhere: true }),
+      { mode: 'off', source: 'versionBumpEnabled' }
+    );
   });
 
   it('reads an unrecognized explicit value as operator, with a warning', () => {
@@ -73,8 +100,8 @@ describe('resolveReleaseMode through the config reader', () => {
     assert.equal(projectConfig.resolveReleaseMode(projectConfig.load(root)).mode, 'off');
   });
 
-  it('reads a project with no config file as agent', () => {
-    assert.equal(projectConfig.resolveReleaseMode(projectConfig.load(root)).mode, 'agent');
+  it('reads a project with no config file as operator (#1702)', () => {
+    assert.equal(projectConfig.resolveReleaseMode(projectConfig.load(root)).mode, 'operator');
   });
 
   it('reads an explicit releaseMode from disk', () => {
@@ -133,10 +160,10 @@ describe('updateProject — releaseMode (#1492, #1701)', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('reports agent for a new project, and releaseMode beside the legacy shadow', async () => {
+  it('reports the cautious operator default for a new project, and releaseMode beside the legacy shadow (#1702)', async () => {
     projects.createProject({ name: 'rm-default' });
     const p = await projects.getProject('rm-default');
-    assert.equal(p.releaseMode, 'agent');
+    assert.equal(p.releaseMode, 'operator');
     assert.equal(p.versionBumpEnabled, true);
   });
 
@@ -202,5 +229,99 @@ describe('updateProject — releaseMode (#1492, #1701)', () => {
     const update = await projects.updateProject('rm-pair', { releaseMode: 'operator', versionBumpEnabled: true });
     assert.deepEqual(update.errors, []);
     assert.equal((await projects.getProject('rm-pair')).releaseMode, 'operator');
+  });
+});
+
+describe('updateProject — group release authority (#1697)', () => {
+  const store = require('../lib/store');
+  const projects = require('../lib/projects');
+  let tmpDir;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-release-owner-api-'));
+    const projectsDir = path.join(tmpDir, 'projects');
+    fs.mkdirSync(projectsDir, { recursive: true });
+    store._setBasePath(path.join(tmpDir, 'tangleclaw'));
+    store.init();
+    const config = store.config.load();
+    config.projectsDir = projectsDir;
+    store.config.save(config);
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('the first member to go release-capable auto-claims the group, silently', async () => {
+    projects.createProject({ name: 'rg-a' });
+    projects.createProject({ name: 'rg-b' });
+    const a = await projects.getProject('rg-a');
+    const b = await projects.getProject('rg-b');
+    const group = store.projectGroups.create({ name: 'rg-fleet-1' });
+    store.projectGroups.addMember(group.id, a.id);
+    store.projectGroups.addMember(group.id, b.id);
+
+    assert.equal(store.projectGroups.get(group.id).releaseOwnerProjectId, null);
+    const update = await projects.updateProject('rg-a', { releaseMode: 'agent' });
+    assert.deepEqual(update.errors, []);
+    assert.equal(store.projectGroups.get(group.id).releaseOwnerProjectId, a.id);
+  });
+
+  it('refuses a second member going release-capable with 409, naming the owner', async () => {
+    projects.createProject({ name: 'rg-c' });
+    projects.createProject({ name: 'rg-d' });
+    const c = await projects.getProject('rg-c');
+    const d = await projects.getProject('rg-d');
+    const group = store.projectGroups.create({ name: 'rg-fleet-2' });
+    store.projectGroups.addMember(group.id, c.id);
+    store.projectGroups.addMember(group.id, d.id);
+
+    await projects.updateProject('rg-c', { releaseMode: 'agent' });
+    assert.equal(store.projectGroups.get(group.id).releaseOwnerProjectId, c.id);
+
+    for (const mode of ['agent', 'operator']) {
+      const update = await projects.updateProject('rg-d', { releaseMode: mode });
+      assert.equal(update.project, null);
+      assert.equal(update.code, 'CONFLICT');
+      assert.match(update.errors[0], /rg-c/);
+      assert.match(update.errors[0], /rg-fleet-2/);
+    }
+    // Setting the non-owner to off is never a conflict.
+    const offUpdate = await projects.updateProject('rg-d', { releaseMode: 'off' });
+    assert.deepEqual(offUpdate.errors, []);
+  });
+
+  it('a transfer via the group settings unblocks the formerly-refused member', async () => {
+    projects.createProject({ name: 'rg-e' });
+    projects.createProject({ name: 'rg-f' });
+    const e = await projects.getProject('rg-e');
+    const f = await projects.getProject('rg-f');
+    const group = store.projectGroups.create({ name: 'rg-fleet-3' });
+    store.projectGroups.addMember(group.id, e.id);
+    store.projectGroups.addMember(group.id, f.id);
+
+    await projects.updateProject('rg-e', { releaseMode: 'agent' });
+    const blocked = await projects.updateProject('rg-f', { releaseMode: 'agent' });
+    assert.equal(blocked.code, 'CONFLICT');
+
+    store.projectGroups.update(group.id, { releaseOwnerProjectId: f.id });
+    const allowed = await projects.updateProject('rg-f', { releaseMode: 'agent' });
+    assert.deepEqual(allowed.errors, []);
+    assert.equal(store.projectGroups.get(group.id).releaseOwnerProjectId, f.id);
+  });
+
+  it('reports group-owner-elsewhere as off for an unconfigured non-owner member (#1702)', async () => {
+    projects.createProject({ name: 'rg-g' });
+    projects.createProject({ name: 'rg-h' });
+    const g = await projects.getProject('rg-g');
+    const group = store.projectGroups.create({ name: 'rg-fleet-4' });
+    store.projectGroups.addMember(group.id, g.id);
+    store.projectGroups.addMember(group.id, (await projects.getProject('rg-h')).id);
+
+    await projects.updateProject('rg-g', { releaseMode: 'agent' });
+    // rg-h never configured releaseMode and sits in a group rg-g now owns.
+    const h = await projects.getProject('rg-h');
+    assert.equal(h.releaseMode, 'off');
   });
 });

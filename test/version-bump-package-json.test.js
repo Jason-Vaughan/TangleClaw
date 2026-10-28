@@ -11,6 +11,7 @@ const { setLevel } = require('../lib/logger');
 setLevel('error');
 
 const vb = require('../lib/wrap-steps/version-bump');
+const store = require('../lib/store');
 
 const PKG = `{
   "name": "example-app",
@@ -35,8 +36,20 @@ const CHANGELOG = `# Changelog
 
 describe('version-bump package.json support (#298)', () => {
   let saved;
-  beforeEach(() => { saved = { ...vb._internal }; });
-  afterEach(() => { Object.assign(vb._internal, saved); });
+  let savedLoad;
+  beforeEach(() => {
+    saved = { ...vb._internal };
+    savedLoad = store.projectConfig.load;
+    // #1702 changed the unconfigured default to operator — this file's own
+    // subject is package.json resolution, not release mode. `/proj` doesn't
+    // exist on disk, so without this stub the real reader's ENOENT fallback
+    // (the default config) would resolve 'operator', not 'agent'.
+    store.projectConfig.load = () => ({ releaseMode: 'agent' });
+  });
+  afterEach(() => {
+    Object.assign(vb._internal, saved);
+    store.projectConfig.load = savedLoad;
+  });
 
   describe('_resolveVersionSource', () => {
     it('prefers version.json when present (unchanged behavior)', () => {

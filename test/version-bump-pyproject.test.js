@@ -83,7 +83,9 @@ describe('version-bump pyproject.toml support (#1444)', () => {
   beforeEach(() => {
     savedInternal = { ...vb._internal };
     savedLoad = projectConfigModule.load;
-    projectConfigModule.load = () => ({});
+    // #1702 changed the unconfigured default to operator; this file's own
+    // subject is pyproject.toml version resolution, not release mode.
+    projectConfigModule.load = () => ({ releaseMode: 'agent' });
     vb._internal.todayIso = () => '2026-09-22';
   });
   afterEach(() => {
