@@ -119,6 +119,20 @@ describe('release recommendation helpers', () => {
       assert.equal(rec.releaseDecisionOpen(worktreeOwner, {}, { planning: true }).open, true, 'owner planning phase');
     });
 
+    it('fails closed when the group ownership lookup throws on an initialized store (Architect R2, mirrors version-bump.js B3)', () => {
+      const project = makeProject({ config: { releaseMode: 'agent' } });
+      store.projects.create({ name: project.name, path: project.path });
+      const savedFind = store.projectGroups.findReleaseOwnerElsewhere;
+      store.projectGroups.findReleaseOwnerElsewhere = () => { throw new Error('simulated DB failure'); };
+      try {
+        const out = rec.releaseDecisionOpen(project, {});
+        assert.equal(out.open, false);
+        assert.match(out.reason, /could not verify group release authority/);
+      } finally {
+        store.projectGroups.findReleaseOwnerElsewhere = savedFind;
+      }
+    });
+
     it('is closed once the operator has decided', () => {
       const project = makeProject({ config: { releaseMode: 'agent' } });
       assert.match(rec.releaseDecisionOpen(project, { release: 'cut' }).reason, /you chose Cut/);
