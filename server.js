@@ -4533,12 +4533,21 @@ route('POST', '/api/projects/import', (req, res, _params, body) => {
         ports: {}
       });
 
-      // Write per-project config if none exists
+      // Write per-project config only when none is on disk — an existing (or
+      // unusable) project.json is never clobbered by defaults (#2232).
+      // Exclusive creation (`flag: 'wx'`) replaces a separate
+      // existsSync-then-save: that pairing left a check-to-write race where a
+      // file landing in the gap between the check and the write would be
+      // silently overwritten; `wx` makes the write itself fail `EEXIST`
+      // instead.
       const projConfigPath = path.join(projPath, '.tangleclaw', 'project.json');
-      if (!fs.existsSync(projConfigPath)) {
-        const projConfig = JSON.parse(JSON.stringify(store.DEFAULT_PROJECT_CONFIG));
-        projConfig.engine = engineId;
-        store.projectConfig.save(projPath, projConfig);
+      const projConfig = JSON.parse(JSON.stringify(store.DEFAULT_PROJECT_CONFIG));
+      projConfig.engine = engineId;
+      try {
+        fs.mkdirSync(path.join(projPath, '.tangleclaw'), { recursive: true });
+        fs.writeFileSync(projConfigPath, JSON.stringify(projConfig, null, 2) + '\n', { flag: 'wx' });
+      } catch (err) {
+        if (err.code !== 'EEXIST') throw err;
       }
 
       imported.push(name);
@@ -4698,13 +4707,22 @@ route('PATCH', '/api/projects/:name', async (req, res, params, body) => {
       return errorResponse(res, 500, `The update failed. ${err.recoveryDecisionSavedMessage}`,
         projects.RECOVERY_DECISION_SAVED_UPDATE_FAILED, { recoveryMode: err.recoveryDecisionSaved });
     }
-    // #1289 — `project.json` became unreadable between the up-front load and
-    // a reload inside phase two (a TOCTOU remove/permission change), with no
-    // recovery decision in play. Nothing was validated or written against a
-    // value this request never actually saw, so it is refused the same way
-    // the up-front check refuses it below.
+    // #1289/#2232 — `project.json` became unreadable between the up-front load
+    // and a reload inside phase two (a TOCTOU remove/permission change), with
+    // no recovery decision in play. Unlike the up-front refusal below, phase
+    // two writes as it goes rather than all at once: `_applyProjectUpdates`
+    // writes the engine's on-disk config and re-syncs its hooks immediately,
+    // and only batches the project row's `engine_id`/`tags` into a single
+    // write at the very end. A reload that throws here can therefore land
+    // AFTER the new engine's files already landed on disk but BEFORE the
+    // project row was updated to match — the message says so, rather than
+    // reading like the clean, nothing-written refusal the up-front check gives.
     if (err.code === projects.PROJECT_CONFIG_UNREADABLE) {
-      return errorResponse(res, 409, err.message, projects.PROJECT_CONFIG_UNREADABLE);
+      return errorResponse(res, 409,
+        `${err.message}. The project row's engine and tags are written last, after every other field in this `
+        + 'request; if this request also changed the engine, its on-disk files may already be written while the '
+        + 'project row still names the old engine.',
+        projects.PROJECT_CONFIG_UNREADABLE);
     }
     // Any other throw is the dispatcher's, as before.
     throw err;
