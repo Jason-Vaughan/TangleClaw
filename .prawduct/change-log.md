@@ -41,6 +41,18 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-28 — v5.44.0 W3-REC: reconcile Wave 1 and Wave 2 update and recovery records
+
+<!-- prawduct: type=internal | scope=v544-w3-rec -->
+
+- **W1-A (#2145):** Installer and server now agree that a blank `projectsDir` in an existing config uses the legacy `~/Documents/Projects` fallback, and boot logs when that fallback applies. Fresh installs still use `~/Projects`; the Full Disk Access hint follow-up was already resolved by #1351.
+- **W1-B (#1246):** The self-updater refuses to discard a managed carrier with staged index changes, including edits inside its managed block. Allowed restores name HEAD explicitly.
+- **W1-C (#1555):** Restart detection checks that launchd or systemd actually started this server before offering Restart, and the browser's 15-second poll distinguishes a failed restart from a slow one with platform diagnostics.
+- **W1-D (#1368, #1369, #2140):** Health degrades when the public index is missing or unreadable; boot audits the server LaunchAgent's working directory and stale LaunchAgent or HTTPS paths after a move; the restart route schedules its command asynchronously so successful self-termination does not produce a false timeout log.
+- **W2-A (#1367, #1223):** The behind-origin banner shows the install's copyable pull command and offers Pull only for a clean `main` strictly behind `origin/main`. The route rechecks before a fast-forward and offers restart. Detached release-tag installs continue through Update now.
+- **W2-B (#737):** Bundled engine profiles sync on list or get after a source change, and Check again forces a sync. Failed source reads or writes leave the fingerprint pending so later reads retry.
+- Reconciled all nine Charter A479 issues in `FEATURES.md` and `docs/user-guide.md`. New `Tests:` citations resolve to test files on disk. This entry adds no archive section.
+
 ## 2026-10-28 — v5.43.0 W4-REL: prepare the verified senders and callers release candidate
 
 <!-- prawduct: type=internal | scope=v543-w4-rel -->
