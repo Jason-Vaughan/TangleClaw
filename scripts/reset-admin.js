@@ -489,32 +489,28 @@ async function runDisableMode({ store, user, dryRun, force }) {
       + '  node scripts/reset-admin.js --disable --user <name>\n');
     return 1;
   }
-  const existing = store.users.getByName(user);
-  if (!existing) {
-    process.stderr.write(`ERROR: no TangleClaw account '${user}'\n`);
-    return 1;
-  }
-  const alreadyDisabled = !!existing.disabled_at;
-  const enabledCount = store.users.list().filter((u) => !u.disabled_at).length;
-  const isLastEnabled = !alreadyDisabled && enabledCount === 1;
 
-  if (isLastEnabled && !force) {
-    const reason = `'${user}' is the only enabled TangleClaw account — disabling it would lock `
-      + 'every account-based login (use --force to override)';
-    if (dryRun) {
+  if (dryRun) {
+    const existing = store.users.getByName(user);
+    if (!existing) {
+      process.stderr.write(`ERROR: no TangleClaw account '${user}'\n`);
+      return 1;
+    }
+    const alreadyDisabled = !!existing.disabled_at;
+    const enabledCount = store.users.list().filter((u) => !u.disabled_at).length;
+    const isLastEnabled = !alreadyDisabled && enabledCount === 1;
+
+    if (isLastEnabled && !force) {
       process.stdout.write(`\n[dry-run] disable TangleClaw account\n`);
       process.stdout.write(`  store:   ${store._getBasePath()}\n`);
       process.stdout.write(`  account: ${user}\n`);
-      process.stdout.write(`  would REFUSE: ${reason}\n\n`);
+      process.stdout.write(`  would REFUSE: '${user}' is the only enabled TangleClaw account — `
+        + 'disabling it would lock every account-based login (use --force to override)\n\n');
       // The ratified #1286 reading: a preview that predicts a refusal exits 1,
       // the same code the real run gives, in every mode this tool has.
       return 1;
     }
-    process.stderr.write(`ERROR: ${reason}\n`);
-    return 1;
-  }
 
-  if (dryRun) {
     process.stdout.write(`\n[dry-run] disable TangleClaw account\n`);
     process.stdout.write(`  store:   ${store._getBasePath()}\n`);
     process.stdout.write(`  account: ${user}${alreadyDisabled ? ' (already DISABLED)' : ''}\n`);
@@ -533,15 +529,49 @@ async function runDisableMode({ store, user, dryRun, force }) {
     return 0;
   }
 
-  const changed = store.users.disable(user);
-  if (!changed) {
-    process.stdout.write(`\nAccount '${user}' is already disabled; nothing changed.\n`);
+  // Real run: the last-enabled-account decision and the write are one
+  // transaction. Without it, two concurrent unforced --disable runs against
+  // two different enabled accounts can each read enabledCount before either
+  // writes, both see more than one enabled account, and both proceed —
+  // leaving the gate LOCKED with neither operator having passed --force
+  // (R-Gate R1, PR #2666). `db` is null when store.getDb is absent (a
+  // stubbed unit test double), in which case the window this closes is
+  // accepted rather than crashing a double that never modelled concurrent
+  // writers.
+  const db = typeof store.getDb === 'function' ? store.getDb() : null;
+  if (db) db.exec('BEGIN IMMEDIATE');
+  try {
+    const existing = store.users.getByName(user);
+    if (!existing) {
+      if (db) db.exec('ROLLBACK');
+      process.stderr.write(`ERROR: no TangleClaw account '${user}'\n`);
+      return 1;
+    }
+    const alreadyDisabled = !!existing.disabled_at;
+    const enabledCount = store.users.list().filter((u) => !u.disabled_at).length;
+    const isLastEnabled = !alreadyDisabled && enabledCount === 1;
+
+    if (isLastEnabled && !force) {
+      if (db) db.exec('ROLLBACK');
+      process.stderr.write(`ERROR: '${user}' is the only enabled TangleClaw account — disabling `
+        + 'it would lock every account-based login (use --force to override)\n');
+      return 1;
+    }
+
+    const changed = store.users.disable(user);
+    if (db) db.exec('COMMIT');
+    if (!changed) {
+      process.stdout.write(`\nAccount '${user}' is already disabled; nothing changed.\n`);
+      return 0;
+    }
+    process.stdout.write(`\nTangleClaw account disabled for '${user}'.\n`);
+    process.stdout.write(`  Store: ${store._getBasePath()}\n`);
+    process.stdout.write(`${describeGateLines(describeLiveGate(store), false)}\n`);
     return 0;
+  } catch (err) {
+    if (db) { try { db.exec('ROLLBACK'); } catch { /* nothing to roll back */ } }
+    throw err;
   }
-  process.stdout.write(`\nTangleClaw account disabled for '${user}'.\n`);
-  process.stdout.write(`  Store: ${store._getBasePath()}\n`);
-  process.stdout.write(`${describeGateLines(describeLiveGate(store), false)}\n`);
-  return 0;
 }
 
 async function main() {

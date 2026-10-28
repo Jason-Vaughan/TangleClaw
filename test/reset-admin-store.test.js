@@ -551,6 +551,97 @@ describe('reset-admin --disable (#1458)', () => {
     assert.equal(store.users.getByName('other').id, other.id);
   });
 
+  it('opens one transaction spanning the enabledCount read and the disable write (R-Gate R1, PR #2666)', async () => {
+    // The defect: `runDisableMode` used to read enabledCount and call
+    // store.users.disable(user) as two independent, unguarded statements.
+    // Two concurrent unforced `--disable` runs against two DIFFERENT enabled
+    // accounts could each read enabledCount BEFORE either wrote, both see
+    // more than one enabled account, and both proceed -- leaving the gate
+    // LOCKED with neither operator passing --force.
+    //
+    // A real two-process race can't be reproduced deterministically here:
+    // node:sqlite's calls and this fix's own transaction body are fully
+    // synchronous, with no `await` between the read and the write, so two
+    // logical `runDisableMode` invocations in one Node process can never
+    // actually interleave -- the second one's entire body runs only after
+    // the first's synchronous body (and its own real BEGIN IMMEDIATE/COMMIT)
+    // has already returned. An externally-held rival lock doesn't
+    // discriminate either: it was tried and found to make EITHER version
+    // throw identically (the unfixed write statement is itself blocked by
+    // any other connection's open write lock, same as the fix's BEGIN
+    // IMMEDIATE would be) -- just at a different point inside the call,
+    // which isn't something a black-box assertion on the outcome can see.
+    //
+    // What IS directly, deterministically verifiable is the mechanism that
+    // closes the race: the enabledCount read and the disable write happen
+    // inside ONE transaction, so nothing else can commit a change to the
+    // users table between them. Spy on the real store's `getDb`/`users.list`/
+    // `users.disable` (same temporary-monkey-patch style as the config-load
+    // failure test above) to record call order against the REAL sqlite
+    // connection -- this runs the real BEGIN IMMEDIATE/COMMIT, it only also
+    // logs when.
+    store.users.create('rosie', PASSWORD);
+    store.users.create('other', PASSWORD);
+
+    const calls = [];
+    const realGetDb = store.getDb;
+    const realDb = store.getDb();
+    const realExec = realDb.exec.bind(realDb);
+    const realList = store.users.list.bind(store.users);
+    const realDisable = store.users.disable.bind(store.users);
+
+    store.getDb = () => ({
+      ...realDb,
+      exec: (sql) => { calls.push(sql); return realExec(sql); }
+    });
+    store.users.list = (...args) => { calls.push('list'); return realList(...args); };
+    store.users.disable = (...args) => { calls.push('disable'); return realDisable(...args); };
+
+    let code;
+    try {
+      code = await run({ user: 'other' });
+    } finally {
+      store.getDb = realGetDb;
+      store.users.list = realList;
+      store.users.disable = realDisable;
+    }
+
+    assert.equal(code, 0);
+    assert.ok(store.users.getByName('other').disabled_at, 'the write still actually happened');
+
+    const beginAt = calls.indexOf('BEGIN IMMEDIATE');
+    const listAt = calls.indexOf('list');
+    const disableAt = calls.indexOf('disable');
+    const commitAt = calls.indexOf('COMMIT');
+    assert.ok(beginAt > -1, 'a real run opens an explicit transaction');
+    assert.ok(beginAt < listAt, 'the transaction opens BEFORE the enabledCount read');
+    assert.ok(listAt < disableAt, 'the read precedes the write, inside that same transaction');
+    assert.ok(disableAt < commitAt, 'the transaction stays open through the write, and only then commits');
+  });
+
+  it('rolls back rather than committing when the last-enabled refusal fires on a real run', async () => {
+    // The transaction must not leave a half-open state on the refusal path:
+    // nothing was written, so the ROLLBACK (not a COMMIT) is what ends it.
+    store.users.create('rosie', PASSWORD);
+
+    const calls = [];
+    const realDb = store.getDb();
+    const realExec = realDb.exec.bind(realDb);
+    const realGetDb = store.getDb;
+    store.getDb = () => ({ ...realDb, exec: (sql) => { calls.push(sql); return realExec(sql); } });
+
+    let code;
+    try {
+      code = await run({ user: 'rosie' });
+    } finally {
+      store.getDb = realGetDb;
+    }
+
+    assert.equal(code, 1);
+    assert.deepEqual(calls, ['BEGIN IMMEDIATE', 'ROLLBACK']);
+    assert.equal(store.users.getByName('rosie').disabled_at, null);
+  });
+
   it('is a no-op, exit 0, when the account is already disabled', async () => {
     store.users.create('rosie', PASSWORD);
     store.users.create('other', PASSWORD);
