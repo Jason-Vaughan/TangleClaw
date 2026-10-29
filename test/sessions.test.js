@@ -4879,7 +4879,7 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
     it('a blocker stored before a restart is still there until the first tick, which clears it with no reader', () => {
       const { session } = live();
       sessions.startLaunchBlockerSweep();
-      assert.equal(store.sessions.get(session.id).launchBlocker.code, 'trust_required', 'nothing runs at start');
+      assert.equal(store.sessions.get(session.id).launchBlocker.code, 'trust_required', 'the restart-dropped-turn record (below) does not clear it; only a tick does');
       assert.deepEqual(looks, []);
       armed[0].fn();
       assert.equal(store.sessions.get(session.id).launchBlocker, null);
