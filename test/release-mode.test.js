@@ -501,9 +501,11 @@ describe('public/ui.js — group release-authority UI (#1697)', () => {
 
   describe('toggleGroupMembership — the group-modal staleness guard (R-6)', () => {
     /**
-     * Run the real `toggleGroupMembership` against mocked API/render globals.
+     * Run the real `toggleGroupMembership` against mocked API/render globals,
+     * with `groupEditId` fixed for the whole call (exercises the FIRST guard
+     * only — the one before `api()` is even called).
      * @param {object} opts
-     * @param {string|null} opts.groupEditIdValue - What the modal is showing when the toggle starts
+     * @param {string|null} opts.groupEditIdValue - What the modal is showing, for the whole call
      * @param {string} opts.groupId - The group this toggle is for
      * @param {object} opts.fetchedData - What the refetch after the mutation returns
      * @returns {Promise<{renderCalls: Array}>}
@@ -522,6 +524,42 @@ describe('public/ui.js — group release-authority UI (#1697)', () => {
       return { renderCalls };
     }
 
+    /**
+     * Run `toggleGroupMembership` with `groupEditId` starting EQUAL to `groupId`
+     * (so the first guard passes and `api()` is actually called), then move
+     * `groupEditId` to `midFlightGroupEditId` WHILE that `api()` call is still
+     * pending — the exact race the SECOND guard exists to catch. A `setTimeout`
+     * macrotask boundary (not a guessed microtask count) is what guarantees
+     * `toggleGroupMembership` has reached its pending `await api(...)` before
+     * the mutation runs (PRR-B C1/C2: the two prior tests set `groupEditId`
+     * before the call ever started, so they only ever exercised the first
+     * guard — removing the second left them green).
+     * @param {object} opts
+     * @param {string} opts.groupId - The group this toggle is for
+     * @param {string|null} opts.midFlightGroupEditId - What the modal moves to mid-flight
+     * @param {object} opts.fetchedData - What the refetch after the mutation returns
+     * @returns {Promise<{renderCalls: Array}>}
+     */
+    async function runMidFlightRace({ groupId, midFlightGroupEditId, fetchedData }) {
+      const renderCalls = [];
+      let resolveApi;
+      const apiPromise = new Promise((res) => { resolveApi = res; });
+      const ctx = {
+        groupEditId: groupId,
+        apiMutate: async () => ({}),
+        api: async () => apiPromise,
+        renderGroupReleaseOwner: (members, owner) => renderCalls.push({ members, owner })
+      };
+      vm.createContext(ctx);
+      vm.runInContext(functionSource('async function toggleGroupMembership('), ctx);
+      const callPromise = ctx.toggleGroupMembership(groupId, 42, true);
+      await new Promise((r) => setTimeout(r, 0));
+      ctx.groupEditId = midFlightGroupEditId;
+      resolveApi(fetchedData);
+      await callPromise;
+      return { renderCalls };
+    }
+
     it('renders the refreshed owner when the modal is still showing the same group', async () => {
       const { renderCalls } = await run({
         groupEditIdValue: 'g1', groupId: 'g1', fetchedData: { members: [1], releaseOwnerProjectId: 1 }
@@ -530,16 +568,30 @@ describe('public/ui.js — group release-authority UI (#1697)', () => {
       assert.deepEqual(renderCalls[0], { members: [1], owner: 1 });
     });
 
-    it('does not render when the modal switched to a different group while the request was in flight', async () => {
+    it('does not call the refetch at all when the modal already switched groups before the mutation returned (first guard)', async () => {
       const { renderCalls } = await run({
         groupEditIdValue: 'g2', groupId: 'g1', fetchedData: { members: [1], releaseOwnerProjectId: 1 }
       });
       assert.equal(renderCalls.length, 0);
     });
 
-    it('does not render when the modal closed (groupEditId null) while the request was in flight', async () => {
+    it('does not call the refetch at all when the modal already closed before the mutation returned (first guard)', async () => {
       const { renderCalls } = await run({
         groupEditIdValue: null, groupId: 'g1', fetchedData: { members: [1], releaseOwnerProjectId: 1 }
+      });
+      assert.equal(renderCalls.length, 0);
+    });
+
+    it('does not render when the modal switches to a different group while the refetch itself is in flight (second guard)', async () => {
+      const { renderCalls } = await runMidFlightRace({
+        groupId: 'g1', midFlightGroupEditId: 'g2', fetchedData: { members: [1], releaseOwnerProjectId: 1 }
+      });
+      assert.equal(renderCalls.length, 0);
+    });
+
+    it('does not render when the modal closes (groupEditId null) while the refetch itself is in flight (second guard)', async () => {
+      const { renderCalls } = await runMidFlightRace({
+        groupId: 'g1', midFlightGroupEditId: null, fetchedData: { members: [1], releaseOwnerProjectId: 1 }
       });
       assert.equal(renderCalls.length, 0);
     });
