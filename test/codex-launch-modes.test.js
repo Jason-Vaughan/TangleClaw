@@ -16,12 +16,17 @@
  * the engine does not define is reported rather than silently dropped.
  */
 
-const { describe, it, beforeEach, afterEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const sessions = require('../lib/sessions');
 const logger = require('../lib/logger');
+const store = require('../lib/store');
+const launchSequence = require('../lib/launch-sequence');
+const tmux = require('../lib/tmux');
+const enginesModule = require('../lib/engines');
 
 const codex = JSON.parse(
   fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8')
@@ -292,5 +297,133 @@ describe('fullAuto declares its loopback sandbox limitation (#1836)', () => {
       const mode = codex.launchModes[key];
       assert.ok(!('sandboxBlocksLoopback' in mode), `${key} should not declare the fullAuto-only limitation`);
     }
+  });
+});
+
+describe('launch-sequence status names the sandbox cause (#1836)', () => {
+  // A synthetic engine carrying the same declared shape as Codex's fullAuto,
+  // with no `capabilities.startupControl` — so the launch takes the plain
+  // tmux/legacy path (same as test/launch-sequence.test.js's own fixtures)
+  // and this test exercises `lib/launch-sequence.js`'s own integration
+  // (`_loopbackSandboxNote` -> `_statusBlock` -> `status()`) without needing
+  // Codex's native app-server machinery, already covered by
+  // test/startup-control-codex.test.js.
+  const ENGINE_ID = 'fake-sandboxed-engine';
+  let tmpDir;
+  let projectsDir;
+  let prevBase;
+
+  before(() => {
+    prevBase = store._getBasePath();
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-codex-loopback-'));
+    store.close();
+    store._setBasePath(tmpDir);
+    store.init();
+    projectsDir = path.join(tmpDir, 'projects');
+    fs.mkdirSync(projectsDir, { recursive: true });
+    const config = store.config.load();
+    config.projectsDir = projectsDir;
+    store.config.save(config);
+    store.engines.save({
+      id: ENGINE_ID,
+      name: 'Fake Sandboxed Engine',
+      command: 'fake-sandboxed-engine',
+      capabilities: { supportsPrimePrompt: true, launchSequence: { supported: true } },
+      launchModes: {
+        default: { label: 'Interactive', args: [] },
+        fullAuto: {
+          label: 'Full Auto',
+          args: [],
+          sandboxBlocksLoopback: true,
+          sandboxNote: 'test fixture: this mode denies loopback',
+          sandboxRemedy: 'test fixture: change the launch mode'
+        }
+      },
+      defaultLaunchMode: 'default'
+    });
+  });
+
+  after(() => {
+    store.close();
+    store._setBasePath(prevBase);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /**
+   * Launch a project with tmux and engine detection stubbed, same as
+   * test/launch-sequence.test.js's own `launch()` helper.
+   * @param {string} name - Project name
+   * @param {object} [launchOptions] - Passed through to `sessions.launchSession`
+   * @returns {object} The launch result
+   */
+  function launch(name, launchOptions = {}) {
+    const real = {
+      create: tmux.createSession, has: tmux.hasSession, kill: tmux.killSession, detect: enginesModule.detectEngine
+    };
+    tmux.createSession = () => true;
+    tmux.hasSession = () => false;
+    tmux.killSession = () => true;
+    enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/fake-sandboxed-engine' });
+    try {
+      return sessions.launchSession(name, launchOptions);
+    } finally {
+      tmux.createSession = real.create;
+      tmux.hasSession = real.has;
+      tmux.killSession = real.kill;
+      enginesModule.detectEngine = real.detect;
+    }
+  }
+
+  it('names the sandbox cause when an unread launch sits at cursor 0 on a sandbox-blocking mode', () => {
+    const name = 'codex-loopback-fullauto';
+    const dir = path.join(projectsDir, name);
+    fs.mkdirSync(dir, { recursive: true });
+    const project = store.projects.create({ name, path: dir, engine: ENGINE_ID });
+    const result = launch(name, { launchMode: 'fullAuto' });
+    assert.equal(result.error, null, result.error);
+
+    const sequence = store.launchSequences.getBySession(result.session.id);
+    assert.equal(sequence.cursor, 0, 'a fresh launch sits unread at cursor 0');
+
+    const shown = launchSequence.status({ launchId: sequence.launchId, projectId: project.id }).body;
+    assert.deepEqual(shown.status.sandboxNote, {
+      code: 'CODEX_SANDBOX_BLOCKS_LOOPBACK',
+      reason: 'test fixture: this mode denies loopback',
+      remedy: 'test fixture: change the launch mode'
+    });
+  });
+
+  it('is absent for the same engine in a mode that does not declare the limitation', () => {
+    const name = 'codex-loopback-default';
+    const dir = path.join(projectsDir, name);
+    fs.mkdirSync(dir, { recursive: true });
+    const project = store.projects.create({ name, path: dir, engine: ENGINE_ID });
+    const result = launch(name, { launchMode: 'default' });
+    assert.equal(result.error, null, result.error);
+
+    const sequence = store.launchSequences.getBySession(result.session.id);
+    assert.equal(sequence.cursor, 0);
+
+    const shown = launchSequence.status({ launchId: sequence.launchId, projectId: project.id }).body;
+    assert.ok(!('sandboxNote' in shown.status), 'no declaration for this mode, so no note');
+  });
+
+  it('is absent once the sequence has moved past cursor 0', () => {
+    const name = 'codex-loopback-advanced';
+    const dir = path.join(projectsDir, name);
+    fs.mkdirSync(dir, { recursive: true });
+    const project = store.projects.create({ name, path: dir, engine: ENGINE_ID });
+    const result = launch(name, { launchMode: 'fullAuto' });
+    assert.equal(result.error, null, result.error);
+
+    const sequence = store.launchSequences.getBySession(result.session.id);
+    // Advance the cursor directly, same as an ack would: cursor 0 is the
+    // literal "unread" state this diagnostic is for, not every early step.
+    store.launchSequences.transaction(() => {
+      store.getDb().prepare('UPDATE launch_sequences SET cursor = 1 WHERE id = ?').run(sequence.id);
+    });
+
+    const shown = launchSequence.status({ launchId: sequence.launchId, projectId: project.id }).body;
+    assert.ok(!('sandboxNote' in shown.status), 'only the unread, cursor-0 state gets the diagnostic');
   });
 });
