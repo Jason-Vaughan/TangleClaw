@@ -13,6 +13,8 @@ const projectConfigModule = require('../lib/project-config');
 const projects = require('../lib/projects');
 const engines = require('../lib/engines');
 const sessions = require('../lib/sessions');
+const startupDialog = require('../lib/startup-dialog');
+const tmux = require('../lib/tmux');
 
 describe('projects', () => {
   let tmpDir;
@@ -3932,6 +3934,193 @@ describe('projects', () => {
       assert.deepEqual(result.errors, []);
       assert.equal(result.project.silentPrime, false);
       assert.equal(fs.existsSync(primeFile), false, 'still absent — _removePrimeFile is non-throwing on missing');
+    });
+  });
+
+  describe('acceptFolderTrust (#2168, A85)', () => {
+    let trustDir;
+
+    before(() => {
+      trustDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-folder-trust-'));
+    });
+
+    after(() => {
+      fs.rmSync(trustDir, { recursive: true, force: true });
+    });
+
+    it('enrichProject exposes acceptFolderTrust: false by default (A85 — opt-in, not a global default)', async () => {
+      const projPath = path.join(trustDir, 'aft-default');
+      fs.mkdirSync(projPath, { recursive: true });
+      const registered = store.projects.create({ name: 'aft-default', path: projPath, engine: 'claude' });
+      const enriched = await projects.enrichProject(registered);
+      assert.equal(enriched.acceptFolderTrust, false);
+    });
+
+    it('enrichProject reflects acceptFolderTrust: true once set in projectConfig', async () => {
+      const projPath = path.join(trustDir, 'aft-on');
+      fs.mkdirSync(projPath, { recursive: true });
+      const registered = store.projects.create({ name: 'aft-on', path: projPath, engine: 'claude' });
+      const projConfig = projectConfigModule.load(projPath);
+      projConfig.acceptFolderTrust = true;
+      store.projectConfig.save(projPath, projConfig);
+      const enriched = await projects.enrichProject(registered);
+      assert.equal(enriched.acceptFolderTrust, true);
+    });
+
+    it('updateProject persists acceptFolderTrust=true, engine-agnostic (no capability gate at this layer)', async () => {
+      const projPath = path.join(trustDir, 'aft-update-on');
+      fs.mkdirSync(projPath, { recursive: true });
+      // An engine with no startup-dialog declaration at all — the point is
+      // that THIS layer (persisting the opt-in) never refuses on engine, only
+      // the launch path's own dialog/acceptKeys check does.
+      store.projects.create({ name: 'aft-update-on', path: projPath, engine: 'no-such-engine' });
+      const result = await projects.updateProject('aft-update-on', { acceptFolderTrust: true });
+      assert.deepEqual(result.errors, []);
+      assert.equal(result.project.acceptFolderTrust, true);
+      assert.equal(projectConfigModule.load(projPath).acceptFolderTrust, true);
+    });
+
+    it('updateProject persists acceptFolderTrust=false (clearing the opt-in)', async () => {
+      const projPath = path.join(trustDir, 'aft-update-off');
+      fs.mkdirSync(projPath, { recursive: true });
+      store.projects.create({ name: 'aft-update-off', path: projPath, engine: 'claude' });
+      const seed = projectConfigModule.load(projPath);
+      seed.acceptFolderTrust = true;
+      store.projectConfig.save(projPath, seed);
+
+      const result = await projects.updateProject('aft-update-off', { acceptFolderTrust: false });
+      assert.deepEqual(result.errors, []);
+      assert.equal(result.project.acceptFolderTrust, false);
+      assert.equal(projectConfigModule.load(projPath).acceptFolderTrust, false);
+    });
+
+    it('updateProject refuses a non-boolean value, writing nothing', async () => {
+      const projPath = path.join(trustDir, 'aft-refuse');
+      fs.mkdirSync(projPath, { recursive: true });
+      store.projects.create({ name: 'aft-refuse', path: projPath, engine: 'claude' });
+      const result = await projects.updateProject('aft-refuse', { acceptFolderTrust: 'yes' });
+      assert.equal(result.project, null);
+      assert.match(result.errors[0], /acceptFolderTrust must be a boolean/);
+      assert.equal(projectConfigModule.load(projPath).acceptFolderTrust, false, 'the default, untouched');
+    });
+  });
+
+  describe('_acceptsFolderTrust — the launch-path gate (#2168, A85)', () => {
+    const TRUST_REQUIRED = { code: 'trust_required', label: 'Trust folder', meaning: 'x', acceptKeys: ['Down', 'Enter'] };
+
+    it('accepts only when every condition holds: the dialog, non-empty acceptKeys, and the opt-in', () => {
+      assert.equal(sessions._acceptsFolderTrust(TRUST_REQUIRED, { acceptFolderTrust: true }), true);
+    });
+
+    it('refuses a dialog this project did not opt in to', () => {
+      assert.equal(sessions._acceptsFolderTrust(TRUST_REQUIRED, { acceptFolderTrust: false }), false);
+      assert.equal(sessions._acceptsFolderTrust(TRUST_REQUIRED, null), false);
+      assert.equal(sessions._acceptsFolderTrust(TRUST_REQUIRED, {}), false);
+    });
+
+    it('refuses any dialog other than trust_required, even opted in — A85 authorizes exactly one dialog', () => {
+      const other = { ...TRUST_REQUIRED, code: 'bypass_permissions_confirm' };
+      assert.equal(sessions._acceptsFolderTrust(other, { acceptFolderTrust: true }), false);
+    });
+
+    it('refuses when the engine declares the dialog with no acceptKeys, or an empty list — opted in or not', () => {
+      const noKeys = { code: 'trust_required', label: 'x', meaning: 'x' };
+      assert.equal(sessions._acceptsFolderTrust(noKeys, { acceptFolderTrust: true }), false);
+      const emptyKeys = { ...TRUST_REQUIRED, acceptKeys: [] };
+      assert.equal(sessions._acceptsFolderTrust(emptyKeys, { acceptFolderTrust: true }), false);
+    });
+
+    it('refuses a null/undefined dialog rather than throwing', () => {
+      assert.equal(sessions._acceptsFolderTrust(null, { acceptFolderTrust: true }), false);
+      assert.equal(sessions._acceptsFolderTrust(undefined, { acceptFolderTrust: true }), false);
+    });
+  });
+
+  describe('launchSession — folder-trust acceptance wiring (#2168, A85)', () => {
+    const TRUST_DIALOG = Object.freeze({
+      code: 'trust_required', label: 'Trust this folder?', meaning: 'x', acceptKeys: ['Down', 'Enter']
+    });
+
+    let realWatch;
+    let realSendRawKey;
+    let realDetectEngine;
+    let sentKeys;
+
+    beforeEach(() => {
+      realWatch = startupDialog.watch;
+      realSendRawKey = tmux.sendRawKey;
+      realDetectEngine = engines.detectEngine;
+      sentKeys = [];
+      engines.detectEngine = () => ({ available: true });
+      // Fires onDialog synchronously with the scripted trust dialog, same
+      // seam test/startup-dialog.test.js's own suite uses — the boot watch
+      // itself (reading a real pane for a real redraw) is not this car's to
+      // re-test; only what `_deferEngineInit` does once it is called is.
+      startupDialog.watch = async (args) => {
+        if (args.onDialog) args.onDialog(TRUST_DIALOG);
+        return { outcome: 'answered', meaning: 'x', dialog: TRUST_DIALOG, waitedMs: 1 };
+      };
+      tmux.sendRawKey = (session, key) => { sentKeys.push({ session, key }); };
+    });
+
+    afterEach(() => {
+      startupDialog.watch = realWatch;
+      tmux.sendRawKey = realSendRawKey;
+      engines.detectEngine = realDetectEngine;
+    });
+
+    /**
+     * Wait long enough for both staggered acceptKeys sends (0ms, 500ms) to
+     * have fired, with margin.
+     * @returns {Promise<void>}
+     */
+    const settleAcceptSends = () => new Promise((resolve) => setTimeout(resolve, 700));
+
+    it('sends the declared acceptKeys in order and logs a durable audit entry, when opted in', async () => {
+      const name = 'aft-launch-accept';
+      projects.createProject({ name, engine: 'claude' });
+      await projects.updateProject(name, { acceptFolderTrust: true });
+      let result;
+      try {
+        result = sessions.launchSession(name, {});
+        assert.equal(result.error, null, result.error);
+        await settleAcceptSends();
+
+        assert.deepEqual(sentKeys.map((k) => k.key), ['Down', 'Enter']);
+        assert.ok(sentKeys.every((k) => k.session === result.session.tmuxSession));
+
+        const logged = store.activity.query({ sessionId: result.session.id, eventType: sessions.FOLDER_TRUST_ACCEPTED_EVENT });
+        assert.equal(logged.length, 1);
+        assert.deepEqual(logged[0].detail, {
+          projectName: name, workDir: result.session.projectPath || store.projects.getByName(name).path,
+          dialogCode: 'trust_required', acceptFolderTrust: true
+        });
+      } finally {
+        if (result && result.session) sessions.killSession(name, 'test cleanup');
+      }
+    });
+
+    it('sends nothing and logs nothing when the project has not opted in', async () => {
+      const name = 'aft-launch-noopt';
+      projects.createProject({ name, engine: 'claude' });
+      // Explicit default: acceptFolderTrust is false unless set.
+      let result;
+      try {
+        result = sessions.launchSession(name, {});
+        assert.equal(result.error, null, result.error);
+        await settleAcceptSends();
+
+        assert.deepEqual(sentKeys, []);
+        assert.deepEqual(store.activity.query({ sessionId: result.session.id, eventType: sessions.FOLDER_TRUST_ACCEPTED_EVENT }), []);
+        // The dialog is still observed and recorded, same as before this car
+        // — opting out changes only whether it is answered. Checked via the
+        // pre-existing deferred-first-turn record rather than the live
+        // `launchBlocker` field, which the (unrelated, already-existing)
+        // "answered" handling clears right after `onDialog` either way.
+        assert.equal(store.activity.query({ sessionId: result.session.id, eventType: sessions.FIRST_TURN_DEFERRED_EVENT })[0].detail.code, 'trust_required');
+      } finally {
+        if (result && result.session) sessions.killSession(name, 'test cleanup');
+      }
     });
   });
 
