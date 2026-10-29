@@ -4856,6 +4856,83 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
     assert.equal(crashCause(session.id), undefined);
   });
 
+  describe('_deferredFirstTurnOwed (#2193, Addendum A483-R5)', () => {
+    const CLAUDE_PROFILE = { capabilities: { supportsPrimePrompt: true } };
+    const NO_PASTE_PROFILE = { capabilities: { supportsPrimePrompt: false } };
+
+    it('both owed: a real interactive launch with a sequence to read', () => {
+      assert.deepEqual(
+        sessions._deferredFirstTurnOwed({
+          primeText: 'hello', silentPrime: false, engineProfile: CLAUDE_PROFILE,
+          kickoffCtx: { hasSequence: true }, nativeStartup: false
+        }),
+        { pasteOwed: true, kickoffOwed: true }
+      );
+    });
+
+    it('a no-sequence legacy launch owes NO kickoff (Critic BLOCKING finding): !nativeStartup alone is not enough', () => {
+      // nativeStartup REQUIRES hasSequence, but not the reverse: a legacy
+      // (non-native) launch with no sequence to read is `nativeStartup: false`
+      // too. Testing only `!nativeStartup` misreads this shape as owing a
+      // kickoff `launchKickoff.kickoff()` itself would answer 'no-sequence'
+      // for, doing nothing -- exactly the false-positive Critic caught.
+      assert.deepEqual(
+        sessions._deferredFirstTurnOwed({
+          primeText: 'hello', silentPrime: false, engineProfile: CLAUDE_PROFILE,
+          kickoffCtx: { hasSequence: false }, nativeStartup: false
+        }),
+        { pasteOwed: true, kickoffOwed: false }
+      );
+    });
+
+    it('silent-prime or no-rules: paste not owed at all, kickoff still owed', () => {
+      assert.deepEqual(
+        sessions._deferredFirstTurnOwed({
+          primeText: 'hello', silentPrime: true, engineProfile: CLAUDE_PROFILE,
+          kickoffCtx: { hasSequence: true }, nativeStartup: false
+        }),
+        { pasteOwed: false, kickoffOwed: true }
+      );
+      assert.deepEqual(
+        sessions._deferredFirstTurnOwed({
+          primeText: null, silentPrime: false, engineProfile: CLAUDE_PROFILE,
+          kickoffCtx: { hasSequence: true }, nativeStartup: false
+        }),
+        { pasteOwed: false, kickoffOwed: true }
+      );
+    });
+
+    it('an engine with no prime channel at all: paste not owed, regardless of kickoff', () => {
+      assert.deepEqual(
+        sessions._deferredFirstTurnOwed({
+          primeText: 'hello', silentPrime: false, engineProfile: NO_PASTE_PROFILE,
+          kickoffCtx: { hasSequence: true }, nativeStartup: false
+        }),
+        { pasteOwed: false, kickoffOwed: true }
+      );
+    });
+
+    it('no kickoffCtx at all (a caller that is not launching a real session): neither owed regardless of the rest', () => {
+      assert.deepEqual(
+        sessions._deferredFirstTurnOwed({
+          primeText: 'hello', silentPrime: false, engineProfile: CLAUDE_PROFILE,
+          kickoffCtx: null, nativeStartup: false
+        }),
+        { pasteOwed: true, kickoffOwed: false }
+      );
+    });
+
+    it('a native-startup launch: kickoff withheld to the bootstrap, never owed here, even with a sequence', () => {
+      assert.deepEqual(
+        sessions._deferredFirstTurnOwed({
+          primeText: 'hello', silentPrime: false, engineProfile: CLAUDE_PROFILE,
+          kickoffCtx: { hasSequence: true }, nativeStartup: true
+        }),
+        { pasteOwed: true, kickoffOwed: false }
+      );
+    });
+  });
+
   describe('on a timer', () => {
     const realSetInterval = global.setInterval;
     const realClearInterval = global.clearInterval;
