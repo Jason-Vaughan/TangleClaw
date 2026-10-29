@@ -4721,16 +4721,28 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
   });
 
   /**
-   * A project with a live session, optionally carrying a stored blocker.
-   * @param {{blocker?: boolean}} [opts] - Whether to store a blocker
+   * A project with a live session, optionally carrying a stored blocker and
+   * the `FIRST_TURN_DEFERRED_EVENT` marker a real `_deferEngineInit` deferral
+   * would have left beside it (#2193).
+   * @param {{blocker?: boolean, deferred?: boolean}} [opts] - Whether to store a blocker,
+   *   and whether it carries the matching deferral marker (false models a LATER, unrelated
+   *   dialog `_reconcileLaunchBlocker` set after the first turn already delivered — PRR-B C1)
    * @returns {{project: object, session: object}}
    */
-  const live = ({ blocker = true } = {}) => {
+  const live = ({ blocker = true, deferred = true } = {}) => {
     counter += 1;
     const name = `sweep-proj-${counter}`;
     const project = store.projects.create({ name, path: path.join(base, name), engine: 'claude' });
     const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: `sweep-${counter}` });
-    if (blocker) store.sessions.setLaunchBlocker(session.id, BLOCKER);
+    if (blocker) {
+      const updated = store.sessions.setLaunchBlocker(session.id, BLOCKER);
+      if (deferred && updated && updated.launchBlocker) {
+        store.activity.log({
+          projectId: project.id, sessionId: session.id, eventType: sessions.FIRST_TURN_DEFERRED_EVENT,
+          detail: { code: updated.launchBlocker.code, observedAt: updated.launchBlocker.observedAt }
+        });
+      }
+    }
     return { project, session };
   };
   const crashCause = (sessionId) => {
@@ -4888,16 +4900,24 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
 
     it('the issue\'s own case: a restart-dropped first turn is recorded once, durably, before the first tick (#2193)', () => {
       const { project, session } = live();
-      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: 'launch.first_turn_dropped_on_restart' }), []);
+      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }), []);
       sessions.startLaunchBlockerSweep();
       assert.deepEqual(looks, [], 'the record reads the stored row, never the pane');
-      const events = store.activity.query({ sessionId: session.id, eventType: 'launch.first_turn_dropped_on_restart' });
+      const events = store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT });
       assert.equal(events.length, 1);
       assert.equal(events[0].projectId, project.id);
       assert.deepEqual(events[0].detail, {
         code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it in the pane.', engineId: 'claude',
         observedAt: store.sessions.get(session.id).launchBlocker.observedAt
       });
+      // Closes #2193 PRR-B C2: this also rides the delivery ledger
+      // GET /api/launch-sequences already reads (server.js), with no change
+      // to that route.
+      const delivered = store.sessionRuleDeliveries.listForSession(session.id);
+      assert.equal(delivered.length, 1);
+      assert.equal(delivered[0].channel, 'prime-paste');
+      assert.equal(delivered[0].outcome, 'skipped');
+      assert.match(delivered[0].skipReason, /restarted/);
       // The record does not stand in for the clearing sweep: the first tick
       // still reconciles the blocker against the pane exactly as before.
       armed[0].fn();
@@ -4907,23 +4927,48 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
     it('a session with no stored blocker is not flagged at start', () => {
       const { session } = live({ blocker: false });
       sessions.startLaunchBlockerSweep();
-      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: 'launch.first_turn_dropped_on_restart' }), []);
+      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }), []);
+    });
+
+    it('a later, unrelated dialog with no matching deferral marker is not flagged (PRR-B C1: already-delivered case)', () => {
+      // Models a session whose first turn delivered fine, long ago, and whose
+      // admission gate (`_refuseAtStartupDialog`) later set a brand new
+      // blocker for a dialog that reappeared well after — `deferred: false`
+      // stores the blocker with no FIRST_TURN_DEFERRED_EVENT marker beside it,
+      // exactly as that path does (it goes through `_reconcileLaunchBlocker`,
+      // never `_deferEngineInit`'s `onDialog`).
+      const { session } = live({ deferred: false });
+      sessions.startLaunchBlockerSweep();
+      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }), []);
+      assert.deepEqual(store.sessionRuleDeliveries.listForSession(session.id), [], 'no ledger row either -- nothing was owed');
+      // The blocker itself is untouched either way: this function only ever reads it.
+      assert.equal(store.sessions.get(session.id).launchBlocker.code, 'trust_required');
     });
 
     it('a second start, already running, does not re-flag', () => {
       const { session } = live();
       sessions.startLaunchBlockerSweep();
       sessions.startLaunchBlockerSweep();
-      assert.equal(store.activity.query({ sessionId: session.id, eventType: 'launch.first_turn_dropped_on_restart' }).length, 1);
+      assert.equal(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }).length, 1);
+    });
+
+    it('a dialog still standing across several restarts (before it is ever answered) is recorded once, not once per restart', () => {
+      const { session } = live();
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 }, 'restart 1');
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 0 }, 'restart 2: the ledger row from restart 1 already answers "owed?"');
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 0 }, 'restart 3');
+      assert.equal(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }).length, 1);
+      assert.equal(store.sessionRuleDeliveries.listForSession(session.id).length, 1);
     });
 
     it('reconcileDeferredFirstTurnsOnRestart is callable directly and counts what it flagged', () => {
       const { session: a } = live();
       const { session: b } = live();
       live({ blocker: false });
+      live({ deferred: false });
       assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 2 });
       for (const session of [a, b]) {
-        assert.equal(store.activity.query({ sessionId: session.id, eventType: 'launch.first_turn_dropped_on_restart' }).length, 1);
+        assert.equal(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }).length, 1);
       }
     });
 

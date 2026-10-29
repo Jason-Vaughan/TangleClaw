@@ -24,6 +24,7 @@ const store = require('../lib/store');
 const launchSequence = require('../lib/launch-sequence');
 const { createServer, _recoveryGateProbeFor } = require('../server');
 const recoveryDefault = require('../lib/recovery-default');
+const sessions = require('../lib/sessions');
 
 /**
  * One JSON request against the test server.
@@ -69,7 +70,6 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
     config.projectsDir = projectsDir;
     store.config.save(config);
 
-    const sessions = require('../lib/sessions');
     /**
      * Bind a sequence to a new session of a project, without starting a pane.
      * @param {object} proj - Project record
@@ -262,6 +262,27 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
     const theirs = await get(server, `/api/launch-sequences?projectId=${other.id}`);
     assert.deepEqual(theirs.body.sequences[0].pasteOutcome,
       { engineId: 'claude', outcome: 'delivered', detail: null });
+  });
+
+  // #2193: a restart-dropped first turn rides this SAME `rulesDelivery` field,
+  // end to end, with no change to this route -- `reconcileDeferredFirstTurnsOnRestart`
+  // (lib/sessions.js) writes the ledger row this panel already reads.
+  it('surfaces a restart-dropped first turn as this launch\'s rulesDelivery, with no route change (#2193)', async () => {
+    const dropped = bind(project);
+    const blocker = { code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it in the pane.', engineId: 'claude' };
+    const updated = store.sessions.setLaunchBlocker(dropped.session.id, blocker);
+    store.activity.log({
+      projectId: project.id, sessionId: dropped.session.id, eventType: sessions.FIRST_TURN_DEFERRED_EVENT,
+      detail: { code: updated.launchBlocker.code, observedAt: updated.launchBlocker.observedAt }
+    });
+    assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 });
+
+    const res = await get(server, `/api/launch-sequences?projectId=${project.id}`);
+    const byId = new Map(res.body.sequences.map((s) => [s.sequenceId, s]));
+    const row = byId.get(dropped.sequence.id).rulesDelivery;
+    assert.equal(row.outcome, 'skipped');
+    assert.equal(row.channel, 'prime-paste');
+    assert.match(row.skipReason, /restarted/);
   });
 
   it('carries the preflight CAUSE, not only its verdict word', async () => {
