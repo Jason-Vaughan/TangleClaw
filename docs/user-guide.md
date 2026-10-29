@@ -1384,12 +1384,19 @@ curl -s http://localhost:3100
 ### A New Session Sits at "Do You Trust This Folder?"
 
 The first time Claude Code opens a repository it asks whether to trust the folder. TangleClaw sees
-that dialog and types nothing into it, because its default option is "No, exit" and one Enter would
-end the session. The session status shows the blocker `trust_required` while it waits.
+that dialog and, by default, types nothing into it, because its default option is "No, exit" and
+one Enter would end the session. The session status shows the blocker `trust_required` while it waits.
 
-- Open the session and answer the dialog in the terminal. Choose "Yes, I trust this folder" only for
-  a folder whose contents you trust: accepting lets the folder's own hooks, MCP servers and
-  permission rules run. TangleClaw does not answer it for you.
+For a project folder you trust, open the project's **Settings** and turn on **Accept the folder-trust
+dialog at launch**. This is a per-project opt-in, off by default. On a later launch, TangleClaw
+answers only if the engine declares an answer and its own folder-trust dialog is positively visible
+in that live session. It checks again before each key, and records a completed acceptance in the
+project's activity log as `launch.folder_trust_accepted`. It does not write the engine's trust file
+directly. Other startup dialogs still need your answer. Use this setting only for a folder whose
+contents you trust: accepting lets its hooks, MCP servers and permission rules run.
+
+- With the setting off, open the session and answer the dialog in the terminal. Choose "Yes, I trust
+  this folder" only for a folder whose contents you trust.
 - If you answer within 15 minutes of the dialog appearing, the launch carries on by itself and
   sends its first turn. After that the session still works; type to start it.
 - Commands sent to the session through TangleClaw are refused with `trust_required` until the
@@ -1401,6 +1408,8 @@ end the session. The session status shows the blocker `trust_required` while it 
   nothing and the launch's first turn is recorded as withheld with `pane_not_at_prompt`. Answer
   the menu in the terminal, then type to start the session. The same happens if text was already
   typed at the prompt when the launch's first turn was due.
+- A later command or switchboard wake is also withheld with `pane_not_at_prompt` while a positively
+  identified selector row is selected. Answer or close the menu in the terminal before retrying.
 
 ### A Session Says Its Launch Is "NOT ISOLATED"
 

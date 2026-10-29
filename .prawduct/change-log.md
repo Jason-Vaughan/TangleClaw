@@ -41,6 +41,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-29 — v5.47.0 W3-REC: reconcile engine dialogs and sandbox records
+
+<!-- prawduct: type=internal | scope=v547-w3-rec -->
+
+- Reconciled the six issues in milestone #32. Wave 1 #1836, #2193, #2205 and #2221 shipped in the v5.46.1 release at `main@c94164b09555b2a3a05248e9a9a2798726c05269`; the release consumed their changelog fragments. Wave 2 #2219 and #2168 merged afterward at `main@cd09db009a7ac82ac2d7abc2f99896d7c6aaa63c` and `main@833b60b4c36413d79b8cff1722caf4de15f79fdc` respectively; their accepted fragments remain for the v5.47.0 release cut.
+- Updated the feature index and operator configuration and troubleshooting guidance for the per-project, default-off folder-trust opt-in and selector-row send refusal. The folder-trust activity event records only a fully sent acceptance. This records merged work; it does not claim a v5.47.0 tag, release, or production activation. The interactive browser check for #2168 remains deferred to the post-deploy live install under PM and Architect ruling A483-R8.
+
 ## 2026-10-29 — v5.46.1 W3-REL: prepare the stabilization release candidate
 
 <!-- prawduct: type=internal | scope=v5461-w3-rel -->
