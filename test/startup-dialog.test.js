@@ -3027,16 +3027,38 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
       assert.equal(startupDialog.classify(resolvedThenLive2, DIALOGS, WAKE, null).dialog.code, 'bypass_permissions_confirm');
     });
 
-    it('a valid dialog whose own markers sit far apart still confirms, with nothing composer-shaped between them (#2711 PRR-A C2)', () => {
+    it('a valid dialog whose own markers sit far apart still confirms, with nothing between them (#2711 PRR-A C2)', () => {
       // The documented contract (docs/configuration-reference.md) places no
-      // distance limit on a dialog's markers: "ALL must be on screen".
-      // C1's fix must not have replaced "far apart" with its own false
-      // positive -- only an actual composer box (`_lastComposerBoxRow`)
-      // draws the reset line, never mere row count.
+      // distance limit on a dialog's markers: "ALL must be on screen". With
+      // no competing candidate, a dialog's own internal span never enters
+      // into it at all (see _read's ranking comment).
       const filler = Array.from({ length: 20 }, (_, i) => ` body line ${i}`);
       const spreadTrust = [' Accessing workspace:', '', ' ❯ No, exit', ...filler, '   Yes, I trust this folder', ''];
-      assert.equal(classify(spreadTrust, null), 'dialog', 'both markers present, 20+ rows apart, no composer box between them');
+      assert.equal(classify(spreadTrust, null), 'dialog', 'both markers present, 20+ rows apart');
       assert.equal(startupDialog.classify(spreadTrust, DIALOGS, WAKE, null).dialog.code, 'trust_required');
+    });
+
+    it('a valid custom dialog shaped like the composer\'s own box still confirms (#2711 PRR-A C2, box-shaped regression)', () => {
+      // A divider-content-divider shape is not unique to the composer --
+      // any dialog's own body can draw one. Nothing in the ranking looks
+      // for this shape at all (unlike an earlier, reverted draft of this
+      // fix), so a lone declared candidate wins regardless of what its own
+      // body happens to look like.
+      const CUSTOM = [{ code: 'custom_dialog', label: 'a custom dialog', markers: ['Title', 'Continue'], meaning: 'test fixture' }];
+      const boxShaped = [' Title', BORDER, ' some body text', BORDER, ' Continue'];
+      const seen = startupDialog.classify(boxShaped, CUSTOM, WAKE, null);
+      assert.equal(seen.state, 'dialog');
+      assert.equal(seen.dialog.code, 'custom_dialog');
+    });
+
+    it('with no measured wake, a live bypass dialog still outranks a stale trust dialog sharing its marker (#2711 PRR-A C2, wake-null regression)', () => {
+      // prompt.last is always -1 with no wake (_promptRow cannot read a
+      // composer at all), so the ranking -- not a composer-reset point --
+      // is what has to prefer the live dialog here.
+      const resolvedThenLive = [...TRUST_DIALOG, ...FRESH, ...BYPASS_1];
+      const seen = startupDialog.classify(resolvedThenLive, DIALOGS, null, null);
+      assert.equal(seen.state, 'dialog');
+      assert.equal(seen.dialog.code, 'bypass_permissions_confirm', 'the live dialog, not the stale one sharing "No, exit"');
     });
 
     it('ordering: an answered menu left ABOVE a fresh composer is history, and the composer clears', () => {
