@@ -4045,6 +4045,7 @@ describe('projects', () => {
     let realCheck;
     let realSendRawKey;
     let realDetectEngine;
+    let realHasSession;
     let sentKeys;
 
     beforeEach(() => {
@@ -4052,8 +4053,26 @@ describe('projects', () => {
       realCheck = startupDialog.check;
       realSendRawKey = tmux.sendRawKey;
       realDetectEngine = engines.detectEngine;
+      realHasSession = tmux.hasSession;
       sentKeys = [];
       engines.detectEngine = () => ({ available: true });
+      // `stillOurs()` (inside `_deferEngineInit`) asks the REAL
+      // `tmux.hasSession`, same as `engines.detectEngine` is stubbed above
+      // for the same reason: this test's tmux pane runs whatever shell
+      // command the (stubbed-available, not actually installed) "claude"
+      // engine resolves to, which on a CI runner with no `claude` binary on
+      // PATH exits immediately (command not found), so the real pane closes
+      // within milliseconds — before even the first staggered key's 0ms
+      // `setTimeout` fires — and every send is wrongly withheld (PM's exact
+      // diagnosis of PR #2712's CI run 40915606769: passed on macOS, where
+      // `claude` is installed and the pane stays open, failed on Ubuntu CI).
+      // This describe block tests `_deferEngineInit`'s WIRING around the
+      // session/pane check, not whether a real shell command keeps a real
+      // pane alive, so the liveness half of `stillOurs()` is stubbed to
+      // always say "yes" — the DB row's own ACTIVE status (the other half,
+      // and the actual fix for PRR-B's original tmux-name-reuse finding)
+      // still decides the mid-sequence-kill tests below.
+      tmux.hasSession = () => true;
       // Fires onDialog synchronously with the scripted trust dialog, same
       // seam test/startup-dialog.test.js's own suite uses — the boot watch
       // itself (reading a real pane for a real redraw) is not this car's to
@@ -4080,6 +4099,7 @@ describe('projects', () => {
       startupDialog.check = realCheck;
       tmux.sendRawKey = realSendRawKey;
       engines.detectEngine = realDetectEngine;
+      tmux.hasSession = realHasSession;
     });
 
     /**
@@ -4236,6 +4256,7 @@ describe('projects', () => {
     let realCursorInfoSync;
     let realSendRawKey;
     let realDetectEngine;
+    let realHasSession;
     let sentKeys;
 
     beforeEach(() => {
@@ -4244,8 +4265,18 @@ describe('projects', () => {
       realCursorInfoSync = startupDialog._internal.cursorInfoSync;
       realSendRawKey = tmux.sendRawKey;
       realDetectEngine = engines.detectEngine;
+      realHasSession = tmux.hasSession;
       sentKeys = [];
       engines.detectEngine = () => ({ available: true });
+      // Same reason as the wiring describe block above: `stillOurs()` asks
+      // the REAL `tmux.hasSession`, and on a CI runner with no `claude`
+      // binary on PATH, the real pane's shell command exits immediately,
+      // closing the pane within milliseconds — before the first staggered
+      // key's 0ms `setTimeout` fires — and withholding every send (PM's
+      // diagnosis of PR #2712's CI run 40915606769). Stubbed to always say
+      // "yes"; this block's own point is the real dialog CLASSIFIER
+      // (`capturePaneSync`/`cursorInfoSync` above), not real pane liveness.
+      tmux.hasSession = () => true;
       // The dialog's own cursor is hidden (#2128 evidence) — null is the
       // real answer `tmux.cursorInfo` gives for this exact captured frame.
       startupDialog._internal.capturePane = async () => ({ lines: TRUST_DIALOG_PANE, alternateScreen: false, cursor: null });
@@ -4267,6 +4298,7 @@ describe('projects', () => {
       startupDialog._internal.cursorInfoSync = realCursorInfoSync;
       tmux.sendRawKey = realSendRawKey;
       engines.detectEngine = realDetectEngine;
+      tmux.hasSession = realHasSession;
     });
 
     it('detects the real dialog through the real boot watch and sends the real declared keys, when opted in', async () => {
