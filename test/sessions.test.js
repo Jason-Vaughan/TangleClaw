@@ -4860,32 +4860,23 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
     const CLAUDE_PROFILE = { capabilities: { supportsPrimePrompt: true } };
     const NO_PASTE_PROFILE = { capabilities: { supportsPrimePrompt: false } };
 
-    it('both owed: a real interactive launch with a sequence to read', () => {
+    it('an interactive-paste launch owes the paste, never a separate kickoff', () => {
+      // Mutually exclusive by construction, not just by convention here:
+      // `pasteOwed` requires `!silentPrime`, `kickoffOwed` requires
+      // `silentPrime` -- `launchKickoff.kickoff()` itself returns
+      // 'not-silent' immediately for a non-silent launch (PRR-B round 3,
+      // verified against lib/launch-kickoff.js), since the pasted prime is
+      // itself the first turn and there is nothing left to kick off.
       assert.deepEqual(
         sessions._deferredFirstTurnOwed({
           primeText: 'hello', silentPrime: false, engineProfile: CLAUDE_PROFILE,
           kickoffCtx: { hasSequence: true }, nativeStartup: false
         }),
-        { pasteOwed: true, kickoffOwed: true }
-      );
-    });
-
-    it('a no-sequence legacy launch owes NO kickoff (Critic BLOCKING finding): !nativeStartup alone is not enough', () => {
-      // nativeStartup REQUIRES hasSequence, but not the reverse: a legacy
-      // (non-native) launch with no sequence to read is `nativeStartup: false`
-      // too. Testing only `!nativeStartup` misreads this shape as owing a
-      // kickoff `launchKickoff.kickoff()` itself would answer 'no-sequence'
-      // for, doing nothing -- exactly the false-positive Critic caught.
-      assert.deepEqual(
-        sessions._deferredFirstTurnOwed({
-          primeText: 'hello', silentPrime: false, engineProfile: CLAUDE_PROFILE,
-          kickoffCtx: { hasSequence: false }, nativeStartup: false
-        }),
         { pasteOwed: true, kickoffOwed: false }
       );
     });
 
-    it('silent-prime or no-rules: paste not owed at all, kickoff still owed', () => {
+    it('a silent-prime launch with a sequence owes the kickoff, never the paste', () => {
       assert.deepEqual(
         sessions._deferredFirstTurnOwed({
           primeText: 'hello', silentPrime: true, engineProfile: CLAUDE_PROFILE,
@@ -4893,12 +4884,30 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
         }),
         { pasteOwed: false, kickoffOwed: true }
       );
+    });
+
+    it('a no-sequence SILENT launch owes no kickoff either (Critic BLOCKING finding): !nativeStartup alone is not enough', () => {
+      // nativeStartup REQUIRES hasSequence, but not the reverse: a legacy
+      // (non-native) launch with no sequence to read is `nativeStartup: false`
+      // too. Testing only `!nativeStartup` misreads this shape as owing a
+      // kickoff `launchKickoff.kickoff()` itself would answer 'no-sequence'
+      // for, doing nothing -- exactly the false-positive Critic caught.
+      assert.deepEqual(
+        sessions._deferredFirstTurnOwed({
+          primeText: 'hello', silentPrime: true, engineProfile: CLAUDE_PROFILE,
+          kickoffCtx: { hasSequence: false }, nativeStartup: false
+        }),
+        { pasteOwed: false, kickoffOwed: false }
+      );
+    });
+
+    it('no primeText (no-rules): paste not owed, whatever silentPrime/kickoff say', () => {
       assert.deepEqual(
         sessions._deferredFirstTurnOwed({
           primeText: null, silentPrime: false, engineProfile: CLAUDE_PROFILE,
           kickoffCtx: { hasSequence: true }, nativeStartup: false
         }),
-        { pasteOwed: false, kickoffOwed: true }
+        { pasteOwed: false, kickoffOwed: false }
       );
     });
 
@@ -4908,7 +4917,7 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
           primeText: 'hello', silentPrime: false, engineProfile: NO_PASTE_PROFILE,
           kickoffCtx: { hasSequence: true }, nativeStartup: false
         }),
-        { pasteOwed: false, kickoffOwed: true }
+        { pasteOwed: false, kickoffOwed: false }
       );
     });
 
@@ -4922,13 +4931,13 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
       );
     });
 
-    it('a native-startup launch: kickoff withheld to the bootstrap, never owed here, even with a sequence', () => {
+    it('a native-startup launch: kickoff withheld to the bootstrap, never owed here, even silent with a sequence', () => {
       assert.deepEqual(
         sessions._deferredFirstTurnOwed({
-          primeText: 'hello', silentPrime: false, engineProfile: CLAUDE_PROFILE,
+          primeText: 'hello', silentPrime: true, engineProfile: CLAUDE_PROFILE,
           kickoffCtx: { hasSequence: true }, nativeStartup: true
         }),
-        { pasteOwed: true, kickoffOwed: false }
+        { pasteOwed: false, kickoffOwed: false }
       );
     });
   });
@@ -5031,33 +5040,52 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
       assert.equal(dropped.length, 1);
     });
 
-    it('ordinary carrier, a channel-matching row exists for some other reason: the drop still fires (A483-R5: unconditional), but the ledger write is not duplicated', () => {
-      // A blocker whose marker still matches (unlike the "later, unrelated
-      // dialog" case below) is, by construction, never reachable behind a
-      // GENUINE prior success: a real 'delivered'/'written' outcome is only
-      // ever written after `clearLaunchBlocker` runs (the 'answered' branch
-      // in `_deferEngineInit`'s `.then()`), so this row -- however it got
-      // here -- is not this watch's own prior resolution. A483-R5 records
-      // the drop unconditionally for every owed launch; this only confirms
-      // the ledger write itself still does not duplicate an existing row.
+    it('ordinary carrier: a paste that genuinely SUCCEEDED despite a failed blocker-clear is not reported as dropped (PRR-B round 3)', () => {
+      // Reachable, verified: `_deferEngineInit`'s `.then()` calls `run()` --
+      // the actual paste attempt -- even when `clearLaunchBlocker` THREW and
+      // left the blocker stored (the catch there only logs). A genuinely
+      // delivered paste can therefore leave a real row on this channel
+      // beside a blocker that still matches this marker.
       const { project, session } = live({ carrier: 'rules' });
       store.sessionRuleDeliveries.record({
         sessionId: session.id, projectId: project.id, engineId: 'claude', channel: 'prime-paste', outcome: 'delivered'
       });
-      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 });
-      assert.equal(store.sessionRuleDeliveries.listForSession(session.id).length, 1, 'not duplicated');
-      assert.equal(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }).length, 1);
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 0 });
+      assert.equal(store.sessionRuleDeliveries.listForSession(session.id).length, 1, 'untouched -- not overwritten or duplicated');
+      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }), []);
     });
 
-    it('pull-pointer carrier, a matching event exists for some other reason: the drop still fires, but the ledger write is not duplicated', () => {
+    it('pull-pointer carrier: a paste that genuinely SUCCEEDED despite a failed blocker-clear is not reported as dropped (PRR-B round 3)', () => {
       const { project, session } = live({ carrier: 'pointer' });
       store.activity.log({
         projectId: project.id, sessionId: session.id, eventType: sessions.POINTER_PASTE_OUTCOME_EVENT,
         detail: { engineId: 'claude', outcome: 'delivered', detail: null }
       });
-      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 0 });
       assert.equal(store.activity.query({ sessionId: session.id, eventType: sessions.POINTER_PASTE_OUTCOME_EVENT }).length, 1,
-        'not duplicated');
+        'untouched -- not duplicated');
+      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }), []);
+    });
+
+    it('a paste that was genuinely SKIPPED for an unrelated reason (not by this restart) also counts as resolved: no re-flag', () => {
+      // "resolved" means ANY outcome on this watch's own channel, not only
+      // 'delivered' -- a prior skip is just as much a real answer to "did
+      // this watch's paste attempt conclude" as a success is.
+      const { project, session } = live({ carrier: 'rules' });
+      store.sessionRuleDeliveries.record({
+        sessionId: session.id, projectId: project.id, engineId: 'claude',
+        channel: 'prime-paste', outcome: 'skipped', skipReason: 'an unrelated withhold reason'
+      });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 0 });
+    });
+
+    it('a paste genuinely resolved, but kickoffOwed is ALSO true: still flagged, for the kickoff -- no duplicate ledger write for the paste', () => {
+      const { project, session } = live({ carrier: 'rules', kickoffOwed: true });
+      store.sessionRuleDeliveries.record({
+        sessionId: session.id, projectId: project.id, engineId: 'claude', channel: 'prime-paste', outcome: 'delivered'
+      });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 }, 'the kickoff has no ledger to resolve against, so it is still taken at face value');
+      assert.equal(store.sessionRuleDeliveries.listForSession(session.id).length, 1, 'the resolved paste row is not touched again');
       assert.equal(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }).length, 1);
     });
 
