@@ -842,8 +842,8 @@
               <td>~5.0m</td>
               <td>~15.0m</td>
               <td><strong>~20.0m</strong></td>
-              <td>4-Gate Release Verification (<code>PRR-B</code> + <code>Tests CI 40866329460</code> + <code>Arc R-Gate</code> + <code>Obsr O-Gate O482-V5461-PASS</code>)</td>
-              <td>Head <code>1e29ed91fbcd</code> on Base <code>980d53bbe2ad</code></td>
+              <td>4-Gate Release Verification (<code>PRR-B</code> + <code>Tests CI 40917741908</code> + <code>Arc R-Gate</code> + <code>Obsr O-Gate O482-V5461-PR2708-04DE03FD-ACCEPT</code>)</td>
+              <td>Head <code>04de03fde29e</code> on Base <code>003f43ae3e8b</code></td>
             </tr>
           </tbody>
         </table>
@@ -1261,22 +1261,22 @@
         </div>
 
         <!-- Card 5: W3-REL -->
-        <div class="wave-card" data-tags="w3 suite authority sol">
+        <div class="wave-card" data-tags="w3 suite authority sol addendum">
           <div class="wave-card-header">
             <div>
-              <span class="badge badge-green">Wave 3 · PR #2708 Candidate Ready (O-Gate PASS)</span>
+              <span class="badge badge-green">Wave 3 · PR #2708 Candidate Ready (O-Gate ACCEPT @ 04de03fd)</span>
               <h3>W3-REL · PR #2708 — Release v5.46.1 Candidate Preparation &amp; Full Local Suite Proof on <code>main</code></h3>
             </div>
             <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
               <div>Lane: <code>TC-Lane-INT</code> + <code>TC-Lane-Obsr</code></div>
-              <div>Head: <code>1e29ed91</code> on Base: <code>980d53bb</code></div>
+              <div>Head: <code>04de03fd</code> on Base: <code>003f43ae</code></div>
             </div>
           </div>
           <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
-            Compiles and removes the 6 accepted Wave 1 <code>changelog.d/*.md</code> fragments into <code>CHANGELOG.md</code> (with the corrected <code>#2699</code> release note matching <code>W2-REC #2707</code>), bumps <code>version.json</code> to <code>5.46.1</code>, updates clone pins in <code>README.md</code>, extends <code>test/fixtures/changelog-released-sections.lock.json</code>, records the three pending finish lines in <code>docs/releases/v5.46.1-status.md</code> and <code>.prawduct/change-log.md</code>, verifies 100% green local <code>node scripts/test-stage.js</code> (<code>Stages 1–5</code>: Stage 4 <code>5,650/5,650</code>, Stage 5 <code>12,147/12,148</code> pass) on clean <code>main</code>, and publishes the validated 8-section interactive Sprint Report (<code>validate-sprint-report.py --all</code> 0 errors across all 14 releases). No tag, GitHub Release, or live deploy is claimed prior to authorized merge and workflow completion.
+            Initially prepared at <code>1e29ed91fbcd</code> on W2-merged <code>main @ 980d53bb</code> (6 fragments), and following the Operator’s direct release-cut authorization after <code>v5.47.0</code> Wave 1 merged to <code>main @ 003f43ae</code>, updated at <code>04de03fde29e1fc43f45c99a0fe9c3dabdae170f</code> under signed <strong>Addendum <code>A482-R10 / A483-R10</code></strong> (resolving <code>TC-Lane-Obsr</code>’s <code>O482-V5461-PR2708-2795363D-HOLD</code>) to compile and remove all 10 <code>changelog.d/*.md</code> fragments on <code>main</code> (the 6 <code>v5.46.1</code> stabilization fragments <code>#2688, #2691, #2696, #2697, #2698, #2699</code> plus the 4 merged <code>v5.47.0</code> Wave 1 fragments <code>#1836, #2193, #2205, #2221</code>) into <code>CHANGELOG.md</code> so <code>node scripts/release-prepare.js</code> exits <code>0</code> (lock <code>f19051dd6309a865</code>), bumps <code>version.json</code> to <code>5.46.1</code>, updates clone pins in <code>README.md</code>, extends <code>test/fixtures/changelog-released-sections.lock.json</code>, and records all 10 shipped changes plus the three pending finish lines in <code>docs/releases/v5.46.1-status.md</code> and <code>.prawduct/change-log.md</code>. No tag, GitHub Release, or live deploy is claimed prior to authorized merge and workflow completion.
           </p>
           <div style="font-size:0.78rem;color:var(--text-dim);">
-            <strong>Stats:</strong> 12 files (<code>+127 / -75</code> LOC · 6 fragments consumed) · <strong>Gates:</strong> <code>PRR-B</code> + <code>Tests CI 40866329460 SUCCESS</code> + <code>Arc R-Gate</code> + <code>Obsr O-Gate</code> (<code>O482-V5461-PASS</code> on exact head <code>1e29ed91fbcd204c5a313ca14295e972feb5e04b</code>).
+            <strong>Stats:</strong> 16 files (<code>+163 / -107</code> LOC · 10 fragments consumed under <code>A482-R10 / A483-R10</code>) · <strong>Gates:</strong> <code>PRR-B</code> + <code>Tests CI 40917741908 SUCCESS</code> + <code>Arc R-Gate</code> + <code>Obsr O-Gate</code> (<code>O482-V5461-PR2708-04DE03FD-ACCEPT</code>).
           </div>
         </div>
       </div>
