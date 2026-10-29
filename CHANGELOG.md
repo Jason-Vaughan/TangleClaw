@@ -4,6 +4,91 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.46.1] - 2026-10-29
+
+### Fixed
+- The ttyd watcher's PTY-pool reader now falls back to `/usr/sbin/sysctl`
+  when the bare `sysctl` is not on PATH, instead of failing the read outright
+  — `sysctl` lives under `/usr/sbin`, which a non-login shell's PATH does not
+  always carry the way it carries `ps`/`launchctl`/`sh` (#2697).
+- A group join keeps the new member but skips its release-owner auto-claim when the ownership
+  lookup cannot be verified. A release-capable project-setting write (`releaseMode` or
+  `versionBumpEnabled`) refuses an unverified lookup or another project's ownership of a joined
+  group; the same project may claim authority in multiple vacant groups (#2699).
+- The Settings modal's group-ownership hint now points at a conflicting (different-project-owned)
+  group rather than a group the project owns itself, and the group modal no longer shows a
+  refreshed owner after it has closed or switched to a different group mid-request (#2699).
+
+### Internal
+- Reclassified 5 test files from the Medium tier to Large in `test/tiers.json`
+  (`test/with-scratch-server.test.js`, `test/system-health.test.js`,
+  `test/api-permissions.test.js`, `test/openclaw-routes.test.js`,
+  `test/session-rules-channel.test.js`) — each reaches `child_process` through
+  code the static classifier cannot see, which the Medium tier's spawn/exec
+  guard correctly refused. `node scripts/test-stage.js 4` is now green (#2688).
+- `scripts/test-stage.js`'s Large tier (Stage 5) now runs under a
+  `--test-timeout` of its own, so a genuinely stuck file is cancelled and
+  named instead of blocking the whole stage indefinitely with no recovery.
+  The originally-reported hang in `test/soak-guest.test.js` turned out not
+  to be infinite: measured alone end to end before any further fix, it
+  passed cleanly (208/208) in ~804s — slow, not stuck.
+- Fixed two real causes of that slowness, plus two correctness bugs found
+  while fixing them, all in `deploy/soak/guest/guest-setup.sh`'s `bounded()`
+  watchdog and `test/soak-guest.test.js`:
+  - **Correctness bug 1 (exit-code race):** `bounded()`'s cleanup killed a
+    hung command's children before killing the command's own process. For a
+    fake command whose hang is a plain foreground `sleep` inside its own
+    script (every HANG-simulating test fixture), killing that child first
+    let the fake's shell resume past the now-dead `sleep` and exit on its
+    own — racing the subsequent kill of the parent, and intermittently
+    reporting the fake's own exit code instead of the timeout's 124.
+  - **Correctness bug 2 (orphan leak):** killing the parent FIRST (the
+    naive fix for bug 1) traded one race for another: the kernel reparents
+    a still-living child to PID 1 the instant its parent dies, so a
+    `pkill -P` even one line later has already lost it — a leaked `sleep`
+    per hung probe, confirmed accumulating across test runs. Fixed by
+    freezing the command (`SIGSTOP`) first, capturing its children while it
+    cannot exit, resume or reparent anything, then killing the command and
+    every captured child together in one command — nothing alive at any
+    point to race or outrun. A dedicated regression
+    (`test/soak-guest.test.js`, "leaves no orphaned process behind...")
+    records a hung probe's own child pid to a file and asserts it is
+    actually gone (`ESRCH`) after `bounded()`'s cleanup; reverting the fix
+    locally reproduces the leak and fails it.
+  - **Slowness #1:** the same watchdog deferred its own cleanup for the
+    full probe timeout when the probed command exited quickly on its own —
+    a bash signal-delivery quirk where a subshell blocked in `wait` for a
+    foreground child does not act on a received signal until that wait
+    returns. Fixed by backgrounding the watchdog's own sleep with a TERM
+    trap instead of a foreground one with a deferred signal.
+  - **Slowness #2:** `test/soak-guest.test.js` created dozens of brand-new
+    executable fake-command files per test, each paying a real macOS
+    Gatekeeper/syspolicyd first-execve scan (measured: ~230ms for a fresh
+    executable inode vs. ~10ms reusing an already-scanned one). Fixed by
+    symlinking every fake command to one shared, already-scanned dispatcher
+    that dot-sources (`.`, a `read()`, never an `execve()`) the real
+    per-command logic from a sibling file.
+
+  Re-measured end to end after every fix: 208/208 (now 209/209 with the new
+  regression) pass in ~270s (down from ~804s before any fix, ~3x faster),
+  with both correctness bugs verified gone. The Large-tier timeout is set
+  with real margin above that measurement but is not yet calibrated against
+  a full Stage 5 run under real host contention (#2691).
+- `test/setup-wizard.test.js`'s "no engine installed" fixtures now suppress
+  `store.engines.syncBundled()` for their duration, so the automatic PATH
+  re-probe inside `engines.refreshDetectionPath()` (#737) can no longer
+  re-seed the bundled `claude`/`codex` profiles into the directory they just
+  emptied — fixes 3 subtests that failed on any host with those CLIs on PATH
+  (#2696).
+- Removed concurrency-load flakiness from the `release-certification` host-publish
+  and soak-driver test suites: the host-publish test now builds its bare git
+  repos from a once-initialized template instead of shelling out to
+  `git init --bare` per subtest, and the soak-driver test's concurrent-reclaim
+  case stubs liveness so only the lock's initial placeholder pid reads as dead
+  (any other pid, including a real contender's own OS pid after it reclaims,
+  still reads as alive) instead of trusting a just-exited process's pid, which
+  could be reused under heavy subprocess churn (#2698).
+
 ## [5.46.0] - 2026-10-28
 
 ### Added

@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-29 — v5.46.1 W3-REL: prepare the stabilization release candidate
+
+<!-- prawduct: type=internal | scope=v5461-w3-rel -->
+
+- Prepared v5.46.1 from W2-merged `main@980d53bbe2ad1c56964adde30ce23f67e7622a36`: promoted all six accepted stabilization fragments into the dated `[5.46.1]` changelog section, removed the consumed fragments, and changed `version.json` from 5.46.0 to 5.46.1.
+- Ran `scripts/release-prepare.js` to update the README clone pins and extend the released-section lock. Recorded the three pending finish lines in `docs/releases/v5.46.1-status.md`. The corrected #2699 release note distinguishes retained group membership from skipped auto-claim on an unverified lookup and allows one project to own multiple vacant groups.
+- This is release preparation; no tag, GitHub Release, production update, or activation is claimed.
+
 ## 2026-10-29 — v5.46.1 W2-REC: reconcile the six stabilization issues
 
 <!-- prawduct: type=internal | scope=v5461-w2-rec -->
