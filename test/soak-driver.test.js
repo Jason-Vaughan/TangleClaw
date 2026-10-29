@@ -924,13 +924,14 @@ describe('soak driver — the log lock and header', () => {
 
   it('lets exactly one of many concurrent processes reclaim a stale lock: never two holders at once', async () => {
     const { spawn } = require('node:child_process');
-    // A pid that is certainly dead: a fixed sentinel outside any real pid
-    // range (the same one the single-reclaimer test above uses), not a just-
-    // exited process's pid. Under full-suite concurrency load, the rest of
-    // the suite forks and reaps processes constantly, so a real exited pid
-    // can be reused by an unrelated process before the contenders below get
-    // to check it, turning "certainly dead" into a race (#2698).
-    const dead = 999999;
+    // A placeholder pid: liveness is stubbed below (`isAlive: () => false`),
+    // never checked against the real OS, so no pid value — not a just-exited
+    // process's (reusable under concurrent load, #2698) and not a fixed
+    // sentinel (Linux pid_max commonly exceeds 999999, so a real process
+    // could hold it) — makes this test depend on the host's actual pid
+    // space. Real concurrent contention still comes from the 8 processes
+    // racing for the genuine filesystem reclaim mutex below.
+    const dead = 1;
     fs.writeFileSync(`${logPath}.lock`, JSON.stringify({ pid: dead, host: os.hostname() }));
     const child = `
       const driver = require(${JSON.stringify(path.join(__dirname, '..', 'lib', 'soak', 'driver.js'))});
@@ -938,7 +939,7 @@ describe('soak driver — the log lock and header', () => {
         // Every contender waits here after finding the lock stale, so they
         // all reach the reclaim together: the window a naive reclaim loses in.
         const hold = () => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
-        const lock = driver.acquireLogLock(${JSON.stringify(logPath)}, { afterStaleCheck: hold });
+        const lock = driver.acquireLogLock(${JSON.stringify(logPath)}, { afterStaleCheck: hold, isAlive: () => false });
         const t0 = Date.now();
         setTimeout(() => { const t1 = Date.now(); lock.release(); console.log(JSON.stringify({ won: true, t0, t1, reclaimed: lock.reclaimed !== null })); }, 1500);
       } catch (err) {
