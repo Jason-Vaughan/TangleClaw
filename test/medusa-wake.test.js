@@ -1448,6 +1448,124 @@ describe('medusa-wake — a not-accepted receipt immediately asks the watchdog t
   });
 });
 
+describe('medusa-wake — a scan requested inside the observation gap is booked, not dropped (#2716)', () => {
+  // PRR-A/PM found that the fix above was inert in the exact case it exists
+  // for: `requestScan('wake-rearmed')` fires ~1.2s after the nudge's own pane
+  // read stamped `lastPaneAnswerAt`, so `_promptLook`'s own gate
+  // (`_mayLookNow`) silently dropped it every time, and the re-armed wake
+  // still waited for a periodic tick regardless. This exercises the REAL
+  // `requestScan` -> `_promptLook` -> `_bookFollowUp` chain end to end, with
+  // a fake clock and fake timers, rather than mocking any of it away.
+  let saved;
+  let clock;
+  let timers;
+
+  beforeEach(() => {
+    wake.stop();
+    saved = { ...wake._internal };
+    clock = 1_000_000;
+    timers = [];
+    wake._internal.now = () => clock;
+    wake._internal.clock = () => clock;
+    wake._internal.setTimer = (fn, ms) => { const t = { fn, dueAt: clock + ms }; timers.push(t); return t; };
+    wake._internal.clearTimer = (t) => { timers = timers.filter((x) => x !== t); };
+    // Deterministic: run the deferred "next turn" immediately rather than via a real setImmediate.
+    wake._internal.defer = (fn) => fn();
+  });
+  afterEach(() => { Object.assign(wake._internal, saved); wake.stop(); });
+
+  /** Fire every timer whose booked due time the fake clock has now reached. */
+  function fireDueTimers() {
+    const due = timers.filter((t) => t.dueAt <= clock);
+    timers = timers.filter((t) => t.dueAt > clock);
+    for (const t of due) t.fn();
+  }
+
+  /**
+   * Drive the debounce and the nudge through the REAL async path (the one
+   * the periodic timer actually uses — `start()` ticks with `{async: true}`)
+   * rather than the synchronous `capturePane` path `tick()` alone exercises
+   * elsewhere in this file. `lastPaneAnswerAt` (what `_mayLookNow`'s
+   * observation-gap check reads) is set only when an async read's answer is
+   * judged (`_onPaneRead` -> `_judgeSession({prefetched})`), never by a bare
+   * sync tick, so this is the only way to reach the real failure mode.
+   * Ticks until the nudge lands (bounded, so a real regression here fails
+   * loudly instead of looping forever) rather than assuming the async path's
+   * debounce needs exactly as many cycles as the synchronous one.
+   * @param {object} world - From `installWorld`.
+   * @returns {Promise<void>}
+   */
+  async function tickAsyncUntilNudged(world) {
+    for (let i = 0; i < wake.IDLE_TICKS_REQUIRED + 2 && world.injected.length === 0; i++) {
+      // Each observation must be spaced out past MIN_OBSERVATION_GAP_MS, or
+      // it resets the debounce streak instead of extending it (the exact
+      // mechanism #2716 is about) -- real ticks are seconds apart, well past
+      // the gap, which a frozen fake clock between manual ticks is not.
+      if (i > 0) clock += wake.MIN_OBSERVATION_GAP_MS + 1000;
+      wake._internal.tick({ async: true });
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.equal(world.injected.length, 1, 'the nudge went out');
+  }
+
+  it('REAL: a request ~1.2s after the nudge\'s own pane read books a follow-up instead of being silently dropped, and the follow-up actually looks before any periodic tick runs again', async () => {
+    // `requestScan` is a no-op unless the monitor is "running"; a huge
+    // interval means the real setInterval it schedules never fires within
+    // this test.
+    wake.start({ intervalMs: 3600 * 1000 });
+    const reads = [];
+    const world = installWorld();
+    wake._internal.readPaneAsync = (tmuxSession) => {
+      reads.push(tmuxSession);
+      return Promise.resolve({ cap: { lines: world.pane, alternateScreen: false }, cursor: null });
+    };
+    // Same mail edge as the first nudge, but the watchdog has re-armed it --
+    // exactly what the real `rearmWorkspace` sets durably, and exactly what
+    // lets `_judgeSession` run every gate again (including a fresh pane
+    // read) for an edge it already nudged, instead of treating it as
+    // already handled and reusing the cached verdict with no new read.
+    wake._internal.rearmDue = () => true;
+
+    // Debounce, then the nudge: the nudge tick's own async pane read, once
+    // judged, stamps `lastPaneAnswerAt` at the current fake clock.
+    await tickAsyncUntilNudged(world);
+    const readsAfterNudge = reads.length;
+    assert.ok(readsAfterNudge >= 1, 'via the async path, which is what stamps lastPaneAnswerAt');
+
+    // ~1.2s later, same as the real not-accepted receipt timing: the
+    // immediate re-arm asks for a scan.
+    clock += 1200;
+    wake.requestScan(1, 'wake-rearmed');
+    assert.equal(reads.length, readsAfterNudge, 'still inside MIN_OBSERVATION_GAP_MS: no SECOND look fires synchronously');
+    assert.equal(timers.length, 1, 'a follow-up is booked instead of the request being dropped outright');
+
+    // The booked follow-up fires at the earliest safe time -- strictly
+    // before a periodic tick is ever run again in this test, so whatever
+    // looked again, it was the follow-up and nothing else.
+    clock += wake.MIN_OBSERVATION_GAP_MS;
+    fireDueTimers();
+    assert.equal(reads.length, readsAfterNudge + 1, 'the follow-up itself looked, without waiting for a periodic tick');
+    assert.equal(reads[reads.length - 1], world.sessions[0].tmuxSession);
+  });
+
+  it('control: a request OUTSIDE the gap still looks immediately, same as before (#2716 only changes the dropped case)', async () => {
+    wake.start({ intervalMs: 3600 * 1000 });
+    const reads = [];
+    const world = installWorld();
+    wake._internal.readPaneAsync = (tmuxSession) => {
+      reads.push(tmuxSession);
+      return Promise.resolve({ cap: { lines: world.pane, alternateScreen: false }, cursor: null });
+    };
+    wake._internal.rearmDue = () => true;
+    await tickAsyncUntilNudged(world);
+    const readsAfterNudge = reads.length;
+    clock += wake.MIN_OBSERVATION_GAP_MS + 1;
+    wake.requestScan(1, 'wake-rearmed');
+    assert.equal(reads.length, readsAfterNudge + 1, 'outside the gap, the request is looked at immediately, with no follow-up needed');
+    assert.equal(timers.length, 0, 'nothing was booked: there was nothing to recover');
+  });
+});
+
 describe('medusa-wake — gates (each one blocks alone)', () => {
   let saved;
   beforeEach(() => { wake.stop(); saved = { ...wake._internal }; });
