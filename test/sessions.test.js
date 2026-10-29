@@ -5108,6 +5108,45 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
       assert.equal(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }).length, 1);
     });
 
+    it('a kickoff that genuinely SENT despite a failed blocker-clear is not reported as dropped (PRR-B round 4)', () => {
+      // Same race as the paste's, for the kickoff: `injectCommand`
+      // (`launchSend: true`) is withheld by the stored blocker exactly like
+      // the paste is, so a blocker whose clear write threw can equally sit
+      // beside a kickoff that genuinely sent -- recorded, durably, by
+      // `launchKickoff.kickoff()`'s own `'launch.kickoff'` activity entry.
+      const { session } = live({ carrier: 'rules', pasteOwed: false, kickoffOwed: true });
+      store.activity.log({
+        projectId: store.sessions.get(session.id).projectId, sessionId: session.id,
+        eventType: 'launch.kickoff', detail: { observed: 'sent' }
+      });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 0 });
+      assert.equal(store.activity.query({ sessionId: session.id, eventType: 'launch.kickoff' }).length, 1, 'untouched -- not duplicated');
+      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }), []);
+    });
+
+    it('a kickoff genuinely sent, but the PASTE is still owed and unresolved: still flagged, for the paste -- the kickoff receipt is not touched', () => {
+      const { project, session } = live({ carrier: 'rules', pasteOwed: true, kickoffOwed: true });
+      store.activity.log({
+        projectId: project.id, sessionId: session.id, eventType: 'launch.kickoff', detail: { observed: 'sent' }
+      });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 }, 'the paste has no resolution yet, so it is still owed');
+      assert.equal(store.sessionRuleDeliveries.listForSession(session.id).length, 1);
+      assert.equal(store.sessionRuleDeliveries.listForSession(session.id)[0].channel, 'prime-paste');
+      assert.equal(store.activity.query({ sessionId: session.id, eventType: 'launch.kickoff' }).length, 1, 'the kickoff receipt is not touched');
+    });
+
+    it('both channels genuinely resolved despite the stored blocker never clearing: not flagged at all', () => {
+      const { project, session } = live({ carrier: 'rules', pasteOwed: true, kickoffOwed: true });
+      store.sessionRuleDeliveries.record({
+        sessionId: session.id, projectId: project.id, engineId: 'claude', channel: 'prime-paste', outcome: 'delivered'
+      });
+      store.activity.log({
+        projectId: project.id, sessionId: session.id, eventType: 'launch.kickoff', detail: { observed: 'sent' }
+      });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 0 });
+      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }), []);
+    });
+
     it('neither pasteOwed nor kickoffOwed (an older marker shape, or a launch that owed neither): not flagged', () => {
       const { session } = live({ carrier: 'rules', pasteOwed: false, kickoffOwed: false });
       assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 0 });
