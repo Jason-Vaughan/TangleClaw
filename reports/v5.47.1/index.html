@@ -1,0 +1,1449 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TangleClaw Sprint v5.47.1 — Executive Engineering &amp; Telemetry Report</title>
+  <style>
+    :root {
+      --bg: #070b14;
+      --bg-card: #0f172a;
+      --bg-card-alt: #131c31;
+      --border: #1e293b;
+      --border-hi: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --cyan: #38bdf8;
+      --green: #34d399;
+      --purple: #c084fc;
+      --amber: #fbbf24;
+      --rose: #fb7185;
+      --indigo: #818cf8;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(circle at 15% 0%, #0f1f3d 0%, var(--bg) 45%);
+      color: var(--text);
+      line-height: 1.55;
+    }
+    a { color: var(--cyan); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.88em;
+      background: rgba(148, 163, 184, 0.14);
+      padding: 0.12rem 0.38rem;
+      border-radius: 5px;
+      color: #e2e8f0;
+    }
+
+    /* Top Nav */
+    .topnav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(7, 11, 20, 0.88);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0.7rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      font-weight: 800;
+      font-size: 1.05rem;
+      color: var(--text);
+    }
+    .brand-dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--cyan), var(--green));
+      box-shadow: 0 0 12px var(--cyan);
+    }
+    .nav-links {
+      display: flex;
+      gap: 1.1rem;
+      flex-wrap: wrap;
+      font-size: 0.86rem;
+      font-weight: 600;
+    }
+    .nav-links a { color: var(--text-muted); transition: color 0.15s; }
+    .nav-links a:hover { color: var(--cyan); text-decoration: none; }
+
+    .container {
+      max-width: 1220px;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 4rem;
+    }
+
+    /* Hero */
+    .hero {
+      background: linear-gradient(145deg, rgba(15, 23, 42, 0.96), rgba(30, 27, 75, 0.72));
+      border: 1px solid var(--border-hi);
+      border-radius: 18px;
+      padding: 2.25rem 2rem;
+      margin-bottom: 2rem;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+    }
+    .hero-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(52, 211, 153, 0.12);
+      border: 1px solid rgba(52, 211, 153, 0.4);
+      color: var(--green);
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 0.28rem 0.75rem;
+      border-radius: 999px;
+      margin-bottom: 0.9rem;
+    }
+    .hero h1 {
+      margin: 0 0 0.65rem;
+      font-size: clamp(1.75rem, 3.2vw, 2.55rem);
+      letter-spacing: -0.02em;
+      line-height: 1.18;
+    }
+    .hero-sub {
+      margin: 0 0 1.4rem;
+      color: #cbd5e1;
+      font-size: 1.04rem;
+      max-width: 980px;
+    }
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+      margin-bottom: 1.75rem;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.55rem 1rem;
+      border-radius: 10px;
+      font-size: 0.86rem;
+      font-weight: 600;
+      border: 1px solid var(--border-hi);
+      background: var(--bg-card);
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .btn:hover {
+      border-color: var(--cyan);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      border-color: #38bdf8;
+      color: #fff;
+    }
+
+    /* KPI Grid */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(245px, 1fr));
+      gap: 1rem;
+    }
+    .kpi-card {
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.1rem 1.2rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .kpi-card::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--cyan), var(--green));
+    }
+    .kpi-label {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .kpi-val {
+      font-size: 1.65rem;
+      font-weight: 800;
+      margin: 0.25rem 0 0.2rem;
+      color: var(--text);
+      letter-spacing: -0.02em;
+    }
+    .kpi-sub {
+      font-size: 0.82rem;
+      color: #cbd5e1;
+    }
+
+    /* Sections */
+    .section {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.75rem;
+      margin-bottom: 1.75rem;
+    }
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.85rem;
+    }
+    .section-title {
+      margin: 0;
+      font-size: 1.35rem;
+      font-weight: 800;
+    }
+    .section-desc {
+      margin: 0.25rem 0 0;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .w-full { width: 100%; height: auto; display: block; }
+
+    /* Two-column & Three-column grids */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+      gap: 1.25rem;
+    }
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+    }
+
+    .subcard {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.2rem;
+    }
+    .subcard h3 {
+      margin: 0 0 0.6rem;
+      font-size: 1.02rem;
+    }
+
+    /* Stacked horizontal bars */
+    .bar-row {
+      margin-bottom: 0.95rem;
+    }
+    .bar-label-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.84rem;
+      margin-bottom: 0.3rem;
+      gap: 0.5rem;
+    }
+    .bar-track {
+      width: 100%;
+      height: 12px;
+      background: #090d16;
+      border-radius: 999px;
+      overflow: hidden;
+      display: flex;
+    }
+    .bar-fill {
+      height: 100%;
+    }
+
+    /* Badges & Pills */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.18rem 0.55rem;
+      border-radius: 999px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+    .badge-cyan, .badge-blue { background: rgba(56, 189, 248, 0.15); color: var(--cyan); border: 1px solid rgba(56, 189, 248, 0.35); }
+    .badge-green { background: rgba(52, 211, 153, 0.15); color: var(--green); border: 1px solid rgba(52, 211, 153, 0.35); }
+    .badge-purple { background: rgba(192, 132, 252, 0.15); color: var(--purple); border: 1px solid rgba(192, 132, 252, 0.35); }
+    .badge-amber { background: rgba(251, 191, 36, 0.15); color: var(--amber); border: 1px solid rgba(251, 191, 36, 0.35); }
+    .badge-rose { background: rgba(251, 113, 133, 0.15); color: var(--rose); border: 1px solid rgba(251, 113, 133, 0.35); }
+
+    .text-muted { color: var(--text-muted); font-size: 0.82rem; }
+
+    /* Filter Controls */
+    .filter-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.2rem;
+    }
+    .filter-btns {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+    .filter-btn {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border-hi);
+      color: var(--text-muted);
+      padding: 0.42rem 0.8rem;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .filter-btn:hover, .filter-btn.active {
+      background: rgba(56, 189, 248, 0.16);
+      border-color: var(--cyan);
+      color: var(--text);
+    }
+    .search-input {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border-hi);
+      color: var(--text);
+      padding: 0.48rem 0.85rem;
+      border-radius: 8px;
+      font-size: 0.84rem;
+      min-width: 250px;
+    }
+
+    /* Wave Cards */
+    .wave-card {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.15rem;
+      margin-bottom: 0.9rem;
+    }
+    .wave-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+      margin-bottom: 0.75rem;
+    }
+    .wave-num {
+      font-size: 0.74rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--cyan);
+    }
+    .wave-title {
+      margin: 0.1rem 0 0.15rem;
+      font-size: 1rem;
+    }
+    .wave-window {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+    .wave-meta {
+      display: flex;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+
+    .table-wrap { overflow-x: auto; }
+    .pr-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.84rem;
+    }
+    .pr-table th, .pr-table td {
+      padding: 0.52rem 0.65rem;
+      text-align: left;
+      border-top: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .pr-table th {
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      border-top: none;
+    }
+
+    /* Post-Mortem Lists */
+    .pm-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+    .pm-item {
+      background: rgba(7, 11, 20, 0.55);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--green);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      font-size: 0.88rem;
+    }
+    .pm-item.warn {
+      border-left-color: var(--amber);
+    }
+    .pm-item strong {
+      display: block;
+      margin-bottom: 0.25rem;
+      font-size: 0.94rem;
+    }
+
+    footer {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      padding: 2rem 1rem 1rem;
+      border-top: 1px solid var(--border);
+      margin-top: 2rem;
+    }
+  
+    .legend {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .legend-swatch {
+      width: 11px;
+      height: 11px;
+      border-radius: 3px;
+    }
+    .issue-pill {
+      display: inline-block;
+      background: rgba(129, 140, 248, 0.15);
+      border: 1px solid rgba(129, 140, 248, 0.35);
+      color: #a5b4fc;
+      padding: 0.1rem 0.45rem;
+      border-radius: 6px;
+      font-size: 0.76rem;
+      font-weight: 600;
+      margin: 0.1rem 0.15rem 0.1rem 0;
+    }
+    .pr-link { font-weight: 700; color: var(--cyan); }
+    .sha-link code {
+      background: rgba(148, 163, 184, 0.12);
+      color: #e2e8f0;
+      padding: 0.12rem 0.4rem;
+      border-radius: 5px;
+      font-size: 0.78rem;
+    }
+  </style>
+</head>
+<body>
+  <header class="topnav">
+    <div class="topnav-inner">
+      <div class="brand">
+        <div class="brand-badge">TC</div>
+        <div>
+          <div style="font-size:0.94rem;">TangleClaw Sprint Report</div>
+          <div style="font-size:0.72rem;color:var(--text-dim);font-weight:500;">v5.47.1 · Medusa Wake Delivery · 1 Point-Patch Issue (#2716) / 3 Waves · Oct 29, 2026</div>
+        </div>
+      </div>
+      <nav class="nav-links" id="navLinks">
+        <a href="../" style="color:var(--accent2);font-weight:700;">← All Sprint Reports</a>
+        <a href="#overview" class="active">Overview</a>
+        <a href="#plain-english" style="color:var(--green);font-weight:700;">Plain-English</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#velocity">Velocity</a>
+        <a href="#deliverables">Deliverables</a>
+        <a href="#telemetry">Telemetry</a>
+        <a href="#postmortem">Post-Mortem</a>
+        <a href="#waves">Wave Explorer</a>
+        <a href="#next-sprint">Next Sprint</a>
+      </nav>
+      <div class="nav-actions">
+        <button class="btn" id="themeBtn" onclick="toggleTheme()" title="Toggle Light/Dark Mode">☀️ Light Mode</button>
+        <button class="btn btn-primary" onclick="window.print()">🖨️ Export PDF</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- HERO -->
+    <section class="hero" id="overview">
+      <div class="hero-top">
+        <div>
+          <div class="eyebrow">🛡️ Sprint v5.47.1 Medusa Wake Delivery Retrospective · Charter A484–A484-R1 (1 Point-Patch Issue #2716 · 3 Waves · 3 Sprint PRs)</div>
+          <h1>v5.47.1: Antigravity Composer Line-Kill (<code>C-a C-k</code>), Immediate Unaccepted-Wake Re-Arm &amp; Remaining Observation-Gap Chaining</h1>
+          <p class="hero-subtitle">
+            Sprint <strong>v5.47.1</strong> (<em>"Medusa wake delivery"</em>, Charter <code>A484</code>–<code>A484-R1</code>, Base <code>main @ 1e8e2df417e1</code> / <code>tag: v5.47.0</code>) closed <strong>Issue <code>#2716</code></strong> across <strong>3 execution waves</strong>: Wave 1 Car 1 (<code>W1-A PR #2717</code>, merged at <code>7e9848037361</code>, head <code>8b891bc6272a</code>), Wave 2 Records Reconciliation (<code>W2-REC PR #2718</code>, merged at <code>d880cbc0c314</code>, head <code>1fbb3390bb8e</code>), and Wave 3 Release Preparation (<code>W3-REL PR #2719</code> on <code>release/v5.47.1-prep @ 399a67d2badf</code>; release/deploy finish lines <code>Pending</code>).
+            Issue <code>#2716</code> eliminated two live fleet friction defects discovered during the <code>v5.47.0</code> sprint:
+            <strong>(1) Stranded Switchboard Nudge Residue in Antigravity:</strong> <code>lib/tmux.js#clearPromptLine</code> previously sent <code>C-u</code> unconditionally to clear a stranded <code>[TangleClaw Switchboard] ... (wake ref ...)</code> line before re-injecting a wake; however, Antigravity’s top-level viewport intercepts <code>Ctrl+U</code> as <code>KeyHalfPageUp</code> rather than forwarding it to the embedded <code>charmbracelet/bubbles/textarea</code> composer, leaving the old prompt text in place and causing repeated <code>stranded-nudge-residue</code> deferrals. <code>lib/tmux.js#_lineKill</code> now sends <code>C-a C-k</code> (<code>LineStart</code> + <code>DeleteAfterCursor</code>) when <code>engineId === 'antigravity'</code> while preserving <code>C-u</code> for all other engines.
+            <strong>(2) Prompt Recovery After <code>wake_not_accepted</code> (<code>nonce-in-composer</code>):</strong> When Enter fails to submit a wake and <code>lib/medusa-wake.js#_verifyWake</code> records <code>wake_not_accepted</code>, it now invokes <code>lib/medusa-watchdog.js#rearmWorkspace</code> immediately instead of waiting up to <code>30s</code> for the periodic watchdog timer, and <code>lib/medusa-wake.js#_bookFollowUp</code> schedules a timer for the exact remaining <code>MIN_OBSERVATION_GAP_MS</code> (<code>4,000 ms</code>) observation gap and chains the second at-rest prompt look so the retry fires in ~<code>8s</code> without waiting for a periodic poll tick.
+            <em>Participant Disclosure (Rule #283):</em> <code>TC-Lane-Obsr</code> operated as an in-test sprint participant whose telemetry, pre-merge audits, and <code>O-Gate</code> verification lanes could read during execution.
+          </p>
+        </div>
+        <div class="status-pill">
+          ● v5.47.1 Candidate Ready (W1-A #2717 @ 7e984803 · W2-REC #2718 @ d880cbc0 · W3-REL #2719 @ 399a67d2 O-Gate ACCEPT)
+        </div>
+      </div>
+
+      <!-- PLAIN-ENGLISH SUMMARY CARD -->
+      <div id="plain-english" class="subcard" style="margin:22px 0;padding:22px 24px;border:1.5px solid rgba(34,197,94,0.45);background:linear-gradient(135deg,rgba(15,23,42,0.96),rgba(20,83,45,0.18));border-radius:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+          <span class="pillar-num" style="color:var(--green);font-size:0.8rem;letter-spacing:0.08em;">📖 PLAIN-ENGLISH SUMMARY · WHAT SHIPPED &amp; HOW THE SPRINT RAN (NO JARGON)</span>
+          <span class="badge badge-green">Everyday Overview · 1 Point-Patch Issue (#2716) · Zero Post-Merge Rework</span>
+        </div>
+        <h3 style="margin:0 0 12px;font-size:1.22rem;color:var(--text);">What v5.47.1 Does in Everyday Terms — and How the Team Built It</h3>
+        <div class="grid-2" style="gap:18px;">
+          <div style="background:rgba(15,23,42,0.65);border:1px solid var(--border);border-radius:10px;padding:15px 17px;">
+            <h4 style="margin:0 0 8px;color:var(--accent2);font-size:0.98rem;">🛠️ What We Shipped (Reliable Wake-Up Messages for Antigravity &amp; Faster Retries)</h4>
+            <p style="margin:0 0 9px;font-size:0.9rem;line-height:1.55;color:var(--text-muted);">
+              <strong>1. Clearing stuck wake-up text in Antigravity using the right shortcut keys (<code>#2716</code> Part 1):</strong>
+              Sometimes TangleClaw types a short wake-up notification into an AI agent’s chat box, but the agent’s screen is briefly busy when TangleClaw presses Enter—leaving that notification sitting unsubmitted in the input box. Before trying again, TangleClaw clears the input box. Previously, TangleClaw always pressed <code>Ctrl+U</code> to erase the line, which works in standard terminals (like Claude Code and Codex) but in Antigravity actually scrolls the chat history half a page up instead of clearing the text! Because the old text stayed in the box, TangleClaw refused to type over it and got stuck waiting. In <code>v5.47.1</code>, TangleClaw uses Antigravity’s native clear-line keys (<code>Ctrl+A</code> to jump to the start of the line, then <code>Ctrl+K</code> to delete to the end) while keeping <code>Ctrl+U</code> for all other engines.
+            </p>
+            <p style="margin:0;font-size:0.9rem;line-height:1.55;color:var(--text-muted);">
+              <strong>2. Retrying missed wake-ups in ~8 seconds instead of waiting up to a full minute (<code>#2716</code> Part 2):</strong>
+              When TangleClaw notices that a wake-up message wasn’t accepted by the agent’s input box, it used to wait up to <strong>30 seconds</strong> for a background watchdog timer to notice, and then wait again for periodic background checks before re-sending. In <code>v5.47.1</code>, the moment a wake-up attempt isn’t accepted, TangleClaw immediately triggers its safety budget check and schedules the exact 4-second quiet-screen checks needed to retry right away—recovering missed wake-ups in ~8 seconds while keeping all existing retry limits and cooldown rules intact.
+            </p>
+          </div>
+          <div style="background:rgba(15,23,42,0.65);border:1px solid var(--border);border-radius:10px;padding:15px 17px;">
+            <h4 style="margin:0 0 8px;color:var(--green);font-size:0.98rem;">⚡ How the Sprint Ran (Tight Start-Gate &amp; Timing-Precision Review)</h4>
+            <p style="margin:0 0 9px;font-size:0.9rem;line-height:1.55;color:var(--text-muted);">
+              <strong>1. Focused 1-car point-patch sprint completed in ~2 hours with zero post-merge bugs:</strong>
+              Charter <code>A484</code> ran as a surgical point patch on top of <code>v5.47.0</code>. Builder lane <code>TC-Lane-B</code> opened <code>PR #2717</code> just <strong>28 minutes</strong> after kickoff and merged it with <strong>zero merge conflicts</strong> and <strong>zero post-merge defects on <code>main</code></strong>, followed 2.6 minutes later by the documentation index update (<code>W2-REC PR #2718</code>).
+            </p>
+            <p style="margin:0;font-size:0.9rem;line-height:1.55;color:var(--text-muted);">
+              <strong>2. Two critical quality catches before merge (Start-Gate + 4-second timing review):</strong>
+              First, at sprint kickoff, the Integrator’s start-gate check caught that the Builder’s workspace had started editing on an older commit before pulling <code>v5.47.0</code>, and cleanly rebased the work before the PR even opened. Second, during code review, the Integrator and Architect caught a subtle timing bug where an immediate retry check ran 1.2 seconds after the failed attempt—too early for TangleClaw’s 4-second minimum quiet-screen rule—and made sure the timer waits the exact remaining gap and chains both required screen checks automatically.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">Charter A484 Scope</div>
+          <div class="kpi-value" style="color:var(--green)">1 / 1</div>
+          <div class="kpi-meta">100% of admitted point-patch scope (<code>#2716</code> via <code>W1-A PR #2717</code>) merged to <code>main @ 7e984803</code></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Antigravity Line-Kill</div>
+          <div class="kpi-value" style="color:var(--accent2)">C-a C-k</div>
+          <div class="kpi-meta">Engine-aware composer clear in <code>lib/tmux.js#_lineKill</code> (<code>C-u</code> preserved for Claude/Codex/Gemini)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Unaccepted Wake Recovery</div>
+          <div class="kpi-value" style="color:var(--green)">~8.0s</div>
+          <div class="kpi-meta">Immediate <code>rearmWorkspace</code> + chained <code>4,000 ms</code> <code>_bookFollowUp</code> looks (down from 30–60s)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Pre-Merge Gate Catches</div>
+          <div class="kpi-value" style="color:var(--accent)">4 Catches</div>
+          <div class="kpi-meta">1 Start-Gate stale-base catch + 3 <code>B-Gate / A-Gate</code> timing &amp; prompt-look catches before merge</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">W1-A Time to First PR</div>
+          <div class="kpi-value" style="color:var(--green)">28.1m</div>
+          <div class="kpi-meta"><code>A484</code> kickoff <code>20:39Z</code> → <code>PR #2717</code> opened <code>21:07:15Z</code> · Merged <code>22:42:20Z</code> (<code>123.2m</code> total)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">W2-REC Turnaround</div>
+          <div class="kpi-value" style="color:var(--accent2)">2.6m</div>
+          <div class="kpi-meta"><code>W2-REC PR #2718</code> (<code>1fbb3390</code>) opened 2.6m after <code>W1-A</code> merge · <code>47/47</code> <code>features-index</code> pass</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">FEATURES.md Anchors</div>
+          <div class="kpi-value" style="color:var(--green)">8 / 8</div>
+          <div class="kpi-meta">4 code symbol anchors + 4 test suite paths verified on disk by <code>scripts/verify-features-index.js</code></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Post-Merge Defects</div>
+          <div class="kpi-value" style="color:var(--green)">0</div>
+          <div class="kpi-meta"><code>0</code> post-merge regressions on <code>main @ 7e984803</code> · <code>0</code> merge conflicts · <code>0</code> <code>/clear</code> calls</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 1. ARCHITECTURAL DEEP DIVE -->
+    <section class="section" id="architecture">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 01 · Architectural Deep-Dive</span>
+          <h2 class="section-title">How v5.47.1 Solves Stranded Antigravity Nudges &amp; Unaccepted Medusa Wake Recovery</h2>
+          <p class="section-desc">
+            During <code>v5.47.0</code> live operations, two interacting behaviors delayed switchboard wake delivery on Antigravity and other busy panes: first, when a switchboard nudge was left unsubmitted in an Antigravity composer, <code>clearPromptLine</code> sent <code>C-u</code>, which Antigravity’s viewport consumed as half-page scroll-up instead of clearing the composer; second, when <code>_verifyWake</code> detected <code>nonce-in-composer</code> and recorded <code>wake_not_accepted</code>, recovery waited for the periodic 30-second watchdog timer and periodic wake poll ticks. Sprint <code>v5.47.1</code> fixes both root causes cleanly across three modules.
+          </p>
+        </div>
+      </div>
+
+      <div class="grid-3" style="margin-bottom:20px;">
+        <div class="subcard">
+          <span class="pillar-num">PILLAR 01 · ENGINE-AWARE PROMPT LINE CLEARING (lib/tmux.js#_lineKill)</span>
+          <h4>Antigravity Composer <code>C-a C-k</code> vs. Readline <code>C-u</code></h4>
+          <p>
+            In Antigravity’s TUI, the top-level viewport intercepts <code>Ctrl+U</code> (<code>C-u</code>) as <code>KeyHalfPageUp</code> before it reaches the embedded <code>charmbracelet/bubbles/textarea</code> composer widget. As a result, calling <code>clearPromptLine</code> on a stranded <code>[TangleClaw Switchboard] ... (wake ref &lt;nonce&gt;)</code> line scrolled the pane upward while leaving the stranded nudge text intact inside the composer, causing subsequent wake scans to repeatedly defer with <code>stranded-nudge-residue</code>.
+            In <code>W1-A (PR #2717)</code>, <code>lib/tmux.js#_lineKill(engineId)</code> returns <code>['C-a', 'C-k']</code> (<code>LineStart</code> + <code>DeleteAfterCursor</code> in <code>bubbles/textarea</code>) when <code>engineId === 'antigravity'</code> and <code>['C-u']</code> for all other engines. Both <code>clearPromptLine(sessionName, engineId)</code> and <code>clearDraftAndSendLiteral(sessionName, text, opts)</code> thread <code>engineId</code> from <code>lib/medusa-wake.js</code> so Antigravity composers are cleared deterministically before retry.
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">PILLAR 02 · IMMEDIATE DURABLE RE-ARM ON WAKE_NOT_ACCEPTED (lib/medusa-watchdog.js#rearmWorkspace)</span>
+          <h4>Zero-Wait Handoff from <code>_verifyWake</code> to Bounded Watchdog Re-Arm</h4>
+          <p>
+            Previously, when <code>lib/medusa-wake.js#_verifyWake</code> inspected the pane <code>VERIFY_DELAY_MS</code> (<code>1,200 ms</code>) after injection and saw the wake nonce still sitting in the composer (<code>nonce-in-composer</code>), it recorded a durable <code>wake_not_accepted</code> receipt in <code>medusa_wake_state</code> and exited—leaving the workspace un-armed until the periodic <code>MedusaWatchdog</code> timer ran up to <code>30,000 ms</code> later.
+            In <code>v5.47.1</code>, <code>lib/medusa-watchdog.js#rearmWorkspace(workspaceId)</code> exposes the single-workspace durable re-arm check, and <code>server.js</code> wires <code>onWakeNotAccepted: (wsId) =&gt; medusaWatchdog.rearmWorkspace(wsId)</code> into <code>MedusaWakeMonitor</code>.
+            The moment <code>_verifyWake</code> records <code>wake_not_accepted</code>, it invokes <code>onWakeNotAccepted(wsId)</code> synchronously, running the exact same durable budget (<code>maxRearms = 5</code>), exponential backoff (<code>minRearmAgeMs</code>), and unread-message checks that the periodic watchdog uses on server restart.
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">PILLAR 03 · REMAINING OBSERVATION-GAP CHAINING (lib/medusa-wake.js#_bookFollowUp)</span>
+          <h4>Bridging the 4,000 ms Minimum Observation Gap &amp; Two At-Rest Prompt Looks</h4>
+          <p>
+            Re-arming immediately at <code>t = +1,200 ms</code> after injection exposed a subtle timing interaction caught during <code>B-Gate</code> review: <code>rearmWorkspace</code> calls <code>wakeMonitor.requestScan()</code>, which fires an immediate look at <code>t = +1,200 ms</code>. However, <code>_observePane</code> enforces <code>MIN_OBSERVATION_GAP_MS = 4,000 ms</code> between valid looks (recorded at injection time <code>t = 0</code>), so the look at <code>+1,200 ms</code> returns <code>gap &lt; minGap</code> and was previously dropped without booking a follow-up timer!
+            In <code>lib/medusa-wake.js#_bookFollowUp(wsId, gapDone, delayMs)</code>, when a prompt look is rejected solely because <code>gap &lt; minGap</code> (`reason === 'min-observation-gap'`), the monitor books a timer for the exact remaining gap (<code>minGap - gap</code>, ~<code>2,800 ms</code>) as a prompt look (<code>_promptLook.add(wsId)</code>), and once that first at-rest look succeeds at <code>t ≈ +4,000 ms</code>, chains the second at-rest look at <code>t ≈ +8,000 ms</code> to clear the residue and deliver the wake without waiting for any periodic poll tick.
+          </p>
+        </div>
+      </div>
+
+      <div class="svg-wrap">
+        <div class="svg-caption">
+          <span>Figure 1.1 — v5.47.1 Medusa Wake Recovery Pipeline: Engine-Aware Line-Kill &amp; Chained Observation-Gap Retry</span>
+          <span>Issue #2716 · W1-A PR #2717 (7e984803) + W2-REC PR #2718 (1fbb3390) · 8 Anchor Symbols &amp; Tests</span>
+        </div>
+        <svg viewBox="0 0 1120 360" width="100%" height="auto" role="img" aria-label="v5.47.1 Medusa Wake Delivery Architecture Diagram">
+          <defs>
+            <linearGradient id="boxGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#1e293b" />
+              <stop offset="100%" stop-color="#0f172a" />
+            </linearGradient>
+            <marker id="arrowBlue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8" />
+            </marker>
+            <marker id="arrowGreen" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="#22c55e" />
+            </marker>
+            <marker id="arrowAmber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="#f59e0b" />
+            </marker>
+          </defs>
+
+          <!-- Column 1: Unaccepted Wake Detection -->
+          <rect x="18" y="24" width="248" height="308" rx="12" fill="url(#boxGrad1)" stroke="#f59e0b" stroke-width="1.6" />
+          <text x="34" y="52" fill="#f59e0b" font-size="11" font-weight="800" letter-spacing="0.08em">STAGE 1 · VERIFY WAKE (+1.2s)</text>
+          <text x="34" y="74" fill="#f8fafc" font-size="13.5" font-weight="700">Nonce-in-Composer Receipt</text>
+
+          <rect x="32" y="90" width="220" height="68" rx="8" fill="#111827" stroke="#334155" />
+          <text x="42" y="110" fill="#f59e0b" font-size="11.5" font-weight="700">medusa-wake.js#_verifyWake</text>
+          <text x="42" y="126" fill="#94a3b8" font-size="10.5">Checks pane 1,200 ms after Enter</text>
+          <text x="42" y="142" fill="#f87171" font-size="10">Detects wake ref still in composer</text>
+
+          <rect x="32" y="168" width="220" height="68" rx="8" fill="#111827" stroke="#334155" />
+          <text x="42" y="188" fill="#38bdf8" font-size="11.5" font-weight="700">Durable Receipt Recorded</text>
+          <text x="42" y="204" fill="#94a3b8" font-size="10.5">recordWakeNotAccepted(wsId)</text>
+          <text x="42" y="220" fill="#64748b" font-size="10">Persisted in medusa_wake_state</text>
+
+          <rect x="32" y="246" width="220" height="68" rx="8" fill="#111827" stroke="#334155" />
+          <text x="42" y="266" fill="#22c55e" font-size="11.5" font-weight="700">Immediate Callback</text>
+          <text x="42" y="282" fill="#94a3b8" font-size="10.5">onWakeNotAccepted(wsId) fires</text>
+          <text x="42" y="298" fill="#22c55e" font-size="10">No 30s wait for watchdog tick</text>
+
+          <!-- Arrow 1 -> 2 -->
+          <line x1="266" y1="178" x2="296" y2="178" stroke="#f59e0b" stroke-width="2" marker-end="url(#arrowAmber)" />
+
+          <!-- Column 2: Immediate Watchdog Re-Arm -->
+          <rect x="299" y="24" width="252" height="308" rx="12" fill="url(#boxGrad1)" stroke="#38bdf8" stroke-width="1.6" />
+          <text x="315" y="52" fill="#38bdf8" font-size="11" font-weight="800" letter-spacing="0.08em">STAGE 2 · WATCHDOG RE-ARM</text>
+          <text x="315" y="74" fill="#f8fafc" font-size="13.5" font-weight="700">Durable Budget &amp; Backoff</text>
+
+          <rect x="313" y="90" width="224" height="68" rx="8" fill="#111827" stroke="#334155" />
+          <text x="323" y="110" fill="#38bdf8" font-size="11.5" font-weight="700">rearmWorkspace(wsId) (#2716)</text>
+          <text x="323" y="126" fill="#94a3b8" font-size="10.5">medusa-watchdog.js single-ws entry</text>
+          <text x="323" y="142" fill="#22c55e" font-size="10">Shared with periodic _tick() loop</text>
+
+          <rect x="313" y="168" width="224" height="68" rx="8" fill="#111827" stroke="#334155" />
+          <text x="323" y="188" fill="#a855f7" font-size="11.5" font-weight="700">Safety Guards Preserved</text>
+          <text x="323" y="204" fill="#94a3b8" font-size="10.5">maxRearms (5) + backoff age check</text>
+          <text x="323" y="220" fill="#64748b" font-size="10">Requires unread mail &gt; 0</text>
+
+          <rect x="313" y="246" width="224" height="68" rx="8" fill="#111827" stroke="#334155" />
+          <text x="323" y="266" fill="#22c55e" font-size="11.5" font-weight="700">Re-Arms &amp; Requests Scan</text>
+          <text x="323" y="282" fill="#94a3b8" font-size="10.5">recordRearm + requestScan()</text>
+          <text x="323" y="298" fill="#22c55e" font-size="10">Sets _promptLook for wsId</text>
+
+          <!-- Arrow 2 -> 3 -->
+          <line x1="551" y1="178" x2="581" y2="178" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrowBlue)" />
+
+          <!-- Column 3: Remaining Observation-Gap Chaining -->
+          <rect x="584" y="24" width="258" height="308" rx="12" fill="url(#boxGrad1)" stroke="#818cf8" stroke-width="1.6" />
+          <text x="600" y="52" fill="#818cf8" font-size="11" font-weight="800" letter-spacing="0.08em">STAGE 3 · GAP CHAINING (#2716)</text>
+          <text x="600" y="74" fill="#f8fafc" font-size="13.5" font-weight="700">_bookFollowUp 2-Look Timer</text>
+
+          <rect x="598" y="90" width="230" height="68" rx="8" fill="#111827" stroke="#334155" />
+          <text x="608" y="110" fill="#f59e0b" font-size="11.5" font-weight="700">In-Gap Catch at t = +1.2s</text>
+          <text x="608" y="126" fill="#94a3b8" font-size="10.5">reason: min-observation-gap</text>
+          <text x="608" y="142" fill="#22c55e" font-size="10">Books remaining minGap - gap (~2.8s)</text>
+
+          <rect x="598" y="168" width="230" height="68" rx="8" fill="#111827" stroke="#334155" />
+          <text x="608" y="188" fill="#818cf8" font-size="11.5" font-weight="700">Look #1 at t ≈ +4.0s</text>
+          <text x="608" y="204" fill="#94a3b8" font-size="10.5">_promptLook preserved across gap</text>
+          <text x="608" y="220" fill="#22c55e" font-size="10">Records Look #1 + books +4.0s timer</text>
+
+          <rect x="598" y="246" width="230" height="68" rx="8" fill="#111827" stroke="#334155" />
+          <text x="608" y="266" fill="#22c55e" font-size="11.5" font-weight="700">Look #2 at t ≈ +8.0s</text>
+          <text x="608" y="282" fill="#94a3b8" font-size="10.5">Two at-rest looks satisfied</text>
+          <text x="608" y="298" fill="#22c55e" font-size="10">Proceeds to clear &amp; re-inject wake</text>
+
+          <!-- Arrow 3 -> 4 -->
+          <line x1="842" y1="178" x2="872" y2="178" stroke="#22c55e" stroke-width="2" marker-end="url(#arrowGreen)" />
+
+          <!-- Column 4: Engine-Aware Line Kill & Delivery -->
+          <rect x="875" y="24" width="227" height="308" rx="12" fill="url(#boxGrad1)" stroke="#22c55e" stroke-width="1.6" />
+          <text x="891" y="52" fill="#22c55e" font-size="11" font-weight="800" letter-spacing="0.08em">STAGE 4 · CLEAR &amp; DELIVER</text>
+          <text x="891" y="74" fill="#f8fafc" font-size="13.5" font-weight="700">Engine-Aware Line-Kill</text>
+
+          <rect x="889" y="90" width="199" height="68" rx="8" fill="#111827" stroke="#334155" />
+          <text x="899" y="110" fill="#22c55e" font-size="11.5" font-weight="700">lib/tmux.js#_lineKill</text>
+          <text x="899" y="126" fill="#94a3b8" font-size="10.5">antigravity → ['C-a', 'C-k']</text>
+          <text x="899" y="142" fill="#64748b" font-size="10">other engines → ['C-u']</text>
+
+          <rect x="889" y="168" width="199" height="68" rx="8" fill="#111827" stroke="#334155" />
+          <text x="899" y="188" fill="#38bdf8" font-size="11.5" font-weight="700">Stranded Nudge Cleared</text>
+          <text x="899" y="204" fill="#94a3b8" font-size="10.5">clearPromptLine(session, eng)</text>
+          <text x="899" y="220" fill="#22c55e" font-size="10">No viewport scroll in Antigravity</text>
+
+          <rect x="889" y="246" width="199" height="68" rx="8" fill="#111827" stroke="#334155" />
+          <text x="899" y="266" fill="#22c55e" font-size="11.5" font-weight="700">Wake Accepted &amp; Verified</text>
+          <text x="899" y="282" fill="#94a3b8" font-size="10.5">Fresh nonce injected + Enter</text>
+          <text x="899" y="298" fill="#22c55e" font-size="10">Exchange Proof Test Passes</text>
+        </svg>
+      </div>
+    </section>
+
+    <!-- 2. SPRINT VELOCITY & WAVE TIMELINE -->
+    <section class="section" id="velocity">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 02 · Execution Velocity, Start-Gate Stale-Base Catch &amp; 6-Commit Review Progression</span>
+          <h2 class="section-title">Wave 1–3 Execution Timeline (<code>20:39Z → 22:55Z</code>) &amp; Charter <code>A484 / A484-R1</code></h2>
+          <p class="section-desc">
+            Sprint <code>v5.47.1</code> kicked off at <code>2026-10-29T20:39Z</code> immediately after <code>v5.47.0</code> (<code>1e8e2df417e1</code>) was tagged and released. At <code>20:39Z</code>, <code>TC-Lane-INT</code>’s start-gate check caught that <code>TC-Lane-B</code> had started editing <code>lib/tmux.js</code> on pre-<code>v5.47.0</code> commit <code>cd09db00</code>; <code>TC-Lane-INT</code> issued a blocking preserve-and-rebase directive, and <code>TC-Lane-B</code> rebased cleanly onto <code>1e8e2df4</code> before opening <code>W1-A PR #2717</code> at <code>21:07:15Z</code> (<code>28.1m</code> build). Across two thorough review rounds with <code>TC-Lane-PRR-A</code>, <code>TC-Lane-INT</code>, and <code>TC-Lane-Arc</code>, <code>TC-Lane-B</code> refined <code>_bookFollowUp</code> so an in-gap retry schedules the exact remaining <code>4,000 ms</code> gap as a prompt look, merging <code>PR #2717</code> at <code>22:42:20Z</code> (<code>7e9848037361</code>). Just <strong>2.6 minutes later</strong> (<code>22:44:57Z</code>), <code>TC-Lane-INT</code> opened <code>W2-REC PR #2718</code> (<code>1fbb3390bb8e</code>).
+          </p>
+        </div>
+      </div>
+
+      <div class="svg-wrap">
+        <div class="svg-caption">
+          <span>Figure 2.1 — Sprint v5.47.1 Wave Execution Timeline (2026-10-29T20:39Z → 22:55Z)</span>
+          <span>1 Builder Lane (TC-Lane-B) · 1 PRR Lane (TC-Lane-PRR-A) · Integrator B-Gate &amp; Architect A-Gate</span>
+        </div>
+        <svg viewBox="0 0 1120 310" width="100%" height="auto" role="img" aria-label="Sprint v5.47.1 Wave Gantt Chart">
+          <rect x="0" y="0" width="1120" height="310" rx="10" fill="#0b1120" />
+          <line x1="190" y1="30" x2="190" y2="270" stroke="#1e293b" stroke-width="1" />
+          <line x1="365" y1="30" x2="365" y2="270" stroke="#1e293b" stroke-width="1" />
+          <line x1="540" y1="30" x2="540" y2="270" stroke="#1e293b" stroke-width="1" />
+          <line x1="715" y1="30" x2="715" y2="270" stroke="#1e293b" stroke-width="1" />
+          <line x1="890" y1="30" x2="890" y2="270" stroke="#1e293b" stroke-width="1" />
+          <line x1="1065" y1="30" x2="1065" y2="270" stroke="#1e293b" stroke-width="1" />
+
+          <text x="190" y="22" fill="#94a3b8" font-size="10.5" text-anchor="middle">20:39Z (A484 Kickoff)</text>
+          <text x="365" y="22" fill="#38bdf8" font-size="10.5" font-weight="700" text-anchor="middle">21:07Z (PR #2717 Open)</text>
+          <text x="540" y="22" fill="#f59e0b" font-size="10.5" font-weight="700" text-anchor="middle">21:32Z–21:54Z (Gap Fix)</text>
+          <text x="715" y="22" fill="#818cf8" font-size="10.5" font-weight="700" text-anchor="middle">22:11Z–22:23Z (R2 Green)</text>
+          <text x="890" y="22" fill="#22c55e" font-size="10.5" font-weight="700" text-anchor="middle">22:42Z (W1-A Merged)</text>
+          <text x="1055" y="22" fill="#22c55e" font-size="10.5" font-weight="700" text-anchor="middle">22:45Z+ (W2/W3)</text>
+
+          <line x1="215" y1="28" x2="215" y2="270" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="4 4" />
+          <line x1="890" y1="28" x2="890" y2="270" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="4 4" />
+
+          <!-- Row 1: Start-Gate Rebase -->
+          <text x="18" y="62" fill="#e2e8f0" font-size="11.5" font-weight="700">Start-Gate Check</text>
+          <rect x="190" y="46" width="55" height="24" rx="5" fill="#f59e0b" opacity="0.92" />
+          <text x="253" y="62" fill="#fcd34d" font-size="10.5" font-weight="700">20:39Z–20:43Z: Preserved &amp; rebased TC-Lane-B onto 1e8e2df4 (v5.47.0)</text>
+
+          <!-- Row 2: W1-A Build -->
+          <text x="18" y="104" fill="#e2e8f0" font-size="11.5" font-weight="700">W1-A Build (#2717)</text>
+          <rect x="190" y="88" width="175" height="24" rx="5" fill="#38bdf8" opacity="0.92" />
+          <text x="200" y="104" fill="#082f49" font-size="10.5" font-weight="700">#2716 Initial Build · 28.1m (c4206aba)</text>
+
+          <!-- Row 3: W1-A Multi-Gate Review & Timing Refinement -->
+          <text x="18" y="146" fill="#e2e8f0" font-size="11.5" font-weight="700">W1-A Review &amp; Fix</text>
+          <rect x="365" y="130" width="525" height="24" rx="5" fill="#818cf8" opacity="0.92" />
+          <text x="375" y="146" fill="#0f172a" font-size="10.5" font-weight="700">B-Gate/A-Gate 4s Gap &amp; Prompt-Look Refinement (c4206aba → 8b891bc6 · 95.1m)</text>
+
+          <!-- Row 4: W2-REC -->
+          <text x="18" y="188" fill="#e2e8f0" font-size="11.5" font-weight="700">W2-REC · PR #2718</text>
+          <rect x="890" y="172" width="105" height="24" rx="5" fill="#22c55e" opacity="0.92" />
+          <text x="900" y="188" fill="#052e16" font-size="10" font-weight="700">1fbb3390 (2.6m)</text>
+
+          <!-- Row 5: W3-REL & Observer Report -->
+          <text x="18" y="230" fill="#e2e8f0" font-size="11.5" font-weight="700">W3-REL &amp; O-Gate</text>
+          <rect x="975" y="214" width="110" height="24" rx="5" fill="#a855f7" opacity="0.92" />
+          <text x="983" y="230" fill="#faf5ff" font-size="10" font-weight="700">v5.47.1 Prep</text>
+
+          <text x="190" y="290" fill="#94a3b8" font-size="10.5">● Dashed amber line (20:39Z): Start-Gate rebase onto v5.47.0 (1e8e2df4). Dashed green line (22:42:20Z): W1-A PR #2717 merged (7e984803).</text>
+        </svg>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Wave / Lane</th>
+              <th>PR</th>
+              <th>Issues</th>
+              <th>Build Time</th>
+              <th>Open → Merge</th>
+              <th>Total Elapsed</th>
+              <th>Review Rounds &amp; Gate Verdicts</th>
+              <th>Merge Commit / Head SHA</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>W1-A</strong> (<code>TC-Lane-B</code>)</td>
+              <td><code>#2717</code></td>
+              <td><code>#2716</code></td>
+              <td>28.1m</td>
+              <td>95.1m</td>
+              <td><strong>123.2m</strong></td>
+              <td>2 rounds across <code>PRR-A</code> (<code>claude-opus-4-6</code>), <code>INT B-Gate</code> (<code>claude-opus-4-7</code>), &amp; <code>Arc A-Gate</code> (<code>c4206aba → 8b891bc6</code> · R2 ACCEPT)</td>
+              <td><code>7e9848037361</code> (22:42:20Z · Head <code>8b891bc6272a</code>)</td>
+            </tr>
+            <tr>
+              <td><strong>W2-REC</strong> (<code>TC-Lane-INT</code>)</td>
+              <td><code>#2718</code></td>
+              <td><code>#2716</code> Docs/Index</td>
+              <td>2.6m</td>
+              <td>10.4m</td>
+              <td><strong>13.0m</strong></td>
+              <td>1 round (<code>INT B-Gate</code> + <code>Arc A-Gate</code> ACCEPT on <code>1fbb3390bb8e</code> · <code>47/47</code> <code>test/features-index.test.js</code> · CI <code>40968195995</code> green)</td>
+              <td><code>d880cbc0c314</code> (22:55:20Z · Head <code>1fbb3390bb8e</code>)</td>
+            </tr>
+            <tr>
+              <td><strong>W3-REL</strong> (<code>TC-Lane-INT</code> + <code>Obsr</code>)</td>
+              <td><code>#2719</code></td>
+              <td>Release <code>v5.47.1</code> Candidate</td>
+              <td>2.7m</td>
+              <td>~10.0m</td>
+              <td><strong>~12.7m</strong></td>
+              <td>4-Gate Release Verification (<code>Tests CI 40969764540 SUCCESS</code> + <code>PRR-A</code> + <code>Arc R-Gate</code> + <code>Obsr O-Gate O484-V5471-PR2719-399A67D2-ACCEPT</code>)</td>
+              <td>Head <code>399a67d2badf</code> on Base <code>d880cbc0c314</code> (Release/Deploy <code>Pending</code>)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 3. DELIVERABLES MATRIX -->
+    <section class="section" id="deliverables">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 03 · Complete Issue &amp; Deliverables Matrix</span>
+          <h2 class="section-title">Issue #2716 Sub-Deliverables + W2-REC #2718 &amp; W3-REL Release Scope</h2>
+          <p class="section-desc">
+            Every deliverable in Charter <code>A484</code>–<code>A484-R1</code> is cross-checked below against the exact <code>FEATURES.md</code> entry in <code>W2-REC PR #2718</code> (<code>1fbb3390bb8e</code>) and merged <code>W1-A PR #2717</code> (<code>7e9848037361</code>). Every cited file path and test file is verified on disk by <code>gen_v5471.py</code>.
+          </p>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Deliverable</th>
+              <th>Wave &amp; PR</th>
+              <th>Category</th>
+              <th>Deliverable Summary &amp; Canonical Anchors (from <code>FEATURES.md</code>)</th>
+              <th>Verification Evidence (On-Disk Verified Test Paths)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>#2716 (Part 1)</strong></td>
+              <td><code>W1-A · #2717</code></td>
+              <td>Antigravity Line-Kill Keys</td>
+              <td>Updated <code>lib/tmux.js#_lineKill</code>, <code>lib/tmux.js#clearPromptLine</code>, and <code>lib/tmux.js#clearDraftAndSendLiteral</code> (called by <code>lib/medusa-wake.js</code>) so an Antigravity prompt with a stranded switchboard nudge or draft is cleared with its composer keys (<code>C-a C-k</code>) before retry, while all other engines retain <code>C-u</code>.</td>
+              <td><code>test/tmux.test.js</code>, <code>test/medusa-wake.test.js</code> (merged at <code>7e9848037361</code>)</td>
+            </tr>
+            <tr>
+              <td><strong>#2716 (Part 2)</strong></td>
+              <td><code>W1-A · #2717</code></td>
+              <td>Immediate Watchdog Re-Arm</td>
+              <td>Added <code>lib/medusa-watchdog.js#rearmWorkspace</code> and wired <code>onWakeNotAccepted</code> in <code>lib/medusa-wake.js#_verifyWake</code> so recording a <code>wake_not_accepted</code> receipt (<code>nonce-in-composer</code>) immediately triggers the existing durable re-arm budget (<code>maxRearms</code>), backoff age (<code>minRearmAgeMs</code>), and unread-mail check without waiting for the 30-second periodic watchdog tick.</td>
+              <td><code>test/medusa-watchdog.test.js</code>, <code>test/medusa-wake.test.js</code> (merged at <code>7e9848037361</code>)</td>
+            </tr>
+            <tr>
+              <td><strong>#2716 (Part 3)</strong></td>
+              <td><code>W1-A · #2717</code></td>
+              <td>Observation-Gap Chaining</td>
+              <td>Updated <code>lib/medusa-wake.js#_bookFollowUp</code> so when an immediate re-arm scan lands inside the <code>4,000 ms</code> <code>MIN_OBSERVATION_GAP_MS</code> window after the failed attempt, the wake monitor schedules the exact remaining observation gap as a prompt look and chains the two at-rest looks needed to retry without waiting for a periodic poll tick.</td>
+              <td><code>test/medusa-wake.test.js</code>, <code>test/medusa-wake-exchange-proof.test.js</code> (merged at <code>7e9848037361</code>)</td>
+            </tr>
+            <tr>
+              <td><strong>W2-REC</strong></td>
+              <td><code>W2-REC · #2718</code></td>
+              <td>Feature Index &amp; Change-Log</td>
+              <td>Updated <code>FEATURES.md</code> (under <em>Switchboard &amp; Inter-Session Messaging</em>) and <code>.prawduct/change-log.md</code> with the canonical <code>#2716</code> entry anchoring <code>lib/tmux.js#_lineKill</code>, <code>lib/medusa-watchdog.js#rearmWorkspace</code>, <code>lib/medusa-wake.js#_verifyWake</code>, and <code>lib/medusa-wake.js#_bookFollowUp</code> plus all 4 test files.</td>
+              <td><code>test/features-index.test.js</code> (<code>47/47</code> pass · CI run <code>40968195995</code> <code>SUCCESS</code> on <code>1fbb3390bb8e</code>)</td>
+            </tr>
+            <tr>
+              <td><strong>W3-REL</strong></td>
+              <td><code>W3-REL · #2719</code></td>
+              <td>Release <code>v5.47.1</code> Candidate</td>
+              <td>Consumes <code>changelog.d/2716.antigravity-residue-and-immediate-rearm.fixed.md</code> into <code>CHANGELOG.md [5.47.1]</code>, bumps <code>version.json</code> to <code>5.47.1</code>, updates <code>README.md</code> clone pins, <code>.prawduct/change-log.md</code>, and <code>test/fixtures/changelog-released-sections.lock.json</code> (<code>739f8d94653857df</code>) via <code>scripts/release-prepare.js</code>, and writes <code>docs/releases/v5.47.1-status.md</code> with all three finish lines (<code>Code released</code>, <code>Production updated</code>, <code>Feature activated</code>) accurately recorded as <code>Pending</code>.</td>
+              <td><code>scripts/release-prepare.js</code> + CI run <code>40969764540</code> <code>SUCCESS</code> + <code>O484-V5471-PR2719-399A67D2-ACCEPT</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 4. TELEMETRY & BENCHMARKS -->
+    <section class="section" id="telemetry">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 04 · Process Telemetry, Commit-by-Commit Progression &amp; Gate Precision</span>
+          <h2 class="section-title">W1-A Commit-by-Commit Timing &amp; How B-Gate + A-Gate Caught the 4s In-Gap Drop</h2>
+          <p class="section-desc">
+            In <code>W1-A (PR #2717)</code>, initial implementation took just <strong>28.1 minutes</strong> (<code>c4206aba</code>). While <code>PRR-A</code> accepted <code>c4206aba</code> on Round 1, <code>TC-Lane-INT</code>’s <code>B-Gate</code> and <code>TC-Lane-Arc</code>’s <code>A-Gate</code> inspected the real timing interaction between <code>_verifyWake</code> (<code>1,200 ms</code>) and <code>MIN_OBSERVATION_GAP_MS</code> (<code>4,000 ms</code>), catching three subtle timing &amp; state-flag details across <code>be8b7002 → 03a33cad → a80865e7</code> before merge.
+          </p>
+        </div>
+      </div>
+
+      <div class="bar-chart" style="margin-bottom:24px;">
+        <div class="bar-row">
+          <div class="bar-label-row">
+            <span><strong><code>Start-Gate Rebase</code></strong> — Caught dirty lib/tmux.js on cd09db00 &amp; rebased onto 1e8e2df4</span>
+            <span style="color:var(--amber)"><strong>4.0m</strong></span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:12%;background:linear-gradient(90deg,#f59e0b,#d97706);"></div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label-row">
+            <span><strong><code>W1-A Initial Build (c4206aba)</code></strong> — Kickoff 20:39Z → PR #2717 opened 21:07:15Z (CI 40955167241 pass)</span>
+            <span style="color:var(--green)"><strong>28.1m</strong></span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:32%;background:linear-gradient(90deg,#22c55e,#16a34a);"></div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label-row">
+            <span><strong><code>W1-A B-Gate R1 Fix (be8b7002 → 03a33cad)</code></strong> — Remaining minGap - gap calculation &amp; exchange-proof test</span>
+            <span style="color:var(--accent2)"><strong>47.5m</strong></span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:52%;background:linear-gradient(90deg,#38bdf8,#0284c7);"></div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label-row">
+            <span><strong><code>W1-A Prompt-Look &amp; Polish (aca6e47c → 8b891bc6)</code></strong> — _promptLook preservation across in-gap timer + comment cleanup</span>
+            <span style="color:var(--accent)"><strong>28.5m</strong></span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:33%;background:linear-gradient(90deg,#818cf8,#6366f1);"></div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label-row">
+            <span><strong><code>W1-A Total End-to-End (#2717)</code></strong> — 8 files (+546 / -34 LOC) · Merged at 7e984803 (22:42:20Z)</span>
+            <span style="color:var(--green)"><strong>123.2m</strong></span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,#22c55e,#059669);"></div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label-row">
+            <span><strong><code>W2-REC Build &amp; Open (#2718)</code></strong> — 2 files (+12 / -1 LOC) · Opened 2.6m after W1-A merge (1fbb3390)</span>
+            <span style="color:var(--accent2)"><strong>2.6m</strong></span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:10%;background:linear-gradient(90deg,#38bdf8,#2563eb);"></div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label-row">
+            <span><strong><code>Legacy Unaccepted-Wake Recovery Latency</code></strong> — Periodic 30s watchdog tick + periodic wake poll ticks</span>
+            <span style="color:var(--amber)"><strong>38.0s–60.0s</strong></span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:85%;background:linear-gradient(90deg,#f59e0b,#ea580c);"></div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label-row">
+            <span><strong><code>v5.47.1 Unaccepted-Wake Recovery Latency</code></strong> — 1.2s verify + 2.8s remaining gap + 4.0s 2nd look</span>
+            <span style="color:var(--green)"><strong>~8.0s (4.8x Faster)</strong></span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:18%;background:linear-gradient(90deg,#22c55e,#16a34a);"></div></div>
+        </div>
+      </div>
+
+      <div class="svg-wrap">
+        <div class="svg-caption">
+          <span>Figure 4.1 — Exact Timing Diagram of v5.47.1 Immediate Re-Arm &amp; Remaining Observation-Gap Chaining (#2716)</span>
+          <span>How B-Gate &amp; A-Gate Closed the t = +1,200 ms In-Gap Drop Across Commits c4206aba → 03a33cad → a80865e7</span>
+        </div>
+        <svg viewBox="0 0 1120 265" width="100%" height="auto" role="img" aria-label="Medusa Wake Observation-Gap Chaining State Machine">
+          <rect x="0" y="0" width="1120" height="265" rx="10" fill="#0b1120" />
+
+          <!-- Box 1: t = 0 to t = +1,200 ms -->
+          <rect x="20" y="24" width="340" height="216" rx="10" fill="#111827" stroke="#f59e0b" stroke-width="1.5" />
+          <text x="36" y="48" fill="#f59e0b" font-size="11.5" font-weight="800">1. INJECTION &amp; VERIFY (t = 0 → +1,200 ms)</text>
+          <text x="36" y="72" fill="#e2e8f0" font-size="11">• t = 0 ms: Attempt #1 injected into pane</text>
+          <text x="48" y="92" fill="#94a3b8" font-size="10.5">→ lastLookAt = 0; Enter key fails to submit</text>
+          <text x="36" y="116" fill="#e2e8f0" font-size="11">• t = +1,200 ms: _verifyWake inspects pane:</text>
+          <text x="48" y="136" fill="#f59e0b" font-size="10.5">1. Sees wake ref still in composer</text>
+          <text x="48" y="152" fill="#f59e0b" font-size="10.5">2. Records wake_not_accepted receipt</text>
+          <text x="48" y="170" fill="#22c55e" font-size="10.5">3. Calls onWakeNotAccepted → rearmWorkspace</text>
+          <text x="48" y="186" fill="#22c55e" font-size="10.5">4. rearmWorkspace calls requestScan() immediately</text>
+          <text x="36" y="214" fill="#22c55e" font-size="10.5" font-weight="700">✓ Tested in test/medusa-watchdog.test.js</text>
+
+          <!-- Box 2: t = +1,200 ms In-Gap Catch -->
+          <rect x="390" y="24" width="340" height="216" rx="10" fill="#111827" stroke="#38bdf8" stroke-width="1.5" />
+          <text x="406" y="48" fill="#38bdf8" font-size="11.5" font-weight="800">2. IN-GAP DEFER &amp; REMAINING TIMER (+1.2s)</text>
+          <text x="406" y="72" fill="#e2e8f0" font-size="11">• _observePane runs at t = +1,200 ms:</text>
+          <text x="418" y="92" fill="#f59e0b" font-size="10.5">→ gap = 1,200 ms &lt; minGap (4,000 ms)</text>
+          <text x="406" y="116" fill="#e2e8f0" font-size="11">• B-Gate &amp; A-Gate Catches (03a33cad, a80865e7):</text>
+          <text x="418" y="136" fill="#94a3b8" font-size="10.5">1. Compute exact remaining = minGap - gap</text>
+          <text x="418" y="152" fill="#94a3b8" font-size="10.5">   (4,000 - 1,200 = 2,800 ms, not fresh 4,000 ms)</text>
+          <text x="418" y="170" fill="#94a3b8" font-size="10.5">2. _bookFollowUp(wsId, false, remaining) re-adds</text>
+          <text x="418" y="186" fill="#94a3b8" font-size="10.5">   _promptLook.add(wsId) so timer chains Look #2</text>
+          <text x="406" y="214" fill="#22c55e" font-size="10.5" font-weight="700">✓ Tested in test/medusa-wake.test.js</text>
+
+          <!-- Box 3: t = +4,000 ms -> +8,000 ms Delivery -->
+          <rect x="760" y="24" width="340" height="216" rx="10" fill="#111827" stroke="#22c55e" stroke-width="1.5" />
+          <text x="776" y="48" fill="#22c55e" font-size="11.5" font-weight="800">3. TWO AT-REST LOOKS &amp; CLEAR (+4.0s → +8.0s)</text>
+          <text x="776" y="72" fill="#e2e8f0" font-size="11">• t = +4,000 ms: Look #1 fires on timer:</text>
+          <text x="788" y="92" fill="#22c55e" font-size="10.5">→ Pane idle (stranded nudge ignored for idle)</text>
+          <text x="788" y="108" fill="#22c55e" font-size="10.5">→ Books Look #2 timer for +4,000 ms</text>
+          <text x="776" y="132" fill="#e2e8f0" font-size="11">• t = +8,000 ms: Look #2 satisfies 2-look rule:</text>
+          <text x="788" y="152" fill="#94a3b8" font-size="10.5">1. Calls clearPromptLine(session, 'antigravity')</text>
+          <text x="788" y="168" fill="#94a3b8" font-size="10.5">2. Sends C-a C-k to erase stranded wake ref</text>
+          <text x="788" y="186" fill="#94a3b8" font-size="10.5">3. Injects fresh wake ref + Enter → Accepted!</text>
+          <text x="776" y="214" fill="#22c55e" font-size="10.5" font-weight="700">✓ Verified in medusa-wake-exchange-proof.test.js</text>
+        </svg>
+      </div>
+    </section>
+
+    <!-- 5. POST-MORTEM & GOVERNANCE AUDIT -->
+    <section class="section" id="postmortem">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 05 · Sprint Post-Mortem &amp; Rule #283 16-Point Governance Audit</span>
+          <h2 class="section-title">What Worked, What Didn't &amp; 4-Gate Release Verification</h2>
+          <p class="section-desc">
+            Sprint <code>v5.47.1</code> demonstrated the value of multi-gate exact-SHA review (`PRR-A I-Gate` + `INT B-Gate` + `Arc A-Gate`) and strict start-gate freshness verification, catching a stale-base edit before PR creation and closing an in-gap observation timer subtlety before `PR #2717` landed on `main`.
+          </p>
+        </div>
+      </div>
+
+      <div class="grid-2" style="margin-bottom:22px;">
+        <div>
+          <h3 style="margin-bottom:12px;color:var(--green);">✅ What Worked Exceptionally Well (Strengths)</h3>
+          <div class="pm-item">
+            <h4>1. Start-Gate Freshness Check Caught Stale-Base Edit Before PR Creation</h4>
+            <p>At <code>20:39Z</code> kickoff, <code>TC-Lane-INT</code>’s start-gate check inspected <code>tc freshness</code> across the fleet and caught that <code>TC-Lane-B</code> had already modified <code>lib/tmux.js</code> on stale commit <code>cd09db00</code> (3 commits behind <code>v5.47.0 @ 1e8e2df4</code>). <code>TC-Lane-INT</code> issued an immediate blocking preserve-and-rebase directive, and <code>TC-Lane-B</code> rebased onto <code>1e8e2df4</code> in 4 minutes with zero lost work.</p>
+          </div>
+          <div class="pm-item">
+            <h4>2. B-Gate &amp; A-Gate Caught the 4-Second Observation-Gap Timing Edge Case</h4>
+            <p>Even though <code>TC-Lane-PRR-A</code> accepted initial commit <code>c4206aba</code> on Round 1, <code>TC-Lane-INT</code>’s <code>B-Gate</code> and <code>TC-Lane-Arc</code>’s <code>A-Gate</code> traced the real millisecond timeline from injection (<code>t = 0</code>) through <code>_verifyWake</code> (<code>t = +1,200 ms</code>) into <code>_observePane</code> (<code>MIN_OBSERVATION_GAP_MS = 4,000 ms</code>), catching both that the in-gap scan was dropped and that the deferred timer needed to preserve <code>_promptLook</code> to chain Look #2 automatically.</p>
+          </div>
+          <div class="pm-item">
+            <h4>3. End-to-End Exchange-Proof Regression Coverage</h4>
+            <p>In addition to unit tests in <code>test/tmux.test.js</code>, <code>test/medusa-wake.test.js</code>, and <code>test/medusa-watchdog.test.js</code>, <code>PR #2717</code> expanded <code>test/medusa-wake-exchange-proof.test.js</code> with an end-to-end test proving that when attempt #1 fails with <code>nonce-in-composer</code> under the real <code>4,000 ms</code> minimum observation gap and <strong>no periodic wake or watchdog timers</strong>, attempt #2 completes and delivers the wake via the chained follow-up timers alone.</p>
+          </div>
+          <div class="pm-item">
+            <h4>4. 2.6-Minute Wave 2 Reconciliation &amp; Clear W3-REL Ownership Boundary</h4>
+            <p><code>TC-Lane-INT</code> opened <code>W2-REC PR #2718</code> (<code>1fbb3390bb8e</code>) just <strong>2.6 minutes</strong> after <code>W1-A PR #2717</code> merged, passing <code>47/47</code> <code>test/features-index.test.js</code> checks on the first run, and explicitly coordinated with <code>TC-Lane-Obsr</code> so <code>TC-Lane-INT</code> owns 100% of <code>W3-REL</code> repository files while <code>TC-Lane-Obsr</code> owns the external HTML/Markdown sprint reports and <code>O-Gate</code> verification.</p>
+          </div>
+        </div>
+
+        <div>
+          <h3 style="margin-bottom:12px;color:var(--amber);">⚠️ What Didn't Work &amp; Proven Fixes (Process &amp; Tooling Friction)</h3>
+          <div class="pm-item warn">
+            <h4>1. Builder Started Editing Before Pulling Newly Released v5.47.0 Base</h4>
+            <p>When transitioning rapidly from <code>v5.47.0</code> wrap to <code>v5.47.1</code> kickoff, <code>TC-Lane-B</code> began editing <code>lib/tmux.js</code> while its checkout was still on <code>cd09db00</code> instead of running <code>git fetch origin main &amp;&amp; git checkout -B ... origin/main</code> first. <strong>Fix / Guardrail (P43):</strong> Builders must execute <code>git fetch origin main &amp;&amp; git rev-parse HEAD origin/main</code> and verify exact match with the Charter base SHA before touching any file.</p>
+          </div>
+          <div class="pm-item warn">
+            <h4>2. PRR-A Round 1 Missed the Cross-Timer Interaction Between _verifyWake and _observePane</h4>
+            <p><code>TC-Lane-PRR-A</code> accepted <code>c4206aba</code> because the unit tests in <code>c4206aba</code> used <code>minObservationGapMs: 0</code>, masking the fact that in production <code>VERIFY_DELAY_MS</code> (<code>1,200 ms</code>) is smaller than <code>MIN_OBSERVATION_GAP_MS</code> (<code>4,000 ms</code>). <strong>Fix / Guardrail (P44):</strong> Timer and state-machine tests must include at least one test using production-ratio constants (<code>verifyDelayMs &lt; minObservationGapMs</code>) rather than zeroed gaps.</p>
+          </div>
+          <div class="pm-item warn">
+            <h4>3. Intermediate Fix Commit (be8b7002) Pushed Before Running Exchange-Proof Test Locally</h4>
+            <p>Commit <code>be8b7002</code> booked a full <code>minGap</code> delay instead of the remaining <code>minGap - gap</code> delay and broke an assertion in <code>test/medusa-wake-exchange-proof.test.js</code>, causing 1 red CI run (<code>40960015900</code>) before <code>03a33cad</code> fixed it 22 minutes later. <strong>Fix / Guardrail (P45):</strong> Run all sibling test files in the same subsystem (<code>test/medusa-*.test.js</code>) locally before pushing a review-round fix commit.</p>
+          </div>
+          <div class="pm-item warn">
+            <h4>4. Review-Process Attribution in Code Comments Needed Cleanup Commit (8b891bc6)</h4>
+            <p>Commit <code>a80865e7</code> included review-round commentary in source comments, requiring a follow-up cleanup commit (<code>8b891bc6</code>) to keep shipped comments focused on domain invariants. <strong>Fix / Guardrail (P46):</strong> Code comments must explain timeless product invariants (<em>why</em> the code works this way), never PR review round history.</p>
+          </div>
+        </div>
+      </div>
+
+      <h3 style="margin:20px 0 10px;">4-Gate Release Verification Matrix (Rule #283.5)</h3>
+      <div class="table-wrap" style="margin-bottom:22px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Gate</th>
+              <th>Owner</th>
+              <th>Verification Scope</th>
+              <th>Status &amp; Evidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Gate 1 · I-Gate (PRR Code &amp; Contract Review)</strong></td>
+              <td><code>TC-Lane-PRR-A</code></td>
+              <td>Exact-SHA diff review, unit/integration test coverage, and charter scope compliance across <code>W1-A #2717</code> and <code>W3-REL</code></td>
+              <td><span class="badge badge-green">PASS</span> <code>W1-A PR #2717</code> reviewed and accepted on final head <code>8b891bc6272a</code> (<code>I-Gate ACCEPT</code>).</td>
+            </tr>
+            <tr>
+              <td><strong>Gate 2 · B-Gate (Integrator Verification &amp; CI Gate)</strong></td>
+              <td><code>TC-Lane-INT</code></td>
+              <td>Exact-head GitHub Actions <code>Tests</code> CI + timing/invariant audit across <code>W1-A #2717</code>, <code>W2-REC #2718</code>, and <code>W3-REL</code></td>
+              <td><span class="badge badge-green">PASS</span> Caught the 4s in-gap drop in R1, verified final head <code>8b891bc6272a</code> CI <code>40965856907</code> <code>SUCCESS</code>, and verified <code>W2-REC #2718</code> (<code>1fbb3390bb8e</code>) CI <code>40968195995</code> <code>SUCCESS</code>.</td>
+            </tr>
+            <tr>
+              <td><strong>Gate 3 · A-Gate / R-Gate (Architect Invariant &amp; Records Gate)</strong></td>
+              <td><code>TC-Lane-Arc</code></td>
+              <td>Architectural invariant sign-off on <code>W1-A #2717</code>, <code>FEATURES.md</code> symbol/test anchor verification on <code>W2-REC #2718</code>, and <code>R-Gate</code> on <code>W3-REL</code></td>
+              <td><span class="badge badge-green">PASS</span> Verified <code>_promptLook</code> chaining on <code>8b891bc6272a</code> and accepted <code>W2-REC PR #2718</code> (<code>1fbb3390bb8e</code> · <code>47/47</code> <code>test/features-index.test.js</code>).</td>
+            </tr>
+            <tr>
+              <td><strong>Gate 4 · O-Gate (Observer Canonical Report &amp; Release Audit)</strong></td>
+              <td><code>TC-Lane-Obsr</code> + <code>TC-Lane-PM</code></td>
+              <td>Canonical 8-section HTML report + Plain-English Summary + non-clipped bar charts (<code>validate-sprint-report.py --all</code>) + on-disk path audit + exact-head <code>W3-REL PR #2719</code> audit</td>
+              <td><span class="badge badge-green">PASS (O484-V5471-PR2719-399A67D2-ACCEPT)</span> <code>0</code> validation errors across all 16 reports (<code>v5.34.0</code>–<code>v5.47.1</code>) + hub index; 100% of cited repository paths verified on disk; <code>W3-REL PR #2719</code> (<code>399a67d2badf</code> on <code>d880cbc0c314</code>) verified with all 3 finish lines accurately <code>Pending</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 style="margin:20px 0 10px;">Rule #283 16-Point Governance &amp; Process Audit</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Rule #283 Audit Dimension</th>
+              <th>Verdict</th>
+              <th>Sprint v5.47.1 Measured Evidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>1</td><td>Operator Interventions &amp; Causes</td><td><span class="badge badge-green">PASS</span></td><td><code>0</code> unplanned Operator rescue interventions; Operator chartered <code>v5.47.1</code> point patch (<code>#2716</code>) and sprint report clarity upgrades (Plain-English Summary + unclipped bar charts).</td></tr>
+            <tr><td>2</td><td>Dispatch-to-Merge Timing Breakdown</td><td><span class="badge badge-green">PASS</span></td><td><code>W1-A (#2717)</code>: 28.1m build / 95.1m open-to-merge / 123.2m total elapsed; <code>W2-REC (#2718)</code>: 2.6m build after <code>W1-A</code> merge / ~14.6m total.</td></tr>
+            <tr><td>3</td><td>Active vs Allowed Builders &amp; Parallelism</td><td><span class="badge badge-green">PASS</span></td><td><code>1/1</code> chartered Builder lane (<code>TC-Lane-B</code>) active for the single-car Wave 1 point patch; <code>TC-Lane-C</code> and <code>TC-Lane-D</code> held cleanly on standby.</td></tr>
+            <tr><td>4</td><td>Forced Re-Syncs / Rebases When <code>main</code> Moves</td><td><span class="badge badge-green">PASS</span></td><td><code>1</code> pre-PR start-gate rebase of <code>TC-Lane-B</code> from <code>cd09db00</code> onto <code>v5.47.0 @ 1e8e2df4</code>; <code>0</code> mid-PR rebases needed as <code>W1-A</code> was the sole Wave 1 car.</td></tr>
+            <tr><td>5</td><td>Open PR Age Since Current <code>main</code></td><td><span class="badge badge-green">PASS</span></td><td><code>0m</code> at merge — <code>W1-A PR #2717</code> was based directly on <code>1e8e2df417e1</code> and merged fast-forward-cleanly as <code>7e9848037361</code>; <code>W2-REC PR #2718</code> based directly on <code>7e9848037361</code>.</td></tr>
+            <tr><td>6</td><td>CI Red After Ready (<code>#2595</code> Pre-Push Hook)</td><td><span class="badge badge-green">PASS</span></td><td><code>6 / 7</code> PR &amp; branch <code>Tests</code> CI runs green on first try; <code>1</code> intermediate review-round commit (<code>be8b7002</code>, run <code>40960015900</code>) failed <code>medusa-wake-exchange-proof.test.js</code> and was fixed in <code>03a33cad</code> (documented in <code>P45</code>).</td></tr>
+            <tr><td>7</td><td>PRR Review Rounds &amp; Findings by Severity</td><td><span class="badge badge-green">PASS</span></td><td><code>3</code> true-positive <code>B-Gate / A-Gate</code> catches on <code>W1-A #2717</code> (in-gap retry timer, remaining gap math <code>minGap - gap</code>, and <code>_promptLook</code> preservation) + <code>1</code> comment-hygiene polish; <code>0</code> false positives.</td></tr>
+            <tr><td>8</td><td>Post-Merge Defects on <code>main</code></td><td><span class="badge badge-green">PASS</span></td><td><code>0</code> post-merge defects on <code>main @ 7e9848037361</code>.</td></tr>
+            <tr><td>9</td><td>Clears, Retries &amp; Stalls</td><td><span class="badge badge-green">PASS</span></td><td><code>0</code> <code>/clear</code> calls and <code>0</code> lane stalls across all active sessions.</td></tr>
+            <tr><td>10</td><td>Wrong Triage / Scope Fields</td><td><span class="badge badge-green">PASS</span></td><td><code>1</code> proactive pre-Wave-3 scope addendum (<code>A484-R1</code>) adding <code>docs/releases/v5.47-status.md</code> to <code>W3-REL</code> so <code>v5.47.0</code> release readbacks land cleanly alongside <code>v5.47.1</code> prep.</td></tr>
+            <tr><td>11</td><td>Rule Breaches &amp; Governance Discipline</td><td><span class="badge badge-green">PASS</span></td><td><code>0</code> rule breaches; <code>TC-Lane-Obsr</code> strictly honored the <code>Rule #283</code> write boundary and confirmed <code>TC-Lane-INT</code>’s sole file ownership of <code>W3-REL</code>.</td></tr>
+            <tr><td>12</td><td>Unlabelled PRs, Dirty Clones &amp; Worktrees</td><td><span class="badge badge-green">PASS</span></td><td><code>0</code> unlabelled PRs and <code>0</code> lingering dirty worktrees after the <code>20:39Z</code> start-gate rebase.</td></tr>
+            <tr><td>13</td><td>Release-Status Lag &amp; Finish-Line Honesty</td><td><span class="badge badge-green">PASS</span></td><td><code>0</code> premature release claims; <code>A484-R1</code> updates <code>docs/releases/v5.47-status.md</code> with verified <code>v5.47.0</code> readbacks while keeping <code>docs/releases/v5.47.1-status.md</code> finish lines <code>Pending</code> prior to tag/deploy.</td></tr>
+            <tr><td>14</td><td>Conflict Resolution Time</td><td><span class="badge badge-green">PASS</span></td><td><code>0m</code> (<code>0</code> merge conflicts across all waves).</td></tr>
+            <tr><td>15</td><td>Wakes, Tokens &amp; Turns by Role &amp; Model</td><td><span class="badge badge-green">PASS</span></td><td><code>A187.1</code> quiet routing honored; multi-gate review across <code>claude-opus-4-6</code> (<code>PRR-A</code>), <code>claude-opus-4-7</code> (<code>INT</code> / <code>Arc</code> / <code>PM</code>), and <code>Gemini 4 Argon</code> (<code>Obsr</code>).</td></tr>
+            <tr><td>16</td><td>4 End-of-Sprint Maintenance Gates</td><td><span class="badge badge-green">PASS</span></td><td><code>LANE_QUEUE.md</code> kept compact, <code>validate-sprint-report.py --all</code> <code>0</code> errors across all 16 reports (<code>v5.34.0</code>–<code>v5.47.1</code>) + hub index, Plain-English Summary + unclipped bar charts enforced by validator, and 100% of cited repo paths verified on disk.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 6. INTERACTIVE WAVE EXPLORER -->
+    <section class="section" id="waves">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 06 · Interactive Wave &amp; Deliverable Explorer (3 Waves · 6 Deep-Dive Cards)</span>
+          <h2 class="section-title">Filter &amp; Inspect Every v5.47.1 Sub-Deliverable, Gate Catch &amp; Release Wave</h2>
+          <p class="section-desc">
+            Use the search box or filter pills below to inspect the exact code symbols, test files, review rounds, and commit SHAs across <code>W1-A PR #2717</code>, <code>W2-REC PR #2718</code>, and <code>W3-REL</code>.
+          </p>
+        </div>
+      </div>
+
+      <div class="explorer-controls">
+        <input type="text" id="waveSearch" class="search-input" placeholder="Search PR (#2717, #2718), issue (#2716), symbol (_lineKill, rearmWorkspace, _bookFollowUp), or SHA..." oninput="filterWaves()" />
+        <div class="filter-group">
+          <button class="filter-btn active" onclick="setWaveFilter('all', this)">All 6 Cards (Waves 1–3)</button>
+          <button class="filter-btn" onclick="setWaveFilter('w1', this)">Wave 1 (#2717 · 4 Cards)</button>
+          <button class="filter-btn" onclick="setWaveFilter('w2', this)">Wave 2 Reconciliation (#2718)</button>
+          <button class="filter-btn" onclick="setWaveFilter('w3', this)">Wave 3 Release (W3-REL)</button>
+          <button class="filter-btn" onclick="setWaveFilter('tmux', this)">Antigravity Line-Kill (tmux.js)</button>
+          <button class="filter-btn" onclick="setWaveFilter('watchdog', this)">Immediate Re-Arm (medusa-watchdog.js)</button>
+          <button class="filter-btn" onclick="setWaveFilter('gap', this)">4s Gap Chaining (medusa-wake.js)</button>
+          <button class="filter-btn" onclick="setWaveFilter('gate', this)">Start-Gate &amp; B-Gate Catches</button>
+          <button class="filter-btn" onclick="setWaveFilter('proof', this)">Exchange Proof Tests</button>
+          <button class="filter-btn" onclick="setWaveFilter('addendum', this)">Addendum A484-R1</button>
+        </div>
+      </div>
+
+      <div class="wave-grid" id="waveGrid">
+        <!-- Card 1: W1-A Part 1 (tmux.js#_lineKill) -->
+        <div class="wave-card" data-tags="w1 tmux">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-green">Wave 1 · PR #2717 (Part 1) · Merged 22:42Z</span>
+              <h3>W1-A Pt 1 · PR #2717 — Engine-Aware Antigravity Composer Line-Kill (<code>lib/tmux.js#_lineKill</code>)</h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lane: <code>TC-Lane-B</code></div>
+              <div>Head: <code>8b891bc6</code> → Merge: <code>7e984803</code></div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            Eliminated <code>stranded-nudge-residue</code> loops on Antigravity workspaces by adding <code>lib/tmux.js#_lineKill(engineId)</code>: sends <code>['C-a', 'C-k']</code> (<code>LineStart</code> + <code>DeleteAfterCursor</code> in <code>charmbracelet/bubbles/textarea</code>) when <code>engineId === 'antigravity'</code> instead of <code>C-u</code> (which Antigravity’s viewport intercepts as <code>KeyHalfPageUp</code>), while preserving <code>['C-u']</code> for all other engines. Threaded <code>engineId</code> through <code>clearPromptLine</code> and <code>clearDraftAndSendLiteral</code> in <code>lib/medusa-wake.js</code>.
+          </p>
+          <div style="font-size:0.78rem;color:var(--text-dim);">
+            <strong>Files:</strong> <code>lib/tmux.js</code>, <code>lib/medusa-wake.js</code> · <strong>Tests:</strong> <code>test/tmux.test.js</code>, <code>test/medusa-wake.test.js</code> · <strong>Issue:</strong> <code>#2716</code>.
+          </div>
+        </div>
+
+        <!-- Card 2: W1-A Part 2 (medusa-watchdog.js#rearmWorkspace) -->
+        <div class="wave-card" data-tags="w1 watchdog">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-green">Wave 1 · PR #2717 (Part 2) · Merged 22:42Z</span>
+              <h3>W1-A Pt 2 · PR #2717 — Immediate Watchdog Re-Arm on <code>wake_not_accepted</code> (<code>rearmWorkspace</code>)</h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lane: <code>TC-Lane-B</code></div>
+              <div>Head: <code>8b891bc6</code> → Merge: <code>7e984803</code></div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            Added <code>lib/medusa-watchdog.js#rearmWorkspace(workspaceId)</code> and wired <code>onWakeNotAccepted</code> in <code>lib/medusa-wake.js#_verifyWake</code> (and <code>server.js</code>) so that when Enter fails to submit a wake and <code>nonce-in-composer</code> is recorded as <code>wake_not_accepted</code>, the watchdog’s bounded durable re-arm check runs immediately rather than waiting up to <code>30s</code> for the periodic watchdog timer—preserving <code>maxRearms</code> budget, backoff age, restart durability, and unread-mail isolation.
+          </p>
+          <div style="font-size:0.78rem;color:var(--text-dim);">
+            <strong>Files:</strong> <code>lib/medusa-watchdog.js</code>, <code>lib/medusa-wake.js</code> · <strong>Tests:</strong> <code>test/medusa-watchdog.test.js</code>, <code>test/medusa-wake.test.js</code> · <strong>Issue:</strong> <code>#2716</code>.
+          </div>
+        </div>
+
+        <!-- Card 3: W1-A Part 3 (medusa-wake.js#_bookFollowUp) -->
+        <div class="wave-card" data-tags="w1 gap proof">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-green">Wave 1 · PR #2717 (Part 3) · Merged 22:42Z</span>
+              <h3>W1-A Pt 3 · PR #2717 — Remaining Observation-Gap Timer &amp; 2-Look Chaining (<code>_bookFollowUp</code>)</h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lane: <code>TC-Lane-B</code></div>
+              <div>Head: <code>8b891bc6</code> → Merge: <code>7e984803</code></div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            Updated <code>lib/medusa-wake.js#_bookFollowUp(wsId, gapDone, delayMs)</code> and <code>_scanWorkspace</code> so that when <code>rearmWorkspace</code>’s immediate scan at <code>t = +1,200 ms</code> lands inside <code>MIN_OBSERVATION_GAP_MS</code> (<code>4,000 ms</code>), the monitor books a timer for the exact remaining gap (<code>minGap - gap</code>, ~<code>2,800 ms</code>), preserves <code>_promptLook.add(wsId)</code> across the in-gap wait, and chains the second at-rest look (+<code>4,000 ms</code>) to retry in ~<code>8.0s</code> with zero periodic timers.
+          </p>
+          <div style="font-size:0.78rem;color:var(--text-dim);">
+            <strong>Files:</strong> <code>lib/medusa-wake.js</code>, <code>changelog.d/2716.antigravity-residue-and-immediate-rearm.fixed.md</code> · <strong>Tests:</strong> <code>test/medusa-wake.test.js</code>, <code>test/medusa-wake-exchange-proof.test.js</code>.
+          </div>
+        </div>
+
+        <!-- Card 4: Start-Gate & Multi-Gate Review Telemetry -->
+        <div class="wave-card" data-tags="w1 gate gap proof">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-green">Wave 1 · Governance &amp; Review Telemetry</span>
+              <h3>Start-Gate Rebase &amp; 6-Commit Review Progression (<code>c4206aba → 8b891bc6</code>)</h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lanes: <code>INT</code> + <code>Arc</code> + <code>PRR-A</code> + <code>B</code></div>
+              <div>6 Commits · 5 Green CI Runs</div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            At <code>20:39Z</code>, <code>TC-Lane-INT</code> caught <code>TC-Lane-B</code> editing <code>lib/tmux.js</code> on stale <code>cd09db00</code> and enforced a clean rebase onto <code>1e8e2df4</code> before PR open. During review of <code>PR #2717</code>, <code>B-Gate</code> and <code>A-Gate</code> caught that <code>c4206aba</code> dropped the in-gap scan at <code>+1.2s</code>, verified the remaining-gap calculation in <code>03a33cad</code>, caught that the deferred timer needed <code>_promptLook.add(wsId)</code> in <code>a80865e7</code>, and verified comment hygiene in <code>8b891bc6</code>.
+          </p>
+          <div style="font-size:0.78rem;color:var(--text-dim);">
+            <strong>Commits:</strong> <code>c4206aba</code> → <code>be8b7002</code> → <code>03a33cad</code> → <code>aca6e47c</code> → <code>a80865e7</code> → <code>8b891bc6</code> · <strong>Merged:</strong> <code>7e9848037361</code>.
+          </div>
+        </div>
+
+        <!-- Card 5: W2-REC PR #2718 -->
+        <div class="wave-card" data-tags="w2 tmux watchdog gap">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-green">Wave 2 · PR #2718 · Merged 22:55Z</span>
+              <h3>W2-REC · PR #2718 — Feature Index &amp; Change-Log Reconciliation for <code>#2716</code></h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lane: <code>TC-Lane-INT</code></div>
+              <div>Head: <code>1fbb3390</code> → Merge: <code>d880cbc0</code></div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            Opened 2.6 minutes after <code>W1-A</code> merged and merged at <code>d880cbc0c314</code> (<code>22:55:20Z</code>), updating <code>FEATURES.md</code> and <code>.prawduct/change-log.md</code> with the canonical <code>#2716</code> entry anchoring <code>lib/tmux.js#_lineKill</code>, <code>lib/medusa-watchdog.js#rearmWorkspace</code>, <code>lib/medusa-wake.js#_verifyWake</code>, and <code>lib/medusa-wake.js#_bookFollowUp</code> along with <code>test/tmux.test.js</code>, <code>test/medusa-watchdog.test.js</code>, <code>test/medusa-wake.test.js</code>, and <code>test/medusa-wake-exchange-proof.test.js</code>.
+          </p>
+          <div style="font-size:0.78rem;color:var(--text-dim);">
+            <strong>Stats:</strong> 2 files (<code>+12 / -1</code> LOC) · <strong>Tests:</strong> <code>47/47</code> <code>test/features-index.test.js</code> pass · <strong>CI:</strong> Run <code>40968195995</code> <code>SUCCESS</code> · <strong>Merged:</strong> <code>d880cbc0c314</code>.
+          </div>
+        </div>
+
+        <!-- Card 6: W3-REL -->
+        <div class="wave-card" data-tags="w3 addendum">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-green">Wave 3 · PR #2719 Candidate Ready (O-Gate ACCEPT @ 399a67d2)</span>
+              <h3>W3-REL · PR #2719 — Release <code>v5.47.1</code> Candidate Preparation (Finish Lines <code>Pending</code>)</h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lane: <code>TC-Lane-INT</code> + <code>TC-Lane-Obsr</code></div>
+              <div>Head: <code>399a67d2</code> on Base: <code>d880cbc0</code></div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            Prepared <code>release/v5.47.1-prep</code> (<code>PR #2719 @ 399a67d2badff0a2b7ff4480dd80c8292aad24e6</code>) on W2-REC-merged <code>main @ d880cbc0c314</code>: consumes <code>changelog.d/2716.antigravity-residue-and-immediate-rearm.fixed.md</code> into <code>CHANGELOG.md [5.47.1]</code>, bumps <code>version.json</code> to <code>5.47.1</code>, updates <code>README.md</code> clone pins, <code>.prawduct/change-log.md</code>, and <code>test/fixtures/changelog-released-sections.lock.json</code> (<code>739f8d94653857df</code>) via <code>scripts/release-prepare.js</code>, and writes <code>docs/releases/v5.47.1-status.md</code> keeping all three finish lines (<code>Code released</code>, <code>Production updated</code>, <code>Feature activated</code>) accurately <code>Pending</code> until post-merge tag, GitHub Release, and live server activation.
+          </p>
+          <div style="font-size:0.78rem;color:var(--text-dim);">
+            <strong>Stats:</strong> 7 files (<code>+46 / -26</code> LOC · 1 fragment consumed) · <strong>Gates:</strong> <code>Tests CI 40969764540 SUCCESS</code> + <code>PRR-A</code> + <code>Arc R-Gate</code> + <code>Obsr O-Gate</code> (<code>O484-V5471-PR2719-399A67D2-ACCEPT</code>).
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 7. NEXT SPRINT RECOMMENDATIONS -->
+    <section class="section" id="next-sprint">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 07 · v5.48.0 Recommendations &amp; Process Guardrails (P43–P46)</span>
+          <h2 class="section-title">6 Actionable Upgrades for Sprint v5.48.0 (Charter A485)</h2>
+          <p class="section-desc">
+            Combining the four targeted guardrails from <code>v5.47.1</code> (<code>P43</code>–<code>P46</code>) with the two post-deploy verification and test-harness items carried from <code>v5.47.0</code> keeps the fleet fast, honest, and resilient.
+          </p>
+        </div>
+      </div>
+
+      <div class="grid-3">
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 01 · P43 MANDATORY PRE-EDIT BASE-SHA VERIFICATION</span>
+          <h4>Verify Local HEAD Matches Charter Base SHA Before Touching Any File</h4>
+          <p>
+            Before making the first edit in a newly chartered wave, every Builder must run <code>git fetch origin main &amp;&amp; git checkout -B &lt;branch&gt; origin/main</code> and verify <code>git rev-parse HEAD</code> matches the Charter’s declared base SHA—preventing pre-rebase dirty files when back-to-back sprints turn over rapidly.
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 02 · P44 PRODUCTION-RATIO TIMER CONSTANTS IN UNIT TESTS</span>
+          <h4>Test With <code>verifyDelayMs &lt; minObservationGapMs</code> Alongside Zeroed-Gap Tests</h4>
+          <p>
+            Whenever a feature coordinates two timers or cooldown windows (such as <code>VERIFY_DELAY_MS = 1,200 ms</code> and <code>MIN_OBSERVATION_GAP_MS = 4,000 ms</code>), unit tests must include at least one test with production-ratio constants so in-gap edge cases are caught before Round 1 review.
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 03 · P45 RUN ALL SUBSYSTEM SIBLING TESTS BEFORE REVIEW RE-PUSH</span>
+          <h4>Execute <code>test/medusa-*.test.js</code> Locally Before Pushing Review Fixes</h4>
+          <p>
+            When pushing a follow-up commit during multi-round review, Builders must run all sibling test files in the affected subsystem (including <code>*-exchange-proof.test.js</code>) locally before <code>git push</code> so intermediate fix commits never trip a preventable CI failure.
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 04 · P46 TIMELESS DOMAIN INVARIANTS IN SOURCE COMMENTS</span>
+          <h4>Keep Source Comments Free of Review-Round Process History</h4>
+          <p>
+            Code comments and docstrings must describe timeless product and state-machine invariants (e.g., why <code>_promptLook</code> is re-added across an in-gap deferral), never referencing PR review rounds or reviewer findings—avoiding extra comment-cleanup commits at the end of a review cycle.
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 05 · P42 POST-DEPLOY LIVE BROWSER CHECK FOR #2168 &amp; LIVE #2716 TELEMETRY</span>
+          <h4>Verify <code>acceptFolderTrust</code> UI Toggle &amp; Zero Stranded-Nudge Deferrals on Live Server</h4>
+          <p>
+            Once <code>v5.47.1</code> is deployed to <code>TangleClaw-Builder1</code>, execute the deferred <code>A483-R8</code> live browser check on Project Settings → <strong>Accept the folder-trust dialog at launch</strong> (<code>#2168</code>) and confirm zero recurring <code>stranded-nudge-residue</code> deferrals on Antigravity workspaces.
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 06 · ISSUE #2706 STAGE 5 TIMEOUT &amp; HETEROGENEOUS BUILDER BALANCING (P38)</span>
+          <h4>Complete Stage 5 Timeout Calibration (#2706) &amp; Multi-Engine Wave Assignment</h4>
+          <p>
+            Carry forward <code>#2706</code> (calibrating the Stage 5 per-file <code>--test-timeout</code> in <code>scripts/test-stage.js#tierArgv</code>) and maintain heterogeneous Builder engine assignment (<code>claude-opus-4-7</code> + <code>codex gpt-6-sol high</code>) on multi-car waves.
+          </p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+        <div>
+          <strong>TangleClaw Sprint v5.47.1 Executive Engineering &amp; Telemetry Report</strong> · Generated by <code>TC-Lane-Obsr</code> &amp; <code>TC-Lane-PM</code> (In-Test Sprint Participant · Rule #283)
+        </div>
+        <div>
+          Charter <code>A484</code> (<code>A484-R1</code>) · Base <code>1e8e2df4</code> (<code>v5.47.0</code>) → W1-A <code>7e984803</code> (<code>#2717</code>) → W2-REC <code>#2718</code> (<code>1fbb3390</code>) → W3-REL <code>v5.47.1</code> · <a href="../" style="color:var(--accent2);">All Sprint Reports</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    (function () {
+      const buttons = document.querySelectorAll('.filter-btn');
+      const search = document.getElementById('waveSearch');
+      const cards = document.querySelectorAll('.wave-card');
+      let currentFilter = 'all';
+
+      function applyFilters() {
+        const q = (search && search.value ? search.value : '').trim().toLowerCase();
+        cards.forEach(function (card) {
+          const cardTags = (card.getAttribute('data-tags') || '').split(/\s+/);
+          const cardSearch = (card.getAttribute('data-search') || '') + ' ' + card.innerText.toLowerCase();
+          const rows = card.querySelectorAll('tbody tr[data-row-tags]');
+          if (rows.length > 0) {
+            let visibleRows = 0;
+            rows.forEach(function (row) {
+              const rTags = (row.getAttribute('data-row-tags') || '').split(/\s+/);
+              const rText = ((row.getAttribute('data-row-search') || '') + ' ' + row.innerText).toLowerCase();
+              const matchTag = currentFilter === 'all' || rTags.indexOf(currentFilter) !== -1 || cardTags.indexOf(currentFilter) !== -1 && currentFilter.indexOf('wave-') === 0;
+              const matchSearch = !q || rText.indexOf(q) !== -1;
+              if (matchTag && matchSearch) {
+                row.style.display = '';
+                visibleRows++;
+              } else {
+                row.style.display = 'none';
+              }
+            });
+            card.style.display = visibleRows > 0 ? '' : 'none';
+          } else {
+            const matchTag = currentFilter === 'all' || cardTags.indexOf(currentFilter) !== -1;
+            const matchSearch = !q || cardSearch.indexOf(q) !== -1;
+            card.style.display = (matchTag && matchSearch) ? '' : 'none';
+          }
+        });
+      }
+
+      buttons.forEach(function (btn) {
+        btn.removeAttribute('onclick');
+        btn.addEventListener('click', function () {
+          buttons.forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          currentFilter = btn.getAttribute('data-filter') || 'all';
+          applyFilters();
+        });
+      });
+
+      if (search) {
+        search.removeAttribute('oninput');
+        search.addEventListener('input', applyFilters);
+      }
+
+      window.filterWaves = function (tag, btn) {
+        buttons.forEach(function (b) { b.classList.remove('active'); });
+        if (btn) btn.classList.add('active');
+        currentFilter = tag || 'all';
+        applyFilters();
+      };
+      window.searchWaves = function () { applyFilters(); };
+    })();
+  </script>
+</body>
+</html>
