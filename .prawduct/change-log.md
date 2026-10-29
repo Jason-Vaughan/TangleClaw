@@ -45,8 +45,8 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- prawduct: type=internal | scope=v5461-w3-rel -->
 
-- Prepared v5.46.1 from W2-merged `main@980d53bbe2ad1c56964adde30ce23f67e7622a36`: promoted all six accepted stabilization fragments into the dated `[5.46.1]` changelog section, removed the consumed fragments, and changed `version.json` from 5.46.0 to 5.46.1.
-- Ran `scripts/release-prepare.js` to update the README clone pins and extend the released-section lock. Recorded the three pending finish lines in `docs/releases/v5.46.1-status.md`. The corrected #2699 release note distinguishes retained group membership from skipped auto-claim on an unverified lookup and allows one project to own multiple vacant groups.
+- Prepared v5.46.1 from W2-merged `main@980d53bbe2ad1c56964adde30ce23f67e7622a36`, then rebased the release candidate onto current `main@003f43ae3e8b017f73b447e0f4dc1c7d5e2405dc`: promoted all six accepted stabilization fragments into the dated `[5.46.1]` changelog section, removed those consumed fragments, and changed `version.json` from 5.46.0 to 5.46.1. The rebased tree also contains v5.47.0 Wave 1 code; its four fragments remain for that later release under PM Addendum A482-R8/A483-R7.
+- On the old base, `scripts/release-prepare.js` updated the README clone pins and released-section lock; on this rebased candidate it **refuses** because the four v5.47.0 fragments remain, so that release-preparation check is unresolved. Recorded the three pending finish lines in `docs/releases/v5.46.1-status.md`. The corrected #2699 release note distinguishes retained group membership from skipped auto-claim on an unverified lookup and allows one project to own multiple vacant groups.
 - This is release preparation; no tag, GitHub Release, production update, or activation is claimed.
 
 ## 2026-10-29 — v5.46.1 W2-REC: reconcile the six stabilization issues
