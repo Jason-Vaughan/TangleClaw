@@ -4299,3 +4299,44 @@ describe('Codex startupControl adapter', () => {
     });
   });
 });
+
+describe('loopbackSandboxNote (#1836)', () => {
+  const profile = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8'));
+
+  it('names the sandbox cause and remedy for fullAuto, straight from the engine profile', () => {
+    const note = codex.loopbackSandboxNote(profile, 'fullAuto');
+    assert.deepEqual(note, {
+      code: 'CODEX_SANDBOX_BLOCKS_LOOPBACK',
+      reason: profile.launchModes.fullAuto.sandboxNote,
+      remedy: profile.launchModes.fullAuto.sandboxRemedy
+    });
+    assert.match(note.reason, /workspace-write/);
+    assert.match(note.remedy, /network_access/);
+  });
+
+  it('is null for a mode that does not declare the limitation', () => {
+    assert.equal(codex.loopbackSandboxNote(profile, 'default'), null);
+    assert.equal(codex.loopbackSandboxNote(profile, 'bypassPermissions'), null);
+  });
+
+  it('is null for no profile, no mode, an unknown mode, or a non-string mode', () => {
+    assert.equal(codex.loopbackSandboxNote(null, 'fullAuto'), null);
+    assert.equal(codex.loopbackSandboxNote(profile, null), null);
+    assert.equal(codex.loopbackSandboxNote(profile, undefined), null);
+    assert.equal(codex.loopbackSandboxNote(profile, 'not-a-real-mode'), null);
+    assert.equal(codex.loopbackSandboxNote(profile, 42), null);
+  });
+
+  it('falls back to a generic reason/remedy if the profile declares the flag without prose', () => {
+    const bare = { launchModes: { x: { sandboxBlocksLoopback: true } } };
+    const note = codex.loopbackSandboxNote(bare, 'x');
+    assert.equal(note.code, 'CODEX_SANDBOX_BLOCKS_LOOPBACK');
+    assert.equal(typeof note.reason, 'string');
+    assert.equal(typeof note.remedy, 'string');
+  });
+
+  it('is null when the flag is present but not literally true', () => {
+    const almost = { launchModes: { x: { sandboxBlocksLoopback: 'true' } } };
+    assert.equal(codex.loopbackSandboxNote(almost, 'x'), null);
+  });
+});
