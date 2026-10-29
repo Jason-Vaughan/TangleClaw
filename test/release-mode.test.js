@@ -322,7 +322,7 @@ describe('updateProject — group release authority (#1697)', () => {
     }
   });
 
-  it('fails closed on the write step too, not just the validator, when the lookup fails ONLY there (#2699 R-5)', async () => {
+  it('fails closed on the write step too, not just the validator, when the lookup fails ONLY there (#2699)', async () => {
     // The validator and `_applyProjectUpdates` each call `findReleaseOwnerElsewhere`
     // (via `safeFindReleaseOwnerElsewhere`) separately. Before the fix, a failure
     // reaching only the SECOND call was swallowed into "no owner elsewhere" and the
@@ -437,7 +437,7 @@ describe('updateProject — group release authority (#1697)', () => {
     assert.equal(store.projectGroups.get(group.id).releaseOwnerProjectId, m.id);
   });
 
-  it('getProject does not throw when the group-ownership lookup is unresolvable (#2699 R-5, 5th call site)', async () => {
+  it('getProject does not throw when the group-ownership lookup is unresolvable (#2699)', async () => {
     // enrichProject's own read (feeding the Settings modal's display) is the
     // 5th place that shares safeFindReleaseOwnerElsewhere — a display read,
     // so unlike the other four it must not fail closed (there is nothing to
@@ -481,7 +481,7 @@ describe('public/ui.js — group release-authority UI (#1697)', () => {
     return uiSrc.slice(start, uiSrc.indexOf('\n}\n', start) + 2);
   }
 
-  describe('releaseOwnerGroup — the settings-modal hint (R-3)', () => {
+  describe('releaseOwnerGroup — the settings-modal hint (#2699)', () => {
     /**
      * Evaluate the shipped `releaseOwnerGroup` expression against a project.
      * @param {object} project
@@ -520,7 +520,7 @@ describe('public/ui.js — group release-authority UI (#1697)', () => {
     });
   });
 
-  describe('toggleGroupMembership — the group-modal staleness guard (R-6)', () => {
+  describe('toggleGroupMembership — the group-modal staleness guard (#2699)', () => {
     /**
      * Run the real `toggleGroupMembership` against mocked API/render globals,
      * with `groupEditId` fixed for the whole call (exercises the FIRST guard

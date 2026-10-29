@@ -618,7 +618,7 @@ describe('version-bump release gate', () => {
       }
     });
 
-    it('fails closed through the shared safeFindReleaseOwnerElsewhere helper too (#2699 R-5)', async () => {
+    it('fails closed through the shared safeFindReleaseOwnerElsewhere helper too (#2699)', async () => {
       // The test above exercises the throw via `getByProject`, one layer below
       // `findReleaseOwnerElsewhere`. This one mocks `findReleaseOwnerElsewhere`
       // itself — the function version-bump.js now reaches only THROUGH

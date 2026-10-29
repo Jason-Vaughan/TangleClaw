@@ -186,7 +186,7 @@ describe('store.projectGroups', () => {
       assert.deepEqual(store.projectGroups.getByProject(proj.id), []);
     });
 
-    it('does not auto-claim a new vacant group when the project already defers to a different group\'s owner (#1697 R-1/R-2)', () => {
+    it('does not auto-claim a new vacant group when the project already defers to a different group\'s owner (#1697)', () => {
       const groupA = store.projectGroups.create({ name: 'fleet-a' });
       const groupB = store.projectGroups.create({ name: 'fleet-b' });
       const owner = store.projects.create({ name: 'OwnerProj', path: '/tmp/owner' });
@@ -217,7 +217,7 @@ describe('store.projectGroups', () => {
     });
   });
 
-  describe('safeFindReleaseOwnerElsewhere (#1697 R-5)', () => {
+  describe('safeFindReleaseOwnerElsewhere (#1697)', () => {
     it('passes through a successful lookup unchanged, with unresolvable: false', () => {
       const group = store.projectGroups.create({ name: 'fleet-safe-ok' });
       const owner = store.projects.create({ name: 'SafeOwner', path: '/tmp/safe-owner' });
