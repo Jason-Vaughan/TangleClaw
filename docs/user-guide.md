@@ -378,6 +378,17 @@ does not leave a truncated carrier. TangleClaw refuses a read-only target and fo
 chain to its final file rather than replacing a link; a symlink loop is refused. Fix the file's
 permissions or link target before retrying an engine-setting change.
 
+**Release mode and group authority.** Project Settings offers **Agent** (cut when release checks
+pass), **Operator** (pause the wrap for your Cut or Hold choice), and **Off** (the project handles
+versioning itself). An unconfigured project starts in Operator mode. The old `auto` and `ask`
+config values still read as Agent and Operator respectively. In a project group, the first member
+set to Agent or Operator claims release authority. A second member cannot take that mode while
+another holds the authority: the save returns `409 CONFLICT` and names the owner. To transfer or
+clear authority, open the group's settings and choose **Release authority** there. A non-owner's
+wrap cannot cut a release even if its project file says Agent or Operator. An unconfigured
+non-owner resolves to Off. See [configuration reference](configuration-reference.md#per-project-configuration-projectjson)
+for the saved settings (#1697, #1701, #1702).
+
 ### Auto-Detection of Existing Projects
 
 During the setup wizard, TangleClaw scans your `projectsDir` for directories that have:

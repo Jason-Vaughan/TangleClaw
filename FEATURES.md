@@ -17,6 +17,17 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v5.46.0 — Release authority and merge policy
+
+- **Release authority for project groups** (#1697, #1702) — the first release-capable group member claims authority; a conflicting project-setting save is refused, the operator can transfer authority in group settings, and a non-owner cannot cut a release. Unconfigured release mode now resolves to `operator`, or `off` when another group member owns release authority. `lib/store.js`, `lib/wrap-steps/version-bump.js`, `public/ui.js`. Tests: `test/api-groups.test.js`, `test/release-mode.test.js`, `test/version-bump-release-gate.test.js`.
+- **Agent and operator release modes** (#1701) — the release-mode names identify who decides; existing `auto` and `ask` settings remain readable aliases. `lib/project-config.js#resolveReleaseMode`, `public/ui.js`. Tests: `test/release-mode.test.js`.
+- **Linked issue release signal** (#1495) — release readiness checks the linked issue's closure state by default and reports `unknown` when it cannot verify the issue. `lib/release-readiness.js#linkedIssueClosedSignal`. Tests: `test/release-readiness.test.js`.
+- **Managed-project release automation** (#721) — an opt-in release helper plans tags and GitHub Releases from committed version and changelog content at a captured head, with a generated GitHub Actions workflow option. `lib/release-automation.js#planRelease`, `lib/release-automation.js#applyRelease`, `lib/release-automation.js#generateReleaseWorkflow`. Tests: `test/changelog-notes.test.js`.
+- **Configurable wrap PR merge method** (#1172, #2162) — wrap PR automation resolves squash, merge or rebase from the project setting or Prawduct preference; this repository's integration PRs use guarded merge commits. `lib/wrap-steps/pr-merge.js#resolveWrapMergeMethod`, `lib/wrap-steps/commit.js`. Tests: `test/wrap-step-pr-merge.test.js`, `test/wrap-step-commit-autopr.test.js`.
+- **Fragment-only changelog coverage** (#2523, #2022) — wrap changelog coverage requires a fragment, while the global instruction follows a project's existing changelog convention and does not create an untracked root stub. `lib/wrap-default-pipeline.js`, `lib/wrap-steps/changelog-coverage.js`, `data/global-rules.md`. Tests: `test/wrap-changelog-coverage.test.js`, `test/repo-governance-reference.test.js`.
+- **Safer wrap prompts and changelog promotion** (#660, #1051) — prompt overrides retain the bundled verification contract, and a promoted release gets a link-reference definition when the changelog uses that style. `lib/wrap-step-overrides.js#applyPromptOverride`, `lib/wrap-steps/version-bump.js`. Tests: `test/wrap-step-overrides.test.js`, `test/version-bump-release-gate.test.js`.
+- **Strict store accessor options** (#2681) — store accessors reject misspelled option keys with `BAD_REQUEST`. `lib/store.js`. Tests: `test/store-projects.test.js`.
+
 ## v5.45.0 — Project configuration integrity
 
 - **Consistent home paths** (#1284) — operator paths beginning with `~` use one expansion helper across project, tunnel, session, PortHub and OpenClaw paths. An unset `HOME` falls back to the system home directory; an unresolved home or `~otheruser` is left unchanged. `lib/project-paths.js#expandHomePath`, `lib/tangleclaw-home.js#userHome`. Tests: `test/project-paths.test.js`.
