@@ -41,13 +41,6 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
-## 2026-10-28 — v5.46.1 W1-B: setup-wizard bundled-profile reseed and ttyd-watcher sysctl PATH (#2696, #2697)
-
-<!-- prawduct: type=fixed | scope=w1b-2696-2697-setup-ttyd-darwin -->
-
-- **#2696:** `engines.refreshDetectionPath()`'s forced `store.engines.syncBundled()` resync (#737) fires on automatic re-probes too, re-seeding the real bundled `claude`/`codex` profiles into the directory `test/setup-wizard.test.js`'s "no engine installed" fixtures had just emptied — a false pass on any host with those CLIs on PATH. Fixed by stubbing `store.engines.syncBundled` to a no-op for the fixtures' duration (mirrors `test/engines.test.js`'s own pattern for this function); no production code touched, since `lib/store.js`/`server.js` sit outside this car's file ceiling and `test/engines.test.js`'s pinned #737 coverage forbids changing `refreshDetectionPath()`'s own default.
-- **#2697:** `lib/ttyd-watcher.js`'s PTY-pool reader called bare `sysctl`, which lives under `/usr/sbin` — not on every PATH this runs under, unlike `ps`/`launchctl`/`sh`. Added `_sysctl()`, falling back to the absolute path on `ENOENT`; used by both the real reader and the test's own direct call. `/prawduct:critic` caught the fallback branch itself shipping with no test coverage (BLOCKING); resolved with 3 mocked-runner unit tests before merge.
-
 ## 2026-10-28 — v5.46.0 W4-REL: prepare the release-authority and merge-policy candidate
 
 <!-- prawduct: type=internal | scope=v546-w4-rel -->
