@@ -24,6 +24,7 @@ const store = require('../lib/store');
 const launchSequence = require('../lib/launch-sequence');
 const { createServer, _recoveryGateProbeFor } = require('../server');
 const recoveryDefault = require('../lib/recovery-default');
+const sessions = require('../lib/sessions');
 
 /**
  * One JSON request against the test server.
@@ -69,7 +70,6 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
     config.projectsDir = projectsDir;
     store.config.save(config);
 
-    const sessions = require('../lib/sessions');
     /**
      * Bind a sequence to a new session of a project, without starting a pane.
      * @param {object} proj - Project record
@@ -262,6 +262,96 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
     const theirs = await get(server, `/api/launch-sequences?projectId=${other.id}`);
     assert.deepEqual(theirs.body.sequences[0].pasteOutcome,
       { engineId: 'claude', outcome: 'delivered', detail: null });
+  });
+
+  // #2193 (PM ruling on PRR-B C2): a restart-dropped first turn rides
+  // whichever of these two fields that launch's own carrier already used,
+  // end to end, with no change to this route -- `reconcileDeferredFirstTurnsOnRestart`
+  // (lib/sessions.js) writes the ledger row each one already reads.
+  it('surfaces a restart-dropped ORDINARY-carrier first turn as this launch\'s rulesDelivery (#2193)', async () => {
+    const dropped = bind(project);
+    const blocker = { code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it in the pane.', engineId: 'claude' };
+    const updated = store.sessions.setLaunchBlocker(dropped.session.id, blocker);
+    store.activity.log({
+      projectId: project.id, sessionId: dropped.session.id, eventType: sessions.FIRST_TURN_DEFERRED_EVENT,
+      detail: {
+        code: updated.launchBlocker.code, observedAt: updated.launchBlocker.observedAt,
+        pasteOwed: true, kickoffOwed: false,
+        deliveryBase: { sessionId: dropped.session.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [], digest: '' },
+        pasteOutcomeBase: null
+      }
+    });
+    assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 });
+
+    const res = await get(server, `/api/launch-sequences?projectId=${project.id}`);
+    const byId = new Map(res.body.sequences.map((s) => [s.sequenceId, s]));
+    const row = byId.get(dropped.sequence.id).rulesDelivery;
+    assert.equal(row.outcome, 'skipped');
+    assert.equal(row.channel, 'prime-paste');
+    assert.match(row.skipReason, /restarted/);
+  });
+
+  it('surfaces a restart-dropped PULL-POINTER-carrier first turn as this launch\'s pasteOutcome, not rulesDelivery (#2193)', async () => {
+    const dropped = bind(other, { applicable: false, reason: 'the engine declares no launch-sequence support' });
+    const blocker = { code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it in the pane.', engineId: 'claude' };
+    const updated = store.sessions.setLaunchBlocker(dropped.session.id, blocker);
+    store.activity.log({
+      projectId: other.id, sessionId: dropped.session.id, eventType: sessions.FIRST_TURN_DEFERRED_EVENT,
+      detail: {
+        code: updated.launchBlocker.code, observedAt: updated.launchBlocker.observedAt,
+        pasteOwed: true, kickoffOwed: false,
+        deliveryBase: null,
+        pasteOutcomeBase: { sessionId: dropped.session.id, projectId: other.id, engineId: 'claude' }
+      }
+    });
+    assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 });
+
+    const res = await get(server, `/api/launch-sequences?projectId=${other.id}`);
+    const row = res.body.sequences.find((s) => s.sequenceId === dropped.sequence.id);
+    assert.equal(row.rulesDelivery, null, 'this carrier never wrote a rules-delivery row');
+    assert.equal(row.pasteOutcome.engineId, 'claude');
+    assert.equal(row.pasteOutcome.outcome, sessions._pointerPasteIsGated('claude') ? 'readiness-gated' : 'blind');
+    assert.match(row.pasteOutcome.detail, /restarted/);
+  });
+
+  // #2193 PRR-B C2 round 2 / Addendum A483-R5: a REAL no-rules launch already
+  // writes its own row on this ledger, eagerly, before any dialog watch
+  // starts. The drop is still recorded (confirmed in test/sessions.test.js,
+  // and via `firstTurnDroppedOnRestart` on GET /api/sessions/:project/status
+  // -- see test/sessions.test.js's getSessionStatus coverage), but THIS
+  // route's `rulesRow = listForSession(...)[0]` (oldest first) means the
+  // PANEL keeps showing that eager row, not the drop. Arc co-signed A483-R5
+  // rules server.js out of scope for this chunk; documented here, not fixed.
+  it('a no-rules launch\'s restart-dropped first turn is recorded but NOT what this route\'s rulesDelivery shows (documents the acknowledged display gap, #2193)', async () => {
+    const dropped = bind(project);
+    store.sessionRuleDeliveries.record({
+      sessionId: dropped.session.id, projectId: project.id, engineId: 'claude', channel: 'none', outcome: 'no-rules'
+    });
+    const blocker = { code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it in the pane.', engineId: 'claude' };
+    const updated = store.sessions.setLaunchBlocker(dropped.session.id, blocker);
+    store.activity.log({
+      projectId: project.id, sessionId: dropped.session.id, eventType: sessions.FIRST_TURN_DEFERRED_EVENT,
+      detail: {
+        code: updated.launchBlocker.code, observedAt: updated.launchBlocker.observedAt,
+        pasteOwed: true, kickoffOwed: false,
+        deliveryBase: { sessionId: dropped.session.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [], digest: '' },
+        pasteOutcomeBase: null
+      }
+    });
+    assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 });
+
+    // Durably recorded on the ledger -- both rows exist.
+    const rows = store.sessionRuleDeliveries.listForSession(dropped.session.id);
+    assert.equal(rows.length, 2);
+    assert.equal(rows[1].channel, 'prime-paste');
+    assert.equal(rows[1].outcome, 'skipped');
+
+    // But the panel still shows the OLD row -- this is the gap, demonstrated
+    // end to end through the real, unmodified route.
+    const res = await get(server, `/api/launch-sequences?projectId=${project.id}`);
+    const row = res.body.sequences.find((s) => s.sequenceId === dropped.sequence.id);
+    assert.deepEqual(row.rulesDelivery, { outcome: 'no-rules', channel: 'none', skipReason: null },
+      'the panel\'s single rulesRow slot still reads the eager, unrelated row -- not the drop this test just confirmed on the ledger above');
   });
 
   it('carries the preflight CAUSE, not only its verdict word', async () => {
