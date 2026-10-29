@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it, beforeEach, afterEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -27,13 +27,28 @@ let pub;
 let hostBase;
 let base;
 
+// One bare repo is `git init`ed for the whole file; every test gets its
+// guest/pub repos by copying it (no subprocess). Under full-suite concurrency
+// load, dozens of subtests each shelling out to `git init --bare` twice piled
+// up enough subprocess overhead to flake (#2698) — a plain directory copy
+// carries none of that.
+let bareTemplate;
+
+before(() => {
+  bareTemplate = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-rc-bare-template-')));
+  initRepo(bareTemplate, ['--bare']);
+});
+
+after(() => {
+  fs.rmSync(bareTemplate, { recursive: true, force: true });
+});
+
 beforeEach(() => {
   tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-rc-relay-')));
   guest = path.join(tmp, 'guest.git');
   pub = path.join(tmp, 'public.git');
   for (const d of [guest, pub]) {
-    fs.mkdirSync(d);
-    initRepo(d, ['--bare']);
+    fs.cpSync(bareTemplate, d, { recursive: true });
   }
   hostBase = path.join(tmp, 'host');
   base = path.join(tmp, 'v1');
@@ -146,12 +161,12 @@ describe('host relay: every check fails closed and publishes nothing', () => {
     await refuses(REFUSAL.NOT_FINALIZED);
     fs.rmSync(tmp, { recursive: true, force: true });
     fs.mkdirSync(tmp);
-    for (const d of [guest, pub]) { fs.mkdirSync(d); initRepo(d, ['--bare']); }
+    for (const d of [guest, pub]) fs.cpSync(bareTemplate, d, { recursive: true });
     await guestRun({ observe: async () => ({ observation: { state: 'ok', checks: { test: 'failure' } }, error: null }) });
     await refuses(REFUSAL.NOT_FINALIZED);
     fs.rmSync(tmp, { recursive: true, force: true });
     fs.mkdirSync(tmp);
-    for (const d of [guest, pub]) { fs.mkdirSync(d); initRepo(d, ['--bare']); }
+    for (const d of [guest, pub]) fs.cpSync(bareTemplate, d, { recursive: true });
     await guestRun({ finalizeDigest: 'f'.repeat(64) });
     await refuses(REFUSAL.NOT_FINALIZED);
   });
