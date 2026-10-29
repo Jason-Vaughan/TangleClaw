@@ -1557,11 +1557,30 @@ describe('medusa-wake — a scan requested inside the observation gap is booked,
 
     // At the earliest eligible moment, the follow-up fires -- strictly
     // before a periodic tick is ever run again in this test, so whatever
-    // looked again, it was the follow-up and nothing else.
+    // looked again, it was the follow-up and nothing else. `reads.push`
+    // happens synchronously when the read STARTS; its judgment (and any
+    // chained booking `_onPaneRead` decides to make) happens only once the
+    // read's promise resolves, hence the await.
     clock = expectedDueAt;
     fireDueTimers();
+    await new Promise((resolve) => setImmediate(resolve));
     assert.equal(reads.length, readsAfterNudge + 1, 'the follow-up itself looked, exactly at the earliest eligible moment');
     assert.equal(reads[reads.length - 1], world.sessions[0].tmuxSession);
+
+    // PRR-A round 3: one read alone is not a retry. A nudge resets
+    // idleTicks to 0 and IDLE_TICKS_REQUIRED is 2, so this first follow-up
+    // observation can only ever reach idleTicks===1 -- `_onPaneRead` chains
+    // the SECOND observation that actually completes the streak only when
+    // this read ran as a `prompt` look, which is exactly what distinguishes
+    // this fix from one that silently stalls waiting on an unrelated
+    // periodic tick to finish the job by luck.
+    assert.equal(timers.length, 1, 'the chained second observation is booked automatically, completing the streak on its own');
+    const secondDueAt = clock + wake.MIN_OBSERVATION_GAP_MS;
+    assert.equal(timers[0].dueAt, secondDueAt, 'chained exactly one more gap out, same rule as the first');
+    clock = secondDueAt;
+    fireDueTimers();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(world.injected.length, 2, 'the retry actually injected -- not merely "looked at" -- with no periodic tick involved anywhere in this chain');
   });
 
   it('control: a request OUTSIDE the gap still looks immediately, same as before (#2716 only changes the dropped case)', async () => {
