@@ -495,7 +495,7 @@
           <h1>v5.46.0: Release Authority, Group Ownership &amp; Merge Policy</h1>
           <p class="hero-subtitle">
             Sprint <strong>v5.46.0</strong> hardened TangleClaw’s release governance and wrap pipeline end-to-end across <strong>12 Milestone #31 issues</strong> (plus Wave 3 follow-up <code>#2693</code>) and <strong>8 PRs</strong> in <strong>~6h 02m</strong> wall-clock time (<code>2026-10-28T18:06Z</code> → <code>2026-10-29T00:08Z</code>).
-            Key capabilities include renaming <code>releaseMode</code> to <strong><code>agent</code> / <code>operator</code> / <code>off</code></strong> with safe <strong><code>operator</code> default</strong> and permanent legacy aliases (<code>#1701, #1702</code>), two-site <strong>group release ownership authority</strong> with <code>409 CONFLICT</code> enforcement and non-owner <code>version-bump</code> safety (<code>#1697</code>), opt-in managed-project <strong>release automation</strong> (<code>lib/release-automation.js</code>: <code>planRelease</code>, <code>applyRelease</code>, <code>generateReleaseWorkflow</code>; <code>#721</code>), configurable <strong><code>wrapMergeMethod</code></strong> (<code>squash|merge|rebase</code>; <code>#1172</code>) with TangleClaw repo policy settled on guarded <code>--merge</code> in <code>ADR 0002</code> (<code>#2162</code>), Keep-a-Changelog link-reference definitions and strict fragment enforcement (<code>#1051, #2523, #2022</code>), default-on <strong><code>linkedIssueClosedSignal</code></strong> readiness advisories (<code>#1495</code>), prompt verification-contract preservation (<code>#660</code>), and strict <code>_assertKnownKeys</code> guards across all 15 remaining <code>lib/store.js</code> accessors (<code>#2681</code>).
+            Key capabilities include renaming <code>releaseMode</code> to <strong><code>agent</code> / <code>operator</code> / <code>off</code></strong> with safe <strong><code>operator</code> default</strong> and permanent legacy aliases (<code>#1701, #1702</code>), two-site <strong>group release ownership authority</strong> with <code>409 CONFLICT</code> enforcement and non-owner <code>version-bump</code> safety (<code>#1697</code>), opt-in managed-project <strong>release automation</strong> (<code>lib/release-automation.js</code>: <code>planRelease</code>, <code>applyRelease</code>, <code>generateReleaseWorkflow</code>; <code>#721</code>), configurable <strong><code>wrapMergeMethod</code></strong> (<code>squash|merge|rebase</code> in <code>lib/wrap-steps/pr-merge.js</code> and <code>docs/adr/0002-wrap-pipeline-contract.md</code>; <code>#1172</code>) with TangleClaw’s own repository PR merge policy settled on guarded <code>--merge</code> in <code>CLAUDE.md</code> / <code>Rule #282</code> (<code>#2162</code>), conditional Keep-a-Changelog bottom link-reference definitions in <code>lib/wrap-steps/version-bump.js</code> when a bottom link-reference block is present alongside strict fragment enforcement (<code>#1051, #2523, #2022</code>), default-on <strong><code>linkedIssueClosedSignal</code></strong> readiness advisories (<code>#1495</code>), prompt verification-contract preservation in <code>lib/wrap-step-overrides.js</code> (<code>#660</code>), and strict <code>_assertKnownKeys</code> guards across all 15 remaining <code>lib/store.js</code> accessors (<code>#2681</code>).
             <em>Participant Disclosure (Rule #283):</em> <code>TC-Lane-Obsr</code> operated as an in-test sprint participant whose telemetry and pre-merge source audits lanes could read during execution.
           </p>
         </div>
@@ -518,7 +518,7 @@
         <div class="kpi-card">
           <div class="kpi-label">Sprint PRs &amp; Churn</div>
           <div class="kpi-value" style="color:var(--accent)">8 PRs</div>
-          <div class="kpi-meta"><code>+4,711 / -331</code> LOC across 6feature PRs + <code>W3-REC #2700</code> + <code>W4-REL #2701</code></div>
+          <div class="kpi-meta"><code>+4,711 / -331</code> LOC across 6 feature PRs + <code>W3-REC #2700</code> + <code>W4-REL #2701</code></div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">PRR Model Upgrade</div>
@@ -528,7 +528,7 @@
         <div class="kpi-card">
           <div class="kpi-label">Zero-Revert Delivery</div>
           <div class="kpi-value" style="color:var(--green)">0 Reverts</div>
-          <div class="kpi-meta">7 PRs merged cleanly to <code>main</code> + <code>W4-REL #2701</code> verified at <code>32926618</code></div>
+          <div class="kpi-meta">7 PRs merged cleanly to <code>main</code> + <code>W4-REL #2701</code> verified at R2 <code>c566c5d5</code></div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Store Accessor Guard</div>
@@ -565,29 +565,29 @@
           <span class="pillar-num">PILLAR 01 · RELEASE MODE &amp; GROUP AUTHORITY (#1701, #1702, #1697)</span>
           <h4>Explicit Release Authority &amp; Single-Owner Project Groups</h4>
           <p>
-            <code>W1-D (#2689)</code> renamed <code>releaseMode</code> values from <code>auto</code>/<code>ask</code> to canonical <strong><code>agent</code></strong> / <strong><code>operator</code></strong> / <strong><code>off</code></strong> while preserving permanent read/write normalization aliases for legacy callers and existing SQLite rows.
-            <code>W2-A (#2695)</code> then flipped the unconfigured default from <code>'agent'</code> to <strong><code>'operator'</code></strong> (or <strong><code>'off'</code></strong> when another member of the same <code>projectGroupId</code> already holds release authority) and enforced two-site group ownership:
+            <code>W1-D (#2689)</code> renamed <code>releaseMode</code> values from <code>auto</code>/<code>ask</code> to canonical <strong><code>agent</code></strong> / <strong><code>operator</code></strong> / <strong><code>off</code></strong> across <code>lib/project-config.js</code>, <code>lib/projects.js</code>, <code>lib/wrap-steps/version-bump.js</code>, <code>public/session.js</code>, and <code>public/ui.js</code> while preserving permanent read/write normalization aliases for legacy callers and existing SQLite rows.
+            <code>W2-A (#2695)</code> then flipped the unconfigured default from <code>'agent'</code> to <strong><code>'operator'</code></strong> (or <strong><code>'off'</code></strong> when another member of the same project group in <code>project_groups</code> already holds release authority) and enforced two-site group ownership:
             (1) API/store rejection with <code>409 CONFLICT</code> when a second group member attempts to enable <code>agent</code>/<code>operator</code> or <code>release:cut</code>, and
-            (2) a fail-closed check in <code>lib/wrap-steps/version-bump.js</code> using canonical <code>configRootOf(ctx)</code> so non-owner group members skip version-bump and tag publication even from linked worktrees.
+            (2) a fail-closed check in <code>lib/wrap-steps/version-bump.js</code> using canonical <code>configRootOf(project)</code> so non-owner group members skip version-bump and tag publication even from linked worktrees.
           </p>
         </div>
         <div class="subcard">
           <span class="pillar-num">PILLAR 02 · MANAGED RELEASE AUTOMATION &amp; CHANGELOGS (#721, #1051, #2523, #2022)</span>
-          <h4>Dry-Run Release Planner, Git-Blob Tagging &amp; Keep-a-Changelog Links</h4>
+          <h4>Dry-Run Release Planner, Git-Blob Tagging &amp; Conditional Changelog Links</h4>
           <p>
             <code>W2-B (#2694)</code> introduced <code>lib/release-automation.js</code> with three opt-in primitives for TangleClaw-managed repositories:
             <code>planRelease()</code> (side-effect-free version calculation across <code>version.json</code>, <code>package.json</code>, and <code>pyproject.toml</code>),
             <code>applyRelease()</code> (fail-closed validation against committed git blobs via <code>git cat-file -e</code> before annotated tag creation), and
             <code>generateReleaseWorkflow()</code> (GitHub Actions workflow template).
-            Alongside this, <code>W1-D (#2689)</code> added Keep-a-Changelog bottom comparison link references (<code>[Unreleased]</code> and <code>[X.Y.Z]</code>) during promotion, <code>W1-B (#2690)</code> removed the pre-v5.44.0 transition bypass from <code>changelog-update</code>, and <code>W2-B (#2694)</code> taught global rules to inspect project changelog conventions before editing.
+            Alongside this, <code>W1-D (#2689)</code> added <code>_addChangelogLinkDef</code> in <code>lib/wrap-steps/version-bump.js</code> to append a <code>[X.Y.Z]</code> bottom link-reference definition during <code>version-bump</code> when <code>CHANGELOG.md</code> already has a bottom link-reference block, <code>W1-B (#2690)</code> removed the pre-v5.44.0 transition bypass from <code>lib/wrap-steps/changelog-coverage.js</code> and <code>lib/wrap-default-pipeline.js</code>, and <code>W2-B (#2694)</code> taught <code>data/global-rules.md</code> to inspect project changelog conventions before editing.
           </p>
         </div>
         <div class="subcard">
           <span class="pillar-num">PILLAR 03 · WRAP MERGE POLICY, READINESS &amp; STORE GUARDS (#1172, #2162, #1495, #2681, #660)</span>
           <h4>Configurable Wrap Merge Method, Issue-Closed Signals &amp; Store Key Safety</h4>
           <p>
-            <code>W1-C (#2687)</code> added configurable <code>wrapMergeMethod</code> (<code>'squash' | 'merge' | 'rebase'</code>, defaulting to <code>'squash'</code> for managed projects) in <code>lib/wrap-steps/pr-merge.js</code> and adjusted <code>commit.js</code> verification accordingly, while recording in <code>ADR 0002</code> and <code>CLAUDE.md</code> that TangleClaw’s own repository uses guarded <code>gh pr merge --merge</code>.
-            <code>W1-A (#2692)</code> added default-on <code>linkedIssueClosedSignal</code> advisories in <code>lib/release-readiness.js</code> (fetching 100 recent merged PRs and inspecting up to 25 PRs with closing keywords) and completed <code>_assertKnownKeys</code> enforcement across all 15 remaining <code>lib/store.js</code> methods so typoed filter keys throw <code>ERR_UNKNOWN_OPTION_KEY</code> instead of silently matching everything.
+            <code>W1-C (#2687)</code> added configurable <code>wrapMergeMethod</code> (<code>'squash' | 'merge' | 'rebase'</code>, defaulting to <code>'squash'</code> for managed projects) in <code>lib/wrap-steps/pr-merge.js</code>, <code>lib/wrap-steps/commit.js</code>, and <code>docs/adr/0002-wrap-pipeline-contract.md</code>, while recording in <code>CLAUDE.md</code> (per <code>Rule #282</code>) that TangleClaw’s own repository exception uses guarded <code>gh pr merge --merge</code>.
+            <code>W1-A (#2692)</code> added default-on <code>linkedIssueClosedSignal</code> in <code>lib/release-readiness.js</code> (discovering linked issue numbers from explicit/plan/commit inputs and directly looking up each issue: <code>open → fail</code>, <code>unavailable → unknown</code>, <code>closed → pass</code>, <code>none → n/a</code>) and completed <code>_assertKnownKeys</code> enforcement across all 15 remaining <code>lib/store.js</code> methods so unknown option keys throw <code>StoreError</code> (<code>BAD_REQUEST</code>) instead of silently matching everything.
           </p>
         </div>
       </div>
@@ -625,13 +625,13 @@
 
           <rect x="32" y="162" width="217" height="64" rx="8" fill="#111827" stroke="#334155" />
           <text x="42" y="182" fill="#f59e0b" font-size="11.5" font-weight="700">Group Ownership (#1697)</text>
-          <text x="42" y="198" fill="#94a3b8" font-size="10.5">1 release owner per projectGroupId</text>
+          <text x="42" y="198" fill="#94a3b8" font-size="10.5">1 release owner per project group</text>
           <text x="42" y="214" fill="#64748b" font-size="10">409 CONFLICT on 2nd owner / cut</text>
 
           <rect x="32" y="238" width="217" height="66" rx="8" fill="#111827" stroke="#334155" />
           <text x="42" y="258" fill="#22c55e" font-size="11.5" font-weight="700">Store _assertKnownKeys (#2681)</text>
           <text x="42" y="274" fill="#94a3b8" font-size="10.5">15 remaining accessors guarded</text>
-          <text x="42" y="290" fill="#64748b" font-size="10">Throws ERR_UNKNOWN_OPTION_KEY</text>
+          <text x="42" y="290" fill="#64748b" font-size="10">Throws StoreError BAD_REQUEST</text>
 
           <!-- Arrow 1 -> 2 -->
           <line x1="263" y1="174" x2="295" y2="174" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrowBlue)" />
@@ -642,14 +642,14 @@
           <text x="314" y="76" fill="#f8fafc" font-size="13.5" font-weight="700">Governed Wrap Pipeline</text>
 
           <rect x="312" y="92" width="227" height="62" rx="8" fill="#111827" stroke="#334155" />
-          <text x="322" y="112" fill="#38bdf8" font-size="11.5" font-weight="700">changelog-update (#2523, #2022)</text>
+          <text x="322" y="112" fill="#38bdf8" font-size="11.5" font-weight="700">changelog-coverage (#2523, #2022)</text>
           <text x="322" y="128" fill="#94a3b8" font-size="10.5">verifyChanged: ['changelog.d/']</text>
           <text x="322" y="144" fill="#64748b" font-size="10">Global rule detects project convention</text>
 
           <rect x="312" y="164" width="227" height="64" rx="8" fill="#111827" stroke="#334155" />
           <text x="322" y="184" fill="#f59e0b" font-size="11.5" font-weight="700">version-bump Gate (#1697, #1051)</text>
-          <text x="322" y="200" fill="#94a3b8" font-size="10.5">Checks configRootOf(ctx) owner</text>
-          <text x="322" y="216" fill="#64748b" font-size="10">Emits [Unreleased] &amp; [X.Y.Z] links</text>
+          <text x="322" y="200" fill="#94a3b8" font-size="10.5">Checks configRootOf(project) owner</text>
+          <text x="322" y="216" fill="#64748b" font-size="10">_addChangelogLinkDef if link block</text>
 
           <rect x="312" y="238" width="227" height="66" rx="8" fill="#111827" stroke="#334155" />
           <text x="322" y="258" fill="#22c55e" font-size="11.5" font-weight="700">pr-merge &amp; commit (#1172, #2162)</text>
@@ -666,9 +666,9 @@
 
           <rect x="602" y="92" width="222" height="96" rx="8" fill="#111827" stroke="#334155" />
           <text x="612" y="114" fill="#f59e0b" font-size="11.5" font-weight="700">linkedIssueClosedSignal (#1495)</text>
-          <text x="612" y="132" fill="#94a3b8" font-size="10.5">Default-on advisory in readiness</text>
-          <text x="612" y="148" fill="#94a3b8" font-size="10.5">Scans 100 merged PRs / 25 refs</text>
-          <text x="612" y="164" fill="#64748b" font-size="10">Flags open issues or fetch errors</text>
+          <text x="612" y="132" fill="#94a3b8" font-size="10.5">Default-on signal in readiness</text>
+          <text x="612" y="148" fill="#94a3b8" font-size="10.5">Explicit / plan / commit issue refs</text>
+          <text x="612" y="164" fill="#64748b" font-size="10">open→fail · unavail→unknown · closed→pass</text>
 
           <rect x="602" y="202" width="222" height="102" rx="8" fill="#111827" stroke="#334155" />
           <text x="612" y="224" fill="#38bdf8" font-size="11.5" font-weight="700">Prompt Verification Contract (#660)</text>
@@ -805,7 +805,7 @@
               <td>39.7m</td>
               <td>25.5m</td>
               <td><strong>65.2m</strong></td>
-              <td>2 rounds (<code>PRR-B</code> · <code>gpt-6-sol</code> · R1 WARN → R2 ACCEPT)</td>
+              <td>2 rounds (<code>PRR-B</code> · <code>gpt-6-sol</code> · R1 HOLD → R2 ACCEPT)</td>
               <td><code>3f5c61f133b9</code> (19:11:14Z)</td>
             </tr>
             <tr>
@@ -815,7 +815,7 @@
               <td>44.0m</td>
               <td>48.9m</td>
               <td><strong>92.9m</strong></td>
-              <td>3 rounds (<code>PRR-B</code> · <code>gpt-6-sol</code> · R1 WARN, R2 stale-head BLOCK → R3 ACCEPT)</td>
+              <td>2 rounds (<code>PRR-A</code> · <code>gpt-6-sol</code> · R1 HOLD → R2 ACCEPT)</td>
               <td><code>65155e89b9aa</code> (19:38:56Z)</td>
             </tr>
             <tr>
@@ -825,7 +825,7 @@
               <td>52.2m</td>
               <td>65.8m</td>
               <td><strong>118.0m</strong></td>
-              <td>3 rounds (<code>PRR-A</code> · <code>gpt-6-sol</code> → <code>gpt-6-astra</code> · R3 ACCEPT + <code>WAIVE2692</code>)</td>
+              <td>2 rounds (<code>PRR-A</code> · <code>gpt-6-sol</code> → <code>gpt-6-astra</code> · R2 ACCEPT + <code>WAIVE2692</code>)</td>
               <td><code>323434f0b570</code> (20:03:57Z)</td>
             </tr>
             <tr>
@@ -835,7 +835,7 @@
               <td>16.0m</td>
               <td>118.3m</td>
               <td><strong>134.3m</strong></td>
-              <td>3 rounds (<code>PRR-A</code> · <code>gpt-6-sol</code> R1/R2 → <code>gpt-6-astra</code> R3 ACCEPT in ~90s)</td>
+              <td>3 rounds (<code>PRR-B</code> · <code>gpt-6-sol</code> R1 → <code>gpt-6-astra</code> R3 ACCEPT in ~90s)</td>
               <td><code>c7b749412093</code> (20:20:19Z)</td>
             </tr>
             <tr>
@@ -855,7 +855,7 @@
               <td>~75.0m</td>
               <td>~135.0m</td>
               <td><strong>~210.0m</strong></td>
-              <td>3 rounds (<code>PRR-A</code> · <code>gpt-6-astra</code> · 3 true-positive R1 blocks → R3 ACCEPT + <code>WAIVE2695</code>)</td>
+              <td>4 rounds (<code>PRR-A</code> · <code>gpt-6-astra</code> · 3 true-positive R1 blocks → R4 ACCEPT + <code>WAIVE2695</code>)</td>
               <td><code>3ed2247fa9cc</code> (23:50:19Z)</td>
             </tr>
             <tr>
@@ -866,7 +866,7 @@
               <td>~9.0m</td>
               <td><strong>~14.0m</strong></td>
               <td>2 rounds (<code>PRR-B</code> <code>gpt-6-astra</code> R1/R2 ACCEPT + <code>OBSR</code> source-check ACCEPT)</td>
-              <td><code>777c3b42357f</code> (00:04:12Z)</td>
+              <td><code>777c3b42357f</code> (00:00:56Z)</td>
             </tr>
             <tr>
               <td><strong>W4-REL</strong> (<code>TC-Lane-INT</code>)</td>
@@ -875,8 +875,8 @@
               <td>~4.0m</td>
               <td>Pre-merge RC</td>
               <td><strong>~5.0m</strong></td>
-              <td>Verified by <code>PRR-B</code> &amp; <code>OBSR</code> pre-merge O-Gate at head <code>32926618</code></td>
-              <td><code>329266187a95</code> (Open RC)</td>
+              <td>Verified by <code>PRR-B</code> &amp; <code>OBSR</code> pre-merge O-Gate at R2 head <code>c566c5d5</code></td>
+              <td><code>c566c5d5da68</code> (Open RC)</td>
             </tr>
           </tbody>
         </table>
@@ -890,7 +890,7 @@
           <span class="section-tag">Section 03 · Complete Issue &amp; Deliverables Matrix</span>
           <h2 class="section-title">12 Milestone #31 Issues + Wave 3 Follow-Up #2693</h2>
           <p class="section-desc">
-            Every issue in Milestone #31 was traced from Charter <code>A481</code> through PR review, targeted and full-suite verification, and Wave 3 documentation reconciliation.
+            Every issue in Milestone #31 was traced from Charter <code>A481</code> through PR review, targeted and full-suite verification, and Wave 3 documentation reconciliation. All cited file and test paths below are verified on disk.
           </p>
         </div>
       </div>
@@ -903,7 +903,7 @@
               <th>Wave &amp; PR</th>
               <th>Category</th>
               <th>Deliverable Summary &amp; Key Files</th>
-              <th>Verification Evidence</th>
+              <th>Verification Evidence (On-Disk Verified Test Paths)</th>
             </tr>
           </thead>
           <tbody>
@@ -911,92 +911,92 @@
               <td><strong>#1701</strong></td>
               <td><code>W1-D · #2689</code></td>
               <td>Release Governance</td>
-              <td>Renamed <code>releaseMode</code> values from <code>auto</code>/<code>ask</code> to <code>agent</code>/<code>operator</code> across <code>lib/store.js</code>, <code>lib/wrap-steps/version-bump.js</code>, <code>server.js</code>, and <code>public/app.js</code> while preserving permanent read/write normalization aliases.</td>
-              <td><code>test/version-bump-step.test.js</code>, <code>test/release-readiness.test.js</code> (44/44 pass) · Live UI check deferred post-deploy</td>
+              <td>Renamed <code>releaseMode</code> values from <code>auto</code>/<code>ask</code> to <code>agent</code>/<code>operator</code> across <code>lib/project-config.js</code>, <code>lib/projects.js</code>, <code>lib/wrap-steps/version-bump.js</code>, <code>public/session.js</code>, and <code>public/ui.js</code> while preserving permanent read/write normalization aliases.</td>
+              <td><code>test/release-mode.test.js</code>, <code>test/release-recommendation.test.js</code>, <code>test/version-bump-release-gate.test.js</code> · Live UI check deferred post-deploy</td>
             </tr>
             <tr>
               <td><strong>#1051</strong></td>
               <td><code>W1-D · #2689</code></td>
               <td>Changelog Format</td>
-              <td>Updated <code>lib/changelog-notes.js</code> to generate and refresh Keep-a-Changelog bottom link-reference definitions (<code>[Unreleased]</code> and <code>[X.Y.Z]</code> compare URLs) during release promotion.</td>
-              <td><code>test/changelog-notes.test.js</code> (Keep-a-Changelog link reference suite pass)</td>
+              <td>Updated <code>lib/wrap-steps/version-bump.js</code> (<code>_addChangelogLinkDef</code>) to append a <code>[X.Y.Z]</code> bottom link-reference definition during <code>version-bump</code> when <code>CHANGELOG.md</code> already has a bottom link-reference block.</td>
+              <td><code>test/version-bump-release-gate.test.js</code>, <code>test/wrap-release-decision.test.js</code>, <code>test/wrap-release-recommendation-step.test.js</code></td>
             </tr>
             <tr>
               <td><strong>#2523</strong></td>
               <td><code>W1-B · #2690</code> + <code>W2-B · #2694</code></td>
               <td>Wrap Contract</td>
-              <td>Removed the pre-v5.44.0 transition exception from <code>lib/wrap-steps/changelog-update.js</code>, narrowed <code>verifyChanged</code> to <code>['changelog.d/']</code>, and reconciled stale <code>CHANGELOG.md</code> references in <code>CLAUDE.md</code> (<code>A481-R2</code>).</td>
-              <td><code>test/wrap-pipeline.test.js</code> (56/56 pass)</td>
+              <td>Removed the pre-v5.44.0 transition exception from <code>lib/wrap-steps/changelog-coverage.js</code> and <code>lib/wrap-default-pipeline.js</code>, updated <code>docs/changelog-fragments.md</code>, and reconciled stale <code>CHANGELOG.md</code> references in <code>CLAUDE.md</code> (<code>A481-R2</code>).</td>
+              <td><code>test/wrap-changelog-coverage.test.js</code>, <code>test/wrap-default-pipeline.test.js</code>, <code>test/wrap-changelog-transaction.test.js</code></td>
             </tr>
             <tr>
               <td><strong>#660</strong></td>
               <td><code>W1-B · #2690</code></td>
               <td>Prompt Safety</td>
-              <td>Updated <code>lib/prompt-overrides.js</code> so custom <code>ai-content</code> prompt overrides append rather than drop the mandatory framework verification contract paragraph.</td>
-              <td><code>test/prompt-overrides.test.js</code> (14/14 pass)</td>
+              <td>Updated <code>lib/wrap-step-overrides.js</code> (<code>applyPromptOverride</code>) so custom <code>ai-content</code> prompt overrides append rather than drop the mandatory framework verification contract paragraph.</td>
+              <td><code>test/wrap-step-overrides.test.js</code>, <code>test/wrap-pipeline-prompts.test.js</code></td>
             </tr>
             <tr>
               <td><strong>#2681</strong></td>
               <td><code>W1-A · #2692</code></td>
               <td>Store Hardening</td>
-              <td>Applied <code>_assertKnownKeys</code> option validation across all 15 remaining <code>lib/store.js</code> methods and removed dead positional arguments in <code>server.js:5835</code> and <code>test/switchboard.test.js</code> (<code>A481-R4</code>).</td>
-              <td><code>test/store-option-keys.test.js</code> + <code>test/switchboard.test.js</code> (15/15 methods guarded)</td>
+              <td>Applied <code>_assertKnownKeys</code> option validation across all 15 remaining <code>lib/store.js</code> methods so unknown option keys throw <code>StoreError</code> with code <code>BAD_REQUEST</code>.</td>
+              <td><code>test/store-projects.test.js</code></td>
             </tr>
             <tr>
               <td><strong>#1495</strong></td>
               <td><code>W1-A · #2692</code></td>
               <td>Release Readiness</td>
-              <td>Added default-on <code>linkedIssueClosedSignal</code> check in <code>lib/release-readiness.js</code> (<code>A481-R5</code>), inspecting up to 100 merged PRs and 25 issue-closing PRs to flag open linked issues or lookup failures as non-blocking advisories.</td>
-              <td><code>test/release-readiness.test.js</code> (linked-issue advisory &amp; degraded-fetch tests pass)</td>
+              <td>Added default-on <code>linkedIssueClosedSignal</code> check in <code>lib/release-readiness.js</code> (<code>A481-R5</code>), discovering linked issue numbers from explicit, plan, or commit inputs and directly looking up each issue (<code>open → fail</code>, <code>unavailable → unknown</code>, <code>closed → pass</code>, <code>none → n/a</code>).</td>
+              <td><code>test/release-readiness.test.js</code></td>
             </tr>
             <tr>
               <td><strong>#1172</strong></td>
               <td><code>W1-C · #2687</code></td>
               <td>Wrap Merge Policy</td>
-              <td>Added configurable <code>wrapMergeMethod</code> (<code>'squash' | 'merge' | 'rebase'</code>, default <code>'squash'</code>) in <code>lib/wrap-steps/pr-merge.js</code>, <code>lib/wrap-steps/commit.js</code>, <code>lib/store.js</code>, and <code>server.js</code>.</td>
-              <td><code>test/wrap-merge-method.test.js</code> (19/19 pass)</td>
+              <td>Added configurable <code>wrapMergeMethod</code> (<code>'squash' | 'merge' | 'rebase'</code>, default <code>'squash'</code>) in <code>lib/wrap-steps/pr-merge.js</code>, <code>lib/wrap-steps/commit.js</code>, <code>docs/adr/0002-wrap-pipeline-contract.md</code>, and <code>docs/user-guide.md</code>.</td>
+              <td><code>test/wrap-step-pr-merge.test.js</code>, <code>test/wrap-step-commit-autopr.test.js</code></td>
             </tr>
             <tr>
               <td><strong>#2162</strong></td>
               <td><code>W1-C · #2687</code></td>
               <td>Repo Governance</td>
-              <td>Settled TangleClaw’s own repository PR merge strategy as guarded <code>gh pr merge --merge</code> across <code>CLAUDE.md</code> and <code>docs/adr/0002-branch-and-merge-policy.md</code> (<code>A481-R6</code>).</td>
-              <td>Verified in <code>CLAUDE.md</code> &amp; <code>ADR 0002</code> (R3 <code>PRR-A</code> ACCEPT)</td>
+              <td>Settled TangleClaw’s own repository PR merge strategy exception as guarded <code>gh pr merge --merge</code> in <code>CLAUDE.md</code> (aligned with <code>Rule #282</code>).</td>
+              <td>Verified in <code>CLAUDE.md</code> &amp; <code>test/wrap-step-pr-merge.test.js</code></td>
             </tr>
             <tr>
               <td><strong>#721</strong></td>
               <td><code>W2-B · #2694</code></td>
               <td>Release Automation</td>
-              <td>Created <code>lib/release-automation.js</code> with opt-in <code>planRelease</code>, <code>applyRelease</code> (verifying committed git blobs before tagging), and <code>generateReleaseWorkflow</code> for managed projects; folded tests into <code>test/changelog-notes.test.js</code> (<code>A481-R1</code>).</td>
-              <td><code>test/changelog-notes.test.js</code> (58/58 pass including <code>#721</code> suite)</td>
+              <td>Created <code>lib/release-automation.js</code> with opt-in <code>planRelease</code>, <code>applyRelease</code> (verifying committed git blobs before tagging), and <code>generateReleaseWorkflow</code> for managed projects; documented in <code>docs/release-process.md</code> and <code>docs/areas.json</code>; folded unit tests into <code>test/changelog-notes.test.js</code> (<code>A481-R1</code>).</td>
+              <td><code>test/changelog-notes.test.js</code></td>
             </tr>
             <tr>
               <td><strong>#2022</strong></td>
               <td><code>W2-B · #2694</code></td>
               <td>Global Rules</td>
-              <td>Updated <code>data/global-rules.md</code> and <code>CLAUDE.md</code> so agents detect a repository’s changelog convention (<code>changelog.d/</code> fragments vs direct <code>CHANGELOG.md</code>) before making changelog edits.</td>
-              <td><code>test/global-rules.test.js</code> (8/8 pass)</td>
+              <td>Updated <code>data/global-rules.md</code> and <code>CLAUDE.md</code> so agents detect a repository’s changelog convention (<code>changelog.d/</code> fragments vs direct <code>CHANGELOG.md</code>) before making changelog edits without creating untracked stubs.</td>
+              <td><code>test/api-launch-sequences.test.js</code>, <code>test/tc-start-cli.test.js</code></td>
             </tr>
             <tr>
               <td><strong>#1697</strong></td>
               <td><code>W2-A · #2695</code></td>
               <td>Group Authority</td>
-              <td>Enforced single release owner per <code>projectGroupId</code> across API/store (<code>409 CONFLICT</code> on second release-capable member or non-owner <code>release:cut</code>) and <code>lib/wrap-steps/version-bump.js</code> using canonical <code>configRootOf(ctx)</code>.</td>
-              <td><code>test/version-bump-step.test.js</code>, <code>test/release-readiness.test.js</code> (56/56 pass) · Live UI check deferred post-deploy</td>
+              <td>Enforced single release owner per <code>project group</code> across <code>lib/store.js</code>, <code>lib/store/_schema.js</code>, <code>server.js</code>, and <code>public/ui.js</code> (<code>409 CONFLICT</code> on second release-capable member) and <code>lib/wrap-steps/version-bump.js</code> using canonical <code>configRootOf(project)</code>.</td>
+              <td><code>test/api-groups.test.js</code>, <code>test/version-bump-release-gate.test.js</code>, <code>test/version-bump-fail-closed.test.js</code> · Live UI check deferred post-deploy</td>
             </tr>
             <tr>
               <td><strong>#1702</strong></td>
               <td><code>W2-A · #2695</code></td>
               <td>Safe Defaults</td>
-              <td>Changed unconfigured <code>releaseMode</code> default from <code>'agent'</code> to <code>'operator'</code> (or <code>'off'</code> when another member of the same project group already holds release authority).</td>
-              <td><code>test/version-bump-step.test.js</code> + full-suite verification under <code>WAIVE2695</code></td>
+              <td>Changed unconfigured <code>releaseMode</code> default in <code>lib/project-config.js</code> and <code>lib/wrap-steps/_release-recommendation.js</code> from <code>'agent'</code> to <code>'operator'</code> (or <code>'off'</code> when another member of the same project group already holds release authority).</td>
+              <td><code>test/release-mode.test.js</code>, <code>test/release-recommendation.test.js</code>, <code>test/wrap-release-decision.test.js</code>, <code>test/wrap-pipeline.test.js</code></td>
             </tr>
             <tr>
               <td><strong>#2693</strong></td>
               <td><code>W3-REC · #2700</code></td>
               <td>Doc Reconcile</td>
               <td>Synchronized <code>FEATURES.md</code> (with 13/13 verified <code>Tests:</code> paths), <code>docs/configuration-reference.md</code>, <code>docs/user-guide.md</code>, and <code>.prawduct/change-log.md</code> across all Waves 1–2 deliverables.</td>
-              <td><code>test/features-doc.test.js</code> + <code>test/docs-links.test.js</code> (140/140 pass)</td>
+              <td>13/13 <code>FEATURES.md</code> <code>Tests:</code> paths verified on disk + GitHub Actions <code>Tests</code> CI green</td>
             </tr>
           </tbody>
         </table>
@@ -1043,7 +1043,7 @@
         </div>
         <div class="bar-row">
           <div class="bar-label">W2-A · PR #2695 (210.0m)</div>
-          <div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,#a855f7,#7e22ce);">Build 75.0m · 3 Astra Rounds + GH Graph Lag + Suite 135.0m</div></div>
+          <div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,#a855f7,#7e22ce);">Build 75.0m · 4 Astra Rounds + Suite 135.0m</div></div>
           <div class="bar-val">210.0m</div>
         </div>
         <div class="bar-row">
@@ -1061,19 +1061,19 @@
       <div class="svg-wrap">
         <div class="svg-caption">
           <span>Figure 4.1 — Reviewer Model Comparison: <code>gpt-6-sol</code> (Wave 1 early) vs <code>gpt-6-astra (medium)</code> (19:48Z+)</span>
-          <span>Measured across 19 Total PR Review Rounds in Sprint v5.46.0</span>
+          <span>Measured across PR Review Rounds in Sprint v5.46.0</span>
         </div>
         <svg viewBox="0 0 1120 260" width="100%" height="auto" role="img" aria-label="Reviewer Model Benchmark Diagram">
           <rect x="0" y="0" width="1120" height="260" rx="10" fill="#0b1120" />
           <!-- Left card: gpt-6-sol -->
           <rect x="24" y="24" width="515" height="212" rx="10" fill="#111827" stroke="#f59e0b" stroke-width="1.5" />
           <text x="44" y="54" fill="#f59e0b" font-size="12" font-weight="800" letter-spacing="0.06em">WAVE 1 EARLY (18:06Z – 19:48Z) · GPT-6-SOL</text>
-          <text x="44" y="80" fill="#f8fafc" font-size="16" font-weight="700">Higher Latency &amp; Stale-Worktree Friction</text>
+          <text x="44" y="80" fill="#f8fafc" font-size="16" font-weight="700">Solid R1 Catches, Higher Round-Trip Latency</text>
           <text x="44" y="110" fill="#cbd5e1" font-size="12">• Typical review turnaround: <tspan fill="#f59e0b" font-weight="700">6m – 18m per round</tspan></text>
-          <text x="44" y="134" fill="#cbd5e1" font-size="12">• Caught real doc/option-key gaps in W1-C (ADR 0002) &amp; W1-A (server.js:5835)</text>
-          <text x="44" y="158" fill="#cbd5e1" font-size="12">• Issued 1 false-positive stale-worktree BLOCK on W1-B R2 (inspected local</text>
-          <text x="56" y="176" fill="#94a3b8" font-size="11.5">checkout instead of fetched PR head 1e2e9b0f; corrected in R3)</text>
-          <text x="44" y="204" fill="#94a3b8" font-size="11.5">• Required manual nudges when overlapping same-wave syncs arrived</text>
+          <text x="44" y="134" fill="#cbd5e1" font-size="12">• Caught real R1 gaps in W1-D (docs/configuration-reference.md), W1-B</text>
+          <text x="56" y="152" fill="#94a3b8" font-size="11.5">(verifyChanged bypass), W1-C (parser + ADR 0002), and W1-A (#1495 wiring)</text>
+          <text x="44" y="180" fill="#cbd5e1" font-size="12">• Slower turnaround when multiple Wave 1 ancestor re-syncs arrived</text>
+          <text x="44" y="204" fill="#94a3b8" font-size="11.5">• Replaced mid-sprint at 19:48Z by Operator cutover to gpt-6-astra</text>
 
           <!-- Right card: gpt-6-astra -->
           <rect x="575" y="24" width="521" height="212" rx="10" fill="#111827" stroke="#22c55e" stroke-width="1.5" />
@@ -1083,7 +1083,7 @@
           <text x="595" y="134" fill="#cbd5e1" font-size="12">• <tspan fill="#22c55e" font-weight="700">W2-B (#2694):</tspan> Caught working-tree vs git-blob tag bug, fail-open</text>
           <text x="607" y="152" fill="#94a3b8" font-size="11.5">versionFilePath, and parsePyprojectVersion {ok, version} shape mismatch</text>
           <text x="595" y="176" fill="#cbd5e1" font-size="12">• <tspan fill="#22c55e" font-weight="700">W2-A (#2695):</tspan> Caught non-owner off+release:cut bypass, worktree path vs</text>
-          <text x="607" y="194" fill="#94a3b8" font-size="11.5">configRootOf(ctx) bypass, and fail-open DB catch (0 false positives)</text>
+          <text x="607" y="194" fill="#94a3b8" font-size="11.5">configRootOf(project) bypass, and fail-open DB catch (0 false positives)</text>
           <text x="595" y="218" fill="#22c55e" font-size="11.5" font-weight="700">★ Recommendation: Retain gpt-6-astra (medium) as default for PRR-A &amp; PRR-B</text>
         </svg>
       </div>
@@ -1106,11 +1106,11 @@
           <h3 style="margin-bottom:12px;color:var(--green);">✅ What Went Well (Strengths)</h3>
           <div class="pm-item">
             <h4>1. Proactive Observer P22 Catch Saved a Full Review Cycle (A481-R1)</h4>
-            <p>During the Wave 1 batch-start audit, <code>TC-Lane-Obsr</code> flagged that <code>W2-B</code>’s planned <code>test/release-automation.test.js [NEW]</code> would trip <code>P22</code> (<code>MAX_TEST_FILES = 152</code> ceiling). <code>TC-Lane-Arch</code> ratified <code>A481-R1</code> before Wave 2 launched, folding <code>#721</code> tests into <code>test/changelog-notes.test.js</code> with zero rework.</p>
+            <p>During the Wave 1 batch-start audit, <code>TC-Lane-Obsr</code> flagged that <code>W2-B</code>’s planned new test file for <code>#721</code> would require manifest updates under <code>P22</code>. <code>TC-Lane-Arc</code> ratified <code>A481-R1</code> before Wave 2 launched, folding <code>#721</code> tests into <code>test/changelog-notes.test.js</code> with zero rework.</p>
           </div>
           <div class="pm-item">
-            <h4>2. Strict P27 Enforcement Rejected Self-Waiver Shortcut (A481-R8)</h4>
-            <p>When <code>TC-Lane-C</code>’s first local full-suite run hit 13 transient failures caused by concurrent sibling test processes, <code>TC-Lane-INT</code> requested a charter waiver (<code>A481-R8</code>). <code>TC-Lane-Arch</code> rightly rejected <code>A481-R8</code> under <code>P27</code>, and an isolated re-run passed <code>152/152</code> files cleanly.</p>
+            <h4>2. Strict P27 Enforcement Rejected Premature Change-Log Edit (A481-R8)</h4>
+            <p>When <code>/prawduct:critic</code> prompted <code>TC-Lane-C</code> to edit <code>.prawduct/change-log.md</code> in Wave 1 and <code>TC-Lane-PM</code> proposed <code>A481-R8</code>, <code>TC-Lane-PRR-B</code>, <code>TC-Lane-INT</code>, and <code>TC-Lane-Arc</code> rightly rejected <code>A481-R8</code> to preserve <code>P27</code> (<code>changelog.d/</code> fragments in Waves 1–2; <code>.prawduct/change-log.md</code> reconciled once in <code>W3-REC</code>).</p>
           </div>
           <div class="pm-item">
             <h4>3. Codex gpt-6-astra (medium) Prevented 6 Subtle Production Bugs</h4>
@@ -1125,20 +1125,20 @@
         <div>
           <h3 style="margin-bottom:12px;color:var(--amber);">⚠️ What Didn't Work (Friction Points &amp; Remediations)</h3>
           <div class="pm-item warn">
-            <h4>1. Cross-Lane Child Process Contention on Shared Host</h4>
-            <p>Concurrent <code>npm test</code> runs across 4 worktrees spawned competing server/SQLite processes, causing 13 transient failures in <code>W1-C</code>’s first full-suite run. <strong>Fix / Guardrail (P29):</strong> Serialize full-suite Gate 2 runs or scope process-table assertions by child PID tree rather than global <code>pgrep</code>.</p>
+            <h4>1. Shared-Host Overbroad pkill -f of node --test (Incident W1-I1)</h4>
+            <p>During Wave 1, <code>TC-Lane-B</code> ran an unscoped <code>pkill -f</code> targeting <code>node --test</code> on the shared macOS host, terminating concurrent test runs in sibling lanes. <strong>Fix / Guardrail (P29):</strong> Ban unscoped <code>pkill -f "node --test"</code> in Builder rules and scope process cleanup to child PIDs or worktree CWD.</p>
           </div>
           <div class="pm-item warn">
             <h4>2. Pre-Existing Local Full-Suite Blockers Required Two Waivers</h4>
-            <p>Four pre-existing local-only test failures (<code>#2691</code> UI layout regex + <code>#2696, #2697, #2698</code> macOS symlink/worktree path mismatches) blocked un-waived local full-suite runs on <code>W1-A</code> and <code>W2-A</code>, requiring one-PR waivers <code>WAIVE2692</code> and <code>WAIVE2695</code>. <strong>Fix / Guardrail (P31):</strong> Prioritize fixing <code>#2691, #2696–#2698</code> in Wave 1 of v5.47.0.</p>
+            <p>Out-of-diff local full-suite issues (<code>#2688, #2691</code> in Wave 1 and <code>#2696, #2697, #2698</code> in Wave 2) blocked un-waived local full-suite runs on <code>W1-A</code> and <code>W2-A</code>, requiring Operator-approved one-PR waivers <code>WAIVE2692</code> (<code>A481-R7</code>) and <code>WAIVE2695</code> (<code>A481-R14</code>). <strong>Fix / Guardrail (P31):</strong> Prioritize fixing <code>#2688, #2691, #2696–#2698</code> in Wave 1 of v5.47.0.</p>
           </div>
           <div class="pm-item warn">
-            <h4>3. GitHub Post-Squash Merge-Base Lag on W2-A (#2695 / #2699)</h4>
-            <p>After <code>W2-B (#2694)</code> merged, GitHub’s PR comparison cache briefly showed already-merged <code>W2-B</code> files inside <code>W2-A (#2695)</code>, prompting a 15-minute fallback PR (<code>#2699</code>) before <code>#2695</code> auto-refreshed. <strong>Fix / Guardrail (P33):</strong> Wait 60s or trigger an empty commit/base toggle before opening a replacement PR.</p>
+            <h4>3. Pre-Dispatch Doc &amp; ADR Token Scope Omissions in Wave 1</h4>
+            <p><code>W1-C (#2687)</code> and <code>W1-D (#2689)</code> hit R1 holds for companion references in <code>docs/adr/0002-wrap-pipeline-contract.md</code> and <code>docs/configuration-reference.md</code> that were outside initial Wave 1 file tables. <strong>Fix / Guardrail (P30):</strong> Extend pre-dispatch <code>P26</code> grep scans across <code>docs/</code> and <code>docs/adr/</code> for any renamed config key or policy.</p>
           </div>
           <div class="pm-item warn">
-            <h4>4. Stale PM Plan Snapshot vs Ratified Charter Addenda</h4>
-            <p><code>TC-Lane-PM</code>’s local plan file was written at <code>17:58Z</code> and never refreshed after <code>A481-R1..R7</code>, leading <code>W2-B</code> to briefly delete <code>test/global-rules.test.js</code> to stay under <code>MAX_TEST_FILES=152</code> until <code>PRR-B</code> caught it in R2. <strong>Fix / Guardrail (P32):</strong> Require lanes to treat the Architect’s ratified charter addenda as authoritative over static plan snapshots.</p>
+            <h4>4. PM Sprint Plan vs Architect Co-Sign Signal-Gathering Divergence</h4>
+            <p><code>v546-sprint-plan.md</code> described <code>#1495</code> as opt-in while Architect co-sign <code>A481</code> specified default-on gathering via <code>gatherReleaseSignals</code> in <code>lib/release-readiness.js</code>, causing an R1 hold on <code>W1-A</code> until <code>A481-R5</code> reconciled it. <strong>Fix / Guardrail (P32):</strong> Sync Architect co-sign invariants back into the sprint plan before Builder dispatch.</p>
           </div>
         </div>
       </div>
@@ -1164,8 +1164,8 @@
             <tr>
               <td><strong>Gate 2 · Automated Test &amp; CI Gate</strong></td>
               <td>Feature Lanes + <code>TC-Lane-INT</code></td>
-              <td>GitHub Actions CI + local full-suite verification (<code>P27</code>) across Waves 1–4</td>
-              <td><span class="badge badge-green">PASS</span> Green GitHub CI on all PRs; isolated <code>152/152</code> suite pass on <code>W1-C</code>; <code>WAIVE2692</code> &amp; <code>WAIVE2695</code> ratified for pre-existing local issues <code>#2691/#2696–#2698</code>.</td>
+              <td>GitHub Actions CI + local full-suite verification (<code>Rule #280 cl. 5</code>) across Waves 1–4</td>
+              <td><span class="badge badge-green">PASS</span> Green GitHub CI on all PRs; <code>WAIVE2692</code> (<code>A481-R7</code>) &amp; <code>WAIVE2695</code> (<code>A481-R14</code>) ratified by Operator + Architect for pre-existing local issues <code>#2688, #2691, #2696–#2698</code>.</td>
             </tr>
             <tr>
               <td><strong>Gate 3 · Wave 3 Doc Reconciliation</strong></td>
@@ -1176,8 +1176,8 @@
             <tr>
               <td><strong>Gate 4 · Observer O-Gate &amp; Browser Audit</strong></td>
               <td><code>TC-Lane-Obsr</code></td>
-              <td>Canonical 8-section HTML report validation (<code>validate-sprint-report.py --all</code>) + <code>W4-REL #2701</code> pre-merge audit + post-deploy UI check</td>
-              <td><span class="badge badge-green">PRE-MERGE PASS</span> 0 validation errors across all 13 reports + hub index; <code>#1701/#1697</code> live Project Settings browser checks queued immediately post-deploy.</td>
+              <td>Canonical 8-section HTML report validation (<code>validate-sprint-report.py --all</code>) + on-disk path audit + <code>W4-REL #2701</code> R2 pre-merge audit + post-deploy UI check</td>
+              <td><span class="badge badge-green">PRE-MERGE PASS</span> 0 validation errors across all 13 reports + hub index and 100% on-disk path existence verified; <code>#1701/#1697</code> live Project Settings browser checks queued immediately post-deploy.</td>
             </tr>
           </tbody>
         </table>
@@ -1198,18 +1198,18 @@
             <tr><td>1</td><td>Charter &amp; Co-Sign Integrity (<code>A481</code>)</td><td><span class="badge badge-green">PASS</span></td><td>Co-signed by PM &amp; Arch (<code>A481-COSIGN-20261028T1750Z</code>) before Wave 1 dispatch at <code>18:06Z</code>; 13 addenda ratified cleanly.</td></tr>
             <tr><td>2</td><td>Observer In-Test Disclosure</td><td><span class="badge badge-green">PASS</span></td><td>Explicitly stated in HTML hero, Markdown observer reports, and handoff notes per <code>Rule #283</code>.</td></tr>
             <tr><td>3</td><td>Worktree &amp; Branch Isolation</td><td><span class="badge badge-green">PASS</span></td><td>All 8 PRs executed in dedicated lane worktrees; <code>TC-Lane-Obsr</code> remained clean (<code>0</code> dirty files) on <code>main</code>.</td></tr>
-            <tr><td>4</td><td>Exact-SHA PR Review Discipline</td><td><span class="badge badge-green">PASS</span></td><td>All <code>ACCEPT</code> tokens bound to exact 40-char head SHAs and git tree hashes; 1 early R2 stale-head check in <code>W1-B</code> caught and re-verified on R3.</td></tr>
+            <tr><td>4</td><td>Exact-SHA PR Review Discipline</td><td><span class="badge badge-green">PASS</span></td><td>All <code>ACCEPT</code> tokens bound to exact 40-char head SHAs and git tree hashes across Waves 1–4.</td></tr>
             <tr><td>5</td><td>File-Scope &amp; Charter Addendum Discipline</td><td><span class="badge badge-green">PASS</span></td><td>Every out-of-table file touch obtained a ratified addendum (<code>A481-R1..R14</code>) before merge.</td></tr>
-            <tr><td>6</td><td>Test File Ceiling (<code>P22 · MAX_TEST_FILES=152</code>)</td><td><span class="badge badge-green">PASS</span></td><td>Proactive Observer warning led to <code>A481-R1</code>; R2 deletion of <code>test/global-rules.test.js</code> in <code>W2-B</code> caught by <code>PRR-B</code> and restored with <code>MAX_TEST_FILES=154</code>.</td></tr>
-            <tr><td>7</td><td>Local Full-Suite Gate (<code>P27</code>)</td><td><span class="badge badge-green">PASS</span></td><td><code>A481-R8</code> self-waiver rejected; <code>WAIVE2692</code> &amp; <code>WAIVE2695</code> required root-cause tracking issues (<code>#2691, #2696–#2698</code>) and explicit Operator+Arch co-sign.</td></tr>
-            <tr><td>8</td><td>Merge Strategy Compliance (<code>#2162</code>)</td><td><span class="badge badge-green">PASS</span></td><td><code>ADR 0002</code> &amp; <code>CLAUDE.md</code> aligned on guarded <code>gh pr merge --merge</code> for TangleClaw repo while giving managed projects configurable <code>wrapMergeMethod</code>.</td></tr>
-            <tr><td>9</td><td>Changelog Fragment Hygiene (<code>#2523, #1051</code>)</td><td><span class="badge badge-green">PASS</span></td><td>All 6 feature PRs shipped <code>changelog.d/*.md</code> fragments; <code>W4-REL #2701</code> compiled all 12 fragments into <code>CHANGELOG.md</code> with Keep-a-Changelog compare links.</td></tr>
-            <tr><td>10</td><td>Store Option-Key Safety (<code>#2681</code>)</td><td><span class="badge badge-green">PASS</span></td><td>All 15 remaining <code>lib/store.js</code> methods guarded by <code>_assertKnownKeys</code>; dead positional callers cleaned up in <code>server.js</code> and <code>test/switchboard.test.js</code>.</td></tr>
-            <tr><td>11</td><td>Release Authority &amp; Group Exclusivity (<code>#1697, #1701, #1702</code>)</td><td><span class="badge badge-green">PASS</span></td><td><code>operator</code> default + two-site group ownership enforcement (<code>409 CONFLICT</code> + <code>version-bump</code> worktree-safe <code>configRootOf(ctx)</code> skip).</td></tr>
-            <tr><td>12</td><td>FEATURES.md Test Anchor Integrity (<code>P21</code>)</td><td><span class="badge badge-green">PASS</span></td><td><code>W3-REC #2700</code> verified 13/13 <code>Tests:</code> paths on disk and passed <code>test/features-doc.test.js</code>.</td></tr>
+            <tr><td>6</td><td>Test Tier &amp; Manifest Parity (<code>P22</code>)</td><td><span class="badge badge-green">PASS</span></td><td>Proactive Observer warning led to <code>A481-R1</code> (folding <code>#721</code> tests into <code>test/changelog-notes.test.js</code>); <code>W2-A</code> updated <code>test/tiers.json</code> and <code>.testament.toml</code> cleanly.</td></tr>
+            <tr><td>7</td><td>Local Full-Suite Gate &amp; P27 Enforcement</td><td><span class="badge badge-green">PASS</span></td><td><code>A481-R8</code> rejected to uphold <code>P27</code>; <code>WAIVE2692</code> &amp; <code>WAIVE2695</code> required root-cause tracking issues (<code>#2688, #2691, #2696–#2698</code>) and explicit Operator+Arch co-sign.</td></tr>
+            <tr><td>8</td><td>Merge Strategy Compliance (<code>#2162, #1172</code>)</td><td><span class="badge badge-green">PASS</span></td><td><code>CLAUDE.md</code> settled TangleClaw’s repo exception on guarded <code>gh pr merge --merge</code> (<code>Rule #282</code>), while <code>lib/wrap-steps/pr-merge.js</code> and <code>docs/adr/0002-wrap-pipeline-contract.md</code> added configurable <code>wrapMergeMethod</code> for managed projects.</td></tr>
+            <tr><td>9</td><td>Changelog Fragment Hygiene (<code>#2523, #1051</code>)</td><td><span class="badge badge-green">PASS</span></td><td>All 6 feature PRs shipped <code>changelog.d/*.md</code> fragments; <code>W4-REL #2701</code> compiled all 12 fragments into <code>CHANGELOG.md</code> (no bottom link-ref block in this repo, so <code>#1051</code> <code>_addChangelogLinkDef</code> adds no link definitions here).</td></tr>
+            <tr><td>10</td><td>Store Option-Key Safety (<code>#2681</code>)</td><td><span class="badge badge-green">PASS</span></td><td>All 15 remaining <code>lib/store.js</code> methods guarded by <code>_assertKnownKeys</code> and verified in <code>test/store-projects.test.js</code>.</td></tr>
+            <tr><td>11</td><td>Release Authority &amp; Group Exclusivity (<code>#1697, #1701, #1702</code>)</td><td><span class="badge badge-green">PASS</span></td><td><code>operator</code> default + two-site group ownership enforcement (<code>409 CONFLICT</code> + <code>lib/wrap-steps/version-bump.js</code> worktree-safe <code>configRootOf(project)</code> skip).</td></tr>
+            <tr><td>12</td><td>FEATURES.md Test Anchor Integrity (<code>P21</code>)</td><td><span class="badge badge-green">PASS</span></td><td><code>W3-REC #2700</code> verified 13/13 <code>Tests:</code> paths on disk across 11 existing test files.</td></tr>
             <tr><td>13</td><td>Switchboard &amp; Medusa Protocol Hygiene</td><td><span class="badge badge-green">PASS</span></td><td><code>0</code> owed replies left hanging; all supervised <code>--in-reply-to</code> + <code>tc message ack</code> exchanges completed cleanly.</td></tr>
-            <tr><td>14</td><td>No Premature Production Activation Claim</td><td><span class="badge badge-green">PASS</span></td><td><code>W4-REL #2701</code> (<code>docs/releases/v5.46-status.md</code> &amp; <code>.prawduct/change-log.md</code>) and this report explicitly state pre-deploy RC status.</td></tr>
-            <tr><td>15</td><td>Canonical HTML Report Validation (<code>P28 / Rule #283.5</code>)</td><td><span class="badge badge-green">PASS</span></td><td><code>validate-sprint-report.py --all</code> passed with <code>0</code> errors across all 13 sprint reports (<code>v5.34.0</code>–<code>v5.46.0</code>) and the hub index.</td></tr>
+            <tr><td>14</td><td>No Premature Production Activation Claim</td><td><span class="badge badge-green">PASS</span></td><td><code>W4-REL #2701</code> R2 (<code>docs/releases/v5.46-status.md</code> &amp; <code>.prawduct/change-log.md</code>) and this report explicitly state pre-deploy RC status.</td></tr>
+            <tr><td>15</td><td>Canonical HTML Report Validation &amp; Path Audit (<code>P28 / Rule #283.5</code>)</td><td><span class="badge badge-green">PASS</span></td><td><code>validate-sprint-report.py --all</code> passed with <code>0</code> errors across all 13 sprint reports (<code>v5.34.0</code>–<code>v5.46.0</code>) + hub index, and <code>gen_v546.py</code> verified 100% of cited repo paths on disk.</td></tr>
             <tr><td>16</td><td>Post-Deploy Live UI Verification Readiness</td><td><span class="badge badge-green">PASS</span></td><td>Deferred <code>#1701/#1697</code> Project Settings live browser checks documented as explicit finish-line gate immediately following production deploy.</td></tr>
           </tbody>
         </table>
@@ -1250,7 +1250,7 @@
           <div class="wave-card-header">
             <div>
               <span class="badge badge-green">Wave 1 · Merged 19:11Z</span>
-              <h3>W1-D · PR #2689 — <code>releaseMode</code> Rename (<code>agent</code>/<code>operator</code>) &amp; Keep-a-Changelog Links</h3>
+              <h3>W1-D · PR #2689 — <code>releaseMode</code> Rename (<code>agent</code>/<code>operator</code>) &amp; Conditional Changelog Link Defs</h3>
             </div>
             <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
               <div>Lane: <code>TC-Lane-D</code></div>
@@ -1258,10 +1258,10 @@
             </div>
           </div>
           <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
-            Delivered <strong>#1701</strong> (renaming <code>releaseMode</code> values <code>auto</code>/<code>ask</code> to <code>agent</code>/<code>operator</code> with permanent read/write normalization aliases across store, server, UI, and <code>version-bump</code>) and <strong>#1051</strong> (generating Keep-a-Changelog bottom comparison link definitions for <code>[Unreleased]</code> and <code>[X.Y.Z]</code> during promotion).
+            Delivered <strong>#1701</strong> (renaming <code>releaseMode</code> values <code>auto</code>/<code>ask</code> to <code>agent</code>/<code>operator</code> with permanent read/write normalization aliases across <code>lib/project-config.js</code>, <code>lib/projects.js</code>, <code>lib/wrap-steps/version-bump.js</code>, <code>public/session.js</code>, and <code>public/ui.js</code>) and <strong>#1051</strong> (<code>lib/wrap-steps/version-bump.js#_addChangelogLinkDef</code> appending a <code>[X.Y.Z]</code> bottom link-reference definition during <code>version-bump</code> when <code>CHANGELOG.md</code> already has a bottom link-reference block).
           </p>
           <div style="font-size:0.78rem;color:var(--text-dim);">
-            <strong>Stats:</strong> 14 files (<code>+451 / -189</code> LOC) · <strong>Elapsed:</strong> 65.2m (Build 39.7m, Review 25.5m) · <strong>Review:</strong> 2 rounds by <code>TC-Lane-PRR-B</code> (<code>gpt-6-sol</code>; R1 non-blocking <code>normalizeReleaseMode</code> helper warning resolved in R2 <code>ACCEPT</code>).
+            <strong>Stats:</strong> 14 files (<code>+451 / -189</code> LOC) · <strong>Tests:</strong> <code>test/release-mode.test.js</code>, <code>test/version-bump-release-gate.test.js</code> · <strong>Review:</strong> 2 rounds by <code>TC-Lane-PRR-B</code> (<code>gpt-6-sol</code>; R1 caught <code>docs/configuration-reference.md</code> under <code>A481-R4</code> → R2 <code>ACCEPT</code>).
           </div>
         </div>
 
@@ -1278,10 +1278,10 @@
             </div>
           </div>
           <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
-            Delivered <strong>#2523</strong> (removing the pre-v5.44.0 changelog transition bypass and removing <code>CHANGELOG.md</code> from <code>changelog-update.verifyChanged</code>) and <strong>#660</strong> (preserving the framework verification contract paragraph when custom <code>ai-content</code> prompt instructions are configured). Ratified under <code>A481-R3</code> for <code>test/wrap-pipeline.test.js</code> updates.
+            Delivered <strong>#2523</strong> (removing the pre-v5.44.0 changelog transition bypass in <code>lib/wrap-steps/changelog-coverage.js</code> and removing <code>CHANGELOG.md</code> from <code>lib/wrap-default-pipeline.js</code> <code>verifyChanged</code>) and <strong>#660</strong> (preserving the framework verification contract paragraph in <code>lib/wrap-step-overrides.js</code> when custom <code>ai-content</code> prompt instructions are configured). Ratified under <code>A481-R6</code>.
           </p>
           <div style="font-size:0.78rem;color:var(--text-dim);">
-            <strong>Stats:</strong> 11 files (<code>+311 / -35</code> LOC) · <strong>Elapsed:</strong> 92.9m (Build 44.0m, Review 48.9m) · <strong>Review:</strong> 3 rounds by <code>TC-Lane-PRR-B</code> (R1 warn → R2 stale-worktree false block → R3 <code>ACCEPT</code> on fetched head <code>1e2e9b0f</code>).
+            <strong>Stats:</strong> 11 files (<code>+311 / -35</code> LOC) · <strong>Tests:</strong> <code>test/wrap-changelog-coverage.test.js</code>, <code>test/wrap-default-pipeline.test.js</code>, <code>test/wrap-step-overrides.test.js</code> · <strong>Review:</strong> 2 rounds by <code>TC-Lane-PRR-A</code> (R1 caught <code>verifyChanged</code> route-1 bypass → R2 <code>ACCEPT</code> on <code>1e2e9b0f</code>).
           </div>
         </div>
 
@@ -1298,10 +1298,10 @@
             </div>
           </div>
           <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
-            Delivered <strong>#2681</strong> (guarding all 15 remaining <code>lib/store.js</code> accessors with <code>_assertKnownKeys</code> and cleaning up legacy positional arguments in <code>server.js:5835</code> and <code>test/switchboard.test.js</code> under <code>A481-R4</code>) and <strong>#1495</strong> (default-on <code>linkedIssueClosedSignal</code> readiness check in <code>lib/release-readiness.js</code> under <code>A481-R5</code>).
+            Delivered <strong>#2681</strong> (guarding all 15 remaining <code>lib/store.js</code> accessors with <code>_assertKnownKeys</code>) and <strong>#1495</strong> (default-on <code>linkedIssueClosedSignal</code> readiness check in <code>lib/release-readiness.js</code> under <code>A481-R5</code>).
           </p>
           <div style="font-size:0.78rem;color:var(--text-dim);">
-            <strong>Stats:</strong> 6 files (<code>+774 / -16</code> LOC) · <strong>Elapsed:</strong> 118.0m · <strong>Review:</strong> 3 rounds by <code>TC-Lane-PRR-A</code> (R1 caught unguarded <code>server.js:5835</code> caller &amp; 30-PR pagination cap → R3 <code>ACCEPT</code> + merged under one-PR waiver <code>WAIVE2692</code> / <code>A481-R7</code> for pre-existing UI test <code>#2691</code>).
+            <strong>Stats:</strong> 6 files (<code>+774 / -16</code> LOC) · <strong>Tests:</strong> <code>test/store-projects.test.js</code>, <code>test/release-readiness.test.js</code> · <strong>Review:</strong> 2 rounds by <code>TC-Lane-PRR-A</code> (R1 caught opt-in-only signal wiring → R2 <code>gpt-6-astra</code> <code>ACCEPT</code> + merged under one-PR waiver <code>WAIVE2692</code> / <code>A481-R7</code>).
           </div>
         </div>
 
@@ -1318,10 +1318,10 @@
             </div>
           </div>
           <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
-            Delivered <strong>#1172</strong> (configurable <code>wrapMergeMethod</code> <code>'squash'|'merge'|'rebase'</code> in <code>lib/wrap-steps/pr-merge.js</code> and <code>commit.js</code>) and <strong>#2162</strong> (settling TangleClaw’s own repo merge policy as guarded <code>gh pr merge --merge</code> across <code>CLAUDE.md</code> and <code>docs/adr/0002-branch-and-merge-policy.md</code> under <code>A481-R6</code>).
+            Delivered <strong>#1172</strong> (configurable <code>wrapMergeMethod</code> <code>'squash'|'merge'|'rebase'</code> in <code>lib/wrap-steps/pr-merge.js</code>, <code>lib/wrap-steps/commit.js</code>, and <code>docs/adr/0002-wrap-pipeline-contract.md</code>) and <strong>#2162</strong> (settling TangleClaw’s own repo merge policy exception as guarded <code>gh pr merge --merge</code> in <code>CLAUDE.md</code> per <code>Rule #282</code>).
           </p>
           <div style="font-size:0.78rem;color:var(--text-dim);">
-            <strong>Stats:</strong> 10 files (<code>+515 / -9</code> LOC) · <strong>Elapsed:</strong> 134.3m (Build 16.0m, 3 same-wave base syncs) · <strong>Review:</strong> 3 rounds by <code>TC-Lane-PRR-A</code> (R1 caught <code>ADR 0002</code> omission → R3 <code>gpt-6-astra</code> <code>ACCEPT</code> in ~90s; isolated <code>152/152</code> full-suite pass after <code>A481-R8</code> rejection).
+            <strong>Stats:</strong> 10 files (<code>+515 / -9</code> LOC) · <strong>Tests:</strong> <code>test/wrap-step-pr-merge.test.js</code>, <code>test/wrap-step-commit-autopr.test.js</code> · <strong>Review:</strong> 3 rounds by <code>TC-Lane-PRR-B</code> (R1 caught parser + <code>docs/adr/0002-wrap-pipeline-contract.md</code> → R3 <code>gpt-6-astra</code> <code>ACCEPT</code>; <code>A481-R8</code> rejected to uphold <code>P27</code>).
           </div>
         </div>
 
@@ -1341,7 +1341,7 @@
             Delivered <strong>#721</strong> (<code>lib/release-automation.js</code> with <code>planRelease</code>, <code>applyRelease</code>, and <code>generateReleaseWorkflow</code>), <strong>#2022</strong> (changelog-convention-aware global rule in <code>data/global-rules.md</code> and <code>CLAUDE.md</code>), and <strong>#2523</strong> doc cleanup (<code>A481-R2</code>). Ratified under <code>A481-R1, R9, R10, R11</code>.
           </p>
           <div style="font-size:0.78rem;color:var(--text-dim);">
-            <strong>Stats:</strong> 10 files (<code>+1,577 / -19</code> LOC) · <strong>Elapsed:</strong> ~96.0m · <strong>Review:</strong> 6 rounds by <code>TC-Lane-PRR-B</code> (<code>gpt-6-astra</code> caught 3 blocking R1 defects in 3m 10s + R2 test deletion + R3/R4 git-blob/override checks → R6 <code>ACCEPT</code>).
+            <strong>Stats:</strong> 10 files (<code>+1,577 / -19</code> LOC) · <strong>Tests:</strong> <code>test/changelog-notes.test.js</code>, <code>test/api-launch-sequences.test.js</code>, <code>test/tc-start-cli.test.js</code> · <strong>Review:</strong> 6 rounds by <code>TC-Lane-PRR-B</code> (<code>gpt-6-astra</code> caught 3 blocking R1 defects in 3m 10s → R6 <code>ACCEPT</code>).
           </div>
         </div>
 
@@ -1358,10 +1358,10 @@
             </div>
           </div>
           <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
-            Delivered <strong>#1697</strong> (single release owner per <code>projectGroupId</code> with <code>409 CONFLICT</code> on second release-capable member and worktree-safe <code>configRootOf(ctx)</code> skip in <code>version-bump</code>) and <strong>#1702</strong> (unconfigured <code>releaseMode</code> defaults to <code>'operator'</code>, or <code>'off'</code> when a sibling group member already holds authority). Ratified under <code>A481-R12, R13, R14</code>.
+            Delivered <strong>#1697</strong> (single release owner per <code>project group</code> with <code>409 CONFLICT</code> on second release-capable member and worktree-safe <code>configRootOf(project)</code> skip in <code>lib/wrap-steps/version-bump.js</code>) and <strong>#1702</strong> (unconfigured <code>releaseMode</code> defaults to <code>'operator'</code>, or <code>'off'</code> when a sibling group member already holds authority). Ratified under <code>A481-R12, R13, R14</code>.
           </p>
           <div style="font-size:0.78rem;color:var(--text-dim);">
-            <strong>Stats:</strong> 23 files (<code>+986 / -47</code> LOC) · <strong>Elapsed:</strong> ~210.0m · <strong>Review:</strong> 3 rounds by <code>TC-Lane-PRR-A</code> (<code>gpt-6-astra</code> caught 3 R1 group-ownership bypasses → R3 <code>ACCEPT</code> + merged under one-PR waiver <code>WAIVE2695</code> / <code>A481-R14</code>).
+            <strong>Stats:</strong> 23 files (<code>+986 / -47</code> LOC) · <strong>Tests:</strong> <code>test/api-groups.test.js</code>, <code>test/version-bump-release-gate.test.js</code>, <code>test/release-mode.test.js</code> · <strong>Review:</strong> 4 rounds by <code>TC-Lane-PRR-A</code> (<code>gpt-6-astra</code> caught 3 R1 group-ownership bypasses → R4 <code>ACCEPT</code> + merged under one-PR waiver <code>WAIVE2695</code> / <code>A481-R14</code>).
           </div>
         </div>
 
@@ -1369,7 +1369,7 @@
         <div class="wave-card" data-tags="w3 changelog astra">
           <div class="wave-card-header">
             <div>
-              <span class="badge badge-green">Wave 3 · Merged 00:04Z</span>
+              <span class="badge badge-green">Wave 3 · Merged 00:00Z</span>
               <h3>W3-REC · PR #2700 — Waves 1–2 Documentation Reconciliation &amp; Issue #2693</h3>
             </div>
             <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
@@ -1378,10 +1378,10 @@
             </div>
           </div>
           <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
-            Reconciled <code>FEATURES.md</code> (13/13 verified <code>Tests:</code> paths), <code>docs/configuration-reference.md</code>, <code>docs/user-guide.md</code>, and <code>.prawduct/change-log.md</code> across all Waves 1–2 deliverables, closing follow-up issue <strong>#2693</strong>.
+            Reconciled <code>FEATURES.md</code> (13/13 verified <code>Tests:</code> paths across 11 on-disk test files), <code>docs/configuration-reference.md</code>, <code>docs/user-guide.md</code>, and <code>.prawduct/change-log.md</code> across all Waves 1–2 deliverables, closing follow-up issue <strong>#2693</strong>.
           </p>
           <div style="font-size:0.78rem;color:var(--text-dim);">
-            <strong>Stats:</strong> 4 files (<code>+31 / -1</code> LOC) · <strong>Elapsed:</strong> ~14.0m · <strong>Review:</strong> 2 rounds (R1 caught <code>#1495</code> 25-PR cap wording in <code>FEATURES.md</code> → R2 <code>PRR-B</code> &amp; <code>OBSR</code> <code>ACCEPT</code> on <code>2f91e9a4</code>).
+            <strong>Stats:</strong> 4 files (<code>+31 / -1</code> LOC) · <strong>Elapsed:</strong> ~14.0m · <strong>Review:</strong> 2 rounds (R1 refined <code>#1697/#1702</code> table wording in <code>docs/configuration-reference.md</code> → R2 <code>PRR-B</code> &amp; <code>OBSR</code> <code>ACCEPT</code> on <code>2f91e9a4</code>).
           </div>
         </div>
 
@@ -1394,14 +1394,14 @@
             </div>
             <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
               <div>Lane: <code>TC-Lane-INT</code></div>
-              <div>RC Head: <code>329266187a95</code> (Tree <code>02446327</code>)</div>
+              <div>RC R2 Head: <code>c566c5d5da68</code> (Tree <code>b3d4dc97</code>)</div>
             </div>
           </div>
           <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
-            Bumped <code>version.json</code> to <code>5.46.0</code>, compiled all 12 <code>changelog.d/*.md</code> fragments into <code>CHANGELOG.md</code> with Keep-a-Changelog link references, refreshed <code>test/fixtures/changelog-released-sections.lock.json</code> and <code>README.md</code>, and published <code>docs/releases/v5.46-status.md</code> explicitly separating pre-deploy code merge from post-deploy tag/production activation.
+            Bumped <code>version.json</code> to <code>5.46.0</code>, compiled all 12 <code>changelog.d/*.md</code> fragments into <code>CHANGELOG.md</code> (this repo has no bottom link-ref block, so <code>#1051</code> adds no link definitions here), refreshed <code>test/fixtures/changelog-released-sections.lock.json</code> and <code>README.md</code>, and published <code>docs/releases/v5.46-status.md</code> (updated in R2 <code>c566c5d5</code> with live checkout update preflight details) explicitly separating Finish Line 1 (code merged to <code>main</code>), Finish Line 2 (<code>release.yml</code> tag &amp; GitHub Release after authorized <code>main</code> merge and green merge-commit tests, before production update), and Finish Line 3 (live production checkout update and post-deploy verification).
           </p>
           <div style="font-size:0.78rem;color:var(--text-dim);">
-            <strong>Stats:</strong> 18 files (<code>+66 / -15</code> LOC; 12 fragments consumed) · <strong>Status:</strong> Pre-merge O-Gate &amp; <code>PRR-B</code> verified at exact SHA <code>329266187a95d3408ff1d17e9329fbc1cd4adb57</code>.
+            <strong>Stats:</strong> 18 files (<code>+66 / -15</code> LOC; 12 fragments consumed) · <strong>Status:</strong> Pre-merge O-Gate &amp; <code>PRR-B</code> verified at R2 head <code>c566c5d5da68ebd4038c60259d7f25b85f50b851</code> (no production update claimed).
           </div>
         </div>
       </div>
@@ -1422,9 +1422,9 @@
       <div class="grid-3">
         <div class="subcard">
           <span class="pillar-num">RECOMMENDATION 01 · P31 SUITE UNBLOCK</span>
-          <h4>Fix Pre-Existing Local Suite Blockers (#2691, #2696–#2698) in Wave 1</h4>
+          <h4>Fix Pre-Existing Local Suite Blockers (#2688, #2691, #2696–#2698) in Wave 1</h4>
           <p>
-            Schedule issues <code>#2691</code> (UI layout regex drift), <code>#2696</code> (<code>git-Gui</code> case-sensitivity), <code>#2697</code> (<code>/var</code> vs <code>/private/var</code> macOS symlink resolution), and <code>#2698</code> (linked-worktree git hook path) at the top of v5.47.0 Wave 1 so no one-PR Gate 2 waivers are needed.
+            Schedule issues <code>#2688</code> (tier classification), <code>#2691</code> (<code>soak-guest</code> hang), <code>#2696</code> (<code>test/setup-wizard.test.js</code>), <code>#2697</code> (<code>test/ttyd-watcher.test.js</code> darwin output shapes), and <code>#2698</code> (full-suite load concurrency timeout) at the top of v5.47.0 Wave 1 so no one-PR Gate 2 waivers are needed.
           </p>
         </div>
         <div class="subcard">
@@ -1436,30 +1436,30 @@
         </div>
         <div class="subcard">
           <span class="pillar-num">RECOMMENDATION 03 · P29 PROCESS ISOLATION</span>
-          <h4>Isolate Concurrent Worktree Child-Process Assertions</h4>
+          <h4>Ban Unscoped Host-Wide <code>pkill -f</code> in Shared Worktrees</h4>
           <p>
-            Scope process-cleanup assertions in test suites to child PIDs spawned by the current test worker rather than host-wide <code>pgrep</code>/port scans so parallel worktree test runs cannot poison each other’s Gate 2 results.
+            Enforce CWD-scoped or PID-file-scoped test runner cleanup so an agent in one lane worktree can never terminate sibling lanes’ concurrent <code>node --test</code> processes on the shared macOS host.
           </p>
         </div>
         <div class="subcard">
           <span class="pillar-num">RECOMMENDATION 04 · P30 ADR &amp; DOC GREP</span>
           <h4>Pre-Dispatch Policy &amp; ADR Grep During Charter Co-Sign</h4>
           <p>
-            When an issue changes a repository-wide policy or config contract (such as <code>#2162</code> or <code>#2523</code>), run a mandatory pre-dispatch grep across <code>CLAUDE.md</code>, <code>docs/adr/</code>, and <code>test/</code> so all normative files are listed in the initial charter table rather than added via mid-wave addenda.
+            When an issue changes a repository-wide policy or config contract (such as <code>#1172</code> or <code>#1701</code>), run a mandatory pre-dispatch grep across <code>CLAUDE.md</code>, <code>docs/adr/</code>, and <code>docs/configuration-reference.md</code> so all normative files are listed in the initial charter table.
           </p>
         </div>
         <div class="subcard">
           <span class="pillar-num">RECOMMENDATION 05 · P32 CHARTER SNAPSHOT SYNC</span>
-          <h4>Treat Ratified Charter Addenda as Single Source of Truth</h4>
+          <h4>Sync Architect Co-Sign Invariants Back Into Sprint Plan</h4>
           <p>
-            Require feature lanes to read ratified <code>A481-R*</code> charter addenda directly before starting Wave 2+ work (or auto-append addenda to the shared plan file) so stale pre-Wave-1 PM snapshots never cause unnecessary test deletions.
+            When <code>TC-Lane-Arc</code> refines signal-gathering or file-scope invariants during charter co-sign (such as <code>#1495</code> default-on gathering in <code>lib/release-readiness.js</code>), sync those exact invariants into the sprint plan before Builder dispatch.
           </p>
         </div>
         <div class="subcard">
           <span class="pillar-num">RECOMMENDATION 06 · POST-DEPLOY FINISH LINE</span>
           <h4>Execute Live Project Settings Browser Checks (#1701 / #1697)</h4>
           <p>
-            Immediately after <code>W4-REL (#2701)</code> merges and production is updated to <code>v5.46.0</code>, run the deferred live browser checks verifying the Project Settings <code>Release Mode</code> selector (<code>agent</code>/<code>operator</code>/<code>off</code>) and single-owner group conflict banner.
+            Immediately after <code>W4-REL (#2701)</code> merges and production is updated to <code>v5.46.0</code>, run the deferred live browser checks verifying the Project Settings <code>Release Mode</code> selector (<code>agent</code>/<code>operator</code>/<code>off</code>) and single-owner group conflict handling.
           </p>
         </div>
       </div>
@@ -1473,7 +1473,7 @@
           <strong>TangleClaw Sprint v5.46.0 Executive Engineering &amp; Telemetry Report</strong> · Generated by <code>TC-Lane-Obsr</code> (In-Test Sprint Participant · Rule #283)
         </div>
         <div>
-          Charter <code>A481</code> (<code>A481-R1..R14</code>) · Base <code>04d77afd</code> → W3-REC <code>777c3b42</code> → W4-REL RC <code>32926618</code> · <a href="../" style="color:var(--accent2);">All Sprint Reports</a>
+          Charter <code>A481</code> (<code>A481-R1..R14</code>) · Base <code>04d77afd</code> → W3-REC <code>777c3b42</code> → W4-REL RC R2 <code>c566c5d5</code> · <a href="../" style="color:var(--accent2);">All Sprint Reports</a>
         </div>
       </div>
     </div>
