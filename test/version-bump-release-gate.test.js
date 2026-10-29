@@ -618,6 +618,26 @@ describe('version-bump release gate', () => {
       }
     });
 
+    it('fails closed through the shared safeFindReleaseOwnerElsewhere helper too (#2699)', async () => {
+      // The test above exercises the throw via `getByProject`, one layer below
+      // `findReleaseOwnerElsewhere`. This one mocks `findReleaseOwnerElsewhere`
+      // itself — the function version-bump.js now reaches only THROUGH
+      // `safeFindReleaseOwnerElsewhere` — so the fail-closed path is proven
+      // through the actual call this file makes, not just an layer it happens
+      // to sit on top of.
+      const solo = makeProject({ config: { releaseMode: 'agent' }, plan: '- [x] done' });
+      registerProject(solo);
+      const savedFind = store.projectGroups.findReleaseOwnerElsewhere;
+      store.projectGroups.findReleaseOwnerElsewhere = () => { throw new Error('simulated DB failure'); };
+      try {
+        const { result } = await run(solo);
+        assert.equal(result.status, 'skipped');
+        assert.match(result.output.reason, /could not resolve group release authority/);
+      } finally {
+        store.projectGroups.findReleaseOwnerElsewhere = savedFind;
+      }
+    });
+
     it('resolves group membership through the registered checkout, not a worktree path (PRR-A B2)', async () => {
       const owner = makeProject({ config: { releaseMode: 'agent' }, plan: '- [x] done' });
       const other = makeProject({ config: { releaseMode: 'agent' }, plan: '- [x] done' });

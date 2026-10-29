@@ -16,17 +16,20 @@
  *        trusted it says why, runs Stage 3 whole instead, and says so.
  *   3    small: the Small tier under its guard
  *   4    medium: the Medium tier under its guard
- *   5    large: the Large tier, no guard
+ *   5    large: the Large tier, no spawn/exec guard, but still `--test-timeout`-bounded (#2691)
  *   all  the suite as the declared `test_command` runs it: one `node --test`
  *        over `test/*.test.js`, the same arguments in the same order, so what
  *        this runs and what the gate records are one command.
  *
- * A guarded tier runs with `--test-timeout`: a refused spawn is a throw, and
- * product code waiting for the process it never got can wait forever; the
- * timeout turns that into a cancelled test that names the file. The value is
- * the one measured when the ledger was first written (the slowest honest
- * Medium file is past 120 s with its tier sharing the host); re-measure before
- * lowering it.
+ * Every tier runs with `--test-timeout`. In a guarded tier (Small, Medium) a
+ * refused spawn is a throw, and product code waiting for the process it
+ * never got can wait forever; the timeout turns that into a cancelled test
+ * that names the file. The Large tier has no such guard — it is allowed to
+ * spawn and open real resources — so the same timeout is the only thing
+ * standing between one hung large file and the whole stage blocking
+ * indefinitely with no recovery (#2691). The value is the one measured when
+ * the ledger was first written (the slowest honest Medium file is past 120 s
+ * with its tier sharing the host); re-measure before lowering it.
  *
  * Every run that executes tests writes a junit report and ends by reconciling
  * it with the runner's own summary (`lib/test-results.js`): the canonical count
@@ -73,11 +76,44 @@ const STATIC_RING = Object.freeze([
  */
 const GUARDED_TIMEOUT_MS = 300000;
 
+/**
+ * `--test-timeout` for the Large tier (#2691), in milliseconds. The Large
+ * tier is allowed real subprocesses and real I/O, so its own slowest file
+ * runs far longer than Medium's: `test/soak-guest.test.js` measured ~804 s
+ * ALONE before a fix to two real slowness causes (a deferred-cleanup bug in
+ * `deploy/soak/guest/guest-setup.sh`'s `bounded()` watchdog, and a fresh
+ * macOS Gatekeeper/syspolicyd scan on every one of the dozens of brand-new
+ * fake-command executables the test created per run); fixed, it measures
+ * ~270 s ALONE, 208/208 passing both times — slow by design (deliberate
+ * probe-hang simulations), never actually stuck. `GUARDED_TIMEOUT_MS` is
+ * calibrated for Medium and would still cancel this file as a false
+ * failure even post-fix.
+ *
+ * Unmeasured: how much slower that file runs with the full ~310-file Large
+ * tier sharing the host (the Medium tier's own calibration saw a ~12x
+ * slowdown from alone to shared — measuring Large's equivalent costs a full
+ * Stage 5 run, tens of minutes, which this fix did not spend). This value is
+ * a deliberately generous placeholder against that unknown, not a measured
+ * one: re-measure for real under full Stage 5 contention and set it
+ * precisely once that data exists, rather than trusting this margin. Until
+ * then, it is still a *bound*, not an unbound run — a file that is
+ * genuinely stuck (as opposed to merely slow) is cancelled and named
+ * instead of blocking the whole stage forever with no recovery.
+ */
+const LARGE_TIMEOUT_MS = 3600000;
+
 /** The tier each tier stage runs, and the guard each tier runs under. */
 const TIER_OF_STAGE = Object.freeze({ 3: 'small', 4: 'medium', 5: 'large' });
 const GUARD_OF_TIER = Object.freeze({
   small: './test/helpers/preload-small.js',
   medium: './test/helpers/preload-medium.js'
+});
+
+/** `--test-timeout` for each tier (#2691: every tier is now bounded, not just the guarded ones). */
+const TIMEOUT_OF_TIER = Object.freeze({
+  small: GUARDED_TIMEOUT_MS,
+  medium: GUARDED_TIMEOUT_MS,
+  large: LARGE_TIMEOUT_MS
 });
 
 /** What `test_command` declares, split the way the recorder splits it. */
@@ -113,7 +149,8 @@ function allArgv(junitPath, specPath = null) {
  */
 function tierArgv(tier, files, junitPath, specPath = null) {
   const argv = ['--test'];
-  if (GUARD_OF_TIER[tier]) argv.push('--require', GUARD_OF_TIER[tier], `--test-timeout=${GUARDED_TIMEOUT_MS}`);
+  if (GUARD_OF_TIER[tier]) argv.push('--require', GUARD_OF_TIER[tier]);
+  argv.push(`--test-timeout=${TIMEOUT_OF_TIER[tier]}`);
   argv.push('--test-reporter=junit', `--test-reporter-destination=${junitPath}`);
   if (specPath) argv.push('--test-reporter=spec', `--test-reporter-destination=${specPath}`);
   argv.push(...files);
@@ -360,14 +397,16 @@ function main(argv, io = {}) {
     return 0;
   }
   const specPath = parsed.specPath === null ? 'stdout' : parsed.specPath;
-  const guard = GUARD_OF_TIER[tier] ? `, guard ${GUARD_OF_TIER[tier]}, --test-timeout=${GUARDED_TIMEOUT_MS}` : ', no guard';
+  const guard = GUARD_OF_TIER[tier]
+    ? `, guard ${GUARD_OF_TIER[tier]}, --test-timeout=${TIMEOUT_OF_TIER[tier]}`
+    : `, no spawn/exec guard, --test-timeout=${TIMEOUT_OF_TIER[tier]}`;
   const nodeArgv = tierArgv(tier, files, junitPath, specPath);
   const shown = `${nodeArgv.slice(0, nodeArgv.length - files.length).join(' ')} <${files.length} files: test/tiers.json ${tier}>`;
   return runSuite(`stage ${parsed.stage} (${tier}, ${files.length} files${guard})`, nodeArgv, { root, junitPath, specPath, out, shown });
 }
 
 module.exports = {
-  STATIC_RING, GUARDED_TIMEOUT_MS, TIER_OF_STAGE, GUARD_OF_TIER, DECLARED_SUITE, STAGES,
+  STATIC_RING, GUARDED_TIMEOUT_MS, LARGE_TIMEOUT_MS, TIMEOUT_OF_TIER, TIER_OF_STAGE, GUARD_OF_TIER, DECLARED_SUITE, STAGES,
   allArgv, tierArgv, syntaxCheck, trackedJs, staticSteps, runStatic, runSuite, parseArgs, main
 };
 

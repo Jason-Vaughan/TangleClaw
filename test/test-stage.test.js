@@ -93,7 +93,7 @@ describe('stages 3, 4 and 5: the ledger\'s tiers, guarded where the tier promise
     assert.deepEqual(stage.TIER_OF_STAGE, { 3: 'small', 4: 'medium', 5: 'large' });
   });
 
-  it('runs a guarded tier with its guard and the measured timeout, and the large tier bare', () => {
+  it('runs a guarded tier with its spawn/exec guard, and every tier (including Large, bare) with the measured timeout (#2691)', () => {
     assert.deepEqual(stage.tierArgv('small', ['test/a.test.js'], '/tmp/j.xml', 'stdout'), [
       '--test', '--require', './test/helpers/preload-small.js', `--test-timeout=${stage.GUARDED_TIMEOUT_MS}`,
       '--test-reporter=junit', '--test-reporter-destination=/tmp/j.xml', '--test-reporter=spec', '--test-reporter-destination=stdout', 'test/a.test.js'
@@ -103,9 +103,18 @@ describe('stages 3, 4 and 5: the ledger\'s tiers, guarded where the tier promise
       '--test-reporter=junit', '--test-reporter-destination=/tmp/j.xml', 'test/a.test.js'
     ]);
     assert.deepEqual(stage.tierArgv('large', ['test/a.test.js', 'test/b.test.js'], '/tmp/j.xml'), [
-      '--test', '--test-reporter=junit', '--test-reporter-destination=/tmp/j.xml', 'test/a.test.js', 'test/b.test.js'
+      '--test', `--test-timeout=${stage.LARGE_TIMEOUT_MS}`,
+      '--test-reporter=junit', '--test-reporter-destination=/tmp/j.xml', 'test/a.test.js', 'test/b.test.js'
     ]);
     assert.equal(stage.GUARDED_TIMEOUT_MS, 300000, 'the value measured when the ledger was written; re-measure before lowering');
+    // test/soak-guest.test.js measured ~804s alone before a fix to two real
+    // slowness causes, ~270s alone after — all 208 tests green both times.
+    // LARGE_TIMEOUT_MS must clear even the pre-fix figure with real margin,
+    // not just match GUARDED_TIMEOUT_MS (which would cancel it as a false
+    // failure), since the margin is a placeholder against unmeasured
+    // shared-host slowdown, not a tight fit to the current fixed timing.
+    assert.ok(stage.LARGE_TIMEOUT_MS > stage.GUARDED_TIMEOUT_MS, 'the Large tier needs a more generous budget than Medium');
+    assert.ok(stage.LARGE_TIMEOUT_MS > 804000, 'must clear the slowest known Large file pre-fix (test/soak-guest.test.js, ~804s alone) with margin');
     for (const guard of Object.values(stage.GUARD_OF_TIER)) assert.ok(fs.existsSync(path.join(REPO, guard)), guard);
   });
 });
@@ -264,7 +273,7 @@ describe('fine', () => { it('passes', () => {}); });
     const junitPath = path.join(root, 'stage5.xml');
     const code = stage.main(['5', '--junit', junitPath, '--spec', path.join(root, 'stage5.spec')], { stdout: out, root });
     assert.equal(code, 1);
-    assert.match(out.text(), /^stage 5 \(large, 1 files, no guard\): \d+ ms, node exit 0$/m);
+    assert.match(out.text(), new RegExp(`^stage 5 \\(large, 1 files, no spawn/exec guard, --test-timeout=${stage.LARGE_TIMEOUT_MS}\\): \\d+ ms, node exit 0$`, 'm'));
     assert.match(out.text(), /^RED: the report carries 1 failure element\(s\) the summary does not count/m);
   });
 

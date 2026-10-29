@@ -492,3 +492,57 @@ describe('API /api/groups/:id/sync', () => {
     assert.ok(syncRes.data.added.includes('API.md'));
   });
 });
+
+describe('POST /api/groups/:id/members — defers-elsewhere does not double-claim (#2699 R-1/R-2)', () => {
+  let tmpDir;
+  let server;
+
+  before(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-members-defer-'));
+    store._setBasePath(tmpDir);
+    store.init();
+    store.config.save({ ...store.config.load(), authEnabled: true, basicAuthUser: null, basicAuthHash: null });
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('a project already deferring to a DIFFERENT group\'s owner does not also claim a second, vacant group it joins via the API', async () => {
+    const ownerPath = path.join(tmpDir, 'defer-owner');
+    fs.mkdirSync(ownerPath, { recursive: true });
+    const ownerId = store.projects.create({ name: 'defer-owner', path: ownerPath, engine: 'claude' }).id;
+
+    const memberPath = path.join(tmpDir, 'defer-member');
+    fs.mkdirSync(memberPath, { recursive: true });
+    const memberId = store.projects.create({ name: 'defer-member', path: memberPath, engine: 'claude' }).id;
+
+    const groupA = await request(server, 'POST', '/api/groups', { name: 'defer-fleet-a' });
+    const groupB = await request(server, 'POST', '/api/groups', { name: 'defer-fleet-b' });
+
+    // owner joins groupA and auto-claims it (no on-disk config -> the
+    // release-capable 'operator' default, #1702). member then joins the
+    // SAME group too — groupA already has a DIFFERENT owner, so member's
+    // own join is a no-op for ownership.
+    const ownerJoinA = await request(server, 'POST', `/api/groups/${groupA.data.id}/members`, { projectId: ownerId });
+    assert.equal(ownerJoinA.status, 200);
+    const memberJoinA = await request(server, 'POST', `/api/groups/${groupA.data.id}/members`, { projectId: memberId });
+    assert.equal(memberJoinA.status, 200);
+    const groupAAfter = await request(server, 'GET', `/api/groups/${groupA.data.id}`);
+    assert.equal(groupAAfter.data.releaseOwnerProjectId, ownerId);
+
+    // Joining a second, vacant group through the same route must not ALSO
+    // claim it for member — member already defers to groupA's owner (a
+    // DIFFERENT project), and the point of R-1/R-2 is that this holds
+    // through the real HTTP route, not just the direct store call.
+    const memberJoinB = await request(server, 'POST', `/api/groups/${groupB.data.id}/members`, { projectId: memberId });
+    assert.equal(memberJoinB.status, 200);
+    const groupBAfter = await request(server, 'GET', `/api/groups/${groupB.data.id}`);
+    assert.equal(groupBAfter.data.releaseOwnerProjectId, null,
+      'groupB must stay vacant — member already holds release authority elsewhere');
+  });
+});

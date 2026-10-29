@@ -12,6 +12,44 @@ const HOST_PROVISION = path.join(GUEST, 'host-provision.sh');
 const GUEST_SETUP = path.join(GUEST, 'guest-setup.sh');
 
 /**
+ * One executable inode, shared by every fake command this file ever creates,
+ * across every test. macOS's first execve of a NEW executable inode pays a
+ * real syspolicyd/Gatekeeper scan (measured: ~230ms for a fresh inode vs.
+ * ~10ms reusing an already-scanned one — a ~20x difference, and this file
+ * creates dozens of fresh fake-command scripts per test). Dot-sourcing a
+ * body file (`.`, a `read()`, never an `execve()`) pays no such scan, so
+ * every fake command is a cheap SYMLINK to this one already-scanned
+ * dispatcher, which sources the real fake logic from a sibling `bodies/`
+ * file named for the symlink it was invoked as (`$0` reflects the invoking
+ * path, not the symlink's target, and `.` does not change it).
+ */
+const SHARED_RUNNER_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'soak-guest-runner-'));
+const SHARED_RUNNER = path.join(SHARED_RUNNER_DIR, 'runner.sh');
+fs.writeFileSync(SHARED_RUNNER, '#!/bin/sh\n. "${0%/*}/../bodies/${0##*/}"\n', { mode: 0o755 });
+process.on('exit', () => {
+  try { fs.rmSync(SHARED_RUNNER_DIR, { recursive: true, force: true }); } catch { /* best effort */ }
+});
+
+/**
+ * Write one fake command as a symlink to the shared runner plus a
+ * dot-sourced body, instead of its own freshly-exec'd script.
+ * @param {string} dir - The fakes root (holds `bin/` and `bodies/` as siblings)
+ * @param {string} name - Command name
+ * @param {string} body - Shell statements run as if they were the command's own script
+ * @returns {void}
+ */
+function writeFakeCmd(dir, name, body) {
+  const bin = path.join(dir, 'bin');
+  const bodies = path.join(dir, 'bodies');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(bodies, { recursive: true });
+  fs.writeFileSync(path.join(bodies, name), `${body}\n`);
+  const link = path.join(bin, name);
+  try { fs.unlinkSync(link); } catch { /* did not exist */ }
+  fs.symlinkSync(SHARED_RUNNER, link);
+}
+
+/**
  * A bin directory of fake commands that record every call to `calls.log` and
  * print a fixed answer, so no test can reach real tart, sudo or pfctl.
  * @param {string} dir - Directory to create them in
@@ -23,7 +61,7 @@ function fakes(dir, answers) {
   const log = path.join(dir, 'calls.log');
   fs.mkdirSync(bin, { recursive: true });
   for (const [name, out] of Object.entries(answers)) {
-    fs.writeFileSync(path.join(bin, name), `#!/bin/sh\necho "${name} $*" >> "${log}"\nprintf '%b' '${out}'\n`, { mode: 0o755 });
+    writeFakeCmd(dir, name, `echo "${name} $*" >> "${log}"\nprintf '%b' '${out}'`);
   }
   return { bin, calls: () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n') : []) };
 }
@@ -98,8 +136,7 @@ describe('soak guest: host-provision.sh', () => {
     f = fakes(tmp, { tart: '' });
     // stat, as the host-side trust check asks it: everything is the operator's
     // and closed, unless FAKE_BAD_PATH names a path to report as FAKE_BAD_META.
-    fs.writeFileSync(path.join(f.bin, 'stat'), [
-      '#!/bin/sh',
+    writeFakeCmd(tmp, 'stat', [
       'p="$3"',
       'if [ -n "$FAKE_BAD_PATH" ] && [ "$p" = "$FAKE_BAD_PATH" ]; then echo "$FAKE_BAD_META"; exit 0; fi',
       'u=$(id -u)',
@@ -107,7 +144,7 @@ describe('soak guest: host-provision.sh', () => {
       '  "%u %Lp") echo "$u 755";;',
       '  *) if [ -d "$p" ]; then echo "$u 755 Directory"; else echo "$u 644 Regular File"; fi;;',
       'esac'
-    ].join('\n'), { mode: 0o755 });
+    ].join('\n'));
   });
 
   afterEach(() => {
@@ -451,7 +488,7 @@ function guestFakes(dir, over = {}) {
   };
   for (const [name, body] of Object.entries(bodies)) {
     if (body === null) continue; // leave the command missing
-    fs.writeFileSync(path.join(bin, name), `#!/bin/sh\necho "[\${FAKE_USER:-admin}] ${name} $*" >> "${log}"\n${body}\n`, { mode: 0o755 });
+    writeFakeCmd(dir, name, `echo "[\${FAKE_USER:-admin}] ${name} $*" >> "${log}"\n${body}`);
   }
   return { bin, calls: () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n') : []) };
 }
@@ -463,8 +500,10 @@ function guestFakes(dir, over = {}) {
 const PROBE_TIMEOUT = '60';
 // A case that needs a probe to hang waits this bound out, so it passes a short
 // one itself. Every probe that runs before the hanging one is under it too:
-// such a case still depends on the host starting a fake within this long.
-const HANG_PROBE_TIMEOUT = '6';
+// such a case still depends on the host starting a fake within this long —
+// now a shared, already-scanned dispatcher inode rather than a fresh exec
+// each time, so even a busy host starts one well under this bound.
+const HANG_PROBE_TIMEOUT = '2';
 
 /**
  * Run guest-setup.sh with the fakes, a probe timeout no fake that exits at
@@ -1116,6 +1155,38 @@ describe('soak guest: admin verifier', () => {
       assert.match(r.json[0].reason, reason);
     });
   }
+
+  it('leaves no orphaned process behind once bounded() times out a hung probe', () => {
+    // bounded()'s own hang is a plain, unbackgrounded `sleep` inside a
+    // fake's script — exactly as every real HANG fixture here simulates —
+    // so the fake backgrounds its OWN sleep here only to record that
+    // child's pid for this assertion; `wait` still blocks the fake exactly
+    // as a plain foreground `sleep 30` would, which is what bounded() sees.
+    const pidFile = path.join(tmp, 'hung-child-pid');
+    const f = guestFakes(tmp, {
+      sudo: [
+        '[ "$1" = "-n" ] && shift',
+        'if [ "$1" = "-l" ]; then',
+        '  [ "$3" = admin ] && exit 0',
+        '  sleep 30 &',
+        `  echo $! > "${pidFile}"`,
+        '  wait',
+        'fi',
+        '[ "${FAKE_USER:-admin}" = admin ] || exit 1',
+        'exec "$@"'
+      ].join('\n')
+    });
+    const r = setup(['--verify-admin'], f, tmp, { RULES: path.join(tmp, 'rules.txt'), SOAK_PROBE_TIMEOUT: HANG_PROBE_TIMEOUT });
+    assert.equal(r.status, 3, r.stderr);
+    assert.match(r.json[0].reason, /sudo -l for soakrun hung/);
+    const childPid = Number(fs.readFileSync(pidFile, 'utf8').trim());
+    assert.ok(childPid > 0, 'the fake must have recorded its backgrounded sleep\'s own pid');
+    assert.throws(
+      () => process.kill(childPid, 0),
+      /ESRCH/,
+      'the hung probe\'s own child process must not survive bounded()\'s cleanup, reparented and forgotten'
+    );
+  });
 });
 
 const REPO = path.join(__dirname, '..');

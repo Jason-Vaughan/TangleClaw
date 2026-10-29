@@ -2010,8 +2010,13 @@ function openSettings(name, options) {
     ['off', 'Off — this project manages its own versioning']
   ].map(([v, label]) => `<option value="${v}"${v === initialReleaseMode ? ' selected' : ''}>${label}</option>`).join('');
   // #1697: group release authority — read-only here; transferred via the
-  // group's own settings, never duplicated as a second control on this modal.
-  const releaseOwnerGroup = (project.groups || []).find(g => g.releaseOwnerProjectId !== null);
+  // group's own settings, never duplicated as a second control on this
+  // modal. A DIFFERENT project's ownership is the conflict this hint exists
+  // to warn about, so it must win over a group this project owns itself —
+  // picking the first group with any owner could show the self-owned one
+  // instead and hide a real conflict in another group.
+  const releaseOwnerGroup = (project.groups || []).find(g => g.releaseOwnerProjectId !== null && g.releaseOwnerProjectId !== project.id)
+    || (project.groups || []).find(g => g.releaseOwnerProjectId !== null);
   let releaseOwnerHint = '';
   if (releaseOwnerGroup) {
     releaseOwnerHint = releaseOwnerGroup.releaseOwnerProjectId === project.id
@@ -6211,9 +6216,13 @@ async function toggleGroupMembership(groupId, projectId, add) {
     await apiMutate(`/api/groups/${groupId}/members/${projectId}`, 'DELETE', {});
   }
   // Refresh the release-owner select: membership (and possibly ownership,
-  // if the removed member held it — #1697) just changed.
+  // if the removed member held it — #1697) just changed. The group modal
+  // may have closed, or switched to a different group, while these awaits
+  // were in flight (same class of staleness as #2121/#2092) — only render
+  // into it if it's still showing the group this toggle was for.
+  if (groupEditId !== groupId) return;
   const data = await api(`/api/groups/${groupId}`);
-  if (data) renderGroupReleaseOwner(data.members || [], data.releaseOwnerProjectId);
+  if (groupEditId === groupId && data) renderGroupReleaseOwner(data.members || [], data.releaseOwnerProjectId);
 }
 
 /**
