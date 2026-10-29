@@ -141,7 +141,7 @@ const REAL_SEAMS = { ...startupDialog._internal };
 
 describe('what an engine declares (#2128)', () => {
   it('Claude Code declares its folder trust dialog, with evidence', () => {
-    assert.equal(DIALOGS.length, 1);
+    assert.equal(DIALOGS.length, 2, 'trust_required and bypass_permissions_confirm (#2205)');
     assert.equal(DIALOGS[0].code, 'trust_required');
     assert.deepEqual(DIALOGS[0].markers, ['Yes, I trust this folder', 'No, exit']);
     const entry = CLAUDE.capabilities.startupDialogs[0];
@@ -175,7 +175,7 @@ describe('what an engine declares (#2128)', () => {
     });
 
     it('an operator\'s second profile for the same command is covered', () => {
-      assert.deepEqual(startupDialog.declared(VARIANT).map((d) => d.code), ['trust_required']);
+      assert.deepEqual(startupDialog.declared(VARIANT).map((d) => d.code), ['trust_required', 'bypass_permissions_confirm']);
     });
 
     it('a profile for another command is not', () => {
@@ -284,7 +284,7 @@ describe('what an engine declares (#2128)', () => {
       startupDialog._internal.engineProfiles = () => [];
       assert.deepEqual(startupDialog.declared(VARIANT), []);
       startupDialog._internal.engineProfiles = () => [CLAUDE];
-      assert.equal(startupDialog.declared(VARIANT).length, 1);
+      assert.equal(startupDialog.declared(VARIANT).length, 2);
     });
   });
 
@@ -328,9 +328,10 @@ describe('reading one pane (#2128)', () => {
     assert.equal(startupDialog.detect(QUOTING_SESSION.slice(0, 4), DIALOGS, WAKE).code, 'trust_required');
   });
 
-  it('false positive: one marker alone is another dialog, not this one', () => {
+  it('one marker alone does not confirm trust_required; a full match of its OWN markers correctly names the other dialog instead (#2205)', () => {
     const bypass = [' WARNING: Claude Code running in Bypass Permissions mode', ' ❯ 1. No, exit', '   2. Yes, I accept', ' Enter to confirm · Esc to cancel'];
-    assert.equal(startupDialog.detect(bypass, DIALOGS, WAKE), null);
+    const hit = startupDialog.detect(bypass, DIALOGS, WAKE);
+    assert.equal(hit && hit.code, 'bypass_permissions_confirm', 'both of ITS OWN markers are present, so this is a real match, not a guess from sharing "No, exit" with trust_required');
   });
 
   it('a booting pane is undecided until it shows a prompt or a dialog', () => {
@@ -397,13 +398,19 @@ describe('one look before a send (#2128)', () => {
     assert.equal(res.dialog.code, 'trust_required');
   });
 
-  it('a frame that stays half-drawn is neither a dialog nor clear, and is named as suspect', () => {
+  it('a frame that stays half-drawn, showing a marker two declared dialogs share, is neither a dialog nor clear, and is named as an unattributed suspect (#2205)', () => {
     frames = [TRUST_DIALOG.slice(0, 13)];
     const res = look();
     assert.equal(settles, 1, 'one re-read, not a loop');
     assert.equal(res.dialog, null);
     assert.equal(res.clear, false);
-    assert.deepEqual(res.suspect, { code: 'trust_required', label: DIALOGS[0].label, meaning: DIALOGS[0].meaning });
+    // "No, exit" alone is shared by trust_required AND bypass_permissions_confirm,
+    // and neither dialog's OWN other marker is drawn yet: naming either one
+    // specifically would be a guess, which is exactly what #2205 replaces.
+    assert.deepEqual(res.suspect, {
+      code: 'startup_screen_suspect', label: null,
+      meaning: 'A startup screen may be showing, but TangleClaw cannot tell which one: what is visible is shared by more than one declared dialog.'
+    });
   });
 
   describe('a reader that types nothing does not wait for a half-drawn frame (#2194)', () => {
@@ -417,7 +424,7 @@ describe('one look before a send (#2128)', () => {
       assert.equal(reads, 1, 'the finished frame behind it was never read');
       assert.equal(res.dialog, null);
       assert.equal(res.clear, false);
-      assert.deepEqual(res.suspect, { code: 'trust_required', label: DIALOGS[0].label, meaning: DIALOGS[0].meaning });
+      assert.equal(res.suspect.code, 'startup_screen_suspect', '#2205 — shared marker, ambiguous between two declared dialogs');
     });
 
     it('look and checkEngine carry the option through, and without it each still settles', () => {
@@ -439,14 +446,16 @@ describe('one look before a send (#2128)', () => {
       const res = look();
       assert.equal(res.clear, false);
       assert.equal(res.dialog, null);
-      assert.equal(res.suspect.code, 'trust_required');
+      // "No, exit" alone does not distinguish trust_required from
+      // bypass_permissions_confirm (#2205) — ambiguous, named as neither.
+      assert.equal(res.suspect.code, 'startup_screen_suspect');
     });
 
     it('the same with a real composer row and a boxed prompt above the dialog being drawn', () => {
       frames = [[...COMPOSER, ...TRUST_DIALOG.slice(0, 13)]];
       const res = look();
       assert.equal(res.clear, false);
-      assert.equal(res.suspect.code, 'trust_required');
+      assert.equal(res.suspect.code, 'startup_screen_suspect');
     });
 
     it('a composer above the FULL dialog is still the dialog', () => {
@@ -467,7 +476,7 @@ describe('one look before a send (#2128)', () => {
       frames = [TRUST_DIALOG.slice(0, 13), []];
       const res = look();
       assert.equal(settles, 1);
-      assert.equal(res.suspect.code, 'trust_required');
+      assert.equal(res.suspect.code, 'startup_screen_suspect');
       assert.equal(res.clear, false);
       assert.match(res.unread, /came back empty/);
     });
@@ -475,7 +484,7 @@ describe('one look before a send (#2128)', () => {
     it('partial, then a re-read that throws: still suspect', () => {
       frames = [TRUST_DIALOG.slice(0, 13), new Error('tmux did not answer')];
       const res = look();
-      assert.equal(res.suspect.code, 'trust_required');
+      assert.equal(res.suspect.code, 'startup_screen_suspect');
       assert.equal(res.unread, 'tmux did not answer');
     });
 
@@ -1850,6 +1859,12 @@ describe('the session keeps its blocker (#2128)', () => {
         tmux.capturePane = () => { reads += 1; return { lines: CODEX_AT_REST, alternateScreen: false }; };
         tmux.probeSession = () => ({ answered: true, live: true, cause: null });
         try {
+          // #2221 deliberately does NOT converge `launch.guardedDialogs` into
+          // `resolve`/`declared`: lib/sessions.js#_deferEngineInit branches
+          // its whole launch path on this being empty for a profile with no
+          // capabilities.startupDialogs (Codex's shape), to reach its own,
+          // separately tested #2223 readiness-gate instead of this module's
+          // boot watch, which has no measured composer evidence for Codex.
           assert.deepEqual(startupDialog.declared(CODEX), [], 'precondition: Codex declares no startup dialog here');
           const res = sessions.injectCommand(project.name, 'tc start next', { sessionId: s.id });
           assert.deepEqual(res, { ok: true, error: null });
@@ -2032,8 +2047,11 @@ describe('the session keeps its blocker (#2128)', () => {
           const s = start();
           tmux.capturePane = () => served(TRUST_DIALOG);
           assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'trust_required');
+          // Half-drawn, this shares its only visible marker with
+          // bypass_permissions_confirm, so it withholds under the neutral,
+          // unattributed code instead of guessing (#2205).
           tmux.capturePane = () => served(TRUST_DIALOG.slice(0, 13));
-          assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'trust_required');
+          assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'startup_screen_suspect');
         });
 
         it('only a positive prompt reading lets the send through', () => {
@@ -2440,7 +2458,7 @@ describe('the session keeps its blocker (#2128)', () => {
       tmux.capturePane = () => served(reads.length > 1 ? reads.shift() : reads[0]);
       const res = sessions.injectCommand(project.name, 'hello');
       assert.equal(res.ok, false);
-      assert.match(res.error, /^trust_required: .*may still be drawing/);
+      assert.match(res.error, /^startup_screen_suspect: .*may still be drawing/);
       assert.deepEqual(typed, []);
       assert.equal(store.sessions.get(s.id).launchBlocker, null);
     });
@@ -2450,10 +2468,10 @@ describe('the session keeps its blocker (#2128)', () => {
       tmux.capturePane = () => served(TRUST_DIALOG.slice(0, 13));
       const res = sessions.injectCommand(project.name, 'hello');
       assert.equal(res.ok, false);
-      assert.match(res.error, /^trust_required: .*part of it is on screen and it may still be drawing/);
+      assert.match(res.error, /^startup_screen_suspect: .*part of it is on screen and it may still be drawing/);
       assert.deepEqual(typed, []);
       assert.equal(store.sessions.get(s.id).launchBlocker, null, 'a suspicion is not recorded as a dialog');
-      assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'trust_required', 'and the writer withholds it too');
+      assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'startup_screen_suspect', 'and the writer withholds it too');
     });
   });
 });
@@ -2825,9 +2843,12 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
   const classify = (lines, cursor = cursorOf(lines)) => startupDialog.classify(lines, DIALOGS, WAKE, cursor).state;
   const boot = (lines, cursor = cursorOf(lines)) => startupDialog.assessBoot(lines, DIALOGS, WAKE, cursor).state;
 
+  // Bypass confirmation is NOT in this table (#2205): now that it is declared
+  // as its own dialog (both its markers fully present in BYPASS_1/BYPASS_2),
+  // it is a recognised DIALOG, not merely "unrecognised, never a prompt" —
+  // a stronger, different category this loop's shared assertions do not fit.
+  // Its own recognised-dialog behaviour is asserted separately, below.
   const NOT_A_PROMPT = Object.freeze({
-    'bypass confirmation, option 1 selected': BYPASS_1,
-    'bypass confirmation, option 2 selected': BYPASS_2,
     'a selector with no declared text, option 1 selected': MENU_1,
     'a selector with no declared text, option 2 selected': MENU_2,
     'the real /model selector': MODEL_MENU,
@@ -2890,12 +2911,15 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
       });
     }
 
-    it('names what it can: the bypass frame shows declared text, so it is part of a dialog with either option selected; the rest name none', () => {
+    it('names the bypass confirmation as its own declared dialog, with either option selected; the rest name none (#2205)', () => {
       for (const lines of [BYPASS_1, BYPASS_2]) {
         for (const cursor of [null, ...cursorsOn(lines.find((row) => row.trimStart().startsWith(GLYPH))).map((c) => c && { ...c, visible: true })]) {
-          assert.equal(classify(lines, cursor), 'partial', 'whatever the cursor reading, shown included: it has no composer box');
+          // Both its own markers ("Yes, I accept" and "No, exit") are fully
+          // present, so it is a real dialog match, not a guess from sharing
+          // "No, exit" with trust_required.
+          assert.equal(classify(lines, cursor), 'dialog', 'whatever the cursor reading, shown included: a full match needs no composer box');
         }
-        assert.equal(startupDialog.classify(lines, DIALOGS, WAKE).partial.code, 'trust_required');
+        assert.equal(startupDialog.classify(lines, DIALOGS, WAKE).dialog.code, 'bypass_permissions_confirm');
       }
       for (const lines of [MENU_1, MENU_2, MODEL_MENU, MODEL_MENU_DOWN, THEME_PICKER, LOGIN_METHOD, DRAFT]) assert.equal(classify(lines), 'noncomposer');
     });
@@ -2920,22 +2944,33 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
       const faint = { visible: true, x: 2, y: 9, line: `❯ ${ESC}[2m2. Yes, I accept${ESC}[0m` };
       assert.equal(medusaWake._composerEmpty(faint, WAKE), true, 'precondition: the cursor reading alone says "empty composer"');
       const row = '❯ 2. Yes, I accept';
-      assert.equal(classify([...BYPASS_HEAD, '   1. No, exit', row, ...BYPASS_FOOT], faint), 'partial', 'no border on either side, under declared text');
-      assert.equal(classify([' Proceed?', '   1. No', row, '', ' Esc to cancel'], faint), 'noncomposer', 'the same with no declared text');
-      assert.equal(classify([' Proceed?', BORDER, row, '   3. Something else', BORDER], faint), 'noncomposer', 'a border above only: the option below gives it away');
-      assert.equal(classify([' Proceed?', BORDER, '   1. No', row, BORDER], faint), 'noncomposer', 'a border below only');
+      // Both of bypass_permissions_confirm's own markers are present (#2205):
+      // a full dialog match, which needs no composer box either way.
+      assert.equal(classify([...BYPASS_HEAD, '   1. No, exit', row, ...BYPASS_FOOT], faint), 'dialog', 'both its own markers are present');
+      // The border-position cases below carry NO declared marker text at
+      // all (#2205 made "Yes, I accept" one, so it can no longer serve
+      // that purpose): a different selected-option text, cursor styled
+      // the same way.
+      const plainRow = '❯ 2. Something else';
+      const plainFaint = { ...faint, line: `❯ ${ESC}[2m2. Something else${ESC}[0m` };
+      assert.equal(classify([' Proceed?', '   1. No', plainRow, '', ' Esc to cancel'], plainFaint), 'noncomposer', 'no declared text at all');
+      assert.equal(classify([' Proceed?', BORDER, plainRow, '   3. Something else', BORDER], plainFaint), 'noncomposer', 'a border above only: the option below gives it away');
+      assert.equal(classify([' Proceed?', BORDER, '   1. No', plainRow, BORDER], plainFaint), 'noncomposer', 'a border below only');
     });
 
-    it('ordering: a stale composer ABOVE a selected option does not clear, with the cursor reading on either row', () => {
+    it('ordering: a stale composer ABOVE a declared dialog does not clear, with the cursor reading on either row', () => {
+      // bypass_permissions_confirm's own full marker set sits below the
+      // stale composer either way, so this IS a real, live dialog (#2205);
+      // what's under test is that the stale composer does not win instead.
       const staleBare = [...AFTER_MENU, ...BYPASS_2];
-      assert.equal(classify(staleBare, null), 'partial');
-      assert.equal(classify(staleBare, cursorOf(AFTER_MENU)), 'partial', 'the cursor still reported on the old composer');
+      assert.equal(classify(staleBare, null), 'dialog');
+      assert.equal(classify(staleBare, cursorOf(AFTER_MENU)), 'dialog', 'the cursor still reported on the old composer');
       assert.equal(classify([...AFTER_MENU, ...MENU_2], cursorOf(AFTER_MENU)), 'noncomposer', 'the same with no declared marker on screen');
       const staleFresh = [...FRESH, ...BYPASS_2];
-      assert.equal(classify(staleFresh, FRESH_CURSOR), 'partial');
+      assert.equal(classify(staleFresh, FRESH_CURSOR), 'dialog');
       assert.equal(classify([...FRESH, ...MENU_2], FRESH_CURSOR), 'noncomposer', 'the same with no declared marker on screen');
-      assert.equal(classify([...FRESH, ...BYPASS_1], FRESH_CURSOR), 'partial');
-      assert.equal(boot(staleFresh, FRESH_CURSOR), 'undecided');
+      assert.equal(classify([...FRESH, ...BYPASS_1], FRESH_CURSOR), 'dialog');
+      assert.equal(boot(staleFresh, FRESH_CURSOR), 'dialog');
     });
 
     it('ordering: an answered menu left ABOVE a fresh composer is history, and the composer clears', () => {
@@ -2951,8 +2986,11 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
 
     it('an option whose label wrapped below a bare glyph is not a prompt', () => {
       const wrapped = [...BYPASS_HEAD, '   1. No, exit', ' ❯ ', '   2. Yes, I accept', ...BYPASS_FOOT];
-      assert.equal(classify(wrapped, null), 'partial');
-      assert.equal(boot(wrapped, null), 'undecided');
+      // Both of bypass_permissions_confirm's markers are present, and its
+      // last marker row sits BELOW the bare-looking wrapped glyph row, so
+      // the bare glyph correctly loses to the confirmed dialog (#2205).
+      assert.equal(classify(wrapped, null), 'dialog');
+      assert.equal(boot(wrapped, null), 'dialog');
       assert.equal(classify([' Proceed?', ' ❯ ', '   1. Yes'], null), 'noncomposer');
       assert.equal(classify(['some output', '❯ ', ''], null), 'clear', 'a blank row beneath is not text');
       assert.equal(classify(['some output', '❯ '], null), 'clear', 'nor is the end of the capture');
@@ -3055,7 +3093,9 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
         startupDialog._internal.cursorInfoSync = () => cursor;
         const seen = look(BYPASS_2);
         assert.equal(seen.clear, false);
-        assert.equal(startupDialog.withholdFor(seen, null).code, 'trust_required');
+        // Both of bypass_permissions_confirm's own markers are present
+        // (#2205): a real, confirmed dialog, named as itself.
+        assert.equal(startupDialog.withholdFor(seen, null).code, 'bypass_permissions_confirm');
       }
     });
 
@@ -3183,10 +3223,10 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
       'claude | trust dialog | wake | no cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
       'claude | trust dialog | no wake | cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
       'claude | trust dialog | no wake | no cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
-      'claude | trust dialog, half drawn | wake | cursor': 'detect=null boot=undecided classify=partial:trust_required',
-      'claude | trust dialog, half drawn | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
-      'claude | trust dialog, half drawn | no wake | cursor': 'detect=null boot=undecided classify=partial:trust_required',
-      'claude | trust dialog, half drawn | no wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude | trust dialog, half drawn | wake | cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
+      'claude | trust dialog, half drawn | wake | no cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
+      'claude | trust dialog, half drawn | no wake | cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
+      'claude | trust dialog, half drawn | no wake | no cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
       'claude | trust dialog, history then the composer | wake | cursor': 'detect=null boot=undecided classify=clear',
       'claude | trust dialog, history then the composer | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
       'claude | trust dialog, history then the composer | no wake | cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
@@ -3223,18 +3263,18 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
       'claude | after the menu | wake | no cursor': 'detect=null boot=clear classify=clear',
       'claude | after the menu | no wake | cursor': 'detect=null boot=undecided classify=unknown',
       'claude | after the menu | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
-      'claude | bypass 1 | wake | cursor': 'detect=null boot=undecided classify=partial:trust_required',
-      'claude | bypass 1 | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
-      'claude | bypass 1 | no wake | cursor': 'detect=null boot=undecided classify=partial:trust_required',
-      'claude | bypass 1 | no wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
-      'claude | bypass 2 | wake | cursor': 'detect=null boot=undecided classify=partial:trust_required',
-      'claude | bypass 2 | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
-      'claude | bypass 2 | no wake | cursor': 'detect=null boot=undecided classify=partial:trust_required',
-      'claude | bypass 2 | no wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
-      'claude | stale then option | wake | cursor': 'detect=null boot=undecided classify=partial:trust_required',
-      'claude | stale then option | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
-      'claude | stale then option | no wake | cursor': 'detect=null boot=undecided classify=partial:trust_required',
-      'claude | stale then option | no wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude | bypass 1 | wake | cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
+      'claude | bypass 1 | wake | no cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
+      'claude | bypass 1 | no wake | cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
+      'claude | bypass 1 | no wake | no cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
+      'claude | bypass 2 | wake | cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
+      'claude | bypass 2 | wake | no cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
+      'claude | bypass 2 | no wake | cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
+      'claude | bypass 2 | no wake | no cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
+      'claude | stale then option | wake | cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
+      'claude | stale then option | wake | no cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
+      'claude | stale then option | no wake | cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
+      'claude | stale then option | no wake | no cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
       'claude | theme picker | wake | cursor': 'detect=null boot=undecided classify=noncomposer',
       'claude | theme picker | wake | no cursor': 'detect=null boot=undecided classify=noncomposer',
       'claude | theme picker | no wake | cursor': 'detect=null boot=undecided classify=unknown',
@@ -3271,10 +3311,10 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
       'claude+second | trust dialog | wake | no cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
       'claude+second | trust dialog | no wake | cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
       'claude+second | trust dialog | no wake | no cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
-      'claude+second | trust dialog, half drawn | wake | cursor': 'detect=null boot=undecided classify=partial:trust_required',
-      'claude+second | trust dialog, half drawn | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
-      'claude+second | trust dialog, half drawn | no wake | cursor': 'detect=null boot=undecided classify=partial:trust_required',
-      'claude+second | trust dialog, half drawn | no wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude+second | trust dialog, half drawn | wake | cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
+      'claude+second | trust dialog, half drawn | wake | no cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
+      'claude+second | trust dialog, half drawn | no wake | cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
+      'claude+second | trust dialog, half drawn | no wake | no cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
       'claude+second | trust dialog, history then the composer | wake | cursor': 'detect=null boot=undecided classify=clear',
       'claude+second | trust dialog, history then the composer | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
       'claude+second | trust dialog, history then the composer | no wake | cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
@@ -3311,18 +3351,18 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
       'claude+second | after the menu | wake | no cursor': 'detect=null boot=clear classify=clear',
       'claude+second | after the menu | no wake | cursor': 'detect=null boot=undecided classify=unknown',
       'claude+second | after the menu | no wake | no cursor': 'detect=null boot=undecided classify=unknown',
-      'claude+second | bypass 1 | wake | cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
-      'claude+second | bypass 1 | wake | no cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
-      'claude+second | bypass 1 | no wake | cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
-      'claude+second | bypass 1 | no wake | no cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
-      'claude+second | bypass 2 | wake | cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
-      'claude+second | bypass 2 | wake | no cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
-      'claude+second | bypass 2 | no wake | cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
-      'claude+second | bypass 2 | no wake | no cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
-      'claude+second | stale then option | wake | cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
-      'claude+second | stale then option | wake | no cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
-      'claude+second | stale then option | no wake | cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
-      'claude+second | stale then option | no wake | no cursor': 'detect=bypass_confirm boot=dialog:bypass_confirm classify=dialog:bypass_confirm',
+      'claude+second | bypass 1 | wake | cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
+      'claude+second | bypass 1 | wake | no cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
+      'claude+second | bypass 1 | no wake | cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
+      'claude+second | bypass 1 | no wake | no cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
+      'claude+second | bypass 2 | wake | cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
+      'claude+second | bypass 2 | wake | no cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
+      'claude+second | bypass 2 | no wake | cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
+      'claude+second | bypass 2 | no wake | no cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
+      'claude+second | stale then option | wake | cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
+      'claude+second | stale then option | wake | no cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
+      'claude+second | stale then option | no wake | cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
+      'claude+second | stale then option | no wake | no cursor': 'detect=bypass_permissions_confirm boot=dialog:bypass_permissions_confirm classify=dialog:bypass_permissions_confirm',
       'claude+second | theme picker | wake | cursor': 'detect=null boot=undecided classify=noncomposer',
       'claude+second | theme picker | wake | no cursor': 'detect=null boot=undecided classify=noncomposer',
       'claude+second | theme picker | no wake | cursor': 'detect=null boot=undecided classify=unknown',
@@ -3954,11 +3994,11 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
           assert.equal(startupDialog.unreadable(VARIANT).length, 1);
           mode = 'ok';
           assert.deepEqual(startupDialog.unreadable(VARIANT), [], 'recovered at the next ask');
-          assert.deepEqual(startupDialog.declared(VARIANT).map((d) => d.code), ['trust_required']);
+          assert.deepEqual(startupDialog.declared(VARIANT).map((d) => d.code), ['trust_required', 'bypass_permissions_confirm']);
           // A good read is kept, as before: the declarations of installed profiles do not change under a running server.
           mode = 'throw';
           assert.deepEqual(startupDialog.unreadable(VARIANT), []);
-          assert.deepEqual(startupDialog.declared(VARIANT).map((d) => d.code), ['trust_required']);
+          assert.deepEqual(startupDialog.declared(VARIANT).map((d) => d.code), ['trust_required', 'bypass_permissions_confirm']);
         });
 
         describe('one snapshot per operation: a fault that comes or goes mid-operation cannot be mixed into "nothing declared, nothing wrong"', () => {
@@ -4076,7 +4116,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
             assert.ok(watchReads >= 2, 'the boot was watched, on the declaration read at the start');
             assert.ok(typed.some((t) => t.text === 'the prime'), 'and, the prompt having been seen, the launch typed');
             assert.ok(!rows.some((r) => r.outcome === 'skipped'));
-            assert.deepEqual(startupDialog.resolve(VARIANT).dialogs.map((d) => d.code), ['trust_required'], 'the declaration is still in force after the later faults');
+            assert.deepEqual(startupDialog.resolve(VARIANT).dialogs.map((d) => d.code), ['trust_required', 'bypass_permissions_confirm'], 'the declaration is still in force after the later faults');
           });
 
           it('the dialog itself, recover then throw: still seen and still refused for every sender', () => {
@@ -4271,7 +4311,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
           startupDialog.reset();
           startupDialog._internal.engineProfiles = () => { throw new Error('profile-list-read-failed'); };
           assert.deepEqual(startupDialog.unreadable(CLAUDE), []);
-          assert.deepEqual(startupDialog.declared(CLAUDE).map((d) => d.code), ['trust_required']);
+          assert.deepEqual(startupDialog.declared(CLAUDE).map((d) => d.code), ['trust_required', 'bypass_permissions_confirm']);
         });
 
         it('control: with the list readable, a command nothing declares for is still simply undeclared', async () => {
@@ -5050,7 +5090,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
             assert.equal(got.lookupFault, 'an installed engine profile is not an object');
             assert.equal(got.dialogs.length, 0);
             assert.equal(startupDialog.check('t', VARIANT).unresolvedCause, 'lookup');
-            assert.deepEqual(startupDialog.resolve(CLAUDE).dialogs.map((d) => d.code), ['trust_required'], 'a profile with its own list is unaffected');
+            assert.deepEqual(startupDialog.resolve(CLAUDE).dialogs.map((d) => d.code), ['trust_required', 'bypass_permissions_confirm'], 'a profile with its own list is unaffected');
           });
         }
 
@@ -5061,7 +5101,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
           assert.equal(startupDialog.resolve(VARIANT).problems.length, 1);
           list = [VARIANT, { ...CLAUDE, id: 'claude', command: 'claude' }];
           assert.deepEqual(startupDialog.resolve(VARIANT).problems, []);
-          assert.deepEqual(startupDialog.resolve(VARIANT).dialogs.map((d) => d.code), ['trust_required']);
+          assert.deepEqual(startupDialog.resolve(VARIANT).dialogs.map((d) => d.code), ['trust_required', 'bypass_permissions_confirm']);
         });
       });
 
@@ -5168,15 +5208,24 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
     });
 
     for (const [name, lines] of Object.entries({ 'option 1': BYPASS_1, 'option 2': BYPASS_2 })) {
-      it(`a later injection into the bypass confirmation with ${name} selected, no blocker stored, is refused by the session and by the pane writer`, () => {
+      it(`a later injection into the bypass confirmation with ${name} selected is refused by the session and by the pane writer, named and recorded as itself (#2205)`, () => {
         const s = start();
         pane = lines;
         const sent = sessions.injectCommand(project.name, 'ls');
         assert.equal(sent.ok, false);
-        assert.equal(sent.startupDialog.code, 'trust_required');
-        assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'trust_required');
+        // Pre-#2205, this screen was mis-attributed to trust_required: it
+        // shares that dialog's "No, exit" option, and nothing else declared
+        // its OWN markers, so the first declared entry with any evidence won
+        // by default, and — being merely a guessed "suspect", not a
+        // confirmed dialog — recorded no blocker: the card badge and session
+        // banner stayed silent, exactly the symptom #2205 reports. Now that
+        // it is declared as itself, both its markers are fully present, it
+        // is a real confirmed dialog match, and the session DOES record it.
+        assert.equal(sent.startupDialog.code, 'bypass_permissions_confirm');
+        assert.equal(tmux._startupDialogOn(s.tmuxSession, 'claude').code, 'bypass_permissions_confirm');
         assert.deepEqual(typed, []);
-        assert.equal(store.sessions.get(s.id).launchBlocker, null, 'a suspect frame records no blocker');
+        assert.equal(store.sessions.get(s.id).launchBlocker.code, 'bypass_permissions_confirm',
+          'a confirmed dialog IS recorded, so the card badge and banner are not silent');
       });
     }
 
