@@ -436,7 +436,7 @@ describe('one look before a send (#2128)', () => {
     // specifically would be a guess, which is exactly what #2205 replaces.
     assert.deepEqual(res.suspect, {
       code: 'startup_screen_suspect', label: null,
-      meaning: 'A startup screen may be showing, but TangleClaw cannot tell which one: what is visible is shared by more than one declared dialog.'
+      meaning: 'A startup screen may be showing, but TangleClaw cannot tell which one: what is visible is shared by more than one declared dialog, or does not confirm any one of them.'
     });
   });
 
@@ -3040,10 +3040,11 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
 
     it('a valid custom dialog shaped like the composer\'s own box still confirms (#2711 PRR-A C2, box-shaped regression)', () => {
       // A divider-content-divider shape is not unique to the composer --
-      // any dialog's own body can draw one. Nothing in the ranking looks
-      // for this shape at all (unlike an earlier, reverted draft of this
-      // fix), so a lone declared candidate wins regardless of what its own
-      // body happens to look like.
+      // any dialog's own body can draw one. The boundary (_lastComposerBoxRow)
+      // also requires the content row to start with the engine's own prompt
+      // GLYPH, which this custom dialog's plain body text does not -- so no
+      // reset is drawn here, and a lone declared candidate wins regardless
+      // of what its own body happens to look like.
       const CUSTOM = [{ code: 'custom_dialog', label: 'a custom dialog', markers: ['Title', 'Continue'], meaning: 'test fixture' }];
       const boxShaped = [' Title', BORDER, ' some body text', BORDER, ' Continue'];
       const seen = startupDialog.classify(boxShaped, CUSTOM, WAKE, null);
@@ -3059,6 +3060,23 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
       const seen = startupDialog.classify(resolvedThenLive, DIALOGS, null, null);
       assert.equal(seen.state, 'dialog');
       assert.equal(seen.dialog.code, 'bypass_permissions_confirm', 'the live dialog, not the stale one sharing "No, exit"');
+    });
+
+    it('a genuinely partial, mid-drawing bypass frame after resolved trust history reports neutral, not the stale dialog (#2711 PRR-A, cross-screen-partial regression)', () => {
+      // Only the first 7 rows of BYPASS_1 -- through "No, exit", before
+      // "Yes, I accept" is drawn. bypass_permissions_confirm is genuinely
+      // NOT fully present (it may still be mid-render); ranking alone only
+      // picks among FULLY-present candidates, so without the reset boundary
+      // trust_required would wrongly become the sole fully-present
+      // candidate by combining its own stale "Yes, I trust this folder"
+      // with this live "No, exit" -- markers from two different screens.
+      // The boundary excludes trust's stale marker; with bypass not yet
+      // complete either, neither confirms, and the ambiguous "No, exit"
+      // alone must not be attributed to either dialog specifically.
+      const partialBypassAfterTrust = [...TRUST_DIALOG, ...FRESH, ...BYPASS_1.slice(0, 7)];
+      const seen = startupDialog.classify(partialBypassAfterTrust, DIALOGS, WAKE, FRESH_CURSOR);
+      assert.equal(seen.state, 'partial');
+      assert.equal(seen.partial.code, startupDialog.STARTUP_SCREEN_SUSPECT, 'not trust_required via cross-screen marker assembly');
     });
 
     it('ordering: an answered menu left ABOVE a fresh composer is history, and the composer clears', () => {
@@ -3168,7 +3186,16 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
         startupDialog._internal.cursorInfoSync = () => cursor;
         const got = look(quoting);
         assert.equal(got.noncomposer, false, why);
-        assert.equal(startupDialog.withholdFor(got, null).code, 'trust_required', why);
+        // #2711 PRR-A: the composer's BOX is still positively there (a
+        // divider-content-divider triple whose content starts with the
+        // glyph) whether or not the CURSOR can confirm what is drawn inside
+        // it -- the two are independent evidence. That box resets the
+        // quoted dialog's stale evidence, and with neither declared dialog
+        // left with any post-reset evidence, the sender is withheld under
+        // the neutral code, not a guessed-at specific one; it still
+        // withholds every sender exactly as before, just without naming the
+        // wrong (resolved) dialog to do it.
+        assert.equal(startupDialog.withholdFor(got, null).code, startupDialog.STARTUP_SCREEN_SUSPECT, why);
       }
       startupDialog._internal.cursorInfoSync = () => DRAFT_CURSOR;
       const unboxed = quoting.filter((row) => row !== BORDER);
@@ -3316,11 +3343,20 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
       'claude | trust dialog, half drawn | no wake | cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
       'claude | trust dialog, half drawn | no wake | no cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
       'claude | trust dialog, history then the composer | wake | cursor': 'detect=null boot=undecided classify=clear',
-      'claude | trust dialog, history then the composer | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      // #2711 PRR-A: with wake available but no cursor to confirm the
+      // composer positively, the box structure (divider/glyph-led
+      // content/divider) is STILL independently, positively detected --
+      // cursor only disambiguates what the composer holds, not whether its
+      // box is there at all. That resets the stale trust dialog's history,
+      // and with nothing else post-reset, naming it specifically would be
+      // exactly the guess #2205/#2711 exist to replace with the neutral
+      // code; the sender is still withheld either way (see the box-shaped
+      // regression test and the 'quoted above a located draft' test).
+      'claude | trust dialog, history then the composer | wake | no cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
       'claude | trust dialog, history then the composer | no wake | cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
       'claude | trust dialog, history then the composer | no wake | no cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
       'claude | trust dialog, history then fresh | wake | cursor': 'detect=null boot=undecided classify=clear',
-      'claude | trust dialog, history then fresh | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude | trust dialog, history then fresh | wake | no cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
       'claude | trust dialog, history then fresh | no wake | cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
       'claude | trust dialog, history then fresh | no wake | no cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
       'claude | composer | wake | cursor': 'detect=null boot=clear classify=clear',
@@ -3404,11 +3440,11 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
       'claude+second | trust dialog, half drawn | no wake | cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
       'claude+second | trust dialog, half drawn | no wake | no cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
       'claude+second | trust dialog, history then the composer | wake | cursor': 'detect=null boot=undecided classify=clear',
-      'claude+second | trust dialog, history then the composer | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude+second | trust dialog, history then the composer | wake | no cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
       'claude+second | trust dialog, history then the composer | no wake | cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
       'claude+second | trust dialog, history then the composer | no wake | no cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
       'claude+second | trust dialog, history then fresh | wake | cursor': 'detect=null boot=undecided classify=clear',
-      'claude+second | trust dialog, history then fresh | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
+      'claude+second | trust dialog, history then fresh | wake | no cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
       'claude+second | trust dialog, history then fresh | no wake | cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
       'claude+second | trust dialog, history then fresh | no wake | no cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
       'claude+second | composer | wake | cursor': 'detect=null boot=clear classify=clear',
