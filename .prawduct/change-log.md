@@ -41,6 +41,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-29 — v5.47.1 W2-REC: reconcile Medusa wake delivery records
+
+<!-- prawduct: type=internal | scope=v5471-w2-rec -->
+
+- Recorded #2716 after Car 1 PR #2717 merged at `main@7e9848037361f1b1dcd1f21a6d0a65d4a23f28c3`. Antigravity now clears a stranded switchboard nudge with `C-a C-k`, while other engines keep `C-u`. A `wake_not_accepted` receipt triggers the existing bounded re-arm check immediately; a re-armed wake requests a look, waits only the remaining observation gap, then chains the second at-rest look needed to retry without a periodic poll tick. The exchange proof keeps restart safety, re-arm budget, backoff and mail isolation.
+- Reconciled the Feature Index entry and marked the already published v5.47.0 engine-dialog batch as released. The accepted #2716 changelog fragment remains for the v5.47.1 release preparation wave to compile and consume. This records merged code; no v5.47.1 tag, GitHub Release, live deployment or activation is claimed here.
+
 ## 2026-10-29 — v5.47.0 W4-REL: prepare the engine dialog release candidate
 
 <!-- prawduct: type=internal | scope=v547-w4-rel -->

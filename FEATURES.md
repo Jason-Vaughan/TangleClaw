@@ -17,7 +17,11 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
-## Unreleased — Engine dialogs and sandbox (v5.47.0 batch)
+## Unreleased — Medusa wake delivery (v5.47.1 patch)
+
+- **Recover a missed Medusa wake promptly** (#2716) — an Antigravity prompt with a stranded switchboard nudge is cleared with its composer keys before retry. A `wake_not_accepted` receipt triggers the existing durable re-arm budget and backoff check immediately; the wake monitor schedules the remaining observation gap and chains the two at-rest looks needed to retry without waiting for a periodic tick. Other engines retain their existing prompt clearing keys. `lib/tmux.js#_lineKill`, `lib/medusa-watchdog.js#rearmWorkspace`, `lib/medusa-wake.js#_verifyWake`, `lib/medusa-wake.js#_bookFollowUp`. Tests: `test/tmux.test.js`, `test/medusa-watchdog.test.js`, `test/medusa-wake.test.js`, `test/medusa-wake-exchange-proof.test.js`.
+
+## v5.47.0 — Engine dialogs and sandbox
 
 - **Refuse later sends on selector rows** (#2219) — when a live pane positively shows a selector's selected row rather than its composer, later command injections are withheld with `pane_not_at_prompt`; a located draft retains its send-and-clear path. `lib/startup-dialog.js#_promptRow`, `lib/startup-dialog.js#withholdFor`, `data/engines/claude.json`. Tests: `test/startup-dialog.test.js`.
 - **Project opt-in for folder trust** (#2168) — the project setting `acceptFolderTrust` defaults off. At launch, an opted-in project sends the engine's declared answer only while its own folder trust dialog is positively visible in the same live session, and records a completed acceptance in project activity. Other startup dialogs remain operator decisions. `lib/project-config.js`, `lib/sessions.js#_acceptsFolderTrust`, `public/ui.js`, `data/engines/claude.json`. Tests: `test/projects.test.js`, `test/project-update-two-phase.test.js`.
