@@ -2783,10 +2783,12 @@ describe('the pane writer refuses a declared dialog (#2128)', () => {
  * empty repository with no turn taken: rows, the styled cursor row and the
  * cursor column as tmux reported them. Four selectors were captured that way (the
  * `/model` menu, the onboarding theme picker, the login-method selector, and the
- * folder trust dialog). The Bypass Permissions confirmation
- * could not be captured (the host has it switched off, and a private config
- * home stops at a login first), so that frame is the
- * text from the report, and is marked UNVERIFIED.
+ * folder trust dialog). The Bypass Permissions confirmation could not be
+ * captured on a live pane (the host has it switched off, and a private
+ * config home stops at a login first); its text is instead confirmed
+ * against the installed Claude Code 2.1.283 binary's own bundled source
+ * (BypassPermissionsModeDialog, byte offset 208119158 — see
+ * data/engines/claude.json's bypass_permissions_confirm evidence block).
  */
 describe('only the composer at rest is a prompt (#2128, A160)', () => {
   const medusaWake = require('../lib/medusa-wake');
@@ -2835,7 +2837,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
   // REAL: the folder trust dialog's cursor, hidden and parked on the selected row's glyph.
   const TRUST_CURSOR = Object.freeze({ visible: false, x: 1, y: 14, line: ` ${ESC}[38;5;153m❯${ESC}[39m ${ESC}[38;5;153mNo,${ESC}[39m ${ESC}[38;5;153mexit${ESC}[39m` });
 
-  // UNVERIFIED: the Bypass Permissions confirmation, from the report's text. It carries ONE of the trust dialog's two markers.
+  // Confirmed against the installed Claude Code 2.1.283 binary's bundled source (see data/engines/claude.json). It carries ONE of the trust dialog's two markers.
   const BYPASS_HEAD = [BORDER, ' WARNING: Claude Code running in Bypass Permissions mode', '', ' In Bypass Permissions mode, Claude Code will not ask for your approval before running', ' potentially dangerous commands.', ''];
   const BYPASS_FOOT = ['', ' Enter to confirm · Esc to cancel'];
   const BYPASS_1 = Object.freeze([...BYPASS_HEAD, ' ❯ 1. No, exit', '   2. Yes, I accept', ...BYPASS_FOOT]);
