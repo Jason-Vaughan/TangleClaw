@@ -924,8 +924,12 @@ describe('ttyd-watcher', () => {
       assert.ok(children.every((c) => Number.isFinite(c.ageMs)), 'every real etime parses');
     });
 
-    it('_poolFromCounts classifies the real sysctl and /dev/ttys* counts', { skip: process.platform !== 'darwin' }, () => {
-      const cap = parseInt(execFileSync('sysctl', ['-n', 'kern.tty.ptmx_max'], { encoding: 'utf8' }), 10);
+    it('_poolFromCounts classifies the real sysctl and /dev/ttys* counts', { skip: process.platform !== 'darwin' }, async () => {
+      // #2697 — bare `sysctl` is not on every PATH this runs under (it lives
+      // in /usr/sbin, which a non-login shell's PATH does not always carry),
+      // so this goes through the same fallback the production reader uses
+      // rather than a bare `execFileSync('sysctl', ...)`.
+      const cap = parseInt(String(await ttydWatcher._sysctl(['-n', 'kern.tty.ptmx_max'])).trim(), 10);
       const used = parseInt(execFileSync('sh', ['-c', 'ls /dev/ttys* 2>/dev/null | wc -l'], { encoding: 'utf8' }), 10);
       const pool = ttydWatcher._poolFromCounts(cap, used, 0.85);
       assert.ok(pool && pool.cap > 0 && pool.used >= 0 && typeof pool.exhausted === 'boolean');
