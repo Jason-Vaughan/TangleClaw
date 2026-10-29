@@ -923,9 +923,14 @@ describe('soak driver — the log lock and header', () => {
   });
 
   it('lets exactly one of many concurrent processes reclaim a stale lock: never two holders at once', async () => {
-    const { spawn, spawnSync } = require('node:child_process');
-    // A pid that is certainly dead: a process that has already exited.
-    const dead = spawnSync(process.execPath, ['-e', '0']).pid;
+    const { spawn } = require('node:child_process');
+    // A pid that is certainly dead: a fixed sentinel outside any real pid
+    // range (the same one the single-reclaimer test above uses), not a just-
+    // exited process's pid. Under full-suite concurrency load, the rest of
+    // the suite forks and reaps processes constantly, so a real exited pid
+    // can be reused by an unrelated process before the contenders below get
+    // to check it, turning "certainly dead" into a race (#2698).
+    const dead = 999999;
     fs.writeFileSync(`${logPath}.lock`, JSON.stringify({ pid: dead, host: os.hostname() }));
     const child = `
       const driver = require(${JSON.stringify(path.join(__dirname, '..', 'lib', 'soak', 'driver.js'))});
