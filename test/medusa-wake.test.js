@@ -1449,8 +1449,8 @@ describe('medusa-wake — a not-accepted receipt immediately asks the watchdog t
 });
 
 describe('medusa-wake — a scan requested inside the observation gap is booked, not dropped (#2716)', () => {
-  // PRR-A/PM found that the fix above was inert in the exact case it exists
-  // for: `requestScan('wake-rearmed')` fires ~1.2s after the nudge's own pane
+  // The fix above was inert in the exact case it exists for:
+  // `requestScan('wake-rearmed')` fires ~1.2s after the nudge's own pane
   // read stamped `lastPaneAnswerAt`, so `_promptLook`'s own gate
   // (`_mayLookNow`) silently dropped it every time, and the re-armed wake
   // still waited for a periodic tick regardless. This exercises the REAL
@@ -1541,10 +1541,9 @@ describe('medusa-wake — a scan requested inside the observation gap is booked,
     assert.equal(timers.length, 1, 'a follow-up is booked instead of the request being dropped outright');
 
     // The earliest eligible moment is MIN_OBSERVATION_GAP_MS after the
-    // NUDGE's own observation, not a fresh full gap from the request --
-    // PM/PRR-A's precise finding (#2716 round 2): booking a full gap from
-    // the ~1.2s-late request would run the look at +5.2s, later than a
-    // periodic tick could legitimately beat it to.
+    // NUDGE's own observation, not a fresh full gap from the request:
+    // booking a full gap from the ~1.2s-late request would run the look at
+    // +5.2s, later than a periodic tick could legitimately beat it to.
     const expectedDueAt = nudgeTime + wake.MIN_OBSERVATION_GAP_MS;
     assert.equal(timers[0].dueAt, expectedDueAt, 'booked for the REMAINING gap, not a fresh one from the request');
 
@@ -1567,13 +1566,13 @@ describe('medusa-wake — a scan requested inside the observation gap is booked,
     assert.equal(reads.length, readsAfterNudge + 1, 'the follow-up itself looked, exactly at the earliest eligible moment');
     assert.equal(reads[reads.length - 1], world.sessions[0].tmuxSession);
 
-    // PRR-A round 3: one read alone is not a retry. A nudge resets
-    // idleTicks to 0 and IDLE_TICKS_REQUIRED is 2, so this first follow-up
-    // observation can only ever reach idleTicks===1 -- `_onPaneRead` chains
-    // the SECOND observation that actually completes the streak only when
-    // this read ran as a `prompt` look, which is exactly what distinguishes
-    // this fix from one that silently stalls waiting on an unrelated
-    // periodic tick to finish the job by luck.
+    // One read alone is not a retry. A nudge resets idleTicks to 0 and
+    // IDLE_TICKS_REQUIRED is 2, so this first follow-up observation can
+    // only ever reach idleTicks===1 -- `_onPaneRead` chains the SECOND
+    // observation that actually completes the streak only when this read
+    // ran as a `prompt` look, which is exactly what distinguishes this fix
+    // from one that silently stalls waiting on an unrelated periodic tick
+    // to finish the job by luck.
     assert.equal(timers.length, 1, 'the chained second observation is booked automatically, completing the streak on its own');
     const secondDueAt = clock + wake.MIN_OBSERVATION_GAP_MS;
     assert.equal(timers[0].dueAt, secondDueAt, 'chained exactly one more gap out, same rule as the first');
