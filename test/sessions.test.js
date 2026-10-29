@@ -4723,13 +4723,16 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
   /**
    * A project with a live session, optionally carrying a stored blocker and
    * the `FIRST_TURN_DEFERRED_EVENT` marker a real `_deferEngineInit` deferral
-   * would have left beside it (#2193).
-   * @param {{blocker?: boolean, deferred?: boolean}} [opts] - Whether to store a blocker,
-   *   and whether it carries the matching deferral marker (false models a LATER, unrelated
-   *   dialog `_reconcileLaunchBlocker` set after the first turn already delivered — PRR-B C1)
+   * would have left beside it, carrying whichever of deliveryBase/
+   * pasteOutcomeBase that launch actually used (#2193; PM ruling on PRR-B C2).
+   * @param {{blocker?: boolean, deferred?: boolean, carrier?: ('rules'|'pointer')}} [opts] - Whether to
+   *   store a blocker; whether it carries the matching deferral marker (false models a LATER,
+   *   unrelated dialog `_reconcileLaunchBlocker` set after the first turn already delivered —
+   *   PRR-B C1); which carrier the (simulated) launch used — 'rules' (deliveryBase, the ordinary
+   *   path) or 'pointer' (pasteOutcomeBase, the pull-pointer path)
    * @returns {{project: object, session: object}}
    */
-  const live = ({ blocker = true, deferred = true } = {}) => {
+  const live = ({ blocker = true, deferred = true, carrier = 'rules' } = {}) => {
     counter += 1;
     const name = `sweep-proj-${counter}`;
     const project = store.projects.create({ name, path: path.join(base, name), engine: 'claude' });
@@ -4739,7 +4742,15 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
       if (deferred && updated && updated.launchBlocker) {
         store.activity.log({
           projectId: project.id, sessionId: session.id, eventType: sessions.FIRST_TURN_DEFERRED_EVENT,
-          detail: { code: updated.launchBlocker.code, observedAt: updated.launchBlocker.observedAt }
+          detail: {
+            code: updated.launchBlocker.code, observedAt: updated.launchBlocker.observedAt,
+            deliveryBase: carrier === 'rules'
+              ? { sessionId: session.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [], digest: '' }
+              : null,
+            pasteOutcomeBase: carrier === 'pointer'
+              ? { sessionId: session.id, projectId: project.id, engineId: 'claude' }
+              : null
+          }
         });
       }
     }
@@ -4898,8 +4909,8 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
       assert.equal(crashCause(session.id), undefined);
     });
 
-    it('the issue\'s own case: a restart-dropped first turn is recorded once, durably, before the first tick (#2193)', () => {
-      const { project, session } = live();
+    it('the issue\'s own case, ordinary (deliveryBase) carrier: a restart-dropped first turn is recorded once, durably, before the first tick (#2193)', () => {
+      const { project, session } = live({ carrier: 'rules' });
       assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }), []);
       sessions.startLaunchBlockerSweep();
       assert.deepEqual(looks, [], 'the record reads the stored row, never the pane');
@@ -4922,6 +4933,47 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
       // still reconciles the blocker against the pane exactly as before.
       armed[0].fn();
       assert.equal(store.sessions.get(session.id).launchBlocker, null);
+    });
+
+    it('the same, pull-pointer (pasteOutcomeBase) carrier: rides pasteOutcome (PM ruling on PRR-B C2) instead of rulesDelivery (#2193)', () => {
+      const { project, session } = live({ carrier: 'pointer' });
+      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.POINTER_PASTE_OUTCOME_EVENT }), []);
+      sessions.startLaunchBlockerSweep();
+      const pasted = store.activity.query({ sessionId: session.id, eventType: sessions.POINTER_PASTE_OUTCOME_EVENT });
+      assert.equal(pasted.length, 1);
+      assert.equal(pasted[0].projectId, project.id);
+      assert.equal(pasted[0].detail.engineId, 'claude');
+      assert.equal(pasted[0].detail.outcome, sessions._pointerPasteIsGated('claude') ? 'readiness-gated' : 'blind');
+      assert.match(pasted[0].detail.detail, /restarted/);
+      // No rules-delivery row for this carrier — that ledger is not what this launch used.
+      assert.deepEqual(store.sessionRuleDeliveries.listForSession(session.id), []);
+      const dropped = store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT });
+      assert.equal(dropped.length, 1);
+    });
+
+    it('already delivered, ordinary carrier: a prior rules-delivery outcome is not re-flagged as dropped (PRR-B C2 false-positive)', () => {
+      // The marker IS the original deferral's (unlike the "later, unrelated
+      // dialog" case below) — this models the paste actually succeeding
+      // before the restart, racing ahead of the blocker clear.
+      const { project, session } = live({ carrier: 'rules' });
+      store.sessionRuleDeliveries.record({
+        sessionId: session.id, projectId: project.id, engineId: 'claude', channel: 'prime-paste', outcome: 'delivered'
+      });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 0 });
+      assert.equal(store.sessionRuleDeliveries.listForSession(session.id).length, 1, 'untouched -- not overwritten or duplicated');
+      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }), []);
+    });
+
+    it('already delivered, pull-pointer carrier: a prior paste outcome is not re-flagged as dropped (PRR-B C2 false-positive)', () => {
+      const { project, session } = live({ carrier: 'pointer' });
+      store.activity.log({
+        projectId: project.id, sessionId: session.id, eventType: sessions.POINTER_PASTE_OUTCOME_EVENT,
+        detail: { engineId: 'claude', outcome: 'delivered', detail: null }
+      });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 0 });
+      assert.equal(store.activity.query({ sessionId: session.id, eventType: sessions.POINTER_PASTE_OUTCOME_EVENT }).length, 1,
+        'untouched -- not duplicated');
+      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }), []);
     });
 
     it('a session with no stored blocker is not flagged at start', () => {

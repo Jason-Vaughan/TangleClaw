@@ -264,16 +264,21 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
       { engineId: 'claude', outcome: 'delivered', detail: null });
   });
 
-  // #2193: a restart-dropped first turn rides this SAME `rulesDelivery` field,
+  // #2193 (PM ruling on PRR-B C2): a restart-dropped first turn rides
+  // whichever of these two fields that launch's own carrier already used,
   // end to end, with no change to this route -- `reconcileDeferredFirstTurnsOnRestart`
-  // (lib/sessions.js) writes the ledger row this panel already reads.
-  it('surfaces a restart-dropped first turn as this launch\'s rulesDelivery, with no route change (#2193)', async () => {
+  // (lib/sessions.js) writes the ledger row each one already reads.
+  it('surfaces a restart-dropped ORDINARY-carrier first turn as this launch\'s rulesDelivery (#2193)', async () => {
     const dropped = bind(project);
     const blocker = { code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it in the pane.', engineId: 'claude' };
     const updated = store.sessions.setLaunchBlocker(dropped.session.id, blocker);
     store.activity.log({
       projectId: project.id, sessionId: dropped.session.id, eventType: sessions.FIRST_TURN_DEFERRED_EVENT,
-      detail: { code: updated.launchBlocker.code, observedAt: updated.launchBlocker.observedAt }
+      detail: {
+        code: updated.launchBlocker.code, observedAt: updated.launchBlocker.observedAt,
+        deliveryBase: { sessionId: dropped.session.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [], digest: '' },
+        pasteOutcomeBase: null
+      }
     });
     assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 });
 
@@ -283,6 +288,28 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
     assert.equal(row.outcome, 'skipped');
     assert.equal(row.channel, 'prime-paste');
     assert.match(row.skipReason, /restarted/);
+  });
+
+  it('surfaces a restart-dropped PULL-POINTER-carrier first turn as this launch\'s pasteOutcome, not rulesDelivery (#2193)', async () => {
+    const dropped = bind(other, { applicable: false, reason: 'the engine declares no launch-sequence support' });
+    const blocker = { code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it in the pane.', engineId: 'claude' };
+    const updated = store.sessions.setLaunchBlocker(dropped.session.id, blocker);
+    store.activity.log({
+      projectId: other.id, sessionId: dropped.session.id, eventType: sessions.FIRST_TURN_DEFERRED_EVENT,
+      detail: {
+        code: updated.launchBlocker.code, observedAt: updated.launchBlocker.observedAt,
+        deliveryBase: null,
+        pasteOutcomeBase: { sessionId: dropped.session.id, projectId: other.id, engineId: 'claude' }
+      }
+    });
+    assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 });
+
+    const res = await get(server, `/api/launch-sequences?projectId=${other.id}`);
+    const row = res.body.sequences.find((s) => s.sequenceId === dropped.sequence.id);
+    assert.equal(row.rulesDelivery, null, 'this carrier never wrote a rules-delivery row');
+    assert.equal(row.pasteOutcome.engineId, 'claude');
+    assert.equal(row.pasteOutcome.outcome, sessions._pointerPasteIsGated('claude') ? 'readiness-gated' : 'blind');
+    assert.match(row.pasteOutcome.detail, /restarted/);
   });
 
   it('carries the preflight CAUSE, not only its verdict word', async () => {
