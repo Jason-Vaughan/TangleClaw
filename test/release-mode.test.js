@@ -436,6 +436,27 @@ describe('updateProject — group release authority (#1697)', () => {
     store.projectGroups.removeMember(group.id, n.id);
     assert.equal(store.projectGroups.get(group.id).releaseOwnerProjectId, m.id);
   });
+
+  it('getProject does not throw when the group-ownership lookup is unresolvable (#2699 R-5, 5th call site)', async () => {
+    // enrichProject's own read (feeding the Settings modal's display) is the
+    // 5th place that shares safeFindReleaseOwnerElsewhere — a display read,
+    // so unlike the other four it must not fail closed (there is nothing to
+    // refuse), just not throw and not silently swallow without a log line.
+    projects.createProject({ name: 'rg-p' });
+    const p = await projects.getProject('rg-p');
+    const group = store.projectGroups.create({ name: 'rg-fleet-8' });
+    store.projectGroups.addMember(group.id, p.id);
+
+    const saved = store.projectGroups.findReleaseOwnerElsewhere;
+    store.projectGroups.findReleaseOwnerElsewhere = () => { throw new Error('simulated DB failure'); };
+    try {
+      const refetched = await projects.getProject('rg-p');
+      assert.equal(refetched.releaseMode, 'operator', 'unresolvable reads as no conflict, not a thrown error');
+      assert.equal(refetched.groups.length, 1, 'the independent getByProject call is unaffected');
+    } finally {
+      store.projectGroups.findReleaseOwnerElsewhere = saved;
+    }
+  });
 });
 
 // The settings-modal and group-modal pieces of #1697, run against the real
