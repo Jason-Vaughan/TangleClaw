@@ -17,6 +17,14 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v5.46.1 — Local suite and release-authority stabilization
+
+- **Reliable local test tiers** (#2688, #2691) — five tests that reach subprocesses through helpers run in the Large tier instead of the Medium tier's spawn guard. Large-tier tests now have a separate timeout, and the soak guest probe watchdog returns a stable timeout result without leaving a child process behind. The soak guest test reuses a shared fake-command dispatcher to avoid repeated macOS executable scans. Large-tier timeout calibration remains tracked in #2706. `test/tiers.json`, `scripts/test-stage.js#tierArgv`, `deploy/soak/guest/guest-setup.sh#bounded`. Tests: `test/test-stage.test.js`, `test/soak-guest.test.js`.
+- **Stable no-engine setup tests** (#2696) — the wizard's no-engine fixtures suppress bundled-profile reseeding during automatic PATH probes, so installed Claude or Codex CLIs do not alter the fixture's expected result. `test/setup-wizard.test.js`.
+- **TTYD watcher on a restricted PATH** (#2697) — the PTY-pool reader retries `/usr/sbin/sysctl` when bare `sysctl` is absent from PATH. `lib/ttyd-watcher.js#_sysctl`. Tests: `test/ttyd-watcher.test.js`.
+- **Stable host-publish and soak-driver tests** (#2698) — host-publish tests copy a once-initialized bare repository, and the soak-driver reclaim test gives its placeholder PID a targeted liveness answer so a reused OS PID cannot change the result. `test/release-certification-host-publish.test.js`, `test/soak-driver.test.js`.
+- **Fail-closed group release authority** (#2699) — a group join keeps the new member but skips its release-owner auto-claim when the authority lookup cannot be verified. A release-capable project-setting write is refused on that lookup failure or when another project owns a joined group; the same project may claim authority in multiple vacant groups. The settings hint points to a conflicting owner, while a closed or switched group modal ignores a late owner response. `lib/store.js#safeFindReleaseOwnerElsewhere`, `lib/projects.js`, `public/ui.js#toggleGroupMembership`. Tests: `test/api-groups.test.js`, `test/release-mode.test.js`, `test/store-groups.test.js`.
+
 ## v5.46.0 — Release authority and merge policy
 
 - **Release authority for project groups** (#1697, #1702) — the first release-capable group member claims authority; a conflicting project-setting save is refused, the operator can transfer authority in group settings, and a non-owner cannot cut a release. Unconfigured release mode now resolves to `operator`, or `off` when another group member owns release authority. `lib/store.js`, `lib/wrap-steps/version-bump.js`, `public/ui.js`. Tests: `test/api-groups.test.js`, `test/release-mode.test.js`, `test/version-bump-release-gate.test.js`.

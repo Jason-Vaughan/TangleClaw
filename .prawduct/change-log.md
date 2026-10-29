@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-29 — v5.46.1 W2-REC: reconcile the six stabilization issues
+
+<!-- prawduct: type=internal | scope=v5461-w2-rec -->
+
+- Reconciled Wave 1 on `main@7db6ee15fc970d4b9a939c8d3fa8b4a84e1b5886`: W1-B fixed the setup wizard's no-engine fixtures (#2696) and the ttyd watcher's restricted-PATH `sysctl` read (#2697); W1-C removed host-publish and soak-driver test races under subprocess load (#2698).
+- W1-D, including W1-A's issues under signed A482-R6, moved five subprocess-using tests to the Large tier (#2688), bounded Stage 5 and fixed the soak guest watchdog's timeout race and orphan cleanup (#2691), and closed group release-authority consistency and fail-open gaps (#2699). The six issues retain their accepted `changelog.d/` fragments for release promotion.
+- Updated `FEATURES.md` with stable code and test anchors for all six issues. This records merged work; it does not claim a v5.46.1 tag, GitHub Release, production deploy, or activation.
+
 ## 2026-10-28 — v5.46.0 W4-REL: prepare the release-authority and merge-policy candidate
 
 <!-- prawduct: type=internal | scope=v546-w4-rel -->
