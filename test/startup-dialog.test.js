@@ -3027,6 +3027,18 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
       assert.equal(startupDialog.classify(resolvedThenLive2, DIALOGS, WAKE, null).dialog.code, 'bypass_permissions_confirm');
     });
 
+    it('a valid dialog whose own markers sit far apart still confirms, with nothing composer-shaped between them (#2711 PRR-A C2)', () => {
+      // The documented contract (docs/configuration-reference.md) places no
+      // distance limit on a dialog's markers: "ALL must be on screen".
+      // C1's fix must not have replaced "far apart" with its own false
+      // positive -- only an actual composer box (`_lastComposerBoxRow`)
+      // draws the reset line, never mere row count.
+      const filler = Array.from({ length: 20 }, (_, i) => ` body line ${i}`);
+      const spreadTrust = [' Accessing workspace:', '', ' ❯ No, exit', ...filler, '   Yes, I trust this folder', ''];
+      assert.equal(classify(spreadTrust, null), 'dialog', 'both markers present, 20+ rows apart, no composer box between them');
+      assert.equal(startupDialog.classify(spreadTrust, DIALOGS, WAKE, null).dialog.code, 'trust_required');
+    });
+
     it('ordering: an answered menu left ABOVE a fresh composer is history, and the composer clears', () => {
       assert.equal(classify([...BYPASS_2, ...FRESH], FRESH_CURSOR), 'clear');
       assert.equal(classify([...BYPASS_1, ...AFTER_MENU], null), 'clear');
