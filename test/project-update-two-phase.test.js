@@ -234,7 +234,8 @@ const VALID_SETTINGS_PATCH = {
   wrapSections: null,
   defaultLaunchMode: 'default',
   showLaunchModePicker: true,
-  confirmBypassHidden: true
+  confirmBypassHidden: true,
+  acceptFolderTrust: true
 };
 
 describe('the fixture tracks the settings modal, not a remembered list', () => {

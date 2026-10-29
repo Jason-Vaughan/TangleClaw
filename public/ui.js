@@ -2030,6 +2030,10 @@ function openSettings(name, options) {
   // #1708: what a wrap that does not say inherits for "keep the session
   // running" — engine-agnostic; default off (a wrap ends its session).
   const initialKeepRunningChecked = !!project.wrapKeepSessionRunning;
+  // #2168, A85: per-project folder-trust-dialog acceptance opt-in —
+  // engine-agnostic at this layer; default off (A85 ruled a global
+  // "always accept" too broad for an attached repository).
+  const initialAcceptFolderTrustChecked = !!project.acceptFolderTrust;
   // Medusa idle-gated wake nudge (MED-2K9P v2 T2) — engine-gated on the
   // engine's declared idle signature; default OFF (a wake spends a real turn).
   const initialMedusaWakeChecked = !!project.medusaWake;
@@ -2098,6 +2102,14 @@ function openSettings(name, options) {
           <span class="toggle-switch"></span>
         </label>
         <div class="form-hint">What a wrap does to this project's session when it completes, if whoever started it did not choose: another session, the Project Manager or a script. On, the session keeps running; off, the wrap ends it. The wrap dialog starts from this setting and can override it for one wrap. A wrap that stops, fails or is cancelled always leaves the session running.</div>
+      </div>
+      <div class="form-group">
+        <label class="gs-toggle-label">
+          <span>Accept the folder-trust dialog at launch</span>
+          <input type="checkbox" id="settingsAcceptFolderTrust" ${initialAcceptFolderTrustChecked ? 'checked' : ''}>
+          <span class="toggle-switch"></span>
+        </label>
+        <div class="form-hint">For a directory TangleClaw itself created and manages, answer the engine's first-run "Do you trust this folder?" dialog automatically instead of waiting for you to click through it. Off by default — a global "always accept" is too broad for a repository you did not create. Only acts on a dialog the engine positively shows and declares an answer for; an engine with no such dialog, or a different one, is unaffected. Never types anything blind, and never writes the engine's own trust file directly.</div>
       </div>
       <div class="form-group">
         <label class="gs-toggle-label">
@@ -4595,6 +4607,12 @@ async function doSaveSettings(launchAfter = false) {
   const medusaEl = document.getElementById('settingsMedusa');
   if (medusaEl) {
     body.medusaEnabled = medusaEl.checked;
+  }
+  // #2168, A85 — always present (engine-agnostic at this layer; the launch
+  // path is where the engine-declared-dialog gate actually lives).
+  const acceptFolderTrustEl = document.getElementById('settingsAcceptFolderTrust');
+  if (acceptFolderTrustEl) {
+    body.acceptFolderTrust = acceptFolderTrustEl.checked;
   }
   // #1708 — sent only when the toggle changed, like the launch-mode picker
   // below: a project that never chose keeps "never chose" (null) through saves
