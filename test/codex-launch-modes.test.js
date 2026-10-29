@@ -27,6 +27,7 @@ const store = require('../lib/store');
 const launchSequence = require('../lib/launch-sequence');
 const tmux = require('../lib/tmux');
 const enginesModule = require('../lib/engines');
+const tcVerbs = require('../lib/tc-verbs');
 
 const codex = JSON.parse(
   fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8')
@@ -461,5 +462,35 @@ describe('launch-sequence status names the sandbox cause (#1836)', () => {
 
     const shown = launchSequence.status({ launchId: sequence.launchId, projectId: project.id }).body;
     assert.ok(!('sandboxNote' in shown.status), 'only the unread, cursor-0 state gets the diagnostic');
+  });
+});
+
+describe('tc start status prints the sandbox cause (#1836, PRR-B C2)', () => {
+  const BASE = {
+    sequence: 'present', sessionId: 7, sequenceId: 3, revision: 1, applicability: 'applicable',
+    preflight: { verdict: 'ok' }, pageBudget: 7800, toolOutput: null, pending: null,
+    status: { cursor: 0, ready: false, recovery: 'none', unready: true }, steps: [{}, {}, {}, {}]
+  };
+
+  it('prints the likely cause and the remedy, right beside the cursor line', () => {
+    const printed = tcVerbs.renderStartStatus({
+      ...BASE,
+      status: {
+        ...BASE.status,
+        sandboxNote: {
+          code: 'CODEX_SANDBOX_BLOCKS_LOOPBACK',
+          reason: codex.launchModes.fullAuto.sandboxNote,
+          remedy: codex.launchModes.fullAuto.sandboxRemedy
+        }
+      }
+    });
+    assert.match(printed, /^Launch sequence 3 \(session 7, revision 1\): 0 of 4 step\(s\) acknowledged\.\nPreflight: ok\.\nLikely cause:/);
+    assert.match(printed, /Likely cause: .*network_access\s*=\s*true/);
+    assert.match(printed, /Remedy: .*network_access = true/);
+  });
+
+  it('prints nothing extra when the server sends no sandboxNote (an older server, or no declared limitation)', () => {
+    const printed = tcVerbs.renderStartStatus(BASE);
+    assert.doesNotMatch(printed, /Likely cause:/);
   });
 });
