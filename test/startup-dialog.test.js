@@ -3186,16 +3186,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
         startupDialog._internal.cursorInfoSync = () => cursor;
         const got = look(quoting);
         assert.equal(got.noncomposer, false, why);
-        // #2711 PRR-A: the composer's BOX is still positively there (a
-        // divider-content-divider triple whose content starts with the
-        // glyph) whether or not the CURSOR can confirm what is drawn inside
-        // it -- the two are independent evidence. That box resets the
-        // quoted dialog's stale evidence, and with neither declared dialog
-        // left with any post-reset evidence, the sender is withheld under
-        // the neutral code, not a guessed-at specific one; it still
-        // withholds every sender exactly as before, just without naming the
-        // wrong (resolved) dialog to do it.
-        assert.equal(startupDialog.withholdFor(got, null).code, startupDialog.STARTUP_SCREEN_SUSPECT, why);
+        assert.equal(startupDialog.withholdFor(got, null).code, 'trust_required', why);
       }
       startupDialog._internal.cursorInfoSync = () => DRAFT_CURSOR;
       const unboxed = quoting.filter((row) => row !== BORDER);
@@ -3343,20 +3334,18 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
       'claude | trust dialog, half drawn | no wake | cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
       'claude | trust dialog, half drawn | no wake | no cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
       'claude | trust dialog, history then the composer | wake | cursor': 'detect=null boot=undecided classify=clear',
-      // #2711 PRR-A: with wake available but no cursor to confirm the
-      // composer positively, the box structure (divider/glyph-led
-      // content/divider) is STILL independently, positively detected --
-      // cursor only disambiguates what the composer holds, not whether its
-      // box is there at all. That resets the stale trust dialog's history,
-      // and with nothing else post-reset, naming it specifically would be
-      // exactly the guess #2205/#2711 exist to replace with the neutral
-      // code; the sender is still withheld either way (see the box-shaped
-      // regression test and the 'quoted above a located draft' test).
-      'claude | trust dialog, history then the composer | wake | no cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
+      // #2711 PRR-A: PRESERVED as the pre-existing pin, per explicit
+      // reviewer policy -- the conditional `floor` in `_read` only applies
+      // the composer-reset boundary when something marker-shaped exists
+      // AFTER it too; with nothing newer than this resolved trust dialog
+      // anywhere in the frame, the boundary stands down and the old,
+      // specific naming holds (see the cross-screen-partial regression,
+      // below, for the case where something newer DOES exist).
+      'claude | trust dialog, history then the composer | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
       'claude | trust dialog, history then the composer | no wake | cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
       'claude | trust dialog, history then the composer | no wake | no cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
       'claude | trust dialog, history then fresh | wake | cursor': 'detect=null boot=undecided classify=clear',
-      'claude | trust dialog, history then fresh | wake | no cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
+      'claude | trust dialog, history then fresh | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
       'claude | trust dialog, history then fresh | no wake | cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
       'claude | trust dialog, history then fresh | no wake | no cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
       'claude | composer | wake | cursor': 'detect=null boot=clear classify=clear',
@@ -3440,11 +3429,11 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
       'claude+second | trust dialog, half drawn | no wake | cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
       'claude+second | trust dialog, half drawn | no wake | no cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
       'claude+second | trust dialog, history then the composer | wake | cursor': 'detect=null boot=undecided classify=clear',
-      'claude+second | trust dialog, history then the composer | wake | no cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
+      'claude+second | trust dialog, history then the composer | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
       'claude+second | trust dialog, history then the composer | no wake | cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
       'claude+second | trust dialog, history then the composer | no wake | no cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
       'claude+second | trust dialog, history then fresh | wake | cursor': 'detect=null boot=undecided classify=clear',
-      'claude+second | trust dialog, history then fresh | wake | no cursor': 'detect=null boot=undecided classify=partial:startup_screen_suspect',
+      'claude+second | trust dialog, history then fresh | wake | no cursor': 'detect=null boot=undecided classify=partial:trust_required',
       'claude+second | trust dialog, history then fresh | no wake | cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
       'claude+second | trust dialog, history then fresh | no wake | no cursor': 'detect=trust_required boot=dialog:trust_required classify=dialog:trust_required',
       'claude+second | composer | wake | cursor': 'detect=null boot=clear classify=clear',
