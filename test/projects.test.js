@@ -4042,12 +4042,14 @@ describe('projects', () => {
     });
 
     let realWatch;
+    let realCheck;
     let realSendRawKey;
     let realDetectEngine;
     let sentKeys;
 
     beforeEach(() => {
       realWatch = startupDialog.watch;
+      realCheck = startupDialog.check;
       realSendRawKey = tmux.sendRawKey;
       realDetectEngine = engines.detectEngine;
       sentKeys = [];
@@ -4060,11 +4062,22 @@ describe('projects', () => {
         if (args.onDialog) args.onDialog(TRUST_DIALOG);
         return { outcome: 'answered', meaning: 'x', dialog: TRUST_DIALOG, waitedMs: 1 };
       };
+      // `_deferEngineInit` now re-confirms the dialog is still positively
+      // showing (via `startupDialog.check`) immediately before each
+      // staggered key (PRR-B/Arc A-Gate HOLD, PR #2712 round 3). This
+      // describe block tests the WIRING around that confirmation, not the
+      // real pane classifier underneath it (the real tmux pane behind this
+      // test's session is a bare shell, never the scripted dialog) — so the
+      // confirmation itself is stubbed to agree with the scripted dialog,
+      // the same way `watch` already is. The real classifier path is
+      // covered separately, below.
+      startupDialog.check = () => ({ declared: true, dialog: { code: TRUST_DIALOG.code }, clear: false });
       tmux.sendRawKey = (session, key) => { sentKeys.push({ session, key }); };
     });
 
     afterEach(() => {
       startupDialog.watch = realWatch;
+      startupDialog.check = realCheck;
       tmux.sendRawKey = realSendRawKey;
       engines.detectEngine = realDetectEngine;
     });
@@ -4115,12 +4128,47 @@ describe('projects', () => {
         };
         result = sessions.launchSession(name, {});
         assert.equal(result.error, null, result.error);
+        const sessionId = result.session.id;
         await settleAcceptSends();
 
         assert.deepEqual(sentKeys.map((k) => k.key), ['Down'],
           'Enter must be withheld once the original session is no longer ACTIVE, not sent to whatever now has that pane');
+        // A partial sequence is not an acceptance — the audit trail must not
+        // say otherwise (Critic, verify-resolutions round 2).
+        assert.deepEqual(store.activity.query({ sessionId, eventType: sessions.FOLDER_TRUST_ACCEPTED_EVENT }), []);
       } finally {
         result = null; // already killed above; nothing further to clean up
+      }
+    });
+
+    it('cancels a later staggered key once the live pane no longer shows the dialog, even though the session and tmux pane are still this launch\'s own (Arc A-Gate HOLD, PR #2712 round 3)', async () => {
+      const name = 'aft-launch-answered-midway';
+      projects.createProject({ name, engine: 'claude' });
+      await projects.updateProject(name, { acceptFolderTrust: true });
+      let result;
+      let dialogStillShowing = true;
+      startupDialog.check = () => ({ declared: true, dialog: dialogStillShowing ? { code: TRUST_DIALOG.code } : null, clear: !dialogStillShowing });
+      try {
+        // The FIRST send (0ms) goes through, same as the operator having
+        // answered nothing yet. Between it and the SECOND send (500ms), the
+        // operator answers the dialog by hand — the session row stays
+        // ACTIVE and the tmux pane stays this launch's own the whole time,
+        // so `stillOurs()` alone would wrongly allow `Enter` through onto
+        // whatever the operator's own answer left in the composer.
+        tmux.sendRawKey = (session, key) => {
+          sentKeys.push({ session, key });
+          if (key === 'Down') dialogStillShowing = false;
+        };
+        result = sessions.launchSession(name, {});
+        assert.equal(result.error, null, result.error);
+        const sessionId = result.session.id;
+        await settleAcceptSends();
+
+        assert.deepEqual(sentKeys.map((k) => k.key), ['Down'],
+          'Enter must be cancelled once the live pane no longer shows the trust dialog, even though the session/tmux pane are unchanged');
+        assert.deepEqual(store.activity.query({ sessionId, eventType: sessions.FOLDER_TRUST_ACCEPTED_EVENT }), []);
+      } finally {
+        if (result && result.session) sessions.killSession(name, 'test cleanup');
       }
     });
 
@@ -4184,12 +4232,16 @@ describe('projects', () => {
     ]);
 
     let realCapturePane;
+    let realCapturePaneSync;
+    let realCursorInfoSync;
     let realSendRawKey;
     let realDetectEngine;
     let sentKeys;
 
     beforeEach(() => {
       realCapturePane = startupDialog._internal.capturePane;
+      realCapturePaneSync = startupDialog._internal.capturePaneSync;
+      realCursorInfoSync = startupDialog._internal.cursorInfoSync;
       realSendRawKey = tmux.sendRawKey;
       realDetectEngine = engines.detectEngine;
       sentKeys = [];
@@ -4197,11 +4249,22 @@ describe('projects', () => {
       // The dialog's own cursor is hidden (#2128 evidence) — null is the
       // real answer `tmux.cursorInfo` gives for this exact captured frame.
       startupDialog._internal.capturePane = async () => ({ lines: TRUST_DIALOG_PANE, alternateScreen: false, cursor: null });
+      // `_deferEngineInit` now re-confirms the dialog via `startupDialog.check`
+      // before each staggered key (PRR-B/Arc A-Gate HOLD, PR #2712 round 3),
+      // which reads the pane through the SYNC seam (`capturePaneSync` +
+      // `cursorInfoSync`), a different pair from the async `capturePane` the
+      // boot watch itself uses above — both are stubbed with the same real
+      // captured frame so the per-key re-check sees the same dialog the boot
+      // watch already detected, through the real classifier either way.
+      startupDialog._internal.capturePaneSync = () => ({ lines: TRUST_DIALOG_PANE, alternateScreen: false });
+      startupDialog._internal.cursorInfoSync = () => null;
       tmux.sendRawKey = (session, key) => { sentKeys.push({ session, key }); };
     });
 
     afterEach(() => {
       startupDialog._internal.capturePane = realCapturePane;
+      startupDialog._internal.capturePaneSync = realCapturePaneSync;
+      startupDialog._internal.cursorInfoSync = realCursorInfoSync;
       tmux.sendRawKey = realSendRawKey;
       engines.detectEngine = realDetectEngine;
     });
