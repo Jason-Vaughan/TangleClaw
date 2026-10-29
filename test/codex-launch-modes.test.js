@@ -281,7 +281,6 @@ describe('unknown launch mode is reported, not swallowed (#731)', () => {
 describe('fullAuto declares its loopback sandbox limitation (#1836)', () => {
   it('declares the sandbox blocks loopback, with a reason, a remedy and dated evidence', () => {
     const mode = codex.launchModes.fullAuto;
-    assert.equal(mode.loopbackReachable, false);
     assert.equal(mode.sandboxBlocksLoopback, true);
     assert.equal(typeof mode.sandboxNote, 'string');
     assert.match(mode.sandboxNote, /workspace-write/);

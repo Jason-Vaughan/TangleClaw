@@ -60,7 +60,6 @@
       ],
       "description": "Never asks for approval, still sandboxed to the workspace",
       "warning": "Sandboxed but unattended — review the generated diffs before merging.",
-      "loopbackReachable": false,
       "sandboxBlocksLoopback": true,
       "sandboxNote": "Codex's workspace-write sandbox denies outbound network, loopback included, unless configured otherwise — not a TangleClaw outage. Every `tc` verb (start, whoami, the switchboard) is loopback HTTP, so a turn in this mode cannot reach the TangleClaw API: `tc start next` reports the API unreachable, the launch sequence stays unread, and no awareness receipt lands (#1836).",
       "sandboxRemedy": "Set `network_access = true` under `[sandbox_workspace_write]` in `~/.codex/config.toml` (or the per-thread equivalent), or launch this project in Interactive or Bypass mode instead.",
