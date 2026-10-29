@@ -16,12 +16,18 @@
  * the engine does not define is reported rather than silently dropped.
  */
 
-const { describe, it, beforeEach, afterEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const sessions = require('../lib/sessions');
 const logger = require('../lib/logger');
+const store = require('../lib/store');
+const launchSequence = require('../lib/launch-sequence');
+const tmux = require('../lib/tmux');
+const enginesModule = require('../lib/engines');
+const tcVerbs = require('../lib/tc-verbs');
 
 const codex = JSON.parse(
   fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8')
@@ -270,5 +276,221 @@ describe('unknown launch mode is reported, not swallowed (#731)', () => {
   it('stays quiet on a mode the engine does define', () => {
     sessions._buildLaunchCommand(codex, null, 'fullAuto');
     assert.doesNotMatch(captured.join(''), /not honored by this engine/);
+  });
+});
+
+describe('fullAuto declares its loopback sandbox limitation (#1836)', () => {
+  it('declares the sandbox blocks loopback, with a reason, a remedy and dated evidence', () => {
+    const mode = codex.launchModes.fullAuto;
+    assert.equal(mode.sandboxBlocksLoopback, true);
+    assert.equal(typeof mode.sandboxNote, 'string');
+    assert.match(mode.sandboxNote, /workspace-write/);
+    assert.match(mode.sandboxNote, /1836/);
+    assert.equal(typeof mode.sandboxRemedy, 'string');
+    assert.match(mode.sandboxRemedy, /network_access/);
+    assert.match(mode.sandboxRemedy, /config\.toml/);
+    assert.ok(mode.sandboxEvidence && mode.sandboxEvidence.verifiedOn, 'dated like every other declared evidence block');
+  });
+
+  it('words the cause as a likely one, not a certainty (PRR-B C1, regression)', () => {
+    // TangleClaw has no way to read the operator's own ~/.codex/config.toml
+    // from the server side, so it cannot know whether network_access=true is
+    // already set for this project. If it is, loopback IS reachable and this
+    // diagnosis would be wrong -- the wording must say so, every time, not
+    // assert the sandbox is the cause as settled fact.
+    const note = codex.launchModes.fullAuto.sandboxNote;
+    assert.match(note, /network_access\s*=\s*true/, 'names the exact override that would make this diagnosis wrong');
+    assert.match(note, /likely cause, not a certainty/i);
+  });
+
+  it('is not declared for the modes that do reach loopback', () => {
+    for (const key of ['default', 'bypassPermissions']) {
+      const mode = codex.launchModes[key];
+      assert.ok(!('sandboxBlocksLoopback' in mode), `${key} should not declare the fullAuto-only limitation`);
+    }
+  });
+});
+
+describe('launch-sequence status names the sandbox cause (#1836)', () => {
+  // A synthetic engine carrying the same declared shape as Codex's fullAuto,
+  // with no `capabilities.startupControl` — so the launch takes the plain
+  // tmux/legacy path (same as test/launch-sequence.test.js's own fixtures)
+  // and this test exercises `lib/launch-sequence.js`'s own integration
+  // (`_loopbackSandboxNote` -> `_statusBlock` -> `status()`) without needing
+  // Codex's native app-server machinery, already covered by
+  // test/startup-control-codex.test.js.
+  const ENGINE_ID = 'fake-sandboxed-engine';
+  let tmpDir;
+  let projectsDir;
+  let prevBase;
+
+  before(() => {
+    prevBase = store._getBasePath();
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-codex-loopback-'));
+    store.close();
+    store._setBasePath(tmpDir);
+    store.init();
+    projectsDir = path.join(tmpDir, 'projects');
+    fs.mkdirSync(projectsDir, { recursive: true });
+    const config = store.config.load();
+    config.projectsDir = projectsDir;
+    store.config.save(config);
+    store.engines.save({
+      id: ENGINE_ID,
+      name: 'Fake Sandboxed Engine',
+      command: 'fake-sandboxed-engine',
+      capabilities: { supportsPrimePrompt: true, launchSequence: { supported: true } },
+      launchModes: {
+        default: { label: 'Interactive', args: [] },
+        fullAuto: {
+          label: 'Full Auto',
+          args: [],
+          sandboxBlocksLoopback: true,
+          sandboxNote: 'test fixture: this mode denies loopback',
+          sandboxRemedy: 'test fixture: change the launch mode'
+        }
+      },
+      defaultLaunchMode: 'default'
+    });
+  });
+
+  after(() => {
+    store.close();
+    store._setBasePath(prevBase);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /**
+   * Launch a project with tmux and engine detection stubbed, same as
+   * test/launch-sequence.test.js's own `launch()` helper.
+   * @param {string} name - Project name
+   * @param {object} [launchOptions] - Passed through to `sessions.launchSession`
+   * @returns {object} The launch result
+   */
+  function launch(name, launchOptions = {}) {
+    const real = {
+      create: tmux.createSession, has: tmux.hasSession, kill: tmux.killSession, detect: enginesModule.detectEngine
+    };
+    tmux.createSession = () => true;
+    tmux.hasSession = () => false;
+    tmux.killSession = () => true;
+    enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/fake-sandboxed-engine' });
+    try {
+      return sessions.launchSession(name, launchOptions);
+    } finally {
+      tmux.createSession = real.create;
+      tmux.hasSession = real.has;
+      tmux.killSession = real.kill;
+      enginesModule.detectEngine = real.detect;
+    }
+  }
+
+  it('is absent at cursor 0 for a launch the unready monitor has not flagged yet', () => {
+    // A fresh launch sitting at cursor 0 is not evidence of anything by
+    // itself (PRR-B C1) — it is what every launch looks like for its first
+    // moment. No diagnostic until the system's own unready monitor has
+    // independently decided this one has sat too long.
+    const name = 'codex-loopback-fresh';
+    const dir = path.join(projectsDir, name);
+    fs.mkdirSync(dir, { recursive: true });
+    const project = store.projects.create({ name, path: dir, engine: ENGINE_ID });
+    const result = launch(name, { launchMode: 'fullAuto' });
+    assert.equal(result.error, null, result.error);
+
+    const sequence = store.launchSequences.getBySession(result.session.id);
+    assert.equal(sequence.cursor, 0, 'a fresh launch sits unread at cursor 0');
+    assert.equal(sequence.unreadyAt, null, 'not yet flagged by the unready monitor');
+
+    const shown = launchSequence.status({ launchId: sequence.launchId, projectId: project.id }).body;
+    assert.ok(!('sandboxNote' in shown.status), 'a merely-fresh sequence gets no diagnosis');
+  });
+
+  it('names the sandbox cause once the unready monitor has flagged an unread launch on a sandbox-blocking mode', () => {
+    const name = 'codex-loopback-fullauto';
+    const dir = path.join(projectsDir, name);
+    fs.mkdirSync(dir, { recursive: true });
+    const project = store.projects.create({ name, path: dir, engine: ENGINE_ID });
+    const result = launch(name, { launchMode: 'fullAuto' });
+    assert.equal(result.error, null, result.error);
+
+    const sequence = store.launchSequences.getBySession(result.session.id);
+    assert.equal(sequence.cursor, 0, 'a fresh launch sits unread at cursor 0');
+    // The unready monitor (lib/launch-unready.js) is what decides a sequence
+    // has sat too long with no attestation; reuse its verdict rather than
+    // re-deciding "how long is too long" here.
+    assert.ok(store.launchSequences.markUnready(sequence.id), 'the stamp was written');
+
+    const shown = launchSequence.status({ launchId: sequence.launchId, projectId: project.id }).body;
+    assert.deepEqual(shown.status.sandboxNote, {
+      code: 'CODEX_SANDBOX_BLOCKS_LOOPBACK',
+      reason: 'test fixture: this mode denies loopback',
+      remedy: 'test fixture: change the launch mode'
+    });
+  });
+
+  it('is absent for the same engine in a mode that does not declare the limitation, even once flagged unready', () => {
+    const name = 'codex-loopback-default';
+    const dir = path.join(projectsDir, name);
+    fs.mkdirSync(dir, { recursive: true });
+    const project = store.projects.create({ name, path: dir, engine: ENGINE_ID });
+    const result = launch(name, { launchMode: 'default' });
+    assert.equal(result.error, null, result.error);
+
+    const sequence = store.launchSequences.getBySession(result.session.id);
+    assert.equal(sequence.cursor, 0);
+    store.launchSequences.markUnready(sequence.id);
+
+    const shown = launchSequence.status({ launchId: sequence.launchId, projectId: project.id }).body;
+    assert.ok(!('sandboxNote' in shown.status), 'no declaration for this mode, so no note');
+  });
+
+  it('is absent once the sequence has moved past cursor 0, even once flagged unready', () => {
+    const name = 'codex-loopback-advanced';
+    const dir = path.join(projectsDir, name);
+    fs.mkdirSync(dir, { recursive: true });
+    const project = store.projects.create({ name, path: dir, engine: ENGINE_ID });
+    const result = launch(name, { launchMode: 'fullAuto' });
+    assert.equal(result.error, null, result.error);
+
+    const sequence = store.launchSequences.getBySession(result.session.id);
+    store.launchSequences.markUnready(sequence.id);
+    // Advance the cursor directly, same as an ack would: cursor 0 is the
+    // literal "unread" state this diagnostic is for, not every early step.
+    store.launchSequences.transaction(() => {
+      store.getDb().prepare('UPDATE launch_sequences SET cursor = 1 WHERE id = ?').run(sequence.id);
+    });
+
+    const shown = launchSequence.status({ launchId: sequence.launchId, projectId: project.id }).body;
+    assert.ok(!('sandboxNote' in shown.status), 'only the unread, cursor-0 state gets the diagnostic');
+  });
+});
+
+describe('tc start status prints the sandbox cause (#1836, PRR-B C2)', () => {
+  const BASE = {
+    sequence: 'present', sessionId: 7, sequenceId: 3, revision: 1, applicability: 'applicable',
+    preflight: { verdict: 'ok' }, pageBudget: 7800, toolOutput: null, pending: null,
+    status: { cursor: 0, ready: false, recovery: 'none', unready: true }, steps: [{}, {}, {}, {}]
+  };
+
+  it('prints the likely cause and the remedy, right beside the cursor line', () => {
+    const printed = tcVerbs.renderStartStatus({
+      ...BASE,
+      status: {
+        ...BASE.status,
+        sandboxNote: {
+          code: 'CODEX_SANDBOX_BLOCKS_LOOPBACK',
+          reason: codex.launchModes.fullAuto.sandboxNote,
+          remedy: codex.launchModes.fullAuto.sandboxRemedy
+        }
+      }
+    });
+    assert.match(printed, /^Launch sequence 3 \(session 7, revision 1\): 0 of 4 step\(s\) acknowledged\.\nPreflight: ok\.\nLikely cause:/);
+    assert.match(printed, /Likely cause: .*network_access\s*=\s*true/);
+    assert.match(printed, /Remedy: .*network_access = true/);
+  });
+
+  it('prints nothing extra when the server sends no sandboxNote (an older server, or no declared limitation)', () => {
+    const printed = tcVerbs.renderStartStatus(BASE);
+    assert.doesNotMatch(printed, /Likely cause:/);
   });
 });
