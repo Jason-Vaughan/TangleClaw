@@ -41,6 +41,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-29 — v5.46.1 W1-D: close group release-authority fail-open/consistency gaps (#2699)
+
+<!-- prawduct: type=fixed | scope=w1d-2699-release-authority-followups -->
+
+- Resolved the 6 non-blocking Critic R5 findings deferred post-merge on #2695 (R-1 through R-6): `addMember` no longer double-claims a vacant group's release authority for a project already deferring to a different group's owner; `_applyProjectUpdates` now fails CLOSED (via a new `store.projectGroups.safeFindReleaseOwnerElsewhere` helper) instead of silently treating an unresolvable lookup as "no owner elsewhere" and writing a release-capable mode the validator itself would have refused; the settings-modal owner hint prioritizes a conflicting group over a self-owned one; `toggleGroupMembership` no longer renders into a group modal that closed or switched groups mid-flight; and the validator threads the real group-owner-elsewhere value instead of a hardcoded `false` (verified to change no reachable outcome).
+- Synced `data/global-rules.md` from the operator's live Rule Authoring & Consolidation Policy and updated `CLAUDE.md`'s required mirror to match — a Critic BLOCKING finding caught that the sync alone would have broken `test/repo-governance-reference.test.js`.
+
 ## 2026-10-28 — v5.46.0 W4-REL: prepare the release-authority and merge-policy candidate
 
 <!-- prawduct: type=internal | scope=v546-w4-rel -->
