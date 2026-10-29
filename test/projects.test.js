@@ -4100,6 +4100,30 @@ describe('projects', () => {
       }
     });
 
+    it('withholds a later staggered key once the session has ended, never sending it to a pane this launch no longer owns (PRR-B, PR #2712)', async () => {
+      const name = 'aft-launch-killed-midway';
+      projects.createProject({ name, engine: 'claude' });
+      await projects.updateProject(name, { acceptFolderTrust: true });
+      let result;
+      try {
+        // The FIRST send (0ms) kills the session itself, simulating the
+        // pane going away (or being reused by a relaunch under the same
+        // tmux name) in the gap before the SECOND send (500ms) fires.
+        tmux.sendRawKey = (session, key) => {
+          sentKeys.push({ session, key });
+          if (key === 'Down') sessions.killSession(name, 'simulated mid-sequence end');
+        };
+        result = sessions.launchSession(name, {});
+        assert.equal(result.error, null, result.error);
+        await settleAcceptSends();
+
+        assert.deepEqual(sentKeys.map((k) => k.key), ['Down'],
+          'Enter must be withheld once the original session is no longer ACTIVE, not sent to whatever now has that pane');
+      } finally {
+        result = null; // already killed above; nothing further to clean up
+      }
+    });
+
     it('sends nothing and logs nothing when the project has not opted in', async () => {
       const name = 'aft-launch-noopt';
       projects.createProject({ name, engine: 'claude' });
@@ -4118,6 +4142,87 @@ describe('projects', () => {
         // `launchBlocker` field, which the (unrelated, already-existing)
         // "answered" handling clears right after `onDialog` either way.
         assert.equal(store.activity.query({ sessionId: result.session.id, eventType: sessions.FIRST_TURN_DEFERRED_EVENT })[0].detail.code, 'trust_required');
+      } finally {
+        if (result && result.session) sessions.killSession(name, 'test cleanup');
+      }
+    });
+  });
+
+  describe('launchSession — folder-trust acceptance through a REAL pane capture (#2168, Critic review PR #2712)', () => {
+    // Stubbing `startupDialog.watch` itself (as the describe block above
+    // does, for the OTHER half of this feature) cannot catch a defect in
+    // `lib/startup-dialog.js#_read` dropping a field before it reaches
+    // `onDialog` — that is exactly what the first Critic review round on this
+    // PR caught: `_read` hands `onDialog` only `{code, label, meaning}`, never
+    // `acceptKeys`, so a hand-built dialog fixture masked a dead production
+    // path. This block drives the REAL `watch()`/`_read()`/`assessBoot()`
+    // pipeline instead, stubbing only the pane capture — the one seam
+    // `test/startup-dialog.test.js`'s own suite uses for the same reason.
+    //
+    // The captured rows are the real folder-trust dialog as measured on
+    // Claude Code 2.1.283 (same fixture `test/startup-dialog.test.js` pins).
+    const ESC = '\u001b';
+    const styled = (text) => text.split(' ').map((w) => `${ESC}[38;5;153m${w}${ESC}[39m`).join(' ');
+    const TRUST_DIALOG_PANE = Object.freeze([
+      '──────────────────────────────────────────────────────────────',
+      ` ${ESC}[1m${ESC}[38;5;220mAccessing${ESC}[0m ${ESC}[1m${ESC}[38;5;220mworkspace:${ESC}[0m`,
+      '',
+      ' /private/tmp/scratch/repo',
+      '',
+      ' Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open',
+      ' source project, or work from your team). If not, take a moment to review what\'s in this folder first.',
+      '',
+      ' Claude Code\'ll be able to read, edit, and execute files here.',
+      '',
+      ' Security guide',
+      '',
+      ` ${styled('❯ No, exit')}`,
+      '   Yes, I trust this folder',
+      '',
+      ` ${styled('Enter to confirm · Esc to cancel')}`,
+      ''
+    ]);
+
+    let realCapturePane;
+    let realSendRawKey;
+    let realDetectEngine;
+    let sentKeys;
+
+    beforeEach(() => {
+      realCapturePane = startupDialog._internal.capturePane;
+      realSendRawKey = tmux.sendRawKey;
+      realDetectEngine = engines.detectEngine;
+      sentKeys = [];
+      engines.detectEngine = () => ({ available: true });
+      // The dialog's own cursor is hidden (#2128 evidence) — null is the
+      // real answer `tmux.cursorInfo` gives for this exact captured frame.
+      startupDialog._internal.capturePane = async () => ({ lines: TRUST_DIALOG_PANE, alternateScreen: false, cursor: null });
+      tmux.sendRawKey = (session, key) => { sentKeys.push({ session, key }); };
+    });
+
+    afterEach(() => {
+      startupDialog._internal.capturePane = realCapturePane;
+      tmux.sendRawKey = realSendRawKey;
+      engines.detectEngine = realDetectEngine;
+    });
+
+    it('detects the real dialog through the real boot watch and sends the real declared keys, when opted in', async () => {
+      const name = 'aft-real-pane-accept';
+      projects.createProject({ name, engine: 'claude' });
+      await projects.updateProject(name, { acceptFolderTrust: true });
+      let result;
+      try {
+        result = sessions.launchSession(name, {});
+        assert.equal(result.error, null, result.error);
+        // The boot poll is every 500ms (`BOOT_POLL_MS`); the dialog matches
+        // on the very first read, then the accept sends stagger at 0/500ms.
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+
+        assert.deepEqual(sentKeys.map((k) => k.key), ['Down', 'Enter'],
+          'the real declared keys for claude.json\'s trust_required entry, found through resolve(), not a test fixture');
+        const logged = store.activity.query({ sessionId: result.session.id, eventType: sessions.FOLDER_TRUST_ACCEPTED_EVENT });
+        assert.equal(logged.length, 1);
+        assert.equal(logged[0].detail.dialogCode, 'trust_required');
       } finally {
         if (result && result.session) sessions.killSession(name, 'test cleanup');
       }
