@@ -4721,16 +4721,42 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
   });
 
   /**
-   * A project with a live session, optionally carrying a stored blocker.
-   * @param {{blocker?: boolean}} [opts] - Whether to store a blocker
+   * A project with a live session, optionally carrying a stored blocker and
+   * the `FIRST_TURN_DEFERRED_EVENT` marker a real `_deferEngineInit` deferral
+   * would have left beside it, carrying whichever of deliveryBase/
+   * pasteOutcomeBase that launch actually used (#2193; PM ruling on PRR-B C2).
+   * @param {{blocker?: boolean, deferred?: boolean, carrier?: ('rules'|'pointer'),
+   *   pasteOwed?: boolean, kickoffOwed?: boolean}} [opts] - Whether to store a blocker; whether
+   *   it carries the matching deferral marker (false models a LATER, unrelated dialog
+   *   `_reconcileLaunchBlocker` set after the first turn already delivered — PRR-B C1); which
+   *   carrier the (simulated) launch used — 'rules' (deliveryBase, the ordinary path) or
+   *   'pointer' (pasteOutcomeBase, the pull-pointer path); whether a paste/kickoff was owed at
+   *   all (Addendum A483-R5 — a silent-prime/no-rules launch may owe neither, one, or both)
    * @returns {{project: object, session: object}}
    */
-  const live = ({ blocker = true } = {}) => {
+  const live = ({ blocker = true, deferred = true, carrier = 'rules', pasteOwed = true, kickoffOwed = false } = {}) => {
     counter += 1;
     const name = `sweep-proj-${counter}`;
     const project = store.projects.create({ name, path: path.join(base, name), engine: 'claude' });
     const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: `sweep-${counter}` });
-    if (blocker) store.sessions.setLaunchBlocker(session.id, BLOCKER);
+    if (blocker) {
+      const updated = store.sessions.setLaunchBlocker(session.id, BLOCKER);
+      if (deferred && updated && updated.launchBlocker) {
+        store.activity.log({
+          projectId: project.id, sessionId: session.id, eventType: sessions.FIRST_TURN_DEFERRED_EVENT,
+          detail: {
+            code: updated.launchBlocker.code, observedAt: updated.launchBlocker.observedAt,
+            pasteOwed, kickoffOwed,
+            deliveryBase: carrier === 'rules'
+              ? { sessionId: session.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [], digest: '' }
+              : null,
+            pasteOutcomeBase: carrier === 'pointer'
+              ? { sessionId: session.id, projectId: project.id, engineId: 'claude' }
+              : null
+          }
+        });
+      }
+    }
     return { project, session };
   };
   const crashCause = (sessionId) => {
@@ -4830,6 +4856,92 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
     assert.equal(crashCause(session.id), undefined);
   });
 
+  describe('_deferredFirstTurnOwed (#2193, Addendum A483-R5)', () => {
+    const CLAUDE_PROFILE = { capabilities: { supportsPrimePrompt: true } };
+    const NO_PASTE_PROFILE = { capabilities: { supportsPrimePrompt: false } };
+
+    it('an interactive-paste launch owes the paste, never a separate kickoff', () => {
+      // Mutually exclusive by construction, not just by convention here:
+      // `pasteOwed` requires `!silentPrime`, `kickoffOwed` requires
+      // `silentPrime` -- `launchKickoff.kickoff()` itself returns
+      // 'not-silent' immediately for a non-silent launch (PRR-B round 3,
+      // verified against lib/launch-kickoff.js), since the pasted prime is
+      // itself the first turn and there is nothing left to kick off.
+      assert.deepEqual(
+        sessions._deferredFirstTurnOwed({
+          primeText: 'hello', silentPrime: false, engineProfile: CLAUDE_PROFILE,
+          kickoffCtx: { hasSequence: true }, nativeStartup: false
+        }),
+        { pasteOwed: true, kickoffOwed: false }
+      );
+    });
+
+    it('a silent-prime launch with a sequence owes the kickoff, never the paste', () => {
+      assert.deepEqual(
+        sessions._deferredFirstTurnOwed({
+          primeText: 'hello', silentPrime: true, engineProfile: CLAUDE_PROFILE,
+          kickoffCtx: { hasSequence: true }, nativeStartup: false
+        }),
+        { pasteOwed: false, kickoffOwed: true }
+      );
+    });
+
+    it('a no-sequence SILENT launch owes no kickoff either (Critic BLOCKING finding): !nativeStartup alone is not enough', () => {
+      // nativeStartup REQUIRES hasSequence, but not the reverse: a legacy
+      // (non-native) launch with no sequence to read is `nativeStartup: false`
+      // too. Testing only `!nativeStartup` misreads this shape as owing a
+      // kickoff `launchKickoff.kickoff()` itself would answer 'no-sequence'
+      // for, doing nothing -- exactly the false-positive Critic caught.
+      assert.deepEqual(
+        sessions._deferredFirstTurnOwed({
+          primeText: 'hello', silentPrime: true, engineProfile: CLAUDE_PROFILE,
+          kickoffCtx: { hasSequence: false }, nativeStartup: false
+        }),
+        { pasteOwed: false, kickoffOwed: false }
+      );
+    });
+
+    it('no primeText (no-rules): paste not owed, whatever silentPrime/kickoff say', () => {
+      assert.deepEqual(
+        sessions._deferredFirstTurnOwed({
+          primeText: null, silentPrime: false, engineProfile: CLAUDE_PROFILE,
+          kickoffCtx: { hasSequence: true }, nativeStartup: false
+        }),
+        { pasteOwed: false, kickoffOwed: false }
+      );
+    });
+
+    it('an engine with no prime channel at all: paste not owed, regardless of kickoff', () => {
+      assert.deepEqual(
+        sessions._deferredFirstTurnOwed({
+          primeText: 'hello', silentPrime: false, engineProfile: NO_PASTE_PROFILE,
+          kickoffCtx: { hasSequence: true }, nativeStartup: false
+        }),
+        { pasteOwed: false, kickoffOwed: false }
+      );
+    });
+
+    it('no kickoffCtx at all (a caller that is not launching a real session): neither owed regardless of the rest', () => {
+      assert.deepEqual(
+        sessions._deferredFirstTurnOwed({
+          primeText: 'hello', silentPrime: false, engineProfile: CLAUDE_PROFILE,
+          kickoffCtx: null, nativeStartup: false
+        }),
+        { pasteOwed: true, kickoffOwed: false }
+      );
+    });
+
+    it('a native-startup launch: kickoff withheld to the bootstrap, never owed here, even silent with a sequence', () => {
+      assert.deepEqual(
+        sessions._deferredFirstTurnOwed({
+          primeText: 'hello', silentPrime: true, engineProfile: CLAUDE_PROFILE,
+          kickoffCtx: { hasSequence: true }, nativeStartup: true
+        }),
+        { pasteOwed: false, kickoffOwed: false }
+      );
+    });
+  });
+
   describe('on a timer', () => {
     const realSetInterval = global.setInterval;
     const realClearInterval = global.clearInterval;
@@ -4879,11 +4991,315 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
     it('a blocker stored before a restart is still there until the first tick, which clears it with no reader', () => {
       const { session } = live();
       sessions.startLaunchBlockerSweep();
-      assert.equal(store.sessions.get(session.id).launchBlocker.code, 'trust_required', 'nothing runs at start');
+      assert.equal(store.sessions.get(session.id).launchBlocker.code, 'trust_required', 'the restart-dropped-turn record (below) does not clear it; only a tick does');
       assert.deepEqual(looks, []);
       armed[0].fn();
       assert.equal(store.sessions.get(session.id).launchBlocker, null);
       assert.equal(crashCause(session.id), undefined);
+    });
+
+    it('the issue\'s own case, ordinary (deliveryBase) carrier: a restart-dropped first turn is recorded once, durably, before the first tick (#2193)', () => {
+      const { project, session } = live({ carrier: 'rules' });
+      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }), []);
+      sessions.startLaunchBlockerSweep();
+      assert.deepEqual(looks, [], 'the record reads the stored row, never the pane');
+      const events = store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT });
+      assert.equal(events.length, 1);
+      assert.equal(events[0].projectId, project.id);
+      assert.deepEqual(events[0].detail, {
+        code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it in the pane.', engineId: 'claude',
+        observedAt: store.sessions.get(session.id).launchBlocker.observedAt
+      });
+      // Closes #2193 PRR-B C2: this also rides the delivery ledger
+      // GET /api/launch-sequences already reads (server.js), with no change
+      // to that route.
+      const delivered = store.sessionRuleDeliveries.listForSession(session.id);
+      assert.equal(delivered.length, 1);
+      assert.equal(delivered[0].channel, 'prime-paste');
+      assert.equal(delivered[0].outcome, 'skipped');
+      assert.match(delivered[0].skipReason, /restarted/);
+      // The record does not stand in for the clearing sweep: the first tick
+      // still reconciles the blocker against the pane exactly as before.
+      armed[0].fn();
+      assert.equal(store.sessions.get(session.id).launchBlocker, null);
+    });
+
+    it('the same, pull-pointer (pasteOutcomeBase) carrier: rides pasteOutcome (PM ruling on PRR-B C2) instead of rulesDelivery (#2193)', () => {
+      const { project, session } = live({ carrier: 'pointer' });
+      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.POINTER_PASTE_OUTCOME_EVENT }), []);
+      sessions.startLaunchBlockerSweep();
+      const pasted = store.activity.query({ sessionId: session.id, eventType: sessions.POINTER_PASTE_OUTCOME_EVENT });
+      assert.equal(pasted.length, 1);
+      assert.equal(pasted[0].projectId, project.id);
+      assert.equal(pasted[0].detail.engineId, 'claude');
+      assert.equal(pasted[0].detail.outcome, sessions._pointerPasteIsGated('claude') ? 'readiness-gated' : 'blind');
+      assert.match(pasted[0].detail.detail, /restarted/);
+      // No rules-delivery row for this carrier — that ledger is not what this launch used.
+      assert.deepEqual(store.sessionRuleDeliveries.listForSession(session.id), []);
+      const dropped = store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT });
+      assert.equal(dropped.length, 1);
+    });
+
+    it('ordinary carrier: a paste that genuinely SUCCEEDED despite a failed blocker-clear is not reported as dropped (PRR-B round 3)', () => {
+      // Reachable, verified: `_deferEngineInit`'s `.then()` calls `run()` --
+      // the actual paste attempt -- even when `clearLaunchBlocker` THREW and
+      // left the blocker stored (the catch there only logs). A genuinely
+      // delivered paste can therefore leave a real row on this channel
+      // beside a blocker that still matches this marker.
+      const { project, session } = live({ carrier: 'rules' });
+      store.sessionRuleDeliveries.record({
+        sessionId: session.id, projectId: project.id, engineId: 'claude', channel: 'prime-paste', outcome: 'delivered'
+      });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 0 });
+      assert.equal(store.sessionRuleDeliveries.listForSession(session.id).length, 1, 'untouched -- not overwritten or duplicated');
+      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }), []);
+    });
+
+    it('pull-pointer carrier: a paste that genuinely SUCCEEDED despite a failed blocker-clear is not reported as dropped (PRR-B round 3)', () => {
+      const { project, session } = live({ carrier: 'pointer' });
+      store.activity.log({
+        projectId: project.id, sessionId: session.id, eventType: sessions.POINTER_PASTE_OUTCOME_EVENT,
+        detail: { engineId: 'claude', outcome: 'delivered', detail: null }
+      });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 0 });
+      assert.equal(store.activity.query({ sessionId: session.id, eventType: sessions.POINTER_PASTE_OUTCOME_EVENT }).length, 1,
+        'untouched -- not duplicated');
+      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }), []);
+    });
+
+    it('a paste that was genuinely SKIPPED for an unrelated reason (not by this restart) also counts as resolved: no re-flag', () => {
+      // "resolved" means ANY outcome on this watch's own channel, not only
+      // 'delivered' -- a prior skip is just as much a real answer to "did
+      // this watch's paste attempt conclude" as a success is.
+      const { project, session } = live({ carrier: 'rules' });
+      store.sessionRuleDeliveries.record({
+        sessionId: session.id, projectId: project.id, engineId: 'claude',
+        channel: 'prime-paste', outcome: 'skipped', skipReason: 'an unrelated withhold reason'
+      });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 0 });
+    });
+
+    it('a paste genuinely resolved, but kickoffOwed is ALSO true: still flagged, for the kickoff -- no duplicate ledger write for the paste', () => {
+      const { project, session } = live({ carrier: 'rules', kickoffOwed: true });
+      store.sessionRuleDeliveries.record({
+        sessionId: session.id, projectId: project.id, engineId: 'claude', channel: 'prime-paste', outcome: 'delivered'
+      });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 }, 'the kickoff has no ledger to resolve against, so it is still taken at face value');
+      assert.equal(store.sessionRuleDeliveries.listForSession(session.id).length, 1, 'the resolved paste row is not touched again');
+      assert.equal(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }).length, 1);
+    });
+
+    it('a second restart does not re-flag even once the ledger already has an outcome from the first', () => {
+      const { session } = live({ carrier: 'rules' });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 }, 'restart 1 writes the row');
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 0 },
+        'restart 2: FIRST_TURN_DROPPED_ON_RESTART_EVENT already matches -- idempotency is keyed on THAT, not the ledger');
+      assert.equal(store.sessionRuleDeliveries.listForSession(session.id).length, 1);
+    });
+
+    it('kickoffOwed alone (no paste owed at all -- a silent-prime launch with nothing to type): still recorded, with no ledger write', () => {
+      const { session } = live({ carrier: 'rules', pasteOwed: false, kickoffOwed: true, deferred: true });
+      // live() always writes a deliveryBase for carrier: 'rules'; a real
+      // silent-prime launch would have pasteOwed: false regardless of which
+      // base it carries, so the paste branch's own `pasteOwed &&` guard is
+      // what is actually under test here, not the base's absence.
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 });
+      assert.deepEqual(store.sessionRuleDeliveries.listForSession(session.id), [], 'no paste was owed -- nothing to write there');
+      assert.equal(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }).length, 1);
+    });
+
+    it('a kickoff that genuinely SENT despite a failed blocker-clear is not reported as dropped (PRR-B round 4)', () => {
+      // Same race as the paste's, for the kickoff: `injectCommand`
+      // (`launchSend: true`) is withheld by the stored blocker exactly like
+      // the paste is, so a blocker whose clear write threw can equally sit
+      // beside a kickoff that genuinely sent -- recorded, durably, by
+      // `launchKickoff.kickoff()`'s own `'launch.kickoff'` activity entry.
+      const { session } = live({ carrier: 'rules', pasteOwed: false, kickoffOwed: true });
+      store.activity.log({
+        projectId: store.sessions.get(session.id).projectId, sessionId: session.id,
+        eventType: 'launch.kickoff', detail: { observed: 'sent' }
+      });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 0 });
+      assert.equal(store.activity.query({ sessionId: session.id, eventType: 'launch.kickoff' }).length, 1, 'untouched -- not duplicated');
+      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }), []);
+    });
+
+    it('a kickoff genuinely sent, but the PASTE is still owed and unresolved: still flagged, for the paste -- the kickoff receipt is not touched', () => {
+      const { project, session } = live({ carrier: 'rules', pasteOwed: true, kickoffOwed: true });
+      store.activity.log({
+        projectId: project.id, sessionId: session.id, eventType: 'launch.kickoff', detail: { observed: 'sent' }
+      });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 }, 'the paste has no resolution yet, so it is still owed');
+      assert.equal(store.sessionRuleDeliveries.listForSession(session.id).length, 1);
+      assert.equal(store.sessionRuleDeliveries.listForSession(session.id)[0].channel, 'prime-paste');
+      assert.equal(store.activity.query({ sessionId: session.id, eventType: 'launch.kickoff' }).length, 1, 'the kickoff receipt is not touched');
+    });
+
+    it('both channels genuinely resolved despite the stored blocker never clearing: not flagged at all', () => {
+      const { project, session } = live({ carrier: 'rules', pasteOwed: true, kickoffOwed: true });
+      store.sessionRuleDeliveries.record({
+        sessionId: session.id, projectId: project.id, engineId: 'claude', channel: 'prime-paste', outcome: 'delivered'
+      });
+      store.activity.log({
+        projectId: project.id, sessionId: session.id, eventType: 'launch.kickoff', detail: { observed: 'sent' }
+      });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 0 });
+      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }), []);
+    });
+
+    it('neither pasteOwed nor kickoffOwed (an older marker shape, or a launch that owed neither): not flagged', () => {
+      const { session } = live({ carrier: 'rules', pasteOwed: false, kickoffOwed: false });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 0 });
+      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }), []);
+    });
+
+    // Addendum A483-R5: `0` server.js edits -- GET /api/sessions/:project/status
+    // already returns whatever getSessionStatus returns, so adding
+    // firstTurnDroppedOnRestart here is the whole visibility fix, covering all
+    // four launch shapes (unlike GET /api/launch-sequences's rulesRow, which
+    // only reaches two of them -- see test/api-launch-sequences.test.js).
+    for (const shape of [
+      { label: 'with-rules', carrier: 'rules', pasteOwed: true, kickoffOwed: false },
+      { label: 'no-rules', carrier: 'rules', pasteOwed: false, kickoffOwed: true },
+      { label: 'silent-prime', carrier: 'rules', pasteOwed: false, kickoffOwed: true },
+      { label: 'pull-pointer', carrier: 'pointer', pasteOwed: true, kickoffOwed: false }
+    ]) {
+      it(`getSessionStatus surfaces firstTurnDroppedOnRestart beside launchBlocker for a ${shape.label} launch (#2193, Addendum A483-R5)`, () => {
+        const { project, session } = live({ carrier: shape.carrier, pasteOwed: shape.pasteOwed, kickoffOwed: shape.kickoffOwed });
+        const blockerBefore = store.sessions.get(session.id).launchBlocker;
+        // Read via the activity log directly, not getSessionStatus, before
+        // reconciling: getSessionStatus itself reads the live pane
+        // (mocked AT_PROMPT in this describe) and would clear the blocker
+        // first, which is the very thing under test, not a setup step.
+        assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }), [],
+          'nothing recorded yet');
+        assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 });
+        const status = sessions.getSessionStatus(project.name);
+        assert.ok(status.firstTurnDroppedOnRestart, 'present once the restart is confirmed to have dropped it');
+        assert.equal(status.firstTurnDroppedOnRestart.code, blockerBefore.code);
+        assert.equal(status.firstTurnDroppedOnRestart.engineId, 'claude');
+        assert.equal(status.firstTurnDroppedOnRestart.observedAt, blockerBefore.observedAt, 'ties back to the exact blocker occurrence');
+      });
+    }
+
+    it('getSessionStatus reads null for a session nothing has flagged', () => {
+      const { project } = live({ deferred: false });
+      assert.equal(sessions.getSessionStatus(project.name).firstTurnDroppedOnRestart, null);
+    });
+
+    it('a REAL no-rules ordinary launch (an eager unrelated row already exists): the drop is still recorded, and that row is preserved untouched (PRR-B C2 round 2)', () => {
+      // _runEngineInit writes this row EAGERLY, before _deferEngineInit's
+      // watch even starts, for every no-rules project (lib/sessions.js ~990) --
+      // a true, complete, unrelated fact this function must never touch.
+      const { project, session } = live({ carrier: 'rules' });
+      store.sessionRuleDeliveries.record({
+        sessionId: session.id, projectId: project.id, engineId: 'claude', channel: 'none', outcome: 'no-rules'
+      });
+      const eagerRowBefore = store.sessionRuleDeliveries.listForSession(session.id)[0];
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 },
+        'a bare row-count guard would have skipped this -- the eager row must not blind it');
+      const rows = store.sessionRuleDeliveries.listForSession(session.id);
+      assert.equal(rows.length, 2, 'the eager row is preserved, not overwritten -- a SECOND row is added');
+      assert.deepEqual(rows[0], eagerRowBefore, 'untouched');
+      assert.equal(rows[1].channel, 'prime-paste');
+      assert.equal(rows[1].outcome, 'skipped');
+      assert.match(rows[1].skipReason, /restarted/);
+      assert.equal(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }).length, 1,
+        'the forensic trail fires even though the carrier ledger already had an unrelated row');
+      // Acknowledged, not fixed here: GET /api/launch-sequences's `rulesRow`
+      // still takes `[0]` (oldest), so the panel's `rulesDelivery` field
+      // keeps showing the OLD, unrelated row for this launch, not the drop
+      // just recorded -- `rows[0]` above is exactly what that field would
+      // read. Closing this needs a one-line server.js change (prefer the
+      // newest `prime-paste` row); out of this car's file scope, proposed to
+      // PM/Arc rather than made here.
+      assert.notEqual(rows[0].channel, 'prime-paste', 'documents the exact row the panel still shows for this launch shape');
+    });
+
+    it('a REAL silent-prime ordinary launch (an eager rules-hook row already exists): the drop is still recorded, and that row is preserved untouched (PRR-B C2 round 2)', () => {
+      const { project, session } = live({ carrier: 'rules' });
+      store.sessionRuleDeliveries.record({
+        sessionId: session.id, projectId: project.id, engineId: 'claude', channel: 'rules-hook', outcome: 'written', ruleIds: [1], digest: 'abc'
+      });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 });
+      const rows = store.sessionRuleDeliveries.listForSession(session.id);
+      assert.equal(rows.length, 2);
+      assert.equal(rows[0].channel, 'rules-hook', 'untouched');
+      assert.equal(rows[0].outcome, 'written', 'untouched -- a separate concern (#1063\'s receipt) this function must not disturb');
+      assert.equal(rows[1].channel, 'prime-paste');
+      assert.equal(rows[1].outcome, 'skipped');
+    });
+
+    it('a session with no stored blocker is not flagged at start', () => {
+      const { session } = live({ blocker: false });
+      sessions.startLaunchBlockerSweep();
+      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }), []);
+    });
+
+    it('a later, unrelated dialog with no matching deferral marker is not flagged (PRR-B C1: already-delivered case)', () => {
+      // Models a session whose first turn delivered fine, long ago, and whose
+      // admission gate (`_refuseAtStartupDialog`) later set a brand new
+      // blocker for a dialog that reappeared well after — `deferred: false`
+      // stores the blocker with no FIRST_TURN_DEFERRED_EVENT marker beside it,
+      // exactly as that path does (it goes through `_reconcileLaunchBlocker`,
+      // never `_deferEngineInit`'s `onDialog`).
+      const { session } = live({ deferred: false });
+      sessions.startLaunchBlockerSweep();
+      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }), []);
+      assert.deepEqual(store.sessionRuleDeliveries.listForSession(session.id), [], 'no ledger row either -- nothing was owed');
+      // The blocker itself is untouched either way: this function only ever reads it.
+      assert.equal(store.sessions.get(session.id).launchBlocker.code, 'trust_required');
+    });
+
+    it('a second start, already running, does not re-flag', () => {
+      const { session } = live();
+      sessions.startLaunchBlockerSweep();
+      sessions.startLaunchBlockerSweep();
+      assert.equal(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }).length, 1);
+    });
+
+    it('a dialog still standing across several restarts (before it is ever answered) is recorded once, not once per restart', () => {
+      const { session } = live();
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 }, 'restart 1');
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 0 }, 'restart 2: the ledger row from restart 1 already answers "owed?"');
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 0 }, 'restart 3');
+      assert.equal(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }).length, 1);
+      assert.equal(store.sessionRuleDeliveries.listForSession(session.id).length, 1);
+    });
+
+    it('reconcileDeferredFirstTurnsOnRestart is callable directly and counts what it flagged', () => {
+      const { session: a } = live();
+      const { session: b } = live();
+      live({ blocker: false });
+      live({ deferred: false });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 2 });
+      for (const session of [a, b]) {
+        assert.equal(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }).length, 1);
+      }
+    });
+
+    it('one project that cannot be checked is logged, and the next is still flagged', () => {
+      const broken = live();
+      const fine = live();
+      const realGetActive = store.sessions.getActive;
+      store.sessions.getActive = (projectId) => {
+        if (projectId === broken.project.id) throw new Error('store exploded');
+        return realGetActive(projectId);
+      };
+      let out = '';
+      setConsoleStream({ write: (chunk) => { out += chunk; } });
+      setLevel('warn');
+      try {
+        assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 });
+      } finally {
+        setLevel('error');
+        setConsoleStream(null);
+        store.sessions.getActive = realGetActive;
+      }
+      assert.match(out, /Could not record a restart-dropped first turn/);
+      assert.match(out, /store exploded/);
+      assert.equal(store.activity.query({ sessionId: fine.session.id, eventType: 'launch.first_turn_dropped_on_restart' }).length, 1);
+      assert.deepEqual(store.activity.query({ sessionId: broken.session.id, eventType: 'launch.first_turn_dropped_on_restart' }), []);
     });
 
     it('the same, with the dialog still up after the restart: the first tick keeps it', () => {
