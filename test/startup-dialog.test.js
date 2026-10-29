@@ -2783,12 +2783,14 @@ describe('the pane writer refuses a declared dialog (#2128)', () => {
  * empty repository with no turn taken: rows, the styled cursor row and the
  * cursor column as tmux reported them. Four selectors were captured that way (the
  * `/model` menu, the onboarding theme picker, the login-method selector, and the
- * folder trust dialog). The Bypass Permissions confirmation could not be
- * captured on a live pane (the host has it switched off, and a private
- * config home stops at a login first); its text is instead confirmed
- * against the installed Claude Code 2.1.283 binary's own bundled source
- * (BypassPermissionsModeDialog, byte offset 208119158 — see
- * data/engines/claude.json's bypass_permissions_confirm evidence block).
+ * folder trust dialog). This file's own fixture for the Bypass Permissions
+ * confirmation was not built from a live pane in this session (this host has
+ * it switched off, and a private config home stops at a login first); its
+ * text is confirmed against the installed Claude Code 2.1.283 binary's own
+ * bundled source (BypassPermissionsModeDialog, byte offset 208119158), and
+ * separately corroborated by a live 110x40 pane capture made in a different
+ * session — see data/engines/claude.json's bypass_permissions_confirm
+ * evidence block for both sources.
  */
 describe('only the composer at rest is a prompt (#2128, A160)', () => {
   const medusaWake = require('../lib/medusa-wake');
