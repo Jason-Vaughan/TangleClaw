@@ -11,6 +11,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const projectConfig = require('../lib/project-config');
 
@@ -321,6 +322,31 @@ describe('updateProject — group release authority (#1697)', () => {
     }
   });
 
+  it('fails closed on the write step too, not just the validator, when the lookup fails ONLY there (#2699 R-5)', async () => {
+    // The validator and `_applyProjectUpdates` each call `findReleaseOwnerElsewhere`
+    // (via `safeFindReleaseOwnerElsewhere`) separately. Before the fix, a failure
+    // reaching only the SECOND call was swallowed into "no owner elsewhere" and the
+    // write proceeded anyway — exactly the race the validator's own fail-closed
+    // check exists to prevent. Let the first call (the validator's) succeed and
+    // the second (the apply step's) fail, to isolate that path.
+    projects.createProject({ name: 'rg-apply-fail' });
+    const savedFind = store.projectGroups.findReleaseOwnerElsewhere;
+    let calls = 0;
+    store.projectGroups.findReleaseOwnerElsewhere = function (...args) {
+      calls += 1;
+      if (calls === 1) return savedFind.apply(this, args);
+      throw new Error('simulated DB failure on the apply-time lookup');
+    };
+    try {
+      const update = await projects.updateProject('rg-apply-fail', { releaseMode: 'agent' });
+      assert.match(update.errors[0], /could not verify group release authority/);
+      assert.equal((await projects.getProject('rg-apply-fail')).releaseMode, 'operator',
+        'the write must not have landed — releaseMode stays at its unconfigured default');
+    } finally {
+      store.projectGroups.findReleaseOwnerElsewhere = savedFind;
+    }
+  });
+
   it('a transfer via the group settings unblocks the formerly-refused member', async () => {
     projects.createProject({ name: 'rg-e' });
     projects.createProject({ name: 'rg-f' });
@@ -409,5 +435,113 @@ describe('updateProject — group release authority (#1697)', () => {
 
     store.projectGroups.removeMember(group.id, n.id);
     assert.equal(store.projectGroups.get(group.id).releaseOwnerProjectId, m.id);
+  });
+});
+
+// The settings-modal and group-modal pieces of #1697, run against the real
+// `public/ui.js` source (a browser script, not a module) the same way
+// `test/engine-change-launch-mode-ui.test.js` does: extract one function (or
+// expression) by text and execute it in a VM sandbox. Kept here rather than
+// a new `test/ui-dom.test.js` file, which would also need registering in
+// `test/tiers.json`/`.testament.toml` for `scripts/test-tiers.js --check`
+// (both outside this chunk's file scope) — see the PR body.
+describe('public/ui.js — group release-authority UI (#1697)', () => {
+  const uiSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+
+  /**
+   * One top-level function's source in a browser script (mirrors the helper
+   * in `test/engine-change-launch-mode-ui.test.js`).
+   * @param {string} decl - The declaration's opening text
+   * @returns {string}
+   */
+  function functionSource(decl) {
+    const start = uiSrc.indexOf(decl);
+    assert.notEqual(start, -1, `${decl} must exist`);
+    return uiSrc.slice(start, uiSrc.indexOf('\n}\n', start) + 2);
+  }
+
+  describe('releaseOwnerGroup — the settings-modal hint (R-3)', () => {
+    /**
+     * Evaluate the shipped `releaseOwnerGroup` expression against a project.
+     * @param {object} project
+     * @returns {object|undefined}
+     */
+    function releaseOwnerGroupFor(project) {
+      const marker = 'const releaseOwnerGroup = ';
+      const start = uiSrc.indexOf(marker);
+      assert.notEqual(start, -1, 'the releaseOwnerGroup computation must exist');
+      const end = uiSrc.indexOf(';\n', start);
+      const expr = uiSrc.slice(start + marker.length, end);
+      const ctx = { project };
+      vm.createContext(ctx);
+      return vm.runInContext(expr, ctx);
+    }
+
+    it('picks a group owned by a DIFFERENT project over one this project owns itself', () => {
+      const project = {
+        id: 1,
+        groups: [
+          { id: 'self-owned', name: 'self', releaseOwnerProjectId: 1 },
+          { id: 'elsewhere', name: 'conflict', releaseOwnerProjectId: 2, releaseOwnerName: 'Other' }
+        ]
+      };
+      assert.equal(releaseOwnerGroupFor(project).id, 'elsewhere');
+    });
+
+    it('falls back to a self-owned group when nothing else conflicts', () => {
+      const project = { id: 1, groups: [{ id: 'self-owned', name: 'self', releaseOwnerProjectId: 1 }] };
+      assert.equal(releaseOwnerGroupFor(project).id, 'self-owned');
+    });
+
+    it('is undefined when no group has any owner', () => {
+      const project = { id: 1, groups: [{ id: 'vacant', name: 'v', releaseOwnerProjectId: null }] };
+      assert.equal(releaseOwnerGroupFor(project), undefined);
+    });
+  });
+
+  describe('toggleGroupMembership — the group-modal staleness guard (R-6)', () => {
+    /**
+     * Run the real `toggleGroupMembership` against mocked API/render globals.
+     * @param {object} opts
+     * @param {string|null} opts.groupEditIdValue - What the modal is showing when the toggle starts
+     * @param {string} opts.groupId - The group this toggle is for
+     * @param {object} opts.fetchedData - What the refetch after the mutation returns
+     * @returns {Promise<{renderCalls: Array}>}
+     */
+    async function run({ groupEditIdValue, groupId, fetchedData }) {
+      const renderCalls = [];
+      const ctx = {
+        groupEditId: groupEditIdValue,
+        apiMutate: async () => ({}),
+        api: async () => fetchedData,
+        renderGroupReleaseOwner: (members, owner) => renderCalls.push({ members, owner })
+      };
+      vm.createContext(ctx);
+      vm.runInContext(functionSource('async function toggleGroupMembership('), ctx);
+      await ctx.toggleGroupMembership(groupId, 42, true);
+      return { renderCalls };
+    }
+
+    it('renders the refreshed owner when the modal is still showing the same group', async () => {
+      const { renderCalls } = await run({
+        groupEditIdValue: 'g1', groupId: 'g1', fetchedData: { members: [1], releaseOwnerProjectId: 1 }
+      });
+      assert.equal(renderCalls.length, 1);
+      assert.deepEqual(renderCalls[0], { members: [1], owner: 1 });
+    });
+
+    it('does not render when the modal switched to a different group while the request was in flight', async () => {
+      const { renderCalls } = await run({
+        groupEditIdValue: 'g2', groupId: 'g1', fetchedData: { members: [1], releaseOwnerProjectId: 1 }
+      });
+      assert.equal(renderCalls.length, 0);
+    });
+
+    it('does not render when the modal closed (groupEditId null) while the request was in flight', async () => {
+      const { renderCalls } = await run({
+        groupEditIdValue: null, groupId: 'g1', fetchedData: { members: [1], releaseOwnerProjectId: 1 }
+      });
+      assert.equal(renderCalls.length, 0);
+    });
   });
 });

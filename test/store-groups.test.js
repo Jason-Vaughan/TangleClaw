@@ -185,5 +185,82 @@ describe('store.projectGroups', () => {
       const proj = store.projects.create({ name: 'TestProj', path: '/tmp/tp' });
       assert.deepEqual(store.projectGroups.getByProject(proj.id), []);
     });
+
+    it('does not auto-claim a new vacant group when the project already defers to a different group\'s owner (#1697 R-1/R-2)', () => {
+      const groupA = store.projectGroups.create({ name: 'fleet-a' });
+      const groupB = store.projectGroups.create({ name: 'fleet-b' });
+      const owner = store.projects.create({ name: 'OwnerProj', path: '/tmp/owner' });
+      const member = store.projects.create({ name: 'MemberProj', path: '/tmp/member' });
+
+      // Both projects resolve to the release-capable 'operator' default with
+      // no on-disk config (#1702), so the owner auto-claims groupA the moment
+      // it joins — the same auto-claim this test's fix still has to apply.
+      store.projectGroups.addMember(groupA.id, owner.id);
+      assert.equal(store.projectGroups.get(groupA.id).releaseOwnerProjectId, owner.id);
+
+      // member joins groupA too (fine — groupA already has an owner, and
+      // member isn't it), then joins a SECOND, vacant group. Before the fix,
+      // addMember claimed groupB for member purely because it was vacant,
+      // with no check that member already defers elsewhere; that let the
+      // same project hold release authority in two groups at once.
+      store.projectGroups.addMember(groupA.id, member.id);
+      store.projectGroups.addMember(groupB.id, member.id);
+      assert.equal(store.projectGroups.get(groupB.id).releaseOwnerProjectId, null,
+        'groupB must stay vacant — member already defers to groupA\'s owner');
+    });
+
+    it('still lets a project with no owner elsewhere claim a vacant group it joins', () => {
+      const group = store.projectGroups.create({ name: 'fleet-solo' });
+      const proj = store.projects.create({ name: 'SoloProj', path: '/tmp/solo' });
+      store.projectGroups.addMember(group.id, proj.id);
+      assert.equal(store.projectGroups.get(group.id).releaseOwnerProjectId, proj.id);
+    });
+  });
+
+  describe('safeFindReleaseOwnerElsewhere (#1697 R-5)', () => {
+    it('passes through a successful lookup unchanged, with unresolvable: false', () => {
+      const group = store.projectGroups.create({ name: 'fleet-safe-ok' });
+      const owner = store.projects.create({ name: 'SafeOwner', path: '/tmp/safe-owner' });
+      const member = store.projects.create({ name: 'SafeMember', path: '/tmp/safe-member' });
+      store.projectGroups.addMember(group.id, owner.id); // auto-claims
+      store.projectGroups.addMember(group.id, member.id);
+
+      const direct = store.projectGroups.findReleaseOwnerElsewhere(member.id);
+      const safe = store.projectGroups.safeFindReleaseOwnerElsewhere(member.id);
+      assert.deepEqual(safe, { elsewhere: direct, unresolvable: false });
+      assert.equal(safe.elsewhere.ownerProjectId, owner.id);
+    });
+
+    it('fails CLOSED (unresolvable: true, elsewhere: null) when the underlying lookup throws', () => {
+      const proj = store.projects.create({ name: 'SafeFail', path: '/tmp/safe-fail' });
+      const saved = store.projectGroups.findReleaseOwnerElsewhere;
+      store.projectGroups.findReleaseOwnerElsewhere = () => { throw new Error('simulated DB failure'); };
+      try {
+        assert.deepEqual(
+          store.projectGroups.safeFindReleaseOwnerElsewhere(proj.id),
+          { elsewhere: null, unresolvable: true }
+        );
+      } finally {
+        store.projectGroups.findReleaseOwnerElsewhere = saved;
+      }
+    });
+
+    it('treats NOT_INITIALIZED as "no group feature active," not unresolvable', () => {
+      const proj = store.projects.create({ name: 'SafeNotInit', path: '/tmp/safe-not-init' });
+      const saved = store.projectGroups.findReleaseOwnerElsewhere;
+      store.projectGroups.findReleaseOwnerElsewhere = () => {
+        const err = new Error('store not initialized');
+        err.code = 'NOT_INITIALIZED';
+        throw err;
+      };
+      try {
+        assert.deepEqual(
+          store.projectGroups.safeFindReleaseOwnerElsewhere(proj.id),
+          { elsewhere: null, unresolvable: false }
+        );
+      } finally {
+        store.projectGroups.findReleaseOwnerElsewhere = saved;
+      }
+    });
   });
 });
