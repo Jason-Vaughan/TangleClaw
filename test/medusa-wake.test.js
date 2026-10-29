@@ -1534,17 +1534,33 @@ describe('medusa-wake — a scan requested inside the observation gap is booked,
 
     // ~1.2s later, same as the real not-accepted receipt timing: the
     // immediate re-arm asks for a scan.
+    const nudgeTime = clock;
     clock += 1200;
     wake.requestScan(1, 'wake-rearmed');
     assert.equal(reads.length, readsAfterNudge, 'still inside MIN_OBSERVATION_GAP_MS: no SECOND look fires synchronously');
     assert.equal(timers.length, 1, 'a follow-up is booked instead of the request being dropped outright');
 
-    // The booked follow-up fires at the earliest safe time -- strictly
+    // The earliest eligible moment is MIN_OBSERVATION_GAP_MS after the
+    // NUDGE's own observation, not a fresh full gap from the request --
+    // PM/PRR-A's precise finding (#2716 round 2): booking a full gap from
+    // the ~1.2s-late request would run the look at +5.2s, later than a
+    // periodic tick could legitimately beat it to.
+    const expectedDueAt = nudgeTime + wake.MIN_OBSERVATION_GAP_MS;
+    assert.equal(timers[0].dueAt, expectedDueAt, 'booked for the REMAINING gap, not a fresh one from the request');
+
+    // One tick short of due: still nothing. This is the asserted proof that
+    // the look is not merely "eventually" sooner than a periodic tick, but
+    // AT the earliest eligible moment and no later.
+    clock = expectedDueAt - 1;
+    fireDueTimers();
+    assert.equal(reads.length, readsAfterNudge, 'not yet due');
+
+    // At the earliest eligible moment, the follow-up fires -- strictly
     // before a periodic tick is ever run again in this test, so whatever
     // looked again, it was the follow-up and nothing else.
-    clock += wake.MIN_OBSERVATION_GAP_MS;
+    clock = expectedDueAt;
     fireDueTimers();
-    assert.equal(reads.length, readsAfterNudge + 1, 'the follow-up itself looked, without waiting for a periodic tick');
+    assert.equal(reads.length, readsAfterNudge + 1, 'the follow-up itself looked, exactly at the earliest eligible moment');
     assert.equal(reads[reads.length - 1], world.sessions[0].tmuxSession);
   });
 

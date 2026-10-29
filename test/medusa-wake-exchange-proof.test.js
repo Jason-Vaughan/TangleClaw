@@ -157,15 +157,22 @@ describe('wakes on the real exchange record (#2086)', () => {
     it('one re-arm per miss, however many watchdog passes and restarts see it', () => {
       const missed = phase([{ op: 'setup' }, { op: 'send', hubId: 'h1' }, { op: 'ticks', n: 4 }], { receipt: 'not-accepted' });
       const x0 = exchange(missed, 'h1');
-      assert.equal(x0.state, 'wake_not_accepted');
       assert.equal(factsOf(x0, 'wake_not_accepted')[0].nonce, attemptNonces(x0)[0], 'the miss names the attempt it is about');
+      // #2716: the re-arm itself (a durable store write, not the wake
+      // monitor's own later scan) now runs immediately inside THIS phase,
+      // right after the receipt is recorded -- not left waiting for a
+      // separate watchdog pass, which is why the exchange has already
+      // moved past `wake_not_accepted` by the time this phase returns.
+      assert.notEqual(x0.state, 'wake_not_accepted', 'already re-armed immediately, not left waiting for a watchdog pass');
+      assert.deepEqual([x0.rearmCount, factsOf(x0, 'rearmed').length], [1, 1]);
+      assert.equal(factsOf(x0, 'rearmed')[0].code, 'not-accepted');
 
+      // Further watchdog passes, mid-backoff, find it already armed and re-arm nothing more.
       const armed = phase([{ op: 'watchdog' }, { op: 'watchdog' }]);
       assert.deepEqual([exchange(armed, 'h1').rearmCount, factsOf(exchange(armed, 'h1'), 'rearmed').length], [1, 1]);
-      // Mid-backoff, a restarted watchdog re-arms nothing more.
       const again = phase([{ op: 'watchdog' }, { op: 'watchdog' }]);
       assert.deepEqual([exchange(again, 'h1').rearmCount, factsOf(exchange(again, 'h1'), 'rearmed').length], [1, 1]);
-      assert.equal(exchange(again, 'h1').nextEligibleAt, exchange(armed, 'h1').nextEligibleAt, 'the backoff is on record');
+      assert.equal(exchange(again, 'h1').nextEligibleAt, x0.nextEligibleAt, 'the backoff is on record from the immediate re-arm');
 
       const retried = phase([{ op: 'ticks', n: 8 }]);
       assert.equal(retried.injected.length, 1, 'the re-arm buys exactly one more nudge');
