@@ -80,10 +80,14 @@ const GUARDED_TIMEOUT_MS = 300000;
  * `--test-timeout` for the Large tier (#2691), in milliseconds. The Large
  * tier is allowed real subprocesses and real I/O, so its own slowest file
  * runs far longer than Medium's: `test/soak-guest.test.js` measured ~804 s
- * ALONE (208 tests, several deliberately simulating a probe hang up to its
- * own configured timeout) and passed cleanly end to end — this is not a
- * hang, it is a legitimately slow file. `GUARDED_TIMEOUT_MS` is calibrated
- * for Medium and would cancel that file as a false failure.
+ * ALONE before a fix to two real slowness causes (a deferred-cleanup bug in
+ * `deploy/soak/guest/guest-setup.sh`'s `bounded()` watchdog, and a fresh
+ * macOS Gatekeeper/syspolicyd scan on every one of the dozens of brand-new
+ * fake-command executables the test created per run); fixed, it measures
+ * ~270 s ALONE, 208/208 passing both times — slow by design (deliberate
+ * probe-hang simulations), never actually stuck. `GUARDED_TIMEOUT_MS` is
+ * calibrated for Medium and would still cancel this file as a false
+ * failure even post-fix.
  *
  * Unmeasured: how much slower that file runs with the full ~310-file Large
  * tier sharing the host (the Medium tier's own calibration saw a ~12x

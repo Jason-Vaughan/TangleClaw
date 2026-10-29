@@ -107,11 +107,14 @@ describe('stages 3, 4 and 5: the ledger\'s tiers, guarded where the tier promise
       '--test-reporter=junit', '--test-reporter-destination=/tmp/j.xml', 'test/a.test.js', 'test/b.test.js'
     ]);
     assert.equal(stage.GUARDED_TIMEOUT_MS, 300000, 'the value measured when the ledger was written; re-measure before lowering');
-    // test/soak-guest.test.js measured ~804s alone, end to end, all 208 tests
-    // green — LARGE_TIMEOUT_MS must clear that with real margin, not just
-    // match GUARDED_TIMEOUT_MS (which would cancel it as a false failure).
+    // test/soak-guest.test.js measured ~804s alone before a fix to two real
+    // slowness causes, ~270s alone after — all 208 tests green both times.
+    // LARGE_TIMEOUT_MS must clear even the pre-fix figure with real margin,
+    // not just match GUARDED_TIMEOUT_MS (which would cancel it as a false
+    // failure), since the margin is a placeholder against unmeasured
+    // shared-host slowdown, not a tight fit to the current fixed timing.
     assert.ok(stage.LARGE_TIMEOUT_MS > stage.GUARDED_TIMEOUT_MS, 'the Large tier needs a more generous budget than Medium');
-    assert.ok(stage.LARGE_TIMEOUT_MS > 804000, 'must clear the slowest known Large file (test/soak-guest.test.js, ~804s alone) with margin');
+    assert.ok(stage.LARGE_TIMEOUT_MS > 804000, 'must clear the slowest known Large file pre-fix (test/soak-guest.test.js, ~804s alone) with margin');
     for (const guard of Object.values(stage.GUARD_OF_TIER)) assert.ok(fs.existsSync(path.join(REPO, guard)), guard);
   });
 });
