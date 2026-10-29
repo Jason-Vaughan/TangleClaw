@@ -4886,6 +4886,71 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
       assert.equal(crashCause(session.id), undefined);
     });
 
+    it('the issue\'s own case: a restart-dropped first turn is recorded once, durably, before the first tick (#2193)', () => {
+      const { project, session } = live();
+      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: 'launch.first_turn_dropped_on_restart' }), []);
+      sessions.startLaunchBlockerSweep();
+      assert.deepEqual(looks, [], 'the record reads the stored row, never the pane');
+      const events = store.activity.query({ sessionId: session.id, eventType: 'launch.first_turn_dropped_on_restart' });
+      assert.equal(events.length, 1);
+      assert.equal(events[0].projectId, project.id);
+      assert.deepEqual(events[0].detail, {
+        code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it in the pane.', engineId: 'claude',
+        observedAt: store.sessions.get(session.id).launchBlocker.observedAt
+      });
+      // The record does not stand in for the clearing sweep: the first tick
+      // still reconciles the blocker against the pane exactly as before.
+      armed[0].fn();
+      assert.equal(store.sessions.get(session.id).launchBlocker, null);
+    });
+
+    it('a session with no stored blocker is not flagged at start', () => {
+      const { session } = live({ blocker: false });
+      sessions.startLaunchBlockerSweep();
+      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: 'launch.first_turn_dropped_on_restart' }), []);
+    });
+
+    it('a second start, already running, does not re-flag', () => {
+      const { session } = live();
+      sessions.startLaunchBlockerSweep();
+      sessions.startLaunchBlockerSweep();
+      assert.equal(store.activity.query({ sessionId: session.id, eventType: 'launch.first_turn_dropped_on_restart' }).length, 1);
+    });
+
+    it('reconcileDeferredFirstTurnsOnRestart is callable directly and counts what it flagged', () => {
+      const { session: a } = live();
+      const { session: b } = live();
+      live({ blocker: false });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 2 });
+      for (const session of [a, b]) {
+        assert.equal(store.activity.query({ sessionId: session.id, eventType: 'launch.first_turn_dropped_on_restart' }).length, 1);
+      }
+    });
+
+    it('one project that cannot be checked is logged, and the next is still flagged', () => {
+      const broken = live();
+      const fine = live();
+      const realGetActive = store.sessions.getActive;
+      store.sessions.getActive = (projectId) => {
+        if (projectId === broken.project.id) throw new Error('store exploded');
+        return realGetActive(projectId);
+      };
+      let out = '';
+      setConsoleStream({ write: (chunk) => { out += chunk; } });
+      setLevel('warn');
+      try {
+        assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 });
+      } finally {
+        setLevel('error');
+        setConsoleStream(null);
+        store.sessions.getActive = realGetActive;
+      }
+      assert.match(out, /Could not record a restart-dropped first turn/);
+      assert.match(out, /store exploded/);
+      assert.equal(store.activity.query({ sessionId: fine.session.id, eventType: 'launch.first_turn_dropped_on_restart' }).length, 1);
+      assert.deepEqual(store.activity.query({ sessionId: broken.session.id, eventType: 'launch.first_turn_dropped_on_restart' }), []);
+    });
+
     it('the same, with the dialog still up after the restart: the first tick keeps it', () => {
       const { session } = live();
       startupDialog.look = (name) => { looks.push(name); return AT_DIALOG; };
