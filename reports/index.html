@@ -235,7 +235,8 @@
       <span>TangleClaw Autonomous Sprint Reports</span>
     </div>
     <div class="nav-links">
-      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.46.1/">v5.46.1 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.47.0/">v5.47.0 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.46.1/">v5.46.1</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.46.0/">v5.46.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.45.0/">v5.45.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.44.0/">v5.44.0</a>
@@ -264,36 +265,59 @@
       <div class="kpi-grid">
         <div class="kpi-card">
           <div class="kpi-label">Published Sprint Reports</div>
-          <div class="kpi-val">14 Releases</div>
-          <div class="kpi-sub"><code>v5.34.0</code> · <code>v5.35.0</code> · <code>v5.36.0</code> · <code>v5.37.0</code> · <code>v5.38.0</code> · <code>v5.39.0</code> · <code>v5.40.0</code> · <code>v5.41.0</code> · <code>v5.42.0</code> · <code>v5.43.0</code> · <code>v5.44.0</code> · <code>v5.45.0</code> · <code>v5.46.0</code> · <code>v5.46.1</code></div>
+          <div class="kpi-val">15 Releases</div>
+          <div class="kpi-sub"><code>v5.34.0</code> · <code>v5.35.0</code> · <code>v5.36.0</code> · <code>v5.37.0</code> · <code>v5.38.0</code> · <code>v5.39.0</code> · <code>v5.40.0</code> · <code>v5.41.0</code> · <code>v5.42.0</code> · <code>v5.43.0</code> · <code>v5.44.0</code> · <code>v5.45.0</code> · <code>v5.46.0</code> · <code>v5.46.1</code> · <code>v5.47.0</code></div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Cumulative Sprint PRs</div>
-          <div class="kpi-val">197 PRs Merged</div>
-          <div class="kpi-sub"><strong>73 waves</strong> across fourteen reports · v5.46.1 delivered 5 PRs across 6 Milestone #32 issues</div>
+          <div class="kpi-val">204 PRs Merged</div>
+          <div class="kpi-sub"><strong>77 waves</strong> across fifteen reports · v5.47.0 delivered 7 PRs across 6 Milestone #32 issues</div>
         </div>
         <div class="kpi-card">
-          <div class="kpi-label">Full Local Suite Proof</div>
-          <div class="kpi-val">24,380 / 0 Fail</div>
-          <div class="kpi-sub"><strong>Stages 1–5 100% green</strong> · <code>soak-guest</code> <strong>804s → 270s (-66.4%)</strong> · 4 <code>PRR-B</code> catches</div>
+          <div class="kpi-label">CI &amp; Fleet Refresh</div>
+          <div class="kpi-val">22/22 CI · 8/8 R3</div>
+          <div class="kpi-sub"><strong>100% first-time CI pass</strong> · 8-session <code>R3</code> refresh (<code>0 /clear</code>) · 11 PRR/Arc catches</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Latest Release Report</div>
-          <div class="kpi-val" style="color:var(--green);">v5.46.1</div>
-          <div class="kpi-sub">Tag <code>v5.46.1</code> · Base <code>6939342c</code> → W2-REC <code>980d53bb</code> · Milestone #32 <code>6/6</code> Closed</div>
+          <div class="kpi-val" style="color:var(--green);">v5.47.0</div>
+          <div class="kpi-sub">Tag <code>v5.47.0</code> · Base <code>980d53bb</code> → W2 <code>833b60b4</code> → W3-REC <code>#2714</code> · Milestone #32 <code>6/6</code> Closed</div>
         </div>
       </div>
     </section>
 
     <div class="report-list">
-      <!-- v5.46.1 Card -->
+      <!-- v5.47.0 Card -->
       <article class="report-card">
         <div class="report-header">
           <div>
             <span class="badge badge-green">● Latest Release · Oct 29, 2026</span>
+            <h2 class="report-title"><a href="./v5.47.0/">TangleClaw <code>v5.47.0</code>: “Engine dialogs and sandbox”</a></h2>
+          </div>
+          <span class="badge badge-cyan">W3-REC #2714 @ f24e5bff · Base 833b60b4</span>
+        </div>
+        <p style="color:#cbd5e1; margin:0;">
+          Four execution waves delivered <strong>7 PRs (#2709, #2710, #2711, #2713, #2712, #2714 + W4-REL, plus mid-sprint v5.46.1 PR #2708 @ c94164b0) in ~6 hours 48 minutes</strong>, closing all <strong>6 Milestone #32 issues (#1836, #2193, #2221, #2205, #2219, #2168)</strong> with a <strong>100% first-time CI pass rate (22/22 runs)</strong> and an <strong>8-session 8-hour <code>R3</code> in-thread procedural refresh (0 <code>/clear</code> calls)</strong>. Converged <code>lib/launch-dialog-guard.js#read</code> onto the shared validator and pane classifier in <code>lib/startup-dialog.js#entryErrors</code> while adding validated <code>acceptKeys</code> to <code>data/engines/claude.json</code> (<code>#2221</code>), declared Claude Code’s <code>bypass_permissions_confirm</code> dialog separately from <code>trust_required</code> and withheld partial shared-option frames (<code>"No, exit"</code>) under neutral <code>startup_screen_suspect</code> with glyph-qualified composer detection and candidate ranking (<code>#2205</code>), declared Codex’s default <code>fullAuto</code> (<code>workspace-write</code>) loopback block in <code>data/engines/codex.json</code> and surfaced the unready-gated diagnosis and remedy in <code>lib/launch-sequence.js#_loopbackSandboxNote</code>, <code>lib/startup-control-codex.js#loopbackSandboxNote</code>, and <code>tc start status</code> (<code>#1836</code>), recorded genuinely dropped first turns across server restarts in <code>lib/sessions.js#reconcileDeferredFirstTurnsOnRestart</code> via <code>pasteOwed</code>/<code>kickoffOwed</code> without false-dropping delivered turns (<code>#2193</code>), withheld mid-session command and switchboard injections with <code>pane_not_at_prompt</code> when a live pane positively shows a selector’s selected row in <code>lib/startup-dialog.js#_promptRow</code> and <code>lib/startup-dialog.js#withholdFor</code> while preserving draft save/restore (<code>#2219</code>), and shipped the default-off per-project <code>acceptFolderTrust</code> setting across <code>lib/project-config.js</code>, <code>lib/projects.js</code>, <code>lib/sessions.js#_acceptsFolderTrust</code>, and <code>public/ui.js</code> with staggered per-key session/dialog re-verification and <code>launch.folder_trust_accepted</code> activity auditing (<code>#2168</code>, completed with an 18-minute hot-spare base-merge assist by <code>TC-Lane-D</code> under <code>A483-R12</code>).
+        </p>
+        <div class="meta-pills">
+          <span class="badge badge-cyan">4 Waves · 7 PRs · 6h 48m Wall Time</span>
+          <span class="badge badge-green">6/6 Milestone #32 Issues Closed · 22/22 First-Time CI</span>
+          <span class="badge badge-purple">+2,560 / -211 LOC · 16/16 Rule #283 PASS · O483-V5470-PASS</span>
+        </div>
+        <div class="actions">
+          <a class="btn btn-primary" href="./v5.47.0/">📊 Open v5.47.0 Interactive Sprint Report →</a>
+          <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2714" target="_blank" rel="noopener">W3-REC PR #2714</a>
+        </div>
+      </article>
+
+      <!-- v5.46.1 Card -->
+      <article class="report-card">
+        <div class="report-header">
+          <div>
+            <span class="badge badge-purple">Release · Oct 29, 2026</span>
             <h2 class="report-title"><a href="./v5.46.1/">TangleClaw <code>v5.46.1</code>: “Local suite and release-authority stabilization”</a></h2>
           </div>
-          <span class="badge badge-cyan">W3-REL #2708 @ 1e29ed91 · Base 980d53bb</span>
+          <span class="badge badge-cyan">Tag v5.46.1 @ c94164b0 · Base 980d53bb</span>
         </div>
         <p style="color:#cbd5e1; margin:0;">
           Three execution waves delivered <strong>5 PRs (#2704, #2703, #2705, #2707, #2708) in ~6 hours 42 minutes</strong> with <strong>0 mid-sprint Operator interventions</strong>, resolved all <strong>6 stabilization issues (#2688, #2691, #2696, #2697, #2698, #2699)</strong>, and restored an un-waived <strong>100% green local <code>node scripts/test-stage.js</code> (<code>Stages 1–5</code>: <code>24,380</code> Prawduct tests, <code>0</code> failures)</strong>. Suppressed bundled engine re-seeding inside <code>test/setup-wizard.test.js</code> no-engine fixtures so installed Claude/Codex CLIs do not alter expected empty-engine results (<code>#2696</code>), added a <code>/usr/sbin/sysctl</code> Darwin fallback in <code>lib/ttyd-watcher.js#_sysctl</code> when bare <code>sysctl</code> is absent from non-login <code>PATH</code> (<code>#2697</code>), eliminated concurrency-load flakiness in <code>test/release-certification-host-publish.test.js</code> (once-initialized bare repo template copy) and <code>test/soak-driver.test.js</code> (targeted <code>isAlive</code> stub keeping live contender PIDs alive; <code>#2698</code>), unified fail-closed group release-authority lookups behind <code>lib/store.js#safeFindReleaseOwnerElsewhere</code> across all 5 call sites in <code>lib/store.js</code>, <code>lib/projects.js</code>, <code>lib/wrap-steps/version-bump.js</code>, and <code>lib/wrap-steps/_release-recommendation.js</code> while prioritizing conflicting owners in settings hints and guarding <code>public/ui.js#toggleGroupMembership</code> against stale <code>groupEditId</code> responses (<code>#2699</code>), reclassified 5 transitive-subprocess tests (including <code>test/session-rules-channel.test.js</code>) from Medium to Large in <code>test/tiers.json</code> (<code>5,650/5,650</code> Stage 4 pass; <code>#2688</code>), and cut <code>test/soak-guest.test.js</code> runtime by <strong>66.4% (<code>~804s → ~270s</code>, <code>209/209</code> pass)</strong> via a shared symlinked fake-command dispatcher inode (bypassing ~5,800 macOS Gatekeeper/<code>syspolicyd</code> scans) and race-free <code>SIGSTOP</code> freeze-capture-kill process-tree cleanup in <code>deploy/soak/guest/guest-setup.sh#bounded</code> alongside a dedicated Stage 5 timeout in <code>scripts/test-stage.js#tierArgv</code> (<code>#2691</code>).

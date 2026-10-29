@@ -1,0 +1,1485 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TangleClaw Sprint v5.47.0 — Executive Engineering &amp; Telemetry Report</title>
+  <style>
+    :root {
+      --bg: #070b14;
+      --bg-card: #0f172a;
+      --bg-card-alt: #131c31;
+      --border: #1e293b;
+      --border-hi: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --cyan: #38bdf8;
+      --green: #34d399;
+      --purple: #c084fc;
+      --amber: #fbbf24;
+      --rose: #fb7185;
+      --indigo: #818cf8;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(circle at 15% 0%, #0f1f3d 0%, var(--bg) 45%);
+      color: var(--text);
+      line-height: 1.55;
+    }
+    a { color: var(--cyan); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.88em;
+      background: rgba(148, 163, 184, 0.14);
+      padding: 0.12rem 0.38rem;
+      border-radius: 5px;
+      color: #e2e8f0;
+    }
+
+    /* Top Nav */
+    .topnav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(7, 11, 20, 0.88);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0.7rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      font-weight: 800;
+      font-size: 1.05rem;
+      color: var(--text);
+    }
+    .brand-dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--cyan), var(--green));
+      box-shadow: 0 0 12px var(--cyan);
+    }
+    .nav-links {
+      display: flex;
+      gap: 1.1rem;
+      flex-wrap: wrap;
+      font-size: 0.86rem;
+      font-weight: 600;
+    }
+    .nav-links a { color: var(--text-muted); transition: color 0.15s; }
+    .nav-links a:hover { color: var(--cyan); text-decoration: none; }
+
+    .container {
+      max-width: 1220px;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 4rem;
+    }
+
+    /* Hero */
+    .hero {
+      background: linear-gradient(145deg, rgba(15, 23, 42, 0.96), rgba(30, 27, 75, 0.72));
+      border: 1px solid var(--border-hi);
+      border-radius: 18px;
+      padding: 2.25rem 2rem;
+      margin-bottom: 2rem;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+    }
+    .hero-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(52, 211, 153, 0.12);
+      border: 1px solid rgba(52, 211, 153, 0.4);
+      color: var(--green);
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 0.28rem 0.75rem;
+      border-radius: 999px;
+      margin-bottom: 0.9rem;
+    }
+    .hero h1 {
+      margin: 0 0 0.65rem;
+      font-size: clamp(1.75rem, 3.2vw, 2.55rem);
+      letter-spacing: -0.02em;
+      line-height: 1.18;
+    }
+    .hero-sub {
+      margin: 0 0 1.4rem;
+      color: #cbd5e1;
+      font-size: 1.04rem;
+      max-width: 980px;
+    }
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+      margin-bottom: 1.75rem;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.55rem 1rem;
+      border-radius: 10px;
+      font-size: 0.86rem;
+      font-weight: 600;
+      border: 1px solid var(--border-hi);
+      background: var(--bg-card);
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .btn:hover {
+      border-color: var(--cyan);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      border-color: #38bdf8;
+      color: #fff;
+    }
+
+    /* KPI Grid */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(245px, 1fr));
+      gap: 1rem;
+    }
+    .kpi-card {
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.1rem 1.2rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .kpi-card::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--cyan), var(--green));
+    }
+    .kpi-label {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .kpi-val {
+      font-size: 1.65rem;
+      font-weight: 800;
+      margin: 0.25rem 0 0.2rem;
+      color: var(--text);
+      letter-spacing: -0.02em;
+    }
+    .kpi-sub {
+      font-size: 0.82rem;
+      color: #cbd5e1;
+    }
+
+    /* Sections */
+    .section {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.75rem;
+      margin-bottom: 1.75rem;
+    }
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.85rem;
+    }
+    .section-title {
+      margin: 0;
+      font-size: 1.35rem;
+      font-weight: 800;
+    }
+    .section-desc {
+      margin: 0.25rem 0 0;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .w-full { width: 100%; height: auto; display: block; }
+
+    /* Two-column & Three-column grids */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+      gap: 1.25rem;
+    }
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+    }
+
+    .subcard {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.2rem;
+    }
+    .subcard h3 {
+      margin: 0 0 0.6rem;
+      font-size: 1.02rem;
+    }
+
+    /* Stacked horizontal bars */
+    .bar-row {
+      margin-bottom: 0.95rem;
+    }
+    .bar-label-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.84rem;
+      margin-bottom: 0.3rem;
+      gap: 0.5rem;
+    }
+    .bar-track {
+      width: 100%;
+      height: 12px;
+      background: #090d16;
+      border-radius: 999px;
+      overflow: hidden;
+      display: flex;
+    }
+    .bar-fill {
+      height: 100%;
+    }
+
+    /* Badges & Pills */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.18rem 0.55rem;
+      border-radius: 999px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+    .badge-cyan, .badge-blue { background: rgba(56, 189, 248, 0.15); color: var(--cyan); border: 1px solid rgba(56, 189, 248, 0.35); }
+    .badge-green { background: rgba(52, 211, 153, 0.15); color: var(--green); border: 1px solid rgba(52, 211, 153, 0.35); }
+    .badge-purple { background: rgba(192, 132, 252, 0.15); color: var(--purple); border: 1px solid rgba(192, 132, 252, 0.35); }
+    .badge-amber { background: rgba(251, 191, 36, 0.15); color: var(--amber); border: 1px solid rgba(251, 191, 36, 0.35); }
+    .badge-rose { background: rgba(251, 113, 133, 0.15); color: var(--rose); border: 1px solid rgba(251, 113, 133, 0.35); }
+
+    .text-muted { color: var(--text-muted); font-size: 0.82rem; }
+
+    /* Filter Controls */
+    .filter-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.2rem;
+    }
+    .filter-btns {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+    .filter-btn {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border-hi);
+      color: var(--text-muted);
+      padding: 0.42rem 0.8rem;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .filter-btn:hover, .filter-btn.active {
+      background: rgba(56, 189, 248, 0.16);
+      border-color: var(--cyan);
+      color: var(--text);
+    }
+    .search-input {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border-hi);
+      color: var(--text);
+      padding: 0.48rem 0.85rem;
+      border-radius: 8px;
+      font-size: 0.84rem;
+      min-width: 250px;
+    }
+
+    /* Wave Cards */
+    .wave-card {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.15rem;
+      margin-bottom: 0.9rem;
+    }
+    .wave-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+      margin-bottom: 0.75rem;
+    }
+    .wave-num {
+      font-size: 0.74rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--cyan);
+    }
+    .wave-title {
+      margin: 0.1rem 0 0.15rem;
+      font-size: 1rem;
+    }
+    .wave-window {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+    .wave-meta {
+      display: flex;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+
+    .table-wrap { overflow-x: auto; }
+    .pr-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.84rem;
+    }
+    .pr-table th, .pr-table td {
+      padding: 0.52rem 0.65rem;
+      text-align: left;
+      border-top: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .pr-table th {
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      border-top: none;
+    }
+
+    /* Post-Mortem Lists */
+    .pm-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+    .pm-item {
+      background: rgba(7, 11, 20, 0.55);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--green);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      font-size: 0.88rem;
+    }
+    .pm-item.warn {
+      border-left-color: var(--amber);
+    }
+    .pm-item strong {
+      display: block;
+      margin-bottom: 0.25rem;
+      font-size: 0.94rem;
+    }
+
+    footer {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      padding: 2rem 1rem 1rem;
+      border-top: 1px solid var(--border);
+      margin-top: 2rem;
+    }
+  
+    .legend {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .legend-swatch {
+      width: 11px;
+      height: 11px;
+      border-radius: 3px;
+    }
+    .issue-pill {
+      display: inline-block;
+      background: rgba(129, 140, 248, 0.15);
+      border: 1px solid rgba(129, 140, 248, 0.35);
+      color: #a5b4fc;
+      padding: 0.1rem 0.45rem;
+      border-radius: 6px;
+      font-size: 0.76rem;
+      font-weight: 600;
+      margin: 0.1rem 0.15rem 0.1rem 0;
+    }
+    .pr-link { font-weight: 700; color: var(--cyan); }
+    .sha-link code {
+      background: rgba(148, 163, 184, 0.12);
+      color: #e2e8f0;
+      padding: 0.12rem 0.4rem;
+      border-radius: 5px;
+      font-size: 0.78rem;
+    }
+  </style>
+</head>
+<body>
+  <header class="topnav">
+    <div class="topnav-inner">
+      <div class="brand">
+        <div class="brand-badge">TC</div>
+        <div>
+          <div style="font-size:0.94rem;">TangleClaw Sprint Report</div>
+          <div style="font-size:0.72rem;color:var(--text-dim);font-weight:500;">v5.47.0 · Engine Dialogs &amp; Sandbox Hardening · 6 Issues / 7 PRs · Oct 29, 2026</div>
+        </div>
+      </div>
+      <nav class="nav-links" id="navLinks">
+        <a href="../" style="color:var(--accent2);font-weight:700;">← All Sprint Reports</a>
+        <a href="#overview" class="active">Overview</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#velocity">Velocity</a>
+        <a href="#deliverables">Deliverables</a>
+        <a href="#telemetry">Telemetry</a>
+        <a href="#postmortem">Post-Mortem</a>
+        <a href="#waves">7-PR Explorer</a>
+        <a href="#next-sprint">Next Sprint</a>
+      </nav>
+      <div class="nav-actions">
+        <button class="btn" id="themeBtn" onclick="toggleTheme()" title="Toggle Light/Dark Mode">☀️ Light Mode</button>
+        <button class="btn btn-primary" onclick="window.print()">🖨️ Export PDF</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- HERO -->
+    <section class="hero" id="overview">
+      <div class="hero-top">
+        <div>
+          <div class="eyebrow">🛡️ Sprint v5.47.0 Engine Dialogs &amp; Sandbox Retrospective · Charter A483–A483-R12 (Milestone #32 · 6 Issues · 7 PRs + Mid-Sprint v5.46.1 Live Cut)</div>
+          <h1>v5.47.0: Unified Startup Dialog Reader, Positive Selector-Row Guard, Per-Project Folder Trust Opt-In &amp; Codex Sandbox Loopback Diagnosis</h1>
+          <p class="hero-subtitle">
+            Sprint <strong>v5.47.0</strong> (<em>"Engine dialogs and sandbox"</em>, Charter <code>A483</code>–<code>A483-R12</code>, Milestone <code>#32</code>) closed all <strong>6 admitted issues</strong> (<code>#1836, #2193, #2221, #2205, #2219, #2168</code>) across <strong>4 execution waves and 7 PRs</strong> (Wave 1 PRs <code>#2709, #2710, #2711</code>, Wave 2 PRs <code>#2713, #2712</code>, Wave 3 Reconciliation <code>PR #2714</code>, and Wave 4 Release <code>W4-REL</code>) while simultaneously executing a zero-regression <strong>8-hour <code>R3</code> in-thread procedural refresh</strong> across all 8 fleet sessions (<code>0</code> <code>/clear</code> calls) and shipping/deploying the mid-sprint <strong><code>v5.46.1</code></strong> release (<code>PR #2708</code> @ <code>c94164b0</code>) live to <code>TangleClaw-Builder1</code>.
+            Key engineering breakthroughs include converging <code>lib/launch-dialog-guard.js</code> onto the shared validator and pane classifier in <code>lib/startup-dialog.js#entryErrors</code> (<code>#2221</code>); declaring Claude Code’s <code>bypass_permissions_confirm</code> dialog separately from <code>trust_required</code> in <code>data/engines/claude.json</code> and withholding partial shared-option frames (<code>"No, exit"</code>) under neutral <code>startup_screen_suspect</code> (<code>#2205</code>); diagnosing Codex <code>fullAuto</code> (<code>--sandbox workspace-write</code>) loopback isolation in <code>data/engines/codex.json</code>, <code>lib/startup-control-codex.js#loopbackSandboxNote</code>, <code>lib/launch-sequence.js#_loopbackSandboxNote</code>, and <code>lib/tc-verbs.js</code> (<code>#1836</code>); recording genuinely dropped first turns across server restarts in <code>lib/sessions.js#reconcileDeferredFirstTurnsOnRestart</code> by tracking <code>pasteOwed</code>/<code>kickoffOwed</code> (<code>#2193</code>); withholding mid-session command and switchboard injections with <code>pane_not_at_prompt</code> when a live pane positively displays a selector’s selected row in <code>lib/startup-dialog.js#_promptRow</code> and <code>lib/startup-dialog.js#withholdFor</code> while preserving draft send-and-clear behavior (<code>#2219</code>); and shipping the default-off per-project <code>acceptFolderTrust</code> setting across <code>lib/project-config.js</code>, <code>lib/projects.js</code>, <code>lib/sessions.js#_acceptsFolderTrust</code>, and <code>public/ui.js</code> with staggered per-key session/dialog re-verification and <code>launch.folder_trust_accepted</code> activity auditing (<code>#2168</code>).
+            <em>Participant Disclosure (Rule #283):</em> <code>TC-Lane-Obsr</code> operated as an in-test sprint participant whose telemetry, pre-merge source audits, and <code>O-Gate</code> holds lanes could read during execution.
+          </p>
+        </div>
+        <div class="status-pill">
+          ● v5.47.0 All 6 Milestone #32 Issues Merged (Waves 1–2 @ 833b60b4 · W3-REC PR #2714)
+        </div>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">Milestone #32 Scope</div>
+          <div class="kpi-value" style="color:var(--green)">6 / 6</div>
+          <div class="kpi-meta">100% of admitted issues (<code>#1836, #2193, #2221, #2205, #2219, #2168</code>) merged to <code>main @ 833b60b4</code></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">First-Time CI Pass Rate</div>
+          <div class="kpi-value" style="color:var(--green)">100%</div>
+          <div class="kpi-meta"><code>22 / 22</code> GitHub Actions <code>Tests</code> CI runs across Waves 1–3 passed green on first execution</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">PRR + Arc Defect Catches</div>
+          <div class="kpi-value" style="color:var(--accent)">11 Blocks</div>
+          <div class="kpi-meta">11 true-positive pre-merge catches across <code>PRR-A</code>, <code>PRR-B</code> &amp; <code>Arc</code> with <code>0</code> post-merge defects</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">8h R3 Fleet Refresh</div>
+          <div class="kpi-value" style="color:var(--accent2)">8 / 8</div>
+          <div class="kpi-meta">100% in-thread <code>R3</code> procedural refresh (<code>12:46Z–13:18Z</code>) with <code>0</code> <code>/clear</code> calls &amp; <code>0</code> dropped work</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Hot-Spare Recovery</div>
+          <div class="kpi-value" style="color:var(--green)">18m</div>
+          <div class="kpi-meta"><code>TC-Lane-D</code> completed <code>W2-B #2712</code> base-merge under <code>A483-R12</code> when <code>TC-Lane-C</code> hit model quota</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">O-Gate Release Catch</div>
+          <div class="kpi-value" style="color:var(--amber)">1 Hold</div>
+          <div class="kpi-meta"><code>O482-V5461-PR2708-2795363D-HOLD</code> caught 4 uncompiled W1 fragments before <code>v5.46.1</code> cut</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">FEATURES.md Anchors</div>
+          <div class="kpi-value" style="color:var(--accent2)">9 / 9</div>
+          <div class="kpi-meta">100% of newly added test &amp; symbol anchors verified in <code>W3-REC PR #2714</code> (<code>47/47</code> index tests pass)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Conflict Resolution</div>
+          <div class="kpi-value" style="color:var(--green)">0m</div>
+          <div class="kpi-meta"><code>0</code> merge conflicts across all 5 feature PRs &amp; <code>7</code> clean ancestor syncs onto <code>origin/main</code></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 1. ARCHITECTURAL DEEP DIVE -->
+    <section class="section" id="architecture">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 01 · Architectural Deep-Dive</span>
+          <h2 class="section-title">How v5.47.0 Hardens Engine Startup Dialogs, Selector-Row Guards &amp; Sandbox Diagnostics</h2>
+          <p class="section-desc">
+            Engine CLIs draw interactive prompts before or during a session where a blind keystroke can terminate the session or select an unintended option. Sprint <code>v5.47.0</code> unifies startup-dialog schema validation and classification across Claude Code and Codex, closes the partial shared-option race between folder trust and bypass-permissions confirmation, adds positive selector-row refusal for mid-session injections, introduces a strictly re-verified per-project opt-in for folder trust, and surfaces restarts and sandbox loopback blocks directly in launch readiness.
+          </p>
+        </div>
+      </div>
+
+      <div class="grid-3" style="margin-bottom:20px;">
+        <div class="subcard">
+          <span class="pillar-num">PILLAR 01 · UNIFIED DIALOG READER, BYPASS-PERMISSIONS &amp; SELECTOR GUARD (#2221, #2205, #2219)</span>
+          <h4>Single Validator, Partial-Frame Suspect Hold &amp; Positive Selector-Row Refusal</h4>
+          <p>
+            In <code>W1-A (PR #2711)</code>, <code>lib/launch-dialog-guard.js#read</code> was converged onto <code>lib/startup-dialog.js#entryErrors</code> and the shared pane classifier (<code>#2221</code>), eliminating duplicate dialog-schema parsing while adding validated <code>acceptKeys</code> (non-empty array of allowed key tokens) to <code>data/engines/claude.json</code>.
+            For <code>#2205</code>, Claude Code now declares <code>bypass_permissions_confirm</code> separately from <code>trust_required</code>. Because both screens share the default <code>"No, exit"</code> option, a half-rendered frame showing only <code>"No, exit"</code> is withheld under the neutral <code>startup_screen_suspect</code> code rather than misattributing to folder trust, and glyph-qualified prompt detection prevents option prose (e.g., <code>"2. No, exit"</code>) from spoofing the composer boundary.
+            In <code>W2-A (PR #2713, #2219)</code>, <code>lib/startup-dialog.js#_promptRow</code> and <code>lib/startup-dialog.js#withholdFor</code> distinguish a positively observed selector option row (<code>selectorRow: true</code>) from an ambiguous <code>noncomposer</code> frame: any mid-session command or switchboard wake against a live selector row is refused with <code>pane_not_at_prompt</code> (HTTP <code>409 STARTUP_DIALOG</code>), whereas a located composer draft retains its save-clear-send-restore path.
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">PILLAR 02 · PER-PROJECT OPT-IN FOLDER TRUST WITH PER-KEY RE-VERIFICATION (#2168)</span>
+          <h4>Default-Off acceptFolderTrust, Staggered Keys &amp; Activity Audit Trail</h4>
+          <p>
+            Building on <code>W1-A</code> and <code>W2-A</code>, <code>W2-B (PR #2712, #2168)</code> introduced the per-project <code>acceptFolderTrust</code> boolean setting (default <code>false</code>) in <code>lib/project-config.js</code>, <code>lib/projects.js</code>, <code>public/index.html</code>, and <code>public/ui.js</code>.
+            During launch, <code>lib/sessions.js#_acceptsFolderTrust</code> checks whether the project explicitly opted in and whether the live pane positively matches the engine’s <code>trust_required</code> dialog with a valid declared <code>acceptKeys</code> sequence (<code>["Down", "Enter"]</code> for Claude Code).
+            Before sending <em>each individual key</em> across the staggered key timer, <code>stillOurs()</code> re-verifies that the live session row still belongs to the same launch (treating a store read throw as <em>"not ours"</em>) and re-reads the tmux pane to confirm the exact same <code>trust_required</code> dialog is still on screen.
+            Only after every key in <code>acceptKeys</code> is delivered does TangleClaw record <code>launch.folder_trust_accepted</code> in project activity with the project, directory, session, and dialog id. TangleClaw never writes an engine’s trust state file directly, and all other startup dialogs remain operator decisions.
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">PILLAR 03 · CODEX LOOPBACK SANDBOX DIAGNOSIS &amp; RESTART DROP RECOVERY (#1836, #2193)</span>
+          <h4>Actionable Full-Auto Unready Notes &amp; Deferred First-Turn Accounting</h4>
+          <p>
+            In <code>W1-B (PR #2709, #1836)</code>, <code>data/engines/codex.json</code> declares that Codex’s <code>fullAuto</code> mode (<code>--full-auto</code> / <code>--sandbox workspace-write</code>) blocks outbound and loopback network access by default. When a Codex <code>fullAuto</code> launch sequence becomes <code>unready</code> with zero HTTP pulls recorded, <code>lib/startup-control-codex.js#loopbackSandboxNote</code> and <code>lib/launch-sequence.js#_loopbackSandboxNote</code> attach a structured likely-cause note and remedy (enable <code>sandbox_workspace_write.network_access = true</code> in <code>~/.codex/config.toml</code> or switch launch mode), surfaced in both the API and <code>tc start status</code> (<code>lib/tc-verbs.js</code>).
+            In <code>W1-C (PR #2710, #2193)</code>, <code>lib/sessions.js#reconcileDeferredFirstTurnsOnRestart</code> tracks <code>pasteOwed</code> and <code>kickoffOwed</code> alongside <code>hasSequence</code> so a server restart that interrupts a first turn waiting behind a startup dialog records <code>firstTurnDroppedOnRestart</code> on the session (including no-rules and silent-prime launches) while ensuring a dialog that appears <em>after</em> the first turn was already delivered never creates a false drop.
+          </p>
+        </div>
+      </div>
+
+      <div class="svg-wrap">
+        <div class="svg-caption">
+          <span>Figure 1.1 — v5.47.0 Startup Dialog Pipeline, Positive Selector-Row Guard &amp; Sandbox Readiness Architecture</span>
+          <span>7 PRs · 4 Execution Waves · 6 Milestone #32 Issues (#1836, #2193, #2221, #2205, #2219, #2168)</span>
+        </div>
+        <svg viewBox="0 0 1120 360" width="100%" height="auto" role="img" aria-label="v5.47.0 Engine Dialogs and Sandbox Architecture Diagram">
+          <defs>
+            <linearGradient id="boxGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#1e293b" />
+              <stop offset="100%" stop-color="#0f172a" />
+            </linearGradient>
+            <marker id="arrowBlue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8" />
+            </marker>
+            <marker id="arrowGreen" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="#22c55e" />
+            </marker>
+            <marker id="arrowAmber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="#f59e0b" />
+            </marker>
+          </defs>
+
+          <!-- Column 1: Engine Profile Declarations -->
+          <rect x="18" y="24" width="248" height="308" rx="12" fill="url(#boxGrad1)" stroke="#38bdf8" stroke-width="1.6" />
+          <text x="34" y="52" fill="#38bdf8" font-size="11" font-weight="800" letter-spacing="0.08em">STAGE 1 · ENGINE DECLARATIONS</text>
+          <text x="34" y="74" fill="#f8fafc" font-size="13.5" font-weight="700">Profiles &amp; Shared Validator</text>
+
+          <rect x="32" y="90" width="220" height="66" rx="8" fill="#111827" stroke="#334155" />
+          <text x="42" y="110" fill="#38bdf8" font-size="11.5" font-weight="700">Unified Dialog Reader (#2221)</text>
+          <text x="42" y="126" fill="#94a3b8" font-size="10.5">startup-dialog.js#entryErrors</text>
+          <text x="42" y="142" fill="#22c55e" font-size="10">launch-dialog-guard.js#read delegates</text>
+
+          <rect x="32" y="166" width="220" height="66" rx="8" fill="#111827" stroke="#334155" />
+          <text x="42" y="186" fill="#f59e0b" font-size="11.5" font-weight="700">data/engines/claude.json (#2205)</text>
+          <text x="42" y="202" fill="#94a3b8" font-size="10.5">trust_required (acceptKeys: Down,Enter)</text>
+          <text x="42" y="218" fill="#64748b" font-size="10">+ bypass_permissions_confirm</text>
+
+          <rect x="32" y="242" width="220" height="72" rx="8" fill="#111827" stroke="#334155" />
+          <text x="42" y="262" fill="#a855f7" font-size="11.5" font-weight="700">data/engines/codex.json (#1836)</text>
+          <text x="42" y="278" fill="#94a3b8" font-size="10.5">fullAuto workspace-write loopback</text>
+          <text x="42" y="294" fill="#64748b" font-size="10">startup-control-codex.js note</text>
+
+          <!-- Arrow 1 -> 2 -->
+          <line x1="266" y1="178" x2="296" y2="178" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrowBlue)" />
+
+          <!-- Column 2: Classifier & Selector-Row Gate -->
+          <rect x="299" y="24" width="258" height="308" rx="12" fill="url(#boxGrad1)" stroke="#f59e0b" stroke-width="1.6" />
+          <text x="315" y="52" fill="#f59e0b" font-size="11" font-weight="800" letter-spacing="0.08em">STAGE 2 · PANE CLASSIFIER</text>
+          <text x="315" y="74" fill="#f8fafc" font-size="13.5" font-weight="700">Suspect Hold &amp; Selector Gate</text>
+
+          <rect x="313" y="90" width="230" height="68" rx="8" fill="#111827" stroke="#334155" />
+          <text x="323" y="110" fill="#f59e0b" font-size="11.5" font-weight="700">Partial Shared Option (#2205)</text>
+          <text x="323" y="126" fill="#94a3b8" font-size="10.5">Shared "No, exit" only → suspect</text>
+          <text x="323" y="142" fill="#22c55e" font-size="10">Withheld as startup_screen_suspect</text>
+
+          <rect x="313" y="168" width="230" height="68" rx="8" fill="#111827" stroke="#334155" />
+          <text x="323" y="188" fill="#38bdf8" font-size="11.5" font-weight="700">Selector-Row Refusal (#2219)</text>
+          <text x="323" y="204" fill="#94a3b8" font-size="10.5">_promptRow + withholdFor selectorRow</text>
+          <text x="323" y="220" fill="#22c55e" font-size="10">Refuses later sends: pane_not_at_prompt</text>
+
+          <rect x="313" y="246" width="230" height="68" rx="8" fill="#111827" stroke="#334155" />
+          <text x="323" y="266" fill="#22c55e" font-size="11.5" font-weight="700">Composer Draft Preservation</text>
+          <text x="323" y="282" fill="#94a3b8" font-size="10.5">Ambiguous noncomposer ≠ selectorRow</text>
+          <text x="323" y="298" fill="#64748b" font-size="10">Located draft keeps save-clear-restore</text>
+
+          <!-- Arrow 2 -> 3 -->
+          <line x1="557" y1="178" x2="587" y2="178" stroke="#f59e0b" stroke-width="2" marker-end="url(#arrowAmber)" />
+
+          <!-- Column 3: Per-Project Folder Trust Opt-In -->
+          <rect x="590" y="24" width="252" height="308" rx="12" fill="url(#boxGrad1)" stroke="#818cf8" stroke-width="1.6" />
+          <text x="606" y="52" fill="#818cf8" font-size="11" font-weight="800" letter-spacing="0.08em">STAGE 3 · OPT-IN TRUST (#2168)</text>
+          <text x="606" y="74" fill="#f8fafc" font-size="13.5" font-weight="700">Per-Key Verified Acceptance</text>
+
+          <rect x="604" y="90" width="224" height="68" rx="8" fill="#111827" stroke="#334155" />
+          <text x="614" y="110" fill="#818cf8" font-size="11.5" font-weight="700">acceptFolderTrust: false</text>
+          <text x="614" y="126" fill="#94a3b8" font-size="10.5">project-config.js + public/ui.js</text>
+          <text x="614" y="142" fill="#64748b" font-size="10">Default-off per-project setting</text>
+
+          <rect x="604" y="168" width="224" height="68" rx="8" fill="#111827" stroke="#334155" />
+          <text x="614" y="188" fill="#38bdf8" font-size="11.5" font-weight="700">Staggered Per-Key Recheck</text>
+          <text x="614" y="204" fill="#94a3b8" font-size="10.5">stillOurs() + live trust_required</text>
+          <text x="614" y="220" fill="#22c55e" font-size="10">Aborts if session or dialog changes</text>
+
+          <rect x="604" y="246" width="224" height="68" rx="8" fill="#111827" stroke="#334155" />
+          <text x="614" y="266" fill="#22c55e" font-size="11.5" font-weight="700">Activity Audit Trail</text>
+          <text x="614" y="282" fill="#94a3b8" font-size="10.5">launch.folder_trust_accepted</text>
+          <text x="614" y="298" fill="#64748b" font-size="10">Logged only after all keys succeed</text>
+
+          <!-- Arrow 3 -> 4 -->
+          <line x1="842" y1="178" x2="872" y2="178" stroke="#22c55e" stroke-width="2" marker-end="url(#arrowGreen)" />
+
+          <!-- Column 4: Restart Recovery & Readiness Surface -->
+          <rect x="875" y="24" width="227" height="308" rx="12" fill="url(#boxGrad1)" stroke="#22c55e" stroke-width="1.6" />
+          <text x="891" y="52" fill="#22c55e" font-size="11" font-weight="800" letter-spacing="0.08em">STAGE 4 · READINESS &amp; RECOVERY</text>
+          <text x="891" y="74" fill="#f8fafc" font-size="13.5" font-weight="700">Restart &amp; Unready Surface</text>
+
+          <rect x="889" y="90" width="199" height="68" rx="8" fill="#111827" stroke="#334155" />
+          <text x="899" y="110" fill="#22c55e" font-size="11.5" font-weight="700">Restart Drop Record (#2193)</text>
+          <text x="899" y="126" fill="#94a3b8" font-size="10.5">pasteOwed / kickoffOwed</text>
+          <text x="899" y="142" fill="#22c55e" font-size="10">No false drop after delivered turn</text>
+
+          <rect x="889" y="168" width="199" height="68" rx="8" fill="#111827" stroke="#334155" />
+          <text x="899" y="188" fill="#38bdf8" font-size="11.5" font-weight="700">Loopback Remedy (#1836)</text>
+          <text x="899" y="204" fill="#94a3b8" font-size="10.5">launch-sequence.js + tc start status</text>
+          <text x="899" y="220" fill="#22c55e" font-size="10">Gated on unreadyAt + 0 pulls</text>
+
+          <rect x="889" y="246" width="199" height="68" rx="8" fill="#111827" stroke="#334155" />
+          <text x="899" y="266" fill="#a855f7" font-size="11.5" font-weight="700">W3-REC &amp; W4-REL v5.47.0</text>
+          <text x="899" y="282" fill="#94a3b8" font-size="10.5">FEATURES.md (47/47) + User Guide</text>
+          <text x="899" y="298" fill="#22c55e" font-size="10">Milestone #32 100% Complete</text>
+        </svg>
+      </div>
+    </section>
+
+    <!-- 2. SPRINT VELOCITY & WAVE TIMELINE -->
+    <section class="section" id="velocity">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 02 · Execution Velocity, 8h R3 Fleet Refresh &amp; Mid-Sprint v5.46.1 Cut</span>
+          <h2 class="section-title">Wave 1–4 Execution Timeline, Hot-Spare Assist &amp; Addenda <code>A483-R1..R12</code></h2>
+          <p class="section-desc">
+            Sprint <code>v5.47.0</code> kicked off at <code>2026-10-29T11:42Z</code> on base <code>980d53bbe2ad</code>. Between <code>12:46Z</code> and <code>13:18Z</code>, the entire 8-session fleet executed an <strong>Observer-first 8-hour <code>R3</code> in-thread procedural refresh</strong> with zero <code>/clear</code> calls. After Wave 1 (<code>PR #2709, #2710, #2711</code>) merged to <code>main @ 003f43ae</code>, the Operator authorized cutting and deploying <code>v5.46.1</code> (`PR #2708`), where <code>TC-Lane-Obsr</code>’s <code>O-Gate</code> caught 4 uncompiled Wave 1 fragments on rebased <code>main</code> and `A482-R10 / A483-R10` compiled all 10 shipped fragments into `v5.46.1` (`c94164b0`). In Wave 2, when `TC-Lane-C` hit a transient upstream Claude quota cap during the final base-merge of `W2-B PR #2712`, `TC-Lane-D` stepped in as hot-spare under signed `A483-R12` and completed the merge in <strong>18 minutes</strong>.
+          </p>
+        </div>
+      </div>
+
+      <div class="svg-wrap">
+        <div class="svg-caption">
+          <span>Figure 2.1 — Sprint v5.47.0 Wave Execution Timeline (2026-10-29T11:42Z → 18:30Z)</span>
+          <span>3 Active Builder Lanes + Hot-Spare Assist · 2 PRR Lanes · 8h R3 Procedural Refresh · Mid-Sprint v5.46.1 Live Deploy</span>
+        </div>
+        <svg viewBox="0 0 1120 350" width="100%" height="auto" role="img" aria-label="Sprint v5.47.0 Wave Gantt Chart">
+          <rect x="0" y="0" width="1120" height="350" rx="10" fill="#0b1120" />
+          <line x1="185" y1="30" x2="185" y2="315" stroke="#1e293b" stroke-width="1" />
+          <line x1="335" y1="30" x2="335" y2="315" stroke="#1e293b" stroke-width="1" />
+          <line x1="485" y1="30" x2="485" y2="315" stroke="#1e293b" stroke-width="1" />
+          <line x1="635" y1="30" x2="635" y2="315" stroke="#1e293b" stroke-width="1" />
+          <line x1="785" y1="30" x2="785" y2="315" stroke="#1e293b" stroke-width="1" />
+          <line x1="935" y1="30" x2="935" y2="315" stroke="#1e293b" stroke-width="1" />
+          <line x1="1075" y1="30" x2="1075" y2="315" stroke="#1e293b" stroke-width="1" />
+
+          <text x="185" y="22" fill="#94a3b8" font-size="10.5" text-anchor="middle">11:42Z (Kickoff)</text>
+          <text x="335" y="22" fill="#f59e0b" font-size="10.5" font-weight="700" text-anchor="middle">13:18Z (8h R3 + W1-B)</text>
+          <text x="485" y="22" fill="#38bdf8" font-size="10.5" font-weight="700" text-anchor="middle">14:49Z (W1-C Merged)</text>
+          <text x="635" y="22" fill="#22c55e" font-size="10.5" font-weight="700" text-anchor="middle">16:03Z (W1-A Merged)</text>
+          <text x="785" y="22" fill="#a855f7" font-size="10.5" font-weight="700" text-anchor="middle">17:22Z (v5.46.1 Cut)</text>
+          <text x="935" y="22" fill="#38bdf8" font-size="10.5" font-weight="700" text-anchor="middle">18:09Z (W2-A &amp; W2-B)</text>
+          <text x="1065" y="22" fill="#22c55e" font-size="10.5" font-weight="700" text-anchor="middle">18:30Z (W3/W4)</text>
+
+          <line x1="295" y1="28" x2="295" y2="315" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="4 4" />
+          <line x1="785" y1="28" x2="785" y2="315" stroke="#a855f7" stroke-width="1.5" stroke-dasharray="4 4" />
+
+          <!-- Row 1: W1-B -->
+          <text x="18" y="60" fill="#e2e8f0" font-size="11.5" font-weight="700">W1-B · PR #2709</text>
+          <rect x="195" y="44" width="165" height="24" rx="5" fill="#22c55e" opacity="0.9" />
+          <text x="205" y="60" fill="#052e16" font-size="10.5" font-weight="700">#1836 Codex Loopback · Merged 13:43Z (113.2m)</text>
+
+          <!-- Row 2: W1-C -->
+          <text x="18" y="98" fill="#e2e8f0" font-size="11.5" font-weight="700">W1-C · PR #2710</text>
+          <rect x="195" y="82" width="290" height="24" rx="5" fill="#38bdf8" opacity="0.9" />
+          <text x="205" y="98" fill="#082f49" font-size="10.5" font-weight="700">#2193 Restart Drop Accounting · Merged 14:49Z (179.0m)</text>
+
+          <!-- Row 3: W1-A -->
+          <text x="18" y="136" fill="#e2e8f0" font-size="11.5" font-weight="700">W1-A · PR #2711</text>
+          <rect x="195" y="120" width="440" height="24" rx="5" fill="#818cf8" opacity="0.9" />
+          <text x="205" y="136" fill="#0f172a" font-size="10.5" font-weight="700">#2221 + #2205 Unified Dialog Reader &amp; Suspect Hold · Merged 16:03Z (253.3m)</text>
+
+          <!-- Row 4: Mid-sprint v5.46.1 Cut & Live Deploy -->
+          <text x="18" y="174" fill="#e2e8f0" font-size="11.5" font-weight="700">v5.46.1 Cut · #2708</text>
+          <rect x="640" y="158" width="165" height="24" rx="5" fill="#a855f7" opacity="0.92" />
+          <text x="648" y="174" fill="#faf5ff" font-size="10" font-weight="700">A482-R10/A483-R10 · Live 17:35Z</text>
+
+          <!-- Row 5: W2-A -->
+          <text x="18" y="212" fill="#e2e8f0" font-size="11.5" font-weight="700">W2-A · PR #2713</text>
+          <rect x="640" y="196" width="225" height="24" rx="5" fill="#22c55e" opacity="0.92" />
+          <text x="650" y="212" fill="#052e16" font-size="10.5" font-weight="700">#2219 Selector-Row Refusal · Merged 17:40Z (96.8m)</text>
+
+          <!-- Row 6: W2-B -->
+          <text x="18" y="250" fill="#e2e8f0" font-size="11.5" font-weight="700">W2-B · PR #2712</text>
+          <rect x="640" y="234" width="295" height="24" rx="5" fill="#f59e0b" opacity="0.92" />
+          <text x="650" y="250" fill="#0f172a" font-size="10.5" font-weight="700">#2168 Folder-Trust Opt-In + A483-R12 Assist · Merged 18:09Z (125.7m)</text>
+
+          <!-- Row 7: W3-REC & W4-REL -->
+          <text x="18" y="288" fill="#e2e8f0" font-size="11.5" font-weight="700">W3-REC &amp; W4-REL</text>
+          <rect x="940" y="272" width="155" height="24" rx="5" fill="#38bdf8" opacity="0.92" />
+          <text x="948" y="288" fill="#082f49" font-size="10" font-weight="700">PR #2714 + v5.47.0 Release</text>
+
+          <text x="185" y="335" fill="#94a3b8" font-size="10.5">● Dashed amber line (12:46Z): 8-session R3 in-thread procedural refresh. Dashed purple line (17:22Z): v5.46.1 PR #2708 merged &amp; deployed live to Builder1.</text>
+        </svg>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Wave / Lane</th>
+              <th>PR</th>
+              <th>Issues</th>
+              <th>Build Time</th>
+              <th>Open → Merge</th>
+              <th>Total Elapsed</th>
+              <th>Review Rounds &amp; Reviewer Model</th>
+              <th>Merge Commit / Base SHA</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>W1-B</strong> (<code>TC-Lane-C</code>)</td>
+              <td><code>#2709</code></td>
+              <td><code>#1836</code></td>
+              <td>13.1m</td>
+              <td>100.1m</td>
+              <td><strong>113.2m</strong></td>
+              <td>2 rounds (<code>PRR-B</code> <code>gpt-6-sol high</code> R1 C3 + <code>Arc</code> <code>A483-R2/R3</code> CLI text → R2 ACCEPT <code>f836e334</code>)</td>
+              <td><code>a999de3a336a</code> (13:43:13Z)</td>
+            </tr>
+            <tr>
+              <td><strong>W1-C</strong> (<code>TC-Lane-D</code>)</td>
+              <td><code>#2710</code></td>
+              <td><code>#2193</code></td>
+              <td>19.5m</td>
+              <td>159.5m</td>
+              <td><strong>179.0m</strong></td>
+              <td>4 rounds (<code>PRR-B</code> <code>gpt-6-sol high</code> R1–R3 false-drop &amp; silent-prime edges + <code>Arc</code> <code>A483-R5</code> → R4 ACCEPT <code>793bc02c</code>)</td>
+              <td><code>ae871d8a1076</code> (14:49:02Z)</td>
+            </tr>
+            <tr>
+              <td><strong>W1-A</strong> (<code>TC-Lane-B</code>)</td>
+              <td><code>#2711</code></td>
+              <td><code>#2221, #2205</code></td>
+              <td>56.5m</td>
+              <td>196.8m</td>
+              <td><strong>253.3m</strong></td>
+              <td>4 rounds (<code>PRR-A</code> <code>claude-opus-4-6</code> + <code>Arc</code> <code>claude-opus-4-7</code> R1–R3 glyph &amp; candidate ranking → R4 ACCEPT <code>a594d283</code>)</td>
+              <td><code>003f43ae3e8b</code> (16:03:21Z)</td>
+            </tr>
+            <tr>
+              <td><strong>Mid-Sprint Cut</strong> (<code>INT</code> + <code>Obsr</code>)</td>
+              <td><code>#2708</code></td>
+              <td><code>v5.46.1</code> Release</td>
+              <td>~15.0m</td>
+              <td>~45.0m</td>
+              <td><strong>~60.0m</strong></td>
+              <td>4-Gate Release Verification (<code>Obsr</code> <code>O482-V5461-PR2708-2795363D-HOLD</code> → <code>A482-R10/A483-R10</code> → <code>O482-V5461-PR2708-04DE03FD-ACCEPT</code>)</td>
+              <td><code>c94164b09555</code> (17:22:39Z · Tag <code>v5.46.1</code>)</td>
+            </tr>
+            <tr>
+              <td><strong>W2-A</strong> (<code>TC-Lane-B</code>)</td>
+              <td><code>#2713</code></td>
+              <td><code>#2219</code></td>
+              <td>39.7m</td>
+              <td>57.1m</td>
+              <td><strong>96.8m</strong></td>
+              <td>1 round (<code>PRR-A</code> R1 ACCEPT + <code>Arc</code> <code>A-W2A-PR2713-DACECFDA-ACCEPT</code> after ancestor sync onto <code>v5.46.1</code>)</td>
+              <td><code>cd09db009a7a</code> (17:40:48Z)</td>
+            </tr>
+            <tr>
+              <td><strong>W2-B</strong> (<code>TC-Lane-C</code> + <code>D</code>)</td>
+              <td><code>#2712</code></td>
+              <td><code>#2168</code></td>
+              <td>18.0m</td>
+              <td>107.7m</td>
+              <td><strong>125.7m</strong></td>
+              <td>4 rounds (<code>PRR-B</code> + <code>Arc</code> R1–R3 per-key session/dialog recheck + <code>A483-R12</code> hot-spare sync → R4 ACCEPT <code>a3e1d68c</code>)</td>
+              <td><code>833b60b4c364</code> (18:09:45Z)</td>
+            </tr>
+            <tr>
+              <td><strong>W3-REC</strong> (<code>TC-Lane-INT</code>)</td>
+              <td><code>#2714</code></td>
+              <td>Milestone #32 Docs</td>
+              <td>~7.0m</td>
+              <td>~15.0m</td>
+              <td><strong>~22.0m</strong></td>
+              <td>2 rounds (<code>PRR-A</code> + <code>Arc</code> <code>A-Gate</code> on <code>3eda1bd9 → f24e5bff</code> · <code>47/47</code> <code>test/features-index.test.js</code>)</td>
+              <td>Head <code>f24e5bff1bbf</code> on Base <code>833b60b4c364</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 3. DELIVERABLES MATRIX -->
+    <section class="section" id="deliverables">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 03 · Complete Issue &amp; Deliverables Matrix</span>
+          <h2 class="section-title">All 6 Milestone #32 Issues + Mid-Sprint v5.46.1 Release Cut</h2>
+          <p class="section-desc">
+            Every issue in Charter <code>A483</code>–<code>A483-R12</code> is cross-checked below against the exact <code>FEATURES.md</code> entries from <code>W3-REC PR #2714</code> (<code>f24e5bff1bbf</code>). Every cited file path and test file is verified on disk by <code>gen_v547.py</code>.
+          </p>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Issue</th>
+              <th>Wave &amp; PR</th>
+              <th>Category</th>
+              <th>Deliverable Summary &amp; Canonical Anchors (from <code>FEATURES.md</code>)</th>
+              <th>Verification Evidence (On-Disk Verified Test Paths)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>#1836</strong></td>
+              <td><code>W1-B · #2709</code></td>
+              <td>Codex Sandbox Diagnostics</td>
+              <td>Declared in <code>data/engines/codex.json</code> that Codex’s default <code>fullAuto</code> (<code>workspace-write</code>) sandbox blocks loopback network access; gated the diagnostic on <code>unreadyAt</code> in <code>lib/launch-sequence.js#_loopbackSandboxNote</code> and <code>lib/startup-control-codex.js#loopbackSandboxNote</code>; and rendered the likely cause and network-access remedy in <code>tc start status</code> (<code>lib/tc-verbs.js</code>).</td>
+              <td><code>test/codex-launch-modes.test.js</code>, <code>test/startup-control-codex.test.js</code> (shipped in <code>v5.46.1</code> @ <code>c94164b0</code>)</td>
+            </tr>
+            <tr>
+              <td><strong>#2193</strong></td>
+              <td><code>W1-C · #2710</code></td>
+              <td>Restart Drop Recovery</td>
+              <td>Updated <code>lib/sessions.js#reconcileDeferredFirstTurnsOnRestart</code> to record a first turn interrupted across a server restart while deferred behind a startup dialog (tracking <code>pasteOwed</code> and <code>kickoffOwed</code> across no-rules and silent-prime launches) while ensuring a dialog appearing after a delivered first turn never creates a false drop.</td>
+              <td><code>test/sessions.test.js</code>, <code>test/api-launch-sequences.test.js</code> (shipped in <code>v5.46.1</code> @ <code>c94164b0</code>)</td>
+            </tr>
+            <tr>
+              <td><strong>#2221</strong></td>
+              <td><code>W1-A · #2711</code></td>
+              <td>Unified Dialog Reader</td>
+              <td>Converged <code>lib/launch-dialog-guard.js#read</code> onto the shared validator and pane classifier in <code>lib/startup-dialog.js#entryErrors</code>, and allowed Claude startup dialog declarations in <code>data/engines/claude.json</code> to specify validated <code>acceptKeys</code> (<code>["Down", "Enter"]</code> on <code>trust_required</code>).</td>
+              <td><code>test/startup-dialog.test.js</code>, <code>test/launch-dialog-guard.test.js</code> (shipped in <code>v5.46.1</code> @ <code>c94164b0</code>)</td>
+            </tr>
+            <tr>
+              <td><strong>#2205</strong></td>
+              <td><code>W1-A · #2711</code></td>
+              <td>Bypass-Permissions Dialog</td>
+              <td>Declared Claude Code’s <code>bypass_permissions_confirm</code> startup dialog separately from <code>trust_required</code> in <code>data/engines/claude.json</code>, and updated <code>lib/startup-dialog.js</code> and <code>lib/launch-dialog-guard.js</code> so a partial frame showing only their shared option (<code>"No, exit"</code>) is withheld as <code>startup_screen_suspect</code> until positively identified.</td>
+              <td><code>test/startup-dialog.test.js</code>, <code>test/launch-dialog-guard.test.js</code> (shipped in <code>v5.46.1</code> @ <code>c94164b0</code>)</td>
+            </tr>
+            <tr>
+              <td><strong>#2219</strong></td>
+              <td><code>W2-A · #2713</code></td>
+              <td>Selector-Row Send Refusal</td>
+              <td>Updated <code>lib/startup-dialog.js#_promptRow</code>, <code>lib/startup-dialog.js#withholdFor</code>, and <code>data/engines/claude.json</code> so that when a live pane positively shows a selector’s selected row rather than its composer, later command injections and switchboard wakes are withheld with <code>pane_not_at_prompt</code>, while a located draft retains its send-and-clear path.</td>
+              <td><code>test/startup-dialog.test.js</code> (merged to <code>main @ cd09db00</code> for <code>v5.47.0</code>)</td>
+            </tr>
+            <tr>
+              <td><strong>#2168</strong></td>
+              <td><code>W2-B · #2712</code></td>
+              <td>Per-Project Folder Trust Opt-In</td>
+              <td>Added default-off project setting <code>acceptFolderTrust</code> across <code>lib/project-config.js</code>, <code>lib/projects.js</code>, <code>lib/sessions.js#_acceptsFolderTrust</code>, <code>public/index.html</code>, <code>public/ui.js</code>, and <code>data/engines/claude.json</code>; sends declared <code>acceptKeys</code> at launch only while the engine’s own <code>trust_required</code> dialog is positively visible in the same live session (rechecking session and dialog before each key) and logs <code>launch.folder_trust_accepted</code> in project activity only upon full completion.</td>
+              <td><code>test/projects.test.js</code>, <code>test/project-update-two-phase.test.js</code> (merged to <code>main @ 833b60b4</code> for <code>v5.47.0</code>; live UI check deferred under <code>A483-R8</code>)</td>
+            </tr>
+            <tr>
+              <td><strong>W3-REC</strong></td>
+              <td><code>W3-REC · #2714</code></td>
+              <td>Docs &amp; Index Reconciliation</td>
+              <td>Reconciled all 6 Milestone <code>#32</code> issues in <code>FEATURES.md</code>, <code>.prawduct/change-log.md</code>, <code>docs/configuration-reference.md</code>, and <code>docs/user-guide.md</code>, recording that Wave 1 (<code>#1836, #2193, #2205, #2221</code>) shipped in <code>v5.46.1</code> (`c94164b0`) while Wave 2 (<code>#2219, #2168</code>) retains its changelog fragments for <code>v5.47.0</code>.</td>
+              <td><code>test/features-index.test.js</code> (<code>47/47</code> pass · <code>9</code> new test anchors verified by <code>scripts/verify-features-index.js</code>)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 4. TELEMETRY & BENCHMARKS -->
+    <section class="section" id="telemetry">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 04 · Process Telemetry, Multi-Round Review Precision &amp; 8h R3 Refresh</span>
+          <h2 class="section-title">PR Build vs. Review Timing &amp; 11 True-Positive Pre-Merge Defect Catches</h2>
+          <p class="section-desc">
+            Across 22 GitHub Actions <code>Tests</code> CI runs (100% first-time green), independent exact-SHA reviews by <code>TC-Lane-PRR-A</code> (<code>claude-opus-4-6</code>), <code>TC-Lane-PRR-B</code> (<code>gpt-6-sol high</code>), and <code>TC-Lane-Arc</code> (<code>claude-opus-4-7</code>) caught <strong>11 subtle state-machine, partial-frame, and per-key race defects</strong> before a single line reached <code>main</code>.
+          </p>
+        </div>
+      </div>
+
+      <div class="bar-chart" style="margin-bottom:24px;">
+        <div class="bar-row">
+          <div class="bar-label">W1-B · PR #2709 (113.2m)</div>
+          <div class="bar-track"><div class="bar-fill" style="width:45%;background:linear-gradient(90deg,#22c55e,#16a34a);">Build 13.1m · 2 PRR-B Rounds + A483-R2/R3 100.1m</div></div>
+          <div class="bar-val">113.2m</div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label">W1-C · PR #2710 (179.0m)</div>
+          <div class="bar-track"><div class="bar-fill" style="width:71%;background:linear-gradient(90deg,#38bdf8,#0284c7);">Build 19.5m · 4 PRR-B Rounds + A483-R5 159.5m</div></div>
+          <div class="bar-val">179.0m</div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label">W1-A · PR #2711 (253.3m)</div>
+          <div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,#818cf8,#6366f1);">Build 56.5m · 4 PRR-A + Arc Rounds 196.8m</div></div>
+          <div class="bar-val">253.3m</div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label">8h R3 Fleet Refresh (32m)</div>
+          <div class="bar-track"><div class="bar-fill" style="width:18%;background:linear-gradient(90deg,#f59e0b,#d97706);">8/8 Sessions Refreshed In-Thread (12:46Z–13:18Z · 0 /clear)</div></div>
+          <div class="bar-val">32.0m</div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label">v5.46.1 Cut · #2708 (60m)</div>
+          <div class="bar-track"><div class="bar-fill" style="width:28%;background:linear-gradient(90deg,#a855f7,#7e22ce);">O-Gate Hold → A482-R10 (10 Fragments) → Live Deploy 17:35Z</div></div>
+          <div class="bar-val">60.0m</div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label">W2-A · PR #2713 (96.8m)</div>
+          <div class="bar-track"><div class="bar-fill" style="width:38%;background:linear-gradient(90deg,#22c55e,#059669);">Build 39.7m · R1 ACCEPT + Ancestor Sync 57.1m</div></div>
+          <div class="bar-val">96.8m</div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label">W2-B · PR #2712 (125.7m)</div>
+          <div class="bar-track"><div class="bar-fill" style="width:50%;background:linear-gradient(90deg,#f59e0b,#ea580c);">Build 18.0m · 4 PRR-B/Arc Rounds + A483-R12 Assist 107.7m</div></div>
+          <div class="bar-val">125.7m</div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label">W3-REC · PR #2714 (~22m)</div>
+          <div class="bar-track"><div class="bar-fill" style="width:14%;background:linear-gradient(90deg,#38bdf8,#2563eb);">4 Docs/Index Files · 47/47 Features Index Pass</div></div>
+          <div class="bar-val">~22.0m</div>
+        </div>
+      </div>
+
+      <div class="svg-wrap">
+        <div class="svg-caption">
+          <span>Figure 4.1 — Defense-in-Depth Startup Dialog &amp; Per-Key Verification State Machine (#2221, #2205, #2219, #2168)</span>
+          <span>How PRR-A, PRR-B &amp; Arc Closed Every Partial-Frame, Option-Prose &amp; Staggered-Key Race Before Merge</span>
+        </div>
+        <svg viewBox="0 0 1120 265" width="100%" height="auto" role="img" aria-label="Startup Dialog Defense-in-Depth State Machine">
+          <rect x="0" y="0" width="1120" height="265" rx="10" fill="#0b1120" />
+
+          <!-- Box 1: Boot & Partial Frame -->
+          <rect x="20" y="24" width="340" height="216" rx="10" fill="#111827" stroke="#38bdf8" stroke-width="1.5" />
+          <text x="36" y="48" fill="#38bdf8" font-size="11.5" font-weight="800">1. PARTIAL FRAME &amp; COMPOSER BOUNDARY (#2205)</text>
+          <text x="36" y="72" fill="#e2e8f0" font-size="11">• Shared option "No, exit" alone on screen:</text>
+          <text x="48" y="92" fill="#f59e0b" font-size="10.5">→ Classified as partial → startup_screen_suspect</text>
+          <text x="36" y="116" fill="#e2e8f0" font-size="11">• PRR-A + Arc R1–R3 Catches on W1-A (#2711):</text>
+          <text x="48" y="136" fill="#94a3b8" font-size="10.5">1. Require glyph lead on promptPattern so option</text>
+          <text x="48" y="152" fill="#94a3b8" font-size="10.5">   prose ("2. No, exit") never spoofs composer</text>
+          <text x="48" y="170" fill="#94a3b8" font-size="10.5">2. Rank candidate dialogs so an earlier 1-marker</text>
+          <text x="48" y="186" fill="#94a3b8" font-size="10.5">   entry cannot shadow a 2-marker dialog match</text>
+          <text x="36" y="214" fill="#22c55e" font-size="10.5" font-weight="700">✓ Verified in test/startup-dialog.test.js</text>
+
+          <!-- Box 2: Mid-Session Selector Refusal -->
+          <rect x="390" y="24" width="340" height="216" rx="10" fill="#111827" stroke="#f59e0b" stroke-width="1.5" />
+          <text x="406" y="48" fill="#f59e0b" font-size="11.5" font-weight="800">2. POSITIVE SELECTOR-ROW GUARD (#2219)</text>
+          <text x="406" y="72" fill="#e2e8f0" font-size="11">• Live pane shows a selector's selected option row:</text>
+          <text x="418" y="92" fill="#f59e0b" font-size="10.5">→ _promptRow sets selectorRow: true</text>
+          <text x="406" y="116" fill="#e2e8f0" font-size="11">• withholdFor Decision Split (W2-A PR #2713):</text>
+          <text x="418" y="136" fill="#94a3b8" font-size="10.5">1. selectorRow === true: refuses EVERY sender</text>
+          <text x="418" y="152" fill="#94a3b8" font-size="10.5">   (launch &amp; later command/wake) with</text>
+          <text x="418" y="168" fill="#94a3b8" font-size="10.5">   pane_not_at_prompt (409 STARTUP_DIALOG)</text>
+          <text x="418" y="186" fill="#94a3b8" font-size="10.5">2. Ambiguous noncomposer: keeps draft save/clear</text>
+          <text x="406" y="214" fill="#22c55e" font-size="10.5" font-weight="700">✓ Verified in test/startup-dialog.test.js</text>
+
+          <!-- Box 3: Per-Key Folder Trust Verification -->
+          <rect x="760" y="24" width="340" height="216" rx="10" fill="#111827" stroke="#22c55e" stroke-width="1.5" />
+          <text x="776" y="48" fill="#22c55e" font-size="11.5" font-weight="800">3. STAGGERED PER-KEY ACCEPTANCE (#2168)</text>
+          <text x="776" y="72" fill="#e2e8f0" font-size="11">• Opt-in acceptFolderTrust === true (default false):</text>
+          <text x="788" y="92" fill="#22c55e" font-size="10.5">→ Sends declared acceptKeys ["Down", "Enter"]</text>
+          <text x="776" y="116" fill="#e2e8f0" font-size="11">• PRR-B + Arc R1–R3 Catches on W2-B (#2712):</text>
+          <text x="788" y="136" fill="#94a3b8" font-size="10.5">1. Re-verify stillOurs() + live trust_required</text>
+          <text x="788" y="152" fill="#94a3b8" font-size="10.5">   dialog before EACH key in acceptKeys</text>
+          <text x="788" y="170" fill="#94a3b8" font-size="10.5">2. Treat store.sessions.get read error as false</text>
+          <text x="788" y="186" fill="#94a3b8" font-size="10.5">3. Log launch.folder_trust_accepted ONLY at end</text>
+          <text x="776" y="214" fill="#22c55e" font-size="10.5" font-weight="700">✓ Verified in test/projects.test.js</text>
+        </svg>
+      </div>
+    </section>
+
+    <!-- 5. POST-MORTEM & GOVERNANCE AUDIT -->
+    <section class="section" id="postmortem">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 05 · Sprint Post-Mortem &amp; Rule #283 16-Point Governance Audit</span>
+          <h2 class="section-title">What Worked, What Didn't &amp; 4-Gate Release Verification</h2>
+          <p class="section-desc">
+            Sprint <code>v5.47.0</code> validated all five process improvements from <code>v5.46.1</code> — proving that active <code>Rule #291/#292</code>, the 8-hour <code>R3</code> in-thread procedural refresh, hot-spare builder failover (<code>A483-R12</code>), and the 4-gate release protocol (`O-Gate` catch on `PR #2708`) work seamlessly under real multi-wave load — while surfacing five targeted guardrails (<code>P38</code>–<code>P42</code>) for <code>v5.48.0</code>.
+          </p>
+        </div>
+      </div>
+
+      <div class="grid-2" style="margin-bottom:22px;">
+        <div>
+          <h3 style="margin-bottom:12px;color:var(--green);">✅ What Worked Exceptionally Well (Strengths)</h3>
+          <div class="pm-item">
+            <h4>1. O-Gate Caught Uncompiled Wave 1 Fragments on Rebased v5.46.1 Release PR #2708</h4>
+            <p>When <code>v5.46.1 W3-REL PR #2708</code> was rebased onto <code>main @ 003f43ae</code> (after <code>v5.47.0</code> Wave 1 merged), <code>TC-Lane-Obsr</code>’s <code>O-Gate</code> audit (<code>O482-V5461-PR2708-2795363D-HOLD</code>) ran <code>node scripts/release-prepare.js</code> and caught that the 4 newly merged Wave 1 fragments (<code>#1836, #2193, #2205, #2221</code>) remained in <code>changelog.d/</code>, violating <code>#1220</code>. <code>TC-Lane-PM</code> and <code>TC-Lane-Arc</code> immediately co-signed <code>Addendum A482-R10 / A483-R10</code> compiling all 10 shipped fragments into <code>v5.46.1</code> (<code>04de03fd → c94164b0</code>).</p>
+          </div>
+          <div class="pm-item">
+            <h4>2. Zero-Clear 8-Hour R3 In-Thread Procedural Refresh Across All 8 Fleet Sessions</h4>
+            <p>Between <code>12:46Z</code> and <code>13:18Z</code>, <code>TC-Lane-PM</code>, <code>TC-Lane-INT</code>, <code>TC-Lane-Obsr</code>, <code>TC-Lane-Arc</code>, <code>TC-Lane-PRR-A</code>, <code>TC-Lane-PRR-B</code>, and the active Builders executed the 8-hour <code>R3</code> procedural refresh in-thread via <code>tc rules</code> + <code>tc start ready --reconciliation</code> + challenge-token readback with <strong>0 <code>/clear</code> calls and 0 lost work</strong>.</p>
+          </div>
+          <div class="pm-item">
+            <h4>3. 18-Minute Hot-Spare Builder Recovery Under Addendum A483-R12</h4>
+            <p>When <code>TC-Lane-C</code> hit an upstream Claude quota cap (<code>"You've hit your limit · resets 2pm"</code>) after <code>W2-B PR #2712</code> was already <code>PRR-B</code> and <code>Arc</code> accepted on <code>a2db8cb0</code> and needed only an ancestor merge of <code>cd09db00</code>, <code>TC-Lane-PM</code> and <code>TC-Lane-Arc</code> co-signed <code>A483-R12</code> authorizing idle <code>TC-Lane-D</code> (`gpt-6-sol high`) to fast-forward/merge `origin/main` into `feat/v547-w2b-2168-folder-trust-optin` (`a3e1d68c`) and land `PR #2712` in 18 minutes.</p>
+          </div>
+          <div class="pm-item">
+            <h4>4. 11 True-Positive Pre-Merge Catches Across PRR-A, PRR-B &amp; Arc</h4>
+            <p>Multi-round exact-SHA reviews caught 11 genuine edge cases before merge: unready-gated Codex loopback notes in <code>W1-B</code>; delivered-turn false-drop suppression and no-rules/silent-prime coverage in <code>W1-C</code>; glyph-qualified composer boundary and candidate dialog ranking in <code>W1-A</code>; and per-key session/dialog re-verification and post-loop activity logging in <code>W2-B</code>.</p>
+          </div>
+        </div>
+
+        <div>
+          <h3 style="margin-bottom:12px;color:var(--amber);">⚠️ What Didn't Work &amp; Proven Fixes (Process &amp; Tooling Friction)</h3>
+          <div class="pm-item warn">
+            <h4>1. Upstream Claude Quota Cap Mid-Wave on Single-Engine Builder Lanes</h4>
+            <p><code>TC-Lane-C</code> (<code>Claude Opus 4.7</code>) hit an account/window rate limit at <code>17:45Z</code> right as <code>W2-B PR #2712</code> needed its final ancestor sync. Although <code>A483-R12</code> recovered in 18m via <code>TC-Lane-D</code> (<code>Codex gpt-6-sol high</code>), homogeneous engine assignment across Builders creates correlated quota risk. <strong>Fix / Guardrail (P38):</strong> Balance Builder engines across <code>claude</code> and <code>codex</code> (`gpt-6-sol high`) at batch kickoff and pre-authorize hot-spare ancestor-sync failover in the base charter.</p>
+          </div>
+          <div class="pm-item warn">
+            <h4>2. Rebased Release PR vs. Next-Sprint Wave 1 Fragments in changelog.d/ (#1220)</h4>
+            <p>When a prior sprint’s release PR (`v5.46.1 PR #2708`) is rebased onto `main` after the next sprint’s Wave 1 PRs have already merged their `changelog.d/*.md` fragments to `main`, `node scripts/release-prepare.js` (`#1220`) rightly refuses to run if any fragment remains in `changelog.d/`. <strong>Fix / Guardrail (P39):</strong> Cut `W<N>-REL` before merging the next sprint’s Wave 1 PRs to `main`, or explicitly run `node scripts/release-prepare.js` as a mandatory pre-PRR check after any release-branch rebase.</p>
+          </div>
+          <div class="pm-item warn">
+            <h4>3. Unstaged package-lock.json Dirtying Builder Working Trees (TC-Lane-B)</h4>
+            <p>During `W1-A` and `W2-A`, `TC-Lane-B`’s working tree accumulated an unstaged `M package-lock.json` modification that caused `tc freshness` to report `1 dirty` after branch merge until cleaned during wrap/re-prep. <strong>Fix / Guardrail (P40):</strong> Add a pre-PR / post-merge `git checkout -- package-lock.json` check whenever `package.json` is untouched so incidental npm lockfile touches never dirty a lane.</p>
+          </div>
+          <div class="pm-item warn">
+            <h4>4. 3–4 Review Rounds on State-Machine PRs Due to Implicit Sub-Invariants</h4>
+            <p>`W1-C (#2710)`, `W1-A (#2711)`, and `W2-B (#2712)` each took 4 review rounds (`107m–196m` open-to-merge) because subtle negative invariants (e.g., *"what if a dialog appears AFTER the first turn was delivered?"* or *"what if the dialog disappears between key 1 and key 2 of acceptKeys?"*) were discovered iteratively in review rather than enumerated in the pre-dispatch brief. <strong>Fix / Guardrail (P41):</strong> Include a 3-bullet *"Negative &amp; Mid-Transition Invariants"* checklist in `TC-Lane-Arc`’s pre-dispatch lane brief for state-machine issues.</p>
+          </div>
+        </div>
+      </div>
+
+      <h3 style="margin:20px 0 10px;">4-Gate Release Verification Matrix (Rule #283.5)</h3>
+      <div class="table-wrap" style="margin-bottom:22px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Gate</th>
+              <th>Owner</th>
+              <th>Verification Scope</th>
+              <th>Status &amp; Evidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Gate 1 · PRR Code &amp; Contract Review</strong></td>
+              <td><code>TC-Lane-PRR-A</code> &amp; <code>TC-Lane-PRR-B</code></td>
+              <td>Exact-SHA diff review, negative-path unit tests, and charter scope compliance across all 6 sprint PRs</td>
+              <td><span class="badge badge-green">PASS</span> <code>PR #2709</code> (<code>PRR-B f836e334</code>), <code>PR #2710</code> (<code>PRR-B 793bc02c</code>), <code>PR #2711</code> (<code>PRR-A a594d283</code>), <code>PR #2713</code> (<code>PRR-A dacecfda</code>), <code>PR #2712</code> (<code>PRR-B a3e1d68c</code>), and <code>PR #2714</code> (<code>PRR-A f24e5bff</code>) all reviewed on exact head SHA.</td>
+            </tr>
+            <tr>
+              <td><strong>Gate 2 · Automated Test &amp; CI Gate</strong></td>
+              <td>Builder Lanes + <code>TC-Lane-INT</code></td>
+              <td>GitHub Actions <code>Tests</code> CI across all 22 runs + targeted &amp; full-suite local verification</td>
+              <td><span class="badge badge-green">PASS</span> <code>22 / 22</code> GitHub Actions <code>Tests</code> runs green on first try; full local suite verified at <code>23,700+</code> tests (`652.5s`) during mid-sprint <code>v5.46.1</code> live deploy.</td>
+            </tr>
+            <tr>
+              <td><strong>Gate 3 · Wave 3 Doc &amp; Feature Index Reconciliation</strong></td>
+              <td><code>TC-Lane-INT</code> + <code>TC-Lane-Arc</code></td>
+              <td><code>FEATURES.md</code> (<code>47/47</code> <code>test/features-index.test.js</code>), <code>.prawduct/change-log.md</code>, <code>docs/configuration-reference.md</code>, and <code>docs/user-guide.md</code></td>
+              <td><span class="badge badge-green">PASS</span> Verified in <code>W3-REC PR #2714</code> (<code>f24e5bff1bbf544b0cb301f18bd6402e167fad2e</code>); all 9 newly added test anchors and file/symbol citations verified on disk by <code>scripts/verify-features-index.js</code>.</td>
+            </tr>
+            <tr>
+              <td><strong>Gate 4 · Observer O-Gate &amp; Canonical Report Validation</strong></td>
+              <td><code>TC-Lane-Obsr</code> + <code>TC-Lane-PM</code></td>
+              <td>Canonical 8-section HTML report validation (<code>validate-sprint-report.py --all</code>) + on-disk path audit + 4 maintenance gates</td>
+              <td><span class="badge badge-green">PASS (O483-V5470-PASS)</span> 0 validation errors across all 15 reports (<code>v5.34.0</code>–<code>v5.47.0</code>) + hub index, 100% of cited repo paths verified on disk, and <code>LANE_QUEUE.md</code> kept &lt; 15 KB.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 style="margin:20px 0 10px;">Rule #283 16-Point Governance &amp; Process Audit</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Rule #283 Audit Dimension</th>
+              <th>Verdict</th>
+              <th>Sprint v5.47.0 Measured Evidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>1</td><td>Operator Interventions &amp; Causes</td><td><span class="badge badge-green">PASS</span></td><td><code>0</code> unplanned Operator rescue interventions; Operator participated only at governed release/deploy gates (authorizing <code>v5.46.1</code> cut/deploy and <code>A483-R8</code> live browser-check deferral).</td></tr>
+            <tr><td>2</td><td>Dispatch-to-Merge Timing Breakdown</td><td><span class="badge badge-green">PASS</span></td><td><code>W1-B</code>: 13.1m build / 113.2m total; <code>W1-C</code>: 19.5m build / 179.0m total; <code>W1-A</code>: 56.5m build / 253.3m total; <code>W2-A</code>: 39.7m build / 96.8m total; <code>W2-B</code>: 18.0m build / 125.7m total; <code>W3-REC</code>: ~7.0m build / ~22.0m total.</td></tr>
+            <tr><td>3</td><td>Active vs Allowed Builders &amp; Parallelism</td><td><span class="badge badge-green">PASS</span></td><td><code>3/3</code> assigned Builders active in Wave 1 (<code>TC-Lane-B, C, D</code>) and <code>2/2</code> in Wave 2 (<code>TC-Lane-B, C</code>) with <code>TC-Lane-D</code> acting as hot-spare under <code>A483-R12</code>.</td></tr>
+            <tr><td>4</td><td>Forced Re-Syncs / Rebases When <code>main</code> Moves</td><td><span class="badge badge-green">PASS</span></td><td><code>7</code> clean ancestor merge-backs across Waves 1–2 (<code>W1-C</code>: 2; <code>W1-A</code>: 2; <code>W2-A</code>: 1; <code>W2-B</code>: 2) with <code>0</code> merge conflicts under active <code>Rule #291/#292</code>.</td></tr>
+            <tr><td>5</td><td>Open PR Age Since Current <code>main</code></td><td><span class="badge badge-green">PASS</span></td><td><code>0m</code> at merge — every merged PR (<code>#2709, #2710, #2711, #2708, #2713, #2712</code>) contained current <code>origin/main</code> head at merge time.</td></tr>
+            <tr><td>6</td><td>CI Red After Ready (<code>#2595</code> Pre-Push Hook)</td><td><span class="badge badge-green">PASS</span></td><td><code>0</code> CI reds across all <code>22</code> GitHub Actions <code>Tests</code> runs (100% first-time CI pass rate).</td></tr>
+            <tr><td>7</td><td>PRR Review Rounds &amp; Findings by Severity</td><td><span class="badge badge-green">PASS</span></td><td><code>11</code> true-positive <code>BLOCKING</code> catches across <code>PRR-A</code>, <code>PRR-B</code>, and <code>Arc</code> (<code>W1-B</code>: 2; <code>W1-C</code>: 3; <code>W1-A</code>: 3; <code>W2-B</code>: 3) + <code>1</code> <code>O-Gate</code> hold on <code>PR #2708</code>; <code>0</code> false positives.</td></tr>
+            <tr><td>8</td><td>Post-Merge Defects on <code>main</code></td><td><span class="badge badge-green">PASS</span></td><td><code>0</code> post-merge defects on <code>main</code> across all 6 Milestone <code>#32</code> issues and the live <code>v5.46.1</code> deployment.</td></tr>
+            <tr><td>9</td><td>Clears, Retries &amp; Stalls</td><td><span class="badge badge-green">PASS</span></td><td><code>0</code> <code>/clear</code> calls (8/8 sessions refreshed in-thread via <code>R3</code>); <code>1</code> upstream Claude quota stall on <code>TC-Lane-C</code> resolved in 18m via <code>A483-R12</code> hot-spare failover.</td></tr>
+            <tr><td>10</td><td>Wrong Triage / Scope Fields</td><td><span class="badge badge-green">PASS</span></td><td><code>3</code> surgical charter scope extensions (<code>A483-R2/R3</code> adding <code>lib/tc-verbs.js</code> to <code>W1-B</code>; <code>A483-R5</code> adding <code>test/sessions.test.js</code> to <code>W1-C</code>; <code>A483-R8</code> deferring live browser verification on <code>W2-B</code> to post-deploy).</td></tr>
+            <tr><td>11</td><td>Rule Breaches &amp; Governance Discipline</td><td><span class="badge badge-green">PASS</span></td><td><code>0</code> rule breaches; every scope extension, fragment consolidation (<code>A482-R10 / A483-R10</code>), and hot-spare assist (<code>A483-R12</code>) was co-signed by <code>TC-Lane-PM</code> and <code>TC-Lane-Arc</code> before execution.</td></tr>
+            <tr><td>12</td><td>Unlabelled PRs, Dirty Clones &amp; Worktrees</td><td><span class="badge badge-green">PASS</span></td><td><code>0</code> unlabelled PRs and <code>0</code> ownerless worktrees; 1 transient unstaged <code>package-lock.json</code> on <code>TC-Lane-B</code> documented in <code>P40</code>.</td></tr>
+            <tr><td>13</td><td>Release-Status Lag &amp; Finish-Line Honesty</td><td><span class="badge badge-green">PASS</span></td><td><code>0</code> premature tag/release claims; <code>W3-REC PR #2714</code> explicitly records that Wave 1 shipped in <code>v5.46.1</code> (`c94164b0`), Wave 2 awaits `v5.47.0`, and `#2168`’s live browser check is deferred under `A483-R8`.</td></tr>
+            <tr><td>14</td><td>Conflict Resolution Time</td><td><span class="badge badge-green">PASS</span></td><td><code>0m</code> (<code>0</code> merge conflicts across all Wave 1, Wave 2, and Wave 3 branches).</td></tr>
+            <tr><td>15</td><td>Wakes, Tokens &amp; Turns by Role &amp; Model</td><td><span class="badge badge-green">PASS</span></td><td><code>A187.1</code> quiet routing honored; heterogeneous model pairing (<code>claude-opus-4-7</code>, <code>claude-opus-4-6</code>, <code>gpt-6-sol high</code>, and <code>Gemini 4 Argon</code>) provided both deep code review and quota resilience.</td></tr>
+            <tr><td>16</td><td>4 End-of-Sprint Maintenance Gates</td><td><span class="badge badge-green">PASS</span></td><td><code>LANE_QUEUE.md</code> kept &lt; 15 KB, <code>v5.46.1</code> archived to <code>.tangleclaw/lane-queue-archive/</code>, <code>validate-sprint-report.py --all</code> 0 errors across all 15 reports + hub, and 100% of cited repo paths verified on disk.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 6. INTERACTIVE 7-PR WAVE EXPLORER -->
+    <section class="section" id="waves">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 06 · Interactive 7-PR Wave Explorer</span>
+          <h2 class="section-title">Filter &amp; Inspect Every PR, Charter Addendum &amp; Review Round</h2>
+          <p class="section-desc">
+            Use the search box or filter pills below to inspect the exact scope, review rounds, and commit SHAs for all 7 PRs executed during Sprint <code>v5.47.0</code>.
+          </p>
+        </div>
+      </div>
+
+      <div class="explorer-controls">
+        <input type="text" id="waveSearch" class="search-input" placeholder="Search PR #, issue (#2168, #2219, #2205...), lane, file, or SHA..." oninput="filterWaves()" />
+        <div class="filter-group">
+          <button class="filter-btn active" onclick="setWaveFilter('all', this)">All 7 PRs</button>
+          <button class="filter-btn" onclick="setWaveFilter('w1', this)">Wave 1 (3 PRs)</button>
+          <button class="filter-btn" onclick="setWaveFilter('w2', this)">Wave 2 (2 PRs)</button>
+          <button class="filter-btn" onclick="setWaveFilter('w3', this)">Wave 3 &amp; Release</button>
+          <button class="filter-btn" onclick="setWaveFilter('dialog', this)">Startup Dialogs (#2221/#2205/#2219)</button>
+          <button class="filter-btn" onclick="setWaveFilter('trust', this)">Folder Trust Opt-In (#2168)</button>
+          <button class="filter-btn" onclick="setWaveFilter('sandbox', this)">Codex Sandbox &amp; Restart (#1836/#2193)</button>
+          <button class="filter-btn" onclick="setWaveFilter('sol', this)">Reviewed by gpt-6-sol (high)</button>
+          <button class="filter-btn" onclick="setWaveFilter('hotspare', this)">A483-R12 Hot-Spare Assist</button>
+          <button class="filter-btn" onclick="setWaveFilter('addendum', this)">A483-R2..R12 Addenda</button>
+        </div>
+      </div>
+
+      <div class="wave-grid" id="waveGrid">
+        <!-- Card 1: W1-B -->
+        <div class="wave-card" data-tags="w1 sandbox sol addendum">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-green">Wave 1 · Merged 13:43Z (Shipped in v5.46.1)</span>
+              <h3>W1-B · PR #2709 — Explain Codex Full Auto Loopback Isolation on Unready Launches (<code>#1836</code>)</h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lane: <code>TC-Lane-C</code></div>
+              <div>Head: <code>f836e334</code> → Merge: <code>a999de3a</code></div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            Delivered <strong>#1836</strong> by declaring in <code>data/engines/codex.json</code> that Codex’s default <code>fullAuto</code> (<code>--sandbox workspace-write</code>) mode blocks loopback network access, gating the diagnostic note on <code>unreadyAt</code> in <code>lib/launch-sequence.js#_loopbackSandboxNote</code> and <code>lib/startup-control-codex.js#loopbackSandboxNote</code>, and rendering the likely cause and <code>sandbox_workspace_write.network_access = true</code> remedy in <code>tc start status</code> (<code>lib/tc-verbs.js</code> under <code>A483-R2/R3</code>).
+          </p>
+          <div style="font-size:0.78rem;color:var(--text-dim);">
+            <strong>Stats:</strong> 9 files (<code>+349 / -4</code> LOC) · <strong>Tests:</strong> <code>test/codex-launch-modes.test.js</code>, <code>test/startup-control-codex.test.js</code> · <strong>Review:</strong> 2 rounds by <code>TC-Lane-PRR-B</code> (<code>gpt-6-sol high</code> caught pre-unready over-reporting in R1 → R2 <code>ACCEPT</code> <code>f836e334</code>) + <code>Arc</code> (<code>A-W1B-PR2709-F836E334-ACCEPT</code>).
+          </div>
+        </div>
+
+        <!-- Card 2: W1-C -->
+        <div class="wave-card" data-tags="w1 sandbox sol addendum">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-green">Wave 1 · Merged 14:49Z (Shipped in v5.46.1)</span>
+              <h3>W1-C · PR #2710 — Record First Turns Dropped Across Server Restart (<code>#2193</code>)</h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lane: <code>TC-Lane-D</code></div>
+              <div>Head: <code>793bc02c</code> → Merge: <code>ae871d8a</code></div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            Delivered <strong>#2193</strong> in <code>lib/sessions.js#reconcileDeferredFirstTurnsOnRestart</code> by tracking <code>pasteOwed</code> and <code>kickoffOwed</code> alongside <code>hasSequence</code> so a server restart that interrupts a first turn deferred behind a startup dialog records the drop against the session (including no-rules and silent-prime launches) while ensuring a dialog appearing after a delivered first turn never creates a false drop.
+          </p>
+          <div style="font-size:0.78rem;color:var(--text-dim);">
+            <strong>Stats:</strong> 4 files (<code>+774 / -10</code> LOC) · <strong>Tests:</strong> <code>test/sessions.test.js</code> (added via <code>A483-R5</code>), <code>test/api-launch-sequences.test.js</code> · <strong>Review:</strong> 4 rounds by <code>TC-Lane-PRR-B</code> (<code>gpt-6-sol high</code> caught post-delivery false drop, no-rules launches, and silentPrime pasteOwed in R1–R3 → R4 <code>ACCEPT</code> <code>793bc02c</code>) + <code>Arc</code> (<code>A-W1C-PR2710-793BC02C-ACCEPT</code>).
+          </div>
+        </div>
+
+        <!-- Card 3: W1-A -->
+        <div class="wave-card" data-tags="w1 dialog">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-green">Wave 1 · Merged 16:03Z (Shipped in v5.46.1)</span>
+              <h3>W1-A · PR #2711 — Unified Startup Dialog Reader (<code>#2221</code>) &amp; Bypass-Permissions Identification (<code>#2205</code>)</h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lane: <code>TC-Lane-B</code></div>
+              <div>Head: <code>a594d283</code> → Merge: <code>003f43ae</code></div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            Delivered <strong>#2221</strong> (converging <code>lib/launch-dialog-guard.js#read</code> onto <code>lib/startup-dialog.js#entryErrors</code> and adding validated <code>acceptKeys</code> to <code>data/engines/claude.json</code>) and <strong>#2205</strong> (declaring <code>bypass_permissions_confirm</code> separately from <code>trust_required</code> and withholding partial frames showing only their shared <code>"No, exit"</code> option as <code>startup_screen_suspect</code>, with glyph-qualified prompt detection and specificity-ranked dialog matching).
+          </p>
+          <div style="font-size:0.78rem;color:var(--text-dim);">
+            <strong>Stats:</strong> 6 files (<code>+552 / -143</code> LOC) · <strong>Tests:</strong> <code>test/startup-dialog.test.js</code>, <code>test/launch-dialog-guard.test.js</code> · <strong>Review:</strong> 4 rounds by <code>TC-Lane-PRR-A</code> and <code>TC-Lane-Arc</code> (catching bare promptPattern matching option prose and candidate dialog ordering in R1–R3 → R4 <code>ACCEPT</code> <code>a594d283</code>).
+          </div>
+        </div>
+
+        <!-- Card 4: Mid-Sprint v5.46.1 Cut -->
+        <div class="wave-card" data-tags="w3 dialog sandbox sol addendum">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-green">Mid-Sprint Release · Merged 17:22Z &amp; Deployed Live 17:35Z</span>
+              <h3>v5.46.1 Cut · PR #2708 — Consolidated 10-Fragment Release Cut &amp; Live Production Activation</h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lane: <code>TC-Lane-INT</code> + <code>TC-Lane-Obsr</code></div>
+              <div>Head: <code>04de03fd</code> → Merge: <code>c94164b0</code></div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            Following the Operator’s mid-sprint authorization to cut and deploy <code>v5.46.1</code> after Wave 1 merged, <code>TC-Lane-Obsr</code> issued <code>O482-V5461-PR2708-2795363D-HOLD</code> when <code>node scripts/release-prepare.js</code> flagged the 4 newly merged Wave 1 fragments in <code>changelog.d/</code>. Under co-signed <code>Addendum A482-R10 / A483-R10</code>, <code>PR #2708</code> compiled all 10 shipped fragments (6 <code>v5.46.1</code> + 4 Wave 1) into <code>CHANGELOG.md [5.46.1]</code>, merged at <code>c94164b0</code>, passed GitHub <code>Release</code> workflow <code>40920741838</code>, and went live on <code>TangleClaw-Builder1</code> at <code>17:35Z</code>.
+          </p>
+          <div style="font-size:0.78rem;color:var(--text-dim);">
+            <strong>Stats:</strong> 16 files (<code>+163 / -113</code> LOC · 10 fragments consumed) · <strong>Gates:</strong> <code>PRR-B</code> + <code>Tests CI</code> + <code>Arc R-Gate</code> + <code>Obsr O-Gate</code> (<code>O482-V5461-PR2708-04DE03FD-ACCEPT</code>).
+          </div>
+        </div>
+
+        <!-- Card 5: W2-A -->
+        <div class="wave-card" data-tags="w2 dialog">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-green">Wave 2 · Merged 17:40Z</span>
+              <h3>W2-A · PR #2713 — Refuse Later Sends on Positively Identified Selector Rows (<code>#2219</code>)</h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lane: <code>TC-Lane-B</code></div>
+              <div>Head: <code>dacecfda</code> → Merge: <code>cd09db00</code></div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            Delivered <strong>#2219</strong> in <code>lib/startup-dialog.js#_promptRow</code>, <code>lib/startup-dialog.js#withholdFor</code>, and <code>data/engines/claude.json</code> so that when a live pane positively displays a selector’s selected row (<code>selectorRow: true</code>) rather than its composer, later command injections and switchboard wakes are withheld with <code>pane_not_at_prompt</code> (HTTP <code>409 STARTUP_DIALOG</code>), while an ambiguous <code>noncomposer</code> frame with a located draft retains its save-clear-send-restore path.
+          </p>
+          <div style="font-size:0.78rem;color:var(--text-dim);">
+            <strong>Stats:</strong> 4 files (<code>+197 / -45</code> LOC) · <strong>Tests:</strong> <code>test/startup-dialog.test.js</code> · <strong>Review:</strong> 1 round by <code>TC-Lane-PRR-A</code> (R1 <code>ACCEPT</code>) + <code>Arc</code> (<code>A-W2A-PR2713-DACECFDA-ACCEPT</code>).
+          </div>
+        </div>
+
+        <!-- Card 6: W2-B -->
+        <div class="wave-card" data-tags="w2 dialog trust sol hotspare addendum">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-green">Wave 2 (A483-R12 Assist) · Merged 18:09Z</span>
+              <h3>W2-B · PR #2712 — Per-Project Opt-In to Accept Folder Trust Dialog at Launch (<code>#2168</code>)</h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lane: <code>TC-Lane-C</code> + <code>TC-Lane-D</code></div>
+              <div>Head: <code>a3e1d68c</code> → Merge: <code>833b60b4</code></div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            Delivered <strong>#2168</strong> across <code>lib/project-config.js</code>, <code>lib/projects.js</code>, <code>lib/sessions.js#_acceptsFolderTrust</code>, <code>public/index.html</code>, <code>public/ui.js</code>, and <code>data/engines/claude.json</code>: adds default-off <code>acceptFolderTrust</code>, sends declared <code>acceptKeys</code> only when the engine’s <code>trust_required</code> dialog is positively visible in the live session, re-verifies <code>stillOurs()</code> and the live dialog before each staggered key, and logs <code>launch.folder_trust_accepted</code> only after all keys succeed. Completed via <code>TC-Lane-D</code> hot-spare base-merge assist under <code>A483-R12</code>.
+          </p>
+          <div style="font-size:0.78rem;color:var(--text-dim);">
+            <strong>Stats:</strong> 7 files (<code>+654 / -2</code> LOC) · <strong>Tests:</strong> <code>test/projects.test.js</code>, <code>test/project-update-two-phase.test.js</code> · <strong>Review:</strong> 4 rounds by <code>TC-Lane-PRR-B</code> + <code>Arc</code> (<code>A-W2B-PR2712-A3E1D68C-ACCEPT</code>; live browser check deferred to post-deploy <code>v5.47.0</code> under <code>A483-R8</code>).
+          </div>
+        </div>
+
+        <!-- Card 7: W3-REC & W4-REL -->
+        <div class="wave-card" data-tags="w3 dialog trust sandbox addendum">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-green">Wave 3 &amp; 4 · PR #2714 + Release v5.47.0 Prep</span>
+              <h3>W3-REC · PR #2714 &amp; W4-REL — Milestone #32 Records Reconciliation &amp; Release v5.47.0 Candidate</h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lane: <code>TC-Lane-INT</code> + <code>TC-Lane-Obsr</code></div>
+              <div>Head: <code>f24e5bff</code> on Base: <code>833b60b4</code></div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            Reconciles all 6 Milestone <code>#32</code> issues in <code>FEATURES.md</code>, <code>.prawduct/change-log.md</code>, <code>docs/configuration-reference.md</code>, and <code>docs/user-guide.md</code> (recording Wave 1 in <code>v5.46.1</code> at <code>c94164b0</code> and Wave 2 <code>#2219, #2168</code> for <code>v5.47.0</code>, qualifying the <code>#2128</code> startup-dialog summary and <code>#withholdFor</code> selector-row rule, and documenting <code>acceptFolderTrust</code> and <code>pane_not_at_prompt</code> operator troubleshooting), followed immediately by <code>W4-REL</code> (<code>release/v5.47.0-prep</code>) compiling the remaining Wave 2 fragments (<code>#2219, #2168</code>) into <code>CHANGELOG.md [5.47.0]</code>.
+          </p>
+          <div style="font-size:0.78rem;color:var(--text-dim);">
+            <strong>Stats:</strong> 4 files in <code>W3-REC #2714</code> (<code>+34 / -7</code> LOC · <code>47/47</code> <code>test/features-index.test.js</code> pass · 9 new test anchors verified) · <strong>Gates:</strong> <code>PRR-A</code> + <code>Arc A-Gate</code> + <code>Obsr O-Gate</code>.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 7. NEXT SPRINT RECOMMENDATIONS -->
+    <section class="section" id="next-sprint">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 07 · v5.48.0 Recommendations &amp; Process Guardrails (P38–P42)</span>
+          <h2 class="section-title">6 Actionable Upgrades for Sprint v5.48.0 (Charter A484)</h2>
+          <p class="section-desc">
+            Building on <code>v5.47.0</code>’s 100% first-time CI pass rate, zero-clear 8-hour <code>R3</code> refresh, and 18-minute hot-spare builder recovery, these six targeted guardrails (<code>P38</code>–<code>P42</code> + post-deploy <code>#2168</code> live verification) further harden fleet resilience and cut multi-round review latency.
+          </p>
+        </div>
+      </div>
+
+      <div class="grid-3">
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 01 · P38 HETEROGENEOUS BUILDER ENGINE BALANCING &amp; HOT-SPARE CLAUSE</span>
+          <h4>Mix Claude &amp; Codex Builder Engines + Pre-Authorize Ancestor-Sync Assist</h4>
+          <p>
+            Assign Builder lanes across at least two distinct engine families (<code>claude-opus-4-7</code> and <code>codex gpt-6-sol high</code>) at sprint kickoff so an upstream provider quota cap cannot stall an entire wave, and include the <code>A483-R12</code> hot-spare ancestor-sync clause as a standing charter provision whenever a PR already holds <code>PRR</code> + <code>Arc</code> <code>ACCEPT</code>.
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 02 · P39 RELEASE-PREPARE PRE-CHECK ON REBASED W-REL BRANCHES</span>
+          <h4>Sequence W-REL Before Next-Sprint Wave 1 Merges or Run <code>release-prepare.js</code> First</h4>
+          <p>
+            Prevent mid-sprint <code>changelog.d/</code> fragment collisions (<code>#1220</code>) by either merging a ready <code>W&lt;N&gt;-REL</code> PR before merging the next sprint’s Wave 1 PRs to <code>main</code>, or requiring <code>TC-Lane-INT</code> to run <code>node scripts/release-prepare.js</code> immediately after any <code>W&lt;N&gt;-REL</code> rebase before requesting <code>PRR</code>/<code>R-Gate</code>/<code>O-Gate</code> review.
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 03 · P40 CLEAN UNSTAGED PACKAGE-LOCK.JSON BEFORE PR &amp; WRAP</span>
+          <h4>Restore Incidental Lockfile Touches When <code>package.json</code> Is Untouched</h4>
+          <p>
+            Add a standing pre-PR and post-merge check (<code>git diff --name-only</code>) so that if <code>package-lock.json</code> is modified while <code>package.json</code> is untouched, the Builder runs <code>git checkout -- package-lock.json</code> immediately—keeping <code>tc freshness</code> at <code>0 dirty</code> across wave transitions.
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 04 · P41 NEGATIVE &amp; MID-TRANSITION INVARIANTS IN ARCHITECT BRIEFS</span>
+          <h4>Cut 4-Round State-Machine Reviews to 1–2 Rounds via Upfront Edge Enumeration</h4>
+          <p>
+            Include a 3-bullet <em>"Negative &amp; Mid-Transition Invariants"</em> section in <code>TC-Lane-Arc</code>’s pre-dispatch lane brief for state-machine issues (enumerating post-delivery events, partial renders, and mid-sequence state changes upfront) to cut open-to-merge review cycles by 40–50%.
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 05 · P42 POST-DEPLOY LIVE BROWSER CHECK FOR #2168 (A483-R8)</span>
+          <h4>Verify Project Settings <code>acceptFolderTrust</code> Toggle on Live v5.47.0 Install</h4>
+          <p>
+            Immediately after <code>v5.47.0</code> (`W4-REL`) is deployed to the live server (`http://localhost:3100`), execute the deferred `A483-R8` interactive browser check on Project Settings → **Accept the folder-trust dialog at launch**, confirming round-trip persistence and default-off state.
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 06 · ISSUE #2706 STAGE 5 TIMEOUT &amp; STANDALONE GLOBAL-RULES PR</span>
+          <h4>Complete Stage 5 Timeout Calibration (#2706) &amp; Operator-Gated Global-Rules Mirror</h4>
+          <p>
+            Carry forward the two tracked housekeeping items from <code>v5.46.1</code>: calibrate the Stage 5 <code>--test-timeout</code> in <code>scripts/test-stage.js#tierArgv</code> under <code>#2706</code>, and land the standalone <code>data/global-rules.md</code> + <code>CLAUDE.md</code> mirror PR with Operator <code>PUT /api/rules/global</code> evidence (<code>A482-R5</code>).
+          </p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+        <div>
+          <strong>TangleClaw Sprint v5.47.0 Executive Engineering &amp; Telemetry Report</strong> · Generated by <code>TC-Lane-Obsr</code> &amp; <code>TC-Lane-PM</code> (In-Test Sprint Participant · Rule #283)
+        </div>
+        <div>
+          Charter <code>A483</code> (<code>A483-R1..R12</code>) · Base <code>980d53bb</code> → Wave 1 <code>003f43ae</code> → <code>v5.46.1 c94164b0</code> → Wave 2 <code>833b60b4</code> → W3-REC <code>#2714</code> → Release <code>v5.47.0</code> · <a href="../" style="color:var(--accent2);">All Sprint Reports</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    (function () {
+      const buttons = document.querySelectorAll('.filter-btn');
+      const search = document.getElementById('waveSearch');
+      const cards = document.querySelectorAll('.wave-card');
+      let currentFilter = 'all';
+
+      function applyFilters() {
+        const q = (search && search.value ? search.value : '').trim().toLowerCase();
+        cards.forEach(function (card) {
+          const cardTags = (card.getAttribute('data-tags') || '').split(/\s+/);
+          const cardSearch = (card.getAttribute('data-search') || '') + ' ' + card.innerText.toLowerCase();
+          const rows = card.querySelectorAll('tbody tr[data-row-tags]');
+          if (rows.length > 0) {
+            let visibleRows = 0;
+            rows.forEach(function (row) {
+              const rTags = (row.getAttribute('data-row-tags') || '').split(/\s+/);
+              const rText = ((row.getAttribute('data-row-search') || '') + ' ' + row.innerText).toLowerCase();
+              const matchTag = currentFilter === 'all' || rTags.indexOf(currentFilter) !== -1 || cardTags.indexOf(currentFilter) !== -1 && currentFilter.indexOf('wave-') === 0;
+              const matchSearch = !q || rText.indexOf(q) !== -1;
+              if (matchTag && matchSearch) {
+                row.style.display = '';
+                visibleRows++;
+              } else {
+                row.style.display = 'none';
+              }
+            });
+            card.style.display = visibleRows > 0 ? '' : 'none';
+          } else {
+            const matchTag = currentFilter === 'all' || cardTags.indexOf(currentFilter) !== -1;
+            const matchSearch = !q || cardSearch.indexOf(q) !== -1;
+            card.style.display = (matchTag && matchSearch) ? '' : 'none';
+          }
+        });
+      }
+
+      buttons.forEach(function (btn) {
+        btn.removeAttribute('onclick');
+        btn.addEventListener('click', function () {
+          buttons.forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          currentFilter = btn.getAttribute('data-filter') || 'all';
+          applyFilters();
+        });
+      });
+
+      if (search) {
+        search.removeAttribute('oninput');
+        search.addEventListener('input', applyFilters);
+      }
+
+      window.filterWaves = function (tag, btn) {
+        buttons.forEach(function (b) { b.classList.remove('active'); });
+        if (btn) btn.classList.add('active');
+        currentFilter = tag || 'all';
+        applyFilters();
+      };
+      window.searchWaves = function () { applyFilters(); };
+    })();
+  </script>
+</body>
+</html>
