@@ -1390,6 +1390,64 @@ describe('medusa-wake — #2402 reply-guidance override and non-actionable-notic
   });
 });
 
+describe('medusa-wake — a not-accepted receipt immediately asks the watchdog to re-arm (#2716)', () => {
+  let saved;
+  beforeEach(() => { wake.stop(); saved = { ...wake._internal }; });
+  afterEach(() => { Object.assign(wake._internal, saved); wake.stop(); });
+
+  /**
+   * A fake transport whose `verify` is controlled directly, bypassing
+   * `verifySubmission`/a real pane read entirely. `deliver` still calls the
+   * real `injectCommand` hook it is handed, exactly as the real transports
+   * do, so `world.injected` is populated the same way a genuine nudge would.
+   */
+  const fakeTransport = (receipt) => Object.freeze({
+    id: 'fake-2716', channel: 'fake', receipts: receipt.outcome === 'accepted' ? 'positive' : 'negative',
+    deliver: (args, hooks) => hooks.injectCommand(args.project.name, args.line, {}),
+    verify: async () => receipt
+  });
+
+  it('calls rearmWorkspace right after recording wake_not_accepted — not merely records it and waits for the periodic watchdog tick', async () => {
+    const world = installWorld();
+    wake._internal.transportFor = () => fakeTransport({ outcome: 'not-accepted', reason: 'test' });
+    wake._internal.pendingWakeCount = () => 1;
+    const recorded = [];
+    wake._internal.recordWakeFacts = (workspaceId, fact, opts) => recorded.push({ workspaceId, fact, opts });
+    const rearmed = [];
+    wake._internal.rearmWorkspace = (workspaceId) => { rearmed.push(workspaceId); };
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 1, 'the nudge itself still goes through unchanged');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(recorded.some((r) => r.fact === 'wake_attempted'), 'the attempt is still recorded');
+    assert.ok(recorded.some((r) => r.fact === 'wake_not_accepted'), 'and so is the receipt');
+    assert.deepEqual(rearmed, [world.status.workspaceId], 'the watchdog is asked to re-arm this exact workspace, once');
+  });
+
+  it('a re-arm failure is caught and logged: the already-recorded receipt stands, and nothing throws', async () => {
+    const world = installWorld();
+    wake._internal.transportFor = () => fakeTransport({ outcome: 'not-accepted', reason: 'test' });
+    wake._internal.pendingWakeCount = () => 1;
+    const recorded = [];
+    wake._internal.recordWakeFacts = (workspaceId, fact, opts) => recorded.push({ workspaceId, fact, opts });
+    wake._internal.rearmWorkspace = () => { throw new Error('watchdog unreachable'); };
+    tickThroughDebounce();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(recorded.some((r) => r.fact === 'wake_not_accepted'), 'the receipt is recorded regardless of the re-arm outcome');
+  });
+
+  it('an accepted receipt never asks for a re-arm', async () => {
+    installWorld();
+    wake._internal.transportFor = () => fakeTransport({ outcome: 'accepted' });
+    wake._internal.pendingWakeCount = () => 1;
+    wake._internal.recordWakeFacts = () => {};
+    const rearmed = [];
+    wake._internal.rearmWorkspace = (workspaceId) => { rearmed.push(workspaceId); };
+    tickThroughDebounce();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(rearmed, [], 'only a proven miss re-arms; an accepted nudge has nothing to retry');
+  });
+});
+
 describe('medusa-wake — gates (each one blocks alone)', () => {
   let saved;
   beforeEach(() => { wake.stop(); saved = { ...wake._internal }; });

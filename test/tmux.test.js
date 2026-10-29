@@ -1252,6 +1252,56 @@ describe('tmux', () => {
       }
     });
 
+    it('REAL: antigravity is cleared with C-a C-k (the whole line, cursor position and all); every other engine still gets C-u (only back to the cursor) (#2716)', () => {
+      // bash's own readline bindings make the two genuinely different with the
+      // cursor NOT at the end of the line: C-u (unix-line-discard) kills only
+      // what is BEFORE the cursor, while C-a (beginning-of-line) then C-k
+      // (kill-line) kills EVERYTHING. That difference is exactly what an
+      // Antigravity pane needs: there, C-u reaches no binding at all (it is
+      // intercepted by the top-level viewport's KeyHalfPageUp before it gets to
+      // EditArea), so without this fix the draft is left in place entirely,
+      // not merely partially.
+      try {
+        tmux.createSession(testSession, { command: BARE_BASH });
+        awaitBashPrompt(testSession);
+        execSync(`tmux send-keys -t '=${testSession}:' -l 'echo FOOBAR'`);
+        waitForPane(testSession, (lines) => /^bash-[\d.]+\$ echo FOOBAR$/.test(lastLine(lines)),
+          'the draft on the prompt line');
+        // Six columns left lands the cursor right after "echo " (before "FOOBAR").
+        execSync(`tmux send-keys -t '=${testSession}:' Left Left Left Left Left Left`);
+
+        tmux.sendKeys(testSession, 'INJECTED', { enter: false, engineId: 'antigravity' });
+        const cleared = waitForPane(testSession, (lines) => lastLine(lines) !== 'echo FOOBAR',
+          'the prompt to change after the antigravity clear+paste');
+        assert.match(lastLine(cleared), /^bash-[\d.]+\$ INJECTED$/,
+          `antigravity's C-a C-k must clear the whole line, cursor position and all, got:\n${cleared.slice(-10).join('\n')}`);
+      } finally {
+        try { tmux.killSession(testSession); } catch (_) {}
+      }
+
+      try {
+        tmux.createSession(testSession, { command: BARE_BASH });
+        awaitBashPrompt(testSession);
+        execSync(`tmux send-keys -t '=${testSession}:' -l 'echo FOOBAR'`);
+        waitForPane(testSession, (lines) => /^bash-[\d.]+\$ echo FOOBAR$/.test(lastLine(lines)),
+          'the draft on the prompt line');
+        execSync(`tmux send-keys -t '=${testSession}:' Left Left Left Left Left Left`);
+
+        // No engineId at all: the unqualified default, same as every
+        // non-antigravity engine named.
+        tmux.sendKeys(testSession, 'INJECTED', { enter: false });
+        const cleared = waitForPane(testSession, (lines) => lastLine(lines) !== 'echo FOOBAR',
+          'the prompt to change after the C-u clear+paste');
+        // C-u kills only what is before the cursor and leaves the cursor at
+        // column 0, so the paste lands there too, ahead of "FOOBAR" (which
+        // C-u never touched and the paste never displaced).
+        assert.match(lastLine(cleared), /^bash-[\d.]+\$ INJECTEDFOOBAR$/,
+          `C-u must only clear back to the cursor, leaving "FOOBAR" in place for the paste to land ahead of, got:\n${cleared.slice(-10).join('\n')}`);
+      } finally {
+        try { tmux.killSession(testSession); } catch (_) {}
+      }
+    });
+
     it('should NOT execute the line when enter:false', () => {
       try {
         tmux.createSession(testSession, { command: BARE_BASH });
