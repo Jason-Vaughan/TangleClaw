@@ -291,6 +291,17 @@ describe('fullAuto declares its loopback sandbox limitation (#1836)', () => {
     assert.ok(mode.sandboxEvidence && mode.sandboxEvidence.verifiedOn, 'dated like every other declared evidence block');
   });
 
+  it('words the cause as a likely one, not a certainty (PRR-B C1, regression)', () => {
+    // TangleClaw has no way to read the operator's own ~/.codex/config.toml
+    // from the server side, so it cannot know whether network_access=true is
+    // already set for this project. If it is, loopback IS reachable and this
+    // diagnosis would be wrong -- the wording must say so, every time, not
+    // assert the sandbox is the cause as settled fact.
+    const note = codex.launchModes.fullAuto.sandboxNote;
+    assert.match(note, /network_access\s*=\s*true/, 'names the exact override that would make this diagnosis wrong');
+    assert.match(note, /likely cause, not a certainty/i);
+  });
+
   it('is not declared for the modes that do reach loopback', () => {
     for (const key of ['default', 'bypassPermissions']) {
       const mode = codex.launchModes[key];
