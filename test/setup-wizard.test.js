@@ -202,9 +202,19 @@ describe('Setup Wizard', () => {
       const savedComplete = config.setupComplete;
       config.setupComplete = false;
       store.config.save(config);
+      // #2696 — the gate's own fallback (engines.refreshDetectionPath, run when
+      // nothing is found) force-syncs the bundled profiles (#737) regardless of
+      // who called it. Left real, that resync re-seeds claude.json/codex.json
+      // into the directory this fixture just emptied, and on a machine that
+      // actually has them on PATH (any dev Mac) the gate sees them as installed
+      // again mid-test. Stubbed the same way test/engines.test.js's own #737
+      // coverage does, for exactly the duration this directory must stay empty.
+      const realSyncBundled = store.engines.syncBundled;
+      store.engines.syncBundled = () => {};
       try {
         await fn();
       } finally {
+        store.engines.syncBundled = realSyncBundled;
         fs.rmSync(dir, { recursive: true, force: true });
         fs.renameSync(stash, dir);
         const restore = store.config.load();
@@ -305,6 +315,14 @@ describe('Setup Wizard', () => {
       fs.renameSync(dir, stash);
       fs.mkdirSync(dir);
       engines.resetDetectionCache();
+      // #2696 — same reseed hazard as withNoEngines above: GET /api/engines'
+      // own automatic re-probe (server.js) routes through
+      // engines.refreshDetectionPath() too, and its forced bundled-profile
+      // sync (#737) would repopulate this emptied directory with profiles
+      // this machine's own PATH can satisfy, independent of the stub shell
+      // below ever answering.
+      const realSyncBundled = store.engines.syncBundled;
+      store.engines.syncBundled = () => {};
       const tally = () => (fs.existsSync(tallyFile)
         ? fs.readFileSync(tallyFile, 'utf8').trim().split('\n').filter(Boolean).length
         : 0);
@@ -315,6 +333,7 @@ describe('Setup Wizard', () => {
         // deliberately-broken SHELL into every later test in this file, turning
         // one red into a cascade.
         process.env.SHELL = savedShell;
+        store.engines.syncBundled = realSyncBundled;
         fs.rmSync(dir, { recursive: true, force: true });
         fs.renameSync(stash, dir);
         fs.rmSync(shellDir, { recursive: true, force: true });

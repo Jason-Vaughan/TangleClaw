@@ -924,11 +924,51 @@ describe('ttyd-watcher', () => {
       assert.ok(children.every((c) => Number.isFinite(c.ageMs)), 'every real etime parses');
     });
 
-    it('_poolFromCounts classifies the real sysctl and /dev/ttys* counts', { skip: process.platform !== 'darwin' }, () => {
-      const cap = parseInt(execFileSync('sysctl', ['-n', 'kern.tty.ptmx_max'], { encoding: 'utf8' }), 10);
+    it('_poolFromCounts classifies the real sysctl and /dev/ttys* counts', { skip: process.platform !== 'darwin' }, async () => {
+      // #2697 — bare `sysctl` is not on every PATH this runs under (it lives
+      // in /usr/sbin, which a non-login shell's PATH does not always carry),
+      // so this goes through the same fallback the production reader uses
+      // rather than a bare `execFileSync('sysctl', ...)`.
+      const cap = parseInt(String(await ttydWatcher._sysctl(['-n', 'kern.tty.ptmx_max'])).trim(), 10);
       const used = parseInt(execFileSync('sh', ['-c', 'ls /dev/ttys* 2>/dev/null | wc -l'], { encoding: 'utf8' }), 10);
       const pool = ttydWatcher._poolFromCounts(cap, used, 0.85);
       assert.ok(pool && pool.cap > 0 && pool.used >= 0 && typeof pool.exhausted === 'boolean');
+    });
+  });
+
+  // _sysctl's fallback branch (#2697) is not exercised by the real-environment
+  // test above: wherever that test actually runs, bare `sysctl` IS on PATH, so
+  // the ENOENT path needs a mocked runner to reach it at all.
+  describe('_sysctl (#2697)', () => {
+    it('falls back to /usr/sbin/sysctl when the bare name is not on PATH', async () => {
+      const enoent = Object.assign(new Error('spawn sysctl ENOENT'), { code: 'ENOENT' });
+      const runner = makeRunner({ 'sysctl:-n': enoent, '/usr/sbin/sysctl:-n': '511\n' });
+      ttydWatcher._setRunner(runner);
+
+      const result = await ttydWatcher._sysctl(['-n', 'kern.tty.ptmx_max']);
+
+      assert.equal(result, '511\n');
+      assert.deepEqual(runner.calls.map((c) => c.cmd), ['sysctl', '/usr/sbin/sysctl'],
+        'must try the bare name first, then the absolute path');
+    });
+
+    it('propagates the fallback\'s own failure rather than swallowing it', async () => {
+      const enoent = Object.assign(new Error('spawn sysctl ENOENT'), { code: 'ENOENT' });
+      const runner = makeRunner({
+        'sysctl:-n': enoent,
+        '/usr/sbin/sysctl:-n': new Error('sysctl: permission denied')
+      });
+      ttydWatcher._setRunner(runner);
+
+      await assert.rejects(ttydWatcher._sysctl(['-n', 'kern.tty.ptmx_max']), /permission denied/);
+    });
+
+    it('does not retry on a non-ENOENT failure', async () => {
+      const runner = makeRunner({ 'sysctl:-n': new Error('sysctl: unknown oid') });
+      ttydWatcher._setRunner(runner);
+
+      await assert.rejects(ttydWatcher._sysctl(['-n', 'kern.tty.ptmx_max']), /unknown oid/);
+      assert.equal(runner.calls.length, 1, 'a real error from the bare name must not trigger a retry');
     });
   });
 
