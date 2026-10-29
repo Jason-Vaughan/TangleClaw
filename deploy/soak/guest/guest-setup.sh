@@ -323,21 +323,31 @@ public_ip 6 "$SOAK_EGRESS_PROBE_ADDR6" || refuse "SOAK_EGRESS_PROBE_ADDR6 must b
 # $t seconds, even though nothing is still running. Backgrounding the sleep
 # and trapping TERM makes the cleanup immediate instead.
 #
-# $pid is killed BEFORE its own children: $pid may be a shell running a
-# foreground child of its own (as every fake command here is — the hung
-# command is a plain, unbackgrounded `sleep` inside a fake's own script).
-# Killing that child first only wakes $pid's `wait`, which resumes running
-# the rest of its script and can exit on its own before the next line here
-# reaches it — a real race that was returning the fake's own exit code
-# instead of 124. SIGKILL to $pid itself is unmaskable and immediate, so
-# killing $pid first closes that race; any now-orphaned descendant of $pid
-# is swept after, not before.
+# $pid is FROZEN (SIGSTOP), its children captured, then both killed
+# together — not killed one after the other, in either order. $pid may be a
+# shell running a foreground child of its own (as every fake command here
+# is — the hung command is a plain, unbackgrounded `sleep` inside a fake's
+# own script). Killing that CHILD first only wakes $pid's `wait`, which
+# resumes running the rest of its script and can exit on its own before the
+# next line here reaches it — a real race that was returning the fake's own
+# exit code instead of 124. Killing $pid FIRST avoids that race (SIGKILL is
+# unmaskable), but the kernel reparents $pid's still-living children to PID
+# 1 the moment $pid dies, so a `pkill -P "$pid"` that runs even one line
+# later has already lost them — a real orphan leak (confirmed: an
+# accumulating `sleep` per probe, never reaped). SIGSTOP pauses $pid without
+# killing it, so it cannot exit, resume, or reparent anything while its
+# children are enumerated; only then are $pid and every child killed in one
+# command, with nothing alive in between to race or outrun.
 bounded() {
   "$@" &
   local pid=$! rc=0
   ( trap "kill -9 \$! 2>/dev/null; exit 0" TERM
     sleep "$t" &
-    wait $! && { kill -9 "$pid" 2>/dev/null; pkill -9 -P "$pid" 2>/dev/null || true; }
+    wait $! && {
+      kill -STOP "$pid" 2>/dev/null || true
+      children="$(pgrep -P "$pid" 2>/dev/null || true)"
+      kill -9 "$pid" $children 2>/dev/null || true
+    }
   ) >/dev/null 2>&1 &
   local watch=$!
   wait "$pid" || rc=$?

@@ -1155,6 +1155,38 @@ describe('soak guest: admin verifier', () => {
       assert.match(r.json[0].reason, reason);
     });
   }
+
+  it('leaves no orphaned process behind once bounded() times out a hung probe', () => {
+    // bounded()'s own hang is a plain, unbackgrounded `sleep` inside a
+    // fake's script — exactly as every real HANG fixture here simulates —
+    // so the fake backgrounds its OWN sleep here only to record that
+    // child's pid for this assertion; `wait` still blocks the fake exactly
+    // as a plain foreground `sleep 30` would, which is what bounded() sees.
+    const pidFile = path.join(tmp, 'hung-child-pid');
+    const f = guestFakes(tmp, {
+      sudo: [
+        '[ "$1" = "-n" ] && shift',
+        'if [ "$1" = "-l" ]; then',
+        '  [ "$3" = admin ] && exit 0',
+        '  sleep 30 &',
+        `  echo $! > "${pidFile}"`,
+        '  wait',
+        'fi',
+        '[ "${FAKE_USER:-admin}" = admin ] || exit 1',
+        'exec "$@"'
+      ].join('\n')
+    });
+    const r = setup(['--verify-admin'], f, tmp, { RULES: path.join(tmp, 'rules.txt'), SOAK_PROBE_TIMEOUT: HANG_PROBE_TIMEOUT });
+    assert.equal(r.status, 3, r.stderr);
+    assert.match(r.json[0].reason, /sudo -l for soakrun hung/);
+    const childPid = Number(fs.readFileSync(pidFile, 'utf8').trim());
+    assert.ok(childPid > 0, 'the fake must have recorded its backgrounded sleep\'s own pid');
+    assert.throws(
+      () => process.kill(childPid, 0),
+      /ESRCH/,
+      'the hung probe\'s own child process must not survive bounded()\'s cleanup, reparented and forgotten'
+    );
+  });
 });
 
 const REPO = path.join(__dirname, '..');
