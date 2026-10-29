@@ -4,6 +4,12 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.47.1] - 2026-10-29
+
+### Fixed
+- Medusa switchboard wake delivery now clears a stranded nudge from an Antigravity prompt with `C-a C-k`. Antigravity intercepts the previous `C-u` shortcut for viewport scrolling, leaving the draft in place and blocking every retry. Other engines continue using `C-u` (#2716).
+- When a wake nudge is observed in the composer but not accepted, its durable receipt now triggers the existing bounded re-arm check immediately. A re-armed wake requests another look at the earliest safe observation time, then makes the second at-rest observation needed for a retry without waiting for the watchdog's 30-second tick or the wake monitor's ordinary poll ticks. The existing re-arm budget, backoff, restart safety and recipient isolation remain in force (#2716).
+
 ## [5.47.0] - 2026-10-29
 
 ### Added

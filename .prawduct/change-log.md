@@ -41,6 +41,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-29 — v5.47.1 W3-REL: prepare the Medusa wake delivery point patch
+
+<!-- prawduct: type=internal | scope=v5471-w3-rel -->
+
+- Prepared the candidate from W2-REC-merged `main@d880cbc0c314b57129d08da2f3acf2438c06b69f`: promoted the accepted #2716 fragment into dated `[5.47.1]` release notes, consumed the fragment, and changed `version.json` from 5.47.0 to 5.47.1. With `changelog.d/` empty, `scripts/release-prepare.js` refreshed README clone pins and extended the released-section lock.
+- Recorded the separate pending release, local update and activation finish lines in `docs/releases/v5.47.1-status.md`. The Observer is preparing a separate v5.47.1 sprint report with a plain-English summary alongside technical evidence. This is release preparation; no v5.47.1 tag, GitHub Release, local deployment or activation is claimed.
+
 ## 2026-10-29 — v5.47.1 W2-REC: reconcile Medusa wake delivery records
 
 <!-- prawduct: type=internal | scope=v5471-w2-rec -->
