@@ -278,8 +278,8 @@
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Latest Release Report</div>
-          <div class="kpi-val" style="color:var(--green);">v5.46.0 RC</div>
-          <div class="kpi-sub">W3-REC <code>777c3b42</code> · W4-REL <code>#2701 @ c566c5d5</code> · Milestone #31 <code>12/12</code> Closed</div>
+          <div class="kpi-val" style="color:var(--green);">v5.46.0</div>
+          <div class="kpi-sub">Tag <code>v5.46.0 @ 6939342c</code> · Live Prod <code>5.46.0</code> · Milestone #31 <code>12/12</code> Closed</div>
         </div>
       </div>
     </section>
@@ -292,19 +292,19 @@
             <span class="badge badge-green">● Latest Release · Oct 28, 2026</span>
             <h2 class="report-title"><a href="./v5.46.0/">TangleClaw <code>v5.46.0</code>: “Release authority and merge policy”</a></h2>
           </div>
-          <span class="badge badge-cyan">W4-REL #2701 @ c566c5d5</span>
+          <span class="badge badge-cyan">Tag v5.46.0 @ 6939342c</span>
         </div>
         <p style="color:#cbd5e1; margin:0;">
-          Four execution waves delivered <strong>8 PRs (#2687, #2689, #2690, #2692, #2694, #2695, #2700, #2701) in ~6 hours 02 minutes</strong> and closed Milestone <code>#31</code> (<strong>12/12 issues: 100%</strong>, plus Wave 3 doc follow-up <code>#2693</code>). Renamed <code>releaseMode</code> to canonical <strong><code>agent</code> / <code>operator</code> / <code>off</code></strong> with permanent legacy aliases and safe <strong><code>operator</code> default</strong> (<code>#1701, #1702</code>), enforced two-site <strong>group release ownership authority</strong> on <code>project_groups</code> with <code>409 CONFLICT</code> and worktree-safe <code>configRootOf(project)</code> <code>version-bump</code> skip (<code>#1697</code>), shipped opt-in managed-project <strong>release automation</strong> (<code>lib/release-automation.js</code>: <code>planRelease</code>, <code>applyRelease</code>, <code>generateReleaseWorkflow</code>; <code>#721</code>), added configurable <strong><code>wrapMergeMethod</code></strong> (<code>squash|merge|rebase</code> in <code>lib/wrap-steps/pr-merge.js</code> and <code>docs/adr/0002-wrap-pipeline-contract.md</code>; <code>#1172</code>) and settled TangleClaw’s repo exception on guarded <code>--merge</code> in <code>CLAUDE.md</code> / <code>Rule #282</code> (<code>#2162</code>), added <code>_addChangelogLinkDef</code> in <code>version-bump</code> for changelogs with bottom link-reference blocks and strict fragment verification (<code>#1051, #2523, #2022</code>), enabled default-on <strong><code>linkedIssueClosedSignal</code></strong> readiness checks (<code>#1495</code>), preserved framework verification contracts on custom prompt overrides (<code>#660</code>), and completed <code>_assertKnownKeys</code> enforcement (<code>StoreError BAD_REQUEST</code>) across all 15 remaining <code>lib/store.js</code> accessors (<code>#2681</code>). Mid-sprint cutover to Codex <strong><code>gpt-6-astra (medium)</code></strong> on <code>PRR-A</code>/<code>PRR-B</code> achieved <strong>60–120s follow-up turnarounds</strong> and caught <strong>6 critical Wave 2 bugs</strong> with zero false positives.
+          Four execution waves delivered <strong>8 PRs (#2687, #2689, #2690, #2692, #2694, #2695, #2700, #2701) in ~7 hours 11 minutes</strong>, closed Milestone <code>#31</code> (<strong>12/12 issues: 100%</strong>, plus Wave 3 doc follow-up <code>#2693</code>), published annotated tag <code>v5.46.0</code> (<code>c7e4024b</code> → <code>6939342c</code>), and deployed <code>v5.46.0</code> to live production. Renamed <code>releaseMode</code> to canonical <strong><code>agent</code> / <code>operator</code> / <code>off</code></strong> with permanent legacy aliases and safe <strong><code>operator</code> default</strong> (<code>#1701, #1702</code>), enforced two-site <strong>group release ownership authority</strong> on <code>project_groups</code> with <code>409 CONFLICT</code> and worktree-safe <code>configRootOf(project)</code> <code>version-bump</code> skip (<code>#1697</code>), shipped opt-in managed-project <strong>release automation</strong> (<code>lib/release-automation.js</code>: <code>planRelease</code>, <code>applyRelease</code>, <code>generateReleaseWorkflow</code>; <code>#721</code>), added configurable <strong><code>wrapMergeMethod</code></strong> (<code>squash|merge|rebase</code> in <code>lib/wrap-steps/pr-merge.js</code> and <code>docs/adr/0002-wrap-pipeline-contract.md</code>; <code>#1172</code>) and settled TangleClaw’s repo exception on guarded <code>--merge</code> in <code>CLAUDE.md</code> / <code>Rule #282</code> (<code>#2162</code>), added <code>_addChangelogLinkDef</code> in <code>version-bump</code> for changelogs with bottom link-reference blocks and strict fragment verification (<code>#1051, #2523, #2022</code>), enabled default-on <strong><code>linkedIssueClosedSignal</code></strong> readiness checks (<code>#1495</code>), preserved framework verification contracts on custom prompt overrides (<code>#660</code>), and completed <code>_assertKnownKeys</code> enforcement (<code>StoreError BAD_REQUEST</code>) across all 15 remaining <code>lib/store.js</code> accessors (<code>#2681</code>). Mid-sprint cutover to Codex <strong><code>gpt-6-astra (medium)</code></strong> on <code>PRR-A</code>/<code>PRR-B</code> achieved <strong>60–120s follow-up turnarounds</strong> and caught <strong>6 critical Wave 2 bugs</strong> with zero false positives.
         </p>
         <div class="meta-pills">
-          <span class="badge badge-cyan">4 Waves · 8 PRs · 6h 02m Wall Time</span>
+          <span class="badge badge-cyan">4 Waves · 8 PRs · 7h 11m Wall Time</span>
           <span class="badge badge-green">Milestone #31: 12/12 Closed (+ #2693) · 0 Reverts</span>
-          <span class="badge badge-purple">+4,711 / -331 LOC · 16/16 Rule #283 PASS · Pre-Deploy RC Verified</span>
+          <span class="badge badge-purple">+4,711 / -331 LOC · 16/16 Rule #283 PASS · O481-V546-PASS</span>
         </div>
         <div class="actions">
           <a class="btn btn-primary" href="./v5.46.0/">📊 Open v5.46.0 Interactive Sprint Report →</a>
-          <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2701" target="_blank" rel="noopener">W4-REL PR #2701</a>
+          <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/releases/tag/v5.46.0" target="_blank" rel="noopener">GitHub Release v5.46.0</a>
         </div>
       </article>
 

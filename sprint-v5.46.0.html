@@ -494,13 +494,13 @@
           <div class="eyebrow">🚀 Sprint v5.46.0 Retrospective · Milestone #31 (12 Issues + #2693 Doc Reconcile · 8 PRs)</div>
           <h1>v5.46.0: Release Authority, Group Ownership &amp; Merge Policy</h1>
           <p class="hero-subtitle">
-            Sprint <strong>v5.46.0</strong> hardened TangleClaw’s release governance and wrap pipeline end-to-end across <strong>12 Milestone #31 issues</strong> (plus Wave 3 follow-up <code>#2693</code>) and <strong>8 PRs</strong> in <strong>~6h 02m</strong> wall-clock time (<code>2026-10-28T18:06Z</code> → <code>2026-10-29T00:08Z</code>).
+            Sprint <strong>v5.46.0</strong> hardened TangleClaw’s release governance and wrap pipeline end-to-end across <strong>12 Milestone #31 issues</strong> (plus Wave 3 follow-up <code>#2693</code>) and <strong>8 PRs</strong> in <strong>~7h 11m</strong> total wall-clock time (<code>2026-10-28T18:06Z</code> Wave 1 start → <code>2026-10-29T01:17Z</code> <code>W4-REL #2701</code> merge at <code>6939342c</code>, tag <code>v5.46.0</code> published at <code>01:29Z</code>, and live production updated to <code>5.46.0</code>).
             Key capabilities include renaming <code>releaseMode</code> to <strong><code>agent</code> / <code>operator</code> / <code>off</code></strong> with safe <strong><code>operator</code> default</strong> and permanent legacy aliases (<code>#1701, #1702</code>), two-site <strong>group release ownership authority</strong> with <code>409 CONFLICT</code> enforcement and non-owner <code>version-bump</code> safety (<code>#1697</code>), opt-in managed-project <strong>release automation</strong> (<code>lib/release-automation.js</code>: <code>planRelease</code>, <code>applyRelease</code>, <code>generateReleaseWorkflow</code>; <code>#721</code>), configurable <strong><code>wrapMergeMethod</code></strong> (<code>squash|merge|rebase</code> in <code>lib/wrap-steps/pr-merge.js</code> and <code>docs/adr/0002-wrap-pipeline-contract.md</code>; <code>#1172</code>) with TangleClaw’s own repository PR merge policy settled on guarded <code>--merge</code> in <code>CLAUDE.md</code> / <code>Rule #282</code> (<code>#2162</code>), conditional Keep-a-Changelog bottom link-reference definitions in <code>lib/wrap-steps/version-bump.js</code> when a bottom link-reference block is present alongside strict fragment enforcement (<code>#1051, #2523, #2022</code>), default-on <strong><code>linkedIssueClosedSignal</code></strong> readiness advisories (<code>#1495</code>), prompt verification-contract preservation in <code>lib/wrap-step-overrides.js</code> (<code>#660</code>), and strict <code>_assertKnownKeys</code> guards across all 15 remaining <code>lib/store.js</code> accessors (<code>#2681</code>).
             <em>Participant Disclosure (Rule #283):</em> <code>TC-Lane-Obsr</code> operated as an in-test sprint participant whose telemetry and pre-merge source audits lanes could read during execution.
           </p>
         </div>
         <div class="status-pill">
-          ● 12/12 Milestone #31 Issues Delivered · Pre-Merge W4-REL Verified
+          ● v5.46.0 Released, Tagged &amp; Live in Production (6939342c · O481-V546-PASS)
         </div>
       </div>
 
@@ -508,17 +508,17 @@
         <div class="kpi-card">
           <div class="kpi-label">Milestone #31 Scope</div>
           <div class="kpi-value" style="color:var(--green)">12 / 12</div>
-          <div class="kpi-meta">100% of Milestone #31 issues closed on <code>main</code> (+ <code>#2693</code> closed in <code>W3-REC #2700</code>)</div>
+          <div class="kpi-meta">100% of Milestone #31 issues closed on <code>main</code> (+ <code>#2693</code> closed · Milestone #31 closed)</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Sprint Wall Clock</div>
-          <div class="kpi-value" style="color:var(--accent2)">6h 02m</div>
-          <div class="kpi-meta">18:06Z Wave 1 start → 00:08Z W4-REL RC prep (W1: 2h14m · W2: 3h30m · W3–W4: 18m)</div>
+          <div class="kpi-value" style="color:var(--accent2)">7h 11m</div>
+          <div class="kpi-meta">18:06Z Wave 1 start → 01:17Z <code>W4-REL #2701</code> merge (<code>01:29Z</code> tag <code>v5.46.0</code> + prod live)</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Sprint PRs &amp; Churn</div>
           <div class="kpi-value" style="color:var(--accent)">8 PRs</div>
-          <div class="kpi-meta"><code>+4,711 / -331</code> LOC across 6 feature PRs + <code>W3-REC #2700</code> + <code>W4-REL #2701</code></div>
+          <div class="kpi-meta"><code>+4,711 / -331</code> LOC across 6 feature PRs + <code>W3-REC #2700</code> + <code>W4-REL #2701</code> (<code>6939342c</code>)</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">PRR Model Upgrade</div>
@@ -528,7 +528,7 @@
         <div class="kpi-card">
           <div class="kpi-label">Zero-Revert Delivery</div>
           <div class="kpi-value" style="color:var(--green)">0 Reverts</div>
-          <div class="kpi-meta">7 PRs merged cleanly to <code>main</code> + <code>W4-REL #2701</code> verified at R2 <code>c566c5d5</code></div>
+          <div class="kpi-meta">All 8 PRs merged cleanly to <code>main</code> · Tag <code>v5.46.0</code> (<code>c7e4024b</code>) &amp; prod live at <code>6939342c</code></div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Store Accessor Guard</div>
@@ -697,7 +697,7 @@
           <rect x="887" y="238" width="202" height="66" rx="8" fill="#111827" stroke="#334155" />
           <text x="897" y="258" fill="#a855f7" font-size="11.5" font-weight="700">W4-REL PR #2701</text>
           <text x="897" y="274" fill="#94a3b8" font-size="10.5">12 fragments → CHANGELOG.md</text>
-          <text x="897" y="290" fill="#64748b" font-size="10">Status: Pre-deploy RC ready</text>
+          <text x="897" y="290" fill="#22c55e" font-size="10">Merged 6939342c · Live v5.46.0</text>
         </svg>
       </div>
     </section>
@@ -709,14 +709,14 @@
           <span class="section-tag">Section 02 · Execution Velocity &amp; Reviewer Model Cutover</span>
           <h2 class="section-title">4-Wave Execution Timeline &amp; Mid-Sprint Codex <code>gpt-6-astra</code> Transition</h2>
           <p class="section-desc">
-            Sprint v5.46.0 executed in four waves between <code>18:06Z</code> and <code>00:08Z</code>. At <code>19:48Z</code> (near the end of Wave 1), the Operator switched <code>TC-Lane-PRR-A</code> and <code>TC-Lane-PRR-B</code> from <code>gpt-6-sol</code> to Codex <strong><code>gpt-6-astra (medium)</code></strong>, cutting follow-up review latency to <strong>60–120 seconds</strong> while catching 6 critical Wave 2 defects before merge.
+            Sprint v5.46.0 executed in four waves between <code>18:06Z</code> and <code>01:17Z</code> (with GitHub Release <code>v5.46.0</code> published at <code>01:29Z</code> and live production updated immediately after). At <code>19:48Z</code> (near the end of Wave 1), the Operator switched <code>TC-Lane-PRR-A</code> and <code>TC-Lane-PRR-B</code> from <code>gpt-6-sol</code> to Codex <strong><code>gpt-6-astra (medium)</code></strong>, cutting follow-up review latency to <strong>60–120 seconds</strong> while catching 6 critical Wave 2 defects before merge.
           </p>
         </div>
       </div>
 
       <div class="svg-wrap">
         <div class="svg-caption">
-          <span>Figure 2.1 — Sprint v5.46.0 Wave Execution Timeline (2026-10-28T18:06Z → 2026-10-29T00:08Z)</span>
+          <span>Figure 2.1 — Sprint v5.46.0 Wave Execution Timeline (2026-10-28T18:06Z → 2026-10-29T01:29Z)</span>
           <span>4 Feature Lanes · 2 PRR Lanes (gpt-6-sol → gpt-6-astra) · Integrator &amp; Observer</span>
         </div>
         <svg viewBox="0 0 1120 330" width="100%" height="auto" role="img" aria-label="Sprint v5.46.0 Wave Gantt Chart">
@@ -737,7 +737,7 @@
           <text x="640" y="22" fill="#94a3b8" font-size="10.5" text-anchor="middle">21:00Z (W2 Active)</text>
           <text x="790" y="22" fill="#94a3b8" font-size="10.5" text-anchor="middle">22:30Z</text>
           <text x="940" y="22" fill="#94a3b8" font-size="10.5" text-anchor="middle">23:50Z (W3-REC)</text>
-          <text x="1065" y="22" fill="#38bdf8" font-size="10.5" font-weight="700" text-anchor="middle">00:08Z (W4)</text>
+          <text x="1065" y="22" fill="#22c55e" font-size="10.5" font-weight="700" text-anchor="middle">01:17Z (v5.46.0)</text>
 
           <!-- Vertical cutover line -->
           <line x1="472" y1="28" x2="472" y2="295" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="4 4" />
@@ -777,7 +777,7 @@
           <rect x="942" y="260" width="68" height="22" rx="5" fill="#38bdf8" opacity="0.92" />
           <text x="948" y="275" fill="#082f49" font-size="9.5" font-weight="700">#2700</text>
           <rect x="1015" y="260" width="65" height="22" rx="5" fill="#22c55e" opacity="0.92" />
-          <text x="1021" y="275" fill="#052e16" font-size="9.5" font-weight="700">#2701 RC</text>
+          <text x="1019" y="275" fill="#052e16" font-size="9.5" font-weight="700">#2701 Live</text>
 
           <text x="190" y="315" fill="#94a3b8" font-size="10.5">● Note: PR #2699 was a temporary W2-A fallback PR opened for 15 minutes during GitHub’s post-squash graph lag and closed unmerged once PR #2695 auto-recovered.</text>
         </svg>
@@ -794,7 +794,7 @@
               <th>Open → Merge</th>
               <th>Total Elapsed</th>
               <th>Review Rounds &amp; Reviewer Model</th>
-              <th>Merge Commit / RC Head</th>
+              <th>Merge Commit / Release SHA</th>
             </tr>
           </thead>
           <tbody>
@@ -865,18 +865,18 @@
               <td>~5.0m</td>
               <td>~9.0m</td>
               <td><strong>~14.0m</strong></td>
-              <td>2 rounds (<code>PRR-B</code> <code>gpt-6-astra</code> R1/R2 ACCEPT + <code>OBSR</code> source-check ACCEPT)</td>
+              <td>2 rounds (<code>PRR-A</code> <code>gpt-6-astra</code> R1/R2 ACCEPT + <code>Arc</code> <code>A-W3REC-PR2700-R2-ACCEPT</code>)</td>
               <td><code>777c3b42357f</code> (00:00:56Z)</td>
             </tr>
             <tr>
               <td><strong>W4-REL</strong> (<code>TC-Lane-INT</code>)</td>
               <td><code>#2701</code></td>
-              <td>Release Candidate Prep</td>
+              <td>Release v5.46.0 Cut &amp; Deploy</td>
               <td>~4.0m</td>
-              <td>Pre-merge RC</td>
-              <td><strong>~5.0m</strong></td>
-              <td>Verified by <code>PRR-B</code> &amp; <code>OBSR</code> pre-merge O-Gate at R2 head <code>c566c5d5</code></td>
-              <td><code>c566c5d5da68</code> (Open RC)</td>
+              <td>~72.0m</td>
+              <td><strong>~76.0m</strong></td>
+              <td>2 rounds (<code>PRR-B</code> <code>943c264d</code> + <code>Arc</code> <code>32a1ae48</code> + <code>OBSR</code> <code>O481-V546-PASS</code>)</td>
+              <td><code>6939342c72a4</code> (01:17:34Z · Tag <code>v5.46.0</code>)</td>
             </tr>
           </tbody>
         </table>
@@ -890,7 +890,7 @@
           <span class="section-tag">Section 03 · Complete Issue &amp; Deliverables Matrix</span>
           <h2 class="section-title">12 Milestone #31 Issues + Wave 3 Follow-Up #2693</h2>
           <p class="section-desc">
-            Every issue in Milestone #31 was traced from Charter <code>A481</code> through PR review, targeted and full-suite verification, and Wave 3 documentation reconciliation. All cited file and test paths below are verified on disk.
+            Every issue in Milestone #31 was traced from Charter <code>A481</code> through PR review, targeted and full-suite verification, Wave 3 documentation reconciliation, and live production deployment (`5.46.0`). All cited file and test paths below are verified on disk.
           </p>
         </div>
       </div>
@@ -912,7 +912,7 @@
               <td><code>W1-D · #2689</code></td>
               <td>Release Governance</td>
               <td>Renamed <code>releaseMode</code> values from <code>auto</code>/<code>ask</code> to <code>agent</code>/<code>operator</code> across <code>lib/project-config.js</code>, <code>lib/projects.js</code>, <code>lib/wrap-steps/version-bump.js</code>, <code>public/session.js</code>, and <code>public/ui.js</code> while preserving permanent read/write normalization aliases.</td>
-              <td><code>test/release-mode.test.js</code>, <code>test/release-recommendation.test.js</code>, <code>test/version-bump-release-gate.test.js</code> · Live UI check deferred post-deploy</td>
+              <td><code>test/release-mode.test.js</code>, <code>test/release-recommendation.test.js</code>, <code>test/version-bump-release-gate.test.js</code> · Live v5.46.0 UI verified (<code>O481-V546-PASS</code>)</td>
             </tr>
             <tr>
               <td><strong>#1051</strong></td>
@@ -982,7 +982,7 @@
               <td><code>W2-A · #2695</code></td>
               <td>Group Authority</td>
               <td>Enforced single release owner per <code>project group</code> across <code>lib/store.js</code>, <code>lib/store/_schema.js</code>, <code>server.js</code>, and <code>public/ui.js</code> (<code>409 CONFLICT</code> on second release-capable member) and <code>lib/wrap-steps/version-bump.js</code> using canonical <code>configRootOf(project)</code>.</td>
-              <td><code>test/api-groups.test.js</code>, <code>test/version-bump-release-gate.test.js</code>, <code>test/version-bump-fail-closed.test.js</code> · Live UI check deferred post-deploy</td>
+              <td><code>test/api-groups.test.js</code>, <code>test/version-bump-release-gate.test.js</code>, <code>test/version-bump-fail-closed.test.js</code> · Live v5.46.0 UI verified (<code>O481-V546-PASS</code>)</td>
             </tr>
             <tr>
               <td><strong>#1702</strong></td>
@@ -1093,10 +1093,10 @@
     <section class="section" id="postmortem">
       <div class="section-header">
         <div>
-          <span class="section-tag">Section 05 · Sprint Post-Mortem, 4-Gate Status &amp; Rule #283 Audit</span>
-          <h2 class="section-title">What Worked, Friction Points &amp; 16-Point Governance Verification</h2>
+          <span class="section-tag">Section 05 · Candid Sprint Post-Mortem, 4-Gate Status &amp; Rule #283 Audit</span>
+          <h2 class="section-title">Why v5.46.0 Felt Rough, What Worked &amp; 16-Point Governance Verification</h2>
           <p class="section-desc">
-            Every friction event observed during Waves 1–4 was traced to root cause, resolved in-sprint without any revert on <code>main</code>, and paired with a concrete guardrail for v5.47.0.
+            While v5.46.0 delivered 100% of Milestone #31 scope with zero reverts on <code>main</code>, Operator experience had too much manual friction: two mid-sprint local test-suite waivers, multi-pane <code>yes</code> confirmation loops at <code>W4-REL</code>, a dirty tracked file on the live production checkout, and three pre-merge report-citation audit rounds. Every single friction event is documented below with its root cause and permanent v5.47.0 guardrail (<code>P29</code>–<code>P34</code>).
           </p>
         </div>
       </div>
@@ -1117,28 +1117,28 @@
             <p>In Wave 2, <code>gpt-6-astra (medium)</code> caught 3 blocking bugs in <code>W2-B (#2694)</code> and 3 blocking group-ownership bypasses in <code>W2-A (#2695)</code> with 60–120s follow-up turnarounds and zero false-positive blocks.</p>
           </div>
           <div class="pm-item">
-            <h4>4. Clean Wave 3 Reconciliation &amp; 13/13 FEATURES.md Anchor Pass</h4>
-            <p><code>W3-REC (#2700)</code> reconciled all Waves 1–2 user/config docs and verified all 13 <code>Tests:</code> file paths in <code>FEATURES.md</code> on disk, closing follow-up issue <code>#2693</code> in 14 minutes.</p>
+            <h4>4. Automated On-Disk Path Verifier in Report Generator (gen_v546.py)</h4>
+            <p>Adding a built-in regex + filesystem existence assertion at the bottom of <code>gen_v546.py</code> verified all 47 cited repository/test paths on disk before writing HTML output, permanently eliminating phantom test-path citations.</p>
           </div>
         </div>
 
         <div>
-          <h3 style="margin-bottom:12px;color:var(--amber);">⚠️ What Didn't Work (Friction Points &amp; Remediations)</h3>
+          <h3 style="margin-bottom:12px;color:var(--amber);">⚠️ What Didn't Work (Why v5.46.0 Felt Rough &amp; Remediations)</h3>
           <div class="pm-item warn">
-            <h4>1. Shared-Host Overbroad pkill -f of node --test (Incident W1-I1)</h4>
-            <p>During Wave 1, <code>TC-Lane-B</code> ran an unscoped <code>pkill -f</code> targeting <code>node --test</code> on the shared macOS host, terminating concurrent test runs in sibling lanes. <strong>Fix / Guardrail (P29):</strong> Ban unscoped <code>pkill -f "node --test"</code> in Builder rules and scope process cleanup to child PIDs or worktree CWD.</p>
+            <h4>1. Repeated Multi-Pane Operator Prompts &amp; Dirty Live Checkout at W4-REL</h4>
+            <p><code>Rule #282 cl. 5/6</code> + <code>Rule #278 cl. 1</code> caused <code>TC-Lane-INT</code> to reject Operator approvals relayed through <code>TC-Lane-PM</code> and demand two separate manual <code>yes</code> prompts directly inside <code>TC-Lane-INT</code>’s pane (one to merge <code>PR #2701</code>, and a second to deploy <code>6939342c</code> to <code>TangleClaw-Builder1</code> after backing up a dirty tracked edit in <code>data/global-rules.md</code>). <strong>Fix / Guardrail (P33):</strong> Pre-flight <code>TangleClaw-Builder1</code> git status during Wave 3 and unify W4-REL merge + production update into a single Operator confirmation gate.</p>
           </div>
           <div class="pm-item warn">
-            <h4>2. Pre-Existing Local Full-Suite Blockers Required Two Waivers</h4>
-            <p>Out-of-diff local full-suite issues (<code>#2688, #2691</code> in Wave 1 and <code>#2696, #2697, #2698</code> in Wave 2) blocked un-waived local full-suite runs on <code>W1-A</code> and <code>W2-A</code>, requiring Operator-approved one-PR waivers <code>WAIVE2692</code> (<code>A481-R7</code>) and <code>WAIVE2695</code> (<code>A481-R14</code>). <strong>Fix / Guardrail (P31):</strong> Prioritize fixing <code>#2688, #2691, #2696–#2698</code> in Wave 1 of v5.47.0.</p>
+            <h4>2. Pre-Existing Local Full-Suite Blockers Forced Two Operator Waivers</h4>
+            <p>Out-of-diff local full-suite failures (<code>#2688</code> tier classification, <code>#2691</code> <code>test/soak-guest.test.js</code> hang, <code>#2696</code> <code>test/setup-wizard.test.js</code>, <code>#2697</code> <code>test/ttyd-watcher.test.js</code> non-login shell missing <code>/usr/sbin</code> causing <code>sysctl ENOENT</code>, and <code>#2698</code> concurrency timeout) blocked un-waived local runs on <code>W1-A</code> and <code>W2-A</code>, requiring Operator waivers <code>WAIVE2692</code> (<code>A481-R7</code>) and <code>WAIVE2695</code> (<code>A481-R14</code>). <strong>Fix / Guardrail (P31):</strong> Fix <code>#2688, #2691, #2696–#2698</code> first in v5.47.0 Wave 1 and prepend <code>/usr/sbin</code> to test runner <code>PATH</code>.</p>
           </div>
           <div class="pm-item warn">
-            <h4>3. Pre-Dispatch Doc &amp; ADR Token Scope Omissions in Wave 1</h4>
-            <p><code>W1-C (#2687)</code> and <code>W1-D (#2689)</code> hit R1 holds for companion references in <code>docs/adr/0002-wrap-pipeline-contract.md</code> and <code>docs/configuration-reference.md</code> that were outside initial Wave 1 file tables. <strong>Fix / Guardrail (P30):</strong> Extend pre-dispatch <code>P26</code> grep scans across <code>docs/</code> and <code>docs/adr/</code> for any renamed config key or policy.</p>
+            <h4>3. Three Pre-Merge W4-REL Report-Content Audit Holds</h4>
+            <p><code>TC-Lane-INT</code> held <code>W4-REL</code> across 3 audit rounds because <code>TC-Lane-Obsr</code>’s initial report draft cited guessed test filenames (instead of <code>test/version-bump-release-gate.test.js</code> and <code>test/changelog-notes.test.js</code>) and guessed identifiers (instead of <code>StoreError BAD_REQUEST</code>, <code>configRootOf(project)</code>, and <code>project group</code>) without cross-checking <code>FEATURES.md</code>. <strong>Fix / Guardrail (P34):</strong> Enforce built-in on-disk path and identifier assertions in <code>gen_v5XX.py</code> and <code>validate-sprint-report.py</code> before W4-REL review.</p>
           </div>
           <div class="pm-item warn">
-            <h4>4. PM Sprint Plan vs Architect Co-Sign Signal-Gathering Divergence</h4>
-            <p><code>v546-sprint-plan.md</code> described <code>#1495</code> as opt-in while Architect co-sign <code>A481</code> specified default-on gathering via <code>gatherReleaseSignals</code> in <code>lib/release-readiness.js</code>, causing an R1 hold on <code>W1-A</code> until <code>A481-R5</code> reconciled it. <strong>Fix / Guardrail (P32):</strong> Sync Architect co-sign invariants back into the sprint plan before Builder dispatch.</p>
+            <h4>4. Shared-Host pkill -f Collision (W1-I1) &amp; Doc/ADR Pre-Dispatch Omissions</h4>
+            <p>During Wave 1, <code>TC-Lane-B</code> ran an unscoped <code>pkill -f "node --test"</code> that killed sibling lanes’ test runs, while <code>W1-C (#2687)</code>, <code>W1-D (#2689)</code>, and <code>W1-A (#2692)</code> required R1 charter addenda (<code>A481-R3..R5</code>) for <code>docs/adr/0002-wrap-pipeline-contract.md</code>, <code>docs/configuration-reference.md</code>, and <code>#1495</code> default-on signal gathering. <strong>Fix / Guardrail (P29, P30, P32):</strong> Ban unscoped <code>pkill -f</code>, grep <code>docs/adr/</code> + <code>docs/configuration-reference.md</code> pre-dispatch, and sync Architect co-sign invariants into the sprint plan.</p>
           </div>
         </div>
       </div>
@@ -1159,13 +1159,13 @@
               <td><strong>Gate 1 · PRR Code &amp; Contract Review</strong></td>
               <td><code>TC-Lane-PRR-A</code> &amp; <code>TC-Lane-PRR-B</code></td>
               <td>Exact-SHA diff review, test coverage, charter scope compliance, and regression audit across all 8 PRs</td>
-              <td><span class="badge badge-green">PASS</span> All 7 merged PRs + <code>W4-REL #2701</code> received explicit <code>PRR ACCEPT</code> on exact head SHA.</td>
+              <td><span class="badge badge-green">PASS</span> All 8 merged PRs (including <code>W4-REL #2701</code> @ <code>6939342c</code>) received explicit <code>PRR ACCEPT</code> on exact head SHA.</td>
             </tr>
             <tr>
               <td><strong>Gate 2 · Automated Test &amp; CI Gate</strong></td>
               <td>Feature Lanes + <code>TC-Lane-INT</code></td>
-              <td>GitHub Actions CI + local full-suite verification (<code>Rule #280 cl. 5</code>) across Waves 1–4</td>
-              <td><span class="badge badge-green">PASS</span> Green GitHub CI on all PRs; <code>WAIVE2692</code> (<code>A481-R7</code>) &amp; <code>WAIVE2695</code> (<code>A481-R14</code>) ratified by Operator + Architect for pre-existing local issues <code>#2688, #2691, #2696–#2698</code>.</td>
+              <td>GitHub Actions CI + local full-suite verification (<code>Rule #280 cl. 5</code>) + post-merge Release/Tests workflows</td>
+              <td><span class="badge badge-green">PASS</span> Green GitHub CI on all PRs; post-merge <code>Release</code> run <code>40799527966</code> &amp; <code>Tests</code> run <code>40799527912</code> succeeded on <code>6939342c</code>; <code>WAIVE2692</code> &amp; <code>WAIVE2695</code> co-signed.</td>
             </tr>
             <tr>
               <td><strong>Gate 3 · Wave 3 Doc Reconciliation</strong></td>
@@ -1174,10 +1174,10 @@
               <td><span class="badge badge-green">PASS</span> Merged in <code>W3-REC PR #2700</code> (<code>777c3b42</code>); 13/13 <code>FEATURES.md</code> <code>Tests:</code> paths verified on disk.</td>
             </tr>
             <tr>
-              <td><strong>Gate 4 · Observer O-Gate &amp; Browser Audit</strong></td>
-              <td><code>TC-Lane-Obsr</code></td>
-              <td>Canonical 8-section HTML report validation (<code>validate-sprint-report.py --all</code>) + on-disk path audit + <code>W4-REL #2701</code> R2 pre-merge audit + post-deploy UI check</td>
-              <td><span class="badge badge-green">PRE-MERGE PASS</span> 0 validation errors across all 13 reports + hub index and 100% on-disk path existence verified; <code>#1701/#1697</code> live Project Settings browser checks queued immediately post-deploy.</td>
+              <td><strong>Gate 4 · Observer O-Gate &amp; Live Browser Audit</strong></td>
+              <td><code>TC-Lane-Obsr</code> + <code>TC-Lane-PM</code></td>
+              <td>Canonical 8-section HTML report validation (<code>validate-sprint-report.py --all</code>) + on-disk path audit + live <code>v5.46.0</code> browser &amp; DOM verification (<code>#1701/#1697</code>)</td>
+              <td><span class="badge badge-green">PASS (O481-V546-PASS)</span> 0 validation errors across all 13 reports + hub index, 47/47 on-disk paths verified, and live <code>http://localhost:3102</code> (<code>5.46.0</code>) UI verified for <code>#1701</code> &amp; <code>#1697</code>.</td>
             </tr>
           </tbody>
         </table>
@@ -1197,7 +1197,7 @@
           <tbody>
             <tr><td>1</td><td>Charter &amp; Co-Sign Integrity (<code>A481</code>)</td><td><span class="badge badge-green">PASS</span></td><td>Co-signed by PM &amp; Arch (<code>A481-COSIGN-20261028T1750Z</code>) before Wave 1 dispatch at <code>18:06Z</code>; 13 addenda ratified cleanly.</td></tr>
             <tr><td>2</td><td>Observer In-Test Disclosure</td><td><span class="badge badge-green">PASS</span></td><td>Explicitly stated in HTML hero, Markdown observer reports, and handoff notes per <code>Rule #283</code>.</td></tr>
-            <tr><td>3</td><td>Worktree &amp; Branch Isolation</td><td><span class="badge badge-green">PASS</span></td><td>All 8 PRs executed in dedicated lane worktrees; <code>TC-Lane-Obsr</code> remained clean (<code>0</code> dirty files) on <code>main</code>.</td></tr>
+            <tr><td>3</td><td>Worktree &amp; Branch Isolation</td><td><span class="badge badge-green">PASS</span></td><td>All 8 PRs executed in dedicated lane worktrees; all 10 fleet clones + <code>TangleClaw-Builder1</code> synced cleanly to <code>6939342c</code> on <code>main</code>.</td></tr>
             <tr><td>4</td><td>Exact-SHA PR Review Discipline</td><td><span class="badge badge-green">PASS</span></td><td>All <code>ACCEPT</code> tokens bound to exact 40-char head SHAs and git tree hashes across Waves 1–4.</td></tr>
             <tr><td>5</td><td>File-Scope &amp; Charter Addendum Discipline</td><td><span class="badge badge-green">PASS</span></td><td>Every out-of-table file touch obtained a ratified addendum (<code>A481-R1..R14</code>) before merge.</td></tr>
             <tr><td>6</td><td>Test Tier &amp; Manifest Parity (<code>P22</code>)</td><td><span class="badge badge-green">PASS</span></td><td>Proactive Observer warning led to <code>A481-R1</code> (folding <code>#721</code> tests into <code>test/changelog-notes.test.js</code>); <code>W2-A</code> updated <code>test/tiers.json</code> and <code>.testament.toml</code> cleanly.</td></tr>
@@ -1208,9 +1208,9 @@
             <tr><td>11</td><td>Release Authority &amp; Group Exclusivity (<code>#1697, #1701, #1702</code>)</td><td><span class="badge badge-green">PASS</span></td><td><code>operator</code> default + two-site group ownership enforcement (<code>409 CONFLICT</code> + <code>lib/wrap-steps/version-bump.js</code> worktree-safe <code>configRootOf(project)</code> skip).</td></tr>
             <tr><td>12</td><td>FEATURES.md Test Anchor Integrity (<code>P21</code>)</td><td><span class="badge badge-green">PASS</span></td><td><code>W3-REC #2700</code> verified 13/13 <code>Tests:</code> paths on disk across 11 existing test files.</td></tr>
             <tr><td>13</td><td>Switchboard &amp; Medusa Protocol Hygiene</td><td><span class="badge badge-green">PASS</span></td><td><code>0</code> owed replies left hanging; all supervised <code>--in-reply-to</code> + <code>tc message ack</code> exchanges completed cleanly.</td></tr>
-            <tr><td>14</td><td>No Premature Production Activation Claim</td><td><span class="badge badge-green">PASS</span></td><td><code>W4-REL #2701</code> R2 (<code>docs/releases/v5.46-status.md</code> &amp; <code>.prawduct/change-log.md</code>) and this report explicitly state pre-deploy RC status.</td></tr>
+            <tr><td>14</td><td>Three-Finish-Line Release &amp; Production Integrity</td><td><span class="badge badge-green">PASS</span></td><td>Finish Line 1 (<code>PR #2701</code> merged at <code>6939342c</code>), Finish Line 2 (tag <code>v5.46.0</code> <code>c7e4024b</code> + GitHub Release after green run <code>40799527966</code>), and Finish Line 3 (<code>TangleClaw-Builder1</code> live on <code>5.46.0</code> after backup) verified sequentially.</td></tr>
             <tr><td>15</td><td>Canonical HTML Report Validation &amp; Path Audit (<code>P28 / Rule #283.5</code>)</td><td><span class="badge badge-green">PASS</span></td><td><code>validate-sprint-report.py --all</code> passed with <code>0</code> errors across all 13 sprint reports (<code>v5.34.0</code>–<code>v5.46.0</code>) + hub index, and <code>gen_v546.py</code> verified 100% of cited repo paths on disk.</td></tr>
-            <tr><td>16</td><td>Post-Deploy Live UI Verification Readiness</td><td><span class="badge badge-green">PASS</span></td><td>Deferred <code>#1701/#1697</code> Project Settings live browser checks documented as explicit finish-line gate immediately following production deploy.</td></tr>
+            <tr><td>16</td><td>Post-Deploy Live UI Verification (<code>O481-V546-PASS</code>)</td><td><span class="badge badge-green">PASS</span></td><td>Live production <code>http://localhost:3102</code> (<code>5.46.0</code>) verified for <code>#1701</code> (<code>agent</code>/<code>operator</code>/<code>off</code> options in <code>public/ui.js</code>) and <code>#1697</code> (<code>gm-release-owner</code> group selector &amp; conflict hint).</td></tr>
           </tbody>
         </table>
       </div>
@@ -1235,7 +1235,7 @@
           <button class="filter-btn" onclick="setWaveFilter('w1', this)">Wave 1 (4 PRs)</button>
           <button class="filter-btn" onclick="setWaveFilter('w2', this)">Wave 2 (2 PRs)</button>
           <button class="filter-btn" onclick="setWaveFilter('w3', this)">Wave 3 Reconcile</button>
-          <button class="filter-btn" onclick="setWaveFilter('w4', this)">Wave 4 Release RC</button>
+          <button class="filter-btn" onclick="setWaveFilter('w4', this)">Wave 4 Release</button>
           <button class="filter-btn" onclick="setWaveFilter('astra', this)">Reviewed by gpt-6-astra</button>
           <button class="filter-btn" onclick="setWaveFilter('waiver', this)">Charter Waivers</button>
           <button class="filter-btn" onclick="setWaveFilter('release', this)">Release Authority</button>
@@ -1381,7 +1381,7 @@
             Reconciled <code>FEATURES.md</code> (13/13 verified <code>Tests:</code> paths across 11 on-disk test files), <code>docs/configuration-reference.md</code>, <code>docs/user-guide.md</code>, and <code>.prawduct/change-log.md</code> across all Waves 1–2 deliverables, closing follow-up issue <strong>#2693</strong>.
           </p>
           <div style="font-size:0.78rem;color:var(--text-dim);">
-            <strong>Stats:</strong> 4 files (<code>+31 / -1</code> LOC) · <strong>Elapsed:</strong> ~14.0m · <strong>Review:</strong> 2 rounds (R1 refined <code>#1697/#1702</code> table wording in <code>docs/configuration-reference.md</code> → R2 <code>PRR-B</code> &amp; <code>OBSR</code> <code>ACCEPT</code> on <code>2f91e9a4</code>).
+            <strong>Stats:</strong> 4 files (<code>+31 / -1</code> LOC) · <strong>Elapsed:</strong> ~14.0m · <strong>Review:</strong> 2 rounds (R1 refined <code>#1697/#1702</code> table wording in <code>docs/configuration-reference.md</code> → R2 <code>PRR-A</code> &amp; <code>Arc</code> <code>ACCEPT</code> on <code>2f91e9a4</code>).
           </div>
         </div>
 
@@ -1389,19 +1389,19 @@
         <div class="wave-card" data-tags="w4 release changelog astra">
           <div class="wave-card-header">
             <div>
-              <span class="badge badge-purple">Wave 4 · Pre-Merge RC Verified</span>
-              <h3>W4-REL · PR #2701 — Release Candidate v5.46.0 Preparation</h3>
+              <span class="badge badge-green">Wave 4 · Merged 01:17Z · Tag v5.46.0 Live</span>
+              <h3>W4-REL · PR #2701 — Release v5.46.0 Cut, Tag Publication &amp; Production Update</h3>
             </div>
             <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
               <div>Lane: <code>TC-Lane-INT</code></div>
-              <div>RC R2 Head: <code>c566c5d5da68</code> (Tree <code>b3d4dc97</code>)</div>
+              <div>Head: <code>c566c5d5</code> → Merge: <code>6939342c</code></div>
             </div>
           </div>
           <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
-            Bumped <code>version.json</code> to <code>5.46.0</code>, compiled all 12 <code>changelog.d/*.md</code> fragments into <code>CHANGELOG.md</code> (this repo has no bottom link-ref block, so <code>#1051</code> adds no link definitions here), refreshed <code>test/fixtures/changelog-released-sections.lock.json</code> and <code>README.md</code>, and published <code>docs/releases/v5.46-status.md</code> (updated in R2 <code>c566c5d5</code> with live checkout update preflight details) explicitly separating Finish Line 1 (code merged to <code>main</code>), Finish Line 2 (<code>release.yml</code> tag &amp; GitHub Release after authorized <code>main</code> merge and green merge-commit tests, before production update), and Finish Line 3 (live production checkout update and post-deploy verification).
+            Bumped <code>version.json</code> to <code>5.46.0</code>, compiled all 12 <code>changelog.d/*.md</code> fragments into <code>CHANGELOG.md</code> (this repo has no bottom link-ref block, so <code>#1051</code> adds no link definitions here), refreshed <code>test/fixtures/changelog-released-sections.lock.json</code> and <code>README.md</code>, and published <code>docs/releases/v5.46-status.md</code>. Merged at <code>6939342c72a4bacefcc3abb6e028110ebc2e69ce</code> (<code>01:17:34Z</code>), verified by post-merge <code>Release</code> workflow run <code>40799527966</code> (<code>SUCCESS</code>) and <code>Tests</code> workflow run <code>40799527912</code> (<code>SUCCESS</code>), tagged <code>v5.46.0</code> (<code>c7e4024bc59cb935dc2c64161741d16a09782708</code>) at <code>01:29:35Z</code>, and deployed live to <code>TangleClaw-Builder1</code> (<code>http://localhost:3102/api/health</code> → <code>5.46.0</code>).
           </p>
           <div style="font-size:0.78rem;color:var(--text-dim);">
-            <strong>Stats:</strong> 18 files (<code>+66 / -15</code> LOC; 12 fragments consumed) · <strong>Status:</strong> Pre-merge O-Gate &amp; <code>PRR-B</code> verified at R2 head <code>c566c5d5da68ebd4038c60259d7f25b85f50b851</code> (no production update claimed).
+            <strong>Stats:</strong> 18 files (<code>+66 / -15</code> LOC; 12 fragments consumed) · <strong>Status:</strong> Merged at <code>6939342c</code> · Tag <code>v5.46.0</code> published · Live production verified (<code>O481-V546-PASS</code>).
           </div>
         </div>
       </div>
@@ -1411,55 +1411,55 @@
     <section class="section" id="next-sprint">
       <div class="section-header">
         <div>
-          <span class="section-tag">Section 07 · v5.47.0 Recommendations &amp; Process Guardrails</span>
-          <h2 class="section-title">6 Actionable Engineering &amp; Governance Upgrades for Sprint v5.47.0</h2>
+          <span class="section-tag">Section 07 · v5.47.0 Recommendations &amp; Process Guardrails (P29–P34)</span>
+          <h2 class="section-title">6 Structural Upgrades to Make Sprint v5.47.0 Smooth End-to-End</h2>
           <p class="section-desc">
-            Derived directly from Sprint v5.46.0 telemetry, these six recommendations eliminate the remaining local full-suite waiver friction and lock in our reviewer velocity gains.
+            Directly addressing the friction points that made v5.46.0 feel rough, these six guardrails (<code>P29</code>–<code>P34</code>) eliminate manual multi-pane Operator prompts, local full-suite waivers, and W4-REL report-audit churn.
           </p>
         </div>
       </div>
 
       <div class="grid-3">
         <div class="subcard">
-          <span class="pillar-num">RECOMMENDATION 01 · P31 SUITE UNBLOCK</span>
-          <h4>Fix Pre-Existing Local Suite Blockers (#2688, #2691, #2696–#2698) in Wave 1</h4>
+          <span class="pillar-num">GUARDRAIL 01 · P31 LOCAL SUITE UNBLOCK</span>
+          <h4>Fix Local Full-Suite Blockers (#2688, #2691, #2696–#2698) in Wave 1</h4>
           <p>
-            Schedule issues <code>#2688</code> (tier classification), <code>#2691</code> (<code>soak-guest</code> hang), <code>#2696</code> (<code>test/setup-wizard.test.js</code>), <code>#2697</code> (<code>test/ttyd-watcher.test.js</code> darwin output shapes), and <code>#2698</code> (full-suite load concurrency timeout) at the top of v5.47.0 Wave 1 so no one-PR Gate 2 waivers are needed.
+            Schedule issues <code>#2688</code> (tier classification), <code>#2691</code> (<code>test/soak-guest.test.js</code> hang), <code>#2696</code> (<code>test/setup-wizard.test.js</code>), <code>#2697</code> (<code>test/ttyd-watcher.test.js</code> missing <code>/usr/sbin</code> in non-login <code>PATH</code>), and <code>#2698</code> (concurrency timeout) at the top of v5.47.0 Wave 1 so zero mid-sprint Gate 2 waivers are needed.
           </p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">RECOMMENDATION 02 · REVIEWER ENGINE DEFAULT</span>
-          <h4>Retain Codex <code>gpt-6-astra (medium)</code> on Both PRR Lanes</h4>
+          <span class="pillar-num">GUARDRAIL 02 · P33 SINGLE W4-REL OPERATOR GATE</span>
+          <h4>Pre-Flight Live Checkout in W3 &amp; Single-Prompt W4-REL Cut/Deploy</h4>
           <p>
-            Keep <code>TC-Lane-PRR-A</code> and <code>TC-Lane-PRR-B</code> pinned to <code>gpt-6-astra (medium)</code> from sprint start. It delivered 60–120s follow-up turnarounds and caught 6 subtle Wave 2 security/correctness bugs with zero false positives.
+            Run a read-only git/DB preflight of <code>TangleClaw-Builder1</code> during Wave 3 so any dirty tracked file (like <code>data/global-rules.md</code>) is reconciled before Wave 4, and combine W4-REL merge + production update into one structured Operator confirmation.
           </p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">RECOMMENDATION 03 · P29 PROCESS ISOLATION</span>
+          <span class="pillar-num">GUARDRAIL 03 · P34 AUTOMATED REPORT CITATION GATE</span>
+          <h4>Enforce On-Disk Path &amp; Symbol Verification in <code>gen_v5XX.py</code></h4>
+          <p>
+            Keep the built-in filesystem path assertion in <code>gen_v5XX.py</code> mandatory and seed Section 3 directly from <code>FEATURES.md</code> after <code>W3-REC</code> merges, preventing multi-round W4-REL holds over guessed test filenames or symbol names.
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 04 · P29 PROCESS ISOLATION</span>
           <h4>Ban Unscoped Host-Wide <code>pkill -f</code> in Shared Worktrees</h4>
           <p>
             Enforce CWD-scoped or PID-file-scoped test runner cleanup so an agent in one lane worktree can never terminate sibling lanes’ concurrent <code>node --test</code> processes on the shared macOS host.
           </p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">RECOMMENDATION 04 · P30 ADR &amp; DOC GREP</span>
-          <h4>Pre-Dispatch Policy &amp; ADR Grep During Charter Co-Sign</h4>
+          <span class="pillar-num">GUARDRAIL 05 · P30 &amp; P32 PRE-DISPATCH CHARTER SYNC</span>
+          <h4>Pre-Dispatch ADR/Config Grep &amp; Sprint Plan Co-Sign Sync</h4>
           <p>
-            When an issue changes a repository-wide policy or config contract (such as <code>#1172</code> or <code>#1701</code>), run a mandatory pre-dispatch grep across <code>CLAUDE.md</code>, <code>docs/adr/</code>, and <code>docs/configuration-reference.md</code> so all normative files are listed in the initial charter table.
+            Run a mandatory pre-dispatch grep across <code>CLAUDE.md</code>, <code>docs/adr/</code>, and <code>docs/configuration-reference.md</code> for any policy/config rename, and sync Architect co-sign refinements back into the sprint plan before Builder dispatch.
           </p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">RECOMMENDATION 05 · P32 CHARTER SNAPSHOT SYNC</span>
-          <h4>Sync Architect Co-Sign Invariants Back Into Sprint Plan</h4>
+          <span class="pillar-num">GUARDRAIL 06 · REVIEWER ENGINE DEFAULT</span>
+          <h4>Pin Codex <code>gpt-6-astra (medium)</code> on Both PRR Lanes from Wave 1</h4>
           <p>
-            When <code>TC-Lane-Arc</code> refines signal-gathering or file-scope invariants during charter co-sign (such as <code>#1495</code> default-on gathering in <code>lib/release-readiness.js</code>), sync those exact invariants into the sprint plan before Builder dispatch.
-          </p>
-        </div>
-        <div class="subcard">
-          <span class="pillar-num">RECOMMENDATION 06 · POST-DEPLOY FINISH LINE</span>
-          <h4>Execute Live Project Settings Browser Checks (#1701 / #1697)</h4>
-          <p>
-            Immediately after <code>W4-REL (#2701)</code> merges and production is updated to <code>v5.46.0</code>, run the deferred live browser checks verifying the Project Settings <code>Release Mode</code> selector (<code>agent</code>/<code>operator</code>/<code>off</code>) and single-owner group conflict handling.
+            Keep <code>TC-Lane-PRR-A</code> and <code>TC-Lane-PRR-B</code> pinned to <code>gpt-6-astra (medium)</code> from sprint start. It delivered 60–120s follow-up turnarounds and caught 6 subtle Wave 2 security/correctness bugs with zero false positives.
           </p>
         </div>
       </div>
@@ -1470,10 +1470,10 @@
     <div class="container">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
         <div>
-          <strong>TangleClaw Sprint v5.46.0 Executive Engineering &amp; Telemetry Report</strong> · Generated by <code>TC-Lane-Obsr</code> (In-Test Sprint Participant · Rule #283)
+          <strong>TangleClaw Sprint v5.46.0 Executive Engineering &amp; Telemetry Report</strong> · Generated by <code>TC-Lane-Obsr</code> &amp; <code>TC-Lane-PM</code> (In-Test Sprint Participant · Rule #283)
         </div>
         <div>
-          Charter <code>A481</code> (<code>A481-R1..R14</code>) · Base <code>04d77afd</code> → W3-REC <code>777c3b42</code> → W4-REL RC R2 <code>c566c5d5</code> · <a href="../" style="color:var(--accent2);">All Sprint Reports</a>
+          Charter <code>A481</code> (<code>A481-R1..R14</code>) · Base <code>04d77afd</code> → W3-REC <code>777c3b42</code> → Release <code>v5.46.0 @ 6939342c</code> · <a href="../" style="color:var(--accent2);">All Sprint Reports</a>
         </div>
       </div>
     </div>
