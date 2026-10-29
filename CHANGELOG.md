@@ -4,6 +4,38 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.47.0] - 2026-10-29
+
+### Added
+- Added a per-project opt-in (default off) to accept the engine's folder-trust
+  dialog automatically at launch, by sending its declared answer into the pane
+  once the dialog is positively observed — never blind, never writing the
+  engine's own trust file directly. Off by default; a global "always accept"
+  was ruled too broad for an attached repository the operator did not create
+  (Architect ruling A85). Every acceptance is recorded in the project's
+  activity log (#2168).
+
+### Fixed
+- A later injection into a live session (a relayed command, a switchboard
+  wake, an unready nudge) is now refused, under `pane_not_at_prompt`, when the
+  pane's last prompt-glyph row is positively a selector's selected option —
+  a menu or dialog this engine's profile does not declare (an engine's
+  `/model` picker, an onboarding theme or login-method selector) — rather
+  than typed into it as before. Previously only a launch's own first sends
+  were withheld from such a row; a later sender was allowed through so an
+  operator's own unsent draft could still be kept and cleared, but that same
+  allowance let text and an Enter land on an undeclared menu's selected row
+  too. The row is now read for positive cursor evidence that it IS a
+  selector (the cursor hidden, or resting on the prompt glyph's own column
+  with no composer border around the row) before refusing every sender on
+  it; a positively located draft still keeps its own send-then-clear path
+  unchanged (#2219).
+
+### Internal
+- Wave 1 groundwork for this milestone (#1836, #2193, #2205, #2221) already
+  shipped in v5.46.1; this release promotes the subsequent Wave 2 changes
+  (#2219, #2168).
+
 ## [5.46.1] - 2026-10-29
 
 ### Fixed

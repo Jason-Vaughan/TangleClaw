@@ -41,6 +41,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-29 — v5.47.0 W4-REL: prepare the engine dialog release candidate
+
+<!-- prawduct: type=internal | scope=v547-w4-rel -->
+
+- Prepared the candidate from W3-REC-merged `main@aea08798cf01a09c7a2ba37069c5a64c63397116`: compiled the two accepted Wave 2 fragments (#2168 and #2219) into the dated `[5.47.0]` section, consumed them, changed `version.json` from 5.46.1 to 5.47.0, and used `scripts/release-prepare.js` to refresh README clone pins and the released-section lock. The release notes cross-reference Wave 1 #1836, #2193, #2205 and #2221, which already shipped in v5.46.1.
+- Recorded the candidate's separate release, deployment and activation finish lines in `docs/releases/v5.47-status.md`. Under co-signed Addendum A483-R13, refreshed `docs/releases/v5.46.1-status.md` with the verified c94164b0 tag/Release/deploy receipts and the post-rebase full-suite count of 23,700 passed, 0 failed, 1 existing skip. The #2168 interactive browser check remains deferred under A483-R8 until the live v5.47.0 install; this candidate does not claim it passed. No v5.47.0 tag, GitHub Release, production update or feature activation is claimed before their own readbacks.
+
 ## 2026-10-29 — v5.47.0 W3-REC: reconcile engine dialogs and sandbox records
 
 <!-- prawduct: type=internal | scope=v547-w3-rec -->
