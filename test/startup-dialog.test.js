@@ -303,6 +303,33 @@ describe('what an engine declares (#2128)', () => {
     };
     assert.deepEqual(startupDialog.declared(profile).map((d) => d.code), ['sound']);
   });
+
+  describe('acceptKeys (#2221, prep for #2168)', () => {
+    it('drops an entry whose acceptKeys is malformed, same as any other bad field', () => {
+      const bad = (acceptKeys) => ({ code: 'sound', label: 'l', meaning: 'm', markers: ['a'], acceptKeys });
+      const profile = {
+        id: 'x',
+        capabilities: {
+          startupDialogs: [
+            bad([]),
+            bad(['Down', '']),
+            bad([1, 'Enter']),
+            bad('Enter'),
+            { code: 'ok', label: 'l', meaning: 'm', markers: ['b'] }
+          ]
+        }
+      };
+      assert.deepEqual(startupDialog.declared(profile).map((d) => d.code), ['ok']);
+    });
+
+    it('a sound entry\'s acceptKeys survives into declared() and resolve() unchanged; absent for an entry that declares none', () => {
+      const trust = startupDialog.declared(CLAUDE).find((d) => d.code === 'trust_required');
+      assert.deepEqual(trust.acceptKeys, ['Down', 'Enter']);
+      assert.deepEqual(startupDialog.resolve(CLAUDE).dialogs.find((d) => d.code === 'trust_required').acceptKeys, ['Down', 'Enter']);
+      const bypass = startupDialog.declared(CLAUDE).find((d) => d.code === 'bypass_permissions_confirm');
+      assert.equal(bypass.acceptKeys, undefined, 'an entry that declares none has no acceptKeys field at all');
+    });
+  });
 });
 
 describe('reading one pane (#2128)', () => {
