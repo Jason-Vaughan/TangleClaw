@@ -140,9 +140,9 @@ When two sessions work related-but-distinct repos (advisor/builder, coordinator/
 
 This avoids merge conflicts, surprise git-log entries, and ambiguity over who owns which commit.
 
-**Rule: Rule Authoring & Consolidation Policy.** To prevent rule bloat, rules must be kept short, concise, and consolidated (replacing obsolete rules rather than piling on new ones). The ProjectManager (PM), Architect, or an assigned Builder may draft and propose rule replacements via `POST /api/session-rules`. Under an approved sprint rule (such as PM Rule #256/#258), PM and Architect may approve bounded operational rule amendments when the charter names the rule, scope, expiry, and rollback; core authority, no-agent, lifecycle, release/deploy, credential, ingress, destructive, migration-cutover, notification, and global rules remain Operator-approved.
-- Any session that finds a missing, incorrect, or conflicting rule reports it to the PM, Architect, or a Builder so a consolidated replacement proposal can be drafted.
-- Shared-infrastructure config (ports and TangleClaw config) remains governed by its own access gates; durable rule activation requires Operator approval (or bounded charter authority where explicitly granted).
+**Rule: Rule Authoring Policy.** The ProjectManager (PM) does NOT author, edit, or rewrite global or session rules. The Builders author and maintain the rules for themselves and the rest of the fleet. If questions arise about rule structure or policy, the Builders consult the Architect directly.
+- Any session that finds a missing, incorrect or conflicting rule reports it to a Builder. The PM may coordinate the assignment.
+- The shared-infrastructure allowance above excludes rule authoring. Its allowance for ports and other TangleClaw config is unchanged.
 
 ## Issues & Feature Requests
 
