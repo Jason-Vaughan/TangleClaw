@@ -272,3 +272,25 @@ describe('unknown launch mode is reported, not swallowed (#731)', () => {
     assert.doesNotMatch(captured.join(''), /not honored by this engine/);
   });
 });
+
+describe('fullAuto declares its loopback sandbox limitation (#1836)', () => {
+  it('declares the sandbox blocks loopback, with a reason, a remedy and dated evidence', () => {
+    const mode = codex.launchModes.fullAuto;
+    assert.equal(mode.loopbackReachable, false);
+    assert.equal(mode.sandboxBlocksLoopback, true);
+    assert.equal(typeof mode.sandboxNote, 'string');
+    assert.match(mode.sandboxNote, /workspace-write/);
+    assert.match(mode.sandboxNote, /1836/);
+    assert.equal(typeof mode.sandboxRemedy, 'string');
+    assert.match(mode.sandboxRemedy, /network_access/);
+    assert.match(mode.sandboxRemedy, /config\.toml/);
+    assert.ok(mode.sandboxEvidence && mode.sandboxEvidence.verifiedOn, 'dated like every other declared evidence block');
+  });
+
+  it('is not declared for the modes that do reach loopback', () => {
+    for (const key of ['default', 'bypassPermissions']) {
+      const mode = codex.launchModes[key];
+      assert.ok(!('sandboxBlocksLoopback' in mode), `${key} should not declare the fullAuto-only limitation`);
+    }
+  });
+});
