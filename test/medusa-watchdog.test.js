@@ -256,6 +256,82 @@ describe('medusa-watchdog (#1839)', () => {
     });
   });
 
+  describe('rearmWorkspace — the immediate per-workspace helper (#2716)', () => {
+    let savedScan;
+    beforeEach(() => { savedScan = watchdog._internal.requestWakeScan; });
+    afterEach(() => { watchdog._internal.requestWakeScan = savedScan; });
+
+    it('re-arms an eligible exchange immediately, same as a periodic tick would, and requests one wake scan', () => {
+      const x = deliveredBlocking();
+      mx.recordWakeForRecipient('builder-ws', 'wake_attempted', { code: 'tmux', detail: { nonce: 'n1' } });
+      mx.recordWakeForRecipient('builder-ws', 'wake_not_accepted', { code: 'nonce-in-composer', attemptNonce: 'n1' });
+      const scanned = [];
+      watchdog._internal.requestWakeScan = (workspaceId, reason) => { scanned.push({ workspaceId, reason }); return true; };
+      assert.equal(watchdog.rearmWorkspace('builder-ws', T0), 1);
+      assert.equal(store.medusaExchanges.facts(x.exchange_id).find((f) => f.fact === 'rearmed').code, 'not-accepted');
+      assert.deepEqual(scanned, [{ workspaceId: 'builder-ws', reason: 'wake-rearmed' }]);
+    });
+
+    it('never asks for a scan when nothing was re-armed', () => {
+      deliveredBlocking();
+      attempt();
+      const scanned = [];
+      watchdog._internal.requestWakeScan = (workspaceId, reason) => { scanned.push({ workspaceId, reason }); return true; };
+      assert.equal(watchdog.rearmWorkspace('builder-ws', T0 + 30 * MIN), 0, 'an attempt with no trigger yet is not eligible');
+      assert.deepEqual(scanned, []);
+    });
+
+    it('is scoped to one recipient workspace: a call for one workspace never touches another\'s eligible exchange', () => {
+      const other = mx.createSendIntent({
+        meta: mx.validateSendMeta({ priority: 'blocking' }, PM, 10),
+        sender: { projectId: 10, workspaceId: 'pm-ws' },
+        recipient: { workspaceId: 'other-ws', projectId: 30, sessionId: 3 }
+      });
+      mx.bindHubId(other.exchange_id, 'hub-other');
+      mx.recordArrival({ hubId: 'hub-other', recipientWorkspaceId: 'other-ws' });
+      mx.recordWakeForRecipient('other-ws', 'wake_attempted', { code: 'tmux', detail: { nonce: 'n-other' } });
+      mx.recordWakeForRecipient('other-ws', 'wake_not_accepted', { code: 'nonce-in-composer', attemptNonce: 'n-other' });
+
+      deliveredBlocking(); // 'builder-ws', no trigger yet -- must stay untouched by a call scoped elsewhere
+      attempt();
+
+      watchdog._internal.requestWakeScan = () => true;
+      assert.equal(watchdog.rearmWorkspace('builder-ws', T0), 0, 'builder-ws has nothing eligible');
+      assert.equal(store.medusaExchanges.get(other.exchange_id).rearm_count, 0, 'other-ws is untouched by a call scoped to builder-ws');
+
+      assert.equal(watchdog.rearmWorkspace('other-ws', T0), 1, 'other-ws is re-armed by its own call');
+      assert.equal(store.medusaExchanges.get(other.exchange_id).rearm_count, 1);
+    });
+
+    it('respects the same budget and backoff tick does: a second immediate call inside the backoff step re-arms nothing more', () => {
+      const x = deliveredBlocking();
+      mx.recordWakeForRecipient('builder-ws', 'wake_attempted', { code: 'tmux', detail: { nonce: 'n1' } });
+      mx.recordWakeForRecipient('builder-ws', 'wake_not_accepted', { code: 'nonce-in-composer', attemptNonce: 'n1' });
+      watchdog._internal.requestWakeScan = () => true;
+      assert.equal(watchdog.rearmWorkspace('builder-ws', T0), 1);
+      assert.equal(watchdog.rearmWorkspace('builder-ws', T0 + 1000), 0, 'immediately inside the backoff step');
+      assert.equal(store.medusaExchanges.get(x.exchange_id).rearm_count, 1);
+    });
+
+    it('a falsy workspaceId is a safe no-op', () => {
+      watchdog._internal.requestWakeScan = () => { assert.fail('must not be reached with no workspace'); };
+      assert.equal(watchdog.rearmWorkspace(null), 0);
+      assert.equal(watchdog.rearmWorkspace(''), 0);
+      assert.equal(watchdog.rearmWorkspace(undefined), 0);
+    });
+
+    it('does nothing while the watchdog is disabled, same as tick', () => {
+      deliveredBlocking();
+      mx.recordWakeForRecipient('builder-ws', 'wake_attempted', { code: 'tmux', detail: { nonce: 'n1' } });
+      mx.recordWakeForRecipient('builder-ws', 'wake_not_accepted', { code: 'nonce-in-composer', attemptNonce: 'n1' });
+      watchdog._internal.loadConfig = () => ({ medusaWatchdog: { enabled: false } });
+      const scanned = [];
+      watchdog._internal.requestWakeScan = () => { scanned.push(1); return true; };
+      assert.equal(watchdog.rearmWorkspace('builder-ws', T0), 0);
+      assert.deepEqual(scanned, []);
+    });
+  });
+
   describe('the wake monitor honours a re-arm, through every gate', () => {
     const saved = {};
     const SEAMS = ['listLiveAll', 'getProject', 'loadProjectConfig', 'wrapRunning', 'getStatus', 'getMessages',
@@ -373,13 +449,20 @@ describe('medusa-watchdog (#1839)', () => {
       assert.equal(JSON.parse(change.detail_json).from, 'listener-connecting');
     });
 
-    it('records a not-accepted receipt when the nonce is still in the composer', async () => {
+    it('records a not-accepted receipt when the nonce is still in the composer, and re-arms it at once rather than on the next periodic tick (#2716)', async () => {
       const x = deliveredBlocking();
       world.receipt = { outcome: 'not-accepted', reason: 'nonce still in the composer' };
       tickIdle();
       await new Promise((resolve) => setImmediate(resolve));
-      assert.equal(store.medusaExchanges.get(x.exchange_id).state, 'wake_not_accepted');
-      assert.equal(watchdog.tick(T0).rearmed, 1, 'a proven miss re-arms at once');
+      const facts = store.medusaExchanges.facts(x.exchange_id);
+      assert.ok(facts.some((f) => f.fact === 'wake_not_accepted'), 'the receipt is still durably recorded');
+      // #2716: `_verifyWake` runs the watchdog's own re-arm check immediately
+      // after recording the receipt, so the exchange has already moved past
+      // `wake_not_accepted` by the time this resolves -- not still waiting on
+      // a periodic tick up to 30s away.
+      assert.notEqual(store.medusaExchanges.get(x.exchange_id).state, 'wake_not_accepted', 'already re-armed immediately, not left waiting');
+      assert.ok(facts.some((f) => f.fact === 'rearmed'), 'the immediate re-arm itself is durably recorded too');
+      assert.equal(watchdog.tick(T0).rearmed, 0, 'nothing left for a later periodic tick to re-arm: the immediate check already handled it');
     });
 
     it('a reconnect after a settled nudge leaves the exchange awaiting read, not stuck on the old reason', () => {
