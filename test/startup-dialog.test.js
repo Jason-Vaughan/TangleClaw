@@ -2839,11 +2839,15 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
   // REAL: the folder trust dialog's cursor, hidden and parked on the selected row's glyph.
   const TRUST_CURSOR = Object.freeze({ visible: false, x: 1, y: 14, line: ` ${ESC}[38;5;153m❯${ESC}[39m ${ESC}[38;5;153mNo,${ESC}[39m ${ESC}[38;5;153mexit${ESC}[39m` });
 
-  // Confirmed against the installed Claude Code 2.1.283 binary's bundled source (see data/engines/claude.json). It carries ONE of the trust dialog's two markers.
+  // Confirmed two ways (see data/engines/claude.json's bypass_permissions_confirm
+  // evidence): the installed Claude Code 2.1.283 binary's bundled source, and a
+  // live 110x40 pane capture made separately — both agree the options are
+  // UNNUMBERED (hideIndexes: true), unlike the numbered selectors elsewhere in
+  // this file. It carries ONE of the trust dialog's two markers.
   const BYPASS_HEAD = [BORDER, ' WARNING: Claude Code running in Bypass Permissions mode', '', ' In Bypass Permissions mode, Claude Code will not ask for your approval before running', ' potentially dangerous commands.', ''];
   const BYPASS_FOOT = ['', ' Enter to confirm · Esc to cancel'];
-  const BYPASS_1 = Object.freeze([...BYPASS_HEAD, ' ❯ 1. No, exit', '   2. Yes, I accept', ...BYPASS_FOOT]);
-  const BYPASS_2 = Object.freeze([...BYPASS_HEAD, '   1. No, exit', ' ❯ 2. Yes, I accept', ...BYPASS_FOOT]);
+  const BYPASS_1 = Object.freeze([...BYPASS_HEAD, ' ❯ No, exit', '   Yes, I accept', ...BYPASS_FOOT]);
+  const BYPASS_2 = Object.freeze([...BYPASS_HEAD, '   No, exit', ' ❯ Yes, I accept', ...BYPASS_FOOT]);
 
   // REAL: first-run onboarding in an empty config home (no account): the theme picker and the
   // login-method selector. Both numbered, neither carrying declared text; cursor hidden on the glyph.
@@ -2974,10 +2978,10 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
       // option this way is unverified, so nothing rests on its not happening.
       const faint = { visible: true, x: 2, y: 9, line: `❯ ${ESC}[2m2. Yes, I accept${ESC}[0m` };
       assert.equal(medusaWake._composerEmpty(faint, WAKE), true, 'precondition: the cursor reading alone says "empty composer"');
-      const row = '❯ 2. Yes, I accept';
+      const row = '❯ Yes, I accept';
       // Both of bypass_permissions_confirm's own markers are present (#2205):
       // a full dialog match, which needs no composer box either way.
-      assert.equal(classify([...BYPASS_HEAD, '   1. No, exit', row, ...BYPASS_FOOT], faint), 'dialog', 'both its own markers are present');
+      assert.equal(classify([...BYPASS_HEAD, '   No, exit', row, ...BYPASS_FOOT], faint), 'dialog', 'both its own markers are present');
       // The border-position cases below carry NO declared marker text at
       // all (#2205 made "Yes, I accept" one, so it can no longer serve
       // that purpose): a different selected-option text, cursor styled
@@ -3004,6 +3008,25 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
       assert.equal(boot(staleFresh, FRESH_CURSOR), 'dialog');
     });
 
+    it('a resolved trust dialog does not lend its stale "No, exit" to a later, different live dialog that shares it (#2711 PRR-A)', () => {
+      // TRUST_DIALOG was answered (FRESH shows the composer afterward), then
+      // a genuinely NEW, different dialog (BYPASS_1) is drawn later. Before
+      // this fix, trust_required's OWN "Yes, I trust this folder" (stale, in
+      // TRUST_DIALOG's history) combined with "No, exit" found anywhere
+      // AFTER it — including BYPASS_1's current, unrelated occurrence of that
+      // same default-option text — and reported a CONFIRMED match for the
+      // wrong, no-longer-live dialog.
+      const resolvedThenLive = [...TRUST_DIALOG, ...FRESH, ...BYPASS_1];
+      assert.equal(classify(resolvedThenLive, FRESH_CURSOR), 'dialog');
+      const seen = startupDialog.classify(resolvedThenLive, DIALOGS, WAKE, FRESH_CURSOR);
+      assert.equal(seen.dialog.code, 'bypass_permissions_confirm', 'the LIVE dialog, not the stale, already-answered one');
+      // The same with the other option selected, and with no cursor reading
+      // at all (the full-match rule needs no composer box, same as #2205's
+      // single-dialog case above).
+      const resolvedThenLive2 = [...TRUST_DIALOG, ...FRESH, ...BYPASS_2];
+      assert.equal(startupDialog.classify(resolvedThenLive2, DIALOGS, WAKE, null).dialog.code, 'bypass_permissions_confirm');
+    });
+
     it('ordering: an answered menu left ABOVE a fresh composer is history, and the composer clears', () => {
       assert.equal(classify([...BYPASS_2, ...FRESH], FRESH_CURSOR), 'clear');
       assert.equal(classify([...BYPASS_1, ...AFTER_MENU], null), 'clear');
@@ -3016,7 +3039,7 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
     });
 
     it('an option whose label wrapped below a bare glyph is not a prompt', () => {
-      const wrapped = [...BYPASS_HEAD, '   1. No, exit', ' ❯ ', '   2. Yes, I accept', ...BYPASS_FOOT];
+      const wrapped = [...BYPASS_HEAD, '   No, exit', ' ❯ ', '   Yes, I accept', ...BYPASS_FOOT];
       // Both of bypass_permissions_confirm's markers are present, and its
       // last marker row sits BELOW the bare-looking wrapped glyph row, so
       // the bare glyph correctly loses to the confirmed dialog (#2205).
