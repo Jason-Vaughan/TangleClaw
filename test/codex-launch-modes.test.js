@@ -374,7 +374,27 @@ describe('launch-sequence status names the sandbox cause (#1836)', () => {
     }
   }
 
-  it('names the sandbox cause when an unread launch sits at cursor 0 on a sandbox-blocking mode', () => {
+  it('is absent at cursor 0 for a launch the unready monitor has not flagged yet', () => {
+    // A fresh launch sitting at cursor 0 is not evidence of anything by
+    // itself (PRR-B C1) — it is what every launch looks like for its first
+    // moment. No diagnostic until the system's own unready monitor has
+    // independently decided this one has sat too long.
+    const name = 'codex-loopback-fresh';
+    const dir = path.join(projectsDir, name);
+    fs.mkdirSync(dir, { recursive: true });
+    const project = store.projects.create({ name, path: dir, engine: ENGINE_ID });
+    const result = launch(name, { launchMode: 'fullAuto' });
+    assert.equal(result.error, null, result.error);
+
+    const sequence = store.launchSequences.getBySession(result.session.id);
+    assert.equal(sequence.cursor, 0, 'a fresh launch sits unread at cursor 0');
+    assert.equal(sequence.unreadyAt, null, 'not yet flagged by the unready monitor');
+
+    const shown = launchSequence.status({ launchId: sequence.launchId, projectId: project.id }).body;
+    assert.ok(!('sandboxNote' in shown.status), 'a merely-fresh sequence gets no diagnosis');
+  });
+
+  it('names the sandbox cause once the unready monitor has flagged an unread launch on a sandbox-blocking mode', () => {
     const name = 'codex-loopback-fullauto';
     const dir = path.join(projectsDir, name);
     fs.mkdirSync(dir, { recursive: true });
@@ -384,6 +404,10 @@ describe('launch-sequence status names the sandbox cause (#1836)', () => {
 
     const sequence = store.launchSequences.getBySession(result.session.id);
     assert.equal(sequence.cursor, 0, 'a fresh launch sits unread at cursor 0');
+    // The unready monitor (lib/launch-unready.js) is what decides a sequence
+    // has sat too long with no attestation; reuse its verdict rather than
+    // re-deciding "how long is too long" here.
+    assert.ok(store.launchSequences.markUnready(sequence.id), 'the stamp was written');
 
     const shown = launchSequence.status({ launchId: sequence.launchId, projectId: project.id }).body;
     assert.deepEqual(shown.status.sandboxNote, {
@@ -393,7 +417,7 @@ describe('launch-sequence status names the sandbox cause (#1836)', () => {
     });
   });
 
-  it('is absent for the same engine in a mode that does not declare the limitation', () => {
+  it('is absent for the same engine in a mode that does not declare the limitation, even once flagged unready', () => {
     const name = 'codex-loopback-default';
     const dir = path.join(projectsDir, name);
     fs.mkdirSync(dir, { recursive: true });
@@ -403,12 +427,13 @@ describe('launch-sequence status names the sandbox cause (#1836)', () => {
 
     const sequence = store.launchSequences.getBySession(result.session.id);
     assert.equal(sequence.cursor, 0);
+    store.launchSequences.markUnready(sequence.id);
 
     const shown = launchSequence.status({ launchId: sequence.launchId, projectId: project.id }).body;
     assert.ok(!('sandboxNote' in shown.status), 'no declaration for this mode, so no note');
   });
 
-  it('is absent once the sequence has moved past cursor 0', () => {
+  it('is absent once the sequence has moved past cursor 0, even once flagged unready', () => {
     const name = 'codex-loopback-advanced';
     const dir = path.join(projectsDir, name);
     fs.mkdirSync(dir, { recursive: true });
@@ -417,6 +442,7 @@ describe('launch-sequence status names the sandbox cause (#1836)', () => {
     assert.equal(result.error, null, result.error);
 
     const sequence = store.launchSequences.getBySession(result.session.id);
+    store.launchSequences.markUnready(sequence.id);
     // Advance the cursor directly, same as an ack would: cursor 0 is the
     // literal "unread" state this diagnostic is for, not every early step.
     store.launchSequences.transaction(() => {
