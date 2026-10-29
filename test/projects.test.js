@@ -4192,6 +4192,43 @@ describe('projects', () => {
       }
     });
 
+    it('cancels the whole sequence when the session-row read throws on the first precheck, even though a later read recovers (PRR-B exact-head HOLD, PR #2712)', async () => {
+      const name = 'aft-launch-read-throws';
+      projects.createProject({ name, engine: 'claude' });
+      await projects.updateProject(name, { acceptFolderTrust: true });
+      let result;
+      const realGet = store.sessions.get;
+      try {
+        result = sessions.launchSession(name, {});
+        assert.equal(result.error, null, result.error);
+        const sessionId = result.session.id;
+        // Installed only after launch returns, so the launch's own
+        // bookkeeping (which also reads session rows, e.g. the boot watch's
+        // own "answered" handling) is unaffected by the window below — only
+        // calls made from here on can throw. Every call for the next 250ms
+        // throws, simulating a DB fault that covers the FIRST staggered
+        // key's (`Down`, 0ms) precheck regardless of how many incidental
+        // reads land first; the window then closes well before the SECOND
+        // key's (`Enter`, 500ms) precheck, which recovers and would
+        // truthfully report ACTIVE on its own. `stillOurs()` must treat the
+        // throw as "not ours" rather than let it escape uncaught, and
+        // `Enter` must never fire alone just because its own, later check
+        // happened to succeed.
+        const throwUntil = Date.now() + 250;
+        store.sessions.get = (id) => {
+          if (Date.now() < throwUntil) throw new Error('simulated store read fault');
+          return realGet(id);
+        };
+        await settleAcceptSends();
+
+        assert.deepEqual(sentKeys, [], 'neither key may send once the first precheck throws, even though the second would have recovered');
+        assert.deepEqual(store.activity.query({ sessionId, eventType: sessions.FOLDER_TRUST_ACCEPTED_EVENT }), []);
+      } finally {
+        store.sessions.get = realGet;
+        if (result && result.session) sessions.killSession(name, 'test cleanup');
+      }
+    });
+
     it('sends nothing and logs nothing when the project has not opted in', async () => {
       const name = 'aft-launch-noopt';
       projects.createProject({ name, engine: 'claude' });
