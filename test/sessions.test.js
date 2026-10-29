@@ -4976,6 +4976,49 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
       assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }), []);
     });
 
+    it('a REAL no-rules ordinary launch (an eager unrelated row already exists): the drop is still recorded, and that row is preserved untouched (PRR-B C2 round 2)', () => {
+      // _runEngineInit writes this row EAGERLY, before _deferEngineInit's
+      // watch even starts, for every no-rules project (lib/sessions.js ~990) --
+      // a true, complete, unrelated fact this function must never touch.
+      const { project, session } = live({ carrier: 'rules' });
+      store.sessionRuleDeliveries.record({
+        sessionId: session.id, projectId: project.id, engineId: 'claude', channel: 'none', outcome: 'no-rules'
+      });
+      const eagerRowBefore = store.sessionRuleDeliveries.listForSession(session.id)[0];
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 },
+        'a bare row-count guard would have skipped this -- the eager row must not blind it');
+      const rows = store.sessionRuleDeliveries.listForSession(session.id);
+      assert.equal(rows.length, 2, 'the eager row is preserved, not overwritten -- a SECOND row is added');
+      assert.deepEqual(rows[0], eagerRowBefore, 'untouched');
+      assert.equal(rows[1].channel, 'prime-paste');
+      assert.equal(rows[1].outcome, 'skipped');
+      assert.match(rows[1].skipReason, /restarted/);
+      assert.equal(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }).length, 1,
+        'the forensic trail fires even though the carrier ledger already had an unrelated row');
+      // Acknowledged, not fixed here: GET /api/launch-sequences's `rulesRow`
+      // still takes `[0]` (oldest), so the panel's `rulesDelivery` field
+      // keeps showing the OLD, unrelated row for this launch, not the drop
+      // just recorded -- `rows[0]` above is exactly what that field would
+      // read. Closing this needs a one-line server.js change (prefer the
+      // newest `prime-paste` row); out of this car's file scope, proposed to
+      // PM/Arc rather than made here.
+      assert.notEqual(rows[0].channel, 'prime-paste', 'documents the exact row the panel still shows for this launch shape');
+    });
+
+    it('a REAL silent-prime ordinary launch (an eager rules-hook row already exists): the drop is still recorded, and that row is preserved untouched (PRR-B C2 round 2)', () => {
+      const { project, session } = live({ carrier: 'rules' });
+      store.sessionRuleDeliveries.record({
+        sessionId: session.id, projectId: project.id, engineId: 'claude', channel: 'rules-hook', outcome: 'written', ruleIds: [1], digest: 'abc'
+      });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 });
+      const rows = store.sessionRuleDeliveries.listForSession(session.id);
+      assert.equal(rows.length, 2);
+      assert.equal(rows[0].channel, 'rules-hook', 'untouched');
+      assert.equal(rows[0].outcome, 'written', 'untouched -- a separate concern (#1063\'s receipt) this function must not disturb');
+      assert.equal(rows[1].channel, 'prime-paste');
+      assert.equal(rows[1].outcome, 'skipped');
+    });
+
     it('a session with no stored blocker is not flagged at start', () => {
       const { session } = live({ blocker: false });
       sessions.startLaunchBlockerSweep();

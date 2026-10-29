@@ -312,6 +312,44 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
     assert.match(row.pasteOutcome.detail, /restarted/);
   });
 
+  // #2193 PRR-B C2 round 2: a REAL no-rules launch already writes its own
+  // row on this ledger, eagerly, before any dialog watch starts. The drop is
+  // still recorded (confirmed in test/sessions.test.js), but this route's
+  // `rulesRow = listForSession(...)[0]` (oldest first) means the PANEL keeps
+  // showing that eager row, not the drop -- an acknowledged display gap,
+  // proposed to PM/Arc as a one-line server.js change (prefer the newest
+  // `prime-paste` row), not fixed here.
+  it('a no-rules launch\'s restart-dropped first turn is recorded but NOT what this route\'s rulesDelivery shows (documents the acknowledged display gap, #2193)', async () => {
+    const dropped = bind(project);
+    store.sessionRuleDeliveries.record({
+      sessionId: dropped.session.id, projectId: project.id, engineId: 'claude', channel: 'none', outcome: 'no-rules'
+    });
+    const blocker = { code: 'trust_required', label: 'folder trust dialog', meaning: 'Answer it in the pane.', engineId: 'claude' };
+    const updated = store.sessions.setLaunchBlocker(dropped.session.id, blocker);
+    store.activity.log({
+      projectId: project.id, sessionId: dropped.session.id, eventType: sessions.FIRST_TURN_DEFERRED_EVENT,
+      detail: {
+        code: updated.launchBlocker.code, observedAt: updated.launchBlocker.observedAt,
+        deliveryBase: { sessionId: dropped.session.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [], digest: '' },
+        pasteOutcomeBase: null
+      }
+    });
+    assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 });
+
+    // Durably recorded on the ledger -- both rows exist.
+    const rows = store.sessionRuleDeliveries.listForSession(dropped.session.id);
+    assert.equal(rows.length, 2);
+    assert.equal(rows[1].channel, 'prime-paste');
+    assert.equal(rows[1].outcome, 'skipped');
+
+    // But the panel still shows the OLD row -- this is the gap, demonstrated
+    // end to end through the real, unmodified route.
+    const res = await get(server, `/api/launch-sequences?projectId=${project.id}`);
+    const row = res.body.sequences.find((s) => s.sequenceId === dropped.sequence.id);
+    assert.deepEqual(row.rulesDelivery, { outcome: 'no-rules', channel: 'none', skipReason: null },
+      'the panel\'s single rulesRow slot still reads the eager, unrelated row -- not the drop this test just confirmed on the ledger above');
+  });
+
   it('carries the preflight CAUSE, not only its verdict word', async () => {
     // The route sends what the recovery panel renders. Carrying the verdict
     // alone asked an operator to grant a clearance against a cause they could
