@@ -471,6 +471,7 @@
       <nav class="nav-links" id="navLinks">
         <a href="../" style="color:var(--accent2);font-weight:700;">← All Sprint Reports</a>
         <a href="#overview" class="active">Overview</a>
+        <a href="#plain-english" style="color:var(--green);font-weight:700;">Plain-English</a>
         <a href="#architecture">Architecture</a>
         <a href="#velocity">Velocity</a>
         <a href="#deliverables">Deliverables</a>
@@ -494,13 +495,54 @@
           <div class="eyebrow">🛡️ Sprint v5.47.0 Engine Dialogs &amp; Sandbox Retrospective · Charter A483–A483-R13 (Milestone #32 · 6 Issues · 7 Sprint PRs + Mid-Sprint v5.46.1 Live Cut = 8 PRs)</div>
           <h1>v5.47.0: Unified Startup Dialog Reader, Positive Selector-Row Guard, Per-Project Folder Trust Opt-In &amp; Codex Sandbox Loopback Diagnosis</h1>
           <p class="hero-subtitle">
-            Sprint <strong>v5.47.0</strong> (<em>"Engine dialogs and sandbox"</em>, Charter <code>A483</code>–<code>A483-R13</code>, Milestone <code>#32</code>) closed all <strong>6 admitted issues</strong> (<code>#1836, #2193, #2221, #2205, #2219, #2168</code>) across <strong>4 execution waves and 7 Sprint PRs</strong> (Wave 1 PRs <code>#2709, #2710, #2711</code>, Wave 2 PRs <code>#2713, #2712</code>, Wave 3 Reconciliation <code>PR #2714</code> merged at <code>aea08798cf01</code>, and Wave 4 Release <code>W4-REL PR #2715</code> @ <code>0e6ce11ada2c</code>) while simultaneously executing a zero-regression <strong>8-hour <code>R3</code> in-thread procedural refresh</strong> across all 8 fleet sessions (<code>0</code> <code>/clear</code> calls) and shipping/deploying the mid-sprint <strong><code>v5.46.1</code></strong> release (<code>PR #2708</code> @ <code>c94164b0</code>, 8th PR in the window) live to <code>TangleClaw-Builder1</code>.
+            Sprint <strong>v5.47.0</strong> (<em>"Engine dialogs and sandbox"</em>, Charter <code>A483</code>–<code>A483-R13</code>, Milestone <code>#32</code>) closed all <strong>6 admitted issues</strong> (<code>#1836, #2193, #2221, #2205, #2219, #2168</code>) across <strong>4 execution waves and 7 Sprint PRs</strong> (Wave 1 PRs <code>#2709, #2710, #2711</code>, Wave 2 PRs <code>#2713, #2712</code>, Wave 3 Reconciliation <code>PR #2714</code> merged at <code>aea08798cf01</code>, and Wave 4 Release <code>W4-REL PR #2715</code> merged at <code>1e8e2df417e1</code> as <code>tag: v5.47.0</code>) while simultaneously executing a zero-regression <strong>8-hour <code>R3</code> in-thread procedural refresh</strong> across all 8 fleet sessions (<code>0</code> <code>/clear</code> calls) and shipping/deploying the mid-sprint <strong><code>v5.46.1</code></strong> release (<code>PR #2708</code> @ <code>c94164b0</code>, 8th PR in the window) live to <code>TangleClaw-Builder1</code>.
             Key engineering breakthroughs include converging <code>lib/launch-dialog-guard.js</code> onto the shared validator and pane classifier in <code>lib/startup-dialog.js#entryErrors</code> (<code>#2221</code>); declaring Claude Code’s <code>bypass_permissions_confirm</code> dialog separately from <code>trust_required</code> in <code>data/engines/claude.json</code> and withholding partial shared-option frames (<code>"No, exit"</code>) under neutral <code>startup_screen_suspect</code> (<code>#2205</code>); diagnosing Codex <code>fullAuto</code> (<code>--sandbox workspace-write</code>) loopback isolation in <code>data/engines/codex.json</code>, <code>lib/startup-control-codex.js#loopbackSandboxNote</code>, <code>lib/launch-sequence.js#_loopbackSandboxNote</code>, and <code>lib/tc-verbs.js</code> (<code>#1836</code>); recording genuinely dropped first turns across server restarts in <code>lib/sessions.js#reconcileDeferredFirstTurnsOnRestart</code> by tracking <code>pasteOwed</code>/<code>kickoffOwed</code> (<code>#2193</code>); withholding mid-session command and switchboard injections with <code>pane_not_at_prompt</code> when a live pane positively displays a selector’s selected row in <code>lib/startup-dialog.js#_promptRow</code> and <code>lib/startup-dialog.js#withholdFor</code> while preserving draft send-and-clear behavior (<code>#2219</code>); and shipping the default-off per-project <code>acceptFolderTrust</code> setting across <code>lib/project-config.js</code>, <code>lib/projects.js</code>, <code>lib/sessions.js#_acceptsFolderTrust</code>, and <code>public/ui.js</code> with staggered per-key session/dialog re-verification and <code>launch.folder_trust_accepted</code> activity auditing (<code>#2168</code>).
             <em>Participant Disclosure (Rule #283):</em> <code>TC-Lane-Obsr</code> operated as an in-test sprint participant whose telemetry, pre-merge source audits, and <code>O-Gate</code> holds lanes could read during execution.
           </p>
         </div>
         <div class="status-pill">
-          ● v5.47.0 W1–W3 Merged (main @ aea08798 · 23,719/23,719 Pass · W4-REL PR #2715 @ 0e6ce11a)
+          ● v5.47.0 Released (Tag v5.47.0 @ 1e8e2df4 · 23,719/23,719 Pass · W4-REL PR #2715 Merged)
+        </div>
+      </div>
+
+      <!-- PLAIN-ENGLISH SUMMARY CARD -->
+      <div id="plain-english" class="subcard" style="margin:22px 0;padding:22px 24px;border:1.5px solid rgba(34,197,94,0.45);background:linear-gradient(135deg,rgba(15,23,42,0.96),rgba(20,83,45,0.18));border-radius:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+          <span class="pillar-num" style="color:var(--green);font-size:0.8rem;letter-spacing:0.08em;">📖 PLAIN-ENGLISH SUMMARY · WHAT SHIPPED &amp; HOW THE SPRINT RAN (NO JARGON)</span>
+          <span class="badge badge-green">Everyday Overview · 6 Issues Shipped · Zero Rework</span>
+        </div>
+        <h3 style="margin:0 0 12px;font-size:1.22rem;color:var(--text);">What v5.47.0 Does in Everyday Terms — and How the Team Built It</h3>
+        <div class="grid-2" style="gap:18px;">
+          <div style="background:rgba(15,23,42,0.65);border:1px solid var(--border);border-radius:10px;padding:15px 17px;">
+            <h4 style="margin:0 0 8px;color:var(--accent2);font-size:0.98rem;">🛠️ What We Shipped (Teaching TangleClaw to Handle Setup Screens Safely)</h4>
+            <p style="margin:0 0 9px;font-size:0.9rem;line-height:1.55;color:var(--text-muted);">
+              <strong>1. Waiting safely at Claude &amp; Codex setup screens instead of typing blindly (<code>#2205, #2221, #2219</code>):</strong>
+              When Claude Code or Codex starts up in a new folder—or when you open an interactive menu like <code>/model</code>—it often displays a multiple-choice prompt where the default highlighted button is <em>"No, exit"</em>. If TangleClaw sends a message or presses Enter while that menu is on screen, it can accidentally close the session or pick the wrong option. In <code>v5.47.0</code>, TangleClaw recognizes both folder-trust prompts and bypass-permissions prompts (even when only half the screen has finished drawing) as well as mid-session option menus, and waits safely instead of typing into them.
+            </p>
+            <p style="margin:0 0 9px;font-size:0.9rem;line-height:1.55;color:var(--text-muted);">
+              <strong>2. Optional one-switch Folder Trust for projects you already trust (<code>#2168</code>):</strong>
+              If you don’t want to manually click <em>"Yes, I trust this folder"</em> on a project you own, you can now flip on <strong>"Accept the folder-trust dialog at launch"</strong> in that project’s Settings (off by default for safety). When turned on, TangleClaw checks that the real folder-trust screen is visible before pressing each key and logs the acceptance in your project activity feed—without ever editing Claude’s internal trust files.
+            </p>
+            <p style="margin:0;font-size:0.9rem;line-height:1.55;color:var(--text-muted);">
+              <strong>3. Clear Codex sandbox explanations, path checks &amp; restart memory (<code>#1836, #2193</code>):</strong>
+              When Codex runs in its default <em>"Full Auto"</em> sandbox, it blocks local network connections so the agent cannot check in with TangleClaw; TangleClaw now explains the exact cause and how to enable network access. And if the TangleClaw server restarts while a new session is waiting behind a startup prompt, TangleClaw remembers that the first message still needs to be sent and keeps workspace state clean across waves.
+            </p>
+          </div>
+          <div style="background:rgba(15,23,42,0.65);border:1px solid var(--border);border-radius:10px;padding:15px 17px;">
+            <h4 style="margin:0 0 8px;color:var(--green);font-size:0.98rem;">⚡ How the Sprint Ran (Fast, Clean Execution with Zero Rework)</h4>
+            <p style="margin:0 0 9px;font-size:0.9rem;line-height:1.55;color:var(--text-muted);">
+              <strong>1. All 6 issues completed cleanly with ~18-minute core builds and zero post-merge rework:</strong>
+              Keeping the fast, disciplined pace of <code>v5.45.0</code>–<code>v5.46.1</code>, the multi-agent Builder lanes completed core coding on key cars in <strong>~13 to 19 minutes</strong> (<code>13.1m</code> on <code>#1836</code>, <code>18.0m</code> on <code>#2168</code>, <code>19.5m</code> on <code>#2193</code>) and merged all 6 Milestone <code>#32</code> issues with <strong>zero merge conflicts</strong> and <strong>zero post-merge bugs or rework on <code>main</code></strong>.
+            </p>
+            <p style="margin:0 0 9px;font-size:0.9rem;line-height:1.55;color:var(--text-muted);">
+              <strong>2. 100% first-time test pass rate (<code>24/24</code> CI runs &amp; <code>23,719</code> local tests):</strong>
+              Every single automated GitHub test run (<code>24 out of 24</code>) passed on the first try, and the full 5-stage local test suite passed all <strong>23,719 tests with 0 failures</strong>. Pre-merge AI reviewers caught 11 subtle edge cases before merge so nothing broke after landing.
+            </p>
+            <p style="margin:0;font-size:0.9rem;line-height:1.55;color:var(--text-muted);">
+              <strong>3. Seamless team refresh &amp; automatic backup-builder handoff:</strong>
+              All 8 active AI sessions refreshed their working rules mid-sprint without clearing their memory, and when one Builder lane hit a temporary model usage limit right before its final merge, a backup Builder lane stepped in and finished the merge in <strong>18 minutes</strong> without waking the human operator.
+            </p>
+          </div>
         </div>
       </div>
 
