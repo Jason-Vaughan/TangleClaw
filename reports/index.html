@@ -271,17 +271,17 @@
         <div class="kpi-card">
           <div class="kpi-label">Cumulative Sprint PRs</div>
           <div class="kpi-val">204 PRs Merged</div>
-          <div class="kpi-sub"><strong>77 waves</strong> across fifteen reports · v5.47.0 delivered 7 PRs across 6 Milestone #32 issues</div>
+          <div class="kpi-sub"><strong>77 waves</strong> across fifteen reports · v5.47.0 delivered 7 Sprint PRs (+ v5.46.1 #2708)</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">CI &amp; Fleet Refresh</div>
-          <div class="kpi-val">22/22 CI · 8/8 R3</div>
-          <div class="kpi-sub"><strong>100% first-time CI pass</strong> · 8-session <code>R3</code> refresh (<code>0 /clear</code>) · 11 PRR/Arc catches</div>
+          <div class="kpi-val">24/24 CI · 8/8 R3</div>
+          <div class="kpi-sub"><strong>23,719/23,719 local suite</strong> · 8-session <code>R3</code> refresh (<code>0 /clear</code>) · 11 PRR/Arc catches</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Latest Release Report</div>
           <div class="kpi-val" style="color:var(--green);">v5.47.0</div>
-          <div class="kpi-sub">Tag <code>v5.47.0</code> · Base <code>980d53bb</code> → W2 <code>833b60b4</code> → W3-REC <code>#2714</code> · Milestone #32 <code>6/6</code> Closed</div>
+          <div class="kpi-sub">Tag <code>v5.47.0</code> · Base <code>980d53bb</code> → W3-REC <code>aea08798</code> → W4-REL <code>#2715</code> · Milestone #32 <code>6/6</code> Closed</div>
         </div>
       </div>
     </section>
@@ -294,19 +294,19 @@
             <span class="badge badge-green">● Latest Release · Oct 29, 2026</span>
             <h2 class="report-title"><a href="./v5.47.0/">TangleClaw <code>v5.47.0</code>: “Engine dialogs and sandbox”</a></h2>
           </div>
-          <span class="badge badge-cyan">W3-REC #2714 @ f24e5bff · Base 833b60b4</span>
+          <span class="badge badge-cyan">W4-REL #2715 @ 0e6ce11a · Base aea08798</span>
         </div>
         <p style="color:#cbd5e1; margin:0;">
-          Four execution waves delivered <strong>7 PRs (#2709, #2710, #2711, #2713, #2712, #2714 + W4-REL, plus mid-sprint v5.46.1 PR #2708 @ c94164b0) in ~6 hours 48 minutes</strong>, closing all <strong>6 Milestone #32 issues (#1836, #2193, #2221, #2205, #2219, #2168)</strong> with a <strong>100% first-time CI pass rate (22/22 runs)</strong> and an <strong>8-session 8-hour <code>R3</code> in-thread procedural refresh (0 <code>/clear</code> calls)</strong>. Converged <code>lib/launch-dialog-guard.js#read</code> onto the shared validator and pane classifier in <code>lib/startup-dialog.js#entryErrors</code> while adding validated <code>acceptKeys</code> to <code>data/engines/claude.json</code> (<code>#2221</code>), declared Claude Code’s <code>bypass_permissions_confirm</code> dialog separately from <code>trust_required</code> and withheld partial shared-option frames (<code>"No, exit"</code>) under neutral <code>startup_screen_suspect</code> with glyph-qualified composer detection and candidate ranking (<code>#2205</code>), declared Codex’s default <code>fullAuto</code> (<code>workspace-write</code>) loopback block in <code>data/engines/codex.json</code> and surfaced the unready-gated diagnosis and remedy in <code>lib/launch-sequence.js#_loopbackSandboxNote</code>, <code>lib/startup-control-codex.js#loopbackSandboxNote</code>, and <code>tc start status</code> (<code>#1836</code>), recorded genuinely dropped first turns across server restarts in <code>lib/sessions.js#reconcileDeferredFirstTurnsOnRestart</code> via <code>pasteOwed</code>/<code>kickoffOwed</code> without false-dropping delivered turns (<code>#2193</code>), withheld mid-session command and switchboard injections with <code>pane_not_at_prompt</code> when a live pane positively shows a selector’s selected row in <code>lib/startup-dialog.js#_promptRow</code> and <code>lib/startup-dialog.js#withholdFor</code> while preserving draft save/restore (<code>#2219</code>), and shipped the default-off per-project <code>acceptFolderTrust</code> setting across <code>lib/project-config.js</code>, <code>lib/projects.js</code>, <code>lib/sessions.js#_acceptsFolderTrust</code>, and <code>public/ui.js</code> with staggered per-key session/dialog re-verification and <code>launch.folder_trust_accepted</code> activity auditing (<code>#2168</code>, completed with an 18-minute hot-spare base-merge assist by <code>TC-Lane-D</code> under <code>A483-R12</code>).
+          Four execution waves delivered <strong>7 Sprint PRs (#2709, #2710, #2711, #2713, #2712, #2714, #2715, plus mid-sprint v5.46.1 PR #2708 @ c94164b0 = 8 PRs in the explorer) in ~6 hours 55 minutes</strong>, closing all <strong>6 Milestone #32 issues (#1836, #2193, #2221, #2205, #2219, #2168)</strong> with a <strong>100% first-time CI pass rate (24/24 runs)</strong>, an un-waived <strong>23,719/23,719 local suite pass on <code>main @ aea08798</code></strong>, and an <strong>8-session 8-hour <code>R3</code> in-thread procedural refresh (0 <code>/clear</code> calls)</strong>. Converged <code>lib/launch-dialog-guard.js#read</code> onto the shared validator and pane classifier in <code>lib/startup-dialog.js#entryErrors</code> while adding validated <code>acceptKeys</code> to <code>data/engines/claude.json</code> (<code>#2221</code>), declared Claude Code’s <code>bypass_permissions_confirm</code> dialog separately from <code>trust_required</code> and withheld partial shared-option frames (<code>"No, exit"</code>) under neutral <code>startup_screen_suspect</code> with glyph-qualified composer detection and candidate ranking (<code>#2205</code>), declared Codex’s default <code>fullAuto</code> (<code>workspace-write</code>) loopback block in <code>data/engines/codex.json</code> and surfaced the unready-gated diagnosis and remedy in <code>lib/launch-sequence.js#_loopbackSandboxNote</code>, <code>lib/startup-control-codex.js#loopbackSandboxNote</code>, and <code>tc start status</code> (<code>#1836</code>), recorded genuinely dropped first turns across server restarts in <code>lib/sessions.js#reconcileDeferredFirstTurnsOnRestart</code> via <code>pasteOwed</code>/<code>kickoffOwed</code> without false-dropping delivered turns (<code>#2193</code>), withheld mid-session command and switchboard injections with <code>pane_not_at_prompt</code> when a live pane positively shows a selector’s selected row in <code>lib/startup-dialog.js#_promptRow</code> and <code>lib/startup-dialog.js#withholdFor</code> while preserving draft save/restore (<code>#2219</code>), and shipped the default-off per-project <code>acceptFolderTrust</code> setting across <code>lib/project-config.js</code>, <code>lib/projects.js</code>, <code>lib/sessions.js#_acceptsFolderTrust</code>, and <code>public/ui.js</code> with staggered per-key session/dialog re-verification and <code>launch.folder_trust_accepted</code> activity auditing (<code>#2168</code>, completed with an 18-minute hot-spare base-merge assist by <code>TC-Lane-D</code> under <code>A483-R12</code>; interactive browser check deferred under <code>A483-R8</code>).
         </p>
         <div class="meta-pills">
-          <span class="badge badge-cyan">4 Waves · 7 PRs · 6h 48m Wall Time</span>
-          <span class="badge badge-green">6/6 Milestone #32 Issues Closed · 22/22 First-Time CI</span>
-          <span class="badge badge-purple">+2,560 / -211 LOC · 16/16 Rule #283 PASS · O483-V5470-PASS</span>
+          <span class="badge badge-cyan">4 Waves · 7 Sprint PRs (+ #2708) · 6h 55m Wall Time</span>
+          <span class="badge badge-green">6/6 Milestone #32 Issues Closed · 23,719 Local Tests (0 Fail)</span>
+          <span class="badge badge-purple">+2,642 / -242 LOC · 16/16 Rule #283 PASS · O483-V5470-PR2715-0E6CE11A-ACCEPT</span>
         </div>
         <div class="actions">
           <a class="btn btn-primary" href="./v5.47.0/">📊 Open v5.47.0 Interactive Sprint Report →</a>
-          <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2714" target="_blank" rel="noopener">W3-REC PR #2714</a>
+          <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2715" target="_blank" rel="noopener">W4-REL Release PR #2715</a>
         </div>
       </article>
 
