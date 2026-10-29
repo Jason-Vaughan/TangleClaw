@@ -407,7 +407,7 @@ describe('one look before a send (#2128)', () => {
 
   it('the composer is clear', () => {
     frames = [COMPOSER];
-    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: true, noncomposer: false, unread: null, promptKnown: true, unreadable: null, unresolved: null, unresolvedCause: null });
+    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: true, noncomposer: false, selector: false, unread: null, promptKnown: true, unreadable: null, unresolved: null, unresolvedCause: null });
   });
 
   it('a session quoting the dialog above its composer is clear: the prompt is the evidence', () => {
@@ -526,7 +526,7 @@ describe('one look before a send (#2128)', () => {
   it('a profile with no prompt glyph is never read as clear: it has no positive evidence to give', () => {
     startupDialog._internal.wakeProfiles = () => ({});
     frames = [COMPOSER];
-    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, noncomposer: false, unread: null, promptKnown: false, unreadable: null, unresolved: null, unresolvedCause: null });
+    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, noncomposer: false, selector: false, unread: null, promptKnown: false, unreadable: null, unresolved: null, unresolvedCause: null });
     frames = [TRUST_DIALOG];
     assert.equal(look().dialog.code, 'trust_required', 'though it still sees the dialog by its markers');
   });
@@ -615,13 +615,13 @@ describe('one look before a send (#2128)', () => {
 
   it('a screen with neither a dialog nor a prompt is not clear', () => {
     frames = [['  Verifying your account…']];
-    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, noncomposer: false, unread: null, promptKnown: true, unreadable: null, unresolved: null, unresolvedCause: null });
+    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, noncomposer: false, selector: false, unread: null, promptKnown: true, unreadable: null, unresolved: null, unresolvedCause: null });
   });
 
   it('an engine that declares nothing is not read', () => {
     frames = [new Error('must not be read')];
     assert.deepEqual(startupDialog.check('t', { id: 'aider', command: 'aider', capabilities: { startupDialogs: [] } }),
-      { declared: false, dialog: null, suspect: null, clear: false, noncomposer: false, unread: null, promptKnown: false, unreadable: null, unresolved: null, unresolvedCause: null });
+      { declared: false, dialog: null, suspect: null, clear: false, noncomposer: false, selector: false, unread: null, promptKnown: false, unreadable: null, unresolved: null, unresolvedCause: null });
   });
 });
 
@@ -2909,20 +2909,34 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
     });
 
     it('the same frame is NOT clear without each of those', () => {
+      const full = (cursor) => startupDialog.classify(FRESH, DIALOGS, WAKE, cursor);
       assert.equal(classify(FRESH, null), 'noncomposer', 'no cursor reading');
+      assert.equal(full(null).selector, false, '(#2219) no cursor row to confirm a selector either');
       assert.equal(boot(FRESH, null), 'undecided');
       const unstyled = { ...FRESH_CURSOR, line: FRESH_ROW };
       assert.equal(classify(FRESH, unstyled), 'noncomposer', 'a cursor row with no styling: the suggestion reads as typed text');
+      assert.equal(full(unstyled).selector, false, '(#2219) shown, on the suggestion\'s own column, boxed: not a selector reading');
+      // (#2219) A hidden cursor is positive selector evidence on its OWN, by
+      // the architect's ruling, whatever the row's content -- even this
+      // genuinely-at-rest composer's suggestion, which is why `selector`
+      // alone must be read as "not positively a draft", never as "confirmed
+      // menu": `withholdFor` only ever uses it to refuse, never to name one.
       assert.equal(classify(FRESH, { ...FRESH_CURSOR, visible: false }), 'noncomposer', 'the cursor hidden, as on every selector captured');
+      assert.equal(full({ ...FRESH_CURSOR, visible: false }).selector, true, '(#2219) hidden is positive selector evidence on its own');
       assert.equal(classify(FRESH, { ...FRESH_CURSOR, visible: null }), 'noncomposer', 'tmux did not say whether the cursor is shown');
+      assert.equal(full({ ...FRESH_CURSOR, visible: null }).selector, false, '(#2219) neither hidden nor shown: not positive either way');
       const { visible: _omitted, ...noFlag } = FRESH_CURSOR;
       assert.equal(classify(FRESH, noFlag), 'noncomposer', 'a cursor reading with no visibility flag at all');
+      assert.equal(full(noFlag).selector, false, '(#2219) same as an explicit null flag');
       assert.equal(boot(FRESH, noFlag), 'undecided');
       assert.equal(classify(FRESH, { ...FRESH_CURSOR, x: 0 }), 'noncomposer', 'the cursor on the glyph, as a selector parks it');
+      assert.equal(full({ ...FRESH_CURSOR, x: 0 }).selector, false, '(#2219) shown AND on the glyph AND boxed: the boxed composer wins the ambiguity, not selector');
       assert.equal(classify(FRESH, { ...FRESH_CURSOR, x: 12 }), 'noncomposer', 'the cursor past text: that text was typed');
+      assert.equal(full({ ...FRESH_CURSOR, x: 12 }).selector, false, '(#2219) shown and past the glyph: never selector evidence');
       assert.equal(classify(FRESH, { x: 2, y: 3, line: `❯ ${ESC}[2mTry something else${ESC}[0m` }), 'noncomposer', 'the cursor on some other row');
       const noUpper = FRESH.filter((row, i) => i !== FRESH.indexOf(BORDER));
       assert.equal(classify(noUpper, FRESH_CURSOR), 'noncomposer', 'no border directly above');
+      assert.equal(startupDialog.classify(noUpper, DIALOGS, WAKE, FRESH_CURSOR).selector, false, '(#2219) shown and on the suggestion\'s own (offset) column: unboxed alone does not make it a selector');
       const noLower = FRESH.filter((row, i) => i !== FRESH.lastIndexOf(BORDER));
       assert.equal(classify(noLower, FRESH_CURSOR), 'noncomposer', 'no border directly below');
     });
@@ -3159,10 +3173,59 @@ describe('only the composer at rest is a prompt (#2128, A160)', () => {
       });
     }
 
-    it('a later injection with no blocker stored and no declared marker is not refused on a non-composer row: it keeps and clears a draft as before', () => {
+    it('a later injection with no blocker stored keeps and clears a draft, but is refused on a positively identified selector row (#2219)', () => {
+      // A located draft (DRAFT: cursor shown, after the typed text, inside
+      // the composer's box) still keeps the pane writer's draft-then-clear
+      // path (Rule #38) -- unchanged by #2219.
+      assert.equal(startupDialog.withholdFor(look(DRAFT), null), null, 'a located draft still passes through');
+      // MODEL_MENU already carries its own REAL cursor via `at()` (hidden,
+      // parked on the selected row's glyph, no composer box): the default
+      // stub (`cursorInfoSync = () => cursorOf(lastServed)`) reads it as is.
+      const modelSeen = look(MODEL_MENU);
+      assert.equal(modelSeen.selector, true, 'positively identified as a selector');
+      assert.equal(
+        startupDialog.withholdFor(modelSeen, null).code, startupDialog.NOT_AT_PROMPT,
+        'a later injection into the real /model selector is refused too, not only a launch send'
+      );
+      // MENU_2 ("a selector with no declared text at all") carries no stated
+      // cursor in this file; give it the same REAL shape a live pane would
+      // report for its own selected row (hidden, on the glyph).
+      const menuRow = MENU_2.find((row) => row.trimStart().startsWith(GLYPH));
+      startupDialog._internal.cursorInfoSync = () => ({ visible: false, x: menuRow.indexOf(GLYPH), y: 9, line: menuRow });
+      const menuSeen = look(MENU_2);
+      assert.equal(menuSeen.selector, true);
+      assert.equal(startupDialog.withholdFor(menuSeen, null).code, startupDialog.NOT_AT_PROMPT);
+    });
+
+    it('with no cursor reading at all, a non-composer row cannot be positively called a selector, and a later injection is not refused on it (unchanged ambiguous case)', () => {
+      startupDialog._internal.cursorInfoSync = () => null;
       for (const lines of [DRAFT, MENU_2, MODEL_MENU]) {
-        assert.equal(startupDialog.withholdFor(look(lines), null), null);
+        const seen = look(lines);
+        assert.equal(seen.selector, false, 'no cursor evidence to confirm it either way');
+        assert.equal(startupDialog.withholdFor(seen, null), null, 'still only a launch send is refused on the broader noncomposer reading');
+        assert.equal(startupDialog.withholdFor(seen, null, { launchSend: true }).code, startupDialog.NOT_AT_PROMPT);
       }
+    });
+
+    it('a shown cursor resting on the glyph\'s own column, with no composer box around the row, is positive selector evidence too', () => {
+      // The second disjunct of `selector` (#2219): not every engine hides the
+      // cursor on a selector, so a visible cursor that still sits exactly on
+      // the glyph (never offset past it, the way a bare prompt's or a
+      // draft's cursor always is) and draws no border around the row is
+      // treated the same as a hidden one.
+      const selected = MENU_2.find((row) => row.trimStart().startsWith(GLYPH));
+      startupDialog._internal.cursorInfoSync = () => ({ visible: true, x: selected.indexOf(GLYPH), y: 9, line: selected });
+      const seen = look(MENU_2);
+      assert.equal(seen.selector, true);
+      assert.equal(startupDialog.withholdFor(seen, null).code, startupDialog.NOT_AT_PROMPT);
+    });
+
+    it('a shown cursor past the glyph\'s own column is never selector evidence, boxed or not', () => {
+      const selected = MENU_2.find((row) => row.trimStart().startsWith(GLYPH));
+      startupDialog._internal.cursorInfoSync = () => ({ visible: true, x: selected.indexOf(GLYPH) + 2, y: 9, line: selected });
+      const seen = look(MENU_2);
+      assert.equal(seen.selector, false);
+      assert.equal(startupDialog.withholdFor(seen, null), null, 'the broader noncomposer reading alone does not refuse a later injection');
     });
 
     it('declared text quoted ABOVE a located draft is a transcript: a later injection keeps its draft path, a launch send does not, and a blocker is not cleared', () => {

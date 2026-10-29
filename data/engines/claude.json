@@ -171,7 +171,7 @@
         },
         "promptGlyph": {
           "verifiedOn": "2026-08-24",
-          "source": "Live pane (#1109): `❯` is the composer glyph, and the composer is located by it rather than by position — a pane with a running subagent fleet draws rows below the input box."
+          "source": "Live pane (#1109): `❯` is the composer glyph, and the composer is located by it rather than by position — a pane with a running subagent fleet draws rows below the input box. Re-measured 2026-10-07 (#2219), four more live panes in the same empty-repository session as the folder trust dialog's own capture: the `/model` menu, the onboarding theme picker, the login-method selector and the folder trust dialog all draw their SELECTED option under this same glyph, but with the terminal cursor hidden (`#{cursor_flag}` 0) and parked ON the glyph's own column (`#{cursor_x}` equal to the glyph's cell, never offset past it the way a bare prompt's suggestion or a draft's cursor is), and no border row adjoining it — unlike the fresh composer and a composer holding typed text, captured the same way, both of which show the cursor offset past the glyph between two border rows. `lib/startup-dialog.js`'s `_promptRow`/`_cursorOnGlyphColumn` locate this same glyph to tell a selector's selected row from either composer reading, refusing a later injection into it for every sender (not only a launch's own send) under `pane_not_at_prompt`, while a positively LOCATED draft still keeps its own send-then-clear path (Rule #38)."
         },
         "promptPad": {
           "verifiedOn": "2026-08-24",
