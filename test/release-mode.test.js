@@ -552,9 +552,8 @@ describe('public/ui.js — group release-authority UI (#1697)', () => {
      * pending — the exact race the SECOND guard exists to catch. A `setTimeout`
      * macrotask boundary (not a guessed microtask count) is what guarantees
      * `toggleGroupMembership` has reached its pending `await api(...)` before
-     * the mutation runs (PRR-B C1/C2: the two prior tests set `groupEditId`
-     * before the call ever started, so they only ever exercised the first
-     * guard — removing the second left them green).
+     * `groupEditId` moves — setting it before the call even starts only
+     * exercises the FIRST guard (the `run` helper above does that).
      * @param {object} opts
      * @param {string} opts.groupId - The group this toggle is for
      * @param {string|null} opts.midFlightGroupEditId - What the modal moves to mid-flight
