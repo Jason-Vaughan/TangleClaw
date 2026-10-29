@@ -924,13 +924,16 @@ describe('soak driver — the log lock and header', () => {
 
   it('lets exactly one of many concurrent processes reclaim a stale lock: never two holders at once', async () => {
     const { spawn } = require('node:child_process');
-    // A placeholder pid: liveness is stubbed below (`isAlive: () => false`),
-    // never checked against the real OS, so no pid value — not a just-exited
-    // process's (reusable under concurrent load, #2698) and not a fixed
-    // sentinel (Linux pid_max commonly exceeds 999999, so a real process
-    // could hold it) — makes this test depend on the host's actual pid
-    // space. Real concurrent contention still comes from the 8 processes
-    // racing for the genuine filesystem reclaim mutex below.
+    // A placeholder pid for the lock's INITIAL holder only: `isAlive` below
+    // reports it, and only it, as dead — never checked against the real OS,
+    // so no pid value (not a just-exited process's, reusable under
+    // concurrent load, #2698; not a fixed sentinel like 999999, which Linux
+    // pid_max commonly exceeds). Every contender's isAlive still has to
+    // report any OTHER pid as alive: `acquireLogLock` writes the winner's
+    // real OS pid (`deps.pid || process.pid`) on reclaim, so once a real
+    // contender holds the lock, the rest must see that live pid as alive, or
+    // a later contender reclaims an already-held lock out from under it
+    // (PRR-B review, reopens the same overlap this test exists to forbid).
     const dead = 1;
     fs.writeFileSync(`${logPath}.lock`, JSON.stringify({ pid: dead, host: os.hostname() }));
     const child = `
@@ -939,7 +942,7 @@ describe('soak driver — the log lock and header', () => {
         // Every contender waits here after finding the lock stale, so they
         // all reach the reclaim together: the window a naive reclaim loses in.
         const hold = () => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
-        const lock = driver.acquireLogLock(${JSON.stringify(logPath)}, { afterStaleCheck: hold, isAlive: () => false });
+        const lock = driver.acquireLogLock(${JSON.stringify(logPath)}, { afterStaleCheck: hold, isAlive: (p) => p !== ${JSON.stringify(dead)} });
         const t0 = Date.now();
         setTimeout(() => { const t1 = Date.now(); lock.release(); console.log(JSON.stringify({ won: true, t0, t1, reclaimed: lock.reclaimed !== null })); }, 1500);
       } catch (err) {
