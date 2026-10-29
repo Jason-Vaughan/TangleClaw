@@ -19,6 +19,39 @@ All notable changes to TangleClaw are documented in this file.
   group rather than a group the project owns itself, and the group modal no longer shows a
   refreshed owner after it has closed or switched to a different group mid-request (#2699).
 
+- Codex's `fullAuto` launch mode now declares, in its engine profile, that the
+  `workspace-write` sandbox blocks outbound network (loopback included) by
+  default, with the exact remedy and dated evidence; once a launch has sat
+  unread long enough for the unready monitor to flag it, the launch-sequence
+  status names this as a likely cause instead of leaving it unexplained
+  (#1836).
+- A server restart while a launch's first turn (its prime paste, or its kickoff/pre-keys turn) was
+  deferred behind an engine startup dialog (folder trust, bypass-permissions, etc.) no longer drops
+  that first turn with no trace, for any launch shape — including a no-rules or silent-prime launch,
+  whose own delivery ledger had previously masked the drop entirely. A dialog that reappears later,
+  well after the session's own first turn already delivered, is correctly left alone rather than
+  misreported as dropped — including when the paste or the kickoff genuinely succeeded but the
+  dialog's own stored record failed to clear afterward. The drop is now surfaced directly on
+  `GET /api/sessions/:project/status`,
+  beside the existing `launchBlocker` field, with no change to that route. The project's
+  launch-sequence/status panel (`GET /api/launch-sequences`) also shows it for most launch shapes;
+  for a no-rules or silent-prime launch specifically, that panel's single delivery-ledger slot keeps
+  showing an earlier, unrelated entry from the same launch — the drop is durably recorded and visible
+  via session status either way, just not in that one panel field for that one launch shape (#2193).
+- Claude Code's bypass-permissions confirmation screen is now declared as
+  its own startup dialog (`bypass_permissions_confirm`), so it is recognized
+  and recorded as itself instead of being mis-attributed to the folder trust
+  dialog, which it shares a default option ("No, exit") with. A frame that
+  shows only that shared option, with neither dialog's full text drawn yet,
+  is now withheld under a neutral `startup_screen_suspect` code that says a
+  startup screen may be showing without guessing which one (#2205).
+- `capabilities.startupDialogs` entries may now declare an optional
+  `acceptKeys` (prepared for `#2168`'s opt-in folder-trust acceptance); the
+  folder trust dialog declares `["Down", "Enter"]`. `lib/launch-dialog-guard.js`'s
+  reader now delegates to the same entry-validation `lib/startup-dialog.js`
+  uses, so Codex's `launch.guardedDialogs` and Claude's `capabilities.startupDialogs`
+  are read by one validator instead of two that could drift (#2221).
+
 ### Internal
 - Reclassified 5 test files from the Medium tier to Large in `test/tiers.json`
   (`test/with-scratch-server.test.js`, `test/system-health.test.js`,
