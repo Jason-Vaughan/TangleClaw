@@ -235,7 +235,8 @@
       <span>TangleClaw Autonomous Sprint Reports</span>
     </div>
     <div class="nav-links">
-      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.45.0/">v5.45.0 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.46.0/">v5.46.0 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.45.0/">v5.45.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.44.0/">v5.44.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.43.0/">v5.43.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.42.0/">v5.42.0</a>
@@ -262,33 +263,56 @@
       <div class="kpi-grid">
         <div class="kpi-card">
           <div class="kpi-label">Published Sprint Reports</div>
-          <div class="kpi-val">12 Releases</div>
-          <div class="kpi-sub"><code>v5.34.0</code> · <code>v5.35.0</code> · <code>v5.36.0</code> · <code>v5.37.0</code> · <code>v5.38.0</code> · <code>v5.39.0</code> · <code>v5.40.0</code> · <code>v5.41.0</code> · <code>v5.42.0</code> · <code>v5.43.0</code> · <code>v5.44.0</code> · <code>v5.45.0</code></div>
+          <div class="kpi-val">13 Releases</div>
+          <div class="kpi-sub"><code>v5.34.0</code> · <code>v5.35.0</code> · <code>v5.36.0</code> · <code>v5.37.0</code> · <code>v5.38.0</code> · <code>v5.39.0</code> · <code>v5.40.0</code> · <code>v5.41.0</code> · <code>v5.42.0</code> · <code>v5.43.0</code> · <code>v5.44.0</code> · <code>v5.45.0</code> · <code>v5.46.0</code></div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Cumulative Sprint PRs</div>
-          <div class="kpi-val">184 PRs Merged</div>
-          <div class="kpi-sub"><strong>66 waves</strong> across twelve reports · v5.45.0 merged 8 PRs with 32.1m mean build (Milestone #30 10/10)</div>
+          <div class="kpi-val">192 PRs Merged</div>
+          <div class="kpi-sub"><strong>70 waves</strong> across thirteen reports · v5.46.0 delivered 8 PRs across 12 Milestone #31 issues (+ #2693)</div>
         </div>
         <div class="kpi-card">
-          <div class="kpi-label">Mean Builder Build Time</div>
-          <div class="kpi-val">32.1m Avg</div>
-          <div class="kpi-sub"><strong>All-time record 6-car mean</strong> (19.2m–44.7m) · <strong>0 rebases in Wave 2</strong> · 6 R-Gate catches</div>
+          <div class="kpi-label">Reviewer Follow-Up Latency</div>
+          <div class="kpi-val">60–120s</div>
+          <div class="kpi-sub"><strong>Codex <code>gpt-6-astra (medium)</code></strong> cutover at 19:48Z · <strong>6 Wave 2 blocking catches</strong> · 0 false blocks</div>
         </div>
         <div class="kpi-card">
-          <div class="kpi-label">Latest Production Release</div>
-          <div class="kpi-val" style="color:var(--green);">v5.45.0 Live</div>
-          <div class="kpi-sub">Tag <code>v5.45.0 @ 04d77afd</code> · Milestone #30 <code>10/10</code> Closed</div>
+          <div class="kpi-label">Latest Release Report</div>
+          <div class="kpi-val" style="color:var(--green);">v5.46.0 RC</div>
+          <div class="kpi-sub">W3-REC <code>777c3b42</code> · W4-REL <code>#2701 @ 32926618</code> · Milestone #31 <code>12/12</code> Closed</div>
         </div>
       </div>
     </section>
 
     <div class="report-list">
-      <!-- v5.45.0 Card -->
+      <!-- v5.46.0 Card -->
       <article class="report-card">
         <div class="report-header">
           <div>
             <span class="badge badge-green">● Latest Release · Oct 28, 2026</span>
+            <h2 class="report-title"><a href="./v5.46.0/">TangleClaw <code>v5.46.0</code>: “Release authority and merge policy”</a></h2>
+          </div>
+          <span class="badge badge-cyan">W4-REL #2701 @ 32926618</span>
+        </div>
+        <p style="color:#cbd5e1; margin:0;">
+          Four execution waves delivered <strong>8 PRs (#2687, #2689, #2690, #2692, #2694, #2695, #2700, #2701) in ~6 hours 02 minutes</strong> and closed Milestone <code>#31</code> (<strong>12/12 issues: 100%</strong>, plus Wave 3 doc follow-up <code>#2693</code>). Renamed <code>releaseMode</code> to canonical <strong><code>agent</code> / <code>operator</code> / <code>off</code></strong> with permanent legacy aliases and safe <strong><code>operator</code> default</strong> (<code>#1701, #1702</code>), enforced two-site <strong>group release ownership authority</strong> with <code>409 CONFLICT</code> and worktree-safe <code>configRootOf(ctx)</code> <code>version-bump</code> skip (<code>#1697</code>), shipped opt-in managed-project <strong>release automation</strong> (<code>lib/release-automation.js</code>: <code>planRelease</code>, <code>applyRelease</code>, <code>generateReleaseWorkflow</code>; <code>#721</code>), added configurable <strong><code>wrapMergeMethod</code></strong> (<code>squash|merge|rebase</code>; <code>#1172</code>) and settled TangleClaw’s repo policy on guarded <code>--merge</code> in <code>ADR 0002</code> (<code>#2162</code>), added Keep-a-Changelog comparison link references and strict fragment verification (<code>#1051, #2523, #2022</code>), enabled default-on <strong><code>linkedIssueClosedSignal</code></strong> readiness advisories (<code>#1495</code>), preserved framework verification contracts on custom prompt overrides (<code>#660</code>), and completed <code>_assertKnownKeys</code> enforcement across all 15 remaining <code>lib/store.js</code> accessors (<code>#2681</code>). Mid-sprint cutover to Codex <strong><code>gpt-6-astra (medium)</code></strong> on <code>PRR-A</code>/<code>PRR-B</code> achieved <strong>60–120s follow-up turnarounds</strong> and caught <strong>6 critical Wave 2 bugs</strong> with zero false positives.
+        </p>
+        <div class="meta-pills">
+          <span class="badge badge-cyan">4 Waves · 8 PRs · 6h 02m Wall Time</span>
+          <span class="badge badge-green">Milestone #31: 12/12 Closed (+ #2693) · 0 Reverts</span>
+          <span class="badge badge-purple">+4,711 / -331 LOC · 16/16 Rule #283 PASS · Pre-Deploy RC Verified</span>
+        </div>
+        <div class="actions">
+          <a class="btn btn-primary" href="./v5.46.0/">📊 Open v5.46.0 Interactive Sprint Report →</a>
+          <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2701" target="_blank" rel="noopener">W4-REL PR #2701</a>
+        </div>
+      </article>
+
+      <!-- v5.45.0 Card -->
+      <article class="report-card">
+        <div class="report-header">
+          <div>
+            <span class="badge badge-purple">Release · Oct 28, 2026</span>
             <h2 class="report-title"><a href="./v5.45.0/">TangleClaw <code>v5.45.0</code>: “Project settings that cannot corrupt”</a></h2>
           </div>
           <span class="badge badge-cyan">Tag v5.45.0 @ 04d77afd</span>
