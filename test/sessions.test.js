@@ -4725,14 +4725,16 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
    * the `FIRST_TURN_DEFERRED_EVENT` marker a real `_deferEngineInit` deferral
    * would have left beside it, carrying whichever of deliveryBase/
    * pasteOutcomeBase that launch actually used (#2193; PM ruling on PRR-B C2).
-   * @param {{blocker?: boolean, deferred?: boolean, carrier?: ('rules'|'pointer')}} [opts] - Whether to
-   *   store a blocker; whether it carries the matching deferral marker (false models a LATER,
-   *   unrelated dialog `_reconcileLaunchBlocker` set after the first turn already delivered —
-   *   PRR-B C1); which carrier the (simulated) launch used — 'rules' (deliveryBase, the ordinary
-   *   path) or 'pointer' (pasteOutcomeBase, the pull-pointer path)
+   * @param {{blocker?: boolean, deferred?: boolean, carrier?: ('rules'|'pointer'),
+   *   pasteOwed?: boolean, kickoffOwed?: boolean}} [opts] - Whether to store a blocker; whether
+   *   it carries the matching deferral marker (false models a LATER, unrelated dialog
+   *   `_reconcileLaunchBlocker` set after the first turn already delivered — PRR-B C1); which
+   *   carrier the (simulated) launch used — 'rules' (deliveryBase, the ordinary path) or
+   *   'pointer' (pasteOutcomeBase, the pull-pointer path); whether a paste/kickoff was owed at
+   *   all (Addendum A483-R5 — a silent-prime/no-rules launch may owe neither, one, or both)
    * @returns {{project: object, session: object}}
    */
-  const live = ({ blocker = true, deferred = true, carrier = 'rules' } = {}) => {
+  const live = ({ blocker = true, deferred = true, carrier = 'rules', pasteOwed = true, kickoffOwed = false } = {}) => {
     counter += 1;
     const name = `sweep-proj-${counter}`;
     const project = store.projects.create({ name, path: path.join(base, name), engine: 'claude' });
@@ -4744,6 +4746,7 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
           projectId: project.id, sessionId: session.id, eventType: sessions.FIRST_TURN_DEFERRED_EVENT,
           detail: {
             code: updated.launchBlocker.code, observedAt: updated.launchBlocker.observedAt,
+            pasteOwed, kickoffOwed,
             deliveryBase: carrier === 'rules'
               ? { sessionId: session.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [], digest: '' }
               : null,
@@ -4951,29 +4954,93 @@ describe('stored launch blockers are kept true when nothing reads them (#2451)',
       assert.equal(dropped.length, 1);
     });
 
-    it('already delivered, ordinary carrier: a prior rules-delivery outcome is not re-flagged as dropped (PRR-B C2 false-positive)', () => {
-      // The marker IS the original deferral's (unlike the "later, unrelated
-      // dialog" case below) — this models the paste actually succeeding
-      // before the restart, racing ahead of the blocker clear.
+    it('ordinary carrier, a channel-matching row exists for some other reason: the drop still fires (A483-R5: unconditional), but the ledger write is not duplicated', () => {
+      // A blocker whose marker still matches (unlike the "later, unrelated
+      // dialog" case below) is, by construction, never reachable behind a
+      // GENUINE prior success: a real 'delivered'/'written' outcome is only
+      // ever written after `clearLaunchBlocker` runs (the 'answered' branch
+      // in `_deferEngineInit`'s `.then()`), so this row -- however it got
+      // here -- is not this watch's own prior resolution. A483-R5 records
+      // the drop unconditionally for every owed launch; this only confirms
+      // the ledger write itself still does not duplicate an existing row.
       const { project, session } = live({ carrier: 'rules' });
       store.sessionRuleDeliveries.record({
         sessionId: session.id, projectId: project.id, engineId: 'claude', channel: 'prime-paste', outcome: 'delivered'
       });
-      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 0 });
-      assert.equal(store.sessionRuleDeliveries.listForSession(session.id).length, 1, 'untouched -- not overwritten or duplicated');
-      assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }), []);
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 });
+      assert.equal(store.sessionRuleDeliveries.listForSession(session.id).length, 1, 'not duplicated');
+      assert.equal(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }).length, 1);
     });
 
-    it('already delivered, pull-pointer carrier: a prior paste outcome is not re-flagged as dropped (PRR-B C2 false-positive)', () => {
+    it('pull-pointer carrier, a matching event exists for some other reason: the drop still fires, but the ledger write is not duplicated', () => {
       const { project, session } = live({ carrier: 'pointer' });
       store.activity.log({
         projectId: project.id, sessionId: session.id, eventType: sessions.POINTER_PASTE_OUTCOME_EVENT,
         detail: { engineId: 'claude', outcome: 'delivered', detail: null }
       });
-      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 0 });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 });
       assert.equal(store.activity.query({ sessionId: session.id, eventType: sessions.POINTER_PASTE_OUTCOME_EVENT }).length, 1,
-        'untouched -- not duplicated');
+        'not duplicated');
+      assert.equal(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }).length, 1);
+    });
+
+    it('a second restart does not re-flag even once the ledger already has an outcome from the first', () => {
+      const { session } = live({ carrier: 'rules' });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 }, 'restart 1 writes the row');
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 0 },
+        'restart 2: FIRST_TURN_DROPPED_ON_RESTART_EVENT already matches -- idempotency is keyed on THAT, not the ledger');
+      assert.equal(store.sessionRuleDeliveries.listForSession(session.id).length, 1);
+    });
+
+    it('kickoffOwed alone (no paste owed at all -- a silent-prime launch with nothing to type): still recorded, with no ledger write', () => {
+      const { session } = live({ carrier: 'rules', pasteOwed: false, kickoffOwed: true, deferred: true });
+      // live() always writes a deliveryBase for carrier: 'rules'; a real
+      // silent-prime launch would have pasteOwed: false regardless of which
+      // base it carries, so the paste branch's own `pasteOwed &&` guard is
+      // what is actually under test here, not the base's absence.
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 });
+      assert.deepEqual(store.sessionRuleDeliveries.listForSession(session.id), [], 'no paste was owed -- nothing to write there');
+      assert.equal(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }).length, 1);
+    });
+
+    it('neither pasteOwed nor kickoffOwed (an older marker shape, or a launch that owed neither): not flagged', () => {
+      const { session } = live({ carrier: 'rules', pasteOwed: false, kickoffOwed: false });
+      assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 0 });
       assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }), []);
+    });
+
+    // Addendum A483-R5: `0` server.js edits -- GET /api/sessions/:project/status
+    // already returns whatever getSessionStatus returns, so adding
+    // firstTurnDroppedOnRestart here is the whole visibility fix, covering all
+    // four launch shapes (unlike GET /api/launch-sequences's rulesRow, which
+    // only reaches two of them -- see test/api-launch-sequences.test.js).
+    for (const shape of [
+      { label: 'with-rules', carrier: 'rules', pasteOwed: true, kickoffOwed: false },
+      { label: 'no-rules', carrier: 'rules', pasteOwed: false, kickoffOwed: true },
+      { label: 'silent-prime', carrier: 'rules', pasteOwed: false, kickoffOwed: true },
+      { label: 'pull-pointer', carrier: 'pointer', pasteOwed: true, kickoffOwed: false }
+    ]) {
+      it(`getSessionStatus surfaces firstTurnDroppedOnRestart beside launchBlocker for a ${shape.label} launch (#2193, Addendum A483-R5)`, () => {
+        const { project, session } = live({ carrier: shape.carrier, pasteOwed: shape.pasteOwed, kickoffOwed: shape.kickoffOwed });
+        const blockerBefore = store.sessions.get(session.id).launchBlocker;
+        // Read via the activity log directly, not getSessionStatus, before
+        // reconciling: getSessionStatus itself reads the live pane
+        // (mocked AT_PROMPT in this describe) and would clear the blocker
+        // first, which is the very thing under test, not a setup step.
+        assert.deepEqual(store.activity.query({ sessionId: session.id, eventType: sessions.FIRST_TURN_DROPPED_ON_RESTART_EVENT }), [],
+          'nothing recorded yet');
+        assert.deepEqual(sessions.reconcileDeferredFirstTurnsOnRestart(), { flagged: 1 });
+        const status = sessions.getSessionStatus(project.name);
+        assert.ok(status.firstTurnDroppedOnRestart, 'present once the restart is confirmed to have dropped it');
+        assert.equal(status.firstTurnDroppedOnRestart.code, blockerBefore.code);
+        assert.equal(status.firstTurnDroppedOnRestart.engineId, 'claude');
+        assert.equal(status.firstTurnDroppedOnRestart.observedAt, blockerBefore.observedAt, 'ties back to the exact blocker occurrence');
+      });
+    }
+
+    it('getSessionStatus reads null for a session nothing has flagged', () => {
+      const { project } = live({ deferred: false });
+      assert.equal(sessions.getSessionStatus(project.name).firstTurnDroppedOnRestart, null);
     });
 
     it('a REAL no-rules ordinary launch (an eager unrelated row already exists): the drop is still recorded, and that row is preserved untouched (PRR-B C2 round 2)', () => {

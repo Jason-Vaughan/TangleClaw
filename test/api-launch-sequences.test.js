@@ -276,6 +276,7 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
       projectId: project.id, sessionId: dropped.session.id, eventType: sessions.FIRST_TURN_DEFERRED_EVENT,
       detail: {
         code: updated.launchBlocker.code, observedAt: updated.launchBlocker.observedAt,
+        pasteOwed: true, kickoffOwed: false,
         deliveryBase: { sessionId: dropped.session.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [], digest: '' },
         pasteOutcomeBase: null
       }
@@ -298,6 +299,7 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
       projectId: other.id, sessionId: dropped.session.id, eventType: sessions.FIRST_TURN_DEFERRED_EVENT,
       detail: {
         code: updated.launchBlocker.code, observedAt: updated.launchBlocker.observedAt,
+        pasteOwed: true, kickoffOwed: false,
         deliveryBase: null,
         pasteOutcomeBase: { sessionId: dropped.session.id, projectId: other.id, engineId: 'claude' }
       }
@@ -312,13 +314,14 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
     assert.match(row.pasteOutcome.detail, /restarted/);
   });
 
-  // #2193 PRR-B C2 round 2: a REAL no-rules launch already writes its own
-  // row on this ledger, eagerly, before any dialog watch starts. The drop is
-  // still recorded (confirmed in test/sessions.test.js), but this route's
-  // `rulesRow = listForSession(...)[0]` (oldest first) means the PANEL keeps
-  // showing that eager row, not the drop -- an acknowledged display gap,
-  // proposed to PM/Arc as a one-line server.js change (prefer the newest
-  // `prime-paste` row), not fixed here.
+  // #2193 PRR-B C2 round 2 / Addendum A483-R5: a REAL no-rules launch already
+  // writes its own row on this ledger, eagerly, before any dialog watch
+  // starts. The drop is still recorded (confirmed in test/sessions.test.js,
+  // and via `firstTurnDroppedOnRestart` on GET /api/sessions/:project/status
+  // -- see test/sessions.test.js's getSessionStatus coverage), but THIS
+  // route's `rulesRow = listForSession(...)[0]` (oldest first) means the
+  // PANEL keeps showing that eager row, not the drop. Arc co-signed A483-R5
+  // rules server.js out of scope for this chunk; documented here, not fixed.
   it('a no-rules launch\'s restart-dropped first turn is recorded but NOT what this route\'s rulesDelivery shows (documents the acknowledged display gap, #2193)', async () => {
     const dropped = bind(project);
     store.sessionRuleDeliveries.record({
@@ -330,6 +333,7 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
       projectId: project.id, sessionId: dropped.session.id, eventType: sessions.FIRST_TURN_DEFERRED_EVENT,
       detail: {
         code: updated.launchBlocker.code, observedAt: updated.launchBlocker.observedAt,
+        pasteOwed: true, kickoffOwed: false,
         deliveryBase: { sessionId: dropped.session.id, projectId: project.id, engineId: 'claude', kind: 'startup', ruleIds: [], digest: '' },
         pasteOutcomeBase: null
       }
