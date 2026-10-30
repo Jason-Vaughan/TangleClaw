@@ -947,6 +947,31 @@ describe('medusa-exchanges (#1839)', () => {
         mx.pruneExchangeHistory(null, b.exchange_id);
         assert.ok(store.medusaExchanges.facts(b.exchange_id).length < bBefore, 'naming b compacts it');
       });
+
+      it('compacts an exchange with a large number of wake facts without throwing (#1879 PRR-B)', () => {
+        // Directly populated (not via recordWakeForRecipient) so the test
+        // stays fast at a count well beyond what the real escalation ladder
+        // would ever produce -- this is proving the loop-based max-seq and
+        // chunked delete have no ceiling, not simulating a realistic rearm count.
+        const x = sendPmToBuilder({ priority: 'blocking' }, 'hub-many-wakes');
+        const base = Date.parse('2026-09-25T12:00:00.000Z');
+        const TOTAL_WAKE_FACTS = 1200;
+        for (let i = 0; i < TOTAL_WAKE_FACTS; i += 1) {
+          store.medusaExchanges.appendFact({
+            exchange_id: x.exchange_id, fact: 'wake_attempted', code: 'tmux', at: new Date(base + i).toISOString()
+          });
+        }
+        store.medusaExchanges.appendFact({ exchange_id: x.exchange_id, fact: 'closed', at: new Date(base + TOTAL_WAKE_FACTS).toISOString() });
+        store.getDb().prepare("UPDATE medusa_exchanges SET state = 'closed', terminal_at = ? WHERE exchange_id = ?")
+          .run(new Date(base + TOTAL_WAKE_FACTS).toISOString(), x.exchange_id);
+
+        mx.pruneExchangeHistory(null, x.exchange_id); // must not throw -- this is the regression
+
+        const kinds = store.medusaExchanges.facts(x.exchange_id).map((f) => f.fact);
+        assert.equal(kinds.filter((k) => k === 'wake_attempted').length, 1, 'every wake fact but the most recent was dropped');
+        assert.equal(kinds[0], 'send_pending');
+        assert.equal(kinds.at(-1), 'closed');
+      });
     });
   });
 
