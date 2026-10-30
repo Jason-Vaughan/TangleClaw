@@ -41,6 +41,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-30 — v5.48.0 W3-REC: reconcile bounded-record retention
+
+<!-- prawduct: type=internal | scope=v548-w3-rec -->
+
+- Reconciled the eight issues in the co-signed A485 sprint after Wave 1 and Wave 2 merged to `main@74706b59c4cdfa47c2bc91f0fc25dcfa231626b8`. Wave 1 bounded launch-sequence content and rows (#1595), ended-session Medusa deliveries (#1331), and ended-launch workload receipts and narrowings (#1918), and retired the persisted, unread project `migration_status` column (#776). Wave 2 bounded handoff publication rows and files (#1602), Medusa exchange rows and facts (#1879), and settled operator-bridge records (#2004), and retired verified one-off config-load migration shims (#1035). The accepted `changelog.d/` fragments remain for release preparation.
+- Updated the feature index with code and test citations for all eight issues and marked the prior v5.47.1 patch as released. This records merged code; it does not claim a v5.48.0 tag, GitHub Release, deployment or activation.
+
 ## 2026-10-29 — v5.47.1 W3-REL: prepare the Medusa wake delivery point patch
 
 <!-- prawduct: type=internal | scope=v5471-w3-rel -->
