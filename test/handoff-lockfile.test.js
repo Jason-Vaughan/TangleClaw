@@ -268,6 +268,38 @@ describe('sweeping orphan history files (#1602)', () => {
   });
 });
 
+describe('sweeping orphan staged files (#1602)', () => {
+  it('removes a staged file whose id is not in the retained set', () => {
+    lockfile.writeStaged(project, doc('pub-lost'));
+    const removed = lockfile.sweepOrphanStagedFiles(project, []);
+    assert.deepEqual(removed, ['pub-lost']);
+    assert.equal(fs.existsSync(lockfile.stagedPath(project, 'pub-lost')), false);
+  });
+
+  it('leaves a staged file whose id IS in the retained set — a live attempt, not an orphan', () => {
+    lockfile.writeStaged(project, doc('pub-live'));
+    const removed = lockfile.sweepOrphanStagedFiles(project, ['pub-live']);
+    assert.deepEqual(removed, []);
+    assert.equal(fs.existsSync(lockfile.stagedPath(project, 'pub-live')), true);
+  });
+
+  it('does not touch current.json or a history file, only staged- names', () => {
+    lockfile.writeStaged(project, doc('pub-a'));
+    lockfile.promoteStaged(project, 'pub-a', null);
+    lockfile.writeStaged(project, doc('pub-b'));
+    lockfile.promoteStaged(project, 'pub-b', 'pub-a');
+
+    const removed = lockfile.sweepOrphanStagedFiles(project, []);
+    assert.deepEqual(removed, []);
+    assert.equal(fs.existsSync(lockfile.currentPath(project)), true);
+    assert.equal(fs.existsSync(lockfile.historyPath(project, 'pub-a')), true);
+  });
+
+  it('is ENOENT-safe when the handoff directory does not exist yet', () => {
+    assert.deepEqual(lockfile.sweepOrphanStagedFiles(project, []), []);
+  });
+});
+
 describe('where the handoff lives', () => {
   it('follows the REGISTERED checkout, not the worktree a session wrapped from', () => {
     const worktree = { path: '/tmp/some-worktree', configPath: '/tmp/registered' };

@@ -248,6 +248,23 @@ describe('retention sweep after a publish/abandon creates a new historical row (
     assert.equal(fs.existsSync(lockfile.historyPath(project, first)), false, 'the orphan sweep removed it');
   });
 
+  it('sweeps an orphan STAGED file left behind by a lost-the-race attempt whose row is gone', () => {
+    const older = stageAttempt({ sessionId: 1, wrapRunId: 'run-old' });
+    const newer = stageAttempt({ sessionId: 2, wrapRunId: 'run-new' });
+    publishHandoff(project, newer);
+    publishHandoff(project, older); // loses the race; superseded, stays at staged-<older>.json
+    // Drift: the row is gone (as a prior prune's DELETE would leave it) but the
+    // file survives, exactly as `store.handoffs.prune` alone would leave it.
+    store.handoffs.prune(project.id, { historical: 0 });
+    assert.equal(store.handoffs.get(older), null);
+    assert.equal(fs.existsSync(lockfile.stagedPath(project, older)), true, 'the orphan is there to sweep');
+
+    const third = stageAttempt({ sessionId: 3, wrapRunId: 'run-3' });
+    publishHandoff(project, third); // creates one new historical row, triggering the sweep
+
+    assert.equal(fs.existsSync(lockfile.stagedPath(project, older)), false, 'the staged-orphan sweep removed it');
+  });
+
   it('never fails the publish when pruning throws', () => {
     const originalPrune = store.handoffs.prune;
     store.handoffs.prune = () => { throw new Error('synthetic prune failure'); };
