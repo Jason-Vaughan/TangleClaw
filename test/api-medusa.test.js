@@ -3342,6 +3342,38 @@ describe('medusa delivery ledger (#792)', () => {
         store.medusaDeliveries._setRetention({ unattachedEndedRows: 200 });
       }
     });
+
+    it('_setRetention rejects a negative quota instead of turning it into an unbounded SQLite LIMIT', () => {
+      // SQLite treats a negative LIMIT as "no limit" (LIMIT -1 means
+      // unlimited), so an accepted negative override would silently defeat
+      // the exact cap this chunk exists to add.
+      store.medusaDeliveries._setRetention({ perSession: 5, endedSessionsPerProject: 5, endedSessionRows: 5, unattachedEndedRows: 5 });
+      try {
+        store.medusaDeliveries._setRetention({ perSession: -1 });
+        store.medusaDeliveries._setRetention({ endedSessionsPerProject: -1 });
+        store.medusaDeliveries._setRetention({ endedSessionRows: -1 });
+        store.medusaDeliveries._setRetention({ unattachedEndedRows: -1 });
+        const numericSessionId = 844002;
+        for (let i = 0; i < 7; i++) {
+          store.medusaDeliveries.record({ sessionId: numericSessionId, messageKey: `neg${i}`, channel: 'none', outcome: 'skipped', skipReason: 'x' });
+        }
+        assert.equal(store.medusaDeliveries.listForSession(numericSessionId).length, 5, 'a rejected negative perSession leaves the prior valid quota (5) in effect, not unlimited');
+      } finally {
+        store.medusaDeliveries._setRetention({ perSession: 100, endedSessionsPerProject: 20, endedSessionRows: 10, unattachedEndedRows: 200 });
+      }
+    });
+
+    it('prune() with no projectId runs only the orphan trim, leaving endedSessions at 0', () => {
+      const result = store.medusaDeliveries.prune({});
+      assert.deepEqual(result, { endedSessions: 0, unattached: result.unattached }, 'no projectId means no per-project sweep to run');
+    });
+
+    it('prune() rejects an unknown option key', () => {
+      assert.throws(
+        () => store.medusaDeliveries.prune({ projectId: 1, bogus: true }),
+        /Unknown option "bogus"/
+      );
+    });
   });
 });
 
