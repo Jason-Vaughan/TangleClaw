@@ -3336,10 +3336,62 @@ describe('medusa delivery ledger (#792)', () => {
           store.medusaDeliveries.record({ sessionId: sid, messageKey: `o${i}`, channel: 'none', outcome: 'skipped', skipReason: 'x' });
           ids.push(sid);
         }
+        // The trim runs BEFORE each insert (so it can never delete the row a
+        // call is about to write, #1331 PRR-B R1), so the cap is enforced as
+        // of the START of each write, not its end: the running count can sit
+        // at cap+1 right after a write and only catches up on the next one.
+        // ids.slice(2) is the last 4 of 6 -- cap (3) plus the final write.
         const survivors = ids.filter((sid) => store.medusaDeliveries.listForSession(sid).length > 0);
-        assert.deepEqual(survivors, ids.slice(3), 'only the newest 3 rows survive the global orphan cap');
+        assert.deepEqual(survivors, ids.slice(2), 'the newest cap+1 rows survive -- the cap catches up fully on the next write');
       } finally {
         store.medusaDeliveries._setRetention({ unattachedEndedRows: 200 });
+      }
+    });
+
+    it('an orphan id that merely LOOKS like a real session id numerically does not dodge the global cap (CAST-to-INTEGER false match)', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-retention-malformed-orphan-'));
+      const proj = store.projects.create({ name: 'retention-malformed-orphan', path: dir, engine: 'claude' });
+      const real = store.sessions.start({ projectId: proj.id, engineId: 'claude', tmuxSession: 'fake-retention-malformed' });
+      store.medusaDeliveries._setRetention({ unattachedEndedRows: 0 });
+      try {
+        const malformed = `${real.id}junk`;
+        store.medusaDeliveries.record({ sessionId: malformed, messageKey: 'bad1', channel: 'none', outcome: 'skipped', skipReason: 'x' });
+        // The trim ran before this write, so the row just inserted always
+        // survives its OWN call -- a second write is what proves it as an
+        // orphan rather than falsely exempt as "attached" to the real
+        // session it merely resembles numerically.
+        store.medusaDeliveries.record({ sessionId: 'master', messageKey: 'bad2', channel: 'master-inject', outcome: 'nudged' });
+        assert.equal(store.medusaDeliveries.listForSession(malformed).length, 0, 'the malformed id never matched the real session and was swept as an orphan');
+      } finally {
+        store.medusaDeliveries._setRetention({ unattachedEndedRows: 200 });
+      }
+    });
+
+    it('recording a new delivery for an already-ended, over-quota session never loses the row just written (#1331 PRR-B R2)', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-retention-insert-survives-sweep-'));
+      const proj = store.projects.create({ name: 'retention-insert-survives-sweep', path: dir, engine: 'claude' });
+
+      const old = store.sessions.start({ projectId: proj.id, engineId: 'claude', tmuxSession: 'fake-retention-old' });
+      store.medusaDeliveries.record({ sessionId: old.id, messageKey: 'old-1', channel: 'none', outcome: 'skipped', skipReason: 'x' });
+      store.sessions.kill(old.id, 'test: ends first, so it ranks behind the next session');
+
+      store.medusaDeliveries._setRetention({ endedSessionsPerProject: 1, endedSessionRows: 1 });
+      try {
+        // A newer ended session outranks `old`, pushing it to rank 1 -- beyond
+        // the quota of 1, so the full-delete tier applies to `old`.
+        const newer = store.sessions.start({ projectId: proj.id, engineId: 'claude', tmuxSession: 'fake-retention-newer' });
+        store.medusaDeliveries.record({ sessionId: newer.id, messageKey: 'newer-1', channel: 'none', outcome: 'skipped', skipReason: 'x' });
+        store.sessions.kill(newer.id, 'test: ends after old, outranking it');
+
+        // Recording a brand-new delivery for `old` triggers the very sweep
+        // that now ranks it beyond quota. Before the fix, the sweep ran
+        // AFTER the insert and deleted the row this call had just written,
+        // and the read-back then threw instead of returning it.
+        const recorded = store.medusaDeliveries.record({ sessionId: old.id, projectId: proj.id, messageKey: 'old-2', channel: 'none', outcome: 'skipped', skipReason: 'y' });
+        assert.equal(recorded.messageKey, 'old-2', 'the write succeeds and returns the row it just wrote, not undefined');
+        assert.equal(store.medusaDeliveries.listForSession(old.id).length, 1, 'the sweep clears the session\'s OLD rows but never the one this call just wrote');
+      } finally {
+        store.medusaDeliveries._setRetention({ endedSessionsPerProject: 20, endedSessionRows: 10, unattachedEndedRows: 200 });
       }
     });
   });
