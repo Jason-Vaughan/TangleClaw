@@ -3261,6 +3261,88 @@ describe('medusa delivery ledger (#792)', () => {
       assert.equal(one.data.deliveries[0].class, undefined);
     });
   });
+
+  describe('bounded retention (#1331)', () => {
+    it('prunes the active-session cap even when the caller passes a numeric sessionId (the TEXT bind bug)', () => {
+      // session_id is TEXT; before the fix, an uncoerced JS number bound
+      // against it never matched the session's own TEXT rows, so the cap
+      // silently never fired for a caller that passed session.id raw.
+      store.medusaDeliveries._setRetention({ perSession: 3 });
+      try {
+        const numericSessionId = 844001;
+        for (let i = 0; i < 7; i++) {
+          store.medusaDeliveries.record({ sessionId: numericSessionId, messageKey: `n${i}`, channel: 'none', outcome: 'skipped', skipReason: 'x' });
+        }
+        assert.equal(store.medusaDeliveries.listForSession(numericSessionId).length, 3, 'a JS number sessionId caps exactly like a string one');
+      } finally {
+        store.medusaDeliveries._setRetention({ perSession: 100 });
+      }
+    });
+
+    it('never touches an active session, or the Master, under the ended-session or orphan sweep — even at a zero quota', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-retention-active-'));
+      const proj = store.projects.create({ name: 'retention-active', path: dir, engine: 'claude' });
+      const active = store.sessions.start({ projectId: proj.id, engineId: 'claude', tmuxSession: 'fake-retention-active' });
+      store.medusaDeliveries._setRetention({ endedSessionsPerProject: 0, endedSessionRows: 0, unattachedEndedRows: 0 });
+      try {
+        for (let i = 0; i < 5; i++) {
+          store.medusaDeliveries.record({ sessionId: active.id, projectId: proj.id, messageKey: `a${i}`, channel: 'none', outcome: 'skipped', skipReason: 'x' });
+        }
+        assert.equal(store.medusaDeliveries.listForSession(active.id).length, 5, 'an active session is exempt from every sweep, even a zero quota');
+        store.medusaDeliveries.record({ sessionId: 'master', messageKey: 'retention-m1', channel: 'master-inject', outcome: 'nudged' });
+        assert.equal(store.medusaDeliveries.listForSession('master').length >= 1, true, "'master' is exempt too");
+      } finally {
+        store.medusaDeliveries._setRetention({ endedSessionsPerProject: 20, endedSessionRows: 10, unattachedEndedRows: 200 });
+      }
+    });
+
+    it('ranks a project\'s ended sessions newest-first: the top N trimmed to M rows each, the rest deleted outright', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-retention-ended-'));
+      const proj = store.projects.create({ name: 'retention-ended', path: dir, engine: 'claude' });
+      const ended = [];
+      for (let i = 0; i < 4; i++) {
+        const s = store.sessions.start({ projectId: proj.id, engineId: 'claude', tmuxSession: `fake-retention-ended-${i}` });
+        // No projectId on these writes: the sweep this test exercises must
+        // not run until the explicit prune() call below, so every session
+        // ends with its full, unswept row count first.
+        store.medusaDeliveries.record({ sessionId: s.id, messageKey: `${i}-1`, channel: 'none', outcome: 'skipped', skipReason: 'x' });
+        store.medusaDeliveries.record({ sessionId: s.id, messageKey: `${i}-2`, channel: 'none', outcome: 'skipped', skipReason: 'x' });
+        ended.push(s);
+      }
+      for (const s of ended) store.sessions.kill(s.id, 'test: retention ended-session sweep');
+
+      store.medusaDeliveries._setRetention({ endedSessionsPerProject: 2, endedSessionRows: 1 });
+      try {
+        store.medusaDeliveries.prune({ projectId: proj.id });
+        // All four sessions ended within the same instant, so the id DESC
+        // tie-break ranks the most recently CREATED session first — the
+        // same newest-first ordering `COALESCE(ended_at, started_at) DESC`
+        // would give across distinct timestamps.
+        assert.equal(store.medusaDeliveries.listForSession(ended[3].id).length, 1, 'rank 0 (newest) trimmed to the row quota, not deleted');
+        assert.equal(store.medusaDeliveries.listForSession(ended[2].id).length, 1, 'rank 1 trimmed to the row quota, not deleted');
+        assert.equal(store.medusaDeliveries.listForSession(ended[1].id).length, 0, 'rank 2 — beyond the session quota — fully deleted');
+        assert.equal(store.medusaDeliveries.listForSession(ended[0].id).length, 0, 'rank 3 fully deleted');
+      } finally {
+        store.medusaDeliveries._setRetention({ endedSessionsPerProject: 20, endedSessionRows: 10, unattachedEndedRows: 200 });
+      }
+    });
+
+    it('caps orphan rows (session_id matching no sessions row) globally, oldest dropped first', () => {
+      store.medusaDeliveries._setRetention({ unattachedEndedRows: 3 });
+      try {
+        const ids = [];
+        for (let i = 0; i < 6; i++) {
+          const sid = `orphan-${900000 + i}`;
+          store.medusaDeliveries.record({ sessionId: sid, messageKey: `o${i}`, channel: 'none', outcome: 'skipped', skipReason: 'x' });
+          ids.push(sid);
+        }
+        const survivors = ids.filter((sid) => store.medusaDeliveries.listForSession(sid).length > 0);
+        assert.deepEqual(survivors, ids.slice(3), 'only the newest 3 rows survive the global orphan cap');
+      } finally {
+        store.medusaDeliveries._setRetention({ unattachedEndedRows: 200 });
+      }
+    });
+  });
 });
 
 describe('a rotated workspace id is re-resolved, not reported as a missing peer (#1023)', () => {
