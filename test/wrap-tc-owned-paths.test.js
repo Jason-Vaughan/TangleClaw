@@ -354,9 +354,9 @@ describe('project.json', () => {
     assert.equal(tcOwned.isStatePath('.tangleclaw/state.json'), true);
   });
 
-  it('the legacy engine id rename is maintenance', () => {
+  it('an engine value change away from the retired claude-code id is not TangleClaw\'s (shim retired, #1035)', () => {
     const { root, dirty } = repoWith({ [P]: json({ ...base, engine: 'claude-code' }) }, { [P]: json(base) });
-    assert.equal(tcOwned.judge(root, dirty).get(P), 'maintenance');
+    assert.equal(tcOwned.judge(root, dirty).has(P), false);
   });
 
   it('an operator setting changing is not TangleClaw\'s', () => {

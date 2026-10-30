@@ -563,11 +563,11 @@ describe('store', () => {
       assert.equal(loaded.rules.extensions.docsParity, false); // default preserved
     });
 
-    it('should migrate legacy claude-code engine ID to claude', () => {
+    it('does not migrate the legacy claude-code engine ID (shim retired, #1035)', () => {
       store.projectConfig.save(projectDir, { engine: 'claude-code' });
 
       const loaded = store.projectConfig.load(projectDir);
-      assert.equal(loaded.engine, 'claude', 'claude-code should be migrated to claude on load');
+      assert.equal(loaded.engine, 'claude-code', 'no project.json on disk still carries claude-code; the load-time rewrite is retired');
     });
 
     // The wrapV2 flag is retired: the pipeline is the only wrap path, so
