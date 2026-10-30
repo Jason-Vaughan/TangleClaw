@@ -842,3 +842,206 @@ describe('store.launchSequences, store.projectRecoveryState, store.recoveryClear
     }
   });
 });
+
+// #1595: `_insertLaunchSequence` never pruned an ended session's backlog, so
+// `launch_sequences` and its frozen `launch_sequence_steps.content` grew
+// without bound. Retention is tested with a small override
+// (`sequences: 3, fullContentSequences: 1`) rather than the real defaults
+// (100 / 10), so each case needs a handful of rows, not a hundred.
+describe('retention for ended-session launch_sequences (#1595)', () => {
+  let tmpDir;
+  let projectsDir;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-launch-retention-'));
+    store._setBasePath(tmpDir);
+    store.init();
+    projectsDir = path.join(tmpDir, 'projects');
+    fs.mkdirSync(projectsDir, { recursive: true });
+    const config = store.config.load();
+    config.projectsDir = projectsDir;
+    store.config.save(config);
+  });
+
+  beforeEach(() => {
+    store.launchSequences._setRetention({ sequences: 3, fullContentSequences: 1 });
+  });
+
+  after(() => {
+    store.launchSequences._setRetention(null);
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /**
+   * Create a project with its own directory.
+   * @param {string} name - Project and directory name
+   * @returns {object} The project record
+   */
+  function makeProject(name) {
+    const dir = path.join(projectsDir, name);
+    fs.mkdirSync(dir, { recursive: true });
+    return store.projects.create({ name, path: dir, engine: 'claude' });
+  }
+
+  const LAUNCH_STEP_IDS_FOR_TEST = ['identity', 'governance', 'state', 'task'];
+
+  /**
+   * Start a session bound to a real, non-empty-content sequence (so
+   * stripping has something to strip), directly through `store.sessions.start`
+   * rather than a full `launchSession` — no tmux pane is needed for these
+   * cases.
+   * @param {number} projectId - The project
+   * @param {string} label - Folded into every step's content, so a case can
+   *   name which sequence it is asserting about
+   * @returns {{session: object, sequence: object}}
+   */
+  function startSequence(projectId, label) {
+    const session = store.sessions.start({
+      projectId,
+      engineId: 'claude',
+      launchSequence: {
+        launchId: launchSequence.mintLaunchId(),
+        pageBudget: 1000,
+        applicability: 'applicable',
+        preflight: launchSequence.PREFLIGHT_NOT_EVALUATED,
+        sourceManifest: {},
+        steps: LAUNCH_STEP_IDS_FOR_TEST.map((id) => ({
+          id, content: `${label}:${id}`, digest: `digest-${label}-${id}`, pageOffsets: [[0, 1]]
+        }))
+      }
+    });
+    return { session, sequence: store.launchSequences.getBySession(session.id) };
+  }
+
+  /**
+   * One active fire row naming `sequenceId`, for `sessionId`.
+   * @param {number} projectId - Project id
+   * @param {number} sessionId - Session the fire is attributed to
+   * @param {number} sequenceId - Sequence the fire names
+   * @returns {object} The stored fire row
+   */
+  function fireFor(projectId, sessionId, sequenceId) {
+    return store.startupPrompts.insertFire({
+      idempotencyKey: `retention-fire-${sequenceId}-${sessionId}`, projectId, sessionId, sequenceId,
+      promptRevision: 1, promptTextDigest: 'd', policyDigest: 'p', callerKind: 'launch', callerClearance: 'launch-automatic',
+      outcome: 'pending'
+    });
+  }
+
+  it('leaves an active session\'s sequence untouched however far back it ranks', () => {
+    const project = makeProject('retain-active-session');
+    const active = startSequence(project.id, 'active');
+    // Three more, newer, ended sequences push `active` to rank 4 — past the
+    // override's `sequences: 3` ceiling — and each insert re-sweeps the project.
+    for (let i = 0; i < 3; i++) {
+      const { session } = startSequence(project.id, `filler-${i}`);
+      store.sessions.kill(session.id, 'test');
+    }
+    const row = store.launchSequences.getBySession(active.session.id);
+    assert.ok(row, 'the active session\'s sequence row survives');
+    const steps = store.launchSequences.listSteps(row.id, row.revision);
+    assert.equal(steps.length, 4);
+    assert.ok(steps.every((st) => st.content === `active:${st.id}`), 'its step content is never stripped while active');
+  });
+
+  it('leaves a sequence untouched while an active startup_prompt_fires row still names it, even from a different ended session', () => {
+    const project = makeProject('retain-fired');
+    const fired = startSequence(project.id, 'fired');
+    store.sessions.kill(fired.session.id, 'test');
+    // A later session's fire still names `fired`'s sequence — the owning
+    // session is already ended, so only the fire-reference exemption covers it.
+    const another = startSequence(project.id, 'another');
+    fireFor(project.id, another.session.id, fired.sequence.id);
+    for (let i = 0; i < 3; i++) {
+      const { session } = startSequence(project.id, `filler-${i}`);
+      store.sessions.kill(session.id, 'test');
+    }
+    const row = store.launchSequences.getBySession(fired.session.id);
+    assert.ok(row, 'the fired-for sequence survives on the fire-reference exemption alone');
+    const steps = store.launchSequences.listSteps(row.id, row.revision);
+    assert.ok(steps.every((st) => st.content === `fired:${st.id}`), 'and keeps its content');
+  });
+
+  it('strips step content in place for ended sequences ranked beyond fullContentSequences, keeping every other column', () => {
+    // A sequence is only counted in the ranking once its OWN session has
+    // already ended by the time some LATER insert's sweep runs — the row
+    // being inserted is always active at that instant, so it never ranks
+    // itself. `older` then `newer` are each killed before the next insert;
+    // `trigger`'s insert is what finally sweeps both of them together.
+    const project = makeProject('strip-tier1');
+    const older = startSequence(project.id, 'older');
+    store.sessions.kill(older.session.id, 'test');
+    const newer = startSequence(project.id, 'newer');
+    store.sessions.kill(newer.session.id, 'test');
+    startSequence(project.id, 'trigger'); // its insert's sweep ranks older/newer: newer=1, older=2
+
+    const newerRow = store.launchSequences.getBySession(newer.session.id);
+    const newerSteps = store.launchSequences.listSteps(newerRow.id, newerRow.revision);
+    assert.ok(newerSteps.every((st) => st.content === `newer:${st.id}`), 'rank 1 (<= fullContentSequences) keeps content');
+
+    const olderRow = store.launchSequences.getBySession(older.session.id);
+    assert.ok(olderRow, 'rank 2 keeps the row itself, not deleted');
+    const olderSteps = store.launchSequences.listSteps(olderRow.id, olderRow.revision);
+    assert.equal(olderSteps.length, 4, 'every step row is kept');
+    assert.ok(olderSteps.every((st) => st.content === ''), 'content is stripped (rank 2 > fullContentSequences 1, <= sequences 3)');
+    assert.ok(olderSteps.every((st) => st.digest === `digest-older-${st.id}`), 'digest is untouched');
+    assert.ok(olderSteps.every((st) => st.pageOffsets.length === 1), 'page metadata is untouched');
+  });
+
+  it('hard-deletes steps then the sequence row for ended sequences ranked beyond sequences', () => {
+    // As above: `oldest` plus 3 fillers are each ended before the next insert,
+    // but the sweep inside the LAST filler's own insert only ranks the 3
+    // that were ALREADY ended by then (the filler being inserted excludes
+    // itself while active) — `oldest` sits at rank 3, still inside the
+    // `sequences: 3` ceiling. A further `trigger` insert is what finally
+    // sweeps all 4 together and ranks `oldest` at 4.
+    const project = makeProject('delete-tier2');
+    const oldest = startSequence(project.id, 'oldest');
+    store.sessions.kill(oldest.session.id, 'test');
+    for (let i = 0; i < 3; i++) {
+      const { session } = startSequence(project.id, `filler-${i}`);
+      store.sessions.kill(session.id, 'test');
+    }
+    assert.ok(store.launchSequences.getBySession(oldest.session.id), 'not yet pruned: only rank 3 among 3 ended rows so far');
+    startSequence(project.id, 'trigger'); // ranks all 4 ended rows together: oldest = rank 4
+
+    assert.equal(store.launchSequences.getBySession(oldest.session.id), null, 'the sequence row is gone');
+    assert.equal(store.launchSequences.listSteps(oldest.sequence.id, oldest.sequence.revision).length, 0, 'its steps are gone too');
+  });
+
+  it('scopes the sweep to one project — another project\'s backlog is untouched', () => {
+    const projectA = makeProject('scope-a');
+    const projectB = makeProject('scope-b');
+    const aOldest = startSequence(projectA.id, 'a-oldest');
+    store.sessions.kill(aOldest.session.id, 'test');
+    // Push `projectB` well past its own `sequences: 3` ceiling; `projectA`
+    // has only its one row and must stay untouched by `projectB`'s sweeps.
+    for (let i = 0; i < 4; i++) {
+      const { session } = startSequence(projectB.id, `b-filler-${i}`);
+      store.sessions.kill(session.id, 'test');
+    }
+    const row = store.launchSequences.getBySession(aOldest.session.id);
+    assert.ok(row, 'project A\'s only sequence is untouched by project B\'s own backlog');
+    const steps = store.launchSequences.listSteps(row.id, row.revision);
+    assert.ok(steps.every((st) => st.content === `a-oldest:${st.id}`));
+  });
+
+  it('store.launchSequences.prune() sweeps on demand with its own transaction, honoring a per-call override', () => {
+    const project = makeProject('manual-prune');
+    const oldest = startSequence(project.id, 'oldest');
+    store.sessions.kill(oldest.session.id, 'test');
+    const { session: newerSession } = startSequence(project.id, 'newer');
+    store.sessions.kill(newerSession.id, 'test');
+    // Default override for this describe block is sequences: 3 — neither row
+    // is pruned by the inserts above. A per-call override of sequences: 1
+    // pushes `oldest` (rank 2) past the ceiling without touching the module's
+    // standing override.
+    const result = store.launchSequences.prune(project.id, { sequences: 1, fullContentSequences: 0 });
+    assert.equal(result.deletedSequences, 1);
+    assert.equal(store.launchSequences.getBySession(oldest.session.id), null);
+    // The standing override (sequences: 3) is unaffected by the one-off call.
+    const { session: anotherSession } = startSequence(project.id, 'another');
+    assert.ok(store.launchSequences.getBySession(anotherSession.id), 'later inserts still use the standing override');
+  });
+});
