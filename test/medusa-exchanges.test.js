@@ -98,6 +98,7 @@ describe('medusa-exchanges (#1839)', () => {
     store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
     mx._internal.now = () => new Date();
+    mx._setRetention();
   });
 
   describe('validateSendMeta', () => {
@@ -746,6 +747,150 @@ describe('medusa-exchanges (#1839)', () => {
       // untracked one never has an attempt to be owned by.
       assert.equal(mx.recordWakeForRecipient('builder-ws', 'wake_attempted', { code: 'tmux', detail: { nonce: 'n-u' } }), 0);
       assert.equal(mx.alreadyAttempted('builder-ws', ['hub-u']), false);
+    });
+  });
+
+  describe('retention (#1879)', () => {
+    it('never prunes an open exchange, however old', () => {
+      const x = sendPmToBuilder({ priority: 'blocking' });
+      advance(400 * 86400000);
+      mx.pruneExchangeHistory();
+      assert.ok(store.medusaExchanges.get(x.exchange_id), 'the open exchange survives');
+      assert.ok(store.medusaExchanges.facts(x.exchange_id).length > 0, 'its facts survive too');
+    });
+
+    describe('untracked bucket', () => {
+      it('keeps an untracked row that is young and within rank', () => {
+        const a = mx.recordArrival({ hubId: 'hub-u1', recipientWorkspaceId: 'ghost-ws', senderWorkspaceId: 'remote-ws' });
+        assert.ok(store.medusaExchanges.get(a.exchange_id));
+      });
+
+      it('prunes an untracked row once older than the age cap', () => {
+        mx._setRetention({ untrackedMaxAgeMs: 1000 });
+        const a = mx.recordArrival({ hubId: 'hub-u1', recipientWorkspaceId: 'ghost-ws', senderWorkspaceId: 'remote-ws' });
+        advance(2000);
+        mx.pruneExchangeHistory();
+        assert.equal(store.medusaExchanges.get(a.exchange_id), null);
+      });
+
+      it('prunes the oldest untracked row once there are more than the rank cap, keeping the newest', () => {
+        mx._setRetention({ untrackedMaxRows: 1 });
+        const a = mx.recordArrival({ hubId: 'hub-u1', recipientWorkspaceId: 'ghost-ws', senderWorkspaceId: 'remote-ws' });
+        advance(1000);
+        const b = mx.recordArrival({ hubId: 'hub-u2', recipientWorkspaceId: 'ghost-ws', senderWorkspaceId: 'remote-ws' });
+        assert.equal(store.medusaExchanges.get(a.exchange_id), null, 'the older row was pruned on the newer arrival');
+        assert.ok(store.medusaExchanges.get(b.exchange_id), 'the newest row survives');
+      });
+    });
+
+    describe('closed bucket', () => {
+      it('prunes a closed exchange once older than the age cap', () => {
+        mx._setRetention({ closedMaxAgeMs: 1000 });
+        const x = sendPmToBuilder({}, 'hub-c1');
+        mx.close(x.exchange_id, PM);
+        advance(2000);
+        mx.pruneExchangeHistory();
+        assert.equal(store.medusaExchanges.get(x.exchange_id), null);
+      });
+
+      it('prunes past the per-project rank cap, independently of other recipient projects', () => {
+        mx._setRetention({ closedMaxPerProject: 1 });
+        const a = sendPmToBuilder({}, 'hub-c1');
+        mx.close(a.exchange_id, PM);
+        advance(1000);
+        const b = sendPmToBuilder({}, 'hub-c2');
+        mx.close(b.exchange_id, PM);
+        assert.equal(store.medusaExchanges.get(a.exchange_id), null, 'the older closed row in the same project was pruned');
+        assert.ok(store.medusaExchanges.get(b.exchange_id), 'the newest closed row in that project survives');
+
+        // A different recipient project's own closed exchange is unaffected --
+        // the rank cap is per `recipient_project_id`, never global.
+        const meta = mx.validateSendMeta({}, PM, 10);
+        const other = mx.createSendIntent({
+          meta, sender: { projectId: 10, sessionId: 1, workspaceId: 'pm-ws' },
+          recipient: { workspaceId: 'other-ws', projectId: 99, sessionId: 9 }
+        });
+        mx.bindHubId(other.exchange_id, 'hub-c3', { hubStatus: 'received' });
+        mx.close(other.exchange_id, PM);
+        assert.ok(store.medusaExchanges.get(other.exchange_id), 'a different project keeps its own newest closed row');
+        assert.ok(store.medusaExchanges.get(b.exchange_id), 'closing the other project\'s exchange did not touch this one');
+      });
+
+      it('an escalated-then-closed exchange is a tombstone, not a closed row -- the closed cap never reaches it', () => {
+        mx._setRetention({ closedMaxPerProject: 0 });
+        const x = sendPmToBuilder({ priority: 'blocking' }, 'hub-esc');
+        mx.recordEscalationFact(x.exchange_id, 'escalated', { code: 'blocking-unread' });
+        mx.close(x.exchange_id, PM);
+        assert.ok(store.medusaExchanges.get(x.exchange_id), 'an escalated-but-closed row survives a closedMaxPerProject of 0');
+      });
+    });
+
+    describe('tombstone bucket', () => {
+      it('outlives the closed bucket\'s much shorter age cap', () => {
+        mx._setRetention({ closedMaxAgeMs: 1000 });
+        const x = sendPmToBuilder({}, 'hub-r1');
+        const r = mx.retract(x.hub_id, PM, { reason: 'superseded' });
+        advance(2000);
+        mx.pruneExchangeHistory();
+        assert.ok(store.medusaExchanges.get(r.exchange_id), 'a tombstone is not subject to the closed bucket\'s cap');
+      });
+
+      it('prunes a retracted exchange once older than its own age cap', () => {
+        mx._setRetention({ tombstoneMaxAgeMs: 1000 });
+        const x = sendPmToBuilder({}, 'hub-r1');
+        const r = mx.retract(x.hub_id, PM, { reason: 'superseded' });
+        advance(2000);
+        mx.pruneExchangeHistory();
+        assert.equal(store.medusaExchanges.get(r.exchange_id), null);
+      });
+
+      it('prunes past the per-project tombstone rank cap, keeping the newest', () => {
+        mx._setRetention({ tombstoneMaxPerProject: 1 });
+        const a = sendPmToBuilder({}, 'hub-r1');
+        mx.retract(a.hub_id, PM, { reason: 'superseded' });
+        advance(1000);
+        const b = sendPmToBuilder({}, 'hub-r2');
+        const rb = mx.retract(b.hub_id, PM, { reason: 'superseded' });
+        assert.equal(store.medusaExchanges.get(a.exchange_id), null, 'the older tombstone was pruned on the newer retraction');
+        assert.ok(store.medusaExchanges.get(rb.exchange_id), 'the newest tombstone survives');
+      });
+    });
+
+    describe('fact compaction', () => {
+      it('leaves a small retained exchange\'s facts untouched', () => {
+        const x = sendPmToBuilder({}, 'hub-small');
+        mx.close(x.exchange_id, PM);
+        assert.ok(store.medusaExchanges.facts(x.exchange_id).length <= 10, 'fixture sanity: at or under the compaction threshold');
+        assert.ok(store.medusaExchanges.facts(x.exchange_id).some((f) => f.fact === 'send_pending'), 'nothing was compacted away');
+      });
+
+      it('thins a large exchange\'s intermediate wake facts, keeping first, last, escalation and the most recent wake fact', () => {
+        const x = sendPmToBuilder({ priority: 'blocking' }, 'hub-w1');
+        mx.recordArrival({ hubId: 'hub-w1', recipientWorkspaceId: 'builder-ws' });
+        for (let i = 0; i < 8; i += 1) {
+          advance(1000);
+          mx.recordWakeForRecipient('builder-ws', 'wake_attempted', { code: `attempt-${i}` });
+        }
+        mx.recordEscalationFact(x.exchange_id, 'escalated', { code: 'blocking-unread' });
+        const before = store.medusaExchanges.facts(x.exchange_id);
+        assert.ok(before.length > 10, 'fixture sanity: over the compaction threshold before closing');
+
+        mx.close(x.exchange_id, PM); // _terminal() runs the sweep, including compaction, right after this
+
+        const after = store.medusaExchanges.facts(x.exchange_id);
+        const kinds = after.map((f) => f.fact);
+        assert.equal(kinds[0], 'send_pending', 'the first fact survives');
+        assert.equal(kinds.at(-1), 'closed', 'the last fact survives');
+        assert.ok(kinds.includes('escalated'), 'the escalation fact survives');
+        assert.equal(kinds.filter((k) => k === 'wake_attempted').length, 1, 'every wake fact but the most recent was dropped');
+        assert.equal(after.find((f) => f.fact === 'wake_attempted').code, 'attempt-7', 'the SURVIVING wake fact is the most recent one');
+        assert.ok(after.length < before.length, 'the exchange actually shrank');
+        assertReplayMatches(x.exchange_id);
+
+        const again = store.medusaExchanges.facts(x.exchange_id).length;
+        mx.pruneExchangeHistory();
+        assert.equal(store.medusaExchanges.facts(x.exchange_id).length, again, 'a second pass compacts nothing further');
+      });
     });
   });
 
