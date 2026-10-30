@@ -76,6 +76,21 @@ describe('store.globalRules (#240 canonical-source model)', () => {
     store.globalRules.save(unicode);
     assert.equal(store.globalRules.load(), unicode);
   });
+
+  it('loadMeasured() no longer inspects or backs up a legacy per-install global-rules.md (#240 shim retired, #1035)', () => {
+    const legacyPath = path.join(tempDir, 'global-rules.md');
+    const legacyContent = '# Stale legacy content that differs from canonical\n';
+    fs.writeFileSync(legacyPath, legacyContent);
+    const backupPath = `${legacyPath}.pre-240-backup`;
+
+    const result = store.globalRules.loadMeasured();
+
+    assert.equal(result.measured, true, 'canonical load is unaffected by a legacy file existing');
+    assert.equal(fs.existsSync(backupPath), false,
+      'the retired #240 shim must not auto-backup a legacy file on load anymore');
+    assert.equal(fs.readFileSync(legacyPath, 'utf8'), legacyContent,
+      'the legacy file itself is left untouched -- nothing reads or compares it anymore');
+  });
 });
 
 describe('store.globalRules normalization (#100)', () => {

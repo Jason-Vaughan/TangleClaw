@@ -376,7 +376,7 @@ The password is hashed with scrypt before storage. Plaintext passwords from v2 a
 Editable markdown rules that apply to all projects across all engines. When an engine config is generated (e.g., `CLAUDE.md`, `.codex.yaml`), global rules are included as a `## Global Rules` section.
 
 - **File**: `data/global-rules.md` in the TangleClaw repo — the single canonical source since #240, tracked in git. UI/API saves and PR-driven edits both land in this one file; there is no separate bundled default and no per-install copy
-- **Legacy `~/.tangleclaw/global-rules.md`**: no longer read. On startup, if one exists and differs from the canonical file, TangleClaw backs it up beside itself (`.pre-240-backup` suffix) and logs a warning with recovery steps; merge wanted sections by hand via the editor
+- **Legacy `~/.tangleclaw/global-rules.md`**: no longer read, and as of #1035 no longer checked at startup either — the one-time #240 migration warning and auto-backup were retired once the migration window closed. A leftover copy from before #1035 is simply ignored; merge wanted sections into `data/global-rules.md` by hand via the editor
 - **Edit via**: Landing page "Global Rules" panel, or `PUT /api/rules/global` as the operator (#2013: a session is refused with `OPERATOR_ONLY`; a Builder drafts or proposes text and the operator applies it)
 - **Revert**: restore it from git (`data/global-rules.md` is tracked). There is no Reset button (#243): under the canonical-source model (#240) `POST /api/rules/global/reset` is a back-compat no-op that returns the current content unchanged, so a button wired to it looked like a revert and changed nothing.
 
