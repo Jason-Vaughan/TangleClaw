@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const http = require('node:http');
 const { execFileSync } = require('node:child_process');
 const { setLevel } = require('../lib/logger');
 
@@ -14,6 +15,8 @@ const store = require('../lib/store');
 const engines = require('../lib/engines');
 const projects = require('../lib/projects');
 const sessionOwnership = require('../lib/session-ownership');
+const { createServer } = require('../server');
+const { operatorHeaders } = require('./_shared-docs-callers');
 
 // The reader's one typed failure: the symbol was found but its value is not a
 // literal. Exit status and error code are the contract between the embedded
@@ -241,14 +244,25 @@ describe('C1 — per-project plugin migration (#262)', () => {
     return JSON.parse(fs.readFileSync(path.join(projectPath, '.claude', 'settings.json'), 'utf8'));
   }
 
-  describe('store — migration_status round-trip', () => {
-    it('a fresh project has migrationStatus null and it persists when set', () => {
+  describe('store — migration_status retired (#776)', () => {
+    it('no longer has a migrationStatus property, and migration_status is an unknown update key', () => {
       const p = mkProjectDir('store');
       const proj = store.projects.create({ name: 'c1-store-rt', path: p });
-      assert.equal(proj.migrationStatus, null);
+      assert.equal('migrationStatus' in proj, false);
 
-      store.projects.update(proj.id, { migration_status: 'migrated' });
-      assert.equal(store.projects.get(proj.id).migrationStatus, 'migrated');
+      assert.throws(() => {
+        store.projects.update(proj.id, { migration_status: 'migrated' });
+      }, (err) => {
+        assert.ok(err instanceof store.StoreError);
+        assert.equal(err.code, 'BAD_REQUEST');
+        assert.match(err.message, /Unknown option "migration_status" for projects\.update/);
+        return true;
+      });
+    });
+
+    it('the projects table itself has no migration_status column on a fresh schema', () => {
+      const cols = store.getDb().prepare('PRAGMA table_info(projects)').all().map((c) => c.name);
+      assert.ok(!cols.includes('migration_status'), 'migration_status must be absent from the live schema (#776)');
     });
   });
 
@@ -674,7 +688,6 @@ describe('C1 — per-project plugin migration (#262)', () => {
       assert.equal(r.status, 'not-applicable');
       assert.equal(r.migrated, false);
       assert.ok(!fs.existsSync(path.join(p, '.claude', 'settings.json')), 'no settings written for a non-Claude project');
-      assert.equal(store.projects.getByName('c1-gemini').migrationStatus, 'not-applicable');
     });
 
     it('defers on a CONFIRMED-live session — no mutation, status unchanged', async () => {
@@ -685,7 +698,6 @@ describe('C1 — per-project plugin migration (#262)', () => {
       assert.equal(r.deferred, true);
       assert.equal(r.migrated, false);
       assert.ok(!fs.existsSync(path.join(p, '.claude', 'settings.json')), 'no settings written while a session is live');
-      assert.equal(store.projects.getByName('c1-live').migrationStatus, null);
     });
 
     it('does NOT defer on a stale ownership row whose pane is gone (live:false) — isolates the .live gate', async () => {
@@ -719,15 +731,15 @@ describe('C1 — per-project plugin migration (#262)', () => {
       assert.match(r.reason, /read-timed-out/, 'and must carry the cause');
       assert.ok(!fs.existsSync(path.join(p, '.claude', 'settings.json')),
         'no settings written while liveness is unknown');
-      assert.equal(store.projects.getByName('c1-unknown').migrationStatus, null);
     });
 
     it('says in the LOG why it deferred on an unknown, not only in the response', async () => {
-      // `migration_status` is deliberately left untouched on a defer, so the
-      // reason otherwise survives only in an HTTP body a caller may discard —
-      // an operator would see a migration that silently never happened. This
-      // guard exists because the log line is the kind of fix that mutates
-      // green: delete it and every other assertion here still passes.
+      // A defer writes nothing persisted (#776 retired the column this once
+      // tracked), so the reason otherwise survives only in an HTTP body a
+      // caller may discard — an operator would see a migration that silently
+      // never happened. This guard exists because the log line is the kind
+      // of fix that mutates green: delete it and every other assertion here
+      // still passes.
       const logger = require('../lib/logger');
       const lines = [];
       logger.setLevel('warn');
@@ -757,7 +769,6 @@ describe('C1 — per-project plugin migration (#262)', () => {
       assert.equal(r.migrated, true);
       assert.equal(r.status, 'migrated');
       assert.equal(engines.isPluginGoverned(p), true);
-      assert.equal(store.projects.getByName('c1-happy').migrationStatus, 'migrated');
     });
 
     it('records pending-activation when the plugin is not installed on this machine', async () => {
@@ -767,7 +778,6 @@ describe('C1 — per-project plugin migration (#262)', () => {
       const r = await projects.migrateProjectToPlugin('c1-pending');
       assert.equal(r.migrated, true);
       assert.equal(r.status, 'pending-activation');
-      assert.equal(store.projects.getByName('c1-pending').migrationStatus, 'pending-activation');
       engines._internal.pluginsHome = () => pluginsHomeInstalled;
     });
 
@@ -786,12 +796,12 @@ describe('C1 — per-project plugin migration (#262)', () => {
       assert.equal(r.migrated, false);
     });
 
-    it('surfaces migrationStatus through the enriched project object', async () => {
+    it('no longer surfaces migrationStatus through the enriched project object (#776 — retired)', async () => {
       const p = mkProjectDir('enrich');
       store.projects.create({ name: 'c1-enrich', path: p, engine: 'claude' });
       await projects.migrateProjectToPlugin('c1-enrich');
       const enriched = await projects.getProject('c1-enrich');
-      assert.equal(enriched.migrationStatus, 'migrated');
+      assert.ok(!('migrationStatus' in enriched), 'migrationStatus must not survive on the enriched project object');
     });
 
     it('migration flips governanceState ungoverned → governed-plugin (C2 #353 badge self-clears)', async () => {
@@ -802,6 +812,61 @@ describe('C1 — per-project plugin migration (#262)', () => {
       await projects.migrateProjectToPlugin('c1-govflip');
       // After: the migration wrote the plugin ref, so the derived state clears.
       assert.equal((await projects.getProject('c1-govflip')).governanceState, 'governed-plugin');
+    });
+  });
+
+  describe('POST /api/projects/:name/migrate-to-plugin (route, #776)', () => {
+    let server;
+    let port;
+
+    before(async () => {
+      server = createServer();
+      await new Promise((resolve) => {
+        server.listen(0, '127.0.0.1', () => {
+          port = server.address().port;
+          resolve();
+        });
+      });
+    });
+
+    after(async () => {
+      await new Promise((resolve) => server.close(resolve));
+    });
+
+    /** @returns {Promise<{status: number, data: object}>} */
+    function postMigrate(name, headers) {
+      return new Promise((resolve, reject) => {
+        const req = http.request(
+          { hostname: '127.0.0.1', port, path: `/api/projects/${name}/migrate-to-plugin`, method: 'POST', headers },
+          (res) => {
+            const chunks = [];
+            res.on('data', (c) => chunks.push(c));
+            res.on('end', () => {
+              const raw = Buffer.concat(chunks).toString('utf8');
+              let data;
+              try { data = JSON.parse(raw); } catch { data = raw; }
+              resolve({ status: res.statusCode, data });
+            });
+          }
+        );
+        req.on('error', reject);
+        req.end();
+      });
+    }
+
+    it('200s with migrationStatus in the response body — a transient value, not the retired DB column', async () => {
+      const p = mkProjectDir('route-happy');
+      store.projects.create({ name: 'c1-route-happy', path: p, engine: 'claude' });
+
+      const { status, data } = await postMigrate('c1-route-happy', operatorHeaders(server));
+      assert.equal(status, 200);
+      assert.equal(data.ok, true);
+      assert.equal(data.name, 'c1-route-happy');
+      assert.equal(data.migrationStatus, 'migrated');
+      assert.equal(data.migrated, true);
+
+      const enriched = await projects.getProject('c1-route-happy');
+      assert.ok(!('migrationStatus' in enriched), 'migrationStatus must not survive on the enriched project object');
     });
   });
 });
