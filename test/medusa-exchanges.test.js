@@ -781,6 +781,35 @@ describe('medusa-exchanges (#1839)', () => {
         assert.equal(store.medusaExchanges.get(a.exchange_id), null, 'the older row was pruned on the newer arrival');
         assert.ok(store.medusaExchanges.get(b.exchange_id), 'the newest row survives');
       });
+
+      it('deletes a one-time backlog spanning several delete chunks cleanly (#1879 PRR-B)', () => {
+        // These tables had no retention before #1879, so the very first sweep
+        // on a long-running install can find far more candidates than any one
+        // bucket's steady-state cap -- enough to span several DELETE_BATCH_SIZE
+        // chunks in a single sweep, not just one.
+        const TOTAL = 1200; // > 2 * the 500-row chunk size
+        const KEEP = 10;
+        for (let i = 0; i < TOTAL; i += 1) {
+          const id = `mx_backlog_${i}`;
+          store.medusaExchanges.insert({
+            exchange_id: id, request_id: `r-${id}`, origin: 'arrival', tracking: 'untracked',
+            recipient_workspace_id: 'ghost-ws', priority: 'normal', reply_required: false,
+            created_at: new Date(Date.parse('2026-09-25T12:00:00.000Z') + i).toISOString(), state: 'untracked'
+          });
+          store.medusaExchanges.appendFact({ exchange_id: id, fact: 'arrived', at: new Date(Date.parse('2026-09-25T12:00:00.000Z') + i).toISOString() });
+        }
+        mx._setRetention({ untrackedMaxRows: KEEP });
+        mx.pruneExchangeHistory(); // must not throw -- this is the regression
+        const remaining = store.getDb().prepare("SELECT COUNT(*) AS n FROM medusa_exchanges WHERE state = 'untracked'").get().n;
+        assert.equal(remaining, KEEP, 'exactly the newest KEEP rows survive the chunked sweep');
+        assert.equal(store.medusaExchanges.get('mx_backlog_0'), null, 'the oldest row in the backlog was deleted');
+        assert.ok(store.medusaExchanges.get(`mx_backlog_${TOTAL - 1}`), 'the newest row in the backlog survives');
+        assert.equal(
+          store.getDb().prepare("SELECT COUNT(*) AS n FROM medusa_exchange_facts WHERE exchange_id LIKE 'mx_backlog_%'").get().n,
+          KEEP,
+          'each surviving row kept exactly its one fact, and no orphaned facts were left behind'
+        );
+      });
     });
 
     describe('closed bucket', () => {
