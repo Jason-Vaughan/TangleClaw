@@ -897,6 +897,32 @@ describe('ended-launch retention for workload_receipts/workload_narrowings (Arch
       assert.ok(countRows('workload_narrowings', laneNew.launchId) > 0, 'the newer launch\'s narrowing survives');
       assert.equal(countRows('workload_receipts', laneOld.launchId), 0, 'the older, receipt-heavy launch is pruned despite its higher raw id');
     });
+
+    it('a tied last_at timestamp at the quota boundary is broken deterministically by session_id DESC', () => {
+      workload._setRetention({ endedLaunchesPerProject: 1, receiptsPerEndedLaunch: 5, narrowingsPerEndedLaunch: 5 });
+      const proj = mkProject('retention-tied-timestamp');
+      const tied = new Date(Date.parse('2026-10-30T00:00:00Z')).toISOString();
+
+      // laneA binds (and so gets its session_id) before laneB — session_id
+      // DESC means laneB, the higher id, is the deterministic tie-break winner.
+      const laneA = bindProject(proj);
+      store.workloadReceipts.append(
+        receiptRow(proj.id, laneA.sessionId, laneA.launchId, 1, tied), { minIntervalMs: 0, nowMs: Date.parse(tied) }
+      );
+      store.sessions.kill(laneA.sessionId);
+
+      const laneB = bindProject(proj);
+      assert.ok(laneB.sessionId > laneA.sessionId, 'laneB truly has the higher session_id this tie-break relies on');
+      store.workloadReceipts.append(
+        receiptRow(proj.id, laneB.sessionId, laneB.launchId, 1, tied), { minIntervalMs: 0, nowMs: Date.parse(tied) }
+      );
+      store.sessions.kill(laneB.sessionId);
+
+      workload.pruneWorkloadHistory({ projectId: proj.id });
+
+      assert.equal(countRows('workload_receipts', laneB.launchId), 1, 'the higher session_id wins the tie and is kept');
+      assert.equal(countRows('workload_receipts', laneA.launchId), 0, 'the lower session_id loses the tie and is pruned, despite an identical last_at');
+    });
   });
 
   describe('record()/recordNarrowing() prune on their success path', () => {
