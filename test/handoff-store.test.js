@@ -9,7 +9,7 @@
  * file-coordination rows belong to the lockfile module.
  */
 
-const { describe, it, beforeEach, after } = require('node:test');
+const { describe, it, beforeEach, afterEach, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -300,6 +300,101 @@ describe('binding inside the wrap lifecycle transition (#1585)', () => {
     const wrapped = store.sessions.wrap(sessionId, 'done');
     assert.equal(wrapped.status, 'wrapped');
     assert.ok(!('publicationBound' in wrapped), 'callers that never staged one see no new field');
+  });
+});
+
+describe('historical retention (#1602)', () => {
+  /**
+   * Stage and abandon `n` attempts for a project, oldest first. Abandoning
+   * is the simplest way to put a row into a terminal state directly, with no
+   * project directory or files involved — this is the DB-only module.
+   * @param {number} projectId - Project id
+   * @param {number} sessionId - Session id for every row
+   * @param {number} n - How many
+   * @returns {string[]} Publication ids, oldest (lowest seq) first
+   */
+  function abandonedBatch(projectId, sessionId, n) {
+    const ids = [];
+    for (let i = 0; i < n; i += 1) {
+      const pub = stage({ projectId, sessionId, wrapRunId: `run-${i}-${Math.random().toString(36).slice(2)}` });
+      store.handoffs.abandon(pub.publicationId, 'test batch', new Date().toISOString());
+      ids.push(pub.publicationId);
+    }
+    return ids;
+  }
+
+  afterEach(() => { store.handoffs._setRetention(); });
+
+  it('prunes historical rows beyond retention, oldest (lowest seq) first', () => {
+    const ids = abandonedBatch(14, 100, 5);
+    store.handoffs._setRetention({ historical: 2 });
+    const pruned = store.handoffs.prune(14);
+    assert.deepEqual(pruned.sort(), [ids[0], ids[1], ids[2]].sort(), 'the three oldest beyond the 2-row ceiling');
+    assert.equal(store.handoffs.get(ids[3]).state, 'abandoned', 'rank 2 survives');
+    assert.equal(store.handoffs.get(ids[4]).state, 'abandoned', 'rank 1 (newest) survives');
+    assert.equal(store.handoffs.get(ids[0]), null, 'pruned rows are hard-deleted');
+  });
+
+  it('never touches a staged row, however old, even at retention 0', () => {
+    const staged = stage({ projectId: 14, sessionId: 100, wrapRunId: 'run-staged' });
+    abandonedBatch(14, 100, 3);
+    store.handoffs._setRetention({ historical: 0 });
+    store.handoffs.prune(14);
+    assert.equal(store.handoffs.get(staged.publicationId).state, 'staged');
+  });
+
+  it('never touches the published row, however old, even at retention 0', () => {
+    const published = stage({ projectId: 14, sessionId: 100, wrapRunId: 'run-pub' });
+    store.handoffs.bindLifecycleEligibility(published.publicationId, 100, 'run-pub', '2026-09-17T21:01:00.000Z');
+    store.handoffs.recordPublished(published.publicationId, null, '2026-09-17T21:01:01.000Z');
+    abandonedBatch(14, 100, 3);
+    store.handoffs._setRetention({ historical: 0 });
+    store.handoffs.prune(14);
+    assert.equal(store.handoffs.get(published.publicationId).state, 'published');
+  });
+
+  it('exempts a historical row whose session is still active, and prunes an ended one at the same rank', () => {
+    const project = store.projects.create({ name: `p-${Math.random().toString(36).slice(2)}`, path: '/tmp/x', engine: 'claude' });
+    const activeSession = store.sessions.start({ projectId: project.id, engineId: 'claude' });
+    const [liveId] = abandonedBatch(project.id, activeSession.id, 1);
+    const [endedId] = abandonedBatch(project.id, 999999, 1);
+    store.handoffs._setRetention({ historical: 0 });
+    const pruned = store.handoffs.prune(project.id);
+    assert.deepEqual(pruned, [endedId], 'only the row with no active session is pruned');
+    assert.equal(store.handoffs.get(liveId).state, 'abandoned', 'the active session exempts its row');
+    assert.equal(store.handoffs.get(endedId), null);
+  });
+
+  it('scopes to one project', () => {
+    const idsA = abandonedBatch(14, 100, 3);
+    const idsB = abandonedBatch(15, 100, 3);
+    store.handoffs._setRetention({ historical: 0 });
+    const pruned = store.handoffs.prune(14);
+    assert.deepEqual(pruned.sort(), idsA.sort());
+    for (const id of idsB) assert.equal(store.handoffs.get(id).state, 'abandoned', 'project 15 is untouched by pruning project 14');
+  });
+
+  it('_setRetention with no args restores the default', () => {
+    const ids = abandonedBatch(14, 100, 3);
+    store.handoffs._setRetention({ historical: 0 });
+    store.handoffs._setRetention();
+    const pruned = store.handoffs.prune(14);
+    assert.deepEqual(pruned, [], 'the default (50) keeps all three');
+    for (const id of ids) assert.equal(store.handoffs.get(id).state, 'abandoned');
+  });
+
+  it('runs safely nested inside a caller-held transaction (SAVEPOINT, not BEGIN)', () => {
+    const ids = abandonedBatch(14, 100, 3);
+    store.handoffs._setRetention({ historical: 0 });
+    const pruned = store.handoffs.transaction(() => store.handoffs.prune(14));
+    assert.deepEqual(pruned.sort(), ids.sort());
+  });
+
+  it('allIdsForProject lists every id regardless of state, unlimited', () => {
+    const staged = stage({ projectId: 14, sessionId: 100, wrapRunId: 'run-x' });
+    const abandoned = abandonedBatch(14, 100, 3);
+    const all = store.handoffs.allIdsForProject(14);
+    assert.deepEqual(all.sort(), [staged.publicationId, ...abandoned].sort());
   });
 });
 
