@@ -41,6 +41,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-30 — v5.48.0 W4-REL: prepare the bounded-records release candidate
+
+<!-- prawduct: type=internal | scope=v548-w4-rel -->
+
+- Prepared the candidate from W3-REC-merged `main@2bdd96059e6c53ab9e5f9c6080064c64caa4f86f`: compiled all eight accepted `changelog.d/` fragments into the dated `[5.48.0]` release section, consumed those fragments, and changed `version.json` from 5.47.1 to 5.48.0. `scripts/release-prepare.js` refreshed the README clone pins and extended the released-section lock.
+- Recorded the separate pending release, production-update and activation finish lines in `docs/releases/v5.48-status.md`. Preparation creates no tag, GitHub Release or live deployment; the release workflow and post-merge checks own those claims.
+
 ## 2026-10-30 — v5.48.0 W3-REC: reconcile bounded-record retention
 
 <!-- prawduct: type=internal | scope=v548-w3-rec -->
