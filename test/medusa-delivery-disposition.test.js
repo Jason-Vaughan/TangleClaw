@@ -432,7 +432,7 @@ describe('delivery disposition — the sender-facing answer uses the same classi
   });
 });
 
-describe('medusa_deliveries retention boundaries (#1331, PRR-B review + Architect disposition A485-1331)', () => {
+describe('medusa_deliveries retention boundaries (#1331)', () => {
   it('an orphan id that merely LOOKS like a real session id numerically does not dodge the global cap (CAST-to-INTEGER false match)', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-retention-malformed-orphan-'));
     const proj = store.projects.create({ name: 'retention-malformed-orphan', path: dir, engine: 'claude' });
@@ -441,8 +441,8 @@ describe('medusa_deliveries retention boundaries (#1331, PRR-B review + Architec
     try {
       // SQLite's CAST(TEXT AS INTEGER) parses only the leading numeric
       // prefix, so '<real.id>junk' casts to the same integer as the real
-      // session id — exactly the false match PRR-B's in-memory query
-      // demonstrated for '042', '42junk' and '42.5'. The sweep runs in the
+      // session id — the same false match any of '042', '42junk' or '42.5'
+      // would produce against a session id of 42. The sweep runs in the
       // same savepoint as the insert, so one record() call is enough to
       // prove the row never persists past this write.
       const malformed = `${real.id}junk`;
@@ -453,7 +453,7 @@ describe('medusa_deliveries retention boundaries (#1331, PRR-B review + Architec
     }
   });
 
-  it('recording a new delivery for an already-ended, over-quota session returns it without throwing, even though the sweep removes it (A485-1331 return contract)', () => {
+  it('recording a new delivery for an already-ended, over-quota session returns it without throwing, even though the sweep removes it', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-retention-insert-survives-sweep-'));
     const proj = store.projects.create({ name: 'retention-insert-survives-sweep', path: dir, engine: 'claude' });
 
@@ -470,12 +470,10 @@ describe('medusa_deliveries retention boundaries (#1331, PRR-B review + Architec
       store.sessions.kill(newer.id, 'test: ends after old, outranking it');
 
       // Recording a brand-new delivery for `old` triggers the very sweep
-      // that now ranks it beyond quota. Before the fix, record() re-read the
-      // row by id AFTER the sweep ran, found nothing, and
-      // _rowToMedusaDelivery(undefined) threw. The Architect's ruling
-      // (A485-1331) is that record() still returns what it wrote even when
-      // the sweep deletes it again immediately after -- the return value is
-      // a record of the write, not a promise the row still exists.
+      // that now ranks it beyond quota. record() returns what it wrote even
+      // when the sweep deletes that row again immediately after -- the
+      // return value is a record of the write, not a promise the row still
+      // exists, so a caller never has to re-read the row to get it back.
       const recorded = store.medusaDeliveries.record({ sessionId: old.id, projectId: proj.id, messageKey: 'old-2', channel: 'none', outcome: 'skipped', skipReason: 'y' });
       assert.equal(recorded.messageKey, 'old-2', 'the write succeeds and returns the row it just wrote, not undefined');
       assert.equal(store.medusaDeliveries.listForSession(old.id).length, 0, 'the sweep still removes every row of the over-quota session, including the one just written -- the returned object is a record of the write, not proof it persisted');
