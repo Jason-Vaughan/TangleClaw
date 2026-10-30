@@ -256,7 +256,10 @@ describe('bridge store (#2031)', () => {
     bridgeStore.masterCredentials.revoke('master-killed', { at: old });
 
     const removed = bridgeStore.prune({ now });
-    assert.deepEqual(removed, { nonces: 1, leases: 0, claims: 0, routes: 1, outbound: 0, candidates: 0, pins: 1, helperTokens: 1, credentials: 1, audit: 1 });
+    assert.deepEqual(removed, {
+      nonces: 1, leases: 0, claims: 0, routes: 1, outbound: 0, candidates: 0, configCircuit: 0, questions: 0,
+      launches: 0, pins: 1, helperTokens: 1, credentials: 1, audit: 1
+    });
     assert.equal(bridgeStore.helperTokens.active().tokenId, 't-new', 'the active token stays');
     assert.deepEqual(bridgeStore.pins.list().map((p) => p.pinId), ['p-new'], 'and so does the active pin');
     assert.equal(bridgeStore.routes.get('rt_1'), null);
@@ -265,6 +268,71 @@ describe('bridge store (#2031)', () => {
     assert.ok(bridgeStore.routes.get('rt_recent'));
     assert.equal(bridgeStore.masterCredentials.mint('d'.repeat(64)), g2 + 1, 'generations are still never reused');
     assert.ok(g1 < g2);
+  });
+
+  it('removes a closed circuit episode once its own close is old enough, and never one still open (#2004)', () => {
+    const old = '2026-01-01T00:00:00.000Z';
+    const closedRecent = '2026-09-29T00:00:00.000Z';
+    const now = '2026-10-04T00:00:00.000Z';
+    const db = store.getDb();
+    const insert = (id, outboundId, closedAt, surfaceKind) => db.prepare(
+      'INSERT INTO bridge_config_circuit (reason, outbound_id, opened_at, closed_at, closed_by, decision, surface_kind) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run('chat-channel-missing', outboundId, old, closedAt, closedAt ? 'operator' : null, closedAt ? 'withdraw' : null, surfaceKind);
+    insert('open', 1, null, 'bot-dm');
+    insert('closed-old', 2, old, 'guild-channel');
+    insert('closed-recent', 3, closedRecent, 'guild-channel');
+
+    assert.equal(bridgeStore.prune({ now }).configCircuit, 1, 'only the one closed long enough ago');
+    assert.deepEqual(
+      db.prepare('SELECT outbound_id FROM bridge_config_circuit ORDER BY outbound_id').all().map((r) => r.outbound_id),
+      [1, 3]
+    );
+    assert.ok(bridgeStore.circuit.open('bot-dm'), 'the still-open episode stays whatever its age');
+  });
+
+  it('settles a question or launch staging row only once both it and its route are old enough (#2004)', () => {
+    const old = '2026-01-01T00:00:00.000Z';
+    const closedRecent = '2026-09-29T00:00:00.000Z';
+    const now = '2026-10-04T00:00:00.000Z';
+    const db = store.getDb();
+    const soon = (iso) => new Date(Date.parse(iso) + 1).toISOString();
+
+    bridgeStore.routes.accept(inbound({ routeId: 'rt_open_q', externalId: 'ext-open-q', at: old }));
+    bridgeStore.routes.accept(inbound({ routeId: 'rt_closed_q', externalId: 'ext-closed-q', at: old }));
+    bridgeStore.applyRouteWrite(closeWrite({
+      routeId: 'rt_closed_q', requestId: 'req-closed-q', at: closedRecent,
+      change: () => ({ set: { state: 'closed', closed_by: 'master', closed_at: closedRecent } })
+    }));
+
+    const clarifyQuestion = (id, routeId) => db.prepare(
+      "INSERT INTO bridge_questions (question_id, route_id, purpose, target_project_id, state, asked_generation, asked_at, expires_at, adopted_route_id, adopted_for, settled_at) "
+      + "VALUES (?, ?, 'clarify', NULL, 'cancelled', 1, ?, ?, NULL, NULL, ?)"
+    ).run(id, routeId, old, soon(old), old);
+    clarifyQuestion('q_open', 'rt_open_q');
+    clarifyQuestion('q_closed', 'rt_closed_q');
+
+    const launchConsent = (routeId, consentRouteId, questionId) => {
+      db.prepare(
+        "INSERT INTO bridge_questions (question_id, route_id, purpose, target_project_id, state, asked_generation, asked_at, expires_at, adopted_route_id, adopted_for, settled_at) "
+        + "VALUES (?, ?, 'launch', 1, 'adopted', 1, ?, ?, ?, 'launch', ?)"
+      ).run(questionId, routeId, old, soon(old), consentRouteId, old);
+      db.prepare(
+        "INSERT INTO bridge_launches (route_id, question_id, consent_route_id, project_id, master_generation, state, requested_at, settled_at) "
+        + "VALUES (?, ?, ?, 1, 1, 'abandoned', ?, ?)"
+      ).run(routeId, questionId, consentRouteId, old, old);
+    };
+    launchConsent('rt_open_q', 'consent_open', 'ql_open');
+    launchConsent('rt_closed_q', 'consent_closed', 'ql_closed');
+
+    const removed = bridgeStore.prune({ now });
+    assert.deepEqual([removed.questions, removed.launches], [2, 1], 'both questions on the closed route go; only its launch does');
+    assert.deepEqual(
+      db.prepare('SELECT question_id FROM bridge_questions ORDER BY question_id').all().map((r) => r.question_id),
+      ['q_open', 'ql_open']
+    );
+    assert.deepEqual(db.prepare('SELECT route_id FROM bridge_launches').all().map((r) => r.route_id), ['rt_open_q']);
+    assert.ok(bridgeStore.questions.get('q_open'), 'a settled question on a still-open route stays whatever its age');
+    assert.equal(bridgeStore.questions.get('q_closed'), null);
   });
 
   it('gives a route one status notice, with fixed text chosen by name', () => {
