@@ -282,7 +282,7 @@
         <div class="kpi-card">
           <div class="kpi-label">Latest Release Report</div>
           <div class="kpi-val" style="color:var(--green);">v5.47.1</div>
-          <div class="kpi-sub">Base <code>1e8e2df4</code> (<code>v5.47.0</code>) → W1-A <code>7e984803</code> → W2-REC <code>d880cbc0</code> → W3-REL · Issue <code>#2716</code> Closed</div>
+          <div class="kpi-sub">Tag <code>v5.47.1 @ 67017dd5</code> · Live Server Updated <code>00:18Z</code> · Feature Activation <code>Pending Live Use</code></div>
         </div>
       </div>
     </section>
@@ -295,19 +295,19 @@
             <span class="badge badge-green">● Latest Release · Oct 29, 2026</span>
             <h2 class="report-title"><a href="./v5.47.1/">TangleClaw <code>v5.47.1</code>: “Medusa wake delivery”</a></h2>
           </div>
-          <span class="badge badge-cyan">W3-REL #2719 @ 399a67d2 · Base d880cbc0</span>
+          <span class="badge badge-cyan">Tag v5.47.1 @ 67017dd5 · Live 5.47.1 (Activation Pending)</span>
         </div>
         <p style="color:#cbd5e1; margin:0;">
-          Three execution waves delivered <strong>3 Sprint PRs (#2717, #2718, #2719) in ~2 hours 18 minutes</strong> under Charter <code>A484</code>–<code>A484-R1</code> on base <code>1e8e2df417e1</code> (<code>tag: v5.47.0</code>), closing point-patch issue <strong><code>#2716</code></strong> with <strong>0 merge conflicts</strong> and <strong>0 post-merge defects on <code>main</code></strong> (release/deploy finish lines <code>Pending</code> on <code>W3-REL PR #2719 @ 399a67d2</code>). Made prompt line-clearing engine-aware in <code>lib/tmux.js#_lineKill</code>, <code>lib/tmux.js#clearPromptLine</code>, and <code>lib/tmux.js#clearDraftAndSendLiteral</code> so an Antigravity prompt with a stranded switchboard nudge or draft sends its native composer keys (<code>C-a C-k</code>: <code>LineStart</code> + <code>DeleteAfterCursor</code> in <code>charmbracelet/bubbles/textarea</code>) instead of <code>C-u</code> (which Antigravity’s viewport intercepts as <code>KeyHalfPageUp</code>), while retaining <code>C-u</code> for all other engines; added <code>lib/medusa-watchdog.js#rearmWorkspace</code> and wired <code>onWakeNotAccepted</code> in <code>lib/medusa-wake.js#_verifyWake</code> so recording a <code>wake_not_accepted</code> receipt (<code>nonce-in-composer</code>) triggers the existing durable re-arm budget (<code>maxRearms</code>), backoff age, and unread-mail check immediately instead of waiting up to 30 seconds for the periodic watchdog timer; and updated <code>lib/medusa-wake.js#_bookFollowUp</code> so an immediate re-arm scan that lands inside the <code>4,000 ms</code> <code>MIN_OBSERVATION_GAP_MS</code> window schedules the exact remaining observation gap as a prompt look and chains the two at-rest looks needed to retry in ~<code>8.0s</code> without waiting for a periodic poll tick (verified end-to-end in <code>test/medusa-wake-exchange-proof.test.js</code>). Includes the prominent <strong>Plain-English Summary</strong> card and non-clipped bar charts across the sprint report hub.
+          Three execution waves delivered <strong>3 Sprint PRs (#2717, #2718, #2719) in ~2 hours 32 minutes</strong> under Charter <code>A484</code>–<code>A484-R1</code> on base <code>1e8e2df417e1</code> (<code>tag: v5.47.0</code>), closing point-patch issue <strong><code>#2716</code></strong> with <strong>0 merge conflicts</strong> and <strong>0 post-merge defects on <code>main</code></strong>, publishing annotated tag and GitHub Release <strong><code>v5.47.1</code> at <code>main @ 67017dd5a700</code></strong> (<strong>Code released: Complete</strong>), and fast-forwarding the live server at <code>2026-10-30T00:18:35Z</code> with <code>/api/server-info</code> <code>runningVersion=5.47.1</code>, <code>startupSha=67017dd5</code>, <code>isStale=false</code>, and <code>/api/system/health</code> 4/4 clear (<strong>Production updated: Complete</strong>; <strong>Feature activated: Pending live use</strong>). Made prompt line-clearing engine-aware in <code>lib/tmux.js#_lineKill</code>, <code>lib/tmux.js#clearPromptLine</code>, and <code>lib/tmux.js#clearDraftAndSendLiteral</code> so an Antigravity prompt with a stranded switchboard nudge or draft sends its native composer keys (<code>C-a C-k</code>: <code>LineStart</code> + <code>DeleteAfterCursor</code> in <code>charmbracelet/bubbles/textarea</code>) instead of <code>C-u</code> (which Antigravity’s viewport intercepts as <code>KeyHalfPageUp</code>), while retaining <code>C-u</code> for all other engines; added <code>lib/medusa-watchdog.js#rearmWorkspace</code> and wired <code>onWakeNotAccepted</code> in <code>lib/medusa-wake.js#_verifyWake</code> so recording a <code>wake_not_accepted</code> receipt (<code>nonce-in-composer</code>) triggers the existing durable re-arm budget (<code>maxRearms</code>), backoff age, and unread-mail check immediately instead of waiting up to 30 seconds for the periodic watchdog timer; and updated <code>lib/medusa-wake.js#_bookFollowUp</code> so an immediate re-arm scan that lands inside the <code>4,000 ms</code> <code>MIN_OBSERVATION_GAP_MS</code> window schedules the exact remaining observation gap as a prompt look and chains the two at-rest looks needed to retry in ~<code>8.0s</code> without waiting for a periodic poll tick (verified end-to-end in <code>test/medusa-wake-exchange-proof.test.js</code>). Includes the prominent <strong>Plain-English Summary</strong> card and non-clipped bar charts across the sprint report hub.
         </p>
         <div class="meta-pills">
-          <span class="badge badge-cyan">3 Waves · 3 Sprint PRs (#2717, #2718, #2719) · ~2h 18m Wall Time</span>
-          <span class="badge badge-green">Issue #2716 Closed · 47/47 Features Index Pass · 0 Rework</span>
+          <span class="badge badge-cyan">3 Waves · 3 Sprint PRs (#2717, #2718, #2719) · 2h 32m Wall Time</span>
+          <span class="badge badge-green">Tag v5.47.1 &amp; Live Update @ 67017dd5 Complete · Activation Pending Live Use</span>
           <span class="badge badge-purple">+604 / -61 LOC · 16/16 Rule #283 PASS · O484-V5471-PR2719-399A67D2-ACCEPT</span>
         </div>
         <div class="actions">
           <a class="btn btn-primary" href="./v5.47.1/">📊 Open v5.47.1 Interactive Sprint Report →</a>
-          <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2719" target="_blank" rel="noopener">W3-REL Release PR #2719</a>
+          <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/releases/tag/v5.47.1" target="_blank" rel="noopener">GitHub Release v5.47.1</a>
         </div>
       </article>
 
