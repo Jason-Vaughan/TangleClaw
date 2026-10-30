@@ -334,6 +334,7 @@ files = [
   "test/medusa-delivery-disposition.test.js",
   "test/medusa-escalation.test.js",
   "test/medusa-exchanges.test.js",
+  "test/medusa-send-pruned-exchange.test.js",
   "test/medusa-wake-backoff.test.js",
   "test/medusa-wake-codex-fixtures.test.js",
   "test/medusa-wake-engine-activity.test.js",

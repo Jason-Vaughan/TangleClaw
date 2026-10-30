@@ -140,18 +140,22 @@ describe('store: Medusa exchange schema (v49, #1839)', () => {
   }
 
   describe('the v74 retention delete trigger (#1879)', () => {
-    it('a fresh install\'s delete trigger is conditional, not the old unconditional v49 shape', () => {
+    const RETENTION_INDEXES = ['idx_medusa_exchanges_untracked_retention', 'idx_medusa_exchanges_terminal_retention'];
+
+    it('a fresh install\'s delete trigger is conditional, not the old unconditional v49 shape, and has both retention indexes', () => {
       freshStore('v74-fresh');
       const ddl = store.getDb().prepare(
         "SELECT sql FROM sqlite_master WHERE name = 'medusa_exchange_facts_append_only_delete'"
       ).get().sql;
       assert.match(ddl, /WHEN/i);
       assert.match(ddl, /terminal_at/i);
+      for (const name of RETENTION_INDEXES) assert.ok(objects().has(name), `missing ${name}`);
     });
 
-    it('a v73 store migrates the trigger to the conditional shape and keeps the tables', () => {
+    it('a v73 store migrates the trigger to the conditional shape, keeps the tables, and gains both retention indexes', () => {
       freshStore('v74-migrate');
       insertExchangeWithFact('mx_keep', { state: 'stored' });
+      for (const name of RETENTION_INDEXES) store.getDb().exec(`DROP INDEX IF EXISTS ${name}`); // a real v73 store never had them
       rewindToV73();
 
       store._setBasePath(tmpDir);
@@ -162,6 +166,7 @@ describe('store: Medusa exchange schema (v49, #1839)', () => {
       ).get().sql;
       assert.match(ddl, /WHEN/i);
       assert.ok(store.medusaExchanges.get('mx_keep'), 'the migration did not touch existing rows');
+      for (const name of RETENTION_INDEXES) assert.ok(objects().has(name), `migration left ${name} missing`);
     });
 
     it('still refuses deleting a fact while its exchange is open', () => {
