@@ -4,6 +4,50 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.48.0] - 2026-10-30
+
+### Changed
+- `GET /api/projects` and other project-read responses no longer include a `migrationStatus` field — the underlying `projects.migration_status` column tracked a one-time V2-plugin migration that's long complete, and nothing read it back (#776). `POST /api/projects/:name/migrate-to-plugin` is unaffected and still reports `migrationStatus` in its own response, computed transiently on each call.
+- Retired two one-off migration shims verified dead across all 87 live projects and the
+  on-disk project configs: the per-load `claude-code` → `claude` engine-id rewrite in
+  `project.json` loading, and its matching exception in TangleClaw's own-path judge. No
+  project currently stores the legacy id, so both were pure overhead on every load (#1035).
+- Retired the `#240` legacy-global-rules warning that fired once per process at startup when
+  a pre-#240 per-install `global-rules.md` still existed outside the tracked canonical source.
+  The migration window has long closed; an operator with a lingering legacy file will no longer
+  see this warning in logs on startup. If that file was never backed up by an earlier fire of
+  this warning (no `.pre-240-backup` sibling already exists), it is now simply ignored rather
+  than backed up on this retirement -- merge any wanted content into `data/global-rules.md` by
+  hand before relying on this change (#1035).
+
+### Fixed
+- Fixed `medusa_deliveries`' per-session retention cap silently never firing
+  for a caller that passed a numeric session id instead of a string: the
+  prune bind was never coerced to match the column's `TEXT` type. Added a
+  bounded ended-session sweep per project and a global cap on orphaned rows,
+  so the ledger no longer grows without bound once a session ends (#1331).
+- Launch sequences and their step content no longer grow without bound: an
+  ended session's sequence keeps full step content for the 10 newest per
+  project, strips step content (keeping all metadata and digests) through
+  the 100 newest, and is pruned past that. A session that is still active,
+  or still named by a live startup-prompt fire, is never touched (#1595).
+- `handoff_publications` rows and their `history/`/`staged-` files no longer
+  grow without bound: a superseded or abandoned attempt is pruned past the 50
+  newest per project, and its on-disk bytes are removed with it. An orphan
+  sweep also removes any `history/` or `staged-` file left behind by a prior
+  partial prune, even when nothing new needs pruning. The current published
+  row and any still-staged attempt are never touched, and a row whose session
+  is still active is exempt (#1602).
+- `medusa_exchanges`/`medusa_exchange_facts` no longer grow without bound: an untracked exchange is pruned past 7 days or the newest 500 globally, an ordinary closed exchange past 14 days or the newest 200 per recipient project, and a retracted/undeliverable/escalated one (a tombstone) past 90 days or the newest 200 per recipient project — while any exchange still open stays fully append-only regardless of age. A retained exchange's repeated intermediate wake-ladder facts are also compacted, keeping its first, last, every escalation/retraction fact, and its most recent wake outcome (#1879).
+- Fixed: a Medusa send whose exchange is pruned by the new retention sweep between its creation and a later binding or Hub-call failure no longer crashes the (deliberately-succeeding) send response; it now reports the outcome with no `exchange` field instead (#1879).
+- Fixed: retention's own delete sweep now deletes in batches of 500 rather than binding one SQL parameter per expired exchange, so the very first sweep over a long-running install's pre-existing backlog can't exceed the database's bound-parameter limit (#1879).
+- Fixed: fact compaction no longer spreads an exchange's wake facts into `Math.max()` or a single `DELETE ... IN (...)`, each with its own unbounded-size ceiling; both now scale to any fact count (#1879).
+- `workload_receipts`/`workload_narrowings` no longer grow without bound: an ended session's rows past a per-project retention quota (newest 50 ended launches, newest 5 receipts and 5 narrowings each) are now pruned automatically, while any row still referenced by `workload_nudge_facts` or `bridge_candidate_receipts` stays append-only regardless of age (#1918).
+- Operator bridge retention now covers every table left unpruned since #1799: a closed
+  circuit episode, a settled question, and a settled launch staging row are each removed
+  once their own retention window has passed, but never while the route they belong to
+  (or, for a circuit episode, while it is still open) is still active (#2004).
+
 ## [5.47.1] - 2026-10-29
 
 ### Fixed
