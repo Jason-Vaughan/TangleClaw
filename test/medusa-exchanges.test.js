@@ -888,8 +888,35 @@ describe('medusa-exchanges (#1839)', () => {
         assertReplayMatches(x.exchange_id);
 
         const again = store.medusaExchanges.facts(x.exchange_id).length;
-        mx.pruneExchangeHistory();
+        mx.close(x.exchange_id, PM); // idempotent close; re-runs the same exchange's compaction pass
         assert.equal(store.medusaExchanges.facts(x.exchange_id).length, again, 'a second pass compacts nothing further');
+      });
+
+      it('compacts only the named exchange, never another eligible terminal row in the same sweep', () => {
+        const a = sendPmToBuilder({ priority: 'blocking' }, 'hub-wa');
+        mx.recordArrival({ hubId: 'hub-wa', recipientWorkspaceId: 'builder-ws' });
+        for (let i = 0; i < 8; i += 1) mx.recordWakeForRecipient('builder-ws', 'wake_attempted', { code: `a-${i}` });
+        mx.close(a.exchange_id, PM); // compacts `a` via the terminal-transition hook
+
+        // Make `b` eligible too, but close it by directly appending the
+        // terminal fact -- bypassing `close()`'s own `_terminal()` hook --
+        // so its own compaction never auto-ran.
+        const b = sendPmToBuilder({ priority: 'blocking' }, 'hub-wb');
+        mx.recordArrival({ hubId: 'hub-wb', recipientWorkspaceId: 'builder-ws' });
+        for (let i = 0; i < 8; i += 1) mx.recordWakeForRecipient('builder-ws', 'wake_attempted', { code: `b-${i}` });
+        store.medusaExchanges.appendFact({ exchange_id: b.exchange_id, fact: 'closed', at: mx._internal.now().toISOString() });
+        store.getDb().prepare("UPDATE medusa_exchanges SET state = 'closed', terminal_at = ? WHERE exchange_id = ?")
+          .run(mx._internal.now().toISOString(), b.exchange_id);
+        const bBefore = store.medusaExchanges.facts(b.exchange_id).length;
+        assert.ok(bBefore > 10, 'fixture sanity: b is over the compaction threshold too');
+
+        // A sweep naming only `a` (as every real call site does) must not touch `b`.
+        mx.pruneExchangeHistory(null, a.exchange_id);
+        assert.equal(store.medusaExchanges.facts(b.exchange_id).length, bBefore, 'b was never named, so it was never compacted');
+
+        // Naming `b` explicitly compacts exactly it.
+        mx.pruneExchangeHistory(null, b.exchange_id);
+        assert.ok(store.medusaExchanges.facts(b.exchange_id).length < bBefore, 'naming b compacts it');
       });
     });
   });
