@@ -8,7 +8,7 @@
  * bounds; and the per-launch sequence is unique under concurrent writes.
  */
 
-const { describe, it, before, after } = require('node:test');
+const { describe, it, before, after, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const fs = require('node:fs');
@@ -631,6 +631,256 @@ describe('workload_receipts storage (ADR 0020 §2)', () => {
     assert.equal(r.rateLimited, true);
     assert.equal(r.retryAfterMs, 600);
     assert.equal(store.workloadReceipts.listForLaunch('L4').length, 1);
+  });
+});
+
+describe('ended-launch retention for workload_receipts/workload_narrowings (Architect Ruling A485-1918)', () => {
+  let tmpDir;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-workload-retention-'));
+    store._setBasePath(tmpDir);
+    store.init();
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  afterEach(() => workload._setRetention());
+
+  const mkProject = (name) => {
+    const dir = path.join(tmpDir, name);
+    fs.mkdirSync(dir);
+    return store.projects.create({ name, path: dir, engine: 'claude' });
+  };
+
+  const receiptRow = (projectId, sessionId, launchId, seq, receivedAt) => ({
+    project_id: projectId, session_id: sessionId, launch_id: launchId, assignment_id: null,
+    state: 'working', clearance: 'do-not-clear', summary: 's', wait_kind: null, wait_detail: null,
+    refs_json: '{"issues":[],"prs":[],"tasks":[]}', branch: null, head_sha: null, source: 'tc-cli',
+    received_at: receivedAt
+  });
+
+  const countRows = (table, launchId) =>
+    store.getDb().prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE launch_id = ?`).get(launchId).n;
+
+  describe('the append-only trigger', () => {
+    it('still aborts a delete for a live-session row (unchanged behavior)', () => {
+      const proj = mkProject('retention-live');
+      const lane = bindProject(proj);
+      const t = Date.parse('2026-10-30T00:00:00Z');
+      const r = store.workloadReceipts.append(
+        receiptRow(proj.id, lane.sessionId, lane.launchId, 1, new Date(t).toISOString()),
+        { minIntervalMs: 0, nowMs: t }
+      );
+      const db = store.getDb();
+      workload.ensureWorkloadRetentionTriggers(db);
+      assert.throws(() => db.prepare('DELETE FROM workload_receipts WHERE receipt_id = ?').run(r.row.receipt_id), /append-only/);
+    });
+
+    it('allows a delete once the row\'s session has ended and nothing references it', () => {
+      const proj = mkProject('retention-ended');
+      const lane = bindProject(proj);
+      const t = Date.parse('2026-10-30T00:00:00Z');
+      const r = store.workloadReceipts.append(
+        receiptRow(proj.id, lane.sessionId, lane.launchId, 1, new Date(t).toISOString()),
+        { minIntervalMs: 0, nowMs: t }
+      );
+      store.sessions.kill(lane.sessionId);
+      const db = store.getDb();
+      workload.ensureWorkloadRetentionTriggers(db);
+      db.prepare('DELETE FROM workload_receipts WHERE receipt_id = ?').run(r.row.receipt_id);
+      assert.equal(store.workloadReceipts.listForLaunch(lane.launchId).length, 0);
+    });
+
+    it('still aborts a delete for an ended-session row referenced by workload_nudge_facts', () => {
+      const proj = mkProject('retention-nudged');
+      const lane = bindProject(proj);
+      const t = Date.parse('2026-10-30T00:00:00Z');
+      const r = store.workloadReceipts.append(
+        receiptRow(proj.id, lane.sessionId, lane.launchId, 1, new Date(t).toISOString()),
+        { minIntervalMs: 0, nowMs: t }
+      );
+      store.workloadNudgeFacts.record({
+        project_id: proj.id, session_id: lane.sessionId, launch_id: lane.launchId, receipt_id: r.row.receipt_id,
+        kind: 'nudged', code: 'x', created_at: new Date(t).toISOString()
+      });
+      store.sessions.kill(lane.sessionId);
+      const db = store.getDb();
+      workload.ensureWorkloadRetentionTriggers(db);
+      assert.throws(() => db.prepare('DELETE FROM workload_receipts WHERE receipt_id = ?').run(r.row.receipt_id), /append-only/);
+    });
+
+    it('still aborts a delete for an ended-session row referenced by bridge_candidate_receipts', () => {
+      const proj = mkProject('retention-bridged');
+      const lane = bindProject(proj);
+      const t = Date.parse('2026-10-30T00:00:00Z');
+      const r = store.workloadReceipts.append(
+        receiptRow(proj.id, lane.sessionId, lane.launchId, 1, new Date(t).toISOString()),
+        { minIntervalMs: 0, nowMs: t }
+      );
+      const db = store.getDb();
+      db.prepare(
+        `INSERT INTO bridge_candidates
+           (candidate_id, idem_key, kind, source_project_id, source_launch_id, digest, state, created_at)
+         VALUES ('cand-1', 'idem-1', 'milestone', ?, ?, ?, 'submitted', ?)`
+      ).run(proj.id, lane.launchId, 'd'.repeat(64), new Date(t).toISOString());
+      db.prepare(
+        `INSERT INTO bridge_candidate_receipts (candidate_id, receipt_kind, receipt_id, receipt_digest)
+         VALUES ('cand-1', 'workload', ?, ?)`
+      ).run(String(r.row.receipt_id), 'e'.repeat(64));
+      store.sessions.kill(lane.sessionId);
+      workload.ensureWorkloadRetentionTriggers(db);
+      assert.throws(() => db.prepare('DELETE FROM workload_receipts WHERE receipt_id = ?').run(r.row.receipt_id), /append-only/);
+    });
+
+    it('still aborts a delete for a live-session workload_narrowings row (unchanged behavior)', () => {
+      const proj = mkProject('retention-narrowing-live');
+      const lane = bindProject(proj);
+      const t = Date.parse('2026-10-30T00:00:00Z');
+      const n = store.workloadReceipts.appendNarrowing({
+        project_id: proj.id, session_id: lane.sessionId, launch_id: lane.launchId, action: 'narrow',
+        cap_clearance: 1, force_unknown: 0, reason: 'r', operator_proof: 'verified-session',
+        created_at: new Date(t).toISOString()
+      });
+      const db = store.getDb();
+      workload.ensureWorkloadRetentionTriggers(db);
+      assert.throws(() => db.prepare('DELETE FROM workload_narrowings WHERE narrowing_id = ?').run(n.narrowing_id), /append-only/);
+    });
+
+    it('allows deleting a workload_narrowings row once its session has ended', () => {
+      const proj = mkProject('retention-narrowing-ended');
+      const lane = bindProject(proj);
+      const t = Date.parse('2026-10-30T00:00:00Z');
+      const n = store.workloadReceipts.appendNarrowing({
+        project_id: proj.id, session_id: lane.sessionId, launch_id: lane.launchId, action: 'narrow',
+        cap_clearance: 1, force_unknown: 0, reason: 'r', operator_proof: 'verified-session',
+        created_at: new Date(t).toISOString()
+      });
+      store.sessions.kill(lane.sessionId);
+      const db = store.getDb();
+      workload.ensureWorkloadRetentionTriggers(db);
+      db.prepare('DELETE FROM workload_narrowings WHERE narrowing_id = ?').run(n.narrowing_id);
+      assert.equal(countRows('workload_narrowings', lane.launchId), 0);
+    });
+  });
+
+  describe('pruneWorkloadHistory', () => {
+    it('keeps the newest launches\' newest rows, drops older launches\' unreferenced rows, and never drops a referenced one', () => {
+      workload._setRetention({ endedLaunchesPerProject: 2, receiptsPerEndedLaunch: 2, narrowingsPerEndedLaunch: 1 });
+      const proj = mkProject('retention-prune');
+      const t = Date.parse('2026-10-30T00:00:00Z');
+      const lanes = [];
+      let referencedReceiptId;
+      for (let i = 0; i < 4; i++) {
+        const lane = bindProject(proj);
+        lanes.push(lane);
+        for (let s = 0; s < 3; s++) {
+          const at = t + i * 60000 + s * 1000;
+          const result = store.workloadReceipts.append(
+            receiptRow(proj.id, lane.sessionId, lane.launchId, s + 1, new Date(at).toISOString()),
+            { minIntervalMs: 0, nowMs: at }
+          );
+          // The oldest launch's oldest receipt is referenced: it must survive
+          // pruning even though its launch ranks beyond the kept quota.
+          if (i === 0 && s === 0) referencedReceiptId = result.row.receipt_id;
+        }
+        store.workloadReceipts.appendNarrowing({
+          project_id: proj.id, session_id: lane.sessionId, launch_id: lane.launchId, action: 'narrow',
+          cap_clearance: 1, force_unknown: 0, reason: 'first', operator_proof: 'verified-session',
+          created_at: new Date(t + i * 60000).toISOString()
+        });
+        store.workloadReceipts.appendNarrowing({
+          project_id: proj.id, session_id: lane.sessionId, launch_id: lane.launchId, action: 'narrow',
+          cap_clearance: 1, force_unknown: 0, reason: 'second', operator_proof: 'verified-session',
+          created_at: new Date(t + i * 60000 + 500).toISOString()
+        });
+        store.sessions.kill(lane.sessionId);
+      }
+      store.workloadNudgeFacts.record({
+        project_id: proj.id, session_id: lanes[0].sessionId, launch_id: lanes[0].launchId,
+        receipt_id: referencedReceiptId, kind: 'nudged', code: 'x', created_at: new Date(t).toISOString()
+      });
+
+      workload.pruneWorkloadHistory({ projectId: proj.id });
+
+      // Launches 0 and 1 rank beyond the quota of 2: all unreferenced rows
+      // are gone, but launch 0's referenced receipt survives regardless.
+      assert.equal(countRows('workload_receipts', lanes[0].launchId), 1, 'only the referenced receipt survives');
+      assert.equal(countRows('workload_narrowings', lanes[0].launchId), 0);
+      assert.equal(countRows('workload_receipts', lanes[1].launchId), 0);
+      assert.equal(countRows('workload_narrowings', lanes[1].launchId), 0);
+      // Launches 2 and 3 are the newest 2: keep their newest 2 of 3 receipts
+      // and newest 1 of 2 narrowings each.
+      assert.equal(countRows('workload_receipts', lanes[2].launchId), 2);
+      assert.equal(countRows('workload_narrowings', lanes[2].launchId), 1);
+      assert.equal(countRows('workload_receipts', lanes[3].launchId), 2);
+      assert.equal(countRows('workload_narrowings', lanes[3].launchId), 1);
+      assert.equal(store.workloadReceipts.activeNarrowing(lanes[3].launchId).reason, 'second', 'the newest narrowing is the one kept');
+    });
+
+    it('is a no-op with no projectId, and a no-op for a project with no ended launches', () => {
+      assert.doesNotThrow(() => workload.pruneWorkloadHistory());
+      assert.doesNotThrow(() => workload.pruneWorkloadHistory({}));
+      const proj = mkProject('retention-noop');
+      const lane = bindProject(proj); // still active — nothing ended
+      store.workloadReceipts.append(
+        receiptRow(proj.id, lane.sessionId, lane.launchId, 1, new Date(Date.parse('2026-10-30T00:00:00Z')).toISOString()),
+        { minIntervalMs: 0, nowMs: Date.parse('2026-10-30T00:00:00Z') }
+      );
+      workload.pruneWorkloadHistory({ projectId: proj.id });
+      assert.equal(countRows('workload_receipts', lane.launchId), 1, 'an active-session launch is never touched');
+    });
+  });
+
+  describe('record()/recordNarrowing() prune on their success path', () => {
+    it('record() runs pruneWorkloadHistory for the writing project after a successful append', async () => {
+      const proj = mkProject('retention-hook-record');
+      const lane = bindProject(proj);
+      const real = workload.pruneWorkloadHistory;
+      let calledWith = null;
+      workload.pruneWorkloadHistory = (arg) => { calledWith = arg; };
+      try {
+        const r = workload.record({ req: { headers: { ...lane.headers, ...TC } }, body: OK });
+        assert.equal(r.status, 201, JSON.stringify(r));
+        assert.deepEqual(calledWith, { projectId: proj.id });
+      } finally {
+        workload.pruneWorkloadHistory = real;
+      }
+    });
+
+    it('a prune failure after record() is logged, not thrown — the receipt write still succeeds', () => {
+      const proj = mkProject('retention-hook-record-fails');
+      const lane = bindProject(proj);
+      const real = workload.pruneWorkloadHistory;
+      workload.pruneWorkloadHistory = () => { throw new Error('boom'); };
+      try {
+        const r = workload.record({ req: { headers: { ...lane.headers, ...TC } }, body: OK });
+        assert.equal(r.status, 201, 'a prune failure never fails the write that already succeeded');
+      } finally {
+        workload.pruneWorkloadHistory = real;
+      }
+    });
+
+    it('recordNarrowing() runs pruneWorkloadHistory for the narrowed session\'s project', () => {
+      const proj = mkProject('retention-hook-narrowing');
+      const lane = bindProject(proj);
+      const real = workload.pruneWorkloadHistory;
+      let calledWith = null;
+      workload.pruneWorkloadHistory = (arg) => { calledWith = arg; };
+      try {
+        const r = workload.recordNarrowing({
+          caller: { kind: 'operator', actor: { operatorProof: 'verified-session' } },
+          body: { sessionId: lane.sessionId, capClearance: true, reason: 'test narrowing' }
+        });
+        assert.equal(r.status, 201, JSON.stringify(r));
+        assert.deepEqual(calledWith, { projectId: proj.id });
+      } finally {
+        workload.pruneWorkloadHistory = real;
+      }
+    });
   });
 });
 
