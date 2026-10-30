@@ -442,9 +442,9 @@ describe('medusa_deliveries retention boundaries (#1331)', () => {
       // SQLite's CAST(TEXT AS INTEGER) parses only the leading numeric
       // prefix, so '<real.id>junk' casts to the same integer as the real
       // session id — the same false match any of '042', '42junk' or '42.5'
-      // would produce against a session id of 42. The sweep runs in the
-      // same savepoint as the insert, so one record() call is enough to
-      // prove the row never persists past this write.
+      // would produce against a session id of 42. The orphan trim runs
+      // right after the insert, within the same record() call, so one call
+      // is enough to prove the row never persists past this write.
       const malformed = `${real.id}junk`;
       store.medusaDeliveries.record({ sessionId: malformed, messageKey: 'bad1', channel: 'none', outcome: 'skipped', skipReason: 'x' });
       assert.equal(store.medusaDeliveries.listForSession(malformed).length, 0, 'the malformed id never matched the real session and was swept as an orphan');
