@@ -8,7 +8,7 @@
  * newer one, and a replayed finalize is a no-op success.
  */
 
-const { describe, it, beforeEach, after } = require('node:test');
+const { describe, it, beforeEach, afterEach, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -183,6 +183,83 @@ describe('publishing a handoff (#1585)', () => {
 
   it('refuses an unknown publication without throwing', () => {
     assert.equal(publishHandoff(project, 'no-such-thing').published, false);
+  });
+});
+
+describe('retention sweep after a publish/abandon creates a new historical row (#1602)', () => {
+  afterEach(() => { store.handoffs._setRetention(); });
+
+  it('prunes an older superseded row and removes its history file once a publish creates a new one beyond retention', () => {
+    store.handoffs._setRetention({ historical: 1 });
+    const first = stageAttempt({ sessionId: 1, wrapRunId: 'run-1' });
+    publishHandoff(project, first);
+    const second = stageAttempt({ sessionId: 2, wrapRunId: 'run-2' });
+    publishHandoff(project, second);
+    // `first` is now superseded (rank 1, kept). Publish a THIRD, pushing `first` to rank 2.
+    const third = stageAttempt({ sessionId: 3, wrapRunId: 'run-3' });
+    publishHandoff(project, third);
+
+    assert.equal(store.handoffs.get(first), null, 'pruned beyond the 1-row ceiling');
+    assert.equal(fs.existsSync(lockfile.historyPath(project, first)), false, 'its history file goes with it');
+    assert.equal(store.handoffs.get(second).state, 'superseded', 'rank 1 (newest historical) survives');
+    assert.equal(fs.existsSync(lockfile.historyPath(project, second)), true);
+  });
+
+  it('prunes a row superseded before it was ever published, removing its STAGED file (never reached history)', () => {
+    store.handoffs._setRetention({ historical: 0 });
+    const older = stageAttempt({ sessionId: 1, wrapRunId: 'run-old' });
+    const newer = stageAttempt({ sessionId: 2, wrapRunId: 'run-new' });
+    publishHandoff(project, newer);
+    publishHandoff(project, older); // loses the race; superseded, never promoted
+
+    assert.equal(store.handoffs.get(older), null);
+    assert.equal(fs.existsSync(lockfile.stagedPath(project, older)), false,
+      'the staged file is where its bytes actually were, not history/');
+  });
+
+  it('prunes an abandoned attempt and removes its staged file', () => {
+    store.handoffs._setRetention({ historical: 0 });
+    // One eligible publication must exist and stay under retention so the
+    // project has at least one non-candidate row; abandon is independent of it.
+    const pid = stageAttempt({ bind: false });
+    abandonHandoff(pid, 'lost-to-kill');
+
+    assert.equal(store.handoffs.get(pid), null);
+    assert.equal(fs.existsSync(lockfile.stagedPath(project, pid)), false);
+  });
+
+  it('sweeps an orphan history file left by a prior partial prune, even with nothing new to prune', () => {
+    const first = stageAttempt({ sessionId: 1, wrapRunId: 'run-1' });
+    publishHandoff(project, first);
+    const second = stageAttempt({ sessionId: 2, wrapRunId: 'run-2' });
+    publishHandoff(project, second);
+    // Simulate drift: calling the bare DB-layer prune directly (as this test
+    // does, bypassing `_pruneHandoffHistory`'s own call to it) deletes the row
+    // for `first` but — by design, `lib/store/handoffs.js` does no filesystem
+    // I/O — leaves its history file exactly as a crash between that DELETE and
+    // an unlink would.
+    store.handoffs.prune(project.id, { historical: 0 });
+    assert.equal(store.handoffs.get(first), null, 'the row is gone');
+    assert.equal(fs.existsSync(lockfile.historyPath(project, first)), true, 'but its file is now an orphan');
+
+    const third = stageAttempt({ sessionId: 3, wrapRunId: 'run-3' });
+    publishHandoff(project, third); // creates one new historical row (second), triggering the sweep
+
+    assert.equal(fs.existsSync(lockfile.historyPath(project, first)), false, 'the orphan sweep removed it');
+  });
+
+  it('never fails the publish when pruning throws', () => {
+    const originalPrune = store.handoffs.prune;
+    store.handoffs.prune = () => { throw new Error('synthetic prune failure'); };
+    try {
+      const first = stageAttempt({ sessionId: 1, wrapRunId: 'run-1' });
+      publishHandoff(project, first);
+      const second = stageAttempt({ sessionId: 2, wrapRunId: 'run-2' });
+      const res = publishHandoff(project, second);
+      assert.equal(res.published, true, 'a retention-sweep error must not fail a successful publish');
+    } finally {
+      store.handoffs.prune = originalPrune;
+    }
   });
 });
 

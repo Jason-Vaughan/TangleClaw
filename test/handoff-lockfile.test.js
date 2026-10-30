@@ -201,6 +201,73 @@ describe('observing the directory for reconciliation', () => {
   });
 });
 
+describe('removing a pruned publication\'s files (#1602)', () => {
+  it('removes a history file and reports which path was found', () => {
+    lockfile.writeStaged(project, doc('pub-a'));
+    lockfile.promoteStaged(project, 'pub-a', null);
+    lockfile.writeStaged(project, doc('pub-b'));
+    lockfile.promoteStaged(project, 'pub-b', 'pub-a');
+
+    const res = lockfile.removePublicationFiles(project, 'pub-a');
+    assert.deepEqual(res, { removedStaged: false, removedHistory: true });
+    assert.equal(fs.existsSync(lockfile.historyPath(project, 'pub-a')), false);
+  });
+
+  it('removes a staged file for an id that never reached history (lost the race, or abandoned)', () => {
+    lockfile.writeStaged(project, doc('pub-lost'));
+    const res = lockfile.removePublicationFiles(project, 'pub-lost');
+    assert.deepEqual(res, { removedStaged: true, removedHistory: false });
+    assert.equal(fs.existsSync(lockfile.stagedPath(project, 'pub-lost')), false);
+  });
+
+  it('is ENOENT-safe when neither file exists', () => {
+    assert.deepEqual(lockfile.removePublicationFiles(project, 'pub-never-existed'), {
+      removedStaged: false, removedHistory: false
+    });
+  });
+});
+
+describe('sweeping orphan history files (#1602)', () => {
+  it('removes a history file whose id is not in the retained set', () => {
+    lockfile.writeStaged(project, doc('pub-a'));
+    lockfile.promoteStaged(project, 'pub-a', null);
+    lockfile.writeStaged(project, doc('pub-b'));
+    lockfile.promoteStaged(project, 'pub-b', 'pub-a');
+
+    const removed = lockfile.sweepOrphanHistoryFiles(project, ['pub-b']);
+    assert.deepEqual(removed, ['pub-a']);
+    assert.equal(fs.existsSync(lockfile.historyPath(project, 'pub-a')), false);
+  });
+
+  it('leaves a history file whose id IS in the retained set', () => {
+    lockfile.writeStaged(project, doc('pub-a'));
+    lockfile.promoteStaged(project, 'pub-a', null);
+    lockfile.writeStaged(project, doc('pub-b'));
+    lockfile.promoteStaged(project, 'pub-b', 'pub-a');
+
+    const removed = lockfile.sweepOrphanHistoryFiles(project, ['pub-a', 'pub-b']);
+    assert.deepEqual(removed, []);
+    assert.equal(fs.existsSync(lockfile.historyPath(project, 'pub-a')), true);
+  });
+
+  it('is ENOENT-safe when the history directory does not exist yet', () => {
+    assert.deepEqual(lockfile.sweepOrphanHistoryFiles(project, []), []);
+  });
+
+  it('ignores non-.json files in the history directory', () => {
+    lockfile.writeStaged(project, doc('pub-a'));
+    lockfile.promoteStaged(project, 'pub-a', null);
+    lockfile.writeStaged(project, doc('pub-b'));
+    lockfile.promoteStaged(project, 'pub-b', 'pub-a');
+    fs.writeFileSync(path.join(lockfile.handoffDir(project), 'history', '.DS_Store'), '');
+
+    const removed = lockfile.sweepOrphanHistoryFiles(project, []);
+    assert.deepEqual(removed, ['pub-a']);
+    assert.equal(fs.existsSync(path.join(lockfile.handoffDir(project), 'history', '.DS_Store')), true,
+      'a non-.json file is left alone');
+  });
+});
+
 describe('where the handoff lives', () => {
   it('follows the REGISTERED checkout, not the worktree a session wrapped from', () => {
     const worktree = { path: '/tmp/some-worktree', configPath: '/tmp/registered' };
