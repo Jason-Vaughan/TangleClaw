@@ -833,6 +833,70 @@ describe('ended-launch retention for workload_receipts/workload_narrowings (Arch
       workload.pruneWorkloadHistory({ projectId: proj.id });
       assert.equal(countRows('workload_receipts', lane.launchId), 1, 'an active-session launch is never touched');
     });
+
+    it('an active session keeps every row even when the per-launch quota would otherwise prune most of them', () => {
+      workload._setRetention({ endedLaunchesPerProject: 50, receiptsPerEndedLaunch: 2, narrowingsPerEndedLaunch: 1 });
+      const proj = mkProject('retention-active-over-quota');
+      const lane = bindProject(proj); // stays active — never killed
+      const t = Date.parse('2026-10-30T00:00:00Z');
+      for (let i = 0; i < 5; i++) {
+        store.workloadReceipts.append(
+          receiptRow(proj.id, lane.sessionId, lane.launchId, i + 1, new Date(t + i * 1000).toISOString()),
+          { minIntervalMs: 0, nowMs: t + i * 1000 }
+        );
+      }
+      for (let i = 0; i < 3; i++) {
+        store.workloadReceipts.appendNarrowing({
+          project_id: proj.id, session_id: lane.sessionId, launch_id: lane.launchId, action: 'narrow',
+          cap_clearance: 1, force_unknown: 0, reason: `n${i}`, operator_proof: 'verified-session',
+          created_at: new Date(t + i * 1000).toISOString()
+        });
+      }
+      workload.pruneWorkloadHistory({ projectId: proj.id });
+      assert.equal(countRows('workload_receipts', lane.launchId), 5, 'all 5 receipts survive though the quota is 2 — the session is still active');
+      assert.equal(countRows('workload_narrowings', lane.launchId), 3, 'all 3 narrowings survive though the quota is 1 — the session is still active');
+    });
+
+    it('ranks ended launches by timestamp, never by raw receipt_id vs narrowing_id — those are independent sequences on different tables', () => {
+      workload._setRetention({ endedLaunchesPerProject: 1, receiptsPerEndedLaunch: 5, narrowingsPerEndedLaunch: 5 });
+      const proj = mkProject('retention-rank-by-time');
+      const db = store.getDb();
+
+      // Push workload_receipts' sequence comfortably past workload_narrowings'
+      // current high-water mark, so a numeric-id comparison (the bug this test
+      // guards against) would rank the receipt-heavy launch "newer" than it
+      // really is.
+      const narrowingHigh = db.prepare('SELECT COALESCE(MAX(narrowing_id), 0) AS n FROM workload_narrowings').get().n;
+      const laneOld = bindProject(proj);
+      const oldT = Date.parse('2020-01-01T00:00:00Z');
+      let lastReceiptId = 0;
+      for (let i = 0; i <= narrowingHigh + 10; i++) {
+        const r = store.workloadReceipts.append(
+          receiptRow(proj.id, laneOld.sessionId, laneOld.launchId, i + 1, new Date(oldT + i * 1000).toISOString()),
+          { minIntervalMs: 0, nowMs: oldT + i * 1000 }
+        );
+        lastReceiptId = r.row.receipt_id;
+      }
+      assert.ok(lastReceiptId > narrowingHigh, 'the receipt-heavy launch\'s id now exceeds every existing narrowing id');
+      store.sessions.kill(laneOld.sessionId);
+
+      const laneNew = bindProject(proj);
+      const newT = Date.parse('2026-10-30T00:00:00Z'); // chronologically much newer than laneOld
+      store.workloadReceipts.appendNarrowing({
+        project_id: proj.id, session_id: laneNew.sessionId, launch_id: laneNew.launchId, action: 'narrow',
+        cap_clearance: 1, force_unknown: 0, reason: 'newer launch, narrowing only', operator_proof: 'verified-session',
+        created_at: new Date(newT).toISOString()
+      });
+      store.sessions.kill(laneNew.sessionId);
+
+      workload.pruneWorkloadHistory({ projectId: proj.id });
+
+      // The chronologically NEWER launch (narrowing-only, low narrowing_id) is
+      // the one quota=1 keeps — not the older, receipt-heavy launch whose raw
+      // receipt_id happens to be numerically larger.
+      assert.ok(countRows('workload_narrowings', laneNew.launchId) > 0, 'the newer launch\'s narrowing survives');
+      assert.equal(countRows('workload_receipts', laneOld.launchId), 0, 'the older, receipt-heavy launch is pruned despite its higher raw id');
+    });
   });
 
   describe('record()/recordNarrowing() prune on their success path', () => {
