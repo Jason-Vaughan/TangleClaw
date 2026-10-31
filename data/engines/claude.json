@@ -37,7 +37,9 @@
   "launch": {
     "shellCommand": "claude",
     "args": [],
-    "env": {},
+    "env": {
+      "CLAUDE_CODE_ARTIFACT_AUTO_OPEN": "0"
+    },
     "startupDelay": 2000
   },
   "launchModes": {

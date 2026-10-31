@@ -1923,7 +1923,14 @@
       // not have to hunt for it — but are not selectable. The engine currently
       // in use is exempt: disabling it would make the control display a value
       // it refuses to keep.
-      const unavailable = e.available === false && e.id !== selectedId;
+      //
+      // Strict/falsy (`!e.available`), not `=== false` (#738): a profile
+      // missing the `available` flag entirely must read as unavailable, same
+      // as the setup wizard's own picker and `tcResolvePickerEngine`'s truthy
+      // filter. Real data never hits the difference — `listWithAvailability()`
+      // always sets the flag — but the strict reading is the safe one, and it
+      // applies to the label too so a profile is never disabled-but-unlabelled.
+      const unavailable = !e.available && e.id !== selectedId;
       // `e.name` is read straight: `engines.engineClientPayload` guarantees a
       // non-empty string, so the guard that used to sit here is gone (#736).
       // The two sources that feed this — the `/api/engines` roster and the
@@ -1932,7 +1939,7 @@
       // under `public/` fetches it.
       return `<option value="${esc(e.id)}" ${e.id === selectedId ? 'selected' : ''}`
         + `${unavailable ? ' disabled' : ''}>`
-        + `${esc(e.name)}${e.available === false ? ' (not installed)' : ''}</option>`;
+        + `${esc(e.name)}${!e.available ? ' (not installed)' : ''}</option>`;
     }).join('');
 
     if (selectedId && !list.some((e) => e.id === selectedId)) {

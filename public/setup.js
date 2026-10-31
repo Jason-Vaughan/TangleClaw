@@ -751,20 +751,17 @@ function renderEngines(body) {
   const currentIsAvailable = selectable.some((e) => e.id === wizard.defaultEngine);
   if (!currentIsAvailable) wizard.defaultEngine = firstAvailable;
 
-  let optionsHtml = '';
+  // `<option>` markup comes from the shared builder (`api-helper.js`) rather
+  // than a hand-rolled copy — #707 converged every other picker onto it, and
+  // this was the one left over (#738). The availability list just below stays
+  // wizard-specific: it renders a ✓/✗ summary this shared builder has no
+  // concept of.
+  const optionsHtml = tcBuildEngineOptions(enginesList, wizard.defaultEngine, esc);
   let listHtml = '';
   for (const e of enginesList) {
-    // Unavailable engines stay listed — an operator who installs one later
-    // shouldn't have to hunt for it — but labelled, and disabled so the value
-    // cannot be chosen. `disabled` is the browser-native refusal; the resolver
-    // server-side is the backstop.
-    const selected = e.id === wizard.defaultEngine ? ' selected' : '';
-    const disabled = e.available ? '' : ' disabled';
     // Read straight: `engines.engineClientPayload` guarantees `name` is a
     // non-empty string for every engine the API hands a client (#736).
     const engineName = e.name;
-    const label = e.available ? esc(engineName) : `${esc(engineName)} (not installed)`;
-    optionsHtml += `<option value="${esc(e.id)}"${selected}${disabled}>${label}</option>`;
 
     const availClass = e.available ? 'setup-engine-available' : 'setup-engine-unavailable';
     const availIcon = e.available ? '&#10003;' : '&#10007;';
