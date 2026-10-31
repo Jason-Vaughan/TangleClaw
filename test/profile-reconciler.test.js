@@ -577,6 +577,88 @@ describe('_matches', () => {
   });
 });
 
+describe('parseLaunchTimestampMs (PRR-A round 7 on PR #2757)', () => {
+  let originalTz;
+  beforeEach(() => { originalTz = process.env.TZ; });
+  afterEach(() => { process.env.TZ = originalTz; });
+
+  it('normalizes a bare SQLite UTC string ("YYYY-MM-DD HH:MM:SS") to UTC regardless of host TZ', () => {
+    process.env.TZ = 'America/Los_Angeles';
+    const ms = reconciler.parseLaunchTimestampMs('2026-10-31 19:00:00');
+    assert.equal(new Date(ms).toISOString(), '2026-10-31T19:00:00.000Z',
+      'must read as UTC, not 7 hours ahead as PDT local time would give');
+  });
+
+  it('normalizes a bare SQLite UTC string with fractional seconds', () => {
+    process.env.TZ = 'America/Los_Angeles';
+    const ms = reconciler.parseLaunchTimestampMs('2026-10-31 19:00:00.250');
+    assert.equal(new Date(ms).toISOString(), '2026-10-31T19:00:00.250Z');
+  });
+
+  it('leaves an ISO string carrying its own Z/offset unaffected by host TZ', () => {
+    process.env.TZ = 'America/Los_Angeles';
+    assert.equal(reconciler.parseLaunchTimestampMs('2026-10-31T19:00:00.000Z'), Date.parse('2026-10-31T19:00:00.000Z'));
+  });
+
+  it('returns a ms epoch number unchanged', () => {
+    assert.equal(reconciler.parseLaunchTimestampMs(1793498400000), 1793498400000);
+  });
+
+  it('returns NaN for null, undefined, and unparseable input', () => {
+    assert.ok(Number.isNaN(reconciler.parseLaunchTimestampMs(null)));
+    assert.ok(Number.isNaN(reconciler.parseLaunchTimestampMs(undefined)));
+    assert.ok(Number.isNaN(reconciler.parseLaunchTimestampMs('not a date')));
+  });
+});
+
+describe('snapshotExistingSessionIds (PRR-A round 7 on PR #2757)', () => {
+  let tmpCodexHome;
+  let tmpClaudeHome;
+  beforeEach(() => {
+    tmpCodexHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-codex-home-'));
+    tmpClaudeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-claude-home-'));
+  });
+  afterEach(() => {
+    fs.rmSync(tmpCodexHome, { recursive: true, force: true });
+    fs.rmSync(tmpClaudeHome, { recursive: true, force: true });
+  });
+
+  it('returns empty for a project path that is missing or blank', () => {
+    assert.equal(reconciler.snapshotExistingSessionIds(null, 'codex').size, 0);
+    assert.equal(reconciler.snapshotExistingSessionIds('  ', 'codex').size, 0);
+  });
+
+  it('returns empty for an engine with no structured reader', () => {
+    assert.equal(reconciler.snapshotExistingSessionIds('/project', 'gemini').size, 0);
+  });
+
+  it('collects codex session_meta ids matching the project path, skipping ones that don\'t', () => {
+    const rollout1 = path.join(tmpCodexHome, 'sessions', 'rollout-1.jsonl');
+    fs.mkdirSync(path.dirname(rollout1), { recursive: true });
+    fs.writeFileSync(rollout1, `${JSON.stringify({ type: 'session_meta', payload: { id: 'sess-a', cwd: '/project' } })}\n`);
+    const rollout2 = path.join(tmpCodexHome, 'sessions', 'rollout-2.jsonl');
+    fs.writeFileSync(rollout2, `${JSON.stringify({ type: 'session_meta', payload: { id: 'sess-b', cwd: '/some/other/project' } })}\n`);
+    const ids = reconciler.snapshotExistingSessionIds('/project', 'codex', { codexHome: tmpCodexHome });
+    assert.deepEqual([...ids], ['sess-a']);
+  });
+
+  it('collects claude transcript basenames matching the project path', () => {
+    const transcript1 = path.join(tmpClaudeHome, 'projects', '-project', 'sess-a.jsonl');
+    fs.mkdirSync(path.dirname(transcript1), { recursive: true });
+    fs.writeFileSync(transcript1, `${JSON.stringify({ type: 'assistant', cwd: '/project' })}\n`);
+    const transcript2 = path.join(tmpClaudeHome, 'projects', '-other', 'sess-b.jsonl');
+    fs.mkdirSync(path.dirname(transcript2), { recursive: true });
+    fs.writeFileSync(transcript2, `${JSON.stringify({ type: 'assistant', cwd: '/some/other/project' })}\n`);
+    const ids = reconciler.snapshotExistingSessionIds('/project', 'claude', { claudeHome: tmpClaudeHome });
+    assert.deepEqual([...ids], ['sess-a']);
+  });
+
+  it('returns empty when the sessions/projects directory does not exist at all', () => {
+    assert.equal(reconciler.snapshotExistingSessionIds('/project', 'codex', { codexHome: tmpCodexHome }).size, 0);
+    assert.equal(reconciler.snapshotExistingSessionIds('/project', 'claude', { claudeHome: tmpClaudeHome }).size, 0);
+  });
+});
+
 /*
  * PRR-A round 5 on PR #2757: the engine-owned structured session-file
  * readers, wired into production as the ONLY observation source. Each
@@ -690,6 +772,58 @@ describe('_readCodexActiveModel', () => {
       + '{"type":"turn_context","payload":{"cwd":"/project","model":"gpt-5.6-sol"}}\n');
     assert.deepEqual(reconciler._readCodexActiveModel({ codexHome: tmpHome, projectPath: '/project', startedAtMs }), { engine: 'codex', model: 'gpt-5.6-sol' });
   });
+
+  describe('PRR-A round 7: excludeSessionIds + same-second ambiguity', () => {
+    it('excludes a file by session_meta.id even when its timestamp would otherwise match', () => {
+      const now = Date.now();
+      const file = writeRollout('2026/10/31/rollout-previous.jsonl', [
+        { type: 'session_meta', payload: { id: 'PREVIOUS-SESSION', cwd: '/project', timestamp: new Date(now + 500).toISOString() } },
+        { type: 'turn_context', payload: { cwd: '/project', model: 'desired-model' } }
+      ]);
+      fs.utimesSync(file, (now + 500) / 1000, (now + 500) / 1000);
+      const result = reconciler._readCodexActiveModel({
+        codexHome: tmpHome, projectPath: '/project', startedAtMs: now, excludeSessionIds: new Set(['PREVIOUS-SESSION'])
+      });
+      assert.equal(result, null);
+    });
+
+    it('fails closed on a same-second candidate when startedAtMs is second-aligned and no disambiguator is supplied', () => {
+      const secondAligned = Math.floor(Date.now() / 1000) * 1000;
+      const file = writeRollout('2026/10/31/rollout-sameSecond.jsonl', [
+        { type: 'session_meta', payload: { id: 's1', cwd: '/project', timestamp: new Date(secondAligned + 700).toISOString() } },
+        { type: 'turn_context', payload: { cwd: '/project', model: 'gpt-5.6-sol' } }
+      ]);
+      fs.utimesSync(file, secondAligned / 1000, secondAligned / 1000);
+      const result = reconciler._readCodexActiveModel({ codexHome: tmpHome, projectPath: '/project', startedAtMs: secondAligned });
+      assert.equal(result, null, 'a same-second candidate with no engineSessionId/excludeSessionIds must be ambiguous, not admitted');
+    });
+
+    it('does NOT fail closed on the same same-second candidate once excludeSessionIds is supplied (even empty)', () => {
+      const secondAligned = Math.floor(Date.now() / 1000) * 1000;
+      const file = writeRollout('2026/10/31/rollout-sameSecond.jsonl', [
+        { type: 'session_meta', payload: { id: 's1', cwd: '/project', timestamp: new Date(secondAligned + 700).toISOString() } },
+        { type: 'turn_context', payload: { cwd: '/project', model: 'gpt-5.6-sol' } }
+      ]);
+      fs.utimesSync(file, secondAligned / 1000, secondAligned / 1000);
+      const result = reconciler._readCodexActiveModel({
+        codexHome: tmpHome, projectPath: '/project', startedAtMs: secondAligned, excludeSessionIds: new Set()
+      });
+      assert.deepEqual(result, { engine: 'codex', model: 'gpt-5.6-sol' });
+    });
+
+    it('does NOT fail closed on the same same-second candidate once engineSessionId is supplied and matches', () => {
+      const secondAligned = Math.floor(Date.now() / 1000) * 1000;
+      const file = writeRollout('2026/10/31/rollout-sameSecond.jsonl', [
+        { type: 'session_meta', payload: { id: 'fresh-session', cwd: '/project', timestamp: new Date(secondAligned + 700).toISOString() } },
+        { type: 'turn_context', payload: { cwd: '/project', model: 'gpt-5.6-sol' } }
+      ]);
+      fs.utimesSync(file, secondAligned / 1000, secondAligned / 1000);
+      const result = reconciler._readCodexActiveModel({
+        codexHome: tmpHome, projectPath: '/project', startedAtMs: secondAligned, engineSessionId: 'fresh-session'
+      });
+      assert.deepEqual(result, { engine: 'codex', model: 'gpt-5.6-sol' });
+    });
+  });
 });
 
 describe('_readClaudeActiveModel', () => {
@@ -775,6 +909,54 @@ describe('_readClaudeActiveModel', () => {
     fs.utimesSync(file, (now - 2000) / 1000, (now - 2000) / 1000);
     const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs: now });
     assert.equal(result, null, 'the previous session\'s transcript must never be mistaken for the new launch\'s');
+  });
+
+  describe('PRR-A round 7: excludeSessionIds + same-second ambiguity', () => {
+    it('excludes a file by its own basename even when its timestamp would otherwise match', () => {
+      const now = Date.now();
+      const file = writeTranscript('-project/sess-previous.jsonl', [
+        { type: 'assistant', cwd: '/project', timestamp: new Date(now + 500).toISOString(), message: { model: 'desired-model' } }
+      ]);
+      fs.utimesSync(file, (now + 500) / 1000, (now + 500) / 1000);
+      const result = reconciler._readClaudeActiveModel({
+        claudeHome: tmpHome, projectPath: '/project', startedAtMs: now, excludeSessionIds: new Set(['sess-previous'])
+      });
+      assert.equal(result, null);
+    });
+
+    it('fails closed on a same-second candidate when startedAtMs is second-aligned and no disambiguator is supplied', () => {
+      const secondAligned = Math.floor(Date.now() / 1000) * 1000;
+      const file = writeTranscript('-project/session.jsonl', [
+        { type: 'assistant', cwd: '/project', timestamp: new Date(secondAligned + 700).toISOString(), message: { model: 'claude-sonnet-5' } }
+      ]);
+      fs.utimesSync(file, secondAligned / 1000, secondAligned / 1000);
+      const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs: secondAligned });
+      assert.equal(result, null, 'a same-second candidate with no engineSessionId/excludeSessionIds must be ambiguous, not admitted');
+    });
+
+    it('does NOT fail closed on the same same-second candidate once excludeSessionIds is supplied (even empty)', () => {
+      const secondAligned = Math.floor(Date.now() / 1000) * 1000;
+      const file = writeTranscript('-project/session.jsonl', [
+        { type: 'assistant', cwd: '/project', timestamp: new Date(secondAligned + 700).toISOString(), message: { model: 'claude-sonnet-5' } }
+      ]);
+      fs.utimesSync(file, secondAligned / 1000, secondAligned / 1000);
+      const result = reconciler._readClaudeActiveModel({
+        claudeHome: tmpHome, projectPath: '/project', startedAtMs: secondAligned, excludeSessionIds: new Set()
+      });
+      assert.deepEqual(result, { engine: 'claude', model: 'claude-sonnet-5' });
+    });
+
+    it('does NOT fail closed on the same same-second candidate once engineSessionId is supplied and matches the basename', () => {
+      const secondAligned = Math.floor(Date.now() / 1000) * 1000;
+      const file = writeTranscript('-project/fresh-session.jsonl', [
+        { type: 'assistant', cwd: '/project', timestamp: new Date(secondAligned + 700).toISOString(), message: { model: 'claude-sonnet-5' } }
+      ]);
+      fs.utimesSync(file, secondAligned / 1000, secondAligned / 1000);
+      const result = reconciler._readClaudeActiveModel({
+        claudeHome: tmpHome, projectPath: '/project', startedAtMs: secondAligned, engineSessionId: 'fresh-session'
+      });
+      assert.deepEqual(result, { engine: 'claude', model: 'claude-sonnet-5' });
+    });
   });
 });
 
@@ -1107,6 +1289,91 @@ describe('sessions._verifyModelAfterLaunch — production wiring converges a ses
       assert.equal(result.state, 'hold');
       assert.equal(reconciler.getAdmissionState('session:9029'), 'held');
     });
+  });
+});
+
+/*
+ * PRR-A round 7 on PR #2757: the two production-wiring regressions named
+ * explicitly in the dispatch — a real SQLite `started_at` string parsed
+ * under a non-UTC host TZ, and a same-second rapid relaunch disambiguated
+ * by the pre-spawn `excludeSessionIds` snapshot `launchSession` now takes
+ * (standing in here for the DB's own second-resolution `started_at`
+ * fallback, which is exactly the case `excludeSessionIds` has to cover).
+ */
+describe('sessions._verifyModelAfterLaunch — PRR-A round 7 regressions on PR #2757', () => {
+  const sessions = require('../lib/sessions');
+  let tmpCodexHome;
+  let originalTz;
+
+  beforeEach(() => {
+    reconciler._resetForTests();
+    tmpCodexHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-codex-home-'));
+    originalTz = process.env.TZ;
+  });
+  afterEach(() => {
+    fs.rmSync(tmpCodexHome, { recursive: true, force: true });
+    process.env.TZ = originalTz;
+  });
+
+  it('a real SQLite started_at string parses as UTC under a non-UTC host TZ, so a genuine record 1s later still verifies', async () => {
+    process.env.TZ = 'America/Los_Angeles';
+    const rollout = path.join(tmpCodexHome, 'sessions', 'rollout-test.jsonl');
+    fs.mkdirSync(path.dirname(rollout), { recursive: true });
+    fs.writeFileSync(rollout, [
+      JSON.stringify({ type: 'session_meta', payload: { id: 's1', cwd: '/fixture/project', timestamp: '2026-10-31T19:00:01.000Z' } }),
+      JSON.stringify({ type: 'turn_context', payload: { cwd: '/fixture/project', model: 'gpt-5.6-sol' } })
+    ].join('\n') + '\n');
+    const mtimeSec = Date.parse('2026-10-31T19:00:01.000Z') / 1000;
+    fs.utimesSync(rollout, mtimeSec, mtimeSec);
+
+    // The exact fallback path: a bare SQLite UTC string, run through
+    // parseLaunchTimestampMs rather than bare Date.parse.
+    const startedAtMs = reconciler.parseLaunchTimestampMs('2026-10-31 19:00:00');
+    const { tmux } = fakeTmux();
+    const result = await sessions._verifyModelAfterLaunch('tmux-tz-regress', 9040, 1, 'codex', 'gpt-5.6-sol', {
+      tmux, stillValid: () => true, codexHome: tmpCodexHome, projectPath: '/fixture/project', startedAtMs
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.state, 'verified', 'must not be rejected as if the record predated the launch by 7 hours');
+  });
+
+  it('a same-second rapid relaunch excludes the PRIOR session\'s own rollout file via excludeSessionIds, staying held until the NEW session\'s own record appears', async () => {
+    // Only the second-resolution SQLite fallback timestamp is available
+    // here — exactly the case excludeSessionIds exists to cover, since the
+    // floored second cannot by itself tell two same-second files apart.
+    const secondAligned = Math.floor(Date.now() / 1000) * 1000;
+    const priorFile = path.join(tmpCodexHome, 'sessions', 'rollout-prior.jsonl');
+    fs.mkdirSync(path.dirname(priorFile), { recursive: true });
+    fs.writeFileSync(priorFile, [
+      JSON.stringify({ type: 'session_meta', payload: { id: 'PRIOR-SESSION', cwd: '/fixture/project', timestamp: new Date(secondAligned + 100).toISOString() } }),
+      JSON.stringify({ type: 'turn_context', payload: { cwd: '/fixture/project', model: 'stale-model' } })
+    ].join('\n') + '\n');
+    fs.utimesSync(priorFile, (secondAligned + 100) / 1000, (secondAligned + 100) / 1000);
+
+    const { tmux, sent } = fakeTmux();
+    const held = await sessions._verifyModelAfterLaunch('tmux-rapid-regress', 9041, 1, 'codex', 'desired-model', {
+      tmux, stillValid: () => true, codexHome: tmpCodexHome, projectPath: '/fixture/project',
+      startedAtMs: secondAligned, excludeSessionIds: new Set(['PRIOR-SESSION'])
+    });
+    assert.equal(held.ok, false);
+    assert.equal(held.state, 'hold');
+    assert.equal(sent.length, 0, 'the codex adapter never mutates, and the prior session\'s file must never be read as the new one\'s');
+    assert.equal(reconciler.getAdmissionState('session:9041'), 'held');
+
+    // The NEW session's own record appears, written at +700ms in the SAME
+    // clock second as the excluded prior one.
+    const newFile = path.join(tmpCodexHome, 'sessions', 'rollout-new.jsonl');
+    fs.writeFileSync(newFile, [
+      JSON.stringify({ type: 'session_meta', payload: { id: 'NEW-SESSION', cwd: '/fixture/project', timestamp: new Date(secondAligned + 700).toISOString() } }),
+      JSON.stringify({ type: 'turn_context', payload: { cwd: '/fixture/project', model: 'desired-model' } })
+    ].join('\n') + '\n');
+    fs.utimesSync(newFile, (secondAligned + 700) / 1000, (secondAligned + 700) / 1000);
+    const converged = await sessions._verifyModelAfterLaunch('tmux-rapid-regress', 9041, 1, 'codex', 'desired-model', {
+      tmux, stillValid: () => true, codexHome: tmpCodexHome, projectPath: '/fixture/project',
+      startedAtMs: secondAligned, excludeSessionIds: new Set(['PRIOR-SESSION'])
+    });
+    assert.equal(converged.ok, true);
+    assert.equal(converged.state, 'verified');
   });
 });
 
