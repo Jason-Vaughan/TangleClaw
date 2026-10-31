@@ -732,6 +732,105 @@ describe('#1176 — rule-receipt-redelivery', () => {
       });
     });
 
+    // #1176 Round 5, PRR-A BLOCKING 1: a fourth, never-pruned durable source
+    // (a per-project JSON file this module exclusively owns) must still
+    // bound maxAttempts even when BOTH the fleet-wide 500-row activity_log
+    // prune AND a server restart (clearing _attempts) have independently
+    // zeroed the other two sources, and must fail closed — refuse the
+    // attempt outright — when it itself cannot be read or written.
+    describe('durable redelivery-state file (PRR-A Round 5 BLOCKING 1)', () => {
+      it('records the reservation before pasting, readable back via _readRedeliveryStateFile', async () => {
+        const project = makeProject();
+        const session = makeSession(project);
+        const delivery = writtenDelivery(session, project);
+
+        const outcomes = await redelivery.checkAndRedeliver({
+          now: pastGraceNow,
+          listCandidates: () => [{ delivery, session }],
+          deliverViaOpenChannel: async () => {}
+        });
+        assert.equal(outcomes[0].attempt, 1);
+
+        const state = redelivery._readRedeliveryStateFile(project.path);
+        assert.equal(state[delivery.id].count, 1);
+        assert.equal(state[delivery.id].exhaustedAt, null);
+        assert.ok(Number.isFinite(state[delivery.id].lastAttemptAt));
+      });
+
+      it('bounds maxAttempts when activity_log rows are pruned away (query returns []) AND a restart clears _attempts', async () => {
+        const project = makeProject();
+        const session = makeSession(project);
+        const delivery = writtenDelivery(session, project);
+        const deps = {
+          listCandidates: () => [{ delivery, session }],
+          deliverViaOpenChannel: async () => { throw new Error('channel unreachable'); },
+          cooldownMs: 0,
+          maxAttempts: 2
+        };
+
+        const first = await redelivery.checkAndRedeliver({ ...deps, now: pastGraceNow });
+        assert.equal(first[0].attempt, 1);
+
+        // Simulated restart: the in-memory Map is gone. Simulated
+        // fleet-wide 500-row prune: activity_log has nothing for this
+        // session either. Only the durable FILE still knows attempt 1
+        // happened.
+        redelivery._resetAttemptState();
+        mock.method(store.activity, 'query', () => []);
+        try {
+          const second = await redelivery.checkAndRedeliver({ ...deps, now: () => pastGraceNow() + 1000 });
+          assert.equal(second[0].status, 'exhausted',
+            'the durable file count (1) must still bound this to maxAttempts (2) — both other sources read 0');
+          assert.equal(second[0].attempts, 2);
+        } finally {
+          mock.restoreAll();
+        }
+      });
+
+      it('fails closed with attempt-state-error (no paste) when the state file cannot be WRITTEN', async () => {
+        const project = makeProject();
+        const session = makeSession(project);
+        const delivery = writtenDelivery(session, project);
+        const statePath = redelivery._redeliveryStatePath(project.path);
+
+        const realWrite = fs.writeFileSync;
+        mock.method(fs, 'writeFileSync', (p, ...rest) => {
+          if (p === statePath) throw new Error('disk full');
+          return realWrite(p, ...rest);
+        });
+        let calls = 0;
+        try {
+          const outcomes = await redelivery.checkAndRedeliver({
+            now: pastGraceNow,
+            listCandidates: () => [{ delivery, session }],
+            deliverViaOpenChannel: async () => { calls += 1; }
+          });
+          assert.equal(outcomes[0].status, 'attempt-state-error');
+          assert.equal(calls, 0, 'the channel must never be touched when the reservation write fails');
+        } finally {
+          mock.restoreAll();
+        }
+      });
+
+      it('fails closed with attempt-state-error (no paste) when the state file exists but cannot be READ (corrupt JSON)', async () => {
+        const project = makeProject();
+        const session = makeSession(project);
+        const delivery = writtenDelivery(session, project);
+        const statePath = redelivery._redeliveryStatePath(project.path);
+        fs.mkdirSync(path.dirname(statePath), { recursive: true });
+        fs.writeFileSync(statePath, '{not valid json');
+
+        let calls = 0;
+        const outcomes = await redelivery.checkAndRedeliver({
+          now: pastGraceNow,
+          listCandidates: () => [{ delivery, session }],
+          deliverViaOpenChannel: async () => { calls += 1; }
+        });
+        assert.equal(outcomes[0].status, 'attempt-state-error');
+        assert.equal(calls, 0, 'the channel must never be touched when the state file cannot be parsed');
+      });
+    });
+
     // #1176 Round 3, PRR-A WARNING 2: bound how many candidates one pass
     // processes, so a backlog never costs one tick noticeably more than its
     // own capture budget.
