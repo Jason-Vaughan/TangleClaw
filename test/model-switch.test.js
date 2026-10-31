@@ -934,7 +934,10 @@ describe('lib/model-switch — switchSessionModel', () => {
     execFileSync('git', ['commit', '-q', '-m', 'initial'], { cwd: projectPath });
     // A prior outage already claimed this exact branch name.
     execFileSync('git', ['branch', `wip/${project.name}-outage-9999`], { cwd: projectPath });
-    execFileSync('git', ['checkout', '-q', 'main'], { cwd: projectPath }).toString();
+    // `-B` creates (or resets) the branch deterministically, regardless of
+    // `initRepo`'s own default branch name — CI's `git init` defaults to
+    // `master`, not `main` (#2762 exact-head CI run 41251763636).
+    execFileSync('git', ['checkout', '-q', '-B', 'main'], { cwd: projectPath }).toString();
     fs.writeFileSync(path.join(projectPath, 'uncommitted.txt'), 'wip\n');
 
     store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
