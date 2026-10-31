@@ -111,6 +111,27 @@ describe('session rules channel (#749)', () => {
       assert.deepEqual(channel.buildShards([{ id: 1, content: '   \n\t ' }], 10000), []);
       assert.deepEqual(channel.buildShards(null, 10000), []);
     });
+
+    it('excludes null, undefined, missing or whitespace-only content without throwing (#1654)', () => {
+      // isUsableRule (lib/launch-rule-drift.js) wraps in String() before
+      // trimming; the inline copy this replaced called `.trim()` on
+      // `rule.content` directly, which threw for anything truthy but not a
+      // string (e.g. a number) — a non-string, non-nullish body (like 7
+      // below) is still truthy and usable, so it must not throw either.
+      const rules = [
+        { id: 1, content: 7 },
+        { id: 2, content: null },
+        { id: 3, content: undefined },
+        { id: 4 },
+        null,
+        { id: 5, content: '   ' },
+        { id: 6, content: 'Usable rule.' }
+      ];
+      let shards;
+      assert.doesNotThrow(() => { shards = channel.buildShards(rules, 10000); });
+      assert.equal(shards.length, 1);
+      assert.deepEqual(shards[0].ruleIds, [1, 6]);
+    });
   });
 
   describe('renderShardPayload', () => {
@@ -160,6 +181,22 @@ describe('session rules channel (#749)', () => {
       assert.deepEqual(slots[0].omittedIds, []);
       assert.match(slots[0].text, /\(all 2\)/);
       assert.ok(!slots[0].text.includes('Not carried'));
+    });
+
+    it('excludes null, undefined, missing or whitespace-only content without throwing (#1654)', () => {
+      const rules = [
+        { id: 1, content: 7 },
+        { id: 2, content: null },
+        { id: 3, content: undefined },
+        { id: 4 },
+        null,
+        { id: 5, content: '   ' },
+        { id: 6, content: 'Usable rule.' }
+      ];
+      let slots;
+      assert.doesNotThrow(() => { slots = channel.packFixedSlots(rules, 10000, 3, at); });
+      assert.equal(slots.length, 1);
+      assert.deepEqual(slots[0].ruleIds, [1, 6]);
     });
 
     it('states the count in force and the time in every slot', () => {

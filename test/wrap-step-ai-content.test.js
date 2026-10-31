@@ -800,6 +800,21 @@ describe('wrap-step ai-content — wrap-rules bridge', () => {
       aic._internal.listWrapRules = () => { throw new Error('db unavailable'); };
       assert.equal(aic._appendWrapRules('base prompt', PROJECT), 'base prompt');
     });
+
+    it('skips null, undefined or missing content without throwing (#1654)', () => {
+      // The inline check this replaced (`r.content && r.content.trim()`)
+      // threw a TypeError for a row carrying a non-string content.
+      aic._internal.listWrapRules = () => [
+        { id: 6, content: null },
+        { id: 7, content: undefined },
+        { id: 8 },
+        { id: 9, content: 'A usable rule.' }
+      ];
+      let out;
+      assert.doesNotThrow(() => { out = aic._appendWrapRules('base prompt', PROJECT); });
+      assert.match(out, /^base prompt\n\n## Project wrap rules\n/);
+      assert.match(out, /- Rule #9 — A usable rule\.$/);
+    });
   });
 
   describe('run() sends the rules-bearing prompt (tmux path)', () => {
