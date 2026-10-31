@@ -2180,7 +2180,9 @@ function openSettings(name, options) {
   renderLaunchModeSettings(
     project.engine ? project.engine.id : '',
     project.defaultLaunchMode || 'default',
-    project.showLaunchModePicker !== false
+    project.showLaunchModePicker !== false,
+    null,
+    project.engine || null
   );
   // CC-6 (#381): populate the per-project rule lists (async) once the
   // modal markup is in the DOM. project.id is the DB id the API scopes on.
@@ -2231,7 +2233,8 @@ function openSettings(name, options) {
       e.target.value,
       tcLaunchModeForEngine(project, e.target.value),
       showEl ? showEl.checked : (project.showLaunchModePicker !== false),
-      leavesStoredEngine && storedMode !== 'default' ? (project.engine || null) : null
+      leavesStoredEngine && storedMode !== 'default' ? (project.engine || null) : null,
+      project.engine || null
     );
   });
 
@@ -2576,11 +2579,15 @@ function renderProjectMapToggle(engineId, preserveChecked, projectEngine, silent
  *   render dropped because the dropdown moved to another engine; null when
  *   nothing was dropped. Named in a line under the control, so a selection
  *   that changed without the operator touching it is explained where it sits.
+ * @param {object|null} [projectEngine] - The project's own enriched engine, used
+ *   only while the dropdown still names it — `state.engines` omits
+ *   connection-backed ids (e.g. `openclaw:<connId>`), and this is where their
+ *   launch modes come from instead (#1264).
  */
-function renderLaunchModeSettings(engineId, preserveMode, preserveShow, resetFrom = null) {
+function renderLaunchModeSettings(engineId, preserveMode, preserveShow, resetFrom = null, projectEngine = null) {
   const container = document.getElementById('settingsLaunchModeContainer');
   if (!container) return;
-  const profile = (state.engines || []).find(e => e.id === engineId);
+  const profile = tcResolveEngineProfile(state.engines, engineId, projectEngine);
   const enabledEntries = tcHonoredLaunchModes(profile);
   if (enabledEntries.length === 0) {
     container.innerHTML = '';
@@ -2672,17 +2679,30 @@ function renderProjectRulesSection(project) {
       </label>`;
   }).join('');
 
-  const ruleBlocks = PROJECT_RULE_KINDS.map((k) => `
+  // Startup rules ride either the hidden rules-hook or the pasted prime
+  // (lib/sessions.js's `supportsPaste`); an engine with neither channel never
+  // delivers them, independent of this project's own silentPrime choice
+  // (#1269). Resolved against the dropdown's initial value, the same input
+  // the other engine-conditional rows in this modal use at open.
+  const projectEngineProfile = tcResolveEngineProfile(
+    state.engines, project.engine ? project.engine.id : '', project.engine || null
+  );
+  const startupRulesDisposition = tcSettingDisposition('startupRules', null, projectEngineProfile);
+  const ruleBlocks = PROJECT_RULE_KINDS.map((k) => {
+    const unreachable = k.kind === 'startup' && !startupRulesDisposition.applies;
+    return `
     <div class="project-rules-block" data-kind="${k.kind}">
       <div class="form-label">${esc(k.label)}</div>
       <div class="form-hint">${esc(k.hint)}</div>
+      ${unreachable ? `<div class="form-hint" style="color:var(--danger)">${esc(startupRulesDisposition.reason)}</div>` : ''}
       <div class="session-rules-list" id="projRulesList-${k.kind}" aria-live="polite"></div>
       <div class="session-rules-add">
         <textarea class="rules-editor" id="projRuleInput-${k.kind}" rows="2"
                   placeholder="Add a ${k.kind} rule…" spellcheck="false"></textarea>
         <button class="btn btn-small btn-primary" data-action="add-rule" data-kind="${k.kind}">Add</button>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
   return `
     <div class="project-rules-section">
@@ -4675,7 +4695,7 @@ async function doSaveSettings(launchAfter = false) {
     const effShow = body.showLaunchModePicker !== undefined
       ? body.showLaunchModePicker
       : (project2 ? project2.showLaunchModePicker !== false : true);
-    const guardProfile = (state.engines || []).find(e => e.id === body.engine);
+    const guardProfile = tcResolveEngineProfile(state.engines, body.engine, project2 ? project2.engine : null);
     const modeConfig = guardProfile && guardProfile.launchModes && guardProfile.launchModes[effMode];
     if (!effShow && modeConfig && modeConfig.warning) {
       openBypassHiddenModal(body, effMode, modeConfig, settingsTarget, (b) => _submitSettings(b, launchAfter));

@@ -163,6 +163,7 @@ describe('#2189 — the settings modal and an engine change', () => {
         document: { getElementById: (id) => (id === 'settingsLaunchModeContainer' ? container : null) },
         state: { engines: ENGINE_IDS.map(profile) },
         tcHonoredLaunchModes: helpers.tcHonoredLaunchModes,
+        tcResolveEngineProfile: helpers.tcResolveEngineProfile,
         esc: helpers.tcEscapeHtml
       };
       vm.createContext(ctx);
@@ -241,6 +242,7 @@ describe('#2189 — the settings modal and an engine change', () => {
         async _submitSettings(body) { sent.push(body); },
         tcSettingDisposition: () => ({ applies: false }),
         tcLaunchModePatch: helpers.tcLaunchModePatch,
+        tcResolveEngineProfile: helpers.tcResolveEngineProfile,
         collectWrapSectionsSelection: () => undefined,
         openBypassHiddenModal() { assert.fail('no confirmation is expected for a reset to the default mode'); }
       };

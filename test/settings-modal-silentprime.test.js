@@ -59,8 +59,11 @@ describe('Project Settings modal — silentPrime toggle (#103 chunk 2)', () => {
       assert.match(src, /tcSettingDisposition\('silentPrime'/);
       assert.doesNotMatch(src, /profile\.capabilities\.supportsSilentPrime/);
       assert.doesNotMatch(src, /engineId\s*===\s*'claude'/);
-      // Engine resolution from the dropdown's value, not from the project record.
-      assert.match(src, /state\.engines.*\.find\(e\s*=>\s*e\.id\s*===\s*engineId\)/);
+      // Engine resolution from the dropdown's value (falling back to the
+      // project's own engine only while the dropdown still names it), through
+      // the one shared resolver — not a second, local `state.engines.find`
+      // (#1264 migrated the last direct call site, `renderLaunchModeSettings`).
+      assert.match(src, /tcResolveEngineProfile\(state\.engines,\s*engineId/);
     });
 
     it('renders a #settingsSilentPrime checkbox tied to the preserved checked state', () => {

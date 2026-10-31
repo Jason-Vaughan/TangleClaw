@@ -48,6 +48,7 @@ function render({ engine, engineId = 'claude', preserveMode = 'default', preserv
   };
   vm.createContext(ctx);
   vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
+  vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcResolveEngineProfile'), ctx);
   vm.runInContext(liftDeclaration(UI_SRC, 'function renderLaunchModeSettings'), ctx);
 
   ctx.renderLaunchModeSettings(engineId, preserveMode, preserveShow);

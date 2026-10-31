@@ -140,7 +140,12 @@ const PROBES = {
   },
   // Off is what ships — a wake spends a real turn — so a stored `true` is the
   // operator's choice, and it cannot apply on an engine declaring no signature.
-  medusaWake: { shipped: false, chosen: true, inapplicable: true, extras: [] }
+  medusaWake: { shipped: false, chosen: true, inapplicable: true, extras: [] },
+  // No stored config value answers this row at all (#1269) — `applies` reads
+  // only the profile's capabilities, never the project config — so every
+  // probe value here is an arbitrary placeholder that exercises the same
+  // `configWith`/cases plumbing every other row uses.
+  startupRules: { shipped: true, chosen: false, inapplicable: true, extras: [] }
 };
 
 // The silent-prime states every case is crossed with. A caveat row's answer
