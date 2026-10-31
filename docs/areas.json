@@ -149,7 +149,9 @@
         "lib/exec*.js",
         "lib/http-settle.js",
         "lib/orchestration.js",
-        "lib/profile-reconciler.js"
+        "lib/profile-reconciler.js",
+        "lib/usage-windows.js",
+        "lib/model-switch.js"
       ]
     },
     "auth": {
