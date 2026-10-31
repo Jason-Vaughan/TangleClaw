@@ -11,7 +11,7 @@
  * confirmed is a refusal with a code, never a pass.
  */
 
-const { describe, it } = require('node:test');
+const { describe, it, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -177,6 +177,91 @@ describe('#2188 engine-models', () => {
     it('drops cache entries whose slug is not a model id instead of passing them on', () => {
       const read = models.roster(profileOffering(['gpt-6-luna']), cache([...LISTED, { slug: 'bad id; rm' }, { display_name: 'no slug' }, null]));
       assert.deepEqual(read.models.map((m) => m.id), ['gpt-5.6-sol', 'gpt-6-luna', 'gpt-reserve']);
+    });
+  });
+
+  describe('the display cache (#2220)', () => {
+    afterEach(() => models._internals._clearDisplayCache());
+
+    /**
+     * A Codex cache reader seam that counts how many times it was actually
+     * invoked, with a clock the test can move. @returns {object}
+     */
+    function countingCache(cached, { display, now } = {}) {
+      let reads = 0;
+      let clock = now === undefined ? NOW : now;
+      return {
+        display,
+        now: () => clock,
+        env: {},
+        homedir: () => '/home/op',
+        readFile: (file) => {
+          reads++;
+          assert.equal(file, '/home/op/.codex/models_cache.json');
+          return JSON.stringify({ fetched_at: '2026-10-07T21:00:00Z', models: cached });
+        },
+        _reads: () => reads,
+        _advance: (ms) => { clock += ms; }
+      };
+    }
+
+    it('is never consulted without deps.display: true — a save/launch read always re-invokes the reader', () => {
+      const p = profileOffering(['gpt-6-luna']);
+      const deps = countingCache(LISTED);
+      models.roster(p, deps);
+      models.roster(p, deps);
+      assert.equal(deps._reads(), 2, 'no display: true means no caching, ever');
+    });
+
+    it('a display read inside the TTL reuses the prior read instead of invoking the reader again', () => {
+      const p = profileOffering(['gpt-6-luna']);
+      const deps = countingCache(LISTED, { display: true });
+      const first = models.roster(p, deps);
+      deps._advance(models._internals.DISPLAY_CACHE_TTL_MS - 1);
+      const second = models.roster(p, deps);
+      assert.equal(deps._reads(), 1, 'the second read within the TTL must not touch the file again');
+      assert.deepEqual(second, first);
+    });
+
+    it('a display read at or past the TTL invokes the reader again', () => {
+      const p = profileOffering(['gpt-6-luna']);
+      const deps = countingCache(LISTED, { display: true });
+      models.roster(p, deps);
+      deps._advance(models._internals.DISPLAY_CACHE_TTL_MS);
+      models.roster(p, deps);
+      assert.equal(deps._reads(), 2, 'a read at/after the TTL boundary must refresh');
+    });
+
+    it('offeredWithAvailability and checkSelection thread deps through and share one cached read', () => {
+      const p = profileOffering(['gpt-6-luna']);
+      const deps = countingCache(LISTED, { display: true });
+      models.offeredWithAvailability(p, deps);
+      models.checkSelection(p, 'gpt-6-luna', deps);
+      assert.equal(deps._reads(), 1, 'both callers must share the one cached roster read');
+    });
+
+    it('keys the cache on the reader + file, not the engine: two profiles sharing a file share one read', () => {
+      const deps = countingCache(LISTED, { display: true });
+      models.roster(profileOffering(['gpt-6-luna']), deps);
+      models.roster({ id: 'codex2', name: 'Codex 2', models: { flag: '--model', offered: ['gpt-6-luna'], roster: { source: 'codex-models-cache' } } }, deps);
+      assert.equal(deps._reads(), 1, 'same reader + same file: one read serves both profiles');
+    });
+
+    it('a fresh (non-display) call bypasses the cache even moments after a display read filled it', () => {
+      const p = profileOffering(['gpt-6-luna']);
+      const deps = countingCache(LISTED, { display: true });
+      models.roster(p, deps);
+      models.roster(p, { ...deps, display: false });
+      assert.equal(deps._reads(), 2, 'a save/launch read must never reuse a display-cached value');
+    });
+
+    it('_clearDisplayCache empties the cache so the next display read refreshes', () => {
+      const p = profileOffering(['gpt-6-luna']);
+      const deps = countingCache(LISTED, { display: true });
+      models.roster(p, deps);
+      models._internals._clearDisplayCache();
+      models.roster(p, deps);
+      assert.equal(deps._reads(), 2);
     });
   });
 
