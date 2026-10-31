@@ -31,14 +31,44 @@ function runShell(command) {
 }
 
 /**
+ * Every `{pid, ppid, args}` row visible in `/proc` — the fallback when `ps`
+ * itself is missing, e.g. `node:22-bookworm-slim` without `procps` (#2752).
+ * `/proc` is a kernel-provided virtual filesystem, present regardless of
+ * which userland utilities are installed.
+ * @returns {Array<{pid: number, ppid: number, args: string}>}
+ */
+function procfsRows() {
+  const rows = [];
+  for (const name of fs.readdirSync('/proc')) {
+    if (!/^\d+$/.test(name)) continue;
+    const pid = Number(name);
+    try {
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, 'latin1');
+      const ppid = Number(stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/)[1]);
+      const args = fs.readFileSync(`/proc/${pid}/cmdline`, 'latin1').split('\0').filter(Boolean).join(' ');
+      rows.push({ pid, ppid, args });
+    } catch {
+      // exited between readdir and read, or unreadable — not part of the tree we can see
+    }
+  }
+  return rows;
+}
+
+/**
  * The argument lists of a process and everything below it.
  * @param {number} pid - Root process id.
  * @returns {string}
  */
 function argvOfTree(pid) {
-  const all = execFileSync('ps', ['-axo', 'pid=,ppid=,args='], { encoding: 'utf8' }).split('\n');
-  const rows = all.map((l) => l.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/)).filter(Boolean)
-    .map((m) => ({ pid: Number(m[1]), ppid: Number(m[2]), args: m[3] }));
+  let rows;
+  try {
+    const all = execFileSync('ps', ['-axo', 'pid=,ppid=,args='], { encoding: 'utf8' }).split('\n');
+    rows = all.map((l) => l.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/)).filter(Boolean)
+      .map((m) => ({ pid: Number(m[1]), ppid: Number(m[2]), args: m[3] }));
+  } catch (err) {
+    if (!(err && err.code === 'ENOENT' && process.platform === 'linux')) throw err;
+    rows = procfsRows(); // no procps in this container (#2752) — read the process tree straight from /proc
+  }
   const wanted = new Set([pid]);
   for (let grew = true; grew;) {
     grew = false;

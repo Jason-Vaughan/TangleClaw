@@ -74,6 +74,7 @@
     "test/git-probe.test.js",
     "test/github-checks.test.js",
     "test/github-facts.test.js",
+    "test/global-engine-settings-ui.test.js",
     "test/global-rules-boundary.test.js",
     "test/global-rules-reset-button.test.js",
     "test/governance-drift-badge.test.js",

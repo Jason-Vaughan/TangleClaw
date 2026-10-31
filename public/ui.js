@@ -4830,6 +4830,94 @@ async function confirmBypassHidden() {
  * after a scare will wonder.
  * @returns {Promise<void>}
  */
+/**
+ * The Global Settings "Engine Settings" panel body for one engine's
+ * inventory row (#2747, consuming `GET /api/engines/inventory` /
+ * `lib/engine-tabs.js`). Read-only introspection — identity, generated-config
+ * carrier, status page, declared capability dispositions, and
+ * locally-discovered extensions — in the same ADR 0013 "takes effect or says
+ * why not" shape the rest of the settings surfaces use: a declared absence
+ * renders its stated reason rather than nothing.
+ *
+ * @param {object} row - One inventory row (`engineInventoryRow` shape).
+ * @returns {string} HTML for the panel body.
+ */
+function renderEngineInventorySummary(row) {
+  if (!row) return '<div class="form-hint">No inventory for this engine.</div>';
+
+  const cf = row.configFormat || {};
+  const configHtml = cf.filename
+    ? `<div class="form-hint">Writes to <code>${esc(cf.filename)}</code> (${esc(cf.syntax || 'unknown format')}, via ${esc(cf.generator || 'unknown generator')}).</div>`
+    : `<div class="form-hint">No generated config for this engine: ${esc(cf.absentReason || 'not declared')}.</div>`;
+
+  const statusHtml = row.statusPage && row.statusPage.url
+    ? `<div class="form-hint">Status page: <code>${esc(row.statusPage.url)}</code>${row.statusPage.componentName ? ` (${esc(row.statusPage.componentName)})` : ''}.</div>`
+    : '<div class="form-hint">No status page declared for this engine.</div>';
+
+  const caps = row.capabilities || {};
+  const capsHtml = `
+    <div class="form-hint">Startup prime prompt: ${caps.supportsPrimePrompt ? 'supported' : 'not supported'}.</div>
+    <div class="form-hint">Silent prime: ${caps.silentPrimeSupported ? 'supported' : 'not supported'}.</div>`;
+
+  const ext = row.extensions || {};
+  let extHtml;
+  if (!ext.probed) {
+    extHtml = `<div class="form-hint">Installed extensions: not checked — ${esc(ext.reason || 'no known convention for this engine')}.</div>`;
+  } else {
+    const listOrNone = (label, arr) => `<div class="form-hint">${esc(label)}: ${(arr && arr.length) ? arr.map((x) => esc(x)).join(', ') : 'none found'}.</div>`;
+    extHtml = `${listOrNone('Plugins', ext.plugins)}${listOrNone('Skills', ext.skills)}${listOrNone('MCP servers', ext.mcpServers)}`;
+  }
+
+  return `
+    <div class="form-hint"><strong>${esc(row.name)}</strong> (<code>${esc(row.id)}</code>)${row.pickerHidden ? ' — hidden from the create picker' : ''}.</div>
+    ${configHtml}
+    ${statusHtml}
+    ${capsHtml}
+    ${extHtml}`;
+}
+
+/**
+ * Fetches `GET /api/engines/inventory` once per Global Settings open and
+ * wires the engine selector to re-render its summary — delegated to the
+ * stable outer container (`#gsEngineSettingsContainer`), the same pattern
+ * `renderSilentPrimeToggle`'s container listener uses, because a direct
+ * listener on the `<select>` dies the moment a re-render replaces it.
+ * Covers every registered engine, `pickerHidden` ones (OpenClaw) included —
+ * this is introspection over the inventory endpoint, not the create picker.
+ */
+async function _loadEngineInventorySection() {
+  const container = document.getElementById('gsEngineSettingsContainer');
+  if (!container) return;
+  const data = await api('/api/engines/inventory');
+  if (!data || !Array.isArray(data.engines)) {
+    container.innerHTML = `<div class="form-hint">Could not load engine inventory: ${esc(api.lastError || 'unknown error')}</div>`;
+    return;
+  }
+  const rows = data.engines;
+  if (rows.length === 0) {
+    container.innerHTML = '<div class="form-hint">No registered engines.</div>';
+    return;
+  }
+  const selectedId = rows[0].id;
+  container.innerHTML = `
+    <div class="form-group">
+      <label class="form-label" for="gsEngineInventorySelect">Engine</label>
+      <select class="form-select" id="gsEngineInventorySelect">${tcEngineInventoryOptions(rows, selectedId, esc)}</select>
+    </div>
+    <div id="gsEngineInventoryBody">${renderEngineInventorySummary(rows[0])}</div>`;
+
+  // `.onchange`, not `addEventListener`: this container's own innerHTML
+  // reset above already gives every open a fresh node under the current
+  // single call-site, but assigning the single-slot handler rather than
+  // adding one keeps that true if a future caller (a "Refresh" button, say)
+  // ever invokes this loader again without resetting the container first.
+  container.onchange = (e) => {
+    if (e.target.id !== 'gsEngineInventorySelect') return;
+    const row = rows.find((r) => r.id === e.target.value);
+    document.getElementById('gsEngineInventoryBody').innerHTML = renderEngineInventorySummary(row);
+  };
+}
+
 async function _loadAccountSection() {
   const box = document.getElementById('gsAccountSection');
   if (!box) return;
@@ -5317,6 +5405,11 @@ function openGlobalSettings() {
       </div>
     </div>
 
+    <div class="gs-section-label">Engine Settings</div>
+    <div class="form-group" id="gsEngineSettingsContainer">
+      <div class="form-hint">Loading engine inventory…</div>
+    </div>
+
     <div class="gs-section-label">Diagnostics</div>
     <div class="form-group">
       <button type="button" class="btn" id="gsRestartBtn"
@@ -5378,6 +5471,7 @@ function openGlobalSettings() {
   _loadCredentialSection();
   _loadAccountSection();
   _loadRecoveryCodesSection();
+  _loadEngineInventorySection();
   // #2031: the operator bridge's controls. The panel is its own script
   // (operator-bridge-panel.js); a page that has not loaded it shows no section.
   if (typeof window.tcMountOperatorBridge === 'function') {
@@ -5482,18 +5576,24 @@ let createData = { name: '', engine: '', defaultLaunchMode: 'default', showLaunc
 
 function openCreateModal() {
   createStep = 0;
+  // Resolved against what is installed, not read straight from config. The
+  // drawer POSTs this value, so seeding it from `config.defaultEngine`
+  // short-circuited the server's resolver and created projects bound to an
+  // engine the machine does not have (#707).
+  const initialEngine = resolvePickerEngine(state.engines, state.config ? state.config.defaultEngine : '');
+  const profile = (state.engines || []).find((e) => e.id === initialEngine);
+  // #2747: seeded from the chosen engine's own profile, not a hardcoded
+  // literal — see `createNext`'s step-1 branch for the re-seed on engine
+  // change. #626's eyes-open guard (`showLaunchModePicker`) rides along
+  // unchanged: it is a wizard-level default, not an engine one.
+  const seed = tcEngineCreationDefaults(profile);
   createData = {
     name: '',
-    // Resolved against what is installed, not read straight from config. The
-    // drawer POSTs this value, so seeding it from `config.defaultEngine`
-    // short-circuited the server's resolver and created projects bound to an
-    // engine the machine does not have (#707).
-    engine: resolvePickerEngine(state.engines, state.config ? state.config.defaultEngine : ''),
-    defaultLaunchMode: 'default',
-    // #626: the pair of `defaultLaunchMode`. Shipped default, so a wizard the
-    // operator clicks straight through creates exactly what it did before.
-    showLaunchModePicker: true,
-    silentPrime: true,
+    engine: initialEngine,
+    defaultLaunchMode: seed.defaultLaunchMode,
+    showLaunchModePicker: seed.showLaunchModePicker,
+    silentPrime: seed.silentPrime,
+    _defaultsSeededFor: initialEngine,
     tags: ''
   };
   renderCreateStep();
@@ -5594,6 +5694,7 @@ function renderCreateStep() {
         </div>`;
 
     body.innerHTML = `
+      <div class="form-hint">Suggested defaults for ${esc((profile && profile.name) || createData.engine)} — editable below, applied once when this project is created, and never changed automatically afterward.</div>
       ${launchModeHtml}
       ${silentPrimeHtml}
       ${!launchModeHtml ? '<div class="form-hint">This engine offers no launch postures to choose from.</div><br>' : ''}
@@ -5625,6 +5726,12 @@ function renderCreateStep() {
 }
 
 
+/**
+ * #2747: step 1's engine branch re-seeds First-Session Settings from the
+ * newly-chosen engine's own profile, but only on an actual change — picking
+ * the SAME engine again (Back then forward) never clobbers edits already
+ * made on step 2. Applied once; never re-read after `submitCreate` posts it.
+ */
 function createNext() {
   if (createStep === 0) {
     const name = document.getElementById('createName').value.trim();
@@ -5636,7 +5743,12 @@ function createNext() {
     }
     createData.name = name;
   } else if (createStep === 1) {
-    createData.engine = document.getElementById('createEngine').value;
+    const chosen = document.getElementById('createEngine').value;
+    if (createData._defaultsSeededFor !== chosen) {
+      const seed = tcEngineCreationDefaults((state.engines || []).find((e) => e.id === chosen));
+      Object.assign(createData, seed, { _defaultsSeededFor: chosen });
+    }
+    createData.engine = chosen;
   } else if (createStep === 2) {
     const modeEl = document.getElementById('createLaunchMode');
     if (modeEl) createData.defaultLaunchMode = modeEl.value;
