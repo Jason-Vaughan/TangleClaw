@@ -2270,7 +2270,10 @@ function openSettings(name, options) {
  *
  * @param {string} engineId - Engine id from the dropdown's current value
  * @param {object|null} [projectEngine] - The project's own enriched engine, for
- *   the connection-backed ids `state.engines` omits.
+ *   the connection-backed ids `state.engines` omits. Also the carrier for
+ *   `pluginGoverned` (#1268) — a per-PROJECT fact `enrichProject` attaches to
+ *   this same object, not a per-engine one, so it rides here rather than the
+ *   candidate `profile` resolved below.
  */
 function renderGeneratedConfigNotice(engineId, projectEngine) {
   const container = document.getElementById('settingsGeneratedConfigContainer');
@@ -2279,7 +2282,11 @@ function renderGeneratedConfigNotice(engineId, projectEngine) {
   // The enriched project carries no `rules`, so the disposition's `chosen` and
   // `level` are the shipped-default answer here. Neither reaches the operator:
   // this renders `reason`, which turns on the engine alone.
-  const disposition = tcSettingDisposition('generatedConfig', null, profile);
+  // `facts.pluginGoverned` is the one addition (#1268): read off `projectEngine`
+  // because it is a project fact, not a fact about whichever engine is being
+  // previewed in the dropdown.
+  const facts = { pluginGoverned: Boolean(projectEngine && projectEngine.pluginGoverned) };
+  const disposition = tcSettingDisposition('generatedConfig', null, profile, facts);
   container.innerHTML = disposition.applies
     ? ''
     : `<div class="form-hint form-hint--caveat">${esc(disposition.reason)}</div>`;

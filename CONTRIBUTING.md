@@ -59,6 +59,24 @@ backlog_service_repo: Jason-Vaughan/TangleClaw
 Add other keys (for example `test_command`) only when this checkout needs them. The advisories
 re-evaluate at the next session start or `/clear`.
 
+### Install the Prawduct plugin once — adding the marketplace is not enough
+
+This repo's `.claude/settings.json` declares the `prawduct` marketplace (`source: github`) and
+references `prawduct@prawduct`. As of Claude Code v2.1.195, a project declaring an externally-sourced
+marketplace plugin this way does **not** auto-load it — Claude Code adds the marketplace once you
+trust the folder, but each collaborator still has to install the plugin themselves, once, before
+their first session:
+
+```bash
+claude plugin install prawduct@prawduct --scope project
+```
+
+Until you do, Claude Code will tell you (it reports the plugin as not installed and prints this same
+command) — but TangleClaw cannot: it detects governance from the committed install reference alone,
+which is present the moment you clone, before you've installed anything. That reference says the
+project is meant to be governed, not that a plugin is loaded in your current session (#1276). Run the
+install command above first; don't take governance-looking advisories as evidence it already happened.
+
 ## Running Tests
 
 ```bash

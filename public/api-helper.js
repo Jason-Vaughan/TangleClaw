@@ -5165,11 +5165,17 @@
    * @param {string} setting - A key of `TC_SETTING_DEFAULTS`.
    * @param {object|null} projConfig - Project config or record carrying the value.
    * @param {object|null} engine - Engine object or profile.
+   * @param {{pluginGoverned?: boolean}} [facts] - Per-project facts no profile
+   *   carries. Only `generatedConfig` reads this today (#1268) — whether the
+   *   Prawduct V2 plugin governs this project, which is a fact about the
+   *   project's directory, not the engine. Absent (`undefined`) answers the
+   *   same as `{ pluginGoverned: false }`, so every existing caller is
+   *   unaffected.
    * @returns {{setting: string, value: *, applies: boolean, chosen: boolean,
    *   reason: string|null, evidence: string|null, caveat: string|null,
    *   level: string|null}}
    */
-  function tcSettingDisposition(setting, projConfig, engine) {
+  function tcSettingDisposition(setting, projConfig, engine, facts) {
     const name = tcEngineDisplayName(engine);
     const reader = TC_SETTING_READERS[setting];
     const has = projConfig && Object.prototype.hasOwnProperty.call(projConfig, setting);
@@ -5248,13 +5254,28 @@
       // The engine-specific half of the sentence is read off the profile the
       // engines API already ships, not restated here — so a sixth engine with
       // no config file needs no edit in this file at all. Mirrors the server.
-      applies = Boolean(engine && engine.configFormat && engine.configFormat.filename);
+      const hasCarrier = Boolean(engine && engine.configFormat && engine.configFormat.filename);
+      // Governance is a per-PROJECT fact (#1268), not a per-engine one, so it
+      // cannot come off the profile the way `hasCarrier` does — `facts` is the
+      // side channel for it. A governed project deferring to the plugin on a
+      // non-`claude-md` carrier is a different reason than having no carrier
+      // at all, even though both answer `applies: false`. Mirrors the server.
+      const deferredToPlugin = Boolean(facts && facts.pluginGoverned && hasCarrier
+        && (!engine.configFormat.generator || engine.configFormat.generator !== 'claude-md'));
+      applies = hasCarrier && !deferredToPlugin;
       if (!applies) {
-        const declared = engine && engine.configFormat && engine.configFormat.absentReason;
-        reason = name + ' has no config file, so the project rule settings and TangleClaw '
-          + 'guides it would carry never reach a session here.'
-          + (declared ? ' ' + declared : '');
-        evidence = 'configFormat.filename is null';
+        if (!hasCarrier) {
+          const declared = engine && engine.configFormat && engine.configFormat.absentReason;
+          reason = name + ' has no config file, so the project rule settings and TangleClaw '
+            + 'guides it would carry never reach a session here.'
+            + (declared ? ' ' + declared : '');
+          evidence = 'configFormat.filename is null';
+        } else {
+          reason = 'This project is governed by the Prawduct V2 plugin, so TangleClaw defers '
+            + name + '\'s config to the plugin — there is no operational block for a '
+            + 'non-claude-md carrier here.';
+          evidence = 'pluginGoverned is true and configFormat.generator is not claude-md';
+        }
       }
     } else if (setting === 'medusaWake') {
       // The engine's own live-probed pane signature, read off the profile the

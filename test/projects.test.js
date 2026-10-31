@@ -1324,6 +1324,27 @@ describe('projects', () => {
           `project ${p.name} missing governanceState`);
       }
     });
+
+    it('a plugin-governed project on a non-claude engine reads pluginGoverned true even though governanceState is not-applicable (#1268)', async () => {
+      // governanceState gates on engineId === 'claude' and answers
+      // not-applicable for anything else — which is exactly why the
+      // generated-config disposition cannot use it (see lib/projects.js
+      // enrichProject). `engine.pluginGoverned` is the raw, engine-independent
+      // fact `writeEngineConfig` itself already acts on.
+      makeProject('gov-plugin-codex', {
+        engine: 'codex',
+        settings: { enabledPlugins: { 'prawduct@prawduct': true } }
+      });
+      const enriched = await projects.getProject('gov-plugin-codex');
+      assert.equal(enriched.governanceState, 'not-applicable');
+      assert.equal(enriched.engine.pluginGoverned, true);
+    });
+
+    it('an ungoverned project on any engine reads pluginGoverned false', async () => {
+      makeProject('gov-plugin-codex-off', { engine: 'codex' });
+      const enriched = await projects.getProject('gov-plugin-codex-off');
+      assert.equal(enriched.engine.pluginGoverned, false);
+    });
   });
 
   describe('syncAllProjects', () => {
