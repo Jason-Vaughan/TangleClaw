@@ -16,6 +16,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { initRepo } = require('./_temp-repo');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -174,6 +175,18 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.equal(savedConfig.effort, 'high');
   });
 
+  it('persists the new config BEFORE refreshing the session, so an interrupted refresh never leaves the old config behind', () => {
+    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    let engineIdWhenRefreshRan = null;
+    const result = modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
+      ...target(),
+      checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      refreshSession: () => { engineIdWhenRefreshRan = store.projects.get(project.id).engineId; }
+    });
+    assert.equal(result.ok, true);
+    assert.equal(engineIdWhenRefreshRan, 'fake', 'the project row must already carry the new engine by the time refresh runs');
+  });
+
   it('reports sameProvider true and still refreshes when the engine is unchanged', () => {
     store.sessions.start({ projectId: project.id, engineId: 'fake', tmuxSession: 'x', primePrompt: null });
     store.projects.update(project.id, { engine_id: 'fake' });
@@ -195,7 +208,7 @@ describe('lib/model-switch — switchSessionModel', () => {
   });
 
   it('outage-takeover: snapshots a dirty worktree onto a wip branch, terminates the session, and applies the switch', () => {
-    execFileSync('git', ['init', '-q'], { cwd: projectPath });
+    initRepo(projectPath, ['-q']);
     execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: projectPath });
     execFileSync('git', ['config', 'user.name', 'Test'], { cwd: projectPath });
     fs.writeFileSync(path.join(projectPath, 'committed.txt'), 'a\n');
@@ -232,7 +245,7 @@ describe('lib/model-switch — switchSessionModel', () => {
   });
 
   it('outage-takeover: a clean worktree is left uncommitted, with wipBranch null', () => {
-    execFileSync('git', ['init', '-q'], { cwd: projectPath });
+    initRepo(projectPath, ['-q']);
     execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: projectPath });
     execFileSync('git', ['config', 'user.name', 'Test'], { cwd: projectPath });
     fs.writeFileSync(path.join(projectPath, 'committed.txt'), 'a\n');
@@ -247,6 +260,83 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.equal(result.ok, true);
     assert.equal(result.wipBranch, null);
     assert.equal(result.handoff.snapshot.committed, false);
+  });
+
+  it('outage-takeover: refuses, and does not touch the project config, when terminating the session fails', () => {
+    initRepo(projectPath, ['-q']);
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: projectPath });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: projectPath });
+    fs.writeFileSync(path.join(projectPath, 'committed.txt'), 'a\n');
+    execFileSync('git', ['add', '-A'], { cwd: projectPath });
+    execFileSync('git', ['commit', '-q', '-m', 'initial'], { cwd: projectPath });
+    fs.writeFileSync(path.join(projectPath, 'uncommitted.txt'), 'wip\n');
+
+    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const result = modelSwitch.switchSessionModel(project.name, {
+      engine: 'fake', model: 'claude-sonnet-5', mode: 'outage-takeover'
+    }, { ...target(), branchTimestamp: () => 9999, killSession: () => ({ error: 'tmux has-session: no server running' }) });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'TERMINATE_FAILED');
+    assert.match(result.error, /tmux has-session/);
+    // The snapshot itself already landed — the branch name is still reported
+    // so nothing is lost, even though the overall call failed.
+    assert.equal(result.wipBranch, `wip/${project.name}-outage-9999`);
+    assert.equal(store.projects.get(project.id).engineId, 'claude', 'engine must NOT be switched when termination failed');
+  });
+
+  it('outage-takeover: a colliding branch name is disambiguated with a numeric suffix', () => {
+    initRepo(projectPath, ['-q']);
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: projectPath });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: projectPath });
+    fs.writeFileSync(path.join(projectPath, 'committed.txt'), 'a\n');
+    execFileSync('git', ['add', '-A'], { cwd: projectPath });
+    execFileSync('git', ['commit', '-q', '-m', 'initial'], { cwd: projectPath });
+    // A prior outage already claimed this exact branch name.
+    execFileSync('git', ['branch', `wip/${project.name}-outage-9999`], { cwd: projectPath });
+    execFileSync('git', ['checkout', '-q', 'main'], { cwd: projectPath }).toString();
+    fs.writeFileSync(path.join(projectPath, 'uncommitted.txt'), 'wip\n');
+
+    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const result = modelSwitch.switchSessionModel(project.name, {
+      engine: 'fake', model: 'claude-sonnet-5', mode: 'outage-takeover'
+    }, { ...target(), branchTimestamp: () => 9999, killSession: () => ({ error: null }) });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.wipBranch, `wip/${project.name}-outage-9999-1`);
+  });
+
+  it('outage-takeover: restores the original branch when the snapshot commit itself fails', () => {
+    initRepo(projectPath, ['-q']);
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: projectPath });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: projectPath });
+    fs.writeFileSync(path.join(projectPath, 'committed.txt'), 'a\n');
+    execFileSync('git', ['add', '-A'], { cwd: projectPath });
+    execFileSync('git', ['commit', '-q', '-m', 'initial'], { cwd: projectPath });
+    fs.writeFileSync(path.join(projectPath, 'uncommitted.txt'), 'wip\n');
+    const originalBranch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: projectPath, encoding: 'utf8' }).trim();
+
+    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    let commitAttempted = false;
+    const result = modelSwitch.switchSessionModel(project.name, {
+      engine: 'fake', model: 'claude-sonnet-5', mode: 'outage-takeover'
+    }, {
+      ...target(),
+      branchTimestamp: () => 4242,
+      execGit: (args) => {
+        if (args[0] === 'commit') {
+          commitAttempted = true;
+          throw new Error('commit failed: nothing configured to sign with');
+        }
+        return execFileSync('git', args, { cwd: projectPath, encoding: 'utf8' });
+      }
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'SNAPSHOT_FAILED');
+    assert.equal(commitAttempted, true);
+    const nowOn = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: projectPath, encoding: 'utf8' }).trim();
+    assert.equal(nowOn, originalBranch, 'worktree must be restored to the branch it started on, not left on the half-made recovery branch');
   });
 });
 

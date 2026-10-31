@@ -69,6 +69,38 @@ describe('lib/usage-windows — Pacific time math', () => {
     assert.equal(parts.hour, 9);
     assert.equal(parts.minute, 0);
   });
+
+  it('previousWeeklyResetAtMs is the most recent Thursday 06:00 Pacific at or before now', () => {
+    const wedNoon = uw.pacificWallClockToUtcMs(2026, 10, 28, 12, 0);
+    const prev = uw.previousWeeklyResetAtMs(wedNoon);
+    assert.deepEqual(uw.pacificParts(prev), { year: 2026, month: 10, day: 22, hour: 6, minute: 0, weekday: 4 });
+  });
+
+  it('previousWeeklyResetAtMs on Thursday before 06:00 lands on the PRIOR week\'s reset', () => {
+    const thu5am = uw.pacificWallClockToUtcMs(2026, 10, 29, 5, 0);
+    const prev = uw.previousWeeklyResetAtMs(thu5am);
+    assert.equal(uw.pacificParts(prev).day, 22);
+  });
+
+  it('previousWeeklyResetAtMs on Thursday at/after 06:00 lands on TODAY\'s reset', () => {
+    const thu7am = uw.pacificWallClockToUtcMs(2026, 10, 29, 7, 0);
+    const prev = uw.previousWeeklyResetAtMs(thu7am);
+    assert.equal(uw.pacificParts(prev).day, 29);
+  });
+
+  it('previousWeeklyResetAtMs stays exactly on 06:00 Pacific across the fall-back DST transition (not off by an hour)', () => {
+    // Nov 1 2026 is when America/Los_Angeles falls back from PDT to PST, so
+    // the week Thu Oct 29 06:00 PDT -> Thu Nov 5 06:00 PST spans 169 real
+    // hours, not the 168 a fixed-millisecond subtraction would assume.
+    const beforeNov5Reset = uw.pacificWallClockToUtcMs(2026, 11, 5, 3, 0);
+    const prev = uw.previousWeeklyResetAtMs(beforeNov5Reset);
+    assert.deepEqual(uw.pacificParts(prev), { year: 2026, month: 10, day: 29, hour: 6, minute: 0, weekday: 4 });
+  });
+
+  it('previousWeeklyResetAtMs at the exact reset instant returns that same instant, not a week earlier', () => {
+    const exactReset = uw.pacificWallClockToUtcMs(2026, 10, 29, 6, 0);
+    assert.equal(uw.previousWeeklyResetAtMs(exactReset), exactReset);
+  });
 });
 
 describe('lib/usage-windows — windowKind policy', () => {
@@ -243,6 +275,27 @@ describe('lib/usage-windows — getUsageWindows composition', () => {
       const result = uw.getUsageWindows({ claudeProjectsDir: projectDir, codexSessionsDir: path.join(dir, 'no-codex'), nowMs });
       assert.equal(result.byProviderModel.claude['claude-sonnet-5'].fiveHour.inputTokens, 0);
       assert.equal(result.byProviderModel.claude['claude-sonnet-5'].weekly.inputTokens, 99);
+    });
+  });
+
+  it('the weekly window excludes a record from just before the Thursday 06:00 reset, across the fall-back DST transition', () => {
+    withTmpDir((dir) => {
+      const projectDir = path.join(dir, 'claude', 'p');
+      fs.mkdirSync(projectDir, { recursive: true });
+      // now = Thu Nov 5 2026 03:00 PST, inside the week that spans the Nov 1
+      // fall-back transition. The correct weekly window starts Thu Oct 29
+      // 06:00 PDT; a record one minute before THAT reset belongs to the
+      // PRIOR week and must be excluded, even though a fixed-168h
+      // subtraction from the next reset would have included it.
+      const nowMs = uw.pacificWallClockToUtcMs(2026, 11, 5, 3, 0);
+      const justBeforePriorReset = new Date(uw.pacificWallClockToUtcMs(2026, 10, 29, 5, 59)).toISOString();
+      const justAfterPriorReset = new Date(uw.pacificWallClockToUtcMs(2026, 10, 29, 6, 1)).toISOString();
+      fs.writeFileSync(path.join(projectDir, 'a.jsonl'), [
+        JSON.stringify({ type: 'assistant', timestamp: justBeforePriorReset, message: { model: 'claude-sonnet-5', usage: { input_tokens: 1, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } }),
+        JSON.stringify({ type: 'assistant', timestamp: justAfterPriorReset, message: { model: 'claude-sonnet-5', usage: { input_tokens: 2, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } })
+      ].join('\n') + '\n');
+      const result = uw.getUsageWindows({ claudeProjectsDir: projectDir, codexSessionsDir: path.join(dir, 'no-codex'), nowMs });
+      assert.equal(result.byProviderModel.claude['claude-sonnet-5'].weekly.inputTokens, 2, 'only the record AFTER the correct reset instant counts');
     });
   });
 });
