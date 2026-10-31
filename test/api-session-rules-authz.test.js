@@ -250,22 +250,25 @@ describe('api/session-rules caller gate (#2013)', () => {
       assert.equal(store.sessionRules.get(governing.id).content, governing.content);
     });
 
-    // #1696 (Architect ruling): a text change to an ACTIVE project rule goes
-    // through approval regardless of who makes it — even the operator's own
-    // edit files a replacement proposal rather than rewriting the rule in
-    // place, so the rule keeps governing its approved text until that
-    // proposal is approved. This test moved from asserting the old in-place
-    // rewrite to asserting the new proposal contract (202, not a weakening).
-    it('even the operator\'s edit files a replacement proposal instead of rewriting the rule', async () => {
+    // #1696 (Architect ruling) made a text change to an ACTIVE project rule
+    // go through approval regardless of who made it, even the operator's own
+    // edit. #2325 narrows that: the operator's OWN verified edit now applies
+    // in one step as an already-approved replacement, because the extra
+    // approval round-trip was the operator approving themselves. A session
+    // acting on a rule's behalf is unaffected — see #1696's surviving
+    // coverage for a bound session's proposal/restore flows elsewhere in
+    // this file, and the restore (rollback) door, which #2325 left alone
+    // ('rolling an ACTIVE rule back to different text files a replacement
+    // proposal...' below).
+    it('the operator\'s own edit of an active rule governs immediately — no proposal round-trip (#2325)', async () => {
       const res = await request('PUT', `/api/session-rules/${governing.id}`, { content: 'operator edit' }, asOperator);
-      assert.equal(res.status, 202);
-      assert.ok(res.data.replacementProposed);
-      assert.equal(res.data.replacementProposed.content, 'operator edit');
-      assert.equal(res.data.replacementProposed.replacesRuleId, governing.id);
-      assert.equal(res.data.replacementProposed.replacementOrigin, 'edit');
-      assert.equal(newestVersion(res.data.replacementProposed.id).changedBy, 'operator');
-      // The original rule is untouched — still governing its approved text.
-      assert.equal(store.sessionRules.get(governing.id).content, governing.content);
+      assert.equal(res.status, 200);
+      assert.equal(res.data.replacementProposed, undefined);
+      assert.equal(res.data.content, 'operator edit');
+      assert.equal(res.data.status, 'active');
+      assert.equal(newestVersion(governing.id).changedBy, 'operator');
+      // The rule itself now carries the new text — nothing is left pending.
+      assert.equal(store.sessionRules.get(governing.id).content, 'operator edit');
     });
 
     it('editing an active rule that already has a pending replacement is refused REPLACEMENT_PENDING, not filed a second time', async () => {

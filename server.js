@@ -3199,7 +3199,16 @@ function refreshDeliveredRules(before, after) {
   // the approved rule's own switch says, so a rule becoming or ceasing to be
   // active counts as well as this rule entering or leaving the set.
   const active = (rule) => !!rule && rule.kind === 'startup' && rule.status === 'active';
-  if (inForce(before) === inForce(after) && active(before) === active(after)) return {};
+  // #2325: a verified-operator direct edit changes an active rule's TEXT in
+  // place without moving it into or out of force — inForce/active alone miss
+  // it, and a running session would keep reading the pre-edit text from its
+  // delivered files despite the change the operator was just shown take
+  // effect. The old (proposal-filing) edit path never reaches here with
+  // different content — it always returns the rule unchanged — so this only
+  // ever fires for the new one-step path.
+  const contentChangedWhileActive = !!before && !!after && active(before) && active(after)
+    && before.content !== after.content;
+  if (inForce(before) === inForce(after) && active(before) === active(after) && !contentChangedWhileActive) return {};
   const projectId = (after || before).projectId;
   try {
     const verdict = rulesRefresh.refreshProjectRules(projectId);
@@ -3341,12 +3350,21 @@ route('PUT', '/api/session-rules/:id', (req, res, params, body) => {
         'This is a shipped Master boundary rule — editing or disabling it requires confirmBaselineEdit: true (Restore defaults always recovers the baseline)',
         'CONFIRM_REQUIRED');
     }
-    const { confirmBaselineEdit, changedBy: _claimedBy, ...updates } = body;
-    const rule = store.sessionRules.update(Number(params.id), { ...updates, changedBy: caller.changedBy });
-    // #1696: a text change to an active, non-master rule files a replacement
-    // proposal instead of rewriting the rule — `rule` here is the ORIGINAL
-    // rule, unchanged, plus `replacementProposed`. 202 says so; the rule
-    // itself still answers 200 for every ordinary (non-deferred) update.
+    // #2325: `verifiedOperator` decides whether a text edit applies in one
+    // step or files a proposal — it must come from THIS request's own
+    // verified origin (`caller.operator`, resolved above from
+    // `sharedDocsAccess.resolveAccess`), never from the body. A client-sent
+    // value is discarded here so it can never forge the server's own signal.
+    const { confirmBaselineEdit, changedBy: _claimedBy, verifiedOperator: _claimedVerifiedOperator, ...updates } = body;
+    const rule = store.sessionRules.update(Number(params.id), {
+      ...updates,
+      changedBy: caller.changedBy,
+      verifiedOperator: caller.operator === true
+    });
+    // #1696/#2325: a text change to an active, non-master rule either files a
+    // replacement proposal (`rule` is the ORIGINAL rule, unchanged, plus
+    // `replacementProposed` — 202 says so) or, for a verified Operator edit,
+    // applies immediately and answers 200 like any ordinary update.
     jsonResponse(res, rule.replacementProposed ? 202 : 200, { ...rule, ...refreshDeliveredRules(existing, rule) });
   } catch (err) {
     if (err.code === 'NOT_FOUND') {

@@ -137,6 +137,63 @@ describe('api/session-rules (#347/D1a)', () => {
     assert.match(res.data.error, /projectId is required/);
   });
 
+  describe('#2325 — sessionRulesApi.update(verifiedOperator) applies in one step (store API)', () => {
+    it('an active, non-master rule governs its new text immediately — no replacementProposed', () => {
+      const rule = store.sessionRules.create({ content: 'original wording', projectId });
+      const result = store.sessionRules.update(rule.id, { content: 'operator wording', verifiedOperator: true });
+      assert.equal(result.replacementProposed, undefined);
+      assert.equal(result.content, 'operator wording');
+      assert.equal(result.status, 'active');
+      assert.equal(store.sessionRules.get(rule.id).content, 'operator wording', 'the rule itself carries the new text, not a separate proposal row');
+      const versions = store.sessionRules.listVersions(rule.id);
+      assert.ok(versions.some((v) => v.content === 'original wording'), 'the pre-edit text is kept as an earlier version');
+      assert.ok(versions.some((v) => v.content === 'operator wording'));
+    });
+
+    it('changedBy: \'operator\' ALONE (no verifiedOperator) still files a replacement proposal — the two are not the same signal', () => {
+      const rule = store.sessionRules.create({ content: 'original wording', projectId });
+      const result = store.sessionRules.update(rule.id, { content: 'claimed-operator wording', changedBy: 'operator' });
+      assert.ok(result.replacementProposed, 'changedBy alone must not be read as verifiedOperator');
+      assert.equal(store.sessionRules.get(rule.id).content, 'original wording');
+    });
+
+    it('a pending replacement proposal still refuses the verified-operator edit with REPLACEMENT_PENDING', () => {
+      const rule = store.sessionRules.create({ content: 'original wording', projectId });
+      const proposal = store.sessionRules.create({
+        content: 'an ai amendment, not yet decided', projectId, createdBy: 'ai', replacesRuleId: rule.id
+      });
+      assert.throws(
+        () => store.sessionRules.update(rule.id, { content: 'operator wording', verifiedOperator: true }),
+        (err) => err.code === 'REPLACEMENT_PENDING' && err.pendingReplacementId === proposal.id
+      );
+      assert.equal(store.sessionRules.get(rule.id).content, 'original wording', 'nothing changed on the refusal');
+    });
+
+    it('a retired rule is still refused RULE_RETIRED even with verifiedOperator', () => {
+      const rule = store.sessionRules.create({ content: 'original wording', projectId });
+      store.sessionRules.setStatus(rule.id, 'retired');
+      assert.throws(
+        () => store.sessionRules.update(rule.id, { content: 'operator wording', verifiedOperator: true }),
+        (err) => err.code === 'RULE_RETIRED'
+      );
+    });
+
+    it('an enabled toggle in the same call applies alongside the immediate text change', () => {
+      const rule = store.sessionRules.create({ content: 'original wording', projectId });
+      const result = store.sessionRules.update(rule.id, { content: 'operator wording', enabled: false, verifiedOperator: true });
+      assert.equal(result.content, 'operator wording');
+      assert.equal(result.enabled, false);
+    });
+
+    it('a Master rule is unaffected by verifiedOperator — it never reaches the proposal door at all', () => {
+      const master = store.sessionRules.create({ content: 'master wording', kind: 'master' });
+      const result = store.sessionRules.update(master.id, { content: 'master wording v2', verifiedOperator: true });
+      assert.equal(result.replacementProposed, undefined);
+      assert.equal(result.content, 'master wording v2');
+      store.sessionRules.delete(master.id);
+    });
+  });
+
   describe('#1121 — unknown projectId is a 400, not a bare 500 or a silent empty list', () => {
     it('POST with the project NAME returns 400 INVALID_PROJECT_ID naming the fix', async () => {
       const res = await request('POST', '/api/session-rules',
@@ -589,39 +646,55 @@ describe('api/session-rules (#347/D1a)', () => {
       await assertFilesMatchRulesInForce(project);
     });
 
-    it('status: approving a replacement leaves the new text and not the old, and the edit alone changed nothing', async () => {
+    it('PUT content on an active rule (#2325: the caller here is always the verified operator) applies in one step and updates the files immediately', async () => {
       const project = launchedProject(['Stays in force.', 'The first wording.']);
       const before = deliveredBytes(project.path);
 
       const edit = await request('PUT', `/api/session-rules/${project.rules[1].id}`, { content: 'The second wording.' });
-      assert.equal(edit.status, 202);
-      assert.deepEqual(deliveredBytes(project.path), before, 'a text change awaiting approval is not in force');
+      // Pre-#2325 this was 202 with a `replacementProposed` awaiting approval.
+      // This suite's `request()` always carries the operator's own headers
+      // (see the file header), and a verified-operator edit of an active,
+      // non-master rule now governs immediately instead.
+      assert.equal(edit.status, 200);
+      assert.equal(edit.data.replacementProposed, undefined);
+      assert.equal(edit.data.content, 'The second wording.');
+      assert.equal(edit.data.status, 'active');
+      assert.notDeepEqual(deliveredBytes(project.path), before, 'the new text must already be in the delivered files');
 
-      const approved = await request('PUT', `/api/session-rules/${edit.data.replacementProposed.id}/status`,
-        { status: 'active', expectedContent: 'The second wording.' });
-      assert.equal(approved.status, 200);
       const text = deliveredText(project.path);
       assert.ok(text.includes('The second wording.'));
-      assert.ok(!text.includes('The first wording.'), 'the replaced text must not be re-delivered');
+      assert.ok(!text.includes('The first wording.'), 'the pre-edit text must not still be delivered');
       const inForce = await assertFilesMatchRulesInForce(project);
-      assert.equal(inForce.length, 2, 'the approval and the retirement it carries are one refresh, after both');
+      assert.equal(inForce.length, 2);
     });
 
-    it('status: approving a replacement that is switched off still takes the rule it retires out of the files', async () => {
-      const project = launchedProject(['Stays in force.', 'Replaced by a rule that is switched off.']);
-      const edit = await request('PUT', `/api/session-rules/${project.rules[1].id}`, { content: 'The replacement, switched off.' });
-      const proposalId = edit.data.replacementProposed.id;
+    it('status: approving a ROLLBACK (restore) that is switched off still takes the rule it retires out of the files', async () => {
+      // #2325 only changes the PUT-content edit door; a version rollback
+      // always files a replacement proposal regardless of who asks, so this
+      // is still the right way to exercise "approving a switched-off
+      // replacement retires the rule it replaces" against the files.
+      const project = launchedProject(['Stays in force.', 'Original wording.']);
+      const id = project.rules[1].id;
+      const edited = await request('PUT', `/api/session-rules/${id}`, { content: 'Replacement wording.' });
+      assert.equal(edited.status, 200, 'the operator edit that creates the second version to roll back from');
+
+      const versions = store.sessionRules.listVersions(id);
+      const originalVersion = versions.find((v) => v.content === 'Original wording.');
+      assert.ok(originalVersion, 'the pre-edit text must still be in the version history');
+      const rollback = await request('POST', `/api/session-rules/${id}/restore`, { versionNo: originalVersion.versionNo });
+      assert.equal(rollback.status, 202, 'a rollback to different text is still filed as a proposal');
+      const proposalId = rollback.data.replacementProposed.id;
       const off = await request('PUT', `/api/session-rules/${proposalId}`, { enabled: false });
       assert.equal(off.status, 200);
 
       const approved = await request('PUT', `/api/session-rules/${proposalId}/status`,
-        { status: 'active', expectedContent: 'The replacement, switched off.' });
+        { status: 'active', expectedContent: 'Original wording.' });
       assert.equal(approved.status, 200);
       assert.equal(approved.data.enabled, false);
-      assert.equal(store.sessionRules.get(project.rules[1].id).status, 'retired');
+      assert.equal(store.sessionRules.get(id).status, 'retired');
 
       const text = deliveredText(project.path);
-      assert.ok(!text.includes('Replaced by a rule that is switched off.'),
+      assert.ok(!text.includes('Replacement wording.'),
         'the approval retired this rule, so it must not be re-delivered as binding');
       const inForce = await assertFilesMatchRulesInForce(project);
       assert.equal(inForce.length, 1);

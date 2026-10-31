@@ -189,11 +189,22 @@ describe('Project Rules modal (CC-6, #381)', () => {
       // retireProjectRule/resolveProjectRuleProposal can find and drive them.
       const pwGroupEl = { hidden: true, classList: { remove: (cls) => { if (cls === 'hidden') pwGroupEl.hidden = false; } } };
       const pwInputEl = { value: '', focused: false, focus() { this.focused = true; } };
+      // #2325: each edited rule's inline textarea, keyed by id like the real
+      // `projRuleEditInput-<id>` element — created lazily so a test can set
+      // `.value` before calling save without pre-registering every id.
+      const editInputEls = new Map();
+      const editing = new Set();
       const document = {
         getElementById: (id) => {
           if (id.startsWith('projRulesList-')) return listEl;
           if (id === 'projRulesPwGroup') return pwGroupEl;
           if (id === 'projRulesPw') return pwInputEl;
+          const editMatch = id.match(/^projRuleEditInput-(\d+)$/);
+          if (editMatch) {
+            const rid = Number(editMatch[1]);
+            if (!editInputEls.has(rid)) editInputEls.set(rid, { value: '' });
+            return editInputEls.get(rid);
+          }
           return null;
         }
       };
@@ -215,7 +226,12 @@ describe('Project Rules modal (CC-6, #381)', () => {
         tcRuleMismatchBadge: helperGlobals.tcRuleMismatchBadge,
         // retireProjectRule confirms before retiring (#1709) — default to
         // confirming, overridable per test via the returned harness.
-        confirm: () => confirmReturn.value
+        confirm: () => confirmReturn.value,
+        // #2325: the shared editing-ids set every edit function and the
+        // renderer itself read/write as a free variable — one instance so
+        // edit → render → save observe the same state the real module-level
+        // Set would.
+        projectRuleEditing: editing
       };
       const names = Object.keys(deps);
       // eslint-disable-next-line no-new-func
@@ -232,7 +248,11 @@ describe('Project Rules modal (CC-6, #381)', () => {
           'async function resolveProjectRuleProposal('),
         retire: build('async function retireProjectRule(id, kind)', 'async function retireProjectRule('),
         restore: build('async function restoreProjectRule(id, kind)', 'async function restoreProjectRule('),
-        calls, statuses, refreshes, refreshAfterMutations, shown, confirmReturn, listEl, pwGroupEl, pwInputEl
+        edit: build('async function editProjectRule(id, kind)', 'async function editProjectRule('),
+        cancelEdit: build('async function cancelProjectRuleEdit(id, kind)', 'async function cancelProjectRuleEdit('),
+        save: build('async function saveProjectRuleEdit(id, kind)', 'async function saveProjectRuleEdit('),
+        calls, statuses, refreshes, refreshAfterMutations, shown, confirmReturn, listEl, pwGroupEl, pwInputEl,
+        editInputEls, editing
       };
     }
 
@@ -344,6 +364,87 @@ describe('Project Rules modal (CC-6, #381)', () => {
         assert.match(h.statuses[0].msg, /switched off/);
         assert.equal(h.statuses[0].ok, true);
         assert.deepEqual(h.refreshAfterMutations, [{ label: 'Restored', kind: 'startup' }]);
+      });
+    });
+
+    describe('Inline edit of an active rule (#2325)', () => {
+      it('a live (non-proposed) rule offers Edit, and no textarea until it is clicked', () => {
+        const h = harness(() => null);
+        h.render('startup', [active(1, 'current text')]);
+        assert.match(h.listEl.innerHTML, /data-action="edit-rule" data-rule-id="1"/);
+        assert.doesNotMatch(h.listEl.innerHTML, /projRuleEditInput-1/);
+      });
+
+      it('a proposed row never offers Edit — only Approve/Reject', () => {
+        const h = harness(() => null);
+        h.render('startup', [proposed(6, 'pending text')]);
+        assert.doesNotMatch(h.listEl.innerHTML, /data-action="edit-rule"/);
+      });
+
+      it('clicking Edit marks the rule editing and re-renders it as a textarea with Save/Cancel', async () => {
+        const h = harness(() => null);
+        await h.edit(1, 'startup');
+        assert.equal(h.editing.has(1), true);
+        assert.deepEqual(h.refreshes, [{ pid: 3, kind: 'startup' }]);
+
+        h.render('startup', [active(1, 'current text')]);
+        assert.match(h.listEl.innerHTML, /id="projRuleEditInput-1"/);
+        assert.match(h.listEl.innerHTML, />current text<\/textarea>/);
+        assert.match(h.listEl.innerHTML, /data-action="save-rule-edit" data-rule-id="1"/);
+        assert.match(h.listEl.innerHTML, /data-action="cancel-rule-edit" data-rule-id="1"/);
+        // The dropped/no-longer-offered controls while editing.
+        assert.doesNotMatch(h.listEl.innerHTML, /data-action="retire-rule"/);
+      });
+
+      it('the plain takes-effect-immediately notice is shown beside the textarea, before Save is ever clicked', async () => {
+        const h = harness(() => null);
+        await h.edit(1, 'startup');
+        h.render('startup', [active(1, 'current text')]);
+        assert.match(h.listEl.innerHTML, /takes effect immediately/);
+        assert.match(h.listEl.innerHTML, /next rules read/);
+      });
+
+      it('Cancel leaves editing state and re-renders the read-only row, sending no request', async () => {
+        const h = harness(() => null);
+        await h.edit(1, 'startup');
+        await h.cancelEdit(1, 'startup');
+        assert.equal(h.editing.has(1), false);
+        assert.deepEqual(h.refreshes, [{ pid: 3, kind: 'startup' }, { pid: 3, kind: 'startup' }]);
+        assert.equal(h.calls.length, 0, 'cancelling must never call the API');
+      });
+
+      it('Save sends the textarea text as content to PUT /api/session-rules/:id, exits edit mode, and refreshes', async () => {
+        const h = harness(() => ({ id: 1, content: 'new text', status: 'active' }));
+        await h.edit(1, 'startup');
+        h.editInputEls.set(1, { value: '  new text  ' });
+        await h.save(1, 'startup');
+        assert.deepEqual(h.calls[0], { url: '/api/session-rules/1', method: 'PUT', body: { content: 'new text' } });
+        assert.equal(h.editing.has(1), false, 'edit mode ends on a successful save');
+        assert.match(h.statuses.at(-1).msg, /Rule #1/);
+        assert.match(h.statuses.at(-1).msg, /governs immediately/);
+        assert.equal(h.statuses.at(-1).ok, true);
+        assert.deepEqual(h.refreshAfterMutations, [{ label: 'Edited', kind: 'startup' }]);
+      });
+
+      it('an empty or whitespace-only textarea is refused client-side — no request is sent, edit mode stays open', async () => {
+        const h = harness(() => ({ id: 1, status: 'active' }));
+        await h.edit(1, 'startup');
+        h.editInputEls.set(1, { value: '   ' });
+        await h.save(1, 'startup');
+        assert.equal(h.calls.length, 0, 'an empty edit must never reach the API');
+        assert.equal(h.editing.has(1), true, 'edit mode stays open so the operator can fix it');
+        assert.match(h.statuses.at(-1).msg, /cannot be empty/);
+        assert.equal(h.statuses.at(-1).ok, false);
+      });
+
+      it('a server refusal (e.g. the rule changed underneath) reports failure and leaves edit mode open', async () => {
+        const h = harness(() => null);
+        await h.edit(1, 'startup');
+        h.editInputEls.set(1, { value: 'attempted text' });
+        await h.save(1, 'startup');
+        assert.match(h.statuses.at(-1).msg, /Save Rule #1 failed/);
+        assert.equal(h.statuses.at(-1).ok, false);
+        assert.equal(h.editing.has(1), true, 'a failed save must not silently drop the operator\'s in-progress edit');
       });
     });
 
