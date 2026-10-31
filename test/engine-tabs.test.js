@@ -24,6 +24,17 @@ describe('lib/engine-tabs (#764)', () => {
       assert.match(result.reason, /no known local-extension convention/);
     });
 
+    for (const adversarialId of ['__proto__', 'constructor', 'toString', 'hasOwnProperty', 'valueOf']) {
+      it(`is probed:false, not a crash or inherited member, for engine id "${adversarialId}"`, () => {
+        const result = engineTabs.extensionInventory({ id: adversarialId }, {});
+        assert.equal(result.probed, false);
+        assert.deepEqual(result.plugins, []);
+        assert.deepEqual(result.skills, []);
+        assert.deepEqual(result.mcpServers, []);
+        assert.match(result.reason, /no known local-extension convention/);
+      });
+    }
+
     it('reads plugins, skills and MCP servers for claude through the injected home/fs seam', () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-engine-tabs-'));
       try {
@@ -147,6 +158,14 @@ describe('lib/engine-tabs (#764)', () => {
     it('reports pickerHidden:true for a connection-backed profile', () => {
       const row = engineTabs.engineInventoryRow({ id: 'openclaw', name: 'OpenClaw', pickerHidden: true }, {});
       assert.equal(row.pickerHidden, true);
+    });
+
+    it('does not crash the whole row on a stored profile whose own id is an inherited Object.prototype member', () => {
+      // Nothing upstream (a hand-edited or synced engine profile file) refuses
+      // an id of "constructor" -- this is the shape GET /api/engines/inventory
+      // hits when it maps `engineInventoryRow` over every stored profile.
+      const row = engineTabs.engineInventoryRow({ id: 'constructor', name: 'Adversarial' }, {});
+      assert.equal(row.extensions.probed, false);
     });
   });
 });
