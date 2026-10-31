@@ -4906,11 +4906,16 @@ async function _loadEngineInventorySection() {
     </div>
     <div id="gsEngineInventoryBody">${renderEngineInventorySummary(rows[0])}</div>`;
 
-  container.addEventListener('change', (e) => {
+  // `.onchange`, not `addEventListener`: this container's own innerHTML
+  // reset above already gives every open a fresh node under the current
+  // single call-site, but assigning the single-slot handler rather than
+  // adding one keeps that true if a future caller (a "Refresh" button, say)
+  // ever invokes this loader again without resetting the container first.
+  container.onchange = (e) => {
     if (e.target.id !== 'gsEngineInventorySelect') return;
     const row = rows.find((r) => r.id === e.target.value);
     document.getElementById('gsEngineInventoryBody').innerHTML = renderEngineInventorySummary(row);
-  });
+  };
 }
 
 async function _loadAccountSection() {

@@ -185,6 +185,79 @@ describe('renderEngineInventorySummary (#2747)', () => {
   });
 });
 
+describe('_loadEngineInventorySection (#2747, PRR-B)', () => {
+  /**
+   * Run the shipped loader against stub `document`/`api`, with the real
+   * `tcEngineInventoryOptions` and `renderEngineInventorySummary`.
+   * @param {object} container - Stub `#gsEngineSettingsContainer`.
+   * @param {object} bodyEl - Stub `#gsEngineInventoryBody`.
+   * @param {function} apiImpl - Stub `api()`.
+   * @returns {Promise<void>}
+   */
+  function run(container, bodyEl, apiImpl) {
+    const { tcEngineInventoryOptions } = loadApiHelperGlobals();
+    const docStub = {
+      getElementById: (id) => {
+        if (id === 'gsEngineSettingsContainer') return container;
+        if (id === 'gsEngineInventoryBody') return bodyEl;
+        return null;
+      }
+    };
+    const src = [
+      liftDeclaration(ui, 'function renderEngineInventorySummary('),
+      liftDeclaration(ui, 'async function _loadEngineInventorySection(')
+    ].join('\n');
+    const fn = new Function('document', 'api', 'esc', 'tcEngineInventoryOptions', `${src}\nreturn _loadEngineInventorySection;`)(
+      docStub, apiImpl, esc, tcEngineInventoryOptions
+    );
+    return fn();
+  }
+
+  /** A row with no interesting inventory detail — just a usable id/name. */
+  const bareRow = (id, name) => ({
+    id, name, configFormat: {}, statusPage: null, capabilities: {}, extensions: { probed: false, reason: 'x' }
+  });
+
+  it('assigns a single-slot `.onchange` handler, not a stacking `addEventListener`', () => {
+    const body = liftDeclaration(ui, 'async function _loadEngineInventorySection(');
+    assert.doesNotMatch(body, /\.addEventListener\(/, 'must not add a listener the container can accumulate');
+    assert.match(body, /\.onchange\s*=/);
+  });
+
+  it('a second call against the SAME (unreset) container replaces, not stacks, the handler', async () => {
+    // Under the current single call-site (inside openGlobalSettings, which
+    // resets this container's innerHTML before each call) this never
+    // actually happens — but the guarantee is cheap and protects a future
+    // caller (e.g. a Refresh button) that invokes the loader again without
+    // resetting the container first.
+    const container = { innerHTML: '', onchange: null };
+    const bodyEl = { innerHTML: '' };
+
+    await run(container, bodyEl, async () => ({ engines: [bareRow('a', 'Engine A')] }));
+    await run(container, bodyEl, async () => ({ engines: [bareRow('b', 'Engine B')] }));
+
+    assert.equal(typeof container.onchange, 'function', 'exactly one handler is live');
+    container.onchange({ target: { id: 'gsEngineInventorySelect', value: 'b' } });
+    assert.match(bodyEl.innerHTML, /Engine B/, 'the live handler must resolve against the SECOND call\'s rows, not a stale first one');
+  });
+
+  it('covers every registered engine, pickerHidden ones included, in the rendered selector', async () => {
+    const container = { innerHTML: '', onchange: null };
+    const bodyEl = { innerHTML: '' };
+    await run(container, bodyEl, async () => ({
+      engines: [bareRow('claude', 'Claude Code'), { ...bareRow('openclaw:c1', 'Lab OpenClaw'), pickerHidden: true }]
+    }));
+    assert.match(container.innerHTML, /Claude Code/);
+    assert.match(container.innerHTML, /Lab OpenClaw \(hidden from create picker\)/);
+  });
+
+  it('reports the fetch failure instead of leaving a stale loading hint', async () => {
+    const container = { innerHTML: '<div class="form-hint">Loading…</div>', onchange: null };
+    await run(container, { innerHTML: '' }, async () => null);
+    assert.match(container.innerHTML, /Could not load engine inventory/);
+  });
+});
+
 describe('create wizard per-engine creation-seed defaults (#2747)', () => {
   it('createNext re-seeds First-Session Settings only on an actual engine change', () => {
     const body = liftDeclaration(ui, 'function createNext(');
