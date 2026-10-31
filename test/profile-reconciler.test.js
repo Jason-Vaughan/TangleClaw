@@ -302,6 +302,14 @@ describe('reconcile: fail closed on an unverified or mismatched result', () => {
     assert.equal(result.state, 'hold');
   });
 
+  it('PRR-A finding, round 3: two conflicting "Model:" lines in the pane hold the reconciliation end to end', async () => {
+    reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'desired-model' });
+    const { tmux } = fakeTmux(['────────────', 'Model: wrong-model', 'Model: desired-model', '>']);
+    const result = await reconciler.reconcile('r1', 'session-r1', { tmux });
+    assert.equal(result.ok, false);
+    assert.equal(result.state, 'hold');
+  });
+
   it('holds when an adapter throws while applying a control, rather than assuming it landed', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
     reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'g1' });
@@ -493,9 +501,8 @@ describe('_defaultParseActiveModel', () => {
       { model: 'claude-opus-5-5' });
   });
 
-  it('prefers the LAST matching line, for a pane with more than one banner frame', () => {
-    assert.deepEqual(reconciler._defaultParseActiveModel(['Model: claude-opus-4-8', 'Model: claude-opus-5-5']),
-      { model: 'claude-opus-5-5' });
+  it('round 3 superseded this: two "Model:" lines in the window now fail closed rather than preferring the last one — see the dedicated describe below', () => {
+    assert.equal(reconciler._defaultParseActiveModel(['Model: claude-opus-4-8', 'Model: claude-opus-5-5']), null);
   });
 
   it('returns null rather than guess when no line matches the recognized shape', () => {
@@ -549,6 +556,27 @@ describe('_defaultParseActiveModel', () => {
   it('a chat turn below a separator still fails closed, not just one above it', () => {
     assert.equal(
       reconciler._defaultParseActiveModel(['───────────────────────', 'Model: desired-model', '> echo this']),
+      null
+    );
+  });
+
+  it('PRR-A finding, round 3 on PR #2757: two conflicting "Model:" lines in the candidate window fail closed, even with no chat turn present', () => {
+    // The exact adversarial inputs named in the review — the loop used to
+    // return on the first (bottom-most) match without checking whether a
+    // DIFFERENT model line also sat earlier in the same window.
+    assert.equal(
+      reconciler._defaultParseActiveModel(['────────────', 'Model: wrong-model', 'Model: desired-model', '>']),
+      null
+    );
+    assert.equal(
+      reconciler._defaultParseActiveModel(['Model: wrong-model', 'Model: desired-model', '>']),
+      null
+    );
+  });
+
+  it('two "Model:" lines agreeing on the same value still fail closed — genuine status chrome never repeats itself', () => {
+    assert.equal(
+      reconciler._defaultParseActiveModel(['Model: claude-opus-5-5', 'Model: claude-opus-5-5']),
       null
     );
   });
@@ -711,7 +739,19 @@ describe('model admission (lib/sessions.js, PRR-A finding 1 round 2)', () => {
 
   describe('_modelAdmissionBlock', () => {
     it('is null when no model was ever requested for this session', () => {
-      assert.equal(sessions._modelAdmissionBlock(90001), null);
+      // A REAL (empty) store, not an uninitialized one: round 3 makes a
+      // genuine query FAILURE fail closed, which this must not be — an
+      // uninitialized store throws for a different reason than "no rows",
+      // and conflating the two would make this test pass for the wrong one.
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-admission-'));
+      store._setBasePath(path.join(tmpDir, 'tangleclaw'));
+      store.init();
+      try {
+        assert.equal(sessions._modelAdmissionBlock(90001), null);
+      } finally {
+        store.close();
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
     });
 
     it('is null once the in-memory reconciler state is "verified"', async () => {
@@ -793,6 +833,73 @@ describe('model admission (lib/sessions.js, PRR-A finding 1 round 2)', () => {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
     });
+
+    it('PRR-A finding 1, round 3: a model requested in memory is "model-verification-pending" even if the durable query throws — the in-memory check runs first and never reaches it', () => {
+      const realQuery = store.activity.query;
+      store.activity.query = () => { throw new Error('store is unavailable'); };
+      try {
+        reconciler.setDesiredProfile('session:999999', { engine: 'codex', model: 'gpt-5.6-sol' });
+        assert.equal(sessions._modelAdmissionBlock(999999), 'model-verification-pending');
+      } finally {
+        store.activity.query = realQuery;
+      }
+    });
+
+    it('PRR-A finding 1, round 3: startupReadiness and injectCommand both hold on that same in-memory-pending-despite-a-throwing-store case', async () => {
+      const realQuery = store.activity.query;
+      const realHasSession = tmux.hasSession;
+      const realSendKeys = tmux.sendKeys;
+      store.activity.query = () => { throw new Error('store is unavailable'); };
+      tmux.hasSession = () => true;
+      tmux.sendKeys = () => {};
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-admission-'));
+      try {
+        store._setBasePath(path.join(tmpDir, 'tangleclaw'));
+        store.init();
+        const project = store.projects.create({ name: 'admission-throwing-query', path: tmpDir, engine: 'claude' });
+        const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'admission-throwing-query' });
+        reconciler.setDesiredProfile(`session:${session.id}`, { engine: 'claude', model: 'claude-opus-5-5' });
+
+        const readiness = sessions.startupReadiness({
+          id: 1, sessionId: session.id, revision: 1, applicability: 'not-applicable',
+          cursor: 0, unreadyAt: null, readyAt: '2026-01-01T00:00:00Z', recovery: 'none', preflight: null, recoveryClearedAt: null
+        });
+        assert.equal(readiness.state, 'starting');
+        assert.equal(readiness.blocker, 'model-verification-pending');
+
+        const injected = sessions.injectCommand('admission-throwing-query', 'hello');
+        assert.equal(injected.ok, false);
+        assert.equal(injected.code, 'MODEL_ADMISSION_HELD');
+      } finally {
+        store.activity.query = realQuery;
+        tmux.hasSession = realHasSession;
+        tmux.sendKeys = realSendKeys;
+        store.close();
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it('PRR-A finding 1, round 3: after an in-memory reset, a throwing durable query fails CLOSED ("model-unverified"), never null', async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-admission-'));
+      store._setBasePath(path.join(tmpDir, 'tangleclaw'));
+      store.init();
+      const realQuery = store.activity.query;
+      try {
+        const project = store.projects.create({ name: 'admission-reset-throwing', path: tmpDir, engine: 'claude' });
+        const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'admission-reset-throwing' });
+        reconciler.setDesiredProfile(`session:${session.id}`, { engine: 'claude', model: 'claude-opus-5-5' });
+        // The process "restarted": in-memory state is gone, so the early
+        // check this finding just added can no longer short-circuit, and
+        // the durable fallback is reached and made to fail.
+        reconciler._resetForTests();
+        store.activity.query = () => { throw new Error('store is unavailable'); };
+        assert.equal(sessions._modelAdmissionBlock(session.id), 'model-unverified');
+      } finally {
+        store.activity.query = realQuery;
+        store.close();
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe('startupReadiness / activeStartupReadiness', () => {
@@ -826,9 +933,20 @@ describe('model admission (lib/sessions.js, PRR-A finding 1 round 2)', () => {
     });
 
     it('with nothing requested at all, there is no model block — confirms "pending" never spuriously holds an untouched session', () => {
-      const readiness = sessions.startupReadiness(fakeSequence(90011));
-      assert.notEqual(readiness.blocker, 'model-verification-pending');
-      assert.notEqual(readiness.blocker, 'model-unverified');
+      // A real (empty) store — round 3 makes a genuine query failure fail
+      // closed, which an uninitialized store would now trigger for the
+      // wrong reason (see the `_modelAdmissionBlock` describe's first test).
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-admission-'));
+      store._setBasePath(path.join(tmpDir, 'tangleclaw'));
+      store.init();
+      try {
+        const readiness = sessions.startupReadiness(fakeSequence(90011));
+        assert.notEqual(readiness.blocker, 'model-verification-pending');
+        assert.notEqual(readiness.blocker, 'model-unverified');
+      } finally {
+        store.close();
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
     });
 
     it('a model block overrides what the sequence itself would otherwise report', async () => {
