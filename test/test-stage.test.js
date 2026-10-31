@@ -427,13 +427,15 @@ describe('offloadTier: probe then run, falling through on anything but a clean p
     assert.match(out.text(), /^testament: pool unavailable for small \(machine_not_set_up\); running locally$/m);
   });
 
-  it('returns 0 and prints the pool\'s counts on a clean pass', () => {
+  it('returns 0 and prints the pool\'s counts on a clean pass, with a visible notice before each blocking call', () => {
     const out = sink();
     const spawnSync = (bin, argv) => (argv.includes('--probe')
       ? { status: 0, stdout: JSON.stringify({ status: 'ok' }) }
       : { status: 0, stdout: JSON.stringify({ report: { counts: { tests: 10, pass: 10 } } }) });
     const code = stage.offloadTier('small', { root: REPO, out, testament: { bin: '/bin/true', spawnSync } });
     assert.equal(code, 0);
+    assert.match(out.text(), /^testament: probing the pool for small\.\.\.$/m);
+    assert.match(out.text(), /^testament: running small on the pool \(this blocks until the batch finishes\)\.\.\.$/m);
     assert.match(out.text(), /^testament: small passed on the pool \({"tests":10,"pass":10}\)$/m);
   });
 
@@ -445,6 +447,26 @@ describe('offloadTier: probe then run, falling through on anything but a clean p
     const code = stage.offloadTier('small', { root: REPO, out, testament: { bin: '/bin/true', spawnSync } });
     assert.equal(code, 1);
     assert.match(out.text(), /^testament: small failed on the pool:\n {2}test\/a\.test\.js::one$/m);
+  });
+
+  it('falls through on a pass exit code whose envelope carries no report, rather than trusting it blind', () => {
+    const out = sink();
+    const spawnSync = (bin, argv) => (argv.includes('--probe')
+      ? { status: 0, stdout: JSON.stringify({ status: 'ok' }) }
+      : { status: 0, stdout: JSON.stringify({ note: 'pass but no report key' }) });
+    const code = stage.offloadTier('small', { root: REPO, out, testament: { bin: '/bin/true', spawnSync } });
+    assert.equal(code, null);
+    assert.match(out.text(), /^testament: pool run for small reported pass but the envelope carries no report; running locally$/m);
+  });
+
+  it('falls through on a fail exit code whose envelope\'s report.items is not an array', () => {
+    const out = sink();
+    const spawnSync = (bin, argv) => (argv.includes('--probe')
+      ? { status: 0, stdout: JSON.stringify({ status: 'ok' }) }
+      : { status: 1, stdout: JSON.stringify({ report: { items: 'not-an-array' } }) });
+    const code = stage.offloadTier('small', { root: REPO, out, testament: { bin: '/bin/true', spawnSync } });
+    assert.equal(code, null);
+    assert.match(out.text(), /^testament: pool run for small reported failure but the envelope carries no report; running locally$/m);
   });
 
   it('falls through on any other exit code after a clean probe, naming it', () => {

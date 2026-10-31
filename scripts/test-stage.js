@@ -196,9 +196,13 @@ function runTestament(argv, timeoutMs, seam = {}) {
 /**
  * Try to run a tier on the Testament pool (#2733): probe, then
  * `--no-fallback --suite <tier>`. Null means "fall through to the existing
- * local run" — either offload is bypassed (`testamentBypassReason`) or the
- * pool answered that it can't take the run right now; non-null means
- * Testament ran the tier and this is its verdict.
+ * local run" — either offload is bypassed (`testamentBypassReason`), the pool
+ * answered that it can't take the run right now, or a pass/fail exit code
+ * arrived with no matching `report` in the envelope (treated as malformed
+ * rather than trusted blind); non-null means Testament ran the tier and this
+ * is its verdict. Each of the two blocking calls (the probe, then the run
+ * itself) writes a line to `io.out` before it starts, since the run can take
+ * a while and silence looks identical to a hang.
  *
  * @param {string} tier
  * @param {{root: string, out: {write: function(string): any}, testament?: object}} io
@@ -208,22 +212,32 @@ function offloadTier(tier, io) {
   const bypass = testamentBypassReason(io.root, io);
   if (bypass) return null;
   const seam = io.testament || {};
+  io.out.write(`testament: probing the pool for ${tier}...\n`);
   const probe = runTestament(['run', '--probe', '--json'], 5000, seam);
   if (!probe.ok || probe.exitCode !== 0 || probe.parsed?.status !== 'ok') {
     io.out.write(`testament: pool unavailable for ${tier} (${probe.parsed?.error?.code || 'probe failed'}); running locally\n`);
     return null;
   }
+  io.out.write(`testament: running ${tier} on the pool (this blocks until the batch finishes)...\n`);
   const run = runTestament(['run', '--no-fallback', '--suite', tier, '--json=summary'], TESTAMENT_RUN_TIMEOUT_MS, seam);
   if (!run.ok || run.parsed === null) {
     io.out.write(`testament: pool run for ${tier} produced no usable report; running locally\n`);
     return null;
   }
   if (run.exitCode === 0) {
-    io.out.write(`testament: ${tier} passed on the pool (${JSON.stringify(run.parsed.report?.counts || {})})\n`);
+    if (!run.parsed.report || typeof run.parsed.report !== 'object') {
+      io.out.write(`testament: pool run for ${tier} reported pass but the envelope carries no report; running locally\n`);
+      return null;
+    }
+    io.out.write(`testament: ${tier} passed on the pool (${JSON.stringify(run.parsed.report.counts || {})})\n`);
     return 0;
   }
   if (run.exitCode === 1) {
-    const items = (run.parsed.report?.items || []).map((it) => `  ${it.id || JSON.stringify(it)}`).join('\n');
+    if (!run.parsed.report || !Array.isArray(run.parsed.report.items)) {
+      io.out.write(`testament: pool run for ${tier} reported failure but the envelope carries no report; running locally\n`);
+      return null;
+    }
+    const items = run.parsed.report.items.map((it) => `  ${it.id || JSON.stringify(it)}`).join('\n');
     io.out.write(`testament: ${tier} failed on the pool:\n${items}\n`);
     return 1;
   }
