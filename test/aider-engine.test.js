@@ -90,6 +90,19 @@ describe('aider engine (#2439)', () => {
     assert.ok(!conventionsContent.includes('ollama_chat/llama3'));
   });
 
+  it('propagates a conventions-carrier write failure instead of writing a broken read: pointer (#2756 PRR-A revise)', () => {
+    const projectPath = fs.mkdtempSync(path.join(tempDir, 'writefail-'));
+    // Occupy the conventions file's own directory with a plain FILE, so
+    // `fs.mkdirSync(dirname, { recursive: true })` cannot create it.
+    fs.writeFileSync(path.join(projectPath, '.tangleclaw'), 'not a directory\n');
+    const result = engines.writeEngineConfig('aider', projectPath, PROJECT_CONFIG, aiderProfile);
+    assert.equal(result.written, false);
+    assert.equal(result.skipped, false);
+    assert.match(result.error, /aider-conventions\.md/);
+    assert.ok(!fs.existsSync(path.join(projectPath, '.aider.conf.yml')),
+      '.aider.conf.yml must not be written when its read: target failed to write');
+  });
+
   it('does not write a conventions carrier for a non-aider engine', () => {
     const projectPath = fs.mkdtempSync(path.join(tempDir, 'claude-'));
     const claudeProfile = store.engines.get('claude');

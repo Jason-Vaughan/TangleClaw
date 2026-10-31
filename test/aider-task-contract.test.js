@@ -112,6 +112,47 @@ describe('aider-task-contract', () => {
       assert.match(receipt.error, /outside editableFiles/);
     });
 
+    it('detects an uncommitted edit left inside scope (auto-commits disabled) as real success, not a no-op', () => {
+      const c = contract.buildTaskContract({ repoPath, editableFiles: ['a.js'], message: 'edit a.js' });
+      const fake = (cmd, args, opts) => {
+        if (cmd !== 'aider') return realSpawnSync(cmd, args, opts);
+        fs.writeFileSync(path.join(repoPath, 'a.js'), `uncommitted edit ${Date.now()}-${Math.random()}\n`);
+        return { status: 0, signal: null, stdout: 'Done, left uncommitted.', stderr: '' };
+      };
+      const receipt = contract.runTask(c, { spawnSync: fake });
+      assert.equal(receipt.outcome, 'success');
+      assert.deepEqual(receipt.filesChanged, ['a.js']);
+      assert.deepEqual(receipt.scopeViolations, []);
+      // Stabilize the fixture repo for later tests in this suite.
+      execFileSync('git', ['add', 'a.js'], { cwd: repoPath });
+      execFileSync('git', ['commit', '-q', '-m', 'stabilize after uncommitted-edit test'], { cwd: repoPath });
+    });
+
+    it('reports scope-violation for an untracked new file left outside scope, even with no commit', () => {
+      const c = contract.buildTaskContract({ repoPath, editableFiles: ['a.js'], message: 'edit a.js' });
+      const fake = (cmd, args, opts) => {
+        if (cmd !== 'aider') return realSpawnSync(cmd, args, opts);
+        fs.writeFileSync(path.join(repoPath, 'untracked-new.js'), 'oops\n');
+        return { status: 0, signal: null, stdout: 'Done.', stderr: '' };
+      };
+      const receipt = contract.runTask(c, { spawnSync: fake });
+      assert.equal(receipt.outcome, 'scope-violation');
+      assert.deepEqual(receipt.scopeViolations, ['untracked-new.js']);
+      fs.rmSync(path.join(repoPath, 'untracked-new.js'), { force: true });
+    });
+
+    it('fails closed (reports error) when post-run working-tree inspection itself cannot be trusted', () => {
+      const c = contract.buildTaskContract({ repoPath, editableFiles: ['a.js'], message: 'edit a.js' });
+      const fake = (cmd, args, opts) => {
+        if (cmd === 'aider') return { status: 0, signal: null, stdout: 'Done.', stderr: '' };
+        if (cmd === 'git' && args[0] === 'status') return { status: 128, signal: null, stdout: '', stderr: 'fatal: inspection boom' };
+        return realSpawnSync(cmd, args, opts);
+      };
+      const receipt = contract.runTask(c, { spawnSync: fake });
+      assert.equal(receipt.outcome, 'error');
+      assert.match(receipt.error, /inspection failed/);
+    });
+
     it('reports no-op when aider exits 0 with no new commit, and flags a disputed claim', () => {
       const c = contract.buildTaskContract({ repoPath, editableFiles: ['a.js'], message: 'edit a.js' });
       const fake = (cmd, args, opts) => cmd === 'aider'
@@ -173,6 +214,19 @@ describe('aider-task-contract', () => {
       assert.equal(receipt.outcome, 'timeout');
     });
 
+    it('reports scope-violation (overriding a bare timeout) when the timed-out run left an edit outside scope', () => {
+      const c = contract.buildTaskContract({ repoPath, editableFiles: ['a.js'], message: 'edit a.js' });
+      const fake = (cmd, args, opts) => {
+        if (cmd !== 'aider') return realSpawnSync(cmd, args, opts);
+        fs.writeFileSync(path.join(repoPath, 'untracked-timeout.js'), 'oops\n');
+        return { status: null, signal: 'SIGTERM', stdout: 'still thinking...', stderr: '' };
+      };
+      const receipt = contract.runTask(c, { spawnSync: fake });
+      assert.equal(receipt.outcome, 'scope-violation');
+      assert.deepEqual(receipt.scopeViolations, ['untracked-timeout.js']);
+      fs.rmSync(path.join(repoPath, 'untracked-timeout.js'), { force: true });
+    });
+
     it('reports cancelled without spawning when the signal is already aborted', () => {
       const c = contract.buildTaskContract({ repoPath, editableFiles: ['a.js'], message: 'edit a.js' });
       let spawned = false;
@@ -182,6 +236,21 @@ describe('aider-task-contract', () => {
       const receipt = contract.runTask(c, { spawnSync: fake, signal: controller.signal });
       assert.equal(receipt.outcome, 'cancelled');
       assert.equal(spawned, false);
+    });
+
+    it('reports scope-violation (overriding cancelled) when a run cancelled mid-flight left an edit outside scope', () => {
+      const c = contract.buildTaskContract({ repoPath, editableFiles: ['a.js'], message: 'edit a.js' });
+      const controller = new AbortController();
+      const fake = (cmd, args, opts) => {
+        if (cmd !== 'aider') return realSpawnSync(cmd, args, opts);
+        fs.writeFileSync(path.join(repoPath, 'untracked-cancel.js'), 'oops\n');
+        controller.abort();
+        return { status: null, signal: 'SIGTERM', stdout: '', stderr: '' };
+      };
+      const receipt = contract.runTask(c, { spawnSync: fake, signal: controller.signal });
+      assert.equal(receipt.outcome, 'scope-violation');
+      assert.deepEqual(receipt.scopeViolations, ['untracked-cancel.js']);
+      fs.rmSync(path.join(repoPath, 'untracked-cancel.js'), { force: true });
     });
 
     it('rejects a receipt field assembly for an unknown outcome (internal invariant)', () => {
