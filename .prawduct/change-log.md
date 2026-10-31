@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-31 — v5.50.0 W1-D: Stage 5 procps parity + global Engine settings UI
+
+<!-- prawduct: type=feature | scope=w1d-2752-2747 -->
+
+- **Stage 5 container parity (#2752):** installed `procps` in the Testament runner image and added a `/proc`-based fallback (Linux only) everywhere this repo shells out to `ps` — `lib/pidfile.js`, `lib/startup-control-codex.js`, `lib/release-certification/lockfile.js`, and the test helper in `test/bridge-handoff.test.js`. All three production call sites already failed closed (no crash) before this change; what was missing was answering correctly instead of degrading to "unknown" when `/bin/ps` is unavailable. Verified against the real Testament container pool (`node scripts/test-stage.js 5`): none of the pool's failures are in bridge-handoff/pidfile/startup-control-codex/lockfile territory, and a clean `origin/main` baseline run is in flight to confirm the remaining failures (rule-delivery-receipt, setup-wizard, tmux, update-release-link) predate this branch.
+- **Global Engine settings panel + per-engine creation-seed defaults (#2747):** Global Settings gains an "Engine Settings" section — one selector across every registered engine (including `pickerHidden` profiles), consuming `GET /api/engines/inventory`. The create wizard's First-Session Settings now seed from the chosen engine's profile rather than a hardcoded literal. `#581`'s TangleTweaker docking, also named in #2747, was deliberately skipped: #581 is closed WONTFIX ("TangleTweaker is a separate product wearing feature clothes") and was not reopened — flagged to TC-Lane-PM/Architect rather than silently built or silently dropped.
+- **Scope notes for the next hop:** the dispatching charter described the three `lib/` ps call sites as needing to be made "ENOENT-safe" — they already were; the actual gap was a correctness fallback, not a crash fix. The charter also cited `data-model.md` for the creation-seed UI-copy convention, which does not exist anywhere in this repo. Building #2747's new browser fetch of `/api/engines/inventory` required narrowing `test/engine-picker-gating.test.js`'s #736 single-engine-endpoint regex (out of this lane's allowed file scope; no other lane claims that file).
+
 ## 2026-10-31 — v5.49.0 W3-REC: reconcile engine settings and inventory records
 
 <!-- prawduct: type=internal | scope=v549-w3-rec -->
