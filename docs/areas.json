@@ -208,7 +208,8 @@
         "lib/engines.js",
         "lib/engine-*.js",
         "lib/engines/*.js",
-        "lib/model-status.js"
+        "lib/model-status.js",
+        "lib/aider-task-contract.js"
       ]
     },
     "shared-docs": {

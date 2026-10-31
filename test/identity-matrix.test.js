@@ -433,7 +433,14 @@ describe('#1619 — actual final generated files, across every supported syntax'
 
   const CARRIERS = {
     '.codex.yaml': (cfg, root) => engines._generateCodexYaml(cfg, root, '.codex.yaml'),
-    '.aider.conf.yml': (cfg, root) => engines._generateAiderConf(cfg, root, '.aider.conf.yml')
+    // Aider's identity-bearing content (origin, tokens, document paths) moved
+    // to a second real file since #2439 (`.tangleclaw/aider-conventions.md`,
+    // `.aider.conf.yml`'s own `read:` pointer) — `_carriesIdentity` is a pure
+    // content-pattern match with no path awareness
+    // (`lib/wrap-steps/_tc-owned-paths.js`), so concatenating both files'
+    // content here exercises the same guard this fixture already tests for
+    // every other carrier, just spread across what is now two files.
+    '.aider.conf.yml': (cfg, root) => `${engines._generateAiderConf(cfg, root, '.aider.conf.yml')}\n${engines._generateAiderConventionsMd(cfg, root)}`
   };
 
   for (const [carrier, render] of Object.entries(CARRIERS)) {
@@ -511,7 +518,7 @@ describe('#1619 — actual final generated files, across every supported syntax'
       const cfg = { id: project.id, medusaEnabled: false, rules: { core: { porthubRegistration: false } } };
       const body = carrier === '.codex.yaml'
         ? engines._generateCodexYaml(cfg, root, carrier)
-        : engines._generateAiderConf(cfg, root, carrier);
+        : `${engines._generateAiderConf(cfg, root, carrier)}\n${engines._generateAiderConventionsMd(cfg, root)}`;
 
       // The precondition IS the point of this case, so it is asserted rather
       // than assumed.
