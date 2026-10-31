@@ -17,7 +17,20 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
-## Unreleased — v5.49.0 Engine settings that tell the truth
+## Unreleased — v5.50.0 Verified engine admission, model switching, and usage windows
+
+- **Verify engine compatibility** (#1897) — capability-probe evidence resolves an engine build to verified, degraded, incompatible, or unknown, with explicit operator override evidence. `lib/engine-canary.js#resolveCanaryState`, `lib/engine-canary.js#decideLaunchGate`. Tests: `test/engine-canary.test.js`.
+- **Admit tasks and rotate engines with attestation** (#1809) — methodology-required work is admitted only to a capable engine attempt; durable rotation records quiesce, revoke, attest, and transfer publication authority. `authorizePublisher()` supplies a publisher check for future resource-write wiring. `lib/engine-admission.js#admitTask`, `lib/engine-admission.js#authorizePublisher`. Tests: `test/engine-admission.test.js`.
+- **Run Stage 5 process checks without ps** (#2752) — the Testament image includes procps, with Linux `/proc` fallbacks for process identity when `ps` is unavailable. This is the procps parity slice; remaining Stage 5 failures are tracked in #2758. `.devcontainer/Dockerfile`, `lib/pidfile.js`, `lib/startup-control-codex.js`, `lib/release-certification/lockfile.js`. Tests: `test/pidfile.test.js`.
+- **Inspect and seed engine settings** (#2747) — Global Settings shows every registered engine's inventory, and new projects seed first-session settings from the chosen engine. TangleTweaker docking (#581) remains WONTFIX. `public/ui.js`, `lib/engine-tabs.js#engineInventoryRow`. Tests: `test/global-engine-settings-ui.test.js`.
+- **Deliver Aider conventions and local model settings** (#2439) — Aider reads TangleClaw conventions from a markdown carrier and accepts project-scoped model, weak model, edit format, and API base settings. `lib/engines.js#_generateAiderConventionsMd`, `lib/engines.js#_generateAiderConf`. Tests: `test/aider-engine.test.js`.
+- **Verify one-shot Aider tasks** (#1644) — a bounded task contract distinguishes real edits and test results from no-ops, out-of-scope changes, timeouts, and CLI errors. `lib/aider-task-contract.js#runTask`. Tests: `test/aider-task-contract.test.js`.
+- **Persist the next launch model** (#2188) — projects save an exact roster-validated model, revalidate it at launch, and verify that it took effect after launch. `lib/projects.js`, `lib/sessions.js#launchSession`. Tests: `test/projects.test.js`, `test/profile-reconciler.test.js`.
+- **Reconcile the active session profile** (#1967) — structured engine session records verify the active model; mismatches hold work admission and direct controls may reconcile them. Claude supports control, while Codex is observation-only. `lib/profile-reconciler.js#reconcile`. Tests: `test/profile-reconciler.test.js`.
+- **Read calibrated usage windows** (#2599) — local Claude and Codex usage records feed rolling five-hour, weekly, and monthly token windows and a recommended model tier, with operator calibration. `lib/usage-windows.js#getUsageWindows`. Tests: `test/usage-windows.test.js`.
+- **Switch models at governed boundaries** (#2598) — model or engine changes require a clean chunk boundary, support outage takeover, and apply effort settings only where the target engine supports them. `lib/model-switch.js#switchSessionModel`. Tests: `test/model-switch.test.js`.
+
+## v5.49.0 — Engine settings that tell the truth
 
 - **Explain generated-config deferral** (#1268) — the settings modal and server explain when a plugin-governed project cannot deliver its generated rule settings or TangleClaw guides to the chosen engine. `lib/engines.js#reportMissingConfigCarrier`, `lib/engines.js#settingDisposition`, `public/api-helper.js#tcSettingDisposition`. Tests: `test/setting-disposition.test.js`, `test/projects.test.js`.
 - **Show startup-rule reachability** (#1269) — the Project Rules editor warns when the selected engine has neither a pasted-prime nor hidden-prime channel, and updates the warning when the engine changes. `public/ui.js#renderStartupRulesWarning`, `lib/engines.js#settingDisposition`. Tests: `test/setting-disposition.test.js`.

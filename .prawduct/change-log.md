@@ -41,6 +41,17 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-31 — v5.50.0 W3-REC: reconcile verified engine and session records
+
+<!-- prawduct: type=internal | scope=v550-w3-rec -->
+
+- Reconciled all ten accepted Charter A488 issues across Wave 1 and Wave 2. Wave 1 merged through PRs #2755 (`3c3a3868`), #2754 (`801d52ef`), #2756 (`d1d89d4b`), and #2757 (`309dacbd`); Wave 2 merged through PR #2762 (`e82760dc`). Each issue retains its accepted `changelog.d/` fragment for the v5.50.0 release cut.
+- **Engine compatibility and admission (#1897, #1809):** engine canary evidence resolves to verified, degraded, incompatible, or unknown with an explicit operator override path. Capability-matched task admission and durable, attested engine rotation govern publisher authority. `authorizePublisher()` is available as a primitive; resource write paths have not been wired to call it.
+- **Aider and launch integration (#2439, #1644, #2188, #1967):** Aider receives its conventions through a real markdown carrier and supports project-scoped local model settings; a bounded one-shot task contract checks the resulting edits and tests. Projects can persist an exact model for their next launch, and session profile reconciliation verifies the active model from structured engine records, holding admission on a mismatch. Claude has the first control adapter; Codex remains observation-only.
+- **Usage and switching (#2599, #2598):** local usage records feed rolling token windows and a recommended model tier, with operator calibration. Governed model or engine switching uses a clean chunk boundary and supports outage takeover; effort settings are applied only when the target engine supports them.
+- **Stage 5 and settings (#2752, #2747):** the Testament runner has `procps` and `/proc` process-identity fallbacks, and Global Settings exposes engine inventory with per-engine creation defaults. #2752 covers the procps parity slice; remaining Stage 5 failures are tracked in #2758. TangleTweaker docking (#581) remains WONTFIX and was not included in #2747.
+- Updated the Feature Index with stable source and test anchors. This records merged code and passing PR gates; the v5.50.0 release cut, tag, and deployment remain later work.
+
 ## 2026-10-31 — v5.50.0 W1-D: Stage 5 procps parity + global Engine settings UI
 
 <!-- prawduct: type=feature | scope=w1d-2752-2747 -->
