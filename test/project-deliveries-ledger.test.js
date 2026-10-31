@@ -51,9 +51,7 @@ function helperGlobals() {
     tcRulesUnknownHtml: sandbox.tcRulesUnknownHtml,
     tcDegradedRead: sandbox.tcDegradedRead,
     tcDeliveryOutcomeClass: sandbox.tcDeliveryOutcomeClass,
-    tcRuleLabelList: sandbox.tcRuleLabelList,
-    tcResolveEngineProfile: sandbox.tcResolveEngineProfile,
-    tcSettingDisposition: sandbox.tcSettingDisposition
+    tcRuleLabelList: sandbox.tcRuleLabelList
   };
 }
 
@@ -73,12 +71,7 @@ const esc = escCtx.esc;
  */
 function renderSection() {
   const decl = 'function renderProjectRulesSection(project)';
-  const helpers = helperGlobals();
-  const ctx = vm.createContext({
-    esc, console, state: { engines: [] },
-    tcResolveEngineProfile: helpers.tcResolveEngineProfile,
-    tcSettingDisposition: helpers.tcSettingDisposition
-  });
+  const ctx = vm.createContext({ esc, console });
   vm.runInContext(`${arrayConst('WRAP_SECTION_NAMES')}\n${arrayConst('PROJECT_RULE_KINDS')}\n`
     + `${decl}${liftBody(UI_SRC, decl)}\nthis.html = renderProjectRulesSection({ id: 7, name: 'p', wrapSections: null });`, ctx);
   return ctx.html;

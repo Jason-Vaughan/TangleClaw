@@ -298,5 +298,45 @@ describe('#2189 — the settings modal and an engine change', () => {
       assert.doesNotMatch(save, /launchModeEl\.value !== \(project2\.defaultLaunchMode/,
         'the value-only comparison is what omitted a mode re-chosen for a new engine');
     });
+
+    it('a connection-backed OpenClaw project gets its eyes-open guard from its own engine, not the roster (#1264)', async () => {
+      // guardProfile used to be `state.engines.find(...)`, which never carries
+      // a connection-backed id — so the bypass warning (and the confirmation
+      // modal it is supposed to trigger) silently never fired for this project.
+      const connectionBacked = Object.assign({}, profile('openclaw'), { id: 'openclaw:conn-1' });
+      const project = {
+        name: 'p-openclaw', engine: connectionBacked,
+        defaultLaunchMode: 'default', showLaunchModePicker: false
+      };
+      let confirmed = false;
+      const els = {
+        settingsName: { value: project.name },
+        settingsEngine: { value: 'openclaw:conn-1' },
+        settingsTags: { value: '' },
+        settingsDefaultLaunchMode: { value: 'bypassPermissions' },
+        settingsShowLaunchPicker: { checked: false }
+      };
+      const ctx = {
+        document: { getElementById: (id) => els[id] || null },
+        // The roster does not carry the connection-backed id, by design — the
+        // same shape `state.engines` ships in production.
+        state: { projects: [project], engines: [] },
+        settingsTarget: project.name,
+        async _submitSettings() { assert.fail('must route through the confirmation, not submit directly'); },
+        tcSettingDisposition: () => ({ applies: false }),
+        tcLaunchModePatch: helpers.tcLaunchModePatch,
+        tcResolveEngineProfile: helpers.tcResolveEngineProfile,
+        collectWrapSectionsSelection: () => undefined,
+        openBypassHiddenModal(body, mode, modeConfig) {
+          confirmed = true;
+          assert.equal(mode, 'bypassPermissions');
+          assert.ok(modeConfig && modeConfig.warning, 'the warning-carrying mode config must be the real one');
+        }
+      };
+      vm.createContext(ctx);
+      vm.runInContext(`${functionSource(ui, 'async function doSaveSettings(')}; this.run = doSaveSettings;`, ctx);
+      await ctx.run();
+      assert.equal(confirmed, true, 'the eyes-open guard must fire for a connection-backed engine too');
+    });
   });
 });

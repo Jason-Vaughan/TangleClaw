@@ -2184,6 +2184,7 @@ function openSettings(name, options) {
     null,
     project.engine || null
   );
+  renderStartupRulesWarning(project.engine ? project.engine.id : '', project.engine || null);
   // CC-6 (#381): populate the per-project rule lists (async) once the
   // modal markup is in the DOM. project.id is the DB id the API scopes on.
   loadProjectRules(project.id, project.name);
@@ -2236,6 +2237,11 @@ function openSettings(name, options) {
       leavesStoredEngine && storedMode !== 'default' ? (project.engine || null) : null,
       project.engine || null
     );
+    // The startup-rules warning is a per-engine capability fact, not a
+    // per-launch choice, so it tracks the dropdown exactly like the toggles
+    // above — stale otherwise the moment the operator switches engines
+    // without reopening the modal (#1269, PRR-A/Integrator HOLD on PR #2748).
+    renderStartupRulesWarning(e.target.value, project.engine || null);
   });
 
   // Turning silent prime off costs the operator the index pointers too — the
@@ -2660,6 +2666,25 @@ const PROJECT_RULE_KINDS = [
 ];
 
 /**
+ * Render the startup-rules unreachable warning into `#projStartupRulesWarning`,
+ * live against the engine the dropdown now names — not the project's stored
+ * engine, which is stale the moment the operator switches engines (#1269).
+ * @param {string} engineId - Engine id from the dropdown's current value
+ * @param {object|null} [projectEngine] - The project's own enriched engine, used
+ *   only while the dropdown still names it — mirrors every other engine-
+ *   conditional control in this modal.
+ */
+function renderStartupRulesWarning(engineId, projectEngine) {
+  const container = document.getElementById('projStartupRulesWarning');
+  if (!container) return;
+  const profile = tcResolveEngineProfile(state.engines, engineId, projectEngine);
+  const disposition = tcSettingDisposition('startupRules', null, profile);
+  container.innerHTML = disposition.applies
+    ? ''
+    : `<div class="form-hint" style="color:var(--danger)">${esc(disposition.reason)}</div>`;
+}
+
+/**
  * Build the Project Rules section markup for the Settings modal. The per-kind rule
  * lists are populated asynchronously by loadProjectRules() after the modal opens.
  * @param {object} project - Enriched project (carries id + wrapSections)
@@ -2679,30 +2704,26 @@ function renderProjectRulesSection(project) {
       </label>`;
   }).join('');
 
-  // Startup rules ride either the hidden rules-hook or the pasted prime
-  // (lib/sessions.js's `supportsPaste`); an engine with neither channel never
-  // delivers them, independent of this project's own silentPrime choice
-  // (#1269). Resolved against the dropdown's initial value, the same input
-  // the other engine-conditional rows in this modal use at open.
-  const projectEngineProfile = tcResolveEngineProfile(
-    state.engines, project.engine ? project.engine.id : '', project.engine || null
-  );
-  const startupRulesDisposition = tcSettingDisposition('startupRules', null, projectEngineProfile);
-  const ruleBlocks = PROJECT_RULE_KINDS.map((k) => {
-    const unreachable = k.kind === 'startup' && !startupRulesDisposition.applies;
-    return `
+  // Startup rules' reachability is engine-conditional (#1269) and the engine
+  // dropdown can change after this section is first rendered, so the warning
+  // gets its own stable container and live re-render — `renderStartupRulesWarning`,
+  // called here for the initial paint and again from the dropdown's `change`
+  // listener, the same split every other engine-conditional control in this
+  // modal (silent prime, Medusa wake, …) already uses. A warning baked once
+  // into this function's return value would go stale the moment the operator
+  // switched engines without reopening the modal.
+  const ruleBlocks = PROJECT_RULE_KINDS.map((k) => `
     <div class="project-rules-block" data-kind="${k.kind}">
       <div class="form-label">${esc(k.label)}</div>
       <div class="form-hint">${esc(k.hint)}</div>
-      ${unreachable ? `<div class="form-hint" style="color:var(--danger)">${esc(startupRulesDisposition.reason)}</div>` : ''}
+      ${k.kind === 'startup' ? '<div id="projStartupRulesWarning"></div>' : ''}
       <div class="session-rules-list" id="projRulesList-${k.kind}" aria-live="polite"></div>
       <div class="session-rules-add">
         <textarea class="rules-editor" id="projRuleInput-${k.kind}" rows="2"
                   placeholder="Add a ${k.kind} rule…" spellcheck="false"></textarea>
         <button class="btn btn-small btn-primary" data-action="add-rule" data-kind="${k.kind}">Add</button>
       </div>
-    </div>`;
-  }).join('');
+    </div>`).join('');
 
   return `
     <div class="project-rules-section">

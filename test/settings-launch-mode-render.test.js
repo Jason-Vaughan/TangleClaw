@@ -34,11 +34,12 @@ const readEngine = (id) => JSON.parse(
 /**
  * Run `renderLaunchModeSettings` against a real bundled profile.
  *
- * @param {object} opts - `engine` (profile object), `engineId`, `preserveMode`,
- *   `preserveShow`.
+ * @param {object} opts - `engine` (profile object, placed in `state.engines`),
+ *   `engineId`, `preserveMode`, `preserveShow`, `projectEngine` (the project's
+ *   own enriched engine, used only while the roster omits `engineId` — #1264).
  * @returns {object} `{ html }` — the container's rendered markup.
  */
-function render({ engine, engineId = 'claude', preserveMode = 'default', preserveShow = true }) {
+function render({ engine, engineId = 'claude', preserveMode = 'default', preserveShow = true, projectEngine = null }) {
   const { doc } = makeDocument(['settingsLaunchModeContainer']);
   const ctx = {
     document: doc,
@@ -51,7 +52,7 @@ function render({ engine, engineId = 'claude', preserveMode = 'default', preserv
   vm.runInContext(liftDeclaration(API_HELPER_SRC, 'function tcResolveEngineProfile'), ctx);
   vm.runInContext(liftDeclaration(UI_SRC, 'function renderLaunchModeSettings'), ctx);
 
-  ctx.renderLaunchModeSettings(engineId, preserveMode, preserveShow);
+  ctx.renderLaunchModeSettings(engineId, preserveMode, preserveShow, null, projectEngine);
   return { html: doc.getElementById('settingsLaunchModeContainer').innerHTML };
 }
 
@@ -108,5 +109,20 @@ describe('the settings modal launch-mode section actually renders (#1037)', () =
     const engine = engineWithDisabled('claude',
       ['default', 'plan', 'auto', 'acceptEdits', 'bypassPermissions']);
     assert.equal(render({ engine }).html, '');
+  });
+
+  it('a connection-backed OpenClaw project gets its section from its own engine, not the roster (#1264)', () => {
+    // The actual defect: `state.engines` never carries a connection-backed id
+    // (`openclaw:<connectionId>`), so this project's launch-mode section used
+    // to resolve to nothing. `projectEngine` is what `openSettings` threads
+    // through for exactly this case.
+    const openclaw = readEngine('openclaw');
+    const connectionBacked = Object.assign({}, openclaw, { id: 'openclaw:conn-1', name: 'Studio (OpenClaw)' });
+    const { html } = render({
+      engine: null, engineId: 'openclaw:conn-1', projectEngine: connectionBacked
+    });
+    assert.match(html, /id="settingsDefaultLaunchMode"/, 'the section renders at all');
+    assert.match(html, /<option value="bypassPermissions"[^>]*>Bypass\s*⚠/,
+      'the warning-carrying mode is offered, so the eyes-open confirmation can fire on it');
   });
 });
