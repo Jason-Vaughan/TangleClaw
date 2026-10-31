@@ -25,6 +25,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const vm = require('node:vm');
 const { liftDeclaration } = require('./helpers/lift');
 
 const engines = require('../lib/engines');
@@ -140,7 +141,12 @@ const PROBES = {
   },
   // Off is what ships — a wake spends a real turn — so a stored `true` is the
   // operator's choice, and it cannot apply on an engine declaring no signature.
-  medusaWake: { shipped: false, chosen: true, inapplicable: true, extras: [] }
+  medusaWake: { shipped: false, chosen: true, inapplicable: true, extras: [] },
+  // No stored config value answers this row at all (#1269) — `applies` reads
+  // only the profile's capabilities, never the project config — so every
+  // probe value here is an arbitrary placeholder that exercises the same
+  // `configWith`/cases plumbing every other row uses.
+  startupRules: { shipped: true, chosen: false, inapplicable: true, extras: [] }
 };
 
 // The silent-prime states every case is crossed with. A caveat row's answer
@@ -825,6 +831,38 @@ describe('the settings surfaces render the disposition rather than their own wor
     assert.match(src, /tcSettingDisposition\('silentPrime'/);
     assert.match(src, /esc\(disposition\.reason\)/, 'the rendered words are the predicate\'s');
     assert.doesNotMatch(src, /supportsSilentPrime/, 'no second capability gate in the browser');
+  });
+
+  it('renderStartupRulesWarning renders live and tracks the engine it is asked about (#1269)', () => {
+    // Behavioral, not source-matched: this is the exact gap PRR-A/Integrator
+    // held PR #2748 on — a warning computed once is not the same as one that
+    // tracks the engine the dropdown now names.
+    const helpers = loadApiHelperGlobals();
+    const container = { innerHTML: '' };
+    const ctx = {
+      document: { getElementById: (id) => (id === 'projStartupRulesWarning' ? container : null) },
+      state: { engines: bundledProfiles() },
+      tcResolveEngineProfile: helpers.tcResolveEngineProfile,
+      tcSettingDisposition: helpers.tcSettingDisposition,
+      esc: (s) => String(s)
+    };
+    vm.createContext(ctx);
+    vm.runInContext(liftDeclaration(UI, 'function renderStartupRulesWarning'), ctx);
+
+    ctx.renderStartupRulesWarning('openclaw', null);
+    assert.match(container.innerHTML, /OpenClaw/, 'names the engine with neither channel');
+    assert.match(container.innerHTML, /will not reach a session/);
+
+    ctx.renderStartupRulesWarning('claude', null);
+    assert.equal(container.innerHTML, '', 'switching to a capable engine clears the stale warning');
+  });
+
+  it('the engine dropdown change handler re-renders the startup-rules warning (#1269)', () => {
+    const start = UI.indexOf("document.getElementById('settingsEngine').addEventListener('change'");
+    assert.notEqual(start, -1, 'the engine-change handler must exist');
+    const handler = UI.slice(start, UI.indexOf('\n  });\n', start));
+    assert.match(handler, /renderStartupRulesWarning\(/,
+      'without this the warning goes stale the moment the operator switches engines');
   });
 
   it('the create wizard offers an inert control with the reason, never nothing', () => {

@@ -4896,7 +4896,10 @@
     featureIndexEnabled: false,
     projectMapEnabled: false,
     generatedConfig: false,
-    medusaWake: false
+    medusaWake: false,
+    // Placeholder — mirrors the server's `startupRules.shippedDefault`
+    // (#1269). No stored value answers this row; see `tcSettingDisposition`.
+    startupRules: true
   };
 
   /**
@@ -5293,6 +5296,19 @@
           + 'from a resting one here and will never nudge this project\'s sessions. Typing into a '
           + 'pane on a guessed signature is the one thing the wake monitor refuses to do.';
         evidence = 'capabilities.wake is not declared, or is declared malformed';
+      }
+    } else if (setting === 'startupRules') {
+      // Mirrors the server: whichever channel can carry startup rules here —
+      // the hidden rules-hook or the pasted prime — independent of this
+      // project's own silentPrime choice.
+      applies = Boolean(engine && engine.capabilities
+        && (engine.capabilities.supportsPrimePrompt === true
+          || engine.capabilities.supportsSilentPrime === true));
+      if (!applies) {
+        reason = name + ' has no channel that can deliver a project\'s startup rules to a session '
+          + 'here — not a pasted prime, not a hidden one — so rules written for this project will '
+          + 'not reach a session on this engine.';
+        evidence = 'capabilities.supportsPrimePrompt and capabilities.supportsSilentPrime are both not true';
       }
     } else {
       // Unknown key: the server throws rather than answering "it applies",

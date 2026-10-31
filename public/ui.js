@@ -2180,8 +2180,11 @@ function openSettings(name, options) {
   renderLaunchModeSettings(
     project.engine ? project.engine.id : '',
     project.defaultLaunchMode || 'default',
-    project.showLaunchModePicker !== false
+    project.showLaunchModePicker !== false,
+    null,
+    project.engine || null
   );
+  renderStartupRulesWarning(project.engine ? project.engine.id : '', project.engine || null);
   // CC-6 (#381): populate the per-project rule lists (async) once the
   // modal markup is in the DOM. project.id is the DB id the API scopes on.
   loadProjectRules(project.id, project.name);
@@ -2231,8 +2234,14 @@ function openSettings(name, options) {
       e.target.value,
       tcLaunchModeForEngine(project, e.target.value),
       showEl ? showEl.checked : (project.showLaunchModePicker !== false),
-      leavesStoredEngine && storedMode !== 'default' ? (project.engine || null) : null
+      leavesStoredEngine && storedMode !== 'default' ? (project.engine || null) : null,
+      project.engine || null
     );
+    // The startup-rules warning is a per-engine capability fact, not a
+    // per-launch choice, so it tracks the dropdown exactly like the toggles
+    // above — stale otherwise the moment the operator switches engines
+    // without reopening the modal (#1269, PRR-A/Integrator HOLD on PR #2748).
+    renderStartupRulesWarning(e.target.value, project.engine || null);
   });
 
   // Turning silent prime off costs the operator the index pointers too — the
@@ -2576,11 +2585,15 @@ function renderProjectMapToggle(engineId, preserveChecked, projectEngine, silent
  *   render dropped because the dropdown moved to another engine; null when
  *   nothing was dropped. Named in a line under the control, so a selection
  *   that changed without the operator touching it is explained where it sits.
+ * @param {object|null} [projectEngine] - The project's own enriched engine, used
+ *   only while the dropdown still names it — `state.engines` omits
+ *   connection-backed ids (e.g. `openclaw:<connId>`), and this is where their
+ *   launch modes come from instead (#1264).
  */
-function renderLaunchModeSettings(engineId, preserveMode, preserveShow, resetFrom = null) {
+function renderLaunchModeSettings(engineId, preserveMode, preserveShow, resetFrom = null, projectEngine = null) {
   const container = document.getElementById('settingsLaunchModeContainer');
   if (!container) return;
-  const profile = (state.engines || []).find(e => e.id === engineId);
+  const profile = tcResolveEngineProfile(state.engines, engineId, projectEngine);
   const enabledEntries = tcHonoredLaunchModes(profile);
   if (enabledEntries.length === 0) {
     container.innerHTML = '';
@@ -2653,6 +2666,25 @@ const PROJECT_RULE_KINDS = [
 ];
 
 /**
+ * Render the startup-rules unreachable warning into `#projStartupRulesWarning`,
+ * live against the engine the dropdown now names — not the project's stored
+ * engine, which is stale the moment the operator switches engines (#1269).
+ * @param {string} engineId - Engine id from the dropdown's current value
+ * @param {object|null} [projectEngine] - The project's own enriched engine, used
+ *   only while the dropdown still names it — mirrors every other engine-
+ *   conditional control in this modal.
+ */
+function renderStartupRulesWarning(engineId, projectEngine) {
+  const container = document.getElementById('projStartupRulesWarning');
+  if (!container) return;
+  const profile = tcResolveEngineProfile(state.engines, engineId, projectEngine);
+  const disposition = tcSettingDisposition('startupRules', null, profile);
+  container.innerHTML = disposition.applies
+    ? ''
+    : `<div class="form-hint" style="color:var(--danger)">${esc(disposition.reason)}</div>`;
+}
+
+/**
  * Build the Project Rules section markup for the Settings modal. The per-kind rule
  * lists are populated asynchronously by loadProjectRules() after the modal opens.
  * @param {object} project - Enriched project (carries id + wrapSections)
@@ -2672,10 +2704,19 @@ function renderProjectRulesSection(project) {
       </label>`;
   }).join('');
 
+  // Startup rules' reachability is engine-conditional (#1269) and the engine
+  // dropdown can change after this section is first rendered, so the warning
+  // gets its own stable container and live re-render — `renderStartupRulesWarning`,
+  // called here for the initial paint and again from the dropdown's `change`
+  // listener, the same split every other engine-conditional control in this
+  // modal (silent prime, Medusa wake, …) already uses. A warning baked once
+  // into this function's return value would go stale the moment the operator
+  // switched engines without reopening the modal.
   const ruleBlocks = PROJECT_RULE_KINDS.map((k) => `
     <div class="project-rules-block" data-kind="${k.kind}">
       <div class="form-label">${esc(k.label)}</div>
       <div class="form-hint">${esc(k.hint)}</div>
+      ${k.kind === 'startup' ? '<div id="projStartupRulesWarning"></div>' : ''}
       <div class="session-rules-list" id="projRulesList-${k.kind}" aria-live="polite"></div>
       <div class="session-rules-add">
         <textarea class="rules-editor" id="projRuleInput-${k.kind}" rows="2"
@@ -4675,7 +4716,7 @@ async function doSaveSettings(launchAfter = false) {
     const effShow = body.showLaunchModePicker !== undefined
       ? body.showLaunchModePicker
       : (project2 ? project2.showLaunchModePicker !== false : true);
-    const guardProfile = (state.engines || []).find(e => e.id === body.engine);
+    const guardProfile = tcResolveEngineProfile(state.engines, body.engine, project2 ? project2.engine : null);
     const modeConfig = guardProfile && guardProfile.launchModes && guardProfile.launchModes[effMode];
     if (!effShow && modeConfig && modeConfig.warning) {
       openBypassHiddenModal(body, effMode, modeConfig, settingsTarget, (b) => _submitSettings(b, launchAfter));
