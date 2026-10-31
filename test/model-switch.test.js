@@ -307,22 +307,24 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.ok(Number.isFinite(reconcileArgs.rdeps.startedAtMs), 'startedAtMs must be a finite number, not NaN/undefined');
   });
 
-  it('same-provider: a non-stubbed reconcile reaches verified against a real Claude transcript file (#2598 BLOCKING 2)', async () => {
+  it('same-provider: a non-stubbed reconcile actually sends /clear + /model and verifies against the post-switch transcript (#2598 BLOCKING 2, PRR-A Round 3 BLOCKING 1)', async () => {
     const claudeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-model-switch-claudehome-'));
     const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'the-real-tmux', primePrompt: null });
     const startedAtMs = profileReconciler.parseLaunchTimestampMs(session.startedAt);
 
-    // The real `_readClaudeActiveModel` reader's own rules: under
-    // claudeHome/projects/**/*.jsonl, a line naming this exact `cwd`, whose
-    // own `timestamp` clears `startedAtMs` by a full second (session rows
-    // carry no sub-second precision, so `startedAtMs` is always an exact
-    // second — a first timestamp inside that same second is deliberately
-    // treated as ambiguous by the reader itself, not a bug in this test).
+    // Pre-switch evidence that the session already ran on a DIFFERENT
+    // model, so the initial observation genuinely does not match the
+    // upcoming switch target (proving /clear + /model fire for a real
+    // reason, not skipped by coincidence). `startedAtMs + 2000` clears the
+    // reader's own one-second same-instant ambiguity window around
+    // `session.startedAt` (SQLite's `started_at` column has only
+    // second resolution) the same way the BLOCKING 2 test above does.
     const transcriptDir = path.join(claudeHome, 'projects', 'some-slug');
     fs.mkdirSync(transcriptDir, { recursive: true });
-    fs.writeFileSync(path.join(transcriptDir, 'abc123.jsonl'), JSON.stringify({
+    const transcriptFile = path.join(transcriptDir, 'abc123.jsonl');
+    fs.writeFileSync(transcriptFile, JSON.stringify({
       type: 'assistant', cwd: projectPath, timestamp: new Date(startedAtMs + 2000).toISOString(),
-      message: { model: 'claude-sonnet-5' }
+      message: { model: 'claude-opus-4-6' }
     }) + '\n');
 
     const sentKeys = [];
@@ -330,17 +332,30 @@ describe('lib/model-switch — switchSessionModel', () => {
       ...target(),
       checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
       claudeHome,
-      tmux: { sendKeys: (sessionArg, cmd) => sentKeys.push({ session: sessionArg, cmd }) }
+      tmux: {
+        sendKeys: (sessionArg, cmd) => {
+          sentKeys.push({ session: sessionArg, cmd });
+          // A real Claude Code session appends a new transcript record once
+          // `/model <id>` actually lands — simulated here by appending one
+          // ourselves, which also refreshes the file's own mtime past the
+          // switch's start instant, same as the real file would.
+          if (cmd === '/model claude-sonnet-5') {
+            fs.appendFileSync(transcriptFile, JSON.stringify({
+              type: 'assistant', cwd: projectPath, timestamp: new Date().toISOString(),
+              message: { model: 'claude-sonnet-5' }
+            }) + '\n');
+          }
+        }
+      }
     });
 
     assert.equal(result.ok, true, result.error);
     assert.equal(result.sameProvider, true);
-    // Nothing was even sent: the FIRST observation already matched the
-    // profile being switched to (the fixture names that exact model), which
-    // the real `reconcile` reports `verified` with no control dispatched —
-    // proof this reached the real adapter/observer, not a stub that always
-    // answers ok regardless of what it was given.
-    assert.deepEqual(sentKeys, []);
+    // Proof this actually drove the live control loop against the real
+    // adapter/observer — not a stub that always answers ok, and not an
+    // early-exit match against stale pre-switch evidence.
+    assert.ok(sentKeys.some((k) => k.cmd === '/clear'), 'must send /clear');
+    assert.ok(sentKeys.some((k) => k.cmd === '/model claude-sonnet-5'), 'must send /model claude-sonnet-5');
   });
 
   it('same-provider: refuses when the reconciler cannot verify the live profile, but the config stays updated', async () => {
