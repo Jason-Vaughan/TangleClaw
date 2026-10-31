@@ -148,7 +148,8 @@
         "lib/shell-word.js",
         "lib/exec*.js",
         "lib/http-settle.js",
-        "lib/orchestration.js"
+        "lib/orchestration.js",
+        "lib/profile-reconciler.js"
       ]
     },
     "auth": {
