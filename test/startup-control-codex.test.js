@@ -1682,7 +1682,7 @@ describe('Codex startupControl adapter', () => {
         channel({ threadId: THREAD });
         server.state.threadStatus = { type: 'active' };
         assert.deepEqual(await observe(), { state: 'busy', reasonCode: 'thread-active' });
-        server.state.threadStatus = { type: 'systemError' };
+        server.state.threadStatus = { type: 'somethingNew' };
         assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-status-unknown' });
         assert.equal(server.calls('config/read').length, 0, 'the folder\'s trust cannot change these answers, so it is not asked');
         server.close();
@@ -1732,9 +1732,54 @@ describe('Codex startupControl adapter', () => {
 
     it('any other status is unknown', async () => {
       await serve();
-      server.state.threadStatus = { type: 'systemError' };
+      server.state.threadStatus = { type: 'somethingNew' };
       channel({ threadId: THREAD });
       assert.deepEqual(await observe(), { state: 'unknown', reasonCode: 'thread-status-unknown' });
+    });
+
+    describe('a bound thread stuck in systemError is resting, not mid-turn (#2723)', () => {
+      it('is answered idle when the folder is trusted and no other thread is active', async () => {
+        await serve();
+        server.state.threadStatus = { type: 'systemError' };
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'idle', reasonCode: 'thread-idle' });
+      });
+
+      it('still checks folder trust, and is held rather than idle when the folder is untrusted', async () => {
+        await serve({ 'config/read': () => ({ config: { projects: { [PROJECT_PATH]: { trust_level: 'untrusted' } } }, origins: {} }) });
+        server.state.threadStatus = { type: 'systemError' };
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'held', reasonCode: 'folder-untrusted' });
+      });
+
+      it('still answers busy when another loaded thread is active', async () => {
+        await serve({
+          'thread/loaded/list': () => ({ data: [THREAD, 'other'] }),
+          'thread/read': (p) => ({
+            thread: p.threadId === THREAD
+              ? { id: THREAD, cwd: PROJECT_PATH, status: { type: 'systemError' }, parentThreadId: null, source: 'cli' }
+              : { id: p.threadId, cwd: PROJECT_PATH, status: { type: 'active', activeFlags: [] }, parentThreadId: null, source: 'cli' }
+          })
+        });
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'busy', reasonCode: 'other-thread-active' });
+      });
+
+      it('still answers busy, named as a subagent, when a subagent thread is active', async () => {
+        await serve({
+          'thread/loaded/list': () => ({ data: [THREAD, 'sub-thread'] }),
+          'thread/read': (p) => ({
+            thread: p.threadId === THREAD
+              ? { id: THREAD, cwd: PROJECT_PATH, status: { type: 'systemError' }, parentThreadId: null, source: 'cli' }
+              : {
+                id: p.threadId, cwd: PROJECT_PATH, status: { type: 'active', activeFlags: [] },
+                parentThreadId: THREAD, source: { subAgent: { thread_spawn: { parent_thread_id: THREAD, depth: 1 } } }
+              }
+          })
+        });
+        channel({ threadId: THREAD });
+        assert.deepEqual(await observe(), { state: 'busy', reasonCode: 'subagent-active' });
+      });
     });
 
     describe('binding a channel whose thread was never recorded (D8)', () => {
