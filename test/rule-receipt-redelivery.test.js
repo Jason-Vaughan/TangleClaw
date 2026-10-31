@@ -194,6 +194,38 @@ describe('#1176 — rule-receipt-redelivery', () => {
       assert.match(token.hookFiredAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
     });
 
+    // #1176 Round 4, PRR-A BLOCKING 2: the receipt gate must never fire for
+    // a shard that failed to actually print — simulated by shadowing `cat`
+    // on PATH with one that always fails, since a real readable-but-
+    // unreadable-at-read-time race is not something a test can force
+    // deterministically.
+    it('when the shard fails to print (cat fails), posts no receipt and stamps nothing onto the token', () => {
+      const project = makeProject();
+      writeShard(project.path);
+      rulesChannel.writeReceiptToken(project.path, { deliveryId: 81, api: REFUSED_API });
+      const tokenFile = rulesChannel.receiptTokenPath(project.path);
+      const before = fs.readFileSync(tokenFile, 'utf8');
+
+      const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-1176-fakebin-'));
+      fs.writeFileSync(path.join(fakeBin, 'cat'), '#!/bin/bash\nexit 1\n');
+      fs.chmodSync(path.join(fakeBin, 'cat'), 0o755);
+      try {
+        execFileSync('bash', [HOOK, '1'], {
+          env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}`, CLAUDE_PROJECT_DIR: project.path },
+          input: JSON.stringify({ source: 'startup' }),
+          encoding: 'utf8'
+        });
+      } finally {
+        fs.rmSync(fakeBin, { recursive: true, force: true });
+      }
+
+      const after = fs.readFileSync(tokenFile, 'utf8');
+      assert.equal(after, before, 'the token must be byte-identical — neither posted-and-deleted nor stamped');
+      const token = JSON.parse(after);
+      assert.equal(token.hookFiredAt, undefined);
+      assert.equal(token.loopbackRefused, undefined);
+    });
+
     it('end to end: the reader then classifies that stamped token as local-receipt-pending, not needs-redelivery', () => {
       const project = makeProject();
       writeShard(project.path);
@@ -634,6 +666,72 @@ describe('#1176 — rule-receipt-redelivery', () => {
       });
     });
 
+    // #1176 Round 4, PRR-A BLOCKING 3: `activity.query` throwing AFTER an
+    // attempt already succeeded must never reset the effective count back
+    // to 0 — the in-memory `_attempts.count`, incremented unconditionally
+    // on every attempt, is the floor that stops that.
+    describe('maxAttempts cannot be exceeded when activity.query later faults (PRR-A Round 4 BLOCKING 3)', () => {
+      it('a query failure on pass 2 still honours maxAttempts, using the in-memory count as the floor', async () => {
+        const project = makeProject();
+        const session = makeSession(project);
+        const delivery = writtenDelivery(session, project);
+
+        const deps = {
+          listCandidates: () => [{ delivery, session }],
+          deliverViaOpenChannel: async () => { throw new Error('channel unreachable'); },
+          cooldownMs: 0,
+          maxAttempts: 2
+        };
+
+        const first = await redelivery.checkAndRedeliver({ ...deps, now: pastGraceNow });
+        assert.equal(first[0].status, 'attempt-failed');
+        assert.equal(first[0].attempt, 1);
+
+        // activity.query now faults — durable count alone would read 0 for
+        // this delivery, not 1, if the in-memory count weren't kept as a
+        // floor against exactly this.
+        mock.method(store.activity, 'query', () => { throw new Error('activity_log unreachable'); });
+        try {
+          const second = await redelivery.checkAndRedeliver({ ...deps, now: () => pastGraceNow() + 1000 });
+          assert.equal(second[0].status, 'exhausted', 'the in-memory count (1) + this attempt must still reach maxAttempts (2), not reset to a fresh attempt 1');
+          assert.equal(second[0].attempts, 2);
+
+          // And a third pass must not somehow attempt again past maxAttempts.
+          const third = await redelivery.checkAndRedeliver({ ...deps, now: () => pastGraceNow() + 2000 });
+          assert.equal(third[0].status, 'exhausted');
+          assert.equal(third[0].attempts, 2, 'never exceeds maxAttempts even on a later pass while still faulting');
+        } finally {
+          mock.restoreAll();
+        }
+      });
+
+      it('a paste that succeeds while activity.query is already faulting is still counted toward maxAttempts', async () => {
+        const project = makeProject();
+        const session = makeSession(project);
+        const delivery = writtenDelivery(session, project);
+
+        mock.method(store.activity, 'query', () => { throw new Error('activity_log unreachable'); });
+        try {
+          const deps = {
+            listCandidates: () => [{ delivery, session }],
+            deliverViaOpenChannel: async () => {},
+            cooldownMs: 0,
+            maxAttempts: 1
+          };
+          const first = await redelivery.checkAndRedeliver({ ...deps, now: pastGraceNow });
+          assert.equal(first[0].status, 'redelivered');
+          assert.equal(first[0].attempt, 1);
+
+          // maxAttempts is 1 — a second pass must read exhausted from the
+          // in-memory count alone (activity.query is still faulting).
+          const second = await redelivery.checkAndRedeliver({ ...deps, now: () => pastGraceNow() + 1000 });
+          assert.equal(second[0].status, 'exhausted');
+        } finally {
+          mock.restoreAll();
+        }
+      });
+    });
+
     // #1176 Round 3, PRR-A WARNING 2: bound how many candidates one pass
     // processes, so a backlog never costs one tick noticeably more than its
     // own capture budget.
@@ -671,6 +769,118 @@ describe('#1176 — rule-receipt-redelivery', () => {
           deliverViaOpenChannel: async () => {}
         });
         assert.equal(outcomes.length, 2);
+      });
+    });
+
+    // #1176 Round 4, PRR-A BLOCKING 1: with `maxCandidatesPerPass: 1` and a
+    // candidate that NEVER becomes 'needs-redelivery' (stuck local-receipt-
+    // pending, cooling down, exhausted, …), index 0 alone used to be
+    // examined on every pass, starving every candidate after it forever.
+    describe('round-robin fairness under maxCandidatesPerPass (PRR-A Round 4 BLOCKING 1)', () => {
+      it('session 1 stuck local-receipt-pending does not starve session 2 on the next pass', async () => {
+        // Separate projects: the receipt token is per-PROJECT, so two
+        // sessions sharing one project would also share one token file.
+        const projectA = makeProject();
+        const projectB = makeProject();
+        const sessionA = makeSession(projectA);
+        const sessionB = makeSession(projectB);
+        const deliveryA = writtenDelivery(sessionA, projectA);
+        const deliveryB = writtenDelivery(sessionB, projectB);
+        // A's token carries loopbackRefused — genuinely stuck local-receipt-
+        // pending on EVERY pass, never resolving to needs-redelivery.
+        const fileA = rulesChannel.receiptTokenPath(projectA.path);
+        fs.mkdirSync(path.dirname(fileA), { recursive: true });
+        fs.writeFileSync(fileA, JSON.stringify({ deliveryId: deliveryA.id, api: 'x', loopbackRefused: true }));
+
+        const deps = {
+          listCandidates: () => [{ delivery: deliveryA, session: sessionA }, { delivery: deliveryB, session: sessionB }],
+          maxCandidatesPerPass: 1,
+          deliverViaOpenChannel: async () => {}
+        };
+
+        const pass1 = await redelivery.checkAndRedeliver({ ...deps, now: pastGraceNow });
+        assert.equal(pass1.length, 1);
+        assert.equal(pass1[0].sessionId, sessionA.id);
+        assert.equal(pass1[0].status, 'local-receipt-pending');
+
+        const pass2 = await redelivery.checkAndRedeliver({ ...deps, now: () => pastGraceNow() + 1000 });
+        assert.equal(pass2.length, 1);
+        assert.equal(pass2[0].sessionId, sessionB.id, 'session B must be examined on the very next pass, not starved by A being stuck');
+        assert.equal(pass2[0].status, 'redelivered');
+
+        // And the rotation continues: a third pass comes back around to A.
+        const pass3 = await redelivery.checkAndRedeliver({ ...deps, now: () => pastGraceNow() + 2000 });
+        assert.equal(pass3[0].sessionId, sessionA.id);
+      });
+
+      it('session 1 stuck exhausted does not starve session 2', async () => {
+        const project = makeProject();
+        const sessionA = makeSession(project);
+        const sessionB = makeSession(project);
+        const deliveryA = writtenDelivery(sessionA, project);
+        const deliveryB = writtenDelivery(sessionB, project);
+
+        // Exhaust A on its own, before B ever enters the picture.
+        for (let i = 0; i < redelivery.DEFAULT_MAX_ATTEMPTS; i++) {
+          await redelivery.checkAndRedeliver({
+            now: () => pastGraceNow() + i * 1000,
+            cooldownMs: 0,
+            listCandidates: () => [{ delivery: deliveryA, session: sessionA }],
+            deliverViaOpenChannel: async () => { throw new Error('unreachable'); }
+          });
+        }
+        const confirmExhausted = await redelivery.checkAndRedeliver({
+          now: () => pastGraceNow() + 9000,
+          cooldownMs: 0,
+          listCandidates: () => [{ delivery: deliveryA, session: sessionA }],
+          deliverViaOpenChannel: async () => { throw new Error('unreachable'); }
+        });
+        assert.equal(confirmExhausted[0].status, 'exhausted');
+
+        const deps = {
+          listCandidates: () => [{ delivery: deliveryA, session: sessionA }, { delivery: deliveryB, session: sessionB }],
+          maxCandidatesPerPass: 1,
+          deliverViaOpenChannel: async () => {}
+        };
+        const pass1 = await redelivery.checkAndRedeliver({ ...deps, now: () => pastGraceNow() + 10000 });
+        assert.equal(pass1[0].sessionId, sessionA.id);
+        assert.equal(pass1[0].status, 'exhausted');
+
+        const pass2 = await redelivery.checkAndRedeliver({ ...deps, now: () => pastGraceNow() + 11000 });
+        assert.equal(pass2[0].sessionId, sessionB.id, 'B must be reached even though A stays exhausted forever');
+        assert.equal(pass2[0].status, 'redelivered');
+      });
+
+      it('the cursor self-corrects when the candidate list changes shape between passes', async () => {
+        const project = makeProject();
+        const sessionA = makeSession(project);
+        const sessionB = makeSession(project);
+        const sessionC = makeSession(project);
+        const deliveryA = writtenDelivery(sessionA, project);
+        const deliveryB = writtenDelivery(sessionB, project);
+        const deliveryC = writtenDelivery(sessionC, project);
+
+        const pass1 = await redelivery.checkAndRedeliver({
+          now: pastGraceNow,
+          listCandidates: () => [{ delivery: deliveryA, session: sessionA }, { delivery: deliveryB, session: sessionB }],
+          maxCandidatesPerPass: 1,
+          deliverViaOpenChannel: async () => {}
+        });
+        assert.equal(pass1[0].sessionId, sessionA.id);
+
+        // A third candidate (C) joins before the next pass — the cursor is
+        // still a valid, in-range offset against the new, longer list.
+        const pass2 = await redelivery.checkAndRedeliver({
+          now: () => pastGraceNow() + 1000,
+          listCandidates: () => [
+            { delivery: deliveryA, session: sessionA },
+            { delivery: deliveryB, session: sessionB },
+            { delivery: deliveryC, session: sessionC }
+          ],
+          maxCandidatesPerPass: 1,
+          deliverViaOpenChannel: async () => {}
+        });
+        assert.equal(pass2[0].sessionId, sessionB.id);
       });
     });
 
