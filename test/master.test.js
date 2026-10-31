@@ -886,7 +886,11 @@ describe('masterIdentityPath — resolves the engine\'s actual config filename (
     assert.equal(master.masterIdentityPath(home, 'not-a-real-engine'), path.join(home, 'CLAUDE.md'));
   });
 
-  it('refreshMasterIdentity writes a non-claude engine\'s identity to ITS resolved path, and the header names that same file', () => {
+  it('refreshMasterIdentity writes a non-claude engine\'s identity to ITS resolved path, serialized for that engine\'s ACTUAL carrier format, not raw Markdown', () => {
+    // Architect Ruling A487-W1D-R2 (#1085 PRR-B REVISE): resolving the right
+    // FILENAME is not the same as resolving the right FORMAT. codex's
+    // configFormat.syntax is 'yaml' — this must parse as the YAML block
+    // literal `_generateCodexYaml` already uses, not raw Markdown bytes.
     const home = mk();
     master.refreshMasterIdentity({
       home,
@@ -897,7 +901,60 @@ describe('masterIdentityPath — resolves the engine\'s actual config filename (
     assert.ok(fs.existsSync(expectedPath), 'the identity must land at the resolved path');
     assert.ok(!fs.existsSync(path.join(home, 'CLAUDE.md')), 'and NOT at the hardcoded CLAUDE.md');
     const content = fs.readFileSync(expectedPath, 'utf8');
-    assert.match(content, new RegExp(`# ${expectedFilename.replace('.', '\\.')} — TangleClaw Project Master`));
+    const lines = content.split('\n');
+    assert.equal(lines[0], 'instructions: |', 'must be the same YAML block-literal shape _generateCodexYaml uses');
+    // Every body line is indented exactly 2 spaces (or blank) — de-indenting
+    // recovers the real Markdown `buildMasterClaudeMd` rendered, proving the
+    // wrap is a lossless round trip, not just a header string appearing
+    // somewhere in the bytes.
+    const body = lines.slice(1, -1); // drop the key line and the trailing ''
+    for (const line of body) assert.ok(line === '' || line.startsWith('  '), `not 2-space indented: ${JSON.stringify(line)}`);
+    const recovered = body.map((l) => (l ? l.slice(2) : l)).join('\n');
+    assert.match(recovered, new RegExp(`# ${expectedFilename.replace('.', '\\.')} — TangleClaw Project Master`));
+  });
+
+  it('refreshMasterIdentity for Aider comments every line — Aider\'s config has no instructions field', () => {
+    const home = mk();
+    master.refreshMasterIdentity({
+      home,
+      enginesLib: { resolveDefaultEngine: () => 'aider', reconcileLaunchMode: () => 'default' }
+    });
+    const expectedFilename = engines.configFilenameOf(engines.resolveProfile('aider'));
+    const content = fs.readFileSync(path.join(home, expectedFilename), 'utf8');
+    const lines = content.split('\n');
+    for (const line of lines) assert.ok(line === '#' || line.startsWith('# '), `not commented: ${JSON.stringify(line)}`);
+    const recovered = lines.map((l) => (l === '#' ? '' : l.slice(2))).join('\n');
+    assert.match(recovered, new RegExp(`# ${expectedFilename.replace('.', '\\.')} — TangleClaw Project Master`));
+  });
+});
+
+describe('serializeMasterIdentity — the Master\'s Markdown identity, in the writing engine\'s real carrier format (#1085, Ruling A487-W1D-R2)', () => {
+  const MD = '# CLAUDE.md — TangleClaw Project Master\n\nYou are the Master.\n\n- a rule';
+
+  it('codex-yaml: wraps under a 2-space-indented YAML block literal', () => {
+    const out = master.serializeMasterIdentity(MD, 'codex-yaml');
+    const lines = out.split('\n');
+    assert.equal(lines[0], 'instructions: |');
+    const body = lines.slice(1, -1);
+    for (const line of body) assert.ok(line === '' || line.startsWith('  '));
+    assert.equal(body.map((l) => (l ? l.slice(2) : l)).join('\n'), MD, 'must round-trip losslessly');
+  });
+
+  it('aider-conf: comments every line, blank lines become a bare #', () => {
+    const out = master.serializeMasterIdentity(MD, 'aider-conf');
+    const lines = out.split('\n');
+    for (const line of lines) assert.ok(line === '#' || line.startsWith('# '));
+    assert.equal(lines.map((l) => (l === '#' ? '' : l.slice(2))).join('\n'), MD, 'must round-trip losslessly');
+  });
+
+  it('claude-md: passed through byte-identical', () => {
+    assert.equal(master.serializeMasterIdentity(MD, 'claude-md'), MD);
+  });
+
+  it('an unrecognized or missing generator falls back to raw Markdown, not a guessed transform', () => {
+    assert.equal(master.serializeMasterIdentity(MD, 'not-a-real-generator'), MD);
+    assert.equal(master.serializeMasterIdentity(MD, null), MD);
+    assert.equal(master.serializeMasterIdentity(MD, undefined), MD);
   });
 });
 
