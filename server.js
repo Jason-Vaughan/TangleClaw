@@ -7747,6 +7747,12 @@ async function handleRequest(req, res) {
 // position they held here, so the route table keeps its order.
 require('./lib/routes/audit').register();
 
+// The engine compatibility canary routes (#1897) read/write
+// `lib/engine-canary.js`'s evidence store through `./_callers`'s own
+// operator proofs, so — like launch-recovery and audit above — register()
+// takes no deps.
+require('./lib/routes/engines-canary').register();
+
 // ── Server Creation ──
 
 /**
