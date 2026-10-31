@@ -410,83 +410,125 @@ describe('offloadTier: probe then run, falling through on anything but a clean p
     try {
       let called = false;
       const out = sink();
-      const code = stage.offloadTier('small', { root: REPO, out, testament: { spawnSync: () => { called = true; } } });
+      const err = sink();
+      const code = stage.offloadTier('small', { root: REPO, out, err, testament: { spawnSync: () => { called = true; } } });
       assert.equal(code, null);
       assert.equal(called, false);
       assert.equal(out.text(), '');
+      assert.equal(err.text(), '');
     } finally { restore(); }
   });
 
   it('falls through, naming the probe\'s error code, when the probe is not ok', () => {
     const out = sink();
+    const err = sink();
     const spawnSync = (bin, argv) => (argv.includes('--probe')
       ? { status: 2, stdout: JSON.stringify({ status: 'machine_not_set_up', error: { code: 'machine_not_set_up' } }) }
       : assert.fail('must not run after a failed probe'));
-    const code = stage.offloadTier('small', { root: REPO, out, testament: { bin: '/bin/true', spawnSync } });
+    const code = stage.offloadTier('small', { root: REPO, out, err, testament: { bin: '/bin/true', spawnSync } });
     assert.equal(code, null);
-    assert.match(out.text(), /^testament: pool unavailable for small \(machine_not_set_up\); running locally$/m);
+    assert.equal(out.text(), '', 'a fallback diagnostic is not a result');
+    assert.match(err.text(), /^testament: pool unavailable for small \(machine_not_set_up\); running locally$/m);
   });
 
-  it('returns 0 and prints the pool\'s counts on a clean pass, with a visible notice before each blocking call', () => {
+  it('returns 0 and prints the pool\'s counts on a clean pass, with a visible stderr notice before each blocking call', () => {
     const out = sink();
+    const err = sink();
     const spawnSync = (bin, argv) => (argv.includes('--probe')
       ? { status: 0, stdout: JSON.stringify({ status: 'ok' }) }
-      : { status: 0, stdout: JSON.stringify({ report: { counts: { tests: 10, pass: 10 } } }) });
-    const code = stage.offloadTier('small', { root: REPO, out, testament: { bin: '/bin/true', spawnSync } });
+      : { status: 0, stdout: JSON.stringify({ exit_code: 0, report: { counts: { tests: 10, pass: 10 } } }) });
+    const code = stage.offloadTier('small', { root: REPO, out, err, testament: { bin: '/bin/true', spawnSync } });
     assert.equal(code, 0);
-    assert.match(out.text(), /^testament: probing the pool for small\.\.\.$/m);
-    assert.match(out.text(), /^testament: running small on the pool \(this blocks until the batch finishes\)\.\.\.$/m);
+    assert.match(err.text(), /^testament: probing the pool for small\.\.\.$/m);
+    assert.match(err.text(), /^testament: running small on the pool \(this blocks until the batch finishes\)\.\.\.$/m);
     assert.match(out.text(), /^testament: small passed on the pool \({"tests":10,"pass":10}\)$/m);
   });
 
   it('returns 1 and names failing items on a pool failure', () => {
     const out = sink();
+    const err = sink();
     const spawnSync = (bin, argv) => (argv.includes('--probe')
       ? { status: 0, stdout: JSON.stringify({ status: 'ok' }) }
-      : { status: 1, stdout: JSON.stringify({ report: { items: [{ id: 'test/a.test.js::one' }] } }) });
-    const code = stage.offloadTier('small', { root: REPO, out, testament: { bin: '/bin/true', spawnSync } });
+      : { status: 1, stdout: JSON.stringify({ exit_code: 1, report: { items: [{ id: 'test/a.test.js::one' }] } }) });
+    const code = stage.offloadTier('small', { root: REPO, out, err, testament: { bin: '/bin/true', spawnSync } });
     assert.equal(code, 1);
     assert.match(out.text(), /^testament: small failed on the pool:\n {2}test\/a\.test\.js::one$/m);
   });
 
-  it('falls through on a pass exit code whose envelope carries no report, rather than trusting it blind', () => {
+  it('falls through on a pass exit code whose envelope carries no usable report', () => {
     const out = sink();
+    const err = sink();
     const spawnSync = (bin, argv) => (argv.includes('--probe')
       ? { status: 0, stdout: JSON.stringify({ status: 'ok' }) }
-      : { status: 0, stdout: JSON.stringify({ note: 'pass but no report key' }) });
-    const code = stage.offloadTier('small', { root: REPO, out, testament: { bin: '/bin/true', spawnSync } });
+      : { status: 0, stdout: JSON.stringify({ exit_code: 0, note: 'pass but no report key' }) });
+    const code = stage.offloadTier('small', { root: REPO, out, err, testament: { bin: '/bin/true', spawnSync } });
     assert.equal(code, null);
-    assert.match(out.text(), /^testament: pool run for small reported pass but the envelope carries no report; running locally$/m);
+    assert.match(err.text(), /^testament: pool run for small reported pass but the envelope carries no usable report; running locally$/m);
+  });
+
+  it('falls through on a pass exit code whose report.counts is an empty object, never trusted as a vacuous pass', () => {
+    const out = sink();
+    const err = sink();
+    const spawnSync = (bin, argv) => (argv.includes('--probe')
+      ? { status: 0, stdout: JSON.stringify({ status: 'ok' }) }
+      : { status: 0, stdout: JSON.stringify({ exit_code: 0, report: {} }) });
+    const code = stage.offloadTier('small', { root: REPO, out, err, testament: { bin: '/bin/true', spawnSync } });
+    assert.equal(code, null);
+    assert.match(err.text(), /^testament: pool run for small reported pass but the envelope carries no usable report; running locally$/m);
   });
 
   it('falls through on a fail exit code whose envelope\'s report.items is not an array', () => {
     const out = sink();
+    const err = sink();
     const spawnSync = (bin, argv) => (argv.includes('--probe')
       ? { status: 0, stdout: JSON.stringify({ status: 'ok' }) }
-      : { status: 1, stdout: JSON.stringify({ report: { items: 'not-an-array' } }) });
-    const code = stage.offloadTier('small', { root: REPO, out, testament: { bin: '/bin/true', spawnSync } });
+      : { status: 1, stdout: JSON.stringify({ exit_code: 1, report: { items: 'not-an-array' } }) });
+    const code = stage.offloadTier('small', { root: REPO, out, err, testament: { bin: '/bin/true', spawnSync } });
     assert.equal(code, null);
-    assert.match(out.text(), /^testament: pool run for small reported failure but the envelope carries no report; running locally$/m);
+    assert.match(err.text(), /^testament: pool run for small reported failure but the envelope carries no usable report; running locally$/m);
+  });
+
+  it('falls through on a fail exit code whose report.items is empty, never trusted as a vacuous failure', () => {
+    const out = sink();
+    const err = sink();
+    const spawnSync = (bin, argv) => (argv.includes('--probe')
+      ? { status: 0, stdout: JSON.stringify({ status: 'ok' }) }
+      : { status: 1, stdout: JSON.stringify({ exit_code: 1, report: { items: [] } }) });
+    const code = stage.offloadTier('small', { root: REPO, out, err, testament: { bin: '/bin/true', spawnSync } });
+    assert.equal(code, null);
+    assert.match(err.text(), /^testament: pool run for small reported failure but the envelope carries no usable report; running locally$/m);
+  });
+
+  it('falls through when the envelope\'s own exit_code disagrees with the process exit code', () => {
+    const out = sink();
+    const err = sink();
+    const spawnSync = (bin, argv) => (argv.includes('--probe')
+      ? { status: 0, stdout: JSON.stringify({ status: 'ok' }) }
+      : { status: 0, stdout: JSON.stringify({ exit_code: 1, report: { counts: { tests: 1 } } }) });
+    const code = stage.offloadTier('small', { root: REPO, out, err, testament: { bin: '/bin/true', spawnSync } });
+    assert.equal(code, null);
   });
 
   it('falls through on any other exit code after a clean probe, naming it', () => {
     const out = sink();
+    const err = sink();
     const spawnSync = (bin, argv) => (argv.includes('--probe')
       ? { status: 0, stdout: JSON.stringify({ status: 'ok' }) }
       : { status: 2, stdout: JSON.stringify({ error: { code: 'unknown_project' } }) });
-    const code = stage.offloadTier('small', { root: REPO, out, testament: { bin: '/bin/true', spawnSync } });
+    const code = stage.offloadTier('small', { root: REPO, out, err, testament: { bin: '/bin/true', spawnSync } });
     assert.equal(code, null);
-    assert.match(out.text(), /^testament: pool run for small exited 2 \(unknown_project\); running locally$/m);
+    assert.match(err.text(), /^testament: pool run for small exited 2 \(unknown_project\); running locally$/m);
   });
 
   it('falls through when the run produces no parseable report', () => {
     const out = sink();
+    const err = sink();
     const spawnSync = (bin, argv) => (argv.includes('--probe')
       ? { status: 0, stdout: JSON.stringify({ status: 'ok' }) }
       : { status: 0, stdout: 'not json' });
-    const code = stage.offloadTier('small', { root: REPO, out, testament: { bin: '/bin/true', spawnSync } });
+    const code = stage.offloadTier('small', { root: REPO, out, err, testament: { bin: '/bin/true', spawnSync } });
     assert.equal(code, null);
-    assert.match(out.text(), /^testament: pool run for small produced no usable report; running locally$/m);
+    assert.match(err.text(), /^testament: pool run for small produced no usable report; running locally$/m);
   });
 });
 
@@ -511,11 +553,12 @@ describe('main wires stages 3-5 through offloadTier before the local run (#2733)
 
   it('returns the pool\'s verdict and never runs node locally on a clean pass', () => {
     const out = sink();
+    const err = sink();
     const junitPath = path.join(root, 'offload-pass.xml');
     const spawnSync = (bin, argv) => (argv.includes('--probe')
       ? { status: 0, stdout: JSON.stringify({ status: 'ok' }) }
-      : { status: 0, stdout: JSON.stringify({ report: { counts: { tests: 1 } } }) });
-    const code = stage.main(['3', '--junit', junitPath], { stdout: out, root, testament: { bin: '/bin/true', spawnSync } });
+      : { status: 0, stdout: JSON.stringify({ exit_code: 0, report: { counts: { tests: 1 } } }) });
+    const code = stage.main(['3', '--junit', junitPath], { stdout: out, stderr: err, root, testament: { bin: '/bin/true', spawnSync } });
     assert.equal(code, 0);
     assert.equal(fs.existsSync(junitPath), false, 'a pool run writes no junit report');
     assert.match(out.text(), /^testament: small passed on the pool/m);
@@ -523,12 +566,13 @@ describe('main wires stages 3-5 through offloadTier before the local run (#2733)
 
   it('falls through to the ordinary local run when the seam reports the pool unavailable', () => {
     const out = sink();
+    const err = sink();
     const junitPath = path.join(root, 'offload-fallback.xml');
     const spawnSync = () => ({ status: 2, stdout: JSON.stringify({ status: 'machine_not_set_up', error: { code: 'machine_not_set_up' } }) });
-    const code = stage.main(['3', '--junit', junitPath], { stdout: out, root, testament: { bin: '/bin/true', spawnSync } });
+    const code = stage.main(['3', '--junit', junitPath], { stdout: out, stderr: err, root, testament: { bin: '/bin/true', spawnSync } });
     assert.equal(code, 0, out.text());
     assert.ok(fs.existsSync(junitPath), 'the local fallback run wrote its own junit report');
-    assert.match(out.text(), /^testament: pool unavailable for small \(machine_not_set_up\); running locally$/m);
+    assert.match(err.text(), /^testament: pool unavailable for small \(machine_not_set_up\); running locally$/m);
     assert.match(out.text(), /^stage 3 \(small, 1 files, guard/m);
   });
 });

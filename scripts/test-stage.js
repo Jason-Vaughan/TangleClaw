@@ -197,51 +197,63 @@ function runTestament(argv, timeoutMs, seam = {}) {
  * Try to run a tier on the Testament pool (#2733): probe, then
  * `--no-fallback --suite <tier>`. Null means "fall through to the existing
  * local run" — either offload is bypassed (`testamentBypassReason`), the pool
- * answered that it can't take the run right now, or a pass/fail exit code
- * arrived with no matching `report` in the envelope (treated as malformed
- * rather than trusted blind); non-null means Testament ran the tier and this
- * is its verdict. Each of the two blocking calls (the probe, then the run
- * itself) writes a line to `io.out` before it starts, since the run can take
- * a while and silence looks identical to a hang.
+ * answered that it can't take the run right now, or the envelope is treated
+ * as malformed rather than trusted blind: the process's own exit code
+ * (`run.exitCode`) and the envelope's self-reported `exit_code` must agree
+ * (per `client.py`'s `Outcome.envelope()`, the two are the same value by
+ * construction, so a mismatch means something corrupted the pipe between
+ * them), and a pass needs a `report.counts` object while a fail needs a
+ * non-empty `report.items` array — an empty `{}` on pass or an empty
+ * `items` on fail is treated the same as a missing `report`, never trusted
+ * as a vacuous success/failure. Non-null means Testament ran the tier and
+ * this is its verdict.
+ *
+ * Progress and fallback-diagnostic lines go to `io.err` (stderr), per the
+ * sprint plan's own spec ("Log to stderr" for the offload notice, "log the
+ * pool error code on stderr and fall back") and matching Testament's own
+ * CLI philosophy (`cli.py`'s `_run`: "stdout carries the envelope alone...
+ * progress is for whoever watches the run, and stderr is where that goes").
+ * The actual pass/fail verdict stays on `io.out` (stdout), alongside every
+ * other result this file prints.
  *
  * @param {string} tier
- * @param {{root: string, out: {write: function(string): any}, testament?: object}} io
+ * @param {{root: string, out: {write: function(string): any}, err: {write: function(string): any}, testament?: object}} io
  * @returns {number|null} 0 or 1 when Testament ran the tier; null to fall through
  */
 function offloadTier(tier, io) {
   const bypass = testamentBypassReason(io.root, io);
   if (bypass) return null;
   const seam = io.testament || {};
-  io.out.write(`testament: probing the pool for ${tier}...\n`);
+  io.err.write(`testament: probing the pool for ${tier}...\n`);
   const probe = runTestament(['run', '--probe', '--json'], 5000, seam);
   if (!probe.ok || probe.exitCode !== 0 || probe.parsed?.status !== 'ok') {
-    io.out.write(`testament: pool unavailable for ${tier} (${probe.parsed?.error?.code || 'probe failed'}); running locally\n`);
+    io.err.write(`testament: pool unavailable for ${tier} (${probe.parsed?.error?.code || 'probe failed'}); running locally\n`);
     return null;
   }
-  io.out.write(`testament: running ${tier} on the pool (this blocks until the batch finishes)...\n`);
+  io.err.write(`testament: running ${tier} on the pool (this blocks until the batch finishes)...\n`);
   const run = runTestament(['run', '--no-fallback', '--suite', tier, '--json=summary'], TESTAMENT_RUN_TIMEOUT_MS, seam);
   if (!run.ok || run.parsed === null) {
-    io.out.write(`testament: pool run for ${tier} produced no usable report; running locally\n`);
+    io.err.write(`testament: pool run for ${tier} produced no usable report; running locally\n`);
     return null;
   }
-  if (run.exitCode === 0) {
-    if (!run.parsed.report || typeof run.parsed.report !== 'object') {
-      io.out.write(`testament: pool run for ${tier} reported pass but the envelope carries no report; running locally\n`);
+  if (run.exitCode === 0 && run.parsed.exit_code === 0) {
+    if (!run.parsed.report || typeof run.parsed.report !== 'object' || !run.parsed.report.counts || typeof run.parsed.report.counts !== 'object') {
+      io.err.write(`testament: pool run for ${tier} reported pass but the envelope carries no usable report; running locally\n`);
       return null;
     }
-    io.out.write(`testament: ${tier} passed on the pool (${JSON.stringify(run.parsed.report.counts || {})})\n`);
+    io.out.write(`testament: ${tier} passed on the pool (${JSON.stringify(run.parsed.report.counts)})\n`);
     return 0;
   }
-  if (run.exitCode === 1) {
-    if (!run.parsed.report || !Array.isArray(run.parsed.report.items)) {
-      io.out.write(`testament: pool run for ${tier} reported failure but the envelope carries no report; running locally\n`);
+  if (run.exitCode === 1 && run.parsed.exit_code === 1) {
+    if (!run.parsed.report || !Array.isArray(run.parsed.report.items) || run.parsed.report.items.length === 0) {
+      io.err.write(`testament: pool run for ${tier} reported failure but the envelope carries no usable report; running locally\n`);
       return null;
     }
     const items = run.parsed.report.items.map((it) => `  ${it.id || JSON.stringify(it)}`).join('\n');
     io.out.write(`testament: ${tier} failed on the pool:\n${items}\n`);
     return 1;
   }
-  io.out.write(`testament: pool run for ${tier} exited ${run.exitCode} (${run.parsed?.error?.code || 'unknown'}); running locally\n`);
+  io.err.write(`testament: pool run for ${tier} exited ${run.exitCode} (${run.parsed?.error?.code || 'unknown'}); running locally\n`);
   return null;
 }
 
@@ -487,14 +499,16 @@ function parseArgs(argv) {
  * Run one stage and return the process exit code.
  *
  * @param {string[]} argv - Arguments after the script name
- * @param {{stdout?: {write: function(string): any}, root?: string, touchedIo?: object}} [io] - Injection seam: `root` runs
+ * @param {{stdout?: {write: function(string): any}, stderr?: {write: function(string): any}, root?: string, touchedIo?: object, testament?: object}} [io] - Injection seam: `root` runs
  *   the test-running stages (2, 3, 4, 5, `all`) against another checkout, which is how the runner is
  *   proved on a fixture repository; `touchedIo` replaces Stage 2's git and file system (`test-touched.repoIo`);
+ *   `stderr` is where stages 3-5 route Testament offload progress/fallback diagnostics (`offloadTier`);
  *   Stage 1 is bound to this repository (see `staticSteps`)
  * @returns {number} 0 green, 1 red, 2 usage
  */
 function main(argv, io = {}) {
   const out = io.stdout || process.stdout;
+  const errOut = io.stderr || process.stderr;
   const root = io.root || ROOT;
   let parsed;
   try {
@@ -525,7 +539,7 @@ function main(argv, io = {}) {
     out.write(`stage ${parsed.stage} (${tier}): the ledger lists no files; nothing to run\n`);
     return 0;
   }
-  const offloaded = offloadTier(tier, { root, out, testament: io.testament });
+  const offloaded = offloadTier(tier, { root, out, err: errOut, testament: io.testament });
   if (offloaded !== null) return offloaded;
   const specPath = parsed.specPath === null ? 'stdout' : parsed.specPath;
   const guard = GUARD_OF_TIER[tier]

@@ -397,12 +397,18 @@ directly (no junit report — a pool run is a quick pass/fail, not something the
 ingests). It falls straight through to the local run already described above whenever offload is
 bypassed (`TANGLECLAW_NO_TESTAMENT=1`, `CI`/`GITHUB_ACTIONS`, or a synthetic fixture root under
 test with no `io.testament` seam) or the pool answers it can't take the run right now (no
-coordinator, the project not yet allowed, no runner, a pass/fail exit code whose envelope carries
-no matching `report` — trusted to say WHETHER it passed, never trusted to carry no evidence of
-it — or any other non-clean exit). Each of the two blocking calls (the probe, then the run itself)
-writes a line before it starts, since `--no-fallback --suite <tier>` can run for a while and
-silence there looks identical to a hang. A CI gate is always a local run: CI sets its own bypass,
-deliberately, so a gate's suite evidence never depends on an external pool being up.
+coordinator, the project not yet allowed, no runner, the process's own exit code disagreeing with
+the envelope's self-reported `exit_code` — the same value by construction per Testament's own
+`client.py`, so a mismatch means something corrupted the pipe between them — a pass with no
+`report.counts` object, a fail with an empty or non-array `report.items`, or any other non-clean
+exit: trusted to say WHETHER it passed, never trusted to carry no evidence of it). Each of the two
+blocking calls (the probe, then the run itself) writes a progress line to `stderr` before it
+starts, since `--no-fallback --suite <tier>` can run for a while and silence there looks identical
+to a hang — per the sprint plan's own spec ("Log to `stderr`") and matching Testament's own CLI
+philosophy (progress on `stderr`, the parseable envelope alone on `stdout`). The actual pass/fail
+verdict stays on `stdout`, alongside everything else this file prints. A CI gate is always a local
+run: CI sets its own bypass, deliberately, so a gate's suite evidence never depends on an external
+pool being up.
 
 **The pool is the Operator's to set up.** Testament's own guide is the authority
 (`testament guide pool`, `testament guide machine`), and it marks the steps only the owner can
