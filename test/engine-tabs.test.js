@@ -90,21 +90,21 @@ describe('lib/engine-tabs (#764)', () => {
     it('reads the two surfaced flags as strict booleans', () => {
       assert.deepEqual(
         engineTabs.capabilityDispositions({ capabilities: { supportsPrimePrompt: true, supportsSilentPrime: false } }),
-        { supportsPrimePrompt: true, supportsSilentPrime: false }
+        { supportsPrimePrompt: true, silentPrimeSupported: false }
       );
     });
 
     it('is false for both on a profile with no capabilities block', () => {
       assert.deepEqual(
         engineTabs.capabilityDispositions({}),
-        { supportsPrimePrompt: false, supportsSilentPrime: false }
+        { supportsPrimePrompt: false, silentPrimeSupported: false }
       );
     });
 
     it('does not read a truthy non-boolean as true (a malformed profile)', () => {
       assert.deepEqual(
         engineTabs.capabilityDispositions({ capabilities: { supportsPrimePrompt: 'yes' } }),
-        { supportsPrimePrompt: false, supportsSilentPrime: false }
+        { supportsPrimePrompt: false, silentPrimeSupported: false }
       );
     });
   });
@@ -151,7 +151,7 @@ describe('lib/engine-tabs (#764)', () => {
       assert.deepEqual(row.configFormat, { filename: 'CLAUDE.md', syntax: 'markdown', generator: 'claude-md', absentReason: null });
       assert.deepEqual(row.statusPage, profile.statusPage);
       assert.equal(row.errorPatterns, null);
-      assert.deepEqual(row.capabilities, { supportsPrimePrompt: true, supportsSilentPrime: true });
+      assert.deepEqual(row.capabilities, { supportsPrimePrompt: true, silentPrimeSupported: true });
       assert.equal(row.extensions.probed, true);
     });
 
