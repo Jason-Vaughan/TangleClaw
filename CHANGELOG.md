@@ -4,6 +4,40 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.48.1] - 2026-10-30
+
+### Added
+- Testament pool offload for the Small, Medium and Large test tiers: `scripts/test-stage.js`
+  probes the pool before each tier and runs it there when the project is allowed with the
+  `container` executor, falling back to the existing local run whenever the pool can't take it
+  (no coordinator, the project not yet allowed, `CI`, or `TANGLECLAW_NO_TESTAMENT=1`). `.testament.toml`
+  now declares `executor = "container"` and builds `.devcontainer/Dockerfile`, so a runner needs
+  nothing but Docker (#2733).
+
+### Changed
+- Large tier's `--test-timeout` recalibrated from a real measurement under full Stage 5
+  contention: `test/soak-guest.test.js`, the slowest file, took ~487 s under contention versus
+  ~270 s alone. `LARGE_TIMEOUT_MS` moves from an unmeasured 60-minute placeholder to 25 minutes
+  (~3.1x headroom over the measurement), tightening how long a genuinely stuck Large-tier file
+  can block the stage (#2706).
+
+### Fixed
+- Fixed a Codex wake stall: a bound thread stuck in `systemError` after a
+  transient Bridge/model error (e.g. "Selected model is at capacity") was
+  answered `unknown`/`thread-status-unknown` instead of resting, so the wake
+  monitor never re-probed it. `systemError` now resolves the same as `idle`
+  (idle, held, or busy, following the same folder-trust and other-thread
+  checks as any resting thread) (#2723).
+- Fixed Medusa send tracking for a retargeted or rotated local handle: a send
+  whose target resolved to a local participant only after the Hub refreshed a
+  stale handle, or only by TangleClaw's own id slug up front, was left
+  `untracked` with a null `recipient_project_id`/`recipient_session_id`,
+  dropping it from the watchdog's supervised set and causing
+  `404 REPLY_TARGET_UNKNOWN` on a reply to it. The exchange's tracking and
+  recipient identity now sync from either resolution, and a `blocking` send to
+  a rotated local handle resolves up front instead of being refused as
+  unsupervised (#2726).
+
 ## [5.48.0] - 2026-10-30
 
 ### Changed

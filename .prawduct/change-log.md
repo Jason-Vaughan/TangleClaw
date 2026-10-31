@@ -41,6 +41,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-30 — v5.48.1 W3-REL: prepare the Testament pool and control-plane release candidate
+
+<!-- prawduct: type=internal | scope=v5481-w3-rel -->
+
+- Prepared the candidate from W2-REC-merged `main@1bb19f77ec3c4c5e55e63c46badf6ff9b5f2ac46`: compiled the four accepted fragments for #2733, #2706, #2723 and #2726 into the dated `[5.48.1]` section, consumed those fragments, and changed `version.json` from 5.48.0 to 5.48.1. `scripts/release-prepare.js` refreshed the README clone pins and extended the released-section lock.
+- Updated `docs/releases/v5.48.1-status.md` to record the merged records base and keep code release, production update and feature activation as separate pending finish lines. Preparation creates no tag, GitHub Release or live deployment; the release workflow and post-merge checks own those claims.
+
 ## 2026-10-30 — v5.48.1 W2-REC: reconcile Testament pool and control-plane records
 
 <!-- prawduct: type=internal | scope=v5481-w2-rec -->
