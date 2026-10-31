@@ -11,12 +11,13 @@
  * confirmed is a refusal with a code, never a pass.
  */
 
-const { describe, it, afterEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const models = require('../lib/engine-models');
 const engines = require('../lib/engines');
+const store = require('../lib/store');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -383,8 +384,25 @@ describe('#2188 engine-models', () => {
   });
 
   describe('modelArgv', () => {
-    it('is the flag and the quoted id, as two elements', () => {
-      assert.deepEqual(models.modelArgv(profileOffering(['gpt-6-luna']), 'gpt-6-luna'), ['--model', "'gpt-6-luna'"]);
+    it('is the flag and the bare id, as two elements', () => {
+      assert.deepEqual(models.modelArgv(profileOffering(['gpt-6-luna']), 'gpt-6-luna'), ['--model', 'gpt-6-luna']);
+    });
+
+    // PRR-A finding on PR #2757 (#2188): the id used to come back quoted, and
+    // every one of those quoted elements is outside `PLAIN_ARGUMENT`
+    // (`lib/recorded-launch-command.js`), the exact charset the real launch's
+    // isolation judge requires — so a quoted argument made every launch with
+    // a selected model refused as unparseable. `MODEL_ID` is already a
+    // strict subset of that charset, so the bare (unquoted) id this function
+    // now returns must stay inside it for any model id the shape check admits.
+    it('the bare id is always inside PLAIN_ARGUMENT — the real launch path never refuses a confirmed model as unparseable', () => {
+      const PLAIN_ARGUMENT = require('../lib/recorded-launch-command').PLAIN_ARGUMENT;
+      for (const id of ['gpt-6-luna', 'claude-opus-5-5', 'a', '0-model_id.v2']) {
+        assert.ok(models.isWellFormedModelId(id), `${id} is expected to pass MODEL_ID for this test to mean anything`);
+        const [, argv] = models.modelArgv(profileOffering([id]), id);
+        assert.equal(argv, id, 'unquoted');
+        assert.match(argv, PLAIN_ARGUMENT, `${id} must be inside PLAIN_ARGUMENT or the real launch refuses it`);
+      }
     });
 
     it('throws instead of returning a command without the model', () => {
@@ -444,5 +462,170 @@ describe('#2188 engine-models', () => {
         assert.equal(sessions._buildLaunchCommand(codex, null, mode), sessions._buildLaunchCommand(without, null, mode), String(mode));
       }
     });
+  });
+});
+
+/*
+ * #2188 — the project-settings wiring of the predicate above: `lib/projects.js`
+ * validates, persists and enriches a project's model selection by calling
+ * `checkSelection`, so these pin THAT wiring (refuse-on-reject, the
+ * engine-change reset, "current vs next" enrichment, the strict-launch-mode
+ * guard) rather than the predicate itself, which the describe block above
+ * already owns. `checkSelection` is stubbed throughout — `lib/projects.js`
+ * must act correctly on whatever verdict the predicate hands back, which is
+ * exactly what stubbing both verdicts, deterministically, lets this prove
+ * without depending on a real installed CLI's model roster.
+ */
+describe('#2188 project settings — model selection (lib/projects.js wiring)', () => {
+  const os = require('node:os');
+  const projects = require('../lib/projects');
+  let tmpDir;
+  let projectsDir;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-model-selection-'));
+    projectsDir = path.join(tmpDir, 'projects');
+    fs.mkdirSync(projectsDir, { recursive: true });
+    store._setBasePath(path.join(tmpDir, 'tangleclaw'));
+    store.init();
+    const config = store.config.load();
+    config.projectsDir = projectsDir;
+    store.config.save(config);
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  let realCheckSelection;
+  beforeEach(() => {
+    realCheckSelection = models.checkSelection;
+  });
+  afterEach(() => {
+    models.checkSelection = realCheckSelection;
+  });
+
+  /** Stub `checkSelection` to accept or refuse every call, deterministically. */
+  function stubCheckSelection(ok, reason = 'stubbed refusal') {
+    models.checkSelection = () => (ok ? { ok: true } : { ok: false, code: 'STUBBED', reason });
+  }
+
+  it('createProject persists a model that checkSelection accepts', () => {
+    stubCheckSelection(true);
+    const { project, errors } = projects.createProject({ name: 'model-create-ok', engine: 'codex', model: 'gpt-5.6-sol' });
+    assert.deepEqual(errors, []);
+    const cfg = store.projectConfig.load(project.path);
+    assert.equal(cfg.model, 'gpt-5.6-sol');
+  });
+
+  it('createProject refuses outright when checkSelection refuses — nothing is created', () => {
+    stubCheckSelection(false, 'not offered for this engine');
+    const { project, errors } = projects.createProject({ name: 'model-create-bad', engine: 'codex', model: 'not-a-real-model' });
+    assert.equal(project, null);
+    assert.ok(errors[0].includes('not offered for this engine'));
+    assert.equal(store.projects.getByName('model-create-bad'), null);
+    assert.equal(fs.existsSync(path.join(projectsDir, 'model-create-bad')), false);
+  });
+
+  it('updateProject persists a valid model and enrichment reports it available', async () => {
+    stubCheckSelection(true);
+    projects.createProject({ name: 'model-update-ok', engine: 'codex' });
+    const result = await projects.updateProject('model-update-ok', { model: 'gpt-6-luna' });
+    assert.deepEqual(result.errors, []);
+    const enriched = await projects.getProject('model-update-ok');
+    assert.equal(enriched.model, 'gpt-6-luna');
+    assert.deepEqual(enriched.modelSelection, { id: 'gpt-6-luna', available: true, reason: null });
+  });
+
+  it('updateProject refuses an invalid model — project.json is left untouched', async () => {
+    stubCheckSelection(true);
+    projects.createProject({ name: 'model-update-bad', engine: 'codex', model: 'gpt-5.6-sol' });
+    stubCheckSelection(false, 'the installed codex CLI does not list this model for this account');
+    const result = await projects.updateProject('model-update-bad', { model: 'gpt-6-luna' });
+    assert.equal(result.project, null);
+    assert.ok(result.errors[0].includes('does not list this model'));
+    const cfg = store.projectConfig.load(store.projects.getByName('model-update-bad').path);
+    assert.equal(cfg.model, 'gpt-5.6-sol', 'the refused update must not have changed the stored model');
+  });
+
+  it('enrichment reports a stored model as unavailable, with a reason, once it stops checking out', async () => {
+    stubCheckSelection(true);
+    projects.createProject({ name: 'model-goes-stale', engine: 'codex', model: 'gpt-5.6-sol' });
+    stubCheckSelection(false, 'the installed codex CLI does not list this model for this account');
+    const enriched = await projects.getProject('model-goes-stale');
+    assert.equal(enriched.model, 'gpt-5.6-sol', 'the stored selection is reported as-is, never silently dropped');
+    assert.deepEqual(enriched.modelSelection, {
+      id: 'gpt-5.6-sol', available: false, reason: 'the installed codex CLI does not list this model for this account'
+    });
+  });
+
+  it('an engine change resets the model and warns, when the update does not name a new one', async () => {
+    stubCheckSelection(true);
+    projects.createProject({ name: 'model-engine-reset', engine: 'codex', model: 'gpt-5.6-sol' });
+    const result = await projects.updateProject('model-engine-reset', { engine: 'claude' });
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.project.model, null);
+    assert.ok(result.warnings.some((w) => w.includes('Selected model "gpt-5.6-sol" does not carry to the new engine')));
+  });
+
+  it('an engine change keeps a model the same request explicitly names for the new engine', async () => {
+    stubCheckSelection(true);
+    projects.createProject({ name: 'model-engine-named', engine: 'codex', model: 'gpt-5.6-sol' });
+    const result = await projects.updateProject('model-engine-named', { engine: 'claude', model: 'claude-opus-5-5' });
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.project.model, 'claude-opus-5-5');
+    assert.ok(!result.warnings.some((w) => w.includes('does not carry to the new engine')));
+  });
+
+  it('reports the next-launch-only warning when a running session\'s model is changed', async () => {
+    stubCheckSelection(true);
+    projects.createProject({ name: 'model-next-launch', engine: 'codex', model: 'gpt-5.6-sol' });
+    const realGetActive = store.sessions.getActive;
+    store.sessions.getActive = () => ({ id: 1 });
+    let result;
+    try {
+      result = await projects.updateProject('model-next-launch', { model: 'gpt-6-luna' });
+    } finally {
+      store.sessions.getActive = realGetActive;
+    }
+    assert.ok(result.warnings.some((w) => w.includes('Model is saved') && w.includes('next launch')));
+  });
+
+  it('condition 3: refuses a warning-carrying launch mode while a model is selected, with no override', async () => {
+    stubCheckSelection(true);
+    projects.createProject({ name: 'model-strict-mode', engine: 'codex', model: 'gpt-5.6-sol' });
+    // codex's bypassPermissions is a real, warning-carrying mode (data/engines/codex.json).
+    const result = await projects.updateProject('model-strict-mode', {
+      defaultLaunchMode: 'bypassPermissions', confirmBypassHidden: true
+    });
+    assert.equal(result.project, null);
+    assert.ok(result.errors[0].includes('carries a warning that a selected model'));
+  });
+
+  it('condition 3: refuses selecting a model while the project already holds a warning-carrying mode', async () => {
+    stubCheckSelection(true);
+    projects.createProject({ name: 'model-strict-mode-2', engine: 'codex' });
+    const modeResult = await projects.updateProject('model-strict-mode-2', { defaultLaunchMode: 'bypassPermissions' });
+    assert.deepEqual(modeResult.errors, []);
+    const result = await projects.updateProject('model-strict-mode-2', { model: 'gpt-5.6-sol' });
+    assert.equal(result.project, null);
+    assert.ok(result.errors[0].includes('carries a warning that a selected model'));
+  });
+
+  it('allows a model with a non-warning launch mode (default)', async () => {
+    stubCheckSelection(true);
+    projects.createProject({ name: 'model-default-mode', engine: 'codex' });
+    const result = await projects.updateProject('model-default-mode', { model: 'gpt-5.6-sol', defaultLaunchMode: 'default' });
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.project.model, 'gpt-5.6-sol');
+  });
+
+  it('null clears a stored model unconditionally', async () => {
+    stubCheckSelection(true);
+    projects.createProject({ name: 'model-clear', engine: 'codex', model: 'gpt-5.6-sol' });
+    const result = await projects.updateProject('model-clear', { model: null });
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.project.model, null);
   });
 });

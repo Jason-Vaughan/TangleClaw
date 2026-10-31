@@ -15,6 +15,9 @@ const engines = require('../lib/engines');
 const sessions = require('../lib/sessions');
 const startupDialog = require('../lib/startup-dialog');
 const tmux = require('../lib/tmux');
+const engineModels = require('../lib/engine-models');
+const profileReconciler = require('../lib/profile-reconciler');
+const { standInCodex, detectWithCodex } = require('./_codex-launchable');
 
 describe('projects', () => {
   let tmpDir;
@@ -4378,6 +4381,118 @@ describe('projects', () => {
         assert.equal(logged[0].detail.dialogCode, 'trust_required');
       } finally {
         if (result && result.session) sessions.killSession(name, 'test cleanup');
+      }
+    });
+  });
+
+  describe('launchSession — model selection (#2188/#1967, PRR-A findings 1+2 on PR #2757)', () => {
+    let realDetectEngine;
+    let realHasSession;
+    let realCreateSession;
+    let realCheckSelection;
+    let realScheduleReconciliation;
+    let restoreCodex;
+    let scheduled;
+
+    beforeEach(() => {
+      realDetectEngine = engines.detectEngine;
+      realHasSession = tmux.hasSession;
+      realCreateSession = tmux.createSession;
+      realCheckSelection = engineModels.checkSelection;
+      realScheduleReconciliation = sessions._scheduleModelReconciliation;
+      scheduled = [];
+      // The established codex-launchable harness (test/_codex-launchable.js):
+      // Codex launches only once its version answers (#2233), and `otherPath`
+      // covers every non-Codex engine these tests also use. `createSession`
+      // fakes a successful tmux create outright, so nothing here shells to a
+      // real tmux server at all.
+      engines.detectEngine = detectWithCodex('/usr/bin/claude');
+      tmux.hasSession = () => false;
+      tmux.createSession = () => true;
+      restoreCodex = standInCodex(require('../lib/startup-control-codex'));
+      // Captured, not invoked for real: the real wrapper schedules a 6-second
+      // timer onto the actual reconciler, which is `_verifyModelAfterLaunch`'s
+      // own test's job (test/profile-reconciler.test.js), not this one's. This
+      // test's job is proving `launchSession` ASKS for it, with the right args.
+      sessions._scheduleModelReconciliation = (...args) => { scheduled.push(args); };
+    });
+
+    afterEach(() => {
+      restoreCodex();
+      engines.detectEngine = realDetectEngine;
+      tmux.hasSession = realHasSession;
+      tmux.createSession = realCreateSession;
+      engineModels.checkSelection = realCheckSelection;
+      sessions._scheduleModelReconciliation = realScheduleReconciliation;
+    });
+
+    it('refuses to launch when the selected model cannot be confirmed for the engine — no session is created', async () => {
+      const name = 'launch-model-refused';
+      engineModels.checkSelection = () => ({ ok: true });
+      projects.createProject({ name, engine: 'codex' });
+      await projects.updateProject(name, { model: 'gpt-5.6-sol' });
+      // Now the model can no longer be confirmed — the roster moved, or the
+      // installed CLI dropped it, between save time and this launch.
+      engineModels.checkSelection = () => ({ ok: false, code: 'MODEL_UNAVAILABLE', reason: 'the installed codex CLI does not list this model for this account' });
+      const result = sessions.launchSession(name, {});
+      assert.equal(result.session, null);
+      assert.equal(result.code, 'MODEL_UNCONFIRMED');
+      assert.ok(result.error.includes('does not list this model'));
+      assert.equal(store.sessions.getActive(store.projects.getByName(name).id), null,
+        'a refused launch must not have created a session');
+      assert.equal(scheduled.length, 0, 'nothing is scheduled when the launch itself was refused');
+    });
+
+    it('launches normally with no model selected — the new check is a no-op when nothing is configured', () => {
+      const name = 'launch-model-none';
+      projects.createProject({ name, engine: 'claude' });
+      let result;
+      try {
+        result = sessions.launchSession(name, {});
+        assert.equal(result.error, null, result.error);
+        assert.equal(scheduled.length, 0);
+      } finally {
+        if (result && result.session) store.sessions.kill(result.session.id, 'test cleanup');
+      }
+    });
+
+    it('on a successful launch with a confirmed model, schedules the launch-time reconciliation with the right arguments', async () => {
+      // Real engine profile with a real `models` block (codex) — unlike the
+      // stubbed-checkSelection-only tests above, `_buildLaunchCommand` calls
+      // the REAL `modelArgv`, which reads the profile's actual block, so an
+      // engine with none (claude) throws here rather than silently passing.
+      const name = 'launch-model-scheduled';
+      engineModels.checkSelection = () => ({ ok: true });
+      projects.createProject({ name, engine: 'codex' });
+      await projects.updateProject(name, { model: 'gpt-5.6-sol' });
+      let result;
+      try {
+        result = sessions.launchSession(name, {});
+        assert.equal(result.error, null, result.error);
+        assert.equal(scheduled.length, 1);
+        const [tmuxSession, sessionId, projectId, engineId, model] = scheduled[0];
+        assert.equal(tmuxSession, tmux.toSessionName(name));
+        assert.equal(sessionId, result.session.id);
+        assert.equal(projectId, store.projects.getByName(name).id);
+        assert.equal(engineId, 'codex');
+        assert.equal(model, 'gpt-5.6-sol');
+      } finally {
+        if (result && result.session) store.sessions.kill(result.session.id, 'test cleanup');
+      }
+    });
+
+    it('does not apply a model chosen for the project\'s own engine to a launch that overrides to a different engine', async () => {
+      const name = 'launch-model-override';
+      engineModels.checkSelection = () => ({ ok: true });
+      projects.createProject({ name, engine: 'codex' });
+      await projects.updateProject(name, { model: 'gpt-5.6-sol' });
+      let result;
+      try {
+        result = sessions.launchSession(name, { engineOverride: 'claude' });
+        assert.equal(result.error, null, result.error);
+        assert.equal(scheduled.length, 0, 'the override engine has nothing to do with the model chosen for the project\'s own engine');
+      } finally {
+        if (result && result.session) store.sessions.kill(result.session.id, 'test cleanup');
       }
     });
   });
