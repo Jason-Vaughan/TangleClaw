@@ -4330,7 +4330,7 @@ function renderProjectRulesList(kind, rules) {
       // #2325: editing an active rule's text in place takes effect immediately
       // (no approval step) — the plain-text notice sits beside the textarea so
       // it is read before Save is ever clicked, not sprung on click as a popup.
-      const isEditing = !isProposed && projectRuleEditing.has(rule.id);
+      const isEditing = !isProposed && typeof projectRuleEditing !== 'undefined' && projectRuleEditing.has(rule.id);
       const contentHtml = isEditing
         ? `<span class="session-rule-content session-rule-editing">
              <span class="session-rule-label">${esc(label)}</span>
