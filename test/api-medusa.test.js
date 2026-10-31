@@ -1641,6 +1641,98 @@ describe('lib/medusa — send / roster (MED-2K9P Chunk 03)', () => {
   });
 });
 
+describe('lib/medusa-send: a stale handle to a LOCAL peer resolves up front (#2726)', () => {
+  const medusaSend = require('../lib/medusa-send');
+  const exchanges = require('../lib/medusa-exchanges');
+  let tempDir;
+  let realSendMessage;
+  let realGetStatus;
+  let realListLiveAll;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-send-local-'));
+    store._setBasePath(tempDir);
+    store.init();
+    realSendMessage = medusa.sendMessage;
+    realGetStatus = medusa.getStatus;
+    realListLiveAll = store.sessions.listLiveAll;
+  });
+
+  afterEach(() => {
+    medusa.sendMessage = realSendMessage;
+    medusa.getStatus = realGetStatus;
+    store.sessions.listLiveAll = realListLiveAll;
+    store.close();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    exchanges._setRetention();
+  });
+
+  it('is recorded tracked, with the live session\'s own identity, when `to` is a rotated handle of a local peer', async () => {
+    // Session 99 is live and currently answers to the NEW suffix; the caller
+    // still names the OLD one -- the same shape as #1023, but a target this
+    // host itself supervises rather than a remote peer the Bridge resolves.
+    store.sessions.listLiveAll = () => [{ id: 99, projectId: 42 }];
+    medusa.getStatus = (sessionId) => (String(sessionId) === '99'
+      ? { workspaceId: 'tilt-v2-83811af0' }
+      : { workspaceId: null });
+    medusa.sendMessage = async ({ beforeHub }) => {
+      beforeHub({ from: 'sender-ws' });
+      return { status: 'received', id: 'hub-local-1', to: 'tilt-v2-ad17fc67' };
+    };
+
+    const result = await medusaSend.sendTracked({
+      sessionId: 1,
+      senderProjectId: 10,
+      caller: { kind: 'project', projectId: 10 },
+      body: { to: 'tilt-v2-ad17fc67', message: 'still here?' }
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.body.exchange.tracking, 'tracked');
+    assert.equal(result.body.exchange.recipient.projectId, 42);
+  });
+
+  it('a `blocking` send to that same rotated local handle is accepted rather than refused as unsupervised', async () => {
+    store.sessions.listLiveAll = () => [{ id: 99, projectId: 42 }];
+    medusa.getStatus = (sessionId) => (String(sessionId) === '99'
+      ? { workspaceId: 'tilt-v2-83811af0' }
+      : { workspaceId: null });
+    medusa.sendMessage = async ({ beforeHub }) => {
+      beforeHub({ from: 'sender-ws' });
+      return { status: 'received', id: 'hub-local-2', to: 'tilt-v2-ad17fc67' };
+    };
+
+    const result = await medusaSend.sendTracked({
+      sessionId: 1,
+      senderProjectId: 10,
+      caller: { kind: 'project', projectId: 10 },
+      body: { to: 'tilt-v2-ad17fc67', message: 'urgent', priority: 'blocking' }
+    });
+
+    assert.equal(result.status, 200, 'not refused with 422 WATCHDOG_UNAVAILABLE_REMOTE');
+    assert.equal(result.body.exchange.tracking, 'tracked');
+  });
+
+  it('stays untracked when no live local session shares the handle\'s slug', async () => {
+    store.sessions.listLiveAll = () => [];
+    medusa.getStatus = () => ({ workspaceId: null });
+    medusa.sendMessage = async ({ beforeHub }) => {
+      beforeHub({ from: 'sender-ws' });
+      return { status: 'queued', id: 'hub-remote-1', to: 'genuinely-remote-ws' };
+    };
+
+    const result = await medusaSend.sendTracked({
+      sessionId: 1,
+      senderProjectId: 10,
+      caller: { kind: 'project', projectId: 10 },
+      body: { to: 'genuinely-remote-ws', message: 'hi' }
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.body.exchange.tracking, 'untracked');
+  });
+});
+
 describe('API — Medusa Chunk 03 routes (send / roster)', () => {
   let bridge;
   let server;

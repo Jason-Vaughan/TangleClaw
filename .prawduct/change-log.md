@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-30 — v5.48.1 W1-B: Codex `systemError` wake resting state + Medusa send/exchange retarget sync (#2723, #2726)
+
+<!-- prawduct: type=fixed | scope=w1b-2723-2726-codex-wake-medusa-retarget -->
+
+- **#2723:** `observeActivity`'s bound-thread check in `lib/startup-control-codex.js` now treats a thread stuck in `status: 'systemError'` the same as `idle` (still gated by folder trust and other-thread activity), instead of refusing it as `unknown`/`thread-status-unknown` — matching `RESTING_STATUSES`' existing treatment of `systemError` elsewhere in the same file. Fixes a Codex wake stall after a transient Bridge/model error (e.g. "Selected model is at capacity").
+- **#2726:** A Medusa send's `beforeHub` now resolves a stale, rotated local handle up front via TangleClaw's own id-slug fallback (`lib/medusa-send.js`), so a `blocking` send to a local peer that restarted is recorded `tracked` instead of being refused as unsupervised. `bindHubId` (`lib/medusa-exchanges.js`) also syncs an exchange's `tracking`/`recipient_project_id`/`recipient_session_id` from the Hub's own post-retarget answer, and `createSendIntent`'s reply-target match now also recognizes a legacy exchange retargeted before this projection existed. `lib/store.js`'s `_MEDUSA_EXCHANGE_PROJECTION_COLUMNS` allowlist extends to carry the three fields through `writeProjection`.
+- Full local suite green (23,824 passed / 0 failed / 1 skipped, tree-valid) on a same-head rerun under an Integrator-approved `SUITE_SLOT`, after an initial run's 3 `test/tmux-tcc.test.js` failures were confirmed as out-of-diff host contention (#2735).
+
 ## 2026-10-30 — v5.48.0 W4-REL: prepare the bounded-records release candidate
 
 <!-- prawduct: type=internal | scope=v548-w4-rel -->

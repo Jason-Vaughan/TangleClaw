@@ -379,6 +379,39 @@ describe('medusa-exchanges (#1839)', () => {
         recipient: { workspaceId: 'builder-ws', projectId: 20 }
       }), { code: 'REPLY_TARGET_UNKNOWN', status: 404 });
     });
+
+    it('lets a reply through on workspace id alone when the target predates recipient_project_id projection (#2726)', () => {
+      // A real project recipient, but recorded with a null project id -- the
+      // shape an exchange retargeted (#1023) before this projection existed
+      // would still have on disk.
+      const original = mx.createSendIntent({
+        meta: mx.validateSendMeta({}, PM, 10),
+        sender: { projectId: 10, sessionId: 1, workspaceId: 'pm-ws' },
+        recipient: { workspaceId: 'builder-ws', projectId: null, sessionId: null }
+      });
+      mx.bindHubId(original.exchange_id, 'hub-legacy', { hubStatus: 'received' });
+      const reply = mx.createSendIntent({
+        meta: mx.validateSendMeta({ inReplyTo: 'hub-legacy' }, BUILDER, 20),
+        sender: { projectId: 20, sessionId: 2, workspaceId: 'builder-ws' },
+        recipient: { workspaceId: 'pm-ws', projectId: 10 }
+      });
+      assert.equal(reply.in_reply_to, original.exchange_id);
+    });
+
+    it('still refuses that same shape when the replier is not the workspace the exchange was delivered to', () => {
+      const original = mx.createSendIntent({
+        meta: mx.validateSendMeta({}, PM, 10),
+        sender: { projectId: 10, sessionId: 1, workspaceId: 'pm-ws' },
+        recipient: { workspaceId: 'builder-ws', projectId: null, sessionId: null }
+      });
+      mx.bindHubId(original.exchange_id, 'hub-legacy', { hubStatus: 'received' });
+      const other = { kind: 'project', projectId: 30 };
+      assert.throws(() => mx.createSendIntent({
+        meta: mx.validateSendMeta({ inReplyTo: 'hub-legacy' }, other, 30),
+        sender: { projectId: 30, sessionId: 3, workspaceId: 'someone-else-ws' },
+        recipient: { workspaceId: 'pm-ws', projectId: 10 }
+      }), { code: 'REPLY_TARGET_UNKNOWN', status: 404 });
+    });
   });
 
   describe('recipient facts are scoped to the recipient', () => {
@@ -408,6 +441,30 @@ describe('medusa-exchanges (#1839)', () => {
     it('reads as untracked once the Hub has it', () => {
       const r = remote();
       assert.equal(mx.bindHubId(r.exchange_id, 'hub-r').state, 'untracked');
+    });
+
+    it('becomes tracked, with the recipient identity the Hub resolved, when the delivered handle turns out to be a local participant (#2726)', () => {
+      const r = remote();
+      const bound = mx.bindHubId(r.exchange_id, 'hub-r', {
+        deliveredTo: 'remote-ws-resolved',
+        deliveredRecipient: { projectId: 99, sessionId: 5 }
+      });
+      assert.equal(bound.tracking, 'tracked');
+      assert.equal(bound.recipient_workspace_id, 'remote-ws-resolved');
+      assert.equal(bound.recipient_project_id, 99);
+      assert.equal(bound.recipient_session_id, '5');
+      assert.equal(bound.state, 'stored', 'no longer forced to untracked now that tracking flipped');
+      assertReplayMatches(r.exchange_id);
+    });
+
+    it('stays untracked when the delivered handle is not a local participant', () => {
+      const r = remote();
+      const bound = mx.bindHubId(r.exchange_id, 'hub-r', { deliveredTo: 'remote-ws-resolved', deliveredRecipient: null });
+      assert.equal(bound.tracking, 'untracked');
+      assert.equal(bound.recipient_project_id, null);
+      assert.equal(bound.recipient_session_id, null);
+      assert.equal(bound.state, 'untracked');
+      assertReplayMatches(r.exchange_id);
     });
   });
 
