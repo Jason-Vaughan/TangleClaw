@@ -384,8 +384,25 @@ describe('#2188 engine-models', () => {
   });
 
   describe('modelArgv', () => {
-    it('is the flag and the quoted id, as two elements', () => {
-      assert.deepEqual(models.modelArgv(profileOffering(['gpt-6-luna']), 'gpt-6-luna'), ['--model', "'gpt-6-luna'"]);
+    it('is the flag and the bare id, as two elements', () => {
+      assert.deepEqual(models.modelArgv(profileOffering(['gpt-6-luna']), 'gpt-6-luna'), ['--model', 'gpt-6-luna']);
+    });
+
+    // PRR-A finding on PR #2757 (#2188): the id used to come back quoted, and
+    // every one of those quoted elements is outside `PLAIN_ARGUMENT`
+    // (`lib/recorded-launch-command.js`), the exact charset the real launch's
+    // isolation judge requires — so a quoted argument made every launch with
+    // a selected model refused as unparseable. `MODEL_ID` is already a
+    // strict subset of that charset, so the bare (unquoted) id this function
+    // now returns must stay inside it for any model id the shape check admits.
+    it('the bare id is always inside PLAIN_ARGUMENT — the real launch path never refuses a confirmed model as unparseable', () => {
+      const PLAIN_ARGUMENT = require('../lib/recorded-launch-command').PLAIN_ARGUMENT;
+      for (const id of ['gpt-6-luna', 'claude-opus-5-5', 'a', '0-model_id.v2']) {
+        assert.ok(models.isWellFormedModelId(id), `${id} is expected to pass MODEL_ID for this test to mean anything`);
+        const [, argv] = models.modelArgv(profileOffering([id]), id);
+        assert.equal(argv, id, 'unquoted');
+        assert.match(argv, PLAIN_ARGUMENT, `${id} must be inside PLAIN_ARGUMENT or the real launch refuses it`);
+      }
     });
 
     it('throws instead of returning a command without the model', () => {
