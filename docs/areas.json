@@ -210,7 +210,8 @@
         "lib/engine-*.js",
         "lib/engines/*.js",
         "lib/model-status.js",
-        "lib/routes/engines-canary.js"
+        "lib/routes/engines-canary.js",
+        "lib/aider-task-contract.js"
       ]
     },
     "shared-docs": {

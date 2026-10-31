@@ -35,7 +35,9 @@ const linesFor = (extensions) =>
 const GENERATORS = [
   { name: 'claude-md', run: (cfg) => engines._generateClaudeMd(cfg, null) },
   { name: 'codex-yaml', run: (cfg) => engines._generateCodexYaml(cfg, null) },
-  { name: 'aider-conf', run: (cfg) => engines._generateAiderConf(cfg, null) },
+  // The rules prose moved to the real `.tangleclaw/aider-conventions.md`
+  // carrier since #2439 — `.aider.conf.yml` itself no longer renders it.
+  { name: 'aider-conf', run: (cfg) => `${engines._generateAiderConf(cfg, null)}\n${engines._generateAiderConventionsMd(cfg, null)}` },
   { name: 'gemini-md', run: (cfg) => engines._generateGeminiMd(cfg, '# GEMINI.md', null) },
   { name: 'antigravity-md', run: (cfg) => engines._generateGeminiMd(cfg, '## TangleClaw', null) }
 ];

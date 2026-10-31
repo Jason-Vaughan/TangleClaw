@@ -454,6 +454,8 @@ files = [
   "test/actions-invoke-critic.test.js",
   "test/activity-observer.test.js",
   "test/advisory-ready-audit.test.js",
+  "test/aider-engine.test.js",
+  "test/aider-task-contract.test.js",
   "test/antigravity-engine.test.js",
   "test/api-account-self-service.test.js",
   "test/api-actions.test.js",

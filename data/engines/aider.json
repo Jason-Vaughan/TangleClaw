@@ -39,7 +39,19 @@
     "supportsSlashCommands": true,
     "supportsPrimePrompt": true,
     "supportsConfigFile": true,
-    "supportsCoAuthor": true
+    "supportsCoAuthor": true,
+    "conventionsCarrier": {
+      "mechanism": "read-file",
+      "path": ".tangleclaw/aider-conventions.md",
+      "note": "TangleClaw's rules/shared-docs/PortHub/Medusa/session-memory conventions reach Aider via its own `read:` config list (a real markdown file it loads as read-only context on every session), not as `.aider.conf.yml` comments — Aider strips `#` comments before the model ever sees them (#2439). `supportsPrimePrompt` is unrelated and still governs the separate pasted startup prime."
+    },
+    "taskContract": {
+      "supported": true,
+      "module": "lib/aider-task-contract.js",
+      "entryPoint": "lib/engines.js#runAiderTask",
+      "invocation": "cli-one-shot",
+      "note": "Bounded one-shot Aider Builder task (#1644) via Aider's own `--message-file` CLI invocation, not the interactive chat loop. No live wake idle/busy signature is configured for Aider yet (lib/medusa-wake.js) — this entry point does not depend on one."
+    }
   },
   "statusPage": null
 }

@@ -113,7 +113,26 @@ describe('#1619 — five checkouts, identical tracked bytes', () => {
   // guard consulted the derived selection.
   const PRIVATE_FORMAT = {
     codex: { render: (c, carrier) => engines._generateCodexYaml(cfg(c), c.path, carrier), own: '.codex.yaml' },
-    aider: { render: (c, carrier) => engines._generateAiderConf(cfg(c), c.path, carrier), own: '.aider.conf.yml' }
+    // Since #2439, `.aider.conf.yml` itself carries no identity content at
+    // all (no committed/private branch left in `_generateAiderConf`) — every
+    // identity-bearing value (doc paths, origin, lock holder) moved to
+    // `.tangleclaw/aider-conventions.md`, which `_generateAiderConventionsMd`
+    // renders UNCONDITIONALLY private (no carrier parameter: see its own
+    // doc comment — `.tangleclaw/` is gitignored by convention, never
+    // committed). So the "private" rendering is the two files combined
+    // (what a real, non-committed checkout actually writes), while the
+    // "shared" rendering is `.aider.conf.yml` alone (the only one of the two
+    // files that could ever plausibly be a committed carrier, and it is
+    // identity-free regardless) — concatenating the always-private
+    // conventions file into the "shared" branch too would fail the "must
+    // not leak" assertions on content this architecture never writes to a
+    // shared location in the first place.
+    aider: {
+      render: (c, carrier) => carrier === '.aider.conf.yml'
+        ? `${engines._generateAiderConf(cfg(c), c.path, carrier)}\n${engines._generateAiderConventionsMd(cfg(c), c.path)}`
+        : engines._generateAiderConf(cfg(c), c.path, carrier),
+      own: '.aider.conf.yml'
+    }
   };
 
   it('classifies by the FILE, not the generator format — for EVERY private-format generator', () => {
