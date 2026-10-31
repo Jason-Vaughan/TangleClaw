@@ -9,6 +9,14 @@
  * required contract names directly: no global default, no clear without a
  * fresh safe-to-clear checkpoint, no guessed menu navigation, fail-closed on
  * anything unverified, and every transition audited.
+ *
+ * PRR-A round 5 on PR #2757 retired `tmux.capturePane` text as an observation
+ * source entirely — no regex/window/separator parser over raw pane text can
+ * ever be trustworthy, because the pane is not an authenticated channel.
+ * Observation now reads each engine's own out-of-band structured session
+ * record (`_readCodexActiveModel` / `_readClaudeActiveModel`); `tmux` is used
+ * in these tests only to record CONTROL sends (`/clear`, `/model <id>`), and
+ * `readTrustedActiveProfile` is the fake observation seam.
  */
 
 const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
@@ -27,15 +35,28 @@ beforeEach(() => {
   reconciler._resetForTests();
 });
 
-/** A fake tmux seam: `sendKeys` records calls, `capturePane` returns scripted lines. */
-function fakeTmux(lines = []) {
+/** A fake tmux seam for CONTROL sends only — `sendKeys` records every call. Observation no longer goes through tmux at all (round 5). */
+function fakeTmux() {
   const sent = [];
-  return {
-    sent,
-    tmux: {
-      sendKeys(session, text) { sent.push({ session, text }); },
-      capturePane() { return { lines }; }
-    }
+  return { sent, tmux: { sendKeys(session, text) { sent.push({ session, text }); } } };
+}
+
+/**
+ * A fake `readTrustedActiveProfile` seam. Each call returns the next entry of
+ * `sequence` (a bare non-array value is treated as a one-element sequence),
+ * repeating the last entry once exhausted — mirroring the pre-control and
+ * post-control observations `reconcile` makes. An entry is a `{engine,
+ * model}` profile, or `null` for "unreadable / no matching session file".
+ * @param {object|null|Array<object|null>} sequence
+ * @returns {(session: string, opts: object) => Promise<object|null>}
+ */
+function fakeObserved(sequence) {
+  const seq = Array.isArray(sequence) ? sequence : [sequence];
+  let call = 0;
+  return async () => {
+    const v = seq[Math.min(call, seq.length - 1)];
+    call += 1;
+    return v;
   };
 }
 
@@ -59,7 +80,7 @@ describe('setDesiredProfile / getDesiredProfile', () => {
 describe('reconcile: no desired profile / no adapter', () => {
   it('holds a resource with no desired profile on record', async () => {
     const { tmux } = fakeTmux();
-    const result = await reconciler.reconcile('r1', 'session-r1', { tmux });
+    const result = await reconciler.reconcile('r1', 'session-r1', { tmux, readTrustedActiveProfile: fakeObserved(null) });
     assert.equal(result.ok, false);
     assert.equal(result.state, 'hold');
   });
@@ -67,7 +88,7 @@ describe('reconcile: no desired profile / no adapter', () => {
   it('holds a resource whose desired engine has no registered adapter', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'nonexistent-engine', model: 'x' });
     const { tmux } = fakeTmux();
-    const result = await reconciler.reconcile('r1', 'session-r1', { tmux });
+    const result = await reconciler.reconcile('r1', 'session-r1', { tmux, readTrustedActiveProfile: fakeObserved(null) });
     assert.equal(result.ok, false);
     assert.equal(result.state, 'hold');
     const audit = reconciler.getAudit('r1');
@@ -78,8 +99,10 @@ describe('reconcile: no desired profile / no adapter', () => {
 describe('reconcile: already matching', () => {
   it('verifies without sending anything when the observed profile already matches', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
-    const { tmux, sent } = fakeTmux(['Model: claude-opus-5-5']);
-    const result = await reconciler.reconcile('r1', 'session-r1', { tmux });
+    const { tmux, sent } = fakeTmux();
+    const result = await reconciler.reconcile('r1', 'session-r1', {
+      tmux, readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-5-5' })
+    });
     assert.equal(result.ok, true);
     assert.equal(result.state, 'verified');
     assert.equal(sent.length, 0, 'nothing should be sent to a pane that already matches');
@@ -92,10 +115,12 @@ describe('reconcile: already matching', () => {
 describe('reconcile: clear requires a fresh safe-to-clear checkpoint', () => {
   it('refuses to issue /clear with no checkpoint on record — a destructive control, held back', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
-    // Pane shows a different model — a clear would normally be tried first,
-    // but nothing records it as safe here.
-    const { tmux, sent } = fakeTmux(['Model: claude-opus-4-8']);
-    await reconciler.reconcile('r1', 'session-r1', { tmux });
+    // Observed profile is a mismatch — a clear would normally be tried
+    // first, but nothing records it as safe here.
+    const { tmux, sent } = fakeTmux();
+    await reconciler.reconcile('r1', 'session-r1', {
+      tmux, readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-4-8' })
+    });
     const clearSent = sent.some((s) => s.text === '/clear');
     assert.equal(clearSent, false, '/clear must never be sent without a recorded safe-to-clear checkpoint');
     const audit = reconciler.getAudit('r1');
@@ -105,16 +130,20 @@ describe('reconcile: clear requires a fresh safe-to-clear checkpoint', () => {
   it('refuses /clear when the checkpoint on record is not safeToClear: true', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
     reconciler.recordCheckpoint('r1', { safeToClear: false, generation: 'g1', note: 'mid-write' });
-    const { tmux, sent } = fakeTmux(['Model: claude-opus-4-8']);
-    await reconciler.reconcile('r1', 'session-r1', { tmux });
+    const { tmux, sent } = fakeTmux();
+    await reconciler.reconcile('r1', 'session-r1', {
+      tmux, readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-4-8' })
+    });
     assert.equal(sent.some((s) => s.text === '/clear'), false);
   });
 
   it('issues /clear only once a safe-to-clear checkpoint is recorded', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
     reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'g1' });
-    const { tmux, sent } = fakeTmux(['Model: claude-opus-4-8']);
-    await reconciler.reconcile('r1', 'session-r1', { tmux, currentGeneration: 'g1' });
+    const { tmux, sent } = fakeTmux();
+    await reconciler.reconcile('r1', 'session-r1', {
+      tmux, currentGeneration: 'g1', readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-4-8' })
+    });
     assert.ok(sent.some((s) => s.text === '/clear'));
   });
 
@@ -127,9 +156,12 @@ describe('reconcile: clear requires a fresh safe-to-clear checkpoint', () => {
   it('PRR-A finding 3: refuses a stale checkpoint — a timestamp alone does not authorize /clear forever', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
     reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'g1' }, { now: () => 1000 });
-    const { tmux, sent } = fakeTmux(['Model: claude-opus-4-8']);
+    const { tmux, sent } = fakeTmux();
     // Default max age is 5 minutes; this reconcile runs 10 minutes later.
-    await reconciler.reconcile('r1', 'session-r1', { tmux, currentGeneration: 'g1', now: () => 1000 + 10 * 60 * 1000 });
+    await reconciler.reconcile('r1', 'session-r1', {
+      tmux, currentGeneration: 'g1', now: () => 1000 + 10 * 60 * 1000,
+      readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-4-8' })
+    });
     assert.equal(sent.some((s) => s.text === '/clear'), false, 'a stale checkpoint must not authorize /clear');
     const audit = reconciler.getAudit('r1');
     assert.ok(audit.some((e) => e.transition === 'refused' && e.control === 'clear' && e.detail.reason === 'CHECKPOINT_STALE'));
@@ -138,17 +170,23 @@ describe('reconcile: clear requires a fresh safe-to-clear checkpoint', () => {
   it('honors a caller-supplied checkpointMaxAgeMs instead of the 5-minute default', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
     reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'g1' }, { now: () => 1000 });
-    const { tmux, sent } = fakeTmux(['Model: claude-opus-4-8']);
-    await reconciler.reconcile('r1', 'session-r1', { tmux, currentGeneration: 'g1', now: () => 1000 + 30 * 1000, checkpointMaxAgeMs: 10 * 1000 });
+    const { tmux, sent } = fakeTmux();
+    await reconciler.reconcile('r1', 'session-r1', {
+      tmux, currentGeneration: 'g1', now: () => 1000 + 30 * 1000, checkpointMaxAgeMs: 10 * 1000,
+      readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-4-8' })
+    });
     assert.equal(sent.some((s) => s.text === '/clear'), false);
   });
 
   it('PRR-A finding 3: refuses a checkpoint recorded for a different generation of the resource', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
     reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'session-before-relaunch' });
-    const { tmux, sent } = fakeTmux(['Model: claude-opus-4-8']);
+    const { tmux, sent } = fakeTmux();
     // The resource relaunched under a new generation since the checkpoint was recorded.
-    await reconciler.reconcile('r1', 'session-r1', { tmux, currentGeneration: 'session-after-relaunch' });
+    await reconciler.reconcile('r1', 'session-r1', {
+      tmux, currentGeneration: 'session-after-relaunch',
+      readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-4-8' })
+    });
     assert.equal(sent.some((s) => s.text === '/clear'), false, 'a checkpoint for a stale generation must not authorize /clear on the current one');
     const audit = reconciler.getAudit('r1');
     assert.ok(audit.some((e) => e.transition === 'refused' && e.control === 'clear' && e.detail.reason === 'CHECKPOINT_GENERATION_MISMATCH'));
@@ -157,11 +195,13 @@ describe('reconcile: clear requires a fresh safe-to-clear checkpoint', () => {
   it('PRR-A finding 3, round 2: refuses /clear when the caller omits currentGeneration entirely — no opt-out', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
     reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'g1' });
-    const { tmux, sent } = fakeTmux(['Model: claude-opus-4-8']);
+    const { tmux, sent } = fakeTmux();
     // Deliberately no currentGeneration at all — this used to skip the
     // generation check entirely and authorize /clear on the checkpoint's
     // bare presence.
-    await reconciler.reconcile('r1', 'session-r1', { tmux });
+    await reconciler.reconcile('r1', 'session-r1', {
+      tmux, readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-4-8' })
+    });
     assert.equal(sent.some((s) => s.text === '/clear'), false, 'a missing currentGeneration must refuse /clear, not skip the check');
     const audit = reconciler.getAudit('r1');
     assert.ok(audit.some((e) => e.transition === 'refused' && e.control === 'clear' && e.detail.reason === 'CHECKPOINT_GENERATION_MISMATCH'));
@@ -170,22 +210,29 @@ describe('reconcile: clear requires a fresh safe-to-clear checkpoint', () => {
   it('a checkpoint matching the current generation is still honored', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
     reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'session-r1-gen1' });
-    const { tmux, sent } = fakeTmux(['Model: claude-opus-4-8']);
-    await reconciler.reconcile('r1', 'session-r1', { tmux, currentGeneration: 'session-r1-gen1' });
+    const { tmux, sent } = fakeTmux();
+    await reconciler.reconcile('r1', 'session-r1', {
+      tmux, currentGeneration: 'session-r1-gen1',
+      readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-4-8' })
+    });
     assert.ok(sent.some((s) => s.text === '/clear'));
   });
 
   it('PRR-A finding 3: a checkpoint already consumed by a successful /clear cannot authorize a second one', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
     reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'g1' });
-    const { tmux: tmux1 } = fakeTmux(['Model: claude-opus-4-8']);
-    const first = await reconciler.reconcile('r1', 'session-r1', { tmux: tmux1, currentGeneration: 'g1' });
-    assert.equal(first.ok, false, 'the pane never actually moves in this fake, so reconciliation still ends in hold');
+    const { tmux: tmux1 } = fakeTmux();
+    const first = await reconciler.reconcile('r1', 'session-r1', {
+      tmux: tmux1, currentGeneration: 'g1', readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-4-8' })
+    });
+    assert.equal(first.ok, false, 'the fake observation never actually moves, so reconciliation still ends in hold');
     assert.equal(reconciler.getCheckpoint('r1'), null, 'the checkpoint is consumed once /clear is actually sent, whether or not the rest of reconciliation later verifies');
 
     // A second reconcile, still mismatched, with no new checkpoint recorded.
-    const { tmux: tmux2, sent: sent2 } = fakeTmux(['Model: claude-opus-4-8']);
-    await reconciler.reconcile('r1', 'session-r1', { tmux: tmux2 });
+    const { tmux: tmux2, sent: sent2 } = fakeTmux();
+    await reconciler.reconcile('r1', 'session-r1', {
+      tmux: tmux2, readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-4-8' })
+    });
     assert.equal(sent2.some((s) => s.text === '/clear'), false, 'the consumed checkpoint must not authorize a second /clear');
   });
 });
@@ -194,8 +241,9 @@ describe('reconcile: deps.stillValid aborts a superseded resource (PRR-A finding
   it('aborts before the first observation when the resource is already superseded', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
     let observeCalls = 0;
-    const tmux = { sendKeys() {}, capturePane() { observeCalls += 1; return { lines: ['Model: claude-opus-4-8'] }; } };
-    const result = await reconciler.reconcile('r1', 'session-r1', { tmux, stillValid: () => false });
+    const { tmux } = fakeTmux();
+    const readTrustedActiveProfile = async () => { observeCalls += 1; return { engine: 'claude', model: 'claude-opus-4-8' }; };
+    const result = await reconciler.reconcile('r1', 'session-r1', { tmux, readTrustedActiveProfile, stillValid: () => false });
     assert.equal(result.ok, false);
     assert.equal(result.state, 'hold');
     assert.equal(observeCalls, 0, 'a superseded resource must not even be observed');
@@ -207,17 +255,14 @@ describe('reconcile: deps.stillValid aborts a superseded resource (PRR-A finding
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
     reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'g1' });
     let stillHere = true;
-    const sent = [];
-    const tmux = {
-      sendKeys(session, text) { sent.push(text); },
-      // The session ends (a relaunch under a new generation) the instant the
-      // first observation returns — simulating the window finding 4 names: a
-      // rapid end + relaunch landing between this call starting and it
-      // reaching its first control.
-      capturePane() { stillHere = false; return { lines: ['Model: claude-opus-4-8'] }; }
-    };
+    const { tmux, sent } = fakeTmux();
+    // The session ends (a relaunch under a new generation) the instant the
+    // first observation returns — simulating the window finding 4 names: a
+    // rapid end + relaunch landing between this call starting and it
+    // reaching its first control.
+    const readTrustedActiveProfile = async () => { stillHere = false; return { engine: 'claude', model: 'claude-opus-4-8' }; };
     const result = await reconciler.reconcile('r1', 'session-r1', {
-      tmux, currentGeneration: 'g1', stillValid: () => stillHere
+      tmux, readTrustedActiveProfile, currentGeneration: 'g1', stillValid: () => stillHere
     });
     assert.equal(result.ok, false);
     assert.equal(result.state, 'hold');
@@ -228,8 +273,10 @@ describe('reconcile: deps.stillValid aborts a superseded resource (PRR-A finding
 
   it('with no stillValid supplied, every check passes — opt-in, not a new default requirement', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
-    const { tmux } = fakeTmux(['Model: claude-opus-5-5']);
-    const result = await reconciler.reconcile('r1', 'session-r1', { tmux });
+    const { tmux } = fakeTmux();
+    const result = await reconciler.reconcile('r1', 'session-r1', {
+      tmux, readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-5-5' })
+    });
     assert.equal(result.ok, true);
   });
 });
@@ -238,8 +285,10 @@ describe('reconcile: explicit model argument, never a guessed menu', () => {
   it('sends /model with the exact desired id as a literal argument', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
     reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'g1' });
-    const { tmux, sent } = fakeTmux(['Model: claude-opus-4-8']);
-    await reconciler.reconcile('r1', 'session-r1', { tmux, currentGeneration: 'g1' });
+    const { tmux, sent } = fakeTmux();
+    await reconciler.reconcile('r1', 'session-r1', {
+      tmux, currentGeneration: 'g1', readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-4-8' })
+    });
     assert.ok(sent.some((s) => s.text === '/model claude-opus-5-5'));
     // Never an arrow key or any other guessed-navigation keystroke.
     assert.ok(sent.every((s) => !/^(Up|Down|Left|Right|Tab)$/.test(s.text)));
@@ -248,18 +297,14 @@ describe('reconcile: explicit model argument, never a guessed menu', () => {
   it('verifies and stops once the second observation matches after applying the controls', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
     reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'g1' });
-    let call = 0;
-    const tmux = {
-      sent: [],
-      sendKeys(session, text) { tmux.sent.push({ session, text }); },
-      capturePane() {
-        call += 1;
-        // First observation (pre-dispatch) shows the stale model; the second
-        // (post-reconciliation) shows the desired one landed.
-        return { lines: [call === 1 ? 'Model: claude-opus-4-8' : 'Model: claude-opus-5-5'] };
-      }
-    };
-    const result = await reconciler.reconcile('r1', 'session-r1', { tmux, currentGeneration: 'g1' });
+    const { tmux } = fakeTmux();
+    // First observation (pre-dispatch) shows the stale model; the second
+    // (post-reconciliation) shows the desired one landed.
+    const readTrustedActiveProfile = fakeObserved([
+      { engine: 'claude', model: 'claude-opus-4-8' },
+      { engine: 'claude', model: 'claude-opus-5-5' }
+    ]);
+    const result = await reconciler.reconcile('r1', 'session-r1', { tmux, currentGeneration: 'g1', readTrustedActiveProfile });
     assert.equal(result.ok, true);
     assert.equal(result.state, 'verified');
   });
@@ -269,10 +314,12 @@ describe('reconcile: fail closed on an unverified or mismatched result', () => {
   it('holds when the post-reconciliation observation still does not match', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
     reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'g1' });
-    // Every capture, before and after, shows the wrong model — the attempted
-    // controls did not take effect.
-    const { tmux } = fakeTmux(['Model: claude-opus-4-8']);
-    const result = await reconciler.reconcile('r1', 'session-r1', { tmux, currentGeneration: 'g1' });
+    const { tmux } = fakeTmux();
+    // Every observation, before and after, shows the wrong model — the
+    // attempted controls did not take effect.
+    const result = await reconciler.reconcile('r1', 'session-r1', {
+      tmux, currentGeneration: 'g1', readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-4-8' })
+    });
     assert.equal(result.ok, false);
     assert.equal(result.state, 'hold');
     const audit = reconciler.getAudit('r1');
@@ -280,34 +327,34 @@ describe('reconcile: fail closed on an unverified or mismatched result', () => {
     assert.equal(audit[audit.length - 1].detail.reason, 'STILL_MISMATCHED');
   });
 
-  it('holds, not verifies, when the pane cannot be read at all (spoof/failure: no false positive on silence)', async () => {
+  it('holds, not verifies, when the trusted source cannot be read at all (spoof/failure: no false positive on silence)', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
     reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'g1' });
-    const tmux = {
-      sendKeys() {},
-      capturePane() { throw new Error('tmux session "session-r1" does not exist'); }
-    };
-    const result = await reconciler.reconcile('r1', 'session-r1', { tmux, currentGeneration: 'g1' });
+    const { tmux } = fakeTmux();
+    const readTrustedActiveProfile = async () => { throw new Error('session file is unavailable'); };
+    const result = await reconciler.reconcile('r1', 'session-r1', { tmux, currentGeneration: 'g1', readTrustedActiveProfile });
     assert.equal(result.ok, false);
     assert.equal(result.state, 'hold');
   });
 
-  it('does not treat a desired model id appearing as a SUBSTRING of an unrelated line as a match (spoof)', async () => {
-    reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
-    // The exact id string is present in the pane, but not as the parser's
-    // recognized "Model: <id>" shape — e.g. the operator typed it in chat.
-    const { tmux } = fakeTmux(['> I would like to use claude-opus-5-5 please']);
-    const result = await reconciler.reconcile('r1', 'session-r1', { tmux });
-    assert.equal(result.ok, false);
-    assert.equal(result.state, 'hold');
-  });
-
-  it('PRR-A finding, round 3: two conflicting "Model:" lines in the pane hold the reconciliation end to end', async () => {
+  it('PRR-A round 5: raw pane text alone — even with a separator and an exact "Model: <id>" line — must never verify a profile', async () => {
+    // The exact point of round 5: _defaultParseActiveModel always returns
+    // null now, and observeActiveProfile reads a trusted session file, not
+    // the pane — so even a pane that would have passed every rule the last
+    // four rounds added can never, by itself, verify or hold anything.
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'desired-model' });
-    const { tmux } = fakeTmux(['────────────', 'Model: wrong-model', 'Model: desired-model', '>']);
-    const result = await reconciler.reconcile('r1', 'session-r1', { tmux });
+    const { tmux, sent } = fakeTmux();
+    // No readTrustedActiveProfile supplied at all: production falls through
+    // to the real _readClaudeActiveModel, which (with no projectPath override
+    // pointed at a fixture) finds nothing and returns null.
+    const result = await reconciler.reconcile('r1', 'session-r1', { tmux, claudeHome: path.join(os.tmpdir(), 'tc-nonexistent-claude-home') });
     assert.equal(result.ok, false);
     assert.equal(result.state, 'hold');
+    // An unknown observation still attempts the explicit /model correction —
+    // that control is not itself dangerous, unlike /clear's checkpoint gate
+    // — but it can never be confirmed by anything the pane says afterward,
+    // which `result.state === 'hold'` above already proves.
+    assert.ok(sent.some((s) => s.text === '/model desired-model'));
   });
 
   it('holds when an adapter throws while applying a control, rather than assuming it landed', async () => {
@@ -316,10 +363,11 @@ describe('reconcile: fail closed on an unverified or mismatched result', () => {
     const tmux = {
       sendKeys(session, text) {
         if (text.startsWith('/model')) throw new Error('pane is not accepting input');
-      },
-      capturePane() { return { lines: ['Model: claude-opus-4-8'] }; }
+      }
     };
-    const result = await reconciler.reconcile('r1', 'session-r1', { tmux, currentGeneration: 'g1' });
+    const result = await reconciler.reconcile('r1', 'session-r1', {
+      tmux, currentGeneration: 'g1', readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-4-8' })
+    });
     assert.equal(result.ok, false);
     assert.equal(result.state, 'hold');
     const audit = reconciler.getAudit('r1');
@@ -331,15 +379,12 @@ describe('audit log', () => {
   it('records requested/applied/verified transitions in order for a full reconciliation', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
     reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'g1' });
-    let call = 0;
-    const tmux = {
-      sendKeys() {},
-      capturePane() {
-        call += 1;
-        return { lines: [call === 1 ? 'Model: claude-opus-4-8' : 'Model: claude-opus-5-5'] };
-      }
-    };
-    await reconciler.reconcile('r1', 'session-r1', { tmux, currentGeneration: 'g1' });
+    const { tmux } = fakeTmux();
+    const readTrustedActiveProfile = fakeObserved([
+      { engine: 'claude', model: 'claude-opus-4-8' },
+      { engine: 'claude', model: 'claude-opus-5-5' }
+    ]);
+    await reconciler.reconcile('r1', 'session-r1', { tmux, currentGeneration: 'g1', readTrustedActiveProfile });
     const transitions = reconciler.getAudit('r1').map((e) => `${e.transition}:${e.control || ''}`);
     assert.deepEqual(transitions, [
       'requested:clear', 'applied:clear',
@@ -351,10 +396,8 @@ describe('audit log', () => {
   it('keeps each resource\'s audit log independent', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'm1' });
     reconciler.setDesiredProfile('r2', { engine: 'claude', model: 'm2' });
-    const { tmux: tmux1 } = fakeTmux(['Model: m1']);
-    const { tmux: tmux2 } = fakeTmux(['Model: other']);
-    await reconciler.reconcile('r1', 's1', { tmux: tmux1 });
-    await reconciler.reconcile('r2', 's2', { tmux: tmux2 });
+    await reconciler.reconcile('r1', 's1', { tmux: fakeTmux().tmux, readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'm1' }) });
+    await reconciler.reconcile('r2', 's2', { tmux: fakeTmux().tmux, readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'other' }) });
     assert.equal(reconciler.getAudit('r1').length, 1);
     assert.ok(reconciler.getAudit('r2').length >= 1);
     assert.notEqual(reconciler.getAudit('r1')[0].at, undefined);
@@ -386,9 +429,10 @@ describe('CODEX_ADAPTER (PRR-A finding 1, round 2 on PR #2757: observation only)
     await assert.rejects(() => reconciler.CODEX_ADAPTER.issueEffortMode('s', {}), /observation only/);
   });
 
-  it('observes through the same shared default parser as Claude, tagged with its own engine id', async () => {
-    const { tmux } = fakeTmux(['Model: gpt-5.6-sol']);
-    const observed = await reconciler.CODEX_ADAPTER.observeActiveProfile('s', { tmux });
+  it('observes through the shared trusted-source path, tagged with its own engine id', async () => {
+    const observed = await reconciler.CODEX_ADAPTER.observeActiveProfile('s', {
+      readTrustedActiveProfile: fakeObserved({ engine: 'codex', model: 'gpt-5.6-sol' })
+    });
     assert.deepEqual(observed, { engine: 'codex', model: 'gpt-5.6-sol' });
   });
 });
@@ -400,15 +444,17 @@ describe('getAdmissionState (PRR-A finding 1, round 2 on PR #2757)', () => {
 
   it('becomes "verified" after a reconciliation that converges', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
-    const { tmux } = fakeTmux(['Model: claude-opus-5-5']);
-    await reconciler.reconcile('r1', 'session-r1', { tmux });
+    await reconciler.reconcile('r1', 'session-r1', {
+      tmux: fakeTmux().tmux, readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-5-5' })
+    });
     assert.equal(reconciler.getAdmissionState('r1'), 'verified');
   });
 
   it('becomes "held" after a reconciliation that does not converge, and stays held — never silently reset', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
-    const { tmux } = fakeTmux(['Model: wrong-model']);
-    await reconciler.reconcile('r1', 'session-r1', { tmux });
+    await reconciler.reconcile('r1', 'session-r1', {
+      tmux: fakeTmux().tmux, readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'wrong-model' })
+    });
     assert.equal(reconciler.getAdmissionState('r1'), 'held');
   });
 
@@ -421,8 +467,8 @@ describe('getAdmissionState (PRR-A finding 1, round 2 on PR #2757)', () => {
   it('is independent per resource', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'm1' });
     reconciler.setDesiredProfile('r2', { engine: 'claude', model: 'm2' });
-    await reconciler.reconcile('r1', 's1', { tmux: fakeTmux(['Model: m1']).tmux });
-    await reconciler.reconcile('r2', 's2', { tmux: fakeTmux(['Model: not-m2']).tmux });
+    await reconciler.reconcile('r1', 's1', { tmux: fakeTmux().tmux, readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'm1' }) });
+    await reconciler.reconcile('r2', 's2', { tmux: fakeTmux().tmux, readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'not-m2' }) });
     assert.equal(reconciler.getAdmissionState('r1'), 'verified');
     assert.equal(reconciler.getAdmissionState('r2'), 'held');
   });
@@ -478,138 +524,42 @@ describe('CONTROL_ORDER', () => {
   });
 });
 
-describe('STATUS_CHROME_LINES', () => {
-  it('is the exact window _defaultParseActiveModel reads from, so the two can never silently drift apart', () => {
-    const n = reconciler.STATUS_CHROME_LINES;
-    assert.equal(n, 5);
-    // Round 4 (PRR-A on PR #2757): the window is read only via a properly
-    // separated footer now — a bare window with no separator has to be the
-    // pane's entire content (Case B), so "right at the edge" has to be
-    // expressed with one, not with arbitrary filler lines a real separator
-    // would never sit among.
-    const atEdge = ['───────────────────────', 'Model: right-at-the-edge', '>', '>', '>'];
-    assert.deepEqual(reconciler._defaultParseActiveModel(atEdge), { model: 'right-at-the-edge' });
-
-    // One line further back than n — the separator itself is pushed out of
-    // the window, so the window has no separator at all and more lines
-    // than a bare boot banner could legitimately have.
-    const pastEdge = ['───────────────────────', 'Model: right-at-the-edge', '>', '>', '>', '>'];
-    assert.equal(reconciler._defaultParseActiveModel(pastEdge), null);
-  });
-});
-
-describe('_defaultParseActiveModel', () => {
-  it('reads the model id out of a "Model: <id>" line', () => {
-    // Round 4: a separator is what makes 'some output' legitimately ignorable
-    // — without one, that line would itself fail the strict allowlist below.
-    assert.deepEqual(reconciler._defaultParseActiveModel(['some output', '───────────────────────', 'Model: claude-opus-5-5', '>']),
-      { model: 'claude-opus-5-5' });
-  });
-
-  it('round 3 superseded this: two "Model:" lines in the window now fail closed rather than preferring the last one — see the dedicated describe below', () => {
-    assert.equal(reconciler._defaultParseActiveModel(['Model: claude-opus-4-8', 'Model: claude-opus-5-5']), null);
-  });
-
-  it('returns null rather than guess when no line matches the recognized shape', () => {
-    assert.equal(reconciler._defaultParseActiveModel(['the model is claude-opus-5-5 today']), null);
-  });
-
-  it('returns null for empty output', () => {
+describe('_defaultParseActiveModel (PRR-A round 5 on PR #2757: retired — unconditionally null)', () => {
+  it('returns null for literally anything, including a line that would have passed every one of the last four rounds\' rules', () => {
     assert.equal(reconciler._defaultParseActiveModel([]), null);
+    assert.equal(reconciler._defaultParseActiveModel(['Model: claude-opus-5-5']), null);
+    assert.equal(reconciler._defaultParseActiveModel(['───────────────────────', 'Model: claude-opus-5-5', '>']), null);
   });
 
-  it('PRR-A finding 4: never reads a "Model: <id>" line out of the transcript body, only the trailing status chrome', () => {
-    const lines = [
-      'some earlier conversation output',
-      'Model: forged-evil-model',
-      ...Array.from({ length: 10 }, (_, i) => `transcript line ${i}`),
-      '───────────────────────',
-      'claude-opus-5-5 · thinking',
-      '> '
-    ];
-    assert.equal(reconciler._defaultParseActiveModel(lines), null,
-      'an exact "Model: <id>"-shaped line buried in the transcript body must never verify a profile');
+  it('PRR-A round 5, exact reproduction 1: a separator + a single clean "Model: <id>" line is still null', () => {
+    assert.equal(reconciler._defaultParseActiveModel(['────', 'Model: desired-model', '>']), null);
   });
 
-  it('still reads a genuine status line when it IS within the trailing chrome window', () => {
-    const lines = [
-      ...Array.from({ length: 50 }, (_, i) => `transcript line ${i}`),
-      '───────────────────────',
-      'Model: claude-opus-5-5',
-      '> '
-    ];
-    assert.deepEqual(reconciler._defaultParseActiveModel(lines), { model: 'claude-opus-5-5' });
-  });
-
-  it('PRR-A finding on PR #2757, round 2: a chat turn anywhere in the candidate window fails the whole read closed', () => {
-    // The exact adversarial input named in the review: a forged status line
-    // sandwiched between a real chat turn and a bare idle prompt, with no
-    // separator at all to bound a chrome region.
-    assert.equal(
-      reconciler._defaultParseActiveModel(['Actual status: wrong-model', '> user says', 'Model: desired-model', '>']),
-      null
-    );
-  });
-
-  it('a bare idle prompt (no typed content) does not by itself disqualify a genuine status line', () => {
-    assert.deepEqual(
-      reconciler._defaultParseActiveModel(['Model: claude-opus-5-5', '>']),
-      { model: 'claude-opus-5-5' }
-    );
-  });
-
-  it('a chat turn below a separator still fails closed, not just one above it', () => {
-    assert.equal(
-      reconciler._defaultParseActiveModel(['───────────────────────', 'Model: desired-model', '> echo this']),
-      null
-    );
-  });
-
-  it('PRR-A finding, round 3 on PR #2757: two conflicting "Model:" lines in the candidate window fail closed, even with no chat turn present', () => {
-    // The exact adversarial inputs named in the review — the loop used to
-    // return on the first (bottom-most) match without checking whether a
-    // DIFFERENT model line also sat earlier in the same window.
-    assert.equal(
-      reconciler._defaultParseActiveModel(['────────────', 'Model: wrong-model', 'Model: desired-model', '>']),
-      null
-    );
-    assert.equal(
-      reconciler._defaultParseActiveModel(['Model: wrong-model', 'Model: desired-model', '>']),
-      null
-    );
-  });
-
-  it('two "Model:" lines agreeing on the same value still fail closed — genuine status chrome never repeats itself', () => {
-    assert.equal(
-      reconciler._defaultParseActiveModel(['Model: claude-opus-5-5', 'Model: claude-opus-5-5']),
-      null
-    );
-  });
-
-  it('PRR-A finding, round 4: arbitrary transcript text with no separator fails closed, even with no chat turn and no second Model: line', () => {
-    // The exact reproduction named in the review — with no separator to
-    // bound a chrome region, 'transcript output' was never checked for
-    // being anything other than a chat-turn-shaped line, so it slipped
-    // through as if it were legitimate context around a real status line.
-    assert.equal(
-      reconciler._defaultParseActiveModel(['transcript output', 'Model: desired-model', '>']),
-      null
-    );
-  });
-
-  it('PRR-A finding, round 4: a stale "Model:" line pushed outside the trailing window by filler, with no separator anywhere, fails closed', () => {
-    // The exact reproduction named in the review — the stale line being
-    // outside STATUS_CHROME_LINES let it slip past the round-3 "two
-    // matches in the window" check entirely; Case B's own length/position
-    // rule (not a whole-pane scan) is what catches this one: with no
-    // separator at all, nonEmpty is longer than the window allows.
+  it('PRR-A round 5, exact reproduction 2: a separator-bounded single match with stale transcript before it is still null', () => {
     assert.equal(
       reconciler._defaultParseActiveModel([
-        'Model: wrong-model', 'transcript 1', 'transcript 2', 'transcript 3',
-        'transcript 4', 'transcript 5', 'Model: desired-model', '>'
+        'Model: actual-wrong', 'transcript 1', 'transcript 2', 'transcript 3', 'transcript 4',
+        '────', 'Model: desired-model', '>'
       ]),
       null
     );
+  });
+});
+
+describe('reconcile with only raw pane-text observation stays held (PRR-A round 5)', () => {
+  it('a pane with a separator and an exact "Model: <id>" line, read through the OLD mechanism only, never verifies', async () => {
+    // Simulates a caller that still only has pane text to offer: passing
+    // `parseActiveProfile`/`tmux.capturePane` alone (the retired path) with
+    // no `readTrustedActiveProfile` must not verify anything, because
+    // nothing in production ever falls back to parsing the pane again.
+    reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'desired-model' });
+    const tmux = {
+      sendKeys() {},
+      capturePane() { return { lines: ['────', 'Model: desired-model', '>'] }; }
+    };
+    const result = await reconciler.reconcile('r1', 'session-r1', { tmux, claudeHome: path.join(os.tmpdir(), 'tc-nonexistent-claude-home') });
+    assert.equal(result.ok, false);
+    assert.equal(result.state, 'hold');
   });
 });
 
@@ -628,14 +578,185 @@ describe('_matches', () => {
 });
 
 /*
+ * PRR-A round 5 on PR #2757: the engine-owned structured session-file
+ * readers, wired into production as the ONLY observation source. Each
+ * engine writes its own session record out-of-band from the pane; these
+ * tests use real temporary `codexHome`/`claudeHome` directories with real
+ * files, exercising the readers exactly as `_observeViaTrustedSource` calls
+ * them in production.
+ */
+describe('_readCodexActiveModel', () => {
+  let tmpHome;
+  beforeEach(() => {
+    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-codex-home-'));
+  });
+  afterEach(() => {
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  /** Write a rollout file under `tmpHome/sessions/<subpath>` with the given records. */
+  function writeRollout(subpath, records) {
+    const full = path.join(tmpHome, 'sessions', subpath);
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+    return full;
+  }
+
+  it('returns null when the sessions directory does not exist at all', () => {
+    assert.equal(reconciler._readCodexActiveModel({ codexHome: tmpHome }), null);
+  });
+
+  it('reads the model from a turn_context record in a real rollout file', () => {
+    writeRollout('2026/10/31/rollout-test.jsonl', [
+      { type: 'session_meta', payload: { id: 's1', cwd: '/Users/jasonvaughan/Documents/Projects/TC-Lane-A' } },
+      { type: 'turn_context', payload: { cwd: '/Users/jasonvaughan/Documents/Projects/TC-Lane-A', model: 'gpt-5.6-sol' } }
+    ]);
+    const result = reconciler._readCodexActiveModel({ codexHome: tmpHome, projectPath: '/Users/jasonvaughan/Documents/Projects/TC-Lane-A' });
+    assert.deepEqual(result, { engine: 'codex', model: 'gpt-5.6-sol' });
+  });
+
+  it('prefers the LATEST turn_context model when several appear in the same file', () => {
+    writeRollout('2026/10/31/rollout-test.jsonl', [
+      { type: 'session_meta', payload: { id: 's1', cwd: '/project' } },
+      { type: 'turn_context', payload: { cwd: '/project', model: 'gpt-5.6-sol' } },
+      { type: 'turn_context', payload: { cwd: '/project', model: 'gpt-6-luna' } }
+    ]);
+    assert.deepEqual(reconciler._readCodexActiveModel({ codexHome: tmpHome, projectPath: '/project' }),
+      { engine: 'codex', model: 'gpt-6-luna' });
+  });
+
+  it('returns null when no rollout file matches deps.projectPath', () => {
+    writeRollout('2026/10/31/rollout-test.jsonl', [
+      { type: 'session_meta', payload: { id: 's1', cwd: '/some/other/project' } },
+      { type: 'turn_context', payload: { cwd: '/some/other/project', model: 'gpt-5.6-sol' } }
+    ]);
+    assert.equal(reconciler._readCodexActiveModel({ codexHome: tmpHome, projectPath: '/project' }), null);
+  });
+
+  it('skips a file whose mtime is older than startedAtMs - 5000', () => {
+    const file = writeRollout('2026/10/31/rollout-stale.jsonl', [
+      { type: 'session_meta', payload: { id: 's1', cwd: '/project' } },
+      { type: 'turn_context', payload: { cwd: '/project', model: 'gpt-5.6-sol' } }
+    ]);
+    const old = Date.now() - 60 * 60 * 1000;
+    fs.utimesSync(file, old / 1000, old / 1000);
+    assert.equal(reconciler._readCodexActiveModel({ codexHome: tmpHome, projectPath: '/project', startedAtMs: Date.now() }), null);
+  });
+
+  it('accepts a file within the 5-second startedAtMs slack', () => {
+    const file = writeRollout('2026/10/31/rollout-fresh.jsonl', [
+      { type: 'session_meta', payload: { id: 's1', cwd: '/project' } },
+      { type: 'turn_context', payload: { cwd: '/project', model: 'gpt-5.6-sol' } }
+    ]);
+    const now = Date.now();
+    fs.utimesSync(file, now / 1000, now / 1000);
+    const result = reconciler._readCodexActiveModel({ codexHome: tmpHome, projectPath: '/project', startedAtMs: now + 2000 });
+    assert.deepEqual(result, { engine: 'codex', model: 'gpt-5.6-sol' });
+  });
+
+  it('skips a malformed line rather than failing the whole read', () => {
+    const full = path.join(tmpHome, 'sessions', '2026/10/31/rollout-malformed.jsonl');
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full,
+      '{"type":"session_meta","payload":{"id":"s1","cwd":"/project"}}\n'
+      + 'not even json\n'
+      + '{"type":"turn_context","payload":{"cwd":"/project","model":"gpt-5.6-sol"}}\n');
+    assert.deepEqual(reconciler._readCodexActiveModel({ codexHome: tmpHome, projectPath: '/project' }), { engine: 'codex', model: 'gpt-5.6-sol' });
+  });
+});
+
+describe('_readClaudeActiveModel', () => {
+  let tmpHome;
+  beforeEach(() => {
+    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-claude-home-'));
+  });
+  afterEach(() => {
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  function writeTranscript(subpath, records) {
+    const full = path.join(tmpHome, 'projects', subpath);
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+    return full;
+  }
+
+  it('returns null when the projects directory does not exist at all', () => {
+    assert.equal(reconciler._readClaudeActiveModel({ claudeHome: tmpHome }), null);
+  });
+
+  it('reads the model from an assistant row in a real transcript file', () => {
+    writeTranscript('-project/session.jsonl', [
+      { type: 'user', cwd: '/project' },
+      { type: 'assistant', cwd: '/project', message: { model: 'claude-sonnet-5' } }
+    ]);
+    assert.deepEqual(reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project' }),
+      { engine: 'claude', model: 'claude-sonnet-5' });
+  });
+
+  it('prefers the LATEST assistant row when several appear in the same file', () => {
+    writeTranscript('-project/session.jsonl', [
+      { type: 'assistant', cwd: '/project', message: { model: 'claude-opus-4-8' } },
+      { type: 'assistant', cwd: '/project', message: { model: 'claude-sonnet-5' } }
+    ]);
+    assert.deepEqual(reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project' }),
+      { engine: 'claude', model: 'claude-sonnet-5' });
+  });
+
+  it('returns null when no transcript row matches deps.projectPath', () => {
+    writeTranscript('-other/session.jsonl', [
+      { type: 'assistant', cwd: '/some/other/project', message: { model: 'claude-sonnet-5' } }
+    ]);
+    assert.equal(reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project' }), null);
+  });
+
+  it('skips a file whose mtime is older than startedAtMs - 5000', () => {
+    const file = writeTranscript('-project/session.jsonl', [
+      { type: 'assistant', cwd: '/project', message: { model: 'claude-sonnet-5' } }
+    ]);
+    const old = Date.now() - 60 * 60 * 1000;
+    fs.utimesSync(file, old / 1000, old / 1000);
+    assert.equal(reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs: Date.now() }), null);
+  });
+});
+
+describe('_observeViaTrustedSource', () => {
+  it('uses deps.readTrustedActiveProfile when a test supplies it, never the structured reader', async () => {
+    // A projectPath that would never match any real file still returns
+    // exactly what the seam says — proof the seam, not a real file lookup,
+    // is what answered.
+    const result = await reconciler._observeViaTrustedSource('claude', 's', {
+      projectPath: '/this/path/matches/nothing/real',
+      readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'from-the-seam' })
+    });
+    assert.deepEqual(result, { engine: 'claude', model: 'from-the-seam' });
+  });
+
+  it('returns null for an engine with neither a seam nor a structured reader', async () => {
+    const result = await reconciler._observeViaTrustedSource('gemini', 's', {});
+    assert.equal(result, null);
+  });
+
+  it('routes codex to the real _readCodexActiveModel when no seam is supplied', async () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-codex-home-'));
+    try {
+      const result = await reconciler._observeViaTrustedSource('codex', 's', { codexHome: tmpHome });
+      assert.equal(result, null, 'an empty codexHome genuinely has nothing to read');
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+});
+
+/*
  * PRR-A finding 2 on PR #2757 (#1967): "wire profile-reconciler into
  * production ... and add an integration test proving production wiring
  * converges a session." `lib/sessions.js`'s `_verifyModelAfterLaunch` is that
  * one production call site — the exact function `launchSession` schedules
  * after every launch that selected a model — and these call it directly,
  * through the real (not re-implemented) `setDesiredProfile` +
- * `reconcile` + `CLAUDE_ADAPTER` path, faking only the tmux pane I/O a unit
- * test cannot have a real one for.
+ * `reconcile` + `CLAUDE_ADAPTER` path, faking only the trusted-source read
+ * (round 5) a unit test cannot have a real session file for.
  */
 describe('sessions._verifyModelAfterLaunch — production wiring converges a session (#1967/#2188 PRR-A finding 2)', () => {
   const sessions = require('../lib/sessions');
@@ -645,25 +766,26 @@ describe('sessions._verifyModelAfterLaunch — production wiring converges a ses
     reconciler._resetForTests();
   });
 
-  it('converges immediately when the pane already shows the requested model — nothing is sent', async () => {
-    const { tmux, sent } = fakeTmux(['Model: claude-opus-5-5']);
-    const result = await sessions._verifyModelAfterLaunch('tmux-verify-1', 9001, 1, 'claude', 'claude-opus-5-5', { tmux, stillValid: () => true });
+  it('converges immediately when the trusted source already shows the requested model — nothing is sent', async () => {
+    const { tmux, sent } = fakeTmux();
+    const result = await sessions._verifyModelAfterLaunch('tmux-verify-1', 9001, 1, 'claude', 'claude-opus-5-5', {
+      tmux, stillValid: () => true, readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-5-5' })
+    });
     assert.equal(result.ok, true);
     assert.equal(result.state, 'verified');
     assert.equal(sent.length, 0);
   });
 
   it('converges a mismatch by sending the real explicit /model control and re-observing', async () => {
-    let call = 0;
     const sent = [];
-    const tmux = {
-      sendKeys(session, text) { sent.push(text); },
-      capturePane() {
-        call += 1;
-        return { lines: [call === 1 ? 'Model: claude-opus-4-8' : 'Model: claude-opus-5-5'] };
-      }
-    };
-    const result = await sessions._verifyModelAfterLaunch('tmux-verify-2', 9002, 1, 'claude', 'claude-opus-5-5', { tmux, stillValid: () => true });
+    const tmux = { sendKeys(session, text) { sent.push(text); } };
+    const readTrustedActiveProfile = fakeObserved([
+      { engine: 'claude', model: 'claude-opus-4-8' },
+      { engine: 'claude', model: 'claude-opus-5-5' }
+    ]);
+    const result = await sessions._verifyModelAfterLaunch('tmux-verify-2', 9002, 1, 'claude', 'claude-opus-5-5', {
+      tmux, stillValid: () => true, readTrustedActiveProfile
+    });
     assert.ok(sent.includes('/model claude-opus-5-5'));
     assert.equal(result.ok, true);
     assert.equal(result.state, 'verified');
@@ -674,37 +796,47 @@ describe('sessions._verifyModelAfterLaunch — production wiring converges a ses
     assert.ok(audit.some((e) => e.transition === 'verified'));
   });
 
-  it('holds, honestly, rather than falsely verifying, when the pane never converges', async () => {
-    const { tmux } = fakeTmux(['Model: some-other-model']);
-    const result = await sessions._verifyModelAfterLaunch('tmux-verify-3', 9003, 1, 'claude', 'claude-opus-5-5', { tmux, stillValid: () => true });
+  it('holds, honestly, rather than falsely verifying, when the trusted source never converges', async () => {
+    const { tmux } = fakeTmux();
+    const result = await sessions._verifyModelAfterLaunch('tmux-verify-3', 9003, 1, 'claude', 'claude-opus-5-5', {
+      tmux, stillValid: () => true, readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'some-other-model' })
+    });
     assert.equal(result.ok, false);
     assert.equal(result.state, 'hold');
   });
 
   it('holds for an engine with no registered adapter at all (e.g. gemini, not yet shipped) rather than silently skipping', async () => {
-    const { tmux } = fakeTmux(['Model: anything']);
-    const result = await sessions._verifyModelAfterLaunch('tmux-verify-4', 9004, 1, 'gemini', 'some-model', { tmux, stillValid: () => true });
+    const { tmux } = fakeTmux();
+    const result = await sessions._verifyModelAfterLaunch('tmux-verify-4', 9004, 1, 'gemini', 'some-model', {
+      tmux, stillValid: () => true, readTrustedActiveProfile: fakeObserved({ engine: 'gemini', model: 'anything' })
+    });
     assert.equal(result.ok, false);
     assert.equal(result.state, 'hold');
     assert.equal(result.reason, 'no control adapter is registered for engine "gemini"');
   });
 
   it('PRR-A finding 1, round 2: codex is a registered OBSERVATION-only adapter — verifies a match, holds (never corrects) a mismatch', async () => {
-    const matching = await sessions._verifyModelAfterLaunch('tmux-verify-codex-1', 9010, 1, 'codex', 'gpt-5.6-sol',
-      { tmux: fakeTmux(['Model: gpt-5.6-sol']).tmux, stillValid: () => true });
+    const matching = await sessions._verifyModelAfterLaunch('tmux-verify-codex-1', 9010, 1, 'codex', 'gpt-5.6-sol', {
+      tmux: fakeTmux().tmux, stillValid: () => true, readTrustedActiveProfile: fakeObserved({ engine: 'codex', model: 'gpt-5.6-sol' })
+    });
     assert.equal(matching.ok, true);
     assert.equal(matching.state, 'verified');
 
-    const { tmux, sent } = fakeTmux(['Model: gpt-6-luna']);
-    const mismatched = await sessions._verifyModelAfterLaunch('tmux-verify-codex-2', 9011, 1, 'codex', 'gpt-5.6-sol', { tmux, stillValid: () => true });
+    const { tmux, sent } = fakeTmux();
+    const mismatched = await sessions._verifyModelAfterLaunch('tmux-verify-codex-2', 9011, 1, 'codex', 'gpt-5.6-sol', {
+      tmux, stillValid: () => true, readTrustedActiveProfile: fakeObserved({ engine: 'codex', model: 'gpt-6-luna' })
+    });
     assert.equal(mismatched.ok, false);
     assert.equal(mismatched.state, 'hold');
     assert.equal(sent.length, 0, 'the codex adapter claims no controls — it never sends anything, even on a mismatch');
   });
 
-  it('never throws out of the launch path, even if the adapter itself throws', async () => {
-    const tmux = { sendKeys() {}, capturePane() { throw new Error('tmux is unavailable'); } };
-    const result = await sessions._verifyModelAfterLaunch('tmux-verify-5', 9005, 1, 'claude', 'claude-opus-5-5', { tmux, stillValid: () => true });
+  it('never throws out of the launch path, even if the trusted-source read itself throws', async () => {
+    const { tmux } = fakeTmux();
+    const readTrustedActiveProfile = async () => { throw new Error('session file is unavailable'); };
+    const result = await sessions._verifyModelAfterLaunch('tmux-verify-5', 9005, 1, 'claude', 'claude-opus-5-5', {
+      tmux, stillValid: () => true, readTrustedActiveProfile
+    });
     assert.equal(result.ok, false);
     assert.equal(result.state, 'hold');
   });
@@ -718,8 +850,10 @@ describe('sessions._verifyModelAfterLaunch — production wiring converges a ses
       // A relaunch landed under session id 9007 while this call (scheduled
       // for 9006) was still pending.
       store.sessions.getActive = () => ({ id: 9007 });
-      const { tmux, sent } = fakeTmux(['Model: claude-opus-4-8']);
-      const result = await sessions._verifyModelAfterLaunch('tmux-verify-6', 9006, 1, 'claude', 'claude-opus-5-5', { tmux });
+      const { tmux, sent } = fakeTmux();
+      const result = await sessions._verifyModelAfterLaunch('tmux-verify-6', 9006, 1, 'claude', 'claude-opus-5-5', {
+        tmux, readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-4-8' })
+      });
       assert.equal(result.ok, false);
       assert.equal(result.state, 'hold');
       assert.equal(sent.length, 0, 'the superseded session must not be acted on at all');
@@ -727,18 +861,149 @@ describe('sessions._verifyModelAfterLaunch — production wiring converges a ses
 
     it('proceeds normally when the active session really is the one this call was scheduled for', async () => {
       store.sessions.getActive = () => ({ id: 9008 });
-      const { tmux } = fakeTmux(['Model: claude-opus-5-5']);
-      const result = await sessions._verifyModelAfterLaunch('tmux-verify-7', 9008, 1, 'claude', 'claude-opus-5-5', { tmux });
+      const { tmux } = fakeTmux();
+      const result = await sessions._verifyModelAfterLaunch('tmux-verify-7', 9008, 1, 'claude', 'claude-opus-5-5', {
+        tmux, readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-5-5' })
+      });
       assert.equal(result.ok, true);
       assert.equal(result.state, 'verified');
     });
 
     it('holds when there is no active session at all for the project (it ended, with no replacement)', async () => {
       store.sessions.getActive = () => null;
-      const { tmux, sent } = fakeTmux(['Model: claude-opus-4-8']);
-      const result = await sessions._verifyModelAfterLaunch('tmux-verify-8', 9009, 1, 'claude', 'claude-opus-5-5', { tmux });
+      const { tmux, sent } = fakeTmux();
+      const result = await sessions._verifyModelAfterLaunch('tmux-verify-8', 9009, 1, 'claude', 'claude-opus-5-5', {
+        tmux, readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-4-8' })
+      });
       assert.equal(result.ok, false);
       assert.equal(sent.length, 0);
+    });
+  });
+
+  describe('PRR-A round 5: production path reaches the real structured-file readers (no seam) with real temporary homes', () => {
+    let tmpCodexHome;
+    let tmpClaudeHome;
+    beforeEach(() => {
+      tmpCodexHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-codex-home-'));
+      tmpClaudeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-claude-home-'));
+    });
+    afterEach(() => {
+      fs.rmSync(tmpCodexHome, { recursive: true, force: true });
+      fs.rmSync(tmpClaudeHome, { recursive: true, force: true });
+    });
+
+    it('converges to "verified" ONLY from a matching real codex rollout file, with no readTrustedActiveProfile seam at all', async () => {
+      const rollout = path.join(tmpCodexHome, 'sessions', '2026', '10', '31', 'rollout-test.jsonl');
+      fs.mkdirSync(path.dirname(rollout), { recursive: true });
+      fs.writeFileSync(rollout, [
+        JSON.stringify({ type: 'session_meta', payload: { id: 's1', cwd: '/fixture/project' } }),
+        JSON.stringify({ type: 'turn_context', payload: { cwd: '/fixture/project', model: 'gpt-5.6-sol' } })
+      ].join('\n') + '\n');
+
+      const { tmux } = fakeTmux();
+      const result = await sessions._verifyModelAfterLaunch('tmux-codex-prod', 9020, 1, 'codex', 'gpt-5.6-sol', {
+        tmux, stillValid: () => true, codexHome: tmpCodexHome, projectPath: '/fixture/project'
+      });
+      assert.equal(result.ok, true);
+      assert.equal(result.state, 'verified');
+    });
+
+    it('stays "held" on a model mismatch in the real codex rollout file', async () => {
+      const rollout = path.join(tmpCodexHome, 'sessions', '2026', '10', '31', 'rollout-test.jsonl');
+      fs.mkdirSync(path.dirname(rollout), { recursive: true });
+      fs.writeFileSync(rollout, [
+        JSON.stringify({ type: 'session_meta', payload: { id: 's1', cwd: '/fixture/project' } }),
+        JSON.stringify({ type: 'turn_context', payload: { cwd: '/fixture/project', model: 'gpt-6-luna' } })
+      ].join('\n') + '\n');
+
+      const { tmux } = fakeTmux();
+      const result = await sessions._verifyModelAfterLaunch('tmux-codex-prod-2', 9021, 1, 'codex', 'gpt-5.6-sol', {
+        tmux, stillValid: () => true, codexHome: tmpCodexHome, projectPath: '/fixture/project'
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.state, 'hold');
+    });
+
+    it('stays "held" when the rollout file\'s cwd does not match the project path', async () => {
+      const rollout = path.join(tmpCodexHome, 'sessions', '2026', '10', '31', 'rollout-test.jsonl');
+      fs.mkdirSync(path.dirname(rollout), { recursive: true });
+      fs.writeFileSync(rollout, [
+        JSON.stringify({ type: 'session_meta', payload: { id: 's1', cwd: '/some/other/project' } }),
+        JSON.stringify({ type: 'turn_context', payload: { cwd: '/some/other/project', model: 'gpt-5.6-sol' } })
+      ].join('\n') + '\n');
+
+      const { tmux } = fakeTmux();
+      const result = await sessions._verifyModelAfterLaunch('tmux-codex-prod-3', 9022, 1, 'codex', 'gpt-5.6-sol', {
+        tmux, stillValid: () => true, codexHome: tmpCodexHome, projectPath: '/fixture/project'
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.state, 'hold');
+    });
+
+    it('stays "held" when the rollout file is stale relative to startedAtMs', async () => {
+      const rollout = path.join(tmpCodexHome, 'sessions', '2026', '10', '31', 'rollout-test.jsonl');
+      fs.mkdirSync(path.dirname(rollout), { recursive: true });
+      fs.writeFileSync(rollout, [
+        JSON.stringify({ type: 'session_meta', payload: { id: 's1', cwd: '/fixture/project' } }),
+        JSON.stringify({ type: 'turn_context', payload: { cwd: '/fixture/project', model: 'gpt-5.6-sol' } })
+      ].join('\n') + '\n');
+      const old = Date.now() - 60 * 60 * 1000;
+      fs.utimesSync(rollout, old / 1000, old / 1000);
+
+      const { tmux } = fakeTmux();
+      const result = await sessions._verifyModelAfterLaunch('tmux-codex-prod-4', 9023, 1, 'codex', 'gpt-5.6-sol', {
+        tmux, stillValid: () => true, codexHome: tmpCodexHome, projectPath: '/fixture/project', startedAtMs: Date.now()
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.state, 'hold');
+    });
+
+    it('stays "held" when no rollout file exists at all', async () => {
+      const { tmux } = fakeTmux();
+      const result = await sessions._verifyModelAfterLaunch('tmux-codex-prod-5', 9024, 1, 'codex', 'gpt-5.6-sol', {
+        tmux, stillValid: () => true, codexHome: tmpCodexHome, projectPath: '/fixture/project'
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.state, 'hold');
+    });
+
+    it('converges to "verified" ONLY from a matching real claude transcript file, with no readTrustedActiveProfile seam at all', async () => {
+      const transcript = path.join(tmpClaudeHome, 'projects', '-fixture-project', 'session.jsonl');
+      fs.mkdirSync(path.dirname(transcript), { recursive: true });
+      fs.writeFileSync(transcript, [
+        JSON.stringify({ type: 'assistant', cwd: '/fixture/project', message: { model: 'claude-sonnet-5' } })
+      ].join('\n') + '\n');
+
+      const { tmux } = fakeTmux();
+      const result = await sessions._verifyModelAfterLaunch('tmux-claude-prod', 9025, 1, 'claude', 'claude-sonnet-5', {
+        tmux, stillValid: () => true, claudeHome: tmpClaudeHome, projectPath: '/fixture/project'
+      });
+      assert.equal(result.ok, true);
+      assert.equal(result.state, 'verified');
+    });
+
+    it('stays "held" on a model mismatch in the real claude transcript file', async () => {
+      const transcript = path.join(tmpClaudeHome, 'projects', '-fixture-project', 'session.jsonl');
+      fs.mkdirSync(path.dirname(transcript), { recursive: true });
+      fs.writeFileSync(transcript, [
+        JSON.stringify({ type: 'assistant', cwd: '/fixture/project', message: { model: 'claude-opus-4-8' } })
+      ].join('\n') + '\n');
+
+      const { tmux } = fakeTmux();
+      const result = await sessions._verifyModelAfterLaunch('tmux-claude-prod-2', 9026, 1, 'claude', 'claude-sonnet-5', {
+        tmux, stillValid: () => true, claudeHome: tmpClaudeHome, projectPath: '/fixture/project'
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.state, 'hold');
+    });
+
+    it('stays "held" when no claude transcript file exists at all', async () => {
+      const { tmux } = fakeTmux();
+      const result = await sessions._verifyModelAfterLaunch('tmux-claude-prod-3', 9027, 1, 'claude', 'claude-sonnet-5', {
+        tmux, stillValid: () => true, claudeHome: tmpClaudeHome, projectPath: '/fixture/project'
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.state, 'hold');
     });
   });
 });
@@ -787,13 +1052,13 @@ describe('model admission (lib/sessions.js, PRR-A finding 1 round 2)', () => {
 
     it('is null once the in-memory reconciler state is "verified"', async () => {
       reconciler.setDesiredProfile('session:90002', { engine: 'claude', model: 'claude-opus-5-5' });
-      await reconciler.reconcile('session:90002', 's', { tmux: { sendKeys() {}, capturePane() { return { lines: ['Model: claude-opus-5-5'] }; } } });
+      await reconciler.reconcile('session:90002', 's', { readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-5-5' }) });
       assert.equal(sessions._modelAdmissionBlock(90002), null);
     });
 
     it('is "model-unverified" once the in-memory reconciler state is "held"', async () => {
       reconciler.setDesiredProfile('session:90003', { engine: 'claude', model: 'claude-opus-5-5' });
-      await reconciler.reconcile('session:90003', 's', { tmux: { sendKeys() {}, capturePane() { return { lines: ['Model: wrong-model'] }; } } });
+      await reconciler.reconcile('session:90003', 's', { readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'wrong-model' }) });
       assert.equal(sessions._modelAdmissionBlock(90003), 'model-unverified');
     });
 
@@ -936,7 +1201,7 @@ describe('model admission (lib/sessions.js, PRR-A finding 1 round 2)', () => {
   describe('startupReadiness / activeStartupReadiness', () => {
     it('reports needs-attention with blocker "model-unverified" when the model reconciliation held', async () => {
       reconciler.setDesiredProfile('session:90010', { engine: 'claude', model: 'claude-opus-5-5' });
-      await reconciler.reconcile('session:90010', 's', { tmux: { sendKeys() {}, capturePane() { return { lines: ['Model: wrong-model'] }; } } });
+      await reconciler.reconcile('session:90010', 's', { readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'wrong-model' }) });
       const readiness = sessions.startupReadiness(fakeSequence(90010));
       assert.equal(readiness.state, 'needs-attention');
       assert.equal(readiness.blocker, 'model-unverified');
@@ -982,7 +1247,7 @@ describe('model admission (lib/sessions.js, PRR-A finding 1 round 2)', () => {
 
     it('a model block overrides what the sequence itself would otherwise report', async () => {
       reconciler.setDesiredProfile('session:90012', { engine: 'claude', model: 'claude-opus-5-5' });
-      await reconciler.reconcile('session:90012', 's', { tmux: { sendKeys() {}, capturePane() { return { lines: ['Model: wrong-model'] }; } } });
+      await reconciler.reconcile('session:90012', 's', { readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'wrong-model' }) });
       // This sequence's OWN fields say ready (readyAt set, not-applicable) —
       // the model block must still win.
       const readiness = sessions.startupReadiness(fakeSequence(90012, { readyAt: '2026-01-01T00:00:00Z' }));
@@ -992,7 +1257,7 @@ describe('model admission (lib/sessions.js, PRR-A finding 1 round 2)', () => {
 
     it('allows the sequence through once the model reconciliation verifies', async () => {
       reconciler.setDesiredProfile('session:90013', { engine: 'claude', model: 'claude-opus-5-5' });
-      await reconciler.reconcile('session:90013', 's', { tmux: { sendKeys() {}, capturePane() { return { lines: ['Model: claude-opus-5-5'] }; } } });
+      await reconciler.reconcile('session:90013', 's', { readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-5-5' }) });
       const readiness = sessions.startupReadiness(fakeSequence(90013));
       assert.equal(readiness.state, 'ready');
       assert.equal(readiness.blocker, null);
@@ -1043,7 +1308,7 @@ describe('model admission (lib/sessions.js, PRR-A finding 1 round 2)', () => {
       assert.equal(held.modelAdmission, 'model-verification-pending');
 
       await reconciler.reconcile(`session:${session.id}`, 'inject-admission', {
-        tmux: { sendKeys() {}, capturePane() { return { lines: ['Model: claude-opus-5-5'] }; } }
+        readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-5-5' })
       });
       const allowed = sessions.injectCommand('inject-admission', 'hello');
       assert.equal(allowed.ok, true);
