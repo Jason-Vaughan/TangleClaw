@@ -459,7 +459,6 @@
   </style>
 </head>
 <body>
-  <!-- AUTO_GENERATED_LIVE_SPRINT_REPORT -->
   <!-- CANONICAL_SHIPPED_SPRINT_REPORT: v5.48.1 @ 7be72520468c620c4780bb2165bdbc15fd3f6e21 -->
   <header class="topnav">
     <div class="topnav-inner">
@@ -707,6 +706,41 @@
           </tbody>
         </table>
       </div>
+
+      <h3 style="margin:24px 0 12px;">Issue-by-Issue Architectural &amp; Contract Deep-Dive (v5.48.1)</h3>
+      <div class="grid-2" style="gap:18px;margin-bottom:20px;">
+        <div class="subcard">
+          <span class="pillar-num">ISSUE #2733 · TESTAMENT V0.30.0 DISTRIBUTED CONTAINER POOL INTEGRATION</span>
+          <h4>Project-Scoped Container Image, Tier Routing &amp; Automatic Local Fallback</h4>
+          <p>
+            Authored <code>.devcontainer/Dockerfile</code> (<code>node:22-bookworm</code> with <code>build-essential</code>, <code>python3</code>, <code>git</code>, <code>sqlite3</code>, <code>procps</code>, and <code>lsof</code>) and <code>.testament.toml</code> (<code>schema_version = 1</code>, <code>project_id = "tangleclaw"</code>, <code>executor = "container"</code>, <code>[tiers.small]</code> max 2 files / 20,000ms budget / 60s timeout, <code>[tiers.medium]</code> max 1 file / 40,000ms budget / 120s timeout, <code>[tiers.large]</code> max 1 file / 180,000ms budget / 300s timeout).
+            Updated <code>scripts/test-stage.js</code> to probe <code>testament status --json</code> at startup for Stages 3–5 when <code>TESTAMENT_DISABLE=1</code> is not set: if the coordinator is reachable and connected runners are available, <code>scripts/test-stage.js</code> executes <code>testament run --tier &lt;small|medium|large&gt; --files &lt;csv&gt;</code> on the distributed pool and automatically falls back to local <code>node --test</code> execution with a clear diagnostic banner if the pool is unreachable or returns non-zero.
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">ISSUE #2706 · STAGE 5 PER-FILE TIMEOUT &amp; TIER BUDGET CALIBRATION</span>
+          <h4>Eliminating False-Red Timeouts on Heavy E2E &amp; Lifecycle Suites</h4>
+          <p>
+            Calibrated <code>STAGE_DEFS[5].timeoutMs</code> in <code>scripts/test-stage.js</code> from <code>60_000ms</code> to <code>90_000ms</code> and synchronized <code>scripts/test-tiers.js</code> and <code>test/tiers.json</code> so that large multi-session SQLite/PTY/worktree tests (<code>test/e2e-critical-paths.test.js</code>, <code>test/server-session-lifecycle.test.js</code>, <code>test/session-wrap-routes.test.js</code>, <code>test/api-routes.test.js</code>) have deterministic headroom both locally under <code>SUITE_SLOT</code> and inside distributed containers.
+            Added contract tests in <code>test/test-stage.test.js</code> and <code>test/test-tiers.test.js</code> verifying pool probe routing, <code>TESTAMENT_DISABLE=1</code> bypass, non-zero pool fallback, and tier budget synchronization.
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">ISSUE #2723 · CODEX SYSTEMERROR TERMINAL TURN-SETTLEMENT RECOVERY</span>
+          <h4>Preventing Permanent Wake Starvation After Model Capacity Errors</h4>
+          <p>
+            In <code>lib/startup-control-codex.js</code>, when Codex emits a terminal <code>codex/event/error</code> or <code>error</code> notification with <code>willRetry === false</code> (or no retry scheduled, such as <em>"Selected model is at capacity. Please try a different model."</em>) while an active turn is in flight and no <code>turn/completed</code> notification arrives within the settlement grace window, the adapter now transitions <code>turnInFlight</code> to <code>false</code>, clears the stuck <code>activeTurnId</code>, records <code>lastTerminalSystemError</code> telemetry, and notifies the wake scheduler so queued switchboard wakes and nudges are delivered instead of stalling forever on <code>pane-turn-in-flight</code>.
+          </p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">ISSUE #2726 · MEDUSA RETARGETED EXCHANGE REPLY RESOLUTION</span>
+          <h4>Accepting Replies From the Live Retargeted Recipient Session</h4>
+          <p>
+            When a Medusa message addressed to a rotated or replaced workspace handle (e.g. <code>tc-lane-pm-old</code>) is automatically retargeted at send time to the live replacement workspace handle (e.g. <code>tc-lane-pm-new</code>), <code>medusa_messages.to_workspace_id</code> and <code>medusa_exchanges.recipient_workspace_id</code> are now synchronized with the resolved live target and persisted alongside <code>retargeted_from_workspace_id</code> in <code>lib/store.js</code>, <code>lib/medusa-send.js</code>, and <code>lib/medusa-exchanges.js</code>.
+            When the live recipient replies via <code>tc message send --in-reply-to &lt;id&gt;</code>, exchange resolution matches both the live retargeted recipient and the original sender without throwing <code>404 REPLY_TARGET_UNKNOWN</code>.
+          </p>
+        </div>
+      </div>
     </section>
 
     <section class="section" id="telemetry">
@@ -774,6 +808,167 @@
           </div>
           <div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,#22c55e,#16a34a);"></div></div>
         </div>
+      </div>
+
+      <h3 style="margin:24px 0 12px;">Testament v0.30.0 Connected Runner Pool &amp; Empirical Benchmark Matrix</h3>
+      <div class="table-wrap" style="margin-bottom:24px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Runner ID / Host</th>
+              <th>Executor &amp; Platform</th>
+              <th>Parallel Slots</th>
+              <th>Allowlisted Project &amp; Image</th>
+              <th>Sprint v5.48.1 Empirical Role &amp; Verification</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong><code>gpu-bozeman</code></strong></td>
+              <td><code>container</code> (Linux Docker)</td>
+              <td><code>28 slots</code></td>
+              <td><code>tangleclaw</code> (<code>.devcontainer/Dockerfile</code>)</td>
+              <td>Primary high-concurrency container worker; executed majority of Stage 3 (<code>175</code> batches) and Stage 4 (<code>150</code> batches) runs with warm image cache.</td>
+            </tr>
+            <tr>
+              <td><strong><code>14th-mbp</code></strong></td>
+              <td><code>container</code> (Apple Silicon Docker)</td>
+              <td><code>18 slots</code></td>
+              <td><code>tangleclaw</code> (<code>.devcontainer/Dockerfile</code>)</td>
+              <td>Secondary high-throughput worker; absorbed concurrent Stage 3 small batches during full-tier 253-file benchmark (<code>27.115s</code> wall-clock).</td>
+            </tr>
+            <tr>
+              <td><strong><code>nas-bozeman</code></strong></td>
+              <td><code>container</code> (Linux Docker)</td>
+              <td><code>10 slots</code></td>
+              <td><code>tangleclaw</code> (<code>.devcontainer/Dockerfile</code>)</td>
+              <td>Persistent LAN container worker; verified project allowlist sync and zero-flake execution across all 5 coordinator runs (<code>330</code> total batches).</td>
+            </tr>
+            <tr>
+              <td><strong><code>laptop</code></strong></td>
+              <td><code>container</code> (macOS Docker)</td>
+              <td><code>10 slots</code></td>
+              <td><code>tangleclaw</code> (<code>.devcontainer/Dockerfile</code>)</td>
+              <td>Fourth distributed worker completing the <code>66-slot</code> pool capacity verified via <code>testament status --json</code> and <code>testament runners list</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 style="margin:24px 0 12px;">Coordinator Run-by-Run Telemetry (5 Live Runs · 330 Total Pool Batches)</h3>
+      <div class="table-wrap" style="margin-bottom:24px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Run ID &amp; Timestamp (UTC)</th>
+              <th>Tier &amp; Caller</th>
+              <th>Files / Batches</th>
+              <th>Test Counts (Pass / Skip / Fail)</th>
+              <th>Wall-Clock &amp; Pool Execution Time</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Run #1 · <code>04:55:12Z</code></strong></td>
+              <td><code>small</code> (Smoke verification)</td>
+              <td><code>2 files / 1 batch</code></td>
+              <td><code>71 passed / 0 skipped / 0 failed</code></td>
+              <td><code>3.412s</code> wall-clock (first warm container execution after allowlist enrollment)</td>
+            </tr>
+            <tr>
+              <td><strong>Run #2 · <code>04:57:08Z</code></strong></td>
+              <td><code>small</code> (Full Stage 3 Pre-Merge Benchmark)</td>
+              <td><code>253 files / 175 batches</code></td>
+              <td><code>5,834 passed / 2 skipped / 0 failed</code></td>
+              <td><strong><code>27.115s</code> wall-clock</strong> (<code>22.777s</code> pool batch execution · <code>0.3495s</code> median batch overhead)</td>
+            </tr>
+            <tr>
+              <td><strong>Run #3 · <code>05:38:19Z</code></strong></td>
+              <td><code>small</code> (W3-REL Pre-Deploy Stage 3 Gate)</td>
+              <td><code>253 files / 175 batches</code></td>
+              <td><code>5,834 passed / 2 skipped / 0 failed</code></td>
+              <td><code>28.402s</code> wall-clock (<code>100%</code> pass across all 253 Stage 3 files on <code>main @ 1bb19f77</code>)</td>
+            </tr>
+            <tr>
+              <td><strong>Run #4 · <code>05:40:05Z</code></strong></td>
+              <td><code>medium</code> (W3-REL Pre-Deploy Stage 4 Gate)</td>
+              <td><code>150 files / 150 batches</code></td>
+              <td><code>5,152 pool passed</code> (149/150 files) → <code>5,710 local fallback passed</code> (150/150 files)</td>
+              <td>Surfaced <code>#2742</code> JUnit XML <code>&lt;undefined name="root"&gt;</code> on <code>test/reset-admin-store.test.js</code>; automatic local fallback passed <code>150/150</code> files.</td>
+            </tr>
+            <tr>
+              <td><strong>Run #5 · <code>06:03:14Z</code></strong></td>
+              <td><code>small</code> (Post-Deploy Live Checkout Verification)</td>
+              <td><code>253 files / 175 batches</code></td>
+              <td><code>5,834 passed / 2 skipped / 0 failed</code></td>
+              <td><code>27.890s</code> wall-clock from live <code>/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder1</code> checkout at <code>7be72520468c</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 style="margin:24px 0 12px;">Fleet Session, Engine, Wake &amp; Token Telemetry Across Sprint v5.48.1</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Session &amp; Workspace ID</th>
+              <th>Role &amp; Engine</th>
+              <th>Assigned Sprint Work</th>
+              <th>Empirical Execution &amp; Governance Telemetry</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong><code>#1531 TC-Lane-PM</code></strong> (<code>tc-lane-pm-70072ceb</code>)</td>
+              <td>Project Manager (<code>antigravity</code>)</td>
+              <td>Charter <code>A486-R1</code>, Pool Enrollment, Wave Dispatch, Charter <code>A487</code> (<code>v5.49.0</code>)</td>
+              <td>Enrolled <code>cursatory</code> on Testament v0.30.0 pool, coordinated <code>W1</code>–<code>W3-REL</code> merges, authored <code>v5490-sprint-plan.md</code>, verified Gate 4 report publication.</td>
+            </tr>
+            <tr>
+              <td><strong><code>#1530 TC-Lane-Arc</code></strong> (<code>tc-lane-arc-82d48b6b</code>)</td>
+              <td>Architect (<code>antigravity</code>)</td>
+              <td><code>A486-R1..R2</code> Co-Sign, <code>A-Gate</code>/<code>R-Gate</code>, Post-Mortem, <code>A487</code> Co-Sign</td>
+              <td>Issued <code>A486-W1A/W1B</code>, <code>A486-SCOPE-R1</code>, <code>A486-W2REC-R2</code>, <code>A486-W3REL-R1</code>, <code>A486-DEPLOY-R1</code>, and <code>A487-COSIGN-V5490-20261030</code>.</td>
+            </tr>
+            <tr>
+              <td><strong><code>#1528 TC-Lane-INT</code></strong> (<code>tc-lane-int-c41a7475</code>)</td>
+              <td>Release Integrator (<code>codex</code>)</td>
+              <td><code>B-Gate</code> Merges (<code>#2738</code>–<code>#2741</code>), <code>W2-REC</code>, <code>W3-REL</code>, Live Deploy</td>
+              <td>Executed all 4 exact-head merges (`--merge --match-head-commit`), ran 23,839-test pre-deploy gate, published tag `v5.48.1`, deployed `:3102`.</td>
+            </tr>
+            <tr>
+              <td><strong><code>#1529 TC-Lane-Obsr</code></strong> (<code>tc-lane-obsr-c12dce8c</code>)</td>
+              <td>Observer (<code>antigravity</code>)</td>
+              <td><code>O-Gate</code> Telemetry, <code>A486-R2</code> Audit Report, Raw JSON, HTML Report</td>
+              <td>Authored <code>v5.48.1-sprint-observer-report.md</code> (`30,469 B`), <code>v5481-w1-raw-evidence.json</code> (`7,744 B`), and shipped HTML report.</td>
+            </tr>
+            <tr>
+              <td><strong><code>#1524 TC-Lane-A</code></strong> (<code>tc-lane-a-295aa459</code>)</td>
+              <td>Builder A (<code>claude-sonnet-reviewer</code>)</td>
+              <td><code>W1-A</code> (<code>#2733 + #2706</code>, PR <code>#2738</code>)</td>
+              <td>Delivered <code>.devcontainer/Dockerfile</code>, <code>.testament.toml</code>, <code>scripts/test-stage.js</code>, and 90s Stage 5 timeout calibration; merged at <code>8b3b8c28</code>.</td>
+            </tr>
+            <tr>
+              <td><strong><code>#1525 TC-Lane-B</code></strong> (<code>tc-lane-b-e1fd98cf</code>)</td>
+              <td>Builder B (<code>claude-sonnet-reviewer</code>)</td>
+              <td><code>W1-B</code> (<code>#2723 + #2726</code>, PR <code>#2739</code>)</td>
+              <td>Delivered Codex <code>systemError</code> turn-settlement recovery and Medusa retargeted exchange reply sync; merged at <code>f16267e0</code>.</td>
+            </tr>
+            <tr>
+              <td><strong><code>#1526 TC-Lane-PRR-A</code></strong> (<code>tc-lane-prr-a-4849db82</code>)</td>
+              <td>PR Reviewer A (<code>codex</code>)</td>
+              <td><code>I-Gate</code> Reviews on <code>#2738</code>, <code>#2739</code>, <code>#2740</code>, <code>#2741</code></td>
+              <td>Caught `test/tiers.json` sync in `W1-A` and `docs/releases/v5.48-status.md` finish-line table in `W2-REC`; delivered exact-head `ACCEPT` receipts across all 4 PRs.</td>
+            </tr>
+            <tr>
+              <td><strong><code>#1527 TC-Lane-PRR-B</code></strong> (<code>tc-lane-prr-b-df711f73</code>)</td>
+              <td>PR Reviewer B (<code>codex</code>)</td>
+              <td><code>I-Gate</code> Review on <code>#2739</code> (<code>W1-B</code>)</td>
+              <td>Caught missing SQLite projection columns for retargeted Medusa exchanges on `PR #2739` initial head `9faab8b7` and verified fix on `c292e967`.</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </section>
 
@@ -894,6 +1089,121 @@
             <tr><td>14</td><td>Conflict Resolution Time</td><td><span class="badge badge-green">PASS</span></td><td>`~4m` to revert `.prawduct/change-log*` on `W1-A`/`W1-B` under `A486-SCOPE-R1`; permanently prevented in `v5.49.0` via `P44`/`P46`.</td></tr>
             <tr><td>15</td><td>Wakes, Tokens &amp; Turns by Role &amp; Model</td><td><span class="badge badge-green">PASS</span></td><td>Recorded in `v5481-w1-raw-evidence.json` and `v5481-observer-sprint-audit-report.md`; `Rule #271` amendment saves ~136k tokens/round in `v5.49.0`.</td></tr>
             <tr><td>16</td><td>4 End-of-Sprint Maintenance Gates</td><td><span class="badge badge-green">PASS</span></td><td>Gate 1 (Registry), Gate 2 (`A486` Post-Mortem + Observer Audit), Gate 3 (`v5.48.1-status.md`), and Gate 4 (HTML Report + Hub) complete.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 style="margin:24px 0 10px;">Sprint v5.48.1 &amp; v5.49.0 Canonical Artifact &amp; SHA-256 Attestation Registry (Gates 1–4)</h3>
+      <div class="table-wrap" style="margin-bottom:22px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Artifact / Governance Document</th>
+              <th>Owner &amp; Gate</th>
+              <th>Canonical URL / Path</th>
+              <th>SHA-256 Digest &amp; Size</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong><code>v5.48.1</code> Sprint Execution Charter (<code>A486-R1</code>)</strong></td>
+              <td><code>TC-Lane-PM</code> (Charter)</td>
+              <td><code>https://cursatory.tail123678.ts.net:8443/plans/74/v5481-sprint-plan.md</code> (<code>.tangleclaw/plans/v5481-sprint-plan.md</code>)</td>
+              <td><code>c8be8d74d9216d645c1718c6b3b3d6c4d49165d60ec9645269e0135f78223d31</code> (<code>15,412 B</code>)</td>
+            </tr>
+            <tr>
+              <td><strong><code>A486</code> Architect Charter Co-Sign (<code>A486-R1..R2</code>)</strong></td>
+              <td><code>TC-Lane-Arc</code> (Gate 1/2)</td>
+              <td><code>https://cursatory.tail123678.ts.net:8443/plans/81/v5481-charter-cosign-a486.md</code> (<code>.tangleclaw/plans/v5481-charter-cosign-a486.md</code>)</td>
+              <td><code>b69398def3260846ab64d3a1c35d79fb94cebee025473610e669443b1143fbc2</code> (<code>25,895 B</code>)</td>
+            </tr>
+            <tr>
+              <td><strong><code>A486-R2</code> Architect Post-Mortem &amp; Exit Assessment</strong></td>
+              <td><code>TC-Lane-Arc</code> (Gate 2)</td>
+              <td><code>https://cursatory.tail123678.ts.net:8443/plans/81/v5481-architect-sprint-postmortem.md</code> (<code>.tangleclaw/plans/v5481-architect-sprint-postmortem.md</code>)</td>
+              <td><code>4374f7dbfa9c0ff961db561518107750b7b32aefde3123bb3cf46846c13fcebc</code> (<code>11,446 B</code>)</td>
+            </tr>
+            <tr>
+              <td><strong><code>A486-R2</code> Observer Sprint Audit Report</strong></td>
+              <td><code>TC-Lane-Obsr</code> (Gate 2/4)</td>
+              <td><code>https://cursatory.tail123678.ts.net:8443/plans/114/v5.48.1-sprint-observer-report.md</code> (<code>.tangleclaw/plans/v5.48.1-sprint-observer-report.md</code>)</td>
+              <td><code>5c960a7e73029346cb81dcf2646b881594359b52440f33a76a28208331c96c43</code> (<code>30,469 B</code>)</td>
+            </tr>
+            <tr>
+              <td><strong><code>v5.48.1</code> Observer Raw Evidence Companion JSON</strong></td>
+              <td><code>TC-Lane-Obsr</code> (Gate 2/4)</td>
+              <td><code>https://cursatory.tail123678.ts.net:8443/plans/114/v5481-w1-raw-evidence.json</code> (<code>.tangleclaw/plans/v5481-w1-raw-evidence.json</code>)</td>
+              <td><code>509a6b5caa94cb1a4c618871abb8fbeeeb5fd08b9f0a202806442d362d03469e</code> (<code>7,744 B</code>)</td>
+            </tr>
+            <tr>
+              <td><strong><code>v5.48.1</code> Sealed Queue Archive</strong></td>
+              <td><code>TC-Lane-PM</code> / <code>INT</code> (Gate 3)</td>
+              <td><code>/Users/jasonvaughan/Documents/Projects/Shared/TangleClaw-Shared/archive/LANE_QUEUE-v5.48.1.md</code></td>
+              <td><code>1be070441837e97bb695bafb798412f263e98a1231c87503bfde93076f4c7dbc</code> (<code>7,007 B</code>)</td>
+            </tr>
+            <tr>
+              <td><strong><code>v5.49.0</code> Sprint Execution Charter (<code>Charter A487</code>)</strong></td>
+              <td><code>TC-Lane-PM</code> (Next Sprint)</td>
+              <td><code>https://cursatory.tail123678.ts.net:8443/plans/74/v5490-sprint-plan.md</code> (<code>.tangleclaw/plans/v5490-sprint-plan.md</code>)</td>
+              <td><code>44ec94b5b82d020835c8195a01363804653b374011afb3a293fcd7eda2ff4788</code> (<code>14,792 B</code>)</td>
+            </tr>
+            <tr>
+              <td><strong><code>A487</code> Architect Charter Co-Sign (<code>v5.49.0</code>)</strong></td>
+              <td><code>TC-Lane-Arc</code> (Next Sprint)</td>
+              <td><code>https://cursatory.tail123678.ts.net:8443/plans/81/v5490-charter-cosign-a487.md</code> (<code>.tangleclaw/plans/v5490-charter-cosign-a487.md</code>)</td>
+              <td><code>864d3e75b20250436218a26cc50815bd771ac020e572540ff279ca8811befed6</code> (<code>12,930 B</code>)</td>
+            </tr>
+            <tr>
+              <td><strong>Canonical Master Document Registry</strong></td>
+              <td><code>TC-Lane-Arc</code> (Gate 1)</td>
+              <td><code>https://cursatory.tail123678.ts.net:8443/plans/81/tangleclaw-document-registry.md</code> (<code>.tangleclaw/plans/tangleclaw-document-registry.md</code>)</td>
+              <td><code>3eb0fe020aae793d1a0cd8b0da8aad90bd286cc4944f5d4c8be547cb71f95d70</code> (<code>20,975 B</code>)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 style="margin:24px 0 10px;">Exact-Head PR Review, CI Check-Run &amp; Merge Receipt Ledger (v5.48.1)</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>PR &amp; Wave Car</th>
+              <th>Reviewed Head SHA</th>
+              <th>GitHub Actions <code>Tests</code> Run</th>
+              <th>PRR &amp; Architect Gate Tokens</th>
+              <th>Merge Commit SHA &amp; Timestamp (UTC)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong><code>PR #2739</code> · <code>W1-B</code> (<code>#2723 + #2726</code>)</strong></td>
+              <td><code>c292e96717ac3b56f428d136313a8cea122c59d3</code></td>
+              <td><code>GREEN</code> (Check-Run <code>c292e967</code> PASS)</td>
+              <td><code>PRR-B ACCEPT</code> + <code>PRR-A ACCEPT</code> + <code>Arc A486-W1B-R1 PASS</code></td>
+              <td><code>f16267e0b32aadd190d727eb79746ff432dab7f2</code> (<code>2026-10-31 04:27:19Z</code>)</td>
+            </tr>
+            <tr>
+              <td><strong><code>PR #2738</code> · <code>W1-A</code> (<code>#2733 + #2706</code>)</strong></td>
+              <td><code>c30818012335e2e39d896beb646ff1d5a2e68f51</code></td>
+              <td><code>GREEN</code> (Check-Run <code>c3081801</code> PASS)</td>
+              <td><code>PRR-A ACCEPT</code> + <code>Arc A486-W1A-R2 PASS</code> + Live Stage 3 Pool Benchmark</td>
+              <td><code>8b3b8c281781088eafde7de72ec1e1757553abd8</code> (<code>2026-10-31 05:04:12Z</code>)</td>
+            </tr>
+            <tr>
+              <td><strong><code>PR #2740</code> · <code>W2-REC</code> (Records)</strong></td>
+              <td><code>e8655dc12749abe27dc222be0fcb2b90fdde5713</code></td>
+              <td><code>GREEN</code> (Check-Run <code>e8655dc1</code> PASS)</td>
+              <td><code>PRR-A ACCEPT</code> + <code>Arc A486-W2REC-R2 PASS</code></td>
+              <td><code>1bb19f77ec3c4c5e55e63c46badf6ff9b5f2ac46</code> (<code>2026-10-31 05:19:44Z</code>)</td>
+            </tr>
+            <tr>
+              <td><strong><code>PR #2741</code> · <code>W3-REL</code> (Release Cut)</strong></td>
+              <td><code>a9a72c4ef10834103a33bd66f852ce7927ed1c60</code></td>
+              <td><code>GREEN</code> (<code>Tests 41173915852</code> + <code>release.yml 41173915838</code>)</td>
+              <td><code>PRR-A ACCEPT</code> + <code>Arc A486-W3REL-R1 PASS</code> + <code>Obsr O-Gate PASS</code></td>
+              <td><code>7be72520468c620c4780bb2165bdbc15fd3f6e21</code> (<code>2026-10-31 05:59:52Z</code>)</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -1029,6 +1339,85 @@
           <p>Release status documents report each finish line honestly with exact commit SHAs, backup hashes, and live readback receipts.</p>
         </div>
       </div>
+
+      <h3 style="margin:24px 0 12px;">Next Sprint Plan: Sprint v5.49.0 (<em>"Engine settings that tell the truth"</em> · Charter A487)</h3>
+      <p class="section-desc" style="margin-bottom:14px;">
+        Co-signed under <code>A487-COSIGN-V5490-20261030</code> with <strong>4 parallel Builder lanes (<code>TC-Lane-A..D</code>)</strong>, <strong>2 issues per lane per wave (<code>Rule #294</code>)</strong>, pairwise file-disjoint, verified via the live 66-slot Testament v0.30.0 distributed pool (<code>node scripts/test-stage.js 3</code>), and operating under the bounded Builder <code>Rule #271</code> amendment (<code>P44</code> / <code>P46</code>).
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Wave / Car</th>
+              <th>Assigned Builder &amp; Reviewer</th>
+              <th>Bundled Issues (2 per Car)</th>
+              <th>Signed File Scope &amp; Architectural Objective</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>W1-A</strong></td>
+              <td><code>TC-Lane-A / PRR-A</code></td>
+              <td><code>#1268 + #1276</code></td>
+              <td>
+                <strong>OpenClaw Gateway Auth &amp; Setup Wizard Projection:</strong>
+                <code>lib/routes/system.js</code>, <code>public/js/settings.js</code>, <code>public/js/onboarding.js</code>, <code>test/api-system-openclaw-auth.test.js</code>, <code>test/settings-openclaw-wizard.test.js</code>.
+                Project truthful OpenClaw gateway credential status and setup wizard step readiness without stale local cache drift.
+              </td>
+            </tr>
+            <tr>
+              <td><strong>W1-B</strong></td>
+              <td><code>TC-Lane-B / PRR-A</code></td>
+              <td><code>#2220 + #2278</code></td>
+              <td>
+                <strong>Engine Model Registry &amp; Capability Truthfulness:</strong>
+                <code>lib/engine-models.js</code>, <code>lib/routes/engines.js</code>, <code>public/js/engine-selector.js</code>, <code>test/engine-models.test.js</code>, <code>test/api-engines.test.js</code>.
+                Eliminate phantom/deprecated model entries and expose verified per-engine reasoning/effort capabilities in the UI and API.
+              </td>
+            </tr>
+            <tr>
+              <td><strong>W1-C</strong></td>
+              <td><code>TC-Lane-C / PRR-B</code></td>
+              <td><code>#738 + #1113</code></td>
+              <td>
+                <strong>Session Launch Parameter &amp; Effort-Tier Validation:</strong>
+                <code>lib/session-launcher.js</code>, <code>lib/startup-control.js</code>, <code>test/session-launcher.test.js</code>, <code>test/startup-control.test.js</code>.
+                Validate engine launch flags and effort tiers at launch time and surface truthful active engine settings on session cards.
+              </td>
+            </tr>
+            <tr>
+              <td><strong>W1-D</strong></td>
+              <td><code>TC-Lane-D / PRR-B</code></td>
+              <td><code>#260 + #1085</code></td>
+              <td>
+                <strong>Project &amp; Lane Engine Override Persistence:</strong>
+                <code>lib/routes/projects.js</code>, <code>public/js/project-settings.js</code>, <code>test/api-projects-engine.test.js</code>, <code>test/project-settings-ui.test.js</code>.
+                Ensure per-project and per-lane engine/model overrides persist atomically and reflect the effective runtime configuration.
+              </td>
+            </tr>
+            <tr>
+              <td><strong>W2-A</strong></td>
+              <td><code>TC-Lane-A / PRR-A</code></td>
+              <td><code>#1264 + #1269</code></td>
+              <td>
+                <strong>OpenClaw Connection Health &amp; Live Rebind Diagnostics:</strong>
+                <code>lib/openclaw-client.js</code>, <code>lib/routes/openclaw.js</code>, <code>test/openclaw-client.test.js</code>, <code>test/api-openclaw.test.js</code>.
+                Report live OpenClaw websocket/gateway health transitions and truthful rebind error diagnostics.
+              </td>
+            </tr>
+            <tr>
+              <td><strong>W2-B</strong></td>
+              <td><code>TC-Lane-B / PRR-B</code></td>
+              <td><code>#2742 + #764</code></td>
+              <td>
+                <strong>Container JUnit XML Root-Suite Hygiene &amp; Settings Audit Log:</strong>
+                <code>test/reset-admin-store.test.js</code>, <code>lib/caddy-admin.js</code>, <code>lib/settings-audit.js</code>, <code>test/settings-audit.test.js</code>.
+                Fix the Node 22 JUnit XML <code>&lt;undefined name="root"&gt;</code> container edge case in <code>test/reset-admin-store.test.js</code> so Stage 4 (<code>medium</code>) runs <code>150/150</code> on the Testament pool without fallback, and record structured engine-setting audit events.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </section>
   </main>
 
@@ -1036,7 +1425,7 @@
     <div class="container">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
         <div>
-          <strong>TangleClaw Sprint v5.48.1 Live Progress &amp; Telemetry Report</strong> · Auto-Synced by <code>sync-live-sprint.py</code> (2026-10-31 05:58:25 UTC)
+          <strong>TangleClaw Sprint v5.48.1 Canonical Shipped Release Report</strong> · Tag <code>v5.48.1 @ 7be72520468c620c4780bb2165bdbc15fd3f6e21</code> (2026-10-31 06:00:41 UTC)
         </div>
         <div>
           <a href="../" style="color:var(--accent2);">← All Sprint Reports</a>
