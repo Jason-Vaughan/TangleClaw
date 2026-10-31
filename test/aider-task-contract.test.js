@@ -170,6 +170,22 @@ describe('aider-task-contract', () => {
       execFileSync('git', ['commit', '-q', '-m', 'stabilize after dirty-baseline test'], { cwd: repoPath });
     });
 
+    it('refuses to run (fails closed, never spawning aider) on a repo with no commits yet — an unborn branch (#2756 PRR-A round 3)', () => {
+      const unbornRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-aider-unborn-'));
+      execFileSync('git', ['init', '-q'], { cwd: unbornRepo });
+      const c = contract.buildTaskContract({ repoPath: unbornRepo, editableFiles: ['a.js'], message: 'create a.js' });
+      let spawnedAider = false;
+      const fake = (cmd, args, opts) => {
+        if (cmd === 'aider') { spawnedAider = true; return { status: 0, signal: null, stdout: 'Done.', stderr: '' }; }
+        return realSpawnSync(cmd, args, opts);
+      };
+      const receipt = contract.runTask(c, { spawnSync: fake });
+      assert.equal(receipt.outcome, 'error');
+      assert.match(receipt.error, /unborn|no commits/i);
+      assert.equal(spawnedAider, false, 'an unborn repo must be rejected before aider ever runs');
+      fs.rmSync(unbornRepo, { recursive: true, force: true });
+    });
+
     it('fails closed when post-run `git diff` fails even though `git status` succeeded (#2756 PRR-A re-review)', () => {
       const c = contract.buildTaskContract({ repoPath, editableFiles: ['a.js'], message: 'edit a.js' });
       const fake = (cmd, args, opts) => {
