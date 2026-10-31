@@ -380,28 +380,39 @@ describe('writeRotation — compare-and-set against concurrent/stale writers (R1
     assert.equal(admission.readRotation(file).record.stage, admission.STAGES.PREPARED);
   });
 
-  it('a stale lock (crashed holder) is reclaimed rather than wedging the record forever', () => {
+  it('a stale lock fails closed rather than being auto-reclaimed, and only an explicit external clear unblocks the write (R4 Finding)', () => {
     const file = admission.rotationPath(dir, 'cas-7');
     const r = admission.prepareRotation({ rotationId: 'cas-7', resourceId: 't', oldAttemptId: 'old', oldEpoch: 0, checkpoint: checkpoint() });
     const lockPath = admission._lockPath(file);
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
     fs.closeSync(fs.openSync(lockPath, 'wx'));
-    // Back-date it well past LOCK_STALE_MS so it reads as abandoned.
+    // Back-date it well past what the old auto-reclaim logic treated as abandoned.
     const old = new Date(Date.now() - 60_000);
     fs.utimesSync(lockPath, old, old);
 
+    assert.throws(
+      () => admission.writeRotation(file, r, { lockTimeoutMs: 100 }),
+      (err) => err instanceof admission.AdmissionError && /could not acquire the rotation lock/.test(err.message)
+    );
+    assert.equal(fs.existsSync(file), false, 'the write never ran while the stale lock stood');
+
+    // Only an explicit external clear (an operator, or ops tooling, having
+    // confirmed the holder is gone) unblocks it — this module never decides
+    // that for itself.
+    fs.unlinkSync(lockPath);
     assert.doesNotThrow(() => admission.writeRotation(file, r));
     assert.equal(admission.readRotation(file).record.stage, admission.STAGES.PREPARED);
   });
 
-  it('refuses to steal a lock whose recorded pid is still alive, even once it is well past LOCK_STALE_MS (R3 Finding)', () => {
+  it('fails closed even on a lock whose recorded pid is provably dead — there is no liveness-based reclaim left to trigger (R4 Finding)', () => {
     const file = admission.rotationPath(dir, 'cas-8');
     const r = admission.prepareRotation({ rotationId: 'cas-8', resourceId: 't', oldAttemptId: 'old', oldEpoch: 0, checkpoint: checkpoint() });
     const lockPath = admission._lockPath(file);
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    // This test process's own pid is unambiguously alive.
-    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, token: 'someone-elses-token' }));
-    const old = new Date(Date.now() - 31_000);
+    // A pid that is certainly not running: this test process's own pid,
+    // negated, is never a real process id.
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: -process.pid, token: 'a-dead-holders-token' }));
+    const old = new Date(Date.now() - 60_000);
     fs.utimesSync(lockPath, old, old);
 
     try {
@@ -409,8 +420,8 @@ describe('writeRotation — compare-and-set against concurrent/stale writers (R1
         () => admission.writeRotation(file, r, { lockTimeoutMs: 100 }),
         (err) => err instanceof admission.AdmissionError && /could not acquire the rotation lock/.test(err.message)
       );
-      assert.equal(fs.existsSync(file), false, 'a live holder\'s lock, even stale by age, is never stolen');
-      assert.deepEqual(JSON.parse(fs.readFileSync(lockPath, 'utf8')), { pid: process.pid, token: 'someone-elses-token' }, 'the live holder\'s lock file is untouched');
+      assert.equal(fs.existsSync(file), false);
+      assert.deepEqual(JSON.parse(fs.readFileSync(lockPath, 'utf8')), { pid: -process.pid, token: 'a-dead-holders-token' }, 'the lock file is untouched — nothing here judged it reclaimable');
     } finally {
       fs.unlinkSync(lockPath);
     }
