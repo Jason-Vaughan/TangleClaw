@@ -18,7 +18,7 @@ tc --help
 
 ## Command families at a glance
 
-This page lists every top-level verb `tc --help` shows, including the restricted ones. The tables below say what each command does. `queue` and `check` are left out of the verb list a launched session is primed with, and so is `candidate` unless the operator has the bridge on and has told every session about candidates; `tc --help` lists all three either way.
+This page lists every top-level verb `tc --help` shows, including the restricted ones. The tables below say what each command does. `queue`, `check`, `usage` and `model` are left out of the verb list a launched session is primed with, and so is `candidate` unless the operator has the bridge on and has told every session about candidates; `tc --help` lists all of them either way.
 
 | Family | Purpose |
 | --- | --- |
@@ -34,6 +34,8 @@ This page lists every top-level verb `tc --help` shows, including the restricted
 | `candidate` | Submit a verified notice candidate to the Project Master. |
 | `bridge` | Let the authorized Project Master route operator messages and decide notice candidates. |
 | `ports`, `docs`, `rules`, `learnings` | Discover leases and project context. |
+| `usage` | Multi-provider usage & quota window telemetry, and an operator's calibration of it. |
+| `model` | A governed model/engine switch for a live session. |
 
 ## The launch commands most people need
 
@@ -61,6 +63,9 @@ The important distinction is: **new or unattested launch = `tc start next`; alre
 | `tc docs` | Lists shared documents available through this pane's project groups, with this project's notice setting for each. The other `tc docs` forms are under [Shared documents](#shared-documents). |
 | `tc rules` | Lists this project's durable session rules and their review state. |
 | `tc learnings` | Lists the project's recorded cross-session learnings. |
+| `tc usage windows` | Multi-provider usage & quota window telemetry: rolling 5-hour/weekly/monthly token windows per provider/model parsed from each engine's own local transcript log, the weekly reset schedule, and a recommended Builder model-tier policy. |
+| `tc usage calibrate --provider <id>` | Records an operator's percentage correction against a provider's own reported remaining headroom. |
+| `tc model switch <project> --engine <id> --model <id>` | A governed model/engine switch for a live session: `boundary` mode (default) only switches a session provably at a clean chunk boundary; `outage-takeover` snapshots an unresponsive session's worktree before terminating it. |
 
 ## Switchboard messaging
 

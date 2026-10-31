@@ -237,6 +237,123 @@ describe('reconcile: clear requires a fresh safe-to-clear checkpoint', () => {
   });
 });
 
+describe('reconcile: deps.requireClear (PRR-A Round 4 on PR #2762, #2598)', () => {
+  it('never trusts a pre-control match — issues /clear + /model even though the FIRST observation already matches desired', async () => {
+    reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
+    reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'g1' });
+    const { tmux, sent } = fakeTmux();
+    const result = await reconciler.reconcile('r1', 'session-r1', {
+      tmux, currentGeneration: 'g1', requireClear: true,
+      // Both the pre-control AND post-control observation return the exact
+      // desired profile — without requireClear this would short-circuit
+      // verified with nothing sent at all (see 'reconcile: already matching').
+      readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-5-5' })
+    });
+    assert.ok(sent.some((s) => s.text === '/clear'), 'must send /clear despite the coincidental pre-control match');
+    assert.ok(sent.some((s) => s.text === '/model claude-opus-5-5'), 'must send /model despite the coincidental pre-control match');
+    assert.equal(result.ok, true);
+    assert.equal(result.state, 'verified');
+  });
+
+  it('refuses immediately (never reaching explicitModel) when requireClear is set but the checkpoint refuses /clear', async () => {
+    reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
+    // No checkpoint recorded at all — /clear will be refused.
+    const { tmux, sent } = fakeTmux();
+    const result = await reconciler.reconcile('r1', 'session-r1', {
+      tmux, currentGeneration: 'g1', requireClear: true,
+      readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-5-5' })
+    });
+    assert.equal(result.ok, false);
+    assert.equal(sent.length, 0, 'must refuse before ever reaching /model — a switch that cannot clear has not switched');
+  });
+
+  it('refuses immediately when requireClear is set and the clear adapter call itself throws', async () => {
+    reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
+    reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'g1' });
+    const tmux = { sendKeys: () => { throw new Error('tmux session gone'); } };
+    const result = await reconciler.reconcile('r1', 'session-r1', {
+      tmux, currentGeneration: 'g1', requireClear: true,
+      readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-5-5' })
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /tmux session gone/);
+  });
+
+  it('omitted requireClear behaves exactly as before — a pre-control match verifies with nothing sent', async () => {
+    reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
+    const { tmux, sent } = fakeTmux();
+    const result = await reconciler.reconcile('r1', 'session-r1', {
+      tmux, readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-5-5' })
+    });
+    assert.equal(result.ok, true);
+    assert.equal(sent.length, 0);
+  });
+});
+
+describe('reconcile: deps.postControlPollAttempts / deps.postControlPollMs (PRR-A Round 5, #2598)', () => {
+  it('defaults to a single observation (no retry) — this function\'s own prior behavior, unchanged for every caller that does not opt in', async () => {
+    reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
+    reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'g1' });
+    const { tmux } = fakeTmux();
+    let observeCalls = 0;
+    // Pre-control mismatch (call 0), post-control WOULD match on a second
+    // call (call 2) — but with no retry budget opted into, only calls 0
+    // and 1 (the single post-control observation) ever happen.
+    const readTrustedActiveProfile = fakeObserved([
+      { engine: 'claude', model: 'claude-opus-4-8' },
+      { engine: 'claude', model: 'claude-opus-4-8' },
+      { engine: 'claude', model: 'claude-opus-5-5' }
+    ]);
+    const result = await reconciler.reconcile('r1', 'session-r1', {
+      tmux, currentGeneration: 'g1',
+      readTrustedActiveProfile: async (...args) => { observeCalls += 1; return readTrustedActiveProfile(...args); }
+    });
+    assert.equal(result.ok, false, 'the match that would have appeared on a third call never gets reached');
+    assert.equal(observeCalls, 2, 'pre-control + exactly one post-control observation — no retry');
+  });
+
+  it('polls the bounded retry loop and reaches verified once a LATER attempt finally observes a match, with no real wall-clock delay via a faked sleep', async () => {
+    reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
+    reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'g1' });
+    const { tmux, sent } = fakeTmux();
+    const sleepCalls = [];
+    // Simulates `tmux.sendKeys` returning before the CLI flushed its
+    // record: the FIRST post-control poll attempt still sees the old
+    // model, and only the SECOND one sees the switch actually land.
+    const result = await reconciler.reconcile('r1', 'session-r1', {
+      tmux, currentGeneration: 'g1',
+      postControlPollAttempts: 5, postControlPollMs: 50,
+      sleep: (ms) => { sleepCalls.push(ms); return Promise.resolve(); },
+      readTrustedActiveProfile: fakeObserved([
+        { engine: 'claude', model: 'claude-opus-4-8' }, // pre-control: mismatch
+        { engine: 'claude', model: 'claude-opus-4-8' }, // post-control poll attempt 0: still stale
+        { engine: 'claude', model: 'claude-opus-5-5' } // poll attempt 1: the switch has landed
+      ])
+    });
+    assert.equal(result.ok, true, result.reason);
+    assert.equal(result.state, 'verified');
+    assert.ok(sent.some((s) => s.text === '/clear'));
+    assert.ok(sent.some((s) => s.text === '/model claude-opus-5-5'));
+    assert.deepEqual(sleepCalls, [50], 'exactly one sleep between poll attempt 0 (mismatch) and attempt 1 (match) — none after the match, none before the first attempt');
+  });
+
+  it('exhausts the retry budget and refuses when every attempt still mismatches', async () => {
+    reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
+    reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'g1' });
+    const { tmux } = fakeTmux();
+    const sleepCalls = [];
+    const result = await reconciler.reconcile('r1', 'session-r1', {
+      tmux, currentGeneration: 'g1',
+      postControlPollAttempts: 3, postControlPollMs: 10,
+      sleep: (ms) => { sleepCalls.push(ms); return Promise.resolve(); },
+      readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-4-8' })
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.state, 'hold');
+    assert.deepEqual(sleepCalls, [10, 10], 'sleeps BETWEEN attempts only — 3 attempts means 2 sleeps, never a trailing one after the last attempt');
+  });
+});
+
 describe('reconcile: deps.stillValid aborts a superseded resource (PRR-A finding 4, round 2 on PR #2757)', () => {
   it('aborts before the first observation when the resource is already superseded', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
@@ -956,6 +1073,152 @@ describe('_readClaudeActiveModel', () => {
         claudeHome: tmpHome, projectPath: '/project', startedAtMs: secondAligned, engineSessionId: 'fresh-session'
       });
       assert.deepEqual(result, { engine: 'claude', model: 'claude-sonnet-5' });
+    });
+  });
+
+  describe('PRR-A Round 4: minRecordTimestampMs (#2598)', () => {
+    it('a record BEFORE minRecordTimestampMs cannot supply the model, even though the file otherwise clears every identity check', () => {
+      const startedAtMs = Date.now() - 10000;
+      const cutoff = Date.now() - 3000;
+      writeTranscript('-project/session.jsonl', [
+        { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(), message: { model: 'claude-opus-4-8' } }
+      ]);
+      const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs, minRecordTimestampMs: cutoff });
+      assert.equal(result, null, 'the only record on file predates the cutoff, so there is nothing to confirm against');
+    });
+
+    it('a record AT/AFTER minRecordTimestampMs supplies the model, even when the file\'s FIRST line (its identity) predates the cutoff', () => {
+      const startedAtMs = Date.now() - 10000;
+      const cutoff = Date.now() - 3000;
+      writeTranscript('-project/session.jsonl', [
+        { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(), message: { model: 'claude-opus-4-8' } },
+        { type: 'assistant', cwd: '/project', timestamp: new Date(cutoff + 500).toISOString(), message: { model: 'claude-sonnet-5' } }
+      ]);
+      const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs, minRecordTimestampMs: cutoff });
+      assert.deepEqual(result, { engine: 'claude', model: 'claude-sonnet-5' }, 'the file\'s identity (firstTs) is unaffected by minRecordTimestampMs — only which record may supply the model');
+    });
+
+    it('omitted minRecordTimestampMs behaves exactly as before — the last-mentioned model wins regardless of its own timestamp', () => {
+      const startedAtMs = Date.now() - 10000;
+      writeTranscript('-project/session.jsonl', [
+        { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(), message: { model: 'claude-opus-4-8' } }
+      ]);
+      const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs });
+      assert.deepEqual(result, { engine: 'claude', model: 'claude-opus-4-8' });
+    });
+  });
+
+  describe('PRR-A Round 7: the real /model two-row exchange (#2598) — verified against a live Claude Code v2.1.283 probe on this host', () => {
+    // The exact shapes a live `claude v2.1.283` probe wrote on this host
+    // (SessionStart/last-prompt/cost-state housekeeping rows omitted —
+    // irrelevant to this reader): a SUCCEEDED `/model claude-sonnet-4-6`
+    // writes two `type: "user"` rows with NO `commandRun` field at all; a
+    // REJECTED `/model bogus-nonexistent-model-xyz` writes two
+    // `type: "system", subtype: "local_command"` rows, and `commandRun`
+    // appears ONLY on the rejection's own stdout row — naming the id that
+    // was REJECTED, not applied.
+    function succeededInvocation(ts, modelId, uuid) {
+      return {
+        type: 'user', uuid, timestamp: ts, cwd: '/project',
+        message: { role: 'user', content: `<command-name>/model</command-name>\n            <command-message>model</command-message>\n            <command-args>${modelId}</command-args>` }
+      };
+    }
+    function succeededConfirmation(ts, parentUuid, uuid) {
+      return {
+        type: 'user', uuid, parentUuid, timestamp: ts, cwd: '/project',
+        message: { role: 'user', content: '<local-command-stdout>Set model to `Sonnet 4.6` and saved as your default for new sessions</local-command-stdout>' }
+      };
+    }
+    function rejectedInvocation(ts, modelId, uuid) {
+      return {
+        type: 'system', subtype: 'local_command', uuid, timestamp: ts, cwd: '/project', level: 'info', isMeta: false,
+        content: `<command-name>/model</command-name>\n            <command-message>model</command-message>\n            <command-args>${modelId}</command-args>`
+      };
+    }
+    function rejectedConfirmation(ts, parentUuid, uuid, modelId) {
+      return {
+        type: 'system', subtype: 'local_command', uuid, parentUuid, timestamp: ts, cwd: '/project', level: 'info', isMeta: false,
+        content: `<local-command-stdout>Model '${modelId}' not found</local-command-stdout>`,
+        commandRun: { command: 'model', args: modelId }
+      };
+    }
+
+    it('reads the model once a SUCCEEDED /model exchange confirms it, with no assistant row in the file at all', () => {
+      const startedAtMs = Date.now() - 10000;
+      writeTranscript('-project/session.jsonl', [
+        succeededInvocation(new Date(startedAtMs + 200).toISOString(), 'claude-sonnet-5', 'inv-1'),
+        succeededConfirmation(new Date(startedAtMs + 201).toISOString(), 'inv-1', 'conf-1')
+      ]);
+      const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs });
+      assert.deepEqual(result, { engine: 'claude', model: 'claude-sonnet-5' });
+    });
+
+    it('a REJECTED /model exchange never supplies the rejected model — the exact real bug a prior version of this reader had (trusting commandRun.args, present only on the rejection)', () => {
+      const startedAtMs = Date.now() - 10000;
+      writeTranscript('-project/session.jsonl', [
+        rejectedInvocation(new Date(startedAtMs + 200).toISOString(), 'bogus-nonexistent-model-xyz', 'inv-1'),
+        rejectedConfirmation(new Date(startedAtMs + 201).toISOString(), 'inv-1', 'conf-1', 'bogus-nonexistent-model-xyz')
+      ]);
+      const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs });
+      assert.equal(result, null, 'a rejected switch must never be read as the applied model, however confidently commandRun names it');
+    });
+
+    it('a REJECTED exchange followed by a SUCCEEDED one (the real sequence this host\'s own probe produced) reads only the succeeded model', () => {
+      const startedAtMs = Date.now() - 10000;
+      writeTranscript('-project/session.jsonl', [
+        succeededInvocation(new Date(startedAtMs + 200).toISOString(), 'claude-opus-4-8', 'inv-1'),
+        succeededConfirmation(new Date(startedAtMs + 201).toISOString(), 'inv-1', 'conf-1'),
+        rejectedInvocation(new Date(startedAtMs + 300).toISOString(), 'bogus-nonexistent-model-xyz', 'inv-2'),
+        rejectedConfirmation(new Date(startedAtMs + 301).toISOString(), 'inv-2', 'conf-2', 'bogus-nonexistent-model-xyz')
+      ]);
+      const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs });
+      assert.deepEqual(result, { engine: 'claude', model: 'claude-opus-4-8' }, 'the rejection must not overwrite the earlier succeeded model, nor supply its own');
+    });
+
+    it('a LATER succeeded /model exchange wins over an earlier assistant row, same as two assistant rows would', () => {
+      const startedAtMs = Date.now() - 10000;
+      writeTranscript('-project/session.jsonl', [
+        { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(), message: { model: 'claude-opus-4-8' } },
+        succeededInvocation(new Date(startedAtMs + 300).toISOString(), 'claude-sonnet-5', 'inv-1'),
+        succeededConfirmation(new Date(startedAtMs + 301).toISOString(), 'inv-1', 'conf-1')
+      ]);
+      const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs });
+      assert.deepEqual(result, { engine: 'claude', model: 'claude-sonnet-5' });
+    });
+
+    it('a succeeded /model exchange is subject to the exact same minRecordTimestampMs recency scoping as an assistant row — scoped to the CONFIRMATION row\'s own timestamp', () => {
+      const startedAtMs = Date.now() - 10000;
+      const cutoff = Date.now() - 3000;
+      writeTranscript('-project/session.jsonl', [
+        { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(), message: { model: 'claude-opus-4-8' } },
+        // Both rows before the cutoff — must not count as post-clear confirmation.
+        succeededInvocation(new Date(startedAtMs + 300).toISOString(), 'claude-sonnet-5', 'inv-1'),
+        succeededConfirmation(new Date(startedAtMs + 301).toISOString(), 'inv-1', 'conf-1')
+      ]);
+      const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs, minRecordTimestampMs: cutoff });
+      assert.equal(result, null, 'the exchange predates the cutoff, same as a stale assistant row would');
+    });
+
+    it('an invocation row with no matching confirmation row at all never supplies a model', () => {
+      const startedAtMs = Date.now() - 10000;
+      writeTranscript('-project/session.jsonl', [
+        succeededInvocation(new Date(startedAtMs + 200).toISOString(), 'claude-sonnet-5', 'inv-1')
+        // No confirmation row ever arrives — the command may still be in flight.
+      ]);
+      const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs });
+      assert.equal(result, null);
+    });
+
+    it('a confirmation-shaped row whose parentUuid matches nothing pending is ignored, not mistaken for an unrelated command\'s result', () => {
+      const startedAtMs = Date.now() - 10000;
+      writeTranscript('-project/session.jsonl', [
+        {
+          type: 'user', uuid: 'orphan', parentUuid: 'nothing-pending', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(),
+          message: { role: 'user', content: '<local-command-stdout>Set model to `Sonnet 4.6` and saved as your default for new sessions</local-command-stdout>' }
+        }
+      ]);
+      const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs });
+      assert.equal(result, null);
     });
   });
 });

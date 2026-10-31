@@ -1592,6 +1592,61 @@ function togglePorts() {
   toggle.setAttribute('aria-expanded', state.portsOpen);
 }
 
+// ── Usage Panel (#2599) ──
+
+/**
+ * Toggle the usage-windows panel open/closed from the dashboard bar,
+ * fetching `GET /api/usage/windows` fresh each time it opens — the same
+ * on-demand-per-open pattern `_loadEngineInventorySection` uses, rather than
+ * riding the dashboard's own session-status poll (this panel is fleet-wide
+ * telemetry, not per-project status).
+ * @returns {Promise<void>}
+ */
+async function toggleUsage() {
+  state.usageOpen = !state.usageOpen;
+  const panel = document.getElementById('usagePanel');
+  const toggle = document.getElementById('usageToggle');
+  panel.classList.toggle('open', state.usageOpen);
+  toggle.classList.toggle('active', state.usageOpen);
+  toggle.setAttribute('aria-expanded', state.usageOpen);
+  if (state.usageOpen) await renderUsagePanel();
+}
+
+/**
+ * Render the usage-windows panel's contents: each provider/model's rolling
+ * windows, the weekly reset countdown, and the recommended Builder
+ * model-tier policy.
+ * @returns {Promise<void>}
+ */
+async function renderUsagePanel() {
+  const panel = document.getElementById('usagePanel');
+  const data = await api('/api/usage/windows');
+  if (!data || !data.byProviderModel) {
+    panel.innerHTML = `<div class="usage-empty">Could not load usage windows: ${esc(api.lastError || 'unknown error')}</div>`;
+    return;
+  }
+  const providers = Object.keys(data.byProviderModel);
+  let html = '';
+  if (providers.length === 0) {
+    html = '<div class="usage-empty">No usage parsed from any local transcript log.</div>';
+  }
+  for (const provider of providers) {
+    html += `<div class="usage-provider-name">${esc(provider)}</div>`;
+    for (const [model, windows] of Object.entries(data.byProviderModel[provider])) {
+      html += `<div class="usage-model-row">
+        <span>${esc(model)}</span>
+        <span>5h ${windows.fiveHour.totalTokens} · weekly ${windows.weekly.totalTokens} · monthly ${windows.monthly.totalTokens}</span>
+      </div>`;
+    }
+  }
+  const p = data.recommendedPolicy;
+  const hours = data.resetSchedule.hoursUntilWeeklyReset.toFixed(1);
+  html += `<div class="usage-policy">
+    Weekly reset in ${hours}h — <strong>${esc(p.window)}</strong>: recommended [${esc(p.recommendedModels.join(', '))}]${p.reservedModels.length ? `, reserved [${esc(p.reservedModels.join(', '))}]` : ''}
+  </div>`;
+  panel.innerHTML = html;
+}
+
 function renderPorts() {
   const grid = document.getElementById('portsGrid');
   if (state.ports.length === 0) {
@@ -7480,6 +7535,7 @@ $('masterToggle').addEventListener('click', toggleMaster);
 masterSettings.mount();
 refreshMasterDot();
 $('portsToggle').addEventListener('click', togglePorts);
+$('usageToggle').addEventListener('click', toggleUsage);
 $('openclawToggle').addEventListener('click', toggleOpenclaw);
 $('auditToggle').addEventListener('click', toggleAudit);
 $('fleetRecoveryToggle').addEventListener('click', toggleFleetRecovery);
