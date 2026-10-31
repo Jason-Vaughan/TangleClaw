@@ -1731,6 +1731,34 @@ describe('lib/medusa-send: a stale handle to a LOCAL peer resolves up front (#27
     assert.equal(result.status, 200);
     assert.equal(result.body.exchange.tracking, 'untracked');
   });
+
+  it('becomes tracked via the HUB\'s own retarget, when beforeHub could not resolve it up front but the Hub\'s answer names a local peer', async () => {
+    // Session 77 answers to 'local-peer-ws'. 'stale-unrelated-ws' is not that
+    // id and shares no TangleClaw id slug with it, so beforeHub's up-front
+    // fallback (exercised by the earlier tests in this block) cannot resolve
+    // it -- this isolates sendTracked's OTHER wiring: passing the Hub's own
+    // answer (result.to) through medusaWake.localParticipant into bindHubId's
+    // deliveredRecipient, exactly as a genuine #1023-shaped Hub retarget would.
+    store.sessions.listLiveAll = () => [{ id: 77, projectId: 55 }];
+    medusa.getStatus = (sessionId) => (String(sessionId) === '77'
+      ? { workspaceId: 'local-peer-ws' }
+      : { workspaceId: null });
+    medusa.sendMessage = async ({ beforeHub }) => {
+      beforeHub({ from: 'sender-ws' });
+      return { status: 'received', id: 'hub-retarget-1', to: 'local-peer-ws' };
+    };
+
+    const result = await medusaSend.sendTracked({
+      sessionId: 1,
+      senderProjectId: 10,
+      caller: { kind: 'project', projectId: 10 },
+      body: { to: 'stale-unrelated-ws', message: 'hi' }
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.body.exchange.tracking, 'tracked');
+    assert.equal(result.body.exchange.recipient.projectId, 55);
+  });
 });
 
 describe('API — Medusa Chunk 03 routes (send / roster)', () => {
