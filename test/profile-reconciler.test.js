@@ -482,22 +482,27 @@ describe('STATUS_CHROME_LINES', () => {
   it('is the exact window _defaultParseActiveModel reads from, so the two can never silently drift apart', () => {
     const n = reconciler.STATUS_CHROME_LINES;
     assert.equal(n, 5);
-    const filler = (count) => Array.from({ length: count }, (_, i) => `chrome line ${i}`);
-
-    // Exactly n lines back from the end — the OLDEST line still inside the window.
-    const atEdge = ['Model: right-at-the-edge', ...filler(n - 1)];
+    // Round 4 (PRR-A on PR #2757): the window is read only via a properly
+    // separated footer now — a bare window with no separator has to be the
+    // pane's entire content (Case B), so "right at the edge" has to be
+    // expressed with one, not with arbitrary filler lines a real separator
+    // would never sit among.
+    const atEdge = ['───────────────────────', 'Model: right-at-the-edge', '>', '>', '>'];
     assert.deepEqual(reconciler._defaultParseActiveModel(atEdge), { model: 'right-at-the-edge' });
 
-    // One line further back than n — now outside the window, and nothing
-    // else inside it matches, so the result is null, not some other line.
-    const pastEdge = ['Model: right-at-the-edge', 'one more line', ...filler(n - 1)];
+    // One line further back than n — the separator itself is pushed out of
+    // the window, so the window has no separator at all and more lines
+    // than a bare boot banner could legitimately have.
+    const pastEdge = ['───────────────────────', 'Model: right-at-the-edge', '>', '>', '>', '>'];
     assert.equal(reconciler._defaultParseActiveModel(pastEdge), null);
   });
 });
 
 describe('_defaultParseActiveModel', () => {
   it('reads the model id out of a "Model: <id>" line', () => {
-    assert.deepEqual(reconciler._defaultParseActiveModel(['some output', 'Model: claude-opus-5-5', 'more output']),
+    // Round 4: a separator is what makes 'some output' legitimately ignorable
+    // — without one, that line would itself fail the strict allowlist below.
+    assert.deepEqual(reconciler._defaultParseActiveModel(['some output', '───────────────────────', 'Model: claude-opus-5-5', '>']),
       { model: 'claude-opus-5-5' });
   });
 
@@ -577,6 +582,32 @@ describe('_defaultParseActiveModel', () => {
   it('two "Model:" lines agreeing on the same value still fail closed — genuine status chrome never repeats itself', () => {
     assert.equal(
       reconciler._defaultParseActiveModel(['Model: claude-opus-5-5', 'Model: claude-opus-5-5']),
+      null
+    );
+  });
+
+  it('PRR-A finding, round 4: arbitrary transcript text with no separator fails closed, even with no chat turn and no second Model: line', () => {
+    // The exact reproduction named in the review — with no separator to
+    // bound a chrome region, 'transcript output' was never checked for
+    // being anything other than a chat-turn-shaped line, so it slipped
+    // through as if it were legitimate context around a real status line.
+    assert.equal(
+      reconciler._defaultParseActiveModel(['transcript output', 'Model: desired-model', '>']),
+      null
+    );
+  });
+
+  it('PRR-A finding, round 4: a stale "Model:" line pushed outside the trailing window by filler, with no separator anywhere, fails closed', () => {
+    // The exact reproduction named in the review — the stale line being
+    // outside STATUS_CHROME_LINES let it slip past the round-3 "two
+    // matches in the window" check entirely; Case B's own length/position
+    // rule (not a whole-pane scan) is what catches this one: with no
+    // separator at all, nonEmpty is longer than the window allows.
+    assert.equal(
+      reconciler._defaultParseActiveModel([
+        'Model: wrong-model', 'transcript 1', 'transcript 2', 'transcript 3',
+        'transcript 4', 'transcript 5', 'Model: desired-model', '>'
+      ]),
       null
     );
   });
