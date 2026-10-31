@@ -160,14 +160,14 @@ describe('lib/model-switch — switchSessionModel', () => {
   });
 
   it('cross-provider: calls sessions.triggerWrap with the project name and the side-effect-neutralizing options, before killing or relaunching (PRR-A Round 4 BLOCKING 2, #2598)', async () => {
-    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
     let wrapArgs = null;
     let killed = false;
     let launched = false;
     const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
       ...target(),
       checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
-      triggerWrap: (name, wopts) => { wrapArgs = { name, wopts }; return { ok: true }; },
+      triggerWrap: (name, wopts) => { wrapArgs = { name, wopts }; return { ok: true, lifecycleCompleted: true, sessionId: session.id }; },
       killSession: () => { killed = true; return { error: null }; },
       launchSession: () => { launched = true; return { error: null }; }
     });
@@ -178,6 +178,66 @@ describe('lib/model-switch — switchSessionModel', () => {
     });
     assert.equal(killed, true);
     assert.equal(launched, true);
+  });
+
+  it('cross-provider: refuses (SESSION_SUPERSEDED) without killing or relaunching, when triggerWrap reports lifecycleCompleted: false (PRR-A Round 5 BLOCKING 2, #2598)', async () => {
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    let killed = false;
+    let launched = false;
+    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
+      ...target(),
+      checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      // The PIPELINE succeeded (`ok: true`) but the SESSION did not — e.g.
+      // the session this wrap was claimed against was killed or replaced
+      // mid-wrap (lib/sessions.js's own triggerWrap doc comment: "a
+      // pipeline that succeeds against a session someone killed mid-wrap
+      // writes nothing").
+      triggerWrap: () => ({ ok: true, lifecycleCompleted: false, sessionId: session.id }),
+      killSession: () => { killed = true; return { error: null }; },
+      launchSession: () => { launched = true; return { error: null }; }
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 409);
+    assert.equal(result.code, 'SESSION_SUPERSEDED');
+    assert.equal(killed, false, 'must never kill a session once the wrap itself reports it did not complete the lifecycle');
+    assert.equal(launched, false, 'must never launch a successor on an unconfirmed lifecycle');
+  });
+
+  it('cross-provider: refuses (SESSION_SUPERSEDED) when triggerWrap\'s own sessionId does not match the session this switch started with', async () => {
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    let killed = false;
+    let launched = false;
+    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
+      ...target(),
+      checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      triggerWrap: () => ({ ok: true, lifecycleCompleted: true, sessionId: session.id + 999 }),
+      killSession: () => { killed = true; return { error: null }; },
+      launchSession: () => { launched = true; return { error: null }; }
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'SESSION_SUPERSEDED');
+    assert.equal(killed, false);
+    assert.equal(launched, false);
+  });
+
+  it('cross-provider: refuses (SESSION_SUPERSEDED) rather than killing a REPLACEMENT session or launching a third, when a different session is active after triggerWrap', async () => {
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const replacement = { id: session.id + 1, name: project.name };
+    let killed = false;
+    let launched = false;
+    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
+      ...target(),
+      checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      triggerWrap: () => ({ ok: true, lifecycleCompleted: true, sessionId: session.id }),
+      getActiveSession: () => replacement,
+      killSession: () => { killed = true; return { error: null }; },
+      launchSession: () => { launched = true; return { error: null }; }
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 409);
+    assert.equal(result.code, 'SESSION_SUPERSEDED');
+    assert.equal(killed, false, 'must never kill the replacement session');
+    assert.equal(launched, false, 'must never launch a third session');
   });
 
   it('cross-provider: refuses (WRAP_FAILED) before killing or relaunching, when the governed wrap itself fails', async () => {
@@ -214,12 +274,12 @@ describe('lib/model-switch — switchSessionModel', () => {
   });
 
   it('switches (cross-provider relaunch), refreshes the session, and persists engine/model when at boundary', async () => {
-    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
     let refreshArgs = null;
     const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
       ...target(),
       checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
-      triggerWrap: () => ({ ok: true }),
+      triggerWrap: () => ({ ok: true, lifecycleCompleted: true, sessionId: session.id }),
       refreshSession: (p, s) => { refreshArgs = { projectName: p.name }; }
     });
     assert.equal(result.ok, true);
@@ -236,12 +296,12 @@ describe('lib/model-switch — switchSessionModel', () => {
   });
 
   it('persists the new config BEFORE refreshing the session, so an interrupted refresh never leaves the old config behind', async () => {
-    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
     let engineIdWhenRefreshRan = null;
     const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
       ...target(),
       checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
-      triggerWrap: () => ({ ok: true }),
+      triggerWrap: () => ({ ok: true, lifecycleCompleted: true, sessionId: session.id }),
       refreshSession: () => { engineIdWhenRefreshRan = store.projects.get(project.id).engineId; }
     });
     assert.equal(result.ok, true);
@@ -249,11 +309,11 @@ describe('lib/model-switch — switchSessionModel', () => {
   });
 
   it('cross-provider: refuses (KILL_FAILED) when killSession fails, using the real default refreshSession', async () => {
-    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
     const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
       ...target(),
       checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
-      triggerWrap: () => ({ ok: true }),
+      triggerWrap: () => ({ ok: true, lifecycleCompleted: true, sessionId: session.id }),
       // The real default `getActiveSession` reads `store.sessions.getActive`,
       // which is still active here (the stubbed triggerWrap didn't end it) —
       // this is exactly the "lightweight test double" case the kill-as-
@@ -266,12 +326,12 @@ describe('lib/model-switch — switchSessionModel', () => {
   });
 
   it('cross-provider: refuses (LAUNCH_FAILED) when launchSession fails after a successful kill', async () => {
-    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
     let killed = false;
     const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
       ...target(),
       checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
-      triggerWrap: () => ({ ok: true }),
+      triggerWrap: () => ({ ok: true, lifecycleCompleted: true, sessionId: session.id }),
       killSession: () => { killed = true; return { error: null }; },
       launchSession: () => ({ error: 'ENGINE_PROFILE_INVALID' })
     });
@@ -290,11 +350,11 @@ describe('lib/model-switch — switchSessionModel', () => {
     const newestPlan = path.join(plansDir, 'newest-plan.md');
     fs.writeFileSync(newestPlan, '# newest\n');
 
-    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
     const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5', reason: 'ship chunk 2' }, {
       ...target(),
       checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
-      triggerWrap: () => ({ ok: true }),
+      triggerWrap: () => ({ ok: true, lifecycleCompleted: true, sessionId: session.id }),
       refreshSession: () => ({ ok: true })
     });
     assert.equal(result.ok, true);
@@ -322,11 +382,11 @@ describe('lib/model-switch — switchSessionModel', () => {
       freshness: { sha: 'deadbeef', branch: 'main', writtenAt: new Date().toISOString(), tier: 'full' }
     });
 
-    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
     const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
       ...target(),
       checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
-      triggerWrap: () => ({ ok: true }),
+      triggerWrap: () => ({ ok: true, lifecycleCompleted: true, sessionId: session.id }),
       refreshSession: () => ({ ok: true })
     });
     assert.equal(result.ok, true, result.error);
@@ -370,6 +430,11 @@ describe('lib/model-switch — switchSessionModel', () => {
     const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5', effort: 'high' }, {
       ...target(),
       checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      // PRR-A Round 5 BLOCKING 3: this test's `effort: 'high'` now gates on
+      // the engine's adapter supporting `effortMode` BEFORE anything below
+      // is touched — the fake engine needs one that does, to keep
+      // exercising the plumbing this test is actually about.
+      getAdapter: () => ({ supports: (c) => c === 'effortMode' }),
       setDesiredProfile: (id, profile) => { setArgs = { id, profile }; },
       recordCheckpoint: (id, receipt) => { checkpointArgs = { id, receipt }; },
       reconcile: (id, tmuxSession, rdeps) => { reconcileArgs = { id, tmuxSession, rdeps }; return { ok: true, state: 'verified' }; }
@@ -392,6 +457,36 @@ describe('lib/model-switch — switchSessionModel', () => {
     // PRR-A Round 4 (#2598): never trust a pre-switch match by coincidence —
     // `/clear` must always run for a live switch.
     assert.equal(reconcileArgs.rdeps.requireClear, true);
+  });
+
+  it('same-provider: refuses (EFFORT_UNSUPPORTED_BY_ENGINE) before mutating project.json or sending any tmux keys, when the engine adapter does not support effortMode (PRR-A Round 5 BLOCKING 3, #2598)', async () => {
+    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const sentKeys = [];
+    // No getAdapter override here — this exercises the REAL
+    // lib/profile-reconciler.js#CLAUDE_ADAPTER.supports('effortMode'),
+    // confirmed false by reading that adapter's own source.
+    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'claude', model: 'claude-sonnet-5', effort: 'high' }, {
+      ...target(),
+      checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      tmux: { sendKeys: (sessionArg, cmd) => sentKeys.push({ session: sessionArg, cmd }) }
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 400);
+    assert.equal(result.code, 'EFFORT_UNSUPPORTED_BY_ENGINE');
+    assert.equal(store.projects.get(project.id).engineId, 'claude', 'nothing touched — refused before _applyToProjectConfig');
+    assert.equal(fs.existsSync(path.join(projectPath, '.tangleclaw', 'project.json')), false, 'project.json must never be written');
+    assert.deepEqual(sentKeys, [], 'no tmux keys sent');
+  });
+
+  it('same-provider: refuses (EFFORT_UNSUPPORTED_BY_ENGINE) for an engine with no registered adapter at all', async () => {
+    const session = store.sessions.start({ projectId: project.id, engineId: 'fake', tmuxSession: 'x', primePrompt: null });
+    store.projects.update(project.id, { engine_id: 'fake' });
+    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5', effort: 'high' }, {
+      ...target(),
+      checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} })
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'EFFORT_UNSUPPORTED_BY_ENGINE');
   });
 
   it('same-provider: a non-stubbed reconcile actually sends /clear + /model and verifies against the post-switch transcript (#2598 BLOCKING 2, PRR-A Round 3 BLOCKING 1)', async () => {
@@ -443,6 +538,55 @@ describe('lib/model-switch — switchSessionModel', () => {
     // early-exit match against stale pre-switch evidence.
     assert.ok(sentKeys.some((k) => k.cmd === '/clear'), 'must send /clear');
     assert.ok(sentKeys.some((k) => k.cmd === '/model claude-sonnet-5'), 'must send /model claude-sonnet-5');
+  });
+
+  it('same-provider: a non-stubbed reconcile polls past an ASYNCHRONOUS post-command write (the real shape — sendKeys returns before the CLI flushes, and NO assistant turn ever runs) and still reaches verified (PRR-A Round 5 BLOCKING 1, #2598)', async () => {
+    const claudeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-model-switch-claudehome-'));
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'the-real-tmux', primePrompt: null });
+    const startedAtMs = profileReconciler.parseLaunchTimestampMs(session.startedAt);
+
+    const transcriptDir = path.join(claudeHome, 'projects', 'some-slug');
+    fs.mkdirSync(transcriptDir, { recursive: true });
+    const transcriptFile = path.join(transcriptDir, 'abc123.jsonl');
+    fs.writeFileSync(transcriptFile, JSON.stringify({
+      type: 'assistant', cwd: projectPath, timestamp: new Date(startedAtMs + 2000).toISOString(),
+      message: { model: 'claude-opus-4-6' }
+    }) + '\n');
+
+    const sentKeys = [];
+    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'claude', model: 'claude-sonnet-5' }, {
+      ...target(),
+      checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      claudeHome,
+      // A smaller, faster poll budget than the real default — this test
+      // still exercises the REAL setTimeout-based `sleep`, just tuned so
+      // the whole test finishes in well under a second.
+      postControlPollAttempts: 10, postControlPollMs: 10,
+      tmux: {
+        sendKeys: (sessionArg, cmd) => {
+          sentKeys.push({ session: sessionArg, cmd });
+          // The real asynchronous delivery shape: `tmux.sendKeys` returns
+          // IMMEDIATELY, before Claude Code has written anything — the
+          // system/local_command record lands moments later, scheduled
+          // here via a real setTimeout rather than synchronously before
+          // this function returns. No assistant turn ever runs at all —
+          // a clean chunk boundary prompts no new conversation.
+          if (cmd === '/model claude-sonnet-5') {
+            setTimeout(() => {
+              fs.appendFileSync(transcriptFile, JSON.stringify({
+                type: 'system', subtype: 'local_command', cwd: projectPath, timestamp: new Date().toISOString(),
+                content: '<local-command-stdout></local-command-stdout>', commandRun: { command: 'model', args: 'claude-sonnet-5' }
+              }) + '\n');
+            }, 15);
+          }
+        }
+      }
+    });
+
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.sameProvider, true);
+    assert.ok(sentKeys.some((k) => k.cmd === '/clear'));
+    assert.ok(sentKeys.some((k) => k.cmd === '/model claude-sonnet-5'));
   });
 
   it('same-provider: a non-stubbed reconcile still sends /clear + /model and re-verifies against a post-clear record, even when the PRE-switch transcript already names the target model (PRR-A Round 4 BLOCKING 1)', async () => {
@@ -517,7 +661,11 @@ describe('lib/model-switch — switchSessionModel', () => {
       now: () => startedAtMs + 5000,
       // No new record ever gets appended here — the engine never actually
       // ran a turn after /model landed, so there is nothing post-clear to
-      // confirm against.
+      // confirm against. `sleep` faked so the real post-control poll's
+      // retry budget (BLOCKING 1, PRR-A Round 5) exhausts without real
+      // wall-clock delay — this test proves the GENUINE-failure path, not
+      // how long the poll itself takes.
+      sleep: () => Promise.resolve(),
       tmux: { sendKeys: (sessionArg, cmd) => sentKeys.push({ session: sessionArg, cmd }) }
     });
 

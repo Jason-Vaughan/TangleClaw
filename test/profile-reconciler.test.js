@@ -290,6 +290,70 @@ describe('reconcile: deps.requireClear (PRR-A Round 4 on PR #2762, #2598)', () =
   });
 });
 
+describe('reconcile: deps.postControlPollAttempts / deps.postControlPollMs (PRR-A Round 5, #2598)', () => {
+  it('defaults to a single observation (no retry) — this function\'s own prior behavior, unchanged for every caller that does not opt in', async () => {
+    reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
+    reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'g1' });
+    const { tmux } = fakeTmux();
+    let observeCalls = 0;
+    // Pre-control mismatch (call 0), post-control WOULD match on a second
+    // call (call 2) — but with no retry budget opted into, only calls 0
+    // and 1 (the single post-control observation) ever happen.
+    const readTrustedActiveProfile = fakeObserved([
+      { engine: 'claude', model: 'claude-opus-4-8' },
+      { engine: 'claude', model: 'claude-opus-4-8' },
+      { engine: 'claude', model: 'claude-opus-5-5' }
+    ]);
+    const result = await reconciler.reconcile('r1', 'session-r1', {
+      tmux, currentGeneration: 'g1',
+      readTrustedActiveProfile: async (...args) => { observeCalls += 1; return readTrustedActiveProfile(...args); }
+    });
+    assert.equal(result.ok, false, 'the match that would have appeared on a third call never gets reached');
+    assert.equal(observeCalls, 2, 'pre-control + exactly one post-control observation — no retry');
+  });
+
+  it('polls the bounded retry loop and reaches verified once a LATER attempt finally observes a match, with no real wall-clock delay via a faked sleep', async () => {
+    reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
+    reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'g1' });
+    const { tmux, sent } = fakeTmux();
+    const sleepCalls = [];
+    // Simulates `tmux.sendKeys` returning before the CLI flushed its
+    // record: the FIRST post-control poll attempt still sees the old
+    // model, and only the SECOND one sees the switch actually land.
+    const result = await reconciler.reconcile('r1', 'session-r1', {
+      tmux, currentGeneration: 'g1',
+      postControlPollAttempts: 5, postControlPollMs: 50,
+      sleep: (ms) => { sleepCalls.push(ms); return Promise.resolve(); },
+      readTrustedActiveProfile: fakeObserved([
+        { engine: 'claude', model: 'claude-opus-4-8' }, // pre-control: mismatch
+        { engine: 'claude', model: 'claude-opus-4-8' }, // post-control poll attempt 0: still stale
+        { engine: 'claude', model: 'claude-opus-5-5' } // poll attempt 1: the switch has landed
+      ])
+    });
+    assert.equal(result.ok, true, result.reason);
+    assert.equal(result.state, 'verified');
+    assert.ok(sent.some((s) => s.text === '/clear'));
+    assert.ok(sent.some((s) => s.text === '/model claude-opus-5-5'));
+    assert.deepEqual(sleepCalls, [50], 'exactly one sleep between poll attempt 0 (mismatch) and attempt 1 (match) — none after the match, none before the first attempt');
+  });
+
+  it('exhausts the retry budget and refuses when every attempt still mismatches', async () => {
+    reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
+    reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'g1' });
+    const { tmux } = fakeTmux();
+    const sleepCalls = [];
+    const result = await reconciler.reconcile('r1', 'session-r1', {
+      tmux, currentGeneration: 'g1',
+      postControlPollAttempts: 3, postControlPollMs: 10,
+      sleep: (ms) => { sleepCalls.push(ms); return Promise.resolve(); },
+      readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-4-8' })
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.state, 'hold');
+    assert.deepEqual(sleepCalls, [10, 10], 'sleeps BETWEEN attempts only — 3 attempts means 2 sleeps, never a trailing one after the last attempt');
+  });
+});
+
 describe('reconcile: deps.stillValid aborts a superseded resource (PRR-A finding 4, round 2 on PR #2757)', () => {
   it('aborts before the first observation when the resource is already superseded', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
@@ -1041,6 +1105,77 @@ describe('_readClaudeActiveModel', () => {
       ]);
       const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs });
       assert.deepEqual(result, { engine: 'claude', model: 'claude-opus-4-8' });
+    });
+  });
+
+  describe('PRR-A Round 5: system/local_command records (#2598) — NO assistant turn required', () => {
+    it('reads the model from a system/local_command record with no assistant row in the file at all', () => {
+      const startedAtMs = Date.now() - 10000;
+      // The real shape Claude Code v2.1.283 writes the instant a `/model
+      // <id>` slash command is delivered — verified against this
+      // machine's own real ~/.claude/projects/**/*.jsonl files before
+      // relying on it (the general commandRun shape; see this reader's
+      // own implementation comment for what was and wasn't directly
+      // confirmed on this host).
+      writeTranscript('-project/session.jsonl', [
+        {
+          type: 'system', subtype: 'local_command', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(),
+          content: '<local-command-stdout></local-command-stdout>', commandRun: { command: 'model', args: 'claude-sonnet-5' }
+        }
+      ]);
+      const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs });
+      assert.deepEqual(result, { engine: 'claude', model: 'claude-sonnet-5' });
+    });
+
+    it('a system/local_command record for /clear (empty args) never supplies a model', () => {
+      const startedAtMs = Date.now() - 10000;
+      writeTranscript('-project/session.jsonl', [
+        {
+          type: 'system', subtype: 'local_command', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(),
+          content: '<local-command-stdout></local-command-stdout>', commandRun: { command: 'clear', args: '' }
+        }
+      ]);
+      const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs });
+      assert.equal(result, null, 'no model-bearing record exists — /clear names no model at all');
+    });
+
+    it('a LATER system/local_command record wins over an earlier assistant row, same as two assistant rows would', () => {
+      const startedAtMs = Date.now() - 10000;
+      writeTranscript('-project/session.jsonl', [
+        { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(), message: { model: 'claude-opus-4-8' } },
+        {
+          type: 'system', subtype: 'local_command', cwd: '/project', timestamp: new Date(startedAtMs + 300).toISOString(),
+          content: '<local-command-stdout></local-command-stdout>', commandRun: { command: 'model', args: 'claude-sonnet-5' }
+        }
+      ]);
+      const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs });
+      assert.deepEqual(result, { engine: 'claude', model: 'claude-sonnet-5' });
+    });
+
+    it('a system/local_command record is subject to the exact same minRecordTimestampMs recency scoping as an assistant row', () => {
+      const startedAtMs = Date.now() - 10000;
+      const cutoff = Date.now() - 3000;
+      writeTranscript('-project/session.jsonl', [
+        { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(), message: { model: 'claude-opus-4-8' } },
+        {
+          // Before the cutoff — must not count as post-clear confirmation.
+          type: 'system', subtype: 'local_command', cwd: '/project', timestamp: new Date(startedAtMs + 300).toISOString(),
+          content: '<local-command-stdout></local-command-stdout>', commandRun: { command: 'model', args: 'claude-sonnet-5' }
+        }
+      ]);
+      const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs, minRecordTimestampMs: cutoff });
+      assert.equal(result, null, 'the local_command record predates the cutoff, same as a stale assistant row would');
+    });
+
+    it('a system/local_command record with no commandRun, an unrecognized command, or a non-string/empty args is never treated as naming a model', () => {
+      const startedAtMs = Date.now() - 10000;
+      writeTranscript('-project/session.jsonl', [
+        { type: 'system', subtype: 'local_command', cwd: '/project', timestamp: new Date(startedAtMs + 100).toISOString(), content: '' },
+        { type: 'system', subtype: 'local_command', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(), content: '', commandRun: { command: 'context', args: '' } },
+        { type: 'system', subtype: 'local_command', cwd: '/project', timestamp: new Date(startedAtMs + 300).toISOString(), content: '', commandRun: { command: 'model' } }
+      ]);
+      const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs });
+      assert.equal(result, null);
     });
   });
 });
