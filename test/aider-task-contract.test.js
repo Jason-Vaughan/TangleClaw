@@ -153,6 +153,38 @@ describe('aider-task-contract', () => {
       assert.match(receipt.error, /inspection failed/);
     });
 
+    it('refuses to run (fails closed, never spawning aider) when the working tree is already dirty before invocation (#2756 PRR-A re-review)', () => {
+      const c = contract.buildTaskContract({ repoPath, editableFiles: ['a.js'], message: 'edit a.js' });
+      fs.writeFileSync(path.join(repoPath, 'a.js'), `pre-existing dirty edit ${Date.now()}-${Math.random()}\n`);
+      let spawnedAider = false;
+      const fake = (cmd, args, opts) => {
+        if (cmd === 'aider') { spawnedAider = true; return { status: 0, signal: null, stdout: 'Done.', stderr: '' }; }
+        return realSpawnSync(cmd, args, opts);
+      };
+      const receipt = contract.runTask(c, { spawnSync: fake });
+      assert.equal(receipt.outcome, 'error');
+      assert.match(receipt.error, /dirty before invocation/);
+      assert.equal(spawnedAider, false, 'a dirty baseline must be caught before aider ever runs');
+      // Stabilize the fixture repo for later tests in this suite.
+      execFileSync('git', ['add', 'a.js'], { cwd: repoPath });
+      execFileSync('git', ['commit', '-q', '-m', 'stabilize after dirty-baseline test'], { cwd: repoPath });
+    });
+
+    it('fails closed when post-run `git diff` fails even though `git status` succeeded (#2756 PRR-A re-review)', () => {
+      const c = contract.buildTaskContract({ repoPath, editableFiles: ['a.js'], message: 'edit a.js' });
+      const fake = (cmd, args, opts) => {
+        if (cmd === 'git' && args[0] === 'diff') return { status: 128, signal: null, stdout: '', stderr: 'fatal: diff boom' };
+        if (cmd !== 'aider') return realSpawnSync(cmd, args, opts);
+        fs.writeFileSync(path.join(repoPath, 'a.js'), `edited ${Date.now()}-${Math.random()}\n`);
+        execFileSync('git', ['add', 'a.js'], { cwd: repoPath });
+        execFileSync('git', ['commit', '-q', '-m', 'aider edit for diff-failure test'], { cwd: repoPath });
+        return { status: 0, signal: null, stdout: 'Done.', stderr: '' };
+      };
+      const receipt = contract.runTask(c, { spawnSync: fake });
+      assert.equal(receipt.outcome, 'error');
+      assert.match(receipt.error, /git diff.*failed/i);
+    });
+
     it('reports no-op when aider exits 0 with no new commit, and flags a disputed claim', () => {
       const c = contract.buildTaskContract({ repoPath, editableFiles: ['a.js'], message: 'edit a.js' });
       const fake = (cmd, args, opts) => cmd === 'aider'

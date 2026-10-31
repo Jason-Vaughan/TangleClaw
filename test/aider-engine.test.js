@@ -11,8 +11,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const { execFileSync, spawnSync: realSpawnSync } = require('node:child_process');
 const store = require('../lib/store');
 const engines = require('../lib/engines');
+const aiderTaskContract = require('../lib/aider-task-contract');
 
 const PROJECT_CONFIG = {
   rules: {
@@ -124,5 +126,50 @@ describe('aider engine (#2439)', () => {
     assert.equal(aiderProfile.command, 'aider');
     assert.equal(aiderProfile.configFormat.filename, '.aider.conf.yml');
     assert.equal(aiderProfile.capabilities.supportsConfigFile, true);
+  });
+
+  it('declares the task-contract integration point (#1644)', () => {
+    assert.equal(aiderProfile.capabilities.taskContract.supported, true);
+    assert.equal(aiderProfile.capabilities.taskContract.entryPoint, 'lib/engines.js#runAiderTask');
+  });
+
+  describe('runAiderTask (#1644) integration point', () => {
+    let repoPath;
+
+    before(() => {
+      repoPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-aider-task-wiring-'));
+      execFileSync('git', ['init', '-q'], { cwd: repoPath });
+      execFileSync('git', ['config', 'user.email', 'tc@test.local'], { cwd: repoPath });
+      execFileSync('git', ['config', 'user.name', 'tc-test'], { cwd: repoPath });
+      fs.writeFileSync(path.join(repoPath, 'a.js'), 'hello\n');
+      execFileSync('git', ['add', 'a.js'], { cwd: repoPath });
+      execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repoPath });
+    });
+
+    after(() => {
+      fs.rmSync(repoPath, { recursive: true, force: true });
+    });
+
+    it('exports the same module the standalone contract tests exercise', () => {
+      assert.equal(engines.aiderTaskContract, aiderTaskContract);
+    });
+
+    it('delegates to aider-task-contract with projectPath as repoPath, ignoring any repoPath in taskSpec', () => {
+      const fake = (cmd, args, opts) => {
+        if (cmd !== 'aider') return realSpawnSync(cmd, args, opts);
+        fs.writeFileSync(path.join(repoPath, 'a.js'), `edited via runAiderTask ${Date.now()}\n`);
+        execFileSync('git', ['add', 'a.js'], { cwd: repoPath });
+        execFileSync('git', ['commit', '-q', '-m', 'aider edit via runAiderTask'], { cwd: repoPath });
+        return { status: 0, signal: null, stdout: 'Done.', stderr: '' };
+      };
+      const receipt = engines.runAiderTask(
+        repoPath,
+        { repoPath: '/should/be/ignored', editableFiles: ['a.js'], message: 'edit a.js' },
+        { spawnSync: fake }
+      );
+      assert.equal(receipt.outcome, 'success');
+      assert.equal(receipt.repoPath, repoPath);
+      assert.deepEqual(receipt.filesChanged, ['a.js']);
+    });
   });
 });
