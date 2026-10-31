@@ -145,14 +145,26 @@ describe('censusFeatureIndex / formatStubClock (#1196 — the 14-day auto-stub c
     );
   });
 
-  it('a block exactly at the 14-day boundary reads as overdue (daysRemaining <= 0), never clamped to a bare 0', () => {
+  it('a block exactly at the 14-day boundary is NOT overdue — matches the real guard\'s strict ">14" failure condition', () => {
     const content = `# Feature Index\n\n${TODO}\n\n- **TBD** — \`a.js\`.\n`;
     const now = new Date('2026-07-16T00:00:00'); // exactly 14 days after 2026-07-02
     const census = censusFeatureIndex(content, now);
     assert.equal(census.daysRemaining, 0);
     assert.equal(
       formatStubClock(census),
-      '1 auto-stub block, oldest 2026-07-02 — overdue by 0 days (14-day index guard)'
+      '1 auto-stub block, oldest 2026-07-02 — 0 days before the 14-day index guard fails',
+      'test/features-index.test.js only fails a block when ageDays > 14, so exactly 14 days old must not read as overdue'
+    );
+  });
+
+  it('a block one day past the boundary (ageDays > 14) IS overdue', () => {
+    const content = `# Feature Index\n\n${TODO}\n\n- **TBD** — \`a.js\`.\n`;
+    const now = new Date('2026-07-17T00:00:00'); // 15 days after 2026-07-02
+    const census = censusFeatureIndex(content, now);
+    assert.equal(census.daysRemaining, -1);
+    assert.equal(
+      formatStubClock(census),
+      '1 auto-stub block, oldest 2026-07-02 — overdue by 1 day (14-day index guard)'
     );
   });
 

@@ -3170,12 +3170,19 @@ function sessionRuleCaller(req, res, target) {
  * they are rewritten, so every route that can change the rules in force calls
  * this once, after its store write and before it answers.
  *
- * The files are rewritten only when the change can have moved the set in
- * force: this rule entered or left it, or became or stopped being an active
- * rule (an approval may retire another rule with it). A proposal, a wrap rule
- * and a Project Master rule never do. Nor does a text edit or rollback of an active rule:
- * the store files that as a proposal and leaves the rule as it was, so new
- * text reaches the files when its proposal is approved and enters the set.
+ * The files are rewritten when the change can have moved the set in force —
+ * this rule entered or left it, or became or stopped being an active rule
+ * (an approval may retire another rule with it) — or changed an already-
+ * active rule's TEXT in place. A proposal and a wrap rule never move the set
+ * in force. A Project Master rule is never delivered this way at all. A
+ * SESSION-proposed text edit or rollback of an active rule does not move
+ * anything either: the store files that as a proposal and leaves the rule as
+ * it was, so new text reaches the files only once its proposal is approved
+ * and enters the set. A verified OPERATOR's own edit of an active,
+ * non-master rule is different (#2325): it applies immediately rather than
+ * filing a proposal, so the files are rewritten right away to carry the new
+ * text — a running session is not left reading what the operator just
+ * changed.
  *
  * It never throws and never fails the route: the rule change is already saved,
  * and the store stays the authority. What it returns is spread into the
