@@ -1075,6 +1075,129 @@ describe('an engine with no config file says what it cannot carry (#1251)', () =
   });
 });
 
+describe('a plugin-governed project on a non-claude-md carrier (#1268)', () => {
+  const ctx = loadApiHelperGlobals();
+  const logger = require('../lib/logger');
+
+  /** @returns {object} The bundled Codex profile — has a carrier, not claude-md. */
+  function codex() {
+    return bundledProfiles().find((p) => p.id === 'codex');
+  }
+
+  /** @returns {object} The bundled Claude profile — has a carrier, IS claude-md. */
+  function claude() {
+    return bundledProfiles().find((p) => p.id === 'claude');
+  }
+
+  it('does not apply when the project is governed and the carrier is not claude-md', () => {
+    assert.equal(codex().configFormat.generator, 'codex-yaml',
+      'fixture assumption: codex is a carrier this row must defer on when governed');
+    const d = engines.settingDisposition('generatedConfig', {}, codex(), { pluginGoverned: true });
+    assert.equal(d.applies, false);
+    assert.equal(d.evidence, 'pluginGoverned is true and configFormat.generator is not claude-md');
+    assert.match(d.reason, /governed by the Prawduct V2 plugin/);
+    assert.match(d.reason, /Codex/);
+    // The two applies:false reasons must stay distinguishable — a reader
+    // (or an operator) mixing them up would chase the wrong fix.
+    assert.doesNotMatch(d.reason, /has no config file/);
+  });
+
+  it('still applies on the same engine when the project is not governed', () => {
+    // No regression on #1251's behavior: an absent or false `facts` must
+    // answer exactly as it did before this row learned to read it.
+    const bare = engines.settingDisposition('generatedConfig', {}, codex());
+    assert.equal(bare.applies, true);
+    const notGoverned = engines.settingDisposition('generatedConfig', {}, codex(),
+      { pluginGoverned: false });
+    assert.equal(notGoverned.applies, true);
+  });
+
+  it('a governed project on claude-md still applies — the plugin owns governance, not the carrier', () => {
+    // writeEngineConfig's deferral is scoped to the claude-md carrier itself
+    // being co-owned with the plugin (a splice, not a skip) — this row must
+    // not flatten that into "governed means never applies".
+    const d = engines.settingDisposition('generatedConfig', {}, claude(), { pluginGoverned: true });
+    assert.equal(d.applies, true);
+    assert.equal(d.reason, null);
+  });
+
+  it('a governed project with no carrier at all still gets the missing-carrier reason, not the plugin one', () => {
+    const openclaw = bundledProfiles().find((p) => p.id === 'openclaw');
+    const d = engines.settingDisposition('generatedConfig', {}, openclaw, { pluginGoverned: true });
+    assert.equal(d.applies, false);
+    assert.match(d.reason, /has no config file/);
+    assert.equal(d.evidence, 'configFormat.filename is null');
+  });
+
+  it('the browser agrees with the server, text included', () => {
+    const projected = engines.engineClientPayload(codex(), { available: true });
+    const facts = { pluginGoverned: true };
+    const server = engines.settingDisposition('generatedConfig', {}, codex(), facts);
+    const browser = ctx.tcSettingDisposition('generatedConfig', {}, projected, facts);
+    assert.equal(browser.applies, server.applies);
+    assert.equal(browser.reason, server.reason, 'the browser must render the server\'s own words');
+    assert.equal(browser.evidence, server.evidence);
+  });
+
+  describe('writeEngineConfig reports its OTHER silent skip', () => {
+    /**
+     * Run `fn` with the logger capturing info-and-above into an array.
+     * @param {() => void} fn - Work to run while capturing.
+     * @returns {string[]} Captured lines.
+     */
+    function captureLog(fn) {
+      const lines = [];
+      const level = logger.getLevel();
+      logger.setLevel('info');
+      logger.setConsoleStream({ write: (s) => lines.push(s) });
+      try {
+        fn();
+      } finally {
+        logger.setConsoleStream(null);
+        logger.setLevel(level);
+      }
+      return lines;
+    }
+
+    it('a real writeEngineConfig on a governed, non-claude-md project emits the line', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-governed-carrier-'));
+      try {
+        fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+        fs.writeFileSync(path.join(dir, '.claude', 'settings.json'),
+          JSON.stringify({ enabledPlugins: { 'prawduct@prawduct': true } }, null, 2));
+        const lines = captureLog(() => {
+          const result = engines.writeEngineConfig('codex', dir, DEFAULT_PROJECT_CONFIG, codex());
+          assert.equal(result.skipped, true, 'the fixture must reach the governed-skip branch');
+          assert.match(result.skipReason, /governed by the Prawduct V2 plugin/);
+        });
+        assert.equal(lines.length, 1, 'the writer emits exactly one line for this skip, same as #1251\'s');
+        assert.match(lines[0], /governed by the Prawduct V2 plugin/);
+        assert.doesNotMatch(lines[0], /has no config file/,
+          'before this fix the line was simply absent; it must not misreport as a missing carrier either');
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('an ungoverned project on the same engine still gets no line at all', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ungoverned-carrier-'));
+      try {
+        const lines = captureLog(() => {
+          const result = engines.writeEngineConfig('codex', dir, DEFAULT_PROJECT_CONFIG, codex());
+          assert.equal(result.skipped, false);
+        });
+        // Mirrors the sibling #1251 test above: an unrelated incidental line
+        // (e.g. a no-git-repo carrier-classification warning) is not what this
+        // asserts — only that the governed-skip sentence was not emitted for a
+        // project that is not governed.
+        assert.deepEqual(lines.filter((l) => l.includes('governed by the Prawduct V2 plugin')), []);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+});
+
 describe('the wake nudge says where it cannot reach (#1255)', () => {
   const ctx = loadApiHelperGlobals();
   const vm = require('node:vm');
