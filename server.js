@@ -101,6 +101,7 @@ const system = require('./lib/system');
 const systemHealth = require('./lib/system-health');
 const ptyActivity = require('./lib/pty-activity');
 const engines = require('./lib/engines');
+const engineTabs = require('./lib/engine-tabs');
 const tmux = require('./lib/tmux');
 const projects = require('./lib/projects');
 const sessions = require('./lib/sessions');
@@ -3726,6 +3727,27 @@ route('GET', '/api/engines', async (req, res) => {
   // get past a step that would otherwise be a locked door.
   const certain = list.some((e) => e && e.available) || engines.detectionWasProbed();
   jsonResponse(res, 200, { engines: list, detectionCertain: certain });
+});
+
+// GET /api/engines/inventory — every engine profile's read-only capability
+// and locally-discovered installed-extension inventory (#764), covering ALL
+// profiles including `pickerHidden` ones (OpenClaw). Registered before
+// `/api/engines/:id` below: that route's `:id` segment would otherwise match
+// the literal path "inventory" first, since routes match in registration
+// order (`matchRoute` in `lib/routes/_kernel.js`).
+route('GET', '/api/engines/inventory', (_req, res) => {
+  jsonResponse(res, 200, { engines: engineTabs.inventory() });
+});
+
+// GET /api/engines/:id/inventory — one engine's row from the same inventory.
+// A distinct path segment count from `/api/engines/:id` (below), so
+// registration order relative to it does not matter.
+route('GET', '/api/engines/:id/inventory', (_req, res, params) => {
+  const row = engineTabs.inventoryFor(params.id);
+  if (!row) {
+    return errorResponse(res, 404, `Engine "${params.id}" not found`, 'NOT_FOUND');
+  }
+  jsonResponse(res, 200, row);
 });
 
 // GET /api/engines/:id
