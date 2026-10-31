@@ -17,6 +17,39 @@ const porthub = require('../lib/porthub');
 // assertions depend on how the runner was started.
 delete process.env.TANGLECLAW_PORT;
 
+/**
+ * What a sweep test means by "aider's generated config" after #2439: the
+ * content these tests check (rules, guides, bootstrap lines, Medusa, origin)
+ * no longer lives in `.aider.conf.yml` alone — it moved to the real markdown
+ * carrier `.aider.conf.yml`'s `read:` points at. Every other engine still
+ * renders everything into one file, so a sweep test that loops over all
+ * config-supporting engines checking ONE generated string needs aider's
+ * check to cover BOTH of its files, concatenated, rather than special-casing
+ * every sweep individually.
+ * @param {object} projectConfig
+ * @param {string} [projectPath]
+ * @returns {string}
+ */
+function generateAiderCombined(projectConfig, projectPath) {
+  return `${engines._generateAiderConf(projectConfig, projectPath)}\n${engines._generateAiderConventionsMd(projectConfig, projectPath)}`;
+}
+
+/**
+ * Same substitution as `generateAiderCombined`, for a sweep that loops over
+ * every `supportsConfigFile` engine profile generically via
+ * `engines.generateConfig(profile.id, ...)`. Every engine but aider is
+ * unaffected.
+ * @param {object} profile - An engine profile from `store.engines.list()`.
+ * @param {object} projectConfig
+ * @param {string} [projectPath]
+ * @returns {?string}
+ */
+function generateConfigForSweep(profile, projectConfig, projectPath) {
+  return profile.id === 'aider'
+    ? generateAiderCombined(projectConfig, projectPath)
+    : engines.generateConfig(profile.id, projectConfig, projectPath);
+}
+
 describe('engines', () => {
   let tempDir;
   let tempRulesPath;
@@ -1144,14 +1177,19 @@ describe('engines', () => {
       }
     });
 
-    it('should generate aider conf with rules as comments', () => {
+    it('should generate aider conf pointing at the real conventions carrier, not comments (#2439)', () => {
       const content = engines._generateAiderConf(
         { rules: { extensions: { loggingLevel: 'debug' } } },
         null
       );
       assert.ok(content.includes('verbose: true'));
-      assert.ok(content.includes('# Core Rules'), 'Should have core rules as comments');
-      assert.ok(content.includes('PortHub'), 'Should mention PortHub');
+      // Aider strips `#` comments before the model ever sees them, so the
+      // conventions must no longer be duplicated there.
+      assert.ok(!content.includes('# Core Rules'), 'rules must not be rendered as comments any more');
+      assert.ok(!content.includes('#   - '), 'no comment-rendered rule bullets');
+      assert.ok(content.includes('read:'), 'must reference the conventions carrier via `read:`');
+      assert.ok(content.includes('.tangleclaw/aider-conventions.md'), 'must name the real markdown carrier');
+      assert.ok(content.includes('gitignore: false'), 'must suppress the interactive gitignore prompt (#193)');
     });
 
     it('should generate aider config via public API (regression: generator name mismatch)', () => {
@@ -1161,6 +1199,45 @@ describe('engines', () => {
       assert.ok(content !== null, 'generateConfig("aider") must not return null — check profile generator matches switch case');
       assert.ok(typeof content === 'string');
       assert.ok(content.length > 0);
+    });
+
+    it('should emit local-model ergonomics flags from a nested extensions.aider object (#2439)', () => {
+      const content = engines._generateAiderConf({
+        rules: { extensions: { aider: { model: 'ollama_chat/llama3', weakModel: 'ollama_chat/phi3', editFormat: 'whole', apiBase: 'http://localhost:11434' } } }
+      }, null);
+      assert.ok(content.includes('model: "ollama_chat/llama3"'));
+      assert.ok(content.includes('weak-model: "ollama_chat/phi3"'));
+      assert.ok(content.includes('edit-format: "whole"'));
+      assert.ok(content.includes('openai-api-base: "http://localhost:11434"'));
+    });
+
+    it('should omit local-model flags entirely when no extensions are set', () => {
+      const content = engines._generateAiderConf({ rules: { extensions: {} } }, null);
+      assert.ok(!content.includes('model:'));
+      assert.ok(!content.includes('weak-model:'));
+      assert.ok(!content.includes('edit-format:'));
+      assert.ok(!content.includes('openai-api-base:'));
+    });
+
+    it('a nested extensions.aider object must never leak into "Extension Rules" prose on any carrier (#2439)', () => {
+      const projectConfig = { rules: { extensions: { aider: { model: 'ollama_chat/llama3' } } } };
+      const claudeMd = engines._generateClaudeMd(projectConfig, null);
+      assert.ok(!claudeMd.includes('ollama_chat/llama3'), 'a nested extensions.aider value must not render as a rule bullet');
+      const rules = engines._getRulesContent(projectConfig);
+      assert.equal(rules.extensionRulesLines.length, 0, '_rendersAsRule must reject an object value');
+    });
+
+    it('_generateAiderConventionsMd renders the same rules/guides _generateClaudeMd does, as plain markdown', () => {
+      const projectConfig = {
+        rules: {
+          core: { changelogPerChange: true, jsdocAllFunctions: true, unitTestRequirements: true, sessionWrapProtocol: true, porthubRegistration: true },
+          extensions: {}
+        }
+      };
+      const content = engines._generateAiderConventionsMd(projectConfig, null);
+      assert.ok(content.includes('## Core Rules (Enforced)'));
+      assert.ok(content.includes('PortHub'), 'Should mention PortHub');
+      assert.ok(!content.startsWith('#!'), 'sanity: real markdown, not a shebang/comment carrier');
     });
   });
 
@@ -1257,7 +1334,7 @@ describe('engines', () => {
         claude: engines._generateClaudeMd(on, projPath),
         gemini: engines._generateGeminiMd(on, undefined, projPath),
         codex: engines._generateCodexYaml(on, projPath),
-        aider: engines._generateAiderConf(on, projPath)
+        aider: generateAiderCombined(on, projPath)
       };
       for (const [name, content] of Object.entries(generated)) {
         assert.ok(/medusa/i.test(content), `${name} config must mention the switchboard`);
@@ -1277,7 +1354,7 @@ describe('engines', () => {
         block: engines._generateOperationalBlock(on, projPath, 'CLAUDE.md'),
         gemini: engines._generateGeminiMd(on, undefined, projPath),
         codex: engines._generateCodexYaml(on, projPath),
-        aider: engines._generateAiderConf(on, projPath)
+        aider: generateAiderCombined(on, projPath)
       });
       const off = all();
       try {
@@ -1298,7 +1375,7 @@ describe('engines', () => {
       // #1619 moved this property. A tracked carrier may not state this
       // machine's origin, so the "reachable, not a pointer to a guide"
       // guarantee now lives where the file is engine-private and gitignored.
-      for (const content of [engines._generateCodexYaml(on, projPath), engines._generateAiderConf(on, projPath)]) {
+      for (const content of [engines._generateCodexYaml(on, projPath), generateAiderCombined(on, projPath)]) {
         assert.match(content, /https?:\/\/localhost:\d+\/api\/sessions\//);
       }
     });
@@ -1329,7 +1406,7 @@ describe('engines', () => {
       // Still the rule wherever the name is written at all: a folder-derived
       // guess hands the session a 404. After #1619 that is the engine-private
       // carriers only; the tracked ones resolve the name at run time instead.
-      for (const content of [engines._generateCodexYaml(on, projPath), engines._generateAiderConf(on, projPath)]) {
+      for (const content of [engines._generateCodexYaml(on, projPath), generateAiderCombined(on, projPath)]) {
         assert.ok(content.includes(encodeURIComponent(projName)) || content.includes(projName),
           'the routes are name-scoped; a folder-derived guess would hand the session a 404');
         assert.ok(!content.includes(`/api/sessions/${path.basename(projPath)}/medusa`),
@@ -1344,7 +1421,7 @@ describe('engines', () => {
         claude: engines._generateClaudeMd(off, projPath),
         gemini: engines._generateGeminiMd(off, undefined, projPath),
         codex: engines._generateCodexYaml(off, projPath),
-        aider: engines._generateAiderConf(off, projPath)
+        aider: generateAiderCombined(off, projPath)
       })) {
         assert.ok(!/medusa/i.test(content), `${name} config must stay silent when the flag is off`);
       }
@@ -1471,7 +1548,7 @@ describe('engines', () => {
       // takes the same fetch pointer as AGENTS.md; see the two tests below.
       const generated = {
         codex: engines._generateCodexYaml(proj),
-        aider: engines._generateAiderConf(proj)
+        aider: generateAiderCombined(proj)
       };
       for (const [name, content] of Object.entries(generated)) {
         assert.ok(content.includes(`Authorization: Bearer ${TOKEN}`), `${name} config must carry the bearer header`);
@@ -1684,7 +1761,7 @@ describe('engines', () => {
       const profiles = store.engines.list().filter(p => p.capabilities && p.capabilities.supportsConfigFile);
       assert.ok(profiles.length >= 4, `Expected at least 4 config-supporting engines, got ${profiles.length}`);
       for (const profile of profiles) {
-        const content = engines.generateConfig(profile.id, { rules: { core: { porthubRegistration: true } } });
+        const content = generateConfigForSweep(profile, { rules: { core: { porthubRegistration: true } } });
         assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
         const unwrapped = content.replace(/\n#\s*/g, ' ').replace(/\s+/g, ' ');
         assert.match(unwrapped, /cleared or compacted mid-session, run `tc start review`/,
@@ -1716,7 +1793,7 @@ describe('engines', () => {
       assert.ok(profiles.length >= 4, `Expected at least 4 config-supporting engines, got ${profiles.length}`);
 
       for (const profile of profiles) {
-        const content = engines.generateConfig(profile.id, projectConfig);
+        const content = generateConfigForSweep(profile, projectConfig);
         assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
         assert.match(content, /tc capabilities/,
           `${profile.id}: carrier is missing the tc bootstrap line`);
@@ -1761,7 +1838,7 @@ describe('engines', () => {
         p.capabilities && p.capabilities.supportsConfigFile
       );
       for (const profile of profiles) {
-        const content = engines.generateConfig(profile.id, bare);
+        const content = generateConfigForSweep(profile, bare);
         assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
         assert.match(content, /tc capabilities/,
           `${profile.id}: the bootstrap line must not hide behind an optional section's gate`);
@@ -1787,7 +1864,7 @@ describe('engines', () => {
       assert.ok(profiles.length >= 4);
       for (const profile of profiles) {
         for (const cfg of [projectConfig, bare]) {
-          const content = engines.generateConfig(profile.id, cfg);
+          const content = generateConfigForSweep(profile, cfg);
           // Wrap-tolerant: the comment form may break the phrase across
           // #-prefixed lines.
           assert.match(content, /GET\s+(# )?\/api\/projects\/<projectId>\/plans/,
@@ -1860,7 +1937,7 @@ describe('engines', () => {
       assert.ok(profiles.length >= 4, `Expected at least 4 config-supporting engines, got ${profiles.length}`);
 
       for (const profile of profiles) {
-        const content = engines.generateConfig(profile.id, fullProjectConfig);
+        const content = generateConfigForSweep(profile, fullProjectConfig);
         assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
         assert.ok(content.includes('CHANGELOG') || content.includes('changelog'),
           `${profile.id}: missing CHANGELOG rule`);
@@ -1877,7 +1954,7 @@ describe('engines', () => {
       );
 
       for (const profile of profiles) {
-        const content = engines.generateConfig(profile.id, fullProjectConfig);
+        const content = generateConfigForSweep(profile, fullProjectConfig);
         assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
         // Claude gets full guide, Codex gets it in instructions, Aider gets comment reference
         assert.ok(
@@ -1893,7 +1970,7 @@ describe('engines', () => {
       );
 
       for (const profile of profiles) {
-        const content = engines.generateConfig(profile.id, fullProjectConfig);
+        const content = generateConfigForSweep(profile, fullProjectConfig);
         assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
         assert.ok(
           content.includes('Global Rules') || content.includes('global') || content.includes('Global'),
@@ -1910,7 +1987,7 @@ describe('engines', () => {
       );
 
       for (const profile of profiles) {
-        const content = engines.generateConfig(profile.id, fullProjectConfig);
+        const content = generateConfigForSweep(profile, fullProjectConfig);
         assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
         assert.ok(
           content.includes('Shared Documents') || content.includes('Shared Docs Guide'),
@@ -1925,7 +2002,7 @@ describe('engines', () => {
       );
 
       for (const profile of profiles) {
-        const content = engines.generateConfig(profile.id, fullProjectConfig);
+        const content = generateConfigForSweep(profile, fullProjectConfig);
         assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
         assert.ok(
           content.includes('Session Memory') || content.includes('session memory'),
@@ -2854,7 +2931,7 @@ describe('engines', () => {
 
       const configs = {};
       for (const profile of profiles) {
-        configs[profile.id] = engines.generateConfig(profile.id, projectConfig);
+        configs[profile.id] = generateConfigForSweep(profile, projectConfig);
         assert.ok(configs[profile.id] !== null, `${profile.id} returned null`);
       }
 
@@ -3066,7 +3143,7 @@ describe('engines', () => {
       const codex = engines._generateCodexYaml(projectConfig);
       assert.ok(codex.includes('Parity Doc'), 'Codex should include shared doc');
 
-      const aider = engines._generateAiderConf(projectConfig);
+      const aider = generateAiderCombined(projectConfig);
       assert.ok(aider.includes('Parity Doc'), 'Aider should include shared doc');
 
       store.sharedDocs.delete(doc.id);
