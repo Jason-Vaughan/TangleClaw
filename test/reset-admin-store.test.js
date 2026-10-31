@@ -53,8 +53,17 @@ describe('reset-admin --store (#1418)', () => {
     setOptOut(null);
     out = '';
     err = '';
-    process.stdout.write = (s) => { out += s; return true; };
-    process.stderr.write = (s) => { err += s; return true; };
+    // Non-string chunks pass straight through to the real writer rather than
+    // being coerced into `out`/`err` (#2742): Node's own test-runner output
+    // capture relies on calling through the previous process.stdout/stderr
+    // writer for anything that isn't the test file's own string output, and
+    // swallowing those chunks here is what corrupted the parent junit
+    // reporter's event stream into `<undefined name="root">` -- verified by
+    // tracing the raw node:test reporter event stream (test:start for the
+    // earliest tests never arrived) and confirming 0 occurrences of
+    // `<undefined` after this fix, both locally and on the Testament pool.
+    process.stdout.write = (s, ...rest) => (typeof s === 'string' ? (out += s, true) : writeOut(s, ...rest));
+    process.stderr.write = (s, ...rest) => (typeof s === 'string' ? (err += s, true) : writeErr(s, ...rest));
   });
 
   /**
@@ -497,8 +506,17 @@ describe('reset-admin --disable (#1458)', () => {
     store.config.save(cfg);
     out = '';
     err = '';
-    process.stdout.write = (s) => { out += s; return true; };
-    process.stderr.write = (s) => { err += s; return true; };
+    // Non-string chunks pass straight through to the real writer rather than
+    // being coerced into `out`/`err` (#2742): Node's own test-runner output
+    // capture relies on calling through the previous process.stdout/stderr
+    // writer for anything that isn't the test file's own string output, and
+    // swallowing those chunks here is what corrupted the parent junit
+    // reporter's event stream into `<undefined name="root">` -- verified by
+    // tracing the raw node:test reporter event stream (test:start for the
+    // earliest tests never arrived) and confirming 0 occurrences of
+    // `<undefined` after this fix, both locally and on the Testament pool.
+    process.stdout.write = (s, ...rest) => (typeof s === 'string' ? (out += s, true) : writeOut(s, ...rest));
+    process.stderr.write = (s, ...rest) => (typeof s === 'string' ? (err += s, true) : writeErr(s, ...rest));
   });
 
   const run = (opts) => runDisableMode({ store, dryRun: false, force: false, ...opts });
