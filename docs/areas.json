@@ -207,6 +207,7 @@
       "paths": [
         "lib/engines.js",
         "lib/engine-*.js",
+        "lib/engines/*.js",
         "lib/model-status.js"
       ]
     },

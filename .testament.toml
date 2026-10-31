@@ -312,6 +312,7 @@ files = [
   "test/chime-status-payload.test.js",
   "test/claude-launch-env.test.js",
   "test/clawbridge.test.js",
+  "test/codex-preflight.test.js",
   "test/codex-readiness-timeout-paste.test.js",
   "test/control-state.test.js",
   "test/coordinator-rotation.test.js",

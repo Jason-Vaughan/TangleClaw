@@ -25,6 +25,7 @@ setLevel('error');
 delete process.env.TANGLECLAW_PORT;
 
 const store = require('../lib/store');
+const engines = require('../lib/engines');
 
 /**
  * A no-op fleet refresher for `ensureMasterSession`.
@@ -859,6 +860,101 @@ describe('killMasterSession — the remedy #968 makes load-bearing', () => {
       'named in the same vocabulary ensure uses, so one client branch covers both');
     assert.equal(r.killed, false);
     assert.deepEqual(calls, [], 'and nothing was killed');
+  });
+});
+
+describe('masterIdentityPath — resolves the engine\'s actual config filename (#1085)', () => {
+  const homes = [];
+  afterEach(() => { for (const h of homes.splice(0)) fs.rmSync(h, { recursive: true, force: true }); });
+  const mk = () => { const h = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-identity-path-')); homes.push(h); return h; };
+
+  it('defaults to CLAUDE.md, unchanged, when no engineId is given', () => {
+    const home = mk();
+    assert.equal(master.masterIdentityPath(home), path.join(home, 'CLAUDE.md'));
+  });
+
+  it('resolves a non-claude engine to ITS configured filename, not CLAUDE.md', () => {
+    const home = mk();
+    const expected = engines.configFilenameOf(engines.resolveProfile('codex'));
+    assert.ok(expected, 'precondition: the codex profile must declare a config filename for this test to mean anything');
+    assert.notEqual(expected, 'CLAUDE.md');
+    assert.equal(master.masterIdentityPath(home, 'codex'), path.join(home, expected));
+  });
+
+  it('falls back to CLAUDE.md for an unrecognized engine id, rather than throwing or guessing a path', () => {
+    const home = mk();
+    assert.equal(master.masterIdentityPath(home, 'not-a-real-engine'), path.join(home, 'CLAUDE.md'));
+  });
+
+  it('refreshMasterIdentity writes a non-claude engine\'s identity to ITS resolved path, serialized for that engine\'s ACTUAL carrier format, not raw Markdown', () => {
+    // Architect Ruling A487-W1D-R2 (#1085 PRR-B REVISE): resolving the right
+    // FILENAME is not the same as resolving the right FORMAT. codex's
+    // configFormat.syntax is 'yaml' — this must parse as the YAML block
+    // literal `_generateCodexYaml` already uses, not raw Markdown bytes.
+    const home = mk();
+    master.refreshMasterIdentity({
+      home,
+      enginesLib: { resolveDefaultEngine: () => 'codex', reconcileLaunchMode: () => 'default' }
+    });
+    const expectedFilename = engines.configFilenameOf(engines.resolveProfile('codex'));
+    const expectedPath = path.join(home, expectedFilename);
+    assert.ok(fs.existsSync(expectedPath), 'the identity must land at the resolved path');
+    assert.ok(!fs.existsSync(path.join(home, 'CLAUDE.md')), 'and NOT at the hardcoded CLAUDE.md');
+    const content = fs.readFileSync(expectedPath, 'utf8');
+    const lines = content.split('\n');
+    assert.equal(lines[0], 'instructions: |', 'must be the same YAML block-literal shape _generateCodexYaml uses');
+    // Every body line is indented exactly 2 spaces (or blank) — de-indenting
+    // recovers the real Markdown `buildMasterClaudeMd` rendered, proving the
+    // wrap is a lossless round trip, not just a header string appearing
+    // somewhere in the bytes.
+    const body = lines.slice(1, -1); // drop the key line and the trailing ''
+    for (const line of body) assert.ok(line === '' || line.startsWith('  '), `not 2-space indented: ${JSON.stringify(line)}`);
+    const recovered = body.map((l) => (l ? l.slice(2) : l)).join('\n');
+    assert.match(recovered, new RegExp(`# ${expectedFilename.replace('.', '\\.')} — TangleClaw Project Master`));
+  });
+
+  it('refreshMasterIdentity for Aider comments every line — Aider\'s config has no instructions field', () => {
+    const home = mk();
+    master.refreshMasterIdentity({
+      home,
+      enginesLib: { resolveDefaultEngine: () => 'aider', reconcileLaunchMode: () => 'default' }
+    });
+    const expectedFilename = engines.configFilenameOf(engines.resolveProfile('aider'));
+    const content = fs.readFileSync(path.join(home, expectedFilename), 'utf8');
+    const lines = content.split('\n');
+    for (const line of lines) assert.ok(line === '#' || line.startsWith('# '), `not commented: ${JSON.stringify(line)}`);
+    const recovered = lines.map((l) => (l === '#' ? '' : l.slice(2))).join('\n');
+    assert.match(recovered, new RegExp(`# ${expectedFilename.replace('.', '\\.')} — TangleClaw Project Master`));
+  });
+});
+
+describe('serializeMasterIdentity — the Master\'s Markdown identity, in the writing engine\'s real carrier format (#1085, Ruling A487-W1D-R2)', () => {
+  const MD = '# CLAUDE.md — TangleClaw Project Master\n\nYou are the Master.\n\n- a rule';
+
+  it('codex-yaml: wraps under a 2-space-indented YAML block literal', () => {
+    const out = master.serializeMasterIdentity(MD, 'codex-yaml');
+    const lines = out.split('\n');
+    assert.equal(lines[0], 'instructions: |');
+    const body = lines.slice(1, -1);
+    for (const line of body) assert.ok(line === '' || line.startsWith('  '));
+    assert.equal(body.map((l) => (l ? l.slice(2) : l)).join('\n'), MD, 'must round-trip losslessly');
+  });
+
+  it('aider-conf: comments every line, blank lines become a bare #', () => {
+    const out = master.serializeMasterIdentity(MD, 'aider-conf');
+    const lines = out.split('\n');
+    for (const line of lines) assert.ok(line === '#' || line.startsWith('# '));
+    assert.equal(lines.map((l) => (l === '#' ? '' : l.slice(2))).join('\n'), MD, 'must round-trip losslessly');
+  });
+
+  it('claude-md: passed through byte-identical', () => {
+    assert.equal(master.serializeMasterIdentity(MD, 'claude-md'), MD);
+  });
+
+  it('an unrecognized or missing generator falls back to raw Markdown, not a guessed transform', () => {
+    assert.equal(master.serializeMasterIdentity(MD, 'not-a-real-generator'), MD);
+    assert.equal(master.serializeMasterIdentity(MD, null), MD);
+    assert.equal(master.serializeMasterIdentity(MD, undefined), MD);
   });
 });
 
@@ -3265,6 +3361,18 @@ describe('getMasterAwareness (#1141) — the Master joins the awareness system',
     const aw = master.getMasterAwareness({ home, tmuxLib: fakeTmux({ alive: true }) });
     assert.equal(aw.state, 'unaware');
     assert.match(aw.basis, /no evidence awareness ever arrived/);
+  });
+
+  it('#1085: for a non-claude Master, checks the RESOLVED identity file, not the hardcoded CLAUDE.md', () => {
+    const codexEnginesLib = { resolveDefaultEngine: () => 'codex', reconcileLaunchMode: () => 'default' };
+    const expectedFilename = engines.configFilenameOf(engines.resolveProfile('codex'));
+    // Identity written at the path a codex Master's identity actually lands
+    // at, NOT at CLAUDE.md — before the fix, this read CLAUDE.md regardless
+    // of engine and would have reported `unaware` despite the file being
+    // right there on disk.
+    fs.writeFileSync(path.join(home, expectedFilename), 'identity');
+    const aw = master.getMasterAwareness({ home, tmuxLib: fakeTmux({ alive: true }), enginesLib: codexEnginesLib });
+    assert.equal(aw.state, 'sent');
   });
 
   it('a role=master receipt since the pane started confirms; an older receipt from a previous run does NOT', () => {

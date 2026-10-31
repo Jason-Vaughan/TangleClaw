@@ -378,6 +378,76 @@ function renderStartupReadinessBanner(readiness) {
 }
 
 /**
+ * The Codex model-vs-auth-mode warning banner's element (#260), minted on
+ * first use for the same reason `ensureStartupReadinessBannerEl` is: this
+ * chunk's allowed scope does not include `session.html` either.
+ * @returns {HTMLElement}
+ */
+function ensureCodexModelWarningBannerEl() {
+  let el = document.getElementById('codexModelWarningBanner');
+  if (el) return el;
+  el = document.createElement('div');
+  el.id = 'codexModelWarningBanner';
+  el.className = 'engine-error-banner hidden';
+  el.setAttribute('role', 'status');
+  el.setAttribute('aria-live', 'polite');
+  const anchor = document.getElementById('startupReadinessBanner')
+    || document.getElementById('launchBlockerBanner')
+    || document.getElementById('engineErrorBanner');
+  if (anchor && anchor.parentNode) {
+    anchor.parentNode.insertBefore(el, anchor.nextSibling);
+  } else {
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+// Per-page-load dismissal: `${model}|${authMode}` of the condition the
+// operator last closed, or null. A changed condition carries a different
+// signature and reshows regardless of this value — dismissal is scoped to
+// the exact pairing dismissed, not to the banner element itself.
+let _dismissedCodexWarningSignature = null;
+
+/**
+ * Show or clear the Codex model/auth-mode warning banner (#260) from the
+ * status poll's `codexModelWarning`. Unlike its siblings in this banner
+ * family, this one carries a real close control rather than auto-clear
+ * only (build-review requirement): the underlying condition can persist
+ * for the rest of the session — the operator may not switch models
+ * immediately — and an alarm the operator cannot silence is worse than one
+ * they have to re-acknowledge if the condition changes.
+ *
+ * @param {{model: string, authMode: string|null, reason: string}|null|undefined} warning
+ *   The status payload's `codexModelWarning`, or nothing.
+ * @returns {void}
+ */
+function renderCodexModelWarningBanner(warning) {
+  const el = ensureCodexModelWarningBannerEl();
+  if (!warning) {
+    el.classList.add('hidden');
+    el.innerHTML = '';
+    return;
+  }
+  const signature = `${warning.model}|${warning.authMode}`;
+  if (signature === _dismissedCodexWarningSignature) {
+    el.classList.add('hidden');
+    return;
+  }
+  el.innerHTML = `<strong>Codex model <code>${esc(warning.model)}</code> may not be supported with your current auth mode</strong>`
+    + `<span class="engine-error-note"> Run <code>codex /model</code> to switch.</span>`;
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'banner-btn';
+  closeBtn.setAttribute('aria-label', 'Dismiss Codex model warning');
+  closeBtn.textContent = '×';
+  closeBtn.onclick = () => {
+    _dismissedCodexWarningSignature = signature;
+    el.classList.add('hidden');
+  };
+  el.appendChild(closeBtn);
+  el.classList.remove('hidden');
+}
+
+/**
  * The explicit retry the banner offers. The background loop keeps running
  * regardless; this exists so the operator has an action that answers NOW
  * rather than at the end of the current interval.
@@ -2401,6 +2471,11 @@ async function pollStatus() {
   // The startup admission gate's own state (#1633) — the same read that
   // gates ordinary commands and the Medusa wake server-side.
   renderStartupReadinessBanner(data.startupReadiness);
+
+  // A Codex model known to be unsupported under the detected auth mode
+  // (#260) — null for every non-Codex engine and every pairing the server
+  // is not confident about, which is what hides the banner again.
+  renderCodexModelWarningBanner(data.codexModelWarning);
 
   // Handle wrapping state
   if (data.wrapping && !sessionState.wrapping) {
