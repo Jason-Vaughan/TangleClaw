@@ -394,6 +394,45 @@ describe('writeRotation — compare-and-set against concurrent/stale writers (R1
     assert.equal(admission.readRotation(file).record.stage, admission.STAGES.PREPARED);
   });
 
+  it('refuses to steal a lock whose recorded pid is still alive, even once it is well past LOCK_STALE_MS (R3 Finding)', () => {
+    const file = admission.rotationPath(dir, 'cas-8');
+    const r = admission.prepareRotation({ rotationId: 'cas-8', resourceId: 't', oldAttemptId: 'old', oldEpoch: 0, checkpoint: checkpoint() });
+    const lockPath = admission._lockPath(file);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    // This test process's own pid is unambiguously alive.
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, token: 'someone-elses-token' }));
+    const old = new Date(Date.now() - 31_000);
+    fs.utimesSync(lockPath, old, old);
+
+    try {
+      assert.throws(
+        () => admission.writeRotation(file, r, { lockTimeoutMs: 100 }),
+        (err) => err instanceof admission.AdmissionError && /could not acquire the rotation lock/.test(err.message)
+      );
+      assert.equal(fs.existsSync(file), false, 'a live holder\'s lock, even stale by age, is never stolen');
+      assert.deepEqual(JSON.parse(fs.readFileSync(lockPath, 'utf8')), { pid: process.pid, token: 'someone-elses-token' }, 'the live holder\'s lock file is untouched');
+    } finally {
+      fs.unlinkSync(lockPath);
+    }
+  });
+
+  it('_releaseLock does not unlink a lock recorded under a different token (R3 Finding)', () => {
+    const file = admission.rotationPath(dir, 'cas-9');
+    const lockPath = admission._lockPath(file);
+    const token = admission._acquireLock(file);
+    // Simulate another writer having reclaimed and re-locked this exact path
+    // while we were (hypothetically) still inside our critical section.
+    const otherToken = 'a-different-writers-token';
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, token: otherToken }));
+
+    admission._releaseLock(file, token); // our (now stale) token must not match
+    assert.equal(fs.existsSync(lockPath), true, 'the other writer\'s lock must still be there');
+    assert.deepEqual(JSON.parse(fs.readFileSync(lockPath, 'utf8')), { pid: process.pid, token: otherToken });
+
+    admission._releaseLock(file, otherToken); // releasing with the CURRENT token does remove it
+    assert.equal(fs.existsSync(lockPath), false);
+  });
+
   it('refuses to write a record for one rotationId over a file already holding a different one', () => {
     const file = admission.rotationPath(dir, 'cas-5-slot');
     const first = admission.prepareRotation({ rotationId: 'cas-5-a', resourceId: 't', oldAttemptId: 'old', oldEpoch: 0, checkpoint: checkpoint() });
