@@ -24,6 +24,7 @@ setLevel('error');
 const store = require('../lib/store');
 const modelSwitch = require('../lib/model-switch');
 const profileReconciler = require('../lib/profile-reconciler');
+const continuity = require('../lib/continuity');
 
 describe('lib/model-switch — validateSwitchTarget', () => {
   it('refuses a malformed engine id', () => {
@@ -161,7 +162,7 @@ describe('lib/model-switch — switchSessionModel', () => {
   it('switches (cross-provider relaunch), refreshes the session, and persists engine/model when at boundary', async () => {
     store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
     let refreshArgs = null;
-    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5', effort: 'high' }, {
+    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
       ...target(),
       checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
       refreshSession: (p, s) => { refreshArgs = { projectName: p.name }; }
@@ -241,6 +242,39 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.equal(handoff.planPath, newestPlan);
     assert.equal(handoff.appliedModel, 'claude-sonnet-5');
     assert.ok(handoff.writtenAt);
+    // The REAL mechanism lib/sessions.js#_resumeSource reads back at the
+    // next launch (continuity.readIndex) — confirmed by reading that
+    // function directly, not assumed.
+    const index = continuity.readIndex(projectPath);
+    assert.ok(index, 'a continuity index must exist after a cross-provider switch');
+    assert.match(index.currentState, /ship chunk 2|session/i);
+    assert.match(index.nextAction, new RegExp(newestPlan.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  });
+
+  it('cross-provider: refuses (EFFORT_UNSUPPORTED_ON_RELAUNCH) before touching anything', async () => {
+    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5', effort: 'high' }, {
+      ...target(),
+      checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} })
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'EFFORT_UNSUPPORTED_ON_RELAUNCH');
+    assert.equal(store.projects.get(project.id).engineId, 'claude', 'nothing touched — refused before _applyToProjectConfig');
+  });
+
+  it('cross-provider: fails closed (HANDOFF_WRITE_FAILED) before killing, when the continuity index cannot be written', async () => {
+    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    let killed = false;
+    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
+      ...target(),
+      checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      killSession: () => { killed = true; return { error: null }; },
+      writeContinuityIndex: () => { throw new Error('disk full'); }
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'HANDOFF_WRITE_FAILED');
+    assert.match(result.error, /disk full/);
+    assert.equal(killed, false, 'must not kill the session once the handoff cannot be recorded');
   });
 
   it('same-provider: reconciles the live session through lib/profile-reconciler instead of relaunching', async () => {
@@ -333,6 +367,40 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.equal(result.code, 'NO_ACTIVE_SESSION');
   });
 
+  it('outage-takeover: refuses (EFFORT_UNSUPPORTED_ON_RELAUNCH) before touching anything', async () => {
+    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const result = await modelSwitch.switchSessionModel(project.name, {
+      engine: 'fake', model: 'claude-sonnet-5', mode: 'outage-takeover', effort: 'high'
+    }, target());
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'EFFORT_UNSUPPORTED_ON_RELAUNCH');
+    assert.equal(store.projects.get(project.id).engineId, 'claude');
+  });
+
+  it('outage-takeover: fails closed (HANDOFF_WRITE_FAILED) before killing, when the continuity index cannot be written', async () => {
+    initRepo(projectPath, ['-q']);
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: projectPath });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: projectPath });
+    fs.writeFileSync(path.join(projectPath, 'committed.txt'), 'a\n');
+    execFileSync('git', ['add', '-A'], { cwd: projectPath });
+    execFileSync('git', ['commit', '-q', '-m', 'initial'], { cwd: projectPath });
+
+    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    let killed = false;
+    const result = await modelSwitch.switchSessionModel(project.name, {
+      engine: 'fake', model: 'claude-sonnet-5', mode: 'outage-takeover'
+    }, {
+      ...target(),
+      killSession: () => { killed = true; return { error: null }; },
+      writeContinuityIndex: () => { throw new Error('disk full'); }
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'HANDOFF_WRITE_FAILED');
+    assert.match(result.error, /disk full/);
+    assert.equal(killed, false, 'must not kill the wedged session once the handoff cannot be recorded');
+    assert.equal(store.projects.get(project.id).engineId, 'claude', 'nothing touched — refused before _applyToProjectConfig');
+  });
+
   it('outage-takeover: snapshots a dirty worktree onto a wip branch, terminates the session, launches a successor, and applies the switch', async () => {
     initRepo(projectPath, ['-q']);
     execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: projectPath });
@@ -380,6 +448,14 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.equal(handoff.mode, 'outage-takeover');
     assert.equal(handoff.sessionId, session.id);
     assert.equal(handoff.planPath, planPath);
+
+    // The REAL mechanism the successor's own launch reads back
+    // (lib/sessions.js#_resumeSource -> continuity.readIndex).
+    const index = continuity.readIndex(projectPath);
+    assert.ok(index);
+    assert.match(index.currentState, new RegExp(result.wipBranch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.match(index.nextAction, new RegExp(planPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.equal(index.freshness.branch, result.wipBranch);
 
     const branches = execFileSync('git', ['branch', '--list', result.wipBranch], { cwd: projectPath, encoding: 'utf8' });
     assert.match(branches, /wip\//);

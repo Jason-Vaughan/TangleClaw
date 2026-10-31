@@ -443,10 +443,10 @@ describe('lib/usage-windows — getUsageWindows composition', () => {
       // one fresh per test) — no injected aggregatesStore here on purpose,
       // proving the default path actually persists.
       const stored = uw.getStoredAggregates();
-      assert.equal(stored.claude['claude-sonnet-5'].fiveHour.inputTokens, 11);
-      assert.equal(stored.claude['claude-sonnet-5'].fiveHour.outputTokens, 22);
-      assert.equal(stored.claude['claude-sonnet-5'].weekly.inputTokens, 11);
-      assert.equal(stored.claude['claude-sonnet-5'].sprint, undefined, 'opted out of the sprint window, so no sprint row to store');
+      assert.equal(stored.byModel.claude['claude-sonnet-5'].fiveHour.inputTokens, 11);
+      assert.equal(stored.byModel.claude['claude-sonnet-5'].fiveHour.outputTokens, 22);
+      assert.equal(stored.byModel.claude['claude-sonnet-5'].weekly.inputTokens, 11);
+      assert.equal(stored.byModel.claude['claude-sonnet-5'].sprint, undefined, 'opted out of the sprint window, so no sprint row to store');
     });
   });
 
@@ -464,7 +464,46 @@ describe('lib/usage-windows — getUsageWindows composition', () => {
       uw.getUsageWindows(opts);
       write(9);
       uw.getUsageWindows(opts);
-      assert.equal(uw.getStoredAggregates().claude['claude-sonnet-5'].fiveHour.inputTokens, 9);
+      assert.equal(uw.getStoredAggregates().byModel.claude['claude-sonnet-5'].fiveHour.inputTokens, 9);
+    });
+  });
+
+  it('upserts distinct per-session aggregates alongside combined per-model aggregates for two sessions on the same model', () => {
+    withTmpDir((dir) => {
+      const projectDir = path.join(dir, 'claude', 'p');
+      fs.mkdirSync(projectDir, { recursive: true });
+      const nowMs = uw.pacificWallClockToUtcMs(2026, 10, 28, 12, 0);
+      fs.writeFileSync(path.join(projectDir, 'session-a.jsonl'), JSON.stringify({
+        type: 'assistant', timestamp: new Date(nowMs - 60000).toISOString(),
+        message: { model: 'claude-sonnet-5', usage: { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } }
+      }) + '\n');
+      fs.writeFileSync(path.join(projectDir, 'session-b.jsonl'), JSON.stringify({
+        type: 'assistant', timestamp: new Date(nowMs - 60000).toISOString(),
+        message: { model: 'claude-sonnet-5', usage: { input_tokens: 3, output_tokens: 7, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } }
+      }) + '\n');
+      const result = uw.getUsageWindows({
+        claudeProjectsDir: projectDir, codexSessionsDir: path.join(dir, 'no-codex'), antigravityBrainDir: path.join(dir, 'no-antigravity'),
+        nowMs, sprintStartMs: null
+      });
+      assert.equal(result.bySession['session-a'].windows.fiveHour.inputTokens, 10);
+      assert.equal(result.bySession['session-b'].windows.fiveHour.inputTokens, 3);
+      assert.equal(result.byProviderModel.claude['claude-sonnet-5'].fiveHour.inputTokens, 13, 'per-model window combines both sessions');
+
+      const storedSessionA = uw.getStoredAggregates({ sessionId: 'session-a' });
+      assert.equal(storedSessionA.provider, 'claude');
+      assert.equal(storedSessionA.model, 'claude-sonnet-5');
+      assert.equal(storedSessionA.windows.fiveHour.inputTokens, 10);
+
+      const storedAll = uw.getStoredAggregates();
+      assert.equal(storedAll.bySession['session-a'].windows.fiveHour.inputTokens, 10);
+      assert.equal(storedAll.bySession['session-b'].windows.fiveHour.inputTokens, 3);
+      assert.equal(storedAll.byModel.claude['claude-sonnet-5'].fiveHour.inputTokens, 13);
+    });
+  });
+
+  it('getStoredAggregates returns null for a sessionId with no rows on file', () => {
+    withTmpDir((dir) => {
+      assert.equal(uw.getStoredAggregates({ sessionId: 'no-such-session' }), null);
     });
   });
 });
