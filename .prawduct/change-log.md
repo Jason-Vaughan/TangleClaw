@@ -41,6 +41,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-30 — v5.48.1 W1-A: Testament container executor + Stage 5 timeout calibration
+
+<!-- prawduct: type=feature | scope=w1a-2733-2706-testament-pool-stage5-timeout -->
+
+- `.testament.toml` moves to `executor = "container"` (new `.devcontainer/Dockerfile`), and `scripts/test-stage.js`'s Stages 3-5 try the Testament pool first with a verified clean local fallback whenever offload is bypassed or the pool can't take the run (#2733).
+- `LARGE_TIMEOUT_MS` recalibrated from an unmeasured 60-minute placeholder to 25 minutes, from a real measurement under full Stage 5 contention (#2706).
+
 ## 2026-10-30 — v5.48.0 W4-REL: prepare the bounded-records release candidate
 
 <!-- prawduct: type=internal | scope=v548-w4-rel -->
