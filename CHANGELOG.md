@@ -4,6 +4,26 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.49.0] - 2026-10-31
+
+### Added
+- A session banner warns when Codex's configured model is known to be unsupported under the active auth mode, checked before the first prompt would otherwise fail with a raw 400 from the OpenAI API. The check is conservative: it only warns on a confident, dated match, never a guess, and the banner has a close control that resets if the model or auth mode changes (#260).
+- A read-only engine inventory API (`GET /api/engines/inventory`, `GET /api/engines/:id/inventory`) reports every engine profile's config carrier, status page, error patterns, prime-related capability flags, and locally-discovered plugins/skills/MCP servers — covering connection-backed profiles (OpenClaw) that the engine picker hides (#764).
+
+### Fixed
+- The Project Master's generated identity now writes to the config file its actual engine reads, instead of always `CLAUDE.md` — a Master running on a non-Claude engine previously had its access level, rules and switchboard identity written to a file that engine never opens (#1085).
+- Claude sessions TangleClaw spawns no longer auto-open a browser tab on the host every time they publish an artifact. Those tabs accumulated silently on a host nobody sits at; `CLAUDE_CODE_ARTIFACT_AUTO_OPEN=0` is now set in the Claude engine's launch env (#1113).
+- A connection-backed OpenClaw project (`openclaw:<connectionId>`) now gets its launch-mode section and the client-side eyes-open confirmation in the settings modal — both used to render nothing because they read the picker roster alone, which omits connection-backed ids (#1264).
+- A plugin-governed project running on codex, aider, or antigravity now reports — instead of silently losing — the project rule settings and TangleClaw guides it never receives: these engines have no managed-block carrier for the plugin's operational block, so TangleClaw defers to the plugin. The settings modal states this next to the engine dropdown, and the server logs it, the same way it already did for an engine with no config file at all (#1268).
+- The settings modal's Project Rules editor now states when an engine has no channel to deliver this project's startup rules at all (OpenClaw, which supports neither a pasted prime nor a hidden one) — the editor used to stay live with no indication the rules would never reach a session there (#1269).
+- `PATCH /api/config` now refuses a `defaultEngine` that is not a non-empty string or does not name a configured, usable engine profile (400 `BAD_REQUEST`), instead of silently storing it.
+- `test/reset-admin-store.test.js` no longer corrupts Node 22's JUnit test report into an unparseable `<undefined name="root">` node on the Testament container pool: its stdout/stderr capture hooks now forward non-string chunks straight through to the real writer instead of coercing them into the captured string, which is what the test runner's own output-capture layer needed to pass through cleanly (#2742).
+
+### Internal
+- The first-run setup wizard's engine dropdown now builds its `<option>` markup through the same shared `tcBuildEngineOptions` every other engine picker uses, instead of a hand-rolled copy. No behavior change for installed/uninstalled engines; an engine profile missing its `available` flag entirely is now treated as unavailable everywhere, same as it already was in the wizard (#738).
+- CONTRIBUTING.md now states that a fresh clone must run `claude plugin install prawduct@prawduct --scope project` once — adding this repo's marketplace does not auto-load an externally-sourced plugin as of Claude Code v2.1.195, and TangleClaw cannot tell a committed install reference from a plugin actually loaded in your session (#1276).
+- `lib/engine-models.js` gained an opt-in, short-lived (5s) display-read cache for an engine's model roster (`deps.display: true`); every existing caller (save, launch) still reads fresh every time, so this has no effect until a future display caller opts in.
+
 ## [5.48.1] - 2026-10-30
 
 ### Added
