@@ -159,12 +159,67 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.equal(store.projects.get(project.id).engineId, 'claude');
   });
 
+  it('cross-provider: calls sessions.triggerWrap with the project name and the side-effect-neutralizing options, before killing or relaunching (PRR-A Round 4 BLOCKING 2, #2598)', async () => {
+    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    let wrapArgs = null;
+    let killed = false;
+    let launched = false;
+    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
+      ...target(),
+      checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      triggerWrap: (name, wopts) => { wrapArgs = { name, wopts }; return { ok: true }; },
+      killSession: () => { killed = true; return { error: null }; },
+      launchSession: () => { launched = true; return { error: null }; }
+    });
+    assert.equal(result.ok, true, result.error);
+    assert.deepEqual(wrapArgs, {
+      name: project.name,
+      wopts: { keepSessionRunning: false, skipTests: true, prHandling: 'defer', bumpLevel: 'none' }
+    });
+    assert.equal(killed, true);
+    assert.equal(launched, true);
+  });
+
+  it('cross-provider: refuses (WRAP_FAILED) before killing or relaunching, when the governed wrap itself fails', async () => {
+    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    let killed = false;
+    let launched = false;
+    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
+      ...target(),
+      checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      triggerWrap: () => ({ ok: false, error: 'test step failed: 3 failing assertions' }),
+      killSession: () => { killed = true; return { error: null }; },
+      launchSession: () => { launched = true; return { error: null }; }
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'WRAP_FAILED');
+    assert.match(result.error, /3 failing assertions/);
+    assert.equal(killed, false, 'must not kill the session once the governed wrap itself failed');
+    assert.equal(launched, false);
+    // The config write already happened (it precedes the wrap, same as it
+    // always preceded the relaunch) — a later launch will still get it right.
+    assert.equal(store.projectConfig.load(projectPath).model, 'claude-sonnet-5');
+  });
+
+  it('cross-provider: refuses (WRAP_FAILED) when triggerWrap returns a falsy result entirely', async () => {
+    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
+      ...target(),
+      checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      triggerWrap: () => null
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'WRAP_FAILED');
+    assert.match(result.error, /governed wrap failed/);
+  });
+
   it('switches (cross-provider relaunch), refreshes the session, and persists engine/model when at boundary', async () => {
     store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
     let refreshArgs = null;
     const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
       ...target(),
       checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      triggerWrap: () => ({ ok: true }),
       refreshSession: (p, s) => { refreshArgs = { projectName: p.name }; }
     });
     assert.equal(result.ok, true);
@@ -186,6 +241,7 @@ describe('lib/model-switch — switchSessionModel', () => {
     const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
       ...target(),
       checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      triggerWrap: () => ({ ok: true }),
       refreshSession: () => { engineIdWhenRefreshRan = store.projects.get(project.id).engineId; }
     });
     assert.equal(result.ok, true);
@@ -197,6 +253,11 @@ describe('lib/model-switch — switchSessionModel', () => {
     const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
       ...target(),
       checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      triggerWrap: () => ({ ok: true }),
+      // The real default `getActiveSession` reads `store.sessions.getActive`,
+      // which is still active here (the stubbed triggerWrap didn't end it) —
+      // this is exactly the "lightweight test double" case the kill-as-
+      // cleanup fallback exists for.
       killSession: () => ({ error: 'tmux has-session: no server running' })
     });
     assert.equal(result.ok, false);
@@ -210,6 +271,7 @@ describe('lib/model-switch — switchSessionModel', () => {
     const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
       ...target(),
       checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      triggerWrap: () => ({ ok: true }),
       killSession: () => { killed = true; return { error: null }; },
       launchSession: () => ({ error: 'ENGINE_PROFILE_INVALID' })
     });
@@ -232,6 +294,7 @@ describe('lib/model-switch — switchSessionModel', () => {
     const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5', reason: 'ship chunk 2' }, {
       ...target(),
       checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      triggerWrap: () => ({ ok: true }),
       refreshSession: () => ({ ok: true })
     });
     assert.equal(result.ok, true);
@@ -249,6 +312,27 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.ok(index, 'a continuity index must exist after a cross-provider switch');
     assert.match(index.currentState, /ship chunk 2|session/i);
     assert.match(index.nextAction, new RegExp(newestPlan.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  });
+
+  it('cross-provider: preserves an existing curated Map in the continuity index rather than wiping it (PRR-A WARNING, Round 4)', async () => {
+    // A prior wrap's curated Map, written before this switch ever runs.
+    continuity.writeIndex(projectPath, {
+      project: project.name, currentState: 'old state', nextAction: 'old action',
+      map: '- `lib/foo.js` — does the foo thing\n- `lib/bar.js` — does the bar thing',
+      freshness: { sha: 'deadbeef', branch: 'main', writtenAt: new Date().toISOString(), tier: 'full' }
+    });
+
+    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
+      ...target(),
+      checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      triggerWrap: () => ({ ok: true }),
+      refreshSession: () => ({ ok: true })
+    });
+    assert.equal(result.ok, true, result.error);
+    const existing = continuity.readIndexRaw(projectPath);
+    assert.match(existing.map, /lib\/foo\.js/, 'a curated Map from before this switch must survive it, not be wiped by writeIndex regenerating the file');
+    assert.match(existing.map, /lib\/bar\.js/);
   });
 
   it('cross-provider: refuses (EFFORT_UNSUPPORTED_ON_RELAUNCH) before touching anything', async () => {
@@ -305,6 +389,9 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.equal(reconcileArgs.rdeps.projectPath, projectPath);
     assert.equal(reconcileArgs.rdeps.startedAtMs, profileReconciler.parseLaunchTimestampMs(session.startedAt));
     assert.ok(Number.isFinite(reconcileArgs.rdeps.startedAtMs), 'startedAtMs must be a finite number, not NaN/undefined');
+    // PRR-A Round 4 (#2598): never trust a pre-switch match by coincidence —
+    // `/clear` must always run for a live switch.
+    assert.equal(reconcileArgs.rdeps.requireClear, true);
   });
 
   it('same-provider: a non-stubbed reconcile actually sends /clear + /model and verifies against the post-switch transcript (#2598 BLOCKING 2, PRR-A Round 3 BLOCKING 1)', async () => {
@@ -356,6 +443,88 @@ describe('lib/model-switch — switchSessionModel', () => {
     // early-exit match against stale pre-switch evidence.
     assert.ok(sentKeys.some((k) => k.cmd === '/clear'), 'must send /clear');
     assert.ok(sentKeys.some((k) => k.cmd === '/model claude-sonnet-5'), 'must send /model claude-sonnet-5');
+  });
+
+  it('same-provider: a non-stubbed reconcile still sends /clear + /model and re-verifies against a post-clear record, even when the PRE-switch transcript already names the target model (PRR-A Round 4 BLOCKING 1)', async () => {
+    const claudeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-model-switch-claudehome-'));
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'the-real-tmux', primePrompt: null });
+    const startedAtMs = profileReconciler.parseLaunchTimestampMs(session.startedAt);
+
+    // The stale-coincidence scenario Round 3 named: the session already ran
+    // on the SAME model being "switched" to (e.g. it drifted away and back
+    // with no conversation turn in between). Without `requireClear: true`
+    // this would short-circuit `verified` with nothing sent at all.
+    const transcriptDir = path.join(claudeHome, 'projects', 'some-slug');
+    fs.mkdirSync(transcriptDir, { recursive: true });
+    const transcriptFile = path.join(transcriptDir, 'abc123.jsonl');
+    fs.writeFileSync(transcriptFile, JSON.stringify({
+      type: 'assistant', cwd: projectPath, timestamp: new Date(startedAtMs + 2000).toISOString(),
+      message: { model: 'claude-sonnet-5' }
+    }) + '\n');
+
+    const sentKeys = [];
+    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'claude', model: 'claude-sonnet-5' }, {
+      ...target(),
+      checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      claudeHome,
+      tmux: {
+        sendKeys: (sessionArg, cmd) => {
+          sentKeys.push({ session: sessionArg, cmd });
+          // The post-clear record `requireClear`'s recency scoping needs:
+          // without this, the only matching-model record on file predates
+          // the clear and can no longer satisfy the re-observation.
+          if (cmd === '/model claude-sonnet-5') {
+            fs.appendFileSync(transcriptFile, JSON.stringify({
+              type: 'assistant', cwd: projectPath, timestamp: new Date().toISOString(),
+              message: { model: 'claude-sonnet-5' }
+            }) + '\n');
+          }
+        }
+      }
+    });
+
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.sameProvider, true);
+    // The whole point of this test: /clear + /model still fire even though
+    // the pre-switch transcript already named the target model.
+    assert.ok(sentKeys.some((k) => k.cmd === '/clear'), 'must send /clear despite the coincidental pre-switch match');
+    assert.ok(sentKeys.some((k) => k.cmd === '/model claude-sonnet-5'), 'must send /model claude-sonnet-5 despite the coincidental pre-switch match');
+  });
+
+  it('same-provider: fails closed (RECONCILE_FAILED) when requireClear cannot verify because no post-clear record ever appears', async () => {
+    const claudeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-model-switch-claudehome-'));
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'the-real-tmux', primePrompt: null });
+    const startedAtMs = profileReconciler.parseLaunchTimestampMs(session.startedAt);
+
+    const transcriptDir = path.join(claudeHome, 'projects', 'some-slug');
+    fs.mkdirSync(transcriptDir, { recursive: true });
+    const transcriptFile = path.join(transcriptDir, 'abc123.jsonl');
+    fs.writeFileSync(transcriptFile, JSON.stringify({
+      type: 'assistant', cwd: projectPath, timestamp: new Date(startedAtMs + 2000).toISOString(),
+      message: { model: 'claude-sonnet-5' }
+    }) + '\n');
+
+    const sentKeys = [];
+    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'claude', model: 'claude-sonnet-5' }, {
+      ...target(),
+      checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      claudeHome,
+      // `clearAppliedAtMs` reads from THIS seam, forced well past the
+      // fixture's only record (startedAtMs + 2000) — without it, a
+      // fast-executing test would see real `Date.now()` land only
+      // milliseconds after `startedAtMs`, which is BEFORE that record and
+      // would make it look like valid post-clear evidence by accident.
+      now: () => startedAtMs + 5000,
+      // No new record ever gets appended here — the engine never actually
+      // ran a turn after /model landed, so there is nothing post-clear to
+      // confirm against.
+      tmux: { sendKeys: (sessionArg, cmd) => sentKeys.push({ session: sessionArg, cmd }) }
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'RECONCILE_FAILED');
+    assert.ok(sentKeys.some((k) => k.cmd === '/clear'));
+    assert.ok(sentKeys.some((k) => k.cmd === '/model claude-sonnet-5'));
   });
 
   it('same-provider: refuses when the reconciler cannot verify the live profile, but the config stays updated', async () => {

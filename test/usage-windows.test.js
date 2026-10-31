@@ -485,18 +485,16 @@ describe('lib/usage-windows — getUsageWindows composition', () => {
         claudeProjectsDir: projectDir, codexSessionsDir: path.join(dir, 'no-codex'), antigravityBrainDir: path.join(dir, 'no-antigravity'),
         nowMs, sprintStartMs: null
       });
-      assert.equal(result.bySession['session-a'].windows.fiveHour.inputTokens, 10);
-      assert.equal(result.bySession['session-b'].windows.fiveHour.inputTokens, 3);
+      assert.equal(result.bySession['session-a'].claude['claude-sonnet-5'].fiveHour.inputTokens, 10);
+      assert.equal(result.bySession['session-b'].claude['claude-sonnet-5'].fiveHour.inputTokens, 3);
       assert.equal(result.byProviderModel.claude['claude-sonnet-5'].fiveHour.inputTokens, 13, 'per-model window combines both sessions');
 
       const storedSessionA = uw.getStoredAggregates({ sessionId: 'session-a' });
-      assert.equal(storedSessionA.provider, 'claude');
-      assert.equal(storedSessionA.model, 'claude-sonnet-5');
-      assert.equal(storedSessionA.windows.fiveHour.inputTokens, 10);
+      assert.equal(storedSessionA.claude['claude-sonnet-5'].fiveHour.inputTokens, 10);
 
       const storedAll = uw.getStoredAggregates();
-      assert.equal(storedAll.bySession['session-a'].windows.fiveHour.inputTokens, 10);
-      assert.equal(storedAll.bySession['session-b'].windows.fiveHour.inputTokens, 3);
+      assert.equal(storedAll.bySession['session-a'].claude['claude-sonnet-5'].fiveHour.inputTokens, 10);
+      assert.equal(storedAll.bySession['session-b'].claude['claude-sonnet-5'].fiveHour.inputTokens, 3);
       assert.equal(storedAll.byModel.claude['claude-sonnet-5'].fiveHour.inputTokens, 13);
     });
   });
@@ -504,6 +502,50 @@ describe('lib/usage-windows — getUsageWindows composition', () => {
   it('getStoredAggregates returns null for a sessionId with no rows on file', () => {
     withTmpDir((dir) => {
       assert.equal(uw.getStoredAggregates({ sessionId: 'no-such-session' }), null);
+    });
+  });
+
+  it('one session that used two model IDs produces separate per-model breakdowns and separate SQLite rows (PRR-A Round 4 BLOCKING 3, #2599)', () => {
+    withTmpDir((dir) => {
+      const projectDir = path.join(dir, 'claude', 'p');
+      fs.mkdirSync(projectDir, { recursive: true });
+      const nowMs = uw.pacificWallClockToUtcMs(2026, 10, 28, 12, 0);
+      // One transcript FILE (one sessionId, since the Claude parser derives
+      // sessionId from the filename) carrying activity under TWO different
+      // models — the exact shape a mid-session model switch (#2598) leaves
+      // behind. Grouping by sessionId alone would attribute all 13 input
+      // tokens to whichever model the FIRST record named.
+      fs.writeFileSync(path.join(projectDir, 'session-mixed.jsonl'), [
+        JSON.stringify({
+          type: 'assistant', timestamp: new Date(nowMs - 120000).toISOString(),
+          message: { model: 'claude-opus-4-6', usage: { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } }
+        }),
+        JSON.stringify({
+          type: 'assistant', timestamp: new Date(nowMs - 60000).toISOString(),
+          message: { model: 'claude-sonnet-5', usage: { input_tokens: 3, output_tokens: 7, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } }
+        })
+      ].join('\n') + '\n');
+      const result = uw.getUsageWindows({
+        claudeProjectsDir: projectDir, codexSessionsDir: path.join(dir, 'no-codex'), antigravityBrainDir: path.join(dir, 'no-antigravity'),
+        nowMs, sprintStartMs: null
+      });
+      assert.equal(result.bySession['session-mixed'].claude['claude-opus-4-6'].fiveHour.inputTokens, 10, 'the opus portion must stay separate from the sonnet portion');
+      assert.equal(result.bySession['session-mixed'].claude['claude-sonnet-5'].fiveHour.inputTokens, 3);
+      // Fleet-wide per-model is unaffected: each model still gets its own
+      // row there too (this was never the bug — BLOCKING 3 is specific to
+      // the per-session breakdown).
+      assert.equal(result.byProviderModel.claude['claude-opus-4-6'].fiveHour.inputTokens, 10);
+      assert.equal(result.byProviderModel.claude['claude-sonnet-5'].fiveHour.inputTokens, 3);
+
+      // DB readback: two distinct rows for this one session, not one
+      // combined row misattributed to a single model.
+      const storedSession = uw.getStoredAggregates({ sessionId: 'session-mixed' });
+      assert.equal(storedSession.claude['claude-opus-4-6'].fiveHour.inputTokens, 10);
+      assert.equal(storedSession.claude['claude-sonnet-5'].fiveHour.inputTokens, 3);
+
+      const storedAll = uw.getStoredAggregates();
+      assert.equal(storedAll.bySession['session-mixed'].claude['claude-opus-4-6'].fiveHour.inputTokens, 10);
+      assert.equal(storedAll.bySession['session-mixed'].claude['claude-sonnet-5'].fiveHour.inputTokens, 3);
     });
   });
 });

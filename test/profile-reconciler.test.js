@@ -237,6 +237,59 @@ describe('reconcile: clear requires a fresh safe-to-clear checkpoint', () => {
   });
 });
 
+describe('reconcile: deps.requireClear (PRR-A Round 4 on PR #2762, #2598)', () => {
+  it('never trusts a pre-control match — issues /clear + /model even though the FIRST observation already matches desired', async () => {
+    reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
+    reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'g1' });
+    const { tmux, sent } = fakeTmux();
+    const result = await reconciler.reconcile('r1', 'session-r1', {
+      tmux, currentGeneration: 'g1', requireClear: true,
+      // Both the pre-control AND post-control observation return the exact
+      // desired profile — without requireClear this would short-circuit
+      // verified with nothing sent at all (see 'reconcile: already matching').
+      readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-5-5' })
+    });
+    assert.ok(sent.some((s) => s.text === '/clear'), 'must send /clear despite the coincidental pre-control match');
+    assert.ok(sent.some((s) => s.text === '/model claude-opus-5-5'), 'must send /model despite the coincidental pre-control match');
+    assert.equal(result.ok, true);
+    assert.equal(result.state, 'verified');
+  });
+
+  it('refuses immediately (never reaching explicitModel) when requireClear is set but the checkpoint refuses /clear', async () => {
+    reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
+    // No checkpoint recorded at all — /clear will be refused.
+    const { tmux, sent } = fakeTmux();
+    const result = await reconciler.reconcile('r1', 'session-r1', {
+      tmux, currentGeneration: 'g1', requireClear: true,
+      readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-5-5' })
+    });
+    assert.equal(result.ok, false);
+    assert.equal(sent.length, 0, 'must refuse before ever reaching /model — a switch that cannot clear has not switched');
+  });
+
+  it('refuses immediately when requireClear is set and the clear adapter call itself throws', async () => {
+    reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
+    reconciler.recordCheckpoint('r1', { safeToClear: true, generation: 'g1' });
+    const tmux = { sendKeys: () => { throw new Error('tmux session gone'); } };
+    const result = await reconciler.reconcile('r1', 'session-r1', {
+      tmux, currentGeneration: 'g1', requireClear: true,
+      readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-5-5' })
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /tmux session gone/);
+  });
+
+  it('omitted requireClear behaves exactly as before — a pre-control match verifies with nothing sent', async () => {
+    reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
+    const { tmux, sent } = fakeTmux();
+    const result = await reconciler.reconcile('r1', 'session-r1', {
+      tmux, readTrustedActiveProfile: fakeObserved({ engine: 'claude', model: 'claude-opus-5-5' })
+    });
+    assert.equal(result.ok, true);
+    assert.equal(sent.length, 0);
+  });
+});
+
 describe('reconcile: deps.stillValid aborts a superseded resource (PRR-A finding 4, round 2 on PR #2757)', () => {
   it('aborts before the first observation when the resource is already superseded', async () => {
     reconciler.setDesiredProfile('r1', { engine: 'claude', model: 'claude-opus-5-5' });
@@ -956,6 +1009,38 @@ describe('_readClaudeActiveModel', () => {
         claudeHome: tmpHome, projectPath: '/project', startedAtMs: secondAligned, engineSessionId: 'fresh-session'
       });
       assert.deepEqual(result, { engine: 'claude', model: 'claude-sonnet-5' });
+    });
+  });
+
+  describe('PRR-A Round 4: minRecordTimestampMs (#2598)', () => {
+    it('a record BEFORE minRecordTimestampMs cannot supply the model, even though the file otherwise clears every identity check', () => {
+      const startedAtMs = Date.now() - 10000;
+      const cutoff = Date.now() - 3000;
+      writeTranscript('-project/session.jsonl', [
+        { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(), message: { model: 'claude-opus-4-8' } }
+      ]);
+      const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs, minRecordTimestampMs: cutoff });
+      assert.equal(result, null, 'the only record on file predates the cutoff, so there is nothing to confirm against');
+    });
+
+    it('a record AT/AFTER minRecordTimestampMs supplies the model, even when the file\'s FIRST line (its identity) predates the cutoff', () => {
+      const startedAtMs = Date.now() - 10000;
+      const cutoff = Date.now() - 3000;
+      writeTranscript('-project/session.jsonl', [
+        { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(), message: { model: 'claude-opus-4-8' } },
+        { type: 'assistant', cwd: '/project', timestamp: new Date(cutoff + 500).toISOString(), message: { model: 'claude-sonnet-5' } }
+      ]);
+      const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs, minRecordTimestampMs: cutoff });
+      assert.deepEqual(result, { engine: 'claude', model: 'claude-sonnet-5' }, 'the file\'s identity (firstTs) is unaffected by minRecordTimestampMs — only which record may supply the model');
+    });
+
+    it('omitted minRecordTimestampMs behaves exactly as before — the last-mentioned model wins regardless of its own timestamp', () => {
+      const startedAtMs = Date.now() - 10000;
+      writeTranscript('-project/session.jsonl', [
+        { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(), message: { model: 'claude-opus-4-8' } }
+      ]);
+      const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs });
+      assert.deepEqual(result, { engine: 'claude', model: 'claude-opus-4-8' });
     });
   });
 });
