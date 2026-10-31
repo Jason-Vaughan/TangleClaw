@@ -4,6 +4,53 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.50.0] - 2026-10-31
+
+### Added
+- Added `lib/aider-task-contract.js`: a bounded, verifiable one-shot task contract for an Aider Builder, run via Aider's CLI `--message-file` invocation. It returns a receipt distinguishing real success, a failing independently-run test command, an edit that escaped its declared file scope, a no-op, a timeout, a timeout recognized as blocked on human input, a caller-cancelled run, and a hard CLI error — and flags when Aider's own chat reply claims completion despite no verifiable change landing.
+- Capability-matched task admission and attested engine rotation:
+  `lib/engine-admission.js` refuses to dispatch methodology-required work
+  (Critic, PR, merge, release) to an engine attempt that cannot run it, and
+  replaces one engine attempt with another through a durable
+  prepared/quiesced/revoked/attested/active record, with revision-based
+  compare-and-set persistence, that transfers publication authority exactly
+  once, attested against the exact checkout, worktree and state (#1809).
+  `authorizePublisher()` is the active-publisher check a resource's own
+  write path calls before honoring one — this slice ships the primitive
+  only; no caller in this repo invokes it yet (intentionally test-only
+  until a resource's own write path is wired to it, outside this car's
+  scope).
+- Shared compatibility canary gate: `lib/engine-canary.js` resolves every
+  engine build's capability-probe evidence into `verified`, `degraded`,
+  `incompatible`, or `unknown` — never silently treating `unknown` as
+  `verified` — and persists it as evidence an operator can read and
+  explicitly override, naming the risk, the last verified version, and the
+  exact rollback command (#1897).
+- A Session Profile Reconciler (`lib/profile-reconciler.js`) can now verify a session's actual running profile against what was asked for and reconcile a mismatch through explicit, direct controls only — never a guessed menu navigation — holding (fail-closed) rather than assuming a restore worked, with every transition audited. Wired into `launchSession` (`lib/sessions.js`): a session's active model is verified against the engine's own structured session records, never pane text, holding work admission on a mismatch or an unobserved record with bounded retries while the record simply hasn't appeared yet. Claude is the first supported control adapter; Codex is observation-only (#1967).
+- A project's settings can now store the exact model its next launch should use, validated against the engine's own roster at save time and refused rather than silently substituted when it cannot be confirmed; a stored selection never carries across an engine change, and a launch mode that hides its risk warning is refused while a model is selected. `launchSession` (`lib/sessions.js`) now verifies the stored model against the engine's catalog again before launch — refusing the launch outright if it is no longer confirmed — passes it to the engine launch command, and schedules post-launch verification that the model actually took effect (#2188).
+- Aider sessions can now be configured for fully local-token setups (e.g. Ollama or a local OpenAI-compatible endpoint) via a project's `rules.extensions.aider` settings (`model`, `weakModel`, `editFormat`, `apiBase`), rendered into `.aider.conf.yml`'s `model`, `weak-model`, `edit-format` and `openai-api-base` keys.
+- Governed model/engine switch for a live session: `tc model switch` (`POST
+  /api/sessions/:project/switch-model`) switches a session's `{engine,
+  model, effort}` in `boundary` mode only once it is provably at a clean
+  chunk boundary (clearance, an empty switchboard inbox, a clean git tree
+  with nothing unpushed), refusing with the specific blockers otherwise; its
+  `outage-takeover` mode snapshots an unresponsive session's worktree onto a
+  deterministic `wip/<project>-outage-<timestamp>` recovery branch before
+  terminating it and applying the switch (#2598).
+- Multi-provider usage & quota window telemetry: `tc usage windows` (`GET
+  /api/usage/windows`) parses Claude Code's and Codex's own local transcript
+  logs into rolling 5-hour, weekly (anchored to Thursday 06:00
+  `America/Los_Angeles`), and monthly token windows per provider/model, with
+  the weekly reset schedule and a recommended Builder model-tier policy
+  (Conservation vs. Use-It-or-Lose-It). `tc usage calibrate` (`POST
+  /api/usage/calibrate`) records an operator's percentage correction against
+  a provider's own reported remaining headroom (#2599).
+- Global Settings gains an Engine Settings panel: a single engine selector (no tab bar, every registered profile including `pickerHidden` ones like OpenClaw) showing that engine's read-only inventory — generated-config carrier, status page, prime-prompt capability dispositions, and locally-discovered plugins/skills/MCP servers — via `GET /api/engines/inventory`. The create wizard's First-Session Settings now seed from the chosen engine's own profile rather than one hardcoded literal, re-seeding on an actual engine change and never afterward, with explicit copy stating the seed-at-creation rule (#2747). `#581`'s TangleTweaker docking, also asked for in #2747, is deliberately not included — #581 is closed WONTFIX and was not reopened.
+
+### Fixed
+- Aider sessions now actually receive TangleClaw's conventions (bootstrap, rules, shared docs, PortHub, Medusa Switchboard, session memory): `.aider.conf.yml` previously carried them as YAML `#` comments, which Aider strips before the model ever sees them, so they silently never reached the LLM. They now live in a real markdown file, `.tangleclaw/aider-conventions.md`, which `.aider.conf.yml` loads via `read:`. `.aider.conf.yml` also now sets `gitignore: false`, so Aider no longer stalls startup prime delivery on its interactive "Add .aider* to .gitignore?" prompt (#193).
+- Added `procps` to the Testament container image and `/proc`-based fallbacks for `ps` in `lib/pidfile.js`, `lib/startup-control-codex.js`, and `lib/release-certification/lockfile.js`, so Stage 5 `large`-tier process-identity checks answer correctly rather than degrading to "unknown" on `node:22-bookworm-slim` containers that lack `/bin/ps` (#2752).
+
 ## [5.49.0] - 2026-10-31
 
 ### Added
