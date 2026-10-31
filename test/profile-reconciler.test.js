@@ -11,8 +11,12 @@
  * anything unverified, and every transition audited.
  */
 
-const { describe, it, beforeEach, afterEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+const tmux = require('../lib/tmux');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -676,6 +680,232 @@ describe('sessions._verifyModelAfterLaunch — production wiring converges a ses
       const result = await sessions._verifyModelAfterLaunch('tmux-verify-8', 9009, 1, 'claude', 'claude-opus-5-5', { tmux });
       assert.equal(result.ok, false);
       assert.equal(sent.length, 0);
+    });
+  });
+});
+
+/*
+ * PRR-A finding 1, round 2 on PR #2757 (#2188): the model-admission block
+ * actually wired into the startup admission gate (#1633,
+ * `startupReadiness`/`activeStartupReadiness`) and into `injectCommand` —
+ * per PM's scope ruling, both already live in lib/sessions.js, no new files
+ * needed. `_modelAdmissionBlock` is the single predicate both read.
+ */
+describe('model admission (lib/sessions.js, PRR-A finding 1 round 2)', () => {
+  const sessions = require('../lib/sessions');
+  const store = require('../lib/store');
+
+  beforeEach(() => {
+    reconciler._resetForTests();
+  });
+
+  /** A minimal launch-sequence fixture `startupReadiness` can read without touching the DB. */
+  function fakeSequence(sessionId, overrides = {}) {
+    return {
+      id: 1, sessionId, revision: 1, applicability: 'not-applicable',
+      cursor: 0, unreadyAt: null, readyAt: '2026-01-01T00:00:00Z',
+      recovery: 'none', preflight: null, recoveryClearedAt: null,
+      ...overrides
+    };
+  }
+
+  describe('_modelAdmissionBlock', () => {
+    it('is null when no model was ever requested for this session', () => {
+      assert.equal(sessions._modelAdmissionBlock(90001), null);
+    });
+
+    it('is null once the in-memory reconciler state is "verified"', async () => {
+      reconciler.setDesiredProfile('session:90002', { engine: 'claude', model: 'claude-opus-5-5' });
+      await reconciler.reconcile('session:90002', 's', { tmux: { sendKeys() {}, capturePane() { return { lines: ['Model: claude-opus-5-5'] }; } } });
+      assert.equal(sessions._modelAdmissionBlock(90002), null);
+    });
+
+    it('is "model-unverified" once the in-memory reconciler state is "held"', async () => {
+      reconciler.setDesiredProfile('session:90003', { engine: 'claude', model: 'claude-opus-5-5' });
+      await reconciler.reconcile('session:90003', 's', { tmux: { sendKeys() {}, capturePane() { return { lines: ['Model: wrong-model'] }; } } });
+      assert.equal(sessions._modelAdmissionBlock(90003), 'model-unverified');
+    });
+
+    it('falls back to the durable activity_log after an in-memory reset — "verified" survives it', async () => {
+      // Real store, so activity.log actually persists rather than no-opping.
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-admission-'));
+      store._setBasePath(path.join(tmpDir, 'tangleclaw'));
+      store.init();
+      try {
+        const project = store.projects.create({ name: 'admission-durable', path: tmpDir, engine: 'claude' });
+        const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'admission-durable' });
+        store.activity.log({
+          projectId: project.id, sessionId: session.id, eventType: 'session.model-launch-requested',
+          detail: { engine: 'claude', model: 'claude-opus-5-5', confirmedSelectableAtLaunch: true }
+        });
+        store.activity.log({
+          projectId: project.id, sessionId: session.id, eventType: 'session.model-launch-verified',
+          detail: { engine: 'claude', model: 'claude-opus-5-5', ok: true, state: 'verified' }
+        });
+        // Simulates a process restart: the in-memory reconciler map is gone,
+        // but the durable rows just written above are not (PM's ruling calls
+        // this `profileReconciler.reset(...)`; no such per-resource reset
+        // exists on this module, so `_resetForTests()` — clearing ALL
+        // in-memory state — is the faithful stand-in for "the process
+        // restarted," which is the actual scenario being proven).
+        reconciler._resetForTests();
+        assert.equal(sessions._modelAdmissionBlock(session.id), null);
+      } finally {
+        store.close();
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it('falls back to the durable activity_log after an in-memory reset — "pending" survives it when no verification row exists yet', async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-admission-'));
+      store._setBasePath(path.join(tmpDir, 'tangleclaw'));
+      store.init();
+      try {
+        const project = store.projects.create({ name: 'admission-durable-pending', path: tmpDir, engine: 'claude' });
+        const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'admission-durable-pending' });
+        store.activity.log({
+          projectId: project.id, sessionId: session.id, eventType: 'session.model-launch-requested',
+          detail: { engine: 'claude', model: 'claude-opus-5-5', confirmedSelectableAtLaunch: true }
+        });
+        reconciler._resetForTests();
+        assert.equal(sessions._modelAdmissionBlock(session.id), 'model-verification-pending');
+      } finally {
+        store.close();
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it('falls back to the durable activity_log — "held" survives it when the latest verification row says ok: false', async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-admission-'));
+      store._setBasePath(path.join(tmpDir, 'tangleclaw'));
+      store.init();
+      try {
+        const project = store.projects.create({ name: 'admission-durable-held', path: tmpDir, engine: 'claude' });
+        const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'admission-durable-held' });
+        store.activity.log({
+          projectId: project.id, sessionId: session.id, eventType: 'session.model-launch-verified',
+          detail: { engine: 'claude', model: 'claude-opus-5-5', ok: false, state: 'hold' }
+        });
+        reconciler._resetForTests();
+        assert.equal(sessions._modelAdmissionBlock(session.id), 'model-unverified');
+      } finally {
+        store.close();
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('startupReadiness / activeStartupReadiness', () => {
+    it('reports needs-attention with blocker "model-unverified" when the model reconciliation held', async () => {
+      reconciler.setDesiredProfile('session:90010', { engine: 'claude', model: 'claude-opus-5-5' });
+      await reconciler.reconcile('session:90010', 's', { tmux: { sendKeys() {}, capturePane() { return { lines: ['Model: wrong-model'] }; } } });
+      const readiness = sessions.startupReadiness(fakeSequence(90010));
+      assert.equal(readiness.state, 'needs-attention');
+      assert.equal(readiness.blocker, 'model-unverified');
+    });
+
+    it('reports starting with blocker "model-verification-pending" before verification completes', async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-admission-'));
+      store._setBasePath(path.join(tmpDir, 'tangleclaw'));
+      store.init();
+      try {
+        const project = store.projects.create({ name: 'readiness-pending', path: tmpDir, engine: 'claude' });
+        const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'readiness-pending' });
+        store.activity.log({
+          projectId: project.id, sessionId: session.id, eventType: 'session.model-launch-requested',
+          detail: { engine: 'claude', model: 'claude-opus-5-5', confirmedSelectableAtLaunch: true }
+        });
+        // No reconcile() has run yet — the 6-second deferred check has not fired.
+        const readiness = sessions.startupReadiness(fakeSequence(session.id));
+        assert.equal(readiness.state, 'starting');
+        assert.equal(readiness.blocker, 'model-verification-pending');
+      } finally {
+        store.close();
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it('with nothing requested at all, there is no model block — confirms "pending" never spuriously holds an untouched session', () => {
+      const readiness = sessions.startupReadiness(fakeSequence(90011));
+      assert.notEqual(readiness.blocker, 'model-verification-pending');
+      assert.notEqual(readiness.blocker, 'model-unverified');
+    });
+
+    it('a model block overrides what the sequence itself would otherwise report', async () => {
+      reconciler.setDesiredProfile('session:90012', { engine: 'claude', model: 'claude-opus-5-5' });
+      await reconciler.reconcile('session:90012', 's', { tmux: { sendKeys() {}, capturePane() { return { lines: ['Model: wrong-model'] }; } } });
+      // This sequence's OWN fields say ready (readyAt set, not-applicable) —
+      // the model block must still win.
+      const readiness = sessions.startupReadiness(fakeSequence(90012, { readyAt: '2026-01-01T00:00:00Z' }));
+      assert.equal(readiness.state, 'needs-attention');
+      assert.equal(readiness.blocker, 'model-unverified');
+    });
+
+    it('allows the sequence through once the model reconciliation verifies', async () => {
+      reconciler.setDesiredProfile('session:90013', { engine: 'claude', model: 'claude-opus-5-5' });
+      await reconciler.reconcile('session:90013', 's', { tmux: { sendKeys() {}, capturePane() { return { lines: ['Model: claude-opus-5-5'] }; } } });
+      const readiness = sessions.startupReadiness(fakeSequence(90013));
+      assert.equal(readiness.state, 'ready');
+      assert.equal(readiness.blocker, null);
+    });
+  });
+
+  describe('injectCommand', () => {
+    let tmpDir;
+    before(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-admission-inject-'));
+      store._setBasePath(path.join(tmpDir, 'tangleclaw'));
+      store.init();
+    });
+    after(() => {
+      store.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    let realHasSession;
+    let realSendKeys;
+    beforeEach(() => {
+      realHasSession = tmux.hasSession;
+      realSendKeys = tmux.sendKeys;
+      tmux.hasSession = () => true;
+      tmux.sendKeys = () => {};
+    });
+    afterEach(() => {
+      tmux.hasSession = realHasSession;
+      tmux.sendKeys = realSendKeys;
+    });
+
+    it('refuses with MODEL_ADMISSION_HELD while the launch-requested model is unverified, and allows it once verified', async () => {
+      const project = store.projects.create({ name: 'inject-admission', path: path.join(tmpDir, 'inject-admission'), engine: 'claude' });
+      const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'inject-admission' });
+      reconciler.setDesiredProfile(`session:${session.id}`, { engine: 'claude', model: 'claude-opus-5-5' });
+      // Mirrors what launchSession itself writes right after creating the
+      // session row — the durable half of "a model was requested", without
+      // which a 'pending' in-memory state is indistinguishable from
+      // "nothing was ever requested" (both are the Map's default miss).
+      store.activity.log({
+        projectId: project.id, sessionId: session.id, eventType: 'session.model-launch-requested',
+        detail: { engine: 'claude', model: 'claude-opus-5-5', confirmedSelectableAtLaunch: true }
+      });
+
+      const held = sessions.injectCommand('inject-admission', 'hello');
+      assert.equal(held.ok, false);
+      assert.equal(held.code, 'MODEL_ADMISSION_HELD');
+      assert.equal(held.modelAdmission, 'model-verification-pending');
+
+      await reconciler.reconcile(`session:${session.id}`, 'inject-admission', {
+        tmux: { sendKeys() {}, capturePane() { return { lines: ['Model: claude-opus-5-5'] }; } }
+      });
+      const allowed = sessions.injectCommand('inject-admission', 'hello');
+      assert.equal(allowed.ok, true);
+    });
+
+    it('launchSend: true bypasses the admission hold — the launch kickoff cannot wait behind the gate that makes it ready', async () => {
+      const project = store.projects.create({ name: 'inject-admission-launchsend', path: path.join(tmpDir, 'inject-admission-launchsend'), engine: 'claude' });
+      const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'inject-admission-launchsend' });
+      reconciler.setDesiredProfile(`session:${session.id}`, { engine: 'claude', model: 'claude-opus-5-5' });
+      const result = sessions.injectCommand('inject-admission-launchsend', 'hello', { launchSend: true });
+      assert.equal(result.ok, true);
     });
   });
 });
