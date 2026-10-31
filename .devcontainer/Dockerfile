@@ -1,0 +1,19 @@
+# Testament's container executor (#2733): the pool builds this image and runs every
+# tier's `node --test` batches inside it. `tar`, `sh` and `git` are what a Testament
+# runner itself needs (unpacking its plugin, checking out the worktree); `tmux` and
+# `sqlite3` are what the Large tier's own tests drive (test/tmux*.test.js,
+# test/store*.test.js); `python3` and `ca-certificates` are what a handful of scripts
+# and HTTPS-fetching tests need. Must end with a non-root USER: Testament refuses an
+# image whose final user is root (`env_build_failed`).
+FROM node:22-bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    git \
+    python3 \
+    sqlite3 \
+    tar \
+    tmux \
+  && rm -rf /var/lib/apt/lists/*
+
+USER node

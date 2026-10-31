@@ -484,9 +484,10 @@ describe('formatTestament: one files suite per tier, from the ledger', () => {
     assert.deepEqual(Object.keys(doc.suites), tiers.TIERS);
     assert.equal(doc.manifest_version, 3);
     assert.equal(doc.name, 'tangleclaw');
-    assert.equal(doc.executor, 'host');
-    assert.deepEqual(doc.env_inputs, ['.node-version']);
+    assert.equal(doc.executor, 'container');
+    assert.deepEqual(doc.env_inputs, ['.devcontainer/Dockerfile', '.node-version']);
     assert.equal(doc.batch_timeout_s, tiers.TESTAMENT_BATCH_TIMEOUT_S);
+    assert.deepEqual(doc.image, { dockerfile: '.devcontainer/Dockerfile', inputs: ['.devcontainer/Dockerfile'] });
     assert.deepEqual(doc.setup, { steps: [] });
     for (const tier of tiers.TIERS) {
       assert.deepEqual(doc.suites[tier], {

@@ -2,15 +2,19 @@
 # by hand. `node scripts/test-tiers.js --check` refuses this file when it differs from what
 # that command writes. What it declares and how the pool is set up: docs/test-pyramid.md.
 #
-# The host executor: the large tier drives tmux, git and engine CLIs, which no image here
-# provides. No setup steps: the suite has no dependencies to install. Each suite runs one
-# file per process because node's junit report before Node 24 does not say which file a
-# test was in.
+# Container executor (#2733): the pool builds .devcontainer/Dockerfile, which gives every
+# tier tmux, git and the other CLIs the Large tier drives. No setup steps: the suite has no
+# dependencies to install. Each suite runs one file per process because node's junit report
+# before Node 24 does not say which file a test was in.
 manifest_version = 3
 name = "tangleclaw"
-executor = "host"
-env_inputs = [".node-version"]
+executor = "container"
+env_inputs = [".devcontainer/Dockerfile", ".node-version"]
 batch_timeout_s = 1800
+
+[image]
+dockerfile = ".devcontainer/Dockerfile"
+inputs = [".devcontainer/Dockerfile"]
 
 [setup]
 steps = []
@@ -751,5 +755,5 @@ files = [
   "test/wrap-tc-owned-paths.test.js",
   "test/wrap-upstream-provenance.test.js",
 ]
-command = ["node", "--test", "--test-concurrency=1", "--test-timeout=3600000", "--test-reporter=junit", "--test-reporter-destination={junit}", "{files}"]
+command = ["node", "--test", "--test-concurrency=1", "--test-timeout=1500000", "--test-reporter=junit", "--test-reporter-destination={junit}", "{files}"]
 one_file_per_process = true

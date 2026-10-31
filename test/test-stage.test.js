@@ -309,6 +309,184 @@ describe('fine', () => { it('passes', () => {}); });
   });
 });
 
+/**
+ * Save an env var and return a closure that restores it exactly, present or
+ * absent, so a test that sets it cannot leak into the ones after it.
+ *
+ * @param {string} name
+ * @returns {function(): void}
+ */
+function saveEnv(name) {
+  const had = Object.hasOwn(process.env, name);
+  const value = process.env[name];
+  return () => { if (had) process.env[name] = value; else delete process.env[name]; };
+}
+
+describe('testamentBypassReason: when a tier must run locally, never through the pool (#2733)', () => {
+  it('bypasses on TANGLECLAW_NO_TESTAMENT=1', () => {
+    const restore = saveEnv('TANGLECLAW_NO_TESTAMENT');
+    try {
+      process.env.TANGLECLAW_NO_TESTAMENT = '1';
+      assert.equal(stage.testamentBypassReason(REPO, {}), 'TANGLECLAW_NO_TESTAMENT=1');
+    } finally { restore(); }
+  });
+
+  it('bypasses on CI=true and on GITHUB_ACTIONS=true', () => {
+    const restoreCi = saveEnv('CI');
+    const restoreGa = saveEnv('GITHUB_ACTIONS');
+    try {
+      delete process.env.GITHUB_ACTIONS;
+      process.env.CI = 'true';
+      assert.equal(stage.testamentBypassReason(REPO, {}), 'CI');
+      delete process.env.CI;
+      process.env.GITHUB_ACTIONS = 'true';
+      assert.equal(stage.testamentBypassReason(REPO, {}), 'CI');
+    } finally { restoreCi(); restoreGa(); }
+  });
+
+  it('bypasses a root other than this repository unless an io.testament seam is given', () => {
+    const restoreCi = saveEnv('CI');
+    const restoreGa = saveEnv('GITHUB_ACTIONS');
+    const restoreNo = saveEnv('TANGLECLAW_NO_TESTAMENT');
+    delete process.env.CI;
+    delete process.env.GITHUB_ACTIONS;
+    delete process.env.TANGLECLAW_NO_TESTAMENT;
+    try {
+      const fixtureRoot = path.join(os.tmpdir(), 'not-this-repo');
+      assert.match(stage.testamentBypassReason(fixtureRoot, {}), /is not this repository/);
+      assert.equal(stage.testamentBypassReason(fixtureRoot, { testament: {} }), null);
+      assert.equal(stage.testamentBypassReason(REPO, {}), null, 'this repository, no opt-out: offload is allowed');
+    } finally { restoreCi(); restoreGa(); restoreNo(); }
+  });
+});
+
+describe('runTestament: parses --json output, never throws on a bad one (#2733)', () => {
+  it('reports ok:false when no binary resolves', () => {
+    assert.deepEqual(stage.runTestament(['run', '--probe', '--json'], 1000, { bin: null }), { ok: false, exitCode: null, parsed: null });
+  });
+
+  it('parses JSON stdout alongside the exit code', () => {
+    const spawnSync = () => ({ status: 0, stdout: JSON.stringify({ status: 'ok' }) });
+    assert.deepEqual(
+      stage.runTestament(['run', '--probe', '--json'], 1000, { bin: '/bin/true', spawnSync }),
+      { ok: true, exitCode: 0, parsed: { status: 'ok' } }
+    );
+  });
+
+  it('treats unparseable stdout as ok with parsed:null, never a throw', () => {
+    const spawnSync = () => ({ status: 2, stdout: 'not json' });
+    assert.deepEqual(
+      stage.runTestament(['run'], 1000, { bin: '/bin/true', spawnSync }),
+      { ok: true, exitCode: 2, parsed: null }
+    );
+  });
+
+  it('treats a spawn error as ok:false rather than throwing', () => {
+    const spawnSync = () => ({ error: new Error('ENOENT'), status: null });
+    assert.deepEqual(
+      stage.runTestament(['run'], 1000, { bin: '/bin/true', spawnSync }),
+      { ok: false, exitCode: null, parsed: null }
+    );
+  });
+});
+
+describe('offloadTier: probe then run, falling through on anything but a clean pass or fail (#2733)', () => {
+  it('is bypassed under CI without ever calling spawnSync', () => {
+    const restore = saveEnv('CI');
+    process.env.CI = 'true';
+    try {
+      let called = false;
+      const out = sink();
+      const code = stage.offloadTier('small', { root: REPO, out, testament: { spawnSync: () => { called = true; } } });
+      assert.equal(code, null);
+      assert.equal(called, false);
+      assert.equal(out.text(), '');
+    } finally { restore(); }
+  });
+
+  it('falls through, naming the probe\'s error code, when the probe is not ok', () => {
+    const out = sink();
+    const spawnSync = (bin, argv) => (argv.includes('--probe')
+      ? { status: 2, stdout: JSON.stringify({ status: 'machine_not_set_up', error: { code: 'machine_not_set_up' } }) }
+      : assert.fail('must not run after a failed probe'));
+    const code = stage.offloadTier('small', { root: REPO, out, testament: { bin: '/bin/true', spawnSync } });
+    assert.equal(code, null);
+    assert.match(out.text(), /^testament: pool unavailable for small \(machine_not_set_up\); running locally$/m);
+  });
+
+  it('returns 0 and prints the pool\'s counts on a clean pass', () => {
+    const out = sink();
+    const spawnSync = (bin, argv) => (argv.includes('--probe')
+      ? { status: 0, stdout: JSON.stringify({ status: 'ok' }) }
+      : { status: 0, stdout: JSON.stringify({ report: { counts: { tests: 10, pass: 10 } } }) });
+    const code = stage.offloadTier('small', { root: REPO, out, testament: { bin: '/bin/true', spawnSync } });
+    assert.equal(code, 0);
+    assert.match(out.text(), /^testament: small passed on the pool \({"tests":10,"pass":10}\)$/m);
+  });
+
+  it('returns 1 and names failing items on a pool failure', () => {
+    const out = sink();
+    const spawnSync = (bin, argv) => (argv.includes('--probe')
+      ? { status: 0, stdout: JSON.stringify({ status: 'ok' }) }
+      : { status: 1, stdout: JSON.stringify({ report: { items: [{ id: 'test/a.test.js::one' }] } }) });
+    const code = stage.offloadTier('small', { root: REPO, out, testament: { bin: '/bin/true', spawnSync } });
+    assert.equal(code, 1);
+    assert.match(out.text(), /^testament: small failed on the pool:\n {2}test\/a\.test\.js::one$/m);
+  });
+
+  it('falls through on any other exit code after a clean probe, naming it', () => {
+    const out = sink();
+    const spawnSync = (bin, argv) => (argv.includes('--probe')
+      ? { status: 0, stdout: JSON.stringify({ status: 'ok' }) }
+      : { status: 2, stdout: JSON.stringify({ error: { code: 'unknown_project' } }) });
+    const code = stage.offloadTier('small', { root: REPO, out, testament: { bin: '/bin/true', spawnSync } });
+    assert.equal(code, null);
+    assert.match(out.text(), /^testament: pool run for small exited 2 \(unknown_project\); running locally$/m);
+  });
+
+  it('falls through when the run produces no parseable report', () => {
+    const out = sink();
+    const spawnSync = (bin, argv) => (argv.includes('--probe')
+      ? { status: 0, stdout: JSON.stringify({ status: 'ok' }) }
+      : { status: 0, stdout: 'not json' });
+    const code = stage.offloadTier('small', { root: REPO, out, testament: { bin: '/bin/true', spawnSync } });
+    assert.equal(code, null);
+    assert.match(out.text(), /^testament: pool run for small produced no usable report; running locally$/m);
+  });
+});
+
+describe('main wires stages 3-5 through offloadTier before the local run (#2733)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-test-stage-offload-'));
+  after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'test', 'helpers'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'test', 'helpers', 'preload-small.js'), `require(${JSON.stringify(path.join(REPO, 'test', 'helpers', 'preload-small.js'))});\n`);
+  fs.writeFileSync(path.join(root, 'test', 'a.test.js'), "'use strict';\nconst { test } = require('node:test');\ntest('one', () => {});\n");
+  fs.writeFileSync(path.join(root, 'test', 'tiers.json'), `${JSON.stringify({ small: ['test/a.test.js'], medium: [], large: [] }, null, 2)}\n`);
+
+  it('returns the pool\'s verdict and never runs node locally on a clean pass', () => {
+    const out = sink();
+    const junitPath = path.join(root, 'offload-pass.xml');
+    const spawnSync = (bin, argv) => (argv.includes('--probe')
+      ? { status: 0, stdout: JSON.stringify({ status: 'ok' }) }
+      : { status: 0, stdout: JSON.stringify({ report: { counts: { tests: 1 } } }) });
+    const code = stage.main(['3', '--junit', junitPath], { stdout: out, root, testament: { bin: '/bin/true', spawnSync } });
+    assert.equal(code, 0);
+    assert.equal(fs.existsSync(junitPath), false, 'a pool run writes no junit report');
+    assert.match(out.text(), /^testament: small passed on the pool/m);
+  });
+
+  it('falls through to the ordinary local run when the seam reports the pool unavailable', () => {
+    const out = sink();
+    const junitPath = path.join(root, 'offload-fallback.xml');
+    const spawnSync = () => ({ status: 2, stdout: JSON.stringify({ status: 'machine_not_set_up', error: { code: 'machine_not_set_up' } }) });
+    const code = stage.main(['3', '--junit', junitPath], { stdout: out, root, testament: { bin: '/bin/true', spawnSync } });
+    assert.equal(code, 0, out.text());
+    assert.ok(fs.existsSync(junitPath), 'the local fallback run wrote its own junit report');
+    assert.match(out.text(), /^testament: pool unavailable for small \(machine_not_set_up\); running locally$/m);
+    assert.match(out.text(), /^stage 3 \(small, 1 files, guard/m);
+  });
+});
+
 describe('pre-push-gate: chaining stage 1 then stage 2', () => {
   const originalMain = stage.main;
   afterEach(() => { stage.main = originalMain; });

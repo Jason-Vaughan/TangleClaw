@@ -206,8 +206,8 @@ and the whole of Stage 2 runs in 41.4 s: Small 0.3 s, the one Medium file 10.5 s
 reaches decides the time, and a change under `server.js`'s graph (`lib/rule-label.js` reaches
 479 tests) selects most of the suite. Against the under-30 s Builder-ring target of #2371's
 checkpoint 4, Stage 1 + Stage 2's selection + Stage 3 is about 8 s before the selected files run;
-the selected files are the variable, and the ring the activation packet names (Stages 1+2+3)
-stays a proposal until the Operator's cutover.
+the selected files are the variable, and the ring the activation packet named (Stages 1+2+3) is
+what shipped when #2371 closed (2026-10-26).
 
 ## The dead-export audit, and the ratchet Stage 1 runs
 
@@ -368,8 +368,9 @@ refuses a manifest that differs by one byte from what that command would write.
 | Key | Value | Why |
 |---|---|---|
 | `manifest_version` | `3` | the version with `[suites.<name>]` tables, one per tier |
-| `executor` | `host` | the `large` tier drives tmux, git and engine CLIs, which no container image here provides |
-| `env_inputs` | `.node-version` | the one file whose change means a different environment |
+| `executor` | `container` (#2733) | runners need nothing but Docker; the image gives every tier tmux, git and the other CLIs the `large` tier drives |
+| `env_inputs` | `.devcontainer/Dockerfile`, `.node-version` | the files whose change means a different environment: the image's own definition, and node's version |
+| `[image] dockerfile` | `.devcontainer/Dockerfile` | `FROM node:22-bookworm-slim`, installs `ca-certificates git python3 sqlite3 tar tmux`, ends `USER node` (Testament refuses a root image) |
 | `batch_timeout_s` | `1800` | a killed batch reports none of its files, so the bound is six times a guarded tier's per-test timeout and above the whole suite's wall time |
 | `[setup] steps` | none | the suite has no dependencies to install |
 | `[suites.small]`, `.medium`, `.large` | `adapter = "files"`, `cwd = "."`, `files` = the tier's paths from the ledger | a literal path is a glob that matches only itself, so the three suites together are exactly `test/*.test.js` |
@@ -380,9 +381,25 @@ refuses a manifest that differs by one byte from what that command would write.
 (`manifest.py` and the `files` adapter, at the v0.9.0 tag this work was planned against and at
 v0.12.1, the newest tag on 2026-10-23), with no error. Testament's own collector, run over the
 tracked tree, put each test file in exactly one suite. The batch command it renders for one file of
-each tier ran under node on this host and wrote its junit report. **No Testament run has happened:**
-`testament` is not installed on this host and no pool exists. Nothing reads a Testament report as
-suite evidence; the gates are unchanged (see #2371, proposed and Operator-held).
+each tier ran under node on this host and wrote its junit report. **No live pool run has happened
+yet:** the project is not yet allowed on the coordinator with the `container` executor (device
+enrolment for this machine is submitted and awaiting Operator approval in Discord — `LANE_QUEUE.md`
+"Carry-Forward"). Until it is, `testament run --probe --json` answers `machine_not_set_up`, and
+`scripts/test-stage.js`'s Stages 3-5 (below) fall straight through to the existing local run.
+Nothing reads a Testament report as suite evidence — that's a separate question from #2371
+(CI-as-suite-evidence, shipped 2026-10-26): #2371 lets a gate trust CI's own report, never a
+Testament pool report, which still isn't wired to anything here.
+
+**Stages 3-5 try the pool first, then fall back locally (#2733).** `scripts/test-stage.js`'s
+`offloadTier` probes `testament run --probe --json` before each guarded or large tier; on a clean
+probe it runs `testament run --no-fallback --suite <tier> --json=summary` and returns that verdict
+directly (no junit report — a pool run is a quick pass/fail, not something the evidence recorder
+ingests). It falls straight through to the local run already described above whenever offload is
+bypassed (`TANGLECLAW_NO_TESTAMENT=1`, `CI`/`GITHUB_ACTIONS`, or a synthetic fixture root under
+test with no `io.testament` seam) or the pool answers it can't take the run right now (no
+coordinator, the project not yet allowed, no runner, or any other non-clean exit). A CI gate is
+always a local run: CI sets its own bypass, deliberately, so a gate's suite evidence never depends
+on an external pool being up.
 
 **The pool is the Operator's to set up.** Testament's own guide is the authority
 (`testament guide pool`, `testament guide machine`), and it marks the steps only the owner can
@@ -399,12 +416,11 @@ take. In outline, from the Operator's machine, which reaches each host over SSH:
 4. `testament coordinator install <host> --listen <tailnet-addr>:7621 --operator <name>`, on an
    always-on host.
 5. `testament runner add <host> --via <coordinator-host> --coordinator <addr>:7621 --slots <n>`
-   for each runner. For this suite a runner also needs Node 22, `git` and `tmux` on the service's
-   PATH, because the `large` tier uses them. On a macOS runner, allow its Python under System
-   Settings → Privacy & Security → Local Network, once; this cannot be done over SSH.
-6. `testament projects allow tangleclaw --executor host --via <coordinator-host>`. A host project
-   also needs the owner secret (`testament owner-secret new`; `runner add` copies it to runners
-   added afterwards).
+   for each runner. A container-executor runner needs only Docker (#2733: the image itself carries
+   Node 22, `git` and `tmux`, so nothing need be pre-installed on the runner's own PATH).
+6. `testament projects allow tangleclaw --executor container --via <coordinator-host>`. A container
+   project needs no owner secret (that is a host project's requirement); the runner builds
+   `.devcontainer/Dockerfile` itself from the worktree it is given.
 7. For each machine that submits runs: `testament invite <person> --machine <name> --project
    tangleclaw --via <coordinator-host>`, then on that machine
    `printf '%s' '<token>' | testament join`.
@@ -416,11 +432,11 @@ agent-instructions block to `CLAUDE.md`. That is not done here: the block would 
 run its tests through Testament, and the lane rules, not this repository, decide how a gate's
 suite is run.
 
-**Things a runner changes.** A host project sees a narrowed environment (PATH, HOME, locale, temp
-directory, proxies, certificates and a few prefixes), so a test that needs another variable from
-the machine needs the runner's operator to pass it (`[runner] pass_env`). Every slot shares the
-runner's network, so a test that binds a fixed port can collide with another batch; bind
-`127.0.0.1` on port 0 and read the port back. Testament's open issue #67
+**Things a runner changes.** Every project, container or host, sees a narrowed environment on a
+runner (PATH, HOME, locale, temp directory, proxies, certificates and a few prefixes), so a test
+that needs another variable from the machine needs the runner's operator to pass it (`[runner]
+pass_env`). Every slot shares the runner's network, so a test that binds a fixed port can collide
+with another batch; bind `127.0.0.1` on port 0 and read the port back. Testament's open issue #67
 (per-test OS routing and slot weights) is not needed here. The tier is the unit, and
 `test/skip-ledger.json` already says which tests need a macOS host or an engine CLI and skip
 without one.
@@ -433,6 +449,18 @@ without one.
 | `medium` | 146 | 5,369 | 4 min 48 s (`--test-timeout=300000`) | 0 refusals; of the 270 files the scan proposed, the guard demoted 124 to `large`, nearly all server-booting tests whose boot path spawns (see above), one by hanging past the timeout. SQLite and filesystem bound: system time above user time |
 | `large` | 301 | | | not run as a tier here; it is the slow slice of the full suite |
 
+## Measured under full Stage 5 contention, for `LARGE_TIMEOUT_MS` (#2706, this repository at this
+chunk's own head, a laptop)
+
+| Tier | Files | Tests | Wall time | Notes |
+|---|---|---|---|---|
+| `large` | 312 | 12,286 | 10 min 36 s (635,777 ms), green (`--test-timeout=3600000`, the prior unmeasured bound) | `test/soak-guest.test.js`, the known slowest file, summed ~486.9 s across its eight top-level describes (sequential, no declared `concurrency`) — a ~1.8x slowdown from its ~270 s measured alone, far gentler than Medium's own ~12x alone-to-shared swing (I/O/subprocess-bound, not CPU-bound against 300+ sibling processes) |
+
+`LARGE_TIMEOUT_MS` moved from the unmeasured 60-minute placeholder to 1,500,000 ms (25 min):
+~3.1x headroom over the 486.9 s measurement, using the same ratio `GUARDED_TIMEOUT_MS` applies
+over its own measured-shared number (120 s → 300 s is ~2.5x). Re-measure if a new slowest file
+emerges or this one changes materially.
+
 Numbers something relies on are re-measured, never copied: the ledger's counts are
 `node scripts/test-tiers.js --check`'s output, and a tier's time is the guarded run's.
 
@@ -444,9 +472,13 @@ Numbers something relies on are re-measured, never copied: the ledger's counts a
   batch is its own issue (#2544, #2548, #2549) with Architect acceptance. The redundancy matrix
   has been measured on the Small tier only.
 - `test_command`, CI and every gate are unchanged: `all` is that command, argument for argument,
-  with the reconciliation printed after it, and nothing yet reads a stage as suite evidence (that
-  is #2371, proposed and Operator-held).
-- `.testament.toml` has not been run. The pool is Operator infrastructure, and its setup is
-  outlined above.
+  with the reconciliation printed after it, and nothing here reads a *stage* as suite evidence.
+  (#2371, shipped 2026-10-26, is the separate question of a gate trusting CI's own report; it
+  doesn't touch a Testament report, which still isn't wired to anything.)
+- `.testament.toml` has not had a live pool run. The pool is Operator infrastructure, its setup
+  is outlined above, and this machine's own device enrolment is still awaiting Operator approval
+  (`LANE_QUEUE.md` "Carry-Forward"). `scripts/test-stage.js`'s offload code (#2733) is written and
+  falls back cleanly today; it has nothing to reach until the project is allowed with the
+  `container` executor.
 - The ledger says nothing about *where* a test may run (macOS, a non-UTC clock, an engine CLI).
   That stays with `test/skip-ledger.json` and [docs/lane-ci-evidence.md](lane-ci-evidence.md).
