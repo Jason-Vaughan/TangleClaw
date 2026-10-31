@@ -603,39 +603,54 @@ describe('_readCodexActiveModel', () => {
   }
 
   it('returns null when the sessions directory does not exist at all', () => {
-    assert.equal(reconciler._readCodexActiveModel({ codexHome: tmpHome }), null);
+    assert.equal(reconciler._readCodexActiveModel({ codexHome: tmpHome, projectPath: '/project', startedAtMs: Date.now() }), null);
+  });
+
+  it('PRR-A round 6: fails closed when projectPath or startedAtMs is missing, even with a real matching file present', () => {
+    writeRollout('2026/10/31/rollout-test.jsonl', [
+      { type: 'session_meta', payload: { id: 's1', cwd: '/project', timestamp: new Date().toISOString() } },
+      { type: 'turn_context', payload: { cwd: '/project', model: 'gpt-5.6-sol' } }
+    ]);
+    assert.equal(reconciler._readCodexActiveModel({ codexHome: tmpHome, startedAtMs: Date.now() }), null, 'missing projectPath');
+    assert.equal(reconciler._readCodexActiveModel({ codexHome: tmpHome, projectPath: '/project' }), null, 'missing startedAtMs');
+    assert.equal(reconciler._readCodexActiveModel({ codexHome: tmpHome, projectPath: '  ', startedAtMs: Date.now() }), null, 'blank projectPath');
+    assert.equal(reconciler._readCodexActiveModel({ codexHome: tmpHome, projectPath: '/project', startedAtMs: NaN }), null, 'non-finite startedAtMs');
   });
 
   it('reads the model from a turn_context record in a real rollout file', () => {
+    const startedAtMs = Date.now() - 1000;
     writeRollout('2026/10/31/rollout-test.jsonl', [
-      { type: 'session_meta', payload: { id: 's1', cwd: '/Users/jasonvaughan/Documents/Projects/TC-Lane-A' } },
+      { type: 'session_meta', payload: { id: 's1', cwd: '/Users/jasonvaughan/Documents/Projects/TC-Lane-A', timestamp: new Date(startedAtMs + 200).toISOString() } },
       { type: 'turn_context', payload: { cwd: '/Users/jasonvaughan/Documents/Projects/TC-Lane-A', model: 'gpt-5.6-sol' } }
     ]);
-    const result = reconciler._readCodexActiveModel({ codexHome: tmpHome, projectPath: '/Users/jasonvaughan/Documents/Projects/TC-Lane-A' });
+    const result = reconciler._readCodexActiveModel({
+      codexHome: tmpHome, projectPath: '/Users/jasonvaughan/Documents/Projects/TC-Lane-A', startedAtMs
+    });
     assert.deepEqual(result, { engine: 'codex', model: 'gpt-5.6-sol' });
   });
 
   it('prefers the LATEST turn_context model when several appear in the same file', () => {
+    const startedAtMs = Date.now() - 1000;
     writeRollout('2026/10/31/rollout-test.jsonl', [
-      { type: 'session_meta', payload: { id: 's1', cwd: '/project' } },
+      { type: 'session_meta', payload: { id: 's1', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString() } },
       { type: 'turn_context', payload: { cwd: '/project', model: 'gpt-5.6-sol' } },
       { type: 'turn_context', payload: { cwd: '/project', model: 'gpt-6-luna' } }
     ]);
-    assert.deepEqual(reconciler._readCodexActiveModel({ codexHome: tmpHome, projectPath: '/project' }),
+    assert.deepEqual(reconciler._readCodexActiveModel({ codexHome: tmpHome, projectPath: '/project', startedAtMs }),
       { engine: 'codex', model: 'gpt-6-luna' });
   });
 
   it('returns null when no rollout file matches deps.projectPath', () => {
     writeRollout('2026/10/31/rollout-test.jsonl', [
-      { type: 'session_meta', payload: { id: 's1', cwd: '/some/other/project' } },
+      { type: 'session_meta', payload: { id: 's1', cwd: '/some/other/project', timestamp: new Date().toISOString() } },
       { type: 'turn_context', payload: { cwd: '/some/other/project', model: 'gpt-5.6-sol' } }
     ]);
-    assert.equal(reconciler._readCodexActiveModel({ codexHome: tmpHome, projectPath: '/project' }), null);
+    assert.equal(reconciler._readCodexActiveModel({ codexHome: tmpHome, projectPath: '/project', startedAtMs: Date.now() - 1000 }), null);
   });
 
-  it('skips a file whose mtime is older than startedAtMs - 5000', () => {
+  it('skips a file whose mtime is older than startedAtMs', () => {
     const file = writeRollout('2026/10/31/rollout-stale.jsonl', [
-      { type: 'session_meta', payload: { id: 's1', cwd: '/project' } },
+      { type: 'session_meta', payload: { id: 's1', cwd: '/project', timestamp: new Date().toISOString() } },
       { type: 'turn_context', payload: { cwd: '/project', model: 'gpt-5.6-sol' } }
     ]);
     const old = Date.now() - 60 * 60 * 1000;
@@ -643,25 +658,37 @@ describe('_readCodexActiveModel', () => {
     assert.equal(reconciler._readCodexActiveModel({ codexHome: tmpHome, projectPath: '/project', startedAtMs: Date.now() }), null);
   });
 
-  it('accepts a file within the 5-second startedAtMs slack', () => {
+  it('PRR-A round 6: the 5-second startedAtMs slack is retired — a file just 2 seconds older than startedAtMs is no longer accepted', () => {
     const file = writeRollout('2026/10/31/rollout-fresh.jsonl', [
-      { type: 'session_meta', payload: { id: 's1', cwd: '/project' } },
+      { type: 'session_meta', payload: { id: 's1', cwd: '/project', timestamp: new Date(Date.now() - 2000).toISOString() } },
       { type: 'turn_context', payload: { cwd: '/project', model: 'gpt-5.6-sol' } }
     ]);
     const now = Date.now();
     fs.utimesSync(file, now / 1000, now / 1000);
     const result = reconciler._readCodexActiveModel({ codexHome: tmpHome, projectPath: '/project', startedAtMs: now + 2000 });
-    assert.deepEqual(result, { engine: 'codex', model: 'gpt-5.6-sol' });
+    assert.equal(result, null);
+  });
+
+  it('PRR-A round 6 regression: a rapid relaunch never admits the PREVIOUS session\'s rollout file, even one written 2s before the new launch', () => {
+    const now = Date.now();
+    const file = writeRollout('2026/10/31/rollout-previous.jsonl', [
+      { type: 'session_meta', payload: { id: 'PREVIOUS-SESSION', cwd: '/project', timestamp: new Date(now - 2000).toISOString() } },
+      { type: 'turn_context', payload: { cwd: '/project', model: 'desired-model' } }
+    ]);
+    fs.utimesSync(file, (now - 2000) / 1000, (now - 2000) / 1000);
+    const result = reconciler._readCodexActiveModel({ codexHome: tmpHome, projectPath: '/project', startedAtMs: now });
+    assert.equal(result, null, 'the previous session\'s file must never be mistaken for the new launch\'s');
   });
 
   it('skips a malformed line rather than failing the whole read', () => {
+    const startedAtMs = Date.now() - 1000;
     const full = path.join(tmpHome, 'sessions', '2026/10/31/rollout-malformed.jsonl');
     fs.mkdirSync(path.dirname(full), { recursive: true });
     fs.writeFileSync(full,
-      '{"type":"session_meta","payload":{"id":"s1","cwd":"/project"}}\n'
+      `{"type":"session_meta","payload":{"id":"s1","cwd":"/project","timestamp":"${new Date(startedAtMs + 200).toISOString()}"}}\n`
       + 'not even json\n'
       + '{"type":"turn_context","payload":{"cwd":"/project","model":"gpt-5.6-sol"}}\n');
-    assert.deepEqual(reconciler._readCodexActiveModel({ codexHome: tmpHome, projectPath: '/project' }), { engine: 'codex', model: 'gpt-5.6-sol' });
+    assert.deepEqual(reconciler._readCodexActiveModel({ codexHome: tmpHome, projectPath: '/project', startedAtMs }), { engine: 'codex', model: 'gpt-5.6-sol' });
   });
 });
 
@@ -682,41 +709,72 @@ describe('_readClaudeActiveModel', () => {
   }
 
   it('returns null when the projects directory does not exist at all', () => {
-    assert.equal(reconciler._readClaudeActiveModel({ claudeHome: tmpHome }), null);
+    assert.equal(reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs: Date.now() }), null);
+  });
+
+  it('PRR-A round 6: fails closed when projectPath or startedAtMs is missing, even with a real matching file present', () => {
+    writeTranscript('-project/session.jsonl', [
+      { type: 'assistant', cwd: '/project', timestamp: new Date().toISOString(), message: { model: 'claude-sonnet-5' } }
+    ]);
+    assert.equal(reconciler._readClaudeActiveModel({ claudeHome: tmpHome, startedAtMs: Date.now() }), null, 'missing projectPath');
+    assert.equal(reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project' }), null, 'missing startedAtMs');
+    assert.equal(reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '  ', startedAtMs: Date.now() }), null, 'blank projectPath');
+    assert.equal(reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs: NaN }), null, 'non-finite startedAtMs');
   });
 
   it('reads the model from an assistant row in a real transcript file', () => {
+    const startedAtMs = Date.now() - 1000;
     writeTranscript('-project/session.jsonl', [
-      { type: 'user', cwd: '/project' },
-      { type: 'assistant', cwd: '/project', message: { model: 'claude-sonnet-5' } }
+      { type: 'user', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString() },
+      { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 300).toISOString(), message: { model: 'claude-sonnet-5' } }
     ]);
-    assert.deepEqual(reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project' }),
+    assert.deepEqual(reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs }),
       { engine: 'claude', model: 'claude-sonnet-5' });
   });
 
   it('prefers the LATEST assistant row when several appear in the same file', () => {
+    const startedAtMs = Date.now() - 1000;
     writeTranscript('-project/session.jsonl', [
-      { type: 'assistant', cwd: '/project', message: { model: 'claude-opus-4-8' } },
-      { type: 'assistant', cwd: '/project', message: { model: 'claude-sonnet-5' } }
+      { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(), message: { model: 'claude-opus-4-8' } },
+      { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 300).toISOString(), message: { model: 'claude-sonnet-5' } }
     ]);
-    assert.deepEqual(reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project' }),
+    assert.deepEqual(reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs }),
       { engine: 'claude', model: 'claude-sonnet-5' });
   });
 
   it('returns null when no transcript row matches deps.projectPath', () => {
     writeTranscript('-other/session.jsonl', [
-      { type: 'assistant', cwd: '/some/other/project', message: { model: 'claude-sonnet-5' } }
+      { type: 'assistant', cwd: '/some/other/project', timestamp: new Date().toISOString(), message: { model: 'claude-sonnet-5' } }
     ]);
-    assert.equal(reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project' }), null);
+    assert.equal(reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs: Date.now() - 1000 }), null);
   });
 
-  it('skips a file whose mtime is older than startedAtMs - 5000', () => {
+  it('skips a file whose mtime is older than startedAtMs', () => {
     const file = writeTranscript('-project/session.jsonl', [
-      { type: 'assistant', cwd: '/project', message: { model: 'claude-sonnet-5' } }
+      { type: 'assistant', cwd: '/project', timestamp: new Date().toISOString(), message: { model: 'claude-sonnet-5' } }
     ]);
     const old = Date.now() - 60 * 60 * 1000;
     fs.utimesSync(file, old / 1000, old / 1000);
     assert.equal(reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs: Date.now() }), null);
+  });
+
+  it('PRR-A round 6: a line carrying a DIFFERENT cwd than deps.projectPath voids the whole file, even when another line matches', () => {
+    const startedAtMs = Date.now() - 1000;
+    writeTranscript('-mixed/session.jsonl', [
+      { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(), message: { model: 'claude-sonnet-5' } },
+      { type: 'assistant', cwd: '/some/other/project', timestamp: new Date(startedAtMs + 300).toISOString(), message: { model: 'claude-sonnet-5' } }
+    ]);
+    assert.equal(reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs }), null);
+  });
+
+  it('PRR-A round 6 regression: a rapid relaunch never admits the PREVIOUS session\'s transcript file, even one written 2s before the new launch', () => {
+    const now = Date.now();
+    const file = writeTranscript('-project/session.jsonl', [
+      { type: 'assistant', cwd: '/project', sessionId: 'PREVIOUS-SESSION', timestamp: new Date(now - 2000).toISOString(), message: { model: 'desired-model' } }
+    ]);
+    fs.utimesSync(file, (now - 2000) / 1000, (now - 2000) / 1000);
+    const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs: now });
+    assert.equal(result, null, 'the previous session\'s transcript must never be mistaken for the new launch\'s');
   });
 });
 
@@ -893,48 +951,51 @@ describe('sessions._verifyModelAfterLaunch — production wiring converges a ses
     });
 
     it('converges to "verified" ONLY from a matching real codex rollout file, with no readTrustedActiveProfile seam at all', async () => {
+      const startedAtMs = Date.now() - 1000;
       const rollout = path.join(tmpCodexHome, 'sessions', '2026', '10', '31', 'rollout-test.jsonl');
       fs.mkdirSync(path.dirname(rollout), { recursive: true });
       fs.writeFileSync(rollout, [
-        JSON.stringify({ type: 'session_meta', payload: { id: 's1', cwd: '/fixture/project' } }),
+        JSON.stringify({ type: 'session_meta', payload: { id: 's1', cwd: '/fixture/project', timestamp: new Date(startedAtMs + 200).toISOString() } }),
         JSON.stringify({ type: 'turn_context', payload: { cwd: '/fixture/project', model: 'gpt-5.6-sol' } })
       ].join('\n') + '\n');
 
       const { tmux } = fakeTmux();
       const result = await sessions._verifyModelAfterLaunch('tmux-codex-prod', 9020, 1, 'codex', 'gpt-5.6-sol', {
-        tmux, stillValid: () => true, codexHome: tmpCodexHome, projectPath: '/fixture/project'
+        tmux, stillValid: () => true, codexHome: tmpCodexHome, projectPath: '/fixture/project', startedAtMs
       });
       assert.equal(result.ok, true);
       assert.equal(result.state, 'verified');
     });
 
     it('stays "held" on a model mismatch in the real codex rollout file', async () => {
+      const startedAtMs = Date.now() - 1000;
       const rollout = path.join(tmpCodexHome, 'sessions', '2026', '10', '31', 'rollout-test.jsonl');
       fs.mkdirSync(path.dirname(rollout), { recursive: true });
       fs.writeFileSync(rollout, [
-        JSON.stringify({ type: 'session_meta', payload: { id: 's1', cwd: '/fixture/project' } }),
+        JSON.stringify({ type: 'session_meta', payload: { id: 's1', cwd: '/fixture/project', timestamp: new Date(startedAtMs + 200).toISOString() } }),
         JSON.stringify({ type: 'turn_context', payload: { cwd: '/fixture/project', model: 'gpt-6-luna' } })
       ].join('\n') + '\n');
 
       const { tmux } = fakeTmux();
       const result = await sessions._verifyModelAfterLaunch('tmux-codex-prod-2', 9021, 1, 'codex', 'gpt-5.6-sol', {
-        tmux, stillValid: () => true, codexHome: tmpCodexHome, projectPath: '/fixture/project'
+        tmux, stillValid: () => true, codexHome: tmpCodexHome, projectPath: '/fixture/project', startedAtMs
       });
       assert.equal(result.ok, false);
       assert.equal(result.state, 'hold');
     });
 
     it('stays "held" when the rollout file\'s cwd does not match the project path', async () => {
+      const startedAtMs = Date.now() - 1000;
       const rollout = path.join(tmpCodexHome, 'sessions', '2026', '10', '31', 'rollout-test.jsonl');
       fs.mkdirSync(path.dirname(rollout), { recursive: true });
       fs.writeFileSync(rollout, [
-        JSON.stringify({ type: 'session_meta', payload: { id: 's1', cwd: '/some/other/project' } }),
+        JSON.stringify({ type: 'session_meta', payload: { id: 's1', cwd: '/some/other/project', timestamp: new Date(startedAtMs + 200).toISOString() } }),
         JSON.stringify({ type: 'turn_context', payload: { cwd: '/some/other/project', model: 'gpt-5.6-sol' } })
       ].join('\n') + '\n');
 
       const { tmux } = fakeTmux();
       const result = await sessions._verifyModelAfterLaunch('tmux-codex-prod-3', 9022, 1, 'codex', 'gpt-5.6-sol', {
-        tmux, stillValid: () => true, codexHome: tmpCodexHome, projectPath: '/fixture/project'
+        tmux, stillValid: () => true, codexHome: tmpCodexHome, projectPath: '/fixture/project', startedAtMs
       });
       assert.equal(result.ok, false);
       assert.equal(result.state, 'hold');
@@ -944,7 +1005,7 @@ describe('sessions._verifyModelAfterLaunch — production wiring converges a ses
       const rollout = path.join(tmpCodexHome, 'sessions', '2026', '10', '31', 'rollout-test.jsonl');
       fs.mkdirSync(path.dirname(rollout), { recursive: true });
       fs.writeFileSync(rollout, [
-        JSON.stringify({ type: 'session_meta', payload: { id: 's1', cwd: '/fixture/project' } }),
+        JSON.stringify({ type: 'session_meta', payload: { id: 's1', cwd: '/fixture/project', timestamp: new Date().toISOString() } }),
         JSON.stringify({ type: 'turn_context', payload: { cwd: '/fixture/project', model: 'gpt-5.6-sol' } })
       ].join('\n') + '\n');
       const old = Date.now() - 60 * 60 * 1000;
@@ -961,50 +1022,170 @@ describe('sessions._verifyModelAfterLaunch — production wiring converges a ses
     it('stays "held" when no rollout file exists at all', async () => {
       const { tmux } = fakeTmux();
       const result = await sessions._verifyModelAfterLaunch('tmux-codex-prod-5', 9024, 1, 'codex', 'gpt-5.6-sol', {
-        tmux, stillValid: () => true, codexHome: tmpCodexHome, projectPath: '/fixture/project'
+        tmux, stillValid: () => true, codexHome: tmpCodexHome, projectPath: '/fixture/project', startedAtMs: Date.now() - 1000
       });
       assert.equal(result.ok, false);
       assert.equal(result.state, 'hold');
     });
 
+    it('PRR-A round 6 regression: a rapid relaunch never converges from the PREVIOUS codex session\'s rollout file', async () => {
+      const now = Date.now();
+      const rollout = path.join(tmpCodexHome, 'sessions', '2026', '10', '31', 'rollout-previous.jsonl');
+      fs.mkdirSync(path.dirname(rollout), { recursive: true });
+      fs.writeFileSync(rollout, [
+        JSON.stringify({ type: 'session_meta', payload: { id: 'PREVIOUS-SESSION', cwd: '/fixture/project', timestamp: new Date(now - 2000).toISOString() } }),
+        JSON.stringify({ type: 'turn_context', payload: { cwd: '/fixture/project', model: 'desired-model' } })
+      ].join('\n') + '\n');
+      fs.utimesSync(rollout, (now - 2000) / 1000, (now - 2000) / 1000);
+
+      const { tmux, sent } = fakeTmux();
+      const result = await sessions._verifyModelAfterLaunch('tmux-codex-rapid', 9028, 1, 'codex', 'desired-model', {
+        tmux, stillValid: () => true, codexHome: tmpCodexHome, projectPath: '/fixture/project', startedAtMs: now
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.state, 'hold');
+      assert.equal(sent.length, 0, 'the codex adapter never mutates, matching or not');
+      assert.equal(reconciler.getAdmissionState('session:9028'), 'held');
+    });
+
     it('converges to "verified" ONLY from a matching real claude transcript file, with no readTrustedActiveProfile seam at all', async () => {
+      const startedAtMs = Date.now() - 1000;
       const transcript = path.join(tmpClaudeHome, 'projects', '-fixture-project', 'session.jsonl');
       fs.mkdirSync(path.dirname(transcript), { recursive: true });
       fs.writeFileSync(transcript, [
-        JSON.stringify({ type: 'assistant', cwd: '/fixture/project', message: { model: 'claude-sonnet-5' } })
+        JSON.stringify({ type: 'assistant', cwd: '/fixture/project', timestamp: new Date(startedAtMs + 200).toISOString(), message: { model: 'claude-sonnet-5' } })
       ].join('\n') + '\n');
 
       const { tmux } = fakeTmux();
       const result = await sessions._verifyModelAfterLaunch('tmux-claude-prod', 9025, 1, 'claude', 'claude-sonnet-5', {
-        tmux, stillValid: () => true, claudeHome: tmpClaudeHome, projectPath: '/fixture/project'
+        tmux, stillValid: () => true, claudeHome: tmpClaudeHome, projectPath: '/fixture/project', startedAtMs
       });
       assert.equal(result.ok, true);
       assert.equal(result.state, 'verified');
     });
 
     it('stays "held" on a model mismatch in the real claude transcript file', async () => {
+      const startedAtMs = Date.now() - 1000;
       const transcript = path.join(tmpClaudeHome, 'projects', '-fixture-project', 'session.jsonl');
       fs.mkdirSync(path.dirname(transcript), { recursive: true });
       fs.writeFileSync(transcript, [
-        JSON.stringify({ type: 'assistant', cwd: '/fixture/project', message: { model: 'claude-opus-4-8' } })
+        JSON.stringify({ type: 'assistant', cwd: '/fixture/project', timestamp: new Date(startedAtMs + 200).toISOString(), message: { model: 'claude-opus-4-8' } })
       ].join('\n') + '\n');
 
-      const { tmux } = fakeTmux();
+      const { tmux, sent } = fakeTmux();
       const result = await sessions._verifyModelAfterLaunch('tmux-claude-prod-2', 9026, 1, 'claude', 'claude-sonnet-5', {
-        tmux, stillValid: () => true, claudeHome: tmpClaudeHome, projectPath: '/fixture/project'
+        tmux, stillValid: () => true, claudeHome: tmpClaudeHome, projectPath: '/fixture/project', startedAtMs
       });
       assert.equal(result.ok, false);
       assert.equal(result.state, 'hold');
+      assert.ok(sent.some((e) => e.text === '/model claude-sonnet-5'), 'a genuine (observed, non-null) mismatch still attempts the real control');
     });
 
     it('stays "held" when no claude transcript file exists at all', async () => {
       const { tmux } = fakeTmux();
       const result = await sessions._verifyModelAfterLaunch('tmux-claude-prod-3', 9027, 1, 'claude', 'claude-sonnet-5', {
-        tmux, stillValid: () => true, claudeHome: tmpClaudeHome, projectPath: '/fixture/project'
+        tmux, stillValid: () => true, claudeHome: tmpClaudeHome, projectPath: '/fixture/project', startedAtMs: Date.now() - 1000
       });
       assert.equal(result.ok, false);
       assert.equal(result.state, 'hold');
     });
+
+    it('PRR-A round 6 regression: a rapid relaunch never converges from the PREVIOUS claude session\'s transcript file', async () => {
+      const now = Date.now();
+      const transcript = path.join(tmpClaudeHome, 'projects', '-fixture-project', 'session-previous.jsonl');
+      fs.mkdirSync(path.dirname(transcript), { recursive: true });
+      fs.writeFileSync(transcript, [
+        JSON.stringify({ type: 'assistant', cwd: '/fixture/project', sessionId: 'PREVIOUS-SESSION', timestamp: new Date(now - 2000).toISOString(), message: { model: 'desired-model' } })
+      ].join('\n') + '\n');
+      fs.utimesSync(transcript, (now - 2000) / 1000, (now - 2000) / 1000);
+
+      const { tmux } = fakeTmux();
+      const result = await sessions._verifyModelAfterLaunch('tmux-claude-rapid', 9029, 1, 'claude', 'desired-model', {
+        tmux, stillValid: () => true, claudeHome: tmpClaudeHome, projectPath: '/fixture/project', startedAtMs: now
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.state, 'hold');
+      assert.equal(reconciler.getAdmissionState('session:9029'), 'held');
+    });
+  });
+});
+
+/*
+ * PRR-A round 6 on PR #2757: `_scheduleModelReconciliation`'s bounded
+ * observation retry. A `null`/unobserved first check must hold quietly (no
+ * mutating `tmux.sendKeys` call, exactly the gap BLOCKING 2 closes) and, if
+ * the structured record appears before the retry budget runs out, converge
+ * to `verified` and release `_modelAdmissionBlock` — proven here with real
+ * `delayMs`/`maxAttempts` so the test runs deterministically without the
+ * real 6-second production delay.
+ */
+describe('_scheduleModelReconciliation: bounded retry on an unobserved record (PRR-A round 6 on PR #2757)', () => {
+  const sessions = require('../lib/sessions');
+  const store = require('../lib/store');
+  let realGetActive;
+
+  beforeEach(() => {
+    reconciler._resetForTests();
+    realGetActive = store.sessions.getActive;
+  });
+  afterEach(() => {
+    store.sessions.getActive = realGetActive;
+  });
+
+  it('check 1 unobserved (0 sendKeys, admission held) converges to verified once the record appears before check 2', async () => {
+    store.sessions.getActive = () => ({ id: 9030 });
+    const { tmux, sent } = fakeTmux();
+    let calls = 0;
+    const readTrustedActiveProfile = async () => {
+      calls += 1;
+      if (calls === 1) return null;
+      // Reaching the SECOND call is itself the deterministic proof that
+      // check 1's whole attempt (including `reconcile`'s own admission-state
+      // write) already finished — no sleep/race needed to prove the ordering.
+      assert.equal(reconciler.getAdmissionState('session:9030'), 'held');
+      assert.equal(sent.length, 0, 'an unobserved check 1 must never mutate');
+      return { engine: 'claude', model: 'claude-sonnet-5' };
+    };
+    const result = await sessions._scheduleModelReconciliation('tmux-retry-1', 9030, 1, 'claude', 'claude-sonnet-5', {
+      tmux, stillValid: () => true, readTrustedActiveProfile, delayMs: 5, maxAttempts: 3
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.state, 'verified');
+    assert.equal(calls, 2, 'converged on the second attempt, once the record appeared');
+    assert.equal(sent.length, 0, 'convergence came from observation alone — nothing was ever sent');
+    assert.equal(reconciler.getAdmissionState('session:9030'), 'verified');
+  });
+
+  it('gives up after maxAttempts and stays held when the record never appears', async () => {
+    store.sessions.getActive = () => ({ id: 9031 });
+    const { tmux, sent } = fakeTmux();
+    let calls = 0;
+    const readTrustedActiveProfile = async () => { calls += 1; return null; };
+    const result = await sessions._scheduleModelReconciliation('tmux-retry-2', 9031, 1, 'claude', 'claude-sonnet-5', {
+      tmux, stillValid: () => true, readTrustedActiveProfile, delayMs: 5, maxAttempts: 3
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.unobserved, true);
+    assert.equal(calls, 3, 'stopped at exactly maxAttempts');
+    assert.equal(sent.length, 0);
+    assert.equal(reconciler.getAdmissionState('session:9031'), 'held');
+  });
+
+  it('stops retrying once the session has been superseded, even with attempts remaining', async () => {
+    let active = { id: 9032 };
+    store.sessions.getActive = () => active;
+    const { tmux } = fakeTmux();
+    let calls = 0;
+    const readTrustedActiveProfile = async () => {
+      calls += 1;
+      active = { id: 9999 }; // a relaunch landed under a new session id after check 1.
+      return null;
+    };
+    const result = await sessions._scheduleModelReconciliation('tmux-retry-3', 9032, 1, 'claude', 'claude-sonnet-5', {
+      tmux, stillValid: () => true, readTrustedActiveProfile, delayMs: 5, maxAttempts: 5
+    });
+    assert.equal(result.ok, false);
+    assert.equal(calls, 1, 'never retried past the supersession');
   });
 });
 
