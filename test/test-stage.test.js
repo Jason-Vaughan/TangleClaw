@@ -16,7 +16,7 @@
  * Stage 1 then Stage 2 through this file's own `main`, blocking on either.
  */
 
-const { describe, it, after, afterEach } = require('node:test');
+const { describe, it, after, afterEach, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -391,6 +391,19 @@ describe('runTestament: parses --json output, never throws on a bad one (#2733)'
 });
 
 describe('offloadTier: probe then run, falling through on anything but a clean pass or fail (#2733)', () => {
+  // CI itself sets CI=true (and GITHUB_ACTIONS=true), which would bypass every
+  // one of these tests before they ever reach the mock seam — clear the real
+  // environment's opt-outs so each test controls its own bypass conditions.
+  let restoreCiEnv;
+  beforeEach(() => {
+    const restores = [saveEnv('CI'), saveEnv('GITHUB_ACTIONS'), saveEnv('TANGLECLAW_NO_TESTAMENT')];
+    delete process.env.CI;
+    delete process.env.GITHUB_ACTIONS;
+    delete process.env.TANGLECLAW_NO_TESTAMENT;
+    restoreCiEnv = () => restores.forEach((r) => r());
+  });
+  afterEach(() => restoreCiEnv());
+
   it('is bypassed under CI without ever calling spawnSync', () => {
     const restore = saveEnv('CI');
     process.env.CI = 'true';
@@ -458,6 +471,17 @@ describe('offloadTier: probe then run, falling through on anything but a clean p
 describe('main wires stages 3-5 through offloadTier before the local run (#2733)', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-test-stage-offload-'));
   after(() => fs.rmSync(root, { recursive: true, force: true }));
+  // Same reason as the offloadTier describe above: neutralize CI's own CI=true
+  // so these tests control offload bypass themselves.
+  let restoreCiEnv;
+  beforeEach(() => {
+    const restores = [saveEnv('CI'), saveEnv('GITHUB_ACTIONS'), saveEnv('TANGLECLAW_NO_TESTAMENT')];
+    delete process.env.CI;
+    delete process.env.GITHUB_ACTIONS;
+    delete process.env.TANGLECLAW_NO_TESTAMENT;
+    restoreCiEnv = () => restores.forEach((r) => r());
+  });
+  afterEach(() => restoreCiEnv());
   fs.mkdirSync(path.join(root, 'test', 'helpers'), { recursive: true });
   fs.writeFileSync(path.join(root, 'test', 'helpers', 'preload-small.js'), `require(${JSON.stringify(path.join(REPO, 'test', 'helpers', 'preload-small.js'))});\n`);
   fs.writeFileSync(path.join(root, 'test', 'a.test.js'), "'use strict';\nconst { test } = require('node:test');\ntest('one', () => {});\n");
