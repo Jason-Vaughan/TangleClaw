@@ -54,7 +54,10 @@ describe('workload guidance (#1912)', () => {
       'claude-md': engines._generateClaudeMd(DEFAULT_PROJECT_CONFIG, null),
       'operational-block': engines._generateOperationalBlock(DEFAULT_PROJECT_CONFIG, null),
       'codex-yaml': engines._generateCodexYaml(DEFAULT_PROJECT_CONFIG, null),
-      'aider-conf': engines._generateAiderConf(DEFAULT_PROJECT_CONFIG, null),
+      // Moved to the real `.tangleclaw/aider-conventions.md` carrier since
+      // #2439 — `.aider.conf.yml` itself no longer carries any rules/guide
+      // prose, so this check needs both files' content concatenated.
+      'aider-conf': `${engines._generateAiderConf(DEFAULT_PROJECT_CONFIG, null)}\n${engines._generateAiderConventionsMd(DEFAULT_PROJECT_CONFIG, null)}`,
       'gemini-md': engines._generateGeminiMd(DEFAULT_PROJECT_CONFIG, '# GEMINI.md', null)
     };
     for (const [name, text] of Object.entries(generated)) {

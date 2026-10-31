@@ -12,6 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { execFileSync, spawnSync: realSpawnSync } = require('node:child_process');
+const { initRepo } = require('./_temp-repo');
 const store = require('../lib/store');
 const engines = require('../lib/engines');
 const aiderTaskContract = require('../lib/aider-task-contract');
@@ -138,7 +139,7 @@ describe('aider engine (#2439)', () => {
 
     before(() => {
       repoPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-aider-task-wiring-'));
-      execFileSync('git', ['init', '-q'], { cwd: repoPath });
+      initRepo(repoPath);
       execFileSync('git', ['config', 'user.email', 'tc@test.local'], { cwd: repoPath });
       execFileSync('git', ['config', 'user.name', 'tc-test'], { cwd: repoPath });
       fs.writeFileSync(path.join(repoPath, 'a.js'), 'hello\n');
