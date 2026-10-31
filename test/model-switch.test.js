@@ -573,10 +573,21 @@ describe('lib/model-switch — switchSessionModel', () => {
           // a clean chunk boundary prompts no new conversation.
           if (cmd === '/model claude-sonnet-5') {
             setTimeout(() => {
-              fs.appendFileSync(transcriptFile, JSON.stringify({
-                type: 'system', subtype: 'local_command', cwd: projectPath, timestamp: new Date().toISOString(),
-                content: '<local-command-stdout></local-command-stdout>', commandRun: { command: 'model', args: 'claude-sonnet-5' }
-              }) + '\n');
+              // The REAL succeeded two-row exchange (PRR-A Round 7,
+              // verified against a live Claude Code v2.1.283 probe on
+              // this host) — both rows `type: "user"`, neither carrying a
+              // `commandRun` field at all.
+              const now = new Date().toISOString();
+              fs.appendFileSync(transcriptFile, [
+                JSON.stringify({
+                  type: 'user', uuid: 'inv-1', cwd: projectPath, timestamp: now,
+                  message: { role: 'user', content: '<command-name>/model</command-name>\n            <command-message>model</command-message>\n            <command-args>claude-sonnet-5</command-args>' }
+                }),
+                JSON.stringify({
+                  type: 'user', uuid: 'conf-1', parentUuid: 'inv-1', cwd: projectPath, timestamp: now,
+                  message: { role: 'user', content: '<local-command-stdout>Set model to `Sonnet 5` and saved as your default for new sessions</local-command-stdout>' }
+                })
+              ].join('\n') + '\n');
             }, 15);
           }
         }
@@ -667,6 +678,58 @@ describe('lib/model-switch — switchSessionModel', () => {
       // how long the poll itself takes.
       sleep: () => Promise.resolve(),
       tmux: { sendKeys: (sessionArg, cmd) => sentKeys.push({ session: sessionArg, cmd }) }
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'RECONCILE_FAILED');
+    assert.ok(sentKeys.some((k) => k.cmd === '/clear'));
+    assert.ok(sentKeys.some((k) => k.cmd === '/model claude-sonnet-5'));
+  });
+
+  it('same-provider: fails closed (RECONCILE_FAILED) when the engine REJECTS the /model command, with the exact real rejected fixture (PRR-A Round 7, #2598)', async () => {
+    const claudeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-model-switch-claudehome-'));
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'the-real-tmux', primePrompt: null });
+    const startedAtMs = profileReconciler.parseLaunchTimestampMs(session.startedAt);
+
+    const transcriptDir = path.join(claudeHome, 'projects', 'some-slug');
+    fs.mkdirSync(transcriptDir, { recursive: true });
+    const transcriptFile = path.join(transcriptDir, 'abc123.jsonl');
+    fs.writeFileSync(transcriptFile, JSON.stringify({
+      type: 'assistant', cwd: projectPath, timestamp: new Date(startedAtMs + 2000).toISOString(),
+      message: { model: 'claude-opus-4-6' }
+    }) + '\n');
+
+    const sentKeys = [];
+    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'claude', model: 'claude-sonnet-5' }, {
+      ...target(),
+      checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      claudeHome,
+      now: () => startedAtMs + 5000,
+      sleep: () => Promise.resolve(),
+      tmux: {
+        sendKeys: (sessionArg, cmd) => {
+          sentKeys.push({ session: sessionArg, cmd });
+          // The engine REJECTS the switch — the exact real two-row
+          // exchange a live Claude Code v2.1.283 probe wrote on this host
+          // for a rejected `/model <id>`: `commandRun` on the rejection's
+          // own stdout row names the SAME id that was rejected, which is
+          // exactly the signal a prior version of this reader mistook for
+          // confirmation.
+          if (cmd === '/model claude-sonnet-5') {
+            fs.appendFileSync(transcriptFile, [
+              JSON.stringify({
+                type: 'system', subtype: 'local_command', uuid: 'inv-1', cwd: projectPath, timestamp: new Date().toISOString(),
+                content: '<command-name>/model</command-name>\n            <command-message>model</command-message>\n            <command-args>claude-sonnet-5</command-args>'
+              }),
+              JSON.stringify({
+                type: 'system', subtype: 'local_command', uuid: 'conf-1', parentUuid: 'inv-1', cwd: projectPath, timestamp: new Date().toISOString(),
+                content: "<local-command-stdout>Model 'claude-sonnet-5' not found</local-command-stdout>",
+                commandRun: { command: 'model', args: 'claude-sonnet-5' }
+              })
+            ].join('\n') + '\n');
+          }
+        }
+      }
     });
 
     assert.equal(result.ok, false);

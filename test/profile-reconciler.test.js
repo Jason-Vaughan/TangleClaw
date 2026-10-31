@@ -1108,71 +1108,114 @@ describe('_readClaudeActiveModel', () => {
     });
   });
 
-  describe('PRR-A Round 5: system/local_command records (#2598) — NO assistant turn required', () => {
-    it('reads the model from a system/local_command record with no assistant row in the file at all', () => {
+  describe('PRR-A Round 7: the real /model two-row exchange (#2598) — verified against a live Claude Code v2.1.283 probe on this host', () => {
+    // The exact shapes a live `claude v2.1.283` probe wrote on this host
+    // (SessionStart/last-prompt/cost-state housekeeping rows omitted —
+    // irrelevant to this reader): a SUCCEEDED `/model claude-sonnet-4-6`
+    // writes two `type: "user"` rows with NO `commandRun` field at all; a
+    // REJECTED `/model bogus-nonexistent-model-xyz` writes two
+    // `type: "system", subtype: "local_command"` rows, and `commandRun`
+    // appears ONLY on the rejection's own stdout row — naming the id that
+    // was REJECTED, not applied.
+    function succeededInvocation(ts, modelId, uuid) {
+      return {
+        type: 'user', uuid, timestamp: ts, cwd: '/project',
+        message: { role: 'user', content: `<command-name>/model</command-name>\n            <command-message>model</command-message>\n            <command-args>${modelId}</command-args>` }
+      };
+    }
+    function succeededConfirmation(ts, parentUuid, uuid) {
+      return {
+        type: 'user', uuid, parentUuid, timestamp: ts, cwd: '/project',
+        message: { role: 'user', content: '<local-command-stdout>Set model to `Sonnet 4.6` and saved as your default for new sessions</local-command-stdout>' }
+      };
+    }
+    function rejectedInvocation(ts, modelId, uuid) {
+      return {
+        type: 'system', subtype: 'local_command', uuid, timestamp: ts, cwd: '/project', level: 'info', isMeta: false,
+        content: `<command-name>/model</command-name>\n            <command-message>model</command-message>\n            <command-args>${modelId}</command-args>`
+      };
+    }
+    function rejectedConfirmation(ts, parentUuid, uuid, modelId) {
+      return {
+        type: 'system', subtype: 'local_command', uuid, parentUuid, timestamp: ts, cwd: '/project', level: 'info', isMeta: false,
+        content: `<local-command-stdout>Model '${modelId}' not found</local-command-stdout>`,
+        commandRun: { command: 'model', args: modelId }
+      };
+    }
+
+    it('reads the model once a SUCCEEDED /model exchange confirms it, with no assistant row in the file at all', () => {
       const startedAtMs = Date.now() - 10000;
-      // The real shape Claude Code v2.1.283 writes the instant a `/model
-      // <id>` slash command is delivered — verified against this
-      // machine's own real ~/.claude/projects/**/*.jsonl files before
-      // relying on it (the general commandRun shape; see this reader's
-      // own implementation comment for what was and wasn't directly
-      // confirmed on this host).
       writeTranscript('-project/session.jsonl', [
-        {
-          type: 'system', subtype: 'local_command', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(),
-          content: '<local-command-stdout></local-command-stdout>', commandRun: { command: 'model', args: 'claude-sonnet-5' }
-        }
+        succeededInvocation(new Date(startedAtMs + 200).toISOString(), 'claude-sonnet-5', 'inv-1'),
+        succeededConfirmation(new Date(startedAtMs + 201).toISOString(), 'inv-1', 'conf-1')
       ]);
       const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs });
       assert.deepEqual(result, { engine: 'claude', model: 'claude-sonnet-5' });
     });
 
-    it('a system/local_command record for /clear (empty args) never supplies a model', () => {
+    it('a REJECTED /model exchange never supplies the rejected model — the exact real bug a prior version of this reader had (trusting commandRun.args, present only on the rejection)', () => {
       const startedAtMs = Date.now() - 10000;
       writeTranscript('-project/session.jsonl', [
-        {
-          type: 'system', subtype: 'local_command', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(),
-          content: '<local-command-stdout></local-command-stdout>', commandRun: { command: 'clear', args: '' }
-        }
+        rejectedInvocation(new Date(startedAtMs + 200).toISOString(), 'bogus-nonexistent-model-xyz', 'inv-1'),
+        rejectedConfirmation(new Date(startedAtMs + 201).toISOString(), 'inv-1', 'conf-1', 'bogus-nonexistent-model-xyz')
       ]);
       const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs });
-      assert.equal(result, null, 'no model-bearing record exists — /clear names no model at all');
+      assert.equal(result, null, 'a rejected switch must never be read as the applied model, however confidently commandRun names it');
     });
 
-    it('a LATER system/local_command record wins over an earlier assistant row, same as two assistant rows would', () => {
+    it('a REJECTED exchange followed by a SUCCEEDED one (the real sequence this host\'s own probe produced) reads only the succeeded model', () => {
+      const startedAtMs = Date.now() - 10000;
+      writeTranscript('-project/session.jsonl', [
+        succeededInvocation(new Date(startedAtMs + 200).toISOString(), 'claude-opus-4-8', 'inv-1'),
+        succeededConfirmation(new Date(startedAtMs + 201).toISOString(), 'inv-1', 'conf-1'),
+        rejectedInvocation(new Date(startedAtMs + 300).toISOString(), 'bogus-nonexistent-model-xyz', 'inv-2'),
+        rejectedConfirmation(new Date(startedAtMs + 301).toISOString(), 'inv-2', 'conf-2', 'bogus-nonexistent-model-xyz')
+      ]);
+      const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs });
+      assert.deepEqual(result, { engine: 'claude', model: 'claude-opus-4-8' }, 'the rejection must not overwrite the earlier succeeded model, nor supply its own');
+    });
+
+    it('a LATER succeeded /model exchange wins over an earlier assistant row, same as two assistant rows would', () => {
       const startedAtMs = Date.now() - 10000;
       writeTranscript('-project/session.jsonl', [
         { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(), message: { model: 'claude-opus-4-8' } },
-        {
-          type: 'system', subtype: 'local_command', cwd: '/project', timestamp: new Date(startedAtMs + 300).toISOString(),
-          content: '<local-command-stdout></local-command-stdout>', commandRun: { command: 'model', args: 'claude-sonnet-5' }
-        }
+        succeededInvocation(new Date(startedAtMs + 300).toISOString(), 'claude-sonnet-5', 'inv-1'),
+        succeededConfirmation(new Date(startedAtMs + 301).toISOString(), 'inv-1', 'conf-1')
       ]);
       const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs });
       assert.deepEqual(result, { engine: 'claude', model: 'claude-sonnet-5' });
     });
 
-    it('a system/local_command record is subject to the exact same minRecordTimestampMs recency scoping as an assistant row', () => {
+    it('a succeeded /model exchange is subject to the exact same minRecordTimestampMs recency scoping as an assistant row — scoped to the CONFIRMATION row\'s own timestamp', () => {
       const startedAtMs = Date.now() - 10000;
       const cutoff = Date.now() - 3000;
       writeTranscript('-project/session.jsonl', [
         { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(), message: { model: 'claude-opus-4-8' } },
-        {
-          // Before the cutoff — must not count as post-clear confirmation.
-          type: 'system', subtype: 'local_command', cwd: '/project', timestamp: new Date(startedAtMs + 300).toISOString(),
-          content: '<local-command-stdout></local-command-stdout>', commandRun: { command: 'model', args: 'claude-sonnet-5' }
-        }
+        // Both rows before the cutoff — must not count as post-clear confirmation.
+        succeededInvocation(new Date(startedAtMs + 300).toISOString(), 'claude-sonnet-5', 'inv-1'),
+        succeededConfirmation(new Date(startedAtMs + 301).toISOString(), 'inv-1', 'conf-1')
       ]);
       const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs, minRecordTimestampMs: cutoff });
-      assert.equal(result, null, 'the local_command record predates the cutoff, same as a stale assistant row would');
+      assert.equal(result, null, 'the exchange predates the cutoff, same as a stale assistant row would');
     });
 
-    it('a system/local_command record with no commandRun, an unrecognized command, or a non-string/empty args is never treated as naming a model', () => {
+    it('an invocation row with no matching confirmation row at all never supplies a model', () => {
       const startedAtMs = Date.now() - 10000;
       writeTranscript('-project/session.jsonl', [
-        { type: 'system', subtype: 'local_command', cwd: '/project', timestamp: new Date(startedAtMs + 100).toISOString(), content: '' },
-        { type: 'system', subtype: 'local_command', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(), content: '', commandRun: { command: 'context', args: '' } },
-        { type: 'system', subtype: 'local_command', cwd: '/project', timestamp: new Date(startedAtMs + 300).toISOString(), content: '', commandRun: { command: 'model' } }
+        succeededInvocation(new Date(startedAtMs + 200).toISOString(), 'claude-sonnet-5', 'inv-1')
+        // No confirmation row ever arrives — the command may still be in flight.
+      ]);
+      const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs });
+      assert.equal(result, null);
+    });
+
+    it('a confirmation-shaped row whose parentUuid matches nothing pending is ignored, not mistaken for an unrelated command\'s result', () => {
+      const startedAtMs = Date.now() - 10000;
+      writeTranscript('-project/session.jsonl', [
+        {
+          type: 'user', uuid: 'orphan', parentUuid: 'nothing-pending', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(),
+          message: { role: 'user', content: '<local-command-stdout>Set model to `Sonnet 4.6` and saved as your default for new sessions</local-command-stdout>' }
+        }
       ]);
       const result = reconciler._readClaudeActiveModel({ claudeHome: tmpHome, projectPath: '/project', startedAtMs });
       assert.equal(result, null);
