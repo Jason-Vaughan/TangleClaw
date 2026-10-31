@@ -435,6 +435,7 @@
     "test/api-auth-session.test.js",
     "test/api-bridge-gateway.test.js",
     "test/api-bridge.test.js",
+    "test/api-config-default-engine.test.js",
     "test/api-config.test.js",
     "test/api-continuity.test.js",
     "test/api-control.test.js",
