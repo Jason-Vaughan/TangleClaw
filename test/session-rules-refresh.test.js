@@ -596,6 +596,28 @@ describe('#2273 — delivered rules files follow the rules in force', () => {
   });
 });
 
+// #2293's own real-engine question — does a hook registered mid-session
+// actually fire on the running session's next `/clear`, or does the engine
+// cache its hooks at launch? — was answered empirically against the real
+// installed `claude` CLI (`claude --version` == 2.1.283): launched a
+// disposable session in a tmux pane with no hooks, wrote a SessionStart
+// hook into its `.claude/settings.local.json` mid-session, and sent `/clear`,
+// repeated across ~10 trials. Yes, it re-reads fresh on every `/clear`, not
+// only at launch — including a brand-new entry added beside one that already
+// fired at launch, and an edit to an already-registered entry's command —
+// provided a few seconds pass between the write and the `/clear` (an
+// immediate, zero-delay `/clear` in the same instant as the write
+// unreliably missed it in several trials; never a concern in real operator
+// usage). See the full writeup and procedure in `lib/session-rules-refresh.js`'s
+// module header. That real-engine behavior is outside this repo's control and
+// not reproduced here — spawning a real tmux+claude process in the suite
+// would be slow and flaky in CI. What IS tested below, deterministically, is
+// TangleClaw's own half of the contract: that a refresh actually registers
+// the hook and writes the file a `/clear` would need, and that the hook
+// SCRIPT this repo owns prints the right content once it runs (see "is what
+// the real hook prints after a clear" above, which already covers that the
+// hook script itself does the right thing — real-engine firing is a
+// property of Claude Code, not of this script).
 describe('#2293 — a project launched with none still gets its first rule, and an outgrown set grows new slots', () => {
   let project;
   beforeEach(() => { project = makeProject(); });

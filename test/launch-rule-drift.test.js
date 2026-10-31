@@ -27,6 +27,24 @@ function fp(source, id, hash, revision = 1) {
   return { id, source, revision, contentHash: hash };
 }
 
+test('isUsableRule excludes a non-string content without throwing, even when it coerces non-empty (#1654)', () => {
+  // A number, object or array `content` coerces to a non-empty string
+  // (`String(7)` -> '7'), which the predicate used to count as usable — but
+  // `displayRuleText` (lib/rule-label.js) treats any non-string `content` as
+  // an empty body, so that rule rendered with no text at all while this
+  // predicate called it present. Requiring `typeof === 'string'` keeps every
+  // population and the renderer agreeing on the same excluded set.
+  assert.equal(drift.isUsableRule({ id: 1, content: 7 }), false);
+  assert.equal(drift.isUsableRule({ id: 2, content: null }), false);
+  assert.equal(drift.isUsableRule({ id: 3, content: undefined }), false);
+  assert.equal(drift.isUsableRule({ id: 4 }), false);
+  assert.equal(drift.isUsableRule({ id: 5, content: {} }), false);
+  assert.equal(drift.isUsableRule({ id: 6, content: ['x'] }), false);
+  assert.equal(drift.isUsableRule(null), false);
+  assert.equal(drift.isUsableRule({ id: 7, content: '   ' }), false, 'whitespace-only is still excluded');
+  assert.equal(drift.isUsableRule({ id: 8, content: 'Usable rule.' }), true);
+});
+
 test('recordedSources reads a legacy document WITH ROWS as project-only', () => {
   // No `manifestSources` means a pre-21.10 wrap, which looked at project rules
   // and nothing else regardless of what its rows claim — but only its ROWS are

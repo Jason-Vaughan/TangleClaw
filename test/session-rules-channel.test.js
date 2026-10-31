@@ -112,17 +112,21 @@ describe('session rules channel (#749)', () => {
       assert.deepEqual(channel.buildShards(null, 10000), []);
     });
 
-    it('excludes null, undefined, missing or whitespace-only content without throwing (#1654)', () => {
-      // isUsableRule (lib/launch-rule-drift.js) wraps in String() before
-      // trimming; the inline copy this replaced called `.trim()` on
-      // `rule.content` directly, which threw for anything truthy but not a
-      // string (e.g. a number) — a non-string, non-nullish body (like 7
-      // below) is still truthy and usable, so it must not throw either.
+    it('excludes a non-string, null, undefined or missing content without throwing (#1654)', () => {
+      // The inline copy this replaced called `.trim()` on `rule.content`
+      // directly, which threw a TypeError for anything truthy but not a
+      // string. isUsableRule now also requires content to actually BE a
+      // string (not merely coerce to a non-empty one): displayRuleText
+      // (lib/rule-label.js) treats a non-string content as an empty body, so
+      // a rule isUsableRule called "usable" there would render with no body
+      // text at all — excluding it here keeps every population and the
+      // renderer agreeing on the same set.
       const rules = [
         { id: 1, content: 7 },
         { id: 2, content: null },
         { id: 3, content: undefined },
         { id: 4 },
+        { id: 7, content: {} },
         null,
         { id: 5, content: '   ' },
         { id: 6, content: 'Usable rule.' }
@@ -130,7 +134,8 @@ describe('session rules channel (#749)', () => {
       let shards;
       assert.doesNotThrow(() => { shards = channel.buildShards(rules, 10000); });
       assert.equal(shards.length, 1);
-      assert.deepEqual(shards[0].ruleIds, [1, 6]);
+      assert.deepEqual(shards[0].ruleIds, [6]);
+      assert.ok(shards[0].body.includes('Usable rule.'), 'a usable string rule renders its full body text');
     });
   });
 
@@ -183,12 +188,13 @@ describe('session rules channel (#749)', () => {
       assert.ok(!slots[0].text.includes('Not carried'));
     });
 
-    it('excludes null, undefined, missing or whitespace-only content without throwing (#1654)', () => {
+    it('excludes a non-string, null, undefined or missing content without throwing (#1654)', () => {
       const rules = [
         { id: 1, content: 7 },
         { id: 2, content: null },
         { id: 3, content: undefined },
         { id: 4 },
+        { id: 7, content: {} },
         null,
         { id: 5, content: '   ' },
         { id: 6, content: 'Usable rule.' }
@@ -196,7 +202,8 @@ describe('session rules channel (#749)', () => {
       let slots;
       assert.doesNotThrow(() => { slots = channel.packFixedSlots(rules, 10000, 3, at); });
       assert.equal(slots.length, 1);
-      assert.deepEqual(slots[0].ruleIds, [1, 6]);
+      assert.deepEqual(slots[0].ruleIds, [6]);
+      assert.ok(slots[0].text.includes('Usable rule.'), 'a usable string rule renders its full body text');
     });
 
     it('states the count in force and the time in every slot', () => {
