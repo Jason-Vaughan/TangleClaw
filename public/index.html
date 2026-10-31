@@ -67,6 +67,10 @@
       <button class="dash-action" id="portsToggle" aria-expanded="false" aria-controls="portsGrid">
         Ports <span class="dash-badge" id="portsCount">0</span>
       </button>
+      <button class="dash-action" id="usageToggle" aria-expanded="false" aria-controls="usagePanel"
+              title="Multi-provider usage &amp; quota window telemetry, the weekly reset schedule, and the recommended Builder model-tier policy">
+        Usage
+      </button>
       <button class="dash-action" id="groupsToggle" aria-expanded="false" aria-controls="groupsPanel">
         Groups <span class="dash-badge" id="groupsCount">0</span>
       </button>
@@ -104,6 +108,12 @@
 
   <!-- Ports Grid (expandable panel) -->
   <div id="portsGrid" class="ports-grid" aria-label="Port leases"></div>
+
+  <!-- Usage Panel (expandable) — multi-provider usage & quota window
+       telemetry (#2599). Fetches GET /api/usage/windows on open, the same
+       on-demand pattern the Engine Inventory settings section uses, rather
+       than riding the dashboard's own session-status poll. -->
+  <div id="usagePanel" class="usage-panel" aria-label="Usage windows"></div>
 
   <!-- Groups Panel (expandable) -->
   <div id="groupsPanel" class="groups-panel" aria-label="Project groups"></div>

@@ -8,12 +8,16 @@
  * calibration, and the Conservation / Use-It-or-Lose-It policy windows.
  */
 
-const { describe, it } = require('node:test');
+const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { setLevel } = require('../lib/logger');
 
+setLevel('error');
+
+const store = require('../lib/store');
 const uw = require('../lib/usage-windows');
 
 /**
@@ -29,6 +33,25 @@ function withTmpDir(fn) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
+
+// A fresh (temp) store for every test in this file: any call that omits
+// `deps.calibrationStore` reaches the default store, `store.usageCalibration`
+// (schema v75), which needs an initialized database — even in tests that are
+// not about calibration at all (`windowKind` reads it to decide the policy
+// window). Per-test, not per-file, so a calibration one test writes can
+// never leak into the next.
+let _storeTmpDir;
+
+beforeEach(() => {
+  _storeTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-usage-windows-store-'));
+  store._setBasePath(_storeTmpDir);
+  store.init();
+});
+
+afterEach(() => {
+  store.close();
+  fs.rmSync(_storeTmpDir, { recursive: true, force: true });
+});
 
 describe('lib/usage-windows — Pacific time math', () => {
   it('nextWeeklyResetAtMs lands on Thursday 06:00 Pacific', () => {
@@ -143,10 +166,19 @@ describe('lib/usage-windows — windowKind policy', () => {
 });
 
 describe('lib/usage-windows — calibration', () => {
-  it('round-trips through the default in-memory store', () => {
+  it('round-trips through the default store (schema v75 usage_calibration, durable across a restart)', () => {
     const result = uw.calibrateUsage({ provider: 'claude', weeklyPct: 42, fiveHourPct: 80 });
     assert.equal(result.ok, true);
     assert.equal(uw.getCalibration('claude').weeklyPct, 42);
+    // Durable, not an in-memory cache: a fresh read through the store facade
+    // directly sees the same row, not a process-local Map.
+    assert.equal(store.usageCalibration.get('claude').weeklyPct, 42);
+  });
+
+  it('default store replaces a calibration in place rather than accumulating rows', () => {
+    uw.calibrateUsage({ provider: 'claude', weeklyPct: 42 });
+    uw.calibrateUsage({ provider: 'claude', weeklyPct: 7 });
+    assert.equal(uw.getCalibration('claude').weeklyPct, 7);
   });
 
   it('round-trips through an injected store without touching the default one', () => {
@@ -259,6 +291,22 @@ describe('lib/usage-windows — getUsageWindows composition', () => {
       assert.ok(Date.parse(result.resetSchedule.nextWeeklyResetAt) > nowMs);
       assert.ok('claude' in result.calibration);
       assert.ok('codex' in result.calibration);
+      assert.equal(result.byProviderModel.claude['claude-sonnet-5'].sprint, null, 'no sprint window without an explicit sprintStartMs');
+    });
+  });
+
+  it('includes a sprint window, summed from the given sprintStartMs, only when one is given', () => {
+    withTmpDir((dir) => {
+      const projectDir = path.join(dir, 'claude', 'p');
+      fs.mkdirSync(projectDir, { recursive: true });
+      const nowMs = uw.pacificWallClockToUtcMs(2026, 10, 28, 12, 0);
+      const sprintStartMs = nowMs - 3 * 86400000;
+      fs.writeFileSync(path.join(projectDir, 'a.jsonl'), [
+        JSON.stringify({ type: 'assistant', timestamp: new Date(sprintStartMs - 60000).toISOString(), message: { model: 'claude-sonnet-5', usage: { input_tokens: 1000, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } }),
+        JSON.stringify({ type: 'assistant', timestamp: new Date(sprintStartMs + 60000).toISOString(), message: { model: 'claude-sonnet-5', usage: { input_tokens: 5, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } })
+      ].join('\n') + '\n');
+      const result = uw.getUsageWindows({ claudeProjectsDir: projectDir, codexSessionsDir: path.join(dir, 'no-codex'), nowMs, sprintStartMs });
+      assert.equal(result.byProviderModel.claude['claude-sonnet-5'].sprint.inputTokens, 5, 'only the record AT/AFTER sprintStartMs counts');
     });
   });
 

@@ -513,6 +513,48 @@ html[data-tc-keyboard] body {
   font-size: 13px;
   padding: 8px;
 }
+
+/* ── Usage Panel (#2599) ── */
+.usage-panel {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease, padding 0.3s ease;
+  padding: 0 16px;
+  font-size: 13px;
+}
+.usage-panel.open {
+  max-height: 400px;
+  padding-top: 4px;
+  padding-bottom: 12px;
+  overflow-y: auto;
+}
+.usage-panel .usage-model-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+  color: var(--text);
+}
+.usage-panel .usage-provider-name {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text);
+  margin-top: 8px;
+}
+.usage-panel .usage-policy {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border, #2a2a2a);
+  color: var(--text-muted);
+}
+.usage-empty {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 8px;
+}
 .port-group {
   margin-bottom: 8px;
 }
