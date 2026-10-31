@@ -17,7 +17,14 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
-## Unreleased — v5.48.0 Stored data that stays bounded
+## Unreleased — v5.48.1 Testament pool and control-plane reliability
+
+- **Offload test tiers to the Testament pool** (#2733) — Stage 3–5 probe the container executor, run eligible Small, Medium and Large suites on the pool, and fall back to local execution when the pool cannot take them. The manifest and Docker image define the runner environment. `scripts/test-stage.js#offloadTier`, `scripts/test-tiers.js`, `.testament.toml`, `.devcontainer/Dockerfile`. Tests: `test/test-stage.test.js`, `test/test-tiers.test.js`.
+- **Calibrate the Large-tier timeout** (#2706) — a measured full Stage 5 contention run sets the Large-tier file timeout to 25 minutes, with headroom over the slowest observed file. `scripts/test-stage.js#LARGE_TIMEOUT_MS`. Tests: `test/test-stage.test.js`.
+- **Recover Codex Medusa wake checks after transient system errors** (#2723) — a bound Codex thread reporting `systemError` is idle for wake purposes while folder trust and other active-thread gates still apply. `lib/startup-control-codex.js#observeActivity`. Tests: `test/startup-control-codex.test.js`.
+- **Track Medusa exchanges after Hub retargeting** (#2726) — a send redirected to a current local workspace updates its projected recipient identity and keeps replies tied to the delivered target, including older retargeted exchanges. `lib/medusa-send.js#sendTracked`, `lib/medusa-exchanges.js#bindHubId`, `lib/medusa-exchanges.js#project`, `lib/store.js`. Tests: `test/api-medusa.test.js`, `test/medusa-exchanges.test.js`.
+
+## v5.48.0 — Stored data that stays bounded
 
 - **Bound launch-sequence records** (#1595) — ended sessions keep full step content for the newest 10 sequences per project, metadata and digests through the newest 100, and no older sequences; active sessions and live startup-prompt references are exempt. `lib/store/launch.js#_pruneLaunchSequences`. Tests: `test/launch-sequence.test.js`, `test/api-launch-sequences.test.js`.
 - **Bound Medusa deliveries after sessions end** (#1331) — numeric session ids now match the ledger's text keys for pruning; ended-session and orphan sweeps cap rows after their per-session cap. `lib/store.js#_pruneMedusaDeliveries`, `lib/store.js#_pruneUnattachedMedusaDeliveries`. Tests: `test/medusa-delivery-disposition.test.js`, `test/api-medusa.test.js`.
