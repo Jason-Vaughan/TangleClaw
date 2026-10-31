@@ -20,7 +20,7 @@
  *    believe.
  */
 
-const { describe, it } = require('node:test');
+const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -28,6 +28,7 @@ const path = require('node:path');
 const { liftDeclaration } = require('./helpers/lift');
 
 const engines = require('../lib/engines');
+const store = require('../lib/store');
 const { DEFAULT_PROJECT_CONFIG } = require('../lib/project-config');
 const loadApiHelperGlobals = require('./_api-helper-globals');
 
@@ -1140,6 +1141,29 @@ describe('a plugin-governed project on a non-claude-md carrier (#1268)', () => {
   });
 
   describe('writeEngineConfig reports its OTHER silent skip', () => {
+    // `writeEngineConfig`'s codex-md generation path re-reads the profile from
+    // the STORE (`generateConfig` -> `store.engines.get(engineId)`), not from
+    // the `codex()` object passed in here — a real `~/.tangleclaw/engines/`
+    // sync is what makes that lookup succeed, and nothing guarantees one
+    // exists on a machine that has never run the server (a fresh CI
+    // checkout's `$HOME`). An un-synced store makes `generateConfig` return
+    // null for an UNRELATED reason (no profile on disk) and the whole write
+    // skip for a reason that has nothing to do with #1268 — exactly the
+    // failure mode this isolated, synced store exists to rule out. Same
+    // pattern as `test/antigravity-engine.test.js`.
+    let storeTempDir;
+
+    before(() => {
+      storeTempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-setting-disposition-store-'));
+      store._setBasePath(storeTempDir);
+      store.init();
+    });
+
+    after(() => {
+      store.close();
+      fs.rmSync(storeTempDir, { recursive: true, force: true });
+    });
+
     /**
      * Run `fn` with the logger capturing info-and-above into an array.
      * @param {() => void} fn - Work to run while capturing.
