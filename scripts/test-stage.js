@@ -37,6 +37,15 @@
  * report that is not the run the summary describes, or that carries a failure
  * the summary does not count, exits 1 whatever node's exit code was.
  *
+ * Stages 3-5 try the Testament pool first (#2733): probe, then run the tier's
+ * manifest suite there, falling through to the local run above whenever
+ * offload is bypassed (`TANGLECLAW_NO_TESTAMENT=1`, `CI`, a synthetic fixture
+ * root with no `io.testament` seam) or the pool answers that it can't take
+ * the run (no coordinator, the project not yet allowed, or any other
+ * `--probe`/`--no-fallback` exit other than a clean pass or fail). A pool run
+ * never writes a junit report — it is a quick pass/fail, not a `test_command`
+ * run the evidence recorder can ingest.
+ *
  * Usage: node scripts/test-stage.js <1|2|3|4|5|all> [--junit <path>] [--spec <path|stdout>] [--base <ref>]
  *   --junit  where the junit report goes (default: a file under the OS temp dir, printed);
  *            Stage 2 writes one per tier beside it, `<path>.<tier>.xml`
@@ -89,18 +98,24 @@ const GUARDED_TIMEOUT_MS = 300000;
  * calibrated for Medium and would still cancel this file as a false
  * failure even post-fix.
  *
- * Unmeasured: how much slower that file runs with the full ~310-file Large
- * tier sharing the host (the Medium tier's own calibration saw a ~12x
- * slowdown from alone to shared — measuring Large's equivalent costs a full
- * Stage 5 run, tens of minutes, which this fix did not spend). This value is
- * a deliberately generous placeholder against that unknown, not a measured
- * one: re-measure for real under full Stage 5 contention and set it
- * precisely once that data exists, rather than trusting this margin. Until
- * then, it is still a *bound*, not an unbound run — a file that is
- * genuinely stuck (as opposed to merely slow) is cancelled and named
- * instead of blocking the whole stage forever with no recovery.
+ * Measured for real under full Stage 5 contention (#2706, this repository at
+ * this chunk's own head, a laptop): a full 312-file Large run, 12,286 tests,
+ * green, 635,777 ms total; `test/soak-guest.test.js`'s own eight top-level
+ * describes (which run sequentially within the file's one process — no
+ * `concurrency` is declared) summed to ~486.9 s, a ~1.8x slowdown from its
+ * ~270 s alone — far gentler than the ~12x alone-to-shared swing the Medium
+ * tier's calibration saw, since this file is I/O/subprocess-bound rather
+ * than CPU-bound against 300+ sibling processes. `GUARDED_TIMEOUT_MS` above
+ * applies ~2.5x headroom over ITS OWN measured-shared number (120 s → 300 s);
+ * the same ratio over 486.9 s would be ~1,217 s, so 1,500,000 ms (25 min,
+ * ~3.1x headroom) is comfortably above that while still cutting the previous
+ * unmeasured 60-minute placeholder by more than half. Re-measure if a new
+ * slowest file emerges or this one changes materially; it is still a
+ * *bound*, not an unbound run — a file that is genuinely stuck (as opposed
+ * to merely slow) is cancelled and named instead of blocking the whole stage
+ * forever with no recovery.
  */
-const LARGE_TIMEOUT_MS = 3600000;
+const LARGE_TIMEOUT_MS = 1500000;
 
 /** The tier each tier stage runs, and the guard each tier runs under. */
 const TIER_OF_STAGE = Object.freeze({ 3: 'small', 4: 'medium', 5: 'large' });
@@ -115,6 +130,132 @@ const TIMEOUT_OF_TIER = Object.freeze({
   medium: GUARDED_TIMEOUT_MS,
   large: LARGE_TIMEOUT_MS
 });
+
+/**
+ * Client-side ceiling for one `testament run` of a tier (#2733): double the
+ * manifest's own per-batch bound, covering queueing on the pool plus the run
+ * itself. The pool enforces the batch bound on each runner; this is only a
+ * guard against a `testament` CLI invocation that never returns at all.
+ */
+const TESTAMENT_RUN_TIMEOUT_MS = 2 * tiers.TESTAMENT_BATCH_TIMEOUT_S * 1000;
+
+/**
+ * Why a tier must run locally rather than through the Testament pool: an
+ * explicit opt-out, CI (which has its own evidence path and no business
+ * depending on an external pool), or a synthetic fixture repo under test
+ * (unless the test supplies its own `io.testament` seam, in which case the
+ * fixture root is exactly what it means to exercise).
+ *
+ * @param {string} root
+ * @param {{testament?: object}} io
+ * @returns {string|null} The reason, or null when offload is allowed
+ */
+function testamentBypassReason(root, io) {
+  if (process.env.TANGLECLAW_NO_TESTAMENT === '1') return 'TANGLECLAW_NO_TESTAMENT=1';
+  if (process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true') return 'CI';
+  if (path.resolve(root) !== ROOT && !io.testament) return `root ${root} is not this repository`;
+  return null;
+}
+
+/**
+ * The `testament` binary: `testament` on `PATH`, else `~/.local/bin/testament`.
+ *
+ * @returns {string|null} An absolute path, or null when neither exists
+ */
+function resolveTestamentBin() {
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    const candidate = path.join(dir, 'testament');
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  const home = path.join(os.homedir(), '.local', 'bin', 'testament');
+  return fs.existsSync(home) ? home : null;
+}
+
+/**
+ * Run `testament` with the given arguments and parse its `--json` output.
+ * Never throws: a missing binary, a spawn error, a timeout or unparseable
+ * output are all reported as `ok: false` / `parsed: null` for the caller to
+ * treat as "fall back to a local run".
+ *
+ * @param {string[]} argv - Arguments after `testament`
+ * @param {number} timeoutMs
+ * @param {{bin?: string|null, spawnSync?: function(string, string[], object): object}} [seam] - Injection seam
+ * @returns {{ok: boolean, exitCode: number|null, parsed: object|null}}
+ */
+function runTestament(argv, timeoutMs, seam = {}) {
+  const bin = 'bin' in seam ? seam.bin : resolveTestamentBin();
+  if (!bin) return { ok: false, exitCode: null, parsed: null };
+  const spawn = seam.spawnSync || spawnSync;
+  const r = spawn(bin, argv, { encoding: 'utf8', timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 });
+  if (r.error || typeof r.status !== 'number') return { ok: false, exitCode: r.status ?? null, parsed: null };
+  let parsed = null;
+  try { parsed = JSON.parse(r.stdout || ''); } catch { /* unparseable: caller falls back */ }
+  return { ok: true, exitCode: r.status, parsed };
+}
+
+/**
+ * Try to run a tier on the Testament pool (#2733): probe, then
+ * `--no-fallback --suite <tier>`. Null means "fall through to the existing
+ * local run" — either offload is bypassed (`testamentBypassReason`), the pool
+ * answered that it can't take the run right now, or the envelope is treated
+ * as malformed rather than trusted blind: the process's own exit code
+ * (`run.exitCode`) and the envelope's self-reported `exit_code` must agree
+ * (per `client.py`'s `Outcome.envelope()`, the two are the same value by
+ * construction, so a mismatch means something corrupted the pipe between
+ * them), and a pass needs a `report.counts` object while a fail needs a
+ * non-empty `report.items` array — an empty `{}` on pass or an empty
+ * `items` on fail is treated the same as a missing `report`, never trusted
+ * as a vacuous success/failure. Non-null means Testament ran the tier and
+ * this is its verdict.
+ *
+ * Progress and fallback-diagnostic lines go to `io.err` (stderr), per the
+ * sprint plan's own spec ("Log to stderr" for the offload notice, "log the
+ * pool error code on stderr and fall back") and matching Testament's own
+ * CLI philosophy (`cli.py`'s `_run`: "stdout carries the envelope alone...
+ * progress is for whoever watches the run, and stderr is where that goes").
+ * The actual pass/fail verdict stays on `io.out` (stdout), alongside every
+ * other result this file prints.
+ *
+ * @param {string} tier
+ * @param {{root: string, out: {write: function(string): any}, err: {write: function(string): any}, testament?: object}} io
+ * @returns {number|null} 0 or 1 when Testament ran the tier; null to fall through
+ */
+function offloadTier(tier, io) {
+  const bypass = testamentBypassReason(io.root, io);
+  if (bypass) return null;
+  const seam = io.testament || {};
+  io.err.write(`testament: probing the pool for ${tier}...\n`);
+  const probe = runTestament(['run', '--probe', '--json'], 5000, seam);
+  if (!probe.ok || probe.exitCode !== 0 || probe.parsed?.status !== 'ok') {
+    io.err.write(`testament: pool unavailable for ${tier} (${probe.parsed?.error?.code || 'probe failed'}); running locally\n`);
+    return null;
+  }
+  io.err.write(`testament: running ${tier} on the pool (this blocks until the batch finishes)...\n`);
+  const run = runTestament(['run', '--no-fallback', '--suite', tier, '--json=summary'], TESTAMENT_RUN_TIMEOUT_MS, seam);
+  if (!run.ok || run.parsed === null) {
+    io.err.write(`testament: pool run for ${tier} produced no usable report; running locally\n`);
+    return null;
+  }
+  if (run.exitCode === 0 && run.parsed.exit_code === 0) {
+    if (!run.parsed.report || typeof run.parsed.report !== 'object' || !run.parsed.report.counts || typeof run.parsed.report.counts !== 'object' || Object.keys(run.parsed.report.counts).length === 0) {
+      io.err.write(`testament: pool run for ${tier} reported pass but the envelope carries no usable report; running locally\n`);
+      return null;
+    }
+    io.out.write(`testament: ${tier} passed on the pool (${JSON.stringify(run.parsed.report.counts)})\n`);
+    return 0;
+  }
+  if (run.exitCode === 1 && run.parsed.exit_code === 1) {
+    if (!run.parsed.report || !Array.isArray(run.parsed.report.items) || run.parsed.report.items.length === 0) {
+      io.err.write(`testament: pool run for ${tier} reported failure but the envelope carries no usable report; running locally\n`);
+      return null;
+    }
+    const items = run.parsed.report.items.map((it) => `  ${it.id || JSON.stringify(it)}`).join('\n');
+    io.out.write(`testament: ${tier} failed on the pool:\n${items}\n`);
+    return 1;
+  }
+  io.err.write(`testament: pool run for ${tier} exited ${run.exitCode} (${run.parsed?.error?.code || 'unknown'}); running locally\n`);
+  return null;
+}
 
 /** What `test_command` declares, split the way the recorder splits it. */
 const DECLARED_SUITE = Object.freeze(['--test', '--test-reporter=junit', '--test-reporter-destination={junit_xml}', 'test/*.test.js']);
@@ -358,14 +499,16 @@ function parseArgs(argv) {
  * Run one stage and return the process exit code.
  *
  * @param {string[]} argv - Arguments after the script name
- * @param {{stdout?: {write: function(string): any}, root?: string, touchedIo?: object}} [io] - Injection seam: `root` runs
+ * @param {{stdout?: {write: function(string): any}, stderr?: {write: function(string): any}, root?: string, touchedIo?: object, testament?: object}} [io] - Injection seam: `root` runs
  *   the test-running stages (2, 3, 4, 5, `all`) against another checkout, which is how the runner is
  *   proved on a fixture repository; `touchedIo` replaces Stage 2's git and file system (`test-touched.repoIo`);
+ *   `stderr` is where stages 3-5 route Testament offload progress/fallback diagnostics (`offloadTier`);
  *   Stage 1 is bound to this repository (see `staticSteps`)
  * @returns {number} 0 green, 1 red, 2 usage
  */
 function main(argv, io = {}) {
   const out = io.stdout || process.stdout;
+  const errOut = io.stderr || process.stderr;
   const root = io.root || ROOT;
   let parsed;
   try {
@@ -396,6 +539,8 @@ function main(argv, io = {}) {
     out.write(`stage ${parsed.stage} (${tier}): the ledger lists no files; nothing to run\n`);
     return 0;
   }
+  const offloaded = offloadTier(tier, { root, out, err: errOut, testament: io.testament });
+  if (offloaded !== null) return offloaded;
   const specPath = parsed.specPath === null ? 'stdout' : parsed.specPath;
   const guard = GUARD_OF_TIER[tier]
     ? `, guard ${GUARD_OF_TIER[tier]}, --test-timeout=${TIMEOUT_OF_TIER[tier]}`
@@ -407,7 +552,9 @@ function main(argv, io = {}) {
 
 module.exports = {
   STATIC_RING, GUARDED_TIMEOUT_MS, LARGE_TIMEOUT_MS, TIMEOUT_OF_TIER, TIER_OF_STAGE, GUARD_OF_TIER, DECLARED_SUITE, STAGES,
-  allArgv, tierArgv, syntaxCheck, trackedJs, staticSteps, runStatic, runSuite, parseArgs, main
+  TESTAMENT_RUN_TIMEOUT_MS,
+  allArgv, tierArgv, syntaxCheck, trackedJs, staticSteps, runStatic, runSuite, parseArgs, main,
+  testamentBypassReason, resolveTestamentBin, runTestament, offloadTier
 };
 
 if (require.main === module) {
