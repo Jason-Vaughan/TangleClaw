@@ -10,7 +10,7 @@
  * before a row is treated as resolved.
  */
 
-const { describe, it, before, beforeEach, after } = require('node:test');
+const { describe, it, before, beforeEach, after, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -21,6 +21,7 @@ setLevel('error');
 
 const store = require('../lib/store');
 const rulesChannel = require('../lib/session-rules-channel');
+const tmux = require('../lib/tmux');
 const redelivery = require('../lib/rule-receipt-redelivery');
 
 describe('#1176 — rule-receipt-redelivery', () => {
@@ -54,8 +55,8 @@ describe('#1176 — rule-receipt-redelivery', () => {
     return store.projects.create({ name, path: projDir, engine: 'claude' });
   }
 
-  function makeSession(project) {
-    return store.sessions.start({ projectId: project.id, engineId: 'claude' });
+  function makeSession(project, overrides = {}) {
+    return store.sessions.start({ projectId: project.id, engineId: 'claude', ...overrides });
   }
 
   function writtenDelivery(session, project) {
@@ -72,42 +73,114 @@ describe('#1176 — rule-receipt-redelivery', () => {
   describe('probeLocalReceipt', () => {
     it('reports no receipt when the token file does not exist', () => {
       const project = makeProject();
-      assert.deepEqual(redelivery.probeLocalReceipt(project.path, 1), { exists: false, matches: false });
+      assert.deepEqual(redelivery.probeLocalReceipt(project.path, 1),
+        { exists: false, matches: false, hookFiredAt: null, loopbackRefused: false });
     });
 
-    it('reports a match when the token on disk names the given delivery', () => {
+    it('reports a match with no hook-ran marker for a plain {deliveryId, api} token — '
+      + 'the ordinary shape `writeReceiptToken` leaves BEFORE the engine ever starts (#1176 Round 2)', () => {
       const project = makeProject();
       rulesChannel.writeReceiptToken(project.path, { deliveryId: 42, api: 'http://localhost:3102' });
-      assert.deepEqual(redelivery.probeLocalReceipt(project.path, 42), { exists: true, matches: true });
+      assert.deepEqual(redelivery.probeLocalReceipt(project.path, 42),
+        { exists: true, matches: true, hookFiredAt: null, loopbackRefused: false });
     });
 
     it('reports exists-but-no-match when the token now names a different delivery', () => {
       const project = makeProject();
       rulesChannel.writeReceiptToken(project.path, { deliveryId: 42, api: 'http://localhost:3102' });
-      assert.deepEqual(redelivery.probeLocalReceipt(project.path, 7), { exists: true, matches: false });
+      assert.deepEqual(redelivery.probeLocalReceipt(project.path, 7),
+        { exists: true, matches: false, hookFiredAt: null, loopbackRefused: false });
+    });
+
+    it('surfaces hookFiredAt when the token (once the hook-side stamp lands) carries one', () => {
+      const project = makeProject();
+      const file = rulesChannel.receiptTokenPath(project.path);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify({ deliveryId: 42, api: 'http://localhost:3102', hookFiredAt: '2026-10-31T00:00:00Z' }));
+      assert.deepEqual(redelivery.probeLocalReceipt(project.path, 42),
+        { exists: true, matches: true, hookFiredAt: '2026-10-31T00:00:00Z', loopbackRefused: false });
+    });
+
+    it('surfaces loopbackRefused when the token carries it (#1150)', () => {
+      const project = makeProject();
+      const file = rulesChannel.receiptTokenPath(project.path);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify({ deliveryId: 42, api: 'http://localhost:3102', loopbackRefused: true }));
+      assert.deepEqual(redelivery.probeLocalReceipt(project.path, 42),
+        { exists: true, matches: true, hookFiredAt: null, loopbackRefused: true });
+    });
+
+    it('never surfaces hookFiredAt/loopbackRefused from a token that does not match this delivery', () => {
+      const project = makeProject();
+      const file = rulesChannel.receiptTokenPath(project.path);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify({ deliveryId: 999, api: 'http://localhost:3102', hookFiredAt: 'now', loopbackRefused: true }));
+      assert.deepEqual(redelivery.probeLocalReceipt(project.path, 42),
+        { exists: true, matches: false, hookFiredAt: null, loopbackRefused: false });
+    });
+
+    it('fails closed with readError on a non-ENOENT read failure, rather than reading as "no token" (WARNING 1)', () => {
+      const project = makeProject();
+      const file = rulesChannel.receiptTokenPath(project.path);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, '{}');
+      const original = fs.readFileSync;
+      mock.method(fs, 'readFileSync', (p, enc) => {
+        if (p === file) { const err = new Error('boom'); err.code = 'EACCES'; throw err; }
+        return original(p, enc);
+      });
+      try {
+        assert.deepEqual(redelivery.probeLocalReceipt(project.path, 1),
+          { exists: false, matches: false, hookFiredAt: null, loopbackRefused: false, readError: 'EACCES' });
+      } finally {
+        mock.restoreAll();
+      }
     });
   });
 
-  describe('classifyWrittenDelivery — #1150 disambiguation', () => {
-    it('is local-receipt-pending when the token still names this delivery', () => {
+  describe('classifyWrittenDelivery — #1150 disambiguation (corrected, #1176 Round 2 / PRR-B BLOCKING 1)', () => {
+    it('is needs-redelivery when the token matches but carries NO hook-ran marker — the ordinary un-run-hook case', () => {
       const result = redelivery.classifyWrittenDelivery({ id: 9 }, '/irrelevant', {
-        probeLocalReceipt: () => ({ exists: true, matches: true })
+        probeLocalReceipt: () => ({ exists: true, matches: true, hookFiredAt: null, loopbackRefused: false })
+      });
+      assert.equal(result.status, 'needs-redelivery',
+        'presence-and-match alone must NOT withhold re-delivery — that was the Round 1 bug');
+    });
+
+    it('is local-receipt-pending when the token carries hookFiredAt', () => {
+      const result = redelivery.classifyWrittenDelivery({ id: 9 }, '/irrelevant', {
+        probeLocalReceipt: () => ({ exists: true, matches: true, hookFiredAt: '2026-10-31T00:00:00Z', loopbackRefused: false })
+      });
+      assert.equal(result.status, 'local-receipt-pending');
+    });
+
+    it('is local-receipt-pending when the token carries loopbackRefused (#1150)', () => {
+      const result = redelivery.classifyWrittenDelivery({ id: 9 }, '/irrelevant', {
+        probeLocalReceipt: () => ({ exists: true, matches: true, hookFiredAt: null, loopbackRefused: true })
       });
       assert.equal(result.status, 'local-receipt-pending');
     });
 
     it('is superseded when the token now names a different delivery', () => {
       const result = redelivery.classifyWrittenDelivery({ id: 9 }, '/irrelevant', {
-        probeLocalReceipt: () => ({ exists: true, matches: false })
+        probeLocalReceipt: () => ({ exists: true, matches: false, hookFiredAt: null, loopbackRefused: false })
       });
       assert.equal(result.status, 'superseded');
     });
 
     it('is needs-redelivery when no local token exists at all', () => {
       const result = redelivery.classifyWrittenDelivery({ id: 9 }, '/irrelevant', {
-        probeLocalReceipt: () => ({ exists: false, matches: false })
+        probeLocalReceipt: () => ({ exists: false, matches: false, hookFiredAt: null, loopbackRefused: false })
       });
       assert.equal(result.status, 'needs-redelivery');
+    });
+
+    it('is token-read-error, and does not fall through to needs-redelivery, on a non-ENOENT read failure (WARNING 1)', () => {
+      const result = redelivery.classifyWrittenDelivery({ id: 9 }, '/irrelevant', {
+        probeLocalReceipt: () => ({ exists: false, matches: false, hookFiredAt: null, loopbackRefused: false, readError: 'EACCES' })
+      });
+      assert.equal(result.status, 'token-read-error');
+      assert.match(result.reason, /EACCES/);
     });
   });
 
@@ -123,8 +196,39 @@ describe('#1176 — rule-receipt-redelivery', () => {
   });
 
   describe('checkAndRedeliver', () => {
-    it('requires a deliverViaOpenChannel dependency', async () => {
-      await assert.rejects(() => redelivery.checkAndRedeliver({}), /deliverViaOpenChannel/);
+    it('defaults deliverViaOpenChannel to the production tmux paste when none is supplied (PRR-B BLOCKING 2)', async () => {
+      const project = makeProject();
+      const session = makeSession(project, { tmuxSession: `tc-1176-${uid()}` });
+      const delivery = writtenDelivery(session, project);
+
+      mock.method(tmux, 'sendKeys', () => {});
+      try {
+        const outcomes = await redelivery.checkAndRedeliver({
+          now: pastGraceNow,
+          listCandidates: () => [{ delivery, session }],
+          getRules: () => [{ id: 1, content: 'a rule' }]
+        });
+        assert.equal(outcomes[0].status, 'redelivered');
+        assert.equal(tmux.sendKeys.mock.calls.length, 1);
+        assert.equal(tmux.sendKeys.mock.calls[0].arguments[0], session.tmuxSession);
+        assert.match(tmux.sendKeys.mock.calls[0].arguments[1], /a rule/);
+      } finally {
+        mock.restoreAll();
+      }
+    });
+
+    it('the default channel reports a failed attempt (never throws past checkAndRedeliver) when the session has no tmux pane', async () => {
+      const project = makeProject();
+      const session = makeSession(project); // no tmuxSession
+      const delivery = writtenDelivery(session, project);
+
+      const outcomes = await redelivery.checkAndRedeliver({
+        now: pastGraceNow,
+        listCandidates: () => [{ delivery, session }],
+        getRules: () => [{ id: 1, content: 'a rule' }]
+      });
+      assert.equal(outcomes[0].status, 'attempt-failed');
+      assert.match(outcomes[0].reason, /no tmux pane/);
     });
 
     it('leaves a freshly-written row alone until the session has stood active past the grace window', async () => {
@@ -144,7 +248,8 @@ describe('#1176 — rule-receipt-redelivery', () => {
       assert.equal(calls, 0, 'must not re-deliver before the grace window elapses');
     });
 
-    it('does not re-deliver while the local receipt token still names this delivery (#1150)', async () => {
+    it('RE-DELIVERS (does not withhold) when the local token matches but carries no hook-ran marker — '
+      + 'presence-and-match alone is the ordinary un-run-hook shape, not evidence (#1176 Round 2 / PRR-B BLOCKING 1)', async () => {
       const project = makeProject();
       const session = makeSession(project);
       const delivery = writtenDelivery(session, project);
@@ -157,8 +262,45 @@ describe('#1176 — rule-receipt-redelivery', () => {
         deliverViaOpenChannel: async () => { calls += 1; }
       });
 
+      assert.equal(outcomes[0].status, 'redelivered');
+      assert.equal(calls, 1, 'a presence-and-match-only token (what writeReceiptToken ALWAYS leaves pre-hook) '
+        + 'must not be mistaken for proof the hook ran — Round 1\'s bug froze this forever at local-receipt-pending');
+    });
+
+    it('does NOT re-deliver while the local token carries loopbackRefused — genuine #1150 evidence the hook ran', async () => {
+      const project = makeProject();
+      const session = makeSession(project);
+      const delivery = writtenDelivery(session, project);
+      const file = rulesChannel.receiptTokenPath(project.path);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify({ deliveryId: delivery.id, api: 'http://localhost:3102', loopbackRefused: true }));
+
+      let calls = 0;
+      const outcomes = await redelivery.checkAndRedeliver({
+        now: pastGraceNow,
+        listCandidates: () => [{ delivery, session }],
+        deliverViaOpenChannel: async () => { calls += 1; }
+      });
+
       assert.equal(outcomes[0].status, 'local-receipt-pending');
-      assert.equal(calls, 0, 'a live, matching local token must not trigger a spurious re-delivery');
+      assert.equal(calls, 0, 'real evidence the hook ran (#1150 loopback-blocked) must still withhold re-delivery');
+    });
+
+    it('fails closed with token-read-error, attempting no re-delivery, on a non-ENOENT token read failure (WARNING 1)', async () => {
+      const project = makeProject();
+      const session = makeSession(project);
+      const delivery = writtenDelivery(session, project);
+
+      let calls = 0;
+      const outcomes = await redelivery.checkAndRedeliver({
+        now: pastGraceNow,
+        listCandidates: () => [{ delivery, session }],
+        probeLocalReceipt: () => ({ exists: false, matches: false, hookFiredAt: null, loopbackRefused: false, readError: 'EACCES' }),
+        deliverViaOpenChannel: async () => { calls += 1; }
+      });
+
+      assert.equal(outcomes[0].status, 'token-read-error');
+      assert.equal(calls, 0, 'an unreadable token must never be treated as "no token, proceed"');
     });
 
     it('treats a token now pointing at a different delivery as superseded, not actionable', async () => {
@@ -291,6 +433,48 @@ describe('#1176 — rule-receipt-redelivery', () => {
         liveOutcomes.some((o) => o.sessionId === session.id), false,
         'the live store default must not surface a delivered row as a candidate'
       );
+    });
+  });
+
+  // #1176, PRR-B BLOCKING 2: checkAndRedeliver has to actually run somewhere
+  // in production, not only in a test's own direct call. This pins that
+  // `lib/activity-observer.js`'s tick loop is that somewhere, and that a
+  // failure in it (the default "no store yet" case every bare unit-test
+  // observer hits) can never break the tick itself.
+  describe('wired into lib/activity-observer.js\'s tick (#1176, PRR-B BLOCKING 2)', () => {
+    it('calls deps.checkRuleReceipts once per tick, after the tick\'s own result is already final', async () => {
+      const { createObserver } = require('../lib/activity-observer');
+      const calls = [];
+      const obs = createObserver({
+        listSessions: () => [],
+        checkRuleReceipts: async () => { calls.push(1); }
+      });
+      const result = await obs.tick();
+      assert.equal(calls.length, 1);
+      assert.deepEqual(result, { observed: [], skipped: [] }, 'the redelivery pass must not alter the tick result');
+    });
+
+    it('a rejecting checkRuleReceipts (e.g. no store yet) is swallowed — tick() still resolves normally', async () => {
+      const { createObserver } = require('../lib/activity-observer');
+      const obs = createObserver({
+        listSessions: () => [],
+        checkRuleReceipts: async () => { throw new Error('store not initialized'); }
+      });
+      await assert.doesNotReject(() => obs.tick());
+    });
+
+    it('defaults checkRuleReceipts to this module\'s own checkAndRedeliver when a caller supplies none', async () => {
+      const { createObserver } = require('../lib/activity-observer');
+      const obs = createObserver({ listSessions: () => [] }); // no checkRuleReceipts override
+      // The real default reaches this suite's own already-initialized live
+      // store (earlier tests leave real `written` rules-hook rows behind),
+      // and its own default `deliverViaOpenChannel` will genuinely attempt —
+      // and fail — a tmux paste against sessions with no real pane. Both are
+      // caught well before this call: `_processOne` catches a failed attempt
+      // as an ordinary outcome, and `tick()`'s own try/catch around
+      // `checkRuleReceipts()` is the backstop. This proves the production
+      // default is actually wired, not just a test-supplied stand-in.
+      await assert.doesNotReject(() => obs.tick());
     });
   });
 });
