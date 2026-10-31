@@ -466,7 +466,7 @@ describe('offloadTier: probe then run, falling through on anything but a clean p
     assert.match(err.text(), /^testament: pool run for small reported pass but the envelope carries no usable report; running locally$/m);
   });
 
-  it('falls through on a pass exit code whose report.counts is an empty object, never trusted as a vacuous pass', () => {
+  it('falls through on a pass exit code whose report has no counts key at all', () => {
     const out = sink();
     const err = sink();
     const spawnSync = (bin, argv) => (argv.includes('--probe')
@@ -474,6 +474,18 @@ describe('offloadTier: probe then run, falling through on anything but a clean p
       : { status: 0, stdout: JSON.stringify({ exit_code: 0, report: {} }) });
     const code = stage.offloadTier('small', { root: REPO, out, err, testament: { bin: '/bin/true', spawnSync } });
     assert.equal(code, null);
+    assert.match(err.text(), /^testament: pool run for small reported pass but the envelope carries no usable report; running locally$/m);
+  });
+
+  it('falls through on a pass exit code whose report.counts is an empty object, never trusted as a vacuous pass', () => {
+    const out = sink();
+    const err = sink();
+    const spawnSync = (bin, argv) => (argv.includes('--probe')
+      ? { status: 0, stdout: JSON.stringify({ status: 'ok' }) }
+      : { status: 0, stdout: JSON.stringify({ exit_code: 0, report: { counts: {} } }) });
+    const code = stage.offloadTier('small', { root: REPO, out, err, testament: { bin: '/bin/true', spawnSync } });
+    assert.equal(code, null);
+    assert.equal(out.text(), '', 'an empty counts object must never be printed as a trusted pass');
     assert.match(err.text(), /^testament: pool run for small reported pass but the envelope carries no usable report; running locally$/m);
   });
 
@@ -507,6 +519,7 @@ describe('offloadTier: probe then run, falling through on anything but a clean p
       : { status: 0, stdout: JSON.stringify({ exit_code: 1, report: { counts: { tests: 1 } } }) });
     const code = stage.offloadTier('small', { root: REPO, out, err, testament: { bin: '/bin/true', spawnSync } });
     assert.equal(code, null);
+    assert.match(err.text(), /^testament: pool run for small exited 0 \(unknown\); running locally$/m);
   });
 
   it('falls through on any other exit code after a clean probe, naming it', () => {

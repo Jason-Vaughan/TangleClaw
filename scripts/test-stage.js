@@ -237,7 +237,7 @@ function offloadTier(tier, io) {
     return null;
   }
   if (run.exitCode === 0 && run.parsed.exit_code === 0) {
-    if (!run.parsed.report || typeof run.parsed.report !== 'object' || !run.parsed.report.counts || typeof run.parsed.report.counts !== 'object') {
+    if (!run.parsed.report || typeof run.parsed.report !== 'object' || !run.parsed.report.counts || typeof run.parsed.report.counts !== 'object' || Object.keys(run.parsed.report.counts).length === 0) {
       io.err.write(`testament: pool run for ${tier} reported pass but the envelope carries no usable report; running locally\n`);
       return null;
     }
