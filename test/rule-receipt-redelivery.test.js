@@ -15,7 +15,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { execFileSync, execFile } = require('node:child_process');
+const { promisify } = require('node:util');
 const { setLevel } = require('../lib/logger');
+
+const execFileAsync = promisify(execFile);
 
 setLevel('error');
 
@@ -136,6 +140,113 @@ describe('#1176 — rule-receipt-redelivery', () => {
         mock.restoreAll();
       }
     });
+
+    it('fails closed with parseError on malformed JSON, rather than reading as "exists, no match" (WARNING 3)', () => {
+      const project = makeProject();
+      const file = rulesChannel.receiptTokenPath(project.path);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, '{not valid json');
+      const result = redelivery.probeLocalReceipt(project.path, 1);
+      assert.equal(result.exists, true);
+      assert.equal(result.matches, false);
+      assert.equal(result.hookFiredAt, null);
+      assert.equal(result.loopbackRefused, false);
+      assert.ok(result.parseError, 'a parse failure must be reported, not silently folded into "no match"');
+    });
+  });
+
+  // #1176 Round 3, PRR-A BLOCKING 1: the writer's half of the #1150 fix —
+  // running the REAL hook script against a refused loopback, end to end,
+  // rather than only unit-testing the reader against a hand-written token.
+  describe('data/hooks/sessionstart-rules-claude.sh stamps hookFiredAt/loopbackRefused on a failed receipt POST (#1150, PRR-A BLOCKING 1)', () => {
+    const HOOK = path.join(__dirname, '..', 'data', 'hooks', 'sessionstart-rules-claude.sh');
+
+    /** A refused loopback port (#1150): nothing listens on 127.0.0.1:1, ever. */
+    const REFUSED_API = 'http://127.0.0.1:1';
+
+    function runHook(projectPath, shard = '1', source = 'startup') {
+      return execFileSync('bash', [HOOK, shard], {
+        env: { ...process.env, CLAUDE_PROJECT_DIR: projectPath },
+        input: JSON.stringify({ source }),
+        encoding: 'utf8'
+      });
+    }
+
+    /** The one shard `cat`'d by shard 1 — `.tangleclaw/` created first, like a real launch leaves it. */
+    function writeShard(projectPath, body = { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: 'test' } }) {
+      fs.mkdirSync(path.join(projectPath, '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(path.join(projectPath, '.tangleclaw', 'session-rules-1.json'), JSON.stringify(body));
+    }
+
+    it('on a failed POST (connection refused), stamps hookFiredAt + loopbackRefused onto the token in place', () => {
+      const project = makeProject();
+      writeShard(project.path);
+      rulesChannel.writeReceiptToken(project.path, { deliveryId: 77, api: REFUSED_API });
+
+      const out = runHook(project.path);
+      assert.match(out, /additionalContext/, 'the shard is still printed — rules delivery itself never depends on the receipt');
+
+      const tokenFile = rulesChannel.receiptTokenPath(project.path);
+      assert.ok(fs.existsSync(tokenFile), 'a failed POST must leave the token — a real retry still needs it');
+      const token = JSON.parse(fs.readFileSync(tokenFile, 'utf8'));
+      assert.equal(token.deliveryId, 77);
+      assert.equal(token.loopbackRefused, true);
+      assert.match(token.hookFiredAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    });
+
+    it('end to end: the reader then classifies that stamped token as local-receipt-pending, not needs-redelivery', () => {
+      const project = makeProject();
+      writeShard(project.path);
+      rulesChannel.writeReceiptToken(project.path, { deliveryId: 78, api: REFUSED_API });
+      runHook(project.path);
+
+      const probe = redelivery.probeLocalReceipt(project.path, 78);
+      assert.equal(probe.matches, true);
+      assert.equal(probe.loopbackRefused, true);
+      assert.ok(probe.hookFiredAt);
+
+      const classification = redelivery.classifyWrittenDelivery({ id: 78 }, project.path);
+      assert.equal(classification.status, 'local-receipt-pending');
+    });
+
+    it('on a SUCCESSFUL POST (a real listener answering 200), still deletes the token exactly as before (no regression)', async () => {
+      const http = require('node:http');
+      const server = http.createServer((req, res) => {
+        req.on('data', () => {});
+        req.on('end', () => { res.writeHead(200); res.end('{}'); });
+      });
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      try {
+        const { port } = server.address();
+        const project = makeProject();
+        writeShard(project.path, { ok: true });
+        rulesChannel.writeReceiptToken(project.path, { deliveryId: 79, api: `http://127.0.0.1:${port}` });
+        // ASYNC, deliberately (same reason test/rule-delivery-receipt.test.js
+        // uses execFileAsync): execFileSync blocks this process's event loop,
+        // so the in-process server above could never accept the hook's
+        // connection and a genuine success would misreport as a failure —
+        // exactly the false negative that file's own comment names. No stdin
+        // is written — the hook's 1s read timeout then defaults HOOK_SOURCE
+        // to empty, which the receipt condition already treats as 'startup'.
+        await execFileAsync('bash', [HOOK, '1'], {
+          env: { ...process.env, CLAUDE_PROJECT_DIR: project.path }
+        });
+        assert.equal(fs.existsSync(rulesChannel.receiptTokenPath(project.path)), false,
+          'a successful POST must still delete the token, unaffected by the new failure-branch stamping');
+      } finally {
+        await new Promise((resolve) => server.close(resolve));
+      }
+    });
+
+    it('a non-startup source (e.g. /clear) never touches the token at all', () => {
+      const project = makeProject();
+      writeShard(project.path, { ok: true });
+      rulesChannel.writeReceiptToken(project.path, { deliveryId: 80, api: REFUSED_API });
+      const before = fs.readFileSync(rulesChannel.receiptTokenPath(project.path), 'utf8');
+      runHook(project.path, '1', 'clear');
+      const after = fs.readFileSync(rulesChannel.receiptTokenPath(project.path), 'utf8');
+      assert.equal(after, before, 'a re-fire on /clear must not claim or alter a startup token');
+    });
   });
 
   describe('classifyWrittenDelivery — #1150 disambiguation (corrected, #1176 Round 2 / PRR-B BLOCKING 1)', () => {
@@ -181,6 +292,14 @@ describe('#1176 — rule-receipt-redelivery', () => {
       });
       assert.equal(result.status, 'token-read-error');
       assert.match(result.reason, /EACCES/);
+    });
+
+    it('is token-parse-error, and does not fall through to superseded, on malformed JSON (WARNING 3)', () => {
+      const result = redelivery.classifyWrittenDelivery({ id: 9 }, '/irrelevant', {
+        probeLocalReceipt: () => ({ exists: true, matches: false, hookFiredAt: null, loopbackRefused: false, parseError: 'Unexpected token' })
+      });
+      assert.equal(result.status, 'token-parse-error');
+      assert.match(result.reason, /Unexpected token/);
     });
   });
 
@@ -303,6 +422,25 @@ describe('#1176 — rule-receipt-redelivery', () => {
       assert.equal(calls, 0, 'an unreadable token must never be treated as "no token, proceed"');
     });
 
+    it('fails closed with token-parse-error, attempting no re-delivery, on malformed token JSON (WARNING 3)', async () => {
+      const project = makeProject();
+      const session = makeSession(project);
+      const delivery = writtenDelivery(session, project);
+      const file = rulesChannel.receiptTokenPath(project.path);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, '{not valid json');
+
+      let calls = 0;
+      const outcomes = await redelivery.checkAndRedeliver({
+        now: pastGraceNow,
+        listCandidates: () => [{ delivery, session }],
+        deliverViaOpenChannel: async () => { calls += 1; }
+      });
+
+      assert.equal(outcomes[0].status, 'token-parse-error');
+      assert.equal(calls, 0, 'malformed JSON must never be treated as "no match, proceed"');
+    });
+
     it('treats a token now pointing at a different delivery as superseded, not actionable', async () => {
       const project = makeProject();
       const session = makeSession(project);
@@ -320,7 +458,7 @@ describe('#1176 — rule-receipt-redelivery', () => {
       assert.equal(calls, 0);
     });
 
-    it('re-delivers through the open channel when nothing local explains the silence, and records the confirmed attempt', async () => {
+    it('re-delivers through the open channel when nothing local explains the silence, and records the attempt as SENT, not confirmed (#1176 Round 3 BLOCKING 3)', async () => {
       const project = makeProject();
       const session = makeSession(project);
       const delivery = writtenDelivery(session, project);
@@ -340,7 +478,200 @@ describe('#1176 — rule-receipt-redelivery', () => {
 
       const activity = store.activity.query({ sessionId: session.id, eventType: redelivery.EVENT_ATTEMPT });
       assert.equal(activity.length, 1);
-      assert.equal(activity[0].detail.confirmed, true);
+      // `pasted`, never `confirmed` (BLOCKING 3): a successful paste proves
+      // only that the reminder was sent, not that the engine consumed it.
+      assert.equal(activity[0].detail.pasted, true);
+      assert.equal(activity[0].detail.confirmed, undefined, 'the old (incorrect) field name must not reappear');
+    });
+
+    it('a successful paste does NOT stop the watch: a later pass with the row still "written" tries again (#1176 Round 3 BLOCKING 3)', async () => {
+      const project = makeProject();
+      const session = makeSession(project);
+      const delivery = writtenDelivery(session, project);
+
+      let calls = 0;
+      const deps = {
+        listCandidates: () => [{ delivery, session }],
+        deliverViaOpenChannel: async () => { calls += 1; },
+        cooldownMs: 0,
+        maxAttempts: 5
+      };
+
+      const first = await redelivery.checkAndRedeliver({ ...deps, now: pastGraceNow });
+      assert.equal(first[0].status, 'redelivered');
+      assert.equal(calls, 1);
+
+      // The ledger row is still 'written' — nothing upgraded it — so a
+      // second pass, with the cooldown elapsed, tries again rather than
+      // treating the first successful paste as the end of the story.
+      const second = await redelivery.checkAndRedeliver({ ...deps, now: () => pastGraceNow() + 1000 });
+      assert.equal(second[0].status, 'redelivered');
+      assert.equal(second[0].attempt, 2);
+      assert.equal(calls, 2, 'a successful paste must never set a permanent confirmed flag that stops future passes');
+    });
+
+    it('once the ledger row genuinely upgrades to delivered, the watch reports already-delivered and never calls the channel again', async () => {
+      const project = makeProject();
+      const session = makeSession(project);
+      const delivery = writtenDelivery(session, project);
+
+      let calls = 0;
+      const outcomes1 = await redelivery.checkAndRedeliver({
+        now: pastGraceNow,
+        listCandidates: () => [{ delivery, session }],
+        deliverViaOpenChannel: async () => { calls += 1; }
+      });
+      assert.equal(outcomes1[0].status, 'redelivered');
+
+      // The REAL confirmation: the hook's own late receipt (or any other
+      // mechanism) upgrades the ledger row — never the open-channel paste.
+      store.sessionRuleDeliveries.markDelivered(delivery.id, Date.now());
+
+      const outcomes2 = await redelivery.checkAndRedeliver({
+        now: () => pastGraceNow() + 1000,
+        listCandidates: () => [{ delivery, session }],
+        deliverViaOpenChannel: async () => { calls += 1; }
+      });
+      assert.equal(outcomes2[0].status, 'already-delivered');
+      assert.equal(calls, 1, 'once genuinely delivered, the channel must never be called again');
+    });
+
+    // #1176 Round 3, PRR-A BLOCKING 2: never paste into a pane that isn't
+    // verified idle — a redelivery must not clobber a live draft or an
+    // in-flight command.
+    describe('isPaneSafeToDeliver gate (PRR-A Round 3 BLOCKING 2)', () => {
+      it('defers (consumes no attempt, never touches the pane) when the gate says the pane is not safe', async () => {
+        const project = makeProject();
+        const session = makeSession(project);
+        const delivery = writtenDelivery(session, project);
+
+        let calls = 0;
+        const outcomes = await redelivery.checkAndRedeliver({
+          now: pastGraceNow,
+          listCandidates: () => [{ delivery, session }],
+          isPaneSafeToDeliver: () => false,
+          deliverViaOpenChannel: async () => { calls += 1; }
+        });
+
+        assert.equal(outcomes[0].status, 'deferred');
+        assert.equal(outcomes[0].reason, 'pane-not-at-rest');
+        assert.equal(calls, 0, 'the channel must never be touched while deferred');
+
+        const activity = store.activity.query({ sessionId: session.id, eventType: redelivery.EVENT_ATTEMPT });
+        assert.equal(activity.length, 0, 'a deferred pass must not count as an attempt');
+      });
+
+      it('a later pass, once the gate says the pane is safe, proceeds normally and consumes attempt 1', async () => {
+        const project = makeProject();
+        const session = makeSession(project);
+        const delivery = writtenDelivery(session, project);
+        const safe = { value: false };
+
+        let calls = 0;
+        const deps = {
+          listCandidates: () => [{ delivery, session }],
+          isPaneSafeToDeliver: () => safe.value,
+          deliverViaOpenChannel: async () => { calls += 1; }
+        };
+
+        const deferred = await redelivery.checkAndRedeliver({ ...deps, now: pastGraceNow });
+        assert.equal(deferred[0].status, 'deferred');
+        assert.equal(calls, 0);
+
+        safe.value = true;
+        const proceeded = await redelivery.checkAndRedeliver({ ...deps, now: () => pastGraceNow() + 1000 });
+        assert.equal(proceeded[0].status, 'redelivered');
+        assert.equal(proceeded[0].attempt, 1, 'the earlier deferral must not have consumed an attempt');
+        assert.equal(calls, 1);
+      });
+
+      it('with no isPaneSafeToDeliver supplied at all, behaves exactly as before the gate existed (opt-in)', async () => {
+        const project = makeProject();
+        const session = makeSession(project);
+        const delivery = writtenDelivery(session, project);
+
+        const outcomes = await redelivery.checkAndRedeliver({
+          now: pastGraceNow,
+          listCandidates: () => [{ delivery, session }],
+          deliverViaOpenChannel: async () => {}
+        });
+        assert.equal(outcomes[0].status, 'redelivered');
+      });
+    });
+
+    // #1176 Round 3, PRR-A WARNING 1: the attempt COUNT must survive a
+    // server restart. `_resetAttemptState()` clears exactly what a restart
+    // loses (the in-memory `_attempts` Map) — the durable count, read from
+    // `activity_log`, must be unaffected.
+    describe('durable attempt count survives a simulated restart (PRR-A Round 3 WARNING 1)', () => {
+      it('maxAttempts is still honoured after the in-memory state is cleared mid-sequence', async () => {
+        const project = makeProject();
+        const session = makeSession(project);
+        const delivery = writtenDelivery(session, project);
+
+        const deps = {
+          listCandidates: () => [{ delivery, session }],
+          deliverViaOpenChannel: async () => { throw new Error('channel unreachable'); },
+          cooldownMs: 0,
+          maxAttempts: 2
+        };
+
+        const first = await redelivery.checkAndRedeliver({ ...deps, now: pastGraceNow });
+        assert.equal(first[0].status, 'attempt-failed');
+        assert.equal(first[0].attempt, 1);
+
+        // Simulates a server restart: the in-memory Map (lastAttemptAt,
+        // the old confirmed/exhausted flags) is gone. The durable count
+        // (one EVENT_ATTEMPT row already in activity_log) is not.
+        redelivery._resetAttemptState();
+
+        const second = await redelivery.checkAndRedeliver({ ...deps, now: () => pastGraceNow() + 1000 });
+        assert.equal(second[0].status, 'exhausted', 'the durable count (1 prior attempt) must still count toward maxAttempts (2) after a restart');
+        assert.equal(second[0].attempts, 2);
+
+        const exhaustions = store.activity.query({ sessionId: session.id, eventType: redelivery.EVENT_EXHAUSTED });
+        assert.equal(exhaustions.length, 1, 'exhaustion is surfaced exactly once, even across the simulated restart');
+      });
+    });
+
+    // #1176 Round 3, PRR-A WARNING 2: bound how many candidates one pass
+    // processes, so a backlog never costs one tick noticeably more than its
+    // own capture budget.
+    describe('maxCandidatesPerPass bound (PRR-A Round 3 WARNING 2)', () => {
+      it('processes at most maxCandidatesPerPass candidates, leaving the rest for a later pass', async () => {
+        const project = makeProject();
+        const sessionA = makeSession(project);
+        const sessionB = makeSession(project);
+        const deliveryA = writtenDelivery(sessionA, project);
+        const deliveryB = writtenDelivery(sessionB, project);
+
+        let calls = 0;
+        const outcomes = await redelivery.checkAndRedeliver({
+          now: pastGraceNow,
+          listCandidates: () => [{ delivery: deliveryA, session: sessionA }, { delivery: deliveryB, session: sessionB }],
+          maxCandidatesPerPass: 1,
+          deliverViaOpenChannel: async () => { calls += 1; }
+        });
+
+        assert.equal(outcomes.length, 1, 'only one candidate is examined at all this pass');
+        assert.equal(outcomes[0].sessionId, sessionA.id, 'candidates are processed in listCandidates\' own order');
+        assert.equal(calls, 1);
+      });
+
+      it('is unbounded by default — unchanged for a caller that never asks for a bound', async () => {
+        const project = makeProject();
+        const sessionA = makeSession(project);
+        const sessionB = makeSession(project);
+        const deliveryA = writtenDelivery(sessionA, project);
+        const deliveryB = writtenDelivery(sessionB, project);
+
+        const outcomes = await redelivery.checkAndRedeliver({
+          now: pastGraceNow,
+          listCandidates: () => [{ delivery: deliveryA, session: sessionA }, { delivery: deliveryB, session: sessionB }],
+          deliverViaOpenChannel: async () => {}
+        });
+        assert.equal(outcomes.length, 2);
+      });
     });
 
     it('records a failed attempt, then withholds a retry during the cooldown window', async () => {

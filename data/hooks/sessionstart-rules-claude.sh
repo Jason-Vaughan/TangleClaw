@@ -85,6 +85,24 @@ if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "$RULES_FILE" ] && [ -r "$RULES_FILE
         # what bounds that. A failed post deliberately leaves the token, so a
         # real retry still works.
         rm -f "$RECEIPT_FILE" || true
+      else
+        # #1150 / #1176 Round 3: we are past `cat` already, so the hook DID
+        # run and DID print the rules — only the receipt POST itself failed
+        # (a sandboxed loopback refusal is the named #1150 case; any other
+        # POST failure here means the same thing to a redelivery watcher:
+        # local evidence the channel already reached the engine). Stamp that
+        # evidence onto the token IN PLACE rather than leaving it the bare
+        # `{deliveryId, api}` shape `writeReceiptToken` leaves BEFORE the
+        # engine ever starts — that shape is indistinguishable from a hook
+        # that never fired at all, which is the exact bug #1176 Round 2 fixed
+        # on the reader's side (`lib/rule-receipt-redelivery.js`). This is the
+        # writer's half of that same fix.
+        HOOK_FIRED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+        DELIVERY_ID="$(sed -n 's/.*"deliveryId"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$RECEIPT_FILE")"
+        if [ -n "$DELIVERY_ID" ]; then
+          printf '{"deliveryId":%s,"api":"%s","hookFiredAt":"%s","loopbackRefused":true}\n' \
+            "$DELIVERY_ID" "$RECEIPT_API" "$HOOK_FIRED_AT" > "$RECEIPT_FILE" 2>/dev/null || true
+        fi
       fi
     fi
   fi
