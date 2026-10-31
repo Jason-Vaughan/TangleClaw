@@ -203,12 +203,13 @@
     },
     "engines": {
       "label": "area:engines",
-      "why": "Engine definitions, models, temp roots, profiles and engine error detection.",
+      "why": "Engine definitions, models, temp roots, profiles, engine error detection, and the shared compatibility canary and capability-matched admission gate (#1897, #1809) every adapter resolves exact-build state through.",
       "paths": [
         "lib/engines.js",
         "lib/engine-*.js",
         "lib/engines/*.js",
-        "lib/model-status.js"
+        "lib/model-status.js",
+        "lib/routes/engines-canary.js"
       ]
     },
     "shared-docs": {
