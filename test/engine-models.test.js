@@ -247,6 +247,23 @@ describe('#2188 engine-models', () => {
       assert.equal(deps._reads(), 1, 'same reader + same file: one read serves both profiles');
     });
 
+    it('two profiles sharing a file but set to different maxAgeHours never share a cached result', () => {
+      // A cache fetched 2 hours ago: fresh for a 24h bound, stale for a 1h one.
+      // Reading profile A first must not leave profile B's read answering
+      // from A's cached (and wrong, for B's own bound) availability.
+      const deps = countingCache(LISTED, { display: true, now: Date.parse('2026-10-07T23:00:00Z') });
+      deps.readFile = () => JSON.stringify({ fetched_at: '2026-10-07T21:00:00Z', models: LISTED });
+      const generous = profileOffering(['gpt-6-luna'], { maxAgeHours: 24 });
+      const strict = profileOffering(['gpt-6-luna'], { maxAgeHours: 1 });
+
+      const first = models.roster(generous, deps);
+      const second = models.roster(strict, deps);
+
+      assert.equal(first.unavailable, undefined, 'the generous bound is fresh at 2h old');
+      assert.equal(second.unavailable, true, 'the strict bound must see its OWN 2h-old cache as stale');
+      assert.match(second.reason, /last fetched/);
+    });
+
     it('a fresh (non-display) call bypasses the cache even moments after a display read filled it', () => {
       const p = profileOffering(['gpt-6-luna']);
       const deps = countingCache(LISTED, { display: true });
