@@ -303,6 +303,7 @@
     "test/dashboard-boot-beacon.test.js",
     "test/drill-gate-fallback.test.js",
     "test/engine-profile-sync.test.js",
+    "test/engine-tabs.test.js",
     "test/eval-audit.test.js",
     "test/frontend-csrf.test.js",
     "test/handoff-epoch.test.js",
