@@ -22,6 +22,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { LANDING_JSARG_SRC } = require('./_page-globals');
 
+const API_HELPER_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
 const SETUP_JS_PATH = path.join(__dirname, '..', 'public', 'setup.js');
 const RAW_SRC = fs.readFileSync(SETUP_JS_PATH, 'utf8');
 const SETUP_JS_SRC = RAW_SRC.replace(/^const wizard = /m, 'var wizard = ')
@@ -90,6 +91,10 @@ function loadSetup(engines, config) {
   sandbox.location = { href: null };
 
   vm.createContext(sandbox);
+  // api-helper.js first: it publishes `tcBuildEngineOptions` as a global, and
+  // setup.js's `renderEngines` now calls it (#738), same load order as
+  // index.html.
+  vm.runInContext(API_HELPER_SRC, sandbox);
   // landing.js's `jsArg` is a page global setup.js calls (#1902).
   vm.runInContext(LANDING_JSARG_SRC, sandbox);
   vm.runInContext(SETUP_JS_SRC, sandbox);
