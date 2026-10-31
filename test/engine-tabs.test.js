@@ -214,6 +214,21 @@ describe('GET /api/engines/inventory, GET /api/engines/:id/inventory (#764)', ()
     assert.equal(data.code, 'NOT_FOUND');
   });
 
+  it('refuses a percent-encoded slash in :id rather than letting it reach store.engines.get() as a real path separator', async () => {
+    // matchRoute's `[^/]+` matches the still-encoded segment, then
+    // decodeURIComponent turns %2F into a literal `/` before the handler
+    // ever sees it -- `_isValidEngineId` must catch that AFTER decoding.
+    const traversal = await get('/api/engines/..%2F..%2Fetc%2Fpasswd/inventory');
+    assert.equal(traversal.status, 400);
+    assert.equal(traversal.data.code, 'BAD_REQUEST');
+  });
+
+  it('the pre-existing GET /api/engines/:id route rejects the same percent-encoded-slash id', async () => {
+    const traversal = await get('/api/engines/..%2F..%2Fetc%2Fpasswd');
+    assert.equal(traversal.status, 400);
+    assert.equal(traversal.data.code, 'BAD_REQUEST');
+  });
+
   it('the literal path "inventory" is not swallowed by the :id route (registration-order regression)', async () => {
     const { status, data } = await get('/api/engines/inventory');
     assert.equal(status, 200);

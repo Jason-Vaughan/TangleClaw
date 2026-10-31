@@ -3729,6 +3729,26 @@ route('GET', '/api/engines', async (req, res) => {
   jsonResponse(res, 200, { engines: list, detectionCertain: certain });
 });
 
+/**
+ * Validate an untrusted engine-id route param (`:id` on every `/api/engines/*`
+ * route, this one included). `matchRoute` (`lib/routes/_kernel.js`)
+ * `decodeURIComponent`s the segment AFTER matching it against `[^/]+`, so a
+ * percent-encoded `..%2F..` carries a real `/` by the time a handler sees
+ * `params.id` — which then reaches `path.join` unsanitized inside
+ * `store.engines.get`/`.list()`'s filename construction. Restricting the
+ * charset here, at the route layer, closes it for every `:id`-keyed engine
+ * route without editing `lib/engines.js` or `lib/store.js` (mirrors
+ * `_isValidSid`'s same rationale for `/api/continuity/*`'s `:sid`).
+ * A bundled engine id is a bare lowercase word (`claude`, `codex`); a
+ * connection-backed one adds a colon-separated suffix (`openclaw:<connId>`)
+ * — both fit this charset, and `/` or `.` never legitimately appear in one.
+ * @param {string} id - Decoded route parameter
+ * @returns {boolean} True when safe to use as an engine-profile filename key
+ */
+function _isValidEngineId(id) {
+  return typeof id === 'string' && /^[A-Za-z0-9_:-]+$/.test(id);
+}
+
 // GET /api/engines/inventory — every engine profile's read-only capability
 // and locally-discovered installed-extension inventory (#764), covering ALL
 // profiles including `pickerHidden` ones (OpenClaw). Registered before
@@ -3743,6 +3763,9 @@ route('GET', '/api/engines/inventory', (_req, res) => {
 // A distinct path segment count from `/api/engines/:id` (below), so
 // registration order relative to it does not matter.
 route('GET', '/api/engines/:id/inventory', (_req, res, params) => {
+  if (!_isValidEngineId(params.id)) {
+    return errorResponse(res, 400, 'Invalid engine id', 'BAD_REQUEST');
+  }
   const row = engineTabs.inventoryFor(params.id);
   if (!row) {
     return errorResponse(res, 404, `Engine "${params.id}" not found`, 'NOT_FOUND');
@@ -3752,6 +3775,9 @@ route('GET', '/api/engines/:id/inventory', (_req, res, params) => {
 
 // GET /api/engines/:id
 route('GET', '/api/engines/:id', (_req, res, params) => {
+  if (!_isValidEngineId(params.id)) {
+    return errorResponse(res, 400, 'Invalid engine id', 'BAD_REQUEST');
+  }
   const profile = engines.getWithAvailability(params.id);
   if (!profile) {
     return errorResponse(res, 404, `Engine "${params.id}" not found`, 'NOT_FOUND');
