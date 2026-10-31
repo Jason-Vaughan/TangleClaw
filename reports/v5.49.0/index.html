@@ -1031,10 +1031,122 @@
     <section class="section" id="telemetry">
       <div class="section-header">
         <div>
-          <h2 class="section-title"><span class="num">04</span> Testament <code>v0.30.0</code> Distributed Pool &amp; Suite Telemetry</h2>
-          <p class="section-desc">Empirical measurements from <code>~/.local/bin/testament report --project tangleclaw --json</code> across 39 sprint pool runs (584 cumulative batches), Stage 3/4/5 benchmarks, and P44/P46 efficiency gains.</p>
+          <h2 class="section-title"><span class="num">04</span> Longitudinal Multi-Sprint Comparison (<code>v5.45.0 → v5.49.0</code>) &amp; Testament Pool Telemetry</h2>
+          <p class="section-desc">Side-by-side empirical comparison across the last 6 sprints alongside <code>~/.local/bin/testament report --project tangleclaw --json</code> across 44 sprint pool runs (838 cumulative batches), Stage 3/4/5 benchmarks, and P44/P45/P46 efficiency gains.</p>
         </div>
-        <span class="badge badge-green">39 Sprint Pool Runs · Stage 3 &amp; 4 100% On Pool</span>
+        <span class="badge badge-green">15th Consecutive 0-Regression Sprint · 51.6% Lower Commit Churn · 25.8m Median Build</span>
+      </div>
+
+      <div class="card" style="margin-bottom:18px;">
+        <h3>Longitudinal Sprint Comparison Table (<code>v5.45.0 → v5.46.0 → v5.47.0 → v5.48.0 → v5.48.1 → v5.49.0</code>)</h3>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>Metric</th>
+                <th><code>v5.45.0</code> (10 Issues · 8 PRs)</th>
+                <th><code>v5.46.0</code> (13 Issues · 8 PRs)</th>
+                <th><code>v5.47.0</code> (6 Issues · 7 PRs)</th>
+                <th><code>v5.48.0</code> (8 Issues · 10 PRs)</th>
+                <th><code>v5.48.1</code> (4 Issues · 4 PRs)</th>
+                <th><code>v5.49.0</code> (12 Issues · 9 PRs)</th>
+                <th>Directional Assessment</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Total Sprint Wall Time (W1 → Deploy)</strong></td>
+                <td><code>2h 33m</code> (W1+W2 <code>2h 19m</code>)</td>
+                <td><code>6h 02m</code> (W1+W2 <code>5h 21m</code>)</td>
+                <td><code>5h 42m</code> (W1+W2 <code>4h 58m</code>)</td>
+                <td><code>6h 50m</code> (W1+W2 <code>5h 53m</code>)</td>
+                <td><code>4h 18m</code> (1 Wave + Pool Bring-Up)</td>
+                <td><strong><code>4h 50m</code> to Release/Deploy (W1+W2 <code>3h 46m</code> for <code>12</code> issues)</strong></td>
+                <td><span class="badge badge-green">36% faster W1+W2 wall time vs v5.48.0 while shipping 50% more issues (12 vs 8)</span></td>
+              </tr>
+              <tr>
+                <td><strong>Throughput (Issues / Hour in W1+W2)</strong></td>
+                <td><code>4.32 issues/hr</code> (10 in 2.32h)</td>
+                <td><code>2.43 issues/hr</code> (13 in 5.35h)</td>
+                <td><code>1.21 issues/hr</code> (6 in 4.97h)</td>
+                <td><code>1.36 issues/hr</code> (8 in 5.88h)</td>
+                <td><code>1.19 issues/hr</code> (4 in 3.36h)</td>
+                <td><strong><code>3.18 issues/hr</code> (<code>12</code> issues in <code>3.77h</code> W1+W2 · <code>18.9m/issue</code>)</strong></td>
+                <td><span class="badge badge-green">2.34x higher issue velocity vs v5.48.0 &amp; 2.67x vs v5.48.1 via Rule #294 + P44 + P45</span></td>
+              </tr>
+              <tr>
+                <td><strong>Builder Active Build Time (Dispatch → PR)</strong></td>
+                <td><code>32.1m</code> mean (6 cars)</td>
+                <td><code>41.5m</code> mean (6 cars)</td>
+                <td><code>29.4m</code> mean (5 cars)</td>
+                <td><code>73.1m</code> mean / <code>54.3m</code> median (8 cars)</td>
+                <td><code>96.0m</code>–<code>110.0m</code> (local 14m suites + internal critic)</td>
+                <td><strong><code>25.8m</code> median / <code>32.1m</code> mean across 6 two-issue cars (<code>12.9m/issue</code> median!)</strong></td>
+                <td><span class="badge badge-green">Fastest per-issue active coding time in fleet history (52% faster median vs v5.48.0)</span></td>
+              </tr>
+              <tr>
+                <td><strong>PR Open-to-Merge Latency</strong></td>
+                <td><code>28.4m</code> median</td>
+                <td><code>70.0m</code> median</td>
+                <td><code>96.8m</code> median</td>
+                <td><code>35.0m</code> median (<code>13.8m</code>–<code>84.9m</code>)</td>
+                <td><code>139.8m</code>–<code>201.3m</code> (4x local <code>SUITE_SLOT</code> waits)</td>
+                <td><strong><code>42.9m</code> median (<code>26.0m</code>–<code>68.5m</code>; <code>100%</code> of PRs &lt; <code>70m</code>)</strong></td>
+                <td><span class="badge badge-green">74% faster open-to-merge vs v5.48.1; Testament pool eliminated 14m SUITE_SLOT queues</span></td>
+              </tr>
+              <tr>
+                <td><strong>Commits / PR &amp; Builder Token Efficiency (<code>P44</code>)</strong></td>
+                <td><code>3.50</code> commits/PR</td>
+                <td><code>4.33</code> commits/PR</td>
+                <td><code>4.20</code> commits/PR</td>
+                <td><code>3.75</code> commits/PR (<code>3.75</code>/issue)</td>
+                <td><code>5.50</code> commits/PR (<code>2.75</code>/issue)</td>
+                <td><strong><code>2.67</code> commits/PR across 2-issue cars (<code>1.33</code> commits/issue · <code>1.83</code> PRR rounds)</strong></td>
+                <td><span class="badge badge-green">51.6% reduction in commits/issue vs v5.48.1 &amp; ~136k Claude tokens/round saved via P44</span></td>
+              </tr>
+              <tr>
+                <td><strong><code>.prawduct/change-log*</code> collisions &amp; Merge Conflicts</strong></td>
+                <td><code>0</code> conflicts</td>
+                <td><code>1</code> rejected edit (<code>A481-R8</code>)</td>
+                <td><code>0</code> conflicts</td>
+                <td><code>0</code> conflicts</td>
+                <td><code>2/2</code> cars collided (<code>A486-SCOPE-R1</code> revert)</td>
+                <td><strong><code>0 / 6</code> change-log collisions (<code>P46</code> 100%) &amp; <code>0</code> merge conflicts (<code>0m</code> conflict time)</strong></td>
+                <td><span class="badge badge-green">P44 + P46 completely eliminated Builder change-log collisions</span></td>
+              </tr>
+              <tr>
+                <td><strong>Test Suite Execution &amp; Pool Offload (<code>P45</code>)</strong></td>
+                <td>Local host (<code>1</code> <code>tmux</code> flake)</td>
+                <td>Local host (<code>2</code> suite waivers)</td>
+                <td>Local host (<code>669.4s</code> full run)</td>
+                <td>Local host (<code>5x</code> 20m runs on <code>W2-B</code>)</td>
+                <td>Testament Pool Bring-Up (<code>6</code> runs, Stage 3 <code>27.1s</code>, Stage 4 <code>149/150</code>)</td>
+                <td><strong><code>44</code> Sprint Pool Runs (<code>838</code> batches); Stage 3 <code>253/253</code> &amp; Stage 4 <code>150/150</code> (<code>100%</code> green after <code>#2742</code>)</strong></td>
+                <td><span class="badge badge-cyan">Stage 3 (~25s) &amp; Stage 4 (100% 150/150) run natively on 66-slot remote container pool</span></td>
+              </tr>
+              <tr>
+                <td><strong>Records (<code>W3-REC</code>) &amp; Release (<code>W4-REL</code>) Turnaround</strong></td>
+                <td><code>6.0m</code> / <code>~5.0m</code></td>
+                <td><code>14.0m</code> / <code>5.0m</code></td>
+                <td><code>14.8m</code> / <code>~19m</code></td>
+                <td><code>18.5m</code> / <code>29.0m</code></td>
+                <td><code>11.2m</code> / <code>38.7m</code></td>
+                <td><strong><code>7.0m</code> total on <code>W3-REC #2750</code> (<code>3.1m</code> open-to-merge!) &amp; <code>41.4m</code> on <code>W4-REL #2751</code></strong></td>
+                <td><span class="badge badge-green">Fastest 12-issue W3-REC reconciliation (3.1m open-to-merge)</span></td>
+              </tr>
+              <tr>
+                <td><strong>Pre-Merge Gate Catches / Post-Merge Regressions</strong></td>
+                <td><code>6</code> caught / <code>0</code> reg</td>
+                <td><code>10</code> caught / <code>0</code> reg</td>
+                <td><code>11</code> caught / <code>0</code> reg</td>
+                <td><code>6</code> caught / <code>0</code> reg</td>
+                <td><code>4</code> caught / <code>0</code> reg</td>
+                <td><strong><code>4</code> true-positive blockers caught pre-merge (<code>#1085</code> YAML carrier, <code>#2220</code> cache bound) / <code>0</code> regressions</strong></td>
+                <td><span class="badge badge-green">15th consecutive zero-regression sprint on main</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div class="grid-2" style="margin-bottom:18px;">
