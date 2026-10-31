@@ -216,12 +216,21 @@ describe('engine picker gating (#707)', () => {
       for (const file of jsFiles(root)) {
         const src = fs.readFileSync(file, 'utf8');
         const rel = path.relative(path.join(__dirname, '..'), file);
+        // `/api/engines/inventory` is excluded on purpose (#2747, #764): it is
+        // a DIFFERENT, deliberately-raw introspection endpoint
+        // (`lib/engine-tabs.js#inventory`), not the single-engine `:id` one
+        // this guard exists to catch, and the Global Settings engine panel
+        // fetches it legitimately. Still catches a future per-id fetch —
+        // `'/api/engines/' + id` or `` `/api/engines/${id}/inventory` `` —
+        // because neither literally ends `/api/engines/inventory` right
+        // after the opening quote.
+        //
         // The trailing slash is the discriminator: the roster is
         // `'/api/engines'` and is projected. Deliberately NOT requiring a
         // character after it — the realistic caller writes
         // `'/api/engines/' + id`, where the next character is the closing
         // quote, and a pattern demanding a literal id matched none of them.
-        assert.doesNotMatch(src, /['"`]\/api\/engines\//,
+        assert.doesNotMatch(src, /['"`]\/api\/engines\/(?!inventory['"`])/,
           `${rel} fetches the unprojected single-engine endpoint — route it through the roster, `
           + 'or project that response first (#736)');
       }

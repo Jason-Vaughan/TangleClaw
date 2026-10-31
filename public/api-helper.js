@@ -1949,6 +1949,29 @@
   }
 
   /**
+   * `<option>` HTML for the Global Settings "Engine Settings" selector
+   * (#2747) — deliberately NOT `tcBuildEngineOptions`. That picker excludes
+   * `pickerHidden` profiles (OpenClaw, #459) because a project cannot be
+   * bound to one, but this selector drives a read-only inventory
+   * (`GET /api/engines/inventory`) covering every registered profile
+   * including hidden ones, the same scope `lib/engine-tabs.js#inventory`
+   * already serves (#764) — excluding them here would silently narrow what
+   * the endpoint behind it actually returns.
+   *
+   * @param {object[]} rows - Inventory rows from `GET /api/engines/inventory`.
+   * @param {string} selectedId - Currently selected engine id.
+   * @param {function} esc - The page's HTML escaper.
+   * @returns {string} `<option>` markup.
+   */
+  function tcEngineInventoryOptions(rows, selectedId, esc) {
+    const list = Array.isArray(rows) ? rows : [];
+    return list.map((r) => {
+      const label = r.pickerHidden ? `${r.name} (hidden from create picker)` : r.name;
+      return `<option value="${esc(r.id)}" ${r.id === selectedId ? 'selected' : ''}>${esc(label)}</option>`;
+    }).join('');
+  }
+
+  /**
    * The engine a picker should open on: the configured one when installed,
    * else the first installed by sorted id, else ''.
    *
@@ -5405,6 +5428,40 @@
   }
 
   /**
+   * The create wizard's First-Session Settings seed for one engine (#2747) —
+   * computed fresh whenever the wizard's engine choice changes, applied once
+   * at creation, and never re-read afterward (the created project owns its
+   * own config file from that point on, same as `createProject` in
+   * `lib/projects.js`).
+   *
+   * Deliberately distinct from `TC_SETTING_DEFAULTS`, which is the one
+   * SHIPPED default used everywhere a stored value is compared against "was
+   * this ever a real choice" — this is only the wizard's starting point.
+   * `defaultLaunchMode` is derived from the profile's own `launchModes`
+   * rather than hardcoded to the literal `'default'`: every bundled profile
+   * happens to declare that key today, but a profile that does not would
+   * otherwise seed a mode nothing in it offers. The fallback prefers a mode
+   * with no `warning` — a wizard should never land an operator on a warned
+   * mode by default.
+   *
+   * @param {object|null} profile - An engine profile (may be null/undefined
+   *   while nothing is selected yet).
+   * @returns {{defaultLaunchMode: string, showLaunchModePicker: boolean, silentPrime: boolean}}
+   */
+  function tcEngineCreationDefaults(profile) {
+    const modes = (profile && profile.launchModes) || {};
+    const keys = Object.keys(modes);
+    const defaultLaunchMode = keys.includes('default')
+      ? 'default'
+      : (keys.find((k) => !(modes[k] && modes[k].warning)) || keys[0] || 'default');
+    return {
+      defaultLaunchMode,
+      showLaunchModePicker: true,
+      silentPrime: true
+    };
+  }
+
+  /**
    * How an engine is named to the operator — the profile's own `name` where it
    * has one, so a reason reads "Codex" rather than "codex". Restated from the
    * server's own display-name helper in `lib/engines.js`, which is internal to
@@ -5503,6 +5560,8 @@
   global.tcMasterLaunchModeView = tcMasterLaunchModeView;
   global.tcProvenancePreview = tcProvenancePreview;
   global.tcCreateProjectBody = tcCreateProjectBody;
+  global.tcEngineCreationDefaults = tcEngineCreationDefaults;
+  global.tcEngineInventoryOptions = tcEngineInventoryOptions;
   global.tcSettingDefaults = TC_SETTING_DEFAULTS;
   global.tcSettingRuleDefaults = TC_SETTING_RULE_DEFAULTS;
   global.tcMedusaIds = tcMedusaIds;
