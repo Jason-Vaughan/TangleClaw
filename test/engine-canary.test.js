@@ -3,7 +3,11 @@
 /*
  * The shared engine compatibility canary gate (#1897): state resolution from
  * capability probes, evidence persistence, and the explicit operator
- * override — never silently treating `unknown` as `verified`.
+ * override — never silently treating `unknown` as `verified`, and never
+ * taking a launch decision on a stored word alone (PRR-B R1 review of
+ * PR #2755: the persisted state must bind to its own evidence, a degraded
+ * fallback must bind to real verified evidence, and a launch decision must
+ * check the exact build it was asked about).
  */
 
 const { describe, it, before, after } = require('node:test');
@@ -62,6 +66,7 @@ function verifiedDoc(overrides = {}) {
       { id: 'identity', result: 'pass' },
       { id: 'startup-injection', result: 'pass' }
     ],
+    requiredCapabilityIds: ['identity', 'startup-injection'],
     state: canary.STATES.VERIFIED,
     verifiedAt: 1_700_000_000_000,
     tangleclawVersion: 'v5.50.0',
@@ -103,7 +108,7 @@ describe('lib/routes/engines-canary — registration and the operator-auth floor
 });
 
 describe('resolveCanaryState', () => {
-  it('resolves verified when every required capability passed', () => {
+  it('resolves verified when every required capability explicitly passed', () => {
     const r = canary.resolveCanaryState({
       capabilities: [{ id: 'identity', result: 'pass' }, { id: 'hooks', result: 'pass' }],
       requiredCapabilityIds: ['identity', 'hooks']
@@ -127,6 +132,19 @@ describe('resolveCanaryState', () => {
     assert.equal(r.state, canary.STATES.UNKNOWN);
   });
 
+  it('refuses a non-empty requiredCapabilityIds requirement — an empty contract cannot resolve anything (R1 Finding 1)', () => {
+    assert.throws(() => canary.resolveCanaryState({ capabilities: [{ id: 'identity', result: 'pass' }], requiredCapabilityIds: [] }), canary.CanaryError);
+  });
+
+  it('treats an explicit not-applicable on a REQUIRED capability as unknown, never as a pass (R1 Finding 1)', () => {
+    const r = canary.resolveCanaryState({
+      capabilities: [{ id: 'identity', result: 'pass' }, { id: 'hooks', result: 'not-applicable' }],
+      requiredCapabilityIds: ['identity', 'hooks']
+    });
+    assert.equal(r.state, canary.STATES.UNKNOWN);
+    assert.deepEqual(r.missingCapabilityIds, ['hooks']);
+  });
+
   it('resolves incompatible when a required capability failed and no fallback is declared', () => {
     const r = canary.resolveCanaryState({
       capabilities: [{ id: 'identity', result: 'pass' }, { id: 'hooks', result: 'fail' }],
@@ -136,24 +154,123 @@ describe('resolveCanaryState', () => {
     assert.deepEqual(r.failedCapabilityIds, ['hooks']);
   });
 
-  it('resolves degraded when a required capability failed but a verified fallback is declared and nothing is missing', () => {
+  it('resolves degraded only when the fallback specifically covers every failed capability (R1 Finding 3)', () => {
     const r = canary.resolveCanaryState({
       capabilities: [{ id: 'identity', result: 'pass' }, { id: 'hooks', result: 'fail' }],
       requiredCapabilityIds: ['identity', 'hooks'],
-      degradedFallback: { version: '0.157.0', note: 'last build with working hooks' }
+      degradedFallback: { coversCapabilityIds: ['hooks'] }
     });
     assert.equal(r.state, canary.STATES.DEGRADED);
   });
 
-  it('prefers incompatible over degraded when a capability is both failed and missing cannot clear a fallback', () => {
+  it('refuses degraded when the fallback does not cover the capability that actually failed (R1 Finding 3)', () => {
+    const r = canary.resolveCanaryState({
+      capabilities: [{ id: 'identity', result: 'pass' }, { id: 'hooks', result: 'fail' }],
+      requiredCapabilityIds: ['identity', 'hooks'],
+      degradedFallback: { coversCapabilityIds: ['some-other-capability'] }
+    });
+    assert.equal(r.state, canary.STATES.INCOMPATIBLE);
+  });
+
+  it('prefers incompatible over degraded when a capability is missing rather than failed, even with a covering fallback', () => {
     const r = canary.resolveCanaryState({
       capabilities: [{ id: 'identity', result: 'fail' }],
       requiredCapabilityIds: ['identity', 'hooks'],
-      degradedFallback: { version: '0.157.0', note: 'fallback' }
+      degradedFallback: { coversCapabilityIds: ['identity'] }
     });
     // "hooks" never ran at all, so even with a failure elsewhere and a
-    // fallback declared, a missing probe must not be waved through as degraded.
+    // fallback declared for it, a missing probe must not be waved through.
     assert.equal(r.state, canary.STATES.INCOMPATIBLE);
+  });
+});
+
+describe('validateEvidenceDoc', () => {
+  it('accepts a minimal verified document', () => {
+    assert.equal(refusal(verifiedDoc()), null);
+  });
+
+  it('rejects an unknown schema tag', () => {
+    assert.match(refusal(verifiedDoc({ schema: 'wrong' })), /schema/);
+  });
+
+  it('rejects an unknown top-level key', () => {
+    assert.match(refusal(verifiedDoc({ bogus: 1 })), /unknown key/);
+  });
+
+  it('rejects a state outside the four named states', () => {
+    assert.match(refusal(verifiedDoc({ state: 'maybe' })), /state must be one of/);
+  });
+
+  it('rejects an empty requiredCapabilityIds', () => {
+    assert.match(refusal(verifiedDoc({ requiredCapabilityIds: [] })), /requiredCapabilityIds must be a non-empty array/);
+  });
+
+  it('rejects a persisted state that disagrees with what its own capabilities resolve to (R1 Finding 2)', () => {
+    // Claims "verified" while its own required capability "hooks" failed.
+    const doc = verifiedDoc({
+      capabilities: [{ id: 'identity', result: 'pass' }, { id: 'startup-injection', result: 'fail' }]
+    });
+    assert.match(refusal(doc), /persisted state disagrees with its evidence/);
+  });
+
+  it('requires degradedFallback when state is degraded', () => {
+    assert.match(refusal(verifiedDoc({ state: canary.STATES.DEGRADED })), /degradedFallback is required/);
+  });
+
+  it('rejects degradedFallback present on a non-degraded state', () => {
+    assert.match(
+      refusal(verifiedDoc({
+        degradedFallback: { version: '1', note: '', coversCapabilityIds: ['x'], verifiedBuildFingerprint: 'other' }
+      })),
+      /degradedFallback may only be set/
+    );
+  });
+
+  it('rejects a degraded document whose degradedFallback has no coversCapabilityIds', () => {
+    const doc = verifiedDoc({
+      capabilities: [{ id: 'identity', result: 'pass' }, { id: 'startup-injection', result: 'fail' }],
+      state: canary.STATES.DEGRADED,
+      degradedFallback: { version: '1', note: '', verifiedBuildFingerprint: 'other' }
+    });
+    assert.match(refusal(doc), /coversCapabilityIds/);
+  });
+
+  it('rejects a degraded document whose degradedFallback has no verifiedBuildFingerprint', () => {
+    const doc = verifiedDoc({
+      capabilities: [{ id: 'identity', result: 'pass' }, { id: 'startup-injection', result: 'fail' }],
+      state: canary.STATES.DEGRADED,
+      degradedFallback: { version: '1', note: '', coversCapabilityIds: ['startup-injection'] }
+    });
+    assert.match(refusal(doc), /verifiedBuildFingerprint/);
+  });
+
+  it('rejects a capability result outside the three named results', () => {
+    assert.match(
+      refusal(verifiedDoc({ capabilities: [{ id: 'identity', result: 'maybe' }] })),
+      /result must be one of/
+    );
+  });
+
+  it('rejects an engine identifier unsafe as a path segment', () => {
+    assert.match(
+      refusal(verifiedDoc({ engine: { ...verifiedDoc().engine, id: '../etc' } })),
+      /id must be/
+    );
+  });
+
+  it('rejects an embedded override missing acknowledgedRisk', () => {
+    const doc = verifiedDoc({
+      override: {
+        schema: canary.OVERRIDE_SCHEMA,
+        actor: 'jason',
+        acknowledgedRisk: false,
+        reason: 'needed it',
+        lastVerifiedVersion: null,
+        rollbackCommand: '',
+        at: 1
+      }
+    });
+    assert.match(refusal(doc), /acknowledgedRisk must be true/);
   });
 });
 
@@ -170,7 +287,7 @@ describe('contract constants', () => {
 
   it('rejects a capabilities array longer than MAX_CAPABILITIES', () => {
     const capabilities = Array.from({ length: canary.MAX_CAPABILITIES + 1 }, (_, i) => ({ id: `cap-${i}`, result: 'pass' }));
-    assert.match(refusal(verifiedDoc({ capabilities })), /at most \d+ entries/);
+    assert.match(refusal(verifiedDoc({ capabilities, requiredCapabilityIds: ['cap-0'] })), /at most \d+ entries/);
   });
 
   it('refuses to write a document whose JSON exceeds MAX_BYTES, even though each field alone validates', () => {
@@ -179,7 +296,7 @@ describe('contract constants', () => {
       result: 'pass',
       detail: 'd'.repeat(500)
     }));
-    const doc = verifiedDoc({ capabilities });
+    const doc = verifiedDoc({ capabilities, requiredCapabilityIds: ['capability-id-0'] });
     assert.equal(refusal(doc), null, 'the document is schema-valid on its own terms');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-engine-canary-oversize-'));
     try {
@@ -215,64 +332,6 @@ describe('validateOverride (standalone)', () => {
 
   it('accepts a null lastVerifiedVersion (no prior verified build exists yet)', () => {
     assert.doesNotThrow(() => canary.validateOverride(validOverride({ lastVerifiedVersion: null })));
-  });
-});
-
-describe('validateEvidenceDoc', () => {
-  it('accepts a minimal verified document', () => {
-    assert.equal(refusal(verifiedDoc()), null);
-  });
-
-  it('rejects an unknown schema tag', () => {
-    assert.match(refusal(verifiedDoc({ schema: 'wrong' })), /schema/);
-  });
-
-  it('rejects an unknown top-level key', () => {
-    assert.match(refusal(verifiedDoc({ bogus: 1 })), /unknown key/);
-  });
-
-  it('rejects a state outside the four named states', () => {
-    assert.match(refusal(verifiedDoc({ state: 'maybe' })), /state must be one of/);
-  });
-
-  it('requires degradedFallback when state is degraded', () => {
-    assert.match(refusal(verifiedDoc({ state: canary.STATES.DEGRADED })), /degradedFallback is required/);
-  });
-
-  it('rejects degradedFallback present on a non-degraded state', () => {
-    assert.match(
-      refusal(verifiedDoc({ degradedFallback: { version: '1', note: '' } })),
-      /degradedFallback may only be set/
-    );
-  });
-
-  it('rejects a capability result outside the three named results', () => {
-    assert.match(
-      refusal(verifiedDoc({ capabilities: [{ id: 'identity', result: 'maybe' }] })),
-      /result must be one of/
-    );
-  });
-
-  it('rejects an engine identifier unsafe as a path segment', () => {
-    assert.match(
-      refusal(verifiedDoc({ engine: { ...verifiedDoc().engine, id: '../etc' } })),
-      /id must be/
-    );
-  });
-
-  it('rejects an embedded override missing acknowledgedRisk', () => {
-    const doc = verifiedDoc({
-      override: {
-        schema: canary.OVERRIDE_SCHEMA,
-        actor: 'jason',
-        acknowledgedRisk: false,
-        reason: 'needed it',
-        lastVerifiedVersion: null,
-        rollbackCommand: '',
-        at: 1
-      }
-    });
-    assert.match(refusal(doc), /acknowledgedRisk must be true/);
   });
 });
 
@@ -325,6 +384,83 @@ describe('evidence persistence', () => {
   });
 });
 
+describe('degraded fallback — evidence binding (R1 Finding 3)', () => {
+  let dir;
+  before(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-engine-canary-degraded-'));
+  });
+  after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  function degradedDoc({ degradedFallback, ...overrides } = {}) {
+    return verifiedDoc({
+      capabilities: [{ id: 'identity', result: 'pass' }, { id: 'startup-injection', result: 'fail' }],
+      state: canary.STATES.DEGRADED,
+      degradedFallback: {
+        version: '0.157.0',
+        note: 'last build with working startup injection',
+        coversCapabilityIds: ['startup-injection'],
+        verifiedBuildFingerprint: 'verified-build',
+        ...degradedFallback
+      },
+      ...overrides
+    });
+  }
+
+  it('refuses to write a degraded document whose fallback build has no recorded evidence at all', () => {
+    const file = canary.evidencePath(dir, 'codex', 'degraded-unbound');
+    assert.throws(
+      () => canary.writeEvidence(file, degradedDoc()),
+      (err) => err instanceof canary.CanaryError && /must name a build whose own recorded evidence resolves to "verified"/.test(err.message)
+    );
+    assert.equal(fs.existsSync(file), false);
+  });
+
+  it('refuses to write a degraded document whose fallback build exists but is not itself verified', () => {
+    canary.writeEvidence(canary.evidencePath(dir, 'codex', 'fallback-incompatible'), verifiedDoc({
+      engine: { ...verifiedDoc().engine, buildFingerprint: 'fallback-incompatible' },
+      capabilities: [{ id: 'identity', result: 'fail' }],
+      state: canary.STATES.INCOMPATIBLE
+    }));
+    const file = canary.evidencePath(dir, 'codex', 'degraded-bad-fallback');
+    assert.throws(
+      () => canary.writeEvidence(file, degradedDoc({ degradedFallback: { verifiedBuildFingerprint: 'fallback-incompatible' } })),
+      canary.CanaryError
+    );
+  });
+
+  it('refuses a degraded document whose fallback names itself', () => {
+    const file = canary.evidencePath(dir, 'codex', 'self-reference');
+    assert.throws(
+      () => canary.writeEvidence(file, degradedDoc({ degradedFallback: { verifiedBuildFingerprint: 'self-reference' } })),
+      (err) => err instanceof canary.CanaryError && /must name a different build/.test(err.message)
+    );
+  });
+
+  it('accepts and persists a degraded document once its fallback build is recorded verified', () => {
+    canary.writeEvidence(canary.evidencePath(dir, 'codex', 'verified-build'), verifiedDoc({
+      engine: { ...verifiedDoc().engine, buildFingerprint: 'verified-build', version: '0.157.0' }
+    }));
+    const file = canary.evidencePath(dir, 'codex', 'degraded-bound');
+    canary.writeEvidence(file, degradedDoc());
+    const read = canary.readEvidence(file);
+    assert.equal(read.status, canary.READ_STATUS.OK);
+    assert.equal(read.doc.state, canary.STATES.DEGRADED);
+  });
+
+  it('downgrades a previously-bound degraded document to invalid once its fallback build evidence is removed (read-time re-check)', () => {
+    canary.writeEvidence(canary.evidencePath(dir, 'codex', 'verified-build-2'), verifiedDoc({
+      engine: { ...verifiedDoc().engine, buildFingerprint: 'verified-build-2' }
+    }));
+    const file = canary.evidencePath(dir, 'codex', 'degraded-then-orphaned');
+    canary.writeEvidence(file, degradedDoc({ degradedFallback: { verifiedBuildFingerprint: 'verified-build-2' } }));
+    assert.equal(canary.readEvidence(file).status, canary.READ_STATUS.OK);
+
+    fs.rmSync(canary.evidencePath(dir, 'codex', 'verified-build-2'));
+    const read = canary.readEvidence(file);
+    assert.equal(read.status, canary.READ_STATUS.INVALID);
+  });
+});
+
 describe('applyOverride', () => {
   let dir;
   before(() => {
@@ -346,7 +482,7 @@ describe('applyOverride', () => {
     const file = canary.evidencePath(dir, 'codex', 'incompatible-1');
     canary.writeEvidence(file, verifiedDoc({
       state: canary.STATES.INCOMPATIBLE,
-      capabilities: [{ id: 'identity', result: 'fail' }]
+      capabilities: [{ id: 'identity', result: 'fail' }, { id: 'startup-injection', result: 'pass' }]
     }));
     assert.throws(
       () => canary.applyOverride(file, { actor: 'jason', acknowledgedRisk: true, rollbackCommand: '' }),
@@ -358,7 +494,7 @@ describe('applyOverride', () => {
     const file = canary.evidencePath(dir, 'codex', 'incompatible-2');
     canary.writeEvidence(file, verifiedDoc({
       state: canary.STATES.INCOMPATIBLE,
-      capabilities: [{ id: 'identity', result: 'fail' }]
+      capabilities: [{ id: 'identity', result: 'fail' }, { id: 'startup-injection', result: 'pass' }]
     }));
     const updated = canary.applyOverride(file, {
       actor: 'jason',
@@ -385,12 +521,6 @@ describe('decideLaunchGate', () => {
     assert.equal(r.refusal, null);
   });
 
-  it('allows a degraded build with no override', () => {
-    const doc = verifiedDoc({ state: canary.STATES.DEGRADED, degradedFallback: { version: '1', note: '' } });
-    const r = canary.decideLaunchGate({ evidenceDoc: doc });
-    assert.equal(r.allowed, true);
-  });
-
   it('refuses an unknown build with no override, and never calls it verified', () => {
     const doc = verifiedDoc({ state: canary.STATES.UNKNOWN, capabilities: [] });
     const r = canary.decideLaunchGate({ evidenceDoc: doc });
@@ -399,20 +529,45 @@ describe('decideLaunchGate', () => {
     assert.ok(r.refusal);
   });
 
-  it('refuses an incompatible build and names the failed capabilities and rollback', () => {
-    const doc = verifiedDoc({ state: canary.STATES.INCOMPATIBLE, capabilities: [{ id: 'hooks', result: 'fail' }] });
+  it('refuses an incompatible build and names the failed capabilities, unknown capabilities, and a synthesized rollback', () => {
+    const doc = verifiedDoc({
+      state: canary.STATES.INCOMPATIBLE,
+      capabilities: [{ id: 'hooks', result: 'fail' }],
+      requiredCapabilityIds: ['hooks', 'never-ran']
+    });
     const lastVerified = verifiedDoc({ engine: { ...verifiedDoc().engine, version: '0.157.0' } });
     const r = canary.decideLaunchGate({ evidenceDoc: doc, lastVerifiedEvidence: lastVerified });
     assert.equal(r.allowed, false);
     assert.deepEqual(r.refusal.failedCapabilityIds, ['hooks']);
+    assert.deepEqual(r.refusal.unknownCapabilityIds, ['never-ran'], 'unknownCapabilityIds must be populated, not hardcoded empty (R1 Note 7)');
     assert.equal(r.refusal.latestVerifiedVersion, '0.157.0');
     assert.equal(r.refusal.detectedVersion, doc.engine.version);
+    assert.equal(r.refusal.rollbackCommand, `Reinstall ${doc.engine.id} 0.157.0`, 'rollback guidance must be synthesized, not read off an unrelated field (R1 Note 7)');
+  });
+
+  it('prefers the current document\'s own recorded override rollbackCommand over a synthesized one', () => {
+    const doc = verifiedDoc({
+      state: canary.STATES.INCOMPATIBLE,
+      capabilities: [{ id: 'hooks', result: 'fail' }],
+      requiredCapabilityIds: ['hooks'],
+      override: {
+        schema: canary.OVERRIDE_SCHEMA, actor: 'jason', acknowledgedRisk: true, reason: 'accepted',
+        lastVerifiedVersion: '0.157.0', rollbackCommand: 'npm install -g codex@0.157.0', at: 1
+      }
+    });
+    const r = canary.decideLaunchGate({ evidenceDoc: doc });
+    assert.equal(r.allowed, true, 'the override itself still clears the launch');
+    // Force a refusal path to inspect rollback guidance despite the override, by naming a build mismatch.
+    const mismatched = canary.decideLaunchGate({ evidenceDoc: doc, expectedBuildFingerprint: 'some-other-build' });
+    assert.equal(mismatched.allowed, false);
+    assert.equal(mismatched.refusal.rollbackCommand, 'npm install -g codex@0.157.0');
   });
 
   it('allows an incompatible build once it carries a recorded override, and still reports it as overridden', () => {
     const doc = verifiedDoc({
       state: canary.STATES.INCOMPATIBLE,
       capabilities: [{ id: 'hooks', result: 'fail' }],
+      requiredCapabilityIds: ['hooks'],
       override: {
         schema: canary.OVERRIDE_SCHEMA,
         actor: 'jason',
@@ -427,5 +582,34 @@ describe('decideLaunchGate', () => {
     assert.equal(r.allowed, true);
     assert.equal(r.overridden, true);
     assert.equal(r.state, canary.STATES.INCOMPATIBLE, 'the state stays truthful even once overridden');
+  });
+
+  it('refuses a verified build when the caller names a different expected engine or build (R1 Finding 2, identity)', () => {
+    const doc = verifiedDoc();
+    const wrongEngine = canary.decideLaunchGate({ evidenceDoc: doc, expectedEngineId: 'claude' });
+    assert.equal(wrongEngine.allowed, false);
+    assert.equal(wrongEngine.refusal.identityMismatch, true);
+
+    const wrongBuild = canary.decideLaunchGate({ evidenceDoc: doc, expectedBuildFingerprint: 'some-other-build' });
+    assert.equal(wrongBuild.allowed, false);
+    assert.equal(wrongBuild.refusal.identityMismatch, true);
+
+    const matches = canary.decideLaunchGate({ evidenceDoc: doc, expectedEngineId: 'codex', expectedBuildFingerprint: 'abc123' });
+    assert.equal(matches.allowed, true);
+  });
+
+  it('refuses an identity mismatch even when the document carries an override — an override for one build never clears another', () => {
+    const doc = verifiedDoc({
+      state: canary.STATES.INCOMPATIBLE,
+      capabilities: [{ id: 'hooks', result: 'fail' }],
+      requiredCapabilityIds: ['hooks'],
+      override: {
+        schema: canary.OVERRIDE_SCHEMA, actor: 'jason', acknowledgedRisk: true, reason: 'accepted',
+        lastVerifiedVersion: null, rollbackCommand: '', at: 1
+      }
+    });
+    const r = canary.decideLaunchGate({ evidenceDoc: doc, expectedBuildFingerprint: 'some-other-build' });
+    assert.equal(r.allowed, false);
+    assert.equal(r.refusal.identityMismatch, true);
   });
 });

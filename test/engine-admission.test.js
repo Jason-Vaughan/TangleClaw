@@ -83,6 +83,7 @@ describe('attested rotation — the happy path', () => {
 
     r = admission.revokeLease(r, { now: 1002 });
     assert.equal(r.stage, admission.STAGES.REVOKED);
+    assert.equal(r.revokedAt, 1002, 'the revocation is explicit on the record, not merely implied by the stage name');
 
     r = admission.attestReplacement(r, {
       newAttemptId: 'attempt-new', checkoutDigest: 'checkout-a', worktreeDigest: 'worktree-a', stateDigest: 'state-a'
@@ -92,6 +93,47 @@ describe('attested rotation — the happy path', () => {
 
     r = admission.transferAuthority(r, { now: 1004 });
     assert.equal(r.stage, admission.STAGES.ACTIVE);
+    assert.equal(r.revision, 5, 'revision advances exactly once per transition');
+  });
+});
+
+describe('authorizePublisher — active-publisher enforcement', () => {
+  function rotationAt(stage) {
+    let r = admission.prepareRotation({ rotationId: `pub-${stage}`, resourceId: 't', oldAttemptId: 'old', oldEpoch: 7, checkpoint: checkpoint('a') });
+    if (stage === admission.STAGES.PREPARED) return r;
+    r = admission.markQuiesced(r);
+    if (stage === admission.STAGES.QUIESCED) return r;
+    r = admission.revokeLease(r);
+    if (stage === admission.STAGES.REVOKED) return r;
+    r = admission.attestReplacement(r, { newAttemptId: 'new', checkoutDigest: 'checkout-a', worktreeDigest: 'worktree-a', stateDigest: 'state-a' });
+    if (stage === admission.STAGES.ATTESTED) return r;
+    return admission.transferAuthority(r);
+  }
+
+  it('authorizes only the old attempt at its old epoch while prepared', () => {
+    const r = rotationAt(admission.STAGES.PREPARED);
+    assert.equal(admission.authorizePublisher(r, { attemptId: 'old', epoch: 7 }).authorized, true);
+    assert.equal(admission.authorizePublisher(r, { attemptId: 'old', epoch: 8 }).authorized, false, 'wrong epoch is refused even for the right attempt');
+    assert.equal(admission.authorizePublisher(r, { attemptId: 'new', epoch: 7 }).authorized, false, 'the new attempt has no authority yet');
+  });
+
+  it('authorizes nobody once quiesced, revoked, or attested', () => {
+    for (const stage of [admission.STAGES.QUIESCED, admission.STAGES.REVOKED, admission.STAGES.ATTESTED]) {
+      const r = rotationAt(stage);
+      assert.equal(admission.authorizePublisher(r, { attemptId: 'old', epoch: 7 }).authorized, false, `old attempt must not publish at "${stage}"`);
+      assert.equal(admission.authorizePublisher(r, { attemptId: 'new', epoch: 8 }).authorized, false, `new attempt must not publish before "active" (at "${stage}")`);
+    }
+  });
+
+  it('authorizes only the new attempt at the new epoch once active, never the old one', () => {
+    const r = rotationAt(admission.STAGES.ACTIVE);
+    assert.equal(admission.authorizePublisher(r, { attemptId: 'new', epoch: 8 }).authorized, true);
+    assert.equal(admission.authorizePublisher(r, { attemptId: 'old', epoch: 7 }).authorized, false, 'a stale attempt presenting its revoked epoch is never authorized once active');
+  });
+
+  it('authorizes nobody once abandoned', () => {
+    const r = admission.abandonRotation(rotationAt(admission.STAGES.PREPARED), 'operator exited');
+    assert.equal(admission.authorizePublisher(r, { attemptId: 'old', epoch: 7 }).authorized, false);
   });
 });
 
@@ -252,5 +294,74 @@ describe('rotation ledger persistence', () => {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, 'not json at all');
     assert.equal(admission.readRotation(file).status, 'invalid');
+  });
+});
+
+describe('writeRotation — compare-and-set against concurrent/stale writers (R1 Finding 4)', () => {
+  let dir;
+  before(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-engine-admission-cas-'));
+  });
+  after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  it('refuses to write revision 1 over an existing record', () => {
+    const file = admission.rotationPath(dir, 'cas-1');
+    const r = admission.prepareRotation({ rotationId: 'cas-1', resourceId: 't', oldAttemptId: 'old', oldEpoch: 0, checkpoint: checkpoint() });
+    admission.writeRotation(file, r);
+    assert.throws(() => admission.writeRotation(file, r), admission.AdmissionError);
+  });
+
+  it('two sessions racing from the same revision: the first write wins, the second is refused and must re-read', () => {
+    const file = admission.rotationPath(dir, 'cas-2');
+    const base = admission.prepareRotation({ rotationId: 'cas-2', resourceId: 't', oldAttemptId: 'old', oldEpoch: 0, checkpoint: checkpoint() });
+    admission.writeRotation(file, base);
+
+    // Two independent sessions each read revision 1 and compute their own
+    // revision 2, at different times — simulating a real race, not a shared
+    // in-memory object.
+    const sessionA = admission.markQuiesced(admission.readRotation(file).record, { now: 2000 });
+    const sessionB = admission.markQuiesced(admission.readRotation(file).record, { now: 3000 });
+
+    admission.writeRotation(file, sessionA); // first writer wins
+    assert.throws(
+      () => admission.writeRotation(file, sessionB),
+      (err) => err instanceof admission.AdmissionError && /already recorded on disk with different content/.test(err.message)
+    );
+    // The on-disk record is session A's, untouched by B's refused write.
+    assert.equal(admission.readRotation(file).record.updatedAt, 2000);
+  });
+
+  it('a true idempotent retry (same revision, identical content) is a no-op success, not a CAS failure', () => {
+    const file = admission.rotationPath(dir, 'cas-3');
+    const r = admission.prepareRotation({ rotationId: 'cas-3', resourceId: 't', oldAttemptId: 'old', oldEpoch: 0, checkpoint: checkpoint() });
+    admission.writeRotation(file, r);
+    const quiesced = admission.markQuiesced(r, { now: 2000 });
+    admission.writeRotation(file, quiesced);
+    assert.doesNotThrow(() => admission.writeRotation(file, quiesced), 'retrying the exact same write (e.g. after a timeout with an uncertain response) must succeed');
+    assert.equal(admission.readRotation(file).record.stage, admission.STAGES.QUIESCED);
+  });
+
+  it('refuses a write that skips ahead of the on-disk revision', () => {
+    const file = admission.rotationPath(dir, 'cas-4');
+    let r = admission.prepareRotation({ rotationId: 'cas-4', resourceId: 't', oldAttemptId: 'old', oldEpoch: 0, checkpoint: checkpoint() });
+    admission.writeRotation(file, r); // revision 1 on disk
+    r = admission.markQuiesced(r);
+    r = admission.revokeLease(r); // in-memory revision 3, but disk is still at 1
+    assert.throws(
+      () => admission.writeRotation(file, r),
+      (err) => err instanceof admission.AdmissionError && /someone else already advanced this rotation/.test(err.message)
+    );
+  });
+
+  it('refuses to write a record for one rotationId over a file already holding a different one', () => {
+    const file = admission.rotationPath(dir, 'cas-5-slot');
+    const first = admission.prepareRotation({ rotationId: 'cas-5-a', resourceId: 't', oldAttemptId: 'old', oldEpoch: 0, checkpoint: checkpoint() });
+    admission.writeRotation(file, first);
+    const second = admission.prepareRotation({ rotationId: 'cas-5-b', resourceId: 't', oldAttemptId: 'old', oldEpoch: 0, checkpoint: checkpoint() });
+    const advanced = admission.markQuiesced(second);
+    assert.throws(
+      () => admission.writeRotation(file, advanced),
+      (err) => err instanceof admission.AdmissionError && /different rotationId/.test(err.message)
+    );
   });
 });
