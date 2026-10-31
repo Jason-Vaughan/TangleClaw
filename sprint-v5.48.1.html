@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TangleClaw Sprint v5.48.1 — Shipped Release &amp; Testament v0.30.0 Pool Report</title>
+  <title>TangleClaw Sprint v5.48.1 — Executive Engineering &amp; Telemetry Report</title>
   <style>
     :root {
       --bg: #070b14;
@@ -459,14 +459,13 @@
   </style>
 </head>
 <body>
-  <!-- CANONICAL_SHIPPED_SPRINT_REPORT: v5.48.1 @ 7be72520468c620c4780bb2165bdbc15fd3f6e21 -->
   <header class="topnav">
     <div class="topnav-inner">
       <div class="brand">
         <div class="brand-badge">TC</div>
         <div>
-          <div style="font-size:0.94rem;">TangleClaw Sprint v5.48.1 Release Report</div>
-          <div style="font-size:0.72rem;color:var(--text-dim);font-weight:500;">v5.48.1 · Testament v0.30.0 Distributed Pool &amp; Control-Plane Reliability · Shipped 2026-10-31 06:00 UTC</div>
+          <div style="font-size:0.94rem;">TangleClaw Sprint Report</div>
+          <div style="font-size:0.72rem;color:var(--text-dim);font-weight:500;">v5.48.1 · Testament v0.30.0 Pool &amp; Control-Plane Reliability · 4 Issues (#2733, #2706, #2723, #2726) / 3 Waves · Oct 31, 2026</div>
         </div>
       </div>
       <nav class="nav-links" id="navLinks">
@@ -489,934 +488,1094 @@
   </header>
 
   <main class="container">
+    <!-- SECTION 1: HERO & EXECUTIVE OVERVIEW -->
     <section class="hero" id="overview">
-      <div class="hero-top">
-        <div>
-          <div class="eyebrow">✅ SHIPPED &amp; LIVE ON PRODUCTION · TAG v5.48.1 @ 7be72520468c (2026-10-31 06:00:41 UTC)</div>
-          <h1>v5.48.1: Testament v0.30.0 Distributed Pool &amp; Control-Plane Reliability — Empirical Sprint Report</h1>
-          <p class="hero-subtitle">
-            Sprint <strong>v5.48.1</strong> (<em>"Testament v0.30.0 Distributed Pool &amp; Control-Plane Reliability"</em>, Charter <code>A486-R1</code>) is <strong>SHIPPED &amp; DEPLOYED</strong> on <code>main @ 7be72520468c620c4780bb2165bdbc15fd3f6e21</code>.
-            Executed under the new <strong>Rule #294 single-wave 2-issue-per-lane bundling contract</strong>, the sprint delivered <strong>4 Sprint PRs (#2738, #2739, #2740, #2741) across 3 waves</strong> with <strong>0 post-merge defects</strong>, enrolled host <code>cursatory</code> onto the live <strong>Testament v0.30.0 distributed pool (4 runners / 66 slots)</strong>, ran Stage 3 (<code>small</code>, 253 files / 5,834 tests) in <strong>27.115s wall-clock</strong>, and verified <code>runningVersion=5.48.1</code> live on <code>:3102</code>.
+      <div class="hero-card">
+        <div class="eyebrow">● AUTONOMOUS MULTI-AGENT RELEASE AUDIT · MILESTONE v5.48.1 · CHARTER A486-R1 (A486-COSIGN-V5481-20261030) · LIVE DEPLOY VERIFIED</div>
+        <h1 class="hero-title">TangleClaw <code>v5.48.1</code>: “Testament v0.30.0 Distributed Pool &amp; Control-Plane Reliability”</h1>
+        <p class="hero-sub">
+          Executed across <strong>3 coordinated waves</strong> on base <code>77d09e99953e077b79dd82b24a27160bf0ebc249</code> (<code>tag: v5.48.0</code>, SQLite <code>schema_version=74</code>) under Charter <code>A486-R1</code> (Architect Co-Sign <code>A486-COSIGN-V5481-20261030</code>, Scope Ruling <code>A486-SCOPE-R1</code>, and Exact-Commit Production Deploy Addendum <code>A486-R1</code>), validating our new <strong>Single-Wave 2-Issue-Per-Lane Bundling architecture (<code>Rule #294</code> / <code>P41</code>)</strong> across <strong>4 sprint PRs (#2738, #2739, #2740, #2741)</strong> closing all <strong>4 scoped issues (#2733, #2706, #2723, #2726)</strong> with <strong>0 cross-lane file conflicts</strong>, <strong>0 post-merge defects on <code>main</code></strong>, and <strong><code>+970 / -103</code> net lines of code across 32 PR file touches</strong>.
+          In <strong>Wave 1</strong>, two disjoint 2-issue Builder cars executed in parallel:
+          <strong><code>W1-A</code> (<code>PR #2738</code>, merged at <code>8b3b8c281781</code> from head <code>c30818012335</code>)</strong> bundled <code>#2733</code> (Testament <code>v0.30.0</code> distributed container executor <code>.devcontainer/Dockerfile</code>, <code>.testament.toml</code>, and <code>scripts/test-stage.js</code> remote pool offload across 4 runners / 66 slots with automatic local fallback on <code>exit_code === 2</code>) and <code>#2706</code> (calibrating Stage 5 <code>LARGE_TIMEOUT_MS</code> in <code>scripts/test-stage.js</code> from <code>60m</code> down to <code>25m</code> / <code>1,500,000 ms</code> based on empirical <code>test/soak-guest.test.js</code> <code>486.9s</code> 312-file contention benchmarking);
+          and <strong><code>W1-B</code> (<code>PR #2739</code>, merged at <code>f16267e0b32a</code> from head <code>c292e96717ac</code>)</strong> bundled <code>#2723</code> (adding Codex <code>'systemError'</code> to <code>RESTING_STATUSES</code> in <code>lib/startup-control-codex.js:2486</code> so transient upstream capacity errors normalize to <code>'idle'</code> and allow Medusa wakes to recover stalled panes) and <code>#2726</code> (upgrading <code>#1023</code> stale-handle retargeted deliveries in <code>lib/medusa-send.js</code>, <code>lib/medusa-exchanges.js</code>, and <code>lib/store.js:6550</code> <code>_MEDUSA_EXCHANGE_PROJECTION_COLUMNS</code> to <code>tracking = 'tracked'</code> with live <code>recipient_project_id</code> / <code>recipient_session_id</code> so <code>--in-reply-to</code> never fails with <code>404 REPLY_TARGET_UNKNOWN</code>).
+          Following <strong>Wave 2 Reconciliation (<code>W2-REC</code>, <code>PR #2740</code> at <code>1bb19f77ec3c</code>)</strong> and <strong>Wave 3 Release Engineering (<code>W3-REL</code>, <code>PR #2741</code> at <code>7be72520468c620c4780bb2165bdbc15fd3f6e21</code> from head <code>a9a72c4ef108</code>, <code>O-Gate</code> token <code>O486-W3REL-PR2741-A9A72C4E-ACCEPT</code>)</strong>, independent <code>main</code> <code>Tests</code> run <code>#41173915852</code> and <code>Release</code> workflow <code>#41173915838</code> passed <code>SUCCESS</code>, publishing annotated tag and GitHub Release <strong><code>v5.48.1</code> at <code>2026-10-31T05:59:52Z</code></strong> (<strong>Code released: Verified</strong>), and <code>TC-Lane-INT</code> backed up SQLite to <code>~/.tangleclaw/backups/tangleclaw-pre-v5.48.1-20261031T0600Z.db</code> (<code>integrity_check = ok</code>), fast-forwarded the live checkout to <code>7be72520468c</code>, and verified <code>/api/server-info</code> <code>runningVersion=5.48.1</code>, <code>startupSha=7be72520</code>, <code>isStale=false</code>, <code>schema_version=74</code>, <code>/api/system/health</code> HTTP <code>200</code>, and post-deploy live Stage 3 Testament pool execution <code>GREEN</code> (<code>5,834</code> pass / <code>2</code> skip in <code>27.115s</code> across <code>175</code> parallel batches with <code>0%</code> local CPU load on <code>cursatory</code>; <strong>Production updated: Verified · Feature activated: Partially verified</strong>).
+        </p>
+
+        <div class="meta-bar">
+          <div class="meta-pill"><span>Release Target:</span> <code>v5.48.1</code> (Shipped on <code>main @ 7be72520468c</code> · Base <code>v5.48.0 @ 77d09e99953e</code>)</div>
+          <div class="meta-pill"><span>Wave 1 Cars (Rule #294):</span> <code>W1-A PR #2738 @ 8b3b8c281781</code> (<code>#2733 + #2706</code>) · <code>W1-B PR #2739 @ f16267e0b32a</code> (<code>#2723 + #2726</code>)</div>
+          <div class="meta-pill"><span>W2-REC &amp; W3-REL:</span> <code>W2-REC PR #2740 @ 1bb19f77ec3c</code> · <code>W3-REL PR #2741 @ 7be72520468c</code> (Head <code>a9a72c4ef108</code>)</div>
+          <div class="meta-pill"><span>Testament Pool:</span> <code>v0.30.0</code> · <code>4</code> Runners / <code>72</code> Cores / <code>66</code> Slots · Stage 3 <code>253/253</code> in <code>27.115s</code> (<code>0%</code> Local CPU)</div>
+          <div class="meta-pill"><span>Finish-Line Honesty:</span> Code Released: <strong>Verified</strong> · Production Updated: <strong>Verified</strong> · Feature Activated: <strong>Partially Verified</strong></div>
+          <div class="meta-pill"><span>Observer Participant Disclosure:</span> <code>TC-Lane-Obsr</code> (#1529) operated as an in-test sprint participant (Rule #283 cl. 1)</div>
+        </div>
+
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-label">Issues &amp; PRs Shipped</div>
+            <div class="kpi-value green">4 / 4 Issues</div>
+            <div class="kpi-sub"><code>4</code> Sprint PRs (<code>#2738–#2741</code>) across <code>3</code> waves · <code>2</code> issues/car in Wave 1 (<code>Rule #294</code>)</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Testament Pool Capacity</div>
+            <div class="kpi-value accent">66 Remote Slots</div>
+            <div class="kpi-sub"><code>4</code> runners (<code>72</code> cores) · <code>331</code> batches across <code>6</code> runs · <code>0.351s</code> project batch overhead</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Stage 3 Pool Wall-Clock</div>
+            <div class="kpi-value green">27.115s Total</div>
+            <div class="kpi-sub"><code>253/253</code> files (<code>5,834</code> pass / <code>2</code> skip) in <code>22.777s</code> execute · <code>58.6 KB</code> delta · <code>0%</code> local CPU</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Stage 5 Timeout Calibration</div>
+            <div class="kpi-value cyan">60m → 25m</div>
+            <div class="kpi-sub"><code>LARGE_TIMEOUT_MS = 1,500,000ms</code> · <code>3.08x</code> headroom over <code>486.9s</code> <code>soak-guest</code> ceiling</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Stage 4 Pool Coverage</div>
+            <div class="kpi-value purple">149 / 150 Pass</div>
+            <div class="kpi-sub"><code>99.3%</code> Medium tier on pool · <code>#2742</code> filed for <code>reset-admin-store</code> JUnit XML (<code>54/54</code> local)</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Flagship Process Finding</div>
+            <div class="kpi-value amber">P44 Rule #271</div>
+            <div class="kpi-sub">Eliminates <code>~4–7m</code> + <code>~136k</code> Claude tokens/round from redundant internal <code>/prawduct:critic</code> &amp; <code>pr</code></div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Production Server Health</div>
+            <div class="kpi-value green">v5.48.1 Live</div>
+            <div class="kpi-sub"><code>startupSha=7be72520</code> · <code>isStale=false</code> · <code>schema_version=74</code> · Health HTTP <code>200</code></div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Rule #283 Governance Audit</div>
+            <div class="kpi-value green">16 / 16 PASS</div>
+            <div class="kpi-sub"><code>0</code> dead-code premise errors (<code>P42</code>) · <code>0</code> post-merge defects · All 4 Gates complete</div>
+          </div>
+        </div>
+
+        <!-- PLAIN-ENGLISH SUMMARY FOR NON-TECHNICAL READERS (MANDATORY v5.47.0+ CONTRACT) -->
+        <div id="plain-english" style="margin-top:22px;padding:22px 24px;border-radius:14px;background:linear-gradient(135deg,rgba(52,211,153,0.10),rgba(56,189,248,0.08));border:1px solid rgba(52,211,153,0.35);">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+            <span class="badge badge-green" style="font-size:0.76rem;padding:4px 10px;">📖 Plain-English Summary — What Sprint v5.48.1 Accomplished &amp; Why It Matters</span>
+            <span style="font-size:0.78rem;color:var(--text-muted);">Written for operators, stakeholders &amp; non-specialist readers</span>
+          </div>
+          <h3 style="margin:0 0 10px;font-size:1.12rem;color:var(--text);">Moving TangleClaw’s Heavy Test Suites Off the Main Mac &amp; Hardening Agent Messaging</h3>
+          <p style="margin:0 0 14px;font-size:0.93rem;color:var(--text-muted);line-height:1.65;">
+            Until now, every time an AI coding agent finished a change in TangleClaw, our primary server machine (<code>cursatory</code>) had to run thousands of automated tests locally—tying up CPU cores for <strong>14 minutes at a time</strong> and forcing other agents to wait in line. Sprint <code>v5.48.1</code> connected TangleClaw to <strong>Testament <code>v0.30.0</code></strong>, a distributed cluster of <strong>4 remote computers providing 66 parallel test slots</strong>, while also fixing two subtle bugs that could leave AI agents unreachable after a temporary model outage or a session restart:
           </p>
-        </div>
-        <div class="status-pill">
-          ● Shipped v5.48.1 (4/4 PRs Merged · Live on :3102)
-        </div>
-      </div>
-
-      <div id="plain-english" class="subcard" style="margin:22px 0;padding:22px 24px;border:1.5px solid rgba(56,189,248,0.45);background:linear-gradient(135deg,rgba(15,23,42,0.96),rgba(14,116,144,0.18));border-radius:14px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
-          <span class="pillar-num" style="color:var(--accent2);font-size:0.8rem;letter-spacing:0.08em;">📖 PLAIN-ENGLISH SUMMARY · WHAT WE BUILT &amp; WHY IT MATTERS (NO JARGON)</span>
-          <span class="badge badge-green">All 3 Finish Lines Complete · 2026-10-31 06:00 UTC</span>
-        </div>
-        <h3 style="margin:0 0 12px;font-size:1.22rem;color:var(--text);">What Sprint v5.48.1 Built — Distributed Test Pool Offload &amp; Control-Plane Reliability</h3>
-        <div class="grid-2" style="gap:18px;">
-          <div style="background:rgba(15,23,42,0.65);border:1px solid var(--border);border-radius:10px;padding:15px 17px;">
-            <h4 style="margin:0 0 8px;color:var(--accent2);font-size:0.98rem;">🛠️ What Sprint v5.48.1 Delivered</h4>
-            <ul style="margin:0;padding-left:18px;font-size:0.9rem;line-height:1.55;color:var(--text-muted);">
-              <li><strong>Testament v0.30.0 Container Pool (<code>#2733</code> + <code>#2706</code>):</strong> Added <code>.devcontainer/Dockerfile</code>, <code>.testament.toml</code>, and automatic <code>scripts/test-stage.js</code> offload to a 4-machine distributed test pool (66 parallel slots), running 5,834 Stage 3 tests in <strong>27.1 seconds</strong> instead of saturating the local host, with automatic local fallback and calibrated 90s Stage 5 timeouts.</li>
-              <li><strong>Codex Wake &amp; Medusa Retargeted Reply Reliability (<code>#2723</code> + <code>#2726</code>):</strong> Fixed Codex <code>systemError</code> wake stalls when a model hits temporary capacity, and fixed <code>404 REPLY_TARGET_UNKNOWN</code> when replying to a Medusa message that was automatically retargeted from a rotated session handle.</li>
-            </ul>
+          <div class="grid-3" style="gap:14px;">
+            <div style="background:rgba(10,15,29,0.65);border:1px solid var(--border);border-radius:10px;padding:14px;">
+              <strong style="color:var(--green);display:block;margin-bottom:6px;font-size:0.92rem;">1. 27-Second Remote Test Offload (`#2733` + `#2706`)</strong>
+              <p style="margin:0;font-size:0.84rem;color:var(--text-muted);line-height:1.55;">
+                Instead of bogging down our main machine, TangleClaw now ships a tiny <strong>58.6 KB change bundle</strong> over an encrypted connection to 4 remote machines (<code>gpu-bozeman</code>, <code>nas-bozeman</code>, <code>14th-mbp</code>, and <code>laptop</code>). Our 253-file Small test suite (<strong>5,836 tests</strong>) now finishes in just <strong>27.1 seconds</strong> using <strong>0% CPU on our main server</strong>—and if the remote pool is ever offline, TangleClaw automatically falls back to running tests locally without failing. We also tuned our slowest test timeout from 60 minutes down to a realistic 25 minutes (<code>#2706</code>).
+              </p>
+            </div>
+            <div style="background:rgba(10,15,29,0.65);border:1px solid var(--border);border-radius:10px;padding:14px;">
+              <strong style="color:var(--accent2);display:block;margin-bottom:6px;font-size:0.92rem;">2. Self-Healing Agent Wakes &amp; Replies (`#2723` + `#2726`)</strong>
+              <p style="margin:0;font-size:0.84rem;color:var(--text-muted);line-height:1.55;">
+                Previously, if OpenAI’s Codex service hit a brief capacity hiccup (reporting <code>systemError</code>), TangleClaw thought the agent was still busy and refused to send it wake-up nudges; TangleClaw now recognizes that the agent is resting and wakes it normally (<code>#2723</code>). Likewise, when a message is automatically rerouted from an old agent session to its replacement, the recipient can now reply directly without hitting an “unknown reply target” error (<code>#2726</code>).
+              </p>
+            </div>
+            <div style="background:rgba(10,15,29,0.65);border:1px solid var(--border);border-radius:10px;padding:14px;">
+              <strong style="color:var(--purple);display:block;margin-bottom:6px;font-size:0.92rem;">3. Smarter Builder Workflow for v5.49.0+ (`Rule #294` + `P44`)</strong>
+              <p style="margin:0;font-size:0.84rem;color:var(--text-muted);line-height:1.55;">
+                By bundling 2 related issues into each Builder’s pull request (<code>Rule #294</code>), we cut pull-request overhead in half and eliminated mid-sprint session restarts. Even better, the Operator spotted that our Claude Builders were still running an old internal self-review loop (<code>/prawduct:critic</code>) that burned <strong>4–7 minutes and ~136,000 tokens per round</strong> duplicating our dedicated Codex reviewers—removing that in <code>v5.49.0</code> will make every future sprint dramatically faster and cheaper.
+              </p>
+            </div>
           </div>
-          <div style="background:rgba(15,23,42,0.65);border:1px solid var(--border);border-radius:10px;padding:15px 17px;">
-            <h4 style="margin:0 0 8px;color:var(--green);font-size:0.98rem;">⚡ Empirical Results (4 of 4 PRs Merged &amp; Deployed)</h4>
-            <p style="margin:0;font-size:0.9rem;line-height:1.55;color:var(--text-muted);">
-              All 4 issues shipped in a single 2-issue-per-lane Builder wave (<code>W1-A</code> PR <code>#2738</code>, <code>W1-B</code> PR <code>#2739</code>), followed by <code>W2-REC</code> (PR <code>#2740</code>) and <code>W3-REL</code> (PR <code>#2741 @ 7be72520</code>). Live pool testing also surfaced a real Node 22 JUnit XML container edge case in 1 of 150 Stage 4 files (<code>test/reset-admin-store.test.js</code>, filed as Issue <code>#2742</code> for Sprint <code>v5.49.0</code>) and motivated the bounded Builder <code>Rule #271</code> amendment eliminating duplicate Builder-side Critic subagents.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <div class="kpi-grid">
-        <div class="kpi-card">
-          <div class="kpi-label">Sprint Version</div>
-          <div class="kpi-value" style="color:var(--accent2)">v5.48.1</div>
-          <div class="kpi-meta">Tag <code>v5.48.1 @ 7be72520468c</code> · Live on <code>:3102</code></div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-label">Sprint PRs Merged</div>
-          <div class="kpi-value" style="color:var(--green)">4 / 4</div>
-          <div class="kpi-meta"><code>#2738</code> (W1-A) · <code>#2739</code> (W1-B) · <code>#2740</code> (W2-REC) · <code>#2741</code> (W3-REL)</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-label">Stage 3 Pool Wall-Clock</div>
-          <div class="kpi-value" style="color:var(--green)">27.115s</div>
-          <div class="kpi-meta">253 files · 5,834 pass / 2 skip across 175 pool batches (22.777s exec)</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-label">Connected Pool Capacity</div>
-          <div class="kpi-value" style="color:var(--accent2)">4 Runners</div>
-          <div class="kpi-meta">66 parallel slots (<code>gpu-bozeman</code>, <code>nas-bozeman</code>, <code>14th-mbp</code>, <code>laptop</code>)</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-label">Pre-Deploy Suite Gate</div>
-          <div class="kpi-value" style="color:var(--green)">23,839 Pass</div>
-          <div class="kpi-meta">0 failed · 3 skipped across Stages 3 (pool), 4 (local), and 5 (local)</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-label">Rule #294 Bundling</div>
-          <div class="kpi-value" style="color:var(--accent2)">2 Issues/Car</div>
-          <div class="kpi-meta">Single-wave 2-issue bundles across active Builder lanes</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-label">Pool Batches Executed</div>
-          <div class="kpi-value" style="color:var(--green)">330 Batches</div>
-          <div class="kpi-meta">5 coordinator runs · <code>0.3495s</code> median batch overhead</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-label">Rule #283 Audit</div>
-          <div class="kpi-value" style="color:var(--green)">16 / 16 PASS</div>
-          <div class="kpi-meta">All 3 Finish Lines Complete · 0 Post-Merge Defects</div>
         </div>
       </div>
     </section>
 
+    <!-- SECTION 2: MULTI-AGENT ARCHITECTURE & TESTAMENT POOL TOPOLOGY -->
     <section class="section" id="architecture">
       <div class="section-header">
         <div>
-          <span class="section-tag">Section 01 · Multi-Agent Fleet Topology &amp; Wave Architecture</span>
-          <h2 class="section-title">Sprint v5.48.1 Multi-Agent Execution Topology</h2>
-          <p class="section-desc">
-            Four parallel Builder lanes (<code>TC-Lane-A..D</code>), two dedicated PR Reviewer lanes (<code>TC-Lane-PRR-A..B</code>), Architect (<code>TC-Lane-Arc</code>), Release Integrator (<code>TC-Lane-INT</code>), Observer (<code>TC-Lane-Obsr</code>), and Project Manager (<code>TC-Lane-PM</code>) coordinate through <code>LANE_QUEUE.md</code> and Medusa switchboard exchanges.
+          <h2 class="section-title"><span class="num">01</span> Multi-Agent Fleet Topology &amp; Testament <code>v0.30.0</code> Distributed Pool Architecture</h2>
+          <p class="section-desc">8-lane heterogeneous agent topology (Claude Sonnet, Codex GPT-6-Sol, Antigravity Gemini 4 Argon) paired with the 4-runner / 66-slot Testament container execution cluster.</p>
+        </div>
+        <span class="badge badge-blue">Rule #294 2-Issue Bundling · 66 Remote Container Slots</span>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3>8-Lane Sprint Fleet &amp; Role Separation (<code>Charter A486-R1</code>)</h3>
+          <p style="font-size:0.87rem;color:var(--text-muted);margin-top:0;">
+            Sprint <code>v5.48.1</code> operated with strict role separation under Common Core <code>Rule #280</code>, Role Overlays <code>#281–#284</code>, and Single-Wave Car Bundling <code>Rule #294</code>. All Wave 1 feature work was partitioned into two mathematically disjoint 2-issue cars (<code>W1-A ∩ W1-B = ∅</code>):
+          </p>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th>Lane / Session</th>
+                  <th>Engine / Model</th>
+                  <th>Role &amp; Overlay</th>
+                  <th>v5.48.1 Assignment &amp; Output</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>TC-Lane-PM</code> (<code>#1523</code>)</td>
+                  <td><code>claude-sonnet-reviewer</code></td>
+                  <td>Coordinator (<code>#281</code>)</td>
+                  <td>Authored Charter <code>A486-R1</code>, coordinated Testament enrolment (<code>QJVT-FHJK</code>), managed Gate 1 &amp; <code>LANE_QUEUE.md</code></td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-Arc</code> (<code>#1530</code>)</td>
+                  <td><code>codex</code> (<code>GPT-6-Sol</code>)</td>
+                  <td>Architect (<code>#282</code>)</td>
+                  <td>Issued Co-Sign <code>A486-COSIGN-V5481-20261030</code>, Scope Ruling <code>A486-SCOPE-R1</code>, <code>A-Gate</code>/<code>R-Gate</code> approvals, &amp; Gate 2 Post-Mortem</td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-A</code> (<code>#1524</code>)</td>
+                  <td><code>claude-sonnet-reviewer</code></td>
+                  <td>Builder (<code>#271</code>)</td>
+                  <td>Shipped <strong><code>W1-A PR #2738</code></strong> bundling <code>#2733</code> (Testament <code>v0.30.0</code> pool offload) + <code>#2706</code> (Stage 5 <code>25m</code> timeout)</td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-B</code> (<code>#1525</code>)</td>
+                  <td><code>claude-sonnet-reviewer</code></td>
+                  <td>Builder (<code>#271</code>)</td>
+                  <td>Shipped <strong><code>W1-B PR #2739</code></strong> bundling <code>#2723</code> (Codex <code>systemError</code> wake) + <code>#2726</code> (Medusa <code>#1023</code> retarget reply tracking)</td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-PRR-A</code> (<code>#1526</code>)</td>
+                  <td><code>codex</code> (<code>GPT-6-Sol</code>)</td>
+                  <td>Reviewer (<code>#270</code>)</td>
+                  <td>7-Goal Critic + 4-Goal PRR on <code>W1-A #2738</code> (4 rounds: CI env isolation, <code>A486-SCOPE-R1</code>, <code>stderr</code> &amp; malformed JSON fallback) &amp; <code>W1-B</code></td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-PRR-B</code> (<code>#1527</code>)</td>
+                  <td><code>codex</code> (<code>GPT-6-Sol</code>)</td>
+                  <td>Reviewer (<code>#270</code>)</td>
+                  <td>7-Goal Critic + 4-Goal PRR on <code>W1-B #2739</code> (caught live Hub <code>#1023</code> retarget test gap), <code>W2-REC #2740</code>, &amp; <code>W3-REL #2741</code></td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-INT</code> (<code>#1528</code>)</td>
+                  <td><code>codex</code> (<code>GPT-6-Sol</code>)</td>
+                  <td>Integrator (<code>#284</code>)</td>
+                  <td>Merged <code>#2739</code> &amp; <code>#2738</code>, authored <code>W2-REC #2740</code> &amp; <code>W3-REL #2741</code>, filed <code>#2742</code>, and executed live <code>v5.48.1</code> deploy</td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-Obsr</code> (<code>#1529</code>)</td>
+                  <td><code>antigravity</code> (<code>Gemini 4</code>)</td>
+                  <td>Observer (<code>#283</code>)</td>
+                  <td>Audited Wave 1–3 telemetry, issued <code>O-Gate PASS</code> (<code>O486-W3REL-PR2741-A9A72C4E-ACCEPT</code>), authored Gate 2 &amp; Gate 4 reports</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>SVG Diagram 1 — Testament <code>v0.30.0</code> Coordinator &amp; 4-Runner Pool Dataflow</h3>
+          <div class="svg-wrap" style="background:rgba(7,11,20,0.7);border:1px solid var(--border);border-radius:12px;padding:12px;">
+            <svg viewBox="0 0 760 360" width="100%" height="auto" role="img" aria-label="Testament v0.30.0 Distributed Container Pool Architecture">
+              <defs>
+                <linearGradient id="tcClientGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#0284c7" stop-opacity="0.35"/>
+                  <stop offset="100%" stop-color="#1e293b" stop-opacity="0.9"/>
+                </linearGradient>
+                <linearGradient id="tcCoordGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#8b5cf6" stop-opacity="0.35"/>
+                  <stop offset="100%" stop-color="#1e293b" stop-opacity="0.9"/>
+                </linearGradient>
+                <linearGradient id="tcRunnerGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#10b981" stop-opacity="0.3"/>
+                  <stop offset="100%" stop-color="#0f172a" stop-opacity="0.95"/>
+                </linearGradient>
+              </defs>
+              <!-- Client Box -->
+              <rect x="16" y="34" width="215" height="292" rx="12" fill="url(#tcClientGrad)" stroke="#38bdf8" stroke-width="1.5"/>
+              <text x="30" y="62" fill="#38bdf8" font-size="13" font-weight="700">CLIENT: cursatory (macOS)</text>
+              <text x="30" y="82" fill="#cbd5e1" font-size="11">scripts/test-stage.js (Stages 3–5)</text>
+              <rect x="28" y="96" width="191" height="52" rx="8" fill="#0f172a" stroke="#334155"/>
+              <text x="38" y="116" fill="#e2e8f0" font-size="11" font-weight="600">1. probeTestamentPool()</text>
+              <text x="38" y="134" fill="#94a3b8" font-size="10">Checks CLI + coordinator reachability</text>
+              <rect x="28" y="160" width="191" height="58" rx="8" fill="#0f172a" stroke="#334155"/>
+              <text x="38" y="180" fill="#34d399" font-size="11" font-weight="600">2. runViaTestament(stage)</text>
+              <text x="38" y="196" fill="#94a3b8" font-size="10">testament run --suite small|med|large</text>
+              <text x="38" y="210" fill="#38bdf8" font-size="10">Delta ship: 58.6 KB in 0.339s</text>
+              <rect x="28" y="230" width="191" height="78" rx="8" fill="#0f172a" stroke="#f59e0b" stroke-dasharray="4 2"/>
+              <text x="38" y="250" fill="#fbbf24" font-size="11" font-weight="600">3. Automatic Local Fallback</text>
+              <text x="38" y="266" fill="#94a3b8" font-size="10">Triggers on exit_code === 2, signal,</text>
+              <text x="38" y="280" fill="#94a3b8" font-size="10">or invalid JSON / schema mismatch</text>
+              <text x="38" y="296" fill="#cbd5e1" font-size="10">→ local node --test (Concurrency 4)</text>
+
+              <!-- Coordinator Box -->
+              <rect x="275" y="95" width="185" height="170" rx="12" fill="url(#tcCoordGrad)" stroke="#a855f7" stroke-width="1.5"/>
+              <text x="290" y="122" fill="#c084fc" font-size="12" font-weight="700">TESTAMENT COORDINATOR</text>
+              <text x="290" y="140" fill="#cbd5e1" font-size="10">testament-wire.rodeo.illuminati.org</text>
+              <text x="290" y="160" fill="#e2e8f0" font-size="10">• TLS :443 (Principal: cursatory)</text>
+              <text x="290" y="178" fill="#e2e8f0" font-size="10">• Tree cache: 8c2499f01a1c</text>
+              <text x="290" y="196" fill="#34d399" font-size="10">• 175 Stage-3 Batches Fanned Out</text>
+              <text x="290" y="214" fill="#38bdf8" font-size="10">• Overhead: 0.351s (vs 3.58s pool)</text>
+              <text x="290" y="232" fill="#fbbf24" font-size="10">• Collects JUnit XML + Verdicts</text>
+
+              <!-- Arrows Client <-> Coordinator -->
+              <line x1="231" y1="165" x2="275" y2="165" stroke="#38bdf8" stroke-width="2"/>
+              <line x1="275" y1="195" x2="231" y2="195" stroke="#34d399" stroke-width="2"/>
+
+              <!-- 4 Runner Boxes -->
+              <rect x="505" y="22" width="238" height="72" rx="10" fill="url(#tcRunnerGrad)" stroke="#10b981" stroke-width="1.4"/>
+              <text x="518" y="43" fill="#34d399" font-size="12" font-weight="700">gpu-bozeman (Linux x86_64)</text>
+              <text x="518" y="60" fill="#e2e8f0" font-size="10">32 Cores / 28 Slots · 229 Batches (69.2%)</text>
+              <text x="518" y="76" fill="#94a3b8" font-size="10">Overhead: 0.336s · Fail Rate: 0.0%</text>
+
+              <rect x="505" y="106" width="238" height="72" rx="10" fill="url(#tcRunnerGrad)" stroke="#10b981" stroke-width="1.4"/>
+              <text x="518" y="127" fill="#34d399" font-size="12" font-weight="700">nas-bozeman (Linux x86_64)</text>
+              <text x="518" y="144" fill="#e2e8f0" font-size="10">12 Cores / 10 Slots · 51 Batches (15.4%)</text>
+              <text x="518" y="160" fill="#94a3b8" font-size="10">Overhead: 1.254s · Warm Prepare: 0.296s</text>
+
+              <rect x="505" y="190" width="238" height="72" rx="10" fill="url(#tcRunnerGrad)" stroke="#10b981" stroke-width="1.4"/>
+              <text x="518" y="211" fill="#34d399" font-size="12" font-weight="700">14th-mbp (macOS arm64)</text>
+              <text x="518" y="228" fill="#e2e8f0" font-size="10">18 Cores / 18 Slots · 35 Batches (10.6%)</text>
+              <text x="518" y="244" fill="#94a3b8" font-size="10">Overhead: 0.220s · Warm Prepare: 0.308s</text>
+
+              <rect x="505" y="274" width="238" height="72" rx="10" fill="url(#tcRunnerGrad)" stroke="#10b981" stroke-width="1.4"/>
+              <text x="518" y="295" fill="#34d399" font-size="12" font-weight="700">laptop (macOS arm64)</text>
+              <text x="518" y="312" fill="#e2e8f0" font-size="10">10 Cores / 10 Slots · 16 Batches (4.8%)</text>
+              <text x="518" y="328" fill="#94a3b8" font-size="10">Overhead: 0.266s · Fail Rate: 0.0%</text>
+
+              <!-- Fanout lines -->
+              <line x1="460" y1="145" x2="505" y2="58" stroke="#a855f7" stroke-width="1.6"/>
+              <line x1="460" y1="168" x2="505" y2="142" stroke="#a855f7" stroke-width="1.6"/>
+              <line x1="460" y1="192" x2="505" y2="226" stroke="#a855f7" stroke-width="1.6"/>
+              <line x1="460" y1="215" x2="505" y2="310" stroke="#a855f7" stroke-width="1.6"/>
+            </svg>
+          </div>
+          <p style="font-size:0.82rem;color:var(--text-muted);margin:10px 0 0;">
+            <strong>Container Isolation Contract (<code>.devcontainer/Dockerfile</code>):</strong> Each remote runner builds <code>FROM node:22-bookworm-slim</code> with <code>ca-certificates git python3 sqlite3 tar tmux</code> and executes tests under non-root <code>USER node</code>, emitting per-batch JUnit XML to <code>$TESTAMENT_JUNIT_PATH</code> via <code>scripts/junit-reporter.js</code>.
           </p>
         </div>
       </div>
-      <div class="grid-3" style="margin-bottom:20px;">
-        <div class="subcard">
-          <span class="pillar-num">PILLAR 01 · PARALLEL FILE-DISJOINT BUILDER WAVES</span>
-          <h4>Zero-Conflict Scoped Cars Across TC-Lane-A..D</h4>
-          <p>Each Builder car in <code>LANE_QUEUE.md</code> carries an explicit signed file scope and branch name verified at the Integrator Start Gate before edits begin.</p>
-        </div>
-        <div class="subcard">
-          <span class="pillar-num">PILLAR 02 · EXACT-HEAD 4-GATE VERIFICATION</span>
-          <h4>PRR I/B-Gate, Architect A/R-Gate, Integrator CI-Gate &amp; Observer O-Gate</h4>
-          <p>Every PR requires exact-head GitHub Actions <code>Tests</code> CI green, PRR review acceptance, Architect invariant sign-off, and Integrator scope/freshness verification before merge.</p>
-        </div>
-        <div class="subcard">
-          <span class="pillar-num">PILLAR 03 · INTER-WAVE SESSION CONTINUITY &amp; RESET</span>
-          <h4>Deterministic Wave Reset Prevents Mid-Sprint Compaction</h4>
-          <p>After each wave merges and branches are retired on clean <code>main</code>, lanes finalize and relaunch fresh sessions so no agent ever stalls or degrades from context compaction.</p>
-        </div>
-      </div>
-      <div class="svg-wrap">
-        <div class="svg-caption">
-          <span>Figure 1.1 — TangleClaw 10-Lane Autonomous Fleet Architecture (Sprint v5.48.1)</span>
-          <span>Live Sync: 2026-10-31 05:58:25 UTC</span>
-        </div>
-        <svg viewBox="0 0 980 330" width="100%" height="auto" role="img" aria-label="Multi-Agent Fleet Topology">
-          <rect x="0" y="0" width="980" height="330" rx="12" fill="#0b1120" />
-          <rect x="30" y="30" width="200" height="270" rx="10" fill="#111827" stroke="#38bdf8" stroke-width="1.5" />
-          <text x="48" y="60" fill="#38bdf8" font-size="12" font-weight="800">COORDINATORS &amp; GATES</text>
-          <text x="48" y="95" fill="#e2e8f0" font-size="11.5">• TC-Lane-PM (Charter)</text>
-          <text x="48" y="125" fill="#e2e8f0" font-size="11.5">• TC-Lane-Arc (A/R-Gate)</text>
-          <text x="48" y="155" fill="#e2e8f0" font-size="11.5">• TC-Lane-INT (Merge/CI)</text>
-          <text x="48" y="185" fill="#e2e8f0" font-size="11.5">• TC-Lane-Obsr (O-Gate)</text>
-          <rect x="270" y="30" width="380" height="270" rx="10" fill="#111827" stroke="#22c55e" stroke-width="1.5" />
-          <text x="290" y="60" fill="#22c55e" font-size="12" font-weight="800">BUILDER LANES (BYPASS MODE)</text>
-          <text x="290" y="95" fill="#e2e8f0" font-size="11.5">• TC-Lane-A · Workstream A</text>
-          <text x="290" y="125" fill="#e2e8f0" font-size="11.5">• TC-Lane-B · Workstream B</text>
-          <text x="290" y="155" fill="#e2e8f0" font-size="11.5">• TC-Lane-C · Workstream C</text>
-          <text x="290" y="185" fill="#e2e8f0" font-size="11.5">• TC-Lane-D · Workstream D</text>
-          <rect x="690" y="30" width="260" height="270" rx="10" fill="#111827" stroke="#a855f7" stroke-width="1.5" />
-          <text x="710" y="60" fill="#a855f7" font-size="12" font-weight="800">PR REVIEWERS (CODEX MEDIUM)</text>
-          <text x="710" y="95" fill="#e2e8f0" font-size="11.5">• TC-Lane-PRR-A (I/B-Gate)</text>
-          <text x="710" y="125" fill="#e2e8f0" font-size="11.5">• TC-Lane-PRR-B (I/B-Gate)</text>
-          <text x="710" y="165" fill="#94a3b8" font-size="11">Exact-SHA review &amp; Prawduct</text>
-        </svg>
-      </div>
     </section>
 
+    <!-- SECTION 3: WAVE-BY-WAVE VELOCITY & TIMELINE -->
     <section class="section" id="velocity">
       <div class="section-header">
         <div>
-          <span class="section-tag">Section 02 · Wave Velocity &amp; Execution Timeline</span>
-          <h2 class="section-title">Sprint v5.48.1 Wave Execution Matrix (4/4 Merged)</h2>
-          <p class="section-desc">All 3 waves (<code>W1-A</code>, <code>W1-B</code>, <code>W2-REC</code>, <code>W3-REL</code>) merged cleanly to <code>main @ 7be72520468c620c4780bb2165bdbc15fd3f6e21</code> and deployed to <code>:3102</code>.</p>
+          <h2 class="section-title"><span class="num">02</span> Wave-by-Wave Execution Timeline &amp; Merge Velocity</h2>
+          <p class="section-desc">End-to-end progression from Charter Co-Sign (<code>A486-COSIGN-V5481-20261030</code>) through parallel Wave 1 2-issue cars, Wave 2 Reconciliation, and Wave 3 Production Release.</p>
         </div>
+        <span class="badge badge-green">4 PRs Merged · 0 Rebases / 0 Conflicts</span>
       </div>
-      <div class="svg-wrap">
-        <div class="svg-caption">
-          <span>Figure 2.1 — Shipped Wave Progress Bar (v5.48.1)</span>
-          <span>4 of 4 Chartered Wave Rows Merged (100%)</span>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3>SVG Diagram 2 — Sprint <code>v5.48.1</code> Wave Execution &amp; Gate Timeline (UTC)</h3>
+          <div class="svg-wrap" style="background:rgba(7,11,20,0.7);border:1px solid var(--border);border-radius:12px;padding:12px;">
+            <svg viewBox="0 0 760 320" width="100%" height="auto" role="img" aria-label="Sprint v5.48.1 Wave Execution Gantt Chart">
+              <!-- Grid lines -->
+              <line x1="140" y1="30" x2="140" y2="275" stroke="#334155" stroke-width="1"/>
+              <line x1="255" y1="30" x2="255" y2="275" stroke="#334155" stroke-width="1" stroke-dasharray="3 3"/>
+              <line x1="370" y1="30" x2="370" y2="275" stroke="#334155" stroke-width="1" stroke-dasharray="3 3"/>
+              <line x1="485" y1="30" x2="485" y2="275" stroke="#334155" stroke-width="1" stroke-dasharray="3 3"/>
+              <line x1="600" y1="30" x2="600" y2="275" stroke="#334155" stroke-width="1" stroke-dasharray="3 3"/>
+              <line x1="720" y1="30" x2="720" y2="275" stroke="#334155" stroke-width="1"/>
+
+              <text x="125" y="22" fill="#94a3b8" font-size="10">00:26Z</text>
+              <text x="240" y="22" fill="#94a3b8" font-size="10">01:45Z</text>
+              <text x="355" y="22" fill="#94a3b8" font-size="10">03:00Z</text>
+              <text x="470" y="22" fill="#94a3b8" font-size="10">04:30Z</text>
+              <text x="585" y="22" fill="#94a3b8" font-size="10">05:17Z</text>
+              <text x="695" y="22" fill="#34d399" font-size="10" font-weight="700">06:00Z</text>
+
+              <!-- Row 1: Charter & Pool Enrolment -->
+              <text x="14" y="60" fill="#e2e8f0" font-size="11" font-weight="600">Charter &amp; Pool Setup</text>
+              <rect x="140" y="42" width="95" height="26" rx="6" fill="#3b82f6" fill-opacity="0.35" stroke="#60a5fa"/>
+              <text x="148" y="59" fill="#e2e8f0" font-size="10">A486-R1 + QJVT-FHJK</text>
+
+              <!-- Row 2: W1-B (#2739) -->
+              <text x="14" y="106" fill="#e2e8f0" font-size="11" font-weight="600">W1-B: PR #2739</text>
+              <text x="14" y="120" fill="#94a3b8" font-size="9">#2723 + #2726 (Lane-B)</text>
+              <rect x="165" y="88" width="310" height="30" rx="6" fill="#10b981" fill-opacity="0.32" stroke="#34d399"/>
+              <text x="175" y="107" fill="#e2e8f0" font-size="10">PR 02:07Z → 2 PRR Rnds (A486-SCOPE-R1 + Hub Test) → Merged 04:27Z (f16267e0)</text>
+
+              <!-- Row 3: W1-A (#2738) -->
+              <text x="14" y="158" fill="#e2e8f0" font-size="11" font-weight="600">W1-A: PR #2738</text>
+              <text x="14" y="172" fill="#94a3b8" font-size="9">#2733 + #2706 (Lane-A)</text>
+              <rect x="150" y="140" width="415" height="30" rx="6" fill="#06b6d4" fill-opacity="0.32" stroke="#22d3ee"/>
+              <text x="160" y="159" fill="#e2e8f0" font-size="10">PR 01:42Z → 4 PRR Rnds + Live Pool 27.1s Proof → Merged 05:04Z (8b3b8c28)</text>
+
+              <!-- Row 4: W2-REC (#2740) -->
+              <text x="14" y="210" fill="#e2e8f0" font-size="11" font-weight="600">W2-REC: PR #2740</text>
+              <text x="14" y="224" fill="#94a3b8" font-size="9">Reconcile (Lane-INT)</text>
+              <rect x="568" y="192" width="38" height="30" rx="6" fill="#a855f7" fill-opacity="0.35" stroke="#c084fc"/>
+              <text x="612" y="211" fill="#c084fc" font-size="10">05:06Z → Merged 05:17Z (1bb19f77, 11.2m)</text>
+
+              <!-- Row 5: W3-REL (#2741) & Live Deploy -->
+              <text x="14" y="260" fill="#34d399" font-size="11" font-weight="700">W3-REL: PR #2741</text>
+              <text x="14" y="274" fill="#94a3b8" font-size="9">Release &amp; Live Deploy</text>
+              <rect x="606" y="242" width="114" height="30" rx="6" fill="#10b981" fill-opacity="0.45" stroke="#34d399" stroke-width="1.8"/>
+              <text x="415" y="298" fill="#34d399" font-size="10" font-weight="600">05:18Z → O-Gate + R-Gate → Merged 05:56Z (7be72520) → Tag &amp; Live Deploy 06:00Z</text>
+            </svg>
+          </div>
         </div>
-        <svg viewBox="0 0 960 180" width="100%" height="auto" role="img" aria-label="Sprint Velocity Chart">
-          <rect x="0" y="0" width="960" height="180" rx="10" fill="#0b1120" />
-          <text x="30" y="45" fill="#22c55e" font-size="13" font-weight="700">Sprint v5.48.1 Shipped Wave Progress (4/4 PRs Merged · Live on :3102)</text>
-          <rect x="30" y="70" width="900" height="32" rx="8" fill="#1e293b" />
-          <rect x="30" y="70" width="900" height="32" rx="8" fill="#22c55e" />
-          <text x="30" y="135" fill="#94a3b8" font-size="11.5">Tag v5.48.1 @ 7be72520468c620c4780bb2165bdbc15fd3f6e21 · Deployed 2026-10-31 06:00:41 UTC</text>
-        </svg>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Car / Wave</th>
-              <th>Assigned Builder &amp; Reviewer</th>
-              <th>Scoped Issues &amp; Branch</th>
-              <th>Shipped Status &amp; Gate Receipts</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td><strong>W1-A</strong></td><td><code>TC-Lane-A / PRR-A (#2733 + #2706)</code></td><td><code>feat/2733-2706-testament-pool-stage5-timeout</code> (.devcontainer/Dockerfile, .testament.toml, scripts/test-stage.js, scripts/test-tiers.js)</td><td><span class="badge badge-green">MERGED: PR #2738 @ c3081801, merge commit 8b3b8c281781088e (PRR-A ACCEPT, Arc A-Gate PASS, CI GREEN)</span></td></tr>
-            <tr><td><strong>W1-B</strong></td><td><code>TC-Lane-B / PRR-B (#2723 + #2726)</code></td><td><code>fix/2723-2726-codex-wake-medusa-retarget</code> (lib/startup-control-codex.js, lib/medusa-exchanges.js, lib/medusa-send.js, lib/store.js)</td><td><span class="badge badge-green">MERGED: PR #2739 @ c292e967, merge commit f16267e0b32aadd1 (PRR-A/B ACCEPT, Arc A-Gate PASS, CI GREEN)</span></td></tr>
-            <tr><td><strong>W2-REC</strong></td><td><code>TC-Lane-INT / PRR-A + Arc</code></td><td><code>chore/v5481-w2-rec</code> (.prawduct/change-log.md, FEATURES.md, docs/releases/v5.48-status.md, docs/releases/v5.48.1-status.md)</td><td><span class="badge badge-green">MERGED: PR #2740 @ e8655dc1, merge commit 1bb19f77ec3c4c5e (PRR-A ACCEPT, Arc A486-W2REC-R2 PASS, CI GREEN)</span></td></tr>
-            <tr><td><strong>W3-REL</strong></td><td><code>TC-Lane-INT / PRR-A + Arc + Obsr</code></td><td><code>release/v5481-cut</code> (CHANGELOG.md, version.json, README.md, changelog-released-sections.lock.json)</td><td><span class="badge badge-green">MERGED &amp; DEPLOYED: PR #2741 @ a9a72c4e, merge commit 7be72520468c620c (Tag v5.48.1, Live :3102 Verified)</span></td></tr>
-          </tbody>
-        </table>
+
+        <div class="card">
+          <h3>Wave Progression &amp; Commit Chain (<code>77d09e99</code> → <code>7be72520</code>)</h3>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th>Wave / Car</th>
+                  <th>PR &amp; Merge Commit</th>
+                  <th>Head SHA</th>
+                  <th>Window (UTC)</th>
+                  <th>LOC / Touches</th>
+                  <th>Key Verification &amp; Review Outcome</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Baseline</strong></td>
+                  <td><code>v5.48.0</code> (<code>77d09e99953e</code>)</td>
+                  <td><code>77d09e99</code></td>
+                  <td><code>00:26:54Z</code></td>
+                  <td>Schema <code>v74</code></td>
+                  <td>Clean starting baseline across all 8 sprint clones</td>
+                </tr>
+                <tr>
+                  <td><strong><code>W1-B</code></strong></td>
+                  <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2739" target="_blank" rel="noopener">PR #2739</a> (<code>f16267e0b32a</code>)</td>
+                  <td><code>c292e967</code></td>
+                  <td><code>02:07Z → 04:27Z</code> (<code>139.8m</code>)</td>
+                  <td><code>9</code> files (<code>+309 / -10</code>)</td>
+                  <td>2 rounds: <code>1aa4a574</code> <code>A486-SCOPE-R1</code> revert + <code>c292e967</code> live Hub <code>#1023</code> retarget test</td>
+                </tr>
+                <tr>
+                  <td><strong><code>W1-A</code></strong></td>
+                  <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2738" target="_blank" rel="noopener">PR #2738</a> (<code>8b3b8c281781</code>)</td>
+                  <td><code>c3081801</code></td>
+                  <td><code>01:42Z → 05:04Z</code> (<code>201.3m</code>)</td>
+                  <td><code>9</code> files (<code>+559 / -51</code>)</td>
+                  <td>4 rounds: CI env scrub (<code>026f5f48</code>), <code>A486-SCOPE-R1</code> (<code>6fda4352</code>), <code>stderr</code> &amp; JSON fallback (<code>c3081801</code>)</td>
+                </tr>
+                <tr>
+                  <td><strong><code>W2-REC</code></strong></td>
+                  <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2740" target="_blank" rel="noopener">PR #2740</a> (<code>1bb19f77ec3c</code>)</td>
+                  <td><code>e8655dc1</code></td>
+                  <td><code>05:06Z → 05:17Z</code> (<code>11.2m</code>)</td>
+                  <td><code>4</code> files (<code>+53 / -9</code>)</td>
+                  <td>Reconciled <code>.prawduct/change-log.md</code>, <code>FEATURES.md</code>, <code>v5.48-status.md</code>, &amp; <code>v5.48.1-status.md</code></td>
+                </tr>
+                <tr>
+                  <td><strong><code>W3-REL</code></strong></td>
+                  <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2741" target="_blank" rel="noopener">PR #2741</a> (<code>7be72520468c</code>)</td>
+                  <td><code>a9a72c4e</code></td>
+                  <td><code>05:18Z → 05:56Z</code> (<code>38.7m</code>)</td>
+                  <td><code>10</code> files (<code>+49 / -33</code>)</td>
+                  <td><code>O-Gate</code> + <code>R-Gate</code> PASS, <code>Tests #41173915852</code> &amp; <code>Release #41173915838</code> <code>SUCCESS</code>, live deploy <code>06:00Z</code></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p style="font-size:0.82rem;color:var(--text-muted);margin:10px 0 0;">
+            <strong>Why <code>W1-A</code> Took 4 Rounds / <code>201.3m</code>:</strong> Because <code>W1-A</code> edited <code>scripts/test-stage.js</code> (an exception-class runner file in the pre-push hook’s mandatory local full-suite ring before <code>#2733</code> merged) AND ran Builder Rule <code>#271</code>’s internal <code>/prawduct:critic</code> + <code>/prawduct:pr</code> subagents (<code>~4–7m</code> + <code>~136k</code> Claude tokens per round), each surgical reviewer polish commit required a ~14-minute local 751-file run under <code>SUITE_SLOT</code>. Both bottlenecks are eliminated in <code>v5.49.0+</code> via <code>#2733</code> and <code>P44</code>!
+          </p>
+        </div>
       </div>
     </section>
 
+    <!-- SECTION 4: DELIVERABLES & CODE-PATH MATRIX -->
     <section class="section" id="deliverables">
       <div class="section-header">
         <div>
-          <span class="section-tag">Section 03 · Chartered Deliverables &amp; File Scope</span>
-          <h2 class="section-title">Sprint v5.48.1 Deliverables Matrix</h2>
-          <p class="section-desc">Each car’s exact issue assignment, branch, file scope, and shipped merge state.</p>
+          <h2 class="section-title"><span class="num">03</span> Shipped Deliverables &amp; Code-Path Verification Matrix</h2>
+          <p class="section-desc">Source-verified file paths, symbols, tests, and finish-line verification statuses across all 4 shipped issues and release engineering artifacts.</p>
         </div>
-      </div>
-      <div class="svg-wrap">
-        <div class="svg-caption">
-          <span>Figure 3.1 — Deliverables Breakdown by Wave State (v5.48.1)</span>
-          <span>Shipped 2026-10-31 06:00:41 UTC</span>
-        </div>
-        <svg viewBox="0 0 960 180" width="100%" height="auto" role="img" aria-label="Deliverables Status Chart">
-          <rect x="0" y="0" width="960" height="180" rx="10" fill="#0b1120" />
-          <text x="30" y="50" fill="#22c55e" font-size="13" font-weight="700">Merged &amp; Deployed Cars: 4 / 4 (100%)</text>
-          <text x="380" y="50" fill="#38bdf8" font-size="13" font-weight="700">Stage 3 Pool Benchmark: 27.115s</text>
-          <text x="700" y="50" fill="#22c55e" font-size="13" font-weight="700">Post-Merge Defects: 0</text>
-          <text x="30" y="110" fill="#94a3b8" font-size="11.5">All deliverables verified against exact signed file scopes, CI gates, and 23,839-test pre-deploy suite before live deploy.</text>
-        </svg>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Car</th>
-              <th>Owner / Reviewer</th>
-              <th>Signed Scope &amp; Issues</th>
-              <th>Current State</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td><strong>W1-A</strong></td><td><code>TC-Lane-A / #2733 + #2706</code></td><td>feat/2733-2706-testament-pool-stage5-timeout (.devcontainer/Dockerfile, scripts/test-tiers.js, .testament.toml, scripts/test-stage.js, test/test-tiers.test.js, test/test-stage.test.js, test/tiers.json, docs/test-pyramid.md, changelog.d/2733.*, changelog.d/2706.*)</td><td>MERGED: PR #2738 @ c30818012335e2e39d896beb646ff1d5a2e68f51, merge commit 8b3b8c281781088eafde7de72ec1e1757553abd8 (2026-10-31 05:04 UTC). PRR-A exact-head ACCEPT, Arc A-Gate PASS, Tests CI GREEN; 0 file overlap with W1-B.</td></tr>
-            <tr><td><strong>W1-B</strong></td><td><code>TC-Lane-B / #2723 + #2726</code></td><td>fix/2723-2726-codex-wake-medusa-retarget (lib/startup-control-codex.js, lib/medusa-exchanges.js, lib/medusa-send.js, lib/store.js, test/startup-control-codex.test.js, test/medusa-exchanges.test.js, test/api-medusa.test.js, changelog.d/2723.*, changelog.d/2726.*)</td><td>MERGED: PR #2739 @ c292e96717ac3b56f428d136313a8cea122c59d3, merge commit f16267e0b32aadd190d727eb79746ff432dab7f2 (2026-10-31 04:27 UTC). PRR-A + PRR-B exact-head ACCEPT, Arc A-Gate PASS, Tests CI GREEN.</td></tr>
-            <tr><td><strong>W2-REC</strong></td><td><code>TC-Lane-INT / PRR-A + Arc</code></td><td>chore/v5481-w2-rec (.prawduct/change-log.md, FEATURES.md, docs/releases/v5.48-status.md, docs/releases/v5.48.1-status.md)</td><td>MERGED: PR #2740 @ e8655dc12749abe27dc222be0fcb2b90fdde5713, merge commit 1bb19f77ec3c4c5e55e63c46badf6ff9b5f2ac46 (2026-10-31 05:19 UTC). PRR-A ACCEPT, Arc A486-W2REC-R2 PASS, CI GREEN.</td></tr>
-            <tr><td><strong>W3-REL</strong></td><td><code>TC-Lane-INT / PRR-A + Arc + Obsr</code></td><td>release/v5481-cut (CHANGELOG.md, version.json, README.md, test/fixtures/changelog-released-sections.lock.json, tag v5.48.1)</td><td>MERGED &amp; DEPLOYED: PR #2741 @ a9a72c4ef10834103a33bd66f852ce7927ed1c60, merge commit 7be72520468c620c4780bb2165bdbc15fd3f6e21 (2026-10-31 06:00 UTC). Tag v5.48.1 published, live server runningVersion=5.48.1 verified.</td></tr>
-          </tbody>
-        </table>
+        <span class="badge badge-purple">100% Source-Verified Paths · 0 Dead-Code Premises</span>
       </div>
 
-      <h3 style="margin:24px 0 12px;">Issue-by-Issue Architectural &amp; Contract Deep-Dive (v5.48.1)</h3>
-      <div class="grid-2" style="gap:18px;margin-bottom:20px;">
-        <div class="subcard">
-          <span class="pillar-num">ISSUE #2733 · TESTAMENT V0.30.0 DISTRIBUTED CONTAINER POOL INTEGRATION</span>
-          <h4>Project-Scoped Container Image, Tier Routing &amp; Automatic Local Fallback</h4>
-          <p>
-            Authored <code>.devcontainer/Dockerfile</code> (<code>node:22-bookworm</code> with <code>build-essential</code>, <code>python3</code>, <code>git</code>, <code>sqlite3</code>, <code>procps</code>, and <code>lsof</code>) and <code>.testament.toml</code> (<code>schema_version = 1</code>, <code>project_id = "tangleclaw"</code>, <code>executor = "container"</code>, <code>[tiers.small]</code> max 2 files / 20,000ms budget / 60s timeout, <code>[tiers.medium]</code> max 1 file / 40,000ms budget / 120s timeout, <code>[tiers.large]</code> max 1 file / 180,000ms budget / 300s timeout).
-            Updated <code>scripts/test-stage.js</code> to probe <code>testament status --json</code> at startup for Stages 3–5 when <code>TESTAMENT_DISABLE=1</code> is not set: if the coordinator is reachable and connected runners are available, <code>scripts/test-stage.js</code> executes <code>testament run --tier &lt;small|medium|large&gt; --files &lt;csv&gt;</code> on the distributed pool and automatically falls back to local <code>node --test</code> execution with a clear diagnostic banner if the pool is unreachable or returns non-zero.
-          </p>
-        </div>
-        <div class="subcard">
-          <span class="pillar-num">ISSUE #2706 · STAGE 5 PER-FILE TIMEOUT &amp; TIER BUDGET CALIBRATION</span>
-          <h4>Eliminating False-Red Timeouts on Heavy E2E &amp; Lifecycle Suites</h4>
-          <p>
-            Calibrated <code>STAGE_DEFS[5].timeoutMs</code> in <code>scripts/test-stage.js</code> from <code>60_000ms</code> to <code>90_000ms</code> and synchronized <code>scripts/test-tiers.js</code> and <code>test/tiers.json</code> so that large multi-session SQLite/PTY/worktree tests (<code>test/e2e-critical-paths.test.js</code>, <code>test/server-session-lifecycle.test.js</code>, <code>test/session-wrap-routes.test.js</code>, <code>test/api-routes.test.js</code>) have deterministic headroom both locally under <code>SUITE_SLOT</code> and inside distributed containers.
-            Added contract tests in <code>test/test-stage.test.js</code> and <code>test/test-tiers.test.js</code> verifying pool probe routing, <code>TESTAMENT_DISABLE=1</code> bypass, non-zero pool fallback, and tier budget synchronization.
-          </p>
-        </div>
-        <div class="subcard">
-          <span class="pillar-num">ISSUE #2723 · CODEX SYSTEMERROR TERMINAL TURN-SETTLEMENT RECOVERY</span>
-          <h4>Preventing Permanent Wake Starvation After Model Capacity Errors</h4>
-          <p>
-            In <code>lib/startup-control-codex.js</code>, when Codex emits a terminal <code>codex/event/error</code> or <code>error</code> notification with <code>willRetry === false</code> (or no retry scheduled, such as <em>"Selected model is at capacity. Please try a different model."</em>) while an active turn is in flight and no <code>turn/completed</code> notification arrives within the settlement grace window, the adapter now transitions <code>turnInFlight</code> to <code>false</code>, clears the stuck <code>activeTurnId</code>, records <code>lastTerminalSystemError</code> telemetry, and notifies the wake scheduler so queued switchboard wakes and nudges are delivered instead of stalling forever on <code>pane-turn-in-flight</code>.
-          </p>
-        </div>
-        <div class="subcard">
-          <span class="pillar-num">ISSUE #2726 · MEDUSA RETARGETED EXCHANGE REPLY RESOLUTION</span>
-          <h4>Accepting Replies From the Live Retargeted Recipient Session</h4>
-          <p>
-            When a Medusa message addressed to a rotated or replaced workspace handle (e.g. <code>tc-lane-pm-old</code>) is automatically retargeted at send time to the live replacement workspace handle (e.g. <code>tc-lane-pm-new</code>), <code>medusa_messages.to_workspace_id</code> and <code>medusa_exchanges.recipient_workspace_id</code> are now synchronized with the resolved live target and persisted alongside <code>retargeted_from_workspace_id</code> in <code>lib/store.js</code>, <code>lib/medusa-send.js</code>, and <code>lib/medusa-exchanges.js</code>.
-            When the live recipient replies via <code>tc message send --in-reply-to &lt;id&gt;</code>, exchange resolution matches both the live retargeted recipient and the original sender without throwing <code>404 REPLY_TARGET_UNKNOWN</code>.
-          </p>
+      <div class="card" style="margin-bottom:18px;">
+        <h3>Complete Issue &amp; Wave Deliverable Matrix (<code>v5.48.1</code>)</h3>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>Issue / Wave</th>
+                <th>PR &amp; Merge SHA</th>
+                <th>Primary Modified Files &amp; Symbols</th>
+                <th>Automated &amp; Live Verification Proof</th>
+                <th>Finish-Line Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="issue-pill">#2733</span> <strong>Testament v0.30.0 Pool Offload</strong> (<code>W1-A</code>)</td>
+                <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2738" target="_blank" rel="noopener">PR #2738</a><br/><code>8b3b8c281781</code></td>
+                <td>
+                  <code>.devcontainer/Dockerfile</code>, <code>.testament.toml</code>, <code>scripts/test-stage.js</code> (<code>probeTestamentPool</code>, <code>runViaTestament</code>, <code>formatTestament</code>), <code>scripts/junit-reporter.js</code>, <code>scripts/generate-testament-suites.js</code>
+                </td>
+                <td>
+                  <code>test/test-stage.test.js</code> + <code>test/test-tiers.test.js</code> (<code>102/102</code> pass on remote pool <code>f7245e9c</code> in <code>37.865s</code>); Live Stage 3 pool run <code>aeb4fc40</code> (<code>253/253</code> files, <code>5,834</code> pass / <code>2</code> skip in <code>27.115s</code>); Post-deploy Stage 3 pool <code>GREEN</code>
+                </td>
+                <td><span class="badge badge-green">Live Pool Verified</span></td>
+              </tr>
+              <tr>
+                <td><span class="issue-pill">#2706</span> <strong>Stage 5 Per-File Timeout Calibration</strong> (<code>W1-A</code>)</td>
+                <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2738" target="_blank" rel="noopener">PR #2738</a><br/><code>8b3b8c281781</code></td>
+                <td>
+                  <code>scripts/test-stage.js</code> (<code>LARGE_TIMEOUT_MS = 1_500_000</code>, <code>tierArgv</code>), <code>.testament.toml</code> (<code>suites.large.timeout_s = 1500</code>), <code>test/test-stage.test.js</code>
+                </td>
+                <td>
+                  Empirically benchmarked slowest Stage 5 file <code>test/soak-guest.test.js</code> at <code>270.0s</code> isolated / <code>486.9s</code> under 312-file contention; calibrated timeout from <code>3,600,000ms</code> (<code>60m</code>) to <code>1,500,000ms</code> (<code>25m</code>, <code>3.08x</code> headroom)
+                </td>
+                <td><span class="badge badge-green">Released &amp; Active</span></td>
+              </tr>
+              <tr>
+                <td><span class="issue-pill">#2723</span> <strong>Codex <code>systemError</code> Resting Status Recovery</strong> (<code>W1-B</code>)</td>
+                <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2739" target="_blank" rel="noopener">PR #2739</a><br/><code>f16267e0b32a</code></td>
+                <td>
+                  <code>lib/startup-control-codex.js</code> (<code>RESTING_STATUSES</code> includes <code>'systemError'</code> at <code>L2486</code>, <code>_normalizeCodexThreadLoadedState</code>), <code>test/startup-control-codex.test.js</code>
+                </td>
+                <td>
+                  <code>test/startup-control-codex.test.js</code> verifies <code>status: &#123; type: 'systemError' &#125;</code> normalizes to <code>state: 'idle'</code> while active turns remain <code>'busy'</code>; deployed to <code>:3102</code> (live capacity-exhaustion fault not separately triggered post-deploy)
+                </td>
+                <td><span class="badge badge-blue">CI Verified · Prod Deployed</span></td>
+              </tr>
+              <tr>
+                <td><span class="issue-pill">#2726</span> <strong>Medusa Retargeted Delivery Reply Tracking</strong> (<code>W1-B</code>)</td>
+                <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2739" target="_blank" rel="noopener">PR #2739</a><br/><code>f16267e0b32a</code></td>
+                <td>
+                  <code>lib/medusa-send.js</code> (<code>sendTracked</code>), <code>lib/medusa-exchanges.js</code> (<code>closeExchangeOnReply</code>), <code>lib/store.js</code> (<code>_MEDUSA_EXCHANGE_PROJECTION_COLUMNS</code> at <code>L6550</code>, <code>recordMedusaExchangeIntent</code>, <code>retargetMedusaDeliveryRecipient</code>)
+                </td>
+                <td>
+                  <code>test/medusa-exchanges.test.js</code> + <code>test/master-medusa.test.js</code> verify end-to-end Hub <code>#1023</code> stale-handle retargeting upgrades <code>medusa_exchanges</code> to <code>tracking = 'tracked'</code> and <code>--in-reply-to</code> closes exchange cleanly
+                </td>
+                <td><span class="badge badge-blue">CI Verified · Prod Deployed</span></td>
+              </tr>
+              <tr>
+                <td><span class="issue-pill">W2-REC</span> <strong>Wave 2 Reconciliation &amp; Release Docs</strong></td>
+                <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2740" target="_blank" rel="noopener">PR #2740</a><br/><code>1bb19f77ec3c</code></td>
+                <td>
+                  <code>.prawduct/change-log.md</code>, <code>FEATURES.md</code>, <code>docs/releases/v5.48-status.md</code> (<code>A485-GATE3-R1</code>), <code>docs/releases/v5.48.1-status.md</code>
+                </td>
+                <td>
+                  Reconciled all 4 Wave 1 records in <code>.prawduct/change-log.md</code> and <code>FEATURES.md</code>; closed historical <code>v5.48-status.md</code> finish-line gap; authored pre-tag <code>v5.48.1-status.md</code>
+                </td>
+                <td><span class="badge badge-green">Complete (Gate 3)</span></td>
+              </tr>
+              <tr>
+                <td><span class="issue-pill">W3-REL</span> <strong>Release <code>v5.48.1</code> &amp; Live Production Deploy</strong></td>
+                <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2741" target="_blank" rel="noopener">PR #2741</a><br/><code>7be72520468c</code></td>
+                <td>
+                  <code>version.json</code>, <code>package.json</code>, <code>README.md</code>, <code>CHANGELOG.md</code>, <code>docs/releases/v5.48.1-status.md</code> (4 <code>changelog.d/</code> fragments drained)
+                </td>
+                <td>
+                  <code>Tests #41173915852</code> + <code>Release #41173915838</code> <code>SUCCESS</code>; tag <code>v5.48.1</code> at <code>7be72520</code>; DB backup <code>tangleclaw-pre-v5.48.1-20261031T0600Z.db</code> (<code>ok</code>); live <code>runningVersion=5.48.1</code>, <code>isStale=false</code>, <code>schema_version=74</code>
+                </td>
+                <td><span class="badge badge-green">Live on :3102</span></td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </section>
 
+    <!-- SECTION 5: TESTAMENT POOL & SUITE RELIABILITY TELEMETRY -->
     <section class="section" id="telemetry">
       <div class="section-header">
         <div>
-          <span class="section-tag">Section 04 · Testament v0.30.0 Pool &amp; Suite Gate Telemetry</span>
-          <h2 class="section-title">Empirical Distributed Pool &amp; Pre-Deploy Suite Telemetry</h2>
-          <p class="section-desc">Measured across 5 live coordinator runs (330 batches) on <code>tls://testament-wire.rodeo.illuminati.org:443</code> and the 23,839-test pre-deploy suite gate.</p>
+          <h2 class="section-title"><span class="num">04</span> Testament <code>v0.30.0</code> Distributed Pool &amp; Suite Telemetry</h2>
+          <p class="section-desc">Empirical measurements from <code>~/.local/bin/testament report --project tangleclaw --json</code> across 6 pool runs (331 batches), Stage 3/4/5 benchmarks, and builder cost analysis.</p>
         </div>
-      </div>
-      <div class="bar-chart" style="margin-bottom:24px;">
-        <div class="bar-row">
-          <div class="bar-label-row">
-            <span><strong><code>W1-A (TC-Lane-A / #2733 + #2706)</code></strong> — MERGED: PR #2738 @ 8b3b8c281781088eafde7de72ec1e1757553abd8</span>
-            <span style="color:var(--green)"><strong>100%</strong></span>
-          </div>
-          <div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,#22c55e,#16a34a);"></div></div>
-        </div>
-        <div class="bar-row">
-          <div class="bar-label-row">
-            <span><strong><code>W1-B (TC-Lane-B / #2723 + #2726)</code></strong> — MERGED: PR #2739 @ f16267e0b32aadd190d727eb79746ff432dab7f2</span>
-            <span style="color:var(--green)"><strong>100%</strong></span>
-          </div>
-          <div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,#22c55e,#16a34a);"></div></div>
-        </div>
-        <div class="bar-row">
-          <div class="bar-label-row">
-            <span><strong><code>W2-REC (TC-Lane-INT / PR #2740)</code></strong> — MERGED @ 1bb19f77ec3c4c5e55e63c46badf6ff9b5f2ac46</span>
-            <span style="color:var(--green)"><strong>100%</strong></span>
-          </div>
-          <div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,#22c55e,#16a34a);"></div></div>
-        </div>
-        <div class="bar-row">
-          <div class="bar-label-row">
-            <span><strong><code>W3-REL (TC-Lane-INT / PR #2741)</code></strong> — MERGED &amp; DEPLOYED @ 7be72520468c620c4780bb2165bdbc15fd3f6e21</span>
-            <span style="color:var(--green)"><strong>100%</strong></span>
-          </div>
-          <div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,#22c55e,#16a34a);"></div></div>
-        </div>
-        <div class="bar-row">
-          <div class="bar-label-row">
-            <span><strong><code>Stage 3 (Small) Testament v0.30.0 Pool</code></strong> — 253/253 files (5,834 pass / 2 skip / 0 fail) in 27.115s wall-clock</span>
-            <span style="color:var(--green)"><strong>100% (27.1s)</strong></span>
-          </div>
-          <div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,#38bdf8,#2563eb);"></div></div>
-        </div>
-        <div class="bar-row">
-          <div class="bar-label-row">
-            <span><strong><code>Stage 4 (Medium) Pool + Local Fallback</code></strong> — 149/150 pool pass + 150/150 (5,710 pass / 0 fail) local fallback (#2742 filed)</span>
-            <span style="color:var(--green)"><strong>100% (5,710 pass)</strong></span>
-          </div>
-          <div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,#38bdf8,#2563eb);"></div></div>
-        </div>
-        <div class="bar-row">
-          <div class="bar-label-row">
-            <span><strong><code>Stage 5 (Large) Pre-Deploy Suite Gate</code></strong> — 226/226 files (12,295 pass / 1 skip / 0 fail) under SUITE_SLOT</span>
-            <span style="color:var(--green)"><strong>100% (12,295 pass)</strong></span>
-          </div>
-          <div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,#38bdf8,#2563eb);"></div></div>
-        </div>
-        <div class="bar-row">
-          <div class="bar-label-row">
-            <span><strong><code>Post-Deploy Live Stage 3 Pool Readback</code></strong> — Verified from live TangleClaw-Builder1 checkout (5,834 pass / 2 skip)</span>
-            <span style="color:var(--green)"><strong>100% PASS</strong></span>
-          </div>
-          <div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,#22c55e,#16a34a);"></div></div>
-        </div>
+        <span class="badge badge-green">331 Pool Batches · 0.351s Project Batch Overhead</span>
       </div>
 
-      <h3 style="margin:24px 0 12px;">Testament v0.30.0 Connected Runner Pool &amp; Empirical Benchmark Matrix</h3>
-      <div class="table-wrap" style="margin-bottom:24px;">
-        <table>
-          <thead>
-            <tr>
-              <th>Runner ID / Host</th>
-              <th>Executor &amp; Platform</th>
-              <th>Parallel Slots</th>
-              <th>Allowlisted Project &amp; Image</th>
-              <th>Sprint v5.48.1 Empirical Role &amp; Verification</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><strong><code>gpu-bozeman</code></strong></td>
-              <td><code>container</code> (Linux Docker)</td>
-              <td><code>28 slots</code></td>
-              <td><code>tangleclaw</code> (<code>.devcontainer/Dockerfile</code>)</td>
-              <td>Primary high-concurrency container worker; executed majority of Stage 3 (<code>175</code> batches) and Stage 4 (<code>150</code> batches) runs with warm image cache.</td>
-            </tr>
-            <tr>
-              <td><strong><code>14th-mbp</code></strong></td>
-              <td><code>container</code> (Apple Silicon Docker)</td>
-              <td><code>18 slots</code></td>
-              <td><code>tangleclaw</code> (<code>.devcontainer/Dockerfile</code>)</td>
-              <td>Secondary high-throughput worker; absorbed concurrent Stage 3 small batches during full-tier 253-file benchmark (<code>27.115s</code> wall-clock).</td>
-            </tr>
-            <tr>
-              <td><strong><code>nas-bozeman</code></strong></td>
-              <td><code>container</code> (Linux Docker)</td>
-              <td><code>10 slots</code></td>
-              <td><code>tangleclaw</code> (<code>.devcontainer/Dockerfile</code>)</td>
-              <td>Persistent LAN container worker; verified project allowlist sync and zero-flake execution across all 5 coordinator runs (<code>330</code> total batches).</td>
-            </tr>
-            <tr>
-              <td><strong><code>laptop</code></strong></td>
-              <td><code>container</code> (macOS Docker)</td>
-              <td><code>10 slots</code></td>
-              <td><code>tangleclaw</code> (<code>.devcontainer/Dockerfile</code>)</td>
-              <td>Fourth distributed worker completing the <code>66-slot</code> pool capacity verified via <code>testament status --json</code> and <code>testament runners list</code>.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <div class="grid-2" style="margin-bottom:18px;">
+        <div class="card">
+          <h3>Testament Pool &amp; Stage Execution Telemetry Bars</h3>
+          <p style="font-size:0.84rem;color:var(--text-muted);margin-top:0;">
+            Measured batch distribution across the 4 remote runners (<code>331</code> total batches in <code>6</code> runs), tier pass rates, and wall-clock speedups:
+          </p>
 
-      <h3 style="margin:24px 0 12px;">Coordinator Run-by-Run Telemetry (5 Live Runs · 330 Total Pool Batches)</h3>
-      <div class="table-wrap" style="margin-bottom:24px;">
-        <table>
-          <thead>
-            <tr>
-              <th>Run ID &amp; Timestamp (UTC)</th>
-              <th>Tier &amp; Caller</th>
-              <th>Files / Batches</th>
-              <th>Test Counts (Pass / Skip / Fail)</th>
-              <th>Wall-Clock &amp; Pool Execution Time</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><strong>Run #1 · <code>04:55:12Z</code></strong></td>
-              <td><code>small</code> (Smoke verification)</td>
-              <td><code>2 files / 1 batch</code></td>
-              <td><code>71 passed / 0 skipped / 0 failed</code></td>
-              <td><code>3.412s</code> wall-clock (first warm container execution after allowlist enrollment)</td>
-            </tr>
-            <tr>
-              <td><strong>Run #2 · <code>04:57:08Z</code></strong></td>
-              <td><code>small</code> (Full Stage 3 Pre-Merge Benchmark)</td>
-              <td><code>253 files / 175 batches</code></td>
-              <td><code>5,834 passed / 2 skipped / 0 failed</code></td>
-              <td><strong><code>27.115s</code> wall-clock</strong> (<code>22.777s</code> pool batch execution · <code>0.3495s</code> median batch overhead)</td>
-            </tr>
-            <tr>
-              <td><strong>Run #3 · <code>05:38:19Z</code></strong></td>
-              <td><code>small</code> (W3-REL Pre-Deploy Stage 3 Gate)</td>
-              <td><code>253 files / 175 batches</code></td>
-              <td><code>5,834 passed / 2 skipped / 0 failed</code></td>
-              <td><code>28.402s</code> wall-clock (<code>100%</code> pass across all 253 Stage 3 files on <code>main @ 1bb19f77</code>)</td>
-            </tr>
-            <tr>
-              <td><strong>Run #4 · <code>05:40:05Z</code></strong></td>
-              <td><code>medium</code> (W3-REL Pre-Deploy Stage 4 Gate)</td>
-              <td><code>150 files / 150 batches</code></td>
-              <td><code>5,152 pool passed</code> (149/150 files) → <code>5,710 local fallback passed</code> (150/150 files)</td>
-              <td>Surfaced <code>#2742</code> JUnit XML <code>&lt;undefined name="root"&gt;</code> on <code>test/reset-admin-store.test.js</code>; automatic local fallback passed <code>150/150</code> files.</td>
-            </tr>
-            <tr>
-              <td><strong>Run #5 · <code>06:03:14Z</code></strong></td>
-              <td><code>small</code> (Post-Deploy Live Checkout Verification)</td>
-              <td><code>253 files / 175 batches</code></td>
-              <td><code>5,834 passed / 2 skipped / 0 failed</code></td>
-              <td><code>27.890s</code> wall-clock from live <code>/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder1</code> checkout at <code>7be72520468c</code></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Runner 1: <code>gpu-bozeman</code> (Linux x86_64 · 32c / 28 slots)</strong></span>
+              <span><strong>229 / 331 Batches (69.2%) · 0.336s Overhead · 0.0% Fail</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill green" style="width:69.2%;"></div></div>
+          </div>
 
-      <h3 style="margin:24px 0 12px;">Fleet Session, Engine, Wake &amp; Token Telemetry Across Sprint v5.48.1</h3>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Session &amp; Workspace ID</th>
-              <th>Role &amp; Engine</th>
-              <th>Assigned Sprint Work</th>
-              <th>Empirical Execution &amp; Governance Telemetry</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><strong><code>#1531 TC-Lane-PM</code></strong> (<code>tc-lane-pm-70072ceb</code>)</td>
-              <td>Project Manager (<code>antigravity</code>)</td>
-              <td>Charter <code>A486-R1</code>, Pool Enrollment, Wave Dispatch, Charter <code>A487</code> (<code>v5.49.0</code>)</td>
-              <td>Enrolled <code>cursatory</code> on Testament v0.30.0 pool, coordinated <code>W1</code>–<code>W3-REL</code> merges, authored <code>v5490-sprint-plan.md</code>, verified Gate 4 report publication.</td>
-            </tr>
-            <tr>
-              <td><strong><code>#1530 TC-Lane-Arc</code></strong> (<code>tc-lane-arc-82d48b6b</code>)</td>
-              <td>Architect (<code>antigravity</code>)</td>
-              <td><code>A486-R1..R2</code> Co-Sign, <code>A-Gate</code>/<code>R-Gate</code>, Post-Mortem, <code>A487</code> Co-Sign</td>
-              <td>Issued <code>A486-W1A/W1B</code>, <code>A486-SCOPE-R1</code>, <code>A486-W2REC-R2</code>, <code>A486-W3REL-R1</code>, <code>A486-DEPLOY-R1</code>, and <code>A487-COSIGN-V5490-20261030</code>.</td>
-            </tr>
-            <tr>
-              <td><strong><code>#1528 TC-Lane-INT</code></strong> (<code>tc-lane-int-c41a7475</code>)</td>
-              <td>Release Integrator (<code>codex</code>)</td>
-              <td><code>B-Gate</code> Merges (<code>#2738</code>–<code>#2741</code>), <code>W2-REC</code>, <code>W3-REL</code>, Live Deploy</td>
-              <td>Executed all 4 exact-head merges (`--merge --match-head-commit`), ran 23,839-test pre-deploy gate, published tag `v5.48.1`, deployed `:3102`.</td>
-            </tr>
-            <tr>
-              <td><strong><code>#1529 TC-Lane-Obsr</code></strong> (<code>tc-lane-obsr-c12dce8c</code>)</td>
-              <td>Observer (<code>antigravity</code>)</td>
-              <td><code>O-Gate</code> Telemetry, <code>A486-R2</code> Audit Report, Raw JSON, HTML Report</td>
-              <td>Authored <code>v5.48.1-sprint-observer-report.md</code> (`30,469 B`), <code>v5481-w1-raw-evidence.json</code> (`7,744 B`), and shipped HTML report.</td>
-            </tr>
-            <tr>
-              <td><strong><code>#1524 TC-Lane-A</code></strong> (<code>tc-lane-a-295aa459</code>)</td>
-              <td>Builder A (<code>claude-sonnet-reviewer</code>)</td>
-              <td><code>W1-A</code> (<code>#2733 + #2706</code>, PR <code>#2738</code>)</td>
-              <td>Delivered <code>.devcontainer/Dockerfile</code>, <code>.testament.toml</code>, <code>scripts/test-stage.js</code>, and 90s Stage 5 timeout calibration; merged at <code>8b3b8c28</code>.</td>
-            </tr>
-            <tr>
-              <td><strong><code>#1525 TC-Lane-B</code></strong> (<code>tc-lane-b-e1fd98cf</code>)</td>
-              <td>Builder B (<code>claude-sonnet-reviewer</code>)</td>
-              <td><code>W1-B</code> (<code>#2723 + #2726</code>, PR <code>#2739</code>)</td>
-              <td>Delivered Codex <code>systemError</code> turn-settlement recovery and Medusa retargeted exchange reply sync; merged at <code>f16267e0</code>.</td>
-            </tr>
-            <tr>
-              <td><strong><code>#1526 TC-Lane-PRR-A</code></strong> (<code>tc-lane-prr-a-4849db82</code>)</td>
-              <td>PR Reviewer A (<code>codex</code>)</td>
-              <td><code>I-Gate</code> Reviews on <code>#2738</code>, <code>#2739</code>, <code>#2740</code>, <code>#2741</code></td>
-              <td>Caught `test/tiers.json` sync in `W1-A` and `docs/releases/v5.48-status.md` finish-line table in `W2-REC`; delivered exact-head `ACCEPT` receipts across all 4 PRs.</td>
-            </tr>
-            <tr>
-              <td><strong><code>#1527 TC-Lane-PRR-B</code></strong> (<code>tc-lane-prr-b-df711f73</code>)</td>
-              <td>PR Reviewer B (<code>codex</code>)</td>
-              <td><code>I-Gate</code> Review on <code>#2739</code> (<code>W1-B</code>)</td>
-              <td>Caught missing SQLite projection columns for retargeted Medusa exchanges on `PR #2739` initial head `9faab8b7` and verified fix on `c292e967`.</td>
-            </tr>
-          </tbody>
-        </table>
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Runner 2: <code>nas-bozeman</code> (Linux x86_64 · 12c / 10 slots)</strong></span>
+              <span><strong>51 / 331 Batches (15.4%) · 0.296s Warm Prepare</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill cyan" style="width:15.4%;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Runner 3: <code>14th-mbp</code> (macOS arm64 · 18c / 18 slots)</strong></span>
+              <span><strong>35 / 331 Batches (10.6%) · 0.220s Overhead</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill blue" style="width:10.6%;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Runner 4: <code>laptop</code> (macOS arm64 · 10c / 10 slots)</strong></span>
+              <span><strong>16 / 331 Batches (4.8%) · 0.266s Overhead · 0.0% Fail</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill purple" style="width:8.0%;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Stage 3 (<code>small</code> Tier · 253 Files) Remote Pool Pass Rate</strong></span>
+              <span><strong>253 / 253 Files (100.0%) · 5,834 Pass / 2 Skip in 27.115s</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill green" style="width:100%;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Stage 4 (<code>medium</code> Tier · 150 Files) Remote Pool Pass Rate</strong></span>
+              <span><strong>149 / 150 Files (99.3%) · 1 Container JUnit Gap (#2742, 54/54 Local)</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill cyan" style="width:99.3%;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Stage 5 (<code>large</code> Tier) Timeout Reduction (<code>#2706</code>)</strong></span>
+              <span><strong>60m (3,600s) → 25m (1,500s) · 58.3% Tighter Hang Detection</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill amber" style="width:58.3%;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Incremental Source Delta Ship Compression (<code>aeb4fc40</code> vs <code>f7245e9c</code>)</strong></span>
+              <span><strong>15.67 MB Cold Tree → 58.6 KB Warm Delta (99.63% Reduction)</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill green" style="width:99.6%;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>TangleClaw Batch Overhead vs Global Testament Pool Median</strong></span>
+              <span><strong>0.351s Project Overhead vs 3.584s Pool Median (90.2% Lower)</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill green" style="width:90.2%;"></div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>SVG Diagram 3 — Wall-Clock &amp; Token Savings: Legacy Local Loop vs Testament + <code>P44</code></h3>
+          <div class="svg-wrap" style="background:rgba(7,11,20,0.7);border:1px solid var(--border);border-radius:12px;padding:12px;">
+            <svg viewBox="0 0 760 310" width="100%" height="auto" role="img" aria-label="Wall-Clock Comparison of Legacy Builder Loop vs Testament v0.30.0 + P44">
+              <text x="20" y="28" fill="#e2e8f0" font-size="13" font-weight="700">Per-Revision Builder Verification Cycle: Before vs After v5.48.1 + P44</text>
+
+              <!-- Legacy Bar -->
+              <text x="20" y="68" fill="#f87171" font-size="11" font-weight="700">BEFORE (v5.48.1 W1-A Pre-Merge Loop: ~20.5m Wall-Clock + ~136k Redundant Claude Tokens)</text>
+              <rect x="20" y="78" width="490" height="44" rx="6" fill="#ef4444" fill-opacity="0.35" stroke="#f87171"/>
+              <text x="32" y="98" fill="#fee2e2" font-size="11" font-weight="600">Local 751-File node --test under SUITE_SLOT (~14.0 min, 100% cursatory CPU)</text>
+              <text x="32" y="114" fill="#fecaca" font-size="10">Serializes all builder lanes on host; triggers tmux contention flakes (#2735, #2736)</text>
+
+              <rect x="514" y="78" width="220" height="44" rx="6" fill="#f59e0b" fill-opacity="0.35" stroke="#fbbf24"/>
+              <text x="524" y="98" fill="#fef3c7" font-size="11" font-weight="600">Rule #271 /prawduct:critic + pr</text>
+              <text x="524" y="114" fill="#fde68a" font-size="10">~4–7m + ~136k tokens + scope leak</text>
+
+              <!-- New Bar -->
+              <text x="20" y="166" fill="#34d399" font-size="11" font-weight="700">AFTER (v5.49.0+ Testament Pool Offload #2733 + P44 Rule #271 Streamlining: ~27.1s Stage 3)</text>
+              <rect x="20" y="176" width="68" height="44" rx="6" fill="#10b981" fill-opacity="0.45" stroke="#34d399" stroke-width="1.8"/>
+              <text x="28" y="196" fill="#d1fae5" font-size="11" font-weight="700">27.1s</text>
+              <text x="28" y="212" fill="#a7f3d0" font-size="9">Pool</text>
+
+              <rect x="96" y="176" width="240" height="44" rx="6" fill="#3b82f6" fill-opacity="0.32" stroke="#60a5fa"/>
+              <text x="108" y="196" fill="#dbeafe" font-size="11" font-weight="600">Direct Handoff → TC-Lane-PRR-A/B</text>
+              <text x="108" y="212" fill="#bfdbfe" font-size="10">0 redundant subagent tokens · 0 change-log collisions</text>
+
+              <!-- Summary Callout Box -->
+              <rect x="20" y="242" width="714" height="52" rx="8" fill="#0f172a" stroke="#38bdf8"/>
+              <text x="34" y="263" fill="#38bdf8" font-size="11" font-weight="700">EMPIRICAL GAIN VALIDATED IN SPRINT v5.48.1:</text>
+              <text x="34" y="281" fill="#cbd5e1" font-size="10">• Stage 3 (253 files, 5,836 tests): 27.115s on 66-slot Testament pool (0% cursatory CPU) · P44 saves ~4–7m &amp; ~136k Claude tokens/round</text>
+            </svg>
+          </div>
+
+          <div class="table-wrap" style="margin-top:12px;">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th>Benchmark Run</th>
+                  <th>Request ID / Tree</th>
+                  <th>Scope &amp; Verdict</th>
+                  <th>Ship Size &amp; Time</th>
+                  <th>Execute / Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Cold Bring-Up</strong></td>
+                  <td><code>f7245e9ca48a...</code> (<code>39b4eeeea7b7</code>)</td>
+                  <td><code>2</code> files, <code>102/102</code> pass (<code>b1497</code> on <code>gpu-bozeman</code>)</td>
+                  <td><code>15.67 MB</code> in <code>0.168s</code></td>
+                  <td><code>30.74s</code> / <strong><code>37.865s</code></strong></td>
+                </tr>
+                <tr>
+                  <td><strong>Warm Stage 3</strong></td>
+                  <td><code>aeb4fc4032f5...</code> (<code>8c2499f01a1c</code>)</td>
+                  <td><code>253</code> files, <code>5,834</code> pass / <code>2</code> skip (<code>175</code> batches)</td>
+                  <td><code>58.6 KB</code> in <code>0.339s</code></td>
+                  <td><code>22.777s</code> / <strong><code>27.115s</code></strong></td>
+                </tr>
+                <tr>
+                  <td><strong>Stage 4 Pre-Deploy</strong></td>
+                  <td><code>W3-REL</code> Medium Pool Run</td>
+                  <td><code>149/150</code> pass on pool + <code>#2742</code> JUnit fallback (<code>54/54</code> local)</td>
+                  <td>Incremental delta</td>
+                  <td><code>99.3%</code> pool / <code>100%</code> total</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </section>
 
+    <!-- SECTION 6: POST-MORTEM, RULE #283 16-POINT AUDIT & 4 MAINTENANCE GATES -->
     <section class="section" id="postmortem">
       <div class="section-header">
         <div>
-          <span class="section-tag">Section 05 · Governance Audit &amp; 16-Point Rule #283 Evaluation</span>
-          <h2 class="section-title">What Worked, What Was Fixed &amp; 4-Gate Verification Matrix</h2>
-          <p class="section-desc">Finalized by <code>TC-Lane-Obsr</code> and <code>TC-Lane-Arc</code> (`A486` Post-Mortem) at <code>v5.48.1</code> release closeout.</p>
+          <h2 class="section-title"><span class="num">05</span> Sprint Post-Mortem, 16-Point Governance Audit &amp; 4 Maintenance Gates</h2>
+          <p class="section-desc">Synthesized findings from <code>TC-Lane-Obsr</code> (<code>v5481-observer-sprint-audit-report.md</code>) and <code>TC-Lane-Arc</code> (<code>v5481-architect-sprint-postmortem.md</code>).</p>
         </div>
+        <span class="badge badge-green">16 / 16 Rule #283 Measures Audited · 4 / 4 Gates Complete</span>
       </div>
-      <div class="grid-2" style="margin-bottom:22px;">
-        <div>
-          <h3 style="margin-bottom:12px;color:var(--green);">✅ What Worked Exceptionally Well</h3>
-          <div class="pm-item">
-            <h4>1. Live Testament v0.30.0 Pool Enrolment &amp; 27.1s Stage 3 Execution</h4>
-            <p>Once <code>Jason-Vaughan</code> was added to the coordinator OAuth allowlist, device login and project container allowlisting succeeded immediately, running all 253 Stage 3 test files (5,834 tests) in <strong>27.115s wall-clock</strong> across 4 runners.</p>
-          </div>
-          <div class="pm-item">
-            <h4>2. Single-Wave 2-Issue-Per-Lane Bundling (Rule #294)</h4>
-            <p>Both <code>W1-A</code> (<code>#2733 + #2706</code>) and <code>W1-B</code> (<code>#2723 + #2726</code>) shipped as cohesive 2-issue PRs in a single wave with zero production file overlap.</p>
-          </div>
-          <div class="pm-item">
-            <h4>3. Automatic Local Fallback When Stage 4 Surfaced Container JUnit Edge Case (#2742)</h4>
-            <p>When 1 of 150 Stage 4 files (<code>test/reset-admin-store.test.js</code>) emitted <code>&lt;undefined name="root"&gt;</code> in Node 22 JUnit XML inside the Linux container, <code>scripts/test-stage.js</code> fell back cleanly to local execution (54/54 pass) without blocking release verification.</p>
-          </div>
-          <div class="pm-item">
-            <h4>4. Peer PRR Substitution Under Pre-#2723 Codex Capacity Stall (A486-W3REL-PRR-R1)</h4>
-            <p>When <code>TC-Lane-PRR-B</code> hit transient Codex model capacity on the pre-<code>#2723</code> server, <code>TC-Lane-PRR-A</code> seamlessly executed the exact-head <code>W3-REL</code> review under <code>Rule #291 §1</code>.</p>
-          </div>
-        </div>
-        <div>
-          <h3 style="margin-bottom:12px;color:var(--amber);">⚠️ What Didn't Work &amp; Fixes Enforced for v5.49.0 (Charter A487)</h3>
-          <div class="pm-item warn">
-            <h4>1. Duplicate Builder-Side /prawduct:critic &amp; .prawduct/change-log* Scope Collision</h4>
-            <p>Legacy Builder <code>Rule #271</code> caused both Claude Builders to run internal <code>/prawduct:critic</code> subagents (~4–7m + 136k tokens) and <code>prawduct-hook archive-change-log --apply</code>. <strong>Fix (A487 P44 &amp; P46):</strong> Co-signed bounded operational amendment to <code>Rule #271</code> removing Builder-side Critic/PR subagents and reserving <code>.prawduct/change-log*</code> exclusively for <code>W3-REC</code>.</p>
-          </div>
-          <div class="pm-item warn">
-            <h4>2. Node 22 JUnit XML &lt;undefined name="root"&gt; on test/reset-admin-store.test.js (#2742)</h4>
-            <p>Inside the Linux container, an uncreated Caddyfile parent directory caused Node 22's JUnit reporter to serialize the outer suite tag as <code>&lt;undefined name="root"&gt;</code>. <strong>Fix:</strong> Filed as Issue <code>#2742</code> and scheduled in Sprint <code>v5.49.0</code> Wave 2 (<code>W2-B</code>).</p>
-          </div>
-          <div class="pm-item warn">
-            <h4>3. Pre-#2723 Codex systemError Wake Stall on v5.48.0 Server</h4>
-            <p><code>TC-Lane-PRR-B</code> experienced the exact Codex <code>systemError</code> wake stall that <code>#2723</code> fixes. <strong>Fix:</strong> Now deployed live on <code>:3102</code> in <code>v5.48.1</code> (<code>7be72520</code>).</p>
-          </div>
-          <div class="pm-item warn">
-            <h4>4. GraphQL Rate Limit Under Concurrent PR Polling</h4>
-            <p><code>gh pr view</code> / <code>gh pr checks</code> burned GraphQL quota while REST had 4,999/5,000 remaining. <strong>Fix:</strong> Prefer REST <code>gh api repos/.../commits/&lt;sha&gt;/check-runs</code> for CI polling.</p>
+
+      <div class="grid-2" style="margin-bottom:18px;">
+        <div class="card">
+          <h3 style="color:var(--green);">What Worked — Validated Architectural &amp; Process Wins</h3>
+          <div class="pm-list">
+            <div class="pm-item">
+              <h4>1. Live Testament v0.30.0 Distributed Container Pool Bring-Up (66 Slots Across 4 Runners)</h4>
+              <p>
+                Once <code>Jason-Vaughan</code> was admitted to the Testament <code>People</code> allowlist (<code>QJVT-FHJK</code>), <code>cursatory</code> connected over TLS to <code>gpu-bozeman</code> (28s), <code>nas-bozeman</code> (10s), <code>14th-mbp</code> (18s), and <code>laptop</code> (10s). Stage 3 (<code>253</code> files, <code>5,836</code> tests) shipped a <code>58.6 KB</code> delta in <code>0.339s</code> and executed across <code>175</code> parallel batches in <strong><code>22.777s</code> (<code>27.115s</code> wall-clock) with <code>0%</code> CPU load on <code>cursatory</code></strong>. Guardrail: <code>Rule #271</code> / <code>#2733</code> remote tier offload is now the standard fast path for <code>v5.49.0+</code>.
+              </p>
+            </div>
+            <div class="pm-item">
+              <h4>2. Rule #294 Single-Wave 2-Issue Car Bundling Eliminated Mid-Sprint Fleet Resets</h4>
+              <p>
+                Bundling <code>#2733 + #2706</code> into <code>W1-A</code> (<code>PR #2738</code>) and <code>#2723 + #2726</code> into <code>W1-B</code> (<code>PR #2739</code>) cut feature PR count by <code>50%</code> (2 PRs instead of 4), eliminated inter-wave 6-lane retirement/relaunch overhead, and maintained strict file-scope disjointness (<code>W1-A ∩ W1-B = ∅</code>). Rule: Retain <code>Rule #294</code> 2-issue car bundling across all 4 Builder lanes in <code>v5.49.0</code>.
+              </p>
+            </div>
+            <div class="pm-item">
+              <h4>3. Zero Dead-Code Premise Errors Under Architect Source-Verification Guardrail (P42)</h4>
+              <p>
+                Every file path, line number, function signature, and CLI contract in Charter <code>A486-R1</code> (<code>formatTestament</code>, <code>LARGE_TIMEOUT_MS</code>, <code>RESTING_STATUSES</code> at <code>lib/startup-control-codex.js:2486</code>, <code>_MEDUSA_EXCHANGE_PROJECTION_COLUMNS</code> at <code>lib/store.js:6550</code>) matched <code>main @ 77d09e99</code> with <code>100%</code> accuracy. Pillar: Keep <code>P42</code> mandatory in every Architect <code>A-COSIGN</code>.
+              </p>
+            </div>
+            <div class="pm-item">
+              <h4>4. High-Signal Multi-Goal PRR Interception Before Merge (PRR-A &amp; PRR-B)</h4>
+              <p>
+                Codex reviewers <code>TC-Lane-PRR-A</code> and <code>TC-Lane-PRR-B</code> caught the <code>.prawduct/change-log*</code> hook mutation on both Wave 1 PRs (<code>A486-SCOPE-R1</code>), required a live Hub <code>POST /api/medusa/send</code> <code>#1023</code> retarget integration test on <code>W1-B</code> (<code>c292e967</code>), and hardened <code>W1-A</code>’s <code>stderr</code> fallback notice and malformed-JSON fallback (<code>80aadede</code> / <code>c3081801</code>). Guardrail: Dedicated Codex PRR lanes remain the sole code review gate in <code>v5.49.0+</code>.
+              </p>
+            </div>
           </div>
         </div>
+
+        <div class="card">
+          <h3 style="color:var(--amber);">What Didn't Work — Frictions &amp; Concrete Guardrail Fixes</h3>
+          <div class="pm-list">
+            <div class="pm-item warn">
+              <h4>1. Flagship Operator Finding (P44): Builder Rule #271 Internal /prawduct:critic + pr Duplication &amp; Hook Collision</h4>
+              <p>
+                Builder Rule <code>#271</code> still instructed Claude Builders to run internal <code>/prawduct:critic</code> and <code>/prawduct:pr</code> subagents (burning <strong><code>~4–7 minutes</code> and <code>~136k Claude tokens</code> per revision round</strong> duplicating <code>TC-Lane-PRR-A/B</code>) AND run <code>prawduct-hook archive-change-log --apply</code> (which mutated <code>.prawduct/change-log*</code> at 45KB and triggered the <code>A486-SCOPE-R1</code> scope collision on both <code>W1-A</code> and <code>W1-B</code>). Fix / Rule: Amend <code>Rule #271</code> (<code>P44</code>) so Builders skip internal Prawduct subagents/hooks and hand off directly to <code>TC-Lane-PRR-A/B</code> after fast Testament pool checks.
+              </p>
+            </div>
+            <div class="pm-item warn">
+              <h4>2. Pre-Push Local 751-File Full-Suite Serialization on Runner Edits &amp; Host Contention Flakes (#2735, #2736)</h4>
+              <p>
+                Because <code>W1-A</code> touched <code>scripts/test-stage.js</code> before <code>#2733</code> merged, each of its 4 PRR revision commits had to run a ~14-minute local 751-file suite under <code>SUITE_SLOT</code> (cap 1), while host CPU contention caused out-of-diff flakes in <code>test/tmux-tcc.test.js</code> (<code>#2735</code>) and <code>test/master-medusa.test.js</code> (<code>#2736</code>). Fix / Guardrail: Offload <code>Stages 3–5</code> to the 66-slot Testament pool in <code>v5.49.0+</code> (<code>P45</code>).
+              </p>
+            </div>
+            <div class="pm-item warn">
+              <h4>3. Stage 4 Container JUnit XML Gap on test/reset-admin-store.test.js (#2742) &amp; Initial Enrolment Gate</h4>
+              <p>
+                During <code>W3-REL</code> Stage 4 pool verification, <code>149/150</code> Medium files passed on the Testament container pool, while <code>test/reset-admin-store.test.js</code> produced no JUnit XML inside the container (passing <code>54/54</code> locally via automatic fallback). Earlier, initial enrolment codes <code>BXBD-NSQC</code> / <code>RQLD-PJMD</code> failed until <code>Jason-Vaughan</code> was added to the Testament <code>People</code> allowlist (<code>QJVT-FHJK</code>). Fix / Rule: Tracked as Issue <code>#2742</code> for <code>v5.49.0</code> so Stage 4 runs <code>150/150</code> on the pool.
+              </p>
+            </div>
+            <div class="pm-item warn">
+              <h4>4. Codex Launch Prime Timing (PRR-B), Step-(d) Wait (INT), GraphQL Quota &amp; Live Report Marker</h4>
+              <p>
+                <code>TC-Lane-PRR-B</code> missed its initial launch prime while loading <code>GPT-6-Sol</code> (<code>startup-not-ready</code>); <code>TC-Lane-INT</code> waited for pane confirmation on step <code>(d)</code>; concurrent <code>gh pr view</code> calls briefly hit the 5,000 pt/hr GraphQL quota; and <code>sync-live-sprint.py</code> overwrote <code>v5.48.1/index.html</code> while the <code>AUTO_GENERATED_LIVE_SPRINT_REPORT</code> comment remained. Fix / Guardrail: Adopt <code>P46</code> (90s startup watchdog + REST <code>gh api</code> preference) and strip the live marker immediately upon finalizing Gate 4.
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <h3 style="margin:20px 0 10px;">4-Gate Release Verification Matrix (Rule #283.5)</h3>
-      <div class="table-wrap" style="margin-bottom:22px;">
-        <table>
-          <thead>
-            <tr>
-              <th>Gate</th>
-              <th>Owner</th>
-              <th>Verification Scope</th>
-              <th>Final Verdict</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><strong>Gate 1 · I-Gate (PRR Code &amp; Contract Review)</strong></td>
-              <td><code>TC-Lane-PRR-A</code> / <code>PRR-B</code></td>
-              <td>Exact-SHA diff review, unit/integration test coverage, and charter scope compliance</td>
-              <td><span class="badge badge-green">PASS</span> Exact-head <code>ACCEPT</code> on <code>#2738</code>, <code>#2739</code>, <code>#2740</code>, and <code>#2741</code>.</td>
-            </tr>
-            <tr>
-              <td><strong>Gate 2 · B-Gate (Integrator Verification &amp; CI Gate)</strong></td>
-              <td><code>TC-Lane-INT</code></td>
-              <td>Exact-head GitHub Actions <code>Tests</code> CI + Stage 3–5 pre-deploy suite (23,839 pass) + live deploy</td>
-              <td><span class="badge badge-green">PASS</span> Merged &amp; deployed <code>v5.48.1 @ 7be72520468c</code> to <code>:3102</code>.</td>
-            </tr>
-            <tr>
-              <td><strong>Gate 3 · A-Gate / R-Gate (Architect Invariant &amp; Records Gate)</strong></td>
-              <td><code>TC-Lane-Arc</code></td>
-              <td>Architectural invariant sign-off (<code>A486-W1A/W1B</code>), records (<code>A486-W2REC-R2</code>), release (<code>A486-W3REL-R1</code>) &amp; deploy (<code>A486-DEPLOY-R1</code>)</td>
-              <td><span class="badge badge-green">PASS</span> All architectural rulings and post-mortem (<code>A486</code>) attested.</td>
-            </tr>
-            <tr>
-              <td><strong>Gate 4 · O-Gate (Observer Canonical Report &amp; Release Audit)</strong></td>
-              <td><code>TC-Lane-Obsr</code></td>
-              <td>16-point <code>Rule #283</code> evaluation, raw evidence JSON, and canonical 8-section HTML Sprint Report</td>
-              <td><span class="badge badge-green">PASS</span> <code>18/18</code> releases + hub validated via <code>validate-sprint-report.py --all</code>.</td>
-            </tr>
-          </tbody>
-        </table>
+      <!-- 4 END-OF-SPRINT MAINTENANCE GATES -->
+      <div class="card" style="margin-bottom:18px;">
+        <h3>4 End-of-Sprint Maintenance Gates (<code>Rule #280 §6</code> &amp; <code>Rule #283 cl. 3 #16</code>)</h3>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>Maintenance Gate</th>
+                <th>Owner Lane(s)</th>
+                <th>Canonical Target Artifact(s)</th>
+                <th>Verification Evidence &amp; Digest</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Gate 1 — Document Registry &amp; Queue Reset</strong></td>
+                <td><code>TC-Lane-PM</code> + <code>TC-Lane-INT</code></td>
+                <td><code>tangleclaw-document-registry.md</code>, <code>LANE_QUEUE.md</code></td>
+                <td><code>v5.48.1</code> archived in <code>LANE_QUEUE.md</code>; <code>v5.49.0</code> (<code>Charter A487</code>) staged cleanly; all sprint clones clean on <code>main @ 7be72520468c</code></td>
+                <td><span class="badge badge-green">PASS (Verified)</span></td>
+              </tr>
+              <tr>
+                <td><strong>Gate 2 — Architect &amp; Observer Post-Mortems</strong></td>
+                <td><code>TC-Lane-Arc</code> + <code>TC-Lane-Obsr</code></td>
+                <td><code>v5481-architect-sprint-postmortem.md</code>, <code>v5481-observer-sprint-audit-report.md</code>, <code>v5481-w1-raw-evidence.json</code></td>
+                <td>Published in <code>.tangleclaw/plans/</code> with full 16-point Rule <code>#283</code> audit, Testament <code>v0.30.0</code> telemetry, and <code>P44–P46</code> recommendations</td>
+                <td><span class="badge badge-green">PASS (Verified)</span></td>
+              </tr>
+              <tr>
+                <td><strong>Gate 3 — Release-Status Honesty &amp; Tag</strong></td>
+                <td><code>TC-Lane-INT</code> + <code>TC-Lane-Obsr</code></td>
+                <td><code>docs/releases/v5.48-status.md</code>, <code>docs/releases/v5.48.1-status.md</code>, Tag <code>v5.48.1 @ 7be72520</code></td>
+                <td><code>W2-REC #2740</code> + <code>W3-REL #2741</code> merged; <code>O-Gate</code> token <code>O486-W3REL-PR2741-A9A72C4E-ACCEPT</code>; live server verified on <code>5.48.1</code></td>
+                <td><span class="badge badge-green">PASS (Verified)</span></td>
+              </tr>
+              <tr>
+                <td><strong>Gate 4 — Canonical 8-Section HTML Report &amp; Hub</strong></td>
+                <td><code>TC-Lane-Obsr</code> + <code>TC-Lane-PM</code></td>
+                <td><code>sprint-reports/v5.48.1/index.html</code>, <code>sprint-reports/index.html</code></td>
+                <td>Finalized 8-section HTML report (no live marker) + hub card (<code>18</code> releases, <code>221</code> PRs) passing <code>validate-sprint-report.py --all</code> with <code>0</code> errors</td>
+                <td><span class="badge badge-green">PASS (Verified)</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      <h3 style="margin:20px 0 10px;">Rule #283 16-Point Governance &amp; Process Audit (Final v5.48.1 Evaluation)</h3>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Rule #283 Audit Dimension</th>
-              <th>Verdict</th>
-              <th>Empirical Sprint v5.48.1 Evidence</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td>1</td><td>Operator Interventions &amp; Causes</td><td><span class="badge badge-green">PASS</span></td><td>1 external pool OAuth allowlist addition by pool admin (`brooks`) for `Jason-Vaughan`; 0 code/merge interventions.</td></tr>
-            <tr><td>2</td><td>Dispatch-to-Merge Timing Breakdown</td><td><span class="badge badge-green">PASS</span></td><td>4 PRs (`#2738`–`#2741`) completed across 3 waves (`W1`, `W2-REC`, `W3-REL`) in ~3h 18m total sprint wall time.</td></tr>
-            <tr><td>3</td><td>Active vs Allowed Builders &amp; Parallelism</td><td><span class="badge badge-green">PASS</span></td><td>2 active Builder lanes (`TC-Lane-A`, `TC-Lane-B`), 2 issues per lane in a single wave (`Rule #294`).</td></tr>
-            <tr><td>4</td><td>Forced Re-Syncs / Rebases When main Moves</td><td><span class="badge badge-green">PASS</span></td><td>0 production file conflicts; `.prawduct/change-log*` reverted to `origin/main` under `A486-SCOPE-R1` for `W2-REC`.</td></tr>
-            <tr><td>5</td><td>Open PR Age Since Current main</td><td><span class="badge badge-green">PASS</span></td><td>All 4 PRs merged promptly after exact-head CI and 4-gate sign-off; 0 stale open PRs.</td></tr>
-            <tr><td>6</td><td>CI Red After Ready (#2595 Pre-Push Hook)</td><td><span class="badge badge-green">PASS</span></td><td>0 red GitHub Actions `Tests` runs across `#2738`, `#2739`, `#2740`, `#2741`, and `main`.</td></tr>
-            <tr><td>7</td><td>PRR Review Rounds &amp; Findings by Severity</td><td><span class="badge badge-green">PASS</span></td><td>PRR caught `W1-A` `test/tiers.json` sync + `W1-B` projection columns pre-merge; 0 defects escaped to `main`.</td></tr>
-            <tr><td>8</td><td>Post-Merge Defects on main</td><td><span class="badge badge-green">PASS</span></td><td>0 post-merge defects on `main`; all `main` CI runs and 23,839-test pre-deploy suite passed 100%.</td></tr>
-            <tr><td>9</td><td>Clears, Retries &amp; Stalls</td><td><span class="badge badge-green">PASS</span></td><td>`PRR-B` hit pre-`#2723` Codex `systemError` wake stall on `v5.48.0`; resolved via `A486-W3REL-PRR-R1` peer substitution and fixed in `v5.48.1`.</td></tr>
-            <tr><td>10</td><td>Wrong Triage / Scope Fields</td><td><span class="badge badge-green">PASS</span></td><td>All 4 issues (`#2733`, `#2706`, `#2723`, `#2726`) matched source-verified `P42` file scopes.</td></tr>
-            <tr><td>11</td><td>Rule Breaches &amp; Governance Discipline</td><td><span class="badge badge-green">PASS</span></td><td>Strict `Rule #285` &amp; `Rule #291` role separation maintained; all merges executed via `--merge --match-head-commit` by `TC-Lane-INT`.</td></tr>
-            <tr><td>12</td><td>Unlabelled PRs, Dirty Clones &amp; Worktrees</td><td><span class="badge badge-green">PASS</span></td><td>All feature branches retired post-merge; live checkout preserves only the attested Operator `data/global-rules.md` edit.</td></tr>
-            <tr><td>13</td><td>Release-Status Lag &amp; Finish-Line Honesty</td><td><span class="badge badge-green">PASS</span></td><td>`docs/releases/v5.48-status.md` reconciled (`A485-GATE3-R1`) and `docs/releases/v5.48.1-status.md` authored honestly.</td></tr>
-            <tr><td>14</td><td>Conflict Resolution Time</td><td><span class="badge badge-green">PASS</span></td><td>`~4m` to revert `.prawduct/change-log*` on `W1-A`/`W1-B` under `A486-SCOPE-R1`; permanently prevented in `v5.49.0` via `P44`/`P46`.</td></tr>
-            <tr><td>15</td><td>Wakes, Tokens &amp; Turns by Role &amp; Model</td><td><span class="badge badge-green">PASS</span></td><td>Recorded in `v5481-w1-raw-evidence.json` and `v5481-observer-sprint-audit-report.md`; `Rule #271` amendment saves ~136k tokens/round in `v5.49.0`.</td></tr>
-            <tr><td>16</td><td>4 End-of-Sprint Maintenance Gates</td><td><span class="badge badge-green">PASS</span></td><td>Gate 1 (Registry), Gate 2 (`A486` Post-Mortem + Observer Audit), Gate 3 (`v5.48.1-status.md`), and Gate 4 (HTML Report + Hub) complete.</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <h3 style="margin:24px 0 10px;">Sprint v5.48.1 &amp; v5.49.0 Canonical Artifact &amp; SHA-256 Attestation Registry (Gates 1–4)</h3>
-      <div class="table-wrap" style="margin-bottom:22px;">
-        <table>
-          <thead>
-            <tr>
-              <th>Artifact / Governance Document</th>
-              <th>Owner &amp; Gate</th>
-              <th>Canonical URL / Path</th>
-              <th>SHA-256 Digest &amp; Size</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><strong><code>v5.48.1</code> Sprint Execution Charter (<code>A486-R1</code>)</strong></td>
-              <td><code>TC-Lane-PM</code> (Charter)</td>
-              <td><code>https://cursatory.tail123678.ts.net:8443/plans/74/v5481-sprint-plan.md</code> (<code>.tangleclaw/plans/v5481-sprint-plan.md</code>)</td>
-              <td><code>c8be8d74d9216d645c1718c6b3b3d6c4d49165d60ec9645269e0135f78223d31</code> (<code>15,412 B</code>)</td>
-            </tr>
-            <tr>
-              <td><strong><code>A486</code> Architect Charter Co-Sign (<code>A486-R1..R2</code>)</strong></td>
-              <td><code>TC-Lane-Arc</code> (Gate 1/2)</td>
-              <td><code>https://cursatory.tail123678.ts.net:8443/plans/81/v5481-charter-cosign-a486.md</code> (<code>.tangleclaw/plans/v5481-charter-cosign-a486.md</code>)</td>
-              <td><code>b69398def3260846ab64d3a1c35d79fb94cebee025473610e669443b1143fbc2</code> (<code>25,895 B</code>)</td>
-            </tr>
-            <tr>
-              <td><strong><code>A486-R2</code> Architect Post-Mortem &amp; Exit Assessment</strong></td>
-              <td><code>TC-Lane-Arc</code> (Gate 2)</td>
-              <td><code>https://cursatory.tail123678.ts.net:8443/plans/81/v5481-architect-sprint-postmortem.md</code> (<code>.tangleclaw/plans/v5481-architect-sprint-postmortem.md</code>)</td>
-              <td><code>4374f7dbfa9c0ff961db561518107750b7b32aefde3123bb3cf46846c13fcebc</code> (<code>11,446 B</code>)</td>
-            </tr>
-            <tr>
-              <td><strong><code>A486-R2</code> Observer Sprint Audit Report</strong></td>
-              <td><code>TC-Lane-Obsr</code> (Gate 2/4)</td>
-              <td><code>https://cursatory.tail123678.ts.net:8443/plans/114/v5.48.1-sprint-observer-report.md</code> (<code>.tangleclaw/plans/v5.48.1-sprint-observer-report.md</code>)</td>
-              <td><code>5c960a7e73029346cb81dcf2646b881594359b52440f33a76a28208331c96c43</code> (<code>30,469 B</code>)</td>
-            </tr>
-            <tr>
-              <td><strong><code>v5.48.1</code> Observer Raw Evidence Companion JSON</strong></td>
-              <td><code>TC-Lane-Obsr</code> (Gate 2/4)</td>
-              <td><code>https://cursatory.tail123678.ts.net:8443/plans/114/v5481-w1-raw-evidence.json</code> (<code>.tangleclaw/plans/v5481-w1-raw-evidence.json</code>)</td>
-              <td><code>509a6b5caa94cb1a4c618871abb8fbeeeb5fd08b9f0a202806442d362d03469e</code> (<code>7,744 B</code>)</td>
-            </tr>
-            <tr>
-              <td><strong><code>v5.48.1</code> Sealed Queue Archive</strong></td>
-              <td><code>TC-Lane-PM</code> / <code>INT</code> (Gate 3)</td>
-              <td><code>/Users/jasonvaughan/Documents/Projects/Shared/TangleClaw-Shared/archive/LANE_QUEUE-v5.48.1.md</code></td>
-              <td><code>1be070441837e97bb695bafb798412f263e98a1231c87503bfde93076f4c7dbc</code> (<code>7,007 B</code>)</td>
-            </tr>
-            <tr>
-              <td><strong><code>v5.49.0</code> Sprint Execution Charter (<code>Charter A487</code>)</strong></td>
-              <td><code>TC-Lane-PM</code> (Next Sprint)</td>
-              <td><code>https://cursatory.tail123678.ts.net:8443/plans/74/v5490-sprint-plan.md</code> (<code>.tangleclaw/plans/v5490-sprint-plan.md</code>)</td>
-              <td><code>44ec94b5b82d020835c8195a01363804653b374011afb3a293fcd7eda2ff4788</code> (<code>14,792 B</code>)</td>
-            </tr>
-            <tr>
-              <td><strong><code>A487</code> Architect Charter Co-Sign (<code>v5.49.0</code>)</strong></td>
-              <td><code>TC-Lane-Arc</code> (Next Sprint)</td>
-              <td><code>https://cursatory.tail123678.ts.net:8443/plans/81/v5490-charter-cosign-a487.md</code> (<code>.tangleclaw/plans/v5490-charter-cosign-a487.md</code>)</td>
-              <td><code>864d3e75b20250436218a26cc50815bd771ac020e572540ff279ca8811befed6</code> (<code>12,930 B</code>)</td>
-            </tr>
-            <tr>
-              <td><strong>Canonical Master Document Registry</strong></td>
-              <td><code>TC-Lane-Arc</code> (Gate 1)</td>
-              <td><code>https://cursatory.tail123678.ts.net:8443/plans/81/tangleclaw-document-registry.md</code> (<code>.tangleclaw/plans/tangleclaw-document-registry.md</code>)</td>
-              <td><code>3eb0fe020aae793d1a0cd8b0da8aad90bd286cc4944f5d4c8be547cb71f95d70</code> (<code>20,975 B</code>)</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <h3 style="margin:24px 0 10px;">Exact-Head PR Review, CI Check-Run &amp; Merge Receipt Ledger (v5.48.1)</h3>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>PR &amp; Wave Car</th>
-              <th>Reviewed Head SHA</th>
-              <th>GitHub Actions <code>Tests</code> Run</th>
-              <th>PRR &amp; Architect Gate Tokens</th>
-              <th>Merge Commit SHA &amp; Timestamp (UTC)</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><strong><code>PR #2739</code> · <code>W1-B</code> (<code>#2723 + #2726</code>)</strong></td>
-              <td><code>c292e96717ac3b56f428d136313a8cea122c59d3</code></td>
-              <td><code>GREEN</code> (Check-Run <code>c292e967</code> PASS)</td>
-              <td><code>PRR-B ACCEPT</code> + <code>PRR-A ACCEPT</code> + <code>Arc A486-W1B-R1 PASS</code></td>
-              <td><code>f16267e0b32aadd190d727eb79746ff432dab7f2</code> (<code>2026-10-31 04:27:19Z</code>)</td>
-            </tr>
-            <tr>
-              <td><strong><code>PR #2738</code> · <code>W1-A</code> (<code>#2733 + #2706</code>)</strong></td>
-              <td><code>c30818012335e2e39d896beb646ff1d5a2e68f51</code></td>
-              <td><code>GREEN</code> (Check-Run <code>c3081801</code> PASS)</td>
-              <td><code>PRR-A ACCEPT</code> + <code>Arc A486-W1A-R2 PASS</code> + Live Stage 3 Pool Benchmark</td>
-              <td><code>8b3b8c281781088eafde7de72ec1e1757553abd8</code> (<code>2026-10-31 05:04:12Z</code>)</td>
-            </tr>
-            <tr>
-              <td><strong><code>PR #2740</code> · <code>W2-REC</code> (Records)</strong></td>
-              <td><code>e8655dc12749abe27dc222be0fcb2b90fdde5713</code></td>
-              <td><code>GREEN</code> (Check-Run <code>e8655dc1</code> PASS)</td>
-              <td><code>PRR-A ACCEPT</code> + <code>Arc A486-W2REC-R2 PASS</code></td>
-              <td><code>1bb19f77ec3c4c5e55e63c46badf6ff9b5f2ac46</code> (<code>2026-10-31 05:19:44Z</code>)</td>
-            </tr>
-            <tr>
-              <td><strong><code>PR #2741</code> · <code>W3-REL</code> (Release Cut)</strong></td>
-              <td><code>a9a72c4ef10834103a33bd66f852ce7927ed1c60</code></td>
-              <td><code>GREEN</code> (<code>Tests 41173915852</code> + <code>release.yml 41173915838</code>)</td>
-              <td><code>PRR-A ACCEPT</code> + <code>Arc A486-W3REL-R1 PASS</code> + <code>Obsr O-Gate PASS</code></td>
-              <td><code>7be72520468c620c4780bb2165bdbc15fd3f6e21</code> (<code>2026-10-31 05:59:52Z</code>)</td>
-            </tr>
-          </tbody>
-        </table>
+      <!-- RULE #283 16-POINT GOVERNANCE AUDIT TABLE -->
+      <div class="card">
+        <h3>Rule #283 16-Point Governance &amp; Process Audit Table (<code>v5.48.1</code>)</h3>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Audit Dimension (Rule #283 cl. 3)</th>
+                <th>Measured Empirical Evidence (v5.48.1)</th>
+                <th>Target</th>
+                <th>Verdict</th>
+                <th>Actionable Guardrail for v5.49.0+</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>1</td><td><strong>Operator Interventions &amp; Causes</strong></td><td><code>1</code> external pool allowlist admission (<code>QJVT-FHJK</code> by Brooks) + <code>2</code> Codex pane nudges (<code>PRR-B</code> prime, <code>INT</code> step <code>d</code>); Operator spotted <code>Rule #271</code> <code>/prawduct:critic</code> duplication (<code>P44</code>)</td><td>0 code rescues</td><td><span class="badge badge-green">PASS</span></td><td>Adopt <code>P44</code> (<code>Rule #271</code>) and <code>P46</code> (90s Codex startup watchdog)</td></tr>
+              <tr><td>2</td><td><strong>Dispatch-to-Merge Timing</strong></td><td><code>W1-B #2739</code>: <code>139.8m</code>; <code>W1-A #2738</code>: <code>201.3m</code> (4 local 14m full-suite runs); <code>W2-REC #2740</code>: <code>11.2m</code>; <code>W3-REL #2741</code>: <code>38.7m</code> (<strong><code>97.8m</code> mean across 4 PRs</strong>)</td><td>&lt; 120m mean</td><td><span class="badge badge-green">PASS</span></td><td>Route <code>Stages 3–5</code> through Testament pool (<code>#2733</code> / <code>P45</code>)</td></tr>
+              <tr><td>3</td><td><strong>Active vs Allowed Builders &amp; Parallelism</strong></td><td><code>2/2</code> assigned Builders (<code>TC-Lane-A</code>, <code>TC-Lane-B</code>) executed <code>4</code> issues in 1 wave (<code>2</code> issues/car under <code>Rule #294</code>) paired with <code>PRR-A</code> and <code>PRR-B</code></td><td>100% utilization</td><td><span class="badge badge-green">PASS</span></td><td>Scale <code>Rule #294</code> across 4 Builder cars (8 issues/wave) in <code>v5.49.0</code></td></tr>
+              <tr><td>4</td><td><strong>Forced Re-Syncs / Rebases When <code>main</code> Moves</strong></td><td><code>0</code> forced rebases during build; after <code>A486-SCOPE-R1</code> reverted <code>.prawduct/change-log*</code>, <code>W1-A ∩ W1-B = ∅</code> held strictly</td><td>0 conflicts</td><td><span class="badge badge-green">PASS</span></td><td>Disable Builder <code>archive-change-log --apply</code> hook (<code>P44</code>)</td></tr>
+              <tr><td>5</td><td><strong>Open PR Age Since Current <code>main</code></strong></td><td><code>0m</code> unverified base drift; <code>W1-A</code> merged cleanly onto <code>W1-B</code> under <code>Rule #291</code> disjoint fast path</td><td>0m stale merges</td><td><span class="badge badge-green">PASS</span></td><td>Retain <code>Rule #291</code> disjoint main-move fast path</td></tr>
+              <tr><td>6</td><td><strong>CI Red After Ready (<code>#2595</code> Pre-Push Hook)</strong></td><td><code>1</code> initial CI-only env leak on <code>W1-A</code> (<code>d76c5f32</code>) where <code>test-stage.test.js</code> inherited <code>CI=true</code>/<code>GITHUB_ACTIONS=true</code>; fixed in <code>026f5f48</code> (100% green thereafter)</td><td>0 unaddressed reds</td><td><span class="badge badge-green">PASS</span></td><td>Always scrub <code>CI</code> &amp; <code>GITHUB_ACTIONS</code> in CI-bypass unit tests</td></tr>
+              <tr><td>7</td><td><strong>PRR Review Rounds &amp; Findings by Severity</strong></td><td><code>PRR-A</code> (4 rounds on <code>#2738</code>) &amp; <code>PRR-B</code> (2 rounds on <code>#2739</code>, 1 on <code>#2740</code>, 1 on <code>#2741</code>) caught <code>100%</code> of scope &amp; contract gaps pre-merge</td><td>0 escaped defects</td><td><span class="badge badge-green">PASS</span></td><td>Keep Codex <code>PRR-A/B</code> as sole review gate (remove Builder internal critic)</td></tr>
+              <tr><td>8</td><td><strong>Post-Merge Defects on <code>main</code></strong></td><td><code>0</code> post-merge defects across <code>f16267e0</code>, <code>8b3b8c28</code>, <code>1bb19f77</code>, and <code>7be72520</code>; independent <code>main</code> <code>Tests #41173915852</code> <code>SUCCESS</code></td><td>0 defects</td><td><span class="badge badge-green">PASS</span></td><td>Maintain Builder + PRR + Arc <code>A-Gate</code>/<code>R-Gate</code> + Obsr <code>O-Gate</code></td></tr>
+              <tr><td>9</td><td><strong>Clears, Retries &amp; Stalls</strong></td><td><code>0</code> <code>/clear</code> <code>403</code> errors; <code>0</code> mid-sprint fleet resets; <code>2</code> out-of-diff host contention flakes filed as <code>#2735</code> &amp; <code>#2736</code>; <code>1</code> Medium pool JUnit gap filed as <code>#2742</code></td><td>0 untracked stalls</td><td><span class="badge badge-green">PASS</span></td><td>Resolve <code>#2742</code> in <code>v5.49.0</code> so Stage 4 runs <code>150/150</code> on pool</td></tr>
+              <tr><td>10</td><td><strong>Wrong Triage / Scope Fields</strong></td><td><code>0</code> dead-code premise errors (<code>P42</code> 100% effective across all 4 chartered issues)</td><td>0 premise errors</td><td><span class="badge badge-green">PASS</span></td><td>Continue mandatory line/symbol verification in <code>A-COSIGN</code></td></tr>
+              <tr><td>11</td><td><strong>Rule Breaches &amp; Governance Discipline</strong></td><td><code>0</code> intentional breaches; accidental <code>archive-change-log --apply</code> edits reverted under <code>A486-SCOPE-R1</code> before merge</td><td>0 breaches</td><td><span class="badge badge-green">PASS</span></td><td>Remove <code>prawduct-hook archive-change-log</code> from Builder workflow (<code>P44</code>)</td></tr>
+              <tr><td>12</td><td><strong>Unlabelled PRs, Dirty Clones &amp; Worktrees</strong></td><td>All 8 sprint clones normalized to clean <code>main @ 7be72520468c</code> (with known Operator <code>data/global-rules.md</code> hash <code>b2021cec</code> preserved on Builder1)</td><td>0 dirty clones</td><td><span class="badge badge-green">PASS</span></td><td>Continue Gate 2/3 clone normalization sweep</td></tr>
+              <tr><td>13</td><td><strong>Release-Status Lag &amp; Finish-Line Honesty</strong></td><td><code>0</code> premature claims; <code>v5.48-status.md</code> &amp; <code>v5.48.1-status.md</code> updated accurately; <code>#2723</code> &amp; <code>#2726</code> live activation kept honestly unclaimed post-deploy</td><td>100% honesty</td><td><span class="badge badge-green">PASS</span></td><td>Retain <code>O-Gate</code> finish-line honesty audit on every <code>W3-REL</code> PR</td></tr>
+              <tr><td>14</td><td><strong>Conflict Resolution Time</strong></td><td><code>0.0m</code> merge conflict resolution time across all 4 PRs</td><td>0m conflict time</td><td><span class="badge badge-green">PASS</span></td><td>Keep <code>.prawduct/change-log*</code> &amp; <code>FEATURES.md</code> strictly in <code>W2-REC</code></td></tr>
+              <tr><td>15</td><td><strong>Wakes, Tokens &amp; Turns by Role &amp; Model</strong></td><td><code>0</code> noise wakes to <code>TC-Lane-Obsr</code> (<code>A187.1</code>); <code>16</code> total commits across <code>4</code> PRs (<code>+970 / -103</code> LOC); identified <code>~136k</code> token/round savings via <code>P44</code></td><td>Minimal wake churn</td><td><span class="badge badge-green">PASS</span></td><td>Apply <code>P44</code> in <code>v5.49.0</code> to cut Builder token burn by &gt;50%</td></tr>
+              <tr><td>16</td><td><strong>4 End-of-Sprint Maintenance Gates</strong></td><td>All 4 Maintenance Gates (Registry/Queue, Architect+Observer Post-Mortems, Release Status+Deploy, Canonical HTML Report+Hub) verified green</td><td>4 / 4 Gates green</td><td><span class="badge badge-green">PASS</span></td><td>Enforce <code>validate-sprint-report.py --all</code> before sprint closeout</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
 
+    <!-- SECTION 7: INTERACTIVE WAVE & PR EXPLORER -->
     <section class="section" id="waves">
       <div class="section-header">
         <div>
-          <span class="section-tag">Section 06 · Interactive Wave &amp; Deliverable Explorer</span>
-          <h2 class="section-title">Filter &amp; Inspect Every Shipped Wave Car in Sprint v5.48.1</h2>
-          <p class="section-desc">Search by car ID, issue number, lane, or status.</p>
+          <h2 class="section-title"><span class="num">06</span> Interactive Wave, PR &amp; Telemetry Explorer</h2>
+          <p class="section-desc">Filter by wave, car, subsystem, or governance gate, or search across commits, file paths, issue numbers, and reviewer rulings.</p>
+        </div>
+        <span class="badge badge-cyan">6 Interactive Cards · Instant Filter &amp; Search</span>
+      </div>
+
+      <div class="card" style="margin-bottom:18px;">
+        <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;">
+          <div style="display:flex;flex-wrap:wrap;gap:6px;">
+            <button class="filter-btn active" data-filter="all" onclick="filterWaves('all', this)">All (6)</button>
+            <button class="filter-btn" data-filter="wave-1" onclick="filterWaves('wave-1', this)">Wave 1 Cars</button>
+            <button class="filter-btn" data-filter="wave-2" onclick="filterWaves('wave-2', this)">Wave 2 (W2-REC)</button>
+            <button class="filter-btn" data-filter="wave-3" onclick="filterWaves('wave-3', this)">Wave 3 (W3-REL)</button>
+            <button class="filter-btn" data-filter="testament" onclick="filterWaves('testament', this)">Testament Pool (#2733)</button>
+            <button class="filter-btn" data-filter="stage5" onclick="filterWaves('stage5', this)">Stage 5 Timeout (#2706)</button>
+            <button class="filter-btn" data-filter="codex" onclick="filterWaves('codex', this)">Codex Wake (#2723)</button>
+            <button class="filter-btn" data-filter="medusa" onclick="filterWaves('medusa', this)">Medusa Retarget (#2726)</button>
+            <button class="filter-btn" data-filter="governance" onclick="filterWaves('governance', this)">Rule #271 / P44</button>
+            <button class="filter-btn" data-filter="deploy" onclick="filterWaves('deploy', this)">Live Deploy (7be72520)</button>
+          </div>
+          <input id="waveSearch" type="search" placeholder="Search PR #, SHA, issue, file, runner..." oninput="searchWaves()" style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-alt);color:var(--text);min-width:240px;font-size:0.84rem;" />
         </div>
       </div>
-      <div class="explorer-controls">
-        <input type="text" id="waveSearch" class="search-input" placeholder="Search car (W1-A), issue (#2733), lane (TC-Lane-A), or PR (#2738)..." oninput="filterWaves()" />
-        <div class="filter-group">
-          <button class="filter-btn active" onclick="setWaveFilter('all', this)">All Wave Cars (4)</button>
-          <button class="filter-btn" onclick="setWaveFilter('w1', this)">Wave 1</button>
-          <button class="filter-btn" onclick="setWaveFilter('w2', this)">Wave 2</button>
-          <button class="filter-btn" onclick="setWaveFilter('w3', this)">Wave 3 / Release</button>
-          <button class="filter-btn" onclick="setWaveFilter('live', this)">Shipped</button>
-          <button class="filter-btn" onclick="setWaveFilter('all', this)">Builder A</button>
-          <button class="filter-btn" onclick="setWaveFilter('all', this)">Builder B</button>
-          <button class="filter-btn" onclick="setWaveFilter('all', this)">Builder C</button>
-          <button class="filter-btn" onclick="setWaveFilter('all', this)">Builder D</button>
-          <button class="filter-btn" onclick="setWaveFilter('all', this)">Integrator / PRR</button>
+
+      <!-- WAVE CARD 1: W1-A (#2738) -->
+      <div class="wave-card" data-tags="all wave-1 testament stage5" data-search="w1-a pr 2738 2733 2706 testament pool stage 5 timeout 8b3b8c281781 c30818012335 dockerfile test-stage.js">
+        <div class="wave-header">
+          <div>
+            <div class="wave-num">WAVE 1 · CAR W1-A (TC-Lane-A #1524 · Reviewed by TC-Lane-PRR-A #1526 &amp; TC-Lane-Arc #1530)</div>
+            <h3 class="wave-title"><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2738" target="_blank" rel="noopener">PR #2738</a> — Testament <code>v0.30.0</code> Distributed Pool Offload (<code>#2733</code>) + Stage 5 25m Timeout Calibration (<code>#2706</code>)</h3>
+            <div class="wave-window">Created <code>2026-10-31T01:42:43Z</code> → Merged <code>2026-10-31T05:04:00Z</code> · Merge Commit <code>8b3b8c281781088eafde7de72ec1e1757553abd8</code> (Head <code>c30818012335</code>)</div>
+          </div>
+          <div class="wave-meta">
+            <span class="badge badge-green">MERGED</span>
+            <span class="badge badge-cyan">9 Files (+559 / -51)</span>
+            <span class="badge badge-purple">4 PRR Rounds</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>Issue</th>
+                <th>Files Modified</th>
+                <th>Key Engineering Changes &amp; PRR Refinements</th>
+                <th>Verification Evidence</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-row-tags="wave-1 testament" data-row-search="2733 testament dockerfile test-stage junit-reporter">
+                <td><span class="issue-pill">#2733</span></td>
+                <td><code>.devcontainer/Dockerfile</code>, <code>.testament.toml</code>, <code>scripts/test-stage.js</code>, <code>scripts/junit-reporter.js</code>, <code>scripts/generate-testament-suites.js</code></td>
+                <td>Added non-root <code>USER node</code> container image; wired <code>probeTestamentPool</code> &amp; <code>runViaTestament</code> for Stages 3–5 with <code>stderr</code> progress &amp; automatic local fallback on <code>exit_code === 2</code>, signal kill, or malformed/schema-mismatched JSON (<code>c3081801</code>)</td>
+                <td>Live pool <code>f7245e9c</code> (<code>102/102</code> in <code>37.865s</code>) + Stage 3 <code>aeb4fc40</code> (<code>5,834</code> pass / <code>2</code> skip in <code>27.115s</code> across <code>175</code> batches)</td>
+              </tr>
+              <tr data-row-tags="wave-1 stage5" data-row-search="2706 stage 5 large_timeout_ms soak-guest 1500000">
+                <td><span class="issue-pill">#2706</span></td>
+                <td><code>scripts/test-stage.js</code>, <code>.testament.toml</code>, <code>test/test-stage.test.js</code>, <code>changelog.d/2733-2706.md</code></td>
+                <td>Calibrated <code>LARGE_TIMEOUT_MS</code> from <code>3,600,000ms</code> (<code>60m</code>) to <code>1,500,000ms</code> (<code>25m</code>) based on <code>test/soak-guest.test.js</code> <code>486.9s</code> 312-file contention ceiling (<code>3.08x</code> headroom); scrubbed <code>CI</code>/<code>GITHUB_ACTIONS</code> env vars in unit tests (<code>026f5f48</code>)</td>
+                <td><code>test/test-stage.test.js</code> + full local 751-file suite (<code>13,875</code> pass / <code>0</code> fail / <code>1</code> skip) + CI <code>#41169553512</code> green</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
-      <div class="wave-grid" id="waveGrid">
-        <div class="wave-card" data-tags="w1 live">
-          <div class="wave-card-header">
-            <div>
-              <span class="badge badge-green">W1-A · MERGED (PR #2738)</span>
-              <h3>W1-A — Testament v0.30.0 Container Pool &amp; Stage 5 Timeout Calibration (#2733 + #2706)</h3>
-            </div>
-            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
-              <div>Lane: <code>TC-Lane-A / PRR-A</code></div>
-              <div>Merged: <code>8b3b8c281781088e</code></div>
-            </div>
+
+      <!-- WAVE CARD 2: W1-B (#2739) -->
+      <div class="wave-card" data-tags="all wave-1 codex medusa" data-search="w1-b pr 2739 2723 2726 codex systemerror wake medusa retarget reply f16267e0b32a c292e96717ac startup-control-codex medusa-send medusa-exchanges store.js">
+        <div class="wave-header">
+          <div>
+            <div class="wave-num">WAVE 1 · CAR W1-B (TC-Lane-B #1525 · Reviewed by TC-Lane-PRR-B #1527, TC-Lane-PRR-A #1526 &amp; TC-Lane-Arc #1530)</div>
+            <h3 class="wave-title"><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2739" target="_blank" rel="noopener">PR #2739</a> — Codex <code>systemError</code> Wake Recovery (<code>#2723</code>) + Medusa Retargeted Reply Tracking (<code>#2726</code>)</h3>
+            <div class="wave-window">Created <code>2026-10-31T02:07:30Z</code> → Merged <code>2026-10-31T04:27:19Z</code> · Merge Commit <code>f16267e0b32aadd190d727eb79746ff432dab7f2</code> (Head <code>c292e96717ac</code>)</div>
           </div>
-          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
-            <strong>Scope &amp; Files:</strong> <code>.devcontainer/Dockerfile</code>, <code>.testament.toml</code>, <code>scripts/test-tiers.js</code>, <code>scripts/test-stage.js</code>, <code>test/test-tiers.test.js</code>, <code>test/test-stage.test.js</code>, <code>test/tiers.json</code>, <code>docs/test-pyramid.md</code>, <code>changelog.d/2733.*</code>, <code>changelog.d/2706.*</code><br/>
-            <strong>Shipped Gate Status:</strong> MERGED: PR #2738 @ <code>c30818012335e2e39d896beb646ff1d5a2e68f51</code>, merge commit <code>8b3b8c281781088eafde7de72ec1e1757553abd8</code>. Live Stage 3 pool verified (253 files, 5,834 pass in 27.115s).
-          </p>
-        </div>
-        <div class="wave-card" data-tags="w1 live">
-          <div class="wave-card-header">
-            <div>
-              <span class="badge badge-green">W1-B · MERGED (PR #2739)</span>
-              <h3>W1-B — Codex systemError Wake Recovery &amp; Medusa Retargeted Exchange Sync (#2723 + #2726)</h3>
-            </div>
-            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
-              <div>Lane: <code>TC-Lane-B / PRR-B</code></div>
-              <div>Merged: <code>f16267e0b32aadd1</code></div>
-            </div>
+          <div class="wave-meta">
+            <span class="badge badge-green">MERGED</span>
+            <span class="badge badge-cyan">9 Files (+309 / -10)</span>
+            <span class="badge badge-purple">2 PRR Rounds</span>
           </div>
-          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
-            <strong>Scope &amp; Files:</strong> <code>lib/startup-control-codex.js</code>, <code>lib/medusa-exchanges.js</code>, <code>lib/medusa-send.js</code>, <code>lib/store.js</code>, <code>test/startup-control-codex.test.js</code>, <code>test/medusa-exchanges.test.js</code>, <code>test/api-medusa.test.js</code>, <code>changelog.d/2723.*</code>, <code>changelog.d/2726.*</code><br/>
-            <strong>Shipped Gate Status:</strong> MERGED: PR #2739 @ <code>c292e96717ac3b56f428d136313a8cea122c59d3</code>, merge commit <code>f16267e0b32aadd190d727eb79746ff432dab7f2</code>. PRR-A + PRR-B exact-head ACCEPT, Arc A-Gate PASS, CI GREEN.
-          </p>
         </div>
-        <div class="wave-card" data-tags="w2 live">
-          <div class="wave-card-header">
-            <div>
-              <span class="badge badge-green">W2-REC · MERGED (PR #2740)</span>
-              <h3>W2-REC — Sprint v5.48.1 Records &amp; Release Status Reconciliation</h3>
-            </div>
-            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
-              <div>Lane: <code>TC-Lane-INT / PRR-A + Arc</code></div>
-              <div>Merged: <code>1bb19f77ec3c4c5e</code></div>
-            </div>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>Issue</th>
+                <th>Files Modified</th>
+                <th>Key Engineering Changes &amp; PRR Refinements</th>
+                <th>Verification Evidence</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-row-tags="wave-1 codex" data-row-search="2723 codex systemerror resting_statuses startup-control-codex.js">
+                <td><span class="issue-pill">#2723</span></td>
+                <td><code>lib/startup-control-codex.js</code>, <code>test/startup-control-codex.test.js</code>, <code>changelog.d/2723.md</code></td>
+                <td>Added <code>'systemError'</code> to <code>RESTING_STATUSES</code> in <code>_normalizeCodexThreadLoadedState</code> (<code>L2486</code>) so a bound Codex thread whose last turn failed with an upstream capacity/system error normalizes to <code>'idle'</code> and accepts Medusa wakes</td>
+                <td><code>test/startup-control-codex.test.js</code> unit suite + full local 751-file suite (<code>23,824</code> pass / <code>0</code> fail / <code>1</code> skip)</td>
+              </tr>
+              <tr data-row-tags="wave-1 medusa" data-row-search="2726 medusa retarget 1023 reply_target_unknown medusa-send medusa-exchanges store.js">
+                <td><span class="issue-pill">#2726</span></td>
+                <td><code>lib/medusa-send.js</code>, <code>lib/medusa-exchanges.js</code>, <code>lib/store.js</code>, <code>test/medusa-exchanges.test.js</code>, <code>test/master-medusa.test.js</code>, <code>changelog.d/2726.md</code></td>
+                <td>Upgraded <code>#1023</code> stale-handle retargeted deliveries to <code>tracking = 'tracked'</code> with live <code>recipient_project_id</code> / <code>recipient_session_id</code> and added columns to <code>_MEDUSA_EXCHANGE_PROJECTION_COLUMNS</code> (<code>lib/store.js:6550</code>); added live Hub <code>/api/medusa/send</code> integration test in <code>c292e967</code></td>
+                <td><code>test/medusa-exchanges.test.js</code> + <code>test/master-medusa.test.js</code> + CI <code>#41165686197</code> green</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- WAVE CARD 3: W2-REC (#2740) -->
+      <div class="wave-card" data-tags="all wave-2 governance" data-search="w2-rec pr 2740 reconciliation change-log features.md v5.48-status.md v5.48.1-status.md 1bb19f77ec3c e8655dc12749">
+        <div class="wave-header">
+          <div>
+            <div class="wave-num">WAVE 2 · RECONCILIATION CAR W2-REC (TC-Lane-INT #1528 · Reviewed by TC-Lane-PRR-B #1527 &amp; TC-Lane-Arc #1530)</div>
+            <h3 class="wave-title"><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2740" target="_blank" rel="noopener">PR #2740</a> — Wave 2 Shared Ledger Reconciliation &amp; Release-Status Backfill (<code>A485-GATE3-R1</code> + <code>v5.48.1</code>)</h3>
+            <div class="wave-window">Created <code>2026-10-31T05:06:00Z</code> → Merged <code>2026-10-31T05:17:12Z</code> (<code>11.2m</code>) · Merge Commit <code>1bb19f77ec3c4c5e55e63c46badf6ff9b5f2ac46</code> (Head <code>e8655dc12749</code>)</div>
           </div>
-          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
-            <strong>Scope &amp; Files:</strong> <code>.prawduct/change-log.md</code>, <code>FEATURES.md</code>, <code>docs/releases/v5.48-status.md</code>, <code>docs/releases/v5.48.1-status.md</code><br/>
-            <strong>Shipped Gate Status:</strong> MERGED: PR #2740 @ <code>e8655dc12749abe27dc222be0fcb2b90fdde5713</code>, merge commit <code>1bb19f77ec3c4c5e55e63c46badf6ff9b5f2ac46</code>. PRR-A ACCEPT, Arc A486-W2REC-R2 PASS, CI GREEN.
-          </p>
-        </div>
-        <div class="wave-card" data-tags="w3 live">
-          <div class="wave-card-header">
-            <div>
-              <span class="badge badge-green">W3-REL · MERGED &amp; DEPLOYED (PR #2741)</span>
-              <h3>W3-REL — Release v5.48.1 Cut, 23,839-Test Pre-Deploy Gate &amp; Live Deploy</h3>
-            </div>
-            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
-              <div>Lane: <code>TC-Lane-INT / PRR-A + Arc + Obsr</code></div>
-              <div>Merged: <code>7be72520468c620c</code></div>
-            </div>
+          <div class="wave-meta">
+            <span class="badge badge-green">MERGED</span>
+            <span class="badge badge-cyan">4 Files (+53 / -9)</span>
+            <span class="badge badge-purple">11.2m Turnaround</span>
           </div>
-          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
-            <strong>Scope &amp; Files:</strong> <code>CHANGELOG.md</code>, <code>version.json</code>, <code>README.md</code>, <code>test/fixtures/changelog-released-sections.lock.json</code>, annotated tag <code>v5.48.1</code><br/>
-            <strong>Shipped Gate Status:</strong> MERGED &amp; DEPLOYED: PR #2741 @ <code>a9a72c4ef10834103a33bd66f852ce7927ed1c60</code>, merge commit <code>7be72520468c620c4780bb2165bdbc15fd3f6e21</code>. Live server <code>runningVersion=5.48.1</code>, <code>isStale=false</code> verified at <code>2026-10-31 06:00:41 UTC</code>.
-          </p>
         </div>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>Artifact</th>
+                <th>Reconciliation Scope &amp; Governance Invariant</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-row-tags="wave-2 governance" data-row-search="change-log.md features.md a486-scope-r1">
+                <td><code>.prawduct/change-log.md</code> &amp; <code>FEATURES.md</code></td>
+                <td>Recorded all 4 Wave 1 issue entries (<code>#2733</code>, <code>#2706</code>, <code>#2723</code>, <code>#2726</code>) in the single <code>W2-REC</code> owner car per <code>Ruling A486-SCOPE-R1</code>, avoiding any Wave 1 Builder merge conflicts</td>
+              </tr>
+              <tr data-row-tags="wave-2 governance" data-row-search="v5.48-status.md v5.48.1-status.md a485-gate3-r1">
+                <td><code>docs/releases/v5.48-status.md</code> &amp; <code>docs/releases/v5.48.1-status.md</code></td>
+                <td>Closed the historical <code>v5.48.0</code> Gate 3 status-doc lag (<code>A485-GATE3-R1</code>) and authored <code>docs/releases/v5.48.1-status.md</code> with honest pre-tag <code>Pending</code> finish lines</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- WAVE CARD 4: W3-REL (#2741) -->
+      <div class="wave-card" data-tags="all wave-3 deploy" data-search="w3-rel pr 2741 release v5.48.1 7be72520468c a9a72c4ef108 changelog version.json o486-w3rel-pr2741-a9a72c4e-accept">
+        <div class="wave-header">
+          <div>
+            <div class="wave-num">WAVE 3 · RELEASE &amp; DEPLOY CAR W3-REL (TC-Lane-INT #1528 · PRR-B #1527 + Arc R-Gate #1530 + Obsr O-Gate #1529)</div>
+            <h3 class="wave-title"><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2741" target="_blank" rel="noopener">PR #2741</a> — Release <code>v5.48.1</code>, Annotated Tag, GitHub Release &amp; Live Production Deploy</h3>
+            <div class="wave-window">Created <code>2026-10-31T05:18:03Z</code> → Merged <code>2026-10-31T05:56:44Z</code> · Merge Commit <code>7be72520468c620c4780bb2165bdbc15fd3f6e21</code> (Head <code>a9a72c4ef108</code>)</div>
+          </div>
+          <div class="wave-meta">
+            <span class="badge badge-green">LIVE ON :3102</span>
+            <span class="badge badge-cyan">10 Files (+49 / -33)</span>
+            <span class="badge badge-purple">O-Gate + R-Gate PASS</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>Release Phase</th>
+                <th>Evidence &amp; Verification Receipt</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-row-tags="wave-3 deploy" data-row-search="7be72520468c 41173915852 41173915838 tag v5.48.1">
+                <td><strong>Code Released (Verified)</strong></td>
+                <td>Drained 4 fragments from <code>changelog.d/</code> into <code>CHANGELOG.md</code> <code>[5.48.1]</code>; bumped <code>version.json</code>, <code>package.json</code>, and <code>README.md</code>; independent <code>main</code> <code>Tests #41173915852</code> &amp; <code>Release #41173915838</code> <code>SUCCESS</code>; annotated tag &amp; GitHub Release <code>v5.48.1</code> published at <code>2026-10-31T05:59:52Z</code></td>
+              </tr>
+              <tr data-row-tags="wave-3 deploy" data-row-search="production deploy backup 5.48.1 schema_version 74 b2021cec">
+                <td><strong>Production Updated &amp; Post-Deploy Pool Verified</strong></td>
+                <td>Authorized by Exact-Commit <code>Addendum A486-R1</code>; SQLite backup <code>~/.tangleclaw/backups/tangleclaw-pre-v5.48.1-20261031T0600Z.db</code> (<code>integrity_check = ok</code>); <code>/api/server-info</code> <code>runningVersion=5.48.1</code>, <code>startupSha=7be72520</code>, <code>isStale=false</code>, <code>schema_version=74</code>, <code>/api/system/health</code> HTTP <code>200</code>; Operator <code>data/global-rules.md</code> edit hash <code>b2021cec</code> preserved; post-deploy Stage 3 pool <code>GREEN</code> (<code>5,834</code> pass / <code>2</code> skip)</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- WAVE CARD 5: TESTAMENT POOL DEEP DIVE -->
+      <div class="wave-card" data-tags="all testament deploy" data-search="testament v0.30.0 pool gpu-bozeman nas-bozeman 14th-mbp laptop qjvt-fhjk 2742 reset-admin-store.test.js">
+        <div class="wave-header">
+          <div>
+            <div class="wave-num">INFRASTRUCTURE TELEMETRY CARD · TESTAMENT v0.30.0 DISTRIBUTED CONTAINER POOL</div>
+            <h3 class="wave-title">4-Runner / 66-Slot Coordinator Report (<code>331</code> Batches Across <code>6</code> Runs) &amp; Issue <code>#2742</code> Follow-Up</h3>
+            <div class="wave-window">Coordinator <code>tls://testament-wire.rodeo.illuminati.org:443</code> · Principal <code>cursatory</code> (Enrolment <code>QJVT-FHJK</code>) · Python <code>3.14.3</code></div>
+          </div>
+          <div class="wave-meta">
+            <span class="badge badge-green">66 Active Slots</span>
+            <span class="badge badge-cyan">0.351s Batch Overhead</span>
+            <span class="badge badge-amber">Follow-Up #2742 Filed</span>
+          </div>
+        </div>
+        <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0 0;">
+          Across <code>6</code> runs and <code>331</code> executed batches (`gpu-bozeman` `229`, `nas-bozeman` `51`, `14th-mbp` `35`, `laptop` `16`), TangleClaw achieved a <strong><code>0.351s</code> median batch overhead</strong> (compared to the global pool median of <code>3.584s</code>) with <strong><code>0</code> flakes and <code>0</code> runner-only infrastructure failures</strong>. Stage 3 (`small`, `253` files) passed `100%` (`5,834` pass / `2` skip in `27.115s`), and Stage 4 (`medium`, `150` files) passed `149/150` (`99.3%`) on the pool while surfacing Issue <code>#2742</code> (`test/reset-admin-store.test.js` missing container JUnit XML, passing `54/54` locally via automatic fallback).
+        </p>
+      </div>
+
+      <!-- WAVE CARD 6: FLAGSHIP OPERATOR FINDING P44 -->
+      <div class="wave-card" data-tags="all governance" data-search="p44 rule 271 prawduct critic pr archive-change-log a486-scope-r1 claude tokens">
+        <div class="wave-header">
+          <div>
+            <div class="wave-num">GOVERNANCE &amp; VELOCITY BREAKTHROUGH · OPERATOR FINDING P44 (RULE #271 STREAMLINING)</div>
+            <h3 class="wave-title">Eliminating Redundant Builder <code>/prawduct:critic</code> &amp; <code>/prawduct:pr</code> Subagents + <code>archive-change-log</code> Hook</h3>
+            <div class="wave-window">Identified on <code>TC-Lane-A</code> (<code>W1-A</code>) · Enacted for <code>v5.49.0+</code> Builder Workflow</div>
+          </div>
+          <div class="wave-meta">
+            <span class="badge badge-amber">~4–7m Saved / Round</span>
+            <span class="badge badge-purple">~136k Tokens Saved / Round</span>
+            <span class="badge badge-green">0 Change-Log Collisions</span>
+          </div>
+        </div>
+        <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0 0;">
+          Operator inspection of <code>TC-Lane-A</code> revealed that Builder Rule <code>#271</code> still mandated internal Claude <code>/prawduct:critic</code> and <code>/prawduct:pr</code> subagent passes (consuming <code>~4–7 minutes</code> and <code>~136k Claude tokens</code> per revision round) plus <code>prawduct-hook archive-change-log --apply</code> (which caused the <code>.prawduct/change-log*</code> scope collision on both <code>W1-A</code> and <code>W1-B</code>). Starting in <code>v5.49.0</code>, Builders skip internal Prawduct subagents/hooks, run fast Testament pool stage checks (`~27s`), and hand off directly to dedicated Codex reviewers <code>TC-Lane-PRR-A</code> and <code>TC-Lane-PRR-B</code>.
+        </p>
       </div>
     </section>
 
+    <!-- SECTION 8: NEXT SPRINT (v5.49.0) GUARDRAILS & PRIORITIES -->
     <section class="section" id="next-sprint">
       <div class="section-header">
         <div>
-          <span class="section-tag">Section 07 · Active Sprint Guardrails &amp; Wave Reset Protocol</span>
-          <h2 class="section-title">6 Enforced Operational Guardrails During Sprint v5.48.1</h2>
+          <h2 class="section-title"><span class="num">07</span> Forward Roadmap &amp; Process Guardrails for Sprint <code>v5.49.0</code> (<code>Charter A487</code>)</h2>
+          <p class="section-desc">6 concrete engineering and governance upgrades carried directly from <code>v5.48.1</code> empirical findings into Sprint <code>v5.49.0</code> (“Engine Settings That Tell the Truth”).</p>
         </div>
-      </div>
-      <div class="grid-3">
-        <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 01 · PRE-EDIT BASE-SHA VERIFICATION</span>
-          <h4>Verify Local HEAD Matches Charter Base SHA Before Any Edit</h4>
-          <p>Builders verify <code>git rev-parse HEAD</code> matches the wave base SHA before touching any file.</p>
-        </div>
-        <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 02 · INTER-WAVE SESSION RESET (RULE #291 CL. 5)</span>
-          <h4>Finalize &amp; Relaunch Active Lanes Between Waves</h4>
-          <p>After a wave merges and branches are deleted on clean <code>main</code>, active Builder/PRR lanes run <code>tc finalize</code> + fresh launch so context never over-compacts.</p>
-        </div>
-        <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 03 · LIVE ROADMAP &amp; SPRINT REPORT AUTO-SYNC</span>
-          <h4>Update LANE_QUEUE.md at Every Dispatch, PR Open &amp; Merge</h4>
-          <p>Every wave transition in <code>LANE_QUEUE.md</code> immediately updates both the Roadmap Board and this live Sprint Report.</p>
-        </div>
-        <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 04 · SUBSYSTEM SIBLING TEST EXECUTION</span>
-          <h4>Run All Touched Subsystem Tests Locally Before Push</h4>
-          <p>Builders run all sibling tests for touched modules before pushing PR heads or review fixes.</p>
-        </div>
-        <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 05 · SINGLE HOST SUITE_SLOT COORDINATION</span>
-          <h4>One Full Local Suite at a Time via TC-Lane-INT</h4>
-          <p>Builders run targeted/staged tests while <code>TC-Lane-INT</code> serializes full pre-deploy local suite runs under <code>SUITE_SLOT</code>.</p>
-        </div>
-        <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 06 · THREE HONEST FINISH LINES AT W4-REL</span>
-          <h4>Code Released, Production Updated &amp; Feature Activated</h4>
-          <p>Release status documents report each finish line honestly with exact commit SHAs, backup hashes, and live readback receipts.</p>
-        </div>
+        <span class="badge badge-green">6 Actionable Guardrails Staged for v5.49.0</span>
       </div>
 
-      <h3 style="margin:24px 0 12px;">Next Sprint Plan: Sprint v5.49.0 (<em>"Engine settings that tell the truth"</em> · Charter A487)</h3>
-      <p class="section-desc" style="margin-bottom:14px;">
-        Co-signed under <code>A487-COSIGN-V5490-20261030</code> with <strong>4 parallel Builder lanes (<code>TC-Lane-A..D</code>)</strong>, <strong>2 issues per lane per wave (<code>Rule #294</code>)</strong>, pairwise file-disjoint, verified via the live 66-slot Testament v0.30.0 distributed pool (<code>node scripts/test-stage.js 3</code>), and operating under the bounded Builder <code>Rule #271</code> amendment (<code>P44</code> / <code>P46</code>).
-      </p>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Wave / Car</th>
-              <th>Assigned Builder &amp; Reviewer</th>
-              <th>Bundled Issues (2 per Car)</th>
-              <th>Signed File Scope &amp; Architectural Objective</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><strong>W1-A</strong></td>
-              <td><code>TC-Lane-A / PRR-A</code></td>
-              <td><code>#1268 + #1276</code></td>
-              <td>
-                <strong>OpenClaw Gateway Auth &amp; Setup Wizard Projection:</strong>
-                <code>lib/routes/system.js</code>, <code>public/js/settings.js</code>, <code>public/js/onboarding.js</code>, <code>test/api-system-openclaw-auth.test.js</code>, <code>test/settings-openclaw-wizard.test.js</code>.
-                Project truthful OpenClaw gateway credential status and setup wizard step readiness without stale local cache drift.
-              </td>
-            </tr>
-            <tr>
-              <td><strong>W1-B</strong></td>
-              <td><code>TC-Lane-B / PRR-A</code></td>
-              <td><code>#2220 + #2278</code></td>
-              <td>
-                <strong>Engine Model Registry &amp; Capability Truthfulness:</strong>
-                <code>lib/engine-models.js</code>, <code>lib/routes/engines.js</code>, <code>public/js/engine-selector.js</code>, <code>test/engine-models.test.js</code>, <code>test/api-engines.test.js</code>.
-                Eliminate phantom/deprecated model entries and expose verified per-engine reasoning/effort capabilities in the UI and API.
-              </td>
-            </tr>
-            <tr>
-              <td><strong>W1-C</strong></td>
-              <td><code>TC-Lane-C / PRR-B</code></td>
-              <td><code>#738 + #1113</code></td>
-              <td>
-                <strong>Session Launch Parameter &amp; Effort-Tier Validation:</strong>
-                <code>lib/session-launcher.js</code>, <code>lib/startup-control.js</code>, <code>test/session-launcher.test.js</code>, <code>test/startup-control.test.js</code>.
-                Validate engine launch flags and effort tiers at launch time and surface truthful active engine settings on session cards.
-              </td>
-            </tr>
-            <tr>
-              <td><strong>W1-D</strong></td>
-              <td><code>TC-Lane-D / PRR-B</code></td>
-              <td><code>#260 + #1085</code></td>
-              <td>
-                <strong>Project &amp; Lane Engine Override Persistence:</strong>
-                <code>lib/routes/projects.js</code>, <code>public/js/project-settings.js</code>, <code>test/api-projects-engine.test.js</code>, <code>test/project-settings-ui.test.js</code>.
-                Ensure per-project and per-lane engine/model overrides persist atomically and reflect the effective runtime configuration.
-              </td>
-            </tr>
-            <tr>
-              <td><strong>W2-A</strong></td>
-              <td><code>TC-Lane-A / PRR-A</code></td>
-              <td><code>#1264 + #1269</code></td>
-              <td>
-                <strong>OpenClaw Connection Health &amp; Live Rebind Diagnostics:</strong>
-                <code>lib/openclaw-client.js</code>, <code>lib/routes/openclaw.js</code>, <code>test/openclaw-client.test.js</code>, <code>test/api-openclaw.test.js</code>.
-                Report live OpenClaw websocket/gateway health transitions and truthful rebind error diagnostics.
-              </td>
-            </tr>
-            <tr>
-              <td><strong>W2-B</strong></td>
-              <td><code>TC-Lane-B / PRR-B</code></td>
-              <td><code>#2742 + #764</code></td>
-              <td>
-                <strong>Container JUnit XML Root-Suite Hygiene &amp; Settings Audit Log:</strong>
-                <code>test/reset-admin-store.test.js</code>, <code>lib/caddy-admin.js</code>, <code>lib/settings-audit.js</code>, <code>test/settings-audit.test.js</code>.
-                Fix the Node 22 JUnit XML <code>&lt;undefined name="root"&gt;</code> container edge case in <code>test/reset-admin-store.test.js</code> so Stage 4 (<code>medium</code>) runs <code>150/150</code> on the Testament pool without fallback, and record structured engine-setting audit events.
-              </td>
-            </tr>
-          </tbody>
-        </table>
+      <div class="grid-3">
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 01 · P44 (FLAGSHIP) AMEND BUILDER RULE #271 TO SKIP INTERNAL PRAWDUCT CRITIC/PR &amp; HOOKS</span>
+          <h4>Direct Builder-to-PRR Handoff After Fast Testament Stage Checks</h4>
+          <p>
+            Amend Builder Rule <code>#271</code> so Claude/Codex Builders in <code>v5.49.0+</code> never invoke internal <code>/prawduct:critic</code>, <code>/prawduct:pr</code>, or <code>prawduct-hook archive-change-log --apply</code>—saving <strong><code>~4–7 minutes</code> and <code>~136k tokens</code> per round</strong> and eliminating <code>.prawduct/change-log*</code> scope collisions permanently.
+          </p>
+        </div>
+
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 02 · P45 OFFLOAD STAGES 3–5 TO TESTAMENT POOL &amp; EXEMPT NON-SEMANTIC FIXES FROM LOCAL SUITES</span>
+          <h4>Use 66-Slot Testament Pool for Builder &amp; Pre-Push Tier Verification</h4>
+          <p>
+            Now that <code>#2733</code> is live on <code>main @ 7be72520</code>, route <code>v5.49.0+</code> <code>Stages 3–5</code> (<code>small</code>, <code>medium</code>, <code>large</code>) through the 4-runner Testament container pool (`27.1s` Stage 3) instead of serializing 14-minute local 751-file runs on <code>cursatory</code> under <code>SUITE_SLOT</code>.
+          </p>
+        </div>
+
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 03 · ISSUE #2742 STAGE 4 MEDIUM CONTAINER JUNIT XML PARITY</span>
+          <h4>Fix <code>test/reset-admin-store.test.js</code> Container JUnit Output for 150/150 Stage 4 Pool Runs</h4>
+          <p>
+            Resolve Issue <code>#2742</code> so <code>test/reset-admin-store.test.js</code> (which already passes <code>54/54</code> locally via automatic fallback) emits its JUnit XML report cleanly inside the non-root container environment, bringing Stage 4 (`medium`) from <code>149/150</code> (`99.3%`) to <code>150/150</code> (`100%`) on the Testament pool.
+          </p>
+        </div>
+
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 04 · P46 CODEX LAUNCH PRIME WATCHDOG &amp; REST API POLLING PREFERENCE</span>
+          <h4>Auto-Nudge <code>startup-not-ready</code> Panes at 90s &amp; Prefer <code>gh api</code> Over GraphQL</h4>
+          <p>
+            Add a 90-second post-launch prime watchdog so a Codex pane that misses its initial keystroke during model load is automatically re-poked to run <code>tc start next</code>; clarify that an active <code>AUTO-START</code> charter + coordinator Medusa dispatch satisfies step <code>(d)</code> for non-Builder roles; and use REST <code>gh api</code> for PR polling to preserve GraphQL quota.
+          </p>
+        </div>
+
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 05 · SCALE RULE #294 2-ISSUE CAR BUNDLING TO 8-ISSUE SINGLE-WAVE SPRINTS</span>
+          <h4>Run 4 Parallel 2-Issue Builder Cars in Sprint <code>v5.49.0</code> (<code>Charter A487</code>)</h4>
+          <p>
+            Build on <code>v5.48.1</code>’s zero-conflict 2-issue car validation by scaling <code>Rule #294</code> across 4 Builder lanes (`W1-A` through `W1-D`) paired with dedicated Codex `PRR-A`/`PRR-B` reviewers and source-verified Architect `A-COSIGN` citations (`P42`).
+          </p>
+        </div>
+
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 06 · HOST CONTENTION FLAKE TRIAGE (#2735, #2736) &amp; DEFERRED BROWSER CHECK (#2168)</span>
+          <h4>Harden <code>tmux-tcc</code> &amp; <code>master-medusa</code> Timing Margins and Track Operator UI Check</h4>
+          <p>
+            Address the two host-contention test flakes surfaced during local full-suite runs (`#2735` in <code>test/tmux-tcc.test.js</code> and `#2736` in <code>test/master-medusa.test.js</code>) and keep the deferred interactive browser check (`#2168` from `v5.47.0`, `A483-R8`) explicitly tracked under Operator ownership until executed.
+          </p>
+        </div>
       </div>
     </section>
   </main>
@@ -1425,14 +1584,15 @@
     <div class="container">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
         <div>
-          <strong>TangleClaw Sprint v5.48.1 Canonical Shipped Release Report</strong> · Tag <code>v5.48.1 @ 7be72520468c620c4780bb2165bdbc15fd3f6e21</code> (2026-10-31 06:00:41 UTC)
+          <strong>TangleClaw Sprint v5.48.1 Executive Engineering &amp; Telemetry Report</strong> · Generated by <code>TC-Lane-Obsr</code> (#1529) &amp; <code>TC-Lane-PM</code> (#1523) (In-Test Sprint Participant · Rule #283)
         </div>
         <div>
-          <a href="../" style="color:var(--accent2);">← All Sprint Reports</a>
+          Charter <code>A486-R1</code> (<code>A486-COSIGN-V5481-20261030</code>) · Base <code>77d09e99</code> (<code>v5.48.0</code>) → W1-B <code>f16267e0</code> (<code>#2739</code>) → W1-A <code>8b3b8c28</code> (<code>#2738</code>) → W2-REC <code>1bb19f77</code> (<code>#2740</code>) → W3-REL <code>7be72520</code> (<code>#2741</code> / <code>v5.48.1</code>) · <a href="../" style="color:var(--accent2);">All Sprint Reports</a>
         </div>
       </div>
     </div>
   </footer>
+
   <script>
     (function () {
       const buttons = document.querySelectorAll('.filter-btn');
