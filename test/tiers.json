@@ -635,6 +635,7 @@
     "test/rotation-live-check.test.js",
     "test/rule-delivery-receipt.test.js",
     "test/rule-id-display.test.js",
+    "test/rule-receipt-redelivery.test.js",
     "test/server-info.test.js",
     "test/server.test.js",
     "test/session-clipboard.test.js",
