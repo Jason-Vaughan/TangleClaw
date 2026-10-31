@@ -353,6 +353,47 @@ describe('writeRotation — compare-and-set against concurrent/stale writers (R1
     );
   });
 
+  it('a second write that reaches the lock while the first is still inside its critical section is refused, not raced (R2 Finding 1)', () => {
+    const file = admission.rotationPath(dir, 'cas-6');
+    const r = admission.prepareRotation({ rotationId: 'cas-6', resourceId: 't', oldAttemptId: 'old', oldEpoch: 0, checkpoint: checkpoint() });
+
+    // Simulate a writer already inside writeRotation's critical section —
+    // including, specifically, mid-writeAtomic, which is exactly the window
+    // a bare read-then-write would miss — by holding the SAME lock
+    // `_acquireLock` itself would take.
+    const lockPath = admission._lockPath(file);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    const fd = fs.openSync(lockPath, 'wx');
+    try {
+      assert.throws(
+        () => admission.writeRotation(file, r, { lockTimeoutMs: 100 }),
+        (err) => err instanceof admission.AdmissionError && /could not acquire the rotation lock/.test(err.message)
+      );
+      assert.equal(fs.existsSync(file), false, 'the interleaved write never reached the record at all');
+    } finally {
+      fs.closeSync(fd);
+      fs.unlinkSync(lockPath);
+    }
+
+    // Once the lock is free, the same write succeeds normally.
+    admission.writeRotation(file, r);
+    assert.equal(admission.readRotation(file).record.stage, admission.STAGES.PREPARED);
+  });
+
+  it('a stale lock (crashed holder) is reclaimed rather than wedging the record forever', () => {
+    const file = admission.rotationPath(dir, 'cas-7');
+    const r = admission.prepareRotation({ rotationId: 'cas-7', resourceId: 't', oldAttemptId: 'old', oldEpoch: 0, checkpoint: checkpoint() });
+    const lockPath = admission._lockPath(file);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.closeSync(fs.openSync(lockPath, 'wx'));
+    // Back-date it well past LOCK_STALE_MS so it reads as abandoned.
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(lockPath, old, old);
+
+    assert.doesNotThrow(() => admission.writeRotation(file, r));
+    assert.equal(admission.readRotation(file).record.stage, admission.STAGES.PREPARED);
+  });
+
   it('refuses to write a record for one rotationId over a file already holding a different one', () => {
     const file = admission.rotationPath(dir, 'cas-5-slot');
     const first = admission.prepareRotation({ rotationId: 'cas-5-a', resourceId: 't', oldAttemptId: 'old', oldEpoch: 0, checkpoint: checkpoint() });

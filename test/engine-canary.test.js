@@ -461,6 +461,65 @@ describe('degraded fallback — evidence binding (R1 Finding 3)', () => {
   });
 });
 
+describe('readEvidence / routes — identity binding to the requested build (R2 Finding 2)', () => {
+  let dir;
+  before(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-engine-canary-identity-'));
+  });
+  after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  it('readEvidence refuses a document whose own engine.buildFingerprint disagrees with the build it was read for', () => {
+    // A valid, verified document — but for "other-build" — placed at the
+    // path conventionally used for "url-build" (a mislabeled/misplaced file).
+    const file = canary.evidencePath(dir, 'codex', 'url-build');
+    canary.writeEvidence(file, verifiedDoc({ engine: { ...verifiedDoc().engine, buildFingerprint: 'other-build' } }));
+
+    const unchecked = canary.readEvidence(file);
+    assert.equal(unchecked.status, canary.READ_STATUS.OK, 'with no expected identity given, the mismatch is invisible by design');
+
+    const checked = canary.readEvidence(file, { expectedBuildFingerprint: 'url-build' });
+    assert.equal(checked.status, canary.READ_STATUS.INVALID);
+  });
+
+  it('readEvidence refuses a document whose own engine.id disagrees with the engine it was read for', () => {
+    const file = canary.evidencePath(dir, 'codex', 'build-x');
+    canary.writeEvidence(file, verifiedDoc({ engine: { ...verifiedDoc().engine, id: 'claude' } }));
+    assert.equal(canary.readEvidence(file, { expectedEngineId: 'codex' }).status, canary.READ_STATUS.INVALID);
+    assert.equal(canary.readEvidence(file, { expectedEngineId: 'claude' }).status, canary.READ_STATUS.OK);
+  });
+
+  it('the GET route refuses (404) a mislabeled evidence file rather than serving it as the requested build', () => {
+    const file = canary.evidencePath(dir, 'codex', 'route-url-build');
+    canary.writeEvidence(file, verifiedDoc({ engine: { ...verifiedDoc().engine, buildFingerprint: 'route-other-build' } }));
+
+    const match = matchRoute('GET', '/api/engines/codex/canary/route-url-build');
+    const { res, status, json } = mockRes();
+    const store = require('../lib/store');
+    const originalBasePath = store._getBasePath();
+    store._setBasePath(dir);
+    try {
+      match.handler({ tcGateState: authGate.GATE_STATES.ARMED, tcSession: { username: 'jason', csrfToken: 't' }, headers: {} }, res, match.params);
+    } finally {
+      store._setBasePath(originalBasePath);
+    }
+    assert.equal(status(), 404);
+    assert.equal(json().code, 'CANARY_EVIDENCE_NOT_FOUND');
+  });
+
+  it('listEvidenceForEngine refuses a row whose filename disagrees with its own recorded identity', () => {
+    const edir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-engine-canary-identity-list-'));
+    try {
+      canary.writeEvidence(canary.evidencePath(edir, 'codex', 'claimed-as-this'), verifiedDoc({ engine: { ...verifiedDoc().engine, buildFingerprint: 'actually-this' } }));
+      const rows = canary.listEvidenceForEngine(edir, 'codex');
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].buildFingerprint, 'claimed-as-this');
+      assert.equal(rows[0].status, canary.READ_STATUS.INVALID);
+    } finally {
+      fs.rmSync(edir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('applyOverride', () => {
   let dir;
   before(() => {
