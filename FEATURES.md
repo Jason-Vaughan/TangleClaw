@@ -17,7 +17,22 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
-## Unreleased — v5.48.1 Testament pool and control-plane reliability
+## Unreleased — v5.49.0 Engine settings that tell the truth
+
+- **Explain generated-config deferral** (#1268) — the settings modal and server explain when a plugin-governed project cannot deliver its generated rule settings or TangleClaw guides to the chosen engine. `lib/engines.js#reportMissingConfigCarrier`, `lib/engines.js#settingDisposition`, `public/api-helper.js#tcSettingDisposition`. Tests: `test/setting-disposition.test.js`, `test/projects.test.js`.
+- **Show startup-rule reachability** (#1269) — the Project Rules editor warns when the selected engine has neither a pasted-prime nor hidden-prime channel, and updates the warning when the engine changes. `public/ui.js#renderStartupRulesWarning`, `lib/engines.js#settingDisposition`. Tests: `test/setting-disposition.test.js`.
+- **Restore connection-backed OpenClaw launch modes** (#1264) — the settings modal resolves a project's own engine when the picker roster omits its connection-backed id, including the bypass confirmation. `public/ui.js#renderLaunchModeSettings`, `public/ui.js#doSaveSettings`. Tests: `test/settings-launch-mode-render.test.js`, `test/engine-change-launch-mode-ui.test.js`.
+- **Document the Prawduct install step** (#1276) — contributor setup now calls out the project-scoped plugin install after adding the marketplace. `CONTRIBUTING.md`.
+- **Keep model-selection reads fresh** (#2220) — model roster display callers can opt into a five-second cache; save and launch retain fresh reads. `lib/engine-models.js#roster`. Tests: `test/engine-models.test.js`.
+- **Validate the default engine** (#2278) — `PATCH /api/config` rejects a blank, unknown, or unusable engine profile with `BAD_REQUEST`. `lib/routes/config.js` ("PATCH /api/config"). Tests: `test/api-config-default-engine.test.js`.
+- **Share setup picker options** (#738) — the first-run engine picker uses the shared option builder and treats profiles without an availability declaration consistently. `public/setup.js#renderEngines`, `public/api-helper.js#tcBuildEngineOptions`. Tests: `test/setup-engine-picker.test.js`, `test/setup-wizard-engines.test.js`.
+- **Read per-engine inventory** (#764) — read-only routes list profile capability dispositions, configuration carriers, status pages, and locally found plugins, skills, and MCP servers, including picker-hidden profiles. `lib/engine-tabs.js#engineInventoryRow`, `lib/engine-tabs.js#extensionInventory`, `server.js` ("GET /api/engines/inventory"). The tab UI and defaults remain tracked in #2747. Tests: `test/engine-tabs.test.js`.
+- **Warn before incompatible Codex models** (#260) — a conservative preflight shows a dismissible warning when the configured model is known to conflict with the active auth mode. `lib/engines/codex-preflight.js#checkCodexModelCompatibility`, `lib/engines/codex-preflight.js#toCodexModelWarning`. Tests: `test/codex-preflight.test.js`.
+- **Write Master identity for its engine** (#1085) — the generated identity uses the active Master's engine config filename instead of always `CLAUDE.md`. `lib/master.js#masterIdentityPath`. Tests: `test/master.test.js`.
+- **Stop host artifact tabs** (#1113) — spawned Claude sessions disable artifact auto-open in the bundled launch environment. `data/engines/claude.json`, `lib/sessions.js`. Tests: `test/claude-launch-env.test.js`.
+- **Preserve JUnit test-runner frames** (#2742) — reset-admin's output capture forwards binary runner frames, restoring valid JUnit XML and all 55 Testament pool cases. `test/reset-admin-store.test.js`. Tests: `test/reset-admin-store.test.js`.
+
+## v5.48.1 — Testament pool and control-plane reliability
 
 - **Offload test tiers to the Testament pool** (#2733) — Stage 3–5 probe the container executor, run eligible Small, Medium and Large suites on the pool, and fall back to local execution when the pool cannot take them. The manifest and Docker image define the runner environment. `scripts/test-stage.js#offloadTier`, `scripts/test-tiers.js`, `.testament.toml`, `.devcontainer/Dockerfile`. Tests: `test/test-stage.test.js`, `test/test-tiers.test.js`.
 - **Calibrate the Large-tier timeout** (#2706) — a measured full Stage 5 contention run sets the Large-tier file timeout to 25 minutes, with headroom over the slowest observed file. `scripts/test-stage.js#LARGE_TIMEOUT_MS`. Tests: `test/test-stage.test.js`.

@@ -41,6 +41,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-31 — v5.49.0 W3-REC: reconcile engine settings and inventory records
+
+<!-- prawduct: type=internal | scope=v549-w3-rec -->
+
+- Reconciled all 12 accepted Charter A487 issues after Wave 1 merged at `main@49ce19f569e89f2f20c304c35584f22b124d3441` and Wave 2 merged at `main@b2864dc77e4fd248f2b03690e37ece9910873551`. Each issue retains its accepted `changelog.d/` fragment for the v5.49.0 release cut.
+- **Engine settings and guidance (#1268, #1269, #1264, #1276):** plugin-governed projects now explain when generated configuration cannot reach an engine; the Project Rules startup warning follows the selected engine; connection-backed OpenClaw projects show launch modes and the eyes-open confirmation; contributor setup explicitly installs the external Prawduct plugin.
+- **Engine choice and inventory (#2220, #2278, #738, #764):** display-only model rosters can opt into a five-second cache while save and launch remain fresh; `defaultEngine` rejects invalid profiles; the setup picker shares the option builder; read-only inventory routes report each engine's capabilities, config carrier, and installed extensions, including hidden profiles. The #764 UI and default-seeding follow-up remains tracked as #2747.
+- **Session and test reliability (#260, #1085, #1113, #2742):** Codex warns on a confidently incompatible model and auth mode; Master identity writes to its engine's config filename; Claude artifact publishing no longer opens host browser tabs; and reset-admin's JUnit capture forwards binary test-runner frames, restoring all 55 Testament cases without malformed XML.
+- Updated the Feature Index with stable source and test anchors. This records merged code and passing PR gates; the v5.49.0 tag, GitHub Release, local deployment, and live activation remain W4-REL work.
+
 ## 2026-10-30 — v5.48.1 W3-REL: prepare the Testament pool and control-plane release candidate
 
 <!-- prawduct: type=internal | scope=v5481-w3-rel -->
