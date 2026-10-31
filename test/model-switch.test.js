@@ -23,6 +23,7 @@ setLevel('error');
 
 const store = require('../lib/store');
 const modelSwitch = require('../lib/model-switch');
+const profileReconciler = require('../lib/profile-reconciler');
 
 describe('lib/model-switch — validateSwitchTarget', () => {
   it('refuses a malformed engine id', () => {
@@ -190,6 +191,58 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.equal(engineIdWhenRefreshRan, 'fake', 'the project row must already carry the new engine by the time refresh runs');
   });
 
+  it('cross-provider: refuses (KILL_FAILED) when killSession fails, using the real default refreshSession', async () => {
+    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
+      ...target(),
+      checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      killSession: () => ({ error: 'tmux has-session: no server running' })
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'KILL_FAILED');
+    assert.match(result.error, /tmux has-session/);
+  });
+
+  it('cross-provider: refuses (LAUNCH_FAILED) when launchSession fails after a successful kill', async () => {
+    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    let killed = false;
+    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
+      ...target(),
+      checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      killSession: () => { killed = true; return { error: null }; },
+      launchSession: () => ({ error: 'ENGINE_PROFILE_INVALID' })
+    });
+    assert.equal(killed, true);
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'LAUNCH_FAILED');
+    assert.match(result.error, /ENGINE_PROFILE_INVALID/);
+  });
+
+  it('cross-provider: writes a continuity handoff naming the active plan before killing', async () => {
+    const plansDir = path.join(projectPath, '.tangleclaw', 'plans');
+    fs.mkdirSync(plansDir, { recursive: true });
+    const olderPlan = path.join(plansDir, 'older-plan.md');
+    fs.writeFileSync(olderPlan, '# old\n');
+    fs.utimesSync(olderPlan, new Date(Date.now() - 3600000), new Date(Date.now() - 3600000));
+    const newestPlan = path.join(plansDir, 'newest-plan.md');
+    fs.writeFileSync(newestPlan, '# newest\n');
+
+    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5', reason: 'ship chunk 2' }, {
+      ...target(),
+      checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      refreshSession: () => ({ ok: true })
+    });
+    assert.equal(result.ok, true);
+    const handoff = JSON.parse(fs.readFileSync(path.join(projectPath, '.tangleclaw', 'model-switch-handoff.json'), 'utf8'));
+    assert.equal(handoff.project, project.name);
+    assert.equal(handoff.mode, 'boundary');
+    assert.equal(handoff.reason, 'ship chunk 2');
+    assert.equal(handoff.planPath, newestPlan);
+    assert.equal(handoff.appliedModel, 'claude-sonnet-5');
+    assert.ok(handoff.writtenAt);
+  });
+
   it('same-provider: reconciles the live session through lib/profile-reconciler instead of relaunching', async () => {
     const session = store.sessions.start({ projectId: project.id, engineId: 'fake', tmuxSession: 'the-tmux-name', primePrompt: null });
     store.projects.update(project.id, { engine_id: 'fake' });
@@ -212,6 +265,48 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.equal(reconcileArgs.id, `session:${session.id}`);
     assert.equal(reconcileArgs.tmuxSession, 'the-tmux-name');
     assert.equal(reconcileArgs.rdeps.currentGeneration, session.id);
+    // Required, not optional: lib/profile-reconciler.js's Claude adapter
+    // fails closed (returns null, which can never match) unless BOTH are
+    // given — a prior version of this call omitted them entirely.
+    assert.equal(reconcileArgs.rdeps.projectPath, projectPath);
+    assert.equal(reconcileArgs.rdeps.startedAtMs, profileReconciler.parseLaunchTimestampMs(session.startedAt));
+    assert.ok(Number.isFinite(reconcileArgs.rdeps.startedAtMs), 'startedAtMs must be a finite number, not NaN/undefined');
+  });
+
+  it('same-provider: a non-stubbed reconcile reaches verified against a real Claude transcript file (#2598 BLOCKING 2)', async () => {
+    const claudeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-model-switch-claudehome-'));
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'the-real-tmux', primePrompt: null });
+    const startedAtMs = profileReconciler.parseLaunchTimestampMs(session.startedAt);
+
+    // The real `_readClaudeActiveModel` reader's own rules: under
+    // claudeHome/projects/**/*.jsonl, a line naming this exact `cwd`, whose
+    // own `timestamp` clears `startedAtMs` by a full second (session rows
+    // carry no sub-second precision, so `startedAtMs` is always an exact
+    // second — a first timestamp inside that same second is deliberately
+    // treated as ambiguous by the reader itself, not a bug in this test).
+    const transcriptDir = path.join(claudeHome, 'projects', 'some-slug');
+    fs.mkdirSync(transcriptDir, { recursive: true });
+    fs.writeFileSync(path.join(transcriptDir, 'abc123.jsonl'), JSON.stringify({
+      type: 'assistant', cwd: projectPath, timestamp: new Date(startedAtMs + 2000).toISOString(),
+      message: { model: 'claude-sonnet-5' }
+    }) + '\n');
+
+    const sentKeys = [];
+    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'claude', model: 'claude-sonnet-5' }, {
+      ...target(),
+      checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      claudeHome,
+      tmux: { sendKeys: (sessionArg, cmd) => sentKeys.push({ session: sessionArg, cmd }) }
+    });
+
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.sameProvider, true);
+    // Nothing was even sent: the FIRST observation already matched the
+    // profile being switched to (the fixture names that exact model), which
+    // the real `reconcile` reports `verified` with no control dispatched —
+    // proof this reached the real adapter/observer, not a stub that always
+    // answers ok regardless of what it was given.
+    assert.deepEqual(sentKeys, []);
   });
 
   it('same-provider: refuses when the reconciler cannot verify the live profile, but the config stays updated', async () => {
@@ -246,16 +341,25 @@ describe('lib/model-switch — switchSessionModel', () => {
     execFileSync('git', ['add', '-A'], { cwd: projectPath });
     execFileSync('git', ['commit', '-q', '-m', 'initial'], { cwd: projectPath });
     fs.writeFileSync(path.join(projectPath, 'uncommitted.txt'), 'wip\n');
+    const plansDir = path.join(projectPath, '.tangleclaw', 'plans');
+    fs.mkdirSync(plansDir, { recursive: true });
+    const planPath = path.join(plansDir, 'in-progress.md');
+    fs.writeFileSync(planPath, '# plan\n');
 
-    store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
     let killedProject = null;
+    let handoffWrittenBeforeKill = null;
     let launchArgs = null;
     const result = await modelSwitch.switchSessionModel(project.name, {
       engine: 'fake', model: 'claude-sonnet-5', mode: 'outage-takeover', reason: 'test outage'
     }, {
       ...target(),
       branchTimestamp: () => 1234567890,
-      killSession: (name) => { killedProject = name; return { error: null }; },
+      killSession: (name) => {
+        killedProject = name;
+        handoffWrittenBeforeKill = fs.existsSync(path.join(projectPath, '.tangleclaw', 'outage-handoff.json'));
+        return { error: null };
+      },
       launchSuccessor: (name, engineOverride) => { launchArgs = { name, engineOverride }; return { error: null }; }
     });
 
@@ -265,9 +369,17 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.equal(result.handoff.snapshot.committed, true);
     assert.equal(result.handoff.sessionTerminated, true);
     assert.equal(result.handoff.successorLaunched, true);
+    assert.equal(result.handoff.planPath, planPath);
     assert.deepEqual(launchArgs, { name: project.name, engineOverride: 'fake' });
     assert.equal(killedProject, project.name);
+    assert.equal(handoffWrittenBeforeKill, true, 'the continuity handoff must be written BEFORE the kill, not after');
     assert.equal(store.projects.get(project.id).engineId, 'fake');
+
+    const handoff = JSON.parse(fs.readFileSync(result.handoff.continuityHandoffFile, 'utf8'));
+    assert.equal(handoff.project, project.name);
+    assert.equal(handoff.mode, 'outage-takeover');
+    assert.equal(handoff.sessionId, session.id);
+    assert.equal(handoff.planPath, planPath);
 
     const branches = execFileSync('git', ['branch', '--list', result.wipBranch], { cwd: projectPath, encoding: 'utf8' });
     assert.match(branches, /wip\//);

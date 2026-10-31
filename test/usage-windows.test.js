@@ -273,6 +273,36 @@ describe('lib/usage-windows — parseCodexSessions', () => {
   });
 });
 
+describe('lib/usage-windows — parseAntigravityTranscripts', () => {
+  it('sums usage from a PLANNER_RESPONSE step, ignoring steps with no token fields', () => {
+    withTmpDir((dir) => {
+      const conversationDir = path.join(dir, 'f833a8a9-dfab-4a30-b0b3-76ddd81fc9a1', '.system_generated', 'logs');
+      fs.mkdirSync(conversationDir, { recursive: true });
+      const lines = [
+        JSON.stringify({ step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', created_at: '2026-10-15T22:21:40Z', content: 'hello' }),
+        JSON.stringify({
+          step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: '2026-10-15T22:21:40Z',
+          input_tokens: 15862, cache_read_tokens: 0, output_tokens: 100
+        }),
+        'not even json'
+      ];
+      fs.writeFileSync(path.join(conversationDir, 'transcript.jsonl'), lines.join('\n') + '\n');
+      const records = uw.parseAntigravityTranscripts(dir);
+      assert.equal(records.length, 1);
+      assert.equal(records[0].provider, 'antigravity');
+      assert.equal(records[0].model, 'unknown');
+      assert.equal(records[0].inputTokens, 15862);
+      assert.equal(records[0].outputTokens, 100);
+      assert.equal(records[0].cacheReadInputTokens, 0);
+      assert.equal(records[0].cacheCreationInputTokens, 0, 'Antigravity has no cache-write field at all');
+    });
+  });
+
+  it('answers with no records for a directory that does not exist', () => {
+    assert.deepEqual(uw.parseAntigravityTranscripts('/nonexistent/path/for/this/test'), []);
+  });
+});
+
 describe('lib/usage-windows — getUsageWindows composition', () => {
   it('composes windows, reset schedule, calibration and a recommended policy', () => {
     withTmpDir((dir) => {
@@ -283,7 +313,10 @@ describe('lib/usage-windows — getUsageWindows composition', () => {
         type: 'assistant', timestamp: new Date(nowMs - 60000).toISOString(),
         message: { model: 'claude-sonnet-5', usage: { input_tokens: 10, output_tokens: 20, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } }
       }) + '\n');
-      const result = uw.getUsageWindows({ claudeProjectsDir: projectDir, codexSessionsDir: path.join(dir, 'no-codex-here'), nowMs });
+      const result = uw.getUsageWindows({
+        claudeProjectsDir: projectDir, codexSessionsDir: path.join(dir, 'no-codex-here'), antigravityBrainDir: path.join(dir, 'no-antigravity-here'),
+        nowMs, sprintStartMs: null // opted out — this test is not about the sprint window; see the dedicated describe block for it
+      });
       assert.equal(result.byProviderModel.claude['claude-sonnet-5'].fiveHour.inputTokens, 10);
       assert.equal(result.byProviderModel.claude['claude-sonnet-5'].fiveHour.totalTokens, 30);
       assert.equal(result.recommendedPolicy.window, 'use-it-or-lose-it');
@@ -291,7 +324,53 @@ describe('lib/usage-windows — getUsageWindows composition', () => {
       assert.ok(Date.parse(result.resetSchedule.nextWeeklyResetAt) > nowMs);
       assert.ok('claude' in result.calibration);
       assert.ok('codex' in result.calibration);
-      assert.equal(result.byProviderModel.claude['claude-sonnet-5'].sprint, null, 'no sprint window without an explicit sprintStartMs');
+      assert.equal(result.byProviderModel.claude['claude-sonnet-5'].sprint, null, 'explicit null opt-out');
+    });
+  });
+
+  describe('sprintStartMs auto-default', () => {
+    it('resolves the default from the latest git tag\'s commit time when none is given', () => {
+      withTmpDir((dir) => {
+        const projectDir = path.join(dir, 'claude', 'p');
+        fs.mkdirSync(projectDir, { recursive: true });
+        const nowMs = Date.now();
+        const tagTimeMs = nowMs - 5 * 86400000;
+        fs.writeFileSync(path.join(projectDir, 'a.jsonl'), JSON.stringify({
+          type: 'assistant', timestamp: new Date(tagTimeMs + 60000).toISOString(),
+          message: { model: 'claude-sonnet-5', usage: { input_tokens: 42, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } }
+        }) + '\n');
+        const calls = [];
+        const execGit = (args) => {
+          calls.push(args);
+          if (args[0] === 'describe') return 'v9.9.9\n';
+          return `${Math.floor(tagTimeMs / 1000)}\n`;
+        };
+        const result = uw.getUsageWindows({
+          claudeProjectsDir: projectDir, codexSessionsDir: path.join(dir, 'no-codex'), antigravityBrainDir: path.join(dir, 'no-antigravity'),
+          nowMs, deps: { execGit, repoRoot: '/irrelevant-for-this-test' }
+        });
+        assert.deepEqual(calls[0], ['describe', '--tags', '--abbrev=0']);
+        assert.deepEqual(calls[1], ['log', '-1', '--format=%ct', 'v9.9.9']);
+        assert.equal(result.byProviderModel.claude['claude-sonnet-5'].sprint.inputTokens, 42);
+      });
+    });
+
+    it('falls back to now - 24h when git is unavailable or there is no tag', () => {
+      withTmpDir((dir) => {
+        const projectDir = path.join(dir, 'claude', 'p');
+        fs.mkdirSync(projectDir, { recursive: true });
+        const nowMs = Date.now();
+        // One record just inside the 24h fallback, one just outside it.
+        fs.writeFileSync(path.join(projectDir, 'a.jsonl'), [
+          JSON.stringify({ type: 'assistant', timestamp: new Date(nowMs - 23 * 3600000).toISOString(), message: { model: 'claude-sonnet-5', usage: { input_tokens: 7, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } }),
+          JSON.stringify({ type: 'assistant', timestamp: new Date(nowMs - 25 * 3600000).toISOString(), message: { model: 'claude-sonnet-5', usage: { input_tokens: 99, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } })
+        ].join('\n') + '\n');
+        const result = uw.getUsageWindows({
+          claudeProjectsDir: projectDir, codexSessionsDir: path.join(dir, 'no-codex'), antigravityBrainDir: path.join(dir, 'no-antigravity'),
+          nowMs, deps: { execGit: () => { throw new Error('fatal: not a git repository'); } }
+        });
+        assert.equal(result.byProviderModel.claude['claude-sonnet-5'].sprint.inputTokens, 7, 'only the record inside the 24h fallback window counts');
+      });
     });
   });
 
@@ -305,7 +384,7 @@ describe('lib/usage-windows — getUsageWindows composition', () => {
         JSON.stringify({ type: 'assistant', timestamp: new Date(sprintStartMs - 60000).toISOString(), message: { model: 'claude-sonnet-5', usage: { input_tokens: 1000, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } }),
         JSON.stringify({ type: 'assistant', timestamp: new Date(sprintStartMs + 60000).toISOString(), message: { model: 'claude-sonnet-5', usage: { input_tokens: 5, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } })
       ].join('\n') + '\n');
-      const result = uw.getUsageWindows({ claudeProjectsDir: projectDir, codexSessionsDir: path.join(dir, 'no-codex'), nowMs, sprintStartMs });
+      const result = uw.getUsageWindows({ claudeProjectsDir: projectDir, codexSessionsDir: path.join(dir, 'no-codex'), antigravityBrainDir: path.join(dir, 'no-antigravity'), nowMs, sprintStartMs });
       assert.equal(result.byProviderModel.claude['claude-sonnet-5'].sprint.inputTokens, 5, 'only the record AT/AFTER sprintStartMs counts');
     });
   });
@@ -320,7 +399,7 @@ describe('lib/usage-windows — getUsageWindows composition', () => {
         type: 'assistant', timestamp: sixHoursAgo,
         message: { model: 'claude-sonnet-5', usage: { input_tokens: 99, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } }
       }) + '\n');
-      const result = uw.getUsageWindows({ claudeProjectsDir: projectDir, codexSessionsDir: path.join(dir, 'no-codex'), nowMs });
+      const result = uw.getUsageWindows({ claudeProjectsDir: projectDir, codexSessionsDir: path.join(dir, 'no-codex'), antigravityBrainDir: path.join(dir, 'no-antigravity'), nowMs });
       assert.equal(result.byProviderModel.claude['claude-sonnet-5'].fiveHour.inputTokens, 0);
       assert.equal(result.byProviderModel.claude['claude-sonnet-5'].weekly.inputTokens, 99);
     });
@@ -342,8 +421,50 @@ describe('lib/usage-windows — getUsageWindows composition', () => {
         JSON.stringify({ type: 'assistant', timestamp: justBeforePriorReset, message: { model: 'claude-sonnet-5', usage: { input_tokens: 1, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } }),
         JSON.stringify({ type: 'assistant', timestamp: justAfterPriorReset, message: { model: 'claude-sonnet-5', usage: { input_tokens: 2, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } })
       ].join('\n') + '\n');
-      const result = uw.getUsageWindows({ claudeProjectsDir: projectDir, codexSessionsDir: path.join(dir, 'no-codex'), nowMs });
+      const result = uw.getUsageWindows({ claudeProjectsDir: projectDir, codexSessionsDir: path.join(dir, 'no-codex'), antigravityBrainDir: path.join(dir, 'no-antigravity'), nowMs });
       assert.equal(result.byProviderModel.claude['claude-sonnet-5'].weekly.inputTokens, 2, 'only the record AFTER the correct reset instant counts');
+    });
+  });
+
+  it('upserts every computed window into usage_window_aggregates (schema v76), readable back via getStoredAggregates', () => {
+    withTmpDir((dir) => {
+      const projectDir = path.join(dir, 'claude', 'p');
+      fs.mkdirSync(projectDir, { recursive: true });
+      const nowMs = uw.pacificWallClockToUtcMs(2026, 10, 28, 12, 0);
+      fs.writeFileSync(path.join(projectDir, 'a.jsonl'), JSON.stringify({
+        type: 'assistant', timestamp: new Date(nowMs - 60000).toISOString(),
+        message: { model: 'claude-sonnet-5', usage: { input_tokens: 11, output_tokens: 22, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } }
+      }) + '\n');
+      uw.getUsageWindows({
+        claudeProjectsDir: projectDir, codexSessionsDir: path.join(dir, 'no-codex'), antigravityBrainDir: path.join(dir, 'no-antigravity'),
+        nowMs, sprintStartMs: null
+      });
+      // Reads through the REAL store (this file's own beforeEach initializes
+      // one fresh per test) — no injected aggregatesStore here on purpose,
+      // proving the default path actually persists.
+      const stored = uw.getStoredAggregates();
+      assert.equal(stored.claude['claude-sonnet-5'].fiveHour.inputTokens, 11);
+      assert.equal(stored.claude['claude-sonnet-5'].fiveHour.outputTokens, 22);
+      assert.equal(stored.claude['claude-sonnet-5'].weekly.inputTokens, 11);
+      assert.equal(stored.claude['claude-sonnet-5'].sprint, undefined, 'opted out of the sprint window, so no sprint row to store');
+    });
+  });
+
+  it('re-computing upserts in place rather than accumulating duplicate rows', () => {
+    withTmpDir((dir) => {
+      const projectDir = path.join(dir, 'claude', 'p');
+      fs.mkdirSync(projectDir, { recursive: true });
+      const nowMs = uw.pacificWallClockToUtcMs(2026, 10, 28, 12, 0);
+      const write = (tokens) => fs.writeFileSync(path.join(projectDir, 'a.jsonl'), JSON.stringify({
+        type: 'assistant', timestamp: new Date(nowMs - 60000).toISOString(),
+        message: { model: 'claude-sonnet-5', usage: { input_tokens: tokens, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } }
+      }) + '\n');
+      const opts = { claudeProjectsDir: projectDir, codexSessionsDir: path.join(dir, 'no-codex'), antigravityBrainDir: path.join(dir, 'no-antigravity'), nowMs, sprintStartMs: null };
+      write(5);
+      uw.getUsageWindows(opts);
+      write(9);
+      uw.getUsageWindows(opts);
+      assert.equal(uw.getStoredAggregates().claude['claude-sonnet-5'].fiveHour.inputTokens, 9);
     });
   });
 });
