@@ -1,0 +1,1180 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TangleClaw Sprint v5.49.0 — Live Sprint Progress &amp; Telemetry Report</title>
+  <style>
+    :root {
+      --bg: #070b14;
+      --bg-card: #0f172a;
+      --bg-card-alt: #131c31;
+      --border: #1e293b;
+      --border-hi: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --cyan: #38bdf8;
+      --green: #34d399;
+      --purple: #c084fc;
+      --amber: #fbbf24;
+      --rose: #fb7185;
+      --indigo: #818cf8;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(circle at 15% 0%, #0f1f3d 0%, var(--bg) 45%);
+      color: var(--text);
+      line-height: 1.55;
+    }
+    a { color: var(--cyan); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.88em;
+      background: rgba(148, 163, 184, 0.14);
+      padding: 0.12rem 0.38rem;
+      border-radius: 5px;
+      color: #e2e8f0;
+    }
+
+    /* Top Nav */
+    .topnav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(7, 11, 20, 0.88);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0.7rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      font-weight: 800;
+      font-size: 1.05rem;
+      color: var(--text);
+    }
+    .brand-dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--cyan), var(--green));
+      box-shadow: 0 0 12px var(--cyan);
+    }
+    .nav-links {
+      display: flex;
+      gap: 1.1rem;
+      flex-wrap: wrap;
+      font-size: 0.86rem;
+      font-weight: 600;
+    }
+    .nav-links a { color: var(--text-muted); transition: color 0.15s; }
+    .nav-links a:hover { color: var(--cyan); text-decoration: none; }
+
+    .container {
+      max-width: 1220px;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 4rem;
+    }
+
+    /* Hero */
+    .hero {
+      background: linear-gradient(145deg, rgba(15, 23, 42, 0.96), rgba(30, 27, 75, 0.72));
+      border: 1px solid var(--border-hi);
+      border-radius: 18px;
+      padding: 2.25rem 2rem;
+      margin-bottom: 2rem;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+    }
+    .hero-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(52, 211, 153, 0.12);
+      border: 1px solid rgba(52, 211, 153, 0.4);
+      color: var(--green);
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 0.28rem 0.75rem;
+      border-radius: 999px;
+      margin-bottom: 0.9rem;
+    }
+    .hero h1 {
+      margin: 0 0 0.65rem;
+      font-size: clamp(1.75rem, 3.2vw, 2.55rem);
+      letter-spacing: -0.02em;
+      line-height: 1.18;
+    }
+    .hero-sub {
+      margin: 0 0 1.4rem;
+      color: #cbd5e1;
+      font-size: 1.04rem;
+      max-width: 980px;
+    }
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+      margin-bottom: 1.75rem;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.55rem 1rem;
+      border-radius: 10px;
+      font-size: 0.86rem;
+      font-weight: 600;
+      border: 1px solid var(--border-hi);
+      background: var(--bg-card);
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .btn:hover {
+      border-color: var(--cyan);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      border-color: #38bdf8;
+      color: #fff;
+    }
+
+    /* KPI Grid */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(245px, 1fr));
+      gap: 1rem;
+    }
+    .kpi-card {
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.1rem 1.2rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .kpi-card::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--cyan), var(--green));
+    }
+    .kpi-label {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .kpi-val {
+      font-size: 1.65rem;
+      font-weight: 800;
+      margin: 0.25rem 0 0.2rem;
+      color: var(--text);
+      letter-spacing: -0.02em;
+    }
+    .kpi-sub {
+      font-size: 0.82rem;
+      color: #cbd5e1;
+    }
+
+    /* Sections */
+    .section {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.75rem;
+      margin-bottom: 1.75rem;
+    }
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.85rem;
+    }
+    .section-title {
+      margin: 0;
+      font-size: 1.35rem;
+      font-weight: 800;
+    }
+    .section-desc {
+      margin: 0.25rem 0 0;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .w-full { width: 100%; height: auto; display: block; }
+
+    /* Two-column & Three-column grids */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+      gap: 1.25rem;
+    }
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+    }
+
+    .subcard {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.2rem;
+    }
+    .subcard h3 {
+      margin: 0 0 0.6rem;
+      font-size: 1.02rem;
+    }
+
+    /* Stacked horizontal bars */
+    .bar-row {
+      margin-bottom: 0.95rem;
+    }
+    .bar-label-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.84rem;
+      margin-bottom: 0.3rem;
+      gap: 0.5rem;
+    }
+    .bar-track {
+      width: 100%;
+      height: 12px;
+      background: #090d16;
+      border-radius: 999px;
+      overflow: hidden;
+      display: flex;
+    }
+    .bar-fill {
+      height: 100%;
+    }
+
+    /* Badges & Pills */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.18rem 0.55rem;
+      border-radius: 999px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+    .badge-cyan, .badge-blue { background: rgba(56, 189, 248, 0.15); color: var(--cyan); border: 1px solid rgba(56, 189, 248, 0.35); }
+    .badge-green { background: rgba(52, 211, 153, 0.15); color: var(--green); border: 1px solid rgba(52, 211, 153, 0.35); }
+    .badge-purple { background: rgba(192, 132, 252, 0.15); color: var(--purple); border: 1px solid rgba(192, 132, 252, 0.35); }
+    .badge-amber { background: rgba(251, 191, 36, 0.15); color: var(--amber); border: 1px solid rgba(251, 191, 36, 0.35); }
+    .badge-rose { background: rgba(251, 113, 133, 0.15); color: var(--rose); border: 1px solid rgba(251, 113, 133, 0.35); }
+
+    .text-muted { color: var(--text-muted); font-size: 0.82rem; }
+
+    /* Filter Controls */
+    .filter-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.2rem;
+    }
+    .filter-btns {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+    .filter-btn {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border-hi);
+      color: var(--text-muted);
+      padding: 0.42rem 0.8rem;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .filter-btn:hover, .filter-btn.active {
+      background: rgba(56, 189, 248, 0.16);
+      border-color: var(--cyan);
+      color: var(--text);
+    }
+    .search-input {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border-hi);
+      color: var(--text);
+      padding: 0.48rem 0.85rem;
+      border-radius: 8px;
+      font-size: 0.84rem;
+      min-width: 250px;
+    }
+
+    /* Wave Cards */
+    .wave-card {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.15rem;
+      margin-bottom: 0.9rem;
+    }
+    .wave-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+      margin-bottom: 0.75rem;
+    }
+    .wave-num {
+      font-size: 0.74rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--cyan);
+    }
+    .wave-title {
+      margin: 0.1rem 0 0.15rem;
+      font-size: 1rem;
+    }
+    .wave-window {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+    .wave-meta {
+      display: flex;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+
+    .table-wrap { overflow-x: auto; }
+    .pr-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.84rem;
+    }
+    .pr-table th, .pr-table td {
+      padding: 0.52rem 0.65rem;
+      text-align: left;
+      border-top: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .pr-table th {
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      border-top: none;
+    }
+
+    /* Post-Mortem Lists */
+    .pm-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+    .pm-item {
+      background: rgba(7, 11, 20, 0.55);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--green);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      font-size: 0.88rem;
+    }
+    .pm-item.warn {
+      border-left-color: var(--amber);
+    }
+    .pm-item strong {
+      display: block;
+      margin-bottom: 0.25rem;
+      font-size: 0.94rem;
+    }
+
+    footer {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      padding: 2rem 1rem 1rem;
+      border-top: 1px solid var(--border);
+      margin-top: 2rem;
+    }
+  
+    .legend {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .legend-swatch {
+      width: 11px;
+      height: 11px;
+      border-radius: 3px;
+    }
+    .issue-pill {
+      display: inline-block;
+      background: rgba(129, 140, 248, 0.15);
+      border: 1px solid rgba(129, 140, 248, 0.35);
+      color: #a5b4fc;
+      padding: 0.1rem 0.45rem;
+      border-radius: 6px;
+      font-size: 0.76rem;
+      font-weight: 600;
+      margin: 0.1rem 0.15rem 0.1rem 0;
+    }
+    .pr-link { font-weight: 700; color: var(--cyan); }
+    .sha-link code {
+      background: rgba(148, 163, 184, 0.12);
+      color: #e2e8f0;
+      padding: 0.12rem 0.4rem;
+      border-radius: 5px;
+      font-size: 0.78rem;
+    }
+  </style>
+</head>
+<body>
+  <!-- AUTO_GENERATED_LIVE_SPRINT_REPORT -->
+  <header class="topnav">
+    <div class="topnav-inner">
+      <div class="brand">
+        <div class="brand-badge">TC</div>
+        <div>
+          <div style="font-size:0.94rem;">TangleClaw Live Sprint Tracker</div>
+          <div style="font-size:0.72rem;color:var(--text-dim);font-weight:500;">v5.49.0 · Engine settings that tell the truth · Live Sync 2026-10-31 06:19:33 UTC</div>
+        </div>
+      </div>
+      <nav class="nav-links" id="navLinks">
+        <a href="../" style="color:var(--accent2);font-weight:700;">← All Sprint Reports</a>
+        <a href="#overview" class="active">Overview</a>
+        <a href="#plain-english" style="color:var(--green);font-weight:700;">Plain-English</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#velocity">Velocity</a>
+        <a href="#deliverables">Deliverables</a>
+        <a href="#telemetry">Telemetry</a>
+        <a href="#postmortem">Post-Mortem</a>
+        <a href="#waves">Wave Explorer</a>
+        <a href="#next-sprint">Next Sprint</a>
+      </nav>
+      <div class="nav-actions">
+        <button class="btn" id="themeBtn" onclick="toggleTheme()" title="Toggle Light/Dark Mode">☀️ Light Mode</button>
+        <button class="btn btn-primary" onclick="window.print()">🖨️ Export PDF</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="hero" id="overview">
+      <div class="hero-top">
+        <div>
+          <div class="eyebrow">📡 LIVE SPRINT IN PROGRESS · AUTO-SYNCED FROM LANE_QUEUE.MD (2026-10-31 06:19:33 UTC)</div>
+          <h1>v5.49.0: Engine settings that tell the truth — Live Multi-Agent Wave &amp; Gate Tracker</h1>
+          <p class="hero-subtitle">
+            Sprint <strong>v5.49.0</strong> (<em>"Engine settings that tell the truth"</em>) is currently <strong>in progress</strong> (ACTIVE — CO-SIGNED (Token: A487-COSIGN-V5490-20261030)).
+            This live interactive sprint report is automatically generated and updated by <code>sync-live-sprint.py</code> on every roadmap sync cycle as waves are dispatched, reviewed, and merged in <code>LANE_QUEUE.md</code>.
+            Currently tracking <strong>8 wave rows</strong>: <strong>1 merged</strong>, <strong>0 in review</strong>, and <strong>7 in progress / queued</strong>.
+            At <code>W4-REL</code> release preparation, <code>TC-Lane-Obsr</code> finalizes the complete post-sprint empirical report and 16-point <code>Rule #283</code> evaluation.
+          </p>
+        </div>
+        <div class="status-pill">
+          ● Live Sprint v5.49.0 (1/8 Merged · 0 In Review)
+        </div>
+      </div>
+
+      <div id="plain-english" class="subcard" style="margin:22px 0;padding:22px 24px;border:1.5px solid rgba(56,189,248,0.45);background:linear-gradient(135deg,rgba(15,23,42,0.96),rgba(14,116,144,0.18));border-radius:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+          <span class="pillar-num" style="color:var(--accent2);font-size:0.8rem;letter-spacing:0.08em;">📖 PLAIN-ENGLISH SUMMARY · WHAT WE ARE BUILDING &amp; LIVE SPRINT PROGRESS (NO JARGON)</span>
+          <span class="badge badge-cyan">Live Sprint Tracker · Updated 2026-10-31 06:19:33 UTC</span>
+        </div>
+        <h3 style="margin:0 0 12px;font-size:1.22rem;color:var(--text);">What Sprint v5.49.0 Is Building — and Where Each Wave Stands Right Now</h3>
+        <div class="grid-2" style="gap:18px;">
+          <div style="background:rgba(15,23,42,0.65);border:1px solid var(--border);border-radius:10px;padding:15px 17px;">
+            <h4 style="margin:0 0 8px;color:var(--accent2);font-size:0.98rem;">🛠️ What Sprint v5.49.0 Delivers</h4>
+            <ul style="margin:0;padding-left:18px;font-size:0.9rem;line-height:1.55;color:var(--text-muted);">
+              <li>Every settings surface resolves the engine the same way and says when a choice will not reach a session.</li>
+            </ul>
+          </div>
+          <div style="background:rgba(15,23,42,0.65);border:1px solid var(--border);border-radius:10px;padding:15px 17px;">
+            <h4 style="margin:0 0 8px;color:var(--green);font-size:0.98rem;">⚡ Live Wave Progress (1 of 8 Cars Merged)</h4>
+            <p style="margin:0;font-size:0.9rem;line-height:1.55;color:var(--text-muted);">
+              The fleet is actively executing <strong>Sprint v5.49.0 Charter (`A487`): Engine Settings That Tell the Truth</strong>. So far, <strong>1</strong> wave item(s) have merged to <code>main</code>, <strong>0</strong> are in active PR review with <code>TC-Lane-PRR-A/B</code> and <code>TC-Lane-Arc</code>, and <strong>7</strong> are in build or queued for the next wave. Between every wave, active Builder and Reviewer lanes run a clean session reset so context stays fresh and never over-compacts.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">Sprint Version</div>
+          <div class="kpi-value" style="color:var(--accent2)">v5.49.0</div>
+          <div class="kpi-meta">Engine settings that tell the truth · Live Sprint in Progress</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Chartered Wave Rows</div>
+          <div class="kpi-value" style="color:var(--green)">1 / 8</div>
+          <div class="kpi-meta">1 Merged · 0 In Review · 7 In Progress/Queued</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Sprint State</div>
+          <div class="kpi-value" style="color:var(--accent)">ACTIVE — CO-SIGNED</div>
+          <div class="kpi-meta">Synced directly from <code>Shared/TangleClaw-Shared/LANE_QUEUE.md</code></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Wave Reset Guardrail</div>
+          <div class="kpi-value" style="color:var(--green)">Active</div>
+          <div class="kpi-meta">Inter-wave <code>tc finalize</code> + fresh launch prevents compaction drift</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Builder Mode</div>
+          <div class="kpi-value" style="color:var(--accent2)">bypass</div>
+          <div class="kpi-meta"><code>TC-Lane-A..D</code> running in <code>bypassPermissions</code> mode</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Codex Effort Tier</div>
+          <div class="kpi-value" style="color:var(--green)">medium</div>
+          <div class="kpi-meta"><code>TC-Lane-INT</code>, <code>PRR-A</code>, <code>PRR-B</code> calibrated to <code>medium</code> effort</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Live Sync Snapshot</div>
+          <div class="kpi-value" style="color:var(--accent2)">15m / Hook</div>
+          <div class="kpi-meta">Updated 2026-10-31 06:19:33 UTC via <code>sync-live-sprint.py</code></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">4-Gate Governance</div>
+          <div class="kpi-value" style="color:var(--green)">Enforced</div>
+          <div class="kpi-meta"><code>I-Gate</code> · <code>B-Gate</code> · <code>A-Gate</code> · <code>O-Gate</code> active on all waves</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="architecture">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 01 · Multi-Agent Fleet Topology &amp; Wave Architecture</span>
+          <h2 class="section-title">Sprint v5.49.0 Multi-Agent Execution Topology</h2>
+          <p class="section-desc">
+            Four parallel Builder lanes (<code>TC-Lane-A..D</code>), two dedicated PR Reviewer lanes (<code>TC-Lane-PRR-A..B</code>), Architect (<code>TC-Lane-Arc</code>), Release Integrator (<code>TC-Lane-INT</code>), Observer (<code>TC-Lane-Obsr</code>), and Project Manager (<code>TC-Lane-PM</code>) coordinate through <code>LANE_QUEUE.md</code> and Medusa switchboard exchanges.
+          </p>
+        </div>
+      </div>
+      <div class="grid-3" style="margin-bottom:20px;">
+        <div class="subcard">
+          <span class="pillar-num">PILLAR 01 · PARALLEL FILE-DISJOINT BUILDER WAVES</span>
+          <h4>Zero-Conflict Scoped Cars Across TC-Lane-A..D</h4>
+          <p>Each Builder car in <code>LANE_QUEUE.md</code> carries an explicit signed file scope and branch name verified at the Integrator Start Gate before edits begin.</p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">PILLAR 02 · EXACT-HEAD 4-GATE VERIFICATION</span>
+          <h4>PRR I/B-Gate, Architect A/R-Gate, Integrator CI-Gate &amp; Observer O-Gate</h4>
+          <p>Every PR requires exact-head GitHub Actions <code>Tests</code> CI green, PRR review acceptance, Architect invariant sign-off, and Integrator scope/freshness verification before merge.</p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">PILLAR 03 · INTER-WAVE SESSION CONTINUITY &amp; RESET</span>
+          <h4>Deterministic Wave Reset Prevents Mid-Sprint Compaction</h4>
+          <p>After each wave merges and branches are retired on clean <code>main</code>, lanes finalize and relaunch fresh sessions so no agent ever stalls or degrades from context compaction.</p>
+        </div>
+      </div>
+      <div class="svg-wrap">
+        <div class="svg-caption">
+          <span>Figure 1.1 — TangleClaw 10-Lane Autonomous Fleet Architecture (Sprint v5.49.0)</span>
+          <span>Live Sync: 2026-10-31 06:19:33 UTC</span>
+        </div>
+        <svg viewBox="0 0 980 330" width="100%" height="auto" role="img" aria-label="Multi-Agent Fleet Topology">
+          <rect x="0" y="0" width="980" height="330" rx="12" fill="#0b1120" />
+          <rect x="30" y="30" width="200" height="270" rx="10" fill="#111827" stroke="#38bdf8" stroke-width="1.5" />
+          <text x="48" y="60" fill="#38bdf8" font-size="12" font-weight="800">COORDINATORS &amp; GATES</text>
+          <text x="48" y="95" fill="#e2e8f0" font-size="11.5">• TC-Lane-PM (Charter)</text>
+          <text x="48" y="125" fill="#e2e8f0" font-size="11.5">• TC-Lane-Arc (A/R-Gate)</text>
+          <text x="48" y="155" fill="#e2e8f0" font-size="11.5">• TC-Lane-INT (Merge/CI)</text>
+          <text x="48" y="185" fill="#e2e8f0" font-size="11.5">• TC-Lane-Obsr (O-Gate)</text>
+          <rect x="270" y="30" width="380" height="270" rx="10" fill="#111827" stroke="#22c55e" stroke-width="1.5" />
+          <text x="290" y="60" fill="#22c55e" font-size="12" font-weight="800">BUILDER LANES (BYPASS MODE)</text>
+          <text x="290" y="95" fill="#e2e8f0" font-size="11.5">• TC-Lane-A · Workstream A</text>
+          <text x="290" y="125" fill="#e2e8f0" font-size="11.5">• TC-Lane-B · Workstream B</text>
+          <text x="290" y="155" fill="#e2e8f0" font-size="11.5">• TC-Lane-C · Workstream C</text>
+          <text x="290" y="185" fill="#e2e8f0" font-size="11.5">• TC-Lane-D · Workstream D</text>
+          <rect x="690" y="30" width="260" height="270" rx="10" fill="#111827" stroke="#a855f7" stroke-width="1.5" />
+          <text x="710" y="60" fill="#a855f7" font-size="12" font-weight="800">PR REVIEWERS (CODEX MEDIUM)</text>
+          <text x="710" y="95" fill="#e2e8f0" font-size="11.5">• TC-Lane-PRR-A (I/B-Gate)</text>
+          <text x="710" y="125" fill="#e2e8f0" font-size="11.5">• TC-Lane-PRR-B (I/B-Gate)</text>
+          <text x="710" y="165" fill="#94a3b8" font-size="11">Exact-SHA review &amp; Prawduct</text>
+        </svg>
+      </div>
+    </section>
+
+    <section class="section" id="velocity">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 02 · Live Wave Velocity &amp; Execution Timeline</span>
+          <h2 class="section-title">Sprint v5.49.0 Wave Execution Matrix</h2>
+          <p class="section-desc">Live wave status synced directly from <code>Shared/TangleClaw-Shared/LANE_QUEUE.md</code>.</p>
+        </div>
+      </div>
+      <div class="svg-wrap">
+        <div class="svg-caption">
+          <span>Figure 2.1 — Live Wave Progress Bar (v5.49.0)</span>
+          <span>1 of 8 Chartered Wave Rows Merged</span>
+        </div>
+        <svg viewBox="0 0 960 180" width="100%" height="auto" role="img" aria-label="Sprint Velocity Chart">
+          <rect x="0" y="0" width="960" height="180" rx="10" fill="#0b1120" />
+          <text x="30" y="45" fill="#38bdf8" font-size="13" font-weight="700">Sprint v5.49.0 Live Wave Progress (1/8 Merged · 0 In Review)</text>
+          <rect x="30" y="70" width="900" height="32" rx="8" fill="#1e293b" />
+          <rect x="30" y="70" width="112" height="32" rx="8" fill="#22c55e" />
+          <text x="30" y="135" fill="#94a3b8" font-size="11.5">Last synced from LANE_QUEUE.md at 2026-10-31 06:19:33 UTC</text>
+        </svg>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Car / Wave</th>
+              <th>Assigned Builder &amp; Reviewer</th>
+              <th>Scoped Issues &amp; Branch</th>
+              <th>Live Status &amp; Gate Receipts</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>W1-A</strong></td><td><code>TC-Lane-A (projectId = 111) / TC-Lane-PRR-A (projectId = 143)</code></td><td>#1268 (Plugin-governed non-Claude carrier generatedConfig disposition) + #1276 (isPluginGo</td><td><span class="badge badge-amber">STAGED (WAVE 1)</span></td></tr>
+            <tr><td><strong>W1-B</strong></td><td><code>TC-Lane-B (projectId = 112) / TC-Lane-PRR-B (projectId = 144)</code></td><td>#2220 (Short-lived display cache for engine model list reads) + #2278 (PATCH /api/config d</td><td><span class="badge badge-amber">STAGED (WAVE 1)</span></td></tr>
+            <tr><td><strong>W1-C</strong></td><td><code>TC-Lane-C (projectId = 141) / TC-Lane-PRR-A (projectId = 143)</code></td><td>#738 (Converge public/setup.js engine picker onto tcBuildEngineOptions) + #1113 (Set CLAUD</td><td><span class="badge badge-amber">STAGED (WAVE 1)</span></td></tr>
+            <tr><td><strong>W1-D</strong></td><td><code>TC-Lane-D (projectId = 142) / TC-Lane-PRR-B (projectId = 144)</code></td><td>#260 (Codex pre-flight model validation at session launch) + #1085 (lib/master.js#masterId</td><td><span class="badge badge-amber">STAGED (WAVE 1)</span></td></tr>
+            <tr><td><strong>W2-A</strong></td><td><code>TC-Lane-A / TC-Lane-PRR-A</code></td><td>#1264 (OpenClaw projects launch-mode section via tcResolveEngineProfile) + #1269 (Project </td><td><span class="badge badge-amber">QUEUED (WAVE 2)</span></td></tr>
+            <tr><td><strong>W2-B</strong></td><td><code>TC-Lane-B / TC-Lane-PRR-B</code></td><td>#2742 (test/reset-admin-store.test.js JUnit XML &lt;undefined&gt; fix on Testament container poo</td><td><span class="badge badge-amber">QUEUED (WAVE 2)</span></td></tr>
+            <tr><td><strong>W3-REC</strong></td><td><code>Records Reconciliation / TC-Lane-INT</code></td><td>TC-Lane-PRR-A (Sole owner of .prawduct/change-log.md, .prawduct/change-log-archive/, and F</td><td><span class="badge badge-amber">.prawduct/change-log.md, .prawduct/change-log-archive/, FEATURES.md</span></td></tr>
+            <tr><td><strong>W4-REL</strong></td><td><code>Release v5.49.0 Cut &amp; Local Deploy / TC-Lane-INT</code></td><td>TC-Lane-PRR-B (Drain changelog.d/ into CHANGELOG.md [5.49.0], bump package.json, package-l</td><td><span class="badge badge-green">CHANGELOG.md, changelog.d/, package.json, package-lock.json, version.json, README.md, test</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section" id="deliverables">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 03 · Chartered Deliverables &amp; File Scope</span>
+          <h2 class="section-title">Sprint v5.49.0 Deliverables Matrix</h2>
+          <p class="section-desc">Each car’s exact issue assignment, branch, file scope, and current review/merge state.</p>
+        </div>
+      </div>
+      <div class="svg-wrap">
+        <div class="svg-caption">
+          <span>Figure 3.1 — Deliverables Breakdown by Wave State (v5.49.0)</span>
+          <span>Updated 2026-10-31 06:19:33 UTC</span>
+        </div>
+        <svg viewBox="0 0 960 180" width="100%" height="auto" role="img" aria-label="Deliverables Status Chart">
+          <rect x="0" y="0" width="960" height="180" rx="10" fill="#0b1120" />
+          <text x="30" y="50" fill="#22c55e" font-size="13" font-weight="700">Merged Cars: 1</text>
+          <text x="320" y="50" fill="#38bdf8" font-size="13" font-weight="700">In Review: 0</text>
+          <text x="610" y="50" fill="#f59e0b" font-size="13" font-weight="700">In Progress / Queued: 7</text>
+          <text x="30" y="110" fill="#94a3b8" font-size="11.5">All deliverables are verified against exact signed file scopes and CI gates before merge.</text>
+        </svg>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Car</th>
+              <th>Owner / Reviewer</th>
+              <th>Signed Scope &amp; Issues</th>
+              <th>Current State</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>W1-A</strong></td><td><code>TC-Lane-A (projectId = 111) / TC-Lane-PRR-A (projectId = 143)</code></td><td>#1268 (Plugin-governed non-Claude carrier generatedConfig disposition) + #1276 (isPluginGoverned clone vs loaded plugin truthfulness) — Ruling A487-W1A (single-turn plan+build): Extend engines.settingDisposition(&#x27;generatedConfig&#x27;, projConfig, engineProfile) (lib/engines.js:1858) and browser mirror tcSettingDisposition (public/api-helper.js:5145–5260 ONLY) + public/ui.js (L2265–2295) so plugin-governed projects on non-claude-md carriers report why TC generates no config; refine lib/governance-state.js (isPluginGoverned) and CONTRIBUTING.md for external plugin install truthfulness (#1276). Touch public/api-helper.js lines 5145–5260 ONLY (&gt; 3,200 lines away from W1-C); zero edits to .prawduct/change-log or FEATURES.md.</td><td>STAGED (WAVE 1)</td></tr>
+            <tr><td><strong>W1-B</strong></td><td><code>TC-Lane-B (projectId = 112) / TC-Lane-PRR-B (projectId = 144)</code></td><td>#2220 (Short-lived display cache for engine model list reads) + #2278 (PATCH /api/config defaultEngine type and existence check) — Ruling A487-W1B (single-turn plan+build): Add a bounded short-lived display-read cache in lib/engine-models.js used by display callers (GET /api/engines, GET /api/projects modelCheck) while keeping save and launch validation strictly uncached (fresh: true); in server.js (PATCH /api/config), validate that defaultEngine is a non-empty string naming a known engine in store.engines.get(id) (returning 400 on invalid type or unknown engine ID). 100% file-disjoint from W1-A, W1-C, W1-D; zero edits to lib/engines.js, public/, .prawduct/change-log, or FEATURES.md.</td><td>STAGED (WAVE 1)</td></tr>
+            <tr><td><strong>W1-C</strong></td><td><code>TC-Lane-C (projectId = 141) / TC-Lane-PRR-A (projectId = 143)</code></td><td>#738 (Converge public/setup.js engine picker onto tcBuildEngineOptions) + #1113 (Set CLAUDE_CODE_ARTIFACT_AUTO_OPEN=0 for spawned Claude sessions) — Ruling A487-W1C (single-turn plan+build): Tighten tcBuildEngineOptions in public/api-helper.js (L1915–1945 ONLY) to disable !e.available and route public/setup.js&#x27;s engine &lt;select&gt; through tcBuildEngineOptions while preserving the wizard&#x27;s availability list and setup-engine-name fallback; set &quot;CLAUDE_CODE_ARTIFACT_AUTO_OPEN&quot;: &quot;0&quot; in data/engines/claude.json launch.env (which both lib/sessions.js:504 and lib/master.js:2462 already merge into createSession). Touch public/api-helper.js lines 1915–1945 ONLY (&gt; 3,200 lines above W1-A); zero edits to lib/engines.js, lib/sessions.js, lib/master.js, .prawduct/change-log, or FEATURES.md.</td><td>STAGED (WAVE 1)</td></tr>
+            <tr><td><strong>W1-D</strong></td><td><code>TC-Lane-D (projectId = 142) / TC-Lane-PRR-B (projectId = 144)</code></td><td>#260 (Codex pre-flight model validation at session launch) + #1085 (lib/master.js#masterIdentityPath per-engine config filename resolution) — Ruling A487-W1D (single-turn plan+build): Create lib/engines/codex-preflight.js and wire non-blocking Codex model-vs-auth-mode preflight warning into lib/sessions.js + public/session.js banner; update masterIdentityPath(home, engineId) (lib/master.js:2751), buildMasterClaudeMd, and readMasterIdentityFreshness in lib/master.js to resolve the configured engine&#x27;s configFormat.filename via engines rather than hardcoding CLAUDE.md. 100% file-disjoint from W1-A, W1-B, W1-C; zero edits to lib/engines.js, public/ui.js, public/api-helper.js, .prawduct/change-log, or FEATURES.md.</td><td>STAGED (WAVE 1)</td></tr>
+            <tr><td><strong>W2-A</strong></td><td><code>TC-Lane-A / TC-Lane-PRR-A</code></td><td>#1264 (OpenClaw projects launch-mode section via tcResolveEngineProfile) + #1269 (Project Rules editor disposition on OpenClaw / non-startup-rules engines) — Ruling A487-W2A (single-turn plan+build): Route renderLaunchModeSettings (public/ui.js:1529) and doSaveSettings guardProfile (public/ui.js:2072) through tcResolveEngineProfile(state.engines, engineId, projectEngine) (#1264), and add a startupRules disposition row to engines.settingDisposition / tcSettingDisposition rendered in the Project Rules section of public/ui.js when the engine cannot receive startup rules (#1269).</td><td>QUEUED (WAVE 2)</td></tr>
+            <tr><td><strong>W2-B</strong></td><td><code>TC-Lane-B / TC-Lane-PRR-B</code></td><td>#2742 (test/reset-admin-store.test.js JUnit XML &lt;undefined&gt; fix on Testament container pool) + #764 (Per-engine tabs in settings modal — read-only extension &amp; profile capability inventory) — Ruling A487-W2B (single-turn plan+build): Ensure test/reset-admin-store.test.js (L358) creates parent temp dirs / guards afterEach so Node 22 --test-reporter=junit never emits &lt;undefined name=&quot;root&quot;&gt; on Linux container runners (150/150 Stage 4 pool pass); implement the read-only per-engine capability/extension inventory tab helper in lib/engine-tabs.js + server.js (GET /api/engines/:id/inventory or enriched /api/engines).</td><td>QUEUED (WAVE 2)</td></tr>
+            <tr><td><strong>W3-REC</strong></td><td><code>Records Reconciliation / TC-Lane-INT</code></td><td>TC-Lane-PRR-A (Sole owner of .prawduct/change-log.md, .prawduct/change-log-archive/, and FEATURES.md reconciliation after Wave 1 + Wave 2 merge.)</td><td>.prawduct/change-log.md, .prawduct/change-log-archive/, FEATURES.md</td></tr>
+            <tr><td><strong>W4-REL</strong></td><td><code>Release v5.49.0 Cut &amp; Local Deploy / TC-Lane-INT</code></td><td>TC-Lane-PRR-B (Drain changelog.d/ into CHANGELOG.md [5.49.0], bump package.json, package-lock.json, version.json, README.md, test/fixtures/changelog-released-sections.lock.json, run Stage 3–5 suite gate via Testament v0.30.0 pool, tag &amp; deploy v5.49.0.)</td><td>CHANGELOG.md, changelog.d/, package.json, package-lock.json, version.json, README.md, test/fixtures/changelog-released-sections.lock.json, docs/releases/v5.49.0-status.md</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section" id="telemetry">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 04 · Live Wave &amp; Gate Telemetry</span>
+          <h2 class="section-title">Real-Time Car Completion &amp; Guardrail Telemetry</h2>
+          <p class="section-desc">Live progress bars for each chartered car and active sprint guardrail.</p>
+        </div>
+      </div>
+      <div class="bar-chart" style="margin-bottom:24px;">
+        <div class="bar-row">
+          <div class="bar-label-row">
+            <span><strong><code>W1-A (TC-Lane-A (projectId = 111) / TC-Lane-PRR-A (projectId = 143))</code></strong> — STAGED (WAVE 1)</span>
+            <span style="color:var(--green)"><strong>30%</strong></span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:30%;background:linear-gradient(90deg,#f59e0b,#d97706);"></div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label-row">
+            <span><strong><code>W1-B (TC-Lane-B (projectId = 112) / TC-Lane-PRR-B (projectId = 144))</code></strong> — STAGED (WAVE 1)</span>
+            <span style="color:var(--green)"><strong>30%</strong></span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:30%;background:linear-gradient(90deg,#f59e0b,#d97706);"></div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label-row">
+            <span><strong><code>W1-C (TC-Lane-C (projectId = 141) / TC-Lane-PRR-A (projectId = 143))</code></strong> — STAGED (WAVE 1)</span>
+            <span style="color:var(--green)"><strong>30%</strong></span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:30%;background:linear-gradient(90deg,#f59e0b,#d97706);"></div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label-row">
+            <span><strong><code>W1-D (TC-Lane-D (projectId = 142) / TC-Lane-PRR-B (projectId = 144))</code></strong> — STAGED (WAVE 1)</span>
+            <span style="color:var(--green)"><strong>30%</strong></span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:30%;background:linear-gradient(90deg,#f59e0b,#d97706);"></div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label-row">
+            <span><strong><code>W2-A (TC-Lane-A / TC-Lane-PRR-A)</code></strong> — QUEUED (WAVE 2)</span>
+            <span style="color:var(--green)"><strong>30%</strong></span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:30%;background:linear-gradient(90deg,#f59e0b,#d97706);"></div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label-row">
+            <span><strong><code>W2-B (TC-Lane-B / TC-Lane-PRR-B)</code></strong> — QUEUED (WAVE 2)</span>
+            <span style="color:var(--green)"><strong>30%</strong></span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:30%;background:linear-gradient(90deg,#f59e0b,#d97706);"></div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label-row">
+            <span><strong><code>W3-REC (Records Reconciliation / TC-Lane-INT)</code></strong> — .prawduct/change-log.md, .prawduct/change-log-archive/, FEATURES.md</span>
+            <span style="color:var(--green)"><strong>30%</strong></span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:30%;background:linear-gradient(90deg,#f59e0b,#d97706);"></div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label-row">
+            <span><strong><code>W4-REL (Release v5.49.0 Cut &amp; Local Deploy / TC-Lane-INT)</code></strong> — CHANGELOG.md, changelog.d/, package.json, package-lock.json, version.json, </span>
+            <span style="color:var(--green)"><strong>100%</strong></span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,#22c55e,#16a34a);"></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="postmortem">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 05 · Live Governance Audit &amp; 16-Point Rule #283 Tracker</span>
+          <h2 class="section-title">What Worked, Active Risk Watch &amp; 4-Gate Verification Matrix</h2>
+          <p class="section-desc">Tracked continuously during the sprint and finalized by <code>TC-Lane-Obsr</code> at <code>W4-REL O-Gate</code>.</p>
+        </div>
+      </div>
+      <div class="grid-2" style="margin-bottom:22px;">
+        <div>
+          <h3 style="margin-bottom:12px;color:var(--green);">✅ What Worked Exceptionally Well (Active Guardrails)</h3>
+          <div class="pm-item">
+            <h4>1. Deterministic Pre-Sprint Fleet Reset &amp; Clean Clones</h4>
+            <p>All 10 fleet clones verified on clean <code>main</code> with 1 branch and 1 worktree prior to Wave 1 dispatch, with <code>LANE_QUEUE.md</code> archived and reset below 6 KB.</p>
+          </div>
+          <div class="pm-item">
+            <h4>2. Automatic Real-Time Sprint Report &amp; Roadmap Board Tracking</h4>
+            <p><code>reconcile-milestones.py</code> and <code>sync-live-sprint.py</code> automatically update both the Roadmap Board and this live Sprint Report as waves move from Dispatched to In Review to Merged.</p>
+          </div>
+          <div class="pm-item">
+            <h4>3. Builder Bypass Mode &amp; Calibrated Codex Medium Effort</h4>
+            <p><code>TC-Lane-A..D</code> run in <code>bypassPermissions</code> mode to prevent interactive prompt stalls, while Codex lanes run on <code>medium</code> effort to preserve quota longevity.</p>
+          </div>
+          <div class="pm-item">
+            <h4>4. Inter-Wave Session Reset Guardrail</h4>
+            <p>Active lanes run <code>tc finalize</code> + fresh session launch at wave boundaries so no session accumulates stale context or hits mid-wave auto-compaction.</p>
+          </div>
+        </div>
+        <div>
+          <h3 style="margin-bottom:12px;color:var(--amber);">⚠️ What Didn't Work Previously &amp; Active Fixes Enforced Now</h3>
+          <div class="pm-item warn">
+            <h4>1. Hardcoded Issue Ceiling (&lt; 2600) &amp; Missing Audit Entries Hid Live Progress</h4>
+            <p>Previously, <code>reconcile-milestones.py</code> filtered out issues <code>&gt;= 2600</code> and omitted full-release <code>progress_audits</code> entries. <strong>Fix / Guardrail (Rule #283.5):</strong> Removed the issue number ceiling and wired full-release <code>progress_audits</code> + <code>sync-live-sprint.py</code> into <code>sync-board.sh</code>.</p>
+          </div>
+          <div class="pm-item warn">
+            <h4>2. Interactive Permission Prompts Stalled Unattended Builder Lanes</h4>
+            <p>Builders in interactive permission mode could park on selector dialogs. <strong>Fix / Guardrail (Rule #291):</strong> Verified <code>bypassPermissions</code> mode across all 4 Builder lanes before Wave 1 start gate.</p>
+          </div>
+          <div class="pm-item warn">
+            <h4>3. High-Effort Codex Quota Burn Across Multi-Wave Sprints</h4>
+            <p>Running Codex reviewers and integrator on max effort burned weekly quota early. <strong>Fix / Guardrail:</strong> Standardized <code>TC-Lane-INT</code>, <code>PRR-A</code>, and <code>PRR-B</code> on <code>medium</code> effort.</p>
+          </div>
+          <div class="pm-item warn">
+            <h4>4. Mid-Sprint Context Compaction Degraded Late-Wave Turn Speed</h4>
+            <p>Long multi-wave sessions risked auto-compaction during W3/W4. <strong>Fix / Guardrail (Rule #291 cl. 5):</strong> Enforce inter-wave <code>tc finalize</code> + fresh relaunch between waves once branches are merged and deleted.</p>
+          </div>
+        </div>
+      </div>
+
+      <h3 style="margin:20px 0 10px;">4-Gate Release Verification Matrix (Rule #283.5)</h3>
+      <div class="table-wrap" style="margin-bottom:22px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Gate</th>
+              <th>Owner</th>
+              <th>Verification Scope</th>
+              <th>Live Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Gate 1 · I-Gate (PRR Code &amp; Contract Review)</strong></td>
+              <td><code>TC-Lane-PRR-A</code> / <code>PRR-B</code></td>
+              <td>Exact-SHA diff review, unit/integration test coverage, and charter scope compliance</td>
+              <td><span class="badge badge-cyan">ACTIVE</span> Reviewing Wave PRs as opened (0 in review, 1 merged).</td>
+            </tr>
+            <tr>
+              <td><strong>Gate 2 · B-Gate (Integrator Verification &amp; CI Gate)</strong></td>
+              <td><code>TC-Lane-INT</code></td>
+              <td>Exact-head GitHub Actions <code>Tests</code> CI + scope/ancestry/Prawduct verification before merge</td>
+              <td><span class="badge badge-cyan">ACTIVE</span> Start-Gate &amp; Merge-Gate enforced on every wave.</td>
+            </tr>
+            <tr>
+              <td><strong>Gate 3 · A-Gate / R-Gate (Architect Invariant &amp; Records Gate)</strong></td>
+              <td><code>TC-Lane-Arc</code></td>
+              <td>Architectural invariant sign-off on sensitive cars, <code>FEATURES.md</code> reconciliation, and release R-Gate</td>
+              <td><span class="badge badge-cyan">ACTIVE</span> Co-signing charter and reviewing architectural cars.</td>
+            </tr>
+            <tr>
+              <td><strong>Gate 4 · O-Gate (Observer Canonical Report &amp; Release Audit)</strong></td>
+              <td><code>TC-Lane-Obsr</code></td>
+              <td>Live telemetry tracking during sprint + final 8-section empirical report at W4-REL</td>
+              <td><span class="badge badge-cyan">LIVE TRACKING</span> Live report active and passing <code>validate-sprint-report.py</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 style="margin:20px 0 10px;">Rule #283 16-Point Governance &amp; Process Audit (Live In-Sprint View)</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Rule #283 Audit Dimension</th>
+              <th>Verdict</th>
+              <th>Live Sprint v5.49.0 Telemetry</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>1</td><td>Operator Interventions &amp; Causes</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.49.0</code> (1/8 cars merged as of 2026-10-31 06:19:33 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
+            <tr><td>2</td><td>Dispatch-to-Merge Timing Breakdown</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.49.0</code> (1/8 cars merged as of 2026-10-31 06:19:33 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
+            <tr><td>3</td><td>Active vs Allowed Builders &amp; Parallelism</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.49.0</code> (1/8 cars merged as of 2026-10-31 06:19:33 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
+            <tr><td>4</td><td>Forced Re-Syncs / Rebases When main Moves</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.49.0</code> (1/8 cars merged as of 2026-10-31 06:19:33 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
+            <tr><td>5</td><td>Open PR Age Since Current main</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.49.0</code> (1/8 cars merged as of 2026-10-31 06:19:33 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
+            <tr><td>6</td><td>CI Red After Ready (#2595 Pre-Push Hook)</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.49.0</code> (1/8 cars merged as of 2026-10-31 06:19:33 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
+            <tr><td>7</td><td>PRR Review Rounds &amp; Findings by Severity</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.49.0</code> (1/8 cars merged as of 2026-10-31 06:19:33 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
+            <tr><td>8</td><td>Post-Merge Defects on main</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.49.0</code> (1/8 cars merged as of 2026-10-31 06:19:33 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
+            <tr><td>9</td><td>Clears, Retries &amp; Stalls</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.49.0</code> (1/8 cars merged as of 2026-10-31 06:19:33 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
+            <tr><td>10</td><td>Wrong Triage / Scope Fields</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.49.0</code> (1/8 cars merged as of 2026-10-31 06:19:33 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
+            <tr><td>11</td><td>Rule Breaches &amp; Governance Discipline</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.49.0</code> (1/8 cars merged as of 2026-10-31 06:19:33 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
+            <tr><td>12</td><td>Unlabelled PRs, Dirty Clones &amp; Worktrees</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.49.0</code> (1/8 cars merged as of 2026-10-31 06:19:33 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
+            <tr><td>13</td><td>Release-Status Lag &amp; Finish-Line Honesty</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.49.0</code> (1/8 cars merged as of 2026-10-31 06:19:33 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
+            <tr><td>14</td><td>Conflict Resolution Time</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.49.0</code> (1/8 cars merged as of 2026-10-31 06:19:33 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
+            <tr><td>15</td><td>Wakes, Tokens &amp; Turns by Role &amp; Model</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.49.0</code> (1/8 cars merged as of 2026-10-31 06:19:33 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
+            <tr><td>16</td><td>4 End-of-Sprint Maintenance Gates</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.49.0</code> (1/8 cars merged as of 2026-10-31 06:19:33 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section" id="waves">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 06 · Interactive Wave &amp; Deliverable Explorer</span>
+          <h2 class="section-title">Filter &amp; Inspect Every Chartered Wave Car in Sprint v5.49.0</h2>
+          <p class="section-desc">Search by car ID, issue number, lane, or status.</p>
+        </div>
+      </div>
+      <div class="explorer-controls">
+        <input type="text" id="waveSearch" class="search-input" placeholder="Search car (W1-A), issue, lane (TC-Lane-A), or status..." oninput="filterWaves()" />
+        <div class="filter-group">
+          <button class="filter-btn active" onclick="setWaveFilter('all', this)">All Wave Cars (8)</button>
+          <button class="filter-btn" onclick="setWaveFilter('w1', this)">Wave 1</button>
+          <button class="filter-btn" onclick="setWaveFilter('w2', this)">Wave 2</button>
+          <button class="filter-btn" onclick="setWaveFilter('w3', this)">Wave 3 / Release</button>
+          <button class="filter-btn" onclick="setWaveFilter('live', this)">Live Tracked</button>
+          <button class="filter-btn" onclick="setWaveFilter('all', this)">Builder A</button>
+          <button class="filter-btn" onclick="setWaveFilter('all', this)">Builder B</button>
+          <button class="filter-btn" onclick="setWaveFilter('all', this)">Builder C</button>
+          <button class="filter-btn" onclick="setWaveFilter('all', this)">Builder D</button>
+          <button class="filter-btn" onclick="setWaveFilter('all', this)">Integrator / PRR</button>
+        </div>
+      </div>
+      <div class="wave-grid" id="waveGrid">
+        <div class="wave-card" data-tags="w1 w2 w3 live">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-amber">W1-A · Live Status</span>
+              <h3>W1-A — #1268 (Plugin-governed non-Claude carrier generatedConfig disposition) + #1276 (</h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lane: <code>TC-Lane-A (projectId = 111) / TC-Lane-PRR-A (projectId = 143)</code></div>
+              <div>Updated: <code>2026-10-31 06:19:33 UTC</code></div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            <strong>Scope &amp; Files:</strong> #1268 (Plugin-governed non-Claude carrier generatedConfig disposition) + #1276 (isPluginGoverned clone vs loaded plugin truthfulness) — Ruling A487-W1A (single-turn plan+build): Extend engines.settingDisposition(&#x27;generatedConfig&#x27;, projConfig, engineProfile) (lib/engines.js:1858) and browser mirror tcSettingDisposition (public/api-helper.js:5145–5260 ONLY) + public/ui.js (L2265–2295) so plugin-governed projects on non-claude-md carriers report why TC generates no config; refine lib/governance-state.js (isPluginGoverned) and CONTRIBUTING.md for external plugin install truthfulness (#1276). Touch public/api-helper.js lines 5145–5260 ONLY (&gt; 3,200 lines away from W1-C); zero edits to .prawduct/change-log or FEATURES.md.<br/>
+            <strong>Current Gate &amp; Wave Status:</strong> STAGED (WAVE 1)
+          </p>
+        </div>
+        <div class="wave-card" data-tags="w1 w2 w3 live">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-amber">W1-B · Live Status</span>
+              <h3>W1-B — #2220 (Short-lived display cache for engine model list reads) + #2278 (PATCH /ap</h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lane: <code>TC-Lane-B (projectId = 112) / TC-Lane-PRR-B (projectId = 144)</code></div>
+              <div>Updated: <code>2026-10-31 06:19:33 UTC</code></div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            <strong>Scope &amp; Files:</strong> #2220 (Short-lived display cache for engine model list reads) + #2278 (PATCH /api/config defaultEngine type and existence check) — Ruling A487-W1B (single-turn plan+build): Add a bounded short-lived display-read cache in lib/engine-models.js used by display callers (GET /api/engines, GET /api/projects modelCheck) while keeping save and launch validation strictly uncached (fresh: true); in server.js (PATCH /api/config), validate that defaultEngine is a non-empty string naming a known engine in store.engines.get(id) (returning 400 on invalid type or unknown engine ID). 100% file-disjoint from W1-A, W1-C, W1-D; zero edits to lib/engines.js, public/, .prawduct/change-log, or FEATURES.md.<br/>
+            <strong>Current Gate &amp; Wave Status:</strong> STAGED (WAVE 1)
+          </p>
+        </div>
+        <div class="wave-card" data-tags="w1 w2 w3 live">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-amber">W1-C · Live Status</span>
+              <h3>W1-C — #738 (Converge public/setup.js engine picker onto tcBuildEngineOptions) + #1113 </h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lane: <code>TC-Lane-C (projectId = 141) / TC-Lane-PRR-A (projectId = 143)</code></div>
+              <div>Updated: <code>2026-10-31 06:19:33 UTC</code></div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            <strong>Scope &amp; Files:</strong> #738 (Converge public/setup.js engine picker onto tcBuildEngineOptions) + #1113 (Set CLAUDE_CODE_ARTIFACT_AUTO_OPEN=0 for spawned Claude sessions) — Ruling A487-W1C (single-turn plan+build): Tighten tcBuildEngineOptions in public/api-helper.js (L1915–1945 ONLY) to disable !e.available and route public/setup.js&#x27;s engine &lt;select&gt; through tcBuildEngineOptions while preserving the wizard&#x27;s availability list and setup-engine-name fallback; set &quot;CLAUDE_CODE_ARTIFACT_AUTO_OPEN&quot;: &quot;0&quot; in data/engines/claude.json launch.env (which both lib/sessions.js:504 and lib/master.js:2462 already merge into createSession). Touch public/api-helper.js lines 1915–1945 ONLY (&gt; 3,200 lines above W1-A); zero edits to lib/engines.js, lib/sessions.js, lib/master.js, .prawduct/change-log, or FEATURES.md.<br/>
+            <strong>Current Gate &amp; Wave Status:</strong> STAGED (WAVE 1)
+          </p>
+        </div>
+        <div class="wave-card" data-tags="w1 w2 w3 live">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-amber">W1-D · Live Status</span>
+              <h3>W1-D — #260 (Codex pre-flight model validation at session launch) + #1085 (lib/master.j</h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lane: <code>TC-Lane-D (projectId = 142) / TC-Lane-PRR-B (projectId = 144)</code></div>
+              <div>Updated: <code>2026-10-31 06:19:33 UTC</code></div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            <strong>Scope &amp; Files:</strong> #260 (Codex pre-flight model validation at session launch) + #1085 (lib/master.js#masterIdentityPath per-engine config filename resolution) — Ruling A487-W1D (single-turn plan+build): Create lib/engines/codex-preflight.js and wire non-blocking Codex model-vs-auth-mode preflight warning into lib/sessions.js + public/session.js banner; update masterIdentityPath(home, engineId) (lib/master.js:2751), buildMasterClaudeMd, and readMasterIdentityFreshness in lib/master.js to resolve the configured engine&#x27;s configFormat.filename via engines rather than hardcoding CLAUDE.md. 100% file-disjoint from W1-A, W1-B, W1-C; zero edits to lib/engines.js, public/ui.js, public/api-helper.js, .prawduct/change-log, or FEATURES.md.<br/>
+            <strong>Current Gate &amp; Wave Status:</strong> STAGED (WAVE 1)
+          </p>
+        </div>
+        <div class="wave-card" data-tags="w1 w2 w3 live">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-amber">W2-A · Live Status</span>
+              <h3>W2-A — #1264 (OpenClaw projects launch-mode section via tcResolveEngineProfile) + #1269</h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lane: <code>TC-Lane-A / TC-Lane-PRR-A</code></div>
+              <div>Updated: <code>2026-10-31 06:19:33 UTC</code></div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            <strong>Scope &amp; Files:</strong> #1264 (OpenClaw projects launch-mode section via tcResolveEngineProfile) + #1269 (Project Rules editor disposition on OpenClaw / non-startup-rules engines) — Ruling A487-W2A (single-turn plan+build): Route renderLaunchModeSettings (public/ui.js:1529) and doSaveSettings guardProfile (public/ui.js:2072) through tcResolveEngineProfile(state.engines, engineId, projectEngine) (#1264), and add a startupRules disposition row to engines.settingDisposition / tcSettingDisposition rendered in the Project Rules section of public/ui.js when the engine cannot receive startup rules (#1269).<br/>
+            <strong>Current Gate &amp; Wave Status:</strong> QUEUED (WAVE 2)
+          </p>
+        </div>
+        <div class="wave-card" data-tags="w1 w2 w3 live">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-amber">W2-B · Live Status</span>
+              <h3>W2-B — #2742 (test/reset-admin-store.test.js JUnit XML &lt;undefined&gt; fix on Testament con</h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lane: <code>TC-Lane-B / TC-Lane-PRR-B</code></div>
+              <div>Updated: <code>2026-10-31 06:19:33 UTC</code></div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            <strong>Scope &amp; Files:</strong> #2742 (test/reset-admin-store.test.js JUnit XML &lt;undefined&gt; fix on Testament container pool) + #764 (Per-engine tabs in settings modal — read-only extension &amp; profile capability inventory) — Ruling A487-W2B (single-turn plan+build): Ensure test/reset-admin-store.test.js (L358) creates parent temp dirs / guards afterEach so Node 22 --test-reporter=junit never emits &lt;undefined name=&quot;root&quot;&gt; on Linux container runners (150/150 Stage 4 pool pass); implement the read-only per-engine capability/extension inventory tab helper in lib/engine-tabs.js + server.js (GET /api/engines/:id/inventory or enriched /api/engines).<br/>
+            <strong>Current Gate &amp; Wave Status:</strong> QUEUED (WAVE 2)
+          </p>
+        </div>
+        <div class="wave-card" data-tags="w1 w2 w3 live">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-amber">W3-REC · Live Status</span>
+              <h3>W3-REC — TC-Lane-PRR-A (Sole owner of .prawduct/change-log.md, .prawduct/change-log-archi</h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lane: <code>Records Reconciliation / TC-Lane-INT</code></div>
+              <div>Updated: <code>2026-10-31 06:19:33 UTC</code></div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            <strong>Scope &amp; Files:</strong> TC-Lane-PRR-A (Sole owner of .prawduct/change-log.md, .prawduct/change-log-archive/, and FEATURES.md reconciliation after Wave 1 + Wave 2 merge.)<br/>
+            <strong>Current Gate &amp; Wave Status:</strong> .prawduct/change-log.md, .prawduct/change-log-archive/, FEATURES.md
+          </p>
+        </div>
+        <div class="wave-card" data-tags="w1 w2 w3 live">
+          <div class="wave-card-header">
+            <div>
+              <span class="badge badge-green">W4-REL · Live Status</span>
+              <h3>W4-REL — TC-Lane-PRR-B (Drain changelog.d/ into CHANGELOG.md [5.49.0], bump package.json,</h3>
+            </div>
+            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
+              <div>Lane: <code>Release v5.49.0 Cut &amp; Local Deploy / TC-Lane-INT</code></div>
+              <div>Updated: <code>2026-10-31 06:19:33 UTC</code></div>
+            </div>
+          </div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
+            <strong>Scope &amp; Files:</strong> TC-Lane-PRR-B (Drain changelog.d/ into CHANGELOG.md [5.49.0], bump package.json, package-lock.json, version.json, README.md, test/fixtures/changelog-released-sections.lock.json, run Stage 3–5 suite gate via Testament v0.30.0 pool, tag &amp; deploy v5.49.0.)<br/>
+            <strong>Current Gate &amp; Wave Status:</strong> CHANGELOG.md, changelog.d/, package.json, package-lock.json, version.json, README.md, test/fixtures/changelog-released-sections.lock.json, docs/releases/v5.49.0-status.md
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="next-sprint">
+      <div class="section-header">
+        <div>
+          <span class="section-tag">Section 07 · Active Sprint Guardrails &amp; Wave Reset Protocol</span>
+          <h2 class="section-title">6 Enforced Operational Guardrails During Sprint v5.49.0</h2>
+        </div>
+      </div>
+      <div class="grid-3">
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 01 · PRE-EDIT BASE-SHA VERIFICATION</span>
+          <h4>Verify Local HEAD Matches Charter Base SHA Before Any Edit</h4>
+          <p>Builders verify <code>git rev-parse HEAD</code> matches the wave base SHA before touching any file.</p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 02 · INTER-WAVE SESSION RESET (RULE #291 CL. 5)</span>
+          <h4>Finalize &amp; Relaunch Active Lanes Between Waves</h4>
+          <p>After a wave merges and branches are deleted on clean <code>main</code>, active Builder/PRR lanes run <code>tc finalize</code> + fresh launch so context never over-compacts.</p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 03 · LIVE ROADMAP &amp; SPRINT REPORT AUTO-SYNC</span>
+          <h4>Update LANE_QUEUE.md at Every Dispatch, PR Open &amp; Merge</h4>
+          <p>Every wave transition in <code>LANE_QUEUE.md</code> immediately updates both the Roadmap Board and this live Sprint Report.</p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 04 · SUBSYSTEM SIBLING TEST EXECUTION</span>
+          <h4>Run All Touched Subsystem Tests Locally Before Push</h4>
+          <p>Builders run all sibling tests for touched modules before pushing PR heads or review fixes.</p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 05 · SINGLE HOST SUITE_SLOT COORDINATION</span>
+          <h4>One Full Local Suite at a Time via TC-Lane-INT</h4>
+          <p>Builders run targeted/staged tests while <code>TC-Lane-INT</code> serializes full pre-deploy local suite runs under <code>SUITE_SLOT</code>.</p>
+        </div>
+        <div class="subcard">
+          <span class="pillar-num">GUARDRAIL 06 · THREE HONEST FINISH LINES AT W4-REL</span>
+          <h4>Code Released, Production Updated &amp; Feature Activated</h4>
+          <p>Release status documents report each finish line honestly with exact commit SHAs, backup hashes, and live readback receipts.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+        <div>
+          <strong>TangleClaw Sprint v5.49.0 Live Progress &amp; Telemetry Report</strong> · Auto-Synced by <code>sync-live-sprint.py</code> (2026-10-31 06:19:33 UTC)
+        </div>
+        <div>
+          <a href="../" style="color:var(--accent2);">← All Sprint Reports</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+  <script>
+    (function () {
+      const buttons = document.querySelectorAll('.filter-btn');
+      const search = document.getElementById('waveSearch');
+      const cards = document.querySelectorAll('.wave-card');
+      let currentFilter = 'all';
+
+      function applyFilters() {
+        const q = (search && search.value ? search.value : '').trim().toLowerCase();
+        cards.forEach(function (card) {
+          const cardTags = (card.getAttribute('data-tags') || '').split(/\s+/);
+          const cardSearch = (card.getAttribute('data-search') || '') + ' ' + card.innerText.toLowerCase();
+          const rows = card.querySelectorAll('tbody tr[data-row-tags]');
+          if (rows.length > 0) {
+            let visibleRows = 0;
+            rows.forEach(function (row) {
+              const rTags = (row.getAttribute('data-row-tags') || '').split(/\s+/);
+              const rText = ((row.getAttribute('data-row-search') || '') + ' ' + row.innerText).toLowerCase();
+              const matchTag = currentFilter === 'all' || rTags.indexOf(currentFilter) !== -1 || cardTags.indexOf(currentFilter) !== -1 && currentFilter.indexOf('wave-') === 0;
+              const matchSearch = !q || rText.indexOf(q) !== -1;
+              if (matchTag && matchSearch) {
+                row.style.display = '';
+                visibleRows++;
+              } else {
+                row.style.display = 'none';
+              }
+            });
+            card.style.display = visibleRows > 0 ? '' : 'none';
+          } else {
+            const matchTag = currentFilter === 'all' || cardTags.indexOf(currentFilter) !== -1;
+            const matchSearch = !q || cardSearch.indexOf(q) !== -1;
+            card.style.display = (matchTag && matchSearch) ? '' : 'none';
+          }
+        });
+      }
+
+      buttons.forEach(function (btn) {
+        btn.removeAttribute('onclick');
+        btn.addEventListener('click', function () {
+          buttons.forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          currentFilter = btn.getAttribute('data-filter') || 'all';
+          applyFilters();
+        });
+      });
+
+      if (search) {
+        search.removeAttribute('oninput');
+        search.addEventListener('input', applyFilters);
+      }
+
+      window.filterWaves = function (tag, btn) {
+        buttons.forEach(function (b) { b.classList.remove('active'); });
+        if (btn) btn.classList.add('active');
+        currentFilter = tag || 'all';
+        applyFilters();
+      };
+      window.searchWaves = function () { applyFilters(); };
+    })();
+  </script>
+</body>
+</html>
