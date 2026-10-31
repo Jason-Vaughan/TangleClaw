@@ -41,6 +41,15 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-30 — v5.48.1 W2-REC: reconcile Testament pool and control-plane records
+
+<!-- prawduct: type=internal | scope=v5481-w2-rec -->
+
+- Reconciled the four issues in Charter A486 after W1-B PR #2739 merged at `main@f16267e0b32aadd190d727eb79746ff432dab7f2` and W1-A PR #2738 merged at `main@8b3b8c281781088eafde7de72ec1e1757553abd8`. Both cars retained their own accepted `changelog.d/` fragments for the release cut.
+- **#2733 and #2706:** Stage 3–5 test tiers can probe and offload to Testament's container pool with local fallback, while Large-tier test-file timeouts use a measured 25-minute bound. The pool-success path omits requested JUnit output; that caller limit is documented in `docs/test-pyramid.md`. The end-to-end pool run is reserved for the release gate.
+- **#2723 and #2726:** Codex Medusa wake checks treat a bound `systemError` thread as resting while retaining folder and competing-thread guards. Medusa send tracking now projects the delivered local recipient after Hub retargeting, including the integration path from the Hub response to a tracked exchange.
+- Updated the Feature Index and recorded the published v5.48.0 release and local deployment separately from its still-unverified live retention exercise. `docs/releases/v5.48.1-status.md` starts with all three release finish lines pending.
+
 ## 2026-10-30 — v5.48.0 W4-REL: prepare the bounded-records release candidate
 
 <!-- prawduct: type=internal | scope=v548-w4-rel -->
