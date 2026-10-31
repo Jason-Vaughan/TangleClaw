@@ -25,6 +25,7 @@ setLevel('error');
 delete process.env.TANGLECLAW_PORT;
 
 const store = require('../lib/store');
+const engines = require('../lib/engines');
 
 /**
  * A no-op fleet refresher for `ensureMasterSession`.
@@ -859,6 +860,44 @@ describe('killMasterSession — the remedy #968 makes load-bearing', () => {
       'named in the same vocabulary ensure uses, so one client branch covers both');
     assert.equal(r.killed, false);
     assert.deepEqual(calls, [], 'and nothing was killed');
+  });
+});
+
+describe('masterIdentityPath — resolves the engine\'s actual config filename (#1085)', () => {
+  const homes = [];
+  afterEach(() => { for (const h of homes.splice(0)) fs.rmSync(h, { recursive: true, force: true }); });
+  const mk = () => { const h = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-identity-path-')); homes.push(h); return h; };
+
+  it('defaults to CLAUDE.md, unchanged, when no engineId is given', () => {
+    const home = mk();
+    assert.equal(master.masterIdentityPath(home), path.join(home, 'CLAUDE.md'));
+  });
+
+  it('resolves a non-claude engine to ITS configured filename, not CLAUDE.md', () => {
+    const home = mk();
+    const expected = engines.configFilenameOf(engines.resolveProfile('codex'));
+    assert.ok(expected, 'precondition: the codex profile must declare a config filename for this test to mean anything');
+    assert.notEqual(expected, 'CLAUDE.md');
+    assert.equal(master.masterIdentityPath(home, 'codex'), path.join(home, expected));
+  });
+
+  it('falls back to CLAUDE.md for an unrecognized engine id, rather than throwing or guessing a path', () => {
+    const home = mk();
+    assert.equal(master.masterIdentityPath(home, 'not-a-real-engine'), path.join(home, 'CLAUDE.md'));
+  });
+
+  it('refreshMasterIdentity writes a non-claude engine\'s identity to ITS resolved path, and the header names that same file', () => {
+    const home = mk();
+    master.refreshMasterIdentity({
+      home,
+      enginesLib: { resolveDefaultEngine: () => 'codex', reconcileLaunchMode: () => 'default' }
+    });
+    const expectedFilename = engines.configFilenameOf(engines.resolveProfile('codex'));
+    const expectedPath = path.join(home, expectedFilename);
+    assert.ok(fs.existsSync(expectedPath), 'the identity must land at the resolved path');
+    assert.ok(!fs.existsSync(path.join(home, 'CLAUDE.md')), 'and NOT at the hardcoded CLAUDE.md');
+    const content = fs.readFileSync(expectedPath, 'utf8');
+    assert.match(content, new RegExp(`# ${expectedFilename.replace('.', '\\.')} — TangleClaw Project Master`));
   });
 });
 
@@ -3265,6 +3304,18 @@ describe('getMasterAwareness (#1141) — the Master joins the awareness system',
     const aw = master.getMasterAwareness({ home, tmuxLib: fakeTmux({ alive: true }) });
     assert.equal(aw.state, 'unaware');
     assert.match(aw.basis, /no evidence awareness ever arrived/);
+  });
+
+  it('#1085: for a non-claude Master, checks the RESOLVED identity file, not the hardcoded CLAUDE.md', () => {
+    const codexEnginesLib = { resolveDefaultEngine: () => 'codex', reconcileLaunchMode: () => 'default' };
+    const expectedFilename = engines.configFilenameOf(engines.resolveProfile('codex'));
+    // Identity written at the path a codex Master's identity actually lands
+    // at, NOT at CLAUDE.md — before the fix, this read CLAUDE.md regardless
+    // of engine and would have reported `unaware` despite the file being
+    // right there on disk.
+    fs.writeFileSync(path.join(home, expectedFilename), 'identity');
+    const aw = master.getMasterAwareness({ home, tmuxLib: fakeTmux({ alive: true }), enginesLib: codexEnginesLib });
+    assert.equal(aw.state, 'sent');
   });
 
   it('a role=master receipt since the pane started confirms; an older receipt from a previous run does NOT', () => {
