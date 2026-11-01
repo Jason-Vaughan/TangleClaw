@@ -301,6 +301,50 @@ describe('lib/usage-windows — parseAntigravityTranscripts', () => {
   it('answers with no records for a directory that does not exist', () => {
     assert.deepEqual(uw.parseAntigravityTranscripts('/nonexistent/path/for/this/test'), []);
   });
+
+  it('never reads transcript_full.jsonl or anything under logs/chunks/ — a real duplicate of transcript.jsonl, not additional data (#2766 BLOCKING 1/2 root cause, PRR-B Round 2)', () => {
+    withTmpDir((dir) => {
+      const logsDir = path.join(dir, 'c1', '.system_generated', 'logs');
+      fs.mkdirSync(logsDir, { recursive: true });
+      fs.mkdirSync(path.join(logsDir, 'chunks', 'transcript'), { recursive: true });
+      fs.mkdirSync(path.join(logsDir, 'chunks', 'transcript_full'), { recursive: true });
+      const real = JSON.stringify({ step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: '2026-10-15T22:21:40Z', input_tokens: 100, output_tokens: 10 });
+      // transcript.jsonl: the one file this is supposed to read.
+      fs.writeFileSync(path.join(logsDir, 'transcript.jsonl'), real + '\n');
+      // Three ways the SAME record could be double-counted if any of these
+      // were read too — each written with a DIFFERENT token count so a
+      // wrong total (not just a wrong record count) would be caught.
+      fs.writeFileSync(path.join(logsDir, 'transcript_full.jsonl'),
+        JSON.stringify({ step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: '2026-10-15T22:21:40Z', input_tokens: 999, output_tokens: 999 }) + '\n');
+      fs.writeFileSync(path.join(logsDir, 'chunks', 'transcript', '00000000.jsonl'),
+        JSON.stringify({ step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: '2026-10-15T22:21:40Z', input_tokens: 888, output_tokens: 888 }) + '\n');
+      fs.writeFileSync(path.join(logsDir, 'chunks', 'transcript_full', '00000000.jsonl'),
+        JSON.stringify({ step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: '2026-10-15T22:21:40Z', input_tokens: 777, output_tokens: 777 }) + '\n');
+      const records = uw.parseAntigravityTranscripts(dir);
+      assert.equal(records.length, 1, 'only transcript.jsonl\'s one record, not four copies of it');
+      assert.equal(records[0].inputTokens, 100, 'the real file\'s own value, not a duplicate\'s');
+    });
+  });
+
+  it('never descends into scratch/, .user_uploaded/, or .system_generated/{tasks,messages,steps}/ — only logs/transcript.jsonl is read per conversation', () => {
+    withTmpDir((dir) => {
+      const convDir = path.join(dir, 'c1');
+      fs.mkdirSync(path.join(convDir, '.system_generated', 'logs'), { recursive: true });
+      fs.writeFileSync(path.join(convDir, '.system_generated', 'logs', 'transcript.jsonl'),
+        JSON.stringify({ step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: '2026-10-15T22:21:40Z', input_tokens: 5, output_tokens: 5 }) + '\n');
+      // Scratch/artifact subtrees real Antigravity conversations carry,
+      // none of them transcripts — a correct implementation never even
+      // lists these, let alone reads a `.jsonl` planted inside one.
+      for (const sub of ['scratch', '.user_uploaded', path.join('.system_generated', 'tasks'), path.join('.system_generated', 'messages'), path.join('.system_generated', 'steps', '1')]) {
+        fs.mkdirSync(path.join(convDir, sub), { recursive: true });
+        fs.writeFileSync(path.join(convDir, sub, 'decoy.jsonl'),
+          JSON.stringify({ step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: '2026-10-15T22:21:40Z', input_tokens: 9999, output_tokens: 9999 }) + '\n');
+      }
+      const records = uw.parseAntigravityTranscripts(dir);
+      assert.equal(records.length, 1);
+      assert.equal(records[0].inputTokens, 5, 'the real transcript, none of the decoys planted alongside it');
+    });
+  });
 });
 
 describe('lib/usage-windows — getUsageWindows composition', () => {
@@ -643,6 +687,23 @@ describe('lib/usage-windows — scan budget and per-file cache (#2766 BLOCKING 1
     assert.ok(records.length < 10, 'at least one file must have been skipped once the deadline passed');
   });
 
+  it('the upfront stat pass itself is bounded, not just the later read-and-parse loop — a huge file COUNT alone cannot block past budget (#2766 BLOCKING 1, PRR-B Round 2)', () => {
+    // A slow `stat`, not a slow `readFile`: proves the deadline is checked
+    // during the stat-and-sort phase that runs BEFORE any file is read, the
+    // exact phase PRR-B's round 2 named as still unbounded.
+    const deps = {
+      readdir: () => fakeEntries(10),
+      stat: () => { sleepSync(200); return { mtimeMs: 1000, size: 1 }; },
+      readFile: () => '',
+      scanDeadlineMs: Date.now() + 500
+    };
+    const started = Date.now();
+    const records = uw.parseClaudeTranscripts('/fake/claude', deps);
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 1800, `stat-ing every file must not run anywhere near the full unbounded 2000ms (took ${elapsed}ms)`);
+    assert.ok(records.length < 10, 'at least one file must never even have been stat-ed once the deadline passed');
+  });
+
   it('an unchanged file (same mtimeMs and size) is never re-read on a second pass — the cache that makes a repeat scan cheap', () => {
     let reads = 0;
     const fileRecordCache = new Map();
@@ -675,18 +736,19 @@ describe('lib/usage-windows — scan budget and per-file cache (#2766 BLOCKING 1
     assert.equal(reads, 2, 'a changed file must be re-read, not served from the stale cache entry');
   });
 
-  it('getUsageWindows itself stays bounded on a cold call with a lot of slow-to-read history — not just the parser in isolation', () => {
+  it('getUsageWindows itself stays bounded on a cold call with a lot of slow-to-read history, and honestly reports complete: false — not just the parser in isolation (#2766 BLOCKING 1/2, PRR-B Round 1/2)', () => {
     // The actual BLOCKING 1 finding: the cold path through the cache
-    // wrapper, not merely `_scanJsonlFiles` on its own, has to honor the
+    // wrapper, not merely `_scanFiles` on its own, has to honor the
     // budget — this is what a real first `tc usage windows` call after
-    // server start goes through.
+    // server start goes through. BLOCKING 2: that same call must say so,
+    // not look like an ordinary complete snapshot.
     const deps = {
       readdir: () => fakeEntries(20),
       stat: () => ({ mtimeMs: 1000, size: 1 }),
       readFile: () => { sleepSync(300); return ''; }
     };
     const started = Date.now();
-    uw.getUsageWindows({ deps });
+    const result = uw.getUsageWindows({ deps });
     const elapsed = Date.now() - started;
     // 20 files * 0.3s * 3 providers would be 18s unbounded; each provider's
     // own scan is bounded by the SAME shared budget
@@ -694,6 +756,7 @@ describe('lib/usage-windows — scan budget and per-file cache (#2766 BLOCKING 1
     // nowhere near that, comfortably inside `tc usage windows`'s CLI timeout.
     assert.ok(elapsed < uw.USAGE_WINDOWS_SCAN_BUDGET_MS * 3 + 1000,
       `a cold call must stay bounded by the scan budget per provider, not by how much slow history exists (took ${elapsed}ms)`);
+    assert.equal(result.complete, false, 'the scan did not finish within budget, and the result must say so');
   });
 
   it('a forced-stale recompute (what the background warmer also does, on the identical code path) is bounded the same way', () => {
@@ -715,5 +778,43 @@ describe('lib/usage-windows — scan budget and per-file cache (#2766 BLOCKING 1
     const elapsed = Date.now() - started;
     assert.ok(elapsed < uw.USAGE_WINDOWS_SCAN_BUDGET_MS * 3 + 1000,
       `a forced recompute must stay bounded exactly like the cold call (took ${elapsed}ms)`);
+  });
+
+  it('an ordinary, unbounded-by-nothing-blocking pass reports complete: true', () => {
+    const deps = { readdir: () => [], stat: () => ({ mtimeMs: 1, size: 1 }), readFile: () => '' };
+    const result = uw.getUsageWindows({ deps });
+    assert.equal(result.complete, true);
+  });
+
+  it('an incomplete cached entry is not trusted for the TTL — the next call retries immediately rather than serving a known-partial answer for 30s', () => {
+    let readdirCalls = 0;
+    const deps = {
+      readdir: () => { readdirCalls += 1; return fakeEntries(20); },
+      stat: () => ({ mtimeMs: 1000, size: 1 }),
+      readFile: () => { sleepSync(300); return ''; }
+    };
+    const first = uw.getUsageWindows({ deps });
+    assert.equal(first.complete, false, 'fixture precondition: the first pass must truncate');
+    const callsAfterFirst = readdirCalls;
+    uw.getUsageWindows({ deps }); // immediately again, well within the 30s TTL
+    assert.ok(readdirCalls > callsAfterFirst,
+      'an incomplete entry must not be served as a cache hit — the next call must retry rather than wait out the TTL');
+  });
+
+  it('a truncated refresh never replaces an existing COMPLETE cached entry with a worse, undercounting one (#2766 BLOCKING 2, PRR-B Round 2)', () => {
+    const fastDeps = { readdir: () => [], stat: () => ({ mtimeMs: 1, size: 1 }), readFile: () => '' };
+    const complete = uw.getUsageWindows({ deps: fastDeps });
+    assert.equal(complete.complete, true, 'fixture precondition: the first pass must complete');
+    const entry = uw._usageWindowsCacheForTests().get('claude');
+    entry.computedAtMs -= (uw.USAGE_WINDOWS_CACHE_TTL_MS + 1); // force the next call to attempt a refresh
+    const slowDeps = {
+      readdir: () => fakeEntries(20),
+      stat: () => ({ mtimeMs: 1000, size: 1 }),
+      readFile: () => { sleepSync(300); return ''; }
+    };
+    const served = uw.getUsageWindows({ deps: slowDeps });
+    assert.equal(served, complete, 'the stale-but-complete snapshot must still be served, not a fresher but truncated one');
+    assert.equal(uw._usageWindowsCacheForTests().get('claude').result, complete,
+      'the cache entry itself must not have been overwritten with the truncated attempt either');
   });
 });
