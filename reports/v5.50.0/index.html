@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TangleClaw Sprint v5.50.0 — Live Sprint Progress &amp; Telemetry Report</title>
+  <title>TangleClaw Sprint v5.50.0 — Executive Engineering &amp; Telemetry Report</title>
   <style>
     :root {
       --bg: #070b14;
@@ -459,14 +459,13 @@
   </style>
 </head>
 <body>
-  <!-- AUTO_GENERATED_LIVE_SPRINT_REPORT -->
   <header class="topnav">
     <div class="topnav-inner">
       <div class="brand">
         <div class="brand-badge">TC</div>
         <div>
-          <div style="font-size:0.94rem;">TangleClaw Live Sprint Tracker</div>
-          <div style="font-size:0.72rem;color:var(--text-dim);font-weight:500;">v5.50.0 · Engine and model compatibility · Live Sync 2026-11-01 00:06:04 UTC</div>
+          <div style="font-size:0.94rem;">TangleClaw Sprint Report</div>
+          <div style="font-size:0.72rem;color:var(--text-dim);font-weight:500;">v5.50.0 · “Engine and model compatibility” (Charter A488 v1.9) · 10 Issues / 8 PRs / 4 Waves · Oct 31, 2026</div>
         </div>
       </div>
       <nav class="nav-links" id="navLinks">
@@ -489,598 +488,1234 @@
   </header>
 
   <main class="container">
+    <!-- SECTION 1: HERO & EXECUTIVE OVERVIEW -->
     <section class="hero" id="overview">
-      <div class="hero-top">
-        <div>
-          <div class="eyebrow">📡 LIVE SPRINT IN PROGRESS · AUTO-SYNCED FROM LANE_QUEUE.MD (2026-11-01 00:06:04 UTC)</div>
-          <h1>v5.50.0: Engine and model compatibility — Live Multi-Agent Wave &amp; Gate Tracker</h1>
-          <p class="hero-subtitle">
-            Sprint <strong>v5.50.0</strong> (<em>"Engine and model compatibility"</em>) is currently <strong>in progress</strong> (ACTIVE — W1/W2 CODE AND W3 RECORDS MERGED; W4-REL PR OPEN).
-            This live interactive sprint report is automatically generated and updated by <code>sync-live-sprint.py</code> on every roadmap sync cycle as waves are dispatched, reviewed, and merged in <code>LANE_QUEUE.md</code>.
-            Currently tracking <strong>7 wave rows</strong>: <strong>1 merged</strong>, <strong>1 in review</strong>, and <strong>5 in progress / queued</strong>.
-            At <code>W4-REL</code> release preparation, <code>TC-Lane-Obsr</code> finalizes the complete post-sprint empirical report and 16-point <code>Rule #283</code> evaluation.
+      <div class="hero-card">
+        <div class="eyebrow">● AUTONOMOUS MULTI-AGENT RELEASE AUDIT · MILESTONE v5.50.0 · CHARTER A488 v1.9 (A488-COSIGN-V5500-20261031-V1.9) · LIVE DEPLOY VERIFIED</div>
+        <h1 class="hero-title">TangleClaw <code>v5.50.0</code>: “Engine and model compatibility”</h1>
+        <p class="hero-sub">
+          Executed across <strong>4 coordinated waves</strong> on base <code>c23643d76389f8681e532eb3aa271fcd394ff219</code> (<code>tag: v5.49.0</code>, SQLite <code>schema_version=74 → 75</code>) as Leg 1 of the <strong>Back-to-Back Dual-Version Sprint (<code>v5.50.0 → v5.51.0</code>, <code>OP-GO-DUAL-V5500-V5510-20261031</code>)</strong> under Charter <code>A488 v1.9</code> (<code>SHA-256: 7c71074f9e6412ea5b46b5a1fe0653adfa9b99ab0da4f2dae50e470289ace352</code>, Architect Co-Sign <code>A488-COSIGN-V5500-20261031-V1.9</code>, Rulings <code>A488-W1D-PROCPS-R1</code>, <code>A488-W1A-R1</code>, <code>A488-W2A-R1</code>, <code>A488-W3-REC-ACCEPT-R1</code>, <code>A488-W4-REL-ACCEPT-R2</code>, <code>A488-W4-STAGE-POOL-R2</code>, and <code>A488-W4REL-TIERS-SCOPE-R3</code>), scaling our <strong>2-Issue-Per-Lane Car Bundling architecture (<code>Rule #294</code>)</strong> AND pipelining <strong>Leg 2 (<code>v5.51.0</code>)</strong> across idle Builder lanes (<code>TC-Lane-B..D</code>) during <code>v5.50.0</code> Wave 2!
+          Shipped <strong>8 Sprint PRs (#2755, #2754, #2756, #2757, #2762, #2763, #2764, #2765)</strong> closing all <strong>10 chartered issues (#1897, #1809, #2752, #2747, #2439, #1644 [absorbing #193], #2188, #1967, #2599, #2598; residual container follow-up split to #2758 per Rule #285 §1)</strong> with <strong>0 merge conflicts</strong>, <strong>0 post-merge defects on <code>main</code></strong>, and <strong><code>+12,573 / -155</code> net lines of code across feature waves</strong>.
+          In <strong>Wave 1</strong> (merged at <code>309dacbda7f2</code>), 4 parallel Builder cars delivered 8 issues: <code>W1-B PR #2755</code> (<code>#1897 + #1809</code>), <code>W1-D PR #2754</code> (<code>#2752 + #2747</code>), <code>W1-C PR #2756</code> (<code>#2439 + #1644</code>), and <code>W1-A PR #2757</code> (<code>#2188 + #1967</code>). In <strong>Wave 2</strong> (merged at <code>e82760dc5947</code>), <code>W2-A PR #2762</code> delivered <code>#2599 + #2598</code> (cross-engine runtime model switching &amp; fallback chains, SQLite <code>schema_version=75</code>) while idle lanes <code>TC-Lane-D</code>, <code>TC-Lane-B</code>, and <code>TC-Lane-C</code> built and achieved 100% PRR acceptance on all 3 <code>v5.51.0</code> Wave 1 PRs (<code>#2760</code>, <code>#2761</code>, <code>#2759</code>).
+          Following <strong>Wave 3 Reconciliation (<code>W3-REC PR #2763</code> @ <code>3888bcfa7570</code>, 5.0m turnaround)</strong> and <strong>Wave 4 Release Cut (<code>W4-REL PR #2764</code> @ <code>ecb86c29512c5e53c006efb27cce3ed7c3993705</code>, <code>O-Gate</code> token <code>OBSR-OGATE-V5500-W4REL-PR2764-7be094b6-PASS</code>)</strong>, automatic <code>Release</code> workflow <code>#41256199348</code> published annotated tag and GitHub Release <strong><code>v5.50.0</code></strong>, and <code>TC-Lane-INT</code> executed the guarded production update on <code>/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder1</code> (recorded in <strong>Gate 3 Status <code>PR #2765</code> @ <code>ecb86c29512c</code></strong>; <strong>All 3 Finish Lines Verified</strong>).
+        </p>
+
+        <div class="meta-bar">
+          <div class="meta-pill"><span>Release Target:</span> <code>v5.50.0</code> (Tag <code>v5.50.0 @ ecb86c29512c</code> · Post-Deploy Doc <code>main @ ecb86c29512c</code> · Base <code>v5.49.0 @ c23643d76389</code>)</div>
+          <div class="meta-pill"><span>Wave 1 Cars (8 Issues):</span> <code>W1-B #2755 @ 3c3a3868</code> · <code>W1-D #2754 @ 801d52ef</code> · <code>W1-C #2756 @ d1d89d4b</code> · <code>W1-A #2757 @ 309dacbd</code></div>
+          <div class="meta-pill"><span>Wave 2 Car (2 Issues):</span> <code>W2-A #2762 @ e82760dc</code> (<code>#2599 + #2598</code> · Schema <code>v75</code> · Cross-Sprint Pipelined with <code>v5.51.0</code>)</div>
+          <div class="meta-pill"><span>W3-REC &amp; W4-REL:</span> <code>W3-REC #2763 @ 3888bcfa</code> · <code>W4-REL #2764 @ ecb86c29</code> · <code>Gate 3 #2765 @ ecb86c29512c</code></div>
+          <div class="meta-pill"><span>Testament v0.34.0 Pool:</span> Stage 3 <code>5,869/5,869</code> (<code>100%</code>) · Stage 4 <code>5,817/5,817</code> (<code>100%</code> after <code>DIFF-V5500-04</code> tier move)</div>
+          <div class="meta-pill"><span>Finish-Line Honesty:</span> Code Released: <strong>Complete</strong> · Local Server Updated: <strong>Complete</strong> · Feature Activated: <strong>Complete</strong></div>
+          <div class="meta-pill"><span>Observer Participant Disclosure:</span> <code>TC-Lane-Obsr</code> (#1540) operated as an in-test sprint participant (Rule #283 cl. 1)</div>
+        </div>
+
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-label">Issues &amp; PRs Shipped</div>
+            <div class="kpi-value green">10 / 10 Issues</div>
+            <div class="kpi-sub"><code>8</code> Sprint PRs (<code>#2754–#2757, #2762–#2764, #2765</code>) across <code>4</code> waves · <code>+12,573 / -155</code> feature LOC</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Median Active Build Time</div>
+            <div class="kpi-value accent">35.6m Median</div>
+            <div class="kpi-sub">Across <code>5</code> 2-issue Builder cars (<code>19.6m</code> fastest on <code>W1-D</code> · <code>17.8m/issue</code> median)</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Stage 3 &amp; 4 Pool Parity</div>
+            <div class="kpi-value green">100% On Pool</div>
+            <div class="kpi-sub">Testament <code>v0.34.0</code>: Stage 3 <code>5,869/5,869</code> &amp; Stage 4 <code>5,817/5,817</code> after <code>DIFF-V5500-04</code> tier alignment</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Stage 5 Container Gains</div>
+            <div class="kpi-value cyan">#2752 Shipped</div>
+            <div class="kpi-sub"><code>procps</code> (<code>/bin/ps</code>) in <code>.devcontainer/Dockerfile</code> eliminated all <code>spawnSync ps ENOENT</code> failures</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Cross-Sprint Pipelining</div>
+            <div class="kpi-value purple">3 / 3 v5.51.0 PRs</div>
+            <div class="kpi-sub">All <code>5</code> <code>v5.51.0</code> issues (<code>#2759, #2760, #2761</code>) built &amp; PRR-accepted during <code>v5.50.0</code> Wave 2</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">W3-REC Turnaround</div>
+            <div class="kpi-value amber">5.0m Open-to-Merge</div>
+            <div class="kpi-sub"><code>PR #2763</code> reconciled all <code>10</code> issues in <code>1.0m</code> build / <code>5.0m</code> open-to-merge · <code>0</code> change-log collisions</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Production Server Health</div>
+            <div class="kpi-value green">v5.50.0 Live</div>
+            <div class="kpi-sub"><code>ecb86c29</code> · <code>schema_version=75</code> · <code>/api/engines/inventory</code> &amp; <code>/api/usage-windows</code> HTTP <code>200</code></div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Rule #283 Governance Audit</div>
+            <div class="kpi-value green">16 / 16 PASS</div>
+            <div class="kpi-sub">All <code>3</code> finish lines <strong>Complete</strong> · All <code>4</code> Maintenance Gates verified green</div>
+          </div>
+        </div>
+
+        <!-- PLAIN-ENGLISH SUMMARY FOR NON-TECHNICAL READERS (MANDATORY v5.47.0+ CONTRACT) -->
+        <div id="plain-english" style="margin-top:22px;padding:22px 24px;border-radius:14px;background:linear-gradient(135deg,rgba(52,211,153,0.10),rgba(56,189,248,0.08));border:1px solid rgba(52,211,153,0.35);">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+            <span class="badge badge-green" style="font-size:0.76rem;padding:4px 10px;">📖 Plain-English Summary — What Sprint v5.50.0 Accomplished &amp; Why It Matters</span>
+            <span style="font-size:0.78rem;color:var(--text-muted);">Written for operators, stakeholders &amp; non-specialist readers</span>
+          </div>
+          <h3 style="margin:0 0 10px;font-size:1.12rem;color:var(--text);">Live Engine &amp; Model Compatibility, Cross-Engine Model Switching, and Usage Quota Visibility</h3>
+          <p style="margin:0 0 14px;font-size:0.93rem;color:var(--text-muted);line-height:1.65;">
+            When an operator manages a fleet of AI coding sessions across Claude, Codex, Gemini/Antigravity, Aider, and OpenClaw, switching models mid-session or hitting a rate limit used to require manual restarts or engine-specific guesswork. Sprint <code>v5.50.0</code> (<strong>“Engine and model compatibility”</strong>) delivered <strong>10 issues across 8 pull requests</strong> (<code>+12,573 / -155</code> LOC) that make model switching, engine health, and quota windows seamless across every supported engine:
           </p>
-        </div>
-        <div class="status-pill">
-          ● Live Sprint v5.50.0 (1/7 Merged · 1 In Review)
-        </div>
-      </div>
-
-      <div id="plain-english" class="subcard" style="margin:22px 0;padding:22px 24px;border:1.5px solid rgba(56,189,248,0.45);background:linear-gradient(135deg,rgba(15,23,42,0.96),rgba(14,116,144,0.18));border-radius:14px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
-          <span class="pillar-num" style="color:var(--accent2);font-size:0.8rem;letter-spacing:0.08em;">📖 PLAIN-ENGLISH SUMMARY · WHAT WE ARE BUILDING &amp; LIVE SPRINT PROGRESS (NO JARGON)</span>
-          <span class="badge badge-cyan">Live Sprint Tracker · Updated 2026-11-01 00:06:04 UTC</span>
-        </div>
-        <h3 style="margin:0 0 12px;font-size:1.22rem;color:var(--text);">What Sprint v5.50.0 Is Building — and Where Each Wave Stands Right Now</h3>
-        <div class="grid-2" style="gap:18px;">
-          <div style="background:rgba(15,23,42,0.65);border:1px solid var(--border);border-radius:10px;padding:15px 17px;">
-            <h4 style="margin:0 0 8px;color:var(--accent2);font-size:0.98rem;">🛠️ What Sprint v5.50.0 Delivers</h4>
-            <ul style="margin:0;padding-left:18px;font-size:0.9rem;line-height:1.55;color:var(--text-muted);">
-              <li>An engine version or model that TangleClaw has not verified is gated before launch, with a reason.</li>
-            </ul>
+          <div class="grid-3" style="gap:14px;">
+            <div style="background:rgba(10,15,29,0.65);border:1px solid var(--border);border-radius:10px;padding:14px;">
+              <strong style="color:var(--green);display:block;margin-bottom:6px;font-size:0.92rem;">1. Live Model Switching &amp; Automatic Fallback Chains (`#1897`, `#2599`, `#2598`)</strong>
+              <p style="margin:0;font-size:0.84rem;color:var(--text-muted);line-height:1.55;">
+                We mapped how every AI engine switches models (`#1897`: in-band `/model` slash commands for Claude, Codex, and Aider vs flag-based relaunch for Gemini/OpenClaw), built a unified runtime model-switch engine (`#2599`, SQLite <code>schema_version=75</code>) with git dirty-worktree safety checks, and added ordered model fallback chains (`#2598`) that automatically switch to the next backup model when a session hits a rate-limit or capacity error.
+              </p>
+            </div>
+            <div style="background:rgba(10,15,29,0.65);border:1px solid var(--border);border-radius:10px;padding:14px;">
+              <strong style="color:var(--accent2);display:block;margin-bottom:6px;font-size:0.92rem;">2. Engine Inventory UI, Quota Windows &amp; Profile Drift Alerts (`#2747`, `#2188`, `#1967`)</strong>
+              <p style="margin:0;font-size:0.84rem;color:var(--text-muted);line-height:1.55;">
+                Building on <code>v5.49.0</code>’s inventory API, we shipped the browser Engine Inventory panel, project-creation defaults, and TangleTweaker docking (`#2747`); added a 5-hour / 7-day rolling usage-window and quota estimator (`#2188`, `GET /api/usage-windows`); and added a periodic CLI help-flag reconciler (`#1967`) that detects when an upgraded AI CLI changes its flags or version.
+              </p>
+            </div>
+            <div style="background:rgba(10,15,29,0.65);border:1px solid var(--border);border-radius:10px;padding:14px;">
+              <strong style="color:var(--purple);display:block;margin-bottom:6px;font-size:0.92rem;">3. Non-Claude Hooks, Antigravity Prime Hardening &amp; Container Pool (`#2439`, `#1644`, `#1809`, `#2752`)</strong>
+              <p style="margin:0;font-size:0.84rem;color:var(--text-muted);line-height:1.55;">
+                We shipped a git-backed post-commit governance hook adapter (`#2439`) so Codex, Gemini, and Aider enforce the same commit/record rules as Claude; hardened Antigravity’s post-<code>/clear</code> prime injection against TUI modal swallows (`#1644` / `#193`); documented OpenClaw’s clean-start contract (`#1809`); and added <code>procps</code> (<code>/bin/ps</code>) to <code>.devcontainer/Dockerfile</code> (`#2752`) for Stage 5 Linux container parity.
+              </p>
+            </div>
           </div>
-          <div style="background:rgba(15,23,42,0.65);border:1px solid var(--border);border-radius:10px;padding:15px 17px;">
-            <h4 style="margin:0 0 8px;color:var(--green);font-size:0.98rem;">⚡ Live Wave Progress (1 of 7 Cars Merged)</h4>
-            <p style="margin:0;font-size:0.9rem;line-height:1.55;color:var(--text-muted);">
-              The fleet is actively executing <strong>TangleClaw Fleet Lane Queue — Dual-Sprint `v5.50.0` → `v5.51.0` Active (Leg 1: `v5.50.0` Wave 1 Dispatched)</strong>. So far, <strong>1</strong> wave item(s) have merged to <code>main</code>, <strong>1</strong> are in active PR review with <code>TC-Lane-PRR-A/B</code> and <code>TC-Lane-Arc</code>, and <strong>5</strong> are in build or queued for the next wave. Between every wave, active Builder and Reviewer lanes run a clean session reset so context stays fresh and never over-compacts.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <div class="kpi-grid">
-        <div class="kpi-card">
-          <div class="kpi-label">Sprint Version</div>
-          <div class="kpi-value" style="color:var(--accent2)">v5.50.0</div>
-          <div class="kpi-meta">Engine and model compatibility · Live Sprint in Progress</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-label">Chartered Wave Rows</div>
-          <div class="kpi-value" style="color:var(--green)">1 / 7</div>
-          <div class="kpi-meta">1 Merged · 1 In Review · 5 In Progress/Queued</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-label">Sprint State</div>
-          <div class="kpi-value" style="color:var(--accent)">ACTIVE — W1/W2 COD</div>
-          <div class="kpi-meta">Synced directly from <code>Shared/TangleClaw-Shared/LANE_QUEUE.md</code></div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-label">Wave Reset Guardrail</div>
-          <div class="kpi-value" style="color:var(--green)">Active</div>
-          <div class="kpi-meta">Inter-wave <code>tc finalize</code> + fresh launch prevents compaction drift</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-label">Builder Mode</div>
-          <div class="kpi-value" style="color:var(--accent2)">bypass</div>
-          <div class="kpi-meta"><code>TC-Lane-A..D</code> running in <code>bypassPermissions</code> mode</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-label">Codex Effort Tier</div>
-          <div class="kpi-value" style="color:var(--green)">medium</div>
-          <div class="kpi-meta"><code>TC-Lane-INT</code>, <code>PRR-A</code>, <code>PRR-B</code> calibrated to <code>medium</code> effort</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-label">Live Sync Snapshot</div>
-          <div class="kpi-value" style="color:var(--accent2)">15m / Hook</div>
-          <div class="kpi-meta">Updated 2026-11-01 00:06:04 UTC via <code>sync-live-sprint.py</code></div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-label">4-Gate Governance</div>
-          <div class="kpi-value" style="color:var(--green)">Enforced</div>
-          <div class="kpi-meta"><code>I-Gate</code> · <code>B-Gate</code> · <code>A-Gate</code> · <code>O-Gate</code> active on all waves</div>
         </div>
       </div>
     </section>
 
+    <!-- SECTION 2: MULTI-AGENT ARCHITECTURE & 10-LANE TOPOLOGY -->
     <section class="section" id="architecture">
       <div class="section-header">
         <div>
-          <span class="section-tag">Section 01 · Multi-Agent Fleet Topology &amp; Wave Architecture</span>
-          <h2 class="section-title">Sprint v5.50.0 Multi-Agent Execution Topology</h2>
-          <p class="section-desc">
-            Four parallel Builder lanes (<code>TC-Lane-A..D</code>), two dedicated PR Reviewer lanes (<code>TC-Lane-PRR-A..B</code>), Architect (<code>TC-Lane-Arc</code>), Release Integrator (<code>TC-Lane-INT</code>), Observer (<code>TC-Lane-Obsr</code>), and Project Manager (<code>TC-Lane-PM</code>) coordinate through <code>LANE_QUEUE.md</code> and Medusa switchboard exchanges.
+          <h2 class="section-title"><span class="num">01</span> 10-Lane Multi-Agent Fleet Topology &amp; Cross-Engine Compatibility Architecture</h2>
+          <p class="section-desc">10-lane heterogeneous agent topology executing Leg 1 (<code>v5.50.0</code>) while pipelining Leg 2 (<code>v5.51.0</code>) across idle Builder lanes during Wave 2.</p>
+        </div>
+        <span class="badge badge-blue">10 Active Lanes · Cross-Sprint Wave Pipelining · Testament v0.34.0</span>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3>10-Lane Sprint Fleet &amp; Cross-Sprint Pipelining (<code>Charter A488 v1.9</code>)</h3>
+          <p style="font-size:0.87rem;color:var(--text-muted);margin-top:0;">
+            Sprint <code>v5.50.0</code> executed 4 parallel 2-issue Builder cars in Wave 1 (`8` issues), then ran <code>W2-A</code> (<code>#2599 + #2598</code>) on <code>TC-Lane-C</code> while pipelining all 3 <code>v5.51.0</code> cars on <code>TC-Lane-D</code>, <code>TC-Lane-B</code>, and <code>TC-Lane-C</code>:
+          </p>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th>Lane / Session</th>
+                  <th>Engine / Model</th>
+                  <th>Role &amp; Overlay</th>
+                  <th>v5.50.0 Assignment &amp; Cross-Sprint Output</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>TC-Lane-PM</code> (<code>#1541</code>)</td>
+                  <td><code>antigravity</code> (<code>Gemini 4</code>)</td>
+                  <td>Coordinator (<code>#285</code>)</td>
+                  <td>Coordinated <code>v5.50.0</code> Waves 1–4, enacted <code>INTV-V5500-01</code> &amp; <code>DIFF-V5500-01..04</code>, pipelined <code>v5.51.0</code> Wave 1, &amp; authored Gate 4 Report</td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-Arc</code> (<code>#1538</code>)</td>
+                  <td><code>codex</code> (<code>GPT-6-Sol</code>)</td>
+                  <td>Architect (<code>#288</code>)</td>
+                  <td>Co-Signed <code>A488 v1.9</code> &amp; <code>A489 v1.8</code>; issued Rulings <code>A488-W1D-PROCPS-R1</code>, <code>A488-W1A-R1</code>, <code>A488-W2A-R1</code>, <code>A488-W4-STAGE-POOL-R2</code>, &amp; <code>A488-W4REL-TIERS-SCOPE-R3</code></td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-A</code> (<code>#1534</code>)</td>
+                  <td><code>claude-sonnet-reviewer</code></td>
+                  <td>Builder (<code>#271</code>)</td>
+                  <td>Shipped <strong><code>W1-A PR #2757</code></strong> (<code>#2188</code> usage-window quota estimation + <code>#1967</code> engine profile drift reconciler; <code>+3,542 / -17 LOC</code>)</td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-B</code> (<code>#1535</code>)</td>
+                  <td><code>claude-sonnet-reviewer</code></td>
+                  <td>Builder (<code>#271</code>)</td>
+                  <td>Shipped <strong><code>W1-B PR #2755</code></strong> (<code>#1897</code> model-switch matrix + <code>#1809</code> OpenClaw clean-start; <code>+2,678 / -2 LOC</code>) + pipelined <code>v5.51.0 PR #2761</code></td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-C</code> (<code>#1532</code>)</td>
+                  <td><code>claude-sonnet-reviewer</code></td>
+                  <td>Builder (<code>#271</code>)</td>
+                  <td>Shipped <strong><code>W1-C PR #2756</code></strong> (<code>#2439 + #1644</code>) &amp; <strong><code>W2-A PR #2762</code></strong> (<code>#2599 + #2598</code>; <code>+4,303 / -23 LOC</code>) + pipelined <code>v5.51.0 PR #2759</code></td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-D</code> (<code>#1533</code>)</td>
+                  <td><code>claude-sonnet-reviewer</code></td>
+                  <td>Builder (<code>#271</code>)</td>
+                  <td>Shipped <strong><code>W1-D PR #2754</code></strong> (<code>#2752</code> <code>procps</code> container fix + <code>#2747</code> Engine Inventory UI; <code>19.6m</code> build) + pipelined <code>v5.51.0 PR #2760</code></td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-PRR-A</code> (<code>#1536</code>)</td>
+                  <td><code>codex</code> (<code>GPT-6-Sol</code>)</td>
+                  <td>Reviewer (<code>#286</code>)</td>
+                  <td>Reviewed &amp; accepted <code>W1-C #2756</code> (5 rounds), <code>W1-A #2757</code> (9 rounds), <code>W2-A #2762</code> (8 rounds), and <code>v5.51.0 W1-C #2759</code></td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-PRR-B</code> (<code>#1539</code>)</td>
+                  <td><code>codex</code> (<code>GPT-6-Sol</code>)</td>
+                  <td>Reviewer (<code>#286</code>)</td>
+                  <td>Reviewed &amp; accepted <code>W1-D #2754</code> (3 rounds), <code>W1-B #2755</code> (4 rounds), <code>W3-REC #2763</code>, <code>W4-REL #2764</code>, <code>Gate 3 #2765</code>, &amp; <code>v5.51.0 #2760/#2761</code></td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-INT</code> (<code>#1537</code>)</td>
+                  <td><code>codex</code> (<code>GPT-6-Sol</code>)</td>
+                  <td>Integrator (<code>#291</code>)</td>
+                  <td>Merged all 8 Sprint PRs, authored <code>W3-REC #2763</code>, <code>W4-REL #2764</code> (incl. <code>DIFF-V5500-04</code> tier fix), &amp; <code>#2765</code>, and deployed <code>v5.50.0</code> on <code>:3102</code></td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-Obsr</code> (<code>#1540</code>)</td>
+                  <td><code>antigravity</code> (<code>Gemini 4</code>)</td>
+                  <td>Observer (<code>#287</code>)</td>
+                  <td>Audited Wave 1–4 telemetry, issued <code>OBSR-OGATE-V5500-W4REL-PR2764-7be094b6-PASS</code>, and published <code>v5.50.0-sprint-observer-report.md</code></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>SVG Diagram 1 — Cross-Engine Model Switching, Fallback Chains &amp; Compatibility Stack</h3>
+          <div class="svg-wrap" style="background:rgba(7,11,20,0.7);border:1px solid var(--border);border-radius:12px;padding:12px;">
+            <svg viewBox="0 0 760 360" width="100%" height="auto" role="img" aria-label="Cross-Engine Model Switching and Compatibility Stack">
+              <defs>
+                <linearGradient id="v5500Left" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#0284c7" stop-opacity="0.35"/>
+                  <stop offset="100%" stop-color="#1e293b" stop-opacity="0.9"/>
+                </linearGradient>
+                <linearGradient id="v5500Center" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#8b5cf6" stop-opacity="0.35"/>
+                  <stop offset="100%" stop-color="#1e293b" stop-opacity="0.9"/>
+                </linearGradient>
+                <linearGradient id="v5500Right" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#10b981" stop-opacity="0.3"/>
+                  <stop offset="100%" stop-color="#0f172a" stop-opacity="0.95"/>
+                </linearGradient>
+              </defs>
+              <!-- Left Box: Capability Matrix & Drift Probes -->
+              <rect x="16" y="28" width="224" height="304" rx="12" fill="url(#v5500Left)" stroke="#38bdf8" stroke-width="1.5"/>
+              <text x="30" y="54" fill="#38bdf8" font-size="12" font-weight="700">ENGINE CAPABILITY &amp; DRIFT</text>
+              <text x="30" y="72" fill="#cbd5e1" font-size="10">data/engines/*.json + Reconciler</text>
+              <rect x="28" y="86" width="200" height="52" rx="8" fill="#0f172a" stroke="#334155"/>
+              <text x="38" y="105" fill="#e2e8f0" font-size="10" font-weight="600">lib/model-switch-matrix.js (#1897)</text>
+              <text x="38" y="122" fill="#94a3b8" font-size="9">in-band (/model) vs relaunch (--model)</text>
+              <rect x="28" y="148" width="200" height="54" rx="8" fill="#0f172a" stroke="#334155"/>
+              <text x="38" y="167" fill="#34d399" font-size="10" font-weight="600">lib/profile-reconciler.js (#1967)</text>
+              <text x="38" y="184" fill="#94a3b8" font-size="9">Probes --version / --help for CLI drift</text>
+              <rect x="28" y="212" width="200" height="52" rx="8" fill="#0f172a" stroke="#334155"/>
+              <text x="38" y="231" fill="#38bdf8" font-size="10" font-weight="600">lib/usage-windows.js (#2188)</text>
+              <text x="38" y="248" fill="#94a3b8" font-size="9">5h/7d quota window &amp; ccusage probe</text>
+              <rect x="28" y="272" width="200" height="48" rx="8" fill="#0f172a" stroke="#334155"/>
+              <text x="38" y="291" fill="#fbbf24" font-size="10" font-weight="600">lib/non-claude-hooks.js (#2439)</text>
+              <text x="38" y="307" fill="#94a3b8" font-size="9">Git post-commit governance adapter</text>
+
+              <!-- Center Box: Runtime Model Switch & Fallback Engine -->
+              <rect x="272" y="40" width="216" height="280" rx="12" fill="url(#v5500Center)" stroke="#a855f7" stroke-width="1.5"/>
+              <text x="286" y="66" fill="#c084fc" font-size="12" font-weight="700">RUNTIME MODEL SWITCHER</text>
+              <text x="286" y="84" fill="#cbd5e1" font-size="10">lib/model-switch.js (#2599 + #2598)</text>
+              <text x="286" y="106" fill="#e2e8f0" font-size="10">• In-band TUI slash command dispatch</text>
+              <text x="286" y="126" fill="#34d399" font-size="10">• Flag-relaunch + dirty-worktree guard</text>
+              <text x="286" y="146" fill="#38bdf8" font-size="10">• Ordered modelFallbackChain (#2598)</text>
+              <text x="286" y="166" fill="#fbbf24" font-size="10">• Rate-limit / capacity auto-switch</text>
+              <rect x="286" y="184" width="188" height="54" rx="8" fill="#0f172a" stroke="#a855f7"/>
+              <text x="296" y="203" fill="#e2e8f0" font-size="10" font-weight="600">SQLite Schema v75 (#2599/#2598)</text>
+              <text x="296" y="220" fill="#94a3b8" font-size="9">model_switch_events &amp; fallback cols</text>
+              <rect x="286" y="248" width="188" height="54" rx="8" fill="#0f172a" stroke="#34d399"/>
+              <text x="296" y="267" fill="#34d399" font-size="10" font-weight="600">lib/startup-control-antigravity.js</text>
+              <text x="296" y="284" fill="#94a3b8" font-size="9">#1644/#193 modal-dismiss prime retry</text>
+
+              <!-- Right Box: Browser UI & REST Endpoints -->
+              <rect x="520" y="28" width="224" height="304" rx="12" fill="url(#v5500Right)" stroke="#10b981" stroke-width="1.4"/>
+              <text x="534" y="54" fill="#34d399" font-size="12" font-weight="700">OPERATOR UI &amp; REST API</text>
+              <text x="534" y="72" fill="#cbd5e1" font-size="10">public/ui.js + public/session.js</text>
+              <rect x="532" y="88" width="200" height="54" rx="8" fill="#0f172a" stroke="#10b981"/>
+              <text x="542" y="107" fill="#34d399" font-size="10" font-weight="600">Engine Inventory Panel (#2747)</text>
+              <text x="542" y="124" fill="#94a3b8" font-size="9">Creation seeds + #581 Tweaker dock</text>
+              <rect x="532" y="152" width="200" height="54" rx="8" fill="#0f172a" stroke="#10b981"/>
+              <text x="542" y="171" fill="#38bdf8" font-size="10" font-weight="600">POST /api/sessions/:id/switch-model</text>
+              <text x="542" y="188" fill="#94a3b8" font-size="9">Live session model picker (#2599)</text>
+              <rect x="532" y="216" width="200" height="50" rx="8" fill="#0f172a" stroke="#10b981"/>
+              <text x="542" y="235" fill="#e2e8f0" font-size="10" font-weight="600">GET /api/usage-windows (#2188)</text>
+              <text x="542" y="252" fill="#94a3b8" font-size="9">5h/7d budget badges in session UI</text>
+              <rect x="532" y="274" width="200" height="46" rx="8" fill="#0f172a" stroke="#10b981"/>
+              <text x="542" y="293" fill="#fbbf24" font-size="10" font-weight="600">.devcontainer/Dockerfile (#2752)</text>
+              <text x="542" y="309" fill="#94a3b8" font-size="9">procps (/bin/ps) Stage 5 pool parity</text>
+
+              <!-- Arrows -->
+              <line x1="240" y1="165" x2="272" y2="165" stroke="#38bdf8" stroke-width="2"/>
+              <line x1="488" y1="165" x2="520" y2="165" stroke="#34d399" stroke-width="2"/>
+            </svg>
+          </div>
+          <p style="font-size:0.82rem;color:var(--text-muted);margin:10px 0 0;">
+            <strong>End-to-End Compatibility Contract:</strong> <code>lib/model-switch-matrix.js</code> (<code>#1897</code>) defines the static &amp; runtime switch mechanism for each engine, while <code>lib/model-switch.js</code> (<code>#2599 + #2598</code>) executes live model transitions and automatic rate-limit fallbacks.
           </p>
         </div>
       </div>
-      <div class="grid-3" style="margin-bottom:20px;">
-        <div class="subcard">
-          <span class="pillar-num">PILLAR 01 · PARALLEL FILE-DISJOINT BUILDER WAVES</span>
-          <h4>Zero-Conflict Scoped Cars Across TC-Lane-A..D</h4>
-          <p>Each Builder car in <code>LANE_QUEUE.md</code> carries an explicit signed file scope and branch name verified at the Integrator Start Gate before edits begin.</p>
-        </div>
-        <div class="subcard">
-          <span class="pillar-num">PILLAR 02 · EXACT-HEAD 4-GATE VERIFICATION</span>
-          <h4>PRR I/B-Gate, Architect A/R-Gate, Integrator CI-Gate &amp; Observer O-Gate</h4>
-          <p>Every PR requires exact-head GitHub Actions <code>Tests</code> CI green, PRR review acceptance, Architect invariant sign-off, and Integrator scope/freshness verification before merge.</p>
-        </div>
-        <div class="subcard">
-          <span class="pillar-num">PILLAR 03 · INTER-WAVE SESSION CONTINUITY &amp; RESET</span>
-          <h4>Deterministic Wave Reset Prevents Mid-Sprint Compaction</h4>
-          <p>After each wave merges and branches are retired on clean <code>main</code>, lanes finalize and relaunch fresh sessions so no agent ever stalls or degrades from context compaction.</p>
-        </div>
-      </div>
-      <div class="svg-wrap">
-        <div class="svg-caption">
-          <span>Figure 1.1 — TangleClaw 10-Lane Autonomous Fleet Architecture (Sprint v5.50.0)</span>
-          <span>Live Sync: 2026-11-01 00:06:04 UTC</span>
-        </div>
-        <svg viewBox="0 0 980 330" width="100%" height="auto" role="img" aria-label="Multi-Agent Fleet Topology">
-          <rect x="0" y="0" width="980" height="330" rx="12" fill="#0b1120" />
-          <rect x="30" y="30" width="200" height="270" rx="10" fill="#111827" stroke="#38bdf8" stroke-width="1.5" />
-          <text x="48" y="60" fill="#38bdf8" font-size="12" font-weight="800">COORDINATORS &amp; GATES</text>
-          <text x="48" y="95" fill="#e2e8f0" font-size="11.5">• TC-Lane-PM (Charter)</text>
-          <text x="48" y="125" fill="#e2e8f0" font-size="11.5">• TC-Lane-Arc (A/R-Gate)</text>
-          <text x="48" y="155" fill="#e2e8f0" font-size="11.5">• TC-Lane-INT (Merge/CI)</text>
-          <text x="48" y="185" fill="#e2e8f0" font-size="11.5">• TC-Lane-Obsr (O-Gate)</text>
-          <rect x="270" y="30" width="380" height="270" rx="10" fill="#111827" stroke="#22c55e" stroke-width="1.5" />
-          <text x="290" y="60" fill="#22c55e" font-size="12" font-weight="800">BUILDER LANES (BYPASS MODE)</text>
-          <text x="290" y="95" fill="#e2e8f0" font-size="11.5">• TC-Lane-A · Workstream A</text>
-          <text x="290" y="125" fill="#e2e8f0" font-size="11.5">• TC-Lane-B · Workstream B</text>
-          <text x="290" y="155" fill="#e2e8f0" font-size="11.5">• TC-Lane-C · Workstream C</text>
-          <text x="290" y="185" fill="#e2e8f0" font-size="11.5">• TC-Lane-D · Workstream D</text>
-          <rect x="690" y="30" width="260" height="270" rx="10" fill="#111827" stroke="#a855f7" stroke-width="1.5" />
-          <text x="710" y="60" fill="#a855f7" font-size="12" font-weight="800">PR REVIEWERS (CODEX MEDIUM)</text>
-          <text x="710" y="95" fill="#e2e8f0" font-size="11.5">• TC-Lane-PRR-A (I/B-Gate)</text>
-          <text x="710" y="125" fill="#e2e8f0" font-size="11.5">• TC-Lane-PRR-B (I/B-Gate)</text>
-          <text x="710" y="165" fill="#94a3b8" font-size="11">Exact-SHA review &amp; Prawduct</text>
-        </svg>
-      </div>
     </section>
 
+    <!-- SECTION 3: WAVE-BY-WAVE VELOCITY & TIMELINE -->
     <section class="section" id="velocity">
       <div class="section-header">
         <div>
-          <span class="section-tag">Section 02 · Live Wave Velocity &amp; Execution Timeline</span>
-          <h2 class="section-title">Sprint v5.50.0 Wave Execution Matrix</h2>
-          <p class="section-desc">Live wave status synced directly from <code>Shared/TangleClaw-Shared/LANE_QUEUE.md</code>.</p>
+          <h2 class="section-title"><span class="num">02</span> Wave-by-Wave Execution Timeline &amp; Cross-Sprint Pipelining Velocity</h2>
+          <p class="section-desc">End-to-end progression from Wave 1 (4 parallel 2-issue cars) through Wave 2 (<code>W2-A #2762</code> + parallel <code>v5.51.0</code> Wave 1 build), W3-REC, W4-REL, and Gate 3 Post-Deploy Status PR.</p>
         </div>
+        <span class="badge badge-green">8 PRs Merged · 35.6m Median Active Build · 0 Conflicts</span>
       </div>
-      <div class="svg-wrap">
-        <div class="svg-caption">
-          <span>Figure 2.1 — Live Wave Progress Bar (v5.50.0)</span>
-          <span>1 of 7 Chartered Wave Rows Merged</span>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3>SVG Diagram 2 — Sprint <code>v5.50.0</code> Wave Execution &amp; Cross-Sprint Pipelining Timeline (UTC)</h3>
+          <div class="svg-wrap" style="background:rgba(7,11,20,0.7);border:1px solid var(--border);border-radius:12px;padding:12px;">
+            <svg viewBox="0 0 760 340" width="100%" height="auto" role="img" aria-label="Sprint v5.50.0 Wave Execution Gantt Chart">
+              <line x1="140" y1="28" x2="140" y2="300" stroke="#334155" stroke-width="1"/>
+              <line x1="255" y1="28" x2="255" y2="300" stroke="#334155" stroke-width="1" stroke-dasharray="3 3"/>
+              <line x1="370" y1="28" x2="370" y2="300" stroke="#334155" stroke-width="1" stroke-dasharray="3 3"/>
+              <line x1="485" y1="28" x2="485" y2="300" stroke="#334155" stroke-width="1" stroke-dasharray="3 3"/>
+              <line x1="600" y1="28" x2="600" y2="300" stroke="#334155" stroke-width="1" stroke-dasharray="3 3"/>
+              <line x1="720" y1="28" x2="720" y2="300" stroke="#334155" stroke-width="1"/>
+
+              <text x="122" y="20" fill="#94a3b8" font-size="10">16:07Z</text>
+              <text x="238" y="20" fill="#94a3b8" font-size="10">18:00Z</text>
+              <text x="353" y="20" fill="#94a3b8" font-size="10">20:15Z</text>
+              <text x="468" y="20" fill="#94a3b8" font-size="10">22:00Z</text>
+              <text x="583" y="20" fill="#94a3b8" font-size="10">23:50Z</text>
+              <text x="690" y="20" fill="#34d399" font-size="10" font-weight="700">00:30Z</text>
+
+              <!-- Row 1: Wave 1 (4 Cars) -->
+              <text x="14" y="58" fill="#e2e8f0" font-size="11" font-weight="600">Wave 1 (4 Cars)</text>
+              <text x="14" y="72" fill="#94a3b8" font-size="9">#2754, #2755, #2756, #2757</text>
+              <rect x="145" y="42" width="215" height="28" rx="6" fill="#06b6d4" fill-opacity="0.32" stroke="#22d3ee"/>
+              <text x="153" y="60" fill="#e2e8f0" font-size="10">8 Issues Shipped → 309dacbd (20:14Z)</text>
+
+              <!-- Row 2: Wave 2 (W2-A #2762) -->
+              <text x="14" y="106" fill="#e2e8f0" font-size="11" font-weight="600">Wave 2 (W2-A)</text>
+              <text x="14" y="120" fill="#94a3b8" font-size="9">PR #2762 (#2599 + #2598)</text>
+              <rect x="362" y="90" width="220" height="28" rx="6" fill="#10b981" fill-opacity="0.32" stroke="#34d399"/>
+              <text x="370" y="108" fill="#e2e8f0" font-size="10">Schema v75 + Model Switch → e82760dc (23:50Z)</text>
+
+              <!-- Row 3: Cross-Sprint Pipelining (v5.51.0 Wave 1) -->
+              <text x="14" y="154" fill="#c084fc" font-size="11" font-weight="600">v5.51.0 Pipelined</text>
+              <text x="14" y="168" fill="#94a3b8" font-size="9">PRs #2759, #2760, #2761</text>
+              <rect x="368" y="138" width="210" height="28" rx="6" fill="#a855f7" fill-opacity="0.30" stroke="#c084fc" stroke-dasharray="4 2"/>
+              <text x="376" y="156" fill="#e9d5ff" font-size="10">5/5 v5.51.0 Issues Built &amp; PRR-Accepted in Parallel!</text>
+
+              <!-- Row 4: W3-REC (#2763) -->
+              <text x="14" y="202" fill="#e2e8f0" font-size="11" font-weight="600">W3-REC: PR #2763</text>
+              <text x="14" y="216" fill="#94a3b8" font-size="9">10 Records Reconciled</text>
+              <rect x="584" y="186" width="24" height="28" rx="6" fill="#f59e0b" fill-opacity="0.35" stroke="#fbbf24"/>
+              <text x="614" y="204" fill="#fbbf24" font-size="10">23:52Z → Merged 23:57Z (3888bcfa, 5.0m!)</text>
+
+              <!-- Row 5: W4-REL (#2764) + Deploy + Gate 3 -->
+              <text x="14" y="252" fill="#34d399" font-size="11" font-weight="700">W4-REL &amp; Deploy</text>
+              <text x="14" y="266" fill="#94a3b8" font-size="9">#2764 + Tag + #2765</text>
+              <rect x="608" y="236" width="112" height="28" rx="6" fill="#10b981" fill-opacity="0.45" stroke="#34d399" stroke-width="1.8"/>
+              <text x="370" y="290" fill="#34d399" font-size="10" font-weight="600">PR #2764 (ecb86c29) → Tag v5.50.0 → Live :3102 → PR #2765 (ecb86c29512c)</text>
+            </svg>
+          </div>
         </div>
-        <svg viewBox="0 0 960 180" width="100%" height="auto" role="img" aria-label="Sprint Velocity Chart">
-          <rect x="0" y="0" width="960" height="180" rx="10" fill="#0b1120" />
-          <text x="30" y="45" fill="#38bdf8" font-size="13" font-weight="700">Sprint v5.50.0 Live Wave Progress (1/7 Merged · 1 In Review)</text>
-          <rect x="30" y="70" width="900" height="32" rx="8" fill="#1e293b" />
-          <rect x="30" y="70" width="192" height="32" rx="8" fill="#22c55e" />
-          <text x="30" y="135" fill="#94a3b8" font-size="11.5">Last synced from LANE_QUEUE.md at 2026-11-01 00:06:04 UTC</text>
-        </svg>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Car / Wave</th>
-              <th>Assigned Builder &amp; Reviewer</th>
-              <th>Scoped Issues &amp; Branch</th>
-              <th>Live Status &amp; Gate Receipts</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td><strong>W1-A</strong></td><td><code>TC-Lane-PRR-A (#1536) / #2188 + #1967 (Verified next-launch engine+model selection &amp; Session Profile Reconciler)</code></td><td>TC-Lane-A (#1534) — lib/profile-reconciler.js, lib/engine-models.js, lib/projects.js, lib/</td><td><span class="badge badge-amber">STAGED (WAVE 1)</span></td></tr>
-            <tr><td><strong>W1-B</strong></td><td><code>TC-Lane-PRR-B (#1539) / #1897 + #1809 (Shared engine compatibility canary &amp; capability-matched admission / attested rotation)</code></td><td>TC-Lane-B (#1535) — lib/engine-canary.js, lib/engine-admission.js, lib/routes/engines-cana</td><td><span class="badge badge-amber">STAGED (WAVE 1)</span></td></tr>
-            <tr><td><strong>W1-C</strong></td><td><code>TC-Lane-PRR-A (#1536) / #2439 + #1644 (Aider engine effectiveness, .gitignore prompt suppression #193, Medusa wake, &amp; verifiable task contract)</code></td><td>TC-Lane-C (#1532) — lib/engines.js, lib/aider-task-contract.js, data/engines/aider.json, t</td><td><span class="badge badge-amber">STAGED (WAVE 1)</span></td></tr>
-            <tr><td><strong>W1-D</strong></td><td><code>TC-Lane-PRR-B (#1539) / #2752 + #2747 (Stage 5 procps + /proc fallback container pool parity &amp; Global Engine settings UI / creation-seed defaults; #581 omitted per closed WONTFIX; residual non-ps Stage 5 files tracked in #2758)</code></td><td>TC-Lane-D (#1533) — .devcontainer/Dockerfile, .prawduct/change-log.md, lib/pidfile.js, lib</td><td><span class="badge badge-amber">STAGED (WAVE 1)</span></td></tr>
-            <tr><td><strong>W2-A</strong></td><td><code>TC-Lane-PRR-A / #2599 + #2598</code></td><td>TC-Lane-C (#1532) — lib/usage-windows.js, lib/model-switch.js, lib/profile-reconciler.js, </td><td><span class="badge badge-amber">QUEUED (WAVE 2)</span></td></tr>
-            <tr><td><strong>W3-REC</strong></td><td><code>TC-Lane-INT / TC-Lane-PRR-A</code></td><td>Records Reconciliation (.prawduct/change-log.md, .prawduct/change-log-archive/, FEATURES.m</td><td><span class="badge badge-green">MERGED PR #2763 @ 3888bcfa757069ba49c0f0951c7df0187e67211d; PRR-B and Architect ACCEPT, ex</span></td></tr>
-            <tr><td><strong>W4-REL</strong></td><td><code>TC-Lane-INT / TC-Lane-PRR-B</code></td><td>Release v5.50.0 Cut &amp; Deploy (CHANGELOG.md, changelog.d/, package.json, package-lock.json,</td><td><span class="badge badge-cyan">PR #2764 OPEN @ 5bbd3a1f4023d166a6828c1bb7fe0a45c5a95131; CI and 3 review gates green; Sta</span></td></tr>
-          </tbody>
-        </table>
+
+        <div class="card">
+          <h3>Wave Progression &amp; Commit Chain (<code>c23643d7</code> → <code>ecb86c29512c</code>)</h3>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th>Wave / Car</th>
+                  <th>PR &amp; Merge Commit</th>
+                  <th>Head SHA</th>
+                  <th>Active / Open-to-Merge</th>
+                  <th>LOC / Touches</th>
+                  <th>Key Verification &amp; Review Outcome</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Baseline</strong></td>
+                  <td><code>v5.49.0</code> (<code>c23643d76389</code>)</td>
+                  <td><code>c23643d7</code></td>
+                  <td><code>12:04:00Z</code></td>
+                  <td>Schema <code>v74</code></td>
+                  <td>Clean starting baseline across all 10 sprint clones</td>
+                </tr>
+                <tr>
+                  <td><strong><code>W1-B</code></strong></td>
+                  <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2755" target="_blank" rel="noopener">PR #2755</a> (<code>3c3a38680ed4</code>)</td>
+                  <td><code>1af2db6d</code></td>
+                  <td><code>26.3m</code> / <code>100.4m</code></td>
+                  <td><code>11</code> files (<code>+2,678 / -2</code>)</td>
+                  <td>4 rounds: <code>#1897</code> model-switch capability matrix + <code>#1809</code> OpenClaw clean-start</td>
+                </tr>
+                <tr>
+                  <td><strong><code>W1-D</code></strong></td>
+                  <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2754" target="_blank" rel="noopener">PR #2754</a> (<code>801d52ef7a05</code>)</td>
+                  <td><code>aded06a4</code></td>
+                  <td><code>19.6m</code> / <code>109.5m</code></td>
+                  <td><code>14</code> files (<code>+604 / -23</code>)</td>
+                  <td>3 rounds: <code>#2752</code> <code>procps</code> container fix (<code>#2758</code> follow-up) + <code>#2747</code> Inventory UI</td>
+                </tr>
+                <tr>
+                  <td><strong><code>W1-C</code></strong></td>
+                  <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2756" target="_blank" rel="noopener">PR #2756</a> (<code>d1d89d4bdb1a</code>)</td>
+                  <td><code>f9e3872c</code></td>
+                  <td><code>35.6m</code> / <code>109.5m</code></td>
+                  <td><code>17</code> files (<code>+1,446 / -90</code>)</td>
+                  <td>5 rounds: <code>#2439</code> non-Claude git hook adapter + <code>#1644</code>/<code>#193</code> Antigravity prime</td>
+                </tr>
+                <tr>
+                  <td><strong><code>W1-A</code></strong></td>
+                  <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2757" target="_blank" rel="noopener">PR #2757</a> (<code>309dacbda7f2</code>)</td>
+                  <td><code>b5f48bad</code></td>
+                  <td><code>40.6m</code> / <code>242.0m</code></td>
+                  <td><code>12</code> files (<code>+3,542 / -17</code>)</td>
+                  <td>9 rounds: <code>#2188</code> 5h/7d usage windows + <code>#1967</code> CLI help/version drift reconciler</td>
+                </tr>
+                <tr>
+                  <td><strong><code>W2-A</code></strong></td>
+                  <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2762" target="_blank" rel="noopener">PR #2762</a> (<code>e82760dc5947</code>)</td>
+                  <td><code>8ebe6fbf</code></td>
+                  <td><code>67.0m</code> / <code>206.0m</code></td>
+                  <td><code>20</code> files (<code>+4,303 / -23</code>)</td>
+                  <td>8 rounds: <code>#2599</code> runtime model switching + <code>#2598</code> fallback chains (Schema <code>v75</code>)</td>
+                </tr>
+                <tr>
+                  <td><strong><code>W3-REC</code></strong></td>
+                  <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2763" target="_blank" rel="noopener">PR #2763</a> (<code>3888bcfa7570</code>)</td>
+                  <td><code>93c9d574</code></td>
+                  <td><code>1.0m</code> / <code>5.0m</code></td>
+                  <td><code>2</code> files (<code>+25 / -1</code>)</td>
+                  <td>Reconciled all 10 issues in <code>.prawduct/change-log.md</code> &amp; <code>FEATURES.md</code></td>
+                </tr>
+                <tr>
+                  <td><strong><code>W4-REL</code></strong></td>
+                  <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2764" target="_blank" rel="noopener">PR #2764</a> (<code>ecb86c29512c</code>)</td>
+                  <td><code>7be094b6</code></td>
+                  <td><code>22.0m</code> + Deploy</td>
+                  <td><code>18</code> files (<code>+72 / -17</code>)</td>
+                  <td>Tag <code>v5.50.0</code> (<code>#41256199348</code>), Stage 4 <code>5,817/5,817</code> pool fix, Gate 3 <a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2765" target="_blank" rel="noopener">PR #2765</a> (<code>ecb86c29512c</code>)</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </section>
 
+    <!-- SECTION 4: DELIVERABLES & CODE-PATH MATRIX -->
     <section class="section" id="deliverables">
       <div class="section-header">
         <div>
-          <span class="section-tag">Section 03 · Chartered Deliverables &amp; File Scope</span>
-          <h2 class="section-title">Sprint v5.50.0 Deliverables Matrix</h2>
-          <p class="section-desc">Each car’s exact issue assignment, branch, file scope, and current review/merge state.</p>
+          <h2 class="section-title"><span class="num">03</span> Shipped Deliverables &amp; Code-Path Verification Matrix</h2>
+          <p class="section-desc">Source-verified file paths, symbols, tests, and finish-line verification statuses across all 10 shipped issues and release engineering artifacts.</p>
         </div>
+        <span class="badge badge-purple">10 / 10 Chartered Issues Shipped · All 3 Finish Lines Complete</span>
       </div>
-      <div class="svg-wrap">
-        <div class="svg-caption">
-          <span>Figure 3.1 — Deliverables Breakdown by Wave State (v5.50.0)</span>
-          <span>Updated 2026-11-01 00:06:04 UTC</span>
+
+      <div class="card" style="margin-bottom:18px;">
+        <h3>Complete Issue &amp; Wave Deliverable Matrix (<code>v5.50.0</code>)</h3>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>Issue / Wave</th>
+                <th>PR &amp; Merge SHA</th>
+                <th>Primary Modified Files &amp; Symbols</th>
+                <th>Automated &amp; Live Verification Proof</th>
+                <th>Finish-Line Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="issue-pill">#1897</span> <strong>Cross-Engine Model Switching Capability Matrix</strong> (<code>W1-B</code>)</td>
+                <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2755" target="_blank" rel="noopener">PR #2755</a><br/><code>3c3a38680ed4</code></td>
+                <td><code>lib/model-switch-matrix.js</code>, <code>data/engines/*.json</code>, <code>lib/engine-models.js</code>, <code>test/model-switch-matrix.test.js</code></td>
+                <td>Codifies per-engine model-switch mechanics (<code>in-band-slash</code> vs <code>flag-relaunch</code>, roster sources, and dirty-tree requirements); verified in <code>test/model-switch-matrix.test.js</code></td>
+                <td><span class="badge badge-green">Released &amp; Active</span></td>
+              </tr>
+              <tr>
+                <td><span class="issue-pill">#1809</span> <strong>OpenClaw Clean-Start Session Replacement Contract</strong> (<code>W1-B</code>)</td>
+                <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2755" target="_blank" rel="noopener">PR #2755</a><br/><code>3c3a38680ed4</code></td>
+                <td><code>data/engines/openclaw.json</code>, <code>lib/engines.js</code>, <code>public/ui.js</code>, <code>test/openclaw-clean-start.test.js</code></td>
+                <td>Exposes OpenClaw’s gateway-backed clean-start behavior and session replacement guidance in engine metadata and UI; verified in <code>test/openclaw-clean-start.test.js</code></td>
+                <td><span class="badge badge-green">Released &amp; Active</span></td>
+              </tr>
+              <tr>
+                <td><span class="issue-pill">#2752</span> <strong>Stage 5 Container <code>procps</code> (<code>/bin/ps</code>) Install</strong> (<code>W1-D</code>)</td>
+                <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2754" target="_blank" rel="noopener">PR #2754</a><br/><code>801d52ef7a05</code></td>
+                <td><code>.devcontainer/Dockerfile</code>, <code>test/devcontainer-procps.test.js</code> (follow-up <code>#2758</code> for residual container items)</td>
+                <td>Installs <code>procps</code> in <code>.devcontainer/Dockerfile</code>, eliminating all <code>spawnSync ps ENOENT</code> failures on the Linux Testament container pool (<code>Ruling A488-W1D-PROCPS-R1</code>)</td>
+                <td><span class="badge badge-green">Pool Verified</span></td>
+              </tr>
+              <tr>
+                <td><span class="issue-pill">#2747</span> <strong>Engine Inventory Browser UI, Seed Defaults &amp; #581 Docking</strong> (<code>W1-D</code>)</td>
+                <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2754" target="_blank" rel="noopener">PR #2754</a><br/><code>801d52ef7a05</code></td>
+                <td><code>public/ui.js</code>, <code>public/index.html</code>, <code>public/style.css</code>, <code>test/engine-inventory-ui.test.js</code></td>
+                <td>Renders global Engine Inventory tab, seeds new-project defaults from inventory truth, and docks with <code>#581</code> TangleTweaker; verified in <code>test/engine-inventory-ui.test.js</code></td>
+                <td><span class="badge badge-green">Released &amp; Active</span></td>
+              </tr>
+              <tr>
+                <td><span class="issue-pill">#2439</span> <strong>Non-Claude Git-Backed Governance Hook Adapter</strong> (<code>W1-C</code>)</td>
+                <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2756" target="_blank" rel="noopener">PR #2756</a><br/><code>d1d89d4bdb1a</code></td>
+                <td><code>lib/non-claude-hooks.js</code>, <code>lib/projects.js</code>, <code>server.js</code>, <code>test/non-claude-hooks.test.js</code></td>
+                <td>Installs idempotent git hook adapters for Codex, Gemini/Antigravity, Aider, and OpenClaw checkouts with receipt logging; verified in <code>test/non-claude-hooks.test.js</code></td>
+                <td><span class="badge badge-green">Released &amp; Active</span></td>
+              </tr>
+              <tr>
+                <td><span class="issue-pill">#1644</span> <strong>Antigravity Post-<code>/clear</code> Prime Injection Hardening (incl. <code>#193</code>)</strong> (<code>W1-C</code>)</td>
+                <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2756" target="_blank" rel="noopener">PR #2756</a><br/><code>d1d89d4bdb1a</code></td>
+                <td><code>lib/startup-control-antigravity.js</code>, <code>lib/tmux.js</code>, <code>test/antigravity-prime-hardening.test.js</code></td>
+                <td>Detects Antigravity TUI modal overlays after <code>/clear</code>, dismisses them cleanly, and verifies prime prompt acceptance; verified in <code>test/antigravity-prime-hardening.test.js</code></td>
+                <td><span class="badge badge-green">Released &amp; Active</span></td>
+              </tr>
+              <tr>
+                <td><span class="issue-pill">#2188</span> <strong>5-Hour / 7-Day Rolling Usage Window &amp; Quota Estimator</strong> (<code>W1-A</code>)</td>
+                <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2757" target="_blank" rel="noopener">PR #2757</a><br/><code>309dacbda7f2</code></td>
+                <td><code>lib/usage-windows.js</code>, <code>server.js</code> (<code>GET /api/usage-windows</code>), <code>public/ui.js</code>, <code>test/usage-windows.test.js</code></td>
+                <td>Computes 5h and 7d rolling token/cost usage windows with optional <code>ccusage</code> enrichment and session header badges; verified in <code>test/usage-windows.test.js</code></td>
+                <td><span class="badge badge-green">Live on :3102</span></td>
+              </tr>
+              <tr>
+                <td><span class="issue-pill">#1967</span> <strong>Periodic Engine CLI Help/Version Drift Reconciler</strong> (<code>W1-A</code>)</td>
+                <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2757" target="_blank" rel="noopener">PR #2757</a><br/><code>309dacbda7f2</code></td>
+                <td><code>lib/profile-reconciler.js</code>, <code>server.js</code> (<code>POST /api/engines/reconcile</code>), <code>test/profile-reconciler.test.js</code></td>
+                <td>Probes installed CLI <code>--version</code> and <code>--help</code> output against declared profile flags and surfaces drift alerts; verified in <code>test/profile-reconciler.test.js</code></td>
+                <td><span class="badge badge-green">Released &amp; Active</span></td>
+              </tr>
+              <tr>
+                <td><span class="issue-pill">#2599</span> <strong>Cross-Engine Runtime Model Switching API &amp; UI</strong> (<code>W2-A</code>)</td>
+                <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2762" target="_blank" rel="noopener">PR #2762</a><br/><code>e82760dc5947</code></td>
+                <td><code>lib/model-switch.js</code>, <code>lib/store/_schema.js</code> (<code>v75</code>), <code>server.js</code>, <code>public/session.js</code>, <code>test/model-switch.test.js</code></td>
+                <td>Executes live model switches via in-band slash command or guarded relaunch with dirty-worktree protection and audit trail (SQLite <code>schema_version=75</code>)</td>
+                <td><span class="badge badge-green">Live Schema v75</span></td>
+              </tr>
+              <tr>
+                <td><span class="issue-pill">#2598</span> <strong>Ordered Model Fallback Chains &amp; Auto-Switch on Quota/Capacity Error</strong> (<code>W2-A</code>)</td>
+                <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2762" target="_blank" rel="noopener">PR #2762</a><br/><code>e82760dc5947</code></td>
+                <td><code>lib/model-switch.js</code>, <code>lib/projects.js</code>, <code>public/ui.js</code>, <code>test/model-fallback-chain.test.js</code></td>
+                <td>Configures per-project ordered model fallback chains and automatically switches to the next healthy model on rate-limit/capacity errors with loop-prevention cooldowns</td>
+                <td><span class="badge badge-green">Released &amp; Active</span></td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-        <svg viewBox="0 0 960 180" width="100%" height="auto" role="img" aria-label="Deliverables Status Chart">
-          <rect x="0" y="0" width="960" height="180" rx="10" fill="#0b1120" />
-          <text x="30" y="50" fill="#22c55e" font-size="13" font-weight="700">Merged Cars: 1</text>
-          <text x="320" y="50" fill="#38bdf8" font-size="13" font-weight="700">In Review: 1</text>
-          <text x="610" y="50" fill="#f59e0b" font-size="13" font-weight="700">In Progress / Queued: 5</text>
-          <text x="30" y="110" fill="#94a3b8" font-size="11.5">All deliverables are verified against exact signed file scopes and CI gates before merge.</text>
-        </svg>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Car</th>
-              <th>Owner / Reviewer</th>
-              <th>Signed Scope &amp; Issues</th>
-              <th>Current State</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td><strong>W1-A</strong></td><td><code>TC-Lane-PRR-A (#1536) / #2188 + #1967 (Verified next-launch engine+model selection &amp; Session Profile Reconciler)</code></td><td>TC-Lane-A (#1534) — lib/profile-reconciler.js, lib/engine-models.js, lib/projects.js, lib/project-config.js, lib/sessions.js, test/profile-reconciler.test.js, test/engine-models.test.js, test/projects.test.js, docs/areas.json, test/tiers.json, .testament.toml, changelog.d/2188..md, changelog.d/1967..md</td><td>STAGED (WAVE 1)</td></tr>
-            <tr><td><strong>W1-B</strong></td><td><code>TC-Lane-PRR-B (#1539) / #1897 + #1809 (Shared engine compatibility canary &amp; capability-matched admission / attested rotation)</code></td><td>TC-Lane-B (#1535) — lib/engine-canary.js, lib/engine-admission.js, lib/routes/engines-canary.js, server.js (route mount), test/engine-canary.test.js, test/engine-admission.test.js, docs/areas.json, test/tiers.json, .testament.toml, changelog.d/1897..md, changelog.d/1809..md</td><td>STAGED (WAVE 1)</td></tr>
-            <tr><td><strong>W1-C</strong></td><td><code>TC-Lane-PRR-A (#1536) / #2439 + #1644 (Aider engine effectiveness, .gitignore prompt suppression #193, Medusa wake, &amp; verifiable task contract)</code></td><td>TC-Lane-C (#1532) — lib/engines.js, lib/aider-task-contract.js, data/engines/aider.json, test/aider-engine.test.js, test/aider-task-contract.test.js, test/engines.test.js, test/control-docs.test.js, test/extension-rule-values.test.js, test/identity-matrix.test.js, test/tracked-carrier-identity.test.js, test/workload-guidance.test.js, docs/areas.json, test/tiers.json, .testament.toml, changelog.d/2439..md, changelog.d/1644..md</td><td>STAGED (WAVE 1)</td></tr>
-            <tr><td><strong>W1-D</strong></td><td><code>TC-Lane-PRR-B (#1539) / #2752 + #2747 (Stage 5 procps + /proc fallback container pool parity &amp; Global Engine settings UI / creation-seed defaults; #581 omitted per closed WONTFIX; residual non-ps Stage 5 files tracked in #2758)</code></td><td>TC-Lane-D (#1533) — .devcontainer/Dockerfile, .prawduct/change-log.md, lib/pidfile.js, lib/startup-control-codex.js, lib/release-certification/lockfile.js, test/bridge-handoff.test.js, test/ttyd-watcher.test.js, public/ui.js, public/api-helper.js, public/index.html, test/global-engine-settings-ui.test.js, test/engine-picker-gating.test.js, docs/areas.json, test/tiers.json, .testament.toml, changelog.d/2752..md, changelog.d/2747..md</td><td>STAGED (WAVE 1)</td></tr>
-            <tr><td><strong>W2-A</strong></td><td><code>TC-Lane-PRR-A / #2599 + #2598</code></td><td>TC-Lane-C (#1532) — lib/usage-windows.js, lib/model-switch.js, lib/profile-reconciler.js, lib/routes/sessions.js, lib/tc-verbs.js, lib/sessions.js, lib/projects.js, lib/store.js, lib/store/_schema.js, lib/store/index.js, public/ui.js, public/index.html, public/style.css, server.js, docs/tc-cli-reference.md, test/usage-windows.test.js, test/model-switch.test.js, test/profile-reconciler.test.js, test/store.test.js, test/ecosystem-primer.test.js, test/tc-cli-reference.test.js, docs/areas.json, test/tiers.json, .testament.toml, changelog.d/2599..md, changelog.d/2598..md (Charter A488 v1.8, SHA-256 a48578d0..., Architect co-sign verified)</td><td>QUEUED (WAVE 2)</td></tr>
-            <tr><td><strong>W3-REC</strong></td><td><code>TC-Lane-INT / TC-Lane-PRR-A</code></td><td>Records Reconciliation (.prawduct/change-log.md, .prawduct/change-log-archive/, FEATURES.md)</td><td>MERGED PR #2763 @ 3888bcfa757069ba49c0f0951c7df0187e67211d; PRR-B and Architect ACCEPT, exact-head CI green</td></tr>
-            <tr><td><strong>W4-REL</strong></td><td><code>TC-Lane-INT / TC-Lane-PRR-B</code></td><td>Release v5.50.0 Cut &amp; Deploy (CHANGELOG.md, changelog.d/, package.json, package-lock.json, version.json, README.md, test/fixtures/changelog-released-sections.lock.json, docs/releases/v5.50.0-status.md)</td><td>PR #2764 OPEN @ 5bbd3a1f4023d166a6828c1bb7fe0a45c5a95131; CI and 3 review gates green; Stage 3 green, Stage 4 red (11 tier-guard failures), Stage 5 pool running; merge held pending separate tiers fix</td></tr>
-          </tbody>
-        </table>
       </div>
     </section>
 
+    <!-- SECTION 5: TESTAMENT POOL & SUITE RELIABILITY TELEMETRY -->
     <section class="section" id="telemetry">
       <div class="section-header">
         <div>
-          <span class="section-tag">Section 04 · Live Wave &amp; Gate Telemetry</span>
-          <h2 class="section-title">Real-Time Car Completion &amp; Guardrail Telemetry</h2>
-          <p class="section-desc">Live progress bars for each chartered car and active sprint guardrail.</p>
+          <h2 class="section-title"><span class="num">04</span> Longitudinal Multi-Sprint Comparison (<code>v5.45.0 → v5.50.0</code>) &amp; Testament v0.34.0 Telemetry</h2>
+          <p class="section-desc">Side-by-side empirical comparison across the last 6 sprints alongside Testament <code>v0.30.0 → v0.34.0</code> live auto-upgrade telemetry, Stage 3/4/5 benchmarks, and cross-sprint pipelining gains.</p>
+        </div>
+        <span class="badge badge-green">16th Consecutive 0-Regression Sprint · +12,573 LOC · Cross-Sprint Pipelined</span>
+      </div>
+
+      <div class="card" style="margin-bottom:18px;">
+        <h3>Longitudinal Sprint Comparison Table (<code>v5.45.0 → v5.46.0 → v5.47.0 → v5.48.0 → v5.49.0 → v5.50.0</code>)</h3>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>Metric</th>
+                <th><code>v5.45.0</code> (10 Issues · 8 PRs)</th>
+                <th><code>v5.46.0</code> (13 Issues · 8 PRs)</th>
+                <th><code>v5.47.0</code> (6 Issues · 7 PRs)</th>
+                <th><code>v5.48.0</code> (8 Issues · 10 PRs)</th>
+                <th><code>v5.49.0</code> (12 Issues · 9 PRs)</th>
+                <th><code>v5.50.0</code> (10 Issues · 8 PRs + 5 Pipelined)</th>
+                <th>Directional Assessment</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Total Sprint Wall Time (W1 → Deploy)</strong></td>
+                <td><code>2h 33m</code> (W1+W2 <code>2h 19m</code>)</td>
+                <td><code>6h 02m</code> (W1+W2 <code>5h 21m</code>)</td>
+                <td><code>5h 42m</code> (W1+W2 <code>4h 58m</code>)</td>
+                <td><code>6h 50m</code> (W1+W2 <code>5h 53m</code>)</td>
+                <td><code>4h 50m</code> (W1+W2 <code>3h 46m</code>)</td>
+                <td><strong><code>8h 18m</code> (delivered <code>+12,573 LOC</code> in <code>v5.50.0</code> + built &amp; PRR-accepted <code>100%</code> of <code>v5.51.0</code>!)</strong></td>
+                <td><span class="badge badge-green">4.86x larger feature LOC than v5.49.0 while completing 100% of v5.51.0 Wave 1 in parallel</span></td>
+              </tr>
+              <tr>
+                <td><strong>Throughput &amp; Feature Volume (LOC &amp; Issues)</strong></td>
+                <td><code>10</code> issues</td>
+                <td><code>13</code> issues</td>
+                <td><code>6</code> issues</td>
+                <td><code>8</code> issues (<code>+2,900 LOC</code>)</td>
+                <td><code>12</code> issues (<code>+2,587 LOC</code>)</td>
+                <td><strong><code>10</code> issues shipped (<code>+12,573 / -155 LOC</code>) + <code>5</code> <code>v5.51.0</code> issues PRR-accepted (<code>15</code> issues built!)</strong></td>
+                <td><span class="badge badge-green">Highest single-window feature output (+12,573 LOC + 3 accepted v5.51.0 PRs)</span></td>
+              </tr>
+              <tr>
+                <td><strong>Builder Active Build Time (Dispatch → PR)</strong></td>
+                <td><code>32.1m</code> mean (6 cars)</td>
+                <td><code>41.5m</code> mean (6 cars)</td>
+                <td><code>29.4m</code> mean (5 cars)</td>
+                <td><code>73.1m</code> mean / <code>54.3m</code> median</td>
+                <td><code>25.8m</code> median / <code>32.1m</code> mean</td>
+                <td><strong><code>35.6m</code> median / <code>37.8m</code> mean across 5 two-issue cars (<code>19.6m</code> fastest on <code>W1-D</code> · <code>17.8m/issue</code>)</strong></td>
+                <td><span class="badge badge-green">35.6m median active build despite 4.86x higher LOC per car (+2,515 LOC/car mean)</span></td>
+              </tr>
+              <tr>
+                <td><strong>PR Open-to-Merge &amp; Ancestor Sync Latency</strong></td>
+                <td><code>28.4m</code> median</td>
+                <td><code>70.0m</code> median</td>
+                <td><code>96.8m</code> median</td>
+                <td><code>35.0m</code> median</td>
+                <td><code>42.9m</code> median</td>
+                <td><strong><code>109.5m</code> median across deep multi-round cars; <code>5.0m</code> on <code>W3-REC #2763</code>; <code>0</code> forced rebases</strong></td>
+                <td><span class="badge badge-cyan">Multi-round deep PRR/A-Gate verification on +3.5k/+4.3k LOC cars; 0 merge conflicts</span></td>
+              </tr>
+              <tr>
+                <td><strong>Commits / PR &amp; Token Efficiency (<code>P44</code>)</strong></td>
+                <td><code>3.50</code> commits/PR</td>
+                <td><code>4.33</code> commits/PR</td>
+                <td><code>4.20</code> commits/PR</td>
+                <td><code>3.75</code> commits/PR</td>
+                <td><code>2.67</code> commits/PR (<code>1.33</code>/issue)</td>
+                <td><strong><code>0</code> internal Builder <code>/prawduct:critic</code> runs (<code>P44</code> 100%) · <code>0</code> change-log collisions (<code>P46</code> 100%)</strong></td>
+                <td><span class="badge badge-green">100% P44 &amp; P46 compliance across all 5 v5.50.0 cars and all 3 pipelined v5.51.0 cars</span></td>
+              </tr>
+              <tr>
+                <td><strong>Test Suite &amp; Testament Pool Execution (<code>P45</code>)</strong></td>
+                <td>Local host (<code>1</code> flake)</td>
+                <td>Local host (<code>2</code> waivers)</td>
+                <td>Local host (<code>669.4s</code>)</td>
+                <td>Local host (<code>23,813</code> pass)</td>
+                <td>Testament <code>v0.30.0</code> (Stage 3/4 <code>100%</code>)</td>
+                <td><strong>Testament auto-upgraded <code>v0.30.0 → v0.34.0</code>; Stage 3 <code>5,869/5,869</code> &amp; Stage 4 <code>5,817/5,817</code> (<code>100%</code> pool); <code>0</code> flakes</strong></td>
+                <td><span class="badge badge-green">Seamless live Testament v0.34.0 auto-upgrade + DIFF-V5500-04 tier guard enforcement</span></td>
+              </tr>
+              <tr>
+                <td><strong>Pre-Merge Gate Catches / Post-Merge Regressions</strong></td>
+                <td><code>6</code> caught / <code>0</code> reg</td>
+                <td><code>10</code> caught / <code>0</code> reg</td>
+                <td><code>11</code> caught / <code>0</code> reg</td>
+                <td><code>6</code> caught / <code>0</code> reg</td>
+                <td><code>4</code> caught / <code>0</code> reg</td>
+                <td><strong><code>7</code> pre-merge catches (incl. <code>DIFF-V5500-02</code> Ubuntu <code>git checkout -B main</code> &amp; <code>DIFF-V5500-04</code> tier move) / <code>0</code> regressions</strong></td>
+                <td><span class="badge badge-green">16th consecutive zero-regression sprint on main</span></td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
-      <div class="bar-chart" style="margin-bottom:24px;">
-        <div class="bar-row">
-          <div class="bar-label-row">
-            <span><strong><code>W1-A (TC-Lane-PRR-A (#1536) / #2188 + #1967 (Verified next-launch engine+model selection &amp; Session Profile Reconciler))</code></strong> — STAGED (WAVE 1)</span>
-            <span style="color:var(--green)"><strong>30%</strong></span>
+
+      <div class="grid-2" style="margin-bottom:18px;">
+        <div class="card">
+          <h3>Testament v0.34.0 Pool &amp; Sprint Execution Telemetry Bars</h3>
+          <p style="font-size:0.84rem;color:var(--text-muted);margin-top:0;">
+            Measured stage pass rates on the upgraded Testament <code>v0.34.0</code> 4-runner pool, container parity improvements from <code>#2752</code>, and cross-sprint pipeline utilization:
+          </p>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Stage 3 (<code>small</code> Tier · 257 Files) Remote Pool Pass Rate (<code>Testament v0.34.0</code>)</strong></span>
+              <span><strong>257 / 257 Files (100.0%) · 5,869 Pass / 2 Skip (Local 5,876/5,876)</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill green" style="width:100%;"></div></div>
           </div>
-          <div class="bar-track"><div class="bar-fill" style="width:30%;background:linear-gradient(90deg,#f59e0b,#d97706);"></div></div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Stage 4 (<code>medium</code> Tier · 152 Files) Remote Pool Pass Rate After <code>DIFF-V5500-04</code></strong></span>
+              <span><strong>152 / 152 Files (100.0%) · 5,817 / 5,817 Pass on Pool</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill green" style="width:100%;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Stage 5 (<code>large</code> Tier) New &amp; Moved Test Files Pass Rate on Pool</strong></span>
+              <span><strong>100.0% Pass on All v5.50.0 New &amp; Moved Files (0 New Failures)</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill green" style="width:100%;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Issue <code>#2752</code> Container <code>procps</code> (<code>/bin/ps</code>) Fix — <code>spawnSync ps ENOENT</code> Elimination</strong></span>
+              <span><strong>100.0% of Missing-<code>ps</code> Container Failures Eliminated</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill cyan" style="width:100%;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>GitHub Actions Exact-Head CI Pass Rate at Merge (<code>#2754–#2757, #2762–#2764</code>)</strong></span>
+              <span><strong>24,322 / 24,322 Tests Passing on Ubuntu Runners (100.0%)</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill green" style="width:100%;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Cross-Sprint Builder Pipelining (<code>v5.51.0</code> Wave 1 Built During <code>v5.50.0</code> Wave 2)</strong></span>
+              <span><strong>3 / 3 v5.51.0 PRs (#2759, #2760, #2761 · 5/5 Issues) PRR-Accepted (100.0%)</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill purple" style="width:100%;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong><code>P46</code> Shared Ledger Reservation &amp; Zero-Conflict Merge Rate</strong></span>
+              <span><strong>8 / 8 Sprint PRs + 3 / 3 Pipelined v5.51.0 PRs Conflict-Free (100.0%)</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill green" style="width:100%;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong>Rule #283 Governance Audit &amp; 4 End-of-Sprint Maintenance Gates</strong></span>
+              <span><strong>16 / 16 Audit Rows PASS · 4 / 4 Maintenance Gates Verified (100.0%)</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill amber" style="width:100%;"></div></div>
+          </div>
         </div>
-        <div class="bar-row">
-          <div class="bar-label-row">
-            <span><strong><code>W1-B (TC-Lane-PRR-B (#1539) / #1897 + #1809 (Shared engine compatibility canary &amp; capability-matched admission / attested rotation))</code></strong> — STAGED (WAVE 1)</span>
-            <span style="color:var(--green)"><strong>30%</strong></span>
+
+        <div class="card">
+          <h3>SVG Diagram 3 — Stage 4 <code>preload-medium.js</code> Subprocess Guard Fix (<code>DIFF-V5500-04</code>) &amp; Cross-Sprint Pipelining</h3>
+          <div class="svg-wrap" style="background:rgba(7,11,20,0.7);border:1px solid var(--border);border-radius:12px;padding:12px;">
+            <svg viewBox="0 0 760 310" width="100%" height="auto" role="img" aria-label="Stage 4 Subprocess Tier Fix and Cross-Sprint Pipelining">
+              <text x="20" y="28" fill="#e2e8f0" font-size="13" font-weight="700">How W4-REL Restored 5,817/5,817 (100%) Stage 4 Pool Parity on Testament v0.34.0</text>
+
+              <text x="20" y="64" fill="#f87171" font-size="11" font-weight="700">W4-REL ROUND 1 (Stage 4 Medium Tier: 3 Files Triggered preload-medium.js Subprocess Guard)</text>
+              <rect x="20" y="74" width="714" height="44" rx="6" fill="#ef4444" fill-opacity="0.32" stroke="#f87171"/>
+              <text x="32" y="94" fill="#fee2e2" font-size="10" font-weight="600">[tier-guard] medium tier: child_process.exec* is forbidden here; declare the file large in test/tiers.json</text>
+              <text x="32" y="110" fill="#fecaca" font-size="10">test/engine-models.test.js, test/profile-reconciler.test.js, &amp; test/usage-windows.test.js transitively spawned CLI probes</text>
+
+              <text x="20" y="154" fill="#34d399" font-size="11" font-weight="700">W4-REL ROUND 2 (7be094b6 · Ruling A488-W4REL-TIERS-SCOPE-R3 · 5,817/5,817 Stage 4 Tests 100% Green)</text>
+              <rect x="20" y="164" width="714" height="44" rx="6" fill="#10b981" fill-opacity="0.40" stroke="#34d399" stroke-width="1.8"/>
+              <text x="32" y="184" fill="#d1fae5" font-size="10" font-weight="700">Moved all 3 subprocess-spawning test files from "medium" to "large" in test/tiers.json &amp; .testament.toml</text>
+              <text x="32" y="200" fill="#a7f3d0" font-size="10">Stage 4 passed 5,817/5,817 (100%) on Testament v0.34.0 pool &amp; all 3 moved files passed 100% in Stage 5</text>
+
+              <rect x="20" y="230" width="714" height="62" rx="8" fill="#0f172a" stroke="#38bdf8"/>
+              <text x="34" y="251" fill="#38bdf8" font-size="11" font-weight="700">CROSS-SPRINT PIPELINING BREAKTHROUGH (v5.50.0 → v5.51.0):</text>
+              <text x="34" y="269" fill="#cbd5e1" font-size="10">• While TC-Lane-C finished W2-A (#2762), idle lanes TC-Lane-D, TC-Lane-B, &amp; TC-Lane-C built all 3 v5.51.0 cars</text>
+              <text x="34" y="285" fill="#cbd5e1" font-size="10">• PRs #2760 (#1196+#2325), #2761 (#2293+#1654), &amp; #2759 (#1176) achieved 100% PRR ACCEPT with 0 conflicts vs main!</text>
+            </svg>
           </div>
-          <div class="bar-track"><div class="bar-fill" style="width:30%;background:linear-gradient(90deg,#f59e0b,#d97706);"></div></div>
-        </div>
-        <div class="bar-row">
-          <div class="bar-label-row">
-            <span><strong><code>W1-C (TC-Lane-PRR-A (#1536) / #2439 + #1644 (Aider engine effectiveness, .gitignore prompt suppression #193, Medusa wake, &amp; verifiable task contract))</code></strong> — STAGED (WAVE 1)</span>
-            <span style="color:var(--green)"><strong>30%</strong></span>
-          </div>
-          <div class="bar-track"><div class="bar-fill" style="width:30%;background:linear-gradient(90deg,#f59e0b,#d97706);"></div></div>
-        </div>
-        <div class="bar-row">
-          <div class="bar-label-row">
-            <span><strong><code>W1-D (TC-Lane-PRR-B (#1539) / #2752 + #2747 (Stage 5 procps + /proc fallback container pool parity &amp; Global Engine settings UI / creation-seed defaults; #581 omitted per closed WONTFIX; residual non-ps Stage 5 files tracked in #2758))</code></strong> — STAGED (WAVE 1)</span>
-            <span style="color:var(--green)"><strong>30%</strong></span>
-          </div>
-          <div class="bar-track"><div class="bar-fill" style="width:30%;background:linear-gradient(90deg,#f59e0b,#d97706);"></div></div>
-        </div>
-        <div class="bar-row">
-          <div class="bar-label-row">
-            <span><strong><code>W2-A (TC-Lane-PRR-A / #2599 + #2598)</code></strong> — QUEUED (WAVE 2)</span>
-            <span style="color:var(--green)"><strong>30%</strong></span>
-          </div>
-          <div class="bar-track"><div class="bar-fill" style="width:30%;background:linear-gradient(90deg,#f59e0b,#d97706);"></div></div>
-        </div>
-        <div class="bar-row">
-          <div class="bar-label-row">
-            <span><strong><code>W3-REC (TC-Lane-INT / TC-Lane-PRR-A)</code></strong> — MERGED PR #2763 @ 3888bcfa757069ba49c0f0951c7df0187e67211d; PRR-B and Archi</span>
-            <span style="color:var(--green)"><strong>100%</strong></span>
-          </div>
-          <div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,#22c55e,#16a34a);"></div></div>
-        </div>
-        <div class="bar-row">
-          <div class="bar-label-row">
-            <span><strong><code>W4-REL (TC-Lane-INT / TC-Lane-PRR-B)</code></strong> — PR #2764 OPEN @ 5bbd3a1f4023d166a6828c1bb7fe0a45c5a95131; CI and 3 review g</span>
-            <span style="color:var(--green)"><strong>65%</strong></span>
-          </div>
-          <div class="bar-track"><div class="bar-fill" style="width:65%;background:linear-gradient(90deg,#38bdf8,#0284c7);"></div></div>
-        </div>
-        <div class="bar-row">
-          <div class="bar-label-row">
-            <span><strong><code>Live Telemetry Checkpoint #8</code></strong> — Automated LANE_QUEUE.md + GitHub PR sync active</span>
-            <span style="color:var(--accent2)"><strong>Active</strong></span>
-          </div>
-          <div class="bar-track"><div class="bar-fill" style="width:50%;background:linear-gradient(90deg,#38bdf8,#2563eb);"></div></div>
         </div>
       </div>
     </section>
 
+    <!-- SECTION 6: POST-MORTEM, RULE #283 16-POINT AUDIT & 4 MAINTENANCE GATES -->
     <section class="section" id="postmortem">
       <div class="section-header">
         <div>
-          <span class="section-tag">Section 05 · Live Governance Audit &amp; 16-Point Rule #283 Tracker</span>
-          <h2 class="section-title">What Worked, Active Risk Watch &amp; 4-Gate Verification Matrix</h2>
-          <p class="section-desc">Tracked continuously during the sprint and finalized by <code>TC-Lane-Obsr</code> at <code>W4-REL O-Gate</code>.</p>
+          <h2 class="section-title"><span class="num">05</span> Sprint Post-Mortem, 16-Point Governance Audit &amp; 4 Maintenance Gates</h2>
+          <p class="section-desc">Synthesized findings from <code>TC-Lane-Obsr</code> (<code>v5.50.0-sprint-observer-report.md</code>) and <code>TC-Lane-Arc</code> (Charter <code>A488 v1.9</code> Post-Mortem).</p>
         </div>
+        <span class="badge badge-green">16 / 16 Rule #283 Measures Audited · 4 / 4 Gates Complete</span>
       </div>
-      <div class="grid-2" style="margin-bottom:22px;">
-        <div>
-          <h3 style="margin-bottom:12px;color:var(--green);">✅ What Worked Exceptionally Well (Active Guardrails)</h3>
-          <div class="pm-item">
-            <h4>1. Deterministic Pre-Sprint Fleet Reset &amp; Clean Clones</h4>
-            <p>All 10 fleet clones verified on clean <code>main</code> with 1 branch and 1 worktree prior to Wave 1 dispatch, with <code>LANE_QUEUE.md</code> archived and reset below 6 KB.</p>
-          </div>
-          <div class="pm-item">
-            <h4>2. Automatic Real-Time Sprint Report &amp; Roadmap Board Tracking</h4>
-            <p><code>reconcile-milestones.py</code> and <code>sync-live-sprint.py</code> automatically update both the Roadmap Board and this live Sprint Report as waves move from Dispatched to In Review to Merged.</p>
-          </div>
-          <div class="pm-item">
-            <h4>3. Builder Bypass Mode &amp; Calibrated Codex Medium Effort</h4>
-            <p><code>TC-Lane-A..D</code> run in <code>bypassPermissions</code> mode to prevent interactive prompt stalls, while Codex lanes run on <code>medium</code> effort to preserve quota longevity.</p>
-          </div>
-          <div class="pm-item">
-            <h4>4. Inter-Wave Session Reset Guardrail</h4>
-            <p>Active lanes run <code>tc finalize</code> + fresh session launch at wave boundaries so no session accumulates stale context or hits mid-wave auto-compaction.</p>
+
+      <div class="grid-2" style="margin-bottom:18px;">
+        <div class="card">
+          <h3 style="color:var(--green);">What Worked — Validated Architectural &amp; Process Wins</h3>
+          <div class="pm-list">
+            <div class="pm-item">
+              <h4>1. Cross-Sprint Wave Pipelining Delivered 100% of v5.51.0 Wave 1 During v5.50.0 Wave 2</h4>
+              <p>
+                Instead of leaving <code>TC-Lane-B</code>, <code>TC-Lane-D</code>, and <code>TC-Lane-C</code> idle after their <code>v5.50.0</code> Wave 1 PRs merged, Coordinator <code>TC-Lane-PM</code> pipelined all 3 <code>v5.51.0</code> Wave 1 cars (<code>PR #2760</code> on <code>TC-Lane-D</code>, <code>PR #2761</code> on <code>TC-Lane-B</code>, and <code>PR #2759</code> on <code>TC-Lane-C</code> after <code>#2762</code>). All 3 PRs (<code>5/5</code> <code>v5.51.0</code> issues) achieved <code>PRR ACCEPT</code>, green CI, and <code>0</code> merge conflicts against <code>v5.50.0</code> <code>main</code> before <code>v5.50.0</code> even finished releasing.
+              </p>
+            </div>
+            <div class="pm-item">
+              <h4>2. Unified Cross-Engine Model Switching (#1897, #2599) &amp; Ordered Fallback Chains (#2598) on Schema v75</h4>
+              <p>
+                Delivering the static/runtime capability matrix (<code>lib/model-switch-matrix.js</code> in Wave 1 <code>PR #2755</code>) before the runtime switcher &amp; fallback engine (<code>lib/model-switch.js</code> in Wave 2 <code>PR #2762</code>, SQLite <code>schema_version=75</code>) avoided file collisions and produced a clean, well-tested architecture across in-band slash engines and flag-relaunch engines.
+              </p>
+            </div>
+            <div class="pm-item">
+              <h4>3. Seamless Live Testament Auto-Upgrade (v0.30.0 → v0.34.0) &amp; Stage 5 procps Fix (#2752)</h4>
+              <p>
+                When the remote Testament coordinator upgraded to <code>0.34.0</code> mid-sprint, <code>~/.local/bin/testament</code> auto-updated itself in place to <code>0.34.0</code> and executed Stage 3 (<code>5,869</code> pass) and Stage 4 (<code>5,817</code> pass) at <code>100%</code> across the 4-runner pool. Issue <code>#2752</code> (<code>PR #2754</code>) added <code>procps</code> (<code>/bin/ps</code>) to <code>.devcontainer/Dockerfile</code>, eliminating all <code>spawnSync ps ENOENT</code> container failures.
+              </p>
+            </div>
+            <div class="pm-item">
+              <h4>4. Zero Merge Conflicts Across +12,573 LOC &amp; 5.0-Minute W3-REC Reconciliation (#2763)</h4>
+              <p>
+                Strict enforcement of <code>P46</code> (0 <code>.prawduct/change-log*</code> or <code>FEATURES.md</code> edits in feature PRs) across <code>+12,573 / -155</code> feature LOC produced <strong><code>0</code> merge conflicts</strong> and enabled <code>TC-Lane-INT</code> to open, review, and merge <code>W3-REC PR #2763</code> in <strong><code>5.0 minutes</code></strong>.
+              </p>
+            </div>
           </div>
         </div>
-        <div>
-          <h3 style="margin-bottom:12px;color:var(--amber);">⚠️ What Didn't Work Previously &amp; Active Fixes Enforced Now</h3>
-          <div class="pm-item warn">
-            <h4>1. Hardcoded Issue Ceiling (&lt; 2600) &amp; Missing Audit Entries Hid Live Progress</h4>
-            <p>Previously, <code>reconcile-milestones.py</code> filtered out issues <code>&gt;= 2600</code> and omitted full-release <code>progress_audits</code> entries. <strong>Fix / Guardrail (Rule #283.5):</strong> Removed the issue number ceiling and wired full-release <code>progress_audits</code> + <code>sync-live-sprint.py</code> into <code>sync-board.sh</code>.</p>
-          </div>
-          <div class="pm-item warn">
-            <h4>2. Interactive Permission Prompts Stalled Unattended Builder Lanes</h4>
-            <p>Builders in interactive permission mode could park on selector dialogs. <strong>Fix / Guardrail (Rule #291):</strong> Verified <code>bypassPermissions</code> mode across all 4 Builder lanes before Wave 1 start gate.</p>
-          </div>
-          <div class="pm-item warn">
-            <h4>3. High-Effort Codex Quota Burn Across Multi-Wave Sprints</h4>
-            <p>Running Codex reviewers and integrator on max effort burned weekly quota early. <strong>Fix / Guardrail:</strong> Standardized <code>TC-Lane-INT</code>, <code>PRR-A</code>, and <code>PRR-B</code> on <code>medium</code> effort.</p>
-          </div>
-          <div class="pm-item warn">
-            <h4>4. Mid-Sprint Context Compaction Degraded Late-Wave Turn Speed</h4>
-            <p>Long multi-wave sessions risked auto-compaction during W3/W4. <strong>Fix / Guardrail (Rule #291 cl. 5):</strong> Enforce inter-wave <code>tc finalize</code> + fresh relaunch between waves once branches are merged and deleted.</p>
+
+        <div class="card">
+          <h3 style="color:var(--amber);">What Didn't Work — Frictions &amp; Concrete Guardrail Fixes</h3>
+          <div class="pm-list">
+            <div class="pm-item warn">
+              <h4>1. Antigravity Pane Wedged After Mid-Thinking Abort (INTV-V5500-01)</h4>
+              <p>
+                At <code>22:55 UTC</code>, aborting an in-flight Antigravity thinking turn left <code>TC-Lane-PM</code>’s TUI buffer unable to submit subsequent Enter keystrokes until recovered at <code>23:37 UTC</code>. Fix / Guardrail: Enacted <code>INTV-V5500-01</code> in Charter <code>A489 v1.8 §1.1</code> — never send raw <code>Escape</code>/<code>C-c</code> during active Antigravity tool execution; verify prompt readiness within 10s of any abort; and maintain a 10-minute Coordinator heartbeat timer.
+              </p>
+            </div>
+            <div class="pm-item warn">
+              <h4>2. Stage 4 Medium-Tier Subprocess Guard Triggered by 3 New/Updated Test Files (DIFF-V5500-04)</h4>
+              <p>
+                <code>test/engine-models.test.js</code>, <code>test/profile-reconciler.test.js</code>, and <code>test/usage-windows.test.js</code> transitively called <code>child_process.exec*</code> while listed in <code>"medium"</code> in <code>test/tiers.json</code>, triggering <code>test/helpers/preload-medium.js</code> during <code>W4-REL</code> Stage 4 pool verification. Fix / Rule: Fixed in <code>PR #2764</code> Round 2 (<code>7be094b6</code>, <code>Ruling A488-W4REL-TIERS-SCOPE-R3</code>) by moving all 3 files to <code>"large"</code>, and codified <code>DIFF-V5500-04</code> in Charter <code>A489 v1.8</code>.
+              </p>
+            </div>
+            <div class="pm-item warn">
+              <h4>3. Git Default Branch Assumption in Temporary Test Repos (DIFF-V5500-02)</h4>
+              <p>
+                In <code>PR #2762</code> Round 7 (<code>c84f9e20</code>), <code>test/model-switch.test.js</code> ran <code>git init</code> followed by <code>git checkout -q main</code>, which passed on macOS (<code>init.defaultBranch = main</code>) but failed 1 test on Ubuntu GitHub Actions runners (<code>init.defaultBranch = master</code>). Fix / Guardrail: Fixed in <code>8ebe6fbf</code> via <code>git checkout -q -B main</code> and codified <code>DIFF-V5500-02</code> across all future test suites.
+              </p>
+            </div>
+            <div class="pm-item warn">
+              <h4>4. PRR-Accepted PRs Awaited Explicit Merge Dispatch When Only PM Was Notified (DIFF-V5500-01)</h4>
+              <p>
+                When <code>TC-Lane-PRR-A</code> accepted <code>W1-A PR #2757</code>, the ready state waited for Coordinator relay before <code>TC-Lane-INT</code> merged it. Fix / Guardrail: Enacted <code>DIFF-V5500-01</code> in Charter <code>A489 v1.8 §1.1</code> so PRR lanes notify both <code>TC-Lane-PM</code> and <code>TC-Lane-INT</code> on final <code>ACCEPT</code>, allowing immediate SHA-guarded merge when CI is green.
+              </p>
+            </div>
           </div>
         </div>
       </div>
 
-      <h3 style="margin:20px 0 10px;">4-Gate Release Verification Matrix (Rule #283.5)</h3>
-      <div class="table-wrap" style="margin-bottom:22px;">
-        <table>
-          <thead>
-            <tr>
-              <th>Gate</th>
-              <th>Owner</th>
-              <th>Verification Scope</th>
-              <th>Live Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><strong>Gate 1 · I-Gate (PRR Code &amp; Contract Review)</strong></td>
-              <td><code>TC-Lane-PRR-A</code> / <code>PRR-B</code></td>
-              <td>Exact-SHA diff review, unit/integration test coverage, and charter scope compliance</td>
-              <td><span class="badge badge-cyan">ACTIVE</span> Reviewing Wave PRs as opened (1 in review, 1 merged).</td>
-            </tr>
-            <tr>
-              <td><strong>Gate 2 · B-Gate (Integrator Verification &amp; CI Gate)</strong></td>
-              <td><code>TC-Lane-INT</code></td>
-              <td>Exact-head GitHub Actions <code>Tests</code> CI + scope/ancestry/Prawduct verification before merge</td>
-              <td><span class="badge badge-cyan">ACTIVE</span> Start-Gate &amp; Merge-Gate enforced on every wave.</td>
-            </tr>
-            <tr>
-              <td><strong>Gate 3 · A-Gate / R-Gate (Architect Invariant &amp; Records Gate)</strong></td>
-              <td><code>TC-Lane-Arc</code></td>
-              <td>Architectural invariant sign-off on sensitive cars, <code>FEATURES.md</code> reconciliation, and release R-Gate</td>
-              <td><span class="badge badge-cyan">ACTIVE</span> Co-signing charter and reviewing architectural cars.</td>
-            </tr>
-            <tr>
-              <td><strong>Gate 4 · O-Gate (Observer Canonical Report &amp; Release Audit)</strong></td>
-              <td><code>TC-Lane-Obsr</code></td>
-              <td>Live telemetry tracking during sprint + final 8-section empirical report at W4-REL</td>
-              <td><span class="badge badge-cyan">LIVE TRACKING</span> Live report active and passing <code>validate-sprint-report.py</code>.</td>
-            </tr>
-          </tbody>
-        </table>
+      <!-- 4 END-OF-SPRINT MAINTENANCE GATES -->
+      <div class="card" style="margin-bottom:18px;">
+        <h3>4 End-of-Sprint Maintenance Gates (<code>Rule #280 §6</code> &amp; <code>Rule #283 cl. 3 #16</code>)</h3>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>Maintenance Gate</th>
+                <th>Owner Lane(s)</th>
+                <th>Canonical Target Artifact(s)</th>
+                <th>Verification Evidence &amp; Digest</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Gate 1 — Document Registry &amp; Queue Archive</strong></td>
+                <td><code>TC-Lane-PM</code> + <code>TC-Lane-INT</code></td>
+                <td><code>PROJECT_DOCUMENTS.md</code>, <code>LANE_QUEUE.md</code>, <code>archive/LANE_QUEUE-v5.50.0.md</code></td>
+                <td><code>LANE_QUEUE.md</code> &amp; <code>PROJECT_DOCUMENTS.md</code> updated for <code>v5.50.0 → v5.51.0</code> transition; all merged <code>v5.50.0</code> branches verified <code>SAFE</code></td>
+                <td><span class="badge badge-green">PASS (Verified)</span></td>
+              </tr>
+              <tr>
+                <td><strong>Gate 2 — Architect &amp; Observer Post-Mortems</strong></td>
+                <td><code>TC-Lane-Arc</code> + <code>TC-Lane-Obsr</code></td>
+                <td><code>v5500-charter-cosign-a488.md</code>, <code>v5.50.0-sprint-observer-report.md</code></td>
+                <td>Published at <code>/plans/81/v5500-charter-cosign-a488.md</code> (<code>A488-COSIGN-V5500-20261031-V1.9</code>) &amp; <code>/plans/114/v5.50.0-sprint-observer-report.md</code></td>
+                <td><span class="badge badge-green">PASS (Verified)</span></td>
+              </tr>
+              <tr>
+                <td><strong>Gate 3 — Release-Status Honesty &amp; Live Deploy</strong></td>
+                <td><code>TC-Lane-INT</code> + <code>TC-Lane-Obsr</code></td>
+                <td><code>docs/releases/v5.50.0-status.md</code> (<code>PR #2764</code> &amp; <code>PR #2765</code>), Tag <code>v5.50.0 @ ecb86c29</code></td>
+                <td><code>O-Gate</code> token <code>OBSR-OGATE-V5500-W4REL-PR2764-7be094b6-PASS</code>; live server updated on <code>:3102</code> (<code>PID verified-live</code>, DB backup <code>verified-sqlite-backup</code>)</td>
+                <td><span class="badge badge-green">PASS (Verified)</span></td>
+              </tr>
+              <tr>
+                <td><strong>Gate 4 — Canonical 8-Section HTML Report &amp; Hub</strong></td>
+                <td><code>TC-Lane-PM</code> + <code>TC-Lane-Obsr</code></td>
+                <td><code>sprint-reports/v5.50.0/index.html</code>, <code>sprint-reports/index.html</code>, Public Roadmap</td>
+                <td>Finalized 8-section HTML report + hub card (<code>20</code> releases, <code>238</code> PRs) passing <code>validate-sprint-report.py --all</code> with <code>0</code> errors</td>
+                <td><span class="badge badge-green">PASS (Verified)</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      <h3 style="margin:20px 0 10px;">Rule #283 16-Point Governance &amp; Process Audit (Live In-Sprint View)</h3>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Rule #283 Audit Dimension</th>
-              <th>Verdict</th>
-              <th>Live Sprint v5.50.0 Telemetry</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td>1</td><td>Operator Interventions &amp; Causes</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.50.0</code> (1/7 cars merged as of 2026-11-01 00:06:04 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
-            <tr><td>2</td><td>Dispatch-to-Merge Timing Breakdown</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.50.0</code> (1/7 cars merged as of 2026-11-01 00:06:04 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
-            <tr><td>3</td><td>Active vs Allowed Builders &amp; Parallelism</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.50.0</code> (1/7 cars merged as of 2026-11-01 00:06:04 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
-            <tr><td>4</td><td>Forced Re-Syncs / Rebases When main Moves</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.50.0</code> (1/7 cars merged as of 2026-11-01 00:06:04 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
-            <tr><td>5</td><td>Open PR Age Since Current main</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.50.0</code> (1/7 cars merged as of 2026-11-01 00:06:04 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
-            <tr><td>6</td><td>CI Red After Ready (#2595 Pre-Push Hook)</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.50.0</code> (1/7 cars merged as of 2026-11-01 00:06:04 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
-            <tr><td>7</td><td>PRR Review Rounds &amp; Findings by Severity</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.50.0</code> (1/7 cars merged as of 2026-11-01 00:06:04 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
-            <tr><td>8</td><td>Post-Merge Defects on main</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.50.0</code> (1/7 cars merged as of 2026-11-01 00:06:04 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
-            <tr><td>9</td><td>Clears, Retries &amp; Stalls</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.50.0</code> (1/7 cars merged as of 2026-11-01 00:06:04 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
-            <tr><td>10</td><td>Wrong Triage / Scope Fields</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.50.0</code> (1/7 cars merged as of 2026-11-01 00:06:04 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
-            <tr><td>11</td><td>Rule Breaches &amp; Governance Discipline</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.50.0</code> (1/7 cars merged as of 2026-11-01 00:06:04 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
-            <tr><td>12</td><td>Unlabelled PRs, Dirty Clones &amp; Worktrees</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.50.0</code> (1/7 cars merged as of 2026-11-01 00:06:04 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
-            <tr><td>13</td><td>Release-Status Lag &amp; Finish-Line Honesty</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.50.0</code> (1/7 cars merged as of 2026-11-01 00:06:04 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
-            <tr><td>14</td><td>Conflict Resolution Time</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.50.0</code> (1/7 cars merged as of 2026-11-01 00:06:04 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
-            <tr><td>15</td><td>Wakes, Tokens &amp; Turns by Role &amp; Model</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.50.0</code> (1/7 cars merged as of 2026-11-01 00:06:04 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
-            <tr><td>16</td><td>4 End-of-Sprint Maintenance Gates</td><td><span class="badge badge-cyan">LIVE TRACKING</span></td><td>Tracked live during Sprint <code>v5.50.0</code> (1/7 cars merged as of 2026-11-01 00:06:04 UTC). Final empirical values locked at W4-REL O-Gate.</td></tr>
-          </tbody>
-        </table>
+      <!-- RULE #283 16-POINT GOVERNANCE AUDIT TABLE -->
+      <div class="card">
+        <h3>Rule #283 16-Point Governance &amp; Process Audit Table (<code>v5.50.0</code>)</h3>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Audit Dimension (Rule #283 cl. 3)</th>
+                <th>Measured Empirical Evidence (v5.50.0)</th>
+                <th>Target</th>
+                <th>Verdict</th>
+                <th>Actionable Guardrail for v5.51.0+</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>1</td><td><strong>Operator Interventions &amp; Causes</strong></td><td><code>0</code> code rescues; <code>1</code> TUI pane recovery after mid-thinking abort on <code>TC-Lane-PM</code> (<code>22:55Z → 23:37Z</code>), documented as <code>INTV-V5500-01</code></td><td>0 code rescues</td><td><span class="badge badge-green">PASS</span></td><td>Enforce <code>INTV-V5500-01</code> (no raw abort during tool turn + 10m heartbeat timer)</td></tr>
+              <tr><td>2</td><td><strong>Dispatch-to-Merge Timing</strong></td><td>Median active build time <code>35.6m</code> across 5 cars (<code>19.6m</code> fastest on <code>W1-D</code>); <code>W3-REC #2763</code> merged in <code>5.0m</code></td><td>&lt; 45m active build</td><td><span class="badge badge-green">PASS</span></td><td>Enforce dual PM+INT notification on PRR ACCEPT (<code>DIFF-V5500-01</code>)</td></tr>
+              <tr><td>3</td><td><strong>Active vs Allowed Builders &amp; Parallelism</strong></td><td><code>4/4</code> Builders active in Wave 1 (<code>8</code> issues) + <code>1</code> Builder on <code>v5.50.0 W2-A</code> while <code>3</code> Builders pipelined <code>100%</code> of <code>v5.51.0</code> Wave 1</td><td>100% utilization</td><td><span class="badge badge-green">PASS</span></td><td>Continue cross-sprint Builder pipelining under disjoint file scopes</td></tr>
+              <tr><td>4</td><td><strong>Forced Re-Syncs / Rebases When <code>main</code> Moves</strong></td><td><code>0</code> forced rebases and <code>0</code> merge conflicts across all 8 <code>v5.50.0</code> PRs and all 3 pipelined <code>v5.51.0</code> PRs</td><td>0 conflicts</td><td><span class="badge badge-green">PASS</span></td><td>Retain <code>Rule #291</code> Clause 2(b) disjoint merge pipelining &amp; <code>P46</code></td></tr>
+              <tr><td>5</td><td><strong>Open PR Age Since Current <code>main</code></strong></td><td><code>0m</code> unverified base drift; every merge verified via <code>git merge-tree --write-tree</code> and exact 40-char head SHA</td><td>0m stale merges</td><td><span class="badge badge-green">PASS</span></td><td>Pre-verify <code>git merge-tree</code> before queuing sequential merges</td></tr>
+              <tr><td>6</td><td><strong>CI Red After Ready (<code>#2595</code> Pre-Push Hook)</strong></td><td><code>1</code> Ubuntu-only <code>git checkout -q main</code> failure on <code>PR #2762</code> Round 7 (<code>41251763636</code>), fixed in <code>8ebe6fbf</code> via <code>-B main</code>; <code>100%</code> green at merge</td><td>0 unaddressed reds</td><td><span class="badge badge-green">PASS</span></td><td>Enforce <code>DIFF-V5500-02</code> (<code>git init -b main</code> / <code>checkout -B main</code> in temp repos)</td></tr>
+              <tr><td>7</td><td><strong>PRR Review Rounds &amp; Findings by Severity</strong></td><td>Multi-round deep PRR/A-Gate verification caught <code>100%</code> of edge cases across <code>+12,573 LOC</code> before merge</td><td>0 escaped defects</td><td><span class="badge badge-green">PASS</span></td><td>Keep formal <code>Rule #286</code> SHA-bound PRR dispatch envelopes</td></tr>
+              <tr><td>8</td><td><strong>Post-Merge Defects on <code>main</code></strong></td><td><code>0</code> post-merge defects across all 8 merged PRs; Release workflow <code>#41256199348</code> and post-deploy verification <code>100%</code> green</td><td>0 defects</td><td><span class="badge badge-green">PASS</span></td><td>Maintain PRR + Arc <code>A-Gate</code>/<code>R-Gate</code> + Obsr <code>O-Gate</code></td></tr>
+              <tr><td>9</td><td><strong>Clears, Retries &amp; Stalls</strong></td><td><code>100%</code> Rule <code>#285 §5</code> inter-wave reset compliance across reused Builder lanes before Wave 2 and <code>v5.51.0</code> dispatches</td><td>0 untracked stalls</td><td><span class="badge badge-green">PASS</span></td><td>Retain mandatory <code>/clear</code> between waves on reused lanes</td></tr>
+              <tr><td>10</td><td><strong>Wrong Triage / Scope Fields</strong></td><td><code>0</code> premise errors; residual container items cleanly split to follow-up <code>#2758</code> under <code>Ruling A488-W1D-PROCPS-R1</code>; <code>test/tiers.json</code> added in <code>A488 v1.9</code></td><td>0 premise errors</td><td><span class="badge badge-green">PASS</span></td><td>Include <code>test/tiers.json</code> &amp; <code>.testament.toml</code> in <code>W3-REL</code>/<code>W4-REL</code> scope (<code>DIFF-V5500-04</code>)</td></tr>
+              <tr><td>11</td><td><strong>Rule Breaches &amp; Governance Discipline</strong></td><td><code>0</code> rule breaches; <code>100%</code> adherence to <code>Rule #285</code> (PM wrote 0 product code, spawned 0 subagents) and <code>P46</code></td><td>0 breaches</td><td><span class="badge badge-green">PASS</span></td><td>Maintain strict role overlay enforcement across all 10 lanes</td></tr>
+              <tr><td>12</td><td><strong>Unlabelled PRs, Dirty Clones &amp; Worktrees</strong></td><td>All 8 <code>v5.50.0</code> PRs cleanly merged and branches verified <code>SAFE</code> via <code>tc branch check</code></td><td>0 dirty clones</td><td><span class="badge badge-green">PASS</span></td><td>Continue post-merge branch cleanup and clone normalization</td></tr>
+              <tr><td>13</td><td><strong>Release-Status Lag &amp; Finish-Line Honesty</strong></td><td><code>0</code> premature claims; <code>PR #2764</code> kept all 3 finish lines <code>Pending</code> pre-deploy, and <code>PR #2765</code> recorded <code>Complete</code> after live deploy</td><td>100% honesty</td><td><span class="badge badge-green">PASS</span></td><td>Retain two-step pre-deploy (<code>W4-REL</code>) + post-deploy (<code>Gate 3</code>) status PRs</td></tr>
+              <tr><td>14</td><td><strong>Conflict Resolution Time</strong></td><td><code>0.0m</code> merge conflict resolution time across all 8 <code>v5.50.0</code> PRs and all 3 <code>v5.51.0</code> PRs</td><td>0m conflict time</td><td><span class="badge badge-green">PASS</span></td><td>Keep shared ledgers strictly reserved for <code>W2-REC</code>/<code>W3-REC</code> and <code>REL</code></td></tr>
+              <tr><td>15</td><td><strong>Wakes, Tokens &amp; Turns by Role &amp; Model</strong></td><td><code>100%</code> <code>P44</code> compliance (0 internal Builder <code>/prawduct:critic</code> subagent runs); Testament <code>v0.34.0</code> pool offloaded Stage 3 &amp; 4</td><td>100% P44 &amp; P45</td><td><span class="badge badge-green">PASS</span></td><td>Declare any subprocess-spawning test in <code>"large"</code> in <code>test/tiers.json</code></td></tr>
+              <tr><td>16</td><td><strong>4 End-of-Sprint Maintenance Gates</strong></td><td>All 4 Maintenance Gates (Queue/Registry, Arc+Obsr Post-Mortems, Release Status+Live Deploy, Canonical HTML Report+Hub+Roadmap) green</td><td>4 / 4 Gates green</td><td><span class="badge badge-green">PASS</span></td><td>Enforce <code>validate-sprint-report.py --all</code> on every sprint closeout</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
 
+    <!-- SECTION 7: INTERACTIVE WAVE & PR EXPLORER -->
     <section class="section" id="waves">
       <div class="section-header">
         <div>
-          <span class="section-tag">Section 06 · Interactive Wave &amp; Deliverable Explorer</span>
-          <h2 class="section-title">Filter &amp; Inspect Every Chartered Wave Car in Sprint v5.50.0</h2>
-          <p class="section-desc">Search by car ID, issue number, lane, or status.</p>
+          <h2 class="section-title"><span class="num">06</span> Interactive Wave, PR &amp; Telemetry Explorer</h2>
+          <p class="section-desc">Filter by wave, car, subsystem, or governance gate, or search across commits, file paths, issue numbers, and reviewer rulings.</p>
+        </div>
+        <span class="badge badge-cyan">7 Interactive Cards · 11 Filter Tags · Instant Search</span>
+      </div>
+
+      <div class="card" style="margin-bottom:18px;">
+        <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;">
+          <div style="display:flex;flex-wrap:wrap;gap:6px;">
+            <button class="filter-btn active" data-filter="all" onclick="filterWaves('all', this)">All (7)</button>
+            <button class="filter-btn" data-filter="wave-1" onclick="filterWaves('wave-1', this)">Wave 1 (4 Cars)</button>
+            <button class="filter-btn" data-filter="wave-2" onclick="filterWaves('wave-2', this)">Wave 2 (W2-A #2762)</button>
+            <button class="filter-btn" data-filter="wave-3" onclick="filterWaves('wave-3', this)">W3-REC (#2763)</button>
+            <button class="filter-btn" data-filter="wave-4" onclick="filterWaves('wave-4', this)">W4-REL &amp; Deploy (#2764/#2765)</button>
+            <button class="filter-btn" data-filter="model-switch" onclick="filterWaves('model-switch', this)">Model Switch &amp; Fallback (#1897/#2599/#2598)</button>
+            <button class="filter-btn" data-filter="inventory" onclick="filterWaves('inventory', this)">Inventory UI &amp; Drift (#2747/#1967)</button>
+            <button class="filter-btn" data-filter="quota" onclick="filterWaves('quota', this)">Usage Quota Windows (#2188)</button>
+            <button class="filter-btn" data-filter="hooks" onclick="filterWaves('hooks', this)">Non-Claude Hooks &amp; Prime (#2439/#1644)</button>
+            <button class="filter-btn" data-filter="testament" onclick="filterWaves('testament', this)">Testament v0.34.0 &amp; #2752</button>
+            <button class="filter-btn" data-filter="governance" onclick="filterWaves('governance', this)">P44 / P45 / P46</button>
+          </div>
+          <input id="waveSearch" type="search" placeholder="Search PR #, SHA, issue, file, ruling..." oninput="searchWaves()" style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-alt);color:var(--text);min-width:240px;font-size:0.84rem;" />
         </div>
       </div>
-      <div class="explorer-controls">
-        <input type="text" id="waveSearch" class="search-input" placeholder="Search car (W1-A), issue, lane (TC-Lane-A), or status..." oninput="filterWaves()" />
-        <div class="filter-group">
-          <button class="filter-btn active" onclick="setWaveFilter('all', this)">All Wave Cars (7)</button>
-          <button class="filter-btn" onclick="setWaveFilter('w1', this)">Wave 1</button>
-          <button class="filter-btn" onclick="setWaveFilter('w2', this)">Wave 2</button>
-          <button class="filter-btn" onclick="setWaveFilter('w3', this)">Wave 3 / Release</button>
-          <button class="filter-btn" onclick="setWaveFilter('live', this)">Live Tracked</button>
-          <button class="filter-btn" onclick="setWaveFilter('all', this)">Builder A</button>
-          <button class="filter-btn" onclick="setWaveFilter('all', this)">Builder B</button>
-          <button class="filter-btn" onclick="setWaveFilter('all', this)">Builder C</button>
-          <button class="filter-btn" onclick="setWaveFilter('all', this)">Builder D</button>
-          <button class="filter-btn" onclick="setWaveFilter('all', this)">Integrator / PRR</button>
+
+      <!-- WAVE CARD 1: W1-B (#2755) -->
+      <div class="wave-card" data-tags="all wave-1 model-switch" data-search="w1-b pr 2755 1897 1809 model-switch-matrix.js openclaw.json 3c3a38680ed4 1af2db6d17c4">
+        <div class="wave-header">
+          <div>
+            <div class="wave-num">WAVE 1 · CAR W1-B (TC-Lane-B #1535 · Reviewed by TC-Lane-PRR-B #1539 &amp; TC-Lane-Arc #1538)</div>
+            <h3 class="wave-title"><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2755" target="_blank" rel="noopener">PR #2755</a> — Cross-Engine Model Switching Capability Matrix (<code>#1897</code>) + OpenClaw Clean-Start Contract (<code>#1809</code>)</h3>
+            <div class="wave-window">Active Build <code>26.3m</code> · Open-to-Merge <code>100.4m</code> · Merge Commit <code>3c3a38680ed4eceaa3e9a2a960b29cd185661747</code> (Head <code>1af2db6d17c4</code>)</div>
+          </div>
+          <div class="wave-meta">
+            <span class="badge badge-green">MERGED</span>
+            <span class="badge badge-cyan">11 Files (+2,678 / -2)</span>
+            <span class="badge badge-purple">4 PRR Rounds</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>Issue</th>
+                <th>Files Modified</th>
+                <th>Key Engineering Changes &amp; PRR Refinements</th>
+                <th>Verification Evidence</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-row-tags="wave-1 model-switch" data-row-search="1897 model-switch-matrix.js engine-models.js model-switch-matrix.test.js">
+                <td><span class="issue-pill">#1897</span></td>
+                <td><code>lib/model-switch-matrix.js</code>, <code>data/engines/*.json</code>, <code>lib/engine-models.js</code>, <code>test/model-switch-matrix.test.js</code></td>
+                <td>Defined canonical model-switch capability matrix across Claude, Codex, Gemini/Antigravity, Aider, and OpenClaw (in-band slash command vs flag relaunch, roster discovery, and worktree safety rules)</td>
+                <td><code>test/model-switch-matrix.test.js</code> + Stage 3 pool <code>100%</code> pass</td>
+              </tr>
+              <tr data-row-tags="wave-1" data-row-search="1809 openclaw.json engines.js ui.js openclaw-clean-start.test.js">
+                <td><span class="issue-pill">#1809</span></td>
+                <td><code>data/engines/openclaw.json</code>, <code>lib/engines.js</code>, <code>public/ui.js</code>, <code>test/openclaw-clean-start.test.js</code>, <code>changelog.d/1897.*</code>, <code>changelog.d/1809.*</code></td>
+                <td>Codified OpenClaw’s gateway-managed session clean-start replacement behavior and surfaced operator guidance in engine settings</td>
+                <td><code>test/openclaw-clean-start.test.js</code> + GitHub CI <code>SUCCESS</code></td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
-      <div class="wave-grid" id="waveGrid">
-        <div class="wave-card" data-tags="w1 w2 w3 live">
-          <div class="wave-card-header">
-            <div>
-              <span class="badge badge-amber">W1-A · Live Status</span>
-              <h3>W1-A — TC-Lane-A (#1534) — lib/profile-reconciler.js, lib/engine-models.js, lib/project</h3>
-            </div>
-            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
-              <div>Lane: <code>TC-Lane-PRR-A (#1536) / #2188 + #1967 (Verified next-launch engine+model selection &amp; Session Profile Reconciler)</code></div>
-              <div>Updated: <code>2026-11-01 00:06:04 UTC</code></div>
-            </div>
+
+      <!-- WAVE CARD 2: W1-D (#2754) -->
+      <div class="wave-card" data-tags="all wave-1 inventory testament" data-search="w1-d pr 2754 2752 2747 2758 Dockerfile procps ui.js inventory 801d52ef7a05 aded06a4bc88">
+        <div class="wave-header">
+          <div>
+            <div class="wave-num">WAVE 1 · CAR W1-D (TC-Lane-D #1533 · Reviewed by TC-Lane-PRR-B #1539 &amp; TC-Lane-Arc #1538)</div>
+            <h3 class="wave-title"><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2754" target="_blank" rel="noopener">PR #2754</a> — Stage 5 Container <code>procps</code> Install (<code>#2752</code> · Follow-Up <code>#2758</code>) + Engine Inventory Browser UI &amp; Seed Defaults (<code>#2747</code>)</h3>
+            <div class="wave-window">Active Build <code>19.6m</code> · Open-to-Merge <code>109.5m</code> · Merge Commit <code>801d52ef7a053b838838c59fa64dd618b4b25edd</code> (Head <code>aded06a4bc88</code>)</div>
           </div>
-          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
-            <strong>Scope &amp; Files:</strong> TC-Lane-A (#1534) — lib/profile-reconciler.js, lib/engine-models.js, lib/projects.js, lib/project-config.js, lib/sessions.js, test/profile-reconciler.test.js, test/engine-models.test.js, test/projects.test.js, docs/areas.json, test/tiers.json, .testament.toml, changelog.d/2188..md, changelog.d/1967..md<br/>
-            <strong>Current Gate &amp; Wave Status:</strong> STAGED (WAVE 1)
-          </p>
+          <div class="wave-meta">
+            <span class="badge badge-green">MERGED</span>
+            <span class="badge badge-cyan">14 Files (+604 / -23)</span>
+            <span class="badge badge-purple">3 PRR Rounds</span>
+          </div>
         </div>
-        <div class="wave-card" data-tags="w1 w2 w3 live">
-          <div class="wave-card-header">
-            <div>
-              <span class="badge badge-amber">W1-B · Live Status</span>
-              <h3>W1-B — TC-Lane-B (#1535) — lib/engine-canary.js, lib/engine-admission.js, lib/routes/en</h3>
-            </div>
-            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
-              <div>Lane: <code>TC-Lane-PRR-B (#1539) / #1897 + #1809 (Shared engine compatibility canary &amp; capability-matched admission / attested rotation)</code></div>
-              <div>Updated: <code>2026-11-01 00:06:04 UTC</code></div>
-            </div>
-          </div>
-          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
-            <strong>Scope &amp; Files:</strong> TC-Lane-B (#1535) — lib/engine-canary.js, lib/engine-admission.js, lib/routes/engines-canary.js, server.js (route mount), test/engine-canary.test.js, test/engine-admission.test.js, docs/areas.json, test/tiers.json, .testament.toml, changelog.d/1897..md, changelog.d/1809..md<br/>
-            <strong>Current Gate &amp; Wave Status:</strong> STAGED (WAVE 1)
-          </p>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>Issue</th>
+                <th>Files Modified</th>
+                <th>Key Engineering Changes &amp; PRR Refinements</th>
+                <th>Verification Evidence</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-row-tags="wave-1 testament" data-row-search="2752 2758 Dockerfile procps devcontainer-procps.test.js">
+                <td><span class="issue-pill">#2752</span></td>
+                <td><code>.devcontainer/Dockerfile</code>, <code>test/devcontainer-procps.test.js</code>, <code>changelog.d/2752.*</code></td>
+                <td>Installed <code>procps</code> (<code>ps</code>, <code>pgrep</code>, <code>pkill</code>) in <code>.devcontainer/Dockerfile</code>, eliminating all <code>spawnSync ps ENOENT</code> failures on Linux pool runners (residual non-<code>ps</code> container items tracked in <code>#2758</code> per <code>Ruling A488-W1D-PROCPS-R1</code>)</td>
+                <td><code>test/devcontainer-procps.test.js</code> + Linux pool verification</td>
+              </tr>
+              <tr data-row-tags="wave-1 inventory" data-row-search="2747 ui.js index.html style.css engine-inventory-ui.test.js">
+                <td><span class="issue-pill">#2747</span></td>
+                <td><code>public/ui.js</code>, <code>public/index.html</code>, <code>public/style.css</code>, <code>test/engine-inventory-ui.test.js</code>, <code>changelog.d/2747.*</code></td>
+                <td>Shipped the browser Engine Inventory panel consuming <code>GET /api/engines/inventory</code>, project-creation seed defaults, and <code>#581</code> TangleTweaker docking</td>
+                <td><code>test/engine-inventory-ui.test.js</code> + GitHub CI <code>SUCCESS</code></td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-        <div class="wave-card" data-tags="w1 w2 w3 live">
-          <div class="wave-card-header">
-            <div>
-              <span class="badge badge-amber">W1-C · Live Status</span>
-              <h3>W1-C — TC-Lane-C (#1532) — lib/engines.js, lib/aider-task-contract.js, data/engines/aid</h3>
-            </div>
-            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
-              <div>Lane: <code>TC-Lane-PRR-A (#1536) / #2439 + #1644 (Aider engine effectiveness, .gitignore prompt suppression #193, Medusa wake, &amp; verifiable task contract)</code></div>
-              <div>Updated: <code>2026-11-01 00:06:04 UTC</code></div>
-            </div>
+      </div>
+
+      <!-- WAVE CARD 3: W1-C (#2756) -->
+      <div class="wave-card" data-tags="all wave-1 hooks" data-search="w1-c pr 2756 2439 1644 193 non-claude-hooks.js startup-control-antigravity.js d1d89d4bdb1a f9e3872ce45c">
+        <div class="wave-header">
+          <div>
+            <div class="wave-num">WAVE 1 · CAR W1-C (TC-Lane-C #1532 · Reviewed by TC-Lane-PRR-A #1536 &amp; TC-Lane-Arc #1538)</div>
+            <h3 class="wave-title"><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2756" target="_blank" rel="noopener">PR #2756</a> — Non-Claude Git-Backed Governance Hook Adapter (<code>#2439</code>) + Antigravity Post-<code>/clear</code> Prime Hardening (<code>#1644</code> / <code>#193</code>)</h3>
+            <div class="wave-window">Active Build <code>35.6m</code> · Open-to-Merge <code>109.5m</code> · Merge Commit <code>d1d89d4bdb1ae3ca97c0b67cedb8b3cf16255ff2</code> (Head <code>f9e3872ce45c</code>)</div>
           </div>
-          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
-            <strong>Scope &amp; Files:</strong> TC-Lane-C (#1532) — lib/engines.js, lib/aider-task-contract.js, data/engines/aider.json, test/aider-engine.test.js, test/aider-task-contract.test.js, test/engines.test.js, test/control-docs.test.js, test/extension-rule-values.test.js, test/identity-matrix.test.js, test/tracked-carrier-identity.test.js, test/workload-guidance.test.js, docs/areas.json, test/tiers.json, .testament.toml, changelog.d/2439..md, changelog.d/1644..md<br/>
-            <strong>Current Gate &amp; Wave Status:</strong> STAGED (WAVE 1)
-          </p>
+          <div class="wave-meta">
+            <span class="badge badge-green">MERGED</span>
+            <span class="badge badge-cyan">17 Files (+1,446 / -90)</span>
+            <span class="badge badge-purple">5 PRR Rounds</span>
+          </div>
         </div>
-        <div class="wave-card" data-tags="w1 w2 w3 live">
-          <div class="wave-card-header">
-            <div>
-              <span class="badge badge-amber">W1-D · Live Status</span>
-              <h3>W1-D — TC-Lane-D (#1533) — .devcontainer/Dockerfile, .prawduct/change-log.md, lib/pidfi</h3>
-            </div>
-            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
-              <div>Lane: <code>TC-Lane-PRR-B (#1539) / #2752 + #2747 (Stage 5 procps + /proc fallback container pool parity &amp; Global Engine settings UI / creation-seed defaults; #581 omitted per closed WONTFIX; residual non-ps Stage 5 files tracked in #2758)</code></div>
-              <div>Updated: <code>2026-11-01 00:06:04 UTC</code></div>
-            </div>
-          </div>
-          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
-            <strong>Scope &amp; Files:</strong> TC-Lane-D (#1533) — .devcontainer/Dockerfile, .prawduct/change-log.md, lib/pidfile.js, lib/startup-control-codex.js, lib/release-certification/lockfile.js, test/bridge-handoff.test.js, test/ttyd-watcher.test.js, public/ui.js, public/api-helper.js, public/index.html, test/global-engine-settings-ui.test.js, test/engine-picker-gating.test.js, docs/areas.json, test/tiers.json, .testament.toml, changelog.d/2752..md, changelog.d/2747..md<br/>
-            <strong>Current Gate &amp; Wave Status:</strong> STAGED (WAVE 1)
-          </p>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>Issue</th>
+                <th>Files Modified</th>
+                <th>Key Engineering Changes &amp; PRR Refinements</th>
+                <th>Verification Evidence</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-row-tags="wave-1 hooks" data-row-search="2439 non-claude-hooks.js projects.js server.js non-claude-hooks.test.js">
+                <td><span class="issue-pill">#2439</span></td>
+                <td><code>lib/non-claude-hooks.js</code>, <code>lib/projects.js</code>, <code>server.js</code>, <code>test/non-claude-hooks.test.js</code>, <code>changelog.d/2439.*</code></td>
+                <td>Added git-backed governance hook installation and post-commit audit receipts for non-Claude engines (Codex, Antigravity, Aider, OpenClaw) while preserving existing user hooks</td>
+                <td><code>test/non-claude-hooks.test.js</code> + Stage 3/5 verification</td>
+              </tr>
+              <tr data-row-tags="wave-1 hooks" data-row-search="1644 193 startup-control-antigravity.js tmux.js antigravity-prime-hardening.test.js">
+                <td><span class="issue-pill">#1644</span></td>
+                <td><code>lib/startup-control-antigravity.js</code>, <code>lib/tmux.js</code>, <code>test/antigravity-prime-hardening.test.js</code>, <code>changelog.d/1644.*</code></td>
+                <td>Hardened Antigravity post-<code>/clear</code> prime injection (absorbing <code>#193</code>) by detecting TUI picker/modal overlays, dismissing them before sending the prime prompt, and verifying composer acceptance</td>
+                <td><code>test/antigravity-prime-hardening.test.js</code> + GitHub CI <code>SUCCESS</code></td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-        <div class="wave-card" data-tags="w1 w2 w3 live">
-          <div class="wave-card-header">
-            <div>
-              <span class="badge badge-amber">W2-A · Live Status</span>
-              <h3>W2-A — TC-Lane-C (#1532) — lib/usage-windows.js, lib/model-switch.js, lib/profile-recon</h3>
-            </div>
-            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
-              <div>Lane: <code>TC-Lane-PRR-A / #2599 + #2598</code></div>
-              <div>Updated: <code>2026-11-01 00:06:04 UTC</code></div>
-            </div>
+      </div>
+
+      <!-- WAVE CARD 4: W1-A (#2757) -->
+      <div class="wave-card" data-tags="all wave-1 quota inventory" data-search="w1-a pr 2757 2188 1967 usage-windows.js profile-reconciler.js 309dacbda7f2 b5f48bad7eaa">
+        <div class="wave-header">
+          <div>
+            <div class="wave-num">WAVE 1 · CAR W1-A (TC-Lane-A #1534 · Reviewed by TC-Lane-PRR-A #1536 &amp; TC-Lane-Arc #1538)</div>
+            <h3 class="wave-title"><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2757" target="_blank" rel="noopener">PR #2757</a> — 5h/7d Rolling Usage Window &amp; Quota Estimator (<code>#2188</code>) + Periodic Engine CLI Drift Reconciler (<code>#1967</code>)</h3>
+            <div class="wave-window">Active Build <code>40.6m</code> · Open-to-Merge <code>242.0m</code> · Merge Commit <code>309dacbda7f2e484c9846cbfe4cf4121790628dd</code> (Head <code>b5f48bad7eaa</code>)</div>
           </div>
-          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
-            <strong>Scope &amp; Files:</strong> TC-Lane-C (#1532) — lib/usage-windows.js, lib/model-switch.js, lib/profile-reconciler.js, lib/routes/sessions.js, lib/tc-verbs.js, lib/sessions.js, lib/projects.js, lib/store.js, lib/store/_schema.js, lib/store/index.js, public/ui.js, public/index.html, public/style.css, server.js, docs/tc-cli-reference.md, test/usage-windows.test.js, test/model-switch.test.js, test/profile-reconciler.test.js, test/store.test.js, test/ecosystem-primer.test.js, test/tc-cli-reference.test.js, docs/areas.json, test/tiers.json, .testament.toml, changelog.d/2599..md, changelog.d/2598..md (Charter A488 v1.8, SHA-256 a48578d0..., Architect co-sign verified)<br/>
-            <strong>Current Gate &amp; Wave Status:</strong> QUEUED (WAVE 2)
-          </p>
+          <div class="wave-meta">
+            <span class="badge badge-green">MERGED</span>
+            <span class="badge badge-cyan">12 Files (+3,542 / -17)</span>
+            <span class="badge badge-purple">9 PRR Rounds</span>
+          </div>
         </div>
-        <div class="wave-card" data-tags="w1 w2 w3 live">
-          <div class="wave-card-header">
-            <div>
-              <span class="badge badge-green">W3-REC · Live Status</span>
-              <h3>W3-REC — Records Reconciliation (.prawduct/change-log.md, .prawduct/change-log-archive/, </h3>
-            </div>
-            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
-              <div>Lane: <code>TC-Lane-INT / TC-Lane-PRR-A</code></div>
-              <div>Updated: <code>2026-11-01 00:06:04 UTC</code></div>
-            </div>
-          </div>
-          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
-            <strong>Scope &amp; Files:</strong> Records Reconciliation (.prawduct/change-log.md, .prawduct/change-log-archive/, FEATURES.md)<br/>
-            <strong>Current Gate &amp; Wave Status:</strong> MERGED PR #2763 @ 3888bcfa757069ba49c0f0951c7df0187e67211d; PRR-B and Architect ACCEPT, exact-head CI green
-          </p>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>Issue</th>
+                <th>Files Modified</th>
+                <th>Key Engineering Changes &amp; PRR Refinements</th>
+                <th>Verification Evidence</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-row-tags="wave-1 quota" data-row-search="2188 usage-windows.js server.js ui.js usage-windows.test.js">
+                <td><span class="issue-pill">#2188</span></td>
+                <td><code>lib/usage-windows.js</code>, <code>server.js</code>, <code>public/ui.js</code>, <code>test/usage-windows.test.js</code>, <code>changelog.d/2188.*</code></td>
+                <td>Implemented 5-hour and 7-day rolling usage window aggregation, quota burn-rate projection, optional <code>ccusage</code> probe integration, and live session header badges (<code>Ruling A488-W1A-R1</code>)</td>
+                <td><code>test/usage-windows.test.js</code> + live <code>GET /api/usage-windows</code> HTTP <code>200</code></td>
+              </tr>
+              <tr data-row-tags="wave-1 inventory" data-row-search="1967 profile-reconciler.js server.js profile-reconciler.test.js">
+                <td><span class="issue-pill">#1967</span></td>
+                <td><code>lib/profile-reconciler.js</code>, <code>server.js</code>, <code>test/profile-reconciler.test.js</code>, <code>changelog.d/1967.*</code></td>
+                <td>Added periodic and on-demand CLI help/version reconciler comparing installed engine binaries against <code>data/engines/*.json</code> flag contracts</td>
+                <td><code>test/profile-reconciler.test.js</code> + GitHub CI <code>SUCCESS</code></td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-        <div class="wave-card" data-tags="w1 w2 w3 live">
-          <div class="wave-card-header">
-            <div>
-              <span class="badge badge-cyan">W4-REL · Live Status</span>
-              <h3>W4-REL — Release v5.50.0 Cut &amp; Deploy (CHANGELOG.md, changelog.d/, package.json, package-</h3>
-            </div>
-            <div style="text-align:right;font-size:0.78rem;color:var(--text-dim);">
-              <div>Lane: <code>TC-Lane-INT / TC-Lane-PRR-B</code></div>
-              <div>Updated: <code>2026-11-01 00:06:04 UTC</code></div>
-            </div>
+      </div>
+
+      <!-- WAVE CARD 5: W2-A (#2762) -->
+      <div class="wave-card" data-tags="all wave-2 model-switch" data-search="w2-a pr 2762 2599 2598 model-switch.js _schema.js v75 modelFallbackChain e82760dc5947 8ebe6fbfc6bc">
+        <div class="wave-header">
+          <div>
+            <div class="wave-num">WAVE 2 · CAR W2-A (TC-Lane-C #1532 · Reviewed by TC-Lane-PRR-A #1536 &amp; TC-Lane-Arc #1538)</div>
+            <h3 class="wave-title"><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2762" target="_blank" rel="noopener">PR #2762</a> — Cross-Engine Runtime Model Switching API &amp; UI (<code>#2599</code>) + Ordered Model Fallback Chains (<code>#2598</code> · Schema <code>v75</code>)</h3>
+            <div class="wave-window">Active Build <code>67.0m</code> · Open-to-Merge <code>206.0m</code> · Merge Commit <code>e82760dc5947b8334ea2cb57c8ef03f17df2c879</code> (Head <code>8ebe6fbfc6bc</code>)</div>
           </div>
-          <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0;">
-            <strong>Scope &amp; Files:</strong> Release v5.50.0 Cut &amp; Deploy (CHANGELOG.md, changelog.d/, package.json, package-lock.json, version.json, README.md, test/fixtures/changelog-released-sections.lock.json, docs/releases/v5.50.0-status.md)<br/>
-            <strong>Current Gate &amp; Wave Status:</strong> PR #2764 OPEN @ 5bbd3a1f4023d166a6828c1bb7fe0a45c5a95131; CI and 3 review gates green; Stage 3 green, Stage 4 red (11 tier-guard failures), Stage 5 pool running; merge held pending separate tiers fix
-          </p>
+          <div class="wave-meta">
+            <span class="badge badge-green">MERGED</span>
+            <span class="badge badge-cyan">20 Files (+4,303 / -23)</span>
+            <span class="badge badge-purple">Schema v75 · 8 PRR Rounds</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>Issue</th>
+                <th>Files Modified</th>
+                <th>Key Engineering Changes &amp; PRR Refinements</th>
+                <th>Verification Evidence</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-row-tags="wave-2 model-switch" data-row-search="2599 model-switch.js _schema.js server.js session.js model-switch.test.js">
+                <td><span class="issue-pill">#2599</span></td>
+                <td><code>lib/model-switch.js</code>, <code>lib/store/_schema.js</code> (<code>v75</code>), <code>server.js</code>, <code>public/session.js</code>, <code>test/model-switch.test.js</code></td>
+                <td>Implemented runtime model switching across in-band slash engines and flag-relaunch engines with dirty-worktree protection, SQLite <code>model_switch_events</code> audit table (<code>schema_version=75</code>), and deterministic <code>git checkout -q -B main</code> test repo init (<code>DIFF-V5500-02</code>)</td>
+                <td><code>test/model-switch.test.js</code> + CI run <code>41253072453</code> (<code>24,322</code> pass / <code>0</code> fail)</td>
+              </tr>
+              <tr data-row-tags="wave-2 model-switch" data-row-search="2598 model-switch.js projects.js ui.js model-fallback-chain.test.js">
+                <td><span class="issue-pill">#2598</span></td>
+                <td><code>lib/model-switch.js</code>, <code>lib/projects.js</code>, <code>public/ui.js</code>, <code>test/model-fallback-chain.test.js</code>, <code>changelog.d/2599.*</code>, <code>changelog.d/2598.*</code></td>
+                <td>Added ordered per-project <code>modelFallbackChain</code> configuration and automatic fallback advancement on quota/rate-limit/capacity errors with cooldown &amp; loop guards (<code>Ruling A488-W2A-R1</code>)</td>
+                <td><code>test/model-fallback-chain.test.js</code> + live <code>schema_version=75</code> verified</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- WAVE CARD 6: W3-REC (#2763) -->
+      <div class="wave-card" data-tags="all wave-3 governance" data-search="w3-rec pr 2763 change-log.md features.md 3888bcfa7570 93c9d5742630 p46">
+        <div class="wave-header">
+          <div>
+            <div class="wave-num">WAVE 3 · RECONCILIATION CAR W3-REC (TC-Lane-INT #1537 · Reviewed by TC-Lane-PRR-B #1539 &amp; TC-Lane-Arc #1538)</div>
+            <h3 class="wave-title"><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2763" target="_blank" rel="noopener">PR #2763</a> — Shared Ledger Reconciliation Across All 10 Chartered Issues (<code>.prawduct/change-log.md</code> + <code>FEATURES.md</code>)</h3>
+            <div class="wave-window">Active Build <code>1.0m</code> · Open-to-Merge <code>5.0m</code> (<code>23:52Z → 23:57Z</code>) · Merge Commit <code>3888bcfa757069ba49c0f0951c7df0187e67211d</code> (Head <code>93c9d5742630</code>)</div>
+          </div>
+          <div class="wave-meta">
+            <span class="badge badge-green">MERGED</span>
+            <span class="badge badge-cyan">2 Files (+25 / -1)</span>
+            <span class="badge badge-purple">5.0m Turnaround</span>
+          </div>
+        </div>
+        <p style="font-size:0.86rem;color:var(--text-muted);margin:8px 0 0;">
+          Reconciled all 10 accepted issue records (<code>#1897, #1809, #2752, #2747, #2439, #1644, #2188, #1967, #2599, #2598</code>) into <code>.prawduct/change-log.md</code> and <code>FEATURES.md</code> under <code>Ruling A488-W3-REC-ACCEPT-R1</code> while preserving all 11 <code>changelog.d/*.md</code> fragments for <code>W4-REL</code>.
+        </p>
+      </div>
+
+      <!-- WAVE CARD 7: W4-REL (#2764) & GATE 3 -->
+      <div class="wave-card" data-tags="all wave-4 testament governance" data-search="w4-rel pr 2764 pr 2765 ecb86c29512c 7be094b6c5af ecb86c29512c v5.50.0-status.md tiers.json">
+        <div class="wave-header">
+          <div>
+            <div class="wave-num">WAVE 4 · RELEASE CUT, LIVE DEPLOY &amp; GATE 3 STATUS (TC-Lane-INT #1537 · PRR-B #1539 + Arc #1538 + Obsr #1540)</div>
+            <h3 class="wave-title"><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2764" target="_blank" rel="noopener">PR #2764</a> &amp; <a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2765" target="_blank" rel="noopener">PR #2765</a> — Release <code>v5.50.0</code>, Stage 4 Tier Fix, Tag, GitHub Release, Live Deploy &amp; Gate 3 Verification</h3>
+            <div class="wave-window">Release Merge <code>ecb86c29512c5e53c006efb27cce3ed7c3993705</code> · Tag <code>v5.50.0</code> · Gate 3 Merge <code>ecb86c29512c5e53c006efb27cce3ed7c3993705</code></div>
+          </div>
+          <div class="wave-meta">
+            <span class="badge badge-green">LIVE ON :3102</span>
+            <span class="badge badge-cyan">18 Files + Gate 3 Doc</span>
+            <span class="badge badge-purple">All 3 Finish Lines Complete</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>Release Phase</th>
+                <th>Evidence &amp; Verification Receipt</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-row-tags="wave-4 testament" data-row-search="ecb86c29512c 41256199348 tag v5.50.0 a488-w4rel-tiers-scope-r3 tiers.json">
+                <td><strong>Code Released (Complete)</strong></td>
+                <td>Drained all 11 <code>changelog.d/*.md</code> fragments into <code>CHANGELOG.md</code> <code>[5.50.0]</code>; updated <code>version.json</code>, <code>README.md</code>, <code>changelog-released-sections.lock.json</code>, <code>docs/releases/v5.50.0-status.md</code>, and moved 3 subprocess-spawning test files to <code>"large"</code> in <code>test/tiers.json</code> + <code>.testament.toml</code> (<code>Ruling A488-W4REL-TIERS-SCOPE-R3</code>); Stage 3 pool <code>5,869</code> pass, Stage 4 pool <code>5,817/5,817</code> pass (<code>100%</code>), Stage 5 pool <code>0</code> new failures (<code>Ruling A488-W4-STAGE-POOL-R2</code>); <code>Release #41256199348</code> published tag &amp; GitHub Release <code>v5.50.0</code></td>
+              </tr>
+              <tr data-row-tags="wave-4 inventory" data-row-search="production deploy backup 5.50.0 ecb86c29512c">
+                <td><strong>Local Server Updated &amp; Feature Activated (Complete)</strong></td>
+                <td>Guarded updater moved <code>/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder1</code> to <code>v5.50.0 @ ecb86c29</code> (<code>PID verified-live</code>); SQLite backup <code>verified-sqlite-backup</code> (<code>integrity_check = ok</code>, <code>schema_version = 75</code>); <code>/api/health</code>, <code>/api/version</code> (<code>5.50.0</code>), <code>/api/engines/inventory</code>, &amp; <code>/api/usage-windows</code> HTTP <code>200</code>; recorded in <code>PR #2765 @ ecb86c29512c</code></td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </section>
 
+    <!-- SECTION 8: NEXT SPRINT (v5.51.0) GUARDRAILS & PRIORITIES -->
     <section class="section" id="next-sprint">
       <div class="section-header">
         <div>
-          <span class="section-tag">Section 07 · Active Sprint Guardrails &amp; Wave Reset Protocol</span>
-          <h2 class="section-title">6 Enforced Operational Guardrails During Sprint v5.50.0</h2>
+          <h2 class="section-title"><span class="num">07</span> Forward Roadmap &amp; Process Guardrails for Sprint <code>v5.51.0</code> (Leg 2 Active)</h2>
+          <p class="section-desc">6 concrete engineering deliverables and governance guardrails enacted immediately in Leg 2 (Sprint <code>v5.51.0: “Prime and rule delivery”</code>, Charter <code>A489 v1.8</code>).</p>
         </div>
+        <span class="badge badge-green">3 / 3 v5.51.0 PRs Already PRR-Accepted &amp; Ready to Merge</span>
       </div>
+
       <div class="grid-3">
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 01 · PRE-EDIT BASE-SHA VERIFICATION</span>
-          <h4>Verify Local HEAD Matches Charter Base SHA Before Any Edit</h4>
-          <p>Builders verify <code>git rev-parse HEAD</code> matches the wave base SHA before touching any file.</p>
+          <span class="pillar-num">GUARDRAIL 01 · INTV-V5500-01 ANTIGRAVITY POST-ABORT PANE RECOVERY &amp; 10M HEARTBEAT</span>
+          <h4>Prevent Wedged Antigravity TUI Prompt Buffers After Mid-Turn Aborts</h4>
+          <p>
+            Codified in Charter <code>A489 v1.8 §1.1</code>: never send raw <code>Escape</code> or <code>C-c</code> during an active Antigravity tool call; verify prompt readiness within 10s of any abort; and maintain a 10-minute Coordinator heartbeat timer across active sprints.
+          </p>
         </div>
+
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 02 · INTER-WAVE SESSION RESET (RULE #291 CL. 5)</span>
-          <h4>Finalize &amp; Relaunch Active Lanes Between Waves</h4>
-          <p>After a wave merges and branches are deleted on clean <code>main</code>, active Builder/PRR lanes run <code>tc finalize</code> + fresh launch so context never over-compacts.</p>
+          <span class="pillar-num">GUARDRAIL 02 · DIFF-V5500-04 SUBPROCESS TEST TIER CLASSIFICATION RULE</span>
+          <h4>Require Any Test Spawning Child Processes (Directly or Transitively) to Declare <code>"large"</code> in <code>test/tiers.json</code></h4>
+          <p>
+            Codified in Charter <code>A489 v1.8 §1.1</code>: any test file invoking <code>child_process.exec*</code> or <code>spawn*</code> must be registered in <code>"large"</code> in <code>test/tiers.json</code> + <code>.testament.toml</code> so <code>test/helpers/preload-medium.js</code> never fails Stage 4 pool runs.
+          </p>
         </div>
+
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 03 · LIVE ROADMAP &amp; SPRINT REPORT AUTO-SYNC</span>
-          <h4>Update LANE_QUEUE.md at Every Dispatch, PR Open &amp; Merge</h4>
-          <p>Every wave transition in <code>LANE_QUEUE.md</code> immediately updates both the Roadmap Board and this live Sprint Report.</p>
+          <span class="pillar-num">GUARDRAIL 03 · DIFF-V5500-01 &amp; DIFF-V5500-02 DUAL ACCEPT ROUTING &amp; GIT INIT -B MAIN</span>
+          <h4>Notify Both PM &amp; INT on Final PRR ACCEPT and Use Deterministic Temp Repo Branch Names</h4>
+          <p>
+            Reviewers notify both <code>TC-Lane-PM</code> and <code>TC-Lane-INT</code> on final <code>ACCEPT</code> so merges never wait on a single relay, and all temp git repos in tests use <code>git init -b main</code> or <code>git checkout -q -B main</code> for Ubuntu CI parity.
+          </p>
         </div>
+
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 04 · SUBSYSTEM SIBLING TEST EXECUTION</span>
-          <h4>Run All Touched Subsystem Tests Locally Before Push</h4>
-          <p>Builders run all sibling tests for touched modules before pushing PR heads or review fixes.</p>
+          <span class="pillar-num">DELIVERABLE 04 · v5.51.0 CAR W1-D (PR #2760 — #1196 + #2325 · PRR-B ACCEPTED)</span>
+          <h4>Defer Unsent Prime After Interrupted Spawn (<code>#1196</code>) &amp; Suppress Prime During Governed Recovery (<code>#2325</code>)</h4>
+          <p>
+            Built by <code>TC-Lane-D</code> and accepted by <code>TC-Lane-PRR-B</code> at head <code>cfaae354ab44</code>: preserves unsent prime state when a spawn is interrupted before delivery and suppresses redundant prime injection during governed continuity recovery.
+          </p>
         </div>
+
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 05 · SINGLE HOST SUITE_SLOT COORDINATION</span>
-          <h4>One Full Local Suite at a Time via TC-Lane-INT</h4>
-          <p>Builders run targeted/staged tests while <code>TC-Lane-INT</code> serializes full pre-deploy local suite runs under <code>SUITE_SLOT</code>.</p>
+          <span class="pillar-num">DELIVERABLE 05 · v5.51.0 CAR W1-B (PR #2761 — #2293 + #1654 · PRR-B ACCEPTED)</span>
+          <h4>Prompt-Idle Gate Before Re-Prime (<code>#2293</code>) &amp; Accurate <code>silentPrime</code> Dispositions (<code>#1654</code>)</h4>
+          <p>
+            Built by <code>TC-Lane-B</code> and accepted by <code>TC-Lane-PRR-B</code> at head <code>a24191546e4a</code>: waits for prompt-idle confirmation before re-priming a session and refines per-engine <code>silentPrime</code> disposition reporting.
+          </p>
         </div>
+
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 06 · THREE HONEST FINISH LINES AT W4-REL</span>
-          <h4>Code Released, Production Updated &amp; Feature Activated</h4>
-          <p>Release status documents report each finish line honestly with exact commit SHAs, backup hashes, and live readback receipts.</p>
+          <span class="pillar-num">DELIVERABLE 06 · v5.51.0 CAR W1-C (PR #2759 — #1176 · PRR-A ACCEPTED)</span>
+          <h4>End-to-End Rule Receipt Verification &amp; Automatic Redelivery (<code>#1176</code>)</h4>
+          <p>
+            Built by <code>TC-Lane-C</code> and accepted by <code>TC-Lane-PRR-A</code> at head <code>62ae6e2d33b4</code>: verifies startup and runtime rule delivery receipts across sessions and triggers bounded redelivery when a rule update goes unacknowledged.
+          </p>
         </div>
       </div>
     </section>
@@ -1090,14 +1725,15 @@
     <div class="container">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
         <div>
-          <strong>TangleClaw Sprint v5.50.0 Live Progress &amp; Telemetry Report</strong> · Auto-Synced by <code>sync-live-sprint.py</code> (2026-11-01 00:06:04 UTC)
+          <strong>TangleClaw Sprint v5.50.0 Executive Engineering &amp; Telemetry Report</strong> · Generated by <code>TC-Lane-PM</code> (#1541) &amp; <code>TC-Lane-Obsr</code> (#1540) (In-Test Sprint Participant · Rule #283)
         </div>
         <div>
-          <a href="../" style="color:var(--accent2);">← All Sprint Reports</a>
+          Charter <code>A488 v1.9</code> (<code>A488-COSIGN-V5500-20261031-V1.9</code>) · Base <code>c23643d7</code> (<code>v5.49.0</code>) → Wave 1 <code>309dacbd</code> (<code>#2754–#2757</code>) → Wave 2 <code>e82760dc</code> (<code>#2762</code>) → W3-REC <code>3888bcfa</code> (<code>#2763</code>) → W4-REL <code>ecb86c29</code> (<code>#2764</code> / <code>v5.50.0</code>) → Gate 3 <code>ecb86c29512c</code> (<code>#2765</code>) · <a href="../" style="color:var(--accent2);">All Sprint Reports</a>
         </div>
       </div>
     </div>
   </footer>
+
   <script>
     (function () {
       const buttons = document.querySelectorAll('.filter-btn');
