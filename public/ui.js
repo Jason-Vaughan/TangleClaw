@@ -5245,15 +5245,18 @@ async function _loadRecoveryCodesSection() {
  */
 function renderTailscaleModeSetting(c) {
   const tailscaleStatus = c.tailscaleStatus || {};
+  // PRR-B C4: this must describe only what W1-B actually ships — resolving
+  // and showing the status here — never that session links, VRF checklists,
+  // artifact shares or Medusa endpoints already read it. Rewiring those is
+  // v5.52.0 Wave 2 (W2-A), not wired yet, and this copy must not promise it.
   const tailscaleHint = tailscaleStatus.ok
-    ? `Generated links use <code>${esc(tailscaleStatus.origin)}</code> instead of <code>localhost</code>.`
+    ? `Resolved: <code>${esc(tailscaleStatus.origin)}</code>. Generated links do not use this yet — `
+      + 'that wiring ships separately.'
     : tailscaleStatus.reason === 'disabled'
-      ? 'Off (default): generated links (session start, VRF checklists, artifact shares, medusa '
-        + 'endpoints) use <code>localhost</code> or the request\'s own address. On: TangleClaw advertises '
-        + 'its Tailscale hostname instead, so the same links work from your phone or another machine on '
-        + 'the tailnet.'
-      : `On, but not usable yet: ${esc(tailscaleStatus.detail || 'the tailnet hostname could not be resolved')}. `
-        + 'Links keep using the fallback address until this is fixed.';
+      ? 'Off (default). On: TangleClaw resolves its Tailscale hostname and shows it here, honestly, with '
+        + 'the specific reason when it cannot (the node is offline, MagicDNS is off, or the CLI is '
+        + 'missing) — never a silent guess. Generated links do not read this setting yet.'
+      : `On, but not usable yet: ${esc(tailscaleStatus.detail || 'the tailnet hostname could not be resolved')}.`;
   return `
     <div class="gs-section-label">Tailscale Advertisement</div>
     <div class="form-group">

@@ -53,12 +53,19 @@ describe('the settings modal Tailscale Advertisement section actually renders (#
     assert.match(html, /id="gsTailscaleMode" checked/);
   });
 
-  it('shows the resolved origin when the server reports ok', () => {
+  it('shows the resolved origin when the server reports ok, without claiming generated links use it yet (PRR-B C4)', () => {
+    // v5.52.0 W1-B ships the resolution and this display only; rewiring
+    // session links, VRF checklists, artifact shares and Medusa endpoints to
+    // actually read `tailscaleMode` is Wave 2 (W2-A) and not wired yet — the
+    // copy must never claim it already happened.
     const html = render({
       tailscaleMode: true,
       tailscaleStatus: { ok: true, origin: 'https://cursatory.tail123678.ts.net:8443', host: 'cursatory.tail123678.ts.net' }
     });
     assert.match(html, /https:\/\/cursatory\.tail123678\.ts\.net:8443/);
+    assert.match(html, /do not use this yet/);
+    assert.doesNotMatch(html, /session start/i);
+    assert.doesNotMatch(html, /VRF/i);
   });
 
   it('shows the honest failure detail when on but not usable, never a silent fallback claim', () => {

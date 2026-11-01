@@ -149,6 +149,7 @@ describe('tailscaleMode on /api/config (#1380)', () => {
       assert.equal(status, 200);
       assert.equal(seen.enabled, true);
       assert.equal(seen.port, 4455);
+      assert.equal(seen.scheme, 'http', 'direct mode with no cert configured answers http, like effectiveServerProtocol');
       assert.deepEqual(data.tailscaleStatus, { ok: true, origin: 'https://fake:1', host: 'fake' });
     } finally {
       if (savedEnvPort === undefined) delete process.env.TANGLECLAW_PORT;
@@ -156,13 +157,18 @@ describe('tailscaleMode on /api/config (#1380)', () => {
     }
   });
 
-  it('passes the caddy front-door port, not the server-bound one, in caddy mode', async () => {
+  it('passes the caddy front-door port and scheme, not the server-bound ones, in caddy mode', async () => {
     let seen = null;
     tailscaleIngress.resolveAdvertisedOrigin = async (opts) => { seen = opts; return { ok: false, reason: 'no-dns-name', detail: 'x' }; };
     await request(server, 'PATCH', '/api/config', { tailscaleMode: true, ingressMode: 'caddy', caddyHttpsPort: 9443, serverPort: 4455 });
 
     await request(server, 'GET', '/api/config');
     assert.equal(seen.port, 9443);
+    // Caddy always terminates TLS for its site, independent of
+    // `effectiveServerProtocol` (which answers `http` in caddy mode on
+    // purpose — that is about the server's own internal bind, not what a
+    // tailnet client should use to reach it through Caddy).
+    assert.equal(seen.scheme, 'https');
   });
 
   it('passes enabled:false and still resolves a port when tailscaleMode is off', async () => {

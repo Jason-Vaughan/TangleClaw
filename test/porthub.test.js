@@ -716,5 +716,35 @@ describe('porthub (store-backed)', () => {
       assert.equal(porthub.getIngressClaim(HOST, 9191), null);
       assert.equal(porthub.listIngressClaims().length, 0);
     });
+
+    it('refuses to claim over an ordinary lease at the same (host, port), even for the same project (PRR-B C1)', () => {
+      // A service on a remote host is a normal lease too, keyed the same way
+      // an ingress claim is (host, port) -- `store.portLeases.lease`'s own
+      // ownership check only compares project names, so same-project would
+      // otherwise read as a harmless renewal and silently overwrite it.
+      store.portLeases.lease({ port: 8444, host: HOST, project: 'SameProject', service: 'real-remote-service' });
+      const result = porthub.claimIngressRoute({ host: HOST, port: 8444, project: 'SameProject' });
+      assert.equal(result.success, false);
+      assert.equal(result.code, 'INGRESS_CLAIM_KEY_COLLISION');
+      const untouched = store.portLeases.get(8444, HOST);
+      assert.equal(untouched.service, 'real-remote-service');
+      assert.equal(untouched.reach, 'loopback');
+    });
+
+    it('refuses to claim over an ordinary lease even with force', () => {
+      store.portLeases.lease({ port: 8444, host: HOST, project: 'SomeoneElse', service: 'real-remote-service' });
+      const result = porthub.claimIngressRoute({ host: HOST, port: 8444, project: 'Claimant', force: true });
+      assert.equal(result.success, false);
+      assert.equal(result.code, 'INGRESS_CLAIM_KEY_COLLISION');
+      assert.equal(store.portLeases.get(8444, HOST).service, 'real-remote-service');
+    });
+
+    it('refuses to release an ordinary lease at the same (host, port)', () => {
+      store.portLeases.lease({ port: 8444, host: HOST, project: 'SameProject', service: 'real-remote-service' });
+      const result = porthub.releaseIngressRoute({ host: HOST, port: 8444, project: 'SameProject' });
+      assert.equal(result.success, false);
+      assert.equal(result.code, 'INGRESS_CLAIM_KEY_COLLISION');
+      assert.ok(store.portLeases.get(8444, HOST), 'the ordinary lease must survive');
+    });
   });
 });
