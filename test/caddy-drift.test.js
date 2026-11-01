@@ -375,6 +375,13 @@ describe('caddy-drift — classifyBypassAlternative (#1403 helper)', () => {
     assert.equal(drift.classifyBypassAlternative('/api/[^]').kind, 'unknown');
   });
 
+  it('does not decode a bare backslash as the single bracketed character', () => {
+    // `[\]` is not an unambiguous single-char class on its own — `\]` is the
+    // standard way to escape a literal `]` as the class's content, which this
+    // shape cannot be told apart from an ordinary close bracket.
+    assert.equal(drift.classifyBypassAlternative('/api/[\\]').kind, 'unknown');
+  });
+
   it('is unknown for an unescaped metacharacter that is not the wildcard tail or a single-char class', () => {
     assert.equal(drift.classifyBypassAlternative('/a.b').kind, 'unknown', 'unescaped mid-string dot');
     assert.equal(drift.classifyBypassAlternative('/a(b)').kind, 'unknown', 'a group');
