@@ -22,7 +22,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const vm = require('node:vm');
 const { setLevel } = require('../lib/logger');
+const { liftDeclaration } = require('./helpers/lift');
 
 setLevel('error');
 
@@ -42,6 +44,7 @@ const {
 
 const FIXTURE_DIR = path.join(__dirname, 'fixtures');
 const CADDY_AVAILABLE = caddy.detectCaddy().available;
+const LANDING_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
 
 /**
  * Load a committed `caddy adapt` fixture.
@@ -173,6 +176,143 @@ describe('caddy-drift — P1, every proxying site has a gate', () => {
     const live = new Map([[ungatedSite.key, { ...ungatedSite }]]);
     const result = drift.checkGates(live, baselineMixed);
     assert.equal(result.status, drift.HOLDS);
+  });
+});
+
+/**
+ * Clone the committed `generated` fixture and rewrite the `localhost` site's
+ * `not path_regexp` bypass pattern on its gate route to `pattern`, leaving
+ * everything else (including the `:8080`/other-host sites) untouched.
+ * @param {string} pattern - Replacement `path_regexp` pattern string.
+ * @returns {object} Adapted Caddy JSON.
+ */
+function withLocalhostBypassPattern(pattern) {
+  const config = JSON.parse(JSON.stringify(adapted('generated')));
+  let rewritten = false;
+  for (const server of Object.values(config.apps.http.servers)) {
+    for (const route of server.routes || []) {
+      const hosts = (route.match || []).flatMap((m) => m.host || []);
+      if (!hosts.includes('localhost')) continue;
+      for (const handler of route.handle || []) {
+        if (handler.handler !== 'subroute') continue;
+        for (const inner of handler.routes || []) {
+          const negated = (inner.match || [])[0] && inner.match[0].not && inner.match[0].not[0];
+          if (negated && negated.path_regexp) {
+            negated.path_regexp.pattern = pattern;
+            rewritten = true;
+          }
+        }
+      }
+    }
+  }
+  assert.ok(rewritten, 'fixture precondition: found the localhost gate route to rewrite');
+  return config;
+}
+
+describe('caddy-drift — P1 breadth, a gate does not admit more than GATE_BYPASS_PATHS (#1403)', () => {
+  const baseline = summarize('generated').sites;
+
+  it("expectedBypassAlternatives mirrors caddy.js's own generated pattern, escaped", () => {
+    const expected = drift.expectedBypassAlternatives();
+    assert.deepEqual([...expected].sort(), ['/api/health', '/manifest\\.json'].sort());
+  });
+
+  it('holds for the generated baseline against itself', () => {
+    const result = drift.checkGates(baseline, baseline);
+    assert.equal(result.status, drift.HOLDS);
+  });
+
+  it("does not flag the live-shape-own-auth hand edit — its gate carries no bypass matcher at all", () => {
+    // Documented limitation (see checkGates's doc comment): this shape achieves
+    // its bypass via a separate, earlier route, not via `not path_regexp` on
+    // the auth route itself, so there is nothing on the auth route for breadth
+    // to read. The per-site-merge gap this leaves open is #1403's deferred
+    // second sub-shape, tracked separately — not this test's concern.
+    const result = drift.checkGates(summarize('live-shape-own-auth').sites, baseline);
+    assert.equal(result.status, drift.HOLDS);
+  });
+
+  it('reports a hand-widened bypass, naming the site and the count, neutrally', () => {
+    const widened = drift.summarizeConfig(
+      withLocalhostBypassPattern('^(/api/health|/manifest\\.json|/api/.*)$')
+    ).sites;
+    const result = drift.checkGates(widened, baseline);
+    assert.equal(result.status, drift.DIVERGED);
+    assert.equal(result.findings.length, 1);
+    assert.match(result.findings[0], /localhost/);
+    assert.match(result.findings[0], /exempts 1 path pattern/);
+    assert.ok(!/mistake|wrong|should|error/i.test(result.findings[0]));
+  });
+
+  it('reports every extra alternative, not just the first', () => {
+    const widened = drift.summarizeConfig(
+      withLocalhostBypassPattern('^(/api/health|/manifest\\.json|/api/.*|/robots\\.txt)$')
+    ).sites;
+    const result = drift.checkGates(widened, baseline);
+    assert.equal(result.status, drift.DIVERGED);
+    assert.match(result.findings[0], /exempts 2 path pattern/);
+  });
+
+  it('does not fire when the live bypass is a subset (narrower, not wider)', () => {
+    const narrower = drift.summarizeConfig(
+      withLocalhostBypassPattern('^(/api/health)$')
+    ).sites;
+    const result = drift.checkGates(narrower, baseline);
+    assert.equal(result.status, drift.HOLDS);
+  });
+
+  it('is NOT-MEASURED, never silently clean, when the bypass pattern cannot be decomposed', () => {
+    const unanchored = drift.summarizeConfig(
+      withLocalhostBypassPattern('/api/.*')
+    ).sites;
+    const result = drift.checkGates(unanchored, baseline);
+    assert.equal(result.status, drift.NOT_MEASURED);
+    assert.notEqual(result.status, drift.HOLDS);
+    assert.match(result.findings[0], /could not be parsed/);
+  });
+
+  it('holds without reading a site once TangleClaw\'s own gate guards the door', () => {
+    const widened = drift.summarizeConfig(
+      withLocalhostBypassPattern('^(/api/health|/manifest\\.json|/api/.*)$')
+    ).sites;
+    const result = drift.checkGates(widened, baseline, 'armed');
+    assert.equal(result.status, drift.HOLDS);
+    assert.deepEqual(result.findings, []);
+  });
+});
+
+describe('caddy-drift — splitAnchoredAlternation / gateBypassPattern (#1403 helpers)', () => {
+  it('splits a plain alternation, respecting backslash-escaped delimiters', () => {
+    assert.deepEqual(
+      drift.splitAnchoredAlternation('^(/a|/b\\|c|/d)$'),
+      ['/a', '/b\\|c', '/d']
+    );
+  });
+
+  it('returns [] for an anchored pattern with no alternatives', () => {
+    assert.deepEqual(drift.splitAnchoredAlternation('^()$'), []);
+  });
+
+  it('returns null for a pattern not wrapped in ^(...)$', () => {
+    assert.equal(drift.splitAnchoredAlternation('/api/.*'), null);
+    assert.equal(drift.splitAnchoredAlternation('^/a$'), null);
+  });
+
+  it('is not applicable to an unconditional gate route (no matcher at all)', () => {
+    assert.deepEqual(drift.gateBypassPattern(undefined), { applicable: false, pattern: null });
+    assert.deepEqual(drift.gateBypassPattern([]), { applicable: false, pattern: null });
+  });
+
+  it('reads the pattern out of the generator\'s exact not/path_regexp shape', () => {
+    const match = [{ not: [{ path_regexp: { pattern: '^(/a)$' } }] }];
+    assert.deepEqual(drift.gateBypassPattern(match), { applicable: true, pattern: '^(/a)$' });
+  });
+
+  it('is applicable-but-unparseable for a matcher shape it does not recognize', () => {
+    assert.equal(drift.gateBypassPattern([{ host: ['x'] }]).applicable, true);
+    assert.equal(drift.gateBypassPattern([{ host: ['x'] }]).pattern, null);
+    assert.equal(drift.gateBypassPattern([{ not: [{ path: ['/a'] }] }]).pattern, null);
+    assert.equal(drift.gateBypassPattern([{ not: [{ path_regexp: 'not-an-object' }] }]).pattern, null);
   });
 });
 
@@ -637,5 +777,222 @@ describe('caddy-drift — against real caddy', { skip: !CADDY_AVAILABLE && 'cadd
     assert.ok(path.basename(created[0]).startsWith('tc-caddy-baseline-'));
     assert.equal(fs.existsSync(created[0]), false,
       'the baseline carries the credential; it must not linger in /tmp');
+  });
+});
+
+describe('caddy-drift — fingerprintFindings / shouldShowDrift (#1415 acknowledge)', () => {
+  it('fingerprints the same findings set the same way regardless of order', () => {
+    const a = drift.fingerprintFindings(['one', 'two']);
+    const b = drift.fingerprintFindings(['two', 'one']);
+    assert.equal(a, b);
+  });
+
+  it('fingerprints a different set differently', () => {
+    const a = drift.fingerprintFindings(['one', 'two']);
+    const b = drift.fingerprintFindings(['one', 'two', 'three']);
+    assert.notEqual(a, b);
+  });
+
+  it('treats a missing/empty findings array consistently', () => {
+    assert.equal(drift.fingerprintFindings(undefined), drift.fingerprintFindings([]));
+    assert.equal(drift.fingerprintFindings(null), drift.fingerprintFindings([]));
+  });
+
+  it('shows the banner when nothing has ever been acknowledged', () => {
+    assert.equal(drift.shouldShowDrift(['a finding'], undefined), true);
+    assert.equal(drift.shouldShowDrift(['a finding'], null), true);
+  });
+
+  it('stays silent when the live findings exactly match what was acknowledged', () => {
+    assert.equal(drift.shouldShowDrift(['a', 'b'], ['a', 'b']), false);
+    assert.equal(drift.shouldShowDrift(['b', 'a'], ['a', 'b']), false, 'order must not matter');
+  });
+
+  it('stays silent when the live findings are a SUBSET of what was acknowledged', () => {
+    // One of the acknowledged violations was fixed; the rest the operator
+    // already saw and accepted.
+    assert.equal(drift.shouldShowDrift(['a'], ['a', 'b']), false);
+    assert.equal(drift.shouldShowDrift([], ['a', 'b']), false);
+  });
+
+  it('reappears the moment a NEW, unacknowledged finding shows up', () => {
+    assert.equal(drift.shouldShowDrift(['a', 'c'], ['a', 'b']), true);
+    assert.equal(drift.shouldShowDrift(['a', 'b', 'c'], ['a', 'b']), true);
+  });
+
+  it('reappears for a wholly different violation set, not just an additional one', () => {
+    assert.equal(drift.shouldShowDrift(['x'], ['a', 'b']), true);
+  });
+});
+
+/**
+ * A minimal fake DOM element: `classList`, `querySelector` over a fixed child
+ * map, `addEventListener` recording handlers by type for the test to invoke,
+ * and a plain `disabled`/`textContent` the production code reads and writes.
+ * @param {Object<string, object>} [children] - `querySelector` selector -> element.
+ * @returns {object}
+ */
+function fakeElement(children = {}, initialClasses = []) {
+  const el = {
+    _classes: new Set(initialClasses),
+    _listeners: {},
+    disabled: false,
+    textContent: '',
+    innerHTML: '',
+    classList: {
+      add(c) { el._classes.add(c); },
+      remove(c) { el._classes.delete(c); },
+      toggle(c) { el._classes.has(c) ? el._classes.delete(c) : el._classes.add(c); },
+      contains(c) { return el._classes.has(c); }
+    },
+    addEventListener(type, handler) { el._listeners[type] = handler; },
+    querySelector(sel) { return children[sel] || null; }
+  };
+  return el;
+}
+
+/**
+ * Render `renderCaddyDriftBanner` (lifted whole from `public/landing.js`,
+ * nested `wireCaddyDriftActions` included) against a fake DOM, with `window`,
+ * `apiMutate` and `loadServerInfo` stubbed so the menu's click handlers can
+ * actually run (#1415). `apiMutateImpl` lets each test control what the
+ * (not-yet-wired, W2-A) endpoint "returns".
+ * @param {object} notice
+ * @param {{apiMutateImpl?: Function, confirmReturns?: boolean}} [opts]
+ * @returns {{banner: object, resolveBtn: object, menu: object, restoreBtn: object,
+ *   ackBtn: object, calls: {apiMutate: Array, alert: Array, loadServerInfo: number,
+ *   confirm: Array, rerenderedWith: Array}}}
+ */
+function renderDriftBannerWithActions(notice, opts = {}) {
+  const resolveBtn = fakeElement();
+  // Starts carrying the `hidden` class the markup gives it, matching a real
+  // browser parsing `<div class="hidden" ...>` — nothing in the production
+  // code calls `menu.classList.add('hidden')` itself; it is baked into the
+  // string `renderCaddyDriftBanner` writes to `innerHTML`.
+  const menu = fakeElement({}, ['hidden']);
+  const restoreBtn = fakeElement();
+  const ackBtn = fakeElement();
+  const textEl = fakeElement({
+    '[data-caddy-drift-resolve]': resolveBtn,
+    '[data-caddy-drift-menu]': menu,
+    '[data-caddy-drift-restore]': restoreBtn,
+    '[data-caddy-drift-ack]': ackBtn
+  });
+  const banner = fakeElement();
+  const calls = { apiMutate: [], alert: [], loadServerInfo: 0, confirm: [], rerenderedWith: [] };
+
+  const ctx = vm.createContext({
+    document: {
+      getElementById: (id) => {
+        if (id === 'caddyDriftBanner') return banner;
+        if (id === 'caddyDriftBannerText') return textEl;
+        return null;
+      }
+    },
+    window: {
+      confirm: (msg) => { calls.confirm.push(msg); return opts.confirmReturns !== false; },
+      alert: (msg) => calls.alert.push(msg)
+    },
+    api: { lastError: 'stubbed last error' },
+    apiMutate: async (url, method, body) => {
+      // The real `apiMutate` JSON-serializes `body` for the wire immediately
+      // (`public/api-helper.js#tcCreateApiMutate`); round-tripping it here
+      // both matches that and converts the vm realm's Object/Array (the
+      // lifted script's own globals, distinct from this file's) into plain
+      // objects this file's `assert.deepEqual` can compare normally.
+      const plainBody = JSON.parse(JSON.stringify(body));
+      calls.apiMutate.push({ url, method, body: plainBody });
+      return opts.apiMutateImpl ? opts.apiMutateImpl(url, method, plainBody) : { ok: true };
+    },
+    loadServerInfo: async () => { calls.loadServerInfo += 1; }
+  });
+  vm.runInContext(
+    `${liftDeclaration(LANDING_SRC, 'function esc(')}\n`
+    + `${liftDeclaration(LANDING_SRC, 'function renderCaddyDriftBanner(')}\n`
+    + `renderCaddyDriftBanner(${JSON.stringify(notice)});`,
+    ctx
+  );
+  // `renderCaddyDriftBanner(null)`, called internally on a successful
+  // acknowledge, re-enters the SAME vm script's top-level — but that re-entry
+  // runs against a DIFFERENT `document.getElementById` call, returning the
+  // same `banner`/`textEl` fakes, so its effect (hiding the banner) is
+  // observable on them directly; nothing further to capture here.
+  return { banner, resolveBtn, menu, restoreBtn, ackBtn, calls };
+}
+
+describe('caddy-drift — Resolve… menu wiring on the banner (#1415)', () => {
+  const notice = { message: 'drift', findings: ['site X has no gate'], unmeasured: [] };
+
+  it('renders the menu hidden, with both actions wired', () => {
+    const { resolveBtn, menu, restoreBtn, ackBtn } = renderDriftBannerWithActions(notice);
+    assert.equal(menu._classes.has('hidden'), true);
+    assert.ok(resolveBtn._listeners.click);
+    assert.ok(restoreBtn._listeners.click);
+    assert.ok(ackBtn._listeners.click);
+  });
+
+  it('the Resolve button toggles the menu open and closed', () => {
+    const { resolveBtn, menu } = renderDriftBannerWithActions(notice);
+    assert.equal(menu._classes.has('hidden'), true);
+    resolveBtn._listeners.click();
+    assert.equal(menu._classes.has('hidden'), false);
+    resolveBtn._listeners.click();
+    assert.equal(menu._classes.has('hidden'), true);
+  });
+
+  it('Restore Security Baseline confirms first, and does nothing on cancel', async () => {
+    const { restoreBtn, calls } = renderDriftBannerWithActions(notice, { confirmReturns: false });
+    await restoreBtn._listeners.click();
+    assert.equal(calls.confirm.length, 1);
+    assert.equal(calls.apiMutate.length, 0, 'cancelling the confirm must not call the API at all');
+  });
+
+  it('Restore Security Baseline posts the restore-baseline action on confirm', async () => {
+    const { restoreBtn, calls } = renderDriftBannerWithActions(notice);
+    await restoreBtn._listeners.click();
+    assert.equal(calls.apiMutate.length, 1);
+    assert.deepEqual(calls.apiMutate[0], {
+      url: '/api/caddy-drift/resolve', method: 'POST', body: { action: 'restore-baseline' }
+    });
+    assert.equal(calls.loadServerInfo, 1, 'a successful restore refreshes server-info');
+    assert.equal(restoreBtn.disabled, false, 'the button must not be left disabled');
+  });
+
+  it('Restore Security Baseline restores the button and alerts on failure, without throwing', async () => {
+    const { restoreBtn, calls } = renderDriftBannerWithActions(notice, {
+      apiMutateImpl: () => ({ ok: false, error: 'no such route yet' })
+    });
+    await restoreBtn._listeners.click();
+    assert.equal(restoreBtn.disabled, false);
+    assert.equal(calls.alert.length, 1);
+    assert.match(calls.alert[0], /no such route yet/);
+    assert.equal(calls.loadServerInfo, 0);
+  });
+
+  it('Acknowledge Intentional Drift posts the live findings exactly, and hides the banner on success', async () => {
+    const { ackBtn, banner, calls } = renderDriftBannerWithActions(notice);
+    await ackBtn._listeners.click();
+    assert.equal(calls.apiMutate.length, 1);
+    assert.deepEqual(calls.apiMutate[0], {
+      url: '/api/caddy-drift/resolve',
+      method: 'POST',
+      body: { action: 'acknowledge', findings: notice.findings }
+    });
+    assert.equal(banner._classes.has('hidden'), true, 'a successful acknowledge hides the banner immediately');
+    assert.equal(ackBtn.disabled, false);
+  });
+
+  it('Acknowledge Intentional Drift leaves the banner showing and alerts on failure', async () => {
+    const { ackBtn, banner, calls } = renderDriftBannerWithActions(notice, {
+      apiMutateImpl: () => ({ ok: false, error: 'no such route yet' })
+    });
+    await ackBtn._listeners.click();
+    assert.equal(banner._classes.has('hidden'), false, 'a failed acknowledge must not hide the banner');
+    assert.equal(calls.alert.length, 1);
+    assert.match(calls.alert[0], /no such route yet/);
+  });
+
+  it('does not throw when the banner has no menu to wire (an older render, or no notice)', () => {
+    assert.doesNotThrow(() => renderDriftBannerWithActions(null));
   });
 });
