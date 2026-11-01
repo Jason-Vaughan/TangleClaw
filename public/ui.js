@@ -2700,6 +2700,10 @@ function closeSettings() {
 let projectRulesTargetId = null;
 // Proposed rule id → the exact stored text its row is showing (#1053).
 const projectRuleShownContent = new Map();
+// Rule ids currently showing their inline edit textarea instead of their
+// read-only text (#2325) — module-level so it survives the re-render a
+// refresh does after Save/Cancel, the same reason projectRuleShownContent is.
+const projectRuleEditing = new Set();
 
 // The same project's NAME, kept beside its id because the two APIs this modal
 // talks to are keyed differently: the rule and launch-sequence reads take the
@@ -4374,16 +4378,34 @@ function renderProjectRulesList(kind, rules) {
              <button class="btn btn-small" data-action="reject-rule" data-rule-id="${rule.id}" aria-label="Reject ${label}" title="Reject ${label}">Reject</button>
            </span>`
         : `<span class="session-rule-decide">
+             <button class="btn btn-small" data-action="edit-rule" data-rule-id="${rule.id}" aria-label="Edit ${label}" title="Edit ${label}">Edit</button>
              <button class="btn btn-small" data-action="retire-rule" data-rule-id="${rule.id}" aria-label="Retire ${label} — move it to the Rules Graveyard" title="Retire ${label}">Retire</button>
              <button class="btn btn-small btn-danger session-rule-delete" data-action="delete-rule" data-rule-id="${rule.id}" aria-label="Delete ${label}" title="Delete ${label}">&times;</button>
            </span>`;
+      // #2325: editing an active rule's text in place takes effect immediately
+      // (no approval step) — the plain-text notice sits beside the textarea so
+      // it is read before Save is ever clicked, not sprung on click as a popup.
+      const isEditing = !isProposed && typeof projectRuleEditing !== 'undefined' && projectRuleEditing.has(rule.id);
+      const contentHtml = isEditing
+        ? `<span class="session-rule-content session-rule-editing">
+             <span class="session-rule-label">${esc(label)}</span>
+             <textarea class="rules-editor session-rule-edit-input" id="projRuleEditInput-${rule.id}" data-rule-id="${rule.id}" rows="3">${esc(tcStripSameIdPrefix(rule.id, rule.content).trim())}</textarea>
+             <small class="session-rule-meta">Saving takes effect immediately — running sessions pick it up at their next rules read.</small>
+           </span>`
+        : `<span class="session-rule-content"><span class="session-rule-label">${esc(label)}</span> ${tcRuleMismatchBadge(rule)}${badges}${esc(tcStripSameIdPrefix(rule.id, rule.content).trim())}${replaces}</span>`;
+      const rowActions = isEditing
+        ? `<span class="session-rule-decide">
+             <button class="btn btn-small btn-primary" data-action="save-rule-edit" data-rule-id="${rule.id}" aria-label="Save edit to ${label}" title="Save edit to ${label}">Save</button>
+             <button class="btn btn-small" data-action="cancel-rule-edit" data-rule-id="${rule.id}" aria-label="Cancel edit to ${label}" title="Cancel edit to ${label}">Cancel</button>
+           </span>`
+        : actions;
       return `
       <div class="session-rule-item${rule.enabled ? '' : ' session-rule-disabled'}${isProposed ? ' session-rule-item--proposed' : ''}" data-rule-id="${rule.id}">
         <label class="session-rule-toggle">
           <input type="checkbox" data-action="toggle-rule" data-rule-id="${rule.id}" aria-label="Enable ${label}" ${rule.enabled && !isProposed ? 'checked' : ''} ${isProposed ? 'disabled' : ''}>
         </label>
-        <span class="session-rule-content"><span class="session-rule-label">${esc(label)}</span> ${tcRuleMismatchBadge(rule)}${badges}${esc(tcStripSameIdPrefix(rule.id, rule.content).trim())}${replaces}</span>
-        ${actions}
+        ${contentHtml}
+        ${rowActions}
       </div>`;
     }).join('');
   list.innerHTML = liveHtml + renderRulesGraveyard(retired, byId);
@@ -4577,6 +4599,54 @@ async function restoreProjectRule(id, kind) {
 }
 
 /**
+ * Switch a live rule's row into its inline edit textarea (#2325).
+ * @param {number} id - Rule id
+ * @param {string} kind - Rule kind (for the targeted re-render)
+ */
+async function editProjectRule(id, kind) {
+  projectRuleEditing.add(id);
+  await refreshProjectRulesList(projectRulesTargetId, kind);
+}
+
+/**
+ * Leave edit mode for a rule without saving anything (#2325).
+ * @param {number} id - Rule id
+ * @param {string} kind - Rule kind (for the targeted re-render)
+ */
+async function cancelProjectRuleEdit(id, kind) {
+  projectRuleEditing.delete(id);
+  await refreshProjectRulesList(projectRulesTargetId, kind);
+}
+
+/**
+ * Save an in-place edit to an active, non-master rule's text (#2325). The
+ * server applies it immediately as an already-approved replacement when the
+ * caller is the verified Operator — this UI only reaches that door, so there
+ * is no separate "proposal filed" branch to handle here, unlike the generic
+ * `update()` store API this route also serves. An empty textarea is refused
+ * client-side with the same message `content cannot be empty` would give.
+ * @param {number} id - Rule id
+ * @param {string} kind - Rule kind (for the targeted re-render)
+ */
+async function saveProjectRuleEdit(id, kind) {
+  const label = tcRuleLabel(id);
+  const input = document.getElementById(`projRuleEditInput-${id}`);
+  const content = input ? input.value.trim() : '';
+  if (!content) {
+    _setProjectRulesStatus(`${label}’s text cannot be empty — nothing was saved`, false);
+    return;
+  }
+  const data = await apiMutate(`/api/session-rules/${id}`, 'PUT', { content });
+  if (!data) {
+    _setProjectRulesStatus(`Save ${label} failed${api.lastError ? `: ${api.lastError}` : ''}`, false);
+    return;
+  }
+  projectRuleEditing.delete(id);
+  _setProjectRulesStatus(`Saved ${label} — it governs immediately`, true);
+  await refreshAfterProjectRuleMutation('Edited', kind);
+}
+
+/**
  * Delegated handler for clicks/changes inside the Project Rules section.
  * Attached once to #settingsBody (stable element; innerHTML is swapped per open).
  * @param {Event} e
@@ -4601,6 +4671,12 @@ function handleProjectRulesEvent(e) {
     retireProjectRule(Number(target.getAttribute('data-rule-id')), kind);
   } else if (action === 'restore-rule' && e.type === 'click') {
     restoreProjectRule(Number(target.getAttribute('data-rule-id')), kind);
+  } else if (action === 'edit-rule' && e.type === 'click') {
+    editProjectRule(Number(target.getAttribute('data-rule-id')), kind);
+  } else if (action === 'cancel-rule-edit' && e.type === 'click') {
+    cancelProjectRuleEdit(Number(target.getAttribute('data-rule-id')), kind);
+  } else if (action === 'save-rule-edit' && e.type === 'click') {
+    saveProjectRuleEdit(Number(target.getAttribute('data-rule-id')), kind);
   }
 }
 

@@ -169,8 +169,9 @@ describe('#1054 — a failed Project Rules read renders as unknown', () => {
       'fetchProjectRules is declared once and called once (inside refreshProjectRulesList)');
     const handlers = UI_SRC.match(/refreshAfterProjectRuleMutation\(/g) || [];
     // #1709 added retireProjectRule/restoreProjectRule as two more mutation
-    // handlers, both re-reading through the same three-state refresh.
-    assert.equal(handlers.length, 7,
-      'declared once and called by the six mutation handlers');
+    // handlers, both re-reading through the same three-state refresh. #2325
+    // added an eighth: saveProjectRuleEdit's in-place edit Save handler.
+    assert.equal(handlers.length, 8,
+      'declared once and called by the seven mutation handlers');
   });
 });

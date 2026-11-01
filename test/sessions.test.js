@@ -11,6 +11,7 @@ setLevel('error');
 
 const store = require('../lib/store');
 const medusa = require('../lib/medusa');
+const { censusFeatureIndex, formatStubClock } = require('../lib/feature-index-prime');
 
 /** The closing sentence of the prime's wrap directive: present whenever the directive is. */
 const WRAP_DIRECTIVE_TAIL = 'Nothing you print opens the wrap drawer.';
@@ -1070,6 +1071,34 @@ describe('sessions', () => {
         assert.equal(prompt.includes('**Handler**'), false, 'curated bodies must not be inlined');
         assert.equal(prompt.includes('**TBD**'), false, 'TBD stubs must not reach the prime');
         assert.equal(prompt.includes('lib/a.js'), false, 'backlog paths must not reach the prime');
+      });
+
+      it('the 14-day auto-stub clock (#1196) reaches the generated prime verbatim, not just the entry count', () => {
+        store.projectConfig.save(fiProjectPath, {
+          engine: 'claude',
+          silentPrime: true,
+          featureIndexEnabled: true
+        });
+        const fixture = '# Feature Index\n\n## Server / API\n\n- **Handler** — serves X. `lib/h.js`\n\n'
+          + '## TODO (auto-stubbed 2026-07-02)\n\n'
+          + '- **TBD** — touched in this session: `lib/a.js`. <!-- describe -->\n'
+          + '- **TBD** — touched in this session: `lib/b.js`. <!-- describe -->\n';
+        fs.writeFileSync(featuresPath, fixture);
+
+        const engine = store.engines.get('claude');
+        const prompt = sessions.generatePrimePrompt(fiProject, engine);
+
+        // Computed independently from the same two exported functions this
+        // suite pins against `lib/feature-index-prime.js`'s own unit tests —
+        // this proves `lib/sessions.js` actually CALLS them and surfaces
+        // their result verbatim, rather than reimplementing or dropping it.
+        const expectedClock = formatStubClock(censusFeatureIndex(fixture));
+        assert.ok(expectedClock, 'the fixture has a parseable auto-stub date, so a clock must be computable');
+        assert.ok(prompt.includes(expectedClock),
+          `prime must carry the exact formatted stub clock (got: ${JSON.stringify(prompt)})`);
+        assert.ok(prompt.includes('oldest 2026-07-02'), 'names the oldest auto-stub block\'s date');
+        assert.match(prompt, /-?\d+ days? before the 14-day index guard fails|overdue by \d+ days? \(14-day index guard\)/,
+          'names the days remaining (or overdue) before the 14-day guard');
       });
 
       it('emits no pointer for a seeded stub with nothing in it yet', () => {
