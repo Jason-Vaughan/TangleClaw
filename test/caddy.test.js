@@ -106,6 +106,27 @@ describe('caddy', () => {
     });
   });
 
+  describe('CADDY_LABEL (#1283 — machine-global by design)', () => {
+    it('is the fixed LaunchAgent label, not derived from the store base path', () => {
+      assert.equal(caddy.CADDY_LABEL, 'com.tangleclaw.caddy');
+    });
+
+    it('does not move when the store base path (what TANGLECLAW_HOME relocates) changes', () => {
+      const before = caddy.CADDY_LABEL;
+      const otherBase = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-caddy-relocated-'));
+      try {
+        store._setBasePath(otherBase);
+        store.init();
+        assert.equal(caddy.CADDY_LABEL, before, 'CADDY_LABEL must stay a constant regardless of the active base path');
+      } finally {
+        store.close();
+        store._setBasePath(baseDir);
+        store.init();
+        fs.rmSync(otherBase, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe('detectCaddy', () => {
     it('reports available: true and parses the version when caddy stub is on PATH', () => {
       const r = caddy.detectCaddy();
