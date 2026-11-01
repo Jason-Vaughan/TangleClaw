@@ -497,16 +497,16 @@
           Executed across <strong>4 coordinated waves</strong> on base <code>c23643d76389f8681e532eb3aa271fcd394ff219</code> (<code>tag: v5.49.0</code>, SQLite <code>schema_version=74 → 75</code>) as Leg 1 of the <strong>Back-to-Back Dual-Version Sprint (<code>v5.50.0 → v5.51.0</code>, <code>OP-GO-DUAL-V5500-V5510-20261031</code>)</strong> under Charter <code>A488 v1.9</code> (<code>SHA-256: 7c71074f9e6412ea5b46b5a1fe0653adfa9b99ab0da4f2dae50e470289ace352</code>, Architect Co-Sign <code>A488-COSIGN-V5500-20261031-V1.9</code>, Rulings <code>A488-W1D-PROCPS-R1</code>, <code>A488-W1A-R1</code>, <code>A488-W2A-R1</code>, <code>A488-W3-REC-ACCEPT-R1</code>, <code>A488-W4-REL-ACCEPT-R2</code>, <code>A488-W4-STAGE-POOL-R2</code>, and <code>A488-W4REL-TIERS-SCOPE-R3</code>), scaling our <strong>2-Issue-Per-Lane Car Bundling architecture (<code>Rule #294</code>)</strong> AND pipelining <strong>Leg 2 (<code>v5.51.0</code>)</strong> across idle Builder lanes (<code>TC-Lane-B..D</code>) during <code>v5.50.0</code> Wave 2!
           Shipped <strong>8 Sprint PRs (#2755, #2754, #2756, #2757, #2762, #2763, #2764, #2765)</strong> closing all <strong>10 chartered issues (#1897, #1809, #2752, #2747, #2439, #1644 [absorbing #193], #2188, #1967, #2599, #2598; residual container follow-up split to #2758 per Rule #285 §1)</strong> with <strong>0 merge conflicts</strong>, <strong>0 post-merge defects on <code>main</code></strong>, and <strong><code>+12,573 / -155</code> net lines of code across feature waves</strong>.
           In <strong>Wave 1</strong> (merged at <code>309dacbda7f2</code>), 4 parallel Builder cars delivered 8 issues: <code>W1-B PR #2755</code> (<code>#1897 + #1809</code>), <code>W1-D PR #2754</code> (<code>#2752 + #2747</code>), <code>W1-C PR #2756</code> (<code>#2439 + #1644</code>), and <code>W1-A PR #2757</code> (<code>#2188 + #1967</code>). In <strong>Wave 2</strong> (merged at <code>e82760dc5947</code>), <code>W2-A PR #2762</code> delivered <code>#2599 + #2598</code> (cross-engine runtime model switching &amp; fallback chains, SQLite <code>schema_version=75</code>) while idle lanes <code>TC-Lane-D</code>, <code>TC-Lane-B</code>, and <code>TC-Lane-C</code> built and achieved 100% PRR acceptance on all 3 <code>v5.51.0</code> Wave 1 PRs (<code>#2760</code>, <code>#2761</code>, <code>#2759</code>).
-          Following <strong>Wave 3 Reconciliation (<code>W3-REC PR #2763</code> @ <code>3888bcfa7570</code>, 5.0m turnaround)</strong> and <strong>Wave 4 Release Cut (<code>W4-REL PR #2764</code> @ <code>ecb86c29512c5e53c006efb27cce3ed7c3993705</code>, <code>O-Gate</code> token <code>OBSR-OGATE-V5500-W4REL-PR2764-7be094b6-PASS</code>)</strong>, automatic <code>Release</code> workflow <code>#41256199348</code> published annotated tag and GitHub Release <strong><code>v5.50.0</code></strong>, and <code>TC-Lane-INT</code> executed the guarded production update on <code>/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder1</code> (recorded in <strong>Gate 3 Status <code>PR #2765</code> @ <code>ecb86c29512c</code></strong>; <strong>All 3 Finish Lines Verified</strong>).
+          Following <strong>Wave 3 Reconciliation (<code>W3-REC PR #2763</code> @ <code>3888bcfa7570</code>, 5.0m turnaround)</strong> and <strong>Wave 4 Release Cut (<code>W4-REL PR #2764</code> @ <code>ecb86c29512c5e53c006efb27cce3ed7c3993705</code>, <code>O-Gate</code> token <code>OBSR-OGATE-V5500-W4REL-PR2764-7be094b6-PASS</code>)</strong>, automatic <code>Release</code> workflow <code>#41256199348</code> published annotated tag and GitHub Release <strong><code>v5.50.0</code></strong>, and <code>TC-Lane-INT</code> executed the guarded production update on <code>/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder1</code> (recorded in <strong>Gate 3 Status <code>PR #2765</code> @ <code>8a34f1faf063</code></strong>; <strong>All 3 Finish Lines Verified</strong>).
         </p>
 
         <div class="meta-bar">
-          <div class="meta-pill"><span>Release Target:</span> <code>v5.50.0</code> (Tag <code>v5.50.0 @ ecb86c29512c</code> · Post-Deploy Doc <code>main @ ecb86c29512c</code> · Base <code>v5.49.0 @ c23643d76389</code>)</div>
+          <div class="meta-pill"><span>Release Target:</span> <code>v5.50.0</code> (Tag <code>v5.50.0 @ ecb86c29512c</code> · Post-Deploy Doc <code>main @ 8a34f1faf063</code> · Base <code>v5.49.0 @ c23643d76389</code>)</div>
           <div class="meta-pill"><span>Wave 1 Cars (8 Issues):</span> <code>W1-B #2755 @ 3c3a3868</code> · <code>W1-D #2754 @ 801d52ef</code> · <code>W1-C #2756 @ d1d89d4b</code> · <code>W1-A #2757 @ 309dacbd</code></div>
           <div class="meta-pill"><span>Wave 2 Car (2 Issues):</span> <code>W2-A #2762 @ e82760dc</code> (<code>#2599 + #2598</code> · Schema <code>v75</code> · Cross-Sprint Pipelined with <code>v5.51.0</code>)</div>
-          <div class="meta-pill"><span>W3-REC &amp; W4-REL:</span> <code>W3-REC #2763 @ 3888bcfa</code> · <code>W4-REL #2764 @ ecb86c29</code> · <code>Gate 3 #2765 @ ecb86c29512c</code></div>
+          <div class="meta-pill"><span>W3-REC &amp; W4-REL:</span> <code>W3-REC #2763 @ 3888bcfa</code> · <code>W4-REL #2764 @ ecb86c29</code> · <code>Gate 3 #2765 @ 8a34f1faf063</code></div>
           <div class="meta-pill"><span>Testament v0.34.0 Pool:</span> Stage 3 <code>5,869/5,869</code> (<code>100%</code>) · Stage 4 <code>5,817/5,817</code> (<code>100%</code> after <code>DIFF-V5500-04</code> tier move)</div>
-          <div class="meta-pill"><span>Finish-Line Honesty:</span> Code Released: <strong>Complete</strong> · Local Server Updated: <strong>Complete</strong> · Feature Activated: <strong>Complete</strong></div>
+          <div class="meta-pill"><span>Finish-Line Honesty:</span> Code Released: <strong>Complete</strong> · Local Server Updated: <strong>Complete</strong> (<code>PID 92580</code>, <code>schema_version=76</code>) · Feature Activated: <strong>Pending</strong> (live route readback)</div>
           <div class="meta-pill"><span>Observer Participant Disclosure:</span> <code>TC-Lane-Obsr</code> (#1540) operated as an in-test sprint participant (Rule #283 cl. 1)</div>
         </div>
 
@@ -815,13 +815,13 @@
               <text x="14" y="252" fill="#34d399" font-size="11" font-weight="700">W4-REL &amp; Deploy</text>
               <text x="14" y="266" fill="#94a3b8" font-size="9">#2764 + Tag + #2765</text>
               <rect x="608" y="236" width="112" height="28" rx="6" fill="#10b981" fill-opacity="0.45" stroke="#34d399" stroke-width="1.8"/>
-              <text x="370" y="290" fill="#34d399" font-size="10" font-weight="600">PR #2764 (ecb86c29) → Tag v5.50.0 → Live :3102 → PR #2765 (ecb86c29512c)</text>
+              <text x="370" y="290" fill="#34d399" font-size="10" font-weight="600">PR #2764 (ecb86c29) → Tag v5.50.0 → Live :3102 → PR #2765 (8a34f1faf063)</text>
             </svg>
           </div>
         </div>
 
         <div class="card">
-          <h3>Wave Progression &amp; Commit Chain (<code>c23643d7</code> → <code>ecb86c29512c</code>)</h3>
+          <h3>Wave Progression &amp; Commit Chain (<code>c23643d7</code> → <code>8a34f1faf063</code>)</h3>
           <div class="table-wrap">
             <table class="pr-table">
               <thead>
@@ -897,7 +897,7 @@
                   <td><code>7be094b6</code></td>
                   <td><code>22.0m</code> + Deploy</td>
                   <td><code>18</code> files (<code>+72 / -17</code>)</td>
-                  <td>Tag <code>v5.50.0</code> (<code>#41256199348</code>), Stage 4 <code>5,817/5,817</code> pool fix, Gate 3 <a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2765" target="_blank" rel="noopener">PR #2765</a> (<code>ecb86c29512c</code>)</td>
+                  <td>Tag <code>v5.50.0</code> (<code>#41256199348</code>), Stage 4 <code>5,817/5,817</code> pool fix, Gate 3 <a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2765" target="_blank" rel="noopener">PR #2765</a> (<code>8a34f1faf063</code>)</td>
                 </tr>
               </tbody>
             </table>
@@ -1311,7 +1311,7 @@
                 <td><strong>Gate 3 — Release-Status Honesty &amp; Live Deploy</strong></td>
                 <td><code>TC-Lane-INT</code> + <code>TC-Lane-Obsr</code></td>
                 <td><code>docs/releases/v5.50.0-status.md</code> (<code>PR #2764</code> &amp; <code>PR #2765</code>), Tag <code>v5.50.0 @ ecb86c29</code></td>
-                <td><code>O-Gate</code> token <code>OBSR-OGATE-V5500-W4REL-PR2764-7be094b6-PASS</code>; live server updated on <code>:3102</code> (<code>PID verified-live</code>, DB backup <code>verified-sqlite-backup</code>)</td>
+                <td><code>O-Gate</code> token <code>OBSR-OGATE-V5500-W4REL-PR2764-7be094b6-PASS</code>; live server updated on <code>:3102</code> (<code>PID 92580</code>, DB backup <code>560251ae41cadfd8e598bf669599f25c22c1906108621f03073949b620ac111c</code>)</td>
                 <td><span class="badge badge-green">PASS (Verified)</span></td>
               </tr>
               <tr>
@@ -1623,12 +1623,12 @@
       </div>
 
       <!-- WAVE CARD 7: W4-REL (#2764) & GATE 3 -->
-      <div class="wave-card" data-tags="all wave-4 testament governance" data-search="w4-rel pr 2764 pr 2765 ecb86c29512c 7be094b6c5af ecb86c29512c v5.50.0-status.md tiers.json">
+      <div class="wave-card" data-tags="all wave-4 testament governance" data-search="w4-rel pr 2764 pr 2765 ecb86c29512c 7be094b6c5af 8a34f1faf063 v5.50.0-status.md tiers.json">
         <div class="wave-header">
           <div>
             <div class="wave-num">WAVE 4 · RELEASE CUT, LIVE DEPLOY &amp; GATE 3 STATUS (TC-Lane-INT #1537 · PRR-B #1539 + Arc #1538 + Obsr #1540)</div>
             <h3 class="wave-title"><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2764" target="_blank" rel="noopener">PR #2764</a> &amp; <a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2765" target="_blank" rel="noopener">PR #2765</a> — Release <code>v5.50.0</code>, Stage 4 Tier Fix, Tag, GitHub Release, Live Deploy &amp; Gate 3 Verification</h3>
-            <div class="wave-window">Release Merge <code>ecb86c29512c5e53c006efb27cce3ed7c3993705</code> · Tag <code>v5.50.0</code> · Gate 3 Merge <code>ecb86c29512c5e53c006efb27cce3ed7c3993705</code></div>
+            <div class="wave-window">Release Merge <code>ecb86c29512c5e53c006efb27cce3ed7c3993705</code> · Tag <code>v5.50.0</code> · Gate 3 Merge <code>8a34f1faf063518aa481186addafea66fcf1d1c6</code></div>
           </div>
           <div class="wave-meta">
             <span class="badge badge-green">LIVE ON :3102</span>
@@ -1649,9 +1649,9 @@
                 <td><strong>Code Released (Complete)</strong></td>
                 <td>Drained all 11 <code>changelog.d/*.md</code> fragments into <code>CHANGELOG.md</code> <code>[5.50.0]</code>; updated <code>version.json</code>, <code>README.md</code>, <code>changelog-released-sections.lock.json</code>, <code>docs/releases/v5.50.0-status.md</code>, and moved 3 subprocess-spawning test files to <code>"large"</code> in <code>test/tiers.json</code> + <code>.testament.toml</code> (<code>Ruling A488-W4REL-TIERS-SCOPE-R3</code>); Stage 3 pool <code>5,869</code> pass, Stage 4 pool <code>5,817/5,817</code> pass (<code>100%</code>), Stage 5 pool <code>0</code> new failures (<code>Ruling A488-W4-STAGE-POOL-R2</code>); <code>Release #41256199348</code> published tag &amp; GitHub Release <code>v5.50.0</code></td>
               </tr>
-              <tr data-row-tags="wave-4 inventory" data-row-search="production deploy backup 5.50.0 ecb86c29512c">
-                <td><strong>Local Server Updated &amp; Feature Activated (Complete)</strong></td>
-                <td>Guarded updater moved <code>/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder1</code> to <code>v5.50.0 @ ecb86c29</code> (<code>PID verified-live</code>); SQLite backup <code>verified-sqlite-backup</code> (<code>integrity_check = ok</code>, <code>schema_version = 75</code>); <code>/api/health</code>, <code>/api/version</code> (<code>5.50.0</code>), <code>/api/engines/inventory</code>, &amp; <code>/api/usage-windows</code> HTTP <code>200</code>; recorded in <code>PR #2765 @ ecb86c29512c</code></td>
+              <tr data-row-tags="wave-4 inventory" data-row-search="production deploy backup 5.50.0 8a34f1faf063">
+                <td><strong>Local Server Updated (Complete) &amp; Feature Activated (Pending Live Readback)</strong></td>
+                <td>Guarded updater moved <code>/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder1</code> to <code>v5.50.0 @ ecb86c29</code> (<code>PID 92580</code>); SQLite backup <code>SHA-256: 560251ae41cadfd8...</code> (<code>integrity_check = ok</code>, <code>schema_version = 76</code>); <code>data/global-rules.md</code> <code>SHA-256: b2021cec...</code> preserved; <code>/api/health</code> &amp; <code>/api/version</code> (<code>5.50.0</code>) HTTP <code>200</code>; functional activation recorded as <code>Pending</code> in <code>PR #2765 @ 8a34f1faf063</code> pending authenticated live readback</td>
               </tr>
             </tbody>
           </table>
@@ -1696,25 +1696,25 @@
 
         <div class="subcard">
           <span class="pillar-num">DELIVERABLE 04 · v5.51.0 CAR W1-D (PR #2760 — #1196 + #2325 · PRR-B ACCEPTED)</span>
-          <h4>Defer Unsent Prime After Interrupted Spawn (<code>#1196</code>) &amp; Suppress Prime During Governed Recovery (<code>#2325</code>)</h4>
+          <h4>Stub-Clock Census (<code>#1196</code>) &amp; One-Step Operator Rule Edits (<code>#2325</code>)</h4>
           <p>
-            Built by <code>TC-Lane-D</code> and accepted by <code>TC-Lane-PRR-B</code> at head <code>cfaae354ab44</code>: preserves unsent prime state when a spawn is interrupted before delivery and suppresses redundant prime injection during governed continuity recovery.
+            Built by <code>TC-Lane-D</code> and accepted by <code>TC-Lane-PRR-B</code> at head <code>cfaae354ab44</code> (<code>13</code> files, <code>+696 / -70 LOC</code>): completes the stub-clock test census (<code>#1196</code>) and streamlines operator rule edits into a single atomic step (<code>#2325</code>).
           </p>
         </div>
 
         <div class="subcard">
           <span class="pillar-num">DELIVERABLE 05 · v5.51.0 CAR W1-B (PR #2761 — #2293 + #1654 · PRR-B ACCEPTED)</span>
-          <h4>Prompt-Idle Gate Before Re-Prime (<code>#2293</code>) &amp; Accurate <code>silentPrime</code> Dispositions (<code>#1654</code>)</h4>
+          <h4>Grow Project Rules Hooks on Refresh (<code>#2293</code>) &amp; Unify <code>isUsableRule</code> (<code>#1654</code>)</h4>
           <p>
-            Built by <code>TC-Lane-B</code> and accepted by <code>TC-Lane-PRR-B</code> at head <code>a24191546e4a</code>: waits for prompt-idle confirmation before re-priming a session and refines per-engine <code>silentPrime</code> disposition reporting.
+            Built by <code>TC-Lane-B</code> and accepted by <code>TC-Lane-PRR-B</code> at head <code>a24191546e4a</code> (<code>11</code> files, <code>+485 / -69 LOC</code>): grows a project’s rules hooks automatically on refresh (<code>#2293</code>) and unifies <code>isUsableRule</code> across server and delivery paths (<code>#1654</code>).
           </p>
         </div>
 
         <div class="subcard">
           <span class="pillar-num">DELIVERABLE 06 · v5.51.0 CAR W1-C (PR #2759 — #1176 · PRR-A ACCEPTED)</span>
-          <h4>End-to-End Rule Receipt Verification &amp; Automatic Redelivery (<code>#1176</code>)</h4>
+          <h4>Re-Deliver Startup Rules When the Hook Receipt Never Arrives (<code>#1176</code>)</h4>
           <p>
-            Built by <code>TC-Lane-C</code> and accepted by <code>TC-Lane-PRR-A</code> at head <code>62ae6e2d33b4</code>: verifies startup and runtime rule delivery receipts across sessions and triggers bounded redelivery when a rule update goes unacknowledged.
+            Built by <code>TC-Lane-C</code> and accepted by <code>TC-Lane-PRR-A</code> at head <code>62ae6e2d33b4</code> (<code>8</code> files, <code>+2,051 / -5 LOC</code>): verifies startup rule hook receipts and automatically re-delivers startup rules when the hook receipt never arrives.
           </p>
         </div>
       </div>
@@ -1728,7 +1728,7 @@
           <strong>TangleClaw Sprint v5.50.0 Executive Engineering &amp; Telemetry Report</strong> · Generated by <code>TC-Lane-PM</code> (#1541) &amp; <code>TC-Lane-Obsr</code> (#1540) (In-Test Sprint Participant · Rule #283)
         </div>
         <div>
-          Charter <code>A488 v1.9</code> (<code>A488-COSIGN-V5500-20261031-V1.9</code>) · Base <code>c23643d7</code> (<code>v5.49.0</code>) → Wave 1 <code>309dacbd</code> (<code>#2754–#2757</code>) → Wave 2 <code>e82760dc</code> (<code>#2762</code>) → W3-REC <code>3888bcfa</code> (<code>#2763</code>) → W4-REL <code>ecb86c29</code> (<code>#2764</code> / <code>v5.50.0</code>) → Gate 3 <code>ecb86c29512c</code> (<code>#2765</code>) · <a href="../" style="color:var(--accent2);">All Sprint Reports</a>
+          Charter <code>A488 v1.9</code> (<code>A488-COSIGN-V5500-20261031-V1.9</code>) · Base <code>c23643d7</code> (<code>v5.49.0</code>) → Wave 1 <code>309dacbd</code> (<code>#2754–#2757</code>) → Wave 2 <code>e82760dc</code> (<code>#2762</code>) → W3-REC <code>3888bcfa</code> (<code>#2763</code>) → W4-REL <code>ecb86c29</code> (<code>#2764</code> / <code>v5.50.0</code>) → Gate 3 <code>8a34f1faf063</code> (<code>#2765</code>) · <a href="../" style="color:var(--accent2);">All Sprint Reports</a>
         </div>
       </div>
     </div>
