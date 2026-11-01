@@ -195,9 +195,20 @@ cannot expand tells them something is wrong and refuses to say what. Findings qu
 Caddyfile, which is operator-authored text arriving at `innerHTML`, so every one is escaped.
 
 Amber, like the base banner: a hand-edit is usually deliberate, and the stale-server banner stays
-the one that reads as urgent when both surface together. State-driven, no dismiss control and no
-timer (#98/#268) — the measurement is taken at boot, so it clears when the operator fixes the file
-and restarts.
+the one that reads as urgent when both surface together. No timer (#98/#268) — the measurement is
+taken at boot, so it clears on its own only when the operator fixes the file and restarts.
+
+It does carry a "Resolve…" menu (#1415): *Restore Security Baseline* overwrites the live Caddyfile
+with the secure content this check would generate and reloads Caddy (`POST
+/api/caddy-drift/resolve`, `{action: 'restore-baseline'}`, reusing the same fail-closed
+write-then-validate-then-restore-on-failure path `lib/admin-credential.js#writeValidatedCaddyfile`
+gives the credential-change route); *Acknowledge Intentional Drift* silences the banner for the
+violations open right now (`{action: 'acknowledge', findings}`,
+`lib/server-info.js#acknowledgeCaddyDrift`) without touching the file at all. Acknowledgment is
+module-level state, reset at boot alongside the notice itself — never persisted — so it is
+re-confirmed after every restart, the same as the notice it gates; `lib/caddy-drift.js#shouldShowDrift`
+is what decides whether a new poll's findings still count as acknowledged, comparing by VALUE so a
+shrinking finding set stays silent while a genuinely new one reinstates the banner.
 
 A check that could **not** run still renders, with `severity: 'unknown'`. On an install where a
 Caddyfile is expected, "TangleClaw did not look" and "TangleClaw looked and found nothing" are

@@ -134,6 +134,7 @@ describe('operator routes that grant authority need a signed-in operator (#2378)
       r('POST', '/api/merge-queue/:id/clear-halt', '/api/merge-queue/mq_missing/clear-halt', {}),
       r('POST', '/api/merge-queue/entries/:id/operator-gate', '/api/merge-queue/entries/mqe_missing/operator-gate', {}),
       r('POST', '/api/merge-queue/entries/:id/settle-landing', '/api/merge-queue/entries/mqe_missing/settle-landing', {}),
+      r('POST', '/api/caddy-drift/resolve', '/api/caddy-drift/resolve', { action: 'acknowledge', findings: [] }),
       r('PUT', '/api/startup-prompt', '/api/startup-prompt', { text: 'A startup prompt.', firerProjectIds: [], expectedRevision: 0 }),
       r('PUT', '/api/shared-docs/:id', `/api/shared-docs/${doc.id}`, { description: 'Changed registration.' }),
       r('POST', '/api/groups/:id/members', `/api/groups/${group.id}/members`, { projectId: beta.id }),
@@ -207,7 +208,7 @@ describe('operator routes that grant authority need a signed-in operator (#2378)
       .sort();
     const tested = classA().map((r) => `${r.method} ${r.pattern}`).filter((k) => k !== 'PATCH /api/projects/:name').sort();
     assert.deepEqual(tested, registered);
-    assert.equal(classA().length, 21);
+    assert.equal(classA().length, 22);
   });
 
   describe('with no login in force (open)', () => {

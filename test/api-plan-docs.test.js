@@ -9,7 +9,7 @@
  * `/api/projects` siblings take; no new gate, no bypass.
  */
 
-const { describe, it, before, after } = require('node:test');
+const { describe, it, before, after, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -24,7 +24,7 @@ const caddy = require('../lib/caddy');
 const httpsSetup = require('../lib/https-setup');
 const serviceToken = require('../lib/service-token');
 const sessionOwnership = require('../lib/session-ownership');
-const { createServer } = require('../server');
+const { createServer, _resetTailscaleOriginCacheForTest } = require('../server');
 
 /**
  * HTTP request; returns status, headers, the raw body and its JSON when it is JSON.
@@ -310,6 +310,79 @@ describe('#542 — served plan docs over HTTP', () => {
       const r = await get(server, '/api/projects/no-such-project/plans');
       assert.equal(r.status, 404);
       assert.equal(r.data.code, 'NOT_FOUND');
+    });
+
+    // #1380 — Tailscale advertisement mode is authoritative when it is on:
+    // the operator turned it on specifically because Host-header addressing
+    // does not reliably reach them, so these never fall back to the `host`/
+    // `local-probe` behavior above once it is enabled.
+    describe('Tailscale advertisement mode (#1380)', () => {
+      const tailscaleIngress = require('../lib/tailscale-ingress');
+      let realResolve;
+
+      before(() => {
+        realResolve = tailscaleIngress.resolveAdvertisedOrigin;
+      });
+
+      afterEach(() => {
+        tailscaleIngress.resolveAdvertisedOrigin = realResolve;
+        // The route memoizes a resolution per (enabled, port, scheme) for
+        // TAILSCALE_ORIGIN_CACHE_TTL_MS, which would otherwise serve the
+        // PREVIOUS test's stubbed answer to this one — both use the same
+        // inputs on purpose, to isolate what changes between them.
+        _resetTailscaleOriginCacheForTest();
+        const config = store.config.load();
+        config.tailscaleMode = false;
+        store.config.save(config);
+      });
+
+      it('uses the resolved Tailscale origin, naming the source, when resolution succeeds', async () => {
+        const config = store.config.load();
+        config.tailscaleMode = true;
+        config.ingressMode = 'direct';
+        store.config.save(config);
+        tailscaleIngress.resolveAdvertisedOrigin = async () =>
+          ({ ok: true, origin: 'https://fixture-box.tailnet-example.ts.net:3102', host: 'fixture-box.tailnet-example.ts.net' });
+
+        const r = await get(server, `/api/projects/${project.id}/plans`, { Host: `${HOST}:3102` });
+        assert.equal(r.status, 200);
+        assert.equal(r.data.origin, 'https://fixture-box.tailnet-example.ts.net:3102');
+        assert.equal(r.data.originSource, 'tailscale-ingress');
+        assert.equal(r.data.originNote, null);
+        assert.equal(r.data.plans[0].url,
+          `https://fixture-box.tailnet-example.ts.net:3102/plans/${project.id}/train.md`);
+        // Authoritative, not additive: the Host header above names a
+        // different host than Tailscale resolved, and the Tailscale answer
+        // must win outright.
+        assert.doesNotMatch(r.data.origin, new RegExp(HOST));
+      });
+
+      it('reports the failure honestly and does NOT fall back to the Host-header origin', async () => {
+        const config = store.config.load();
+        config.tailscaleMode = true;
+        config.ingressMode = 'direct';
+        store.config.save(config);
+        tailscaleIngress.resolveAdvertisedOrigin = async () =>
+          ({ ok: false, reason: 'magicdns-off', detail: 'MagicDNS is off for this tailnet, so there is no stable hostname to advertise' });
+
+        const r = await get(server, `/api/projects/${project.id}/plans`, { Host: `${HOST}:3102` });
+        assert.equal(r.status, 200);
+        assert.equal(r.data.origin, null, 'no fabricated fallback origin');
+        assert.equal(r.data.originSource, 'tailscale-ingress');
+        assert.match(r.data.originNote, /MagicDNS is off/);
+        assert.equal(r.data.plans[0].url, null, 'no link can be built with no origin');
+      });
+
+      it('with the mode off, the Host-header/local-probe behavior is exactly unchanged', async () => {
+        // Regression pin: #1380 must not alter the existing path at all when
+        // the feature is not in use.
+        const config = store.config.load();
+        config.tailscaleMode = false;
+        store.config.save(config);
+        const r = await get(server, `/api/projects/${project.id}/plans`, { Host: `${HOST}:3102` });
+        assert.equal(r.data.origin, `http://${HOST}:${frontPort()}`);
+        assert.equal(r.data.originSource, 'host');
+      });
     });
   });
 
