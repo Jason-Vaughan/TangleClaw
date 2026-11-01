@@ -98,9 +98,12 @@ describe('master-continuity', () => {
         assert.equal(out.status, 'critical', `expected critical at ${pct}%`);
         assert.equal(out.trigger, true);
         // Master is not a sessions row and never wraps (lib/master.js) — the
-        // trigger must never say 'wrap', here or in the generic protocol enum.
+        // trigger must never say 'wrap'. 'finalize-relaunch' is the real,
+        // valid tangleclaw-continuity/v1 enum member closest to Master's
+        // actual (manual Kill+Retry) prior art; wrap: 'none' disambiguates
+        // it from that same value's ordinary wrap-then-relaunch meaning.
         assert.notEqual(out.protocol.transition, 'wrap');
-        assert.equal(out.protocol.transition, 'companion-relaunch');
+        assert.equal(out.protocol.transition, 'finalize-relaunch');
         assert.equal(out.protocol.wrap, 'none');
         assert.match(out.protocol.next_safe_action, /Prepare a continuity capsule now/);
         assert.doesNotMatch(out.protocol.next_safe_action, /\bwrap\b/i);
