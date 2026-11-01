@@ -41,6 +41,17 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-01 — W2-A: HEAD-as-GET, dashboard poll latency, Caddy Drift route wiring, Tailscale origin (#923, #2771, #1415, #1380)
+
+<!-- prawduct: type=feature | scope=w2a-923-2771-1415-1380 -->
+
+- **HEAD-as-GET (#923):** `HEAD` now answers exactly what `GET` would (status, headers, no body) via one `dispatchMethod` variable at every routing comparison plus a response-body-suppression wrapper at `handleRequest`'s shared exit point, rather than touching each scattered `GET`-gated site individually. The two reverse-proxy sections (`/terminal/*`, `/openclaw[-direct]/*`) are deliberately untouched — they forward whatever method arrives to a different process.
+- **Dashboard poll latency (#2771):** `lib/projects.js#listProjects` caches each project's facts for 20s, skipping the scanner-child read on a warm hit while leaving the existing one-at-a-time spawn discipline for a cold/stale one unchanged. `public/landing.js#loadProjects` fetches `/api/projects` and `/api/awareness` in parallel (decoupled, not `Promise.all`, so a stalled awareness poll never blocks the project list from rendering) and shows a toast on a failed fetch instead of returning silently.
+- **Caddy Drift route wiring (#1415):** `POST /api/caddy-drift/resolve` wires W1-A's Resolve/Acknowledge menu — `restore-baseline` reuses the credential route's fail-closed write-then-validate-then-restore idiom; `acknowledge` updates module-level state in `lib/server-info.js`, gated through `lib/caddy-drift.js#shouldShowDrift` on every read. Behind `signedInOperator`.
+- **Tailscale origin wiring (#1380, partial):** the plan-share-link route advertises the resolved Tailscale origin when `config.tailscaleMode` is on, honestly reporting `origin: null` with a reason rather than silently falling back to Host-header addressing. Session-start links and Medusa peer-advertisement text are genuinely out of scope (Ruling A490-W2A-R3): both stay loopback-only by design.
+- **Pre-merge fix, Architect Ruling A490-W2A-R6:** `tc whoami`/every `bin/tc` verb transitively required this PR's new top-level `require('./caddy-drift')` in `lib/server-info.js`, which requires `./store`, loading `node:sqlite` and printing an `ExperimentalWarning` to stderr — breaking `test/tc-pane-identity.test.js:504`'s stderr-emptiness assertion on CI. Root cause independently verified against the actual require chain (not taken on citation alone) before fixing; `./caddy-drift` is now lazy-required inside `_visibleCaddyDriftNotice()`'s existing null-guard, matching this file's own `./bind-policy` precedent. `test/tc-pane-identity.test.js` is untouched (115/115 pass); a 129-file `server.js`-dependent regression sweep ran clean (4502/4502).
+- Three test files outside this car's original envelope were touched and individually escalated/approved mid-build (LANE_QUEUE r1278/r1279) because this PR's own changes broke or triggered them: `test/dashboard-boot-beacon.test.js` (new `showToast`/`hideToast` free variables for an isolated VM-lift), `test/launch-binding-routes.test.js` and `test/signed-in-operator-routes.test.js` (both maintain a reviewed allowlist of signed-in-operator routes; the new `/api/caddy-drift/resolve` route is now on both).
+
 ## 2026-10-31 — v5.51.0 W2-REC: reconcile project-rule delivery records
 
 <!-- prawduct: type=internal | scope=v551-w2-rec -->
