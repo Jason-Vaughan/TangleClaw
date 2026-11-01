@@ -79,6 +79,26 @@ function registerHooks(projectPath, count) {
 }
 
 /**
+ * Make the project's `.claude/` directory refuse a new hook registration
+ * write, while leaving what is already registered in it readable (#2293).
+ * Simulates hook growth being attempted and genuinely failing — a transient
+ * filesystem error, not a project that declined delivery — so a refresh
+ * falls back to naming what the registered files cannot carry, exactly as it
+ * did before growth existed. Call `allowHookWrites` on the same path once the
+ * test is done asserting, so the shared `tmpBase` cleanup in `after()` can
+ * still remove it.
+ * @param {string} projectPath
+ */
+function blockHookWrites(projectPath) {
+  fs.chmodSync(path.join(projectPath, '.claude'), 0o555);
+}
+
+/** Undo {@link blockHookWrites}. @param {string} projectPath */
+function allowHookWrites(projectPath) {
+  fs.chmodSync(path.join(projectPath, '.claude'), 0o755);
+}
+
+/**
  * Write the files a launch writes for the project's rules as they stand now,
  * and register one hook per file, as the launch's hook sync does.
  * @param {{id:number, path:string}} project
@@ -166,29 +186,40 @@ describe('#2273 — delivered rules files follow the rules in force', () => {
     assert.match(text, /is the current statement: where a count elsewhere in this session differs, this one is right/);
   });
 
-  it('writes nothing where the launch delivered no rules files, and says so', () => {
-    addRule(project.id, 'A rule for a project whose launch chose no delivery.');
+  it('writes nothing for a project whose launch declined delivery outright, and says so', () => {
+    // silentPrime off is a real decline, unlike a launch that simply had no
+    // rule yet (#2293, covered below): there is no engine-side hook this
+    // project will ever register no matter how many times a refresh tries.
+    const declinedPath = path.join(tmpBase, 'declined-proj');
+    fs.mkdirSync(declinedPath, { recursive: true });
+    const declined = store.projects.create({ name: 'declined-proj', path: declinedPath, engine: 'claude' });
+    store.projectConfig.save(declinedPath, { engine: 'claude', silentPrime: false });
+    addRule(declined.id, 'A rule for a project whose launch chose no delivery.');
 
-    const verdict = refresh.refreshProjectRules(project.id, { now: NOW });
+    const verdict = refresh.refreshProjectRules(declined.id, { now: NOW });
 
     assert.deepEqual(verdict, {
-      status: 'nothing-to-refresh', projectId: project.id, reason: 'no-rules-files', rulesInForce: 1
+      status: 'nothing-to-refresh', projectId: declined.id, reason: 'no-rules-files', rulesInForce: 1
     });
-    assert.equal(fs.existsSync(path.join(project.path, '.tangleclaw')), false,
+    assert.equal(fs.existsSync(channel.shardPath(declined.path, 1)), false,
       'a refresh must not start delivery the launch declined');
   });
 
   it('counts the rules in force on every verdict that leaves the files alone', () => {
-    // A project launched with no rule has no file and no hook, so its first
-    // rules land on the same verdict as a launch that declined delivery. The
-    // count is what lets a caller say a rule is in force and not delivered.
-    assert.equal(refresh.refreshProjectRules(project.id).rulesInForce, 0);
-    addRule(project.id, 'The first rule of a project launched with none.');
-    const second = addRule(project.id, 'A second, switched off below.');
-    store.sessionRules.create({ content: 'A wrap rule is not delivered this way.', projectId: project.id, kind: 'wrap' });
-    assert.equal(refresh.refreshProjectRules(project.id).rulesInForce, 2);
+    // A declined project (silentPrime off) never grows a hook, so every one
+    // of its verdicts is the bail with no files touched; `rulesInForce` is
+    // what lets a caller still say a rule governs it although nothing states so.
+    const declinedPath = path.join(tmpBase, 'declined-count-proj');
+    fs.mkdirSync(declinedPath, { recursive: true });
+    const declined = store.projects.create({ name: 'declined-count-proj', path: declinedPath, engine: 'claude' });
+    store.projectConfig.save(declinedPath, { engine: 'claude', silentPrime: false });
+    assert.equal(refresh.refreshProjectRules(declined.id).rulesInForce, 0);
+    addRule(declined.id, 'The first rule of a project that declined delivery.');
+    const second = addRule(declined.id, 'A second, switched off below.');
+    store.sessionRules.create({ content: 'A wrap rule is not delivered this way.', projectId: declined.id, kind: 'wrap' });
+    assert.equal(refresh.refreshProjectRules(declined.id).rulesInForce, 2);
     store.sessionRules.update(second.id, { enabled: false });
-    assert.equal(refresh.refreshProjectRules(project.id).rulesInForce, 1, 'a disabled rule is not in force');
+    assert.equal(refresh.refreshProjectRules(declined.id).rulesInForce, 1, 'a disabled rule is not in force');
 
     assert.equal(refresh.refreshProjectRules(null).rulesInForce, 0);
     assert.equal(refresh.refreshProjectRules(987654).rulesInForce, 0);
@@ -219,15 +250,26 @@ describe('#2273 — delivered rules files follow the rules in force', () => {
     assert.ok(!texts[0].includes('first x'), 'no retired rule text is left behind');
   });
 
-  it('names what the registered files cannot carry, without growing their number or breaking the budget', () => {
+  it('names what the registered files cannot carry when growth genuinely fails, without breaking the budget', () => {
     const body = 'y'.repeat(Math.floor(budget * 0.45));
     const kept = [addRule(project.id, `one ${body}`), addRule(project.id, `two ${body}`)];
     assert.equal(launchFiles(project), 1, 'the fixture needs a launch that wrote one file');
     const added = [addRule(project.id, `three ${body}`), addRule(project.id, `four ${body}`)];
+    // The set now needs a second shard this project never registered — block
+    // the write that growth (#2293) would otherwise make, so the shortfall
+    // falls back to naming what the one registered file cannot carry, exactly
+    // as it did before growth existed.
+    blockHookWrites(project.path);
 
-    const verdict = refresh.refreshProjectRules(project.id, { now: NOW });
+    let verdict;
+    try {
+      verdict = refresh.refreshProjectRules(project.id, { now: NOW });
+    } finally {
+      allowHookWrites(project.path);
+    }
 
     assert.equal(verdict.status, 'refreshed');
+    assert.equal(verdict.hooksGrown, false, 'a blocked write registers nothing new');
     assert.equal(verdict.files, 1, 'a file no hook is registered for would be printed by nothing');
     assert.equal(verdict.rules, 4);
     assert.deepEqual(tangleclawDir(project.path), ['session-rules-1.json']);
@@ -254,9 +296,19 @@ describe('#2273 — delivered rules files follow the rules in force', () => {
     addRule(project.id, `two ${body}`);
     assert.equal(launchFiles(project), 2);
     const third = addRule(project.id, `three ${body}`);
+    // A third shard would otherwise be grown (#2293) for this third rule —
+    // block it so the budget-driven "fill what you have first" packing this
+    // test is about still shows, as it would for a growth attempt that fails.
+    blockHookWrites(project.path);
 
-    const verdict = refresh.refreshProjectRules(project.id, { now: NOW });
+    let verdict;
+    try {
+      verdict = refresh.refreshProjectRules(project.id, { now: NOW });
+    } finally {
+      allowHookWrites(project.path);
+    }
 
+    assert.equal(verdict.hooksGrown, false, 'a blocked write registers nothing new');
     assert.equal(verdict.files, 2);
     assert.deepEqual(verdict.omittedRuleIds, [third.id]);
     const texts = deliveredTexts(project.path);
@@ -294,30 +346,69 @@ describe('#2273 — delivered rules files follow the rules in force', () => {
     const second = addRule(project.id, `two ${body}`);
     assert.equal(launchFiles(project), 2);
     registerHooks(project.path, 1);
+    // Fewer hooks than this set needs would otherwise be grown back (#2293) —
+    // block the write so holding to what is actually registered still shows.
+    blockHookWrites(project.path);
 
-    const verdict = refresh.refreshProjectRules(project.id, { now: NOW });
+    let verdict;
+    try {
+      verdict = refresh.refreshProjectRules(project.id, { now: NOW });
+    } finally {
+      allowHookWrites(project.path);
+    }
 
+    assert.equal(verdict.hooksGrown, false, 'a blocked write registers nothing new');
     assert.equal(verdict.files, 1);
     assert.equal(verdict.removed, 1, 'a file nothing prints is not left to look delivered');
     assert.deepEqual(verdict.omittedRuleIds, [second.id]);
     assert.ok(deliveredTexts(project.path)[0].includes(`Not carried in this block: Rule #${second.id}.`));
   });
 
-  it('writes nothing when files are on disk and no rules hook is registered', () => {
+  it('grows the hook back when nothing is registered but the project can still register one (#2293)', () => {
+    // Zero registered hooks with files still on disk no longer reads only as
+    // "declined" — a capable, enabled project that lost its registration
+    // (an operator edit, an engine hiccup) self-heals on the next refresh
+    // instead of leaving the rule stuck undelivered until the next launch.
+    addRule(project.id, 'A rule whose file had no reader.');
+    launchFiles(project);
+    registerHooks(project.path, 0);
+
+    const verdict = refresh.refreshProjectRules(project.id, { now: NOW });
+
+    assert.equal(verdict.status, 'refreshed');
+    assert.equal(verdict.hooksGrown, true);
+    assert.equal(refresh.registeredSlots(project.path), 1);
+    assert.ok(deliveredTexts(project.path)[0].includes('A rule whose file had no reader.'));
+  });
+
+  it('writes nothing when files are on disk and growth cannot register a hook', () => {
     addRule(project.id, 'A rule whose file has no reader.');
     launchFiles(project);
     const before = fs.readFileSync(channel.shardPath(project.path, 1), 'utf8');
     registerHooks(project.path, 0);
+    blockHookWrites(project.path);
 
-    const verdict = refresh.refreshProjectRules(project.id, { now: NOW });
+    let verdict;
+    try {
+      verdict = refresh.refreshProjectRules(project.id, { now: NOW });
+    } finally {
+      allowHookWrites(project.path);
+    }
 
     assert.deepEqual(verdict, {
       status: 'nothing-to-refresh', projectId: project.id, reason: 'no-rules-hooks', rulesInForce: 1
     });
     assert.equal(fs.readFileSync(channel.shardPath(project.path, 1), 'utf8'), before);
+
     fs.rmSync(path.join(project.path, '.claude'), { recursive: true });
-    assert.equal(refresh.refreshProjectRules(project.id, { now: NOW }).reason, 'no-rules-hooks',
-      'no settings file registers no hook');
+    fs.chmodSync(project.path, 0o555);
+    let secondVerdict;
+    try {
+      secondVerdict = refresh.refreshProjectRules(project.id, { now: NOW });
+    } finally {
+      fs.chmodSync(project.path, 0o755);
+    }
+    assert.equal(secondVerdict.reason, 'no-rules-hooks', 'a settings file growth cannot create registers no hook');
   });
 
   it('fails, and changes nothing, when the registered hooks cannot be read', () => {
@@ -446,10 +537,18 @@ describe('#2273 — delivered rules files follow the rules in force', () => {
     store.sessions.start({ projectId: stored.id, engineId: 'claude' });
     const live = refresh.refreshProjectRules(stored.id, { now: NOW });
 
+    // Claude's tighter cap needs a second shard this set never had registered
+    // under the larger stored engine. Growth (#2293) registers it against the
+    // LIVE engine (claude), not the stored one ('other') — if it registered
+    // against the wrong engine, this would come back with an omission instead.
     assert.equal(live.status, 'refreshed');
-    assert.ok(fs.readFileSync(channel.shardPath(dir, 1), 'utf8').length <= budget,
-      'a file over the running engine\'s cap is replaced by a preview and every rule in it is lost');
-    assert.equal(live.omittedRuleIds.length, 1);
+    assert.equal(live.hooksGrown, true, 'claude needed a second shard this project never registered');
+    assert.equal(live.files, 2);
+    assert.deepEqual(live.omittedRuleIds, [], 'the grown second shard carries what the first alone could not');
+    for (let i = 1; i <= 2; i += 1) {
+      assert.ok(fs.readFileSync(channel.shardPath(dir, i), 'utf8').length <= budget,
+        'a file over the running engine\'s cap is replaced by a preview and every rule in it is lost');
+    }
   });
 
   it('leaves no staging file behind after a refresh, and a second refresh agrees with the first', () => {
@@ -494,5 +593,101 @@ describe('#2273 — delivered rules files follow the rules in force', () => {
     const context = JSON.parse(printed).hookSpecificOutput.additionalContext;
     assert.ok(context.includes(`Rule #${fresh.id} — Rule approved "mid-session", with a \\ backslash.`));
     assert.ok(!context.includes('Launch-time rule'));
+  });
+});
+
+// #2293's own real-engine question — does a hook registered mid-session
+// actually fire on the running session's next `/clear`, or does the engine
+// cache its hooks at launch? — was answered empirically against the real
+// installed `claude` CLI (`claude --version` == 2.1.283): launched a
+// disposable session in a tmux pane with no hooks, wrote a SessionStart
+// hook into its `.claude/settings.local.json` mid-session, and sent `/clear`,
+// repeated across ~10 trials. Yes, it re-reads fresh on every `/clear`, not
+// only at launch — including a brand-new entry added beside one that already
+// fired at launch, and an edit to an already-registered entry's command —
+// provided a few seconds pass between the write and the `/clear` (an
+// immediate, zero-delay `/clear` in the same instant as the write
+// unreliably missed it in several trials; never a concern in real operator
+// usage). See the full writeup and procedure in `lib/session-rules-refresh.js`'s
+// module header. That real-engine behavior is outside this repo's control and
+// not reproduced here — spawning a real tmux+claude process in the suite
+// would be slow and flaky in CI. What IS tested below, deterministically, is
+// TangleClaw's own half of the contract: that a refresh actually registers
+// the hook and writes the file a `/clear` would need, and that the hook
+// SCRIPT this repo owns prints the right content once it runs (see "is what
+// the real hook prints after a clear" above, which already covers that the
+// hook script itself does the right thing — real-engine firing is a
+// property of Claude Code, not of this script).
+describe('#2293 — a project launched with none still gets its first rule, and an outgrown set grows new slots', () => {
+  let project;
+  beforeEach(() => { project = makeProject(); });
+
+  it('delivers a project\'s first rule after a launch that had none to deliver, and a clear sees it', () => {
+    // No launchFiles() call: this project launched with zero rules in force,
+    // so it wrote no file and registered no hook, exactly as a genuine
+    // decline would — the two are indistinguishable at launch. The first rule
+    // approved afterward must still reach a `/clear`.
+    assert.equal(fs.existsSync(channel.shardPath(project.path, 1)), false, 'no launch-time file exists yet');
+    assert.equal(refresh.registeredSlots(project.path), 0, 'no launch-time hook is registered yet');
+    const first = addRule(project.id, 'The project\'s first rule, approved mid-session.');
+
+    const verdict = refresh.refreshProjectRules(project.id, { now: NOW });
+
+    assert.equal(verdict.status, 'refreshed');
+    assert.equal(verdict.hooksGrown, true, 'a hook had to be registered for the first time');
+    assert.equal(verdict.files, 1);
+    assert.deepEqual(verdict.omittedRuleIds, []);
+    assert.equal(refresh.registeredSlots(project.path), 1);
+
+    const printed = execFileSync('bash', [HOOK, '1'], {
+      env: { ...process.env, CLAUDE_PROJECT_DIR: project.path },
+      input: '{"source":"clear"}',
+      encoding: 'utf8'
+    });
+    const context = JSON.parse(printed).hookSpecificOutput.additionalContext;
+    assert.ok(context.includes(`Rule #${first.id} — The project's first rule, approved mid-session.`),
+      'a clear right after the approval must already see it — not wait for the next launch');
+  });
+
+  it('registers further slots for a rule set that outgrows however many the launch registered', () => {
+    const body = 'q'.repeat(Math.floor(budget * 0.6));
+    addRule(project.id, `one ${body}`);
+    addRule(project.id, `two ${body}`);
+    assert.equal(launchFiles(project), 2, 'the fixture needs a launch that registered two slots');
+    const third = addRule(project.id, `three ${body}`);
+    const fourth = addRule(project.id, `four ${body}`);
+
+    const verdict = refresh.refreshProjectRules(project.id, { now: NOW });
+
+    assert.equal(verdict.status, 'refreshed');
+    assert.equal(verdict.hooksGrown, true, 'two more slots than the launch registered were needed');
+    assert.equal(verdict.files, 4);
+    assert.deepEqual(verdict.omittedRuleIds, [], 'growth carries what naming an omission used to leave out');
+    assert.equal(refresh.registeredSlots(project.path), 4);
+    const text = deliveredTexts(project.path).join('\n');
+    assert.ok(text.includes(`Rule #${third.id}`) && text.includes(`three ${body}`));
+    assert.ok(text.includes(`Rule #${fourth.id}`) && text.includes(`four ${body}`));
+    for (const i of [1, 2, 3, 4]) {
+      assert.ok(fs.readFileSync(channel.shardPath(project.path, i), 'utf8').length <= budget);
+    }
+  });
+
+  it('reports a hookless engine\'s first rule honestly, instead of silently trying to grow a hook it has none of', () => {
+    // Codex has no `capabilities.supportsSilentPrime`: syncEngineHooks clears
+    // hooks for it rather than registering any, whatever the rule count. A
+    // refresh attempt must not throw, and must say plainly that nothing was
+    // delivered — the rule is in force (`tc rules` reads it) but only the
+    // project's next launch, not a `/clear`, will deliver it.
+    const codexPath = path.join(tmpBase, 'codex-proj');
+    fs.mkdirSync(codexPath, { recursive: true });
+    const codex = store.projects.create({ name: 'codex-proj', path: codexPath, engine: 'codex' });
+    addRule(codex.id, 'A rule on an engine with no hook mechanism.');
+
+    const verdict = refresh.refreshProjectRules(codex.id, { now: NOW });
+
+    assert.deepEqual(verdict, {
+      status: 'nothing-to-refresh', projectId: codex.id, reason: 'no-rules-files', rulesInForce: 1
+    });
+    assert.equal(refresh.registeredSlots(codexPath), 0);
   });
 });

@@ -807,19 +807,20 @@ describe('api/session-rules (#347/D1a)', () => {
       });
     });
 
-    describe('where the launch wrote no rules file', () => {
-      it('writes no file, and says nothing when no session of the project is running', async () => {
+    describe('where the launch registered no rules hook', () => {
+      it('grows a hook and delivers the first rule, even with no session of the project running (#2293)', async () => {
         const project = launchedProject([]);
         const outcome = await withLog(() => request('POST', '/api/session-rules',
           { content: 'The next launch delivers this.', projectId: project.id }));
         assert.equal(outcome.res.status, 201);
-        assert.equal(outcome.res.data.deliveryWarning, undefined, 'the next launch writes the files; nothing is undelivered');
+        assert.equal(outcome.res.data.deliveryWarning, undefined, 'growth delivered it; nothing is undelivered');
         assert.equal(outcome.logged, '');
-        assert.equal(fs.existsSync(path.join(project.path, '.tangleclaw')), false,
-          'a rule change must not start delivery the launch declined');
+        assert.equal(fs.existsSync(channel.shardPath(project.path, 1)), true,
+          'growth registers a hook and writes the file it prints, whether or not a session is running');
+        assert.equal(deliveredText(project.path).includes('The next launch delivers this.'), true);
       });
 
-      it('tells the caller and the log that a running session is not re-delivered its first rule (#2293)', async () => {
+      it('tells the caller and the log that a running session IS re-delivered its first rule via a grown hook (#2293)', async () => {
         const project = launchedProject([]);
         bindProject(project);
         const outcome = await withLog(() => request('POST', '/api/session-rules',
@@ -827,25 +828,21 @@ describe('api/session-rules (#347/D1a)', () => {
 
         assert.equal(outcome.res.status, 201);
         assert.equal(outcome.res.data.status, 'active');
-        const warning = outcome.res.data.deliveryWarning;
-        assert.match(warning, /1 rule is in force/);
-        assert.ok(warning.includes(project.name));
-        assert.match(warning, /will not be re-delivered them after a clear or a compaction until its next launch/);
-        assert.match(warning, /its launch wrote no rules file/);
-        assert.match(warning, /`tc rules` shows them meanwhile/);
-        assert.ok(outcome.logged.includes(project.name) && outcome.logged.includes('#2293'),
-          `an undelivered rule is stated in the log, never silent: ${outcome.logged}`);
-        assert.equal(fs.existsSync(path.join(project.path, '.tangleclaw')), false);
+        assert.equal(outcome.res.data.deliveryWarning, undefined, 'the grown hook delivers it; nothing is undelivered');
+        assert.equal(outcome.logged, '', 'a delivered rule is not logged as undelivered');
+        assert.equal(channel.shardCount(store.sessionRules.listActiveForProject(project.id), budget) >= 1, true);
+        assert.ok(deliveredText(project.path).includes('The first rule of a project launched with none.'));
 
         const second = await request('POST', '/api/session-rules', { content: 'A second.', projectId: project.id });
-        assert.match(second.data.deliveryWarning, /2 rules are in force/);
+        assert.equal(second.data.deliveryWarning, undefined);
+        assert.ok(deliveredText(project.path).includes('A second.'));
       });
 
       it('says nothing once no rule is left in force, or for a change that is not in force', async () => {
         const project = launchedProject([]);
         const asProject = bindProject(project).headers;
         const created = await request('POST', '/api/session-rules', { content: 'Only rule.', projectId: project.id });
-        assert.ok(created.data.deliveryWarning);
+        assert.equal(created.data.deliveryWarning, undefined, 'growth delivers the only rule; nothing is undelivered');
 
         const proposed = await sendAs(server, 'POST', '/api/session-rules',
           { content: 'A proposal.', projectId: project.id }, asProject);
@@ -857,12 +854,20 @@ describe('api/session-rules (#347/D1a)', () => {
         assert.equal(deleted.data.deliveryWarning, undefined);
       });
 
-      it('names the missing hook when files are on disk and nothing is registered to print them', async () => {
+      it('names the missing hook when growth genuinely cannot register one', async () => {
         const project = launchedProject(['Launch-time rule.']);
         registerHooks(project.path, 0);
         bindProject(project);
         const before = deliveredBytes(project.path);
-        const res = await request('POST', '/api/session-rules', { content: 'Another.', projectId: project.id });
+        // Block the write growth (#2293) would otherwise make, so the
+        // shortfall is still named — exactly as it read before growth existed.
+        fs.chmodSync(path.join(project.path, '.claude'), 0o555);
+        let res;
+        try {
+          res = await request('POST', '/api/session-rules', { content: 'Another.', projectId: project.id });
+        } finally {
+          fs.chmodSync(path.join(project.path, '.claude'), 0o755);
+        }
         assert.equal(res.status, 201);
         assert.match(res.data.deliveryWarning, /2 rules are in force/);
         assert.match(res.data.deliveryWarning, /no session-start hook is registered to print its rules files/);
