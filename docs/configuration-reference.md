@@ -55,8 +55,18 @@ installed service would put `tangleclaw.log` under the new base and
 run while the variable is set, because it bakes paths into launchd jobs that no
 override can relocate, and a rehearsal that repointed the live ttyd job at a
 scratch directory would take every terminal down when that directory was
-removed. Issue #1283 carries what it would take to make a genuine second install
-possible.
+removed.
+
+**Decision (#1283): running two live launchd/Caddy installs side by side on
+one machine is scoped out, by design, not by oversight.** `CADDY_LABEL`
+(`com.tangleclaw.caddy`), the `~/Library/LaunchAgents` jobs
+(`com.tangleclaw.server`, `com.tangleclaw.ttyd`), and the ingress port
+defaults are machine-global constants, and deriving them from
+`TANGLECLAW_HOME`'s install identity would need changes outside Caddy's own
+module — the launchd/ttyd wiring is not scheduled. `TANGLECLAW_HOME` remains
+strictly rehearsal and test isolation, as stated above; a genuine second
+install stays unsupported. Revisit this decision if running two live installs
+side by side becomes a real requirement.
 
 Overriding `HOME` instead is not supported and never was: it moves anything
 derived from the home directory, TangleClaw's and the operating system's alike,
@@ -333,6 +343,26 @@ Defaults below are read from `DEFAULT_CONFIG` in `lib/store.js`.
 | `caddyTailnetHost` | string\|null | `null` | Tailnet FQDN to emit as an additional gated HTTPS site. The generator refuses to emit this site without a gate — Caddy's `basic_auth`, or TangleClaw's login in `armed`/`locked` — because an ungated remote HTTPS door is not a supported state. Re-run the cutover after setting it. **It is also the canonical tailnet name for the certificate, the served-Host allowlist and operator links** (#1905). With it unset, those use the name the overlay probe reports (`tailscale status` `Self.DNSName`), and the Caddy site stays off, since it needs a gate and is your decision. When it is set and the probe reports a different name, the set name keeps serving, and the drift is logged at boot and reported by `POST /api/setup/generate-cert`. In direct mode, `{"reconcileTailnet": true}` on that route moves this key and the certificate to the observed name together; it is refused while this site would be ungated. In caddy mode the key moves with the live Caddyfile in two phases: `{"reconcileTailnet": "prepare"}` mints a certificate carrying both names, then `node scripts/ingress-cutover.js --to caddy --tailnet-host <name>` moves the site and this key together, verifies the new name strictly and rolls back if it is not healthy. See [deploy/INGRESS.md](../deploy/INGRESS.md). |
 | `caddyAccessLogPath` | string\|null | `null` | Absolute path for a `log { output file … }` block on every generated site that proxies to TangleClaw (never on the plain redirect site). `null` emits no log at all — TangleClaw does not start an access log you did not ask for. Normally set for you: it is adopted automatically from a live Caddyfile that already carries a per-site log block, so a cutover preserves an audit trail you added by hand instead of dropping it. Adoption refuses anything it cannot re-emit exactly — a block that also carries `format`/`level`, a destination with its own `{ roll_size … }`, a logger in the global options block, or two sites naming different files — and says so rather than silently adopting half of it. Rotation is Caddy's `log` directive, not TangleClaw's. |
 | `publicDomain` | string\|null | `null` | Public domain for an ACME/Let's Encrypt site on 443/80. Requires real DNS pointing at this machine and relocates Caddy to a root LaunchDaemon — see [deploy/INGRESS.md](../deploy/INGRESS.md). Not needed for LAN or tailnet access. |
+
+**Verified answers (#1340): does Caddy ever front a PortHub-registered port
+on its own?** No. `lib/caddy.js#buildCaddyfileContent` emits exactly one
+upstream — `127.0.0.1:<serverPort>`, TangleClaw's own dashboard — and never
+reads PortHub's lease table or emits a `reverse_proxy` for any other
+registered port (ADR 0003). A PortHub-registered service that nonetheless
+answers from off-machine is not something this generator produced; it is a
+manual, out-of-band Caddyfile edit on that host.
+
+That case is already detected, separately, by the mechanism documented in
+full at [`docs/caddy-drift-check.md`](caddy-drift-check.md) (#1394):
+`lib/caddy-drift.js#checkCaddyDrift`'s P4 property (`checkLeaseReach`)
+cross-references every hand-added upstream in the *live* Caddyfile against
+PortHub's declared `reach`, and flags a loopback-reach lease that a live site
+fronts anyway. `server.js` runs the whole check once at boot in caddy ingress
+mode, and the result surfaces as the dashboard's Caddy Drift banner
+(`public/landing.js#renderCaddyDriftBanner`) — whose Resolve/Acknowledge
+actions are being added in parallel (#1415). The check is boot-time only: a
+port registered or fronted after boot is not re-checked until the next
+restart.
 
 > **Reaching the dashboard from another device.** A gated caddy-mode install serves the machine's
 > own mDNS name (`<hostname>.local`) alongside `localhost`, so a phone or laptop on the same network

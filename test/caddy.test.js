@@ -106,6 +106,27 @@ describe('caddy', () => {
     });
   });
 
+  describe('CADDY_LABEL (#1283 — machine-global by design)', () => {
+    it('is the fixed LaunchAgent label, not derived from the store base path', () => {
+      assert.equal(caddy.CADDY_LABEL, 'com.tangleclaw.caddy');
+    });
+
+    it('does not move when the store base path (what TANGLECLAW_HOME relocates) changes', () => {
+      const before = caddy.CADDY_LABEL;
+      const otherBase = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-caddy-relocated-'));
+      try {
+        store._setBasePath(otherBase);
+        store.init();
+        assert.equal(caddy.CADDY_LABEL, before, 'CADDY_LABEL must stay a constant regardless of the active base path');
+      } finally {
+        store.close();
+        store._setBasePath(baseDir);
+        store.init();
+        fs.rmSync(otherBase, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe('detectCaddy', () => {
     it('reports available: true and parses the version when caddy stub is on PATH', () => {
       const r = caddy.detectCaddy();
@@ -130,6 +151,33 @@ describe('caddy', () => {
 
   describe('buildCaddyfileContent', () => {
     const opts = { serverPort: 3101, certPath: '/c/cert.pem', keyPath: '/c/key.pem' };
+
+    // #1340 — verifies the generator never fronts a PortHub-registered port: the
+    // only `reverse_proxy` target across every site shape it can emit is
+    // TangleClaw's own serverPort. A hand-added block proxying anywhere else is
+    // caught separately, by lib/caddy-drift.js#checkLeaseReach against the live
+    // file — not by this generator refusing to emit one.
+    it('never emits a reverse_proxy upstream other than 127.0.0.1:<serverPort> (#1340)', () => {
+      const HASH = '$2a$14$abcdefghijklmnopqrstuv';
+      const variants = [
+        opts,
+        { ...opts, lanHost: 'studio.local' },
+        { ...opts, basicAuthUser: 'tcadmin', basicAuthHash: HASH },
+        { ...opts, basicAuthUser: 'tcadmin', basicAuthHash: HASH, remoteHttpCatchAll: true },
+        { ...opts, basicAuthUser: 'tcadmin', basicAuthHash: HASH, tailnetHost: 'box.tail123.ts.net' },
+        { ...opts, publicDomain: 'tc.example.com' },
+        { ...opts, gateState: 'armed', tailnetHost: 'box.tail123.ts.net' }
+      ];
+      for (const variant of variants) {
+        const out = caddy.buildCaddyfileContent(variant);
+        const upstreams = [...out.matchAll(/reverse_proxy\s+(\S+)/g)].map((m) => m[1]);
+        assert.ok(upstreams.length > 0, 'expected at least one reverse_proxy directive');
+        for (const upstream of upstreams) {
+          assert.equal(upstream, `127.0.0.1:${opts.serverPort}`,
+            `every reverse_proxy upstream must be TangleClaw's own serverPort, got ${upstream}`);
+        }
+      }
+    });
 
     // #863 — a default install generated exactly ONE site, `localhost`, so every
     // other address failed the TLS handshake and the dashboard could not be
