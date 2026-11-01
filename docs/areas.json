@@ -140,6 +140,7 @@
         "lib/pty-activity.js",
         "lib/transcript.js",
         "lib/continuity.js",
+        "lib/master-continuity.js",
         "lib/workload*.js",
         "lib/tick-meter.js",
         "lib/activity-observer.js",
