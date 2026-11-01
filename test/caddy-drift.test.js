@@ -212,11 +212,6 @@ function withLocalhostBypassPattern(pattern) {
 describe('caddy-drift — P1 breadth, a gate does not admit more than GATE_BYPASS_PATHS (#1403)', () => {
   const baseline = summarize('generated').sites;
 
-  it("expectedBypassAlternatives mirrors caddy.js's own generated pattern, escaped", () => {
-    const expected = drift.expectedBypassAlternatives();
-    assert.deepEqual([...expected].sort(), ['/api/health', '/manifest\\.json'].sort());
-  });
-
   it('holds for the generated baseline against itself', () => {
     const result = drift.checkGates(baseline, baseline);
     assert.equal(result.status, drift.HOLDS);
@@ -278,6 +273,98 @@ describe('caddy-drift — P1 breadth, a gate does not admit more than GATE_BYPAS
     const result = drift.checkGates(widened, baseline, 'armed');
     assert.equal(result.status, drift.HOLDS);
     assert.deepEqual(result.findings, []);
+  });
+
+  // PR #2777 review round 1 (PRR-A): a semantically-identical bypass written
+  // with a different, still-correct escaping (`[.]` for a literal dot rather
+  // than `\.`) was reported as DIVERGED. It admits exactly `/manifest.json`,
+  // the same as the generator's own escaped form — not a divergence. But its
+  // equivalence to that escaped form is also not something this check proves
+  // (see classifyBypassAlternative's doc comment), so the honest answer is
+  // not-measured, not holds — PRR-A's fix asked for exactly this, not a
+  // second kind of false-clean.
+  it('does NOT flag a character-class escape of a literal dot as a widening — reports not-measured instead', () => {
+    const sameAdmissionDifferentSyntax = drift.summarizeConfig(
+      withLocalhostBypassPattern('^(/api/health|/manifest[.]json)$')
+    ).sites;
+    const result = drift.checkGates(sameAdmissionDifferentSyntax, baseline);
+    assert.notEqual(result.status, drift.DIVERGED, 'same admitted paths, different valid regex spelling');
+    assert.equal(result.status, drift.NOT_MEASURED);
+  });
+
+  it('is NOT-MEASURED, never guessed either way, for a syntax this check cannot prove equivalent', () => {
+    const characterClass = drift.summarizeConfig(
+      withLocalhostBypassPattern('^(/manifest[.]json)$')
+    ).sites;
+    const result = drift.checkGates(characterClass, baseline);
+    assert.equal(result.status, drift.NOT_MEASURED);
+    assert.notEqual(result.status, drift.DIVERGED, 'must not guess it is a widening');
+    assert.notEqual(result.status, drift.HOLDS, 'must not guess it is clean either');
+  });
+
+  it('still reports the provable widening even alongside an unprovable alternative', () => {
+    // The exact regression PRR-A asked for: a real wildcard widening
+    // (/openclaw-direct/.* is not in GATE_BYPASS_PATHS at all) alongside a
+    // character-class literal whose equivalence is merely unprovable, not
+    // wrong. The provable DIVERGED finding must win, not get buried under or
+    // conflated with the unprovable one.
+    const mixed = drift.summarizeConfig(
+      withLocalhostBypassPattern('^(/api/health|/openclaw-direct/.*|/manifest[.]json)$')
+    ).sites;
+    const result = drift.checkGates(mixed, baseline);
+    assert.equal(result.status, drift.DIVERGED);
+    assert.equal(result.findings.length, 1);
+    assert.match(result.findings[0], /exempts 1 path pattern/);
+  });
+});
+
+describe('caddy-drift — classifyBypassAlternative (#1403 helper)', () => {
+  it('decodes a plain literal with backslash-escaped metacharacters', () => {
+    assert.deepEqual(drift.classifyBypassAlternative('/manifest\\.json'), {
+      kind: 'literal', literal: '/manifest.json'
+    });
+  });
+
+  it('decodes the SAME literal written with a character-class escape to the SAME value', () => {
+    assert.deepEqual(drift.classifyBypassAlternative('/manifest[.]json'), { kind: 'unknown' });
+    // Deliberately NOT decoded to '/manifest.json' — classifyBypassAlternative
+    // does not know character classes are equivalent to a backslash escape;
+    // that is exactly why it returns 'unknown' rather than guessing, and why
+    // the bug this fixes was a false DIVERGED, not a wrong decode.
+  });
+
+  it('treats a plain literal with no escaping at all as itself', () => {
+    assert.deepEqual(drift.classifyBypassAlternative('/api/health'), {
+      kind: 'literal', literal: '/api/health'
+    });
+  });
+
+  it('recognizes a literal prefix with a trailing unescaped .* as prefix-wildcard', () => {
+    assert.deepEqual(drift.classifyBypassAlternative('/api/.*'), {
+      kind: 'prefix-wildcard', prefix: '/api/'
+    });
+  });
+
+  it('does not mistake an ESCAPED dot-star for a wildcard', () => {
+    // `\.` then a literal `*` — a dot followed by a literal asterisk
+    // character, not "any char, zero or more times".
+    assert.deepEqual(drift.classifyBypassAlternative('/a\\.\\*'), {
+      kind: 'literal', literal: '/a.*'
+    });
+  });
+
+  it('is unknown for an unescaped metacharacter that is not the wildcard tail', () => {
+    assert.equal(drift.classifyBypassAlternative('/manifest[.]json').kind, 'unknown');
+    assert.equal(drift.classifyBypassAlternative('/a.b').kind, 'unknown', 'unescaped mid-string dot');
+    assert.equal(drift.classifyBypassAlternative('/a(b)').kind, 'unknown', 'a group');
+  });
+
+  it('is unknown for an unrecognized escape sequence', () => {
+    assert.equal(drift.classifyBypassAlternative('/a\\x').kind, 'unknown');
+  });
+
+  it('is unknown for a trailing backslash with nothing after it', () => {
+    assert.equal(drift.classifyBypassAlternative('/a\\').kind, 'unknown');
   });
 });
 

@@ -131,14 +131,20 @@ arbitrary matcher sets admits more requests means reimplementing Caddy's matcher
 and still avoided. What's narrower and *is* checked now: when a gate route carries exactly the shape
 `lib/caddy.js#_bypassPathRegexp` generates (`not path_regexp ^(alt1|alt2|...)$` on the auth route
 itself), `lib/caddy-drift.js#checkGates` decomposes the live pattern's top-level alternatives and
-compares each, as a literal string, against `GATE_BYPASS_PATHS` — the one side TangleClaw already
-owns. Any alternative that isn't exactly one of those (whatever it is — a stray literal, a careless
-wildcard) is reported, naming the site and the count. A gate using some OTHER exemption shape (most
-notably the `live-shape-own-auth` hand-edit, where the real gate route is `match: null` and the
-bypass is a wholly separate, earlier route — see #2774 above) has nothing on its own matcher to check
-this way and is silently skipped, not flagged; a bypass pattern that IS the `not path_regexp` shape but
-doesn't parse into a plain anchored alternation (no `^(...)$` wrapper) is `not-measured`, never
-guessed clean. `lib/caddy-drift.js`'s `checkGates` doc comment is the fuller account.
+classifies each (`classifyBypassAlternative`): a plain literal is compared against
+`GATE_BYPASS_PATHS` **by decoded value**, not by matching its own escaped text — `/manifest[.]json`
+and `/manifest\.json` decode to the same literal and must read as equal (PR #2777 review round 1
+caught the first version of this check reporting that exact non-divergence as a false positive). A
+literal prefix followed by a trailing unescaped `.*` is always a widening, since no
+`GATE_BYPASS_PATHS` entry is a wildcard. Anything else an alternative could be — a character class, a
+group, an unrecognized escape — is `not-measured` for that gate, not guessed in either direction:
+proving two differently-written regexes equivalent in general is the same matcher algebra the
+presence check avoids. A gate using some OTHER exemption shape entirely (most notably the
+`live-shape-own-auth` hand-edit, where the real gate route is `match: null` and the bypass is a
+wholly separate, earlier route — see #2774 above) has nothing on its own matcher to check this way
+and is silently skipped, not flagged; a bypass pattern that isn't even wrapped in a plain anchored
+alternation (no `^(...)$` form at all) is also `not-measured`. `lib/caddy-drift.js`'s `checkGates`
+doc comment is the fuller account.
 
 **P4 is scoped to the upstreams P3 already found unknown.** The upstreams TangleClaw generates are
 fronted by design — TC's own server binds loopback precisely *because* Caddy is the front door — so
