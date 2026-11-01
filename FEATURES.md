@@ -17,7 +17,15 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
-## Unreleased — v5.50.0 Verified engine admission, model switching, and usage windows
+## Unreleased — v5.51.0 Project rules and delivery
+
+- **See the auto-stub deadline** (#1196) — the Feature Index census reports the oldest TODO stub's date, age, and days remaining before the 14-day guard fails. `lib/feature-index-prime.js#censusFeatureIndex`, `lib/feature-index-prime.js#formatStubClock`. Tests: `test/feature-index-prime.test.js`.
+- **Edit active rules in one step** (#2325) — a verified Operator edit of an active non-master rule takes effect immediately, and the Project Rules modal explains that behavior. Pending replacements from others still block the edit. `lib/store/session-rules.js#update`, `server.js` ("PUT /api/session-rules/:id"), `public/ui.js`. Tests: `test/api-session-rules-authz.test.js`, `test/project-rules-modal.test.js`.
+- **Deliver the first rule to a running session** (#2293) — rules refresh registers new hook slots when a project gains its first rule or outgrows the slots set at launch, so a running Claude session can receive it at its next `/clear` or compaction. Engines without a SessionStart hook still receive it at their next launch or through `tc rules`. `lib/session-rules-refresh.js#refreshProjectRules`. Tests: `test/session-rules-refresh.test.js`, `test/api-session-rules.test.js`.
+- **Use one rule-body predicate** (#1654) — delivery and wrap prompts share `isUsableRule`, excluding missing or non-string content consistently. `lib/launch-rule-drift.js#isUsableRule`, `lib/session-rules-channel.js`, `lib/wrap-steps/ai-content.js`. Tests: `test/launch-rule-drift.test.js`, `test/session-rules-channel.test.js`, `test/wrap-step-ai-content.test.js`.
+- **Recover unconfirmed startup-rule delivery** (#1176) — a receipt watcher checks whether a written rules hook ran, retries delivery through an open channel within bounds when local evidence cannot explain the silence, and names the exhausted case for escalation. `lib/rule-receipt-redelivery.js#checkAndRedeliver`, `lib/rule-receipt-redelivery.js#classifyWrittenDelivery`. Tests: `test/rule-receipt-redelivery.test.js`.
+
+## v5.50.0 — Verified engine admission, model switching, and usage windows
 
 - **Verify engine compatibility** (#1897) — capability-probe evidence resolves an engine build to verified, degraded, incompatible, or unknown, with explicit operator override evidence. `lib/engine-canary.js#resolveCanaryState`, `lib/engine-canary.js#decideLaunchGate`. Tests: `test/engine-canary.test.js`.
 - **Admit tasks and rotate engines with attestation** (#1809) — methodology-required work is admitted only to a capable engine attempt; durable rotation records quiesce, revoke, attest, and transfer publication authority. `authorizePublisher()` supplies a publisher check for future resource-write wiring. `lib/engine-admission.js#admitTask`, `lib/engine-admission.js#authorizePublisher`. Tests: `test/engine-admission.test.js`.
