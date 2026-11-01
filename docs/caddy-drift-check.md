@@ -131,14 +131,17 @@ arbitrary matcher sets admits more requests means reimplementing Caddy's matcher
 and still avoided. What's narrower and *is* checked now: when a gate route carries exactly the shape
 `lib/caddy.js#_bypassPathRegexp` generates (`not path_regexp ^(alt1|alt2|...)$` on the auth route
 itself), `lib/caddy-drift.js#checkGates` decomposes the live pattern's top-level alternatives and
-classifies each (`classifyBypassAlternative`): a plain literal is compared against
-`GATE_BYPASS_PATHS` **by decoded value**, not by matching its own escaped text — `/manifest[.]json`
-and `/manifest\.json` decode to the same literal and must read as equal (PR #2777 review round 1
-caught the first version of this check reporting that exact non-divergence as a false positive). A
-literal prefix followed by a trailing unescaped `.*` is always a widening, since no
-`GATE_BYPASS_PATHS` entry is a wildcard. Anything else an alternative could be — a character class, a
-group, an unrecognized escape — is `not-measured` for that gate, not guessed in either direction:
-proving two differently-written regexes equivalent in general is the same matcher algebra the
+classifies each (`classifyBypassAlternative`): a plain literal — including a backslash escape
+(`\.`) or a single-character class (`[.]`), both decoded to the same one character — is compared
+against `GATE_BYPASS_PATHS` **by decoded value**, not by matching its own escaped text —
+`/manifest[.]json` and `/manifest\.json` decode to the same literal and must read as equal (PR #2777
+review: round 1, PRR-A, caught the first version reporting that exact non-divergence as a false
+positive; round 2, the Architect's ruling A490-W1A-R3 extended the decoder to single-character
+classes so it reads `holds` rather than merely `not-measured`). A literal prefix followed by a
+trailing unescaped `.*` is always a widening, since no `GATE_BYPASS_PATHS` entry is a wildcard.
+Anything else an alternative could be — a range or multi-character class (`[a-z]`, `[ab]`), a group,
+an unrecognized escape — is `not-measured` for that gate, not guessed in either direction: proving
+two differently-written regexes equivalent in general is the same matcher algebra the
 presence check avoids. A gate using some OTHER exemption shape entirely (most notably the
 `live-shape-own-auth` hand-edit, where the real gate route is `match: null` and the bypass is a
 wholly separate, earlier route — see #2774 above) has nothing on its own matcher to check this way
