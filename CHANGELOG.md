@@ -4,6 +4,17 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.51.0] - 2026-10-31
+
+### Added
+- The Operator's own edit of an active, non-master project rule now takes effect in one step: `PUT /api/session-rules/:id` applies it immediately as an already-approved replacement rather than filing a proposal the Operator would then approve themselves. A session acting on a rule's behalf, a pending replacement from someone else, and a version rollback retain their approval paths. The Project Rules modal now has an Edit control on live rules and explains that saving takes effect immediately (#2325).
+- A startup-rules receipt watcher checks `rules-hook` deliveries that remain `written` after a session has been active past a grace window. It distinguishes a hook that never ran from one whose receipt POST failed, retries delivery through an open channel only when local evidence cannot explain the silence, and names the exhausted case for escalation. Retries are bounded, so a session does not silently keep running with unconfirmed rules (#1176).
+
+### Fixed
+- The Feature Index census now shows the oldest auto-stub block's date, age, and signed days remaining before the 14-day CI guard fails, alongside its counts (#1196).
+- A project's first rule approved after a launch with no rules now reaches a running Claude session on its next `/clear` or compaction. Refresh registers the rules hook it needs, and grows additional slots when a rule set outgrows those registered at launch. This was verified against Claude Code v2.1.283 after a brief file-change settle interval; an immediate scripted `/clear` with zero delay is not guaranteed. Engines without a `SessionStart` hook receive the rule at their next launch or immediately through `tc rules` (#2293).
+- Rules delivery and wrap prompts now use the canonical `isUsableRule` predicate. Missing and non-string rule bodies are excluded consistently instead of risking a `.trim()` error or an empty rendered body (#1654).
+
 ## [5.50.0] - 2026-10-31
 
 ### Added
