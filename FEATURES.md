@@ -17,7 +17,19 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
-## Unreleased — v5.51.0 Project rules and delivery
+## Unreleased — v5.52.0 Ingress you can read
+
+- **See and resolve Caddy drift** (#1415, #1403) — the drift check reports a gate whose bypass is broader than TangleClaw's policy. The dashboard's Resolve menu can restore the security baseline or acknowledge current findings; a new finding shows the banner again. `lib/caddy-drift.js#checkGates`, `lib/caddy-drift.js#shouldShowDrift`, `public/landing.js#renderCaddyDriftBanner`, `server.js` ("POST /api/caddy-drift/resolve"). Tests: `test/caddy-drift.test.js`, `test/signed-in-operator-routes.test.js`.
+- **Advertise a Tailscale origin for share links** (#1380) — Global Settings resolves the Tailscale origin or shows why it cannot, and plan and artifact share links use that origin when enabled. Session-start and Medusa peer links remain loopback-only by design. `lib/tailscale-ingress.js#resolveAdvertisedOrigin`, `public/ui.js#renderTailscaleModeSetting`, `server.js` ("GET /api/projects/:project/plans"). Tests: `test/tailscale-ingress.test.js`, `test/settings-tailscale-mode-render.test.js`, `test/api-plan-docs.test.js`.
+- **Reserve an ingress route** (#815) — PortHub records a machine-wide Tailscale serve or funnel claim separately from local port leases, so a session can check ownership before changing ingress. `lib/porthub.js#claimIngressRoute`, `lib/porthub.js#releaseIngressRoute`. Tests: `test/porthub.test.js`.
+- **Know Caddy's reach boundary** (#1340, #1283) — generated Caddyfiles front only TangleClaw's own port; the existing live-file check finds hand-added sites that expose a loopback lease. `TANGLECLAW_HOME` does not isolate the machine-global labels and ports needed for a second install, which remains unsupported. `lib/caddy.js#buildCaddyfileContent`, `lib/caddy-drift.js#checkLeaseReach`, `docs/configuration-reference.md`. Tests: `test/caddy.test.js`.
+- **Answer HEAD like GET without a body** (#923) — the HTTP router uses GET dispatch and headers for HEAD while suppressing response bytes. `server.js#handleRequest`. Tests: `test/head-requests.test.js`.
+- **Render dashboard projects promptly** (#2771) — warm project facts reuse a short cache, the project list renders without waiting for awareness, failed fetches surface a toast, and an older awareness reply cannot replace newer data. Cold or expired fact scans retain their sequential cost. `lib/projects.js#listProjects`, `public/landing.js#loadProjects`. Tests: `test/landing-projects-load.test.js`, `test/dashboard-boot-beacon.test.js`.
+- **Read cached usage windows** (#2766) — a bounded, pre-warmed snapshot serves usage windows and reports an incomplete scan while it converges. `lib/usage-windows.js#getUsageWindows`. Tests: `test/usage-windows.test.js`.
+- **Run the Stage 5 pool with its required tools** (#2758) — the Testament image includes curl and less, and environment-sensitive fixtures report their limitations explicitly. `.devcontainer/Dockerfile`. Tests: `test/setup-wizard.test.js`, `test/tmux-named-paste-buffer.test.js`, `test/update-release-link.test.js`.
+- **Avoid coarse-second profile test races** (#2768) — profile reconciliation fixtures start away from second boundaries. `test/profile-reconciler.test.js`. Tests: `test/profile-reconciler.test.js`.
+
+## v5.51.0 — Project rules and delivery
 
 - **See the auto-stub deadline** (#1196) — the Feature Index census reports the oldest TODO stub's date, age, and days remaining before the 14-day guard fails. `lib/feature-index-prime.js#censusFeatureIndex`, `lib/feature-index-prime.js#formatStubClock`. Tests: `test/feature-index-prime.test.js`.
 - **Edit active rules in one step** (#2325) — a verified Operator edit of an active non-master rule takes effect immediately, and the Project Rules modal explains that behavior. Pending replacements from others still block the edit. `lib/store/session-rules.js#update`, `server.js` ("PUT /api/session-rules/:id"), `public/ui.js`. Tests: `test/api-session-rules-authz.test.js`, `test/project-rules-modal.test.js`.
