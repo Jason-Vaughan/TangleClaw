@@ -105,6 +105,31 @@ describe('lib/master-authority.js', () => {
       assert.equal(masterAuthority.getAuthorityState({ master: { lifecycleGeneration: 1.5 } }).generation, 0);
       assert.equal(masterAuthority.getAuthorityState({ master: { lifecycleGeneration: 'nope' } }).generation, 0);
     });
+
+    it('refuses to treat accessLevel=write as read-write when no transition was ever recorded (PRR-B BLOCKING C1/C5)', () => {
+      // The pre-#966 PATCH /api/config can already set accessLevel: 'write'
+      // directly, with no lifecycleGeneration write at all -- exactly the
+      // legacy write path that bypasses applyOperatorAuthorityChange's
+      // audited generation tracking entirely.
+      assert.equal(masterAuthority.getAuthorityState({ master: { accessLevel: 'write' } }).toggleState, 'read-only');
+      assert.equal(masterAuthority.getAuthorityState({ master: { accessLevel: 'write', lifecycleGeneration: 0 } }).toggleState, 'read-only');
+      assert.equal(masterAuthority.getAuthorityState({ master: { accessLevel: 'write', lifecycleGeneration: -1 } }).toggleState, 'read-only');
+      assert.equal(masterAuthority.getAuthorityState({ master: { accessLevel: 'write', lifecycleGeneration: 'nope' } }).toggleState, 'read-only');
+    });
+
+    it('grants read-write only once a real transition has been recorded', () => {
+      assert.equal(masterAuthority.getAuthorityState({ master: { accessLevel: 'write', lifecycleGeneration: 1 } }).toggleState, 'read-write');
+      const config = store.config.load();
+      const result = masterAuthority.applyOperatorAuthorityChange(config, { accessLevel: 'write', actor: 'operator:jason' });
+      assert.equal(result.toggleState, 'read-write');
+    });
+
+    it('evaluateLifecycleCall refuses a lifecycle action against a legacy write with no recorded generation', () => {
+      const config = { master: { accessLevel: 'write', apiTokenEnabled: true, apiToken: 'tc_master_legacy' } };
+      const result = masterAuthority.evaluateLifecycleCall(config, { headers: { authorization: 'Bearer tc_master_legacy' }, action: 'launch' });
+      assert.equal(result.allowed, false);
+      assert.equal(result.code, 'AUTHORITY_READ_ONLY');
+    });
   });
 
   describe('applyOperatorAuthorityChange (#2132 criteria 1, 2, 4)', () => {
@@ -140,6 +165,25 @@ describe('lib/master-authority.js', () => {
         /AUTHORITY_BAD_REQUEST|disagree/
       );
       assert.equal(masterAuthority.getAuthorityState(config).generation, 0, 'a refused change must not advance the generation');
+    });
+
+    it('accepts accessLevel=suggest with toggleState=read-only — both derive to read-only, so they agree (PRR-B WARNING C1)', () => {
+      // The naive fix compares accessLevel against a mapping that only
+      // knows 'write'/'read-only', which would wrongly flag this pair as
+      // contradictory: 'suggest' is a third value that ALSO derives to
+      // read-only, same as the literal 'read-only' accessLevel does.
+      const config = store.config.load();
+      const result = masterAuthority.applyOperatorAuthorityChange(config, { accessLevel: 'suggest', toggleState: 'read-only', actor: 'x' });
+      assert.equal(result.accessLevel, 'suggest');
+      assert.equal(result.toggleState, 'read-only');
+    });
+
+    it('still refuses accessLevel=suggest with toggleState=read-write — suggest never derives to read-write', () => {
+      const config = store.config.load();
+      assert.throws(
+        () => masterAuthority.applyOperatorAuthorityChange(config, { accessLevel: 'suggest', toggleState: 'read-write', actor: 'x' }),
+        /disagree/
+      );
     });
 
     it('refuses an unrecognized accessLevel', () => {
@@ -187,6 +231,19 @@ describe('lib/master-authority.js', () => {
       assert.equal(masterAuthority.ensureApiTokenWhenEnabled({}), false);
       assert.equal(masterAuthority.ensureApiTokenWhenEnabled({ master: null }), false);
     });
+
+    it('treats a truthy non-boolean apiTokenEnabled as disabled (PRR-B WARNING C5)', () => {
+      const config = { master: { apiTokenEnabled: 'false' } };
+      assert.equal(masterAuthority.ensureApiTokenWhenEnabled(config), false);
+      assert.equal(config.master.apiToken, undefined);
+    });
+
+    it('replaces a malformed non-string apiToken rather than treating it as already set', () => {
+      const config = { master: { apiTokenEnabled: true, apiToken: 123 } };
+      assert.equal(masterAuthority.ensureApiTokenWhenEnabled(config), true);
+      assert.equal(typeof config.master.apiToken, 'string');
+      assert.ok(config.master.apiToken.startsWith('tc_master_'));
+    });
   });
 
   describe('validateApiToken', () => {
@@ -229,6 +286,28 @@ describe('lib/master-authority.js', () => {
 
     it('is safe against a missing config.master', () => {
       assert.equal(masterAuthority.validateApiToken({ authorization: `Bearer ${TOKEN}` }, {}).code, 'MASTER_API_TOKEN_DISABLED');
+    });
+
+    it('treats a truthy non-boolean apiTokenEnabled as disabled, never activating the gate (PRR-B WARNING C5)', () => {
+      const result = masterAuthority.validateApiToken(
+        { authorization: `Bearer ${TOKEN}` },
+        { master: { apiTokenEnabled: 'false', apiToken: TOKEN } }
+      );
+      assert.equal(result.code, 'MASTER_API_TOKEN_DISABLED');
+    });
+
+    it('refuses cleanly, never throwing, when apiToken is a malformed non-string value', () => {
+      for (const malformed of [123, {}, [], true]) {
+        assert.doesNotThrow(() => masterAuthority.validateApiToken(
+          { authorization: `Bearer ${TOKEN}` },
+          { master: { apiTokenEnabled: true, apiToken: malformed } }
+        ));
+        const result = masterAuthority.validateApiToken(
+          { authorization: `Bearer ${TOKEN}` },
+          { master: { apiTokenEnabled: true, apiToken: malformed } }
+        );
+        assert.equal(result.code, 'MASTER_API_TOKEN_MISCONFIGURED');
+      }
     });
   });
 
