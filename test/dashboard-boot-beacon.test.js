@@ -233,6 +233,10 @@ describe('the dashboard sends the beacon after the shell boots, not before (#817
       renderSessionCount() { marks.push('renderSessionCount'); },
       updateUnregisteredToggle() { marks.push('updateUnregisteredToggle'); },
       loadOrphanHooksInventory: async () => {},
+      // #2771 — loadProjects now shows a toast on a failed fetch instead of
+      // returning silently; recorded like the other renderers above.
+      showToast() { marks.push('showToast'); },
+      hideToast() { marks.push('hideToast'); },
       fetch: async (url, init) => {
         marks.push('beacon');
         calls.push({ url, init });
@@ -281,14 +285,16 @@ describe('the dashboard sends the beacon after the shell boots, not before (#817
   /** Let the un-awaited beacon (its own two awaits) settle. */
   const settle = () => new Promise((r) => setImmediate(r));
 
-  it('sends nothing while the projects fetch fails — a shell that has not rendered has not booted', async () => {
+  it('sends no BEACON while the projects fetch fails — a shell that has not rendered has not booted', async () => {
     const ctx = loadShell({ cacheKeys: ['tangleclaw-v3-60'] });
     ctx.serverUp = false;
     await ctx.loadProjects();
     await ctx.loadProjects();
     await settle();
-    assert.equal(ctx.calls.length, 0);
-    assert.deepEqual(ctx.marks, [], 'nothing rendered, nothing claimed');
+    assert.equal(ctx.calls.length, 0, 'no beacon fetch — nothing claims a boot that has not rendered');
+    // #2771 — a failed fetch now shows a toast; once per failing STREAK, not
+    // once per call, which is what the second loadProjects() above pins.
+    assert.deepEqual(ctx.marks, ['showToast'], 'the failure is shown, but nothing downstream of a render runs');
   });
 
   it('sends exactly one beacon after the first success, carrying the cache generation and worker state', async () => {
@@ -382,7 +388,10 @@ describe('the dashboard sends the beacon after the shell boots, not before (#817
     const body = liftDeclaration(LANDING_SRC, 'async function loadProjects()');
     const callSites = LANDING_SRC.split('sendBootBeacon();').length - 1;
     assert.equal(callSites, 1, 'exactly one call site');
-    const guard = body.indexOf('if (!data) return;');
+    // #2771 — the guard grew a multi-line body (a toast on a failed fetch)
+    // instead of a one-line `return;`; `if (!data) {` still marks the same
+    // guard, which still has to sit before the call either way.
+    const guard = body.indexOf('if (!data) {');
     const call = body.indexOf('sendBootBeacon();');
     assert.notEqual(guard, -1);
     assert.ok(call > guard, 'the call sits after the guard that proves the fetch succeeded');

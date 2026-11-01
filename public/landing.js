@@ -1966,15 +1966,30 @@ function renderHeldWakeBadge(project) {
 }
 
 async function loadProjects() {
-  const data = await api('/api/projects?archived=true');
-  if (!data) return;
+  // #2771 — run alongside `/api/projects` rather than after it: these answer
+  // independently, so awaiting them one at a time added a full second
+  // round trip to every ten-second poll for nothing both calls needed.
+  const [data, aw] = await Promise.all([api('/api/projects?archived=true'), api('/api/awareness')]);
+  if (!data) {
+    // A failed fetch used to return here with zero visible sign of it — the
+    // project list simply stayed whatever it last was, indistinguishable from
+    // "nothing changed." One toast per failing STREAK, not one per poll: a
+    // sustained outage would otherwise retoast every ten seconds.
+    if (!state._projectsLoadFailing) {
+      state._projectsLoadFailing = true;
+      showToast('Could not load the project list — retrying…', 'warn');
+    }
+    return;
+  }
+  if (state._projectsLoadFailing) {
+    state._projectsLoadFailing = false;
+    hideToast();
+  }
   state.projects = (data.projects || []).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 
-  // Awareness view (ambient-awareness Chunk 05) — fetched on the same poll so
-  // the cards render with it in one pass. A failed fetch keeps the previous
-  // answer rather than blanking every badge: an unreachable endpoint is not
-  // evidence the fleet became aware.
-  const aw = await api('/api/awareness');
+  // Awareness view (ambient-awareness Chunk 05). A failed fetch keeps the
+  // previous answer rather than blanking every badge: an unreachable endpoint
+  // is not evidence the fleet became aware.
   if (aw && aw.projects) {
     state.awareness = Object.fromEntries(aw.projects.map((p) => [p.projectId, p]));
   }

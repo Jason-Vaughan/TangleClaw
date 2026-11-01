@@ -17,12 +17,13 @@
 // that changes the JSON shape fails here on a developer machine instead of
 // leaving the committed snapshot quietly describing a Caddy nobody runs.
 
-const { describe, it } = require('node:test');
+const { describe, it, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
+const http = require('node:http');
 const { setLevel } = require('../lib/logger');
 const { liftDeclaration } = require('./helpers/lift');
 
@@ -31,10 +32,14 @@ setLevel('error');
 const caddy = require('../lib/caddy');
 const drift = require('../lib/caddy-drift');
 const store = require('../lib/store');
-const { withoutCaddy } = require('./_caddy-stub');
+const serverInfo = require('../lib/server-info');
+const { createServer, _setRestartScheduler } = require('../server');
+const { withoutCaddy, installCaddyStub } = require('./_caddy-stub');
+const { signInOperator } = require('./_shared-docs-callers');
 const {
   FIXTURE_CADDYFILES,
   fixtureConfig,
+  generatedCaddyfile,
   FIXTURE_HASH,
   FIXTURE_TAILNET_HOST,
   FIXTURE_HTTPS_PORT,
@@ -1109,5 +1114,184 @@ describe('caddy-drift — Resolve… menu wiring on the banner (#1415)', () => {
 
   it('does not throw when the banner has no menu to wire (an older render, or no notice)', () => {
     assert.doesNotThrow(() => renderDriftBannerWithActions(null));
+  });
+});
+
+describe('serverInfo — Caddy Drift acknowledgment gates the visible notice (#1415, W2-A wiring)', () => {
+  beforeEach(() => {
+    serverInfo.__unsafeResetForTest();
+  });
+
+  after(() => {
+    serverInfo.__unsafeResetForTest();
+  });
+
+  it('getServerInfo hides the notice once every live finding is acknowledged', () => {
+    serverInfo.setCaddyDriftNotice({ message: 'drift', severity: 'diverged', findings: ['a', 'b'] });
+    assert.ok(serverInfo.getServerInfo().caddyDriftNotice, 'precondition: visible before acknowledging');
+    serverInfo.acknowledgeCaddyDrift(['a', 'b']);
+    assert.equal(serverInfo.getServerInfo().caddyDriftNotice, null);
+  });
+
+  it('a new, unacknowledged finding reinstates the notice', () => {
+    serverInfo.setCaddyDriftNotice({ message: 'drift', severity: 'diverged', findings: ['a'] });
+    serverInfo.acknowledgeCaddyDrift(['a']);
+    assert.equal(serverInfo.getServerInfo().caddyDriftNotice, null, 'precondition: hidden');
+    serverInfo.setCaddyDriftNotice({ message: 'drift', severity: 'diverged', findings: ['a', 'c'] });
+    assert.ok(serverInfo.getServerInfo().caddyDriftNotice, 'a genuinely new finding must reinstate it');
+  });
+
+  it('a shrinking finding set stays acknowledged — it does not need to match exactly', () => {
+    serverInfo.setCaddyDriftNotice({ message: 'drift', severity: 'diverged', findings: ['a', 'b'] });
+    serverInfo.acknowledgeCaddyDrift(['a', 'b']);
+    serverInfo.setCaddyDriftNotice({ message: 'drift', severity: 'diverged', findings: ['a'] });
+    assert.equal(serverInfo.getServerInfo().caddyDriftNotice, null);
+  });
+
+  it('nothing acknowledged yet shows the notice as-is', () => {
+    serverInfo.setCaddyDriftNotice({ message: 'drift', severity: 'diverged', findings: ['a'] });
+    assert.ok(serverInfo.getServerInfo().caddyDriftNotice);
+  });
+
+  it('a null notice (nothing diverged) stays null regardless of acknowledgment state', () => {
+    serverInfo.acknowledgeCaddyDrift(['a']);
+    assert.equal(serverInfo.getServerInfo().caddyDriftNotice, null);
+  });
+
+  it('__unsafeResetForTest clears the acknowledgment alongside the notice', () => {
+    serverInfo.setCaddyDriftNotice({ message: 'drift', severity: 'diverged', findings: ['a'] });
+    serverInfo.acknowledgeCaddyDrift(['a']);
+    serverInfo.__unsafeResetForTest();
+    serverInfo.setCaddyDriftNotice({ message: 'drift', severity: 'diverged', findings: ['a'] });
+    assert.ok(serverInfo.getServerInfo().caddyDriftNotice, 'a reset must not leave a stale acknowledgment behind');
+  });
+});
+
+describe('POST /api/caddy-drift/resolve (#1415, W2-A route)', () => {
+  let server; let tmpDir; let caddyStub; let operatorSession;
+
+  /** One JSON request against the real listening test server. */
+  function request(method, urlPath, body, headers = {}) {
+    return new Promise((resolve, reject) => {
+      const addr = server.address();
+      const req = http.request({
+        hostname: '127.0.0.1', port: addr.port, path: urlPath, method,
+        headers: Object.assign({ 'Content-Type': 'application/json' }, headers)
+      }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          const raw = Buffer.concat(chunks).toString('utf8');
+          let data;
+          try { data = JSON.parse(raw); } catch { data = raw; }
+          resolve({ status: res.statusCode, data });
+        });
+      });
+      req.on('error', reject);
+      req.end(body === undefined ? undefined : JSON.stringify(body));
+    });
+  }
+
+  async function asOperator(method, urlPath, body) {
+    operatorSession = operatorSession || await signInOperator(server);
+    return request(method, urlPath, body, operatorSession);
+  }
+
+  before(async () => {
+    caddyStub = installCaddyStub();
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-caddy-drift-route-'));
+    store._setBasePath(tmpDir);
+    store.init();
+    _setRestartScheduler(() => {});
+    server = createServer();
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  });
+
+  after(async () => {
+    caddyStub.restore();
+    await new Promise((r) => server.close(r));
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    operatorSession = null;
+    serverInfo.__unsafeResetForTest();
+    const config = fixtureConfig({ ingressMode: 'caddy' });
+    store.config.save(config);
+    const p = caddy.getCaddyfilePath();
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, generatedCaddyfile(), { mode: 0o600 });
+    fs.writeFileSync(caddyStub.launchctlLog, '');
+  });
+
+  it('refuses a caller who is not the signed-in operator', async () => {
+    const res = await request('POST', '/api/caddy-drift/resolve', { action: 'acknowledge', findings: [] });
+    assert.notEqual(res.status, 200);
+  });
+
+  it('rejects an unknown action', async () => {
+    const res = await asOperator('POST', '/api/caddy-drift/resolve', { action: 'bogus' });
+    assert.equal(res.status, 400);
+  });
+
+  it("acknowledge updates serverInfo's acknowledgment state without touching the Caddyfile", async () => {
+    const before = fs.readFileSync(caddy.getCaddyfilePath(), 'utf8');
+    serverInfo.setCaddyDriftNotice({ message: 'drift', severity: 'diverged', findings: ['x'] });
+    const res = await asOperator('POST', '/api/caddy-drift/resolve', { action: 'acknowledge', findings: ['x'] });
+    assert.equal(res.status, 200);
+    assert.equal(res.data.ok, true);
+    assert.equal(serverInfo.getServerInfo().caddyDriftNotice, null, 'the notice is now acknowledged');
+    assert.equal(fs.readFileSync(caddy.getCaddyfilePath(), 'utf8'), before, 'acknowledge never writes the Caddyfile');
+  });
+
+  it('restore-baseline overwrites the live Caddyfile with a generator-authored baseline and defers the Caddy reload', async () => {
+    const handEdited = FIXTURE_CADDYFILES['hand-edited'];
+    fs.writeFileSync(caddy.getCaddyfilePath(), handEdited, { mode: 0o600 });
+    const res = await asOperator('POST', '/api/caddy-drift/resolve', { action: 'restore-baseline' });
+    assert.equal(res.status, 200, JSON.stringify(res.data));
+    assert.equal(res.data.ok, true);
+    assert.ok(res.data.backup);
+    assert.match(res.data.reloadCommand, /launchctl kickstart -k gui\/\d+\/com\.tangleclaw\.caddy/);
+
+    const live = fs.readFileSync(caddy.getCaddyfilePath(), 'utf8');
+    assert.notEqual(live, handEdited, 'the hand edit must be gone');
+    assert.ok(live.startsWith('# Generated by TangleClaw'), 'the live file is now generator-authored');
+    assert.ok(!live.includes(String(FIXTURE_STRAY_PORT)), 'the hand-added stray site must be gone');
+    // Not compared byte-for-byte against `generatedCaddyfile()`: `asOperator`
+    // provisions the install's first real account, which genuinely moves
+    // `authGate`'s resolved state to "armed" (TangleClaw's own login now
+    // guards the door), so the real route omits `basic_auth` on purpose — the
+    // same behavior `checkGates`'s own `#1420` tests pin elsewhere. Asserting
+    // exact content here would mean reproducing that resolution ourselves and
+    // risking testing our own copy of it instead of the route.
+
+    // A stable fixed point instead: restoring an ALREADY-restored file must
+    // change nothing. This exercises the exact same resolution the route just
+    // ran, with no need to reproduce it by hand.
+    const second = await asOperator('POST', '/api/caddy-drift/resolve', { action: 'restore-baseline' });
+    assert.equal(second.status, 200, JSON.stringify(second.data));
+    assert.equal(fs.readFileSync(caddy.getCaddyfilePath(), 'utf8'), live,
+      'restoring an already-restored baseline must be a no-op');
+
+    // The reload is deferred to after the response closes — polled rather than
+    // asserted immediately, same reasoning as the credential route's own test.
+    let logged = '';
+    for (let i = 0; i < 20 && !logged.trim(); i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      logged = fs.readFileSync(caddyStub.launchctlLog, 'utf8');
+    }
+    assert.match(logged, /kickstart/, 'the reload must still happen — just after the response, not before it');
+  });
+
+  it('restore-baseline leaves the Caddyfile untouched when the baseline fails validation', async () => {
+    caddyStub.restore();
+    caddyStub = installCaddyStub({ answersValidate: false });
+    const handEdited = FIXTURE_CADDYFILES['hand-edited'];
+    fs.writeFileSync(caddy.getCaddyfilePath(), handEdited, { mode: 0o600 });
+    const res = await asOperator('POST', '/api/caddy-drift/resolve', { action: 'restore-baseline' });
+    assert.equal(res.status, 400);
+    assert.equal(fs.readFileSync(caddy.getCaddyfilePath(), 'utf8'), handEdited,
+      'a rejected validation must restore the original — nothing half-written');
   });
 });

@@ -168,6 +168,7 @@ const recoveryCodes = require('./lib/recovery-codes');
 const openInstallToken = require('./lib/open-install-token');
 const passwordHashing = require('./lib/password');
 const sessionOwnership = require('./lib/session-ownership');
+const tailscaleIngress = require('./lib/tailscale-ingress');
 const planDocs = require('./lib/plan-docs');
 const scorecardCache = require('./lib/scorecard-cache');
 const strandedWraps = require('./lib/stranded-wraps');
@@ -2431,6 +2432,81 @@ route('POST', '/api/auth/credential', (req, res, _params, body) => {
   });
 });
 
+// POST /api/caddy-drift/resolve — the Caddy Drift banner's two actions
+// (#1415): `{ action: 'restore-baseline' }` overwrites the live Caddyfile
+// with the secure content TangleClaw's generator would produce;
+// `{ action: 'acknowledge', findings }` only records what the operator just
+// acknowledged, no Caddyfile write.
+//
+// `restore-baseline` reuses the credential route's own write-then-reload
+// shape immediately above: `writeValidatedCaddyfile` takes a timestamped
+// backup, writes, `caddy validate`s, and restores the backup on a validation
+// failure (never half-done); the reload is deferred to `res.on('close', ...)`
+// for the same reason the credential route defers it — this response travels
+// back through the very Caddy process the reload restarts, so reloading
+// inline would tear down the connection carrying the reply.
+route('POST', '/api/caddy-drift/resolve', (req, res, _params, body) => {
+  const payload = body || {};
+  const action = payload.action;
+  if (action !== 'restore-baseline' && action !== 'acknowledge') {
+    return errorResponse(res, 400, "action must be 'restore-baseline' or 'acknowledge'", 'BAD_REQUEST');
+  }
+
+  if (action === 'acknowledge') {
+    const findings = Array.isArray(payload.findings) ? payload.findings : [];
+    serverInfo.acknowledgeCaddyDrift(findings);
+    return jsonResponse(res, 200, { ok: true });
+  }
+
+  const config = store.config.load();
+  const caddyfilePath = caddy.getCaddyfilePath();
+  let liveContent;
+  try {
+    liveContent = fs.readFileSync(caddyfilePath, 'utf8');
+  } catch (err) {
+    return errorResponse(res, 500, `The live Caddyfile could not be read: ${err.message}`, 'READ_FAILED');
+  }
+  const gateState = authGate.resolveGateState(() => config, store.authSessions, _gateIngress);
+  const baseline = caddyDrift.buildBaseline(config, liveContent, gateState);
+  if (!baseline.ok) {
+    return errorResponse(res, 500,
+      `A secure baseline could not be generated: ${baseline.reason}`, 'BASELINE_FAILED');
+  }
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const written = adminCredential.writeValidatedCaddyfile(
+    caddyfilePath, baseline.content, caddy.validateCaddyfile, stamp
+  );
+  if (!written.ok) {
+    log.warn('Caddy Drift restore-baseline did not complete; nothing was changed',
+      { error: caddy.redactHashes(written.error), restored: written.restored });
+    if (!written.restored) {
+      return errorResponse(res, 500,
+        'The Caddyfile could not be written or restored, so the ingress may now be broken. '
+        + `A copy of the original is at ${written.backup} — restore it at a terminal on this machine.`,
+        'GATE_BROKEN');
+    }
+    return errorResponse(res, 400,
+      `The generated baseline was rejected by Caddy, so nothing was changed: ${caddy.redactHashes(written.error)}`,
+      'VALIDATION_FAILED');
+  }
+
+  log.info('Caddy Drift baseline restored; reloading Caddy once this response is out');
+  res.on('close', () => {
+    adminCredential.reloadCaddyAsync(process.getuid(), (reload) => {
+      if (reload.ok) {
+        log.info('Caddy reloaded; the secure baseline is in force');
+      } else {
+        log.error('Caddy could not be reloaded after restoring the baseline',
+          { error: reload.error, reloadCommand: reload.command });
+      }
+    });
+  });
+
+  const reloadCommand = `launchctl ${adminCredential.reloadCaddyArgs(process.getuid()).join(' ')}`;
+  jsonResponse(res, 200, { ok: true, backup: written.backup, reloadCommand });
+}, { signedInOperator: { action: 'resolve a Caddy Drift finding' } });
+
 // GET /api/service-token — reveal the raw fleet token for the Settings
 // "reveal" display. 404 when the gate is off or no token is set (nothing to
 // reveal); the redacted config API never carries the raw value.
@@ -4372,25 +4448,99 @@ function _projectByIdOrName(segment) {
   return store.projects.getByName(segment) || null;
 }
 
+// The active listen port/scheme a tailnet client should use (#1380) — the
+// same derivation `lib/routes/config.js`'s own (private) `_activeListenPort`/
+// `_activeListenScheme` make for `_withBindState`: Caddy always terminates
+// TLS for its site in caddy mode (`effectiveServerProtocol` answers `http`
+// there on purpose, about the server's own internal bind, not the front
+// door), and direct mode has no proxy to terminate it, so it is exactly
+// `effectiveServerProtocol`/`effectiveServerPort`'s answer. Duplicated here
+// rather than imported because neither is exported from that file; a third
+// copy appearing is itself a signal this pair belongs in `lib/https-setup.js`
+// alongside its siblings, left as a follow-up rather than done silently
+// inside this chunk.
+function _activeListenPort(config) {
+  if (config && config.ingressMode === 'caddy') {
+    return config.caddyHttpsPort || store.DEFAULT_CONFIG.caddyHttpsPort;
+  }
+  return httpsSetup.effectiveServerPort(config);
+}
+function _activeListenScheme(config) {
+  if (config && config.ingressMode === 'caddy') return 'https';
+  return httpsSetup.effectiveServerProtocol(config);
+}
+
+// Short-TTL memoized wrapper around `tailscaleIngress.resolveAdvertisedOrigin`
+// (#1380): it spawns `tailscale status --json` on every call, which a route
+// that may be polled or called per-request must not do bare. Keyed on the
+// three inputs that change its answer; a config change (toggling the mode,
+// changing the port) is picked up within one TTL window, same tradeoff as
+// `lib/projects.js`'s facts cache (#2771).
+const TAILSCALE_ORIGIN_CACHE_TTL_MS = 20000;
+let _tailscaleOriginCache = null; // { key, at, result }
+async function _resolveAdvertisedOperatorOrigin(enabled, port, scheme) {
+  const key = `${enabled}|${port}|${scheme}`;
+  if (_tailscaleOriginCache && _tailscaleOriginCache.key === key
+    && (Date.now() - _tailscaleOriginCache.at) < TAILSCALE_ORIGIN_CACHE_TTL_MS) {
+    return _tailscaleOriginCache.result;
+  }
+  const result = await tailscaleIngress.resolveAdvertisedOrigin({ enabled, port, scheme });
+  _tailscaleOriginCache = { key, at: Date.now(), result };
+  return result;
+}
+/** Forget the cached Tailscale origin. For tests only (#1380). */
+function _resetTailscaleOriginCacheForTest() {
+  _tailscaleOriginCache = null;
+}
+
 // GET /api/projects/:project/plans — every served plan in the project with the
 // link to hand the operator (#542). Accepts the numeric id or the name.
 //
 // The origin is the operator's FRONT DOOR, not this listener: in caddy mode
 // that is Caddy's HTTPS port, and the host is the one the operator reaches
-// this box on (`resolveOperatorHost` — the caller's own Host header when it
-// is not loopback, else the machine's MagicDNS/hostname probe). An agent
-// calling from localhost therefore gets a link that answers from the
-// operator's phone, which is the whole point. When no host can be
-// established, `url` is null and `originNote` says to ask — a fabricated
-// localhost link would be worse than an honest absence.
-route('GET', '/api/projects/:project/plans', (req, res, params) => {
+// this box on.
+//
+// Tailscale mode (#1380) is authoritative when it is on: the operator turned
+// it on specifically because they are remote and Host-header-based addressing
+// does not reliably reach them, so a Tailscale failure reports honestly
+// (`origin: null`, the specific reason in `originNote`) rather than silently
+// falling back to the Host-header path — falling back there would defeat the
+// setting without saying so. With the mode off, behavior is exactly what it
+// was: `resolveOperatorHost` (the caller's own Host header when it is not
+// loopback, else the machine's MagicDNS/hostname probe) — an agent calling
+// from localhost gets a link that answers from the operator's phone, which is
+// the whole point. When no host can be established there either, `url` is
+// null and `originNote` says to ask — a fabricated localhost link would be
+// worse than an honest absence.
+route('GET', '/api/projects/:project/plans', async (req, res, params) => {
   const project = _projectByIdOrName(params.project);
   if (!project) {
     return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
   }
   const config = store.config.load();
-  const topology = sessionOwnership.resolveOperatorHost(req.headers, config);
-  const origin = topology.host ? httpsSetup.effectiveOperatorOrigin(config, topology.host) : null;
+
+  let origin = null;
+  let originSource;
+  let originNote;
+  if (config.tailscaleMode === true) {
+    const tailscale = await _resolveAdvertisedOperatorOrigin(
+      true, _activeListenPort(config), _activeListenScheme(config)
+    );
+    if (tailscale.ok) {
+      origin = tailscale.origin;
+      originSource = 'tailscale-ingress';
+      originNote = null;
+    } else {
+      originSource = 'tailscale-ingress';
+      originNote = `Tailscale advertisement is on but could not resolve an origin: ${tailscale.detail}`;
+    }
+  } else {
+    const topology = sessionOwnership.resolveOperatorHost(req.headers, config);
+    origin = topology.host ? httpsSetup.effectiveOperatorOrigin(config, topology.host) : null;
+    originSource = topology.source;
+    originNote = sessionOwnership.operatorLinkDirective(topology.host);
+  }
+
   const plans = planDocs.listPlans(project.path).map((p) => {
     const urlPath = `/plans/${project.id}/${encodeURIComponent(p.file)}`;
     return { ...p, urlPath, url: origin ? origin + urlPath : null };
@@ -4399,8 +4549,8 @@ route('GET', '/api/projects/:project/plans', (req, res, params) => {
     project: { id: project.id, name: project.name },
     plansDirs: planDocs.plansDirCandidates(project.path).map((c) => c.relative),
     origin,
-    originSource: topology.source,
-    originNote: sessionOwnership.operatorLinkDirective(topology.host),
+    originSource,
+    originNote,
     plans
   });
 });
@@ -7265,6 +7415,36 @@ async function handleRequest(req, res) {
   const pathname = urlObj.pathname;
   const method = req.method.toUpperCase();
 
+  // #923 — HEAD answers with whatever GET would (status, headers, no body),
+  // never its own 404: nothing here registers a route under `HEAD`, so a bare
+  // method comparison against GET-gated dispatch never matches. `method`
+  // stays the REAL method everywhere else in this function (the CSRF guards
+  // just below, and every log line) — only `dispatchMethod` substitutes GET
+  // for HEAD, and only at the routing/dispatch comparisons below
+  // (`matchRoute`, and the handful of `if (dispatchMethod === 'GET' ...)`
+  // page/static guards). A mutating POST/PUT/DELETE route is never reached
+  // via HEAD either way: nothing is ever registered under that method for
+  // HEAD to borrow.
+  const dispatchMethod = method === 'HEAD' ? 'GET' : method;
+  if (method === 'HEAD') {
+    // Every response in this file goes through `res.end(...)` — directly, or
+    // via `writeHead(status, headers)` then `end(body)` — never `res.write`,
+    // so suppressing the body here at the one shared exit point covers every
+    // route and the static/page fallbacks uniformly. Headers/status, already
+    // written by the time `end` runs, are left exactly as the GET path set
+    // them (including `Content-Length`, computed from the real body each
+    // handler built) — only the bytes are dropped, per HTTP's own HEAD
+    // contract. A trailing callback argument, in whichever of `res.end`'s
+    // overloads a caller used, is preserved rather than silently dropped.
+    const realEnd = res.end.bind(res);
+    res.end = (chunk, encodingOrCb, cb) => {
+      if (typeof chunk === 'function') return realEnd(chunk);
+      if (typeof encodingOrCb === 'function') return realEnd(encodingOrCb);
+      if (typeof cb === 'function') return realEnd(cb);
+      return realEnd();
+    };
+  }
+
   // An inbound identity header is deleted before anything reads the request —
   // identity is the session's (ADR 0016 OQ2). See `authIdentity.refuseInboundIdentity`.
   _refuseInboundIdentity(req, pathname);
@@ -7494,7 +7674,7 @@ async function handleRequest(req, res) {
   // existence at the moment the gate turns on. While no account exists there is
   // nothing to sign in to, so the same path answers with the first-account
   // page rather than a login form that can only fail.
-  if (method === 'GET' && pathname === '/login') {
+  if (dispatchMethod === 'GET' && pathname === '/login') {
     return gateState === authGate.GATE_STATES.ACCOUNT_REQUIRED
       ? _serveAuthPage(res, 200, 'account-setup.html')
       : _serveLoginPage(res, 200);
@@ -7502,14 +7682,14 @@ async function handleRequest(req, res) {
   // The recovery-code page. The gate lets a signed-out person reach it only in
   // `armed`; anywhere else it is reached only when the gate is open or the
   // caller is signed in, and the route it posts to says why a code cannot help.
-  if (method === 'GET' && pathname === '/recover') {
+  if (dispatchMethod === 'GET' && pathname === '/recover') {
     return _serveAuthPage(res, 200, 'recover.html');
   }
 
   // API routes
   if (pathname.startsWith('/api/')) {
 
-    const matched = matchRoute(method, pathname);
+    const matched = matchRoute(dispatchMethod, pathname);
     if (!matched) {
       log.debug('Route not found', { method, path: pathname });
       return errorResponse(res, 404, `${method} ${pathname} not found`, 'NOT_FOUND');
@@ -7683,7 +7863,7 @@ async function handleRequest(req, res) {
   // (`lib/auth-gate.js#GATE_BYPASS_PATHS`), so the gate in front of the
   // dashboard gates it too. No route-level gate is added because none of the
   // pages have one — the perimeter is the gate.
-  if (method === 'GET' && pathname.startsWith('/plans/')) {
+  if (dispatchMethod === 'GET' && pathname.startsWith('/plans/')) {
     // Outside the `/api/` branch there is no route try/catch, so a renderer
     // failure here (a pathological plan, a read race) would leave the
     // response open forever. Answer with a 500 page instead.
@@ -7706,7 +7886,7 @@ async function handleRequest(req, res) {
   }
 
   // Static files
-  if (method === 'GET') {
+  if (dispatchMethod === 'GET') {
     if (serveStatic(res, pathname)) {
       // The dashboard document is the one static response logged at info —
       // see logNavigation. Every other asset stays at debug.
@@ -7739,7 +7919,7 @@ async function handleRequest(req, res) {
   }
 
   // Session wrapper page — /session/:name serves session.html
-  if (method === 'GET' && pathname.startsWith('/session/') && pathname.split('/').length === 3) {
+  if (dispatchMethod === 'GET' && pathname.startsWith('/session/') && pathname.split('/').length === 3) {
     const sessionName = pathname.split('/')[2];
     if (sessionName && serveStatic(res, '/session.html')) {
       logNavigation(method, pathname, startTime, 'session.html');
@@ -7748,7 +7928,7 @@ async function handleRequest(req, res) {
   }
 
   // OpenClaw viewer page — /openclaw-view/:connId serves openclaw-view.html
-  if (method === 'GET' && pathname.startsWith('/openclaw-view/') && pathname.split('/').length === 3) {
+  if (dispatchMethod === 'GET' && pathname.startsWith('/openclaw-view/') && pathname.split('/').length === 3) {
     const connId = pathname.split('/')[2];
     if (connId && serveStatic(res, '/openclaw-view.html')) {
       return;
@@ -7756,7 +7936,7 @@ async function handleRequest(req, res) {
   }
 
   // Fallback: serve index.html for SPA routing
-  if (method === 'GET' && !pathname.includes('.')) {
+  if (dispatchMethod === 'GET' && !pathname.includes('.')) {
     if (serveStatic(res, '/')) {
       logNavigation(method, pathname, startTime, 'index.html');
       return;
@@ -8560,4 +8740,4 @@ if (require.main === module) {
 }
 
 
-module.exports = { _routePatterns, createServer, _recoveryGateProbeFor, _operatorProofOf, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers, _activityObserver: activityObserver, _exchangeCaller: exchangeCaller, _checkPublicAssets, _setPublicDir };
+module.exports = { _routePatterns, createServer, _recoveryGateProbeFor, _operatorProofOf, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers, _activityObserver: activityObserver, _exchangeCaller: exchangeCaller, _checkPublicAssets, _setPublicDir, _resetTailscaleOriginCacheForTest };

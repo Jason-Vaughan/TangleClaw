@@ -155,6 +155,7 @@ describe('launch-binding guard: every mutating route is guarded or listed (#2233
 // review, and not by registering a route.
 const SIGNED_IN_OPERATOR = Object.freeze([
   'DELETE /api/session-rules/:id',
+  'POST /api/caddy-drift/resolve',
   'POST /api/control/assignments/:id/close',
   'POST /api/control/assignments/:id/release',
   'POST /api/coordinator-roles',
