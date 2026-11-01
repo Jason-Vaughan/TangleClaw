@@ -301,6 +301,50 @@ describe('lib/usage-windows — parseAntigravityTranscripts', () => {
   it('answers with no records for a directory that does not exist', () => {
     assert.deepEqual(uw.parseAntigravityTranscripts('/nonexistent/path/for/this/test'), []);
   });
+
+  it('never reads transcript_full.jsonl or anything under logs/chunks/ — a real duplicate of transcript.jsonl, not additional data (#2766 BLOCKING 1/2 root cause, PRR-B Round 2)', () => {
+    withTmpDir((dir) => {
+      const logsDir = path.join(dir, 'c1', '.system_generated', 'logs');
+      fs.mkdirSync(logsDir, { recursive: true });
+      fs.mkdirSync(path.join(logsDir, 'chunks', 'transcript'), { recursive: true });
+      fs.mkdirSync(path.join(logsDir, 'chunks', 'transcript_full'), { recursive: true });
+      const real = JSON.stringify({ step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: '2026-10-15T22:21:40Z', input_tokens: 100, output_tokens: 10 });
+      // transcript.jsonl: the one file this is supposed to read.
+      fs.writeFileSync(path.join(logsDir, 'transcript.jsonl'), real + '\n');
+      // Three ways the SAME record could be double-counted if any of these
+      // were read too — each written with a DIFFERENT token count so a
+      // wrong total (not just a wrong record count) would be caught.
+      fs.writeFileSync(path.join(logsDir, 'transcript_full.jsonl'),
+        JSON.stringify({ step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: '2026-10-15T22:21:40Z', input_tokens: 999, output_tokens: 999 }) + '\n');
+      fs.writeFileSync(path.join(logsDir, 'chunks', 'transcript', '00000000.jsonl'),
+        JSON.stringify({ step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: '2026-10-15T22:21:40Z', input_tokens: 888, output_tokens: 888 }) + '\n');
+      fs.writeFileSync(path.join(logsDir, 'chunks', 'transcript_full', '00000000.jsonl'),
+        JSON.stringify({ step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: '2026-10-15T22:21:40Z', input_tokens: 777, output_tokens: 777 }) + '\n');
+      const records = uw.parseAntigravityTranscripts(dir);
+      assert.equal(records.length, 1, 'only transcript.jsonl\'s one record, not four copies of it');
+      assert.equal(records[0].inputTokens, 100, 'the real file\'s own value, not a duplicate\'s');
+    });
+  });
+
+  it('never descends into scratch/, .user_uploaded/, or .system_generated/{tasks,messages,steps}/ — only logs/transcript.jsonl is read per conversation', () => {
+    withTmpDir((dir) => {
+      const convDir = path.join(dir, 'c1');
+      fs.mkdirSync(path.join(convDir, '.system_generated', 'logs'), { recursive: true });
+      fs.writeFileSync(path.join(convDir, '.system_generated', 'logs', 'transcript.jsonl'),
+        JSON.stringify({ step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: '2026-10-15T22:21:40Z', input_tokens: 5, output_tokens: 5 }) + '\n');
+      // Scratch/artifact subtrees real Antigravity conversations carry,
+      // none of them transcripts — a correct implementation never even
+      // lists these, let alone reads a `.jsonl` planted inside one.
+      for (const sub of ['scratch', '.user_uploaded', path.join('.system_generated', 'tasks'), path.join('.system_generated', 'messages'), path.join('.system_generated', 'steps', '1')]) {
+        fs.mkdirSync(path.join(convDir, sub), { recursive: true });
+        fs.writeFileSync(path.join(convDir, sub, 'decoy.jsonl'),
+          JSON.stringify({ step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: '2026-10-15T22:21:40Z', input_tokens: 9999, output_tokens: 9999 }) + '\n');
+      }
+      const records = uw.parseAntigravityTranscripts(dir);
+      assert.equal(records.length, 1);
+      assert.equal(records[0].inputTokens, 5, 'the real transcript, none of the decoys planted alongside it');
+    });
+  });
 });
 
 describe('lib/usage-windows — getUsageWindows composition', () => {
@@ -547,5 +591,253 @@ describe('lib/usage-windows — getUsageWindows composition', () => {
       assert.equal(storedAll.bySession['session-mixed'].claude['claude-opus-4-6'].fiveHour.inputTokens, 10);
       assert.equal(storedAll.bySession['session-mixed'].claude['claude-sonnet-5'].fiveHour.inputTokens, 3);
     });
+  });
+});
+
+describe('lib/usage-windows — bound-cache & pre-warm (#2766)', () => {
+  afterEach(() => {
+    uw._resetUsageWindowsCacheForTests();
+  });
+
+  it('a warm call never re-scans: the second call for the same key returns the cached result without touching the parsers again', () => {
+    uw._resetUsageWindowsCacheForTests();
+    let scans = 0;
+    const deps = { readdir: () => { scans += 1; return []; } };
+    const cold = uw.getUsageWindows({ deps });
+    assert.equal(scans, 3, 'the cold call scans all three providers\' directories once each');
+    const warm = uw.getUsageWindows({ deps });
+    assert.equal(scans, 3, 'the warm call must not scan again — this is the budget #2766 asks for, not a slower-but-still-bounded scan');
+    assert.equal(warm, cold, 'the exact cached object is served, not a fresh recomputation that merely looks equal');
+  });
+
+  it('a call naming any real-data override (claudeProjectsDir, nowMs, a store, ...) always recomputes fresh, uncached — the caching exists only for the zero-override production shape', () => {
+    uw._resetUsageWindowsCacheForTests();
+    let scans = 0;
+    const deps = { readdir: () => { scans += 1; return []; } };
+    uw.getUsageWindows({ deps, nowMs: Date.now() });
+    uw.getUsageWindows({ deps, nowMs: Date.now() });
+    assert.equal(scans, 6, 'a call that supplies nowMs must bypass the cache every time, exactly like before #2766');
+  });
+
+  it('a stale entry (older than USAGE_WINDOWS_CACHE_TTL_MS) is recomputed rather than served indefinitely', () => {
+    uw._resetUsageWindowsCacheForTests();
+    let scans = 0;
+    const deps = { readdir: () => { scans += 1; return []; } };
+    uw.getUsageWindows({ deps });
+    assert.equal(scans, 3);
+    const entry = uw._usageWindowsCacheForTests().get('claude');
+    entry.computedAtMs -= (uw.USAGE_WINDOWS_CACHE_TTL_MS + 1);
+    uw.getUsageWindows({ deps });
+    assert.equal(scans, 6, 'past the TTL, the next call must pay for a fresh scan rather than keep serving stale data forever');
+  });
+
+  it('different policyProvider values each get their own cache entry, so one does not shadow the other', () => {
+    uw._resetUsageWindowsCacheForTests();
+    let scans = 0;
+    const deps = { readdir: () => { scans += 1; return []; } };
+    uw.getUsageWindows({ deps, policyProvider: 'claude' });
+    assert.equal(scans, 3);
+    uw.getUsageWindows({ deps, policyProvider: 'codex' });
+    assert.equal(scans, 6, 'a different provider key is a cache miss, not a hit against claude\'s entry');
+    uw.getUsageWindows({ deps, policyProvider: 'claude' });
+    uw.getUsageWindows({ deps, policyProvider: 'codex' });
+    assert.equal(scans, 6, 'both keys are now warm');
+  });
+});
+
+describe('lib/usage-windows — scan budget and per-file cache (#2766 BLOCKING 1/2, PRR-B Round 1)', () => {
+  afterEach(() => {
+    uw._resetUsageWindowsCacheForTests();
+  });
+
+  /**
+   * A fake directory listing of `count` files, none of them real — every
+   * call here supplies its own `readFile`/`stat`, so nothing under this
+   * fake path is ever actually opened.
+   * @param {number} count
+   * @returns {{name: string, isFile: () => boolean}[]}
+   */
+  function fakeEntries(count) {
+    return Array.from({ length: count }, (_, i) => ({ name: `f${i}.jsonl`, isFile: () => true }));
+  }
+
+  /**
+   * A true synchronous sleep with no busy-loop CPU burn and no subprocess
+   * spawn, so a per-file "slow read" fake is fast to set up and precise.
+   * @param {number} ms
+   */
+  function sleepSync(ms) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  }
+
+  it('a scan deadline stops opening further files once it passes, rather than finishing an unbounded pass', () => {
+    // 10 files at 200ms each is 2000ms of unbounded work against a 500ms
+    // budget — this must come back having read only SOME of them, not all,
+    // and well under what the full set would have cost.
+    const deps = {
+      readdir: () => fakeEntries(10),
+      stat: () => ({ mtimeMs: 1000, size: 1 }),
+      readFile: () => { sleepSync(200); return ''; },
+      scanDeadlineMs: Date.now() + 500
+    };
+    const started = Date.now();
+    const records = uw.parseClaudeTranscripts('/fake/claude', deps);
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 1800, `a bounded pass must not run anywhere near the full unbounded 2000ms (took ${elapsed}ms)`);
+    assert.ok(records.length < 10, 'at least one file must have been skipped once the deadline passed');
+  });
+
+  it('the upfront stat pass itself is bounded, not just the later read-and-parse loop — a huge file COUNT alone cannot block past budget (#2766 BLOCKING 1, PRR-B Round 2)', () => {
+    // A slow `stat`, not a slow `readFile`: proves the deadline is checked
+    // during the stat-and-sort phase that runs BEFORE any file is read, the
+    // exact phase PRR-B's round 2 named as still unbounded.
+    const deps = {
+      readdir: () => fakeEntries(10),
+      stat: () => { sleepSync(200); return { mtimeMs: 1000, size: 1 }; },
+      readFile: () => '',
+      scanDeadlineMs: Date.now() + 500
+    };
+    const started = Date.now();
+    const records = uw.parseClaudeTranscripts('/fake/claude', deps);
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 1800, `stat-ing every file must not run anywhere near the full unbounded 2000ms (took ${elapsed}ms)`);
+    assert.ok(records.length < 10, 'at least one file must never even have been stat-ed once the deadline passed');
+  });
+
+  it('a slow stat pass still converges to complete: true across successive retries — the stat cache lets each one skip what an earlier one already paid for, rather than re-stat-ing from file 0 every time (#2766 BLOCKING 2, PRR-B Round 3)', () => {
+    // Without a stat cache this loops forever: every retry re-stats from
+    // the start of the list and hits the SAME deadline at the SAME point,
+    // never reaching the files that would make the pass complete — exactly
+    // what PRR-B's round 3 named. `antigravity` contributes nothing here
+    // (`fakeEntries` isn't shaped as conversation directories), so this is
+    // really just claude + codex, 10 fake files each, sharing one budget.
+    const deps = {
+      readdir: () => fakeEntries(10),
+      stat: () => { sleepSync(200); return { mtimeMs: 1000, size: 1 }; },
+      readFile: () => ''
+    };
+    let result;
+    let calls = 0;
+    const CEILING = 10;
+    for (; calls < CEILING; calls++) {
+      result = uw.getUsageWindows({ deps });
+      if (result.complete) break;
+    }
+    assert.equal(result.complete, true, `must converge to complete within a bounded number of retries (gave up after ${calls + 1})`);
+    assert.ok(calls + 1 < CEILING, `should converge comfortably before the ${CEILING}-call ceiling (took ${calls + 1} calls)`);
+  });
+
+  it('an unchanged file (same mtimeMs and size) is never re-read on a second pass — the cache that makes a repeat scan cheap', () => {
+    let reads = 0;
+    const fileRecordCache = new Map();
+    const deps = {
+      readdir: () => fakeEntries(3),
+      stat: () => ({ mtimeMs: 42, size: 7 }),
+      readFile: () => { reads += 1; return ''; },
+      fileRecordCache
+    };
+    uw.parseClaudeTranscripts('/fake/claude', deps);
+    assert.equal(reads, 3, 'the first pass reads every file once');
+    uw.parseClaudeTranscripts('/fake/claude', deps);
+    assert.equal(reads, 3, 'the second pass, same (mtimeMs, size) for every file, must not read any of them again');
+  });
+
+  it('a file whose mtimeMs or size changed IS re-read — the cache tracks staleness, not just presence', () => {
+    let reads = 0;
+    let size = 7;
+    const fileRecordCache = new Map();
+    const deps = {
+      readdir: () => fakeEntries(1),
+      stat: () => ({ mtimeMs: 42, size }),
+      readFile: () => { reads += 1; return ''; },
+      fileRecordCache
+    };
+    uw.parseClaudeTranscripts('/fake/claude', deps);
+    assert.equal(reads, 1);
+    size = 8; // the file grew — a real append
+    uw.parseClaudeTranscripts('/fake/claude', deps);
+    assert.equal(reads, 2, 'a changed file must be re-read, not served from the stale cache entry');
+  });
+
+  it('getUsageWindows itself stays bounded on a cold call with a lot of slow-to-read history, and honestly reports complete: false — not just the parser in isolation (#2766 BLOCKING 1/2, PRR-B Round 1/2)', () => {
+    // The actual BLOCKING 1 finding: the cold path through the cache
+    // wrapper, not merely `_scanFiles` on its own, has to honor the
+    // budget — this is what a real first `tc usage windows` call after
+    // server start goes through. BLOCKING 2: that same call must say so,
+    // not look like an ordinary complete snapshot.
+    const deps = {
+      readdir: () => fakeEntries(20),
+      stat: () => ({ mtimeMs: 1000, size: 1 }),
+      readFile: () => { sleepSync(300); return ''; }
+    };
+    const started = Date.now();
+    const result = uw.getUsageWindows({ deps });
+    const elapsed = Date.now() - started;
+    // 20 files * 0.3s * 3 providers would be 18s unbounded; each provider's
+    // own scan is bounded by the SAME shared budget
+    // (`USAGE_WINDOWS_SCAN_BUDGET_MS`), so the whole cold call must land
+    // nowhere near that, comfortably inside `tc usage windows`'s CLI timeout.
+    assert.ok(elapsed < uw.USAGE_WINDOWS_SCAN_BUDGET_MS * 3 + 1000,
+      `a cold call must stay bounded by the scan budget per provider, not by how much slow history exists (took ${elapsed}ms)`);
+    assert.equal(result.complete, false, 'the scan did not finish within budget, and the result must say so');
+  });
+
+  it('a forced-stale recompute (what the background warmer also does, on the identical code path) is bounded the same way', () => {
+    // The warmer's own `setInterval` tick calls the exact same
+    // `_computeUsageWindows({ policyProvider, deps: _boundedScanDeps() })`
+    // expression as this recompute does — proving THIS path is bounded is
+    // proving the warmer's 20s tick is too, since there is only one such
+    // expression in the module, not two.
+    const deps = {
+      readdir: () => fakeEntries(20),
+      stat: () => ({ mtimeMs: 1000, size: 1 }),
+      readFile: () => { sleepSync(300); return ''; }
+    };
+    uw.getUsageWindows({ deps }); // first cold call, populates the cache entry
+    const entry = uw._usageWindowsCacheForTests().get('claude');
+    entry.computedAtMs -= (uw.USAGE_WINDOWS_CACHE_TTL_MS + 1); // force the next call to recompute
+    const started = Date.now();
+    uw.getUsageWindows({ deps });
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < uw.USAGE_WINDOWS_SCAN_BUDGET_MS * 3 + 1000,
+      `a forced recompute must stay bounded exactly like the cold call (took ${elapsed}ms)`);
+  });
+
+  it('an ordinary, unbounded-by-nothing-blocking pass reports complete: true', () => {
+    const deps = { readdir: () => [], stat: () => ({ mtimeMs: 1, size: 1 }), readFile: () => '' };
+    const result = uw.getUsageWindows({ deps });
+    assert.equal(result.complete, true);
+  });
+
+  it('an incomplete cached entry is not trusted for the TTL — the next call retries immediately rather than serving a known-partial answer for 30s', () => {
+    let readdirCalls = 0;
+    const deps = {
+      readdir: () => { readdirCalls += 1; return fakeEntries(20); },
+      stat: () => ({ mtimeMs: 1000, size: 1 }),
+      readFile: () => { sleepSync(300); return ''; }
+    };
+    const first = uw.getUsageWindows({ deps });
+    assert.equal(first.complete, false, 'fixture precondition: the first pass must truncate');
+    const callsAfterFirst = readdirCalls;
+    uw.getUsageWindows({ deps }); // immediately again, well within the 30s TTL
+    assert.ok(readdirCalls > callsAfterFirst,
+      'an incomplete entry must not be served as a cache hit — the next call must retry rather than wait out the TTL');
+  });
+
+  it('a truncated refresh never replaces an existing COMPLETE cached entry with a worse, undercounting one (#2766 BLOCKING 2, PRR-B Round 2)', () => {
+    const fastDeps = { readdir: () => [], stat: () => ({ mtimeMs: 1, size: 1 }), readFile: () => '' };
+    const complete = uw.getUsageWindows({ deps: fastDeps });
+    assert.equal(complete.complete, true, 'fixture precondition: the first pass must complete');
+    const entry = uw._usageWindowsCacheForTests().get('claude');
+    entry.computedAtMs -= (uw.USAGE_WINDOWS_CACHE_TTL_MS + 1); // force the next call to attempt a refresh
+    const slowDeps = {
+      readdir: () => fakeEntries(20),
+      stat: () => ({ mtimeMs: 1000, size: 1 }),
+      readFile: () => { sleepSync(300); return ''; }
+    };
+    const served = uw.getUsageWindows({ deps: slowDeps });
+    assert.equal(served, complete, 'the stale-but-complete snapshot must still be served, not a fresher but truncated one');
+    assert.equal(uw._usageWindowsCacheForTests().get('claude').result, complete,
+      'the cache entry itself must not have been overwritten with the truncated attempt either');
   });
 });
