@@ -89,7 +89,18 @@ describe('update-checker releaseUrl derivation (#149)', () => {
   });
 
   describe('_getReleasesUrlBase', () => {
-    it('derives a URL from the local repo\'s origin remote when it\'s GitHub', () => {
+    // This test's premise is the checkout's own `origin` remote — real on a
+    // developer clone or a fork (github.com either way), but not guaranteed
+    // on the Testament container pool (#2758), which can check out from its
+    // own mirror rather than a `github.com` clone. Read the SAME remote the
+    // function under test would, independently of its memoized state, and
+    // skip cleanly rather than assert a GitHub shape this checkout doesn't
+    // have — the assertion below is about shape, not about this remote
+    // existing at all.
+    let originIsGitHub = false;
+    try { originIsGitHub = updateChecker._parseGitHubRemote(updateChecker._internal.gitRemote()) !== null; } catch { /* no origin, or git unavailable */ }
+
+    it('derives a URL from the local repo\'s origin remote when it\'s GitHub', { skip: originIsGitHub ? false : 'this checkout\'s origin remote is not a GitHub URL' }, () => {
       // This test runs inside the TC repo itself, whose origin points at
       // github.com/Jason-Vaughan/TangleClaw. The function should return a
       // /releases/tag/ URL for that repo. If the test ever fails because

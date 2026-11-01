@@ -60,6 +60,23 @@ function fakeObserved(sequence) {
   };
 }
 
+/**
+ * A `startedAtMs` this many ms in the past, never exactly second-aligned.
+ *
+ * `lib/profile-reconciler.js`'s coarse-second guard (`startedAtMs % 1000 ===
+ * 0`) exists to treat a SQLite-resolution `startedAtMs` as ambiguous — tests
+ * that don't mean to exercise that guard must never trip it by accident.
+ * `Date.now() - offsetMs` lands exactly on a second boundary on a 1-in-1000
+ * tick (#2768); nudging it off by one ms is harmless to every assertion here,
+ * none of which care about millisecond precision.
+ * @param {number} offsetMs
+ * @returns {number}
+ */
+function startedAtMsAgo(offsetMs) {
+  const ts = Date.now() - offsetMs;
+  return ts % 1000 === 0 ? ts + 1 : ts;
+}
+
 describe('setDesiredProfile / getDesiredProfile', () => {
   it('rejects a profile with no engine', () => {
     const result = reconciler.setDesiredProfile('r1', { model: 'claude-opus-5-5' });
@@ -817,7 +834,7 @@ describe('_readCodexActiveModel', () => {
   });
 
   it('reads the model from a turn_context record in a real rollout file', () => {
-    const startedAtMs = Date.now() - 1000;
+    const startedAtMs = startedAtMsAgo(1000);
     writeRollout('2026/10/31/rollout-test.jsonl', [
       { type: 'session_meta', payload: { id: 's1', cwd: '/Users/jasonvaughan/Documents/Projects/TC-Lane-A', timestamp: new Date(startedAtMs + 200).toISOString() } },
       { type: 'turn_context', payload: { cwd: '/Users/jasonvaughan/Documents/Projects/TC-Lane-A', model: 'gpt-5.6-sol' } }
@@ -829,7 +846,7 @@ describe('_readCodexActiveModel', () => {
   });
 
   it('prefers the LATEST turn_context model when several appear in the same file', () => {
-    const startedAtMs = Date.now() - 1000;
+    const startedAtMs = startedAtMsAgo(1000);
     writeRollout('2026/10/31/rollout-test.jsonl', [
       { type: 'session_meta', payload: { id: 's1', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString() } },
       { type: 'turn_context', payload: { cwd: '/project', model: 'gpt-5.6-sol' } },
@@ -880,7 +897,7 @@ describe('_readCodexActiveModel', () => {
   });
 
   it('skips a malformed line rather than failing the whole read', () => {
-    const startedAtMs = Date.now() - 1000;
+    const startedAtMs = startedAtMsAgo(1000);
     const full = path.join(tmpHome, 'sessions', '2026/10/31/rollout-malformed.jsonl');
     fs.mkdirSync(path.dirname(full), { recursive: true });
     fs.writeFileSync(full,
@@ -974,7 +991,7 @@ describe('_readClaudeActiveModel', () => {
   });
 
   it('reads the model from an assistant row in a real transcript file', () => {
-    const startedAtMs = Date.now() - 1000;
+    const startedAtMs = startedAtMsAgo(1000);
     writeTranscript('-project/session.jsonl', [
       { type: 'user', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString() },
       { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 300).toISOString(), message: { model: 'claude-sonnet-5' } }
@@ -984,7 +1001,7 @@ describe('_readClaudeActiveModel', () => {
   });
 
   it('prefers the LATEST assistant row when several appear in the same file', () => {
-    const startedAtMs = Date.now() - 1000;
+    const startedAtMs = startedAtMsAgo(1000);
     writeTranscript('-project/session.jsonl', [
       { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(), message: { model: 'claude-opus-4-8' } },
       { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 300).toISOString(), message: { model: 'claude-sonnet-5' } }
@@ -1010,7 +1027,7 @@ describe('_readClaudeActiveModel', () => {
   });
 
   it('PRR-A round 6: a line carrying a DIFFERENT cwd than deps.projectPath voids the whole file, even when another line matches', () => {
-    const startedAtMs = Date.now() - 1000;
+    const startedAtMs = startedAtMsAgo(1000);
     writeTranscript('-mixed/session.jsonl', [
       { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(), message: { model: 'claude-sonnet-5' } },
       { type: 'assistant', cwd: '/some/other/project', timestamp: new Date(startedAtMs + 300).toISOString(), message: { model: 'claude-sonnet-5' } }
@@ -1078,7 +1095,7 @@ describe('_readClaudeActiveModel', () => {
 
   describe('PRR-A Round 4: minRecordTimestampMs (#2598)', () => {
     it('a record BEFORE minRecordTimestampMs cannot supply the model, even though the file otherwise clears every identity check', () => {
-      const startedAtMs = Date.now() - 10000;
+      const startedAtMs = startedAtMsAgo(10000);
       const cutoff = Date.now() - 3000;
       writeTranscript('-project/session.jsonl', [
         { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(), message: { model: 'claude-opus-4-8' } }
@@ -1088,7 +1105,7 @@ describe('_readClaudeActiveModel', () => {
     });
 
     it('a record AT/AFTER minRecordTimestampMs supplies the model, even when the file\'s FIRST line (its identity) predates the cutoff', () => {
-      const startedAtMs = Date.now() - 10000;
+      const startedAtMs = startedAtMsAgo(10000);
       const cutoff = Date.now() - 3000;
       writeTranscript('-project/session.jsonl', [
         { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(), message: { model: 'claude-opus-4-8' } },
@@ -1099,7 +1116,7 @@ describe('_readClaudeActiveModel', () => {
     });
 
     it('omitted minRecordTimestampMs behaves exactly as before — the last-mentioned model wins regardless of its own timestamp', () => {
-      const startedAtMs = Date.now() - 10000;
+      const startedAtMs = startedAtMsAgo(10000);
       writeTranscript('-project/session.jsonl', [
         { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(), message: { model: 'claude-opus-4-8' } }
       ]);
@@ -1144,7 +1161,7 @@ describe('_readClaudeActiveModel', () => {
     }
 
     it('reads the model once a SUCCEEDED /model exchange confirms it, with no assistant row in the file at all', () => {
-      const startedAtMs = Date.now() - 10000;
+      const startedAtMs = startedAtMsAgo(10000);
       writeTranscript('-project/session.jsonl', [
         succeededInvocation(new Date(startedAtMs + 200).toISOString(), 'claude-sonnet-5', 'inv-1'),
         succeededConfirmation(new Date(startedAtMs + 201).toISOString(), 'inv-1', 'conf-1')
@@ -1154,7 +1171,7 @@ describe('_readClaudeActiveModel', () => {
     });
 
     it('a REJECTED /model exchange never supplies the rejected model — the exact real bug a prior version of this reader had (trusting commandRun.args, present only on the rejection)', () => {
-      const startedAtMs = Date.now() - 10000;
+      const startedAtMs = startedAtMsAgo(10000);
       writeTranscript('-project/session.jsonl', [
         rejectedInvocation(new Date(startedAtMs + 200).toISOString(), 'bogus-nonexistent-model-xyz', 'inv-1'),
         rejectedConfirmation(new Date(startedAtMs + 201).toISOString(), 'inv-1', 'conf-1', 'bogus-nonexistent-model-xyz')
@@ -1164,7 +1181,7 @@ describe('_readClaudeActiveModel', () => {
     });
 
     it('a REJECTED exchange followed by a SUCCEEDED one (the real sequence this host\'s own probe produced) reads only the succeeded model', () => {
-      const startedAtMs = Date.now() - 10000;
+      const startedAtMs = startedAtMsAgo(10000);
       writeTranscript('-project/session.jsonl', [
         succeededInvocation(new Date(startedAtMs + 200).toISOString(), 'claude-opus-4-8', 'inv-1'),
         succeededConfirmation(new Date(startedAtMs + 201).toISOString(), 'inv-1', 'conf-1'),
@@ -1176,7 +1193,7 @@ describe('_readClaudeActiveModel', () => {
     });
 
     it('a LATER succeeded /model exchange wins over an earlier assistant row, same as two assistant rows would', () => {
-      const startedAtMs = Date.now() - 10000;
+      const startedAtMs = startedAtMsAgo(10000);
       writeTranscript('-project/session.jsonl', [
         { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(), message: { model: 'claude-opus-4-8' } },
         succeededInvocation(new Date(startedAtMs + 300).toISOString(), 'claude-sonnet-5', 'inv-1'),
@@ -1187,7 +1204,7 @@ describe('_readClaudeActiveModel', () => {
     });
 
     it('a succeeded /model exchange is subject to the exact same minRecordTimestampMs recency scoping as an assistant row — scoped to the CONFIRMATION row\'s own timestamp', () => {
-      const startedAtMs = Date.now() - 10000;
+      const startedAtMs = startedAtMsAgo(10000);
       const cutoff = Date.now() - 3000;
       writeTranscript('-project/session.jsonl', [
         { type: 'assistant', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(), message: { model: 'claude-opus-4-8' } },
@@ -1200,7 +1217,7 @@ describe('_readClaudeActiveModel', () => {
     });
 
     it('an invocation row with no matching confirmation row at all never supplies a model', () => {
-      const startedAtMs = Date.now() - 10000;
+      const startedAtMs = startedAtMsAgo(10000);
       writeTranscript('-project/session.jsonl', [
         succeededInvocation(new Date(startedAtMs + 200).toISOString(), 'claude-sonnet-5', 'inv-1')
         // No confirmation row ever arrives — the command may still be in flight.
@@ -1210,7 +1227,7 @@ describe('_readClaudeActiveModel', () => {
     });
 
     it('a confirmation-shaped row whose parentUuid matches nothing pending is ignored, not mistaken for an unrelated command\'s result', () => {
-      const startedAtMs = Date.now() - 10000;
+      const startedAtMs = startedAtMsAgo(10000);
       writeTranscript('-project/session.jsonl', [
         {
           type: 'user', uuid: 'orphan', parentUuid: 'nothing-pending', cwd: '/project', timestamp: new Date(startedAtMs + 200).toISOString(),
@@ -1396,7 +1413,7 @@ describe('sessions._verifyModelAfterLaunch — production wiring converges a ses
     });
 
     it('converges to "verified" ONLY from a matching real codex rollout file, with no readTrustedActiveProfile seam at all', async () => {
-      const startedAtMs = Date.now() - 1000;
+      const startedAtMs = startedAtMsAgo(1000);
       const rollout = path.join(tmpCodexHome, 'sessions', '2026', '10', '31', 'rollout-test.jsonl');
       fs.mkdirSync(path.dirname(rollout), { recursive: true });
       fs.writeFileSync(rollout, [
@@ -1413,7 +1430,7 @@ describe('sessions._verifyModelAfterLaunch — production wiring converges a ses
     });
 
     it('stays "held" on a model mismatch in the real codex rollout file', async () => {
-      const startedAtMs = Date.now() - 1000;
+      const startedAtMs = startedAtMsAgo(1000);
       const rollout = path.join(tmpCodexHome, 'sessions', '2026', '10', '31', 'rollout-test.jsonl');
       fs.mkdirSync(path.dirname(rollout), { recursive: true });
       fs.writeFileSync(rollout, [
@@ -1430,7 +1447,7 @@ describe('sessions._verifyModelAfterLaunch — production wiring converges a ses
     });
 
     it('stays "held" when the rollout file\'s cwd does not match the project path', async () => {
-      const startedAtMs = Date.now() - 1000;
+      const startedAtMs = startedAtMsAgo(1000);
       const rollout = path.join(tmpCodexHome, 'sessions', '2026', '10', '31', 'rollout-test.jsonl');
       fs.mkdirSync(path.dirname(rollout), { recursive: true });
       fs.writeFileSync(rollout, [
@@ -1494,7 +1511,7 @@ describe('sessions._verifyModelAfterLaunch — production wiring converges a ses
     });
 
     it('converges to "verified" ONLY from a matching real claude transcript file, with no readTrustedActiveProfile seam at all', async () => {
-      const startedAtMs = Date.now() - 1000;
+      const startedAtMs = startedAtMsAgo(1000);
       const transcript = path.join(tmpClaudeHome, 'projects', '-fixture-project', 'session.jsonl');
       fs.mkdirSync(path.dirname(transcript), { recursive: true });
       fs.writeFileSync(transcript, [
@@ -1510,7 +1527,7 @@ describe('sessions._verifyModelAfterLaunch — production wiring converges a ses
     });
 
     it('stays "held" on a model mismatch in the real claude transcript file', async () => {
-      const startedAtMs = Date.now() - 1000;
+      const startedAtMs = startedAtMsAgo(1000);
       const transcript = path.join(tmpClaudeHome, 'projects', '-fixture-project', 'session.jsonl');
       fs.mkdirSync(path.dirname(transcript), { recursive: true });
       fs.writeFileSync(transcript, [

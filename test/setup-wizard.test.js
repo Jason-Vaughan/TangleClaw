@@ -12,6 +12,7 @@ const store = require('../lib/store');
 const { createServer, _setCutoverSpawner } = require('../server');
 const { installCaddyStub } = require('./_caddy-stub');
 const { installAlwaysAvailableEngine } = require('./_engine-fixture');
+const engines = require('../lib/engines');
 const { operatorHeaders, signInOperator } = require('./_shared-docs-callers');
 
 /**
@@ -211,10 +212,31 @@ describe('Setup Wizard', () => {
       // coverage does, for exactly the duration this directory must stay empty.
       const realSyncBundled = store.engines.syncBundled;
       store.engines.syncBundled = () => {};
+      // #2758 — `anyEngineInstalled` counts UNCERTAIN as installed (by design,
+      // #346: an operator whose shell merely would not answer must not be
+      // refused). That probe runs `process.env.SHELL || '/bin/zsh'` with
+      // `-lic`/`-lc`; a minimal container with no interactive login shell at
+      // all (no `zsh` on PATH) makes the probe fail, which flips this
+      // fixture's intended "certainly nothing installed" into "uncertain, so
+      // treat as installed" — the gate passes 200 instead of refusing 400, on
+      // the container only. Force a real, fast, deterministic shell (the same
+      // `fakeShell` technique test/engines.test.js's own #346/#737 coverage
+      // uses) so this fixture tests the CERTAIN-not-installed case on every
+      // host, not whichever shell happens to exist here.
+      const shellDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-setup-wizard-shell-'));
+      const shellFile = path.join(shellDir, 'shell');
+      fs.writeFileSync(shellFile, '#!/bin/sh\neval "$2"\n');
+      fs.chmodSync(shellFile, 0o755);
+      const savedShell = process.env.SHELL;
+      process.env.SHELL = shellFile;
+      engines.resetDetectionCache();
       try {
         await fn();
       } finally {
         store.engines.syncBundled = realSyncBundled;
+        process.env.SHELL = savedShell;
+        engines.resetDetectionCache();
+        fs.rmSync(shellDir, { recursive: true, force: true });
         fs.rmSync(dir, { recursive: true, force: true });
         fs.renameSync(stash, dir);
         const restore = store.config.load();

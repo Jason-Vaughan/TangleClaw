@@ -549,3 +549,54 @@ describe('lib/usage-windows — getUsageWindows composition', () => {
     });
   });
 });
+
+describe('lib/usage-windows — bound-cache & pre-warm (#2766)', () => {
+  afterEach(() => {
+    uw._resetUsageWindowsCacheForTests();
+  });
+
+  it('a warm call never re-scans: the second call for the same key returns the cached result without touching the parsers again', () => {
+    uw._resetUsageWindowsCacheForTests();
+    let scans = 0;
+    const deps = { readdir: () => { scans += 1; return []; } };
+    const cold = uw.getUsageWindows({ deps });
+    assert.equal(scans, 3, 'the cold call scans all three providers\' directories once each');
+    const warm = uw.getUsageWindows({ deps });
+    assert.equal(scans, 3, 'the warm call must not scan again — this is the budget #2766 asks for, not a slower-but-still-bounded scan');
+    assert.equal(warm, cold, 'the exact cached object is served, not a fresh recomputation that merely looks equal');
+  });
+
+  it('a call naming any real-data override (claudeProjectsDir, nowMs, a store, ...) always recomputes fresh, uncached — the caching exists only for the zero-override production shape', () => {
+    uw._resetUsageWindowsCacheForTests();
+    let scans = 0;
+    const deps = { readdir: () => { scans += 1; return []; } };
+    uw.getUsageWindows({ deps, nowMs: Date.now() });
+    uw.getUsageWindows({ deps, nowMs: Date.now() });
+    assert.equal(scans, 6, 'a call that supplies nowMs must bypass the cache every time, exactly like before #2766');
+  });
+
+  it('a stale entry (older than USAGE_WINDOWS_CACHE_TTL_MS) is recomputed rather than served indefinitely', () => {
+    uw._resetUsageWindowsCacheForTests();
+    let scans = 0;
+    const deps = { readdir: () => { scans += 1; return []; } };
+    uw.getUsageWindows({ deps });
+    assert.equal(scans, 3);
+    const entry = uw._usageWindowsCacheForTests().get('claude');
+    entry.computedAtMs -= (uw.USAGE_WINDOWS_CACHE_TTL_MS + 1);
+    uw.getUsageWindows({ deps });
+    assert.equal(scans, 6, 'past the TTL, the next call must pay for a fresh scan rather than keep serving stale data forever');
+  });
+
+  it('different policyProvider values each get their own cache entry, so one does not shadow the other', () => {
+    uw._resetUsageWindowsCacheForTests();
+    let scans = 0;
+    const deps = { readdir: () => { scans += 1; return []; } };
+    uw.getUsageWindows({ deps, policyProvider: 'claude' });
+    assert.equal(scans, 3);
+    uw.getUsageWindows({ deps, policyProvider: 'codex' });
+    assert.equal(scans, 6, 'a different provider key is a cache miss, not a hit against claude\'s entry');
+    uw.getUsageWindows({ deps, policyProvider: 'claude' });
+    uw.getUsageWindows({ deps, policyProvider: 'codex' });
+    assert.equal(scans, 6, 'both keys are now warm');
+  });
+});
