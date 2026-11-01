@@ -18,6 +18,50 @@ TangleClaw is the central port registry for every project on this machine — re
   TangleClaw's Caddyfile divergence check cross-references it, so a proxy fronting a port whose
   owner meant it to stay local is reported rather than silently accepted. A lease with no `reach`
   is treated as `loopback` and never as permission to expose the port.
+- **Before any machine-wide ingress mutation** — `tailscale serve`, `tailscale funnel`, binding
+  `80`/`443` directly, installing a LaunchDaemon that fronts traffic — check what the machine
+  already serves (`tailscale serve status --json`, or the equivalent for the mechanism in use)
+  and record the claim (`porthub.claimIngressRoute`, see below) **before** running the command.
+  PortHub cannot intercept these — they claim a route on the machine's tailnet identity, not a
+  local port a lease probe can see — so this is the preflight check that stands in for
+  enforcement it cannot do (#815, the 2026-07-31 incident this would have prevented: a `serve`
+  invocation displaced the Caddy front door and cut remote access to every tab).
+
+### Machine-Wide Ingress Claims
+
+A port lease answers "is this local port bound?" `tailscale serve`/`funnel` claims something
+PortHub's leases cannot see: a route on the machine's tailnet identity (a hostname and port),
+machine-wide, for every consumer of that hostname — not a listener any lease probe can find.
+
+This is **reservation, not enforcement** — PortHub cannot intercept `tailscale serve`, and a
+registry that appeared to guarantee something it cannot would be worse than one that honestly
+records intent (#815). Before claiming a route, running `porthub.listIngressClaims()` or
+checking `GET /api/ports` (`reach: 'tailnet'` leases whose `service` starts `ingress-claim:`) is
+how a session answers "who already holds this hostname/port?" before running the command that
+claims it:
+
+```js
+const porthub = require('./lib/porthub');
+
+// Record the claim BEFORE running `tailscale serve --bg --yes --https=8444 3330`.
+porthub.claimIngressRoute({
+  host: 'cursatory.tail123678.ts.net',  // the tailnet hostname — never a loopback spelling
+  port: 8444,                           // the externally visible ingress port
+  project: 'my-project',
+  mode: 'serve',                        // or 'funnel'
+  backedBy: { host: 'localhost', port: 3330 },  // the local service it proxies to, if known
+  description: 'why this route exists'
+});
+
+porthub.listIngressClaims();            // who holds what, machine-wide
+porthub.releaseIngressRoute({ host: '...', port: 8444, project: 'my-project' });
+```
+
+A different project's live claim on the same `(host, port)` is refused (`code:
+'INGRESS_CLAIM_CONFLICT'`) unless `force` is set, the same mental model as a port conflict. This
+is bookkeeping only: nothing here runs `tailscale serve`, checks that it is still running, or
+stops anyone from running it unclaimed — the claim is only as current as the session that
+recorded it.
 
 ### Port Ranges Convention
 - **3100-3199**: TangleClaw infrastructure (ttyd, server) — do not use

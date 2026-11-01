@@ -5222,6 +5222,51 @@ async function _loadRecoveryCodesSection() {
 }
 
 /**
+ * Render the Tailscale Advertisement toggle and its status hint (#1380).
+ *
+ * `tailscaleMode` is orthogonal to `ingressMode` — a separate flag, never a
+ * fourth state bolted onto it — and `tailscaleStatus` is the SERVER's
+ * resolution (`lib/tailscale-ingress.js`, honest failure detection), never
+ * re-derived here. The same "server resolves, frontend renders" discipline
+ * the Network Exposure section above already uses, for the same reason: a
+ * frontend guess about whether the node is logged in or MagicDNS is on would
+ * drift from what the server can actually detect.
+ *
+ * Placed deliberately AWAY from the Login section just below: a structural
+ * test (`test/settings-credential.test.js`) slices the text from
+ * `_loadCredentialSection` to `openGlobalSettings` and pins that the slice
+ * never mentions `/api/config`, to catch a credential change silently
+ * routed through the unguarded config PATCH. A doc comment naming that
+ * route — this one's own JSDoc does, honestly describing where its `c`
+ * parameter comes from — would land inside that slice and trip the pin by
+ * sheer textual adjacency if this sat between the two.
+ * @param {object} c - Config, as `GET`/`PATCH /api/config` returns it.
+ * @returns {string} Markup for the section.
+ */
+function renderTailscaleModeSetting(c) {
+  const tailscaleStatus = c.tailscaleStatus || {};
+  const tailscaleHint = tailscaleStatus.ok
+    ? `Generated links use <code>${esc(tailscaleStatus.origin)}</code> instead of <code>localhost</code>.`
+    : tailscaleStatus.reason === 'disabled'
+      ? 'Off (default): generated links (session start, VRF checklists, artifact shares, medusa '
+        + 'endpoints) use <code>localhost</code> or the request\'s own address. On: TangleClaw advertises '
+        + 'its Tailscale hostname instead, so the same links work from your phone or another machine on '
+        + 'the tailnet.'
+      : `On, but not usable yet: ${esc(tailscaleStatus.detail || 'the tailnet hostname could not be resolved')}. `
+        + 'Links keep using the fallback address until this is fixed.';
+  return `
+    <div class="gs-section-label">Tailscale Advertisement</div>
+    <div class="form-group">
+      <label class="gs-toggle-label">
+        <span>Advertise a Tailscale hostname</span>
+        <input type="checkbox" id="gsTailscaleMode" ${c.tailscaleMode ? 'checked' : ''}>
+        <span class="toggle-switch"></span>
+      </label>
+      <div class="form-hint">${tailscaleHint}</div>
+    </div>`;
+}
+
+/**
  * Render the Login section from the server's own answer about this install.
  *
  * The form is drawn only when `GET /api/auth/credential` says a change is
@@ -5508,6 +5553,8 @@ function openGlobalSettings() {
       <button type="button" class="btn" id="gsBindKeepOpen">Keep network access, and stop warning me</button>
     </div>` : ''}
 
+    ${renderTailscaleModeSetting(c)}
+
     <div class="gs-section-label">Caddy password</div>
     <div class="form-group" id="gsCredentialSection">
       <div class="form-hint">Checking what this install can change…</div>
@@ -5670,7 +5717,8 @@ async function saveGlobalSettings() {
     portScannerEnabled: document.getElementById('gsPortScannerEnabled').checked,
     portScannerIntervalMs: intervalMs,
     stripAiCoauthors: document.getElementById('gsStripAiCoauthors').checked,
-    serviceTokenEnabled: document.getElementById('gsServiceTokenEnabled').checked
+    serviceTokenEnabled: document.getElementById('gsServiceTokenEnabled').checked,
+    tailscaleMode: document.getElementById('gsTailscaleMode').checked
   };
 
   // Send this ONLY when the operator actually moved the switch.
