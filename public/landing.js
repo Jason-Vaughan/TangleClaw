@@ -784,12 +784,18 @@ function renderBindNotice(notice, elementId) {
  * nothing for both is exactly the collapse this check exists to prevent.
  *
  * State-driven like the other banners: it mirrors the latest `/api/server-info`
- * poll. No dismiss control and no timer — the measurement is taken at boot, so
- * it clears when the operator fixes the file and restarts.
+ * poll. The measurement itself is taken at boot and has no timer, but unlike
+ * the other no-dismiss banners this one has a "Resolve…" menu (#1415) — the
+ * cause does not go away on its own, mirroring why `renderRecoveryNotice` is
+ * also the one banner here with a button.
  *
  * Findings are server-authored strings describing the live Caddyfile, and they
  * are escaped: a hostname in that file is operator-controlled text arriving at
- * innerHTML.
+ * innerHTML. The menu's two buttons are generated fresh into this same
+ * innerHTML on every render (there is no static markup for them in
+ * `index.html`), so they are re-queried and re-wired here each call rather
+ * than once — the `dataset.wired` guard other banners use would be
+ * meaningless against nodes that do not survive the next render anyway.
  *
  * @param {{message: string, severity: string, findings: string[],
  *   unmeasured: string[]}|null|undefined} notice
@@ -814,8 +820,103 @@ function renderCaddyDriftBanner(notice) {
   const items = findings.map((f) => `<li>${esc(f)}</li>`)
     .concat(unmeasured.map((u) => `<li class="caddy-drift-unmeasured">not checked: ${esc(u)}</li>`));
   const list = items.length ? `<ul class="caddy-drift-findings">${items.join('')}</ul>` : '';
-  textEl.innerHTML = `⚠ <strong>${esc(message)}</strong>${list}`;
+  const actions =
+    '<div class="caddy-drift-actions" style="margin-top:6px">'
+    + '<button type="button" class="orphan-banner-btn" data-caddy-drift-resolve>Resolve…</button>'
+    + '<div class="hidden" data-caddy-drift-menu style="margin-top:4px">'
+    + '<button type="button" class="orphan-banner-details" data-caddy-drift-restore>'
+    + 'Restore Security Baseline</button> '
+    + '<button type="button" class="orphan-banner-details" data-caddy-drift-ack>'
+    + 'Acknowledge Intentional Drift</button>'
+    + '</div>'
+    + '</div>';
+  textEl.innerHTML = `⚠ <strong>${esc(message)}</strong>${list}${actions}`;
   banner.classList.remove('hidden');
+
+  // Wire the "Resolve…" menu just built into `textEl` above. Nested rather
+  // than a top-level sibling: several test files lift `renderCaddyDriftBanner`
+  // in isolation via `liftDeclaration`/`liftBody` (see
+  // `test/caddy-drift-surfacing.test.js`) and supply only a minimal stub
+  // `document` as a free variable, so a sibling helper function would be
+  // invisible to them (`ReferenceError`) — nesting puts it inside the same
+  // declaration those harnesses lift whole.
+  //
+  // `findings` closes over the outer scope rather than being re-read from the
+  // DOM, because the `<li>` text above is HTML-escaped for display and this
+  // needs the exact strings the server reported, matching what a future
+  // acknowledge endpoint will compare against
+  // (`lib/caddy-drift.js#fingerprintFindings`).
+  //
+  // **Server wiring for both actions is W2-A's, not this car's** (#1415's
+  // route/persistence half is out of W1-A's file envelope; see the PR). Until
+  // then, both calls below 404 against a live server — `apiMutate` reports
+  // that as a failure the same way it reports any other, so the buttons
+  // restore and alert rather than hang, but nothing actually resolves yet.
+  function wireCaddyDriftActions() {
+    // The isolated-lift stub `textEl` is a bare `{ innerHTML, textContent }` —
+    // no `querySelector`. A real element always has one, so this is a
+    // test-stub accommodation, not a degraded production path.
+    if (typeof textEl.querySelector !== 'function') return;
+    const resolveBtn = textEl.querySelector('[data-caddy-drift-resolve]');
+    const menu = textEl.querySelector('[data-caddy-drift-menu]');
+    const restoreBtn = textEl.querySelector('[data-caddy-drift-restore]');
+    const ackBtn = textEl.querySelector('[data-caddy-drift-ack]');
+    if (!resolveBtn || !menu || !restoreBtn || !ackBtn) return;
+
+    resolveBtn.addEventListener('click', () => menu.classList.toggle('hidden'));
+
+    restoreBtn.addEventListener('click', async () => {
+      if (!window.confirm(
+        'Overwrite the live Caddyfile with the secure configuration TangleClaw generates? '
+        + 'Any manual edits to it will be lost.'
+      )) {
+        return;
+      }
+      restoreBtn.disabled = true;
+      const original = restoreBtn.textContent;
+      restoreBtn.textContent = 'Restoring…';
+      let result;
+      try {
+        result = await apiMutate('/api/caddy-drift/resolve', 'POST', { action: 'restore-baseline' });
+      } catch (err) { // prawduct:allow prawduct/broad-except -- a throw here must not strand the button disabled
+        window.alert(`Restore failed: ${err && err.message ? err.message : 'request did not complete'}`);
+        restoreBtn.disabled = false;
+        restoreBtn.textContent = original;
+        return;
+      }
+      restoreBtn.disabled = false;
+      restoreBtn.textContent = original;
+      if (!result || !result.ok) {
+        window.alert(`Restore not completed: ${(result && result.error) || api.lastError || 'unknown error'}`);
+        return;
+      }
+      await loadServerInfo();
+    });
+
+    ackBtn.addEventListener('click', async () => {
+      ackBtn.disabled = true;
+      let result;
+      try {
+        result = await apiMutate('/api/caddy-drift/resolve', 'POST', { action: 'acknowledge', findings });
+      } catch (err) { // prawduct:allow prawduct/broad-except -- a throw here must not strand the button disabled
+        window.alert(`Acknowledge failed: ${err && err.message ? err.message : 'request did not complete'}`);
+        ackBtn.disabled = false;
+        return;
+      }
+      ackBtn.disabled = false;
+      if (!result || !result.ok) {
+        window.alert(`Not acknowledged: ${(result && result.error) || api.lastError || 'unknown error'}`);
+        return;
+      }
+      // Optimistic: hide now rather than wait for the next poll. If a
+      // genuinely new violation shows up, the next poll's notice reinstates
+      // the banner — `shouldShowDrift` on the server decides that, this just
+      // stops nagging about exactly what was just acknowledged.
+      renderCaddyDriftBanner(null);
+    });
+  }
+
+  wireCaddyDriftActions();
 }
 
 /**

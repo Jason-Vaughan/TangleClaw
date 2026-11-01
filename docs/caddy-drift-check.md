@@ -65,7 +65,7 @@ list carries divergences only, so a caller deciding whether to reassure the oper
 
 | # | Key | Property | `not-measured` when |
 |---|---|---|---|
-| P1 | `gatedProxies` | No proxying site lacks a gate the generated baseline does not also omit — or TangleClaw's own login guards the door | adapt unavailable, or the config generates no gate at all and the login does not guard the door |
+| P1 | `gatedProxies` | No proxying site lacks a gate the generated baseline does not also omit, and no gate's own bypass exemption admits a path outside `GATE_BYPASS_PATHS` — or TangleClaw's own login guards the door | adapt unavailable, the config generates no gate at all and the login does not guard the door, or a gate's bypass exemption pattern cannot be decomposed into literal paths |
 | P2 | `httpsProtocols` | The HTTPS listener negotiates the protocols the baseline pins (`h1`) | adapt unavailable, or the baseline has no HTTPS listener |
 | P3 | `knownUpstreams` | No site dials an upstream the generated config does not dial | adapt unavailable |
 | P4 | `leaseReach` | No site fronts a port whose PortHub lease declares a narrower `reach` | adapt unavailable, PortHub unreachable, the port has no lease, or the lease has no readable reach |
@@ -120,13 +120,34 @@ every route under one site, so a gate anywhere in that site satisfies P1 for all
 path-scoped block sitting beside a real gate on the same host and port therefore reads as `holds`.
 That aggregation is what makes the property work at all — TangleClaw's own bypass routes are exactly
 such ungated blocks — but it means P1 catches a site with NO gate, not an ungated hole inside a gated
-one. Same boundary as the breadth limit below, reached from the other direction, and in #1403's scope.
+one. Tracked as **#2774** (split off #1403, below) rather than approximated: answering it in general
+means evaluating route match/order coverage per path, Caddy's matcher algebra again, not a set
+comparison.
 
-**P1 is gate PRESENCE, not gate BREADTH.** A hand-widened bypass matcher leaves the site gated and is
-not reported. The first implementation did compare matchers and fired on three correctly gated sites,
-because deciding which of two matcher sets admits more requests means reimplementing Caddy's matcher
-algebra. Tracked as **#1403** rather than approximated — approximating it produces exactly the
-false-positive class this check exists to avoid.
+**P1 is gate PRESENCE, but also now checks one specific, narrower kind of BREADTH (#1403).** A
+hand-widened bypass matcher used to leave the site gated and unreported. The first implementation
+compared whole matcher trees and fired on three correctly gated sites, because deciding which of two
+arbitrary matcher sets admits more requests means reimplementing Caddy's matcher algebra — still true,
+and still avoided. What's narrower and *is* checked now: when a gate route carries exactly the shape
+`lib/caddy.js#_bypassPathRegexp` generates (`not path_regexp ^(alt1|alt2|...)$` on the auth route
+itself), `lib/caddy-drift.js#checkGates` decomposes the live pattern's top-level alternatives and
+classifies each (`classifyBypassAlternative`): a plain literal — including a backslash escape
+(`\.`) or a single-character class (`[.]`), both decoded to the same one character — is compared
+against `GATE_BYPASS_PATHS` **by decoded value**, not by matching its own escaped text —
+`/manifest[.]json` and `/manifest\.json` decode to the same literal and must read as equal (PR #2777
+review: round 1, PRR-A, caught the first version reporting that exact non-divergence as a false
+positive; round 2, the Architect's ruling A490-W1A-R3 extended the decoder to single-character
+classes so it reads `holds` rather than merely `not-measured`). A literal prefix followed by a
+trailing unescaped `.*` is always a widening, since no `GATE_BYPASS_PATHS` entry is a wildcard.
+Anything else an alternative could be — a range or multi-character class (`[a-z]`, `[ab]`), a group,
+an unrecognized escape — is `not-measured` for that gate, not guessed in either direction: proving
+two differently-written regexes equivalent in general is the same matcher algebra the
+presence check avoids. A gate using some OTHER exemption shape entirely (most notably the
+`live-shape-own-auth` hand-edit, where the real gate route is `match: null` and the bypass is a
+wholly separate, earlier route — see #2774 above) has nothing on its own matcher to check this way
+and is silently skipped, not flagged; a bypass pattern that isn't even wrapped in a plain anchored
+alternation (no `^(...)$` form at all) is also `not-measured`. `lib/caddy-drift.js`'s `checkGates`
+doc comment is the fuller account.
 
 **P4 is scoped to the upstreams P3 already found unknown.** The upstreams TangleClaw generates are
 fronted by design — TC's own server binds loopback precisely *because* Caddy is the front door — so
