@@ -120,7 +120,8 @@
         "lib/session-rules-*.js",
         "lib/rule-label.js",
         "lib/methodology-topics.js",
-        "lib/store/session-rules.js"
+        "lib/store/session-rules.js",
+        "lib/rule-receipt-redelivery.js"
       ]
     },
     "sessions": {

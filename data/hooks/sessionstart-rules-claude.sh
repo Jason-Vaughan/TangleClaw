@@ -39,9 +39,15 @@ fi
 RULES_FILE="${CLAUDE_PROJECT_DIR:-}/.tangleclaw/session-rules-${SHARD}.json"
 
 if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "$RULES_FILE" ] && [ -r "$RULES_FILE" ]; then
-  # `|| true` survives the race where the file vanishes between the readability
-  # check and the read.
-  cat "$RULES_FILE" || true
+  # #1176 Round 4, PRR-A BLOCKING 2: the receipt POST below (and the
+  # hookFiredAt/loopbackRefused stamp on its failure) both vouch that the
+  # rules actually reached the engine — neither may fire for a shard that
+  # did NOT actually print, e.g. the race where the file vanishes or turns
+  # unreadable between the check above and this read. SHARD_READ_FAILED is
+  # that gate; `|| true` alone (the old form) swallowed the exit code this
+  # needs.
+  SHARD_READ_FAILED=0
+  cat "$RULES_FILE" || SHARD_READ_FAILED=1
 
   # Receipt (#1063). Reaching this line is the only proof that exists that an
   # engine actually ran this hook: TangleClaw records the delivery as `written`
@@ -64,7 +70,7 @@ if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "$RULES_FILE" ] && [ -r "$RULES_FILE
   # as a synthetic turn. An unsent receipt costs a row that stays `written`,
   # which is the honest state anyway.
   RECEIPT_FILE="${CLAUDE_PROJECT_DIR}/.tangleclaw/session-rules-receipt.json"
-  if [ "$SHARD" = "1" ] && { [ -z "$HOOK_SOURCE" ] || [ "$HOOK_SOURCE" = "startup" ]; } && [ -r "$RECEIPT_FILE" ] && command -v curl >/dev/null 2>&1; then
+  if [ "$SHARD_READ_FAILED" = "0" ] && [ "$SHARD" = "1" ] && { [ -z "$HOOK_SOURCE" ] || [ "$HOOK_SOURCE" = "startup" ]; } && [ -r "$RECEIPT_FILE" ] && command -v curl >/dev/null 2>&1; then
     RECEIPT_API="$(sed -n 's/.*"api"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$RECEIPT_FILE")"
     if [ -n "$RECEIPT_API" ]; then
       # `-k`: on an HTTPS install the API is served under a mkcert CA that this
@@ -85,6 +91,24 @@ if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "$RULES_FILE" ] && [ -r "$RULES_FILE
         # what bounds that. A failed post deliberately leaves the token, so a
         # real retry still works.
         rm -f "$RECEIPT_FILE" || true
+      else
+        # #1150 / #1176 Round 3: we are past `cat` already, so the hook DID
+        # run and DID print the rules — only the receipt POST itself failed
+        # (a sandboxed loopback refusal is the named #1150 case; any other
+        # POST failure here means the same thing to a redelivery watcher:
+        # local evidence the channel already reached the engine). Stamp that
+        # evidence onto the token IN PLACE rather than leaving it the bare
+        # `{deliveryId, api}` shape `writeReceiptToken` leaves BEFORE the
+        # engine ever starts — that shape is indistinguishable from a hook
+        # that never fired at all, which is the exact bug #1176 Round 2 fixed
+        # on the reader's side (`lib/rule-receipt-redelivery.js`). This is the
+        # writer's half of that same fix.
+        HOOK_FIRED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+        DELIVERY_ID="$(sed -n 's/.*"deliveryId"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$RECEIPT_FILE")"
+        if [ -n "$DELIVERY_ID" ]; then
+          printf '{"deliveryId":%s,"api":"%s","hookFiredAt":"%s","loopbackRefused":true}\n' \
+            "$DELIVERY_ID" "$RECEIPT_API" "$HOOK_FIRED_AT" > "$RECEIPT_FILE" 2>/dev/null || true
+        fi
       fi
     fi
   fi
