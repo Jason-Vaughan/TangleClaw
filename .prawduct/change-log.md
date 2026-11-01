@@ -41,6 +41,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-10-31 — v5.51.0 W2-REC: reconcile project-rule delivery records
+
+<!-- prawduct: type=internal | scope=v551-w2-rec -->
+
+- Reconciled the five accepted Charter A489 Wave 1 issues. PR #2761 (#2293, #1654) merged as `d2b4b0ed`, PR #2760 (#1196, #2325) as `82560fbb`, and PR #2759 (#1176) as `69513ec5`; their `changelog.d/` fragments remain for the v5.51.0 release cut.
+- **Rule reachability and consistency (#2293, #1654):** refresh registers hook slots when a rule first becomes active or outgrows launch slots, so a running Claude session can receive it on `/clear` or compaction. Delivery and wrap prompts use the canonical `isUsableRule` predicate to exclude missing or non-string bodies. The real Claude CLI check supports the hook refresh behavior after a brief settle interval; a zero-delay scripted `/clear` is not guaranteed.
+- **Operator editing and stub visibility (#2325, #1196):** a verified Operator edit of an active non-master rule governs immediately, with an Edit control and notice in Project Rules. The Feature Index census exposes the oldest auto-stub date, age, and 14-day deadline.
+- **Receipt-based recovery (#1176):** the startup-rule receipt watcher distinguishes a hook that did not run from a missing receipt POST, retries delivery through an open channel within bounds when local evidence is inconclusive, and surfaces an explicit exhausted escalation.
+- Updated the Feature Index with stable source and test anchors. These are merged-code records; the v5.51.0 release cut and live activation remain separate gates.
+
 ## 2026-10-31 — v5.50.0 W3-REC: reconcile verified engine and session records
 
 <!-- prawduct: type=internal | scope=v550-w3-rec -->
