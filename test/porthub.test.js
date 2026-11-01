@@ -646,7 +646,7 @@ describe('porthub (store-backed)', () => {
       porthub.claimIngressRoute({ host: HOST, port: 8444, project: 'WheresMy' });
       const result = porthub.claimIngressRoute({ host: HOST, port: 8444, project: 'OtherProject' });
       assert.equal(result.success, false);
-      assert.equal(result.code, 'PORT_CONFLICT');
+      assert.equal(result.code, 'INGRESS_CLAIM_CONFLICT');
       assert.equal(result.owner.project, 'WheresMy');
       assert.equal(porthub.getIngressClaim(HOST, 8444).project, 'WheresMy');
     });
@@ -683,7 +683,7 @@ describe('porthub (store-backed)', () => {
       porthub.claimIngressRoute({ host: HOST, port: 8444, project: 'WheresMy' });
       const result = porthub.releaseIngressRoute({ host: HOST, port: 8444, project: 'OtherProject' });
       assert.equal(result.success, false);
-      assert.equal(result.code, 'PORT_CONFLICT');
+      assert.equal(result.code, 'INGRESS_CLAIM_CONFLICT');
       assert.ok(porthub.getIngressClaim(HOST, 8444));
     });
 
