@@ -344,19 +344,25 @@ Defaults below are read from `DEFAULT_CONFIG` in `lib/store.js`.
 | `caddyAccessLogPath` | string\|null | `null` | Absolute path for a `log { output file … }` block on every generated site that proxies to TangleClaw (never on the plain redirect site). `null` emits no log at all — TangleClaw does not start an access log you did not ask for. Normally set for you: it is adopted automatically from a live Caddyfile that already carries a per-site log block, so a cutover preserves an audit trail you added by hand instead of dropping it. Adoption refuses anything it cannot re-emit exactly — a block that also carries `format`/`level`, a destination with its own `{ roll_size … }`, a logger in the global options block, or two sites naming different files — and says so rather than silently adopting half of it. Rotation is Caddy's `log` directive, not TangleClaw's. |
 | `publicDomain` | string\|null | `null` | Public domain for an ACME/Let's Encrypt site on 443/80. Requires real DNS pointing at this machine and relocates Caddy to a root LaunchDaemon — see [deploy/INGRESS.md](../deploy/INGRESS.md). Not needed for LAN or tailnet access. |
 
-**Verification boundary (#1340): Caddyfile generation fronts only `serverPort`.**
-`lib/caddy.js#buildCaddyfileContent` emits exactly one upstream —
-`127.0.0.1:<serverPort>`, TangleClaw's own dashboard — and never reads
-PortHub's lease table or emits a `reverse_proxy` for any other registered
-port. A PortHub-registered service that nonetheless answers from off-machine
-is not something this generator produced; it is a manual or out-of-band
-Caddyfile edit on that host, not TangleClaw's doing. Detecting that case is a
-separate, already-shipped mechanism: `lib/caddy-drift.js#checkLeaseReach`
-cross-references the *live* Caddyfile's fronted upstreams against PortHub
-leases' declared `reach`, and `server.js` runs it once at boot in caddy
-ingress mode (#1394), reading real leases and logging a warning when a
-loopback-reach lease is fronted anyway. It is boot-time only — a port
-registered or fronted after boot is not re-checked until the next restart.
+**Verified answers (#1340): does Caddy ever front a PortHub-registered port
+on its own?** No. `lib/caddy.js#buildCaddyfileContent` emits exactly one
+upstream — `127.0.0.1:<serverPort>`, TangleClaw's own dashboard — and never
+reads PortHub's lease table or emits a `reverse_proxy` for any other
+registered port (ADR 0003). A PortHub-registered service that nonetheless
+answers from off-machine is not something this generator produced; it is a
+manual, out-of-band Caddyfile edit on that host.
+
+That case is already detected, separately, by the mechanism documented in
+full at [`docs/caddy-drift-check.md`](caddy-drift-check.md) (#1394):
+`lib/caddy-drift.js#checkCaddyDrift`'s P4 property (`checkLeaseReach`)
+cross-references every hand-added upstream in the *live* Caddyfile against
+PortHub's declared `reach`, and flags a loopback-reach lease that a live site
+fronts anyway. `server.js` runs the whole check once at boot in caddy ingress
+mode, and the result surfaces as the dashboard's Caddy Drift banner
+(`public/landing.js#renderCaddyDriftBanner`) — whose Resolve/Acknowledge
+actions are being added in parallel (#1415). The check is boot-time only: a
+port registered or fronted after boot is not re-checked until the next
+restart.
 
 > **Reaching the dashboard from another device.** A gated caddy-mode install serves the machine's
 > own mDNS name (`<hostname>.local`) alongside `localhost`, so a phone or laptop on the same network
