@@ -117,11 +117,25 @@ describe('lib/master-authority.js', () => {
       assert.equal(masterAuthority.getAuthorityState({ master: { accessLevel: 'write', lifecycleGeneration: 'nope' } }).toggleState, 'read-only');
     });
 
-    it('grants read-write only once a real transition has been recorded', () => {
-      assert.equal(masterAuthority.getAuthorityState({ master: { accessLevel: 'write', lifecycleGeneration: 1 } }).toggleState, 'read-write');
+    it('grants read-write only once a COMPLETE transition has been recorded — generation alone is not enough (PRR-B BLOCKING C1/C5, round 2)', () => {
+      // A positive lifecycleGeneration with no lifecycleUpdatedAt/By is
+      // exactly as unverified as no generation at all: there is still no
+      // actual evidence of who made the change or when.
+      assert.equal(masterAuthority.getAuthorityState({ master: { accessLevel: 'write', lifecycleGeneration: 1 } }).toggleState, 'read-only');
+      assert.equal(masterAuthority.getAuthorityState({ master: { accessLevel: 'write', lifecycleGeneration: 1, lifecycleUpdatedAt: '2026-01-01T00:00:00.000Z' } }).toggleState, 'read-only', 'missing updatedBy alone must still refuse');
+      assert.equal(masterAuthority.getAuthorityState({ master: { accessLevel: 'write', lifecycleGeneration: 1, lifecycleUpdatedBy: 'operator:x' } }).toggleState, 'read-only', 'missing updatedAt alone must still refuse');
+      assert.equal(masterAuthority.getAuthorityState({ master: { accessLevel: 'write', lifecycleGeneration: 1, lifecycleUpdatedAt: '', lifecycleUpdatedBy: 'operator:x' } }).toggleState, 'read-only', 'a blank updatedAt must still refuse');
+
       const config = store.config.load();
       const result = masterAuthority.applyOperatorAuthorityChange(config, { accessLevel: 'write', actor: 'operator:jason' });
-      assert.equal(result.toggleState, 'read-write');
+      assert.equal(result.toggleState, 'read-write', 'a real transition through the audited path sets all three fields together');
+    });
+
+    it('evaluateLifecycleCall refuses a lifecycle action against an incomplete transition record, even with a valid token', () => {
+      const config = { master: { accessLevel: 'write', lifecycleGeneration: 1, apiTokenEnabled: true, apiToken: 'tc_master_incomplete' } };
+      const result = masterAuthority.evaluateLifecycleCall(config, { headers: { authorization: 'Bearer tc_master_incomplete' }, action: 'launch' });
+      assert.equal(result.allowed, false);
+      assert.equal(result.code, 'AUTHORITY_READ_ONLY');
     });
 
     it('evaluateLifecycleCall refuses a lifecycle action against a legacy write with no recorded generation', () => {
@@ -194,6 +208,31 @@ describe('lib/master-authority.js', () => {
     it('refuses with neither accessLevel nor toggleState given', () => {
       const config = store.config.load();
       assert.throws(() => masterAuthority.applyOperatorAuthorityChange(config, { actor: 'x' }));
+    });
+
+    describe('generation repair semantics (PRR-B WARNING C1, round 2)', () => {
+      it('refuses rather than silently repairing a corrupted existing generation, to avoid regressing below history', () => {
+        for (const corrupted of ['not-a-number', -1, 1.5, NaN, {}, []]) {
+          const config = { master: { accessLevel: 'write', lifecycleGeneration: corrupted } };
+          assert.throws(
+            () => masterAuthority.applyOperatorAuthorityChange(config, { accessLevel: 'write', actor: 'x' }),
+            /corrupted/,
+            `expected a refusal for lifecycleGeneration=${JSON.stringify(corrupted)}`
+          );
+        }
+      });
+
+      it('advances from a genuinely absent generation at 0, not from a guessed value', () => {
+        const config = {};
+        const result = masterAuthority.applyOperatorAuthorityChange(config, { accessLevel: 'write', actor: 'x' });
+        assert.equal(result.generation, 1);
+      });
+
+      it('advances from a VALID prior generation even when the record was otherwise incomplete (no updatedAt/updatedBy) — a real number is not corruption', () => {
+        const config = { master: { accessLevel: 'write', lifecycleGeneration: 5 } };
+        const result = masterAuthority.applyOperatorAuthorityChange(config, { accessLevel: 'write', actor: 'operator:x' });
+        assert.equal(result.generation, 6, 'must continue from 5, never reset to 1');
+      });
     });
 
     it('requires actor — an authority change with no recorded "who" is the gap this closes', () => {
