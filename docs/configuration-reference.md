@@ -55,8 +55,16 @@ installed service would put `tangleclaw.log` under the new base and
 run while the variable is set, because it bakes paths into launchd jobs that no
 override can relocate, and a rehearsal that repointed the live ttyd job at a
 scratch directory would take every terminal down when that directory was
-removed. Issue #1283 carries what it would take to make a genuine second install
-possible.
+removed.
+
+**Decision (#1283): scoped out.** Deriving the launchd job labels
+(`com.tangleclaw.server`, `com.tangleclaw.ttyd`), the Caddy site label
+(`CADDY_LABEL`), and the ingress port defaults from the same install identity
+`TANGLECLAW_HOME` sets would need changes outside Caddy's own module — the
+launchd/ttyd wiring is not scheduled. A genuine second install on one machine
+stays unsupported; `TANGLECLAW_HOME` remains rehearsal and test isolation
+only, as stated above. Revisit this decision if running two live installs
+side by side becomes a real requirement.
 
 Overriding `HOME` instead is not supported and never was: it moves anything
 derived from the home directory, TangleClaw's and the operating system's alike,
