@@ -1978,10 +1978,22 @@ async function loadProjects() {
   // dependency" rather than removed. The project list renders the moment
   // ITS OWN fetch resolves; awareness updates whenever IT resolves, with a
   // second render only if the first one already happened without it.
+  // PRR-A, round 2: awareness answers from overlapping polls are not
+  // ordered — a stalled OLDER poll's answer could still land after a NEWER
+  // poll's own (faster) one, overwriting fresher badges with stale ones.
+  // `state._awarenessGeneration` is this call's ticket: bumped before either
+  // fetch is awaited, and checked again when the awareness answer actually
+  // arrives, so only the MOST RECENT call's answer is ever applied — an
+  // existence check alone (did the fetch resolve) is not what this needs;
+  // every poll's fetch resolves eventually, it is whether this is still the
+  // one anyone wants that can go stale out from under it.
+  const myAwarenessGeneration = (state._awarenessGeneration || 0) + 1;
+  state._awarenessGeneration = myAwarenessGeneration;
   const projectsPromise = api('/api/projects?archived=true');
   const awarenessPromise = api('/api/awareness');
   let renderedOnce = false;
   awarenessPromise.then((aw) => {
+    if (myAwarenessGeneration !== state._awarenessGeneration) return;
     if (aw && aw.projects) {
       state.awareness = Object.fromEntries(aw.projects.map((p) => [p.projectId, p]));
       // Only a LATE awareness answer needs its own render: an early one is

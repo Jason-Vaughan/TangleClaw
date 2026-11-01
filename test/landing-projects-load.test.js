@@ -220,6 +220,33 @@ describe('loadProjects (#2771, client side)', () => {
     assert.equal(calls.renderProjects, 1, 'exactly one render — awareness landing early does not add a second');
   });
 
+  it('a stale, out-of-order awareness answer from an OLDER poll does not clobber a NEWER one (PRR-A, PR #2782 round 2)', async () => {
+    let awarenessCallNum = 0;
+    let staleAwarenessResolve;
+    const { run, state } = liftLoadProjects((url) => {
+      if (url.startsWith('/api/projects')) return Promise.resolve({ projects: [], scan: null });
+      awarenessCallNum += 1;
+      if (awarenessCallNum === 1) {
+        // Poll 1's awareness fetch stalls indefinitely, until released below.
+        return new Promise((resolve) => { staleAwarenessResolve = resolve; });
+      }
+      // Poll 2's awareness fetch answers immediately, with NEWER data.
+      return Promise.resolve({ projects: [{ projectId: 'p1', aware: 'new' }] });
+    });
+
+    const firstPoll = run(); // poll 1 starts; its awareness fetch is now pending
+    await run(); // poll 2 runs to completion, including its own awareness update
+    assert.deepEqual(JSON.parse(JSON.stringify(state.awareness)), { p1: { projectId: 'p1', aware: 'new' } },
+      'precondition: the newer poll already applied its answer');
+
+    // NOW poll 1's stale answer finally arrives.
+    staleAwarenessResolve({ projects: [{ projectId: 'p1', aware: 'stale' }] });
+    await new Promise((r) => setImmediate(r));
+    await firstPoll;
+    assert.deepEqual(JSON.parse(JSON.stringify(state.awareness)), { p1: { projectId: 'p1', aware: 'new' } },
+      'a stale, out-of-order answer must not overwrite the newer one');
+  });
+
   it('renders normally and clears a failing-streak toast once the fetch succeeds', async () => {
     const { run, state, calls } = liftLoadProjects((url) => {
       if (url.startsWith('/api/projects')) {
