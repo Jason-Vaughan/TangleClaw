@@ -166,12 +166,58 @@ describe('loadProjects (#2771, client side)', () => {
       return new Promise((resolve) => { awarenessResolve = resolve; });
     });
     const pending = run();
-    // Both fetches must have STARTED before either resolves — proves Promise.all,
-    // not a sequential await where the second start would wait for the first.
+    // Both fetches must have STARTED before either resolves — a sequential
+    // await would not start the second until the first settled.
     assert.deepEqual(order.sort(), ['start:/api/awareness', 'start:/api/projects?archived=true'].sort());
     projectsResolve({ projects: [], scan: null });
     awarenessResolve({ projects: [] });
     await pending;
+  });
+
+  it('renders the project list as soon as it resolves, WITHOUT waiting for a stalled /api/awareness (PRR-A, PR #2782 round 1)', async () => {
+    // The exact regression a bare Promise.all reintroduced: awaiting both
+    // together means a slow/hung awareness call keeps the list from
+    // appearing even though projects already answered — the "never loads"
+    // complaint #2771 itself is about, just relocated.
+    let awarenessResolve;
+    const { run, state, calls } = liftLoadProjects((url) => {
+      if (url.startsWith('/api/projects')) {
+        return Promise.resolve({ projects: [{ name: 'a' }], scan: null });
+      }
+      return new Promise((resolve) => { awarenessResolve = resolve; }); // never resolves during this test
+    });
+    await run();
+    assert.deepEqual(state.projects.map((p) => p.name), ['a'], 'the list rendered without awareness ever answering');
+    assert.equal(calls.renderProjects, 1);
+    assert.equal(awarenessResolve !== undefined, true, 'sanity: the awareness fetch really is still pending');
+  });
+
+  it('re-renders once a LATE awareness answer finally arrives, to pick up its badges', async () => {
+    let awarenessResolve;
+    const { run, state, calls } = liftLoadProjects((url) => {
+      if (url.startsWith('/api/projects')) {
+        return Promise.resolve({ projects: [{ name: 'a' }], scan: null });
+      }
+      return new Promise((resolve) => { awarenessResolve = resolve; });
+    });
+    await run();
+    assert.equal(calls.renderProjects, 1, 'one render already happened without awareness');
+    awarenessResolve({ projects: [{ projectId: 'p1', aware: true }] });
+    await new Promise((r) => setImmediate(r)); // let the pending .then() settle
+    assert.deepEqual(JSON.parse(JSON.stringify(state.awareness)), { p1: { projectId: 'p1', aware: true } });
+    assert.equal(calls.renderProjects, 2, 'a second render reflects the late answer');
+  });
+
+  it('does not re-render when awareness resolves BEFORE the first render — nothing to patch yet', async () => {
+    const { run, calls } = liftLoadProjects((url) => {
+      if (url.startsWith('/api/projects')) {
+        // Projects resolves LAST this time, after awareness already settled.
+        return new Promise((resolve) => setTimeout(() => resolve({ projects: [], scan: null }), 5));
+      }
+      return Promise.resolve({ projects: [{ projectId: 'p1', aware: true }] });
+    });
+    await run();
+    assert.equal(calls.renderProjects, 1, 'exactly one render — awareness landing early does not add a second');
   });
 
   it('renders normally and clears a failing-streak toast once the fetch succeeds', async () => {

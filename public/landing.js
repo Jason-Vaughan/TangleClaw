@@ -1966,10 +1966,31 @@ function renderHeldWakeBadge(project) {
 }
 
 async function loadProjects() {
-  // #2771 — run alongside `/api/projects` rather than after it: these answer
-  // independently, so awaiting them one at a time added a full second
-  // round trip to every ten-second poll for nothing both calls needed.
-  const [data, aw] = await Promise.all([api('/api/projects?archived=true'), api('/api/awareness')]);
+  // #2771 — fired together rather than one after the other: these answer
+  // independently, so awaiting them in sequence added a full extra round
+  // trip to every ten-second poll for nothing either call needed.
+  //
+  // NOT awaited together via `Promise.all` (PRR-A, PR #2782 round 1): that
+  // made the render wait for the SLOWER of the two, so a stalled
+  // `/api/awareness` kept the project list from appearing even after
+  // `/api/projects` had already answered — exactly the "never loads"
+  // complaint #2771 is about, just moved from "sequential" to "one slow
+  // dependency" rather than removed. The project list renders the moment
+  // ITS OWN fetch resolves; awareness updates whenever IT resolves, with a
+  // second render only if the first one already happened without it.
+  const projectsPromise = api('/api/projects?archived=true');
+  const awarenessPromise = api('/api/awareness');
+  let renderedOnce = false;
+  awarenessPromise.then((aw) => {
+    if (aw && aw.projects) {
+      state.awareness = Object.fromEntries(aw.projects.map((p) => [p.projectId, p]));
+      // Only a LATE awareness answer needs its own render: an early one is
+      // already in `state` by the time the render below runs.
+      if (renderedOnce) renderProjects();
+    }
+  });
+
+  const data = await projectsPromise;
   if (!data) {
     // A failed fetch used to return here with zero visible sign of it — the
     // project list simply stayed whatever it last was, indistinguishable from
@@ -1987,12 +2008,6 @@ async function loadProjects() {
   }
   state.projects = (data.projects || []).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 
-  // Awareness view (ambient-awareness Chunk 05). A failed fetch keeps the
-  // previous answer rather than blanking every badge: an unreachable endpoint
-  // is not evidence the fleet became aware.
-  if (aw && aw.projects) {
-    state.awareness = Object.fromEntries(aw.projects.map((p) => [p.projectId, p]));
-  }
   // Kept as sent, including on the healthy path — a field that only appears on
   // failure makes every reader probe for its existence instead of reading its
   // value. `renderRootPanel` decides what to draw; this only stops the answer
@@ -2001,7 +2016,13 @@ async function loadProjects() {
   state.projectsScan = data.scan || null;
   collectTags();
   collectEngines();
+  // Awareness (ambient-awareness Chunk 05) may already be in `state` above
+  // (it answered first) or may still be pending (it answered after, or
+  // fails) — either way this render is correct: `state.awareness` holds
+  // whatever is known right now, and the `.then()` above re-renders once
+  // more if a genuinely late answer arrives after this point.
   renderProjects();
+  renderedOnce = true;
   renderSessionCount();
   updateUnregisteredToggle();
   // The shell is on screen: this is the moment "the dashboard booted" becomes
