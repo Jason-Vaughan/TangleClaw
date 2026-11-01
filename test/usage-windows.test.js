@@ -600,3 +600,120 @@ describe('lib/usage-windows — bound-cache & pre-warm (#2766)', () => {
     assert.equal(scans, 6, 'both keys are now warm');
   });
 });
+
+describe('lib/usage-windows — scan budget and per-file cache (#2766 BLOCKING 1/2, PRR-B Round 1)', () => {
+  afterEach(() => {
+    uw._resetUsageWindowsCacheForTests();
+  });
+
+  /**
+   * A fake directory listing of `count` files, none of them real — every
+   * call here supplies its own `readFile`/`stat`, so nothing under this
+   * fake path is ever actually opened.
+   * @param {number} count
+   * @returns {{name: string, isFile: () => boolean}[]}
+   */
+  function fakeEntries(count) {
+    return Array.from({ length: count }, (_, i) => ({ name: `f${i}.jsonl`, isFile: () => true }));
+  }
+
+  /**
+   * A true synchronous sleep with no busy-loop CPU burn and no subprocess
+   * spawn, so a per-file "slow read" fake is fast to set up and precise.
+   * @param {number} ms
+   */
+  function sleepSync(ms) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  }
+
+  it('a scan deadline stops opening further files once it passes, rather than finishing an unbounded pass', () => {
+    // 10 files at 200ms each is 2000ms of unbounded work against a 500ms
+    // budget — this must come back having read only SOME of them, not all,
+    // and well under what the full set would have cost.
+    const deps = {
+      readdir: () => fakeEntries(10),
+      stat: () => ({ mtimeMs: 1000, size: 1 }),
+      readFile: () => { sleepSync(200); return ''; },
+      scanDeadlineMs: Date.now() + 500
+    };
+    const started = Date.now();
+    const records = uw.parseClaudeTranscripts('/fake/claude', deps);
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 1800, `a bounded pass must not run anywhere near the full unbounded 2000ms (took ${elapsed}ms)`);
+    assert.ok(records.length < 10, 'at least one file must have been skipped once the deadline passed');
+  });
+
+  it('an unchanged file (same mtimeMs and size) is never re-read on a second pass — the cache that makes a repeat scan cheap', () => {
+    let reads = 0;
+    const fileRecordCache = new Map();
+    const deps = {
+      readdir: () => fakeEntries(3),
+      stat: () => ({ mtimeMs: 42, size: 7 }),
+      readFile: () => { reads += 1; return ''; },
+      fileRecordCache
+    };
+    uw.parseClaudeTranscripts('/fake/claude', deps);
+    assert.equal(reads, 3, 'the first pass reads every file once');
+    uw.parseClaudeTranscripts('/fake/claude', deps);
+    assert.equal(reads, 3, 'the second pass, same (mtimeMs, size) for every file, must not read any of them again');
+  });
+
+  it('a file whose mtimeMs or size changed IS re-read — the cache tracks staleness, not just presence', () => {
+    let reads = 0;
+    let size = 7;
+    const fileRecordCache = new Map();
+    const deps = {
+      readdir: () => fakeEntries(1),
+      stat: () => ({ mtimeMs: 42, size }),
+      readFile: () => { reads += 1; return ''; },
+      fileRecordCache
+    };
+    uw.parseClaudeTranscripts('/fake/claude', deps);
+    assert.equal(reads, 1);
+    size = 8; // the file grew — a real append
+    uw.parseClaudeTranscripts('/fake/claude', deps);
+    assert.equal(reads, 2, 'a changed file must be re-read, not served from the stale cache entry');
+  });
+
+  it('getUsageWindows itself stays bounded on a cold call with a lot of slow-to-read history — not just the parser in isolation', () => {
+    // The actual BLOCKING 1 finding: the cold path through the cache
+    // wrapper, not merely `_scanJsonlFiles` on its own, has to honor the
+    // budget — this is what a real first `tc usage windows` call after
+    // server start goes through.
+    const deps = {
+      readdir: () => fakeEntries(20),
+      stat: () => ({ mtimeMs: 1000, size: 1 }),
+      readFile: () => { sleepSync(300); return ''; }
+    };
+    const started = Date.now();
+    uw.getUsageWindows({ deps });
+    const elapsed = Date.now() - started;
+    // 20 files * 0.3s * 3 providers would be 18s unbounded; each provider's
+    // own scan is bounded by the SAME shared budget
+    // (`USAGE_WINDOWS_SCAN_BUDGET_MS`), so the whole cold call must land
+    // nowhere near that, comfortably inside `tc usage windows`'s CLI timeout.
+    assert.ok(elapsed < uw.USAGE_WINDOWS_SCAN_BUDGET_MS * 3 + 1000,
+      `a cold call must stay bounded by the scan budget per provider, not by how much slow history exists (took ${elapsed}ms)`);
+  });
+
+  it('a forced-stale recompute (what the background warmer also does, on the identical code path) is bounded the same way', () => {
+    // The warmer's own `setInterval` tick calls the exact same
+    // `_computeUsageWindows({ policyProvider, deps: _boundedScanDeps() })`
+    // expression as this recompute does — proving THIS path is bounded is
+    // proving the warmer's 20s tick is too, since there is only one such
+    // expression in the module, not two.
+    const deps = {
+      readdir: () => fakeEntries(20),
+      stat: () => ({ mtimeMs: 1000, size: 1 }),
+      readFile: () => { sleepSync(300); return ''; }
+    };
+    uw.getUsageWindows({ deps }); // first cold call, populates the cache entry
+    const entry = uw._usageWindowsCacheForTests().get('claude');
+    entry.computedAtMs -= (uw.USAGE_WINDOWS_CACHE_TTL_MS + 1); // force the next call to recompute
+    const started = Date.now();
+    uw.getUsageWindows({ deps });
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < uw.USAGE_WINDOWS_SCAN_BUDGET_MS * 3 + 1000,
+      `a forced recompute must stay bounded exactly like the cold call (took ${elapsed}ms)`);
+  });
+});
