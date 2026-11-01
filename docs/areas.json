@@ -182,6 +182,7 @@
         "lib/caddy*.js",
         "lib/host-*.js",
         "lib/tailnet-cutover.js",
+        "lib/tailscale-ingress.js",
         "lib/port-scanner.js",
         "lib/pidfile.js",
         "lib/tangleclaw-home.js",

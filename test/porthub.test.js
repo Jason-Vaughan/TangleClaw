@@ -614,4 +614,137 @@ describe('porthub (store-backed)', () => {
       assert.throws(() => porthub.nextFreePort({}), /integer range/);
     });
   });
+
+  describe('claimIngressRoute / releaseIngressRoute (#815)', () => {
+    const HOST = 'cursatory.tail123678.ts.net';
+
+    it('records a claim, readable by get and list', () => {
+      const result = porthub.claimIngressRoute({
+        host: HOST, port: 8444, project: 'WheresMy', mode: 'serve',
+        backedBy: { host: 'localhost', port: 3330 }, description: 'preview'
+      });
+      assert.equal(result.success, true);
+      assert.equal(result.claim.host, HOST);
+      assert.equal(result.claim.project, 'WheresMy');
+      assert.equal(result.claim.mode, 'serve');
+      assert.match(result.claim.description, /backed by localhost:3330/);
+
+      assert.deepEqual(porthub.getIngressClaim(HOST, 8444).project, 'WheresMy');
+      assert.equal(porthub.listIngressClaims().length, 1);
+      assert.equal(porthub.listIngressClaims({ project: 'WheresMy' }).length, 1);
+      assert.equal(porthub.listIngressClaims({ project: 'SomeoneElse' }).length, 0);
+    });
+
+    it('is a renewal when the same project re-claims the same route', () => {
+      porthub.claimIngressRoute({ host: HOST, port: 443, project: 'WheresMy', mode: 'funnel' });
+      const second = porthub.claimIngressRoute({ host: HOST, port: 443, project: 'WheresMy', mode: 'funnel', description: 'updated' });
+      assert.equal(second.success, true);
+      assert.equal(porthub.listIngressClaims().length, 1);
+    });
+
+    it('refuses a different project\'s claim without force', () => {
+      porthub.claimIngressRoute({ host: HOST, port: 8444, project: 'WheresMy' });
+      const result = porthub.claimIngressRoute({ host: HOST, port: 8444, project: 'OtherProject' });
+      assert.equal(result.success, false);
+      assert.equal(result.code, 'INGRESS_CLAIM_CONFLICT');
+      assert.equal(result.owner.project, 'WheresMy');
+      assert.equal(porthub.getIngressClaim(HOST, 8444).project, 'WheresMy');
+    });
+
+    it('takes over a different project\'s claim with force', () => {
+      porthub.claimIngressRoute({ host: HOST, port: 8444, project: 'WheresMy' });
+      const result = porthub.claimIngressRoute({ host: HOST, port: 8444, project: 'OtherProject', force: true });
+      assert.equal(result.success, true);
+      assert.equal(porthub.getIngressClaim(HOST, 8444).project, 'OtherProject');
+    });
+
+    it('refuses a loopback host — an ingress claim is never a local bind', () => {
+      for (const host of ['localhost', '127.0.0.1', '::1', '[::1]']) {
+        const result = porthub.claimIngressRoute({ host, port: 443, project: 'X' });
+        assert.equal(result.success, false);
+        assert.equal(result.code, 'INGRESS_CLAIM_BAD_REQUEST');
+      }
+    });
+
+    it('refuses an unknown mode', () => {
+      const result = porthub.claimIngressRoute({ host: HOST, port: 443, project: 'X', mode: 'bogus' });
+      assert.equal(result.success, false);
+      assert.equal(result.code, 'INGRESS_CLAIM_BAD_REQUEST');
+    });
+
+    it('releases a claim this project holds', () => {
+      porthub.claimIngressRoute({ host: HOST, port: 8444, project: 'WheresMy' });
+      const result = porthub.releaseIngressRoute({ host: HOST, port: 8444, project: 'WheresMy' });
+      assert.equal(result.success, true);
+      assert.equal(porthub.getIngressClaim(HOST, 8444), null);
+    });
+
+    it('refuses releasing another project\'s claim without force', () => {
+      porthub.claimIngressRoute({ host: HOST, port: 8444, project: 'WheresMy' });
+      const result = porthub.releaseIngressRoute({ host: HOST, port: 8444, project: 'OtherProject' });
+      assert.equal(result.success, false);
+      assert.equal(result.code, 'INGRESS_CLAIM_CONFLICT');
+      assert.ok(porthub.getIngressClaim(HOST, 8444));
+    });
+
+    it('releases another project\'s claim with force', () => {
+      porthub.claimIngressRoute({ host: HOST, port: 8444, project: 'WheresMy' });
+      const result = porthub.releaseIngressRoute({ host: HOST, port: 8444, project: 'OtherProject', force: true });
+      assert.equal(result.success, true);
+      assert.equal(porthub.getIngressClaim(HOST, 8444), null);
+    });
+
+    it('is invisible to an ordinary local port lease on the same port number', () => {
+      // #815's whole point: the local listener (:3330) and the tailnet route
+      // (:8444) are different claims on different hosts, never conflated.
+      porthub.registerPort(8444, 'TangleClaw', 'caddy-https-ingress', { host: 'localhost' });
+      porthub.claimIngressRoute({ host: HOST, port: 8444, project: 'WheresMy' });
+      assert.equal(porthub.listIngressClaims().length, 1);
+      assert.equal(porthub.getIngressClaim(HOST, 8444).project, 'WheresMy');
+      assert.equal(porthub.getIngressClaim('localhost', 8444), null);
+
+      const leases = store.portLeases.list();
+      assert.equal(leases.length, 2);
+    });
+
+    it('does not let an ordinary lease merely tagged reach:tailnet masquerade as a claim', () => {
+      // `reach: 'tailnet'` is also meaningful for a normal, locally-bound
+      // service (lib/porthub.js's own `reach` doc: "the service behind this
+      // port is MEANT to be reachable" beyond loopback). Only this module's
+      // own `ingress-claim:` service prefix distinguishes the two.
+      store.portLeases.lease({ port: 9191, host: HOST, project: 'Other', service: 'a-real-dev-server', reach: 'tailnet' });
+      assert.equal(porthub.getIngressClaim(HOST, 9191), null);
+      assert.equal(porthub.listIngressClaims().length, 0);
+    });
+
+    it('refuses to claim over an ordinary lease at the same (host, port), even for the same project (PRR-B C1)', () => {
+      // A service on a remote host is a normal lease too, keyed the same way
+      // an ingress claim is (host, port) -- `store.portLeases.lease`'s own
+      // ownership check only compares project names, so same-project would
+      // otherwise read as a harmless renewal and silently overwrite it.
+      store.portLeases.lease({ port: 8444, host: HOST, project: 'SameProject', service: 'real-remote-service' });
+      const result = porthub.claimIngressRoute({ host: HOST, port: 8444, project: 'SameProject' });
+      assert.equal(result.success, false);
+      assert.equal(result.code, 'INGRESS_CLAIM_KEY_COLLISION');
+      const untouched = store.portLeases.get(8444, HOST);
+      assert.equal(untouched.service, 'real-remote-service');
+      assert.equal(untouched.reach, 'loopback');
+    });
+
+    it('refuses to claim over an ordinary lease even with force', () => {
+      store.portLeases.lease({ port: 8444, host: HOST, project: 'SomeoneElse', service: 'real-remote-service' });
+      const result = porthub.claimIngressRoute({ host: HOST, port: 8444, project: 'Claimant', force: true });
+      assert.equal(result.success, false);
+      assert.equal(result.code, 'INGRESS_CLAIM_KEY_COLLISION');
+      assert.equal(store.portLeases.get(8444, HOST).service, 'real-remote-service');
+    });
+
+    it('refuses to release an ordinary lease at the same (host, port)', () => {
+      store.portLeases.lease({ port: 8444, host: HOST, project: 'SameProject', service: 'real-remote-service' });
+      const result = porthub.releaseIngressRoute({ host: HOST, port: 8444, project: 'SameProject' });
+      assert.equal(result.success, false);
+      assert.equal(result.code, 'INGRESS_CLAIM_KEY_COLLISION');
+      assert.ok(store.portLeases.get(8444, HOST), 'the ordinary lease must survive');
+    });
+  });
 });
