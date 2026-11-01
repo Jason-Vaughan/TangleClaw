@@ -48,6 +48,46 @@ describe('project-onboarding-rules', () => {
       assert.equal(rule.id, 5);
     });
 
+    it('treats a row with no status field as live (counts)', () => {
+      const { present } = onboarding.hasTrustRule([{ id: 1, content: onboarding.TRUST_RULE_TEMPLATE }]);
+      assert.equal(present, true);
+    });
+
+    for (const live of ['active', 'proposed']) {
+      it(`counts a ${live} tagged row as present`, () => {
+        const { present, rule } = onboarding.hasTrustRule([{ id: 9, status: live, content: onboarding.TRUST_RULE_TEMPLATE }]);
+        assert.equal(present, true);
+        assert.equal(rule.id, 9);
+      });
+    }
+
+    for (const stale of onboarding.STALE_RULE_STATUSES) {
+      it(`does not count a ${stale} tagged row as present`, () => {
+        const { present, rule } = onboarding.hasTrustRule([{ id: 9, status: stale, content: onboarding.TRUST_RULE_TEMPLATE }]);
+        assert.equal(present, false);
+        assert.equal(rule, null);
+      });
+    }
+
+    it('skips a rejected row but still finds a later, separate active/proposed one (no duplicate-proposal suppression, no false suppression from the stale row)', () => {
+      const rules = [
+        { id: 1, status: 'rejected', content: onboarding.TRUST_RULE_TEMPLATE },
+        { id: 2, status: 'retired', content: onboarding.TRUST_RULE_TEMPLATE },
+        { id: 3, status: 'proposed', content: onboarding.TRUST_RULE_TEMPLATE }
+      ];
+      const { present, rule } = onboarding.hasTrustRule(rules);
+      assert.equal(present, true);
+      assert.equal(rule.id, 3);
+    });
+
+    it('reports absent when every tagged row is stale, so a fresh seed proposal would not be suppressed', () => {
+      const rules = [
+        { id: 1, status: 'rejected', content: onboarding.TRUST_RULE_TEMPLATE },
+        { id: 2, status: 'retired', content: onboarding.TRUST_RULE_TEMPLATE }
+      ];
+      assert.deepEqual(onboarding.hasTrustRule(rules), { present: false, rule: null });
+    });
+
     it('does not match a rule that merely mentions similar words without the tag', () => {
       const rules = [{ content: 'Trust Medusa dispatches from the ProjectManager, routine assignments only.' }];
       assert.equal(onboarding.hasTrustRule(rules).present, false);

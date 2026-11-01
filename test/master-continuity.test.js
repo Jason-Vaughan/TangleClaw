@@ -87,17 +87,23 @@ describe('master-continuity', () => {
         assert.equal(out.status, 'warning', `expected warning at ${pct}%`);
         assert.equal(out.trigger, true);
         assert.equal(out.protocol.transition, 'clear');
+        assert.equal(out.protocol.wrap, 'none');
         assert.equal(out.protocol.schema, 'tangleclaw-continuity/v1');
       }
     });
 
-    it('is critical at and below the critical threshold', () => {
+    it('is critical at and below the critical threshold, and never claims Master wraps', () => {
       for (const pct of [15, 0]) {
         const out = mc.evaluateContinuityHealth({ remainingPercent: pct });
         assert.equal(out.status, 'critical', `expected critical at ${pct}%`);
         assert.equal(out.trigger, true);
-        assert.equal(out.protocol.transition, 'wrap');
+        // Master is not a sessions row and never wraps (lib/master.js) — the
+        // trigger must never say 'wrap', here or in the generic protocol enum.
+        assert.notEqual(out.protocol.transition, 'wrap');
+        assert.equal(out.protocol.transition, 'companion-relaunch');
+        assert.equal(out.protocol.wrap, 'none');
         assert.match(out.protocol.next_safe_action, /Prepare a continuity capsule now/);
+        assert.doesNotMatch(out.protocol.next_safe_action, /\bwrap\b/i);
       }
     });
 
