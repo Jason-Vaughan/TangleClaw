@@ -1241,3 +1241,45 @@ describe('tc and the launch-isolation inventory\'s own rows for an override (#22
     assert.ok(unproved.includes(inventory.OVERRIDE_UNPROVED));
   });
 });
+
+describe('tc usage windows — surfaces a partial scan honestly (#2766 BLOCKING 1, PRR-B Round 3)', () => {
+  const usageVerb = VERB_ROSTER.find((v) => v.id === 'usage');
+
+  /**
+   * A `GET /api/usage/windows` response body, shaped just enough for
+   * `renderUsageWindows` to render without throwing.
+   * @param {object} [overrides]
+   * @returns {object}
+   */
+  function fakeBody(overrides = {}) {
+    return {
+      resetSchedule: { nextWeeklyResetAt: '2026-11-06T14:00:00.000Z', hoursUntilWeeklyReset: 12.3 },
+      byProviderModel: {},
+      calibration: {},
+      recommendedPolicy: { window: 'use-it-or-lose-it', recommendedModels: ['bounded'], reservedModels: [], reason: 'test reason' },
+      ...overrides
+    };
+  }
+
+  it('prints a clear warming banner, first, when complete: false — a partial snapshot is never printed as if it were the final answer', async () => {
+    const ctx = { argv: ['windows'], getJson: async () => fakeBody({ complete: false }) };
+    const res = await usageVerb.run(ctx);
+    assert.equal(res.code, 0);
+    assert.match(res.stdout, /^\(scan still warming/, 'the banner must be the FIRST line, impossible to scroll past');
+    assert.match(res.stdout, /partial snapshot/);
+  });
+
+  it('prints no banner at all when complete: true', async () => {
+    const ctx = { argv: ['windows'], getJson: async () => fakeBody({ complete: true }) };
+    const res = await usageVerb.run(ctx);
+    assert.doesNotMatch(res.stdout, /scan still warming/);
+    assert.match(res.stdout, /^Weekly reset:/);
+  });
+
+  it('prints no banner for an older server response with no complete field at all — undefined is not a warming signal', async () => {
+    const ctx = { argv: ['windows'], getJson: async () => fakeBody() };
+    const res = await usageVerb.run(ctx);
+    assert.doesNotMatch(res.stdout, /scan still warming/);
+    assert.match(res.stdout, /^Weekly reset:/, 'renders exactly as it did before #2766 for a server that predates the field');
+  });
+});

@@ -704,6 +704,29 @@ describe('lib/usage-windows — scan budget and per-file cache (#2766 BLOCKING 1
     assert.ok(records.length < 10, 'at least one file must never even have been stat-ed once the deadline passed');
   });
 
+  it('a slow stat pass still converges to complete: true across successive retries — the stat cache lets each one skip what an earlier one already paid for, rather than re-stat-ing from file 0 every time (#2766 BLOCKING 2, PRR-B Round 3)', () => {
+    // Without a stat cache this loops forever: every retry re-stats from
+    // the start of the list and hits the SAME deadline at the SAME point,
+    // never reaching the files that would make the pass complete — exactly
+    // what PRR-B's round 3 named. `antigravity` contributes nothing here
+    // (`fakeEntries` isn't shaped as conversation directories), so this is
+    // really just claude + codex, 10 fake files each, sharing one budget.
+    const deps = {
+      readdir: () => fakeEntries(10),
+      stat: () => { sleepSync(200); return { mtimeMs: 1000, size: 1 }; },
+      readFile: () => ''
+    };
+    let result;
+    let calls = 0;
+    const CEILING = 10;
+    for (; calls < CEILING; calls++) {
+      result = uw.getUsageWindows({ deps });
+      if (result.complete) break;
+    }
+    assert.equal(result.complete, true, `must converge to complete within a bounded number of retries (gave up after ${calls + 1})`);
+    assert.ok(calls + 1 < CEILING, `should converge comfortably before the ${CEILING}-call ceiling (took ${calls + 1} calls)`);
+  });
+
   it('an unchanged file (same mtimeMs and size) is never re-read on a second pass — the cache that makes a repeat scan cheap', () => {
     let reads = 0;
     const fileRecordCache = new Map();
