@@ -5591,7 +5591,7 @@ function registerMedusaRoutes(prefix, resolve) {
       // a reply nobody sent while the inbox looks clear.
       if (ids && ids.length > 0) {
         const unanswered = medusaExchanges.unansweredReplyRequiredForAck(
-          ids.filter((id) => typeof id === 'string'), medusa.getStatus(sessionId).workspaceId,
+          ids.filter((id) => typeof id === 'string'), targetWorkspaceId(r.target),
           exchangeCaller(req, targetProjectId(r.target), true));
         if (unanswered.length > 0) {
           return errorResponse(res, 409,

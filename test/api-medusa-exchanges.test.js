@@ -557,6 +557,22 @@ describe('API — Medusa exchanges (#1839)', () => {
     assert.deepEqual(all.data.exchanges.map((x) => x.hubId), [sent.data.id]);
   });
 
+  // R-Gate Round 3 on PR #2813: the Ack Gate's own workspaceId resolution had
+  // the identical gap — a session that read a reply-required message, then
+  // stopped its listener, must still be refused on POST .../read.
+  it('the Ack Gate still refuses an unanswered reply-required message once the listener has stopped', async () => {
+    const sent = await call(server, 'POST', `${pmBase()}/send`,
+      { to: builderWs, message: 'rule on X', priority: 'blocking', reason: 'awaiting-ruling' }, bPM.headers);
+    assert.equal(sent.data.exchange.replyRequired, true);
+    deliverToBuilder(sent.data.id);
+    medusa.stopSession(bBuilder.sessionId);
+    assert.equal(medusa.getStatus(bBuilder.sessionId).workspaceId, null, 'no live listener — this is the off case');
+
+    const ack = await call(server, 'POST', `${builderBase()}/read`, { ids: [sent.data.id] }, bBuilder.headers);
+    assert.equal(ack.status, 409);
+    assert.equal(ack.data.code, 'REPLY_REQUIRED_BEFORE_ACK');
+  });
+
   // #1873 — the retraction route itself (the library function has its own
   // direct-call coverage in test/medusa-exchanges.test.js; this exercises
   // caller resolution, the coordinator gate wiring, and the best-effort
