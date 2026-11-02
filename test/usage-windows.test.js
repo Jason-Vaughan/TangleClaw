@@ -873,9 +873,12 @@ describe('lib/usage-windows — parseSessionTerminalUsage (#2787)', () => {
 });
 
 describe('lib/usage-windows — buildSessionUsageReadings (#2787)', () => {
+  // `startedAt` as `store.sessions` actually serves it: a SQLite
+  // `datetime('now')` STRING, never epoch ms (the BLOCKING finding this
+  // fixture is shaped to catch — see `_launchTimestampMs`'s own doc comment).
   const SESSIONS = [
-    { id: 1, projectId: 10, engineId: 'claude', tmuxSession: 'proj-a', startedAt: 1000 },
-    { id: 2, projectId: 20, engineId: 'codex', tmuxSession: 'proj-b', startedAt: 2000 }
+    { id: 1, projectId: 10, engineId: 'claude', tmuxSession: 'proj-a', startedAt: '2026-11-02 18:00:00' },
+    { id: 2, projectId: 20, engineId: 'codex', tmuxSession: 'proj-b', startedAt: '2026-11-02 18:05:00' }
   ];
   const PROJECTS = new Map([
     [10, { id: 10, name: 'proj-a', path: '/repo/a' }],
@@ -963,6 +966,18 @@ describe('lib/usage-windows — buildSessionUsageReadings (#2787)', () => {
     assert.equal(readings[0].lowUsageHandOffRecommended, false);
   });
 
+  it('converts the session\'s SQLite-string startedAt to epoch ms before calling getActiveModel (BLOCKING finding, rev-20261102T192012Z-68f2d3e9): a trusted-source reader fails CLOSED on a non-numeric startedAtMs, so the raw string must never reach it', async () => {
+    let seenDeps = null;
+    await uw.buildSessionUsageReadings({
+      sessions: [SESSIONS[0]],
+      projects: PROJECTS,
+      capturePaneOutput: async () => null,
+      getActiveModel: async (engineId, tmuxSession, deps) => { seenDeps = deps; return null; }
+    });
+    assert.ok(Number.isFinite(seenDeps.startedAtMs), 'startedAtMs must be a finite epoch-ms number, not the raw SQLite datetime string');
+    assert.equal(seenDeps.startedAtMs, Date.parse('2026-11-02T18:00:00Z'));
+  });
+
   it('accepts `projects` as a plain array, not only a Map', async () => {
     const readings = await uw.buildSessionUsageReadings({
       sessions: [SESSIONS[0]],
@@ -1029,7 +1044,7 @@ describe('lib/routes/usage — GET /api/usage/sessions (#2787)', () => {
     assert.equal(body().code, 'INVALID_SESSION_ID');
   });
 
-  it('GET /api/usage/sessions filters by ?engine= and ?lowOnly=true', async () => {
+  it('GET /api/usage/sessions filters by ?engine=', async () => {
     const project = store.projects.list()[0];
     const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'route-proj' });
     try {
@@ -1040,6 +1055,51 @@ describe('lib/routes/usage — GET /api/usage/sessions (#2787)', () => {
       assert.deepEqual(body().sessions, [], 'the one live session is claude, not codex, so the engine filter excludes it');
     } finally {
       store.sessions.wrap(session.id, 'test cleanup');
+    }
+  });
+
+  it('GET /api/usage/sessions answers 400 for a non-numeric ?projectId= rather than silently returning no rows (Critic R-3 secondary note)', async () => {
+    const { handler, params } = matchRoute('GET', '/api/usage/sessions');
+    const { res, status, body } = fakeRes();
+    await handler({ url: '/api/usage/sessions?projectId=not-a-number', headers: {} }, res, params);
+    assert.equal(status(), 400);
+    assert.equal(body().code, 'INVALID_PROJECT_ID');
+  });
+
+  it('GET /api/usage/sessions filters by ?projectId= (BLOCKING finding, rev-20261102T192012Z-68f2d3e9: this filter was previously untested)', async () => {
+    const projectA = store.projects.list()[0];
+    const projectB = store.projects.create({ name: 'route-proj-b', path: '/repo/route-proj-b', engine: 'claude' });
+    const sessionA = store.sessions.start({ projectId: projectA.id, engineId: 'claude', tmuxSession: 'route-proj' });
+    const sessionB = store.sessions.start({ projectId: projectB.id, engineId: 'claude', tmuxSession: 'route-proj-b' });
+    try {
+      const { handler, params } = matchRoute('GET', '/api/usage/sessions');
+      const { res, status, body } = fakeRes();
+      await handler({ url: `/api/usage/sessions?projectId=${projectB.id}`, headers: {} }, res, params);
+      assert.equal(status(), 200);
+      const ids = body().sessions.map((r) => r.sessionId);
+      assert.deepEqual(ids, [sessionB.id], 'only the session under the requested projectId is returned');
+    } finally {
+      store.sessions.wrap(sessionA.id, 'test cleanup');
+      store.sessions.wrap(sessionB.id, 'test cleanup');
+      store.projects.delete(projectB.id);
+    }
+  });
+
+  it('GET /api/usage/sessions filters by ?lowOnly=true (BLOCKING finding, rev-20261102T192012Z-68f2d3e9: this filter was previously untested)', async () => {
+    uw.calibrateUsage({ provider: 'codex', fiveHourPct: 3 }); // well under the 12% default hand-off threshold
+    const project = store.projects.list()[0];
+    const lowSession = store.sessions.start({ projectId: project.id, engineId: 'codex', tmuxSession: 'route-proj-low' });
+    const okSession = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'route-proj-ok' });
+    try {
+      const { handler, params } = matchRoute('GET', '/api/usage/sessions');
+      const { res, status, body } = fakeRes();
+      await handler({ url: '/api/usage/sessions?lowOnly=true', headers: {} }, res, params);
+      assert.equal(status(), 200);
+      const ids = body().sessions.map((r) => r.sessionId);
+      assert.deepEqual(ids, [lowSession.id], 'only the calibrated-low (codex, 3% five-hour) session passes ?lowOnly=true');
+    } finally {
+      store.sessions.wrap(lowSession.id, 'test cleanup');
+      store.sessions.wrap(okSession.id, 'test cleanup');
     }
   });
 });
