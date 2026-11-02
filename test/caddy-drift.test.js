@@ -222,14 +222,18 @@ describe('caddy-drift — P1 breadth, a gate does not admit more than GATE_BYPAS
     assert.equal(result.status, drift.HOLDS);
   });
 
-  it("does not flag the live-shape-own-auth hand edit — its gate carries no bypass matcher at all", () => {
-    // Documented limitation (see checkGates's doc comment): this shape achieves
-    // its bypass via a separate, earlier route, not via `not path_regexp` on
-    // the auth route itself, so there is nothing on the auth route for breadth
-    // to read. The per-site-merge gap this leaves open is #1403's deferred
-    // second sub-shape, tracked separately — not this test's concern.
+  it('flags the live-shape-own-auth hand edit — route-order coverage catches the ungated block P1 presence alone could not (#2774)', () => {
+    // P1's breadth check still has nothing on the auth route itself to read
+    // (this shape achieves its bypass via a separate, earlier route, not via
+    // `not path_regexp` on the auth route) — but route-order coverage now
+    // walks the site's own routes in Caddy's evaluation order and finds the
+    // ungated `@ownauth` block reached before the real gate, with a matcher
+    // (`/openclaw-direct/*` alongside `/manifest.json`) that admits more
+    // than TangleClaw's own bypass set. This is #1403's deferred second
+    // sub-shape, now closed rather than tracked as a limitation.
     const result = drift.checkGates(summarize('live-shape-own-auth').sites, baseline);
-    assert.equal(result.status, drift.HOLDS);
+    assert.equal(result.status, drift.DIVERGED);
+    assert.ok(result.findings.some((f) => f.includes('reaches a proxying route before any gate')));
   });
 
   it('reports a hand-widened bypass, naming the site and the count, neutrally', () => {
@@ -433,6 +437,137 @@ describe('caddy-drift — splitAnchoredAlternation / gateBypassPattern (#1403 he
     assert.equal(drift.gateBypassPattern([{ host: ['x'] }]).pattern, null);
     assert.equal(drift.gateBypassPattern([{ not: [{ path: ['/a'] }] }]).pattern, null);
     assert.equal(drift.gateBypassPattern([{ not: [{ path_regexp: 'not-an-object' }] }]).pattern, null);
+  });
+});
+
+describe('caddy-drift — route-order coverage helpers (#2774)', () => {
+  describe('isPathTransparentMatch', () => {
+    it('is transparent for unconditional and host-only matchers', () => {
+      assert.equal(drift.isPathTransparentMatch(undefined), true);
+      assert.equal(drift.isPathTransparentMatch([]), true);
+      assert.equal(drift.isPathTransparentMatch([{ host: ['x'] }]), true);
+    });
+
+    it('is not transparent for a path matcher, or a host matcher with something else alongside it', () => {
+      assert.equal(drift.isPathTransparentMatch([{ path: ['/a'] }]), false);
+      assert.equal(drift.isPathTransparentMatch([{ host: ['x'], path: ['/a'] }]), false);
+      assert.equal(drift.isPathTransparentMatch([{ host: ['x'] }, { host: ['y'] }]), false);
+    });
+  });
+
+  describe('authGateCovers', () => {
+    it('covers on an unconditional or host-only matcher', () => {
+      assert.deepEqual(drift.authGateCovers(undefined), { covers: true, unmeasured: false });
+      assert.deepEqual(drift.authGateCovers([{ host: ['x'] }]), { covers: true, unmeasured: false });
+    });
+
+    it('covers when every bypass alternative is exactly a GATE_BYPASS_PATHS literal', () => {
+      const match = [{ not: [{ path_regexp: { pattern: '^(/api/health|/manifest\\.json)$' } }] }];
+      assert.deepEqual(drift.authGateCovers(match), { covers: true, unmeasured: false });
+    });
+
+    it('does not cover, and is not unmeasured, when a bypass alternative widens beyond GATE_BYPASS_PATHS', () => {
+      const match = [{ not: [{ path_regexp: { pattern: '^(/api/health|/manifest\\.json|/api/.*)$' } }] }];
+      const result = drift.authGateCovers(match);
+      assert.equal(result.covers, false);
+      assert.equal(result.unmeasured, false);
+    });
+
+    it('is unmeasured for a matcher shape it cannot classify at all', () => {
+      assert.deepEqual(drift.authGateCovers([{ host: ['x'], path: ['/a'] }]), { covers: false, unmeasured: true });
+    });
+  });
+
+  describe('matcherRestrictedToBypassPaths', () => {
+    it('is restricted when every path entry is exactly a GATE_BYPASS_PATHS literal', () => {
+      assert.deepEqual(drift.matcherRestrictedToBypassPaths([{ path: ['/manifest.json'] }]), { restricted: true, unmeasured: false });
+      assert.deepEqual(drift.matcherRestrictedToBypassPaths([{ path: ['/api/health', '/manifest.json'] }]), { restricted: true, unmeasured: false });
+    });
+
+    it('is a clean non-restriction, not an ambiguity, for a wildcard or an unlisted literal — #2774\'s own motivating shape', () => {
+      const result = drift.matcherRestrictedToBypassPaths([{ path: ['/openclaw-direct/*', '/manifest.json'] }]);
+      assert.deepEqual(result, { restricted: false, unmeasured: false });
+    });
+
+    it('is not restricted for an unconditional or empty matcher — nothing is restricted to anything', () => {
+      assert.deepEqual(drift.matcherRestrictedToBypassPaths(undefined), { restricted: false, unmeasured: false });
+      assert.deepEqual(drift.matcherRestrictedToBypassPaths([]), { restricted: false, unmeasured: false });
+    });
+
+    it('is unmeasured for any matcher shape other than a lone path key', () => {
+      assert.deepEqual(drift.matcherRestrictedToBypassPaths([{ host: ['x'] }]), { restricted: false, unmeasured: true });
+      assert.deepEqual(drift.matcherRestrictedToBypassPaths([{ path: ['/a'] }, { host: ['x'] }]), { restricted: false, unmeasured: true });
+    });
+  });
+
+  describe('routeHasRewriteHandler', () => {
+    it('is false with no rewrite handler anywhere', () => {
+      assert.equal(drift.routeHasRewriteHandler({ handle: [{ handler: 'reverse_proxy' }] }), false);
+    });
+
+    it('is true for a direct rewrite handler', () => {
+      assert.equal(drift.routeHasRewriteHandler({ handle: [{ handler: 'rewrite' }, { handler: 'reverse_proxy' }] }), true);
+    });
+
+    it('is true for a rewrite nested inside a subroute', () => {
+      const route = { handle: [{ handler: 'subroute', routes: [{ handle: [{ handler: 'rewrite' }] }] }] };
+      assert.equal(drift.routeHasRewriteHandler(route), true);
+    });
+  });
+
+  describe('checkRouteOrderCoverage', () => {
+    it('holds for an unconditional authentication+reverse_proxy route', () => {
+      const route = { handle: [{ handler: 'authentication' }, { handler: 'reverse_proxy', upstreams: [{ dial: 'x' }] }] };
+      assert.deepEqual(drift.checkRouteOrderCoverage([route]), { ok: true, unmeasured: false });
+    });
+
+    it('diverges for a direct, unguarded reverse_proxy route', () => {
+      const route = { handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: 'x' }] }] };
+      assert.deepEqual(drift.checkRouteOrderCoverage([route]), { ok: false, unmeasured: false });
+    });
+
+    it('holds for a bypass-restricted matched proxy ahead of an unconditional gate — a correct hand exemption', () => {
+      const routes = [
+        { match: [{ path: ['/manifest.json'] }], handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: 'x' }] }] },
+        { handle: [{ handler: 'authentication' }, { handler: 'reverse_proxy', upstreams: [{ dial: 'x' }] }] }
+      ];
+      assert.deepEqual(drift.checkRouteOrderCoverage(routes), { ok: true, unmeasured: false });
+    });
+
+    it('holds true even when the bypass-restricted route rewrites the path first, if it never actually proxies', () => {
+      // Restriction is about the MATCHER; rewrite only matters once the
+      // request would reach a reverse_proxy through it.
+      const routes = [{ match: [{ path: ['/manifest.json'] }], handle: [{ handler: 'rewrite' }] }];
+      assert.deepEqual(drift.checkRouteOrderCoverage(routes), { ok: true, unmeasured: false });
+    });
+
+    it('diverges when a bypass-restricted matched route rewrites the path before proxying', () => {
+      const routes = [
+        { match: [{ path: ['/manifest.json'] }], handle: [{ handler: 'rewrite' }, { handler: 'reverse_proxy', upstreams: [{ dial: 'x' }] }] }
+      ];
+      assert.deepEqual(drift.checkRouteOrderCoverage(routes), { ok: false, unmeasured: false });
+    });
+
+    it('is unmeasured when a matched proxy route\'s matcher cannot be classified, never guessed', () => {
+      const routes = [{ match: [{ remote_ip: { ranges: ['10.0.0.0/8'] } }], handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: 'x' }] }] }];
+      const result = drift.checkRouteOrderCoverage(routes);
+      assert.equal(result.ok, false);
+      assert.equal(result.unmeasured, true);
+    });
+
+    it('holds vacuously for an empty or non-array route list', () => {
+      assert.deepEqual(drift.checkRouteOrderCoverage([]), { ok: true, unmeasured: false });
+      assert.deepEqual(drift.checkRouteOrderCoverage(undefined), { ok: true, unmeasured: false });
+    });
+
+    it('is immediately covered by an offbox guard route regardless of what follows it', () => {
+      const guard = {
+        match: [{ not: [{ remote_ip: { ranges: ['127.0.0.1/8', '::1'] } }] }],
+        handle: [{ handler: 'static_response', abort: true }]
+      };
+      const uncoveredProxy = { handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: 'x' }] }] };
+      assert.deepEqual(drift.checkRouteOrderCoverage([guard, uncoveredProxy]), { ok: true, unmeasured: false });
+    });
   });
 });
 

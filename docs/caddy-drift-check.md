@@ -65,7 +65,7 @@ list carries divergences only, so a caller deciding whether to reassure the oper
 
 | # | Key | Property | `not-measured` when |
 |---|---|---|---|
-| P1 | `gatedProxies` | No proxying site lacks a gate the generated baseline does not also omit, and no gate's own bypass exemption admits a path outside `GATE_BYPASS_PATHS` — or TangleClaw's own login guards the door | adapt unavailable, the config generates no gate at all and the login does not guard the door, or a gate's bypass exemption pattern cannot be decomposed into literal paths |
+| P1 | `gatedProxies` | No proxying site lacks a gate the generated baseline does not also omit, no gate's own bypass exemption admits a path outside `GATE_BYPASS_PATHS`, and no proxying route is reached before a list-covering gate without its own matcher being provably bypass-restricted (#2774) — or TangleClaw's own login guards the door | adapt unavailable, the config generates no gate at all and the login does not guard the door, a gate's bypass exemption pattern cannot be decomposed into literal paths, or a site's route order cannot be fully classified |
 | P2 | `httpsProtocols` | The HTTPS listener negotiates the protocols the baseline pins (`h1`) | adapt unavailable, or the baseline has no HTTPS listener |
 | P3 | `knownUpstreams` | No site dials an upstream the generated config does not dial | adapt unavailable |
 | P4 | `leaseReach` | No site fronts a port whose PortHub lease declares a narrower `reach` | adapt unavailable, PortHub unreachable, the port has no lease, or the lease has no readable reach |
@@ -115,14 +115,28 @@ The finding names `scripts/guard-ungated-sites.js`, which adds the guard
 in place and writes nothing unless `caddy adapt` reads the guard routes as the only change
 (`#planOffboxGuard`) — the same standard as P2's remedy.
 
-**P1 asks its question per SITE, and a site is `(listen address, host)`.** `summarizeConfig` merges
-every route under one site, so a gate anywhere in that site satisfies P1 for all of it. An ungated
-path-scoped block sitting beside a real gate on the same host and port therefore reads as `holds`.
-That aggregation is what makes the property work at all — TangleClaw's own bypass routes are exactly
-such ungated blocks — but it means P1 catches a site with NO gate, not an ungated hole inside a gated
-one. Tracked as **#2774** (split off #1403, below) rather than approximated: answering it in general
-means evaluating route match/order coverage per path, Caddy's matcher algebra again, not a set
-comparison.
+**P1 asks its PRESENCE and BREADTH questions per SITE, and a site is `(listen address, host)`.**
+`summarizeConfig` merges every route under one site, so a gate anywhere in that site satisfies
+presence for all of it. That aggregation is what makes the property work at all — TangleClaw's own
+bypass routes are exactly such ungated blocks — but on its own it would mean an ungated path-scoped
+block sitting beside a real gate on the same host and port reads as `holds` too. **Closed, not
+approximated, by route-order coverage (#2774, split off #1403):** `lib/caddy-drift.js#checkRouteOrderCoverage`
+walks each site's OWN `rawRoutes` — the per-site list `summarizeConfig` keeps alongside its merged
+bag, never merged itself — in Caddy's actual evaluation order, the same way `#refusesOffboxBeforeProxy`
+already walks for the offbox guard. A `reverse_proxy` route reached before a list-covering gate
+(the offbox guard, or an authentication handler whose own matcher is unconditional or exactly
+bypass-restricted — `#authGateCovers`) must have ITS OWN matcher provably restricted to
+`GATE_BYPASS_PATHS` (Caddy's `path` matcher, an array of glob patterns — `#matcherRestrictedToBypassPaths`
+— never the gate's `not path_regexp` shape) with no `rewrite` ahead of it
+(`#routeHasRewriteHandler`), or the site diverges. `live-shape-own-auth`'s own `@ownauth` block —
+`path /openclaw-direct/* /manifest.json` — names a real bypass literal (`/manifest.json`) alongside
+a wildcard (`/openclaw-direct/*`) that is not one, and now reports `DIVERGED` rather than `holds`.
+Skipped for a site presence or breadth already has something to say about (one fact, one finding,
+never the same underlying problem reported twice) and for any site with no gate anywhere in the
+merged bag (nothing route-order could add there). An unclassifiable matcher shape — neither a
+`path` matcher nor the gate's own recognized exemption, or more than one OR'd matcher set — is
+`not-measured` for that site, never guessed in either direction, the same degradation philosophy
+every other half of this check already follows.
 
 **P1 is gate PRESENCE, but also now checks one specific, narrower kind of BREADTH (#1403).** A
 hand-widened bypass matcher used to leave the site gated and unreported. The first implementation
@@ -144,10 +158,11 @@ an unrecognized escape — is `not-measured` for that gate, not guessed in eithe
 two differently-written regexes equivalent in general is the same matcher algebra the
 presence check avoids. A gate using some OTHER exemption shape entirely (most notably the
 `live-shape-own-auth` hand-edit, where the real gate route is `match: null` and the bypass is a
-wholly separate, earlier route — see #2774 above) has nothing on its own matcher to check this way
-and is silently skipped, not flagged; a bypass pattern that isn't even wrapped in a plain anchored
-alternation (no `^(...)$` form at all) is also `not-measured`. `lib/caddy-drift.js`'s `checkGates`
-doc comment is the fuller account.
+wholly separate, earlier route) has nothing on its OWN matcher for breadth to check this way and is
+skipped by breadth specifically — not silently clean overall, since route-order coverage (#2774,
+above) now reads that earlier, separate route directly and reports it; a bypass pattern that isn't
+even wrapped in a plain anchored alternation (no `^(...)$` form at all) is also `not-measured` by
+breadth. `lib/caddy-drift.js`'s `checkGates` doc comment is the fuller account.
 
 **P4 is scoped to the upstreams P3 already found unknown.** The upstreams TangleClaw generates are
 fronted by design — TC's own server binds loopback precisely *because* Caddy is the front door — so
