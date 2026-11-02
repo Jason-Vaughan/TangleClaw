@@ -343,6 +343,7 @@ files = [
   "test/launch-preflight-context.test.js",
   "test/launch-recovery-migration.test.js",
   "test/launch-rule-drift-wiring.test.js",
+  "test/master-authority.test.js",
   "test/master-launch-mode-ui.test.js",
   "test/master-launch-mode.test.js",
   "test/medusa-aged-notice.test.js",
