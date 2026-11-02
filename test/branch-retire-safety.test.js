@@ -69,6 +69,52 @@ describe('branch-retire-safety: parsers', () => {
   });
 });
 
+describe('branch-retire-safety: isSameOrSubpath', () => {
+  let root;
+  before(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-same-or-subpath-')); });
+  after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  it('a path is its own subpath', () => {
+    const p = path.join(root, 'wt');
+    fs.mkdirSync(p);
+    assert.equal(brs.isSameOrSubpath(p, p), true);
+  });
+
+  it('a nested subdirectory is a subpath of its ancestor worktree', () => {
+    const wt = path.join(root, 'wt-feat');
+    const nested = path.join(wt, 'subdir', 'nested');
+    fs.mkdirSync(nested, { recursive: true });
+    assert.equal(brs.isSameOrSubpath(nested, wt), true);
+  });
+
+  it('a sibling directory sharing a name prefix is NOT a subpath (the classic startsWith collision)', () => {
+    const wt = path.join(root, 'wt-feat');
+    const sibling = path.join(root, 'wt-feat-other');
+    fs.mkdirSync(sibling, { recursive: true });
+    assert.equal(brs.isSameOrSubpath(sibling, wt), false);
+  });
+
+  it('a parent directory is NOT a subpath of a child (direction matters)', () => {
+    const wt = path.join(root, 'wt-parent-check');
+    const nested = path.join(wt, 'inner');
+    fs.mkdirSync(nested, { recursive: true });
+    assert.equal(brs.isSameOrSubpath(wt, nested), false);
+  });
+
+  it('resolves symlinks on BOTH sides before comparing, not only one — the macOS /var vs /private/var case', () => {
+    const real = path.join(root, 'real-wt');
+    fs.mkdirSync(real);
+    const link = path.join(root, 'linked-view');
+    fs.symlinkSync(real, link);
+    // One side arrives already realpath-resolved (as `git worktree list`
+    // reports it); the other arrives as the symlinked spelling a caller's
+    // raw `process.cwd()` or a tmux pane would report. Both must still
+    // compare equal.
+    assert.equal(brs.isSameOrSubpath(link, real), true);
+    assert.equal(brs.isSameOrSubpath(real, link), true);
+  });
+});
+
 describe('branch-retire-safety: against real git', () => {
   let root;
   let n = 0;
@@ -739,6 +785,23 @@ describe('branch-retire-safety: worktree & branch retirement (#1267)', () => {
       assert.equal(plan.skipped[0].reason, brs.WT_SKIP.ACTIVE_CWD);
     });
 
+    it('a process cwd NESTED inside the worktree (not the worktree root itself) still holds it, reason active-cwd', async () => {
+      const { dir, base } = makeClone();
+      git(dir, 'checkout', '-q', '-b', 'feat');
+      commit(dir, 'a.txt', 'x', 'feature');
+      git(dir, 'checkout', '-q', 'main');
+      git(dir, 'merge', '-q', '--no-ff', '-m', 'Merge feat', 'feat');
+      const linked = path.join(base, 'wt-feat');
+      git(dir, 'worktree', 'add', '-q', linked, 'feat');
+      const nestedCwd = path.join(linked, 'subdir', 'nested');
+      fs.mkdirSync(nestedCwd, { recursive: true });
+
+      const plan = await brs.planWorktreeRetirement({ repo: dir, cwd: nestedCwd, execFile: realExec });
+      assert.equal(plan.eligible.length, 0, 'a subdirectory cwd must hold the worktree exactly like the root would');
+      assert.equal(plan.skipped.length, 1);
+      assert.equal(plan.skipped[0].reason, brs.WT_SKIP.ACTIVE_CWD);
+    });
+
     it('a detached worktree at an ancestor of main is eligible', async () => {
       const { dir, base } = makeClone();
       const mainSha = git(dir, 'rev-parse', 'HEAD');
@@ -1149,6 +1212,18 @@ describe('scripts/retire-stale-worktrees.js: default live-session/active-branch 
       assert.equal(session, null);
     });
 
+    it('finds a pane whose current directory is a SUBDIRECTORY of the worktree, not only an exact match', async () => {
+      const execFileSync = fakeExecFileSync({ tmux: 'tc-lane-nested\t/repo/wt-feat/subdir/nested\n' });
+      const session = await cli._defaultLookupSession('/repo/wt-feat', { execFileSync });
+      assert.deepEqual(session, { sessionId: 'tc-lane-nested' });
+    });
+
+    it('does not match a sibling worktree sharing a name prefix', async () => {
+      const execFileSync = fakeExecFileSync({ tmux: 'other-sess\t/repo/wt-feat-other\n' });
+      const session = await cli._defaultLookupSession('/repo/wt-feat', { execFileSync });
+      assert.equal(session, null);
+    });
+
     it('dry-run swallows a probe failure (nothing destructive to fail closed on)', async () => {
       const execFileSync = fakeExecFileSync({ tmux: new Error('no server running on /tmp/tmux-x') });
       const session = await cli._defaultLookupSession('/repo/wt-feat', { execFileSync, apply: false });
@@ -1261,6 +1336,28 @@ describe('scripts/retire-stale-worktrees.js: default live-session/active-branch 
       assert.ok(held, 'the worktree must appear in skipped');
       assert.equal(held.reason, brs.WT_SKIP.LIVE_SESSION);
       assert.equal(held.provenance.sessionId, 'tc-lane-default');
+    });
+
+    it('--apply: a tmux pane NESTED inside the worktree holds it through the full pipeline, never removing it', async () => {
+      const { dir, base } = makeClone();
+      git(dir, 'checkout', '-q', '-b', 'feat');
+      commit(dir, 'a.txt', 'x', 'feature');
+      git(dir, 'checkout', '-q', 'main');
+      git(dir, 'merge', '-q', '--no-ff', '-m', 'Merge feat', 'feat');
+      git(dir, 'push', '-q', 'origin', 'main');
+      const linked = path.join(base, 'wt-feat');
+      git(dir, 'worktree', 'add', '-q', linked, 'feat');
+      const nestedPanePath = path.join(linked, 'subdir', 'nested');
+      fs.mkdirSync(nestedPanePath, { recursive: true });
+
+      const execFileSync = fakeExecFileSync({ tmux: `tc-lane-nested\t${nestedPanePath}\n` });
+      const out = await cli.runPipeline(dir, true, { execFile: realExec, execFileSync });
+      assert.equal(out.worktrees.result.removed.length, 0, 'a pane nested in the worktree must hold it, same as a pane at its root');
+      assert.equal(fs.existsSync(linked), true, 'the worktree must survive --apply');
+      const held = out.worktrees.plan.skipped.find((s) => fs.realpathSync(s.path) === fs.realpathSync(linked));
+      assert.ok(held);
+      assert.equal(held.reason, brs.WT_SKIP.LIVE_SESSION);
+      assert.equal(held.provenance.sessionId, 'tc-lane-nested');
     });
 
     it('with no tmux pane reported, the same worktree is eligible (the default detector found nothing live)', async () => {

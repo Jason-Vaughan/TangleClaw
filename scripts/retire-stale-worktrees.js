@@ -100,12 +100,14 @@ function _tmuxPanes(execFileSync) {
 
 /**
  * The CLI's own default `lookupSession`, used only when no caller injects one: a tmux pane
- * whose current directory IS the worktree counts as a live session. Only ever sees a
- * tmux-launched session — a worktree in use any other way is invisible to this default, which
- * is exactly why a caller that knows better should supply its own `lookupSession`. In
- * `--dry-run`, an unreachable tmux is swallowed (nothing destructive to fail closed on there);
- * in `--apply`, it throws, which `lib/branch-retire-safety.js`'s consumers (`describeProvenance`,
- * `retireWorktrees`) both turn into holding the worktree, never removing it.
+ * whose current directory IS the worktree, OR a SUBDIRECTORY of it (a pane sitting in
+ * `<worktree>/src` is still actively using the worktree — exact-equality missed this), counts
+ * as a live session. Only ever sees a tmux-launched session — a worktree in use any other way
+ * is invisible to this default, which is exactly why a caller that knows better should supply
+ * its own `lookupSession`. In `--dry-run`, an unreachable tmux is swallowed (nothing destructive
+ * to fail closed on there); in `--apply`, it throws, which `lib/branch-retire-safety.js`'s
+ * consumers (`describeProvenance`, `retireWorktrees`) both turn into holding the worktree,
+ * never removing it.
  *
  * @param {string} worktreePath
  * @param {object} [opts]
@@ -122,8 +124,7 @@ async function _defaultLookupSession(worktreePath, opts = {}) {
     if (opts.apply) throw err;
     return null;
   }
-  const target = (() => { try { return fs.realpathSync(worktreePath); } catch { return path.resolve(worktreePath); } })();
-  const hit = panes.find((p) => p.cwd === target);
+  const hit = panes.find((p) => brs.isSameOrSubpath(p.cwd, worktreePath));
   return hit ? { sessionId: hit.sessionName } : null;
 }
 
