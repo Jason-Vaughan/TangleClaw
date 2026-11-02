@@ -41,6 +41,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-02 — v5.53.1 W2-REC: reconcile residual and spin-off closure records
+
+<!-- prawduct: type=internal | scope=v5531-w2-rec -->
+
+- Reconciled Charter A492 Wave 1 PRs #2792, #2793, #2794, and #2795 and all six linked issues: #1380, #2120, #2125, #2774, #2778, and #2773. The accepted `changelog.d/` fragments remain the v5.53.1 release-note inputs.
+- **Tailscale origin and Master continuity (#1380, #2120, #2125):** `tc whoami` operator-host and setup cutover/restart redirects now honor the configured Tailscale mode, with an explicit failure when an advertised origin cannot be resolved. Running Master status measures its live pane buffer when no reading is supplied and labels that estimate; empty or failed captures remain `unmeasured`. A caller-supplied reading still takes precedence, and no automatic relaunch was added. The imported-project trust proposal from v5.53.0 remains in place; #2125 closes that already-shipped slice.
+- **Ingress and session diagnostics (#2774, #2773):** Caddy drift now detects a route that proxies before the required auth gate, including nested subroutes, and reports the bypass as drift. Named tmux buffer reads skip `tc-send-*` transport buffers and select an explicit nontransport buffer, preserving the no-buffer and no-server outcomes.
+- **Rule-receipt test pool (#2778):** the receipt test names a missing `curl` PATH precondition, making the pool failure actionable without changing product behavior.
+- GitHub REST audit found all six issues closed and milestones #37 and #38 closed with zero open issues. The Feature Index now points to the merged source and tests. These records describe merged code; the release cut and live deployment follow their own gates.
+
 ## 2026-11-01 — v5.53.0 W2-REC: reconcile Master authority and session lifecycle records
 
 <!-- prawduct: type=internal | scope=v553-w2-rec -->

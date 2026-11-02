@@ -17,7 +17,15 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
-## Unreleased — v5.53.0 Master authority and continuity
+## Unreleased — v5.53.1 Residual and spin-off closure
+
+- **Advertise the configured operator origin** (#1380) — `tc whoami` operator-host and setup cutover/restart redirects honor Tailscale mode. If the advertised origin cannot be resolved, they expose the failure instead of substituting the request Host; mode off retains local behavior. Medusa peer links remain loopback-only. `lib/tailscale-ingress.js#resolveAdvertisedOrigin`, `lib/routes/tc.js`, `lib/routes/setup.js`, `public/setup.js`. Tests: `test/identity-diagnostics.test.js`, `test/setup-provisioning.test.js`, `test/api-setup-https.test.js`, `test/setup-wizard-https.test.js`.
+- **Measure a running Master's continuity** (#2120) — without a supplied reading, status estimates pane-buffer use from the live Master pane and marks its source `estimated`; an empty or failed capture remains `unmeasured`. An explicit reading takes precedence. The signal does not relaunch the Master. `lib/master.js#getMasterStatus`, `lib/master-continuity.js#evaluateContinuityHealth`. Tests: `test/master.test.js`, `test/master-continuity.test.js`.
+- **Detect a Caddy route-order bypass** (#2774) — drift reports a proxy route reached before the required auth gate, including inside nested subroutes; an offbox guard does not count as auth. `lib/caddy-drift.js#checkRouteOrderCoverage`, `lib/caddy-drift.js#checkGates`. Tests: `test/caddy-drift.test.js`, `test/gate-fallback.test.js`.
+- **Read the newest user tmux buffer** (#2773) — named buffer lookup skips `tc-send-*` transport entries and reads an explicit nontransport buffer, retaining distinct no-buffer and no-server results. `lib/tmux.js#readNewestBuffer`. Tests: `test/tmux-named-paste-buffer.test.js`, `test/session-clipboard.test.js`.
+- **Explain the receipt test's curl dependency** (#2778) — the rule-delivery receipt test reports when `curl` is missing from PATH in its test pool. `test/rule-delivery-receipt.test.js`. Tests: `test/rule-delivery-receipt.test.js`.
+
+## v5.53.0 — Master authority and continuity
 
 - **Gate session lifecycle mutations** (#2129) — launch and kill require a verified Operator or an authorized Project Master; a current project session may wrap only itself. Each route checks this caller boundary in addition to the shared launch-binding gate. `lib/routes/_callers.js#_requireSessionLifecycleCaller`, `lib/routes/sessions.js`, `lib/routes/wrap.js`. Tests: `test/session-lifecycle-authz.test.js`, `test/launch-binding-routes.test.js`.
 - **Control the Master's lifecycle authority** (#2132) — the existing access level yields a generation-tracked read-only/read-write toggle; only `write` permits lifecycle mutation. The Operator can read and change it through the Master authority API; config PATCH uses the same Operator proof for access-level changes. `lib/master-authority.js#getAuthorityState`, `lib/master-authority.js#applyOperatorAuthorityChange`, `server.js` ("GET /api/master/authority", "POST /api/master/authority"). Tests: `test/master-authority.test.js`, `test/master.test.js`, `test/api-config.test.js`, `test/frontend-csrf.test.js`.
