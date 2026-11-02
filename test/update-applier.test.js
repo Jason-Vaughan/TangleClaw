@@ -669,7 +669,8 @@ describe('update-applier (UB #228/#229)', () => {
           delta: 'records-only',
           fromSha: 'aaaaaaa000000000000000000000000000000000',
           toSha: 'bbbbbbb000000000000000000000000000000000'
-        }
+        },
+        repoPath: applier._internal.repoDir
       });
       assert.equal(r.ok, true);
       assert.equal(r.fromSha, 'aaaaaaa000000000000000000000000000000000');
@@ -684,7 +685,7 @@ describe('update-applier (UB #228/#229)', () => {
         { delta: 'records-only', fromSha: 'not-a-sha', toSha: 'bbbbbbb000000000000000000000000000000000' },
         { delta: 'records-only', fromSha: 'aaaaaaa000000000000000000000000000000000', toSha: null }
       ]) {
-        const r = applier.applyAutomaticRecordsOnlyFastForward({ delta: bad });
+        const r = applier.applyAutomaticRecordsOnlyFastForward({ delta: bad, repoPath: applier._internal.repoDir });
         assert.equal(r.ok, false);
         assert.equal(r.code, 'unverified-delta');
       }
@@ -701,7 +702,8 @@ describe('update-applier (UB #228/#229)', () => {
           delta: 'records-only',
           fromSha: 'aaaaaaa000000000000000000000000000000000',
           toSha: 'bbbbbbb000000000000000000000000000000000'
-        }
+        },
+        repoPath: applier._internal.repoDir
       });
       assert.equal(r.ok, false);
       assert.equal(r.code, 'drift-detected');
@@ -720,7 +722,8 @@ describe('update-applier (UB #228/#229)', () => {
           delta: 'records-only',
           fromSha: 'aaaaaaa000000000000000000000000000000000',
           toSha: 'bbbbbbb000000000000000000000000000000000'
-        }
+        },
+        repoPath: applier._internal.repoDir
       });
       assert.equal(r.ok, false);
       assert.equal(r.code, 'drift-detected');
@@ -752,7 +755,7 @@ describe('update-applier (UB #228/#229)', () => {
         'rev-parse HEAD': 'aaaaaaa000000000000000000000000000000000\n',
         'rev-parse --abbrev-ref HEAD': 'feat/something\n',
       });
-      const r = applier.applyAutomaticRecordsOnlyFastForward({ delta: VALID_DELTA });
+      const r = applier.applyAutomaticRecordsOnlyFastForward({ delta: VALID_DELTA, repoPath: applier._internal.repoDir });
       assert.equal(r.ok, false);
       assert.equal(r.code, 'wrong-ref');
     });
@@ -763,7 +766,7 @@ describe('update-applier (UB #228/#229)', () => {
         'rev-parse --abbrev-ref HEAD': 'main\n',
         'status --porcelain': ' M some/file.js\n',
       });
-      const r = applier.applyAutomaticRecordsOnlyFastForward({ delta: VALID_DELTA });
+      const r = applier.applyAutomaticRecordsOnlyFastForward({ delta: VALID_DELTA, repoPath: applier._internal.repoDir });
       assert.equal(r.ok, false);
       assert.equal(r.code, 'dirty-tree');
     });
@@ -775,7 +778,7 @@ describe('update-applier (UB #228/#229)', () => {
         'status --porcelain': '',
       });
       applier._internal.anyRunning = () => 'other-project';
-      const r = applier.applyAutomaticRecordsOnlyFastForward({ delta: VALID_DELTA });
+      const r = applier.applyAutomaticRecordsOnlyFastForward({ delta: VALID_DELTA, repoPath: applier._internal.repoDir });
       assert.equal(r.ok, false);
       assert.equal(r.code, 'wrap-running');
       assert.match(r.error, /other-project/);
@@ -789,7 +792,7 @@ describe('update-applier (UB #228/#229)', () => {
         'rev-parse origin/main': 'bbbbbbb000000000000000000000000000000000\n',
         'merge --ff-only bbbbbbb000000000000000000000000000000000': new Error('fatal: Not possible to fast-forward, aborting.'),
       });
-      const r = applier.applyAutomaticRecordsOnlyFastForward({ delta: VALID_DELTA });
+      const r = applier.applyAutomaticRecordsOnlyFastForward({ delta: VALID_DELTA, repoPath: applier._internal.repoDir });
       assert.equal(r.ok, false);
       assert.equal(r.code, 'git-error');
     });
@@ -836,9 +839,22 @@ describe('update-applier (UB #228/#229)', () => {
         if (!(key in table)) throw new Error(`unexpected git call: ${key}`);
         return table[key];
       };
-      const r = applier.evaluateStaleInstallResponse({ id: 1, name: 'p', path: '/x' });
+      const r = applier.evaluateStaleInstallResponse({ id: 1, name: 'p', path: applier._internal.repoDir });
       assert.equal(r.action, 'auto-pulled');
       assert.equal(r.result.ok, true);
+    });
+
+    it('refuses a records-only delta classified for a different checkout, never advancing this install on its behalf', () => {
+      applier._internal.classifyUpstreamDelta = () => ({
+        delta: 'records-only', reason: null, fromSha: 'aaaaaaa000000000000000000000000000000000',
+        toSha: 'bbbbbbb000000000000000000000000000000000', executablePaths: [], recordsPaths: ['docs/x.md']
+      });
+      applier._internal.git = gitStub({
+        'rev-parse HEAD': 'aaaaaaa000000000000000000000000000000000\n',
+      });
+      const r = applier.evaluateStaleInstallResponse({ id: 1, name: 'p', path: '/other/clone' });
+      assert.equal(r.action, 'auto-pull-refused');
+      assert.equal(r.result.code, 'wrong-checkout');
     });
 
     it('reports auto-pull-refused when a records-only delta cannot be pulled (e.g. dirty tree)', () => {
@@ -851,7 +867,7 @@ describe('update-applier (UB #228/#229)', () => {
         'rev-parse --abbrev-ref HEAD': 'main\n',
         'status --porcelain': ' M docs/x.md\n',
       });
-      const r = applier.evaluateStaleInstallResponse({ id: 1, name: 'p', path: '/x' });
+      const r = applier.evaluateStaleInstallResponse({ id: 1, name: 'p', path: applier._internal.repoDir });
       assert.equal(r.action, 'auto-pull-refused');
       assert.equal(r.result.code, 'dirty-tree');
     });

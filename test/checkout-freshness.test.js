@@ -356,7 +356,7 @@ describe('checkout-freshness', () => {
       });
       await warmAndRead(p, fake);
       const r = cf.classifyUpstreamDelta(p, { config: ON });
-      assert.deepEqual(r, { delta: 'none', reason: null, fromSha: SHA_A, toSha: SHA_A, executablePaths: [], recordsPaths: [], truncated: false });
+      assert.deepEqual(r, { delta: 'none', reason: null, fromSha: SHA_A, toSha: SHA_A, executablePaths: [], recordsPaths: [], truncated: false, repoPath: p.path });
     });
 
     it('classifies a records-only delta via the canonical checkout-state classifier', async () => {
