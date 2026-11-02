@@ -101,6 +101,13 @@ describe('branch-retire-safety: isSameOrSubpath', () => {
     assert.equal(brs.isSameOrSubpath(wt, nested), false);
   });
 
+  it('a real subdirectory literally named ..notes is a subpath, not a false traversal match', () => {
+    const wt = path.join(root, 'wt-dotdot-check');
+    const dotdot = path.join(wt, '..notes');
+    fs.mkdirSync(dotdot, { recursive: true });
+    assert.equal(brs.isSameOrSubpath(dotdot, wt), true);
+  });
+
   it('resolves symlinks on BOTH sides before comparing, not only one — the macOS /var vs /private/var case', () => {
     const real = path.join(root, 'real-wt');
     fs.mkdirSync(real);
@@ -1358,6 +1365,28 @@ describe('scripts/retire-stale-worktrees.js: default live-session/active-branch 
       assert.ok(held);
       assert.equal(held.reason, brs.WT_SKIP.LIVE_SESSION);
       assert.equal(held.provenance.sessionId, 'tc-lane-nested');
+    });
+
+    it('--apply: a tmux pane in a literal "..notes" subdirectory of the worktree still holds it, not a false traversal mismatch', async () => {
+      const { dir, base } = makeClone();
+      git(dir, 'checkout', '-q', '-b', 'feat');
+      commit(dir, 'a.txt', 'x', 'feature');
+      git(dir, 'checkout', '-q', 'main');
+      git(dir, 'merge', '-q', '--no-ff', '-m', 'Merge feat', 'feat');
+      git(dir, 'push', '-q', 'origin', 'main');
+      const linked = path.join(base, 'wt-feat');
+      git(dir, 'worktree', 'add', '-q', linked, 'feat');
+      const dotdotPanePath = path.join(linked, '..notes');
+      fs.mkdirSync(dotdotPanePath, { recursive: true });
+
+      const execFileSync = fakeExecFileSync({ tmux: `tc-lane-dotdot\t${dotdotPanePath}\n` });
+      const out = await cli.runPipeline(dir, true, { execFile: realExec, execFileSync });
+      assert.equal(out.worktrees.result.removed.length, 0, 'a literal ..notes subdirectory must still hold the worktree');
+      assert.equal(fs.existsSync(linked), true, 'the worktree must survive --apply');
+      const held = out.worktrees.plan.skipped.find((s) => fs.realpathSync(s.path) === fs.realpathSync(linked));
+      assert.ok(held);
+      assert.equal(held.reason, brs.WT_SKIP.LIVE_SESSION);
+      assert.equal(held.provenance.sessionId, 'tc-lane-dotdot');
     });
 
     it('with no tmux pane reported, the same worktree is eligible (the default detector found nothing live)', async () => {
