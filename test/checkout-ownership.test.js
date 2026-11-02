@@ -251,6 +251,39 @@ describe('captureBaselineTreeState / verifyTreeUnchangedSinceBaseline', () => {
     fx.git('add', '-A');
     fx.git('commit', '-q', '-m', 'settle é.txt at three');
   });
+
+  it('a staged INDEX blob change is detected even when the working tree and HEAD stay fixed (#1332 Round 3 finding)', () => {
+    const trackedPath = path.join(fx.worktree, 'tracked.txt');
+    // Stage one change, then edit further WITHOUT staging — porcelain
+    // status becomes "MM" (staged diff from HEAD, plus an unstaged diff on
+    // top of THAT). The working-tree digest alone cannot see the staged
+    // half at all.
+    fs.writeFileSync(trackedPath, 'staged-one\n');
+    fx.git('add', '-A');
+    fs.writeFileSync(trackedPath, 'working-tree-only\n');
+    assert.equal(fx.git('status', '--porcelain').toString().trim(), 'MM tracked.txt');
+
+    const baseline = ownership.captureBaselineTreeState(fx.worktree);
+
+    // Mutate ONLY the staged index blob via plumbing (never `git add`, which
+    // would also touch the working tree) — the working-tree file and HEAD
+    // are untouched, and porcelain's status CODE stays exactly "MM" either
+    // way, which is the entire gap this fix closes.
+    const newBlob = execFileSync('git', ['hash-object', '-w', '--stdin'],
+      { cwd: fx.worktree, input: 'staged-two\n' }).toString().trim();
+    fx.git('update-index', '--cacheinfo', `100644,${newBlob},tracked.txt`);
+    assert.equal(fx.git('status', '--porcelain').toString().trim(), 'MM tracked.txt',
+      'the mutation must be invisible to the porcelain status CODE — that invisibility is the whole point of this test');
+
+    const verified = ownership.verifyTreeUnchangedSinceBaseline(fx.worktree, baseline);
+    assert.equal(verified.ok, false,
+      'a staged-only index mutation must be caught even though the working tree and HEAD never changed');
+    assert.equal(verified.code, 'FOREIGN_WORKTREE_MUTATION');
+
+    fs.writeFileSync(trackedPath, 'one\n');
+    fx.git('add', '-A');
+    fx.git('commit', '-q', '-m', 'settle tracked.txt back to one');
+  });
 });
 
 describe('evaluateWorktreeWriteAdmission', () => {
