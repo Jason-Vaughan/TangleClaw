@@ -1719,11 +1719,17 @@ async function _routeAfterComplete(result) {
   }
 
   if (result.restart) {
-    // Backend always supplies redirectUrl with restart today, but fall back
-    // to the current origin so the overlay still shows while the server
-    // cycles — otherwise the normal dismiss flow would run fetches against
-    // a process that's exiting.
-    _showRestartOverlay(result.redirectUrl || (window.location && window.location.origin) || '/',
+    // `redirectUrl` is `undefined` only on a response shape this build
+    // predates (fall back to the current origin so the overlay still shows
+    // while the server cycles — otherwise the normal dismiss flow would run
+    // fetches against a process that's exiting). It is explicitly `null`
+    // when Tailscale mode is on and the server could not resolve an
+    // authoritative origin (#1380) — an HONEST absence, not a gap to paper
+    // over with this browser's own origin, which may not be an address the
+    // operator can even reach. `_showRestartOverlay` renders that case
+    // itself rather than being handed a guessed URL.
+    _showRestartOverlay(
+      result.redirectUrl === undefined ? ((window.location && window.location.origin) || '/') : result.redirectUrl,
       carried, result.redirectVia);
     return;
   }
@@ -2192,6 +2198,14 @@ function _showRestartOverlay(redirectUrl, warnings, via) {
   wizard.view = 'restarting';
   const body = document.getElementById('setupBody');
   if (!body) return;
+  // No address to show or probe at all — Tailscale mode was on and the server
+  // could not resolve one (#1380). Nothing below this point is reachable
+  // without a URL, so render the honest absence and stop: no polling (there
+  // is nothing to probe) and no fabricated "Open null" button.
+  if (redirectUrl === null) {
+    _renderRestartOverlay(redirectUrl, warnings, 'no-redirect', via);
+    return;
+  }
   _renderRestartOverlay(redirectUrl, warnings, 'waiting', via);
   // Only probe when a response from that address would MEAN anything. Behind
   // Caddy it does not: the proxy stays up across TangleClaw's restart and answers
@@ -2210,16 +2224,22 @@ function _showRestartOverlay(redirectUrl, warnings, via) {
  * Paint the restart overlay for one readiness state.
  *
  * Navigation is ALWAYS the button, never this function — see `_pollRestartReady`.
- * @param {string} redirectUrl - Where TangleClaw will be reachable.
+ * @param {string|null} redirectUrl - Where TangleClaw will be reachable, or
+ *   `null` when Tailscale mode is on and the server could not resolve one.
  * @param {string[]} [warnings] - Server warnings to restate.
- * @param {'waiting'|'ready'|'unconfirmed'|'behind-proxy'} state - What the probe
- *   has observed, or `behind-proxy` where no probe can observe anything.
+ * @param {'waiting'|'ready'|'unconfirmed'|'behind-proxy'|'no-redirect'} state -
+ *   What the probe has observed, `behind-proxy` where no probe can observe
+ *   anything, or `no-redirect` where there is no address at all.
  * @param {string} [via] - `'proxy'` when the address is fronted by Caddy.
  */
 function _renderRestartOverlay(redirectUrl, warnings, state, via) {
   const body = document.getElementById('setupBody');
   if (!body) return;
-  const go = `<button class="btn btn-primary setup-btn" onclick="window.location.href=${jsArg(redirectUrl)}">Open ${esc(redirectUrl)}</button>`;
+  // No button at all for `no-redirect` — there is no URL to send the operator
+  // to, and a button wired to `null` is exactly the fabricated-link defect
+  // this screen otherwise exists to avoid.
+  const go = redirectUrl === null ? ''
+    : `<button class="btn btn-primary setup-btn" onclick="window.location.href=${jsArg(redirectUrl)}">Open ${esc(redirectUrl)}</button>`;
   const panel = {
     waiting: `
         <div class="spinner"></div>
@@ -2237,7 +2257,13 @@ function _renderRestartOverlay(redirectUrl, warnings, state, via) {
     // of the proxy replying is a report of something never observed.
     'behind-proxy': `
         <p class="setup-text">TangleClaw is restarting behind your login at <code>${esc(redirectUrl)}</code>.</p>
-        <p class="setup-text-muted">Give it a moment, then open it. <strong>If it asks for your username and password, it is back.</strong> If you get an error page, it is still starting — wait and reload.</p>`
+        <p class="setup-text-muted">Give it a moment, then open it. <strong>If it asks for your username and password, it is back.</strong> If you get an error page, it is still starting — wait and reload.</p>`,
+    // No address was ever established, so this claims nothing about where or
+    // whether the server came back — the warning below carries the actual
+    // Tailscale failure reason.
+    'no-redirect': `
+        <p class="setup-text">TangleClaw is restarting, but could not work out an address to send you to.</p>
+        <p class="setup-text-muted">See the warning below, then reach this install the way you normally do.</p>`
   }[state];
   // The heading names the operation and stays put across all three states; the
   // panel below carries what has been observed. A heading that changes underneath

@@ -1293,6 +1293,38 @@ describe('readMasterIdentityFreshness — has the RUNNING Master read this? (#96
       });
       assert.equal(s.continuity.status, 'unmeasured', 'a failed read must not be reported as a measured status');
     });
+
+    it('falls back to unmeasured, not a false 100%, when capturePane reports its own failure as empty lines', () => {
+      // PRR-A finding (PR #2795): lib/tmux.js#capturePane catches its own
+      // exec errors internally and returns {lines: [], alternateScreen:
+      // false} WITHOUT throwing — the try/catch above never sees this case.
+      // usedBytes from an empty capture would read as 0, which
+      // _deriveRemainingPercent reports as 100% remaining (status: 'ok') —
+      // a read that saw nothing must not be reported as "measured, and
+      // everything is fine".
+      const home = mk();
+      const tmuxLib = Object.assign(fakeTmux({ alive: true }), {
+        capturePane: () => ({ lines: [], alternateScreen: false })
+      });
+      const s = master.getMasterStatus({
+        home, tmuxLib,
+        enginesLib: { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' }
+      });
+      assert.equal(s.continuity.status, 'unmeasured',
+        'an empty capture must not be reported as a measured 100%-remaining status');
+    });
+
+    it('falls back to unmeasured when the pane captured only blank lines', () => {
+      const home = mk();
+      const tmuxLib = Object.assign(fakeTmux({ alive: true }), {
+        capturePane: () => ({ lines: [''], alternateScreen: false })
+      });
+      const s = master.getMasterStatus({
+        home, tmuxLib,
+        enginesLib: { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' }
+      });
+      assert.equal(s.continuity.status, 'unmeasured');
+    });
   });
 
   it('getMasterStatus carries it, so a surface can render it', () => {

@@ -11,6 +11,7 @@ const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const { installAlwaysAvailableEngine } = require('./_engine-fixture');
 const { operatorOf } = require('./_shared-docs-callers');
+const tailscaleIngress = require('../lib/tailscale-ingress');
 
 /**
  * The methods a caller must be identified for (#2233). The request helper below
@@ -683,6 +684,40 @@ describe('HTTPS Setup API', () => {
       assert.equal(cfg.httpsEnabled, true);
       assert.equal(cfg.httpsCertPath, fixture.certPath);
       assert.equal(cfg.httpsKeyPath, fixture.keyPath);
+    });
+
+    it('#1380/PRR-A: an honest Tailscale restart-redirect failure reaches warnings, not a silent null', async (t) => {
+      if (!hasOpenssl) return t.skip('openssl not available');
+
+      await request(server, 'PATCH', '/api/config', {
+        httpsEnabled: false, httpsCertPath: '', httpsKeyPath: '', tailscaleMode: true
+      });
+      restartCalls = 0;
+      const real = tailscaleIngress.resolveAdvertisedOrigin;
+      tailscaleIngress.resolveAdvertisedOrigin = async () =>
+        ({ ok: false, reason: 'node-not-running', detail: 'this tailscale node is not running' });
+      try {
+        const { status, data } = await completeSetup({
+          httpsEnabled: true,
+          httpsCertPath: fixture.certPath,
+          httpsKeyPath: fixture.keyPath
+        });
+        assert.equal(status, 200);
+        assert.equal(data.restart, true);
+        assert.equal(restartCalls, 1);
+        // The actual defect this pins: `redirectUrl: null` reaching the
+        // client with no warning let the wizard's own
+        // `result.redirectUrl || window.location.origin` fallback silently
+        // substitute a guessed address.
+        assert.equal(data.redirectUrl, null, 'must not fall back to a guessed host on an honest Tailscale failure');
+        assert.ok(Array.isArray(data.warnings) && data.warnings.some((w) => /could not resolve the restart redirect/.test(w)),
+          'the honest failure reason must reach warnings, which is what the client actually reads');
+      } finally {
+        tailscaleIngress.resolveAdvertisedOrigin = real;
+        const c = store.config.load();
+        delete c.tailscaleMode;
+        store.config.save(c);
+      }
     });
 
     it('builds redirectUrl from the bound port, not config.serverPort (#654)', async (t) => {
