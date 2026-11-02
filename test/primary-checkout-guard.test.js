@@ -151,6 +151,29 @@ function runGuard(opts) {
   return { status: res.status, stdout: res.stdout, stderr: res.stderr, decision, reason };
 }
 
+/**
+ * Run the fixture's own `install-primary-guard.js --invoke` directly — the
+ * STABLE OUTER RUNNER itself (#1400), bypassing the shell `|| true` wrapper
+ * so a test isolates the runner's own behavior from shell quoting.
+ *
+ * @param {object} fx - Fixture from `makeFixture()`.
+ * @param {object} toolInput - Payload `tool_input`.
+ * @param {object} [env] - Extra environment for the `--invoke` process itself.
+ * @param {string} [tool] - Tool name; default 'Write'.
+ * @returns {{status:number, stdout:string, stderr:string}}
+ */
+function invokeCli(fx, toolInput, env, tool) {
+  const payload = JSON.stringify({ tool_name: tool || 'Write', tool_input: toolInput, cwd: fx.primary });
+  const res = spawnSync(process.execPath,
+    [path.join(fx.primary, 'scripts', 'install-primary-guard.js'), '--invoke'],
+    {
+      input: payload,
+      encoding: 'utf8',
+      env: { ...process.env, CLAUDE_PROJECT_DIR: fx.primary, TANGLECLAW_ALLOW_PRIMARY_WRITE: '', ...(env || {}) }
+    });
+  return { status: res.status, stdout: res.stdout, stderr: res.stderr };
+}
+
 describe('#798 primary-checkout guard — P1, the session is rooted in a worktree', () => {
   let fx;
   before(() => { fx = makeFixture(); });
@@ -699,10 +722,14 @@ describe('#798 installer — scripts/install-primary-guard.js', () => {
 
   it('ends the command in `|| true`, so the guard can never fail a hook', () => {
     // A non-zero hook exit is fed back as a synthetic user message and starts a
-    // new turn — the loop this guard exists downstream of. The suffix is the
-    // only thing that makes that structurally impossible.
+    // new turn — the loop this guard exists downstream of. `|| true` is now
+    // belt-and-braces alongside `--invoke`'s own exit-0 guarantee (#1400),
+    // rather than the guard's only protection, but it still has to be there
+    // for the one failure mode `--invoke` cannot see itself: this very file
+    // failing to parse.
     assert.match(installer.guardCommand('/repo'), /\|\| true$/);
-    assert.ok(installer.guardCommand('/repo').includes(installer.GUARD_REL));
+    assert.ok(installer.guardCommand('/repo').includes(installer.INSTALLER_REL));
+    assert.ok(installer.guardCommand('/repo').includes('--invoke'));
   });
 
   it('is idempotent — a second install changes nothing', () => {
@@ -951,5 +978,181 @@ describe('#798 — the wiring survives TangleClaw\'s own hook reconciliation', (
     const merged = engines._mergeBaselineHooks(wired.hooks, baseline);
     assert.equal(merged.hooks.PreToolUse.filter((e) => installer.isGuardEntry(e)).length, 2);
     assert.equal(merged.preservedForeign, 2);
+  });
+});
+
+describe('#1400 — the stable outer runner (`--invoke`) and liveness telemetry', () => {
+  let fx;
+  before(() => { fx = makeFixture(); });
+  after(() => fx.cleanup());
+
+  const statusPath = () => installer.statusFilePath(fx.primary);
+  const readStatusNow = () => installer.readStatus(statusPath());
+
+  it('--invoke forwards a genuine refusal and records it as genuine, not self-test', () => {
+    const before_ = readStatusNow();
+    const r = invokeCli(fx, { file_path: path.join(fx.primary, 'public', 'sw.js') });
+    assert.equal(r.status, 0, 'the runner must exit 0 even for a refusal');
+    const parsed = JSON.parse(r.stdout);
+    assert.equal(parsed.hookSpecificOutput.permissionDecision, 'deny');
+
+    const after_ = readStatusNow();
+    assert.equal(after_.counts.total, before_.counts.total + 1);
+    assert.equal(after_.counts.refusal, before_.counts.refusal + 1);
+    assert.equal(after_.lastOutcome, 'refusal');
+    assert.equal(after_.lastHook, 'Write');
+    assert.equal(after_.selfTest.counts.total, before_.selfTest.counts.total,
+      'a genuine invocation must not inflate the self-test bucket');
+  });
+
+  it('--invoke forwards a genuine allow (no decision) and records it', () => {
+    const before_ = readStatusNow();
+    const r = invokeCli(fx, { file_path: path.join(fx.primary, 'lib', 'x.js') });
+    assert.equal(r.status, 0);
+    assert.equal(r.stdout, '');
+    const after_ = readStatusNow();
+    assert.equal(after_.counts.allow, before_.counts.allow + 1);
+    assert.equal(after_.lastOutcome, 'allow');
+  });
+
+  it('a broken inner script is recorded as `error`, not silently as allow, and the decision stays empty', () => {
+    // The case #1400 requirement 2c names explicitly: a syntax/runtime
+    // failure in the INNER guard must not read as a clean fall-through.
+    // Corrupting a COPY (the fixture's) rather than the real repo's script —
+    // this is exactly why `selfTest` itself does not probe this case against
+    // the real primary.
+    const guardPath = path.join(fx.primary, installer.GUARD_REL);
+    const saved = fs.readFileSync(guardPath, 'utf8');
+    fs.writeFileSync(guardPath, 'this is not valid node syntax {{{');
+    try {
+      const before_ = readStatusNow();
+      const r = invokeCli(fx, { file_path: path.join(fx.primary, 'public', 'sw.js') });
+      assert.equal(r.status, 0, 'the outer runner must still exit 0 when the inner script crashes');
+      assert.equal(r.stdout, '', 'a crashed inner script must produce no decision — fail open');
+      const after_ = readStatusNow();
+      assert.equal(after_.counts.error, before_.counts.error + 1);
+      assert.equal(after_.lastOutcome, 'error');
+      assert.ok(after_.lastError, 'a crash must leave a reason code');
+      assert.ok(!after_.lastError.includes(fx.primary),
+        'telemetry must never contain the raw script path (#1400 Security)');
+      assert.ok(!after_.lastError.includes('node:internal') && after_.lastError.length < 40,
+        'the recorded code must be bounded, not a raw stack trace');
+    } finally {
+      fs.writeFileSync(guardPath, saved);
+    }
+  });
+
+  it('a telemetry write failure does not alter the decision', () => {
+    const file = statusPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.rmSync(file, { recursive: true, force: true }); // earlier tests in this block already wrote a real status file here
+    // A directory sits where the status file belongs: every write to it
+    // fails at the final rename, without touching the decision path at all.
+    fs.mkdirSync(file);
+    try {
+      const r = invokeCli(fx, { file_path: path.join(fx.primary, 'public', 'sw.js') });
+      assert.equal(r.status, 0);
+      const parsed = JSON.parse(r.stdout);
+      assert.equal(parsed.hookSpecificOutput.permissionDecision, 'deny',
+        'the refusal must still reach the harness even though telemetry could not be written');
+      assert.match(r.stderr, /telemetry write failed/);
+    } finally {
+      fs.rmSync(file, { recursive: true, force: true });
+    }
+  });
+
+  it('--self-test advances the self-test counter, not the genuine one, and stamps success', () => {
+    fs.writeFileSync(path.join(fx.primary, '.claude', 'settings.local.json'),
+      JSON.stringify(installer.apply({}, fx.primary, 'install').settings, null, 2));
+    const before_ = readStatusNow();
+    const r = spawnSync(process.execPath,
+      [path.join(fx.primary, 'scripts', 'install-primary-guard.js'), '--self-test'], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /self-test: PASS/);
+
+    const after_ = readStatusNow();
+    assert.equal(after_.selfTest.counts.total, before_.selfTest.counts.total + 2,
+      'self-test drives two probes — a refusal case and an allow case');
+    assert.equal(after_.counts.total, before_.counts.total,
+      'self-test traffic must never be counted as genuine traffic');
+    assert.ok(after_.selfTest.lastSuccessfulAt, 'a passing self-test must stamp its own success');
+  });
+
+  it('--status/--json reports the shape #1400 asks for', () => {
+    const r = spawnSync(process.execPath,
+      [path.join(fx.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+      { encoding: 'utf8' });
+    assert.equal(r.status, 0);
+    const parsed = JSON.parse(r.stdout);
+    assert.ok('counts' in parsed && 'total' in parsed.counts);
+    assert.ok('lastInvokedAt' in parsed);
+    assert.ok('selfTest' in parsed);
+    assert.ok('staleWarning' in parsed);
+    assert.ok('crashSinceLastSelfTest' in parsed);
+  });
+
+  it('--status flags a crash recorded AFTER the last successful self-test as actionable', () => {
+    // A fresh fixture, so the crash/self-test ORDER is unambiguous.
+    const fresh = makeFixture();
+    try {
+      fs.writeFileSync(path.join(fresh.primary, '.claude', 'settings.local.json'),
+        JSON.stringify(installer.apply({}, fresh.primary, 'install').settings, null, 2));
+      const selfTestFirst = spawnSync(process.execPath,
+        [path.join(fresh.primary, 'scripts', 'install-primary-guard.js'), '--self-test'],
+        { encoding: 'utf8' });
+      assert.equal(selfTestFirst.status, 0, selfTestFirst.stdout + selfTestFirst.stderr);
+
+      const guardPath = path.join(fresh.primary, installer.GUARD_REL);
+      const saved = fs.readFileSync(guardPath, 'utf8');
+      fs.writeFileSync(guardPath, 'not valid node {{{');
+      try {
+        const crashed = invokeCli(fresh, { file_path: path.join(fresh.primary, 'public', 'sw.js') });
+        assert.equal(crashed.status, 0);
+      } finally {
+        fs.writeFileSync(guardPath, saved);
+      }
+
+      const statusRun = spawnSync(process.execPath,
+        [path.join(fresh.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+        { encoding: 'utf8' });
+      assert.equal(statusRun.status, 1, 'an actionable status must exit non-zero');
+      const parsed = JSON.parse(statusRun.stdout);
+      assert.equal(parsed.crashSinceLastSelfTest, true);
+    } finally {
+      fresh.cleanup();
+    }
+  });
+
+  it('warns when commits advanced since the last check with no genuine invocation, '
+    + 'and stays quiet when neither advanced', () => {
+    const fresh = makeFixture();
+    try {
+      const git = (...args) => execFileSync('git', args, { cwd: fresh.primary, stdio: 'pipe' });
+      const first = spawnSync(process.execPath,
+        [path.join(fresh.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+        { encoding: 'utf8' });
+      assert.equal(JSON.parse(first.stdout).staleWarning, false, 'first check has no baseline yet');
+
+      // Neither signal advances: a check right after must stay quiet — the
+      // "intentionally idle install" case #1400 requirement 4 names.
+      const quiet = spawnSync(process.execPath,
+        [path.join(fresh.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+        { encoding: 'utf8' });
+      assert.equal(JSON.parse(quiet.stdout).staleWarning, false,
+        'an intentionally idle install must remain quiet');
+
+      // Commits advance; no guard invocation happens in between.
+      fs.writeFileSync(path.join(fresh.primary, 'lib', 'x.js'), '// changed\n');
+      git('add', '-A');
+      git('commit', '-q', '-m', 'unrelated activity, no guard invocation');
+
+      const warned = spawnSync(process.execPath,
+        [path.join(fresh.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+        { encoding: 'utf8' });
+      assert.equal(warned.status, 1);
+      assert.equal(JSON.parse(warned.stdout).staleWarning, true);
+    } finally {
+      fresh.cleanup();
+    }
   });
 });

@@ -32,7 +32,7 @@ const { execFileSync } = require('node:child_process');
 
 const engines = require('../lib/engines');
 const { shellWord, firstWord } = require('../lib/shell-word');
-const { guardCommand, pinnedScript, GUARD_REL } = require('../scripts/install-primary-guard');
+const { guardCommand, pinnedScript, GUARD_REL, INSTALLER_REL } = require('../scripts/install-primary-guard');
 
 // Every character that breaks one of the quoting styles, in one directory name:
 // a space (breaks bare), `$` and a backtick (survive single quotes only), a
@@ -210,6 +210,14 @@ describe('the guard command round-trips through its own reader (#1062)', () => {
   // and changing the quoting broke the reader while leaving the writer correct:
   // `--check` then called a freshly-wired install STALE. A test of either half
   // alone cannot see that.
+  //
+  // The pinned target changed under #1400: the wired command now names
+  // `install-primary-guard.js` (the stable outer runner, invoked with
+  // `--invoke`) rather than `guard-primary-checkout.js` directly — the only
+  // way an outer process can witness a syntax error IN the policy script as a
+  // crash, rather than losing it to the same `|| true` the policy script
+  // already hides behind. The invariant under test is unchanged: whatever the
+  // generator writes, the reader must read back.
   for (const [label, dir] of [
     ['a hostile path', path.join(os.tmpdir(), HOSTILE)],
     ['an ordinary path', '/opt/tangleclaw'],
@@ -217,14 +225,15 @@ describe('the guard command round-trips through its own reader (#1062)', () => {
   ]) {
     it(`reads back what it wrote for ${label}`, () => {
       const cmd = guardCommand(dir);
-      assert.equal(pinnedScript(cmd), path.join(dir, GUARD_REL));
+      assert.equal(pinnedScript(cmd), path.join(dir, INSTALLER_REL));
     });
   }
 
-  it('still reads the double-quoted form already wired on existing machines', () => {
+  it('still reads the double-quoted form already wired on existing (pre-#1400) machines', () => {
     // Those entries live in gitignored settings files that nothing migrates, so
-    // the reader has to keep understanding them or it reports a working install
-    // as broken.
+    // the reader has to keep understanding them — pinned straight at the
+    // policy script, no `--invoke` — or it reports a working install as
+    // broken merely for having been wired before #1400 shipped.
     const legacy = `node "${path.join('/opt/tangleclaw', GUARD_REL)}" || true`;
     assert.equal(pinnedScript(legacy), path.join('/opt/tangleclaw', GUARD_REL));
   });
