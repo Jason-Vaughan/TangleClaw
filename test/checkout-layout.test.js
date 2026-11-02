@@ -447,18 +447,30 @@ const SAMPLE_PLIST_XML = [
   ''
 ].join('\n');
 
-describe('renderLaunchdServerPlist (#1672 Round 3)', () => {
-  it('rewrites ONLY WorkingDirectory, leaving ProgramArguments\' relative server.js entry and the HOME-relative log path untouched', () => {
-    const xml = renderLaunchdServerPlist('/dedicated/root', { templateXml: SAMPLE_PLIST_XML });
+describe('renderLaunchdServerPlist (#1672 Round 3 → Round 4)', () => {
+  it('rewrites WorkingDirectory and substitutes every __PLACEHOLDER__, leaving the relative server.js argument and /dev/null untouched', () => {
+    const xml = renderLaunchdServerPlist('/dedicated/root', {
+      templateXml: SAMPLE_PLIST_XML, nodePath: '/opt/node/bin/node', homeDir: '/Users/op', launchdPath: '/usr/bin:/bin'
+    });
     assert.match(xml, /<key>WorkingDirectory<\/key>\s*<string>\/dedicated\/root<\/string>/);
     assert.match(xml, /<string>server\.js<\/string>/, 'the relative server.js argument must survive untouched');
-    assert.match(xml, /__HOME__\/\.tangleclaw\/logs\/server\.err\.log/, 'the HOME-relative log path must survive untouched');
+    assert.match(xml, /<string>\/opt\/node\/bin\/node<\/string>/, '__NODE_PATH__ must be substituted');
+    assert.match(xml, /\/Users\/op\/\.tangleclaw\/logs\/server\.err\.log/, '__HOME__ must be substituted, not left literal');
     assert.match(xml, /<string>\/dev\/null<\/string>/);
+    assert.equal(/__[A-Z0-9_]+__/.test(xml), false, 'no placeholder may survive rendering');
   });
 
-  it('XML-escapes a path containing characters meaningful to XML', () => {
-    const xml = renderLaunchdServerPlist('/weird & <root>', { templateXml: SAMPLE_PLIST_XML });
+  it('defaults __NODE_PATH__/__HOME__/__LAUNCHD_PATH__ to this process\'s own values when no override is given', () => {
+    const xml = renderLaunchdServerPlist('/dedicated/root', { templateXml: SAMPLE_PLIST_XML });
+    assert.ok(xml.includes(`<string>${process.execPath}</string>`));
+    assert.ok(xml.includes(`${require('node:os').homedir()}/.tangleclaw/logs/server.err.log`));
+    assert.equal(/__[A-Z0-9_]+__/.test(xml), false);
+  });
+
+  it('XML-escapes a path containing characters meaningful to XML, for WorkingDirectory and for a substituted placeholder alike', () => {
+    const xml = renderLaunchdServerPlist('/weird & <root>', { templateXml: SAMPLE_PLIST_XML, homeDir: '/weird & <home>' });
     assert.match(xml, /<string>\/weird &amp; &lt;root&gt;<\/string>/);
+    assert.match(xml, /\/weird &amp; &lt;home&gt;\/\.tangleclaw/);
   });
 
   it('throws TypeError when templateXml is missing or empty', () => {
@@ -469,9 +481,17 @@ describe('renderLaunchdServerPlist (#1672 Round 3)', () => {
   it('throws when the template XML has no WorkingDirectory key to rewrite', () => {
     assert.throws(() => renderLaunchdServerPlist('/x', { templateXml: '<plist><dict></dict></plist>' }));
   });
+
+  it('fails closed (#1672 Round 4) when a placeholder survives every known substitution, rather than returning broken XML', () => {
+    const withUnknownPlaceholder = SAMPLE_PLIST_XML.replace('/dev/null', '__SOME_FUTURE_PLACEHOLDER__');
+    assert.throws(
+      () => renderLaunchdServerPlist('/dedicated/root', { templateXml: withUnknownPlaceholder }),
+      /unresolved placeholder/
+    );
+  });
 });
 
-describe('repointLaunchdServerPlist (#1672 Round 3)', () => {
+describe('repointLaunchdServerPlist (#1672 Round 3 → Round 4)', () => {
   let base;
   beforeEach(() => { base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-repoint-'))); });
   afterEach(() => fs.rmSync(base, { recursive: true, force: true }));
@@ -493,17 +513,33 @@ describe('repointLaunchdServerPlist (#1672 Round 3)', () => {
     assert.equal(fs.existsSync(plistPath), false, 'nothing must be written when validation fails');
   });
 
-  it('writes the rewritten plist to plistPath, reading from the target\'s own deploy/ template by default', () => {
+  it('writes the rewritten plist to plistPath, reading from the target\'s own deploy/ template when nothing is installed at plistPath yet, with no unresolved placeholders', () => {
     const target = makeValidTarget();
     const plistPath = path.join(base, 'out.plist');
-    const result = repointLaunchdServerPlist(target, { plistPath });
+    const result = repointLaunchdServerPlist(target, { plistPath, nodePath: '/opt/node', homeDir: '/home/op', launchdPath: '/bin' });
     assert.equal(result.reloaded, false);
+    assert.equal(result.sourcePath, path.join(target, 'deploy', 'com.tangleclaw.server.plist'));
     assert.equal(fs.existsSync(plistPath), true);
     const written = fs.readFileSync(plistPath, 'utf8');
     assert.ok(written.includes(`<string>${target}</string>`), 'the rewritten WorkingDirectory must be present');
+    assert.equal(/__[A-Z0-9_]+__/.test(written), false, 'the installed plist must carry no unresolved __*__ placeholder');
+    assert.match(written, /<key>ProgramArguments<\/key>\s*<array>\s*<string>\/opt\/node<\/string>\s*<string>server\.js<\/string>/,
+      'ProgramArguments must be a valid [nodePath, server.js] pair');
+    assert.match(written, /<key>WorkingDirectory<\/key>\s*<string>[^<]+<\/string>/);
   });
 
-  it('reads from the existing plist at plistPath instead of the template when readFrom is "existing"', () => {
+  it('(#1672 Round 4) defaults to the ALREADY-INSTALLED plist at plistPath, not the raw template, once one exists', () => {
+    const target = makeValidTarget();
+    const plistPath = path.join(base, 'out.plist');
+    const first = repointLaunchdServerPlist(target, { plistPath });
+    assert.equal(first.sourcePath, path.join(target, 'deploy', 'com.tangleclaw.server.plist'), 'first repoint: nothing installed yet, so the template is the source');
+
+    const second = repointLaunchdServerPlist(target, { plistPath });
+    assert.equal(second.sourcePath, plistPath, 'second repoint: the now-installed, already-rendered plist is preferred over the raw template');
+    assert.equal(/__[A-Z0-9_]+__/.test(fs.readFileSync(plistPath, 'utf8')), false);
+  });
+
+  it('reads from the existing plist at plistPath instead of the template when readFrom is "existing", even if the template would also have been available', () => {
     const target = makeValidTarget();
     const plistPath = path.join(base, 'existing.plist');
     // A pre-existing installed plist, deliberately different from the template
@@ -513,6 +549,17 @@ describe('repointLaunchdServerPlist (#1672 Round 3)', () => {
     const result = repointLaunchdServerPlist(target, { plistPath, readFrom: 'existing' });
     assert.equal(result.sourcePath, plistPath);
     assert.match(fs.readFileSync(plistPath, 'utf8'), /\/custom\/out\.log/, 'the existing custom field must survive');
+    assert.equal(/__[A-Z0-9_]+__/.test(fs.readFileSync(plistPath, 'utf8')), false);
+  });
+
+  it('readFrom "template" forces the raw template even when a (different) plist is already installed at plistPath', () => {
+    const target = makeValidTarget();
+    const plistPath = path.join(base, 'out.plist');
+    fs.writeFileSync(plistPath, SAMPLE_PLIST_XML.replace('/dev/null', '/already-installed-marker.log'));
+    const result = repointLaunchdServerPlist(target, { plistPath, readFrom: 'template' });
+    assert.equal(result.sourcePath, path.join(target, 'deploy', 'com.tangleclaw.server.plist'));
+    assert.equal(fs.readFileSync(plistPath, 'utf8').includes('/already-installed-marker.log'), false,
+      'forcing the template must overwrite, not preserve, whatever was installed before');
   });
 
   it('never calls execFileSync unless reload is true', () => {
