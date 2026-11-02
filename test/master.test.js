@@ -3139,6 +3139,24 @@ describe('master API routes over HTTP', () => {
     assert.equal(data.exists === null, data.incomplete.includes('exists'),
       'exists === null and incomplete naming it are the same claim, and must not disagree');
     assert.equal(data.tmuxSession, 'tangleclaw-master');
+    // #2120/#2132/#966 — present on every answer, not only once asked for.
+    assert.equal(data.continuity.status, 'unmeasured', 'no reading was supplied on this call');
+    assert.equal(data.authority.accessLevel, 'read-only');
+    assert.equal(data.authority.toggleState, 'read-only');
+  });
+
+  it('GET /api/master/status forwards remainingPercent as the continuity reading (#2120)', async () => {
+    const { status, data } = await request('GET', '/api/master/status?remainingPercent=10');
+    assert.equal(status, 200);
+    assert.equal(data.continuity.status, 'critical');
+    assert.equal(data.continuity.remainingPercent, 10);
+    assert.equal(data.continuity.source, 'reported');
+  });
+
+  it('GET /api/master/status forwards usedBytes+capacityBytes as a pane-buffer estimate (#2120)', async () => {
+    const { status, data } = await request('GET', '/api/master/status?usedBytes=95&capacityBytes=100');
+    assert.equal(status, 200);
+    assert.equal(data.continuity.source, 'estimated');
   });
 
   it('POST /api/master/ensure returns 200 on success and 500 with a code on refusal', async () => {
@@ -3242,6 +3260,133 @@ describe('master API routes over HTTP', () => {
     } finally {
       master.killMasterSession = original;
     }
+  });
+
+  // #2129 — a caller that is not the operator (no headers at all: not the
+  // dashboard, not a bound project, not the Master) must never reach ensure
+  // or kill, which start or stop the operator's own fleet assistant.
+  function bareRequest(method, urlPath) {
+    return new Promise((resolve, reject) => {
+      const req = http.request({
+        hostname: '127.0.0.1', port: server.address().port, path: urlPath, method,
+        headers: { 'Content-Type': 'application/json' }
+      }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({ status: res.statusCode, data: JSON.parse(Buffer.concat(chunks).toString('utf8')) }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  it('POST /api/master/ensure refuses a caller that is not the operator', async () => {
+    const res = await bareRequest('POST', '/api/master/ensure');
+    assert.notEqual(res.status, 200);
+    assert.notEqual(res.data.code, undefined);
+  });
+
+  it('POST /api/master/kill refuses a caller that is not the operator', async () => {
+    const res = await bareRequest('POST', '/api/master/kill');
+    assert.notEqual(res.status, 200);
+    assert.notEqual(res.data.code, undefined);
+  });
+});
+
+describe('GET/POST /api/master/authority (#2132, #966)', () => {
+  let server;
+  let operatorWriteHeaders;
+  const masterAuthority = require('../lib/master-authority');
+  const { operatorHeaders, sendAs } = require('./_shared-docs-callers');
+
+  const realApplyMasterAccessLevel = master.applyMasterAccessLevel;
+
+  before(async () => {
+    const { createServer } = require('../server');
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    // Stubbed for the same reason `ensure`/`kill` stub their own module
+    // functions above: this machine's REAL `~/.tangleclaw/master` home exists
+    // (an operator's genuine Master), so the real `applyMasterAccessLevel`
+    // would write to it and could throw on this scratch store's engine state.
+    // The route under test is the audit-trail wiring, not the write-guard
+    // regeneration `test/master.test.js` already covers elsewhere.
+    master.applyMasterAccessLevel = () => ({ applied: false, home: '/tmp/stubbed-master-home' });
+    // POST /api/master/authority goes through the strict `_requireOperatorWrite`
+    // proof, not the loose dashboard-client header `request()` above uses for
+    // ensure/kill: on this OPEN install (no login configured) that means
+    // same-origin headers plus the dashboard's own open-install anti-forgery
+    // token, minted per `GET /api/auth/me` — same pattern as
+    // `test/api-permissions.test.js`'s `writeHeaders` setup.
+    operatorWriteHeaders = operatorHeaders(server);
+    const me = await sendAs(server, 'GET', '/api/auth/me', undefined, operatorWriteHeaders);
+    if (me.data && me.data.openInstallToken) {
+      operatorWriteHeaders = { ...operatorWriteHeaders, 'x-tc-open-token': me.data.openInstallToken };
+    }
+  });
+
+  after(async () => {
+    master.applyMasterAccessLevel = realApplyMasterAccessLevel;
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  beforeEach(() => {
+    const config = store.config.load();
+    delete config.master;
+    store.config.save(config);
+  });
+
+  function requestJson(method, urlPath, body, headers) {
+    return new Promise((resolve, reject) => {
+      const raw = body !== undefined ? JSON.stringify(body) : null;
+      const reqHeaders = { 'Content-Type': 'application/json', ...headers };
+      if (raw !== null) reqHeaders['Content-Length'] = Buffer.byteLength(raw);
+      const req = http.request({
+        hostname: '127.0.0.1', port: server.address().port, path: urlPath, method, headers: reqHeaders
+      }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({ status: res.statusCode, data: JSON.parse(Buffer.concat(chunks).toString('utf8')) }));
+      });
+      req.on('error', reject);
+      if (raw !== null) req.write(raw);
+      req.end();
+    });
+  }
+
+  it('GET reads the canonical read-only default with no prior transition', async () => {
+    const res = await requestJson('GET', '/api/master/authority', undefined, operatorWriteHeaders);
+    assert.equal(res.status, 200);
+    assert.equal(res.data.accessLevel, 'read-only');
+    assert.equal(res.data.toggleState, 'read-only');
+    assert.equal(res.data.generation, 0);
+  });
+
+  it('POST, as the operator, records an audited transition the GET then reflects', async () => {
+    const posted = await requestJson('POST', '/api/master/authority', { accessLevel: 'write' }, operatorWriteHeaders);
+    assert.equal(posted.status, 200);
+    assert.equal(posted.data.accessLevel, 'write');
+    assert.equal(posted.data.toggleState, 'read-write');
+    assert.equal(posted.data.generation, 1);
+    assert.equal(posted.data.updatedBy, 'operator');
+
+    const got = await requestJson('GET', '/api/master/authority', undefined, operatorWriteHeaders);
+    assert.equal(got.data.generation, 1);
+    assert.equal(got.data.toggleState, 'read-write');
+  });
+
+  it('POST refuses a self-contradictory accessLevel/toggleState pair with 400', async () => {
+    const res = await requestJson('POST', '/api/master/authority', { accessLevel: 'read-only', toggleState: 'read-write' }, operatorWriteHeaders);
+    assert.equal(res.status, 400);
+    assert.equal(res.data.code, 'AUTHORITY_BAD_REQUEST');
+  });
+
+  it('POST refuses a caller that is not the operator (no headers at all)', async () => {
+    const res = await requestJson('POST', '/api/master/authority', { accessLevel: 'write' }, {});
+    assert.notEqual(res.status, 200);
+    const config = store.config.load();
+    assert.equal(masterAuthority.getAuthorityState(config).toggleState, 'read-only',
+      'a refused caller must never move the canonical state');
   });
 });
 

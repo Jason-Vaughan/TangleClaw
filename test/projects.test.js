@@ -2807,9 +2807,28 @@ describe('projects', () => {
 
       // Should have per-project config
       assert.ok(fs.existsSync(path.join(attachDir, '.tangleclaw', 'project.json')));
+
+      // #2125 — an attached project gets the standard onboarding trust rule,
+      // proposed (not auto-active) for the Operator to review.
+      const projectOnboardingRules = require('../lib/project-onboarding-rules');
+      const rules = store.sessionRules.list({ projectId: result.project.id });
+      const onboarding = rules.filter((r) => projectOnboardingRules.hasTrustRule([r]).present);
+      assert.equal(onboarding.length, 1);
+      assert.equal(onboarding[0].status, 'proposed');
     });
 
-  
+    it('does not seed a second onboarding trust rule on a project that already has one', () => {
+      const projectOnboardingRules = require('../lib/project-onboarding-rules');
+      const projDir = path.join(projectsDir, 'already-onboarded');
+      fs.mkdirSync(projDir, { recursive: true });
+      const row = store.projects.create({ name: 'already-onboarded', path: projDir, engine: 'claude' });
+
+      assert.equal(projects.ensureOnboardingTrustRule(row.id), true);
+      assert.equal(projects.ensureOnboardingTrustRule(row.id), false, 'a second call is a no-op');
+      const rules = store.sessionRules.list({ projectId: row.id });
+      assert.equal(rules.filter((r) => projectOnboardingRules.hasTrustRule([r]).present).length, 1);
+    });
+
     it('reads existing .tangleclaw/project.json', async () => {
       const attachDir = path.join(projectsDir, 'has-config');
       fs.mkdirSync(path.join(attachDir, '.tangleclaw'), { recursive: true });
@@ -3674,6 +3693,41 @@ describe('projects', () => {
       } finally {
         projectConfigModule.load = savedLoad;
       }
+    });
+  });
+
+  // ── #1982: operator-authority setting discrepancies, surfaced on enrichment ──
+  describe('authorityDiscrepancies (#1982)', () => {
+    let authDir;
+
+    before(() => {
+      authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-authority-discrepancy-'));
+    });
+
+    after(() => {
+      fs.rmSync(authDir, { recursive: true, force: true });
+    });
+
+    it('enrichProject reports none by default', async () => {
+      const projPath = path.join(authDir, 'auth-clean');
+      fs.mkdirSync(projPath, { recursive: true });
+      const registered = store.projects.create({ name: 'auth-clean', path: projPath, engine: 'claude' });
+      const enriched = await projects.enrichProject(registered);
+      assert.deepEqual(enriched.authorityDiscrepancies, []);
+    });
+
+    it('surfaces a disagreement between an operator recoveryMode pin and project.json', async () => {
+      const projPath = path.join(authDir, 'auth-conflict');
+      fs.mkdirSync(projPath, { recursive: true });
+      const registered = store.projects.create({ name: 'auth-conflict', path: projPath, engine: 'claude' });
+      store.projectRecoveryState.recordDecision(registered.id, 'operator', 'test-operator');
+      const projConfig = projectConfigModule.load(projPath);
+      projConfig.launchSequence = { ...projConfig.launchSequence, recoveryMode: 'advisory' };
+      store.projectConfig.save(projPath, projConfig);
+
+      const enriched = await projects.enrichProject(registered);
+      assert.equal(enriched.authorityDiscrepancies.length, 1);
+      assert.match(enriched.authorityDiscrepancies[0], /operator pinned/);
     });
   });
 

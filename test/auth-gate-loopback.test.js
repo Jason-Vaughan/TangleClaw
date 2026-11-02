@@ -18,7 +18,7 @@
  * is a `server.js` change, out of this car's file envelope.
  */
 
-const { describe, it } = require('node:test');
+const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const authGate = require('../lib/auth-gate');
 
@@ -124,5 +124,148 @@ describe('lib/auth-gate — isMachineClient\'s opt-in service-token requirement 
       const machineClient = authGate.isMachineClient({ ...local, requireServiceToken: true, serviceTokenValid: true });
       assert.deepEqual(authGate.evaluateUpgrade({ ...base, machineClient }), { action: 'allow' });
     });
+  });
+});
+
+describe('server.js — _gateIdentity wires the opt-in end to end (#1973)', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const http = require('node:http');
+  const store = require('../lib/store');
+  const serviceToken = require('../lib/service-token');
+  const { createServer } = require('../server');
+
+  let tmpDir;
+  let server;
+
+  function send(headers = {}) {
+    return new Promise((resolve, reject) => {
+      const req = http.request({
+        hostname: '127.0.0.1', port: server.address().port, path: '/api/master/status', method: 'GET', headers
+      }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({ status: res.statusCode }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  before(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-gate-1973-'));
+    store._setBasePath(tmpDir);
+    store.init();
+    // Arm the login gate: a bare, cookieless, non-browser-shaped GET is the
+    // exact shape the machine-client carve-out exists for — it would
+    // otherwise be challenged like any other anonymous caller.
+    store.users.create('gate-1973-operator', 'Fixture-Passphrase-2233');
+    const armed = store.config.load();
+    armed.authEnabled = true;
+    store.config.save(armed);
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('a bare machine call is let through while machineClientRequiresServiceToken is unset (unchanged default)', async () => {
+    const res = await send();
+    assert.equal(res.status, 200);
+  });
+
+  it('the same bare call is challenged once the operator opts in and presents no token', async () => {
+    const config = store.config.load();
+    config.machineClientRequiresServiceToken = true;
+    store.config.save(config);
+    try {
+      const res = await send();
+      assert.equal(res.status, 401);
+    } finally {
+      config.machineClientRequiresServiceToken = false;
+      store.config.save(config);
+    }
+  });
+
+  it('passes once the opted-in caller presents a valid AUTH-4 service token', async () => {
+    const config = store.config.load();
+    config.machineClientRequiresServiceToken = true;
+    config.serviceTokenEnabled = true;
+    serviceToken.ensureTokenWhenEnabled(config);
+    store.config.save(config);
+    try {
+      const res = await send({ Authorization: `Bearer ${config.serviceToken}` });
+      assert.equal(res.status, 200);
+    } finally {
+      config.machineClientRequiresServiceToken = false;
+      config.serviceTokenEnabled = false;
+      store.config.save(config);
+    }
+  });
+
+  it('fails CLOSED for the machine-client carve-out when config.json goes unreadable after opting in (PRR-A BLOCKING, round 1)', async () => {
+    // Opt in first, as the prior tests do, then corrupt the file directly
+    // (bypassing store.config.save, which would refuse or normalize bad
+    // JSON) to reach the exact state _gateConfig()'s try/catch exists for.
+    const configPath = store._getConfigPath();
+    const goodJson = fs.readFileSync(configPath, 'utf8');
+    const config = JSON.parse(goodJson);
+    config.machineClientRequiresServiceToken = true;
+    store.config.save(config);
+    // Warm _gateConfig()'s own last-known-good cache with the OPTED-IN
+    // value before corrupting the file — the fix this test guards reads
+    // that cache on a read failure, so the regression only reproduces when
+    // the cache actually saw the opt-in, same as it would on a real
+    // install that opted in and then later lost its config.
+    await send();
+    const optedInJson = fs.readFileSync(configPath, 'utf8');
+    fs.writeFileSync(configPath, '{ not valid json');
+    try {
+      const res = await send();
+      // Refused, not silently waved through as a machine client: an
+      // unreadable config is the UNREADABLE gate state, which is meant to
+      // enforce, not to reopen the loopback carve-out this opt-in exists to
+      // close.
+      assert.notEqual(res.status, 200);
+    } finally {
+      fs.writeFileSync(configPath, optedInJson);
+      const restored = store.config.load();
+      restored.machineClientRequiresServiceToken = false;
+      store.config.save(restored);
+    }
+  });
+
+  it('keeps the pre-#1973 carve-out when config.json goes unreadable on an install that never opted in', async () => {
+    // The regression the first version of the fail-closed fix introduced:
+    // unconditionally requiring a token on ANY config-read failure broke
+    // this exact scenario for the entire fleet, not just opted-in
+    // installs — caught by test/launch-recovery-clear.test.js in CI, not
+    // locally. An install that never set machineClientRequiresServiceToken
+    // must keep today's behavior when its config breaks for an unrelated
+    // reason: a bare machine-shaped request still reaches the route (and
+    // whatever THAT route's own launch-binding floor decides), rather than
+    // being challenged by the login gate as if it were a browser.
+    const configPath = store._getConfigPath();
+    const goodJson = fs.readFileSync(configPath, 'utf8');
+    // Warm the cache with a config that has NEVER opted in.
+    await send();
+    fs.writeFileSync(configPath, '{ not valid json');
+    try {
+      const res = await send();
+      // Not the login gate's 401 challenge: machineClient:true still
+      // carries this request past `authGate.evaluate`, same as before
+      // #1973 existed. Whatever happens after that is a separate concern —
+      // GET /api/master/status reads config itself too, and genuinely
+      // cannot serve a normal answer while it is unreadable (500), which
+      // is not what this test is about.
+      assert.notEqual(res.status, 401, JSON.stringify(res));
+    } finally {
+      fs.writeFileSync(configPath, goodJson);
+    }
   });
 });

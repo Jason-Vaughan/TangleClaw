@@ -109,6 +109,7 @@ const launchSequence = require('./lib/launch-sequence');
 const launchRecoveryClear = require('./lib/launch-recovery-clear');
 const recoveryDefault = require('./lib/recovery-default');
 const master = require('./lib/master');
+const masterAuthority = require('./lib/master-authority');
 const sharedDocsAccess = require('./lib/shared-docs-access');
 const sharedDocRecord = require('./lib/shared-docs');
 const launchBindingGuard = require('./lib/launch-binding-guard');
@@ -1227,15 +1228,31 @@ route('POST', '/api/dashboard/boot', (_req, res, _params, body) => {
 // the M2M-gated path set: these are operator surfaces, not fleet surfaces.
 
 // GET /api/master/status — is the master session alive? Truth from tmux.
-route('GET', '/api/master/status', (_req, res) => {
-  jsonResponse(res, 200, master.getMasterStatus());
+// #2120 — `remainingPercent` (0-100), or `usedBytes`+`capacityBytes` as a
+// pane-buffer-size estimate, are optional continuity-handoff inputs; omitted
+// entirely, the continuity signal reads `unmeasured` rather than a false `ok`.
+route('GET', '/api/master/status', (req, res) => {
+  const query = parseQuery(reqUrl(req).search);
+  const continuityReading = {};
+  const remainingPercent = Number(query.remainingPercent);
+  if (query.remainingPercent !== undefined && Number.isFinite(remainingPercent)) {
+    continuityReading.remainingPercent = remainingPercent;
+  }
+  const usedBytes = Number(query.usedBytes);
+  const capacityBytes = Number(query.capacityBytes);
+  if (query.usedBytes !== undefined && query.capacityBytes !== undefined
+    && Number.isFinite(usedBytes) && Number.isFinite(capacityBytes)) {
+    continuityReading.paneBuffer = { usedBytes, capacityBytes };
+  }
+  jsonResponse(res, 200, master.getMasterStatus({ continuityReading }));
 });
 
 // POST /api/master/ensure — idempotent create-or-noop. Regenerates the
 // master's CLAUDE.md identity every call (so guide/token changes propagate),
 // launches the session only when absent. The UI calls this before attaching
 // the terminal iframe (ttyd only attaches to EXISTING tmux sessions).
-route('POST', '/api/master/ensure', (_req, res) => {
+route('POST', '/api/master/ensure', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'start the Project Master')) return;
   const result = master.ensureMasterSession();
   if (result.error) {
     // Refused before anything started: the engine could not be shown isolated
@@ -1260,7 +1277,8 @@ route('POST', '/api/master/ensure', (_req, res) => {
 // master is success, because the operator's intent is "not running". The remedy
 // for #968 — a level change binds on the guard at once, but the running master
 // reads its instructions only at launch, so it has to restart to act on one.
-route('POST', '/api/master/kill', (_req, res) => {
+route('POST', '/api/master/kill', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'stop the Project Master')) return;
   const result = master.killMasterSession();
   if (result.error) {
     // Same distinction ensure draws, and for the same reason: tmux declining to
@@ -1274,6 +1292,77 @@ route('POST', '/api/master/kill', (_req, res) => {
     return errorResponse(res, 500, result.error, 'MASTER_LIVENESS_UNKNOWN', { cause: result.cause });
   }
   jsonResponse(res, 200, result);
+});
+
+/**
+ * `_requireOperatorWrite` proof options for a Project Master authority
+ * change (#2132/#966) — same shape as `_startupPromptProofOptions`, for the
+ * same reason: this changes what the Master may do fleet-wide, so only a
+ * provably signed-in operator (never the Master itself, never a project)
+ * may change it.
+ * @param {string} action - Completing "...to {action}".
+ * @returns {object}
+ */
+function _masterAuthorityProofOptions(action) {
+  return {
+    logEvent: 'Refused a Project Master authority change',
+    logContext: {},
+    fallbackAction: action,
+    sameOriginWhat: 'A Project Master authority change',
+    unauthenticated: `Sign in to ${action}: this is the operator's to change, never the Master's own.`,
+    machineClient: `Only the operator may ${action}. A local process is not the operator, and the Master cannot grant itself authority.`,
+    openToken: `This install has no login, so a request to ${action} must carry the anti-forgery token its `
+      + 'dashboard was issued. Reload the dashboard and try again.',
+    gateUnsupported: (gateState) => `Cannot ${action} while the login gate is "${gateState}". Resolve the gate first.`
+  };
+}
+
+// GET /api/master/authority — the Project Master's current lifecycle
+// authority state (#2132/#966): the 3-tier accessLevel, the binary
+// toggleState it derives to, and the generation/updatedAt/updatedBy of its
+// last recorded Operator transition.
+route('GET', '/api/master/authority', (_req, res) => {
+  jsonResponse(res, 200, masterAuthority.getAuthorityState(store.config.load()));
+});
+
+// POST /api/master/authority — an Operator-authorized lifecycle-authority
+// transition. Body: { accessLevel? , toggleState? } (either, not both
+// disagreeing — masterAuthority.applyOperatorAuthorityChange itself refuses
+// a contradiction). The operator only: the Master cannot grant itself
+// standing fleet-mutation authority (#2132 acceptance criterion 2).
+route('POST', '/api/master/authority', (req, res, _params, body) => {
+  const proof = _requireOperatorWrite(req, res, _masterAuthorityProofOptions('change the Project Master\'s lifecycle authority'));
+  if (!proof) return;
+  const config = store.config.load();
+  // `load()` shallow-spreads `DEFAULT_CONFIG` under a config that has no
+  // `master` key of its own (a fresh install, or a config.json saved before
+  // `master` ever existed on it) — so `config.master`, left untouched, can be
+  // the literal shared `DEFAULT_CONFIG.master` object. `applyOperatorAuthorityChange`
+  // mutates `config.master` in place; breaking the reference here, before that
+  // call, is what keeps a stored transition from corrupting every future
+  // config.load() for the life of this process.
+  if (config.master && typeof config.master === 'object') config.master = { ...config.master };
+  const previousAccessLevel = masterAuthority.getAuthorityState(config).accessLevel;
+  let next;
+  try {
+    next = masterAuthority.applyOperatorAuthorityChange(config, {
+      accessLevel: body ? body.accessLevel : undefined,
+      toggleState: body ? body.toggleState : undefined,
+      actor: proof.actor || 'operator'
+    });
+  } catch (err) {
+    if (err.code === 'AUTHORITY_BAD_REQUEST') {
+      return errorResponse(res, 400, err.message, err.code);
+    }
+    throw err;
+  }
+  masterAuthority.ensureApiTokenWhenEnabled(config);
+  store.config.save(config);
+  // Regenerate the Master's own file-write guard only when the level actually
+  // moved — `applyMasterAccessLevel` is a no-op when the Master has never been
+  // launched, but still touches disk and can throw when it has.
+  if (next.accessLevel !== previousAccessLevel) master.applyMasterAccessLevel(next.accessLevel);
+  jsonResponse(res, 200, next);
 });
 
 // POST /api/master/rules/restore-defaults — replace every master Hard rule
@@ -4748,13 +4837,16 @@ route('POST', '/api/projects/import', (req, res, _params, body) => {
     const engineId = importDefaultEngine;
 
     try {
-      store.projects.create({
+      const created = store.projects.create({
         name,
         path: projPath,
         engine: engineId,
         tags: [],
         ports: {}
       });
+      // #2125 — an imported project gets the standard onboarding trust rule
+      // exactly as a created one does; best-effort, never fails the import.
+      projects.ensureOnboardingTrustRule(created.id);
 
       // Write per-project config only when none is on disk — an existing (or
       // unusable) project.json is never clobbered by defaults (#2232).
@@ -7034,6 +7126,58 @@ function _gateIdentity(req, socket, pathname) {
   }
   const browserShaped = _looksLikeBrowser(req);
   const conn = socket || req.socket;
+  // #1973 — the opt-in fifth condition (Ruling A491-W1D-R2): while the
+  // operator has turned `machineClientRequiresServiceToken` on, the loopback
+  // carve-out additionally requires a valid AUTH-4 service token on THIS
+  // request. `_gateConfig()`, not a fresh `store.config.load()`: this runs on
+  // every request, and that cache is keyed on the file's own mtime/size.
+  // `serviceToken.validateRequest` answers `{ok: true}` when ITS OWN gate
+  // (`serviceTokenEnabled`) is off, which is not proof of a real token — only
+  // `gate.ok && config.serviceTokenEnabled` together are, the same condition
+  // the AUTH-4 M2M surface gate below already uses for the same reason.
+  // Guarded the same way the session lookup above is: `resolveGateState`
+  // already decided the gate is active despite whatever this read finds (a
+  // corrupt or missing config.json fails the gate CLOSED there, not here),
+  // and this function has no catch above it either — a throw must not be
+  // how that failure reaches the caller a second time.
+  let requireServiceToken = false;
+  let serviceTokenValid = false;
+  try {
+    const config = _gateConfig();
+    requireServiceToken = config.machineClientRequiresServiceToken === true;
+    if (requireServiceToken) {
+      const gate = serviceToken.validateRequest(req.headers, config);
+      serviceTokenValid = gate.ok === true && config.serviceTokenEnabled === true;
+    }
+  } catch (err) {
+    // Fail toward the LAST KNOWN REQUIREMENT, not toward a blanket "always
+    // require a token now" — the two are different claims. An install that
+    // never opted in (no entry yet, or the cached config read `false`) must
+    // stay on the pre-#1973 default when its config goes unreadable: that
+    // default is what the ENTIRE existing fleet (`bin/tc`, hooks, PortHub,
+    // the switchboard, and every mutating route's OWN launch-binding floor,
+    // which independently refuses an unbound caller regardless of this
+    // carve-out) already depends on, and unconditionally requiring a token
+    // here regressed a real, unrelated scenario: an unidentified
+    // machine-shaped caller on an UNREADABLE gate used to reach the route
+    // and get refused there (403 LAUNCH_BINDING_REQUIRED) — informative,
+    // existing behavior — and instead got the login gate's OWN 401
+    // challenge first, which is both wrong for a non-browser caller and a
+    // behavior change nobody but an opted-in install asked for
+    // (`test/launch-recovery-clear.test.js`, caught by CI, not locally).
+    //
+    // An install that WAS opted in (the cache's last good read said so)
+    // keeps requiring one — PRR-A's actual scenario: the carve-out must not
+    // silently reopen just because config broke AFTER the operator turned
+    // this on. `serviceTokenValid` stays false either way: nothing here can
+    // validate a presented token against a config that cannot be read.
+    requireServiceToken = Boolean(_gateConfigCache && _gateConfigCache.value
+      && _gateConfigCache.value.machineClientRequiresServiceToken === true);
+    serviceTokenValid = false;
+    log.error('Config read failed while resolving machine-client identity — using the last known requirement for the #1973 carve-out', {
+      method: req.method, path: pathname, error: err.message, requireServiceToken
+    });
+  }
   const machineClient = authGate.isMachineClient({
     // `isLoopbackRemote` is `lib/admin-credential.js`'s, reused because
     // `POST /api/auth/credential` already authorises on exactly this predicate.
@@ -7043,7 +7187,9 @@ function _gateIdentity(req, socket, pathname) {
     // process. See `authGate.isMachineClient` condition 2.
     proxied: authIdentity.cameThroughProxy(req.headers),
     browserShaped,
-    hasSessionCookie: sessionToken !== null
+    hasSessionCookie: sessionToken !== null,
+    requireServiceToken,
+    serviceTokenValid
   });
   return { sessionToken, session, machineClient };
 }
