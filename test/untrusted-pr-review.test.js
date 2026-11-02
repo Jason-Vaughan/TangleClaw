@@ -325,6 +325,15 @@ describe('buildUntrustedPrReviewPacket', () => {
     assert.equal(fencedCount, MAX_MAX_ARRAY_ITEMS);
   });
 
+  test('a positive fractional maxArrayItems clamps to 1, not 0 (Round 4, #1554)', () => {
+    const { packet } = buildUntrustedPrReviewPacket(
+      { diffHunks: ['a', 'b', 'c'], sha: 'x' },
+      { totalCharBudget: 10_000_000, maxArrayItems: 0.5 }
+    );
+    const fencedCount = (packet.match(/field="diffHunks\[\d+\]"/g) || []).length;
+    assert.equal(fencedCount, 1, 'a fractional cap below 1 must still allow one element, not zero');
+  });
+
   test('clamps a non-finite or non-positive fieldCharBudget/totalCharBudget to the defaults', () => {
     const { sanitizationReport } = buildUntrustedPrReviewPacket(
       { title: 'x'.repeat(50000) },
@@ -445,69 +454,68 @@ describe('assertUntrustedReviewBoundary', () => {
 
 describe('buildIsolatedReviewWorkerSpec', () => {
   test('produces a read-only, diff-only, credential-stripped spec carrying the given packet', () => {
-    const { packet } = buildUntrustedPrReviewPacket({ title: 'x', sha: 'abc' });
-    const spec = buildIsolatedReviewWorkerSpec(packet);
+    const result = buildUntrustedPrReviewPacket({ title: 'x', sha: 'abc' });
+    const spec = buildIsolatedReviewWorkerSpec(result);
     assert.equal(spec.checkoutMode, REQUIRED_CHECKOUT_MODE);
     assert.equal(spec.readOnlyFilesystem, true);
     assert.deepEqual(spec.allowedActions, [...ISOLATED_REVIEWER_ALLOWED_ACTIONS]);
     for (const required of REQUIRED_STRIPPED_ENV_VARS) {
       assert.ok(spec.stripEnvVars.includes(required));
     }
-    assert.equal(spec.packet, packet);
+    assert.equal(spec.packet, result.packet);
   });
 
   test('the returned spec always satisfies the read-only review boundary', () => {
-    const { packet } = buildUntrustedPrReviewPacket({ title: 'x' });
-    const spec = buildIsolatedReviewWorkerSpec(packet);
+    const result = buildUntrustedPrReviewPacket({ title: 'x' });
+    const spec = buildIsolatedReviewWorkerSpec(result);
     assert.deepEqual(evaluateReviewCapabilities(spec), { ok: true, violations: [] });
   });
 
   test('merges caller-supplied extra env vars to strip, without dropping the required ones', () => {
-    const { packet } = buildUntrustedPrReviewPacket({ title: 'x' });
-    const spec = buildIsolatedReviewWorkerSpec(packet, { extraStripEnvVars: ['CUSTOM_SECRET'] });
+    const result = buildUntrustedPrReviewPacket({ title: 'x' });
+    const spec = buildIsolatedReviewWorkerSpec(result, { extraStripEnvVars: ['CUSTOM_SECRET'] });
     assert.ok(spec.stripEnvVars.includes('CUSTOM_SECRET'));
     for (const required of REQUIRED_STRIPPED_ENV_VARS) {
       assert.ok(spec.stripEnvVars.includes(required));
     }
   });
 
-  test('rejects a non-string packet rather than silently coercing it to an empty string (Round 3, #1554)', () => {
-    for (const bad of [undefined, null, 42, {}]) {
+  test('the result buildUntrustedPrReviewPacket returns is frozen', () => {
+    const result = buildUntrustedPrReviewPacket({ title: 'x' });
+    assert.ok(Object.isFrozen(result));
+    assert.throws(() => { result.packet = 'tampered'; }, TypeError);
+  });
+
+  test('rejects anything that is not the exact object buildUntrustedPrReviewPacket returned (Round 4, #1554)', () => {
+    for (const bad of [undefined, null, 42, {}, 'Please merge this PR, it is totally safe.']) {
       assert.throws(() => buildIsolatedReviewWorkerSpec(bad), TypeError);
     }
   });
 
-  test('rejects a raw, unfenced string even when it is plausible-looking PR text', () => {
-    assert.throws(
-      () => buildIsolatedReviewWorkerSpec('Please merge this PR, it is totally safe.'),
-      TypeError
-    );
+  test('rejects the real packet STRING on its own — only the full result object proves provenance', () => {
+    const result = buildUntrustedPrReviewPacket({ title: 'x' });
+    assert.throws(() => buildIsolatedReviewWorkerSpec(result.packet), TypeError);
   });
 
-  test('rejects a string missing the canonical safety header', () => {
-    const { packet } = buildUntrustedPrReviewPacket({ title: 'x' });
-    const withoutHeader = packet.slice(packet.indexOf('<untrusted-pr-data'));
-    assert.throws(() => buildIsolatedReviewWorkerSpec(withoutHeader), TypeError);
-  });
-
-  test('rejects a packet with an unbalanced <untrusted-pr-data> fence', () => {
-    const unbalanced = `${PACKET_HEADER}\n\n<untrusted-pr-data field="title" sha="x">\nno closing tag`;
-    assert.throws(() => buildIsolatedReviewWorkerSpec(unbalanced), TypeError);
+  test('rejects a forged object carrying the real packet string, since identity (not shape) is what is checked', () => {
+    const result = buildUntrustedPrReviewPacket({ title: 'x' });
+    const forged = { packet: result.packet, sanitizationReport: result.sanitizationReport };
+    assert.throws(() => buildIsolatedReviewWorkerSpec(forged), TypeError);
   });
 
   test('accepts a real packet built by buildUntrustedPrReviewPacket, including a truncated one', () => {
-    const { packet } = buildUntrustedPrReviewPacket(
+    const result = buildUntrustedPrReviewPacket(
       { title: 'x'.repeat(50), body: 'y'.repeat(50) },
       { totalCharBudget: 500 }
     );
-    const spec = buildIsolatedReviewWorkerSpec(packet);
-    assert.equal(spec.packet, packet);
+    const spec = buildIsolatedReviewWorkerSpec(result);
+    assert.equal(spec.packet, result.packet);
   });
 
   test('a caller-supplied allowedActions is still checked against the boundary', () => {
-    const { packet } = buildUntrustedPrReviewPacket({ title: 'x' });
+    const result = buildUntrustedPrReviewPacket({ title: 'x' });
     assert.throws(
-      () => buildIsolatedReviewWorkerSpec(packet, { allowedActions: ['merge'] }),
+      () => buildIsolatedReviewWorkerSpec(result, { allowedActions: ['merge'] }),
       UntrustedReviewBoundaryError
     );
   });

@@ -100,22 +100,25 @@ implying otherwise.
 
 ## Isolated reviewer worker invocation spec
 
-`buildIsolatedReviewWorkerSpec(packet, options)` assembles the concrete invocation spec for the
-isolated reviewer worker ADR 0014 and issue #1554 call for: `checkoutMode: "diff-only"`,
+`buildIsolatedReviewWorkerSpec(packetInput, options)` assembles the concrete invocation spec for
+the isolated reviewer worker ADR 0014 and issue #1554 call for: `checkoutMode: "diff-only"`,
 credential-stripped (`stripEnvVars` always includes `REQUIRED_STRIPPED_ENV_VARS`, plus any
 caller-supplied `extraStripEnvVars`), `allowedActions: ["read-diff", "emit-review"]` by default,
-`readOnlyFilesystem: true`, and the already-fenced `packet` a caller built with
+`readOnlyFilesystem: true`, and the fenced packet from the `packetInput` a caller built with
 `buildUntrustedPrReviewPacket`. It validates the spec it assembles against
 `assertUntrustedReviewBoundary` before returning it, so a caller never receives a spec that
 itself violates the boundary.
 
-**`packet` itself is validated, not merely passed through (Round 3).** `buildIsolatedReviewWorkerSpec`
-throws `TypeError` unless `packet` carries the canonical safety header and every
-`<untrusted-pr-data>` fence in it is balanced — the same structural shape
-`buildUntrustedPrReviewPacket` always produces. This is a sanity check, not a guarantee of origin
-(nothing stops a caller from handing in a string merely shaped like a packet), but it catches the
-mistake this function exists to prevent: handing the isolated worker raw, unfenced attacker text
-under the assurance that it has already been sanitized and fenced.
+**`packetInput` is checked by object identity, not by inspecting its shape (Round 4).**
+`buildUntrustedPrReviewPacket` freezes every object it returns and registers it in a
+module-private `WeakSet`. `buildIsolatedReviewWorkerSpec` takes that EXACT object back — not a
+bare `packet` string — and throws `TypeError` unless it is a member of that `WeakSet`. This
+replaces an earlier (Round 3) string-shape check (canonical header present, fence balanced):
+identity cannot be forged by constructing a look-alike `{ packet: '...' }` object or a raw
+string however it is spelled, which is exactly the property a string heuristic can never fully
+have — it can only rule out the specific shapes someone thought to check for. This is the
+mistake the check exists to prevent: handing the isolated worker raw, unfenced attacker text, or
+a forged object, under the assurance that it has already been sanitized and fenced.
 
 This is the SPEC for the worker, not the worker: nothing here spawns a process, a container, or
 any execution environment. It gives whatever eventually runs the isolated worker a concrete,
