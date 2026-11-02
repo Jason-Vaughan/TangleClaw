@@ -11,7 +11,7 @@ const store = require('../lib/store');
 const master = require('../lib/master');
 const portScanner = require('../lib/port-scanner');
 const { createServer, _setInstallPriorUse } = require('../server');
-const { operatorHeaders, signInOperator, attemptUnidentified } = require('./_shared-docs-callers');
+const { operatorHeaders, signInOperator, attemptUnidentified, bindProject } = require('./_shared-docs-callers');
 
 /**
  * The methods a caller must be identified for (#2233). The request helper below
@@ -1256,6 +1256,33 @@ describe('API endpoints', () => {
           assert.deepEqual(data.warnings, []);
         } finally {
           master.applyMasterAccessLevel = realApply;
+        }
+      });
+
+      it('refuses a project-bound caller changing accessLevel — only the operator may (PRR-A BLOCKING, round 2)', async () => {
+        // The exact gap PRR-A's round-2 pre-inspection named: a verified
+        // project session is admitted by the generic launch-binding floor to
+        // PATCH /api/config at all (every OTHER field on this route is
+        // reachable that way), but an accessLevel transition grants the
+        // Master standing write authority over the fleet API — the same
+        // authority POST /api/master/authority already requires operator
+        // proof for. Without this check, a project session could grant that
+        // authority to itself via a PATCH the audit trail would misrecord as
+        // the operator's own action.
+        given(BYPASS_ON_CLAUDE);
+        const before = store.config.load().master;
+        const projDir = path.join(tmpDir, 'authz-escalation-probe');
+        fs.mkdirSync(projDir, { recursive: true });
+        const project = store.projects.create({ name: 'authz-escalation-probe', path: projDir, engine: 'claude' });
+        const bound = bindProject(project);
+        try {
+          const { status, data } = await request(server, 'PATCH', '/api/config',
+            { master: { accessLevel: 'write' } }, bound.headers);
+          assert.equal(status, 403);
+          assert.equal(data.code, 'OPERATOR_ONLY');
+          assert.deepEqual(store.config.load().master, before, 'nothing was granted — not accessLevel, not a generation bump');
+        } finally {
+          store.sessions.kill(bound.sessionId, 'test cleanup');
         }
       });
 
