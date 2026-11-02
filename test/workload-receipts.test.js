@@ -513,11 +513,11 @@ describe('POST/GET /api/tc/workload (ADR 0020 §1–§2)', () => {
       assert.equal(now.status, 201, 'a bound reply discharges the debt — and this lane\'s first successful write, so no rate limit interferes');
     });
 
-    // Critic cumulative (rev-20261102T225819Z-124a30ca): a send whose Hub
-    // outcome was never bound never reached this lane's inbox — it cannot
-    // read or reply to a message it never received, so the gate must not
-    // count it as owed (same exclusion lib/session-finalize.js's own
-    // owed-reply check already makes, via hubBoundOnly: true).
+    // A send whose Hub outcome was never bound never reached this lane's
+    // inbox — it cannot read or reply to a message it never received, so
+    // the gate must not count it as owed (same exclusion
+    // lib/session-finalize.js's own owed-reply check already makes, via
+    // hubBoundOnly: true).
     it('does not count a reply-required send still send_pending or send_unknown as owed', async () => {
       const lane = bindProject(mkProject('owed-reply-lane-unbound'));
       medusa.getStatus = (sessionId) => (String(sessionId) === String(lane.sessionId)
