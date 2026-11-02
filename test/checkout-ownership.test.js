@@ -442,4 +442,20 @@ describe('evaluateWorktreeWriteAdmission', () => {
       fs.rmSync(marker, { force: true });
     }
   });
+
+  it('a marker file that is VALID JSON but missing sessionId/launchId/claimedAt fails closed rather than passing every check by omission (#1332 Round 7 finding)', () => {
+    const marker = ownership.markerPath(fx.worktree);
+    // Explicit nulls for the baseline fields mean the drift check is also
+    // skipped, same as the mismatch check skipping on a missing claimedAt
+    // — nothing left to catch this shape without schema validation.
+    fs.writeFileSync(marker, JSON.stringify({ baselineHeadSha: null, baselineStatusHash: null }));
+    try {
+      const result = ownership.evaluateWorktreeWriteAdmission(fx.worktree, ownerB);
+      assert.equal(result.allowed, false,
+        'a well-formed-JSON-but-malformed-shape marker must not fall through every check into allowed:true');
+      assert.equal(result.code, 'CORRUPT_OWNERSHIP_MARKER');
+    } finally {
+      fs.rmSync(marker, { force: true });
+    }
+  });
 });

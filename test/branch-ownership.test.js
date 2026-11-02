@@ -189,6 +189,37 @@ describe('evaluateBranchMutationGuard', () => {
       fs.writeFileSync(storeFile, before_);
     }
   });
+
+  it('a store that is a top-level ARRAY fails closed, even though typeof [] === "object" (#1977 Round 7 finding)', () => {
+    const storeFile = branchOwnership.storePath(fx.worktreeRoot);
+    const before_ = fs.readFileSync(storeFile, 'utf8');
+    fs.writeFileSync(storeFile, JSON.stringify([]));
+    try {
+      const result = branchOwnership.evaluateBranchMutationGuard({
+        branch: 'feature', worktreeRoot: fx.worktreeRoot, caller: genA
+      });
+      assert.equal(result.allowed, false, 'an array must not be mistaken for a valid branch-record map');
+      assert.equal(result.code, 'CORRUPT_BRANCH_OWNERSHIP_STORE');
+    } finally {
+      fs.writeFileSync(storeFile, before_);
+    }
+  });
+
+  it('a VALID-JSON store with a malformed branch entry ({"feature":{}}, missing sessionId/launchId) fails closed rather than reading it as a legitimate but matchless owner (#1977 Round 7 finding)', () => {
+    const storeFile = branchOwnership.storePath(fx.worktreeRoot);
+    const before_ = fs.readFileSync(storeFile, 'utf8');
+    fs.writeFileSync(storeFile, JSON.stringify({ feature: {} }));
+    try {
+      const result = branchOwnership.evaluateBranchMutationGuard({
+        branch: 'feature', worktreeRoot: fx.worktreeRoot, caller: genA
+      });
+      assert.equal(result.allowed, false,
+        'a branch entry with neither a valid owned shape nor a valid evidence-only shape must not pass schema validation');
+      assert.equal(result.code, 'CORRUPT_BRANCH_OWNERSHIP_STORE');
+    } finally {
+      fs.writeFileSync(storeFile, before_);
+    }
+  });
 });
 
 describe('recordReviewEvidence / invalidateReviewEvidenceOnRewrite', () => {
