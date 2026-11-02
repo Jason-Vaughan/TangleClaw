@@ -581,11 +581,35 @@ function wireBehindOriginPullBtn() {
 }
 
 /**
+ * Open the recipient of an escalated exchange's own session page (#2137),
+ * where `V5560-W1-A`'s sibling server car makes the exchange discoverable to
+ * the session itself via `?role=recipient|all` — the fix for the actual
+ * underlying gap (the recipient session had no way to find mail addressed to
+ * it) rather than only surfacing an inspect link the operator still has to
+ * act on by hand.
+ *
+ * `o.recipient` is a project NAME when the exchange's recipient resolves to a
+ * registered project, but falls back to a raw workspace id otherwise
+ * (`lib/medusa-watchdog.js#escalationSummary` names no other identifier) —
+ * `/session/<name>` will 404 on the latter. Known, accepted gap: the summary
+ * carries no project id to resolve that case properly, and adding one is a
+ * server-side change outside this car's file scope.
+ * @param {{recipient: string}} oldest - `summary.oldest` from the banner.
+ * @returns {void}
+ */
+function inspectMedusaEscalation(oldest) {
+  if (!oldest || !oldest.recipient) return;
+  navigateToSession(oldest.recipient);
+}
+
+/**
  * Show or hide the Medusa escalation banner (#1839) from the
  * `medusaEscalations` field of `/api/server-info`: how many messages the
  * delivery watchdog escalated to the operator, and the oldest one's priority,
- * age, recipient and blocker. Built with text nodes only, since the recipient
- * is a project name. Self-clears when nothing is escalated.
+ * age, recipient and blocker. Text content is text nodes only, since the
+ * recipient is untrusted cross-session data; the one action button (#2137)
+ * is a plain element with a static label, never built from that data.
+ * Self-clears when nothing is escalated.
  * @param {{count: number, oldest: {priority: string, ageMinutes: number, recipient: string, blocker: string, blockerMeaning: (string|null)}}|null|undefined} summary
  * @returns {void}
  */
@@ -606,7 +630,17 @@ function renderMedusaEscalationBanner(summary) {
     ` Oldest: ${String(o.priority)}, ${age} min, to ${String(o.recipient)}, blocked by ${String(o.blocker)}`
     + (o.blockerMeaning ? ` (${String(o.blockerMeaning)})` : '') + '.'
   );
-  textEl.replaceChildren(strong, detail);
+  const actionBtn = document.createElement('button');
+  actionBtn.type = 'button';
+  actionBtn.className = 'btn btn-small medusa-escalation-action-btn';
+  // `.orphan-banner`'s flex `gap` only separates DIRECT children, and this
+  // button is nested inside the text span (keeping this change inside
+  // `landing.js` rather than also adding a sibling element to `index.html`'s
+  // static markup) — restated here so it doesn't sit flush against the text.
+  actionBtn.style.marginLeft = '10px';
+  actionBtn.textContent = 'Open recipient';
+  actionBtn.addEventListener('click', () => inspectMedusaEscalation(o));
+  textEl.replaceChildren(strong, detail, actionBtn);
   banner.classList.remove('hidden');
 }
 

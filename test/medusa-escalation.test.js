@@ -374,6 +374,7 @@ describe('medusa watchdog escalation (#1839 chunk 04)', () => {
     it('renders the dashboard banner with text nodes only, and clears it when nothing is escalated', () => {
       const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
       const fn = liftDeclaration(src, 'function renderMedusaEscalationBanner(');
+      const inspectFn = liftDeclaration(src, 'function inspectMedusaEscalation(');
       const el = (id) => ({
         id, _hidden: true, children: [],
         classList: { add(c) { if (c === 'hidden') this._o._hidden = true; }, remove(c) { if (c === 'hidden') this._o._hidden = false; } },
@@ -383,19 +384,42 @@ describe('medusa watchdog escalation (#1839 chunk 04)', () => {
       banner.classList._o = banner;
       const text = el('t');
       text.classList._o = text;
+      // Buttons the real function creates for the #2137 action: a plain node
+      // supporting the handful of properties/methods `renderMedusaEscalationBanner`
+      // and `inspectMedusaEscalation` actually touch (see `test/_mini-dom.js`'s
+      // same minimal-stub convention).
+      const mkButton = () => {
+        const btn = { textContent: '', type: '', className: '', style: {}, _listeners: {} };
+        btn.addEventListener = (type, listener) => {
+          (btn._listeners[type] || (btn._listeners[type] = [])).push(listener);
+        };
+        btn.click = () => (btn._listeners.click || []).forEach((listener) => listener());
+        return btn;
+      };
       const document = {
         getElementById: (id) => (id === 'medusaEscalationBanner' ? banner : id === 'medusaEscalationBannerText' ? text : null),
-        createElement: () => ({ textContent: '' }),
+        createElement: (tag) => (tag === 'button' ? mkButton() : { textContent: '' }),
         createTextNode: (t) => ({ textContent: t })
       };
-      const ctx = vm.createContext({ document });
-      vm.runInContext(`${fn}\nrenderMedusaEscalationBanner(summary);`, Object.assign(ctx, {
+      const navigated = [];
+      const ctx = vm.createContext({ document, navigateToSession: (name) => navigated.push(name) });
+      vm.runInContext(`${fn}\n${inspectFn}\nrenderMedusaEscalationBanner(summary);`, Object.assign(ctx, {
         summary: { count: 2, oldest: { priority: 'blocking', ageMinutes: 47, recipient: '<img src=x>', blocker: 'pane-composer-has-input', blockerMeaning: null } }
       }));
       assert.equal(banner._hidden, false);
       const rendered = text.children.map((c) => c.textContent).join('');
       assert.match(rendered, /Medusa: 2 messages need attention\. Oldest: blocking, 47 min, to <img src=x>, blocked by pane-composer-has-input\./);
       assert.equal(text.innerHTML, undefined, 'never written as HTML');
+
+      // #2137: the banner's clickable action opens the recipient's own session
+      // page — never the untrusted recipient string written as HTML.
+      assert.equal(text.children.length, 3, 'strong, detail text node, action button');
+      const actionBtn = text.children[2];
+      assert.equal(actionBtn.textContent, 'Open recipient');
+      assert.equal(actionBtn.type, 'button');
+      actionBtn.click();
+      assert.deepEqual(navigated, ['<img src=x>'], 'navigates using the recipient string verbatim, never HTML-escaped or interpreted');
+
       vm.runInContext(`${fn}\nrenderMedusaEscalationBanner(null);`, ctx);
       assert.equal(banner._hidden, true);
     });

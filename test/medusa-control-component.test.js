@@ -360,6 +360,93 @@ describe('tcCreateMedusaControl — talks to ITS api base', () => {
   });
 });
 
+describe('tcFetchMedusaExchanges (#2137 V5560-W1-A client support)', () => {
+  it('requests the plain exchanges endpoint with no role by default', async () => {
+    const calls = [];
+    const api = async (url) => { calls.push(url); return { exchanges: [] }; };
+    await G.tcFetchMedusaExchanges(api, '/api/sessions/p/medusa');
+    assert.deepEqual(calls, ['/api/sessions/p/medusa/exchanges']);
+  });
+
+  it('forwards an explicit role as a query param', async () => {
+    const calls = [];
+    const api = async (url) => { calls.push(url); return { exchanges: [] }; };
+    await G.tcFetchMedusaExchanges(api, '/api/sessions/p/medusa', { role: 'recipient' });
+    assert.deepEqual(calls, ['/api/sessions/p/medusa/exchanges?role=recipient']);
+  });
+
+  it('returns null, like every other api() caller, when the request fails', async () => {
+    const result = await G.tcFetchMedusaExchanges(async () => null, '/api/master/medusa', { role: 'all' });
+    assert.equal(result, null);
+  });
+});
+
+// INTV-V5540-01 — require confirmation before a toggle-off would silence a
+// session that has unread mail (a toggle-ON, or an off session with nothing
+// unread, needs none: there is nothing a confirm here would be protecting).
+describe('tcCreateMedusaControl — toggle-off guard on unread mail (INTV-V5540-01)', () => {
+  it('confirms before turning off while unread mail is pending, and proceeds on yes', async () => {
+    const ids = G.tcMedusaIds('');
+    const w = world(ids, { toggle: { state: 'off', unread: 3 } });
+    const asked = [];
+    const c = G.tcCreateMedusaControl({
+      doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids,
+      confirm: (msg) => { asked.push(msg); return true; }
+    });
+    c.applyStatus({ state: 'listening', unread: 3 });
+    await c.toggle();
+    assert.equal(asked.length, 1);
+    assert.match(asked[0], /3 messages are unread/);
+    assert.deepEqual(w.calls.map((x) => x.url), ['/api/sessions/p/medusa/toggle'], 'the toggle still ran');
+    assert.equal(c.state.state, 'off');
+  });
+
+  it('declining the confirm leaves the listener untouched — no API call at all', async () => {
+    const ids = G.tcMedusaIds('');
+    const w = world(ids, { toggle: { state: 'off', unread: 3 } });
+    const c = G.tcCreateMedusaControl({
+      doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids,
+      confirm: () => false
+    });
+    c.applyStatus({ state: 'listening', unread: 3 });
+    await c.toggle();
+    assert.deepEqual(w.calls, [], 'declined: the toggle never ran');
+    assert.equal(c.state.state, 'listening', 'state is exactly as it was');
+  });
+
+  it('no confirm available means no silent toggle-off — fails CLOSED, not open', async () => {
+    const ids = G.tcMedusaIds('');
+    const w = world(ids, { toggle: { state: 'off', unread: 3 } });
+    // No `confirm` in deps, and no `global.confirm` either — the sandbox this
+    // suite shares carries none. The naive `typeof ask === 'function' && !ask(...)`
+    // spelling would evaluate false here and let the toggle proceed unconfirmed;
+    // this pins that it does not.
+    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
+    c.applyStatus({ state: 'listening', unread: 3 });
+    await c.toggle();
+    assert.deepEqual(w.calls, [], 'no way to confirm: refused, not allowed through');
+    assert.equal(c.state.state, 'listening');
+  });
+
+  it('needs no confirm to turn OFF with nothing unread, or to turn ON', async () => {
+    const ids = G.tcMedusaIds('');
+    const w = world(ids, { toggle: { state: 'listening', unread: 0 } });
+    const asked = [];
+    const c = G.tcCreateMedusaControl({
+      doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids,
+      confirm: (msg) => { asked.push(msg); return true; }
+    });
+    // Off → on: nothing to protect.
+    c.applyStatus({ state: 'off', unread: 0 });
+    await c.toggle();
+    // On, nothing unread → off: also nothing to protect.
+    c.applyStatus({ state: 'listening', unread: 0 });
+    await c.toggle();
+    assert.deepEqual(asked, [], 'never asked — no unread mail was ever at risk');
+    assert.equal(w.calls.length, 2, 'both toggles still went through');
+  });
+});
+
 describe('tcCreateMedusaControl — mount', () => {
   it('binds heads, badge, panel, Escape and outside-click once; a second mount binds nothing more', () => {
     const ids = G.tcMedusaIds('masterPanel');
