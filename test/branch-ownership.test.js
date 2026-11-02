@@ -218,6 +218,21 @@ describe('handoffBranchOwnership', () => {
   before(() => { fx = makeFixture(); });
   after(() => fx.cleanup());
 
+  it('refuses rather than silently passing when there is no basis to verify publication at all', () => {
+    // A LOCAL-only branch: no upstream tracking configured, and the caller
+    // supplies no fromOwner.headSha either — nothing here to compare
+    // localHead against, so this must refuse, not read as "clean."
+    fx.git('checkout', '-q', '-b', 'local-only');
+    const result = branchOwnership.handoffBranchOwnership({
+      branch: 'local-only', worktreeRoot: fx.worktreeRoot,
+      fromOwner: { sessionId: 'sess-a', launchId: 'launch-a', generationId: 'gen-a' }, // no headSha
+      toOwner: genB
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'UNABLE_TO_VERIFY_PUBLICATION');
+    fx.git('checkout', '-q', 'feature');
+  });
+
   it('refuses when the working tree is not clean', () => {
     branchOwnership.bindBranchOwnership({ branch: 'feature', worktreeRoot: fx.worktreeRoot, ...genA, headSha: fx.headSha() });
     fs.writeFileSync(path.join(fx.worktreeRoot, 'dirty.txt'), 'x\n');

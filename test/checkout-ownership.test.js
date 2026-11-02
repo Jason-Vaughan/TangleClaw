@@ -60,6 +60,11 @@ describe('gitDirFor / markerPath / MARKER_BASENAME', () => {
     assert.equal(ownership.markerPath(fx.worktree), path.join(ownership.gitDirFor(fx.worktree), ownership.MARKER_BASENAME));
     assert.equal(ownership.MARKER_BASENAME, 'tangleclaw-owner.json');
   });
+
+  it('the lock constants are sane relative to each other', () => {
+    assert.ok(ownership.LOCK_STALE_MS > ownership.LOCK_MAX_WAIT_MS,
+      'a lock must be presumed abandoned well after the wait budget this module itself gives up at');
+  });
 });
 
 describe('claimWorktreeOwnership / readWorktreeOwnership / releaseWorktreeOwnership', () => {
@@ -123,6 +128,25 @@ describe('claimWorktreeOwnership / readWorktreeOwnership / releaseWorktreeOwners
     const result = ownership.releaseWorktreeOwnership(fx.worktree, ownerA);
     assert.equal(result.ok, true);
     assert.equal(result.owner, null);
+  });
+
+  it('a held lock means claim/release are SKIPPED, never applied unlocked (two sessions racing to claim must not both succeed)', () => {
+    const marker = ownership.markerPath(fx.worktree);
+    const lockPath = `${marker}${ownership.LOCK_SUFFIX}`;
+    fs.mkdirSync(path.dirname(marker), { recursive: true });
+    fs.mkdirSync(lockPath);
+    try {
+      const claim = ownership.claimWorktreeOwnership(fx.worktree, ownerA);
+      assert.equal(claim.ok, false);
+      assert.equal(claim.code, 'LOCK_CONTENDED');
+      assert.equal(ownership.readWorktreeOwnership(fx.worktree), null, 'the contended claim must not have written anything');
+
+      const release = ownership.releaseWorktreeOwnership(fx.worktree, ownerA);
+      assert.equal(release.ok, false);
+      assert.equal(release.code, 'LOCK_CONTENDED');
+    } finally {
+      fs.rmSync(lockPath, { recursive: true, force: true });
+    }
   });
 
   it('a STALE claim no longer needs force to take over', () => {
