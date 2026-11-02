@@ -1064,6 +1064,41 @@ describe('lib/routes/sessions — GET /api/usage/sessions (#2787)', () => {
     assert.deepEqual(body(), { sessions: [] });
   });
 
+  it('GET /api/usage/sessions/:sessionId answers 200 with that session\'s own reading on the success path (Critic BLOCKING: previously untested)', async () => {
+    const project = store.projects.list()[0];
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'route-proj' });
+    try {
+      const { handler, params } = matchRoute('GET', `/api/usage/sessions/${session.id}`);
+      const { res, status, body } = fakeRes();
+      await handler({ url: `/api/usage/sessions/${session.id}`, headers: {} }, res, params);
+      assert.equal(status(), 200);
+      const reading = body();
+      assert.equal(reading.sessionId, session.id);
+      assert.equal(reading.projectId, project.id);
+      assert.equal(reading.engine, 'claude');
+      // The single-object shape, not { sessions: [...] } — distinct from the list route.
+      assert.equal(Array.isArray(reading), false);
+      assert.ok('contextRemainingPct' in reading);
+    } finally {
+      store.sessions.wrap(session.id, 'test cleanup');
+    }
+  });
+
+  it('GET /api/usage/sessions/:sessionId forwards ?lowUsageHandoffThresholdPct= the same way the list route does (Critic WARNING: previously dropped silently)', async () => {
+    const project = store.projects.list()[0];
+    const session = store.sessions.start({ projectId: project.id, engineId: 'codex', tmuxSession: 'route-proj-threshold' });
+    uw.calibrateUsage({ provider: 'codex', fiveHourPct: 20 }); // above the default 12%, below a raised 25%
+    try {
+      const { handler, params } = matchRoute('GET', `/api/usage/sessions/${session.id}`);
+      const { res, status, body } = fakeRes();
+      await handler({ url: `/api/usage/sessions/${session.id}?lowUsageHandoffThresholdPct=25`, headers: {} }, res, params);
+      assert.equal(status(), 200);
+      assert.equal(body().lowUsageHandOffRecommended, true, '20% is at or below the overridden 25% threshold, forwarded from the query string');
+    } finally {
+      store.sessions.wrap(session.id, 'test cleanup');
+    }
+  });
+
   it('GET /api/usage/sessions/:sessionId answers 404 for a session with no live reading', async () => {
     const { handler, params } = matchRoute('GET', '/api/usage/sessions/999999');
     const { res, status, body } = fakeRes();
