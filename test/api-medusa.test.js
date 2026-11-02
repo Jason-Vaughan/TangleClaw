@@ -165,6 +165,29 @@ class FakeWS {
   }
 }
 
+// #1009 R-Gate Round 2: `getStatus()` now kicks off a fire-and-forget
+// `checkBridgeHealth()` refresh for every active listener, so ANY test in
+// this file that starts one can trigger a REAL, unseamed network probe
+// against whatever `bridgeHttpUrl`/`wsUrl` happen to be configured at that
+// moment — and this file reconfigures those constantly for its own fixture
+// tests (`_bridge-hub.js`, `_setBridgeHttpUrl`), so stubbing the network
+// itself isn't viable here (tried; broke the file's own real HTTP-fixture
+// tests, which need `fetch`/`net` working).
+//
+// What actually makes this safe is the production fix's OWN generation
+// counter (`lib/medusa.js`'s `_bridgeProbeGeneration`): a probe that
+// resolves after the cache has been reset discards its result instead of
+// writing it. Resetting before AND after every test, file-wide, guarantees
+// a straggling background probe from test N can never be observed by test
+// N+1 — not because it never fires, but because by the time it resolves,
+// the generation it started under has already moved on.
+beforeEach(() => {
+  medusa._resetBridgeProbe();
+});
+afterEach(() => {
+  medusa._resetBridgeProbe();
+});
+
 describe('lib/medusa — service layer', () => {
   let tempDir;
   const started = [];
@@ -183,7 +206,10 @@ describe('lib/medusa — service layer', () => {
   });
 
   it('getStatus(null) and unknown session return an off status', () => {
-    const off = { state: 'off', listeningSince: null, workspaceId: null, unread: 0, lastError: null, lastErrorCode: null };
+    const off = {
+      state: 'off', listeningSince: null, workspaceId: null, unread: 0, lastError: null, lastErrorCode: null,
+      bridgeVersion: null, bridgeUpdaterStatus: null
+    };
     assert.deepEqual(medusa.getStatus(null), off);
     assert.deepEqual(medusa.getStatus('no-such-session'), off);
   });
@@ -231,7 +257,11 @@ describe('lib/medusa — service layer', () => {
     const first = medusa.startSession({ projectPath: tempDir, sessionId: sid, name: 'Svc Two', wsFactory: (u) => new FakeWS(u) });
     const second = medusa.startSession({ projectPath: tempDir, sessionId: sid, name: 'Svc Two', wsFactory: (u) => new FakeWS(u) });
     assert.equal(second.workspaceId, first.workspaceId);
-    assert.deepEqual(second, medusa.getStatus(sid));
+    // getStatus() carries the cached Bridge version/update-status reading
+    // (#1009) on top of the listener's own status; startSession() returns
+    // the listener's status directly, without that merge.
+    const { bridgeVersion, bridgeUpdaterStatus, ...statusOnly } = medusa.getStatus(sid);
+    assert.deepEqual(second, statusOnly);
   });
 
   it('stopSession removes the listener and reverts to off', () => {
@@ -239,7 +269,10 @@ describe('lib/medusa — service layer', () => {
     medusa.startSession({ projectPath: tempDir, sessionId: sid, name: 'Svc Three', wsFactory: (u) => new FakeWS(u) });
     assert.notEqual(medusa.getStatus(sid).state, 'off');
     medusa.stopSession(sid);
-    assert.deepEqual(medusa.getStatus(sid), { state: 'off', listeningSince: null, workspaceId: null, unread: 0, lastError: null, lastErrorCode: null });
+    assert.deepEqual(medusa.getStatus(sid), {
+      state: 'off', listeningSince: null, workspaceId: null, unread: 0, lastError: null, lastErrorCode: null,
+      bridgeVersion: null, bridgeUpdaterStatus: null
+    });
   });
 
   it('reuses the same workspace id across restarts (registry persistence)', () => {
@@ -257,7 +290,10 @@ describe('lib/medusa — service layer', () => {
     assert.notEqual(medusa.getStatus(sid).state, 'off');
     medusa.forgetSession({ projectPath: tempDir, sessionId: sid });
     // Listener stopped...
-    assert.deepEqual(medusa.getStatus(sid), { state: 'off', listeningSince: null, workspaceId: null, unread: 0, lastError: null, lastErrorCode: null });
+    assert.deepEqual(medusa.getStatus(sid), {
+      state: 'off', listeningSince: null, workspaceId: null, unread: 0, lastError: null, lastErrorCode: null,
+      bridgeVersion: null, bridgeUpdaterStatus: null
+    });
     // ...and the id forgotten — unlike stopSession, a fresh start mints a NEW id.
     const b = medusa.startSession({ projectPath: tempDir, sessionId: sid, name: 'Forget Me', wsFactory: (u) => new FakeWS(u) });
     started.push(sid);
@@ -312,7 +348,7 @@ describe('lib/medusa — service layer', () => {
         return {
           ok: true, status: 200,
           json: async () => (kind === 'hissing'
-            ? { status: 'hissing', version: '1.0.0-rc2' }
+            ? { status: 'hissing', version: '1.0.0-rc2', updaterStatus: 'up-to-date' }
             : { status: 'degraded', error: 'store unavailable' })
         };
       };
@@ -503,6 +539,105 @@ describe('lib/medusa — service layer', () => {
       assert.equal(medusa.activeListenerCount(), before + 1);
       medusa.stopSession('count-1');
       assert.equal(medusa.activeListenerCount(), before);
+    });
+
+    it('reads updaterStatus from the same /health body as version, never a second request (#1009)', async () => {
+      const r = await medusa.checkBridgeHealth({
+        fetchImpl: fetchImplThat('hissing'), connectImpl: connectImplThat(true)
+      });
+      assert.equal(r.version, '1.0.0-rc2');
+      assert.equal(r.updaterStatus, 'up-to-date');
+    });
+
+    it('updaterStatus is null wherever version is null — never a half-trusted body', async () => {
+      for (const kind of ['absent', 'timeout', 'degraded', 'unreadable']) {
+        const r = await medusa.checkBridgeHealth({
+          fetchImpl: fetchImplThat(kind), connectImpl: connectImplThat(true)
+        });
+        assert.equal(r.version, null, `${kind}: version`);
+        assert.equal(r.updaterStatus, null, `${kind}: updaterStatus`);
+      }
+    });
+  });
+
+  describe('getStatus carries the cached Bridge version/updater status (#1009)', () => {
+    afterEach(() => {
+      medusa._resetBridgeProbe();
+    });
+
+    it('reads whatever checkBridgeHealth last measured, however it was measured', () => {
+      medusa._setBridgeProbeVerdict({ healthy: true, version: '1.0.0-rc2', updaterStatus: 'up-to-date' });
+      const status = medusa.getStatus(null);
+      assert.equal(status.bridgeVersion, '1.0.0-rc2');
+      assert.equal(status.bridgeUpdaterStatus, 'up-to-date');
+    });
+
+    it('is null for both until something has measured the Bridge at all', () => {
+      medusa._resetBridgeProbe();
+      const status = medusa.getStatus(null);
+      assert.equal(status.bridgeVersion, null);
+      assert.equal(status.bridgeUpdaterStatus, null);
+    });
+
+    it('rides every status shape — off, refused, and a real listener alike', () => {
+      medusa._setBridgeProbeVerdict({ healthy: true, version: '2.0.0', updaterStatus: 'update-available' });
+      // Off (no session, or an unknown one):
+      assert.equal(medusa.getStatus('no-such-session').bridgeVersion, '2.0.0');
+      // A real listener:
+      const sid = 'bridge-info-live';
+      medusa.startSession({ projectPath: tempDir, sessionId: sid, name: 'Live', wsFactory: (u) => new FakeWS(u) });
+      try {
+        assert.equal(medusa.getStatus(sid).bridgeVersion, '2.0.0');
+        assert.equal(medusa.getStatus(sid).bridgeUpdaterStatus, 'update-available');
+      } finally {
+        medusa.stopSession(sid);
+      }
+    });
+
+    it('a status read on an active listener refreshes a stale/absent cache via the normal flow — no toggle, no dashboard poll (#1009 R-Gate Round 2)', async () => {
+      // PRR-B's finding: a pure cache READ alone leaves a session that
+      // reconnects with no toggle and no dashboard tab open carrying a
+      // stale or absent reading forever. getStatus() on an active listener
+      // must itself keep the cache warm.
+      const sid = 'bridge-refresh-flow';
+      medusa.startSession({ projectPath: tempDir, sessionId: sid, name: 'Refresh', wsFactory: (u) => new FakeWS(u) });
+      const realFetch = global.fetch;
+      const net = require('node:net');
+      const realConnect = net.connect;
+      let version = '1.0.0';
+      global.fetch = async () => ({
+        ok: true, status: 200,
+        json: async () => ({ status: 'hissing', version, updaterStatus: 'checking' })
+      });
+      net.connect = () => {
+        const EventEmitter = require('node:events');
+        const socket = new EventEmitter();
+        socket.destroy = () => {};
+        setImmediate(() => socket.emit('connect'));
+        return socket;
+      };
+      const settle = () => new Promise((r) => setImmediate(r));
+      try {
+        assert.equal(medusa.getStatus(sid).bridgeVersion, null, 'nothing measured yet');
+        medusa.getStatus(sid); // the normal status-poll flow — fires the refresh
+        await settle(); await settle(); await settle();
+        assert.equal(medusa.getStatus(sid).bridgeVersion, '1.0.0',
+          'refreshed with no toggle and no /api/system/health poll involved');
+
+        // The Bridge updates; once the cache is due to refresh again, the
+        // NEW version reaches the status payload the same way.
+        version = '1.1.0';
+        medusa._resetBridgeProbe(); // simulates the real TTL having elapsed
+        medusa.getStatus(sid);
+        await settle(); await settle(); await settle();
+        assert.equal(medusa.getStatus(sid).bridgeVersion, '1.1.0',
+          'a later Bridge version reaches the status payload once refreshed');
+      } finally {
+        global.fetch = realFetch;
+        net.connect = realConnect;
+        medusa.stopSession(sid);
+        medusa._resetBridgeProbe();
+      }
     });
   });
 
@@ -806,7 +941,9 @@ describe('API — GET /api/sessions/:project/medusa/status', () => {
     // against — served even when off, since it is a property of the routes).
     assert.deepEqual(data, {
       state: 'off', listeningSince: null, workspaceId: null, unread: 0, lastError: null, lastErrorCode: null, loops: [],
-      outbound: { allowed: true, reason: null }, enabled: false, messageLimitBytes: 64 * 1024
+      outbound: { allowed: true, reason: null }, enabled: false, messageLimitBytes: 64 * 1024,
+      // #1009: the Bridge's own cached version/update-status reading, never measured here.
+      bridgeVersion: null, bridgeUpdaterStatus: null
     });
   });
 
@@ -921,7 +1058,10 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
     assert.equal(medusa.getStatus(active.id).state, 'listening');
     const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: false }, dashboard());
     assert.equal(status, 200);
-    assert.deepEqual(data, { state: 'off', listeningSince: null, workspaceId: null, unread: 0, lastError: null, lastErrorCode: null });
+    assert.deepEqual(data, {
+      state: 'off', listeningSince: null, workspaceId: null, unread: 0, lastError: null, lastErrorCode: null,
+      bridgeVersion: null, bridgeUpdaterStatus: null
+    });
   });
 
   it('toggle {enabled:true} does NOT refuse when the Bridge is absent — it starts, and says why', async () => {
@@ -1033,7 +1173,10 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
     medusa._setBridgeWsUrl();
     const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: false }, dashboard());
     assert.equal(status, 200);
-    assert.deepEqual(data, { state: 'off', listeningSince: null, workspaceId: null, unread: 0, lastError: null, lastErrorCode: null });
+    assert.deepEqual(data, {
+      state: 'off', listeningSince: null, workspaceId: null, unread: 0, lastError: null, lastErrorCode: null,
+      bridgeVersion: null, bridgeUpdaterStatus: null
+    });
   });
 
   it('toggle with no body flips off→on (starts a listener)', async () => {
@@ -1638,6 +1781,74 @@ describe('lib/medusa — send / roster (MED-2K9P Chunk 03)', () => {
     const ids = roster.map((w) => w.id);
     assert.ok(ids.includes('live-ws') && ids.includes('offline-ws'));
     assert.ok(!ids.includes(workspaceId), 'own workspace must be excluded');
+  });
+});
+
+describe('lib/medusa — sendSystemMessage (#2270)', () => {
+  it('sends and reports the Bridge\'s own status/id', async () => {
+    const r = await medusa.sendSystemMessage({
+      to: 'ws-1', message: 'hello',
+      fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ success: true, status: 'received', id: 'm-1' }) })
+    });
+    assert.deepEqual(r, { status: 'received', id: 'm-1', to: 'ws-1' });
+  });
+
+  it('an unreachable Bridge is BRIDGE_UNREACHABLE, 502', async () => {
+    await assert.rejects(
+      medusa.sendSystemMessage({
+        to: 'ws-1', message: 'hello',
+        fetchImpl: async () => { throw Object.assign(new Error('connect'), { cause: { code: 'ECONNREFUSED' } }); }
+      }),
+      (err) => { assert.equal(err.code, 'BRIDGE_UNREACHABLE'); assert.equal(err.httpStatus, 502); return true; }
+    );
+  });
+
+  it('a Bridge that rejects the send is BRIDGE_REJECTED, carrying its own status', async () => {
+    await assert.rejects(
+      medusa.sendSystemMessage({
+        to: 'ws-1', message: 'hello',
+        fetchImpl: async () => ({ ok: false, status: 404, json: async () => ({ error: 'Peer not found' }) })
+      }),
+      (err) => { assert.equal(err.code, 'BRIDGE_REJECTED'); assert.equal(err.httpStatus, 404); return true; }
+    );
+  });
+
+  it('is bounded: a Bridge that accepts the connection and never answers resolves as BRIDGE_UNREACHABLE, not forever (#2270)', async () => {
+    // A real send that genuinely hangs — the fake fetch returns a promise that
+    // only ever settles from the real AbortSignal firing, exactly like a real
+    // `fetch` would. A short `timeoutMs` keeps the test itself fast.
+    const hang = async (url, opts) => new Promise((resolve, reject) => {
+      opts.signal.addEventListener('abort', () => {
+        reject(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }));
+      });
+    });
+    // `AbortSignal.timeout()` deliberately uses an UNREF'D timer (Node's own
+    // docs), so with nothing else pending, the event loop can resolve and
+    // abandon this promise before the real timer ever fires — not a flake in
+    // the production code, a property of the primitive under test. Keep the
+    // loop alive for the ~20ms this needs.
+    const keepAlive = setInterval(() => {}, 5);
+    try {
+      await assert.rejects(
+        medusa.sendSystemMessage({ to: 'ws-1', message: 'hello', fetchImpl: hang, timeoutMs: 20 }),
+        (err) => { assert.equal(err.code, 'BRIDGE_UNREACHABLE'); assert.equal(err.httpStatus, 502); return true; }
+      );
+    } finally {
+      clearInterval(keepAlive);
+    }
+  });
+
+  it('passes a real AbortSignal, defaulting to BRIDGE_SEND_TIMEOUT_MS when timeoutMs is not given', async () => {
+    let seenSignal = null;
+    await medusa.sendSystemMessage({
+      to: 'ws-1', message: 'hello',
+      fetchImpl: async (url, opts) => {
+        seenSignal = opts.signal;
+        return { ok: true, status: 200, json: async () => ({ success: true, status: 'received', id: 'm-1' }) };
+      }
+    });
+    assert.ok(seenSignal instanceof AbortSignal);
+    assert.equal(seenSignal.aborted, false, 'the default deadline must not already have fired');
   });
 });
 

@@ -3503,6 +3503,32 @@
   }
 
   /**
+   * Fetch a session's or the Master's Medusa exchanges, optionally scoped by
+   * `role` (#2137's `V5560-W1-A` server car: `GET <apiBase>/exchanges` gains
+   * `?role=sender|recipient|all`, so a session can finally discover exchanges
+   * addressed TO it, not only ones it sent). This is the thin client-side call
+   * that query param needs — kept generic and separate from any one banner's
+   * click handler so every surface that needs a recipient-scoped exchange list
+   * calls through the same place.
+   *
+   * No caller in THIS change depends on the server honoring `role` yet — the
+   * server half ships from a different, file-disjoint car under the same
+   * issue — so this is provided for that car's consumers (and tested against
+   * the request it sends) rather than exercised end-to-end here.
+   *
+   * @param {(url: string, opts?: object) => Promise<object|null>} api - The
+   *   page's `api()` (resolves to `null` on failure, never rejects).
+   * @param {string} apiBase - `/api/sessions/<project>/medusa` or `/api/master/medusa`.
+   * @param {{role?: ('sender'|'recipient'|'all')}} [opts]
+   * @returns {Promise<object|null>} The exchanges payload, or `null` on failure.
+   */
+  function tcFetchMedusaExchanges(api, apiBase, opts) {
+    const role = opts && opts.role;
+    const qs = role ? `?role=${encodeURIComponent(role)}` : '';
+    return api(`${apiBase}/exchanges${qs}`);
+  }
+
+  /**
    * Create a Medusa switchboard control bound to one participant.
    *
    * Rides its host's existing poll — `poll()` is called by the session's status
@@ -3520,6 +3546,8 @@
    * @param {(s: *) => string} [deps.esc] - HTML escaper; defaults to `tcEscapeHtml`.
    * @param {string} [deps.subject] - How the help text names the host:
    *   `'this session'` (default) or `'the Master'`.
+   * @param {(msg: string) => boolean} [deps.confirm] - The toggle-off guard's
+   *   confirm (INTV-V5540-01), injectable for tests; defaults to `global.confirm`.
    * @param {object} [deps.state] - The state object to drive. The session passes
    *   `sessionState.medusa` so its loop code keeps reading the object it always
    *   read; omitted → a private one.
@@ -3552,6 +3580,11 @@
     if (m.lastError === undefined) m.lastError = null;
     if (m.lastErrorCode === undefined) m.lastErrorCode = null;
     if (m.bridge === undefined) m.bridge = null;
+    // The install's Bridge version + update-status reading (#1009), carried
+    // on every status payload (`lib/medusa.js#getStatus`'s own cached read —
+    // never this control's own fetch).
+    if (m.bridgeVersion === undefined) m.bridgeVersion = null;
+    if (m.bridgeUpdaterStatus === undefined) m.bridgeUpdaterStatus = null;
     if (m.shown === undefined) m.shown = false;
     if (m.loops === undefined) m.loops = [];
     if (m.loopsError === undefined) m.loopsError = null;
@@ -3650,7 +3683,23 @@
         ? ` Sending is disabled: ${st.outbound.reason || 'the access level does not allow it'}`
         : '';
       return 'Medusa: session-to-session comms (the switchboard) — message your other '
-        + `TangleClaw sessions from the banner. ${doing}. Click the heads to ${action}.${blocked}`;
+        + `TangleClaw sessions from the banner. ${doing}. Click the heads to ${action}.${blocked}${bridgeVersionClause(st)}`;
+    }
+
+    /**
+     * The Bridge's own version + update-status clause appended to the hover
+     * tooltip (#1009), from `lib/medusa.js#getStatus`'s cached reading.
+     * `updaterStatus` is rendered verbatim — its vocabulary is the Bridge's
+     * own (an external process this repo does not own the source of), not
+     * reinterpreted into a local "up to date"/"update available" ladder this
+     * install cannot verify holds.
+     * @param {{bridgeVersion: (string|null), bridgeUpdaterStatus: (string|null)}} st - State.
+     * @returns {string}
+     */
+    function bridgeVersionClause(st) {
+      if (!st.bridgeVersion) return '';
+      const updater = st.bridgeUpdaterStatus ? ` (${st.bridgeUpdaterStatus})` : '';
+      return ` Medusa Bridge v${st.bridgeVersion}${updater}.`;
     }
 
     /**
@@ -3698,6 +3747,11 @@
         heads.setAttribute('aria-pressed', m.state !== 'off' ? 'true' : 'false');
         heads.setAttribute('aria-label', label);
         heads.title = helpText(m);
+        // Machine-readable mirror of `bridgeVersionClause()` (#1009) — set to
+        // '' rather than removed, since `setAttribute` is all the shared
+        // mini-DOM test stub implements.
+        heads.setAttribute('data-medusa-bridge-version', m.bridgeVersion || '');
+        heads.setAttribute('data-medusa-bridge-updater-status', m.bridgeUpdaterStatus || '');
       }
 
       const badge = el('badge');
@@ -3779,6 +3833,11 @@
       // the LISTENER's classification of why it is not listening. Two different
       // failures, one name, one file — read the receiver, not the property.
       m.lastErrorCode = data.lastErrorCode || null;
+      // Always present (#1009): `lib/medusa.js#getStatus` carries a cached
+      // read on every status payload, toggle or plain poll alike — unlike
+      // `bridge` below, which only rides a toggle-ON response.
+      m.bridgeVersion = data.bridgeVersion || null;
+      m.bridgeUpdaterStatus = data.bridgeUpdaterStatus || null;
       // Present only on a toggle-ON response, where a preflight actually ran.
       // Taken when present for the same reason `loops` and `enabled` are: a status
       // poll carries none, and blanking it would erase the diagnosis the operator
@@ -3814,9 +3873,30 @@
     /**
      * Toggle the listener (the heads click). Reflects the returned status at
      * once; the next poll reconciles.
+     *
+     * Guards the OFF direction (INTV-V5540-01): a single click on `heads` is
+     * also the hover target for `showPeers`, so a slightly-mistimed click is
+     * an easy accident, and turning the listener off while mail is unread
+     * silently deafens the session. Confirmed only on that direction — an
+     * accidental click turning it ON costs nothing a second click can't undo.
+     *
+     * NO CONFIRMATION AVAILABLE MEANS NO SILENT TOGGLE-OFF, the same rule
+     * `tcCreateMasterControlBar`'s write-access guard states explicitly: the
+     * obvious-looking `typeof ask === 'function' && !ask(...)` fails OPEN
+     * or `confirm` is missing (the condition is simply false), proceeding with
+     * exactly the silent toggle-off this guard exists to stop.
      * @returns {Promise<void>}
      */
     async function toggle() {
+      if (m.state !== 'off' && (Number(m.unread) || 0) > 0) {
+        const ask = deps.confirm || global.confirm;
+        const n = Number(m.unread) || 0;
+        if (typeof ask !== 'function'
+          || !ask(`Turn off Medusa while ${n} message${n === 1 ? '' : 's'} are unread? `
+            + `${subject} will stop receiving until re-enabled.`)) {
+          return;
+        }
+      }
       applyStatus(await deps.api(`${deps.apiBase}/toggle`, { method: 'POST' }));
     }
 
@@ -5576,6 +5656,7 @@
   global.tcSettingDefaults = TC_SETTING_DEFAULTS;
   global.tcSettingRuleDefaults = TC_SETTING_RULE_DEFAULTS;
   global.tcMedusaIds = tcMedusaIds;
+  global.tcFetchMedusaExchanges = tcFetchMedusaExchanges;
   global.tcMedusaControlMarkup = tcMedusaControlMarkup;
   global.tcEscapeHtml = tcEscapeHtml;
   global.tcCreateMedusaControl = tcCreateMedusaControl;
