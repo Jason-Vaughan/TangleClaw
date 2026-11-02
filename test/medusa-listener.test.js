@@ -1353,7 +1353,14 @@ describe('a reconnect never replaces a registered socket (#2370)', () => {
       return s;
     };
     l = new MedusaListener({
-      workspaceId: 'ws-2370', backoffBaseMs: BASE, handshakeTimeoutMs: DEADLINE, wsFactory: factory
+      workspaceId: 'ws-2370', backoffBaseMs: BASE, handshakeTimeoutMs: DEADLINE,
+      // This describe block is about superseded-socket reconnect behavior, not
+      // the heartbeat-ack deadline (#1364) — none of these sockets ever send a
+      // heartbeat_ack, and some tests here tick past many backoff steps, which
+      // the default ack deadline (heartbeatMs * 3) would otherwise trip first.
+      // Sized to outlast every tick this block performs.
+      heartbeatAckTimeoutMs: 10_000_000,
+      wsFactory: factory
     });
     return { l, sockets, heldAtClose };
   }
@@ -1433,6 +1440,101 @@ describe('a reconnect never replaces a registered socket (#2370)', () => {
     assert.equal(l._ws, sockets[0]);
     assert.equal(sockets[0].readyState, READY.OPEN);
     assert.equal(l.state, 'listening');
+    l.stop();
+  });
+});
+
+describe('a silent Bridge missing heartbeat_ack is detected and reconnected (#1364)', () => {
+  // A Bridge that keeps the socket OPEN but stops answering
+  // `listener_heartbeat` with `heartbeat_ack` leaves `_onMessage`'s tolerant
+  // heartbeat_ack/pong case with nothing to report — the connection looks
+  // alive with nothing behind it, the same shape #1131 fixed one layer up for
+  // a Bridge that never answers `registered`. `mock.timers` drives every
+  // timeout deterministically; nothing here waits on real time (#1205).
+
+  /**
+   * Build and register a listener against a fresh FakeWebSocket pair.
+   * @param {{factory: Function, heartbeatMs?: number, heartbeatAckTimeoutMs?: number}} opts - Build options.
+   * @returns {MedusaListener} The registered listener.
+   */
+  function registeredListener({ factory, heartbeatMs = 10, heartbeatAckTimeoutMs } = {}) {
+    const l = new MedusaListener({
+      workspaceId: 'ws-1364', heartbeatMs, heartbeatAckTimeoutMs, backoffBaseMs: 1000, wsFactory: factory
+    });
+    return l;
+  }
+
+  it('transitions out of listening with HEARTBEAT_TIMEOUT once the missed-heartbeat window elapses with no ack', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+    const { factory, sockets } = makeFactory();
+    const l = registeredListener({ factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-1364' });
+    assert.equal(l.state, 'listening');
+    t.mock.timers.tick(l.heartbeatAckTimeoutMs); // default: heartbeatMs * 3, no ack ever arrives
+    assert.equal(l.lastErrorCode, LISTENER_ERROR_CODES.HEARTBEAT_TIMEOUT);
+    assert.equal(l.state, 'error');
+    l.stop();
+  });
+
+  it('each heartbeat_ack pushes the deadline out, so a Bridge that keeps answering never times out', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+    const { factory, sockets } = makeFactory();
+    const l = registeredListener({ factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-1364' });
+    const deadline = l.heartbeatAckTimeoutMs;
+    for (let step = 0; step < 4; step += 1) {
+      t.mock.timers.tick(deadline - 1);
+      assert.equal(l.state, 'listening', `still listening before deadline, step ${step}`);
+      sockets[0]._message({ type: 'heartbeat_ack', timestamp: step });
+    }
+    assert.equal(l.lastErrorCode, null);
+    assert.equal(sockets.length, 1, 'never reconnected');
+    l.stop();
+  });
+
+  it('abandons the silent socket (detached before close) and reconnects exactly once', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+    const { factory, sockets } = makeFactory();
+    const l = registeredListener({ factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-1364' });
+    t.mock.timers.tick(l.heartbeatAckTimeoutMs);
+    assert.equal(sockets[0].readyState, READY.CLOSED, 'the silent socket is closed');
+    assert.equal(l._ws, null, 'the abandoned socket is detached before close, same as the handshake deadline');
+    t.mock.timers.tick(l.backoffBaseMs);
+    assert.equal(sockets.length, 2, 'exactly one reconnect follows the deadline');
+    l.stop();
+  });
+
+  it('stop() during the silent window suppresses the timeout', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+    const { factory, sockets } = makeFactory();
+    const l = registeredListener({ factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-1364' });
+    l.stop();
+    t.mock.timers.tick(l.heartbeatAckTimeoutMs * 5);
+    assert.equal(l.lastErrorCode, null);
+    assert.equal(sockets.length, 1);
+  });
+
+  it('honors an explicit heartbeatAckTimeoutMs override rather than deriving one from heartbeatMs', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+    const { factory, sockets } = makeFactory();
+    const l = registeredListener({ factory, heartbeatMs: 10, heartbeatAckTimeoutMs: 5000 });
+    assert.equal(l.heartbeatAckTimeoutMs, 5000);
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-1364' });
+    t.mock.timers.tick(30); // past the derived default (heartbeatMs * 3) but well under the override
+    assert.equal(l.state, 'listening');
+    assert.equal(l.lastErrorCode, null);
     l.stop();
   });
 });
