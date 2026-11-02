@@ -4,6 +4,53 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.55.0] - 2026-11-02
+
+### Added
+- `lib/branch-retire-safety.js` gained a safe worktree- and `[gone]`-branch-retirement
+  planner/executor pair, plus `scripts/retire-stale-worktrees.js` (`--dry-run` by default,
+  `--apply`, `--json`): a worktree retires only when clean, not the active checkout, and its
+  branch/HEAD is `[gone]` upstream, an ancestor of `origin/main`, or content-identical to it;
+  branches retire only after their worktrees, reusing the existing `safe`/`preserve`/`unknown`
+  oracle. A new `describeProvenance()` helper parses `agent-<hash>` worktree names for triage (#1267).
+- `lib/checkout-ownership.js` provides a standalone deterministic module API for claiming exclusive worktree ownership per session (`claimWorktreeOwnership`/`readWorktreeOwnership`/`releaseWorktreeOwnership`, an atomic marker inside the worktree's own gitdir) and detecting a foreign write — `captureBaselineTreeState`/`verifyTreeUnchangedSinceBaseline` digest both HEAD and tracked/staged/untracked file contents. `evaluateWorktreeWriteAdmission` composes these callable helpers into a fail-closed check ready for host integration; live command and write paths do not invoke it yet (#1332).
+- `lib/checkout-freshness.js` classifies the delta between this checkout's HEAD and the observed
+  `origin/main` (`classifyUpstreamDelta`) by reusing the existing restart-impact classifier
+  (`checkoutState.classifyRange`) rather than a second, separately-maintained records-only path
+  list. `lib/update-applier.js` adds `applyAutomaticRecordsOnlyFastForward`, which fast-forwards
+  (`--ff-only`, onto the classification's own verified SHA — re-checked against the live HEAD and
+  `origin/main` immediately before merging, never the moving ref) onto a proven records-only delta
+  only when the checkout is on `main`, the working tree is clean, no session's wrap is running
+  anywhere on the host, and the classification itself identifies this install's own checkout path
+  (refusing with `wrong-checkout` otherwise — a delta classified for a different clone or worktree
+  at the same commit pair must never advance this install on its behalf), and
+  `evaluateStaleInstallResponse`, which composes the classification with
+  the auto-pull; reports a pending diagnosis (no restart prompt) for a delta that isn't measured
+  yet; and — for an executable or mixed delta, only once a caller explicitly answers whether any
+  session elsewhere is mid-turn — returns a structured restart-readiness payload instead of ever
+  restarting launchd unilaterally. An operator's explicit authorization still drives the actual
+  restart. These callable helpers are standalone core logic; no live route or poller invokes them yet (#1710).
+- `lib/branch-ownership.js` provides a standalone deterministic module API that binds a branch to one owner generation (`bindBranchOwnership`), verifies publication before handoff, and invalidates exact-head review evidence on rewrite (`recordReviewEvidence`/`invalidateReviewEvidenceOnRewrite`). Its callable `evaluateBranchMutationGuard` refuses cross-owner mutations and force pushes when invoked. These helpers are ready for host integration; live command, write, and push paths do not invoke them yet (#1977).
+
+### Fixed
+- `getServerInfo()` now reports `checkoutCoupling`: whether the checkout the background server
+  actually runs from (always the real running-code checkout, never a declared
+  `TANGLECLAW_SERVER_ROOT`, which would otherwise let the server misreport a different checkout's
+  freshness than the code it is actually serving) is itself a linked git worktree, or a primary
+  checkout with active Builder/agent worktrees linked off it right now. A declared
+  `TANGLECLAW_SERVER_ROOT` is validated (must exist, be a real TangleClaw checkout with `server.js`,
+  and be a recognizable git checkout) and surfaced separately as `declaredRoot`/
+  `matchesRunningProcess`, so an operator can tell whether the server has actually been repointed
+  to a dedicated install or only declares one it isn't yet running from; `checkoutCoupling` also
+  reports the plist's own `launchdWorkingDirectory`. An unexpected read error fails closed
+  (`coupled: null, status: "unknown"`, with a bounded error reason), never as a false "uncoupled".
+- `lib/checkout-layout.js` adds the executable half: `repointLaunchdServerPlist` rewrites the
+  `com.tangleclaw.server` launchd plist's `WorkingDirectory` to point at a validated target
+  checkout (atomically, optionally reloading the job), `provisionDedicatedServerCheckout`
+  creates a disk-light dedicated checkout (`git worktree add --detach` or `git clone --shared`)
+  to point it at, and a new CLI (`node lib/checkout-layout.js --repoint <root> [--reload]` /
+  `--provision-dedicated <root>`) exposes both to an operator or a smoke-test harness (#1672).
+
 ## [5.54.0] - 2026-11-02
 
 ### Added
