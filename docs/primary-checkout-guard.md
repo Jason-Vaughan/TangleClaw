@@ -124,7 +124,127 @@ is the kind of boundary each one is:
 Claude Code feeds hook *failures* back as synthetic user messages, which starts a new turn. A guard
 that fails closed on its own bug therefore loops forever, burning context on a machine the operator
 is almost never sitting at. The wired command also ends in `|| true`, so a missing node, a deleted
-script or a syntax error cannot produce a non-zero hook exit at all.
+script or a syntax error cannot produce a non-zero hook exit at all — belt-and-braces alongside
+`--invoke`'s own exit-0 guarantee (below), for the one failure mode nothing *inside* this file's own
+process can see: this file itself failing to parse.
+
+## The stable outer runner, and liveness telemetry (#1400)
+
+The wired command invokes `install-primary-guard.js --invoke`, not `guard-primary-checkout.js`
+directly. `|| true` makes a crashed guard harmless; it does not make a crash *visible*. A script
+that fails silently every time, from the day it ships, is observably identical to one that has
+never fired at all — and nothing short of a second process watching the first can tell those apart,
+because the thing crashing is also the thing that would have reported the crash.
+
+`--invoke` is that second process. It spawns `guard-primary-checkout.js` as a **child** (bounded by
+a timeout — a hung child is killed and recorded as an `error`, not left to block the tool call that
+triggered it forever), forwards its stdin, and forwards its stdout byte-for-byte — never altering
+the decision — while recording, to a small liveness-telemetry file, which of three things happened:
+
+- **`refusal`** — the child returned a `deny` decision.
+- **`allow`** — the child returned no decision (a handled fail-open, or an ordinary fall-through;
+  these are indistinguishable from outside the child, and the child's own contract already treats
+  them the same).
+- **`error`** — the child could not be trusted to answer: a non-zero exit, a timeout, a syntax error
+  in the policy script, or output that does not parse as this guard's own shape. This is the state
+  `|| true` alone cannot surface.
+
+The wired command's own `||` fallback — for the one failure mode even `--invoke` cannot observe,
+`node` itself missing or this very file failing to parse — no longer stays silent either. It is pure
+shell (a `printf`, no `node`, so it works precisely when `node` does not) that **appends** (`>>`, not
+`>` — several failures before anyone folds them leave several lines, not one overwriting the last) a
+small sentinel beside the telemetry file. It is folded into `counts.error` as `OUTER_NODE_FAILED`
+(one per line, so a burst of real failures is not under-counted) the next time anything can run JS
+against this primary again — a recovered real invocation, or an operator's own `--status`. The fold
+happens strictly INSIDE the same lock `updateStatus` already takes for everything else, not as a
+separate unlocked step beforehand: an earlier design unlinked the sentinel as its own atomic claim
+before acquiring the lock, which raced against the lock's own contention-skip (below) — a contended
+lock could let the unlink destroy the sentinel while the write meant to fold it never happened,
+losing the failure entirely. One lock, one atomic read-fold-unlink-write, closes that gap.
+
+Telemetry is written TWICE per invocation, not once: a `pending` entry is recorded *before* the
+child even runs, and cleared when the outcome above is recorded after. The gap this closes is the
+outer `--invoke` process itself being killed mid-invocation (not merely its child, which the timeout
+above already bounds) — without the pre-invocation write, that leaves no trace at all, observably
+identical to a guard that never fired. An entry still unclosed well past any realistic invocation
+time is folded into `counts.error` as `unclosed-entry` the next time telemetry is touched.
+
+Because a `PreToolUse` hook can fire for more than one tool call at once (parallel tool calls in one
+turn), every telemetry read-modify-write goes through a short, local exclusive lock (a
+`fs.openSync(..., 'wx')` lockfile, breaking a lock whose own mtime says its holder is long gone) —
+without it, two concurrent invocations each incrementing the same counter from the same stale read
+would silently lose one side's increment. The lock has a bounded wait, and losing that race SKIPS
+the update rather than falling back to an unlocked read-modify-write: telemetry must never be the
+reason a real tool call stalls, but an unlocked write could silently clobber a concurrent process's
+own crash record — the one thing this telemetry exists to preserve — so a missed increment under
+contention this guard does not expect to see in practice (one hook invocation per tool call, not a
+high-throughput server) is the far cheaper failure.
+
+The telemetry file (`<git-common-dir>/tangleclaw-primary-guard-status.json` by default;
+`TANGLECLAW_PRIMARY_GUARD_STATUS_FILE` overrides it) tracks `lastInvokedAt`, a `lastHook` bounded to
+`/^[A-Za-z0-9_-]{1,32}$/` (never the raw harness-supplied `tool_name` past that pattern — telemetry
+must not leak what it observes; see Security below), `lastOutcome`, running `counts` per outcome,
+and a bounded `lastError` code — never a raw path, command or message. A write failure here is
+swallowed and never alters the decision already computed — telemetry is strictly best-effort
+downstream of the thing that actually matters.
+
+`--self-test` runs these checks, in order: the node binary it would re-spawn as the inner guard
+actually runs (naming that specific cause directly, rather than letting it surface only as a generic
+"the wired command failed to run"); `disableAllHooks` is not set in EITHER `.claude/settings.json`
+or `settings.local.json` (a flag `settings.local.json` alone could never reveal if it were set only
+in the shared file); this guard's entry appears in the UNION of both files' `PreToolUse` entries —
+Claude Code loads hooks from both additively, so the union is the honest model of what the engine
+actually has to work with, not a guess at precedence between them (there is none to guess at for two
+files that both contribute).
+
+**Then it checks for an EXISTING genuine engine heartbeat — and fails closed if there is none, rather
+than skipping the check.** AC8's own text is explicit: *"Proof that the hook is on the live route must
+come from a heartbeat the engine's own invocation produced, never from one the self-test caused. A
+check that cannot be made is a failure, not a skip."* An earlier version of this file had self-test
+drive a third, realistically engine-shaped probe through the wired command itself — which is exactly
+the thing that sentence forbids: self-test manufacturing its own proof. Removed. Self-test may only
+ask "has `engineInvocations` ever been incremented by something that was NOT self-test" — if the
+answer is no, self-test FAILS, naming that as the reason, rather than quietly skipping the question.
+Only once that proof already exists does self-test go on to genuinely drive the wired command through
+a refusal case and an allow case and assert the liveness heartbeat advances — proving the outer
+runner is the one actually live on this path — and explicitly confirms its OWN two probes never moved
+`engineInvocations` either. Both probe invocations are counted into a **separate** `selfTest` bucket,
+never into the genuine `counts` or `engineInvocations` — a healthy self-test habit must never be able
+to masquerade as evidence that real tool-call traffic is reaching the guard.
+
+```sh
+node scripts/install-primary-guard.js --status         # liveness telemetry, human-readable
+node scripts/install-primary-guard.js --status --json  # same, as JSON
+```
+
+`--status` reports `liveEngineVerified`: true once `engineInvocations` is nonzero — a GENUINE
+(non-self-test) invocation whose payload actually looks like Claude Code's own PreToolUse envelope:
+`hook_event_name === 'PreToolUse'` together with non-empty `session_id`/`transcript_path`/`cwd`, AND
+`transcript_path` resolving to a REAL, EXISTING `.jsonl` file whose basename matches `session_id`.
+The on-disk check is load-bearing, not decoration: a payload merely copying plausible-looking field
+names is indistinguishable from the exact kind of self-manufactured proof AC8 forbids, so matching
+field names alone is not enough — only a transcript file that genuinely exists at the claimed path is.
+`lastEngineHeartbeatAt` is stamped alongside every such increment; `--self-test` requires both to be
+present before it will run at all. It also checks
+whether the TRACKED, shared `.claude/settings.json` declares its own `PreToolUse` entry for one of
+this guard's two exact matchers (`'Bash'` or the write matcher) that is not this guard's own — this
+repo's own contract says that file carries no `hooks` block at all, so any such entry is already
+anomalous by that contract, whatever wrote it, and `sharedSettingsHookConflicts` names it. (This one
+check is still deliberately narrow: an EXACT matcher collision, not a reproduction of general overlap
+between two *different* matcher patterns, which is a harder problem than this check claims to solve.)
+
+`--status` exits 1 and prints `ACTIONABLE` when any of three things is true: a crash was recorded
+*after* the last successful `--self-test` (an old crash a passing self-test already re-covered is
+not new news); the primary gained commits since the last `--status` check while no genuine
+invocation was recorded in that window (an independent activity signal the guard itself cannot move,
+used only as a *relative* check — commits advanced, invocations did not — never from wall-clock age
+alone, and never tripped by an install that is simply, genuinely idle); or the shared-settings
+conflict above. `--status` also folds the outer-node sentinel (above) before reading anything else,
+so a shell-level failure is caught even on a check run with no invocation in between.
+
+**Exemption hygiene:** this change introduces no new silence or exemption mechanism. The two
+existing override routes (the env var and the sentinel file, both named below) are unchanged, and
+telemetry does not add a third way to stand the guard down.
 
 ## Installing it
 
@@ -144,17 +264,20 @@ location; the wiring names an absolute path.
 ```sh
 node scripts/install-primary-guard.js              # wire it (idempotent)
 node scripts/install-primary-guard.js --check      # report what IS wired; exit 1 if not, or stale
-node scripts/install-primary-guard.js --self-test  # drive the wired command; exit 1 if it doesn't refuse
+node scripts/install-primary-guard.js --self-test  # drive the wired command; exit 1 if it doesn't
+                                                    # refuse, allow, and advance the heartbeat
+node scripts/install-primary-guard.js --status     # liveness telemetry; see above
 node scripts/install-primary-guard.js --remove     # unwire
 ```
 
 **`--self-test` is the readback that matters.** `--check` proves an entry is listed and the script
-it pins exists; it cannot prove the wired command still produces a decision. `--self-test` pipes a
-synthetic PreToolUse payload through the command *actually written into the settings file* and
-asserts a refusal comes back. That distinction is not theoretical here: this repo shipped the
-mirror-image bug in #755, where a posture readback keyed on the guard *script* reported healthy
-after the hook's *registration* was removed. A readback keyed on the registration must not be blind
-to the reverse, and a wired command ending in `|| true` fails silently by construction.
+it pins exists; it cannot prove the wired command still produces a decision. `--self-test` pipes
+synthetic PreToolUse payloads through the command *actually written into the settings file* and
+asserts a refusal, an allow, and a heartbeat advance all come back. That distinction is not
+theoretical here: this repo shipped the mirror-image bug in #755, where a posture readback keyed on
+the guard *script* reported healthy after the hook's *registration* was removed. A readback keyed
+on the registration must not be blind to the reverse, and a wired command ending in `|| true` fails
+silently by construction.
 
 Run both after any merge that touches the guard, and after anything that rewrites
 `settings.local.json`.
@@ -164,19 +287,21 @@ hooks and where `_mergeBaselineHooks` preserves foreign entries verbatim across 
 reconciliation. **Wiring takes effect for sessions started after it runs**, not for the session that
 ran it.
 
-The command pins the *primary's* absolute copy of the guard rather than `$CLAUDE_PROJECT_DIR`, so a
-session launched in a worktree whose branch predates this feature does not invoke a script that
-does not exist.
+The command pins the *primary's* absolute copy of `install-primary-guard.js` rather than
+`$CLAUDE_PROJECT_DIR`, so a session launched in a worktree whose branch predates this feature does
+not invoke a script that does not exist. An already-wired machine's entry (pinned directly at
+`guard-primary-checkout.js`, the pre-#1400 shape) is still recognised as this guard's own and
+replaced cleanly on the next install — nothing migrates it on its own.
 
 ## Files
 
 | Path | Role |
 |---|---|
-| `scripts/guard-primary-checkout.js` | the hook: policy, refusal text, fail-open |
+| `scripts/guard-primary-checkout.js` | the policy script: refusal text, fail-open |
+| `scripts/install-primary-guard.js` | wire / check / unwire / status, AND (`--invoke`) the stable outer runner actually wired into the hook (#1400) |
 | `lib/checkout-layout.js` | where the primary is, which worktree a path belongs to |
 | `lib/project-paths.js` | the repo's sole containment predicate (`allowRoot` for directory questions) |
-| `scripts/install-primary-guard.js` | wire / check / unwire |
-| `test/primary-checkout-guard.test.js` | drives the real hook over stdin against a real worktree |
+| `test/primary-checkout-guard.test.js` | drives the real hook and the real runner over stdin against a real worktree |
 | `test/checkout-layout.test.js` | the layout answers that decide whether it refuses |
 
 ## Related

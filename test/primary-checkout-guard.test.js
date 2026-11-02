@@ -25,7 +25,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { execFileSync, spawnSync, spawn } = require('node:child_process');
 
 const { initRepo } = require('./_temp-repo');
 const engines = require('../lib/engines');
@@ -149,6 +149,86 @@ function runGuard(opts) {
     assert.equal(parsed.hookSpecificOutput.hookEventName, 'PreToolUse');
   }
   return { status: res.status, stdout: res.stdout, stderr: res.stderr, decision, reason };
+}
+
+/**
+ * Run the fixture's own `install-primary-guard.js --invoke` directly — the
+ * STABLE OUTER RUNNER itself (#1400), bypassing the shell `|| true` wrapper
+ * so a test isolates the runner's own behavior from shell quoting.
+ *
+ * @param {object} fx - Fixture from `makeFixture()`.
+ * @param {object} toolInput - Payload `tool_input`.
+ * @param {object} [env] - Extra environment for the `--invoke` process itself.
+ * @param {string} [tool] - Tool name; default 'Write'.
+ * @returns {{status:number, stdout:string, stderr:string}}
+ */
+function invokeCli(fx, toolInput, env, tool, rawStdin) {
+  const payload = rawStdin !== undefined ? rawStdin
+    : JSON.stringify({ tool_name: tool || 'Write', tool_input: toolInput, cwd: fx.primary });
+  const res = spawnSync(process.execPath,
+    [path.join(fx.primary, 'scripts', 'install-primary-guard.js'), '--invoke'],
+    {
+      input: payload,
+      encoding: 'utf8',
+      env: { ...process.env, CLAUDE_PROJECT_DIR: fx.primary, TANGLECLAW_ALLOW_PRIMARY_WRITE: '', ...(env || {}) }
+    });
+  return { status: res.status, stdout: res.stdout, stderr: res.stderr };
+}
+
+/**
+ * Run `install-primary-guard.js --invoke` ASYNCHRONOUSLY (not `spawnSync`),
+ * so two calls can genuinely overlap — the only way to exercise the lock
+ * `updateStatus` takes around a real read-modify-write race (#1400 Round 2
+ * finding 2).
+ *
+ * @param {object} fx - Fixture from `makeFixture()`.
+ * @param {object} toolInput - Payload `tool_input`.
+ * @param {object} [env] - Extra environment.
+ * @returns {Promise<{status:number, stdout:string, stderr:string}>}
+ */
+function invokeCliAsync(fx, toolInput, env) {
+  return new Promise((resolve) => {
+    const payload = JSON.stringify({ tool_name: 'Write', tool_input: toolInput, cwd: fx.primary });
+    const child = spawn(process.execPath,
+      [path.join(fx.primary, 'scripts', 'install-primary-guard.js'), '--invoke'],
+      {
+        env: { ...process.env, CLAUDE_PROJECT_DIR: fx.primary, TANGLECLAW_ALLOW_PRIMARY_WRITE: '', ...(env || {}) }
+      });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (c) => { stdout += c; });
+    child.stderr.on('data', (c) => { stderr += c; });
+    child.on('close', (status) => resolve({ status, stdout, stderr }));
+    child.stdin.end(payload);
+  });
+}
+
+/**
+ * Seed `engineInvocations`/`lastEngineHeartbeatAt` with ONE genuine-looking
+ * engine invocation — the only thing `selfTest` will accept as proof the
+ * guard is on the live route (#1400 Round 4 finding 1 / AC8). A real,
+ * on-disk `.jsonl` transcript file whose basename matches `session_id` is
+ * required by `looksLikeEngineEnvelope` itself, not just a plausible field
+ * name — so this creates one for real, then cleans it up.
+ *
+ * @param {object} fx - Fixture from `makeFixture()`.
+ * @param {object} [toolInput] - Payload `tool_input`; defaults to an ordinary allow.
+ * @returns {{status:number, stdout:string, stderr:string}}
+ */
+function seedGenuineEngineHeartbeat(fx, toolInput) {
+  const sessionId = `self-test-seed-${Math.random().toString(36).slice(2, 10)}`;
+  const transcriptPath = path.join(os.tmpdir(), `${sessionId}.jsonl`);
+  fs.writeFileSync(transcriptPath, '{}\n');
+  try {
+    const payload = JSON.stringify({
+      hook_event_name: 'PreToolUse', session_id: sessionId, transcript_path: transcriptPath,
+      tool_name: 'Write', tool_input: toolInput || { file_path: path.join(fx.primary, 'lib', 'x.js') },
+      cwd: fx.primary
+    });
+    return invokeCli(fx, null, {}, null, payload);
+  } finally {
+    fs.rmSync(transcriptPath, { force: true });
+  }
 }
 
 describe('#798 primary-checkout guard — P1, the session is rooted in a worktree', () => {
@@ -697,12 +777,21 @@ describe('#798 installer — scripts/install-primary-guard.js', () => {
     assert.ok(entries.every((e) => installer.isGuardEntry(e)));
   });
 
-  it('ends the command in `|| true`, so the guard can never fail a hook', () => {
+  it('falls back to a shell-only sentinel write, never a bare `|| true`, so the guard can never fail a hook', () => {
     // A non-zero hook exit is fed back as a synthetic user message and starts a
-    // new turn — the loop this guard exists downstream of. The suffix is the
-    // only thing that makes that structurally impossible.
-    assert.match(installer.guardCommand('/repo'), /\|\| true$/);
-    assert.ok(installer.guardCommand('/repo').includes(installer.GUARD_REL));
+    // new turn — the loop this guard exists downstream of. The `||` fallback is
+    // belt-and-braces alongside `--invoke`'s own exit-0 guarantee (#1400),
+    // rather than the guard's only protection, but it still has to be there
+    // for the one failure mode `--invoke` cannot see itself: `node` missing
+    // entirely, or this very file failing to parse. #1400 Round 3 makes that
+    // branch WRITE a sentinel (pure shell — no `node`) rather than stay
+    // silent, and still end in `true` so the fallback itself can never
+    // produce a non-zero hook exit either.
+    const cmd = installer.guardCommand('/repo');
+    assert.match(cmd, /\|\| \{.*true; \}$/s);
+    assert.match(cmd, /printf/);
+    assert.ok(cmd.includes(installer.INSTALLER_REL));
+    assert.ok(cmd.includes('--invoke'));
   });
 
   it('is idempotent — a second install changes nothing', () => {
@@ -853,6 +942,11 @@ describe('#798 installer — the CLI, against a real settings file', () => {
   });
 
   it('--self-test drives the WIRED command and sees a real refusal', () => {
+    // #1400 Round 4 finding 1 / AC8: self-test now requires an EXISTING
+    // genuine engine heartbeat before it will run its own probes at all —
+    // seed one first. (This also carries forward for every later test in
+    // this shared fixture, since engineInvocations never resets.)
+    seedGenuineEngineHeartbeat(fx);
     const r = cli('--self-test');
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /self-test: PASS/);
@@ -951,5 +1045,690 @@ describe('#798 — the wiring survives TangleClaw\'s own hook reconciliation', (
     const merged = engines._mergeBaselineHooks(wired.hooks, baseline);
     assert.equal(merged.hooks.PreToolUse.filter((e) => installer.isGuardEntry(e)).length, 2);
     assert.equal(merged.preservedForeign, 2);
+  });
+});
+
+describe('#1400 — the stable outer runner (`--invoke`) and liveness telemetry', () => {
+  let fx;
+  before(() => { fx = makeFixture(); });
+  after(() => fx.cleanup());
+
+  const statusPath = () => installer.statusFilePath(fx.primary);
+  const readStatusNow = () => installer.readStatus(statusPath());
+
+  it('--invoke forwards a genuine refusal and records it as genuine, not self-test', () => {
+    const before_ = readStatusNow();
+    const r = invokeCli(fx, { file_path: path.join(fx.primary, 'public', 'sw.js') });
+    assert.equal(r.status, 0, 'the runner must exit 0 even for a refusal');
+    const parsed = JSON.parse(r.stdout);
+    assert.equal(parsed.hookSpecificOutput.permissionDecision, 'deny');
+
+    const after_ = readStatusNow();
+    assert.equal(after_.counts.total, before_.counts.total + 1);
+    assert.equal(after_.counts.refusal, before_.counts.refusal + 1);
+    assert.equal(after_.lastOutcome, 'refusal');
+    assert.equal(after_.lastHook, 'Write');
+    assert.equal(after_.selfTest.counts.total, before_.selfTest.counts.total,
+      'a genuine invocation must not inflate the self-test bucket');
+  });
+
+  it('--invoke forwards a genuine allow (no decision) and records it', () => {
+    const before_ = readStatusNow();
+    const r = invokeCli(fx, { file_path: path.join(fx.primary, 'lib', 'x.js') });
+    assert.equal(r.status, 0);
+    assert.equal(r.stdout, '');
+    const after_ = readStatusNow();
+    assert.equal(after_.counts.allow, before_.counts.allow + 1);
+    assert.equal(after_.lastOutcome, 'allow');
+  });
+
+  it('a broken inner script is recorded as `error`, not silently as allow, and the decision stays empty', () => {
+    // The case #1400 requirement 2c names explicitly: a syntax/runtime
+    // failure in the INNER guard must not read as a clean fall-through.
+    // Corrupting a COPY (the fixture's) rather than the real repo's script —
+    // this is exactly why `selfTest` itself does not probe this case against
+    // the real primary.
+    const guardPath = path.join(fx.primary, installer.GUARD_REL);
+    const saved = fs.readFileSync(guardPath, 'utf8');
+    fs.writeFileSync(guardPath, 'this is not valid node syntax {{{');
+    try {
+      const before_ = readStatusNow();
+      const r = invokeCli(fx, { file_path: path.join(fx.primary, 'public', 'sw.js') });
+      assert.equal(r.status, 0, 'the outer runner must still exit 0 when the inner script crashes');
+      assert.equal(r.stdout, '', 'a crashed inner script must produce no decision — fail open');
+      const after_ = readStatusNow();
+      assert.equal(after_.counts.error, before_.counts.error + 1);
+      assert.equal(after_.lastOutcome, 'error');
+      assert.ok(after_.lastError, 'a crash must leave a reason code');
+      assert.ok(!after_.lastError.includes(fx.primary),
+        'telemetry must never contain the raw script path (#1400 Security)');
+      assert.ok(!after_.lastError.includes('node:internal') && after_.lastError.length < 40,
+        'the recorded code must be bounded, not a raw stack trace');
+    } finally {
+      fs.writeFileSync(guardPath, saved);
+    }
+  });
+
+  it('a telemetry write failure does not alter the decision', () => {
+    const file = statusPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.rmSync(file, { recursive: true, force: true }); // earlier tests in this block already wrote a real status file here
+    // A directory sits where the status file belongs: every write to it
+    // fails at the final rename, without touching the decision path at all.
+    fs.mkdirSync(file);
+    try {
+      const r = invokeCli(fx, { file_path: path.join(fx.primary, 'public', 'sw.js') });
+      assert.equal(r.status, 0);
+      const parsed = JSON.parse(r.stdout);
+      assert.equal(parsed.hookSpecificOutput.permissionDecision, 'deny',
+        'the refusal must still reach the harness even though telemetry could not be written');
+      assert.match(r.stderr, /telemetry write failed/);
+    } finally {
+      fs.rmSync(file, { recursive: true, force: true });
+    }
+  });
+
+  it('--self-test advances the self-test counter, not the genuine one, and stamps success', () => {
+    fs.writeFileSync(path.join(fx.primary, '.claude', 'settings.local.json'),
+      JSON.stringify(installer.apply({}, fx.primary, 'install').settings, null, 2));
+    seedGenuineEngineHeartbeat(fx); // #1400 Round 4 finding 1 / AC8: self-test now requires this first
+    const before_ = readStatusNow();
+    const r = spawnSync(process.execPath,
+      [path.join(fx.primary, 'scripts', 'install-primary-guard.js'), '--self-test'], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /self-test: PASS/);
+
+    const after_ = readStatusNow();
+    assert.equal(after_.selfTest.counts.total, before_.selfTest.counts.total + 2,
+      'self-test drives two probes — a refusal case and an allow case (#1400 Round 4: the Round 3 '
+      + 'engine-shaped probe was removed — self-test must never manufacture its own engine proof)');
+    assert.equal(after_.counts.total, before_.counts.total,
+      'self-test traffic must never be counted as genuine traffic');
+    assert.equal(after_.engineInvocations, before_.engineInvocations,
+      'self-test traffic must never inflate engineInvocations');
+    assert.ok(after_.selfTest.lastSuccessfulAt, 'a passing self-test must stamp its own success');
+  });
+
+  it('--status/--json reports the shape #1400 asks for', () => {
+    const r = spawnSync(process.execPath,
+      [path.join(fx.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+      { encoding: 'utf8' });
+    assert.equal(r.status, 0);
+    const parsed = JSON.parse(r.stdout);
+    assert.ok('counts' in parsed && 'total' in parsed.counts);
+    assert.ok('lastInvokedAt' in parsed);
+    assert.ok('selfTest' in parsed);
+    assert.ok('staleWarning' in parsed);
+    assert.ok('crashSinceLastSelfTest' in parsed);
+  });
+
+  it('--status flags a crash recorded AFTER the last successful self-test as actionable', () => {
+    // A fresh fixture, so the crash/self-test ORDER is unambiguous.
+    const fresh = makeFixture();
+    try {
+      fs.writeFileSync(path.join(fresh.primary, '.claude', 'settings.local.json'),
+        JSON.stringify(installer.apply({}, fresh.primary, 'install').settings, null, 2));
+      seedGenuineEngineHeartbeat(fresh); // #1400 Round 4 finding 1 / AC8: self-test now requires this first
+      const selfTestFirst = spawnSync(process.execPath,
+        [path.join(fresh.primary, 'scripts', 'install-primary-guard.js'), '--self-test'],
+        { encoding: 'utf8' });
+      assert.equal(selfTestFirst.status, 0, selfTestFirst.stdout + selfTestFirst.stderr);
+
+      const guardPath = path.join(fresh.primary, installer.GUARD_REL);
+      const saved = fs.readFileSync(guardPath, 'utf8');
+      fs.writeFileSync(guardPath, 'not valid node {{{');
+      try {
+        const crashed = invokeCli(fresh, { file_path: path.join(fresh.primary, 'public', 'sw.js') });
+        assert.equal(crashed.status, 0);
+      } finally {
+        fs.writeFileSync(guardPath, saved);
+      }
+
+      const statusRun = spawnSync(process.execPath,
+        [path.join(fresh.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+        { encoding: 'utf8' });
+      assert.equal(statusRun.status, 1, 'an actionable status must exit non-zero');
+      const parsed = JSON.parse(statusRun.stdout);
+      assert.equal(parsed.crashSinceLastSelfTest, true);
+    } finally {
+      fresh.cleanup();
+    }
+  });
+
+  it('warns when commits advanced since the last check with no genuine invocation, '
+    + 'and stays quiet when neither advanced', () => {
+    const fresh = makeFixture();
+    try {
+      const git = (...args) => execFileSync('git', args, { cwd: fresh.primary, stdio: 'pipe' });
+      const first = spawnSync(process.execPath,
+        [path.join(fresh.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+        { encoding: 'utf8' });
+      assert.equal(JSON.parse(first.stdout).staleWarning, false, 'first check has no baseline yet');
+
+      // Neither signal advances: a check right after must stay quiet — the
+      // "intentionally idle install" case #1400 requirement 4 names.
+      const quiet = spawnSync(process.execPath,
+        [path.join(fresh.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+        { encoding: 'utf8' });
+      assert.equal(JSON.parse(quiet.stdout).staleWarning, false,
+        'an intentionally idle install must remain quiet');
+
+      // Commits advance; no guard invocation happens in between.
+      fs.writeFileSync(path.join(fresh.primary, 'lib', 'x.js'), '// changed\n');
+      git('add', '-A');
+      git('commit', '-q', '-m', 'unrelated activity, no guard invocation');
+
+      const warned = spawnSync(process.execPath,
+        [path.join(fresh.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+        { encoding: 'utf8' });
+      assert.equal(warned.status, 1);
+      assert.equal(JSON.parse(warned.stdout).staleWarning, true);
+    } finally {
+      fresh.cleanup();
+    }
+  });
+});
+
+describe('#1400 Round 2 — pre-invocation heartbeat, locking, bounded telemetry, live-engine proof', () => {
+  let fx;
+  before(() => { fx = makeFixture(); });
+  after(() => fx.cleanup());
+
+  const statusPath = () => installer.statusFilePath(fx.primary);
+  const readStatusNow = () => installer.readStatus(statusPath());
+
+  it('lastHook is bounded/sanitized, never the raw tool_name verbatim', () => {
+    const hostile = JSON.stringify({
+      tool_name: '../../etc/passwd; rm -rf /',
+      tool_input: { file_path: path.join(fx.primary, 'lib', 'x.js') },
+      cwd: fx.primary
+    });
+    const r = invokeCli(fx, null, {}, null, hostile);
+    assert.equal(r.status, 0);
+    const status = readStatusNow();
+    assert.equal(status.lastHook, 'unknown',
+      'a tool_name outside the bounded pattern must never reach telemetry verbatim');
+  });
+
+  it('a hung inner script is killed and recorded as `error`, not left to hang forever', () => {
+    const guardPath = path.join(fx.primary, installer.GUARD_REL);
+    const saved = fs.readFileSync(guardPath, 'utf8');
+    // Never reads stdin, never exits on its own — exactly the shape a
+    // timeout has to catch, not a crash `runInner`'s try/catch would see
+    // immediately on its own.
+    fs.writeFileSync(guardPath, 'setInterval(() => {}, 1000);\n');
+    try {
+      const before_ = readStatusNow();
+      const start = Date.now();
+      const r = invokeCli(fx, { file_path: path.join(fx.primary, 'public', 'sw.js') }, {
+        [installer.INNER_TIMEOUT_ENV]: '300'
+      });
+      const elapsed = Date.now() - start;
+      assert.equal(r.status, 0, 'the outer runner must still exit 0 when its child is killed');
+      assert.equal(r.stdout, '');
+      assert.ok(elapsed < 5000, `expected the 300ms timeout to bound this, took ${elapsed}ms`);
+      const after_ = readStatusNow();
+      assert.equal(after_.counts.error, before_.counts.error + 1);
+      assert.ok(after_.lastError, 'a killed child must leave a reason code');
+    } finally {
+      fs.writeFileSync(guardPath, saved);
+    }
+  });
+
+  it('an abandoned pending entry is reclaimed as `unclosed-entry` on the next status update', () => {
+    // Simulates the OUTER `--invoke` process itself being killed between
+    // `recordInvocationStart` and `recordInvocation` — the one case nothing
+    // in THIS process's own lifetime can close (#1400 Round 2 finding 1).
+    const file = statusPath();
+    const id = installer.recordInvocationStart(fx.primary, 'Bash', false);
+    assert.ok(id, 'recordInvocationStart must return an id to test against');
+    const before_ = installer.readStatus(file);
+    assert.ok(id in before_.pending, 'the entry must exist while "in flight"');
+
+    const r = spawnSync(process.execPath,
+      [path.join(fx.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+      { encoding: 'utf8', env: { ...process.env, [installer.PENDING_STALE_ENV]: '1' } });
+    // `--status`'s exit code is not asserted here: this shared fixture may
+    // already carry an unrelated crash/staleness flag from an earlier test
+    // in this block, and that is not what this test is about.
+    const after_ = JSON.parse(r.stdout);
+    assert.equal(after_.lastOutcome, 'error');
+    assert.equal(after_.lastError, 'unclosed-entry');
+    assert.ok(!(id in after_.pending), 'the reclaimed entry must be removed, not left to be reclaimed again');
+  });
+
+  it('two concurrent invocations do not lose an increment to each other', async () => {
+    const before_ = readStatusNow();
+    await Promise.all([
+      invokeCliAsync(fx, { file_path: path.join(fx.primary, 'lib', 'x.js') }),
+      invokeCliAsync(fx, { file_path: path.join(fx.primary, 'public', 'sw.js') })
+    ]);
+    const after_ = readStatusNow();
+    assert.equal(after_.counts.total, before_.counts.total + 2,
+      'both concurrent invocations must be counted — a lost update means the lock did not hold');
+  });
+
+  it('acquireLock breaks a stale lock rather than waiting out the full budget', () => {
+    const file = statusPath();
+    const lockPath = `${file}${installer.LOCK_SUFFIX}`;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(lockPath, '');
+    const old = Date.now() / 1000 - 60; // 60s old — well past the staleness threshold
+    fs.utimesSync(lockPath, old, old);
+    const start = Date.now();
+    const acquired = installer.acquireLock(file);
+    try {
+      assert.ok(acquired, 'a stale lock must be broken, not waited out');
+      assert.ok(Date.now() - start < 1000, 'breaking a stale lock must be fast, not a full timeout wait');
+    } finally {
+      installer.releaseLock(acquired);
+    }
+  });
+
+  it('liveEngineVerified stays false for a hand-built CLI call, true only for an engine-shaped payload', () => {
+    const fresh = makeFixture();
+    try {
+      const before_ = spawnSync(process.execPath,
+        [path.join(fresh.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+        { encoding: 'utf8' });
+      assert.equal(JSON.parse(before_.stdout).liveEngineVerified, false);
+
+      // An ordinary, hand-built payload — no hook_event_name/session_id/
+      // transcript_path — must NOT count, even though it produces a real
+      // decision and is not a self-test probe (#1400 Round 3 finding 2).
+      invokeCli(fresh, { file_path: path.join(fresh.primary, 'public', 'sw.js') });
+      const stillFalse = spawnSync(process.execPath,
+        [path.join(fresh.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+        { encoding: 'utf8' });
+      assert.equal(JSON.parse(stillFalse.stdout).liveEngineVerified, false,
+        'a hand-built CLI call must not satisfy liveEngineVerified');
+      assert.equal(JSON.parse(stillFalse.stdout).engineInvocations, 0);
+
+      // A payload with the right FIELD NAMES but a transcript_path that
+      // does not exist, or whose basename does not match session_id, must
+      // still be rejected (#1400 Round 4 finding 1) — plausible field
+      // names alone are not proof; the on-disk check is the point.
+      const fakeTranscript = JSON.stringify({
+        hook_event_name: 'PreToolUse', session_id: 'real-session', transcript_path: '/tmp/does-not-exist.jsonl',
+        tool_name: 'Write', tool_input: { file_path: path.join(fresh.primary, 'public', 'sw.js') },
+        cwd: fresh.primary
+      });
+      invokeCli(fresh, null, {}, null, fakeTranscript);
+      const stillFakeRejected = spawnSync(process.execPath,
+        [path.join(fresh.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+        { encoding: 'utf8' });
+      assert.equal(JSON.parse(stillFakeRejected.stdout).liveEngineVerified, false,
+        'a nonexistent transcript file must not satisfy the engine-envelope check');
+
+      const r = seedGenuineEngineHeartbeat(fresh, { file_path: path.join(fresh.primary, 'public', 'sw.js') });
+      assert.equal(r.status, 0);
+
+      const after_ = spawnSync(process.execPath,
+        [path.join(fresh.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+        { encoding: 'utf8' });
+      const parsedAfter = JSON.parse(after_.stdout);
+      assert.equal(parsedAfter.liveEngineVerified, true);
+      assert.equal(parsedAfter.engineInvocations, 1);
+      assert.ok(parsedAfter.lastEngineHeartbeatAt);
+    } finally {
+      fresh.cleanup();
+    }
+  });
+
+  it('flags a competing exact-matcher PreToolUse entry in the shared settings.json as actionable', () => {
+    const fresh = makeFixture();
+    try {
+      fs.writeFileSync(path.join(fresh.primary, '.claude', 'settings.json'), JSON.stringify({
+        hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'echo unrelated' }] }] }
+      }));
+      const r = spawnSync(process.execPath,
+        [path.join(fresh.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+        { encoding: 'utf8' });
+      assert.equal(r.status, 1);
+      const parsed = JSON.parse(r.stdout);
+      assert.deepEqual(parsed.sharedSettingsHookConflicts, ['Bash']);
+    } finally {
+      fresh.cleanup();
+    }
+  });
+
+  it('does not flag settings.json when it declares no PreToolUse hooks at all', () => {
+    const r = spawnSync(process.execPath,
+      [path.join(fx.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+      { encoding: 'utf8' });
+    assert.equal(JSON.parse(r.stdout).sharedSettingsHookConflicts.length, 0);
+  });
+
+  it('checkNodeResolvable passes under the real node binary', () => {
+    assert.equal(installer.checkNodeResolvable().ok, true);
+  });
+});
+
+describe('#1400 Round 3 — outer-node sentinel, merged-settings AC8, lock-contention safety', () => {
+  let fx;
+  before(() => { fx = makeFixture(); });
+  after(() => fx.cleanup());
+
+  const statusPath = () => installer.statusFilePath(fx.primary);
+  const readStatusNow = () => installer.readStatus(statusPath());
+
+  it('guardCommand\'s shell fallback writes a sentinel, pure shell, when the outer node invocation itself fails', () => {
+    // No node on PATH at all — the ONE failure mode nothing JS-based can
+    // observe from inside this file, which is exactly why the fallback has
+    // to be pure shell (`printf`, no `node`) to catch it.
+    const cmd = installer.guardCommand(fx.primary);
+    const r = spawnSync('/bin/sh', ['-c', cmd], { env: { PATH: '/nonexistent' }, encoding: 'utf8' });
+    assert.equal(r.status, 0, 'the fallback itself must still end in `true` and exit 0');
+    const sentinel = installer.outerFailureSentinelPath(fx.primary);
+    assert.ok(fs.existsSync(sentinel), 'the shell fallback must have written the sentinel');
+    fs.rmSync(sentinel);
+  });
+
+  it('a later real --invoke folds the sentinel into telemetry as OUTER_NODE_FAILED', () => {
+    const sentinel = installer.outerFailureSentinelPath(fx.primary);
+    fs.writeFileSync(sentinel, '{"code":"OUTER_NODE_FAILED"}\n');
+    const before_ = readStatusNow();
+
+    const r = invokeCli(fx, { file_path: path.join(fx.primary, 'lib', 'x.js') });
+    assert.equal(r.status, 0);
+
+    const after_ = readStatusNow();
+    assert.ok(!fs.existsSync(sentinel), 'the sentinel must be consumed, not left to be folded again');
+    assert.equal(after_.counts.error, before_.counts.error + 1,
+      'folding the sentinel is itself one more error — on top of whatever THIS invocation decided');
+    assert.equal(after_.lastError, 'OUTER_NODE_FAILED');
+  });
+
+  it('--status alone folds the sentinel even with no invocation since', () => {
+    const sentinel = installer.outerFailureSentinelPath(fx.primary);
+    fs.writeFileSync(sentinel, '{"code":"OUTER_NODE_FAILED"}\n');
+    const before_ = readStatusNow();
+
+    const r = spawnSync(process.execPath,
+      [path.join(fx.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+      { encoding: 'utf8' });
+    assert.equal(r.status, 1, 'a freshly-folded crash must be actionable');
+    assert.ok(!fs.existsSync(sentinel));
+    const after_ = JSON.parse(r.stdout);
+    assert.equal(after_.counts.error, before_.counts.error + 1);
+    assert.equal(after_.lastError, 'OUTER_NODE_FAILED');
+  });
+
+  it('disableAllHooks anywhere in the merged settings hierarchy fails --self-test', () => {
+    const fresh = makeFixture();
+    try {
+      fs.writeFileSync(path.join(fresh.primary, '.claude', 'settings.local.json'),
+        JSON.stringify(installer.apply({}, fresh.primary, 'install').settings, null, 2));
+      // Set on the SHARED file, not the local one that is already confirmed
+      // wired — settings.local.json alone could never reveal this.
+      fs.writeFileSync(path.join(fresh.primary, '.claude', 'settings.json'),
+        JSON.stringify({ disableAllHooks: true }));
+
+      const r = spawnSync(process.execPath,
+        [path.join(fresh.primary, 'scripts', 'install-primary-guard.js'), '--self-test'], { encoding: 'utf8' });
+      assert.equal(r.status, 1);
+      assert.match(r.stdout, /self-test: FAIL/);
+      assert.match(r.stdout, /disableAllHooks/);
+    } finally {
+      fresh.cleanup();
+    }
+  });
+
+  it('a lock still held (not stale) causes the update to be SKIPPED, never an unlocked overwrite', () => {
+    const file = statusPath();
+    const lockPath = `${file}${installer.LOCK_SUFFIX}`;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(lockPath, ''); // fresh — NOT stale, so acquireLock must not break it
+    try {
+      const before_ = readStatusNow();
+      const r = invokeCli(fx, { file_path: path.join(fx.primary, 'public', 'sw.js') }, {
+        [installer.LOCK_MAX_WAIT_ENV]: '50'
+      });
+      assert.equal(r.status, 0, 'the decision must still be forwarded even when telemetry is skipped');
+      const parsed = JSON.parse(r.stdout);
+      assert.equal(parsed.hookSpecificOutput.permissionDecision, 'deny');
+      assert.match(r.stderr, /telemetry update skipped/);
+
+      const after_ = readStatusNow();
+      assert.deepEqual(after_.counts, before_.counts,
+        'a contended lock must leave counts untouched, not clobbered by an unlocked write');
+    } finally {
+      fs.rmSync(lockPath, { force: true });
+    }
+
+    // Normal operation resumes once the lock is released.
+    const resumed = invokeCli(fx, { file_path: path.join(fx.primary, 'public', 'sw.js') });
+    assert.equal(JSON.parse(resumed.stdout).hookSpecificOutput.permissionDecision, 'deny');
+    assert.equal(readStatusNow().counts.refusal > 0, true);
+  });
+});
+
+describe('#1400 Round 4 — AC8 fail-closed self-test, locked sentinel fold, --status under contention', () => {
+  let fx;
+  before(() => { fx = makeFixture(); });
+  after(() => fx.cleanup());
+
+  const statusPath = () => installer.statusFilePath(fx.primary);
+  const readStatusNow = () => installer.readStatus(statusPath());
+
+  const cliSelfTest = (dir) => spawnSync(process.execPath,
+    [path.join(dir, 'scripts', 'install-primary-guard.js'), '--self-test'], { encoding: 'utf8' });
+  const cliStatusJson = (dir) => spawnSync(process.execPath,
+    [path.join(dir, 'scripts', 'install-primary-guard.js'), '--status', '--json'], { encoding: 'utf8' });
+
+  it('selfTest FAILS CLOSED on a freshly-installed guard before any real engine invocation — never skips', () => {
+    const fresh = makeFixture();
+    try {
+      fs.writeFileSync(path.join(fresh.primary, '.claude', 'settings.local.json'),
+        JSON.stringify(installer.apply({}, fresh.primary, 'install').settings, null, 2));
+      // No seedGenuineEngineHeartbeat call — this is the whole point.
+      const r = cliSelfTest(fresh.primary);
+      assert.equal(r.status, 1, 'a check that cannot be made must be a failure, not a skip (#1400 AC8)');
+      assert.match(r.stdout, /self-test: FAIL/);
+      assert.match(r.stdout, /no genuine, engine-produced PreToolUse heartbeat/);
+      // And it must not have run its own probes at all — no selfTest counter movement.
+      const status = installer.readStatus(installer.statusFilePath(fresh.primary));
+      assert.equal(status.selfTest.counts.total, 0);
+    } finally {
+      fresh.cleanup();
+    }
+  });
+
+  it('selfTest never increments engineInvocations itself, confirmed directly by calling it', () => {
+    const fresh = makeFixture();
+    try {
+      fs.writeFileSync(path.join(fresh.primary, '.claude', 'settings.local.json'),
+        JSON.stringify(installer.apply({}, fresh.primary, 'install').settings, null, 2));
+      seedGenuineEngineHeartbeat(fresh);
+      const before_ = installer.readStatus(installer.statusFilePath(fresh.primary));
+      const r = cliSelfTest(fresh.primary);
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      const after_ = installer.readStatus(installer.statusFilePath(fresh.primary));
+      assert.equal(after_.engineInvocations, before_.engineInvocations,
+        'a passing self-test must not move engineInvocations at all');
+    } finally {
+      fresh.cleanup();
+    }
+  });
+
+  it('a lock held during a sentinel fold attempt preserves the sentinel, rather than losing it (#1400 Round 4 finding 2)', () => {
+    const sentinel = installer.outerFailureSentinelPath(fx.primary);
+    fs.writeFileSync(sentinel, '{"code":"OUTER_NODE_FAILED"}\n');
+    const file = statusPath();
+    const lockPath = `${file}${installer.LOCK_SUFFIX}`;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(lockPath, ''); // fresh, not stale
+    try {
+      const before_ = readStatusNow();
+      const r = invokeCli(fx, { file_path: path.join(fx.primary, 'lib', 'x.js') }, {
+        [installer.LOCK_MAX_WAIT_ENV]: '50'
+      });
+      assert.equal(r.status, 0);
+      assert.match(r.stderr, /telemetry update skipped/);
+      // The whole point of Round 4 finding 2: the sentinel must SURVIVE a
+      // contended lock, not be claimed-then-dropped by an unlink that ran
+      // before the (now-skipped) write.
+      assert.ok(fs.existsSync(sentinel), 'a contended lock must never destroy the still-unfolded sentinel');
+      const after_ = readStatusNow();
+      assert.deepEqual(after_.counts, before_.counts, 'nothing should have changed while the lock was held');
+    } finally {
+      fs.rmSync(lockPath, { force: true });
+    }
+
+    // Once the lock clears, the next update folds it correctly.
+    const resumed = invokeCli(fx, { file_path: path.join(fx.primary, 'lib', 'x.js') });
+    assert.equal(resumed.status, 0);
+    assert.ok(!fs.existsSync(sentinel), 'the sentinel must be folded once the lock is free');
+    assert.equal(readStatusNow().lastError, 'OUTER_NODE_FAILED');
+  });
+
+  it('--status answers with a real read, never crashes, when its own locked update is contended', () => {
+    const file = statusPath();
+    const lockPath = `${file}${installer.LOCK_SUFFIX}`;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(lockPath, '');
+    try {
+      const r = spawnSync(process.execPath,
+        [path.join(fx.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+        { encoding: 'utf8', env: { ...process.env, [installer.LOCK_MAX_WAIT_ENV]: '50' } });
+      assert.equal(r.status === 0 || r.status === 1, true, 'must answer with a clean exit code, never crash');
+      assert.doesNotThrow(() => JSON.parse(r.stdout), 'must still print a parseable status, not a stack trace');
+      assert.doesNotMatch(r.stderr, /TypeError|Cannot read properties of undefined/,
+        'reportStatus must not dereference a field on undefined when the lock is contended');
+    } finally {
+      fs.rmSync(lockPath, { force: true });
+    }
+  });
+
+  it('guardCommand appends (not overwrites) on repeated outer-node failures, and both lines fold as two errors', () => {
+    const cmd = installer.guardCommand(fx.primary);
+    spawnSync('/bin/sh', ['-c', cmd], { env: { PATH: '/nonexistent' }, encoding: 'utf8' });
+    spawnSync('/bin/sh', ['-c', cmd], { env: { PATH: '/nonexistent' }, encoding: 'utf8' });
+    const sentinel = installer.outerFailureSentinelPath(fx.primary);
+    const raw = fs.readFileSync(sentinel, 'utf8');
+    assert.equal(raw.trim().split('\n').length, 2, 'two failures must append two lines, not overwrite to one');
+
+    const before_ = readStatusNow();
+    const r = invokeCli(fx, { file_path: path.join(fx.primary, 'lib', 'x.js') });
+    assert.equal(r.status, 0);
+    const after_ = readStatusNow();
+    assert.equal(after_.counts.error, before_.counts.error + 2, 'both appended failures must fold as two errors');
+    assert.ok(!fs.existsSync(sentinel));
+  });
+});
+
+describe('#1400 Round 6 — unique-named sentinel claims, folded purely in memory', () => {
+  let fx;
+  before(() => { fx = makeFixture(); });
+  after(() => fx.cleanup());
+
+  const statusPath = () => installer.statusFilePath(fx.primary);
+  const readStatusNow = () => installer.readStatus(statusPath());
+  const claimFilesNow = (sentinel) => {
+    const dir = path.dirname(sentinel);
+    const prefix = `${path.basename(sentinel)}.claim`;
+    return fs.readdirSync(dir).filter((f) => f.startsWith(prefix));
+  };
+
+  it('a write failure AFTER the sentinel is claimed leaves it folded on the next successful update, not lost', () => {
+    const sentinel = installer.outerFailureSentinelPath(fx.primary);
+    fs.writeFileSync(sentinel, '{"code":"OUTER_NODE_FAILED"}\n');
+
+    const file = statusPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    // Pre-create the destination as a directory, so writeStatusAtomic's own
+    // rename-into-place throws — simulating a write that fails AFTER the
+    // sentinel has already been claimed, the exact gap Round 4 left open.
+    fs.rmSync(file, { recursive: true, force: true });
+    fs.mkdirSync(file);
+    try {
+      assert.throws(() => installer.updateStatus(fx.primary, (s) => s));
+    } finally {
+      fs.rmSync(file, { recursive: true, force: true });
+    }
+
+    assert.ok(!fs.existsSync(sentinel), 'the sentinel itself must have been claimed, not left in place');
+    assert.equal(claimFilesNow(sentinel).length, 1, 'the claimed content must survive the failed write as a claim file');
+
+    // A later successful update must fold it exactly once — not lost, and
+    // not double-counted against whatever the failed attempt already saw.
+    const before_ = readStatusNow();
+    installer.updateStatus(fx.primary, (s) => s);
+    const after_ = readStatusNow();
+    assert.equal(after_.counts.error, before_.counts.error + 1);
+    assert.equal(after_.lastError, 'OUTER_NODE_FAILED');
+    assert.equal(claimFilesNow(sentinel).length, 0, 'the claim file must be removed once it is actually folded into a written status');
+  });
+
+  it('a leftover claim from a call that crashed right after claiming folds together with a newly-arrived sentinel, neither overwriting the other (#1400 Round 6 finding 1)', () => {
+    const sentinel = installer.outerFailureSentinelPath(fx.primary);
+    // A leftover claim from a call that renamed the sentinel away but
+    // crashed before folding it — under Round 5's FIXED `.claim.incoming`
+    // name, the rename below would have overwritten this outright.
+    fs.writeFileSync(`${sentinel}.claim.leftover-from-a-dead-pid`, '{"code":"OUTER_NODE_FAILED"}\n');
+    // ...plus a brand-new sentinel that arrived since.
+    fs.writeFileSync(sentinel, '{"code":"OUTER_NODE_FAILED"}\n');
+
+    const before_ = readStatusNow();
+    installer.updateStatus(fx.primary, (s) => s);
+    const after_ = readStatusNow();
+    assert.equal(after_.counts.error, before_.counts.error + 2,
+      'both the leftover claim and the newly-arrived sentinel must fold — a fixed claim name would have overwritten one');
+    assert.ok(!fs.existsSync(sentinel));
+    assert.equal(claimFilesNow(sentinel).length, 0);
+  });
+
+  it('two genuine leftover claims present at once each fold exactly once, never double-counted (#1400 Round 6 finding 2)', () => {
+    const sentinel = installer.outerFailureSentinelPath(fx.primary);
+    // Two claims left behind by two different calls that each crashed
+    // after claiming — Round 5's fix would have merged these onto a single
+    // on-disk file and risked re-reading both after a crash mid-merge; this
+    // design never writes a merged file at all.
+    fs.writeFileSync(`${sentinel}.claim.111.1.aaaaa`, '{"code":"OUTER_NODE_FAILED"}\n');
+    fs.writeFileSync(`${sentinel}.claim.222.2.bbbbb`, '{"code":"OUTER_NODE_FAILED"}\n{"code":"OUTER_NODE_FAILED"}\n');
+
+    const before_ = readStatusNow();
+    installer.updateStatus(fx.primary, (s) => s);
+    const after_ = readStatusNow();
+    assert.equal(after_.counts.error, before_.counts.error + 3, 'one line from the first claim plus two from the second — three total, not six');
+    assert.equal(claimFilesNow(sentinel).length, 0);
+
+    // And folding again right after must find nothing left to re-count.
+    const before2_ = readStatusNow();
+    installer.updateStatus(fx.primary, (s) => s);
+    assert.equal(readStatusNow().counts.error, before2_.counts.error);
+  });
+
+  it('a claim file that exists but fails to read for a real reason (not merely gone) is never unlinked, so its content is not silently lost (#1400 Round 7 finding)', () => {
+    const sentinel = installer.outerFailureSentinelPath(fx.primary);
+    const badClaim = `${sentinel}.claim.999.9.ccccc`;
+    const goodClaim = `${sentinel}.claim.888.8.ddddd`;
+    fs.writeFileSync(badClaim, '{"code":"OUTER_NODE_FAILED"}\n');
+    fs.writeFileSync(goodClaim, '{"code":"OUTER_NODE_FAILED"}\n');
+
+    // Both this test file and the installer `require('node:fs')` — the same
+    // cached module object — so stubbing one path's read here reaches the
+    // installer's own call without needing to export a seam for it.
+    const realReadFileSync = fs.readFileSync;
+    fs.readFileSync = (p, ...rest) => {
+      if (p === badClaim) {
+        const err = new Error(`EACCES: permission denied, open '${p}'`);
+        err.code = 'EACCES';
+        throw err;
+      }
+      return realReadFileSync(p, ...rest);
+    };
+    try {
+      const before_ = readStatusNow();
+      installer.updateStatus(fx.primary, (s) => s);
+      const after_ = readStatusNow();
+      assert.equal(after_.counts.error, before_.counts.error + 1, 'only the readable claim must fold');
+    } finally {
+      fs.readFileSync = realReadFileSync;
+    }
+
+    assert.ok(fs.existsSync(badClaim), 'a claim file whose read failed for a real reason must NOT be unlinked');
+    assert.ok(!fs.existsSync(goodClaim), 'the claim that WAS read and folded must be unlinked');
+    fs.rmSync(badClaim, { force: true });
   });
 });
