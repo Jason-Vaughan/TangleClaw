@@ -5486,6 +5486,17 @@ function registerMedusaRoutes(prefix, resolve) {
     const { target } = r;
     const isOn = medusa.getStatus(target.sessionId).state !== 'off';
     const desired = (body && typeof body.enabled === 'boolean') ? body.enabled : !isOn;
+    // INTV-V5540-01: turning the listener off while mail sits unread would
+    // silently take the inbox panel's only live view of it away with it —
+    // require an explicit confirmation rather than let a reflexive toggle
+    // lose that visibility.
+    if (!desired && isOn) {
+      const unread = medusa.getStatus(target.sessionId).unread;
+      if (unread > 0 && !(body && body.confirm === true)) {
+        return errorResponse(res, 409, 'Turning Medusa off while unread messages are in the inbox requires confirm: true.',
+          'MEDUSA_UNREAD_CONFIRM_REQUIRED', { unreadCount: unread });
+      }
+    }
     // Preflight on the way ON, and it does NOT gate the toggle (#1130, operator
     // decision 2026-09-08). The listener still starts and still retries, because a
     // retrying listener registers by itself once the Bridge appears and a refused
@@ -5568,6 +5579,21 @@ function registerMedusaRoutes(prefix, resolve) {
       { messageIds: body && Array.isArray(body.ids) ? body.ids : null })) return;
     if (sessionId != null) {
       const ids = body && Array.isArray(body.ids) ? body.ids : null;
+      // #1976 — the Ack Gate: a reply-required message cannot be marked handled
+      // (hidden from the inbox) before it is answered, or the fleet deadlocks on
+      // a reply nobody sent while the inbox looks clear.
+      if (ids && ids.length > 0) {
+        const unanswered = medusaExchanges.unansweredReplyRequiredForAck(
+          ids.filter((id) => typeof id === 'string'), medusa.getStatus(sessionId).workspaceId,
+          exchangeCaller(req, targetProjectId(r.target), true));
+        if (unanswered.length > 0) {
+          return errorResponse(res, 409,
+            `Cannot mark reply-required message(s) handled before replying (${unanswered.map((x) => x.hub_id).join(', ')}). `
+              + 'Reply first with tc message send --in-reply-to <id> <sender> "<reply>", then ack.',
+            'REPLY_REQUIRED_BEFORE_ACK',
+            { details: { hubIds: unanswered.map((x) => x.hub_id), exchangeIds: unanswered.map((x) => x.exchange_id) } });
+        }
+      }
       if (ids) medusa.markHandled(sessionId, ids);
       else medusa.markRead(sessionId);
       // #1839: handled mail is acknowledged, recorded as whoever handled it.
@@ -5690,7 +5716,10 @@ function registerMedusaRoutes(prefix, resolve) {
 
   // GET <prefix>/exchanges — this participant's Medusa exchanges (#1839):
   // `?direction=sent` (default) or `received`, `?open=1` for unfinished only.
-  // States and metadata only; never a message body.
+  // `?role=recipient`/`sender` alias `direction`; `?role=all` (#2137) merges
+  // both sides, de-duplicated by exchange_id, newest first, capped to the
+  // same limit either side alone would use. States and metadata only; never
+  // a message body.
   route('GET', `${prefix}/exchanges`, (req, res, params) => {
     const query = parseQuery(reqUrl(req).search);
     const r = resolve(params, query);
@@ -5698,12 +5727,28 @@ function registerMedusaRoutes(prefix, resolve) {
     const openOnly = query.open === '1' || query.open === 'true';
     const limit = query.limit !== undefined ? Number(query.limit) : undefined;
     let rows;
-    if (query.direction === 'received') {
+    if (query.role === 'all') {
       const workspaceId = medusa.getStatus(r.target.sessionId).workspaceId;
-      rows = workspaceId ? store.medusaExchanges.listForRecipient(workspaceId, { openOnly, limit }) : [];
-    } else {
       const projectId = targetProjectId(r.target);
-      rows = projectId != null ? store.medusaExchanges.listForSender(projectId, { openOnly, limit }) : [];
+      const received = workspaceId ? store.medusaExchanges.listForRecipient(workspaceId, { openOnly, limit }) : [];
+      const sent = projectId != null ? store.medusaExchanges.listForSender(projectId, { openOnly, limit }) : [];
+      const byId = new Map();
+      for (const row of [...sent, ...received]) byId.set(row.exchange_id, row);
+      const effectiveLimit = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 200) : 50;
+      rows = [...byId.values()]
+        .sort((a, b) => (a.created_at === b.created_at
+          ? (a.exchange_id < b.exchange_id ? 1 : -1)
+          : (a.created_at < b.created_at ? 1 : -1)))
+        .slice(0, effectiveLimit);
+    } else {
+      const direction = query.role === 'recipient' ? 'received' : query.role === 'sender' ? 'sent' : query.direction;
+      if (direction === 'received') {
+        const workspaceId = medusa.getStatus(r.target.sessionId).workspaceId;
+        rows = workspaceId ? store.medusaExchanges.listForRecipient(workspaceId, { openOnly, limit }) : [];
+      } else {
+        const projectId = targetProjectId(r.target);
+        rows = projectId != null ? store.medusaExchanges.listForSender(projectId, { openOnly, limit }) : [];
+      }
     }
     jsonResponse(res, 200, { exchanges: rows.map(medusaExchanges.view) });
   });
@@ -5726,6 +5771,46 @@ function registerMedusaRoutes(prefix, resolve) {
     } catch (err) {
       exchangeRefusal(res, err);
     }
+  });
+
+  // POST <prefix>/messages/:hubId/retract — the sender retracts a message
+  // nobody has read yet (#1873). Only a verified launch of the sending
+  // project, a verified Master launch on the Master's own mount (for what
+  // the Master sent), or the operator — `medusaExchanges.retract` enforces
+  // it; this route only resolves who is calling. Best-effort afterward:
+  // clears the retracted message from a live recipient session's local
+  // inbox, and — only when this message's wake had already been attempted
+  // before the retraction landed, so the recipient's pane may already be
+  // watching for it — tells it the message was withdrawn.
+  route('POST', `${prefix}/messages/:hubId/retract`, async (req, res, params, body) => {
+    const r = resolve(params);
+    if (refused(res, r, 'retract a message for')) return;
+    if (coordinatorGateRefused(req, res, targetProjectId(r.target), 'medusa-retract', { hubId: params.hubId })) return;
+    const existingRow = store.medusaExchanges.getByHubId(params.hubId, 'send');
+    const wasAttempted = !!existingRow
+      && medusaExchanges.wakeStanding(store.medusaExchanges.facts(existingRow.exchange_id)).attempt != null;
+    const masterMount = r.target.sessionId === master.MASTER_MEDUSA_KEY;
+    const caller = masterMount && resolveControlCaller(req).kind === 'master'
+      ? { kind: 'master' }
+      : exchangeCaller(req, targetProjectId(r.target));
+    let retracted;
+    try {
+      retracted = medusaExchanges.retract(params.hubId, caller, { reason: body && body.reason, replacementHubId: body && body.replacementHubId });
+    } catch (err) {
+      exchangeRefusal(res, err);
+      return;
+    }
+    if (retracted.recipient_session_id != null) {
+      medusa.markHandled(retracted.recipient_session_id, [params.hubId]);
+      if (wasAttempted) {
+        medusa.sendSystemMessage({
+          to: retracted.recipient_workspace_id,
+          message: `[Medusa Retraction] Message ${params.hubId} was retracted by its sender (${retracted.terminal_code || 'retracted'})`
+            + `${retracted.replacement_hub_id ? '; replaced by ' + retracted.replacement_hub_id : ''}. No action required.`
+        }).catch(() => {});
+      }
+    }
+    jsonResponse(res, 200, { exchange: medusaExchanges.view(retracted) });
   });
 
   // POST <prefix>/loop — open a Medusa loop to a target workspace (MED-2K9P v2

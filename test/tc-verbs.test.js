@@ -637,6 +637,44 @@ describe('tc verb roster (lib/tc-verbs)', () => {
       assert.match(res.stdout, /is closed/);
     });
 
+    // #1873 — retracting an unread message, mirroring `close`'s own route/id
+    // shape but against the new `/messages/:hubId/retract` route.
+    it('retract posts to the retract route, defaults --reason, id URL-encoded, and needs an id', async () => {
+      const bare = await message.run({ ...noopCtx, argv: ['retract'] });
+      assert.equal(bare.code, 1);
+      assert.match(bare.stderr, /retract needs the message id/);
+      const calls = [];
+      const res = await message.run({
+        env: {}, argv: ['retract', 'hub-a/b'],
+        getJson: async () => ({ project: { id: 1, name: 'p q' } }),
+        postJson: async (p, body) => {
+          calls.push({ p, body });
+          return { exchange: { exchangeId: 'mx_1', state: 'retracted' } };
+        }
+      });
+      assert.equal(res.code, 0);
+      assert.equal(calls[0].p, '/api/sessions/p%20q/medusa/messages/hub-a%2Fb/retract');
+      assert.deepEqual(calls[0].body, { reason: 'superseded' }, 'the reason defaults when omitted');
+      assert.match(res.stdout, /Message hub-a\/b retracted \(mx_1: retracted\)/);
+    });
+
+    it('retract passes an explicit --reason and --replacement', async () => {
+      const calls = [];
+      const res = await message.run({
+        env: {}, argv: ['retract', '--reason', 'sent-in-error', '--replacement', 'hub-new', 'hub-old'],
+        getJson: async () => ({ project: { id: 1, name: 'p' } }),
+        postJson: async (p, body) => { calls.push({ p, body }); return { exchange: { exchangeId: 'mx_2', state: 'retracted' } }; }
+      });
+      assert.equal(res.code, 0);
+      assert.deepEqual(calls[0].body, { reason: 'sent-in-error', replacementHubId: 'hub-new' });
+    });
+
+    it('retract refuses an unknown flag before any network call', async () => {
+      const res = await message.run({ ...noopCtx, argv: ['retract', '--urgent', 'hub-1'] });
+      assert.equal(res.code, 1);
+      assert.match(res.stderr, /unknown flag --urgent/);
+    });
+
     it('a retargeted send relays the refreshed handle — the agent must not keep the dead one (#1023)', async () => {
       const ctx = {
         env: {}, argv: ['send', 'ws-stale', 'hello'],

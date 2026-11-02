@@ -261,8 +261,13 @@ describe('API — Medusa exchanges (#1839)', () => {
     assert.equal(sent.data.exchange.sender.verified, true);
     const hubId = sent.data.id;
     deliverToBuilder(hubId);
-    await call(server, 'POST', `${builderBase()}/read`, { ids: [hubId] }, bBuilder.headers);
-    assert.equal(store.medusaExchanges.getByHubId(hubId, 'send').state, 'acknowledged');
+
+    // #1976 — the Ack Gate: a reply-required message cannot be marked handled
+    // before it is answered.
+    const earlyAck = await call(server, 'POST', `${builderBase()}/read`, { ids: [hubId] }, bBuilder.headers);
+    assert.equal(earlyAck.status, 409);
+    assert.equal(earlyAck.data.code, 'REPLY_REQUIRED_BEFORE_ACK');
+    assert.equal(store.medusaExchanges.getByHubId(hubId, 'send').state, 'delivered', 'the refused ack changed nothing');
 
     const unbound = await call(server, 'POST', `${builderBase()}/send`, { to: pmWs, message: 'done', inReplyTo: hubId });
     assert.equal(unbound.status, 403);
@@ -273,6 +278,11 @@ describe('API — Medusa exchanges (#1839)', () => {
     const target = store.medusaExchanges.getByHubId(hubId, 'send');
     assert.equal(target.state, 'replied');
     assert.equal(target.terminal_at, null);
+
+    // Now that the reply is bound, the Ack Gate has nothing left to refuse.
+    const ackAfterReply = await call(server, 'POST', `${builderBase()}/read`, { ids: [hubId] }, bBuilder.headers);
+    assert.equal(ackAfterReply.status, 200);
+    assert.equal(store.medusaExchanges.getByHubId(hubId, 'send').state, 'replied');
 
     const byBuilder = await call(server, 'POST', `${builderBase()}/exchanges/${target.exchange_id}/close`, null, bBuilder.headers);
     assert.equal(byBuilder.status, 403, 'the Builder did not send it');
@@ -493,7 +503,10 @@ describe('API — Medusa exchanges (#1839)', () => {
   });
 
   it('drops a session from the undelivered list once its mail is handled by hand (#1435)', async () => {
-    const sent = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'x', priority: 'blocking' }, bPM.headers);
+    // replyRequired: false — this test is about the delivery ledger, not the
+    // #1976 Ack Gate; a reply-required blocking send would refuse the ack below.
+    const sent = await call(server, 'POST', `${pmBase()}/send`,
+      { to: builderWs, message: 'x', priority: 'blocking', replyRequired: false }, bPM.headers);
     const hubId = sent.data.id;
     deliverToBuilder(hubId);
     store.medusaDeliveries.record({
