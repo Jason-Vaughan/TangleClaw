@@ -4,6 +4,17 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.54.0] - 2026-11-02
+
+### Added
+- The primary-checkout guard's wired command now runs through a stable outer runner that records allow, refusal, and inner-script error outcomes while preserving the guard's fail-open decision. `--self-test` exercises a refusal and an allow and checks that liveness advances; `--status` exposes invocation counts, the last outcome, and crashes since the last successful self-test (#1400).
+- A review-boundary module sanitizes and fences untrusted external PR text, bounds packet size, and validates the read-only capabilities of a proposed reviewer worker. It complements ADR 0014's injection-hold rule; the isolated reviewer worker remains unbuilt (#1554).
+- `GET /api/usage/sessions` and `GET /api/usage/sessions/:sessionId` report each live session's context remaining, a Codex weekly-quota reading when its status line provides one, and a configurable low-usage hand-off recommendation. Five-hour quota for both engines, and weekly quota without a live reading, remain operator-calibrated (#2787).
+
+### Fixed
+- Startup now narrows the TangleClaw data directory to `0700` on every boot and existing SQLite `-journal`, `-wal`, and `-shm` sidecars to `0600`, rather than relying only on the database file's mode (#1421).
+- The fork-PR test workflow disables persisted checkout credentials and bounds its test job to 20 minutes (#1550).
+
 ## [5.53.1] - 2026-11-02
 
 ### Added
