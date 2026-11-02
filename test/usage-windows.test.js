@@ -8,7 +8,7 @@
  * calibration, and the Conservation / Use-It-or-Lose-It policy windows.
  */
 
-const { describe, it, beforeEach, afterEach } = require('node:test');
+const { describe, it, before, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -839,5 +839,207 @@ describe('lib/usage-windows — scan budget and per-file cache (#2766 BLOCKING 1
     assert.equal(served, complete, 'the stale-but-complete snapshot must still be served, not a fresher but truncated one');
     assert.equal(uw._usageWindowsCacheForTests().get('claude').result, complete,
       'the cache entry itself must not have been overwritten with the truncated attempt either');
+  });
+});
+
+describe('lib/usage-windows — parseSessionTerminalUsage (#2787)', () => {
+  it('parses Codex\'s own "Context NN% left" status-row item', () => {
+    const pane = ['', '› Ask Codex to do anything', '', '  GPT-6-Astra default · Ready · never · Context 92% left'];
+    const result = uw.parseSessionTerminalUsage(pane.join('\n'), 'codex');
+    assert.deepEqual(result, { contextRemainingPct: 92, source: 'terminal-statusline' });
+  });
+
+  it('parses Claude Code\'s own trailing "NN% left" status-row segment', () => {
+    const pane = ['done', '───', '  TangleClaw (main) | Opus 5 (1M context) | 77% left'];
+    const result = uw.parseSessionTerminalUsage(pane.join('\n'), 'claude');
+    assert.deepEqual(result, { contextRemainingPct: 77, source: 'terminal-statusline' });
+  });
+
+  it('reads the LAST matching row, not an earlier stale one left in scrollback', () => {
+    const pane = ['  TangleClaw (main) | Opus 5 (1M context) | 95% left', 'working...', '  TangleClaw (main) | Opus 5 (1M context) | 60% left'];
+    const result = uw.parseSessionTerminalUsage(pane.join('\n'), 'claude');
+    assert.equal(result.contextRemainingPct, 60);
+  });
+
+  it('returns nulls when the pane has no matching status row at all', () => {
+    const result = uw.parseSessionTerminalUsage('just some ordinary pane text\nwith no status row', 'claude');
+    assert.deepEqual(result, { contextRemainingPct: null, source: null });
+  });
+
+  it('returns nulls for empty or non-string pane text (a capture failure)', () => {
+    assert.deepEqual(uw.parseSessionTerminalUsage(null, 'codex'), { contextRemainingPct: null, source: null });
+    assert.deepEqual(uw.parseSessionTerminalUsage(undefined, 'claude'), { contextRemainingPct: null, source: null });
+  });
+});
+
+describe('lib/usage-windows — buildSessionUsageReadings (#2787)', () => {
+  const SESSIONS = [
+    { id: 1, projectId: 10, engineId: 'claude', tmuxSession: 'proj-a', startedAt: 1000 },
+    { id: 2, projectId: 20, engineId: 'codex', tmuxSession: 'proj-b', startedAt: 2000 }
+  ];
+  const PROJECTS = new Map([
+    [10, { id: 10, name: 'proj-a', path: '/repo/a' }],
+    [20, { id: 20, name: 'proj-b', path: '/repo/b' }]
+  ]);
+
+  it('combines a pane-parsed context reading with a calibrated quota reading into one "combined" row', async () => {
+    uw.calibrateUsage({ provider: 'claude', weeklyPct: 40, fiveHourPct: 8 });
+    const readings = await uw.buildSessionUsageReadings({
+      sessions: [SESSIONS[0]],
+      projects: PROJECTS,
+      capturePaneOutput: async () => '  proj-a (main) | Sonnet 5 (1M context) | 55% left',
+      getActiveModel: async () => ({ engine: 'claude', model: 'claude-sonnet-5' }),
+      now: 123456
+    });
+    assert.equal(readings.length, 1);
+    const r = readings[0];
+    assert.equal(r.sessionId, 1);
+    assert.equal(r.projectId, 10);
+    assert.equal(r.projectName, 'proj-a');
+    assert.equal(r.engine, 'claude');
+    assert.equal(r.provider, 'claude');
+    assert.equal(r.model, 'claude-sonnet-5');
+    assert.equal(r.contextRemainingPct, 55);
+    assert.equal(r.weeklyRemainingPct, 40);
+    assert.equal(r.fiveHourRemainingPct, 8);
+    assert.equal(r.source, 'combined');
+    assert.equal(r.observedAt, new Date(123456).toISOString());
+    // fiveHourPct 8 <= the default 12% hand-off threshold.
+    assert.equal(r.lowUsageHandOffRecommended, true);
+    assert.match(r.handOffReason, /5-hour 8%/);
+  });
+
+  it('a session with no calibration on file and no pane match gets an all-null, non-crashing row, sourced "provider-window"', async () => {
+    const readings = await uw.buildSessionUsageReadings({
+      sessions: [SESSIONS[1]],
+      projects: PROJECTS,
+      capturePaneOutput: async () => null,
+      getActiveModel: async () => null
+    });
+    assert.equal(readings.length, 1);
+    const r = readings[0];
+    assert.equal(r.contextRemainingPct, null);
+    assert.equal(r.weeklyRemainingPct, null);
+    assert.equal(r.fiveHourRemainingPct, null);
+    assert.equal(r.model, null);
+    assert.equal(r.source, 'provider-window');
+    assert.equal(r.lowUsageHandOffRecommended, false);
+    assert.equal(r.handOffReason, null);
+  });
+
+  it('a capturePaneOutput rejection is swallowed — one bad session never throws out the whole fleet-wide read', async () => {
+    const readings = await uw.buildSessionUsageReadings({
+      sessions: SESSIONS,
+      projects: PROJECTS,
+      capturePaneOutput: async (tmuxSession) => {
+        if (tmuxSession === 'proj-a') throw new Error('tmux session does not exist');
+        return '  GPT-6-Astra default · Ready · never · Context 30% left';
+      },
+      getActiveModel: async () => null
+    });
+    assert.equal(readings.length, 2, 'both sessions still get a row');
+    assert.equal(readings[0].contextRemainingPct, null);
+    assert.equal(readings[1].contextRemainingPct, 30);
+  });
+
+  it('honors a caller-supplied lowUsageHandoffThresholdPct, overriding the 12% default', async () => {
+    const readings = await uw.buildSessionUsageReadings({
+      sessions: [SESSIONS[0]],
+      projects: PROJECTS,
+      capturePaneOutput: async () => '  proj-a (main) | Sonnet 5 (1M context) | 20% left',
+      getActiveModel: async () => null,
+      lowUsageHandoffThresholdPct: 25
+    });
+    assert.equal(readings[0].lowUsageHandOffRecommended, true, '20% is at or below the overridden 25% threshold');
+  });
+
+  it('does not recommend a hand-off above the default 12% threshold', async () => {
+    const readings = await uw.buildSessionUsageReadings({
+      sessions: [SESSIONS[0]],
+      projects: PROJECTS,
+      capturePaneOutput: async () => '  proj-a (main) | Sonnet 5 (1M context) | 50% left',
+      getActiveModel: async () => null
+    });
+    assert.equal(readings[0].lowUsageHandOffRecommended, false);
+  });
+
+  it('accepts `projects` as a plain array, not only a Map', async () => {
+    const readings = await uw.buildSessionUsageReadings({
+      sessions: [SESSIONS[0]],
+      projects: [{ id: 10, name: 'proj-a', path: '/repo/a' }],
+      capturePaneOutput: async () => null,
+      getActiveModel: async () => null
+    });
+    assert.equal(readings[0].projectName, 'proj-a');
+  });
+});
+
+describe('lib/routes/usage — GET /api/usage/sessions (#2787)', () => {
+  const usageRoutes = require('../lib/routes/usage');
+  const { matchRoute } = require('../lib/routes/_kernel');
+
+  /**
+   * A minimal fake `http.ServerResponse`, capturing what `jsonResponse`/
+   * `errorResponse` write rather than opening a real socket.
+   * @returns {{res: object, status: () => number, body: () => object}}
+   */
+  function fakeRes() {
+    let status = null;
+    let chunks = '';
+    const res = {
+      writeHead(code) { status = code; },
+      end(body) { chunks = body || ''; }
+    };
+    return { res, status: () => status, body: () => (chunks ? JSON.parse(chunks) : null) };
+  }
+
+  before(() => {
+    usageRoutes.register();
+  });
+
+  beforeEach(() => {
+    store.projects.create({ name: 'route-proj', path: '/repo/route-proj', engine: 'claude' });
+  });
+
+  afterEach(() => {
+    for (const p of store.projects.list()) store.projects.delete(p.id);
+  });
+
+  it('GET /api/usage/sessions returns one row per live session, with no live sessions returning an empty list', async () => {
+    const { handler, params } = matchRoute('GET', '/api/usage/sessions');
+    const { res, status, body } = fakeRes();
+    await handler({ url: '/api/usage/sessions', headers: {} }, res, params);
+    assert.equal(status(), 200);
+    assert.deepEqual(body(), { sessions: [] });
+  });
+
+  it('GET /api/usage/sessions/:sessionId answers 404 for a session with no live reading', async () => {
+    const { handler, params } = matchRoute('GET', '/api/usage/sessions/999999');
+    const { res, status, body } = fakeRes();
+    await handler({ url: '/api/usage/sessions/999999', headers: {} }, res, params);
+    assert.equal(status(), 404);
+    assert.equal(body().code, 'SESSION_NOT_FOUND');
+  });
+
+  it('GET /api/usage/sessions/:sessionId answers 400 for a non-numeric sessionId', async () => {
+    const { handler, params } = matchRoute('GET', '/api/usage/sessions/not-a-number');
+    const { res, status, body } = fakeRes();
+    await handler({ url: '/api/usage/sessions/not-a-number', headers: {} }, res, params);
+    assert.equal(status(), 400);
+    assert.equal(body().code, 'INVALID_SESSION_ID');
+  });
+
+  it('GET /api/usage/sessions filters by ?engine= and ?lowOnly=true', async () => {
+    const project = store.projects.list()[0];
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'route-proj' });
+    try {
+      const { handler, params } = matchRoute('GET', '/api/usage/sessions');
+      const { res, status, body } = fakeRes();
+      await handler({ url: '/api/usage/sessions?engine=codex', headers: {} }, res, params);
+      assert.equal(status(), 200);
+      assert.deepEqual(body().sessions, [], 'the one live session is claude, not codex, so the engine filter excludes it');
+    } finally {
+      store.sessions.wrap(session.id, 'test cleanup');
+    }
   });
 });
