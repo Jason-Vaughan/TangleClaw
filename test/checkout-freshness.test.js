@@ -68,6 +68,7 @@ function fakeRepos(repos) {
       }
       case 'rev-list': out = r.leftRight || '0\t0\n'; break;
       case 'ls-remote': out = r.lsRemote; break;
+      case 'diff': out = r.diffNameStatus !== undefined ? r.diffNameStatus : '';  break;
       default: out = Object.assign(new Error(`unexpected git ${a[0]}`), { code: 128 });
     }
     setImmediate(() => (out instanceof Error ? cb(out, '') : cb(null, out === undefined ? '' : out)));
@@ -345,6 +346,87 @@ describe('checkout-freshness', () => {
     assert.ok(ci.runtime.restartImpact, 'a stale install asks what a restart would load');
     assert.deepEqual(ci.owner, { project: install.name, sessionId: 77 });
     assert.deepEqual(co.owner, { project: other.name, sessionId: null });
+  });
+
+  describe('classifyUpstreamDelta (#1710)', () => {
+    it('reports none when HEAD already equals the observed upstream', async () => {
+      const p = project('up-to-date');
+      const fake = fakeRepos({
+        [p.path]: { status: statusOut(SHA_A, 'main'), origin: 'git@github.com:O/N.git\n', has: [SHA_A], lsRemote: `${SHA_A}\trefs/heads/main\n` }
+      });
+      await warmAndRead(p, fake);
+      const r = cf.classifyUpstreamDelta(p, { config: ON });
+      assert.deepEqual(r, { delta: 'none', reason: null, fromSha: SHA_A, toSha: SHA_A, executablePaths: [], recordsPaths: [], truncated: false, repoPath: p.path });
+    });
+
+    it('classifies a records-only delta via the canonical checkout-state classifier', async () => {
+      const p = project('records-only');
+      const fake = fakeRepos({
+        [p.path]: {
+          status: statusOut(SHA_A, 'main'), origin: 'git@github.com:O/N.git\n',
+          has: [SHA_A, SHA_B], lsRemote: `${SHA_B}\trefs/heads/main\n`, diffNameStatus: 'M\0docs/a.md\0'
+        }
+      });
+      await warmAndRead(p, fake);
+      let r = cf.classifyUpstreamDelta(p, { config: ON });
+      assert.equal(r.delta, 'pending', 'the background classification has not resolved yet');
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      r = cf.classifyUpstreamDelta(p, { config: ON });
+      assert.equal(r.delta, 'records-only');
+      assert.deepEqual(r.recordsPaths, ['docs/a.md']);
+      assert.deepEqual(r.executablePaths, []);
+    });
+
+    it('classifies an executable delta the same way', async () => {
+      const p = project('executable');
+      const fake = fakeRepos({
+        [p.path]: {
+          status: statusOut(SHA_A, 'main'), origin: 'git@github.com:O/N.git\n',
+          has: [SHA_A, SHA_B], lsRemote: `${SHA_B}\trefs/heads/main\n`, diffNameStatus: 'M\0lib/foo.js\0'
+        }
+      });
+      await warmAndRead(p, fake);
+      cf.classifyUpstreamDelta(p, { config: ON });
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      const r = cf.classifyUpstreamDelta(p, { config: ON });
+      assert.equal(r.delta, 'executable');
+      assert.deepEqual(r.executablePaths, ['lib/foo.js']);
+    });
+
+    it('classifies a mixed delta the same way', async () => {
+      const p = project('mixed');
+      const fake = fakeRepos({
+        [p.path]: {
+          status: statusOut(SHA_A, 'main'), origin: 'git@github.com:O/N.git\n',
+          has: [SHA_A, SHA_B], lsRemote: `${SHA_B}\trefs/heads/main\n`, diffNameStatus: 'M\0lib/foo.js\0M\0docs/a.md\0'
+        }
+      });
+      await warmAndRead(p, fake);
+      cf.classifyUpstreamDelta(p, { config: ON });
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      const r = cf.classifyUpstreamDelta(p, { config: ON });
+      assert.equal(r.delta, 'mixed');
+    });
+
+    it('reports unknown when the checkout is not measured yet', () => {
+      const p = project('unmeasured');
+      const r = cf.classifyUpstreamDelta(p, { config: ON });
+      assert.equal(r.delta, 'unknown');
+    });
+
+    it('reports unknown when the upstream has not been observed', async () => {
+      const p = project('no-upstream');
+      const fake = fakeRepos({
+        [p.path]: { status: statusOut(SHA_A, 'main'), origin: Object.assign(new Error('x'), { stderr: 'fatal: no such remote' }) }
+      });
+      cs._internal.execFile = fake.execFile;
+      await cs.refresh(p.path);
+      const r = cf.classifyUpstreamDelta(p, { config: ON });
+      assert.equal(r.delta, 'unknown');
+    });
   });
 
   describe('prime line', () => {
