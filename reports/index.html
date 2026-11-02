@@ -297,31 +297,88 @@
       <article class="report-card" style="border-color:rgba(56,189,248,0.65);background:linear-gradient(135deg,rgba(15,23,42,0.96),rgba(14,116,144,0.18));">
         <div class="report-header">
           <div>
-            <span class="badge badge-cyan">● Live Sprint In Progress · Updated 2026-11-02 00:32 UTC</span>
-            <h2 class="report-title"><a href="./v5.52.0/">TangleClaw <code>v5.52.0</code> — Live Wave &amp; Gate Tracker</a></h2>
+            <span class="badge badge-cyan">● Live Sprint In Progress · Updated 2026-11-02 22:03 UTC</span>
+            <h2 class="report-title"><a href="./v5.54.0/">TangleClaw <code>v5.54.0</code> — Live Wave &amp; Gate Tracker</a></h2>
           </div>
           <span class="badge badge-purple">0/0 Cars Merged · 0 In Review</span>
         </div>
         <p style="color:#cbd5e1; margin:0;">
           <strong>Live Sprint Telemetry (Auto-Synced from <code>LANE_QUEUE.md</code>):</strong> TangleClaw Sprint Lane Queue (`LANE_QUEUE.md`).
-          Current wave status: <code>ACTIVE — AUTHORIZED BY OPERATOR (OP-GO-DUAL-V5520-V5530-20261101) — v5.52.0 W3-REL MERGED; TAG/DEPLOY PENDING</code>.
+          Current wave status: <code>ACTIVE — AUTHORIZED BY OPERATOR (OP-GO-V5540-V5560-20261102) — v5.54.0 Wave 1 (V5540-W1-A..D) Dispatched</code>.
           Open the live interactive report below to inspect real-time car progress, Builder/PRR lane assignments, and gate statuses as waves progress.
         </p>
         <div class="meta-pills">
           <span class="badge badge-cyan">0 Chartered Wave Rows</span>
           <span class="badge badge-green">0 Merged · 0 In Review</span>
-          <span class="badge badge-purple">State: ACTIVE — AUTHORIZED BY OPERATOR (OP-GO-DUAL-V5520-V5530-20261101) — v5.52.0 W3-REL MERGED; TAG/DEPLOY PENDING</span>
+          <span class="badge badge-purple">State: ACTIVE — AUTHORIZED BY OPERATOR (OP-GO-V5540-V5560-20261102) — v5.54.0 Wave 1 (V5540-W1-A..D) Dispatched</span>
         </div>
         <div class="actions">
-          <a class="btn btn-primary" href="./v5.52.0/">📡 Open v5.52.0 Live Sprint Tracker →</a>
+          <a class="btn btn-primary" href="./v5.54.0/">📡 Open v5.54.0 Live Sprint Tracker →</a>
         </div>
       </article>
       <!-- LIVE_SPRINT_CARD_END -->
+      <!-- v5.54.0 Card -->
+      <article class="report-card">
+        <div class="report-header">
+          <div>
+            <span class="badge badge-green">● Latest Release · Nov 2, 2026</span>
+            <h2 class="report-title"><a href="./v5.54.0/">TangleClaw <code>v5.54.0</code>: “External code and CI safety”</a></h2>
+          </div>
+          <span class="badge badge-cyan">Tag v5.54.0 @ 3b1817cf · Live 5.54.0 (PID 18745) &amp; Testament v0.34.0 Verified</span>
+        </div>
+        <p style="color:#cbd5e1; margin:0;">
+          Two execution waves delivered <strong>6 Sprint PRs (#2799, #2800, #2801, #2802, #2809, #2810)</strong> under Charter <code>A493 v1.0</code> (<code>OP-GO-V5540-V5560-20261102</code>) as Leg 1 of the Triple-Version Autonomous Sprint (<code>v5.54.0 → v5.55.0 → v5.56.0</code>), closing all <strong>5 external code &amp; CI safety issues (#1400, #1421, #1550, #1554, #2787)</strong> and closing <strong>Milestone #39 (<code>open_issues: 0</code>)</strong>. Shipped primary-checkout mutation &amp; branch-switch enforcement (<code>#1400</code>, <code>lib/primary-checkout-guard.js</code>), automatic <code>0700</code>/<code>0600</code> filesystem permission hardening on <code>~/.tangleclaw</code> and SQLite files (<code>#1421</code>), GitHub Actions <code>test.yml</code> least-privilege permissions, concurrency cancellation, 35-minute timeout, and full 40-hex action SHA pinning (<code>#1550</code>), read-only untrusted external PR inspection without checkout or execution (<code>#1554</code>, <code>lib/untrusted-pr-review.js</code>), and live on-demand terminal &amp; API usage readings for Claude and Codex sessions (<code>#2787</code>, <code>GET /api/usage/sessions</code>). Published annotated tag and GitHub Release <strong><code>v5.54.0</code> at <code>3b1817cf1e9d9706c195b3693cc0a6b74b24e790</code></strong> (<code>Release #41533009808</code>) and updated live <code>:3102</code> (<code>OBSR-GATE3-LIVE-V5540-3b1817cf-PASS</code>).
+        </p>
+        <div class="meta-pills">
+          <span class="badge badge-cyan">2 Waves · 6 Sprint PRs (4 Feature Cars + W2-REC #2809 + W2-REL #2810) · 5 Issues Shipped</span>
+          <span class="badge badge-green">Triple-Sprint Leg 1 Complete (Tag v5.54.0 @ 3b1817cf + Live :3102 PID 18745)</span>
+          <span class="badge badge-purple">Milestone #39 Closed (0 Open) · OBSR-OGATE-V5540-W2REL-PR2810-6255b924-PASS · OBSR-GATE3-LIVE-V5540-3b1817cf-PASS</span>
+        </div>
+        <div class="actions">
+          <a class="btn btn-primary" href="./v5.54.0/">📊 Open v5.54.0 Interactive Sprint Report →</a>
+          <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/releases/tag/v5.54.0" target="_blank" rel="noopener">GitHub Release v5.54.0</a>
+        </div>
+      </article>
+
+      <!-- v5.53.1 Card -->
+      <article class="report-card">
+        <div class="report-header">
+          <div>
+            <span class="badge badge-purple">Release · Nov 1, 2026</span>
+            <h2 class="report-title"><a href="./v5.53.1/">TangleClaw <code>v5.53.1</code>: “Session continuity and operator authority”</a></h2>
+          </div>
+          <span class="badge badge-cyan">Tag v5.53.1 &amp; v5.53.0 @ 48061687 · Live :3102 Verified</span>
+        </div>
+        <p style="color:#cbd5e1; margin:0;">
+          Delivered session continuity capsules, launch-binding exclusion on operator authority routes, and governed multi-lane handoff guarantees across <code>v5.53.0</code> / <code>v5.53.1</code>.
+        </p>
+        <div class="actions">
+          <a class="btn btn-primary" href="./v5.53.1/">📊 Open v5.53.1 Interactive Sprint Report →</a>
+        </div>
+      </article>
+
+      <!-- v5.52.0 Card -->
+      <article class="report-card">
+        <div class="report-header">
+          <div>
+            <span class="badge badge-purple">Release · Nov 1, 2026</span>
+            <h2 class="report-title"><a href="./v5.52.0/">TangleClaw <code>v5.52.0</code>: “Release &amp; Governance Hardening”</a></h2>
+          </div>
+          <span class="badge badge-cyan">Tag v5.52.0 · Live :3102 &amp; Testament v0.34.0 Verified</span>
+        </div>
+        <p style="color:#cbd5e1; margin:0;">
+          Delivered release pipeline and multi-agent governance hardening across the 10-lane TangleClaw fleet.
+        </p>
+        <div class="actions">
+          <a class="btn btn-primary" href="./v5.52.0/">📊 Open v5.52.0 Interactive Sprint Report →</a>
+        </div>
+      </article>
+
       <!-- v5.51.0 Card -->
       <article class="report-card">
         <div class="report-header">
           <div>
-            <span class="badge badge-green">● Latest Release · Oct 31, 2026</span>
+            <span class="badge badge-purple">Release · Oct 31, 2026</span>
             <h2 class="report-title"><a href="./v5.51.0/">TangleClaw <code>v5.51.0</code>: “Prime and rule delivery”</a></h2>
           </div>
           <span class="badge badge-cyan">Tag v5.51.0 @ 45d4b5e9 · Live 5.51.0 (PID 41855) &amp; Testament v0.34.0 Stage 3/4 100% Verified</span>
