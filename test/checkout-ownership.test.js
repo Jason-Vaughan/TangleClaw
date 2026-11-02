@@ -428,4 +428,18 @@ describe('evaluateWorktreeWriteAdmission', () => {
       ownership.releaseWorktreeOwnership(fx.worktree, { ...ownerB, force: true });
     }
   });
+
+  it('a marker file that exists but is corrupt (invalid JSON) fails closed, denying a foreign caller rather than reading as unowned (#1332 Round 6 finding)', () => {
+    ownership.claimWorktreeOwnership(fx.worktree, ownerA);
+    const marker = ownership.markerPath(fx.worktree);
+    fs.writeFileSync(marker, 'not valid json {{{');
+    try {
+      const result = ownership.evaluateWorktreeWriteAdmission(fx.worktree, ownerB);
+      assert.equal(result.allowed, false,
+        'a present-but-corrupt marker must not be read the same as "no marker at all"');
+      assert.equal(result.code, 'CORRUPT_OWNERSHIP_MARKER');
+    } finally {
+      fs.rmSync(marker, { force: true });
+    }
+  });
 });

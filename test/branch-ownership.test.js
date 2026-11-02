@@ -173,6 +173,22 @@ describe('evaluateBranchMutationGuard', () => {
       'omitting generationId must not fall back to a sessionId/launchId match against a record that HAS one');
     assert.equal(result.code, 'CROSS_OWNER_BRANCH_MUTATION_FORBIDDEN');
   });
+
+  it('a store file that exists but is corrupt (invalid JSON) fails closed, denying any mutation rather than reading every branch as unbound (#1977 Round 6 finding)', () => {
+    const storeFile = branchOwnership.storePath(fx.worktreeRoot);
+    const before_ = fs.readFileSync(storeFile, 'utf8');
+    fs.writeFileSync(storeFile, 'not valid json {{{');
+    try {
+      const result = branchOwnership.evaluateBranchMutationGuard({
+        branch: 'feature', worktreeRoot: fx.worktreeRoot, caller: genA, isForcePush: true, commandOrAction: 'git push --force'
+      });
+      assert.equal(result.allowed, false,
+        'a present-but-corrupt store must not be read as "every branch unbound" — even this branch\'s own genuine owner (genA) must be refused until the corruption is resolved');
+      assert.equal(result.code, 'CORRUPT_BRANCH_OWNERSHIP_STORE');
+    } finally {
+      fs.writeFileSync(storeFile, before_);
+    }
+  });
 });
 
 describe('recordReviewEvidence / invalidateReviewEvidenceOnRewrite', () => {
