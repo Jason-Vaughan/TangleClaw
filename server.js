@@ -184,6 +184,7 @@ const { resolveControlCaller, isOperatorShaped } = require('./lib/control-auth')
 const medusaExchanges = require('./lib/medusa-exchanges');
 const medusaWatchdog = require('./lib/medusa-watchdog');
 const medusaSend = require('./lib/medusa-send');
+const medusaRegistry = require('./lib/medusa-registry');
 const launchAgentScan = require('./lib/launchagent-scan');
 
 const log = createLogger('server');
@@ -5347,6 +5348,23 @@ function registerMedusaRoutes(prefix, resolve) {
   }
 
   /**
+   * A target's recipient workspace id, falling back to the durable registry
+   * mapping when the listener is off. `medusa.getStatus()` reports
+   * `workspaceId: null` for a stopped listener — that is liveness, not
+   * identity — so a session that read mail then stopped its listener must
+   * still resolve the same workspace its received exchanges are filed
+   * under (R-Gate Round 2 on PR #2813, matching
+   * `lib/session-finalize.js`'s own resolution via
+   * `medusaRegistry.getWorkspaceId`).
+   * @param {object} target - Resolved target (`sessionId`, `projectPath`).
+   * @returns {string|null}
+   */
+  function targetWorkspaceId(target) {
+    return medusa.getStatus(target.sessionId).workspaceId
+      || (target.projectPath ? medusaRegistry.getWorkspaceId(target.projectPath, target.sessionId) : null);
+  }
+
+  /**
    * Answer an exchange refusal, or rethrow anything else.
    * @param {import('http').ServerResponse} res - Response.
    * @param {Error} err - The error.
@@ -5717,7 +5735,7 @@ function registerMedusaRoutes(prefix, resolve) {
     const limit = query.limit !== undefined ? Number(query.limit) : undefined;
     let rows;
     if (query.role === 'all') {
-      const workspaceId = medusa.getStatus(r.target.sessionId).workspaceId;
+      const workspaceId = targetWorkspaceId(r.target);
       const projectId = targetProjectId(r.target);
       const received = workspaceId ? store.medusaExchanges.listForRecipient(workspaceId, { openOnly, limit }) : [];
       const sent = projectId != null ? store.medusaExchanges.listForSender(projectId, { openOnly, limit }) : [];
@@ -5732,7 +5750,7 @@ function registerMedusaRoutes(prefix, resolve) {
     } else {
       const direction = query.role === 'recipient' ? 'received' : query.role === 'sender' ? 'sent' : query.direction;
       if (direction === 'received') {
-        const workspaceId = medusa.getStatus(r.target.sessionId).workspaceId;
+        const workspaceId = targetWorkspaceId(r.target);
         rows = workspaceId ? store.medusaExchanges.listForRecipient(workspaceId, { openOnly, limit }) : [];
       } else {
         const projectId = targetProjectId(r.target);

@@ -538,6 +538,25 @@ describe('API — Medusa exchanges (#1839)', () => {
       'limit caps the MERGED, deduplicated result — not each side independently');
   });
 
+  // R-Gate Round 2 on PR #2813: medusa.getStatus() reports workspaceId: null
+  // for a STOPPED listener — that is liveness, not identity. A received
+  // exchange is filed under the registry's durable workspace id, which
+  // outlives the listener; ?role=recipient/all must still find it.
+  it('?role=recipient and ?role=all still return a persisted received exchange once the listener has stopped', async () => {
+    const sent = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'x' }, bPM.headers);
+    deliverToBuilder(sent.data.id);
+    medusa.stopSession(bBuilder.sessionId);
+    assert.equal(medusa.getStatus(bBuilder.sessionId).workspaceId, null, 'no live listener — this is the off case');
+
+    const asRecipient = await call(server, 'GET', `${builderBase()}/exchanges?role=recipient`, null, bBuilder.headers);
+    assert.equal(asRecipient.status, 200);
+    assert.deepEqual(asRecipient.data.exchanges.map((x) => x.hubId), [sent.data.id]);
+
+    const all = await call(server, 'GET', `${builderBase()}/exchanges?role=all`, null, bBuilder.headers);
+    assert.equal(all.status, 200);
+    assert.deepEqual(all.data.exchanges.map((x) => x.hubId), [sent.data.id]);
+  });
+
   // #1873 — the retraction route itself (the library function has its own
   // direct-call coverage in test/medusa-exchanges.test.js; this exercises
   // caller resolution, the coordinator gate wiring, and the best-effort

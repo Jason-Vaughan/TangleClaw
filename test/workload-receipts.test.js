@@ -23,6 +23,7 @@ const store = require('../lib/store');
 const workload = require('../lib/workload');
 const medusa = require('../lib/medusa');
 const mx = require('../lib/medusa-exchanges');
+const medusaRegistry = require('../lib/medusa-registry');
 const { createServer } = require('../server');
 const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
 
@@ -551,6 +552,33 @@ describe('POST/GET /api/tc/workload (ADR 0020 §1–§2)', () => {
       const r = await send(server, 'POST', '/api/tc/workload',
         { ...OK, state: 'working', clearance: 'do-not-clear' }, { ...lane.headers, ...TC });
       assert.equal(r.status, 201);
+    });
+
+    // R-Gate Round 2 on PR #2813: medusa.getStatus() reports workspaceId:
+    // null for a STOPPED listener — that is liveness, not identity. A lane
+    // that read a reply-required message while its listener was on, then
+    // turned it off, must still be refused; the registry mapping (seeded
+    // when the listener first minted an id) outlives the listener.
+    it('still refuses while owed even after the lane\'s Medusa listener has stopped', async () => {
+      const proj = mkProject('owed-reply-lane-listener-off');
+      const lane = bindProject(proj);
+      medusaRegistry.ensureWorkspaceId(proj.path, lane.sessionId, proj.name);
+      const workspaceId = medusaRegistry.getWorkspaceId(proj.path, lane.sessionId);
+      assert.ok(workspaceId, 'the registry minted an id');
+      assert.equal(medusa.getStatus(lane.sessionId).workspaceId, null, 'no live listener — this is the off case');
+
+      const sent = mx.createSendIntent({
+        meta: mx.validateSendMeta({ replyRequired: true }, { kind: 'operator', proof: 'verified-session' }, null),
+        sender: { projectId: null, sessionId: 'pm', workspaceId: 'pm-ws' },
+        recipient: { workspaceId, projectId: proj.id, sessionId: lane.sessionId }
+      });
+      mx.bindHubId(sent.exchange_id, 'hub-owed-listener-off-1', { hubStatus: 'received' });
+
+      const r = await send(server, 'POST', '/api/tc/workload',
+        { ...OK, state: 'complete', clearance: 'safe-to-clear' }, { ...lane.headers, ...TC });
+      assert.equal(r.status, 409);
+      assert.equal(r.data.code, 'WORKLOAD_OWED_REPLY_OUTSTANDING');
+      assert.deepEqual(r.data.hubIds, ['hub-owed-listener-off-1']);
     });
   });
 });
