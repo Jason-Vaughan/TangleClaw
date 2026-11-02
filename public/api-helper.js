@@ -3588,6 +3588,7 @@
       HANDSHAKE_TIMEOUT: 'The Bridge accepted the connection but never completed registration — it may be starting up, or something other than the Bridge owns that port.',
       BRIDGE_ERROR: 'The Bridge answered with an error. Its own logs will say why.',
       BAD_FRAME: 'The Bridge sent something this version could not read — a version mismatch is likely.',
+      HEARTBEAT_TIMEOUT: 'The connection stayed open but the Bridge stopped answering heartbeats — something between here and the Bridge may be silently dropping frames.',
       WS_URL_REFUSED: 'An explicit MEDUSA_BRIDGE_WS_URL was refused, so no listener was started — check the server log for the rejected value and why.'
     });
 

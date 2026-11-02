@@ -168,46 +168,48 @@ describe('_assessPane — a stranded nudge does not block its own re-arm (#1621)
   });
 });
 
+/**
+ * The same happy-path seams `test/medusa-wake.test.js` installs, with the pane
+ * holding a nudge whose Enter was lost. Module-scoped (not local to one
+ * `describe`) so both the re-arm tests below and the resubmit tests further
+ * down can build on the same base world.
+ * @returns {object} The world the seams read.
+ */
+function installStrandedWorld() {
+  const { lines, cursor } = paneHolding(strandedNudge('proj-a', 1, 'ffffffffffff'));
+  const world = {
+    sessions: [{ id: 1, projectId: 10, sessionMode: 'tmux', tmuxSession: 'tc-1', engineId: 'claude' }],
+    project: { id: 10, name: 'proj-a', path: '/tmp/proj-a' },
+    status: { state: 'listening', workspaceId: 'proj-a-abc123', unread: 1, lastError: null },
+    inbox: [{ id: 'm1', from: 'peer', message: 'hello' }],
+    pane: lines,
+    cursor,
+    injected: [],
+    recorded: []
+  };
+  wake._internal.recordDelivery = (entry) => { world.recorded.push(entry); };
+  wake._internal.masterWakeRecord = () => null;
+  wake._internal.injectMaster = () => ({ ok: true, error: null });
+  wake._internal.listLiveAll = () => world.sessions;
+  wake._internal.getProject = () => world.project;
+  wake._internal.loadProjectConfig = () => ({ medusaWake: true });
+  wake._internal.wrapRunning = () => false;
+  wake._internal.rotationOpen = () => false;
+  wake._internal.getStatus = () => world.status;
+  wake._internal.getMessages = () => world.inbox;
+  wake._internal.capturePane = () => ({ lines: world.pane });
+  wake._internal.cursorInfo = () => world.cursor;
+  wake._internal.injectCommand = (projectName, command, options) => {
+    world.injected.push({ projectName, command, options });
+    return { ok: true, error: null };
+  };
+  return world;
+}
+
 describe('the wake monitor replaces a stranded nudge (#1621)', () => {
   let saved;
   beforeEach(() => { wake.stop(); saved = { ...wake._internal }; });
   afterEach(() => { Object.assign(wake._internal, saved); wake.stop(); });
-
-  /**
-   * The same happy-path seams `test/medusa-wake.test.js` installs, with the pane
-   * holding a nudge whose Enter was lost.
-   * @returns {object} The world the seams read.
-   */
-  function installStrandedWorld() {
-    const { lines, cursor } = paneHolding(strandedNudge('proj-a', 1, 'ffffffffffff'));
-    const world = {
-      sessions: [{ id: 1, projectId: 10, sessionMode: 'tmux', tmuxSession: 'tc-1', engineId: 'claude' }],
-      project: { id: 10, name: 'proj-a', path: '/tmp/proj-a' },
-      status: { state: 'listening', workspaceId: 'proj-a-abc123', unread: 1, lastError: null },
-      inbox: [{ id: 'm1', from: 'peer', message: 'hello' }],
-      pane: lines,
-      cursor,
-      injected: [],
-      recorded: []
-    };
-    wake._internal.recordDelivery = (entry) => { world.recorded.push(entry); };
-    wake._internal.masterWakeRecord = () => null;
-    wake._internal.injectMaster = () => ({ ok: true, error: null });
-    wake._internal.listLiveAll = () => world.sessions;
-    wake._internal.getProject = () => world.project;
-    wake._internal.loadProjectConfig = () => ({ medusaWake: true });
-    wake._internal.wrapRunning = () => false;
-    wake._internal.rotationOpen = () => false;
-    wake._internal.getStatus = () => world.status;
-    wake._internal.getMessages = () => world.inbox;
-    wake._internal.capturePane = () => ({ lines: world.pane });
-    wake._internal.cursorInfo = () => world.cursor;
-    wake._internal.injectCommand = (projectName, command, options) => {
-      world.injected.push({ projectName, command, options });
-      return { ok: true, error: null };
-    };
-    return world;
-  }
 
   it('injects a fresh nudge over the stranded one instead of refusing the pane', () => {
     const world = installStrandedWorld();
@@ -226,6 +228,97 @@ describe('the wake monitor replaces a stranded nudge (#1621)', () => {
     world.cursor = cursor;
     for (let i = 0; i < wake.IDLE_TICKS_REQUIRED + 1; i++) wake._internal.tick();
     assert.equal(world.injected.length, 0, 'operator text is never typed over');
+  });
+});
+
+describe('a not-accepted receipt presses Enter again before the re-arm retypes it (#1621)', () => {
+  // The re-arm (#1621/#2716) recovers a stranded nudge too, but only after
+  // `IDLE_TICKS_REQUIRED` consecutive idle ticks and a full retype. This is
+  // the cheaper, faster first attempt: press Enter again over the exact same
+  // text, with no retype, the moment the receipt says it is still sitting
+  // there unsubmitted.
+  let saved;
+  beforeEach(() => { wake.stop(); saved = { ...wake._internal }; });
+  afterEach(() => { Object.assign(wake._internal, saved); wake.stop(); });
+
+  const FIXED_NONCE = 'deadbeefcafe';
+
+  /**
+   * The stranded-nudge world, wired so a nudge's receipt comes back
+   * `not-accepted` and every `_attemptResubmit` seam is observable.
+   * @returns {object} The world `installStrandedWorld` returns, extended
+   *   with `sentKeys` and `rearmed`.
+   */
+  function installUnacceptedWorld() {
+    const world = installStrandedWorld();
+    // Fixed so the pane this world's `pane` already shows — set up below to
+    // hold exactly this nonce — is recognisable as THIS attempt's own text,
+    // not some other attempt's.
+    wake._internal.newNonce = () => FIXED_NONCE;
+    const { lines, cursor } = paneHolding(strandedNudge('proj-a', 1, FIXED_NONCE));
+    world.pane = lines;
+    world.cursor = cursor;
+    world.sentKeys = [];
+    wake._internal.sendRawKey = (session, key) => { world.sentKeys.push({ session, key }); };
+    wake._internal.pendingWakeCount = () => 1;
+    wake._internal.verifySubmission = async () => ({ outcome: 'not-accepted', reason: 'test' });
+    world.rearmed = [];
+    wake._internal.rearmWorkspace = (workspaceId) => { world.rearmed.push(workspaceId); };
+    return world;
+  }
+
+  it('presses Enter again over the exact stranded attempt, and the re-arm still runs as the backstop', async () => {
+    const world = installUnacceptedWorld();
+    for (let i = 0; i < wake.IDLE_TICKS_REQUIRED; i++) wake._internal.tick();
+    assert.equal(world.injected.length, 1, 'the nudge is delivered once');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(world.sentKeys, [{ session: 'tc-1', key: 'Enter' }]);
+    assert.deepEqual(world.rearmed, [world.status.workspaceId], 'the re-arm is never skipped just because a resubmit ran');
+  });
+
+  it('never presses Enter once the pane has moved on since delivery (operator typed)', async () => {
+    const world = installUnacceptedWorld();
+    for (let i = 0; i < wake.IDLE_TICKS_REQUIRED; i++) wake._internal.tick();
+    assert.equal(world.injected.length, 1);
+    // Between the delivery and the (async) receipt check landing, the
+    // operator typed alongside the stranded nudge.
+    const { lines, cursor } = paneHolding(`${strandedNudge('proj-a', 1, FIXED_NONCE)} wait`);
+    world.pane = lines;
+    world.cursor = cursor;
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(world.sentKeys, [], 'operator text beside the nudge is never submitted by a bare Enter');
+    assert.deepEqual(world.rearmed, [world.status.workspaceId]);
+  });
+
+  it('never presses Enter over a DIFFERENT stranded attempt found sitting there', async () => {
+    const world = installUnacceptedWorld();
+    // The composer holds some OTHER own-nudge attempt's text, not this
+    // delivery's — e.g. a still-unreplaced nudge from an earlier wake.
+    const other = paneHolding(strandedNudge('proj-a', 1, 'ffffffffffff'));
+    world.pane = other.lines;
+    world.cursor = other.cursor;
+    for (let i = 0; i < wake.IDLE_TICKS_REQUIRED; i++) wake._internal.tick();
+    assert.equal(world.injected.length, 1);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(world.sentKeys, [], 'a different attempt\'s stranded nudge is not this call\'s to finish');
+  });
+
+  it('a resubmit that throws does not stop the re-arm from running', async () => {
+    const world = installUnacceptedWorld();
+    wake._internal.sendRawKey = () => { throw new Error('tmux gone'); };
+    for (let i = 0; i < wake.IDLE_TICKS_REQUIRED; i++) wake._internal.tick();
+    assert.equal(world.injected.length, 1);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(world.rearmed, [world.status.workspaceId]);
+  });
+
+  it('an accepted receipt never presses Enter', async () => {
+    const world = installUnacceptedWorld();
+    wake._internal.verifySubmission = async () => ({ outcome: 'accepted', reason: 'test' });
+    for (let i = 0; i < wake.IDLE_TICKS_REQUIRED; i++) wake._internal.tick();
+    assert.equal(world.injected.length, 1);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(world.sentKeys, []);
   });
 });
 
@@ -289,5 +382,98 @@ describe('a terminal device-attributes reply in the composer does not hold a wak
     const typed = `❯${NBSP}0;276;0c`;
     const lines = [DIVIDER, typed, DIVIDER, FOOTER];
     assert.deepEqual(wake._assessPane(lines, CLAUDE, { x: [...typed].length, y: 0, line: typed }), { idle: true, reason: 'at-prompt' });
+  });
+});
+
+describe('the periodic medusa_deliveries sweep runs independent of record() (#2720)', () => {
+  // Before this, `store.medusaDeliveries.prune` ran only from inside
+  // `record()` itself, so a DORMANT project — every session ended, nothing
+  // left to call `record()` — never had its rows trimmed again. This sweep
+  // runs on a tick with no live session at all, which is exactly that case.
+  let saved;
+  beforeEach(() => { wake.stop(); saved = { ...wake._internal }; });
+  afterEach(() => { Object.assign(wake._internal, saved); wake.stop(); });
+
+  /**
+   * Wire the seams the periodic sweep reads, with no live session and no
+   * Master — the dormant-project shape this exists for.
+   * @param {object} [overrides] - Per-seam overrides.
+   * @returns {{pruned: object[], nowMs: number, setNow: Function}}
+   */
+  function installDormantWorld(overrides = {}) {
+    // Comfortably past `PRUNE_EVERY_MS` from a zero epoch, like real
+    // `Date.now()` is — `_lastMedusaDeliveryPruneAt` starts at 0 (`wake.stop()`
+    // in `beforeEach`), so the first tick's `now - 0` must already clear the
+    // window for the very first sweep to run, exactly as it does against a
+    // real epoch-scale clock in production.
+    let nowMs = wake.PRUNE_EVERY_MS * 10;
+    wake._internal.now = () => nowMs;
+    wake._internal.listLiveAll = overrides.listLiveAll || (() => []);
+    wake._internal.masterWakeRecord = overrides.masterWakeRecord || (() => null);
+    wake._internal.listProjects = overrides.listProjects || (() => [{ id: 10 }, { id: 20 }]);
+    const pruned = [];
+    wake._internal.pruneMedusaDeliveries = overrides.pruneMedusaDeliveries
+      || ((options) => { pruned.push(options); return { endedSessions: 0, unattached: 0 }; });
+    return { pruned, bump: (deltaMs) => { nowMs += deltaMs; } };
+  }
+
+  it('sweeps every known project on a tick with no live session at all', () => {
+    const { pruned } = installDormantWorld();
+    wake._internal.tick();
+    assert.deepEqual(pruned, [{ projectId: 10 }, { projectId: 20 }],
+      'every known project is swept, not only ones with a live session');
+  });
+
+  it('is rate-limited: a tick moments later does not sweep again', () => {
+    const { pruned, bump } = installDormantWorld();
+    wake._internal.tick();
+    assert.equal(pruned.length, 2);
+    bump(1000);
+    wake._internal.tick();
+    assert.equal(pruned.length, 2, 'a second tick inside PRUNE_EVERY_MS must not sweep again');
+  });
+
+  it('sweeps again once a full PRUNE_EVERY_MS has elapsed', () => {
+    const { pruned, bump } = installDormantWorld();
+    wake._internal.tick();
+    assert.equal(pruned.length, 2);
+    bump(wake.PRUNE_EVERY_MS);
+    wake._internal.tick();
+    assert.equal(pruned.length, 4, 'a full window elapsed, so the sweep ran again for every project');
+  });
+
+  it('one project\'s sweep failure does not stop the sweep for the rest, or the tick itself', () => {
+    const { pruned } = installDormantWorld({
+      listProjects: () => [{ id: 10 }, { id: 20 }, { id: 30 }],
+      pruneMedusaDeliveries: (options) => {
+        if (options.projectId === 20) throw new Error('db busy');
+        pruned.push(options);
+      }
+    });
+    assert.doesNotThrow(() => wake._internal.tick());
+    assert.deepEqual(pruned, [{ projectId: 10 }, { projectId: 30 }],
+      'the failing project is skipped; the others still swept');
+  });
+
+  it('a failure to list projects does not throw, and leaves nothing swept', () => {
+    const { pruned } = installDormantWorld({ listProjects: () => { throw new Error('store unavailable'); } });
+    assert.doesNotThrow(() => wake._internal.tick());
+    assert.deepEqual(pruned, []);
+  });
+
+  it('still runs the ordinary per-session scan on the same tick (not a replacement for it)', () => {
+    const sessions = [{ id: 1, projectId: 10, sessionMode: 'webui', tmuxSession: null, engineId: 'claude' }];
+    const { pruned } = installDormantWorld({ listProjects: () => [{ id: 10 }], listLiveAll: () => sessions });
+    const recorded = [];
+    wake._internal.recordDelivery = (entry) => recorded.push(entry);
+    wake._internal.getProject = () => ({ id: 10, name: 'proj-a', path: '/tmp/proj-a' });
+    wake._internal.loadProjectConfig = () => ({ medusaWake: true });
+    wake._internal.wrapRunning = () => false;
+    wake._internal.rotationOpen = () => false;
+    wake._internal.getStatus = () => ({ state: 'listening', workspaceId: 'proj-a-abc', unread: 1, lastError: null });
+    wake._internal.getMessages = () => [{ id: 'm1', from: 'peer', message: 'hello' }];
+    wake._internal.tick();
+    assert.deepEqual(pruned, [{ projectId: 10 }], 'the sweep still ran');
+    assert.equal(recorded.some((r) => r.skipReason === 'no-pane'), true, 'and the webui session was still scanned, unaffected');
   });
 });
