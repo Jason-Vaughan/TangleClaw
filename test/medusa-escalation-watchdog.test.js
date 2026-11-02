@@ -213,6 +213,79 @@ describe('tick — delivery', () => {
     await watchdog.tick();
     assert.deepEqual(calls, ['the-secret-value']);
   });
+
+  it('recovers WITHOUT a restart once the operator sets the missing env var on a later tick (#1876 Round 2)', async () => {
+    watchdog._internal.loadConfig = () => ({
+      escalationExternalAlert: {
+        enabled: true, url: 'https://example.test/hook', authTokenEnvVar: 'TC_TEST_ESCALATION_TOKEN',
+        adapterFn: async (e, opts) => { calls.push(opts.token); return { ok: true, status: 200 }; }
+      }
+    });
+    watchdog._internal.listEscalations = () => [escalation()];
+
+    delete process.env.TC_TEST_ESCALATION_TOKEN;
+    const first = await watchdog.tick();
+    assert.equal(first.considered, 1);
+    assert.equal(calls.length, 0, 'the credential is missing: nothing is sent yet');
+
+    process.env.TC_TEST_ESCALATION_TOKEN = 'now-set';
+    await watchdog.tick();
+    assert.deepEqual(calls, ['now-set'], 'the very next tick must deliver, with no restart, once the env var is set');
+  });
+
+  it('a missing credential is never marked retry-exhausted, however many ticks pass', async () => {
+    watchdog._internal.loadConfig = () => ({
+      escalationExternalAlert: {
+        enabled: true, url: 'https://example.test/hook', authTokenEnvVar: 'TC_TEST_ESCALATION_TOKEN_UNSET', maxAttempts: 1,
+        adapterFn: async () => { calls.push(1); return { ok: true, status: 200 }; }
+      }
+    });
+    watchdog._internal.listEscalations = () => [escalation()];
+    for (let i = 0; i < 5; i++) await watchdog.tick();
+    assert.equal(calls.length, 0);
+    process.env.TC_TEST_ESCALATION_TOKEN_UNSET = 'finally-set';
+    await watchdog.tick();
+    assert.equal(calls.length, 1, 'a missing credential must never exhaust the retry budget — it is not a delivery attempt at all');
+    delete process.env.TC_TEST_ESCALATION_TOKEN_UNSET;
+  });
+});
+
+describe('tick — overlapping (concurrent) calls', () => {
+  it('two tick() calls that overlap in time invoke the adapter only once for the same escalation (#1876 Round 2)', async () => {
+    let calls = 0;
+    let resolveAdapter;
+    watchdog._internal.loadConfig = () => ({
+      escalationExternalAlert: {
+        enabled: true, url: 'https://example.test/hook',
+        adapterFn: () => {
+          calls += 1;
+          return new Promise((resolve) => { resolveAdapter = resolve; }).then(() => ({ ok: true, status: 200 }));
+        }
+      }
+    });
+    watchdog._internal.listEscalations = () => [escalation()];
+
+    const first = watchdog.tick();
+    const second = watchdog.tick(); // fired before the first's adapter call has resolved
+    resolveAdapter();
+    await Promise.all([first, second]);
+
+    assert.equal(calls, 1, 'the second, overlapping tick must see the first attempt as already in flight and skip it');
+  });
+
+  it('a third tick, started only after the first has fully settled, is correctly idempotent (not an in-flight false positive)', async () => {
+    let calls = 0;
+    watchdog._internal.loadConfig = () => ({
+      escalationExternalAlert: {
+        enabled: true, url: 'https://example.test/hook',
+        adapterFn: async () => { calls += 1; return { ok: true, status: 200 }; }
+      }
+    });
+    watchdog._internal.listEscalations = () => [escalation()];
+    await watchdog.tick();
+    await watchdog.tick();
+    assert.equal(calls, 1);
+  });
 });
 
 describe('tick — failure, backoff and retry-exhaustion', () => {
