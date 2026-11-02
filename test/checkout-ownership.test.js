@@ -284,6 +284,51 @@ describe('captureBaselineTreeState / verifyTreeUnchangedSinceBaseline', () => {
     fx.git('add', '-A');
     fx.git('commit', '-q', '-m', 'settle tracked.txt back to one');
   });
+
+  it('an UNRESOLVED MERGE with multiple index stages is detected when a non-final stage\'s blob is mutated (#1332 Round 4 finding)', () => {
+    const trackedPath = path.join(fx.worktree, 'tracked.txt');
+    fs.writeFileSync(trackedPath, 'ancestor\n');
+    fx.git('add', '-A');
+    fx.git('commit', '-q', '-m', 'ancestor');
+    const ancestorSha = fx.git('rev-parse', 'HEAD').toString().trim();
+
+    fs.writeFileSync(trackedPath, 'ours\n');
+    fx.git('add', '-A');
+    fx.git('commit', '-q', '-m', 'ours');
+
+    fx.git('branch', 'theirs-branch', ancestorSha);
+    fx.git('checkout', '-q', 'theirs-branch');
+    fs.writeFileSync(trackedPath, 'theirs\n');
+    fx.git('add', '-A');
+    fx.git('commit', '-q', '-m', 'theirs');
+    fx.git('checkout', '-q', 'feature');
+
+    try {
+      fx.git('merge', '-q', '--no-ff', 'theirs-branch');
+    } catch (err) { /* conflict, expected — merge exits non-zero */ }
+    assert.equal(fx.git('status', '--porcelain').toString().trim(), 'UU tracked.txt');
+
+    const baseline = ownership.captureBaselineTreeState(fx.worktree);
+
+    // Mutate ONLY stage 2 ("ours")'s blob via --index-info plumbing,
+    // leaving stage 1 (ancestor) and stage 3 (theirs) untouched. A map
+    // overwritten per path (instead of accumulating every stage) would
+    // have captured only the LAST stage seen and missed this entirely.
+    const newBlob = execFileSync('git', ['hash-object', '-w', '--stdin'],
+      { cwd: fx.worktree, input: 'mutated-ours\n' }).toString().trim();
+    execFileSync('git', ['update-index', '--index-info'],
+      { cwd: fx.worktree, input: `100644 ${newBlob} 2\ttracked.txt\n` });
+    assert.equal(fx.git('status', '--porcelain').toString().trim(), 'UU tracked.txt',
+      'the mutation must be invisible to the porcelain status CODE — that invisibility is the whole point of this test');
+
+    const verified = ownership.verifyTreeUnchangedSinceBaseline(fx.worktree, baseline);
+    assert.equal(verified.ok, false,
+      'a stage-2-only index mutation inside an unresolved merge must be caught, not lost to a map that only kept the last stage seen');
+    assert.equal(verified.code, 'FOREIGN_WORKTREE_MUTATION');
+
+    fx.git('merge', '--abort');
+    fx.git('branch', '-D', 'theirs-branch');
+  });
 });
 
 describe('evaluateWorktreeWriteAdmission', () => {
