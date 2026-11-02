@@ -38,6 +38,10 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # A fork PR's run is approved by a maintainer, not trusted by default
+    # (#1550): bounding the job keeps a wedged or deliberately-stalling test
+    # from occupying a runner indefinitely once that approval is given.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -50,6 +54,10 @@ jobs:
           # `test`, so the guard would report a miss that `gh pr merge --auto`
           # merges straight past.
           fetch-depth: 0
+          # This workflow runs an approved fork PR's own code (#1550) — the
+          # checkout has no reason to keep a credential a later step in that
+          # same untrusted run could read back out and use against the repo.
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           # node:sqlite requires Node 22+; matches the production runtime

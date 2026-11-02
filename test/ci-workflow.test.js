@@ -152,6 +152,37 @@ describe('CI workflow (.github/workflows/test.yml)', () => {
     assert.match(workflowSource(), /node-version: 22/);
   });
 
+  it('does not persist checkout credentials for any job (#1550)', () => {
+    // This workflow runs an approved fork PR's own code once a maintainer
+    // approves the run — a later step in that same untrusted run must not be
+    // able to read a lingering git credential back out of the checkout and
+    // use it against the repo.
+    const src = workflowSource();
+    const checkouts = src.match(/uses: actions\/checkout@\S+[\s\S]*?(?=\n {6}- (?:uses|name)|\n {4}\w|\n*$)/g) || [];
+    assert.ok(checkouts.length > 0, 'no actions/checkout step found');
+    for (const step of checkouts) {
+      assert.match(step, /persist-credentials: false/,
+        `every actions/checkout step must set persist-credentials: false, got:\n${step}`);
+    }
+  });
+
+  it('bounds every job with an explicit timeout-minutes (#1550)', () => {
+    // An approved fork PR run is untrusted code, not merely a build to wait
+    // on — a wedged or deliberately stalling test must not occupy a runner
+    // indefinitely. One job today (`test`), checked generically so a second
+    // job added later cannot slip in unbounded.
+    const src = workflowSource();
+    const jobsBlock = src.slice(src.indexOf('\njobs:'));
+    const jobNames = jobsBlock.match(/^  \w[\w-]*:$/gm) || [];
+    assert.ok(jobNames.length > 0, 'no jobs found in the workflow');
+    const jobBodies = jobsBlock.split(/^  \w[\w-]*:$/m).slice(1);
+    assert.equal(jobBodies.length, jobNames.length);
+    jobNames.forEach((name, i) => {
+      assert.match(jobBodies[i], /^\s+timeout-minutes: \d+$/m,
+        `job ${name.trim()} must declare an explicit timeout-minutes`);
+    });
+  });
+
   it('README badge points at this workflow', () => {
     const readme = fs.readFileSync(README, 'utf8');
     assert.ok(
