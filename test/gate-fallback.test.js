@@ -60,12 +60,16 @@ describe('lib/gate-fallback — the door TangleClaw may stand down behind (#1420
     });
 
     it('refuses that shape with the ungated /openclaw-direct/* handle — the #472 decision', () => {
-      // A merged-site reading (the drift check's P1) accepts this file: one gate
-      // sits in the same site. Here TangleClaw is about to stop asking, and that
-      // handle forwards the gateway token to whoever asks.
+      // A merged-site PRESENCE reading alone (the drift check's P1) would
+      // accept this file: one gate sits in the same site. Route-order
+      // coverage (#2774) now catches it directly — the ungated handle is
+      // reached before the gate — so this check's own verdict is DIVERGED,
+      // independent of the fallback door's own stricter refusal below.
+      // Here TangleClaw is about to stop asking, and that handle forwards
+      // the gateway token to whoever asks.
       const adapted = fixture('live-shape-own-auth');
       assert.equal(drift.checkGates(drift.summarizeConfig(adapted).sites,
-        drift.summarizeConfig(fixture('generated')).sites).status, drift.HOLDS);
+        drift.summarizeConfig(fixture('generated')).sites).status, drift.DIVERGED);
       const door = gf.checkFallbackDoor(adapted, PORT);
       assert.equal(door.ok, false);
       assert.match(door.reason, new RegExp(FIXTURE_TAILNET_HOST.replace(/\./g, '\\.')));
