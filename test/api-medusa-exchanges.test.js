@@ -261,8 +261,13 @@ describe('API — Medusa exchanges (#1839)', () => {
     assert.equal(sent.data.exchange.sender.verified, true);
     const hubId = sent.data.id;
     deliverToBuilder(hubId);
-    await call(server, 'POST', `${builderBase()}/read`, { ids: [hubId] }, bBuilder.headers);
-    assert.equal(store.medusaExchanges.getByHubId(hubId, 'send').state, 'acknowledged');
+
+    // #1976 — the Ack Gate: a reply-required message cannot be marked handled
+    // before it is answered.
+    const earlyAck = await call(server, 'POST', `${builderBase()}/read`, { ids: [hubId] }, bBuilder.headers);
+    assert.equal(earlyAck.status, 409);
+    assert.equal(earlyAck.data.code, 'REPLY_REQUIRED_BEFORE_ACK');
+    assert.equal(store.medusaExchanges.getByHubId(hubId, 'send').state, 'delivered', 'the refused ack changed nothing');
 
     const unbound = await call(server, 'POST', `${builderBase()}/send`, { to: pmWs, message: 'done', inReplyTo: hubId });
     assert.equal(unbound.status, 403);
@@ -273,6 +278,11 @@ describe('API — Medusa exchanges (#1839)', () => {
     const target = store.medusaExchanges.getByHubId(hubId, 'send');
     assert.equal(target.state, 'replied');
     assert.equal(target.terminal_at, null);
+
+    // Now that the reply is bound, the Ack Gate has nothing left to refuse.
+    const ackAfterReply = await call(server, 'POST', `${builderBase()}/read`, { ids: [hubId] }, bBuilder.headers);
+    assert.equal(ackAfterReply.status, 200);
+    assert.equal(store.medusaExchanges.getByHubId(hubId, 'send').state, 'replied');
 
     const byBuilder = await call(server, 'POST', `${builderBase()}/exchanges/${target.exchange_id}/close`, null, bBuilder.headers);
     assert.equal(byBuilder.status, 403, 'the Builder did not send it');
@@ -456,6 +466,201 @@ describe('API — Medusa exchanges (#1839)', () => {
     assert.ok(!JSON.stringify(theirs.data).includes('secret body'));
   });
 
+  // #2137 — ?role= aliases direction, and role=all merges both sides.
+  it('?role=sender/recipient alias direction', async () => {
+    const sentByPm = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'from pm' }, bPM.headers);
+    deliverToBuilder(sentByPm.data.id);
+    const sentByBuilder = await call(server, 'POST', `${builderBase()}/send`, { to: pmWs, message: 'from builder' }, bBuilder.headers);
+    assert.equal(sentByBuilder.status, 200, JSON.stringify(sentByBuilder.data));
+
+    const asSender = await call(server, 'GET', `${pmBase()}/exchanges?role=sender`, null, bPM.headers);
+    assert.equal(asSender.status, 200);
+    assert.deepEqual(asSender.data.exchanges.map((x) => x.hubId), [sentByPm.data.id]);
+    const viaDirection = await call(server, 'GET', `${pmBase()}/exchanges?direction=sent`, null, bPM.headers);
+    assert.deepEqual(viaDirection.data.exchanges.map((x) => x.hubId), asSender.data.exchanges.map((x) => x.hubId),
+      'role=sender is exactly direction=sent');
+
+    const asRecipient = await call(server, 'GET', `${pmBase()}/exchanges?role=recipient`, null, bPM.headers);
+    assert.equal(asRecipient.status, 200);
+    assert.deepEqual(asRecipient.data.exchanges.map((x) => x.hubId), [sentByBuilder.data.id]);
+  });
+
+  /**
+   * A send recorded directly through the library (not the HTTP route), so its
+   * `created_at` can be pinned via {@link medusaExchanges._internal}.now — the
+   * precision a real `/send` round-trip cannot offer when several must sort
+   * in a known order.
+   * @param {{senderProjectId: number, senderWs: string, recipientWs: string, recipientProjectId: (number|null),
+   *   hubId: string, atMs: number}} opts
+   * @returns {object} The bound exchange row
+   */
+  function sendAt({ senderProjectId, senderWs, recipientWs, recipientProjectId, hubId, atMs }) {
+    const real = medusaExchanges._internal.now;
+    medusaExchanges._internal.now = () => new Date(atMs);
+    try {
+      const x = medusaExchanges.createSendIntent({
+        meta: medusaExchanges.validateSendMeta({}, { kind: 'project', projectId: senderProjectId }, senderProjectId),
+        sender: { projectId: senderProjectId, sessionId: 9, workspaceId: senderWs },
+        recipient: { workspaceId: recipientWs, projectId: recipientProjectId, sessionId: null }
+      });
+      return medusaExchanges.bindHubId(x.exchange_id, hubId, { hubStatus: 'received' });
+    } finally {
+      medusaExchanges._internal.now = real;
+    }
+  }
+
+  it('?role=all merges both sides newest-first, collapses a TRUE duplicate (sender and recipient are the same exchange), and caps at ?limit', async () => {
+    const t0 = Date.parse('2026-11-01T00:00:00Z');
+    // Oldest to newest: a plain received, a plain sent, then one exchange that
+    // is BOTH sent and received by this project (PM messaging itself) — the
+    // one row a naive concat (rather than a true id-keyed dedup) would double.
+    const received = sendAt({
+      senderProjectId: builder.id, senderWs: builderWs, recipientWs: pmWs, recipientProjectId: pm.id,
+      hubId: 'hub-role-all-received', atMs: t0
+    });
+    const sent = sendAt({
+      senderProjectId: pm.id, senderWs: pmWs, recipientWs: builderWs, recipientProjectId: builder.id,
+      hubId: 'hub-role-all-sent', atMs: t0 + 1000
+    });
+    const self = sendAt({
+      senderProjectId: pm.id, senderWs: pmWs, recipientWs: pmWs, recipientProjectId: pm.id,
+      hubId: 'hub-role-all-self', atMs: t0 + 2000
+    });
+
+    const all = await call(server, 'GET', `${pmBase()}/exchanges?role=all`, null, bPM.headers);
+    assert.equal(all.status, 200);
+    assert.deepEqual(all.data.exchanges.map((x) => x.exchangeId), [self.exchange_id, sent.exchange_id, received.exchange_id],
+      'newest first — the self-exchange appears exactly once, not twice');
+
+    const capped = await call(server, 'GET', `${pmBase()}/exchanges?role=all&limit=2`, null, bPM.headers);
+    assert.equal(capped.status, 200);
+    assert.deepEqual(capped.data.exchanges.map((x) => x.exchangeId), [self.exchange_id, sent.exchange_id],
+      'limit caps the MERGED, deduplicated result — not each side independently');
+  });
+
+  // R-Gate Round 2 on PR #2813: medusa.getStatus() reports workspaceId: null
+  // for a STOPPED listener — that is liveness, not identity. A received
+  // exchange is filed under the registry's durable workspace id, which
+  // outlives the listener; ?role=recipient/all must still find it.
+  it('?role=recipient and ?role=all still return a persisted received exchange once the listener has stopped', async () => {
+    const sent = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'x' }, bPM.headers);
+    deliverToBuilder(sent.data.id);
+    medusa.stopSession(bBuilder.sessionId);
+    assert.equal(medusa.getStatus(bBuilder.sessionId).workspaceId, null, 'no live listener — this is the off case');
+
+    const asRecipient = await call(server, 'GET', `${builderBase()}/exchanges?role=recipient`, null, bBuilder.headers);
+    assert.equal(asRecipient.status, 200);
+    assert.deepEqual(asRecipient.data.exchanges.map((x) => x.hubId), [sent.data.id]);
+
+    const all = await call(server, 'GET', `${builderBase()}/exchanges?role=all`, null, bBuilder.headers);
+    assert.equal(all.status, 200);
+    assert.deepEqual(all.data.exchanges.map((x) => x.hubId), [sent.data.id]);
+  });
+
+  // R-Gate Round 3 on PR #2813: the Ack Gate's own workspaceId resolution had
+  // the identical gap — a session that read a reply-required message, then
+  // stopped its listener, must still be refused on POST .../read.
+  it('the Ack Gate still refuses an unanswered reply-required message once the listener has stopped', async () => {
+    const sent = await call(server, 'POST', `${pmBase()}/send`,
+      { to: builderWs, message: 'rule on X', priority: 'blocking', reason: 'awaiting-ruling' }, bPM.headers);
+    assert.equal(sent.data.exchange.replyRequired, true);
+    deliverToBuilder(sent.data.id);
+    medusa.stopSession(bBuilder.sessionId);
+    assert.equal(medusa.getStatus(bBuilder.sessionId).workspaceId, null, 'no live listener — this is the off case');
+
+    const ack = await call(server, 'POST', `${builderBase()}/read`, { ids: [sent.data.id] }, bBuilder.headers);
+    assert.equal(ack.status, 409);
+    assert.equal(ack.data.code, 'REPLY_REQUIRED_BEFORE_ACK');
+  });
+
+  // #1873 — the retraction route itself (the library function has its own
+  // direct-call coverage in test/medusa-exchanges.test.js; this exercises
+  // caller resolution, the coordinator gate wiring, and the best-effort
+  // side effects only the route performs).
+  describe('POST /messages/:hubId/retract (#1873)', () => {
+    it('refuses an unbound caller and a non-sender, before succeeding for the verified sender', async () => {
+      const sent = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'x' }, bPM.headers);
+      const hubId = sent.data.id;
+
+      const unbound = await call(server, 'POST', `${pmBase()}/messages/${hubId}/retract`, { reason: 'superseded' });
+      assert.equal(unbound.status, 403);
+      assert.equal(unbound.data.code, 'LAUNCH_BINDING_REQUIRED');
+
+      const notTheSender = await call(server, 'POST', `${builderBase()}/messages/${hubId}/retract`, { reason: 'superseded' }, bBuilder.headers);
+      assert.equal(notTheSender.status, 403);
+      assert.equal(notTheSender.data.code, 'NOT_INITIATOR');
+
+      const ok = await call(server, 'POST', `${pmBase()}/messages/${hubId}/retract`, { reason: 'sent-in-error' }, bPM.headers);
+      assert.equal(ok.status, 200, JSON.stringify(ok.data));
+      assert.equal(ok.data.exchange.state, 'retracted');
+      assert.equal(ok.data.exchange.ended.code, 'sent-in-error');
+    });
+
+    it('is refused once read, and propagates a 404 for an id nothing sent', async () => {
+      const missing = await call(server, 'POST', `${pmBase()}/messages/hub-no-such-id/retract`, { reason: 'superseded' }, bPM.headers);
+      assert.equal(missing.status, 404);
+      assert.equal(missing.data.code, 'EXCHANGE_NOT_FOUND');
+
+      const sent = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'x' }, bPM.headers);
+      const hubId = sent.data.id;
+      deliverToBuilder(hubId);
+      await call(server, 'GET', `${builderBase()}/messages`, null, bBuilder.headers);
+      const refused = await call(server, 'POST', `${pmBase()}/messages/${hubId}/retract`, { reason: 'superseded' }, bPM.headers);
+      assert.equal(refused.status, 409);
+      assert.equal(refused.data.code, 'NOT_RETRACTABLE');
+    });
+
+    it('is refused for a HOLD/STOP/RELEASE control notice, even for the operator', async () => {
+      store.control.insertReceipt({
+        event_id: 'evt-retract-ctl-1', fact: 'notify_attempted', outcome_code: 'sent',
+        actor_principal: 'system', notice_ref: 'hub-ctl-retract-1'
+      });
+      const refused = await call(server, 'POST', `${pmBase()}/messages/hub-ctl-retract-1/retract`, { reason: 'superseded' }, op);
+      assert.equal(refused.status, 409);
+      assert.equal(refused.data.code, 'CONTROL_NOT_RETRACTABLE');
+    });
+
+    it('clears the retracted message from a live recipient session\'s own inbox', async () => {
+      const sent = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'x' }, bPM.headers);
+      const hubId = sent.data.id;
+      deliverToBuilder(hubId);
+      const before = await call(server, 'GET', `${builderBase()}/messages`, null, op);
+      assert.ok(before.data.messages.some((m) => m.id === hubId), 'in the inbox before retraction');
+
+      const retracted = await call(server, 'POST', `${pmBase()}/messages/${hubId}/retract`, { reason: 'superseded' }, bPM.headers);
+      assert.equal(retracted.status, 200, JSON.stringify(retracted.data));
+
+      const after = await call(server, 'GET', `${builderBase()}/messages`, null, op);
+      assert.ok(!after.data.messages.some((m) => m.id === hubId), 'cleared from the recipient\'s own inbox');
+    });
+
+    it('sends a best-effort system retraction notice only when a wake was already attempted', async () => {
+      const silent = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'no wake yet' }, bPM.headers);
+      deliverToBuilder(silent.data.id);
+      const beforeCount = hub.received.length;
+      const r1 = await call(server, 'POST', `${pmBase()}/messages/${silent.data.id}/retract`, { reason: 'superseded' }, bPM.headers);
+      assert.equal(r1.status, 200, JSON.stringify(r1.data));
+      assert.equal(hub.received.length, beforeCount, 'no wake was attempted, so no notice is sent');
+
+      const woken = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'woken then retracted' }, bPM.headers);
+      deliverToBuilder(woken.data.id);
+      medusaExchanges.recordWakeForRecipient(builderWs, 'wake_attempted', { detail: { nonce: 'n-retract' } });
+      const r2 = await call(server, 'POST', `${pmBase()}/messages/${woken.data.id}/retract`, { reason: 'sent-in-error', replacementHubId: null }, bPM.headers);
+      assert.equal(r2.status, 200, JSON.stringify(r2.data));
+      const notice = hub.received.find((m) => m.to === builderWs && typeof m.message === 'string' && m.message.includes('[Medusa Retraction]'));
+      assert.ok(notice, 'a system notice named the retraction');
+      assert.match(notice.message, new RegExp(woken.data.id));
+      assert.match(notice.message, /sent-in-error/);
+    });
+
+    it('the Builder sweeping its OWN sent message leaves the PM\'s side alone', async () => {
+      const sent = await call(server, 'POST', `${builderBase()}/send`, { to: pmWs, message: 'x' }, bBuilder.headers);
+      const retracted = await call(server, 'POST', `${builderBase()}/messages/${sent.data.id}/retract`, { reason: 'no-longer-needed' }, bBuilder.headers);
+      assert.equal(retracted.status, 200, JSON.stringify(retracted.data));
+      assert.equal(retracted.data.exchange.state, 'retracted');
+    });
+  });
+
   it('accepts bounded watchdog settings through PATCH /api/config and refuses the rest', async () => {
     const bad = await call(server, 'PATCH', '/api/config', { medusaWatchdog: { tickMs: 1 } }, op);
     assert.equal(bad.status, 400);
@@ -493,7 +698,10 @@ describe('API — Medusa exchanges (#1839)', () => {
   });
 
   it('drops a session from the undelivered list once its mail is handled by hand (#1435)', async () => {
-    const sent = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'x', priority: 'blocking' }, bPM.headers);
+    // replyRequired: false — this test is about the delivery ledger, not the
+    // #1976 Ack Gate; a reply-required blocking send would refuse the ack below.
+    const sent = await call(server, 'POST', `${pmBase()}/send`,
+      { to: builderWs, message: 'x', priority: 'blocking', replyRequired: false }, bPM.headers);
     const hubId = sent.data.id;
     deliverToBuilder(hubId);
     store.medusaDeliveries.record({

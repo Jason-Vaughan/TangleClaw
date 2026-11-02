@@ -268,17 +268,23 @@ describe('#1839 exit: an unreadable blocking message escalates, then clears once
     await watchdog.tick(t0 + 61 * MIN).notices;
     assert.equal(hubLog.length, before, 'a later tick repeats nothing');
 
-    // The Builder finally reads and acks it. A reply is required, so the
-    // exchange stays open; the Builder replies, and the PM closes it.
+    // The Builder finally reads it. A reply is required, so #1976's Ack Gate
+    // refuses marking it handled before the reply; the exchange stays open,
+    // the Builder replies, and only then does the ack succeed, and the PM closes it.
     const inbox = await call(server, 'GET', `${builderBase}/messages`, null, bBuilder.headers);
     assert.ok(inbox.data.messages.some((m) => m.id === sent.data.id));
-    await call(server, 'POST', `${builderBase}/read`, { ids: [sent.data.id] }, bBuilder.headers);
-    assert.equal(row().state, 'acknowledged');
+    const earlyAck = await call(server, 'POST', `${builderBase}/read`, { ids: [sent.data.id] }, bBuilder.headers);
+    assert.equal(earlyAck.status, 409);
+    assert.equal(earlyAck.data.code, 'REPLY_REQUIRED_BEFORE_ACK');
+    assert.equal(row().state, 'read');
     assert.equal(row().terminal_at, null);
     const reply = await call(server, 'POST', `${builderBase}/send`,
       { to: pmWs, message: 'v49.', inReplyTo: sent.data.id }, bBuilder.headers);
     assert.equal(reply.status, 200, JSON.stringify(reply.data));
     assert.equal(row().state, 'replied');
+    const ackAfterReply = await call(server, 'POST', `${builderBase}/read`, { ids: [sent.data.id] }, bBuilder.headers);
+    assert.equal(ackAfterReply.status, 200);
+    assert.equal(row().state, 'replied', 'an ack no longer outranks a reply already recorded');
     const closed = await call(server, 'POST', `${pmBase}/exchanges/${exchangeId}/close`, null, bPM.headers);
     assert.equal(closed.status, 200);
     assert.equal(row().state, 'closed');

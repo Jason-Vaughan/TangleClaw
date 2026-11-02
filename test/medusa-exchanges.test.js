@@ -627,6 +627,71 @@ describe('medusa-exchanges (#1839)', () => {
       store.control.insertReceipt({ event_id: 'evt_1', fact: 'notify_attempted', outcome_code: 'sent', actor_principal: 'system', notice_ref: 'hub-ctl' });
       assert.throws(() => mx.retract('hub-ctl', OPERATOR, { reason: 'superseded' }), { code: 'CONTROL_NOT_RETRACTABLE', status: 409 });
     });
+
+    /**
+     * Record a send from the Project Master to the Builder: no sending
+     * project, from the Master's listener key, as its unbound send route
+     * records it. Mirrors `close`'s own `sendMasterToBuilder` fixture (not
+     * reusable across `describe` blocks — a sibling, not a shared helper).
+     * @param {{hubId?: string, caller?: object}} [opts]
+     * @returns {object} The exchange row
+     */
+    function sendMasterToBuilder({ hubId = 'hub-m1', caller = UNBOUND } = {}) {
+      const x = mx.createSendIntent({
+        meta: mx.validateSendMeta({}, caller, null),
+        sender: { projectId: null, sessionId: 'master', workspaceId: 'master-ws' },
+        recipient: { workspaceId: 'builder-ws', projectId: 20, sessionId: 2 }
+      });
+      return mx.bindHubId(x.exchange_id, hubId, { hubStatus: 'received' });
+    }
+
+    it('lets the verified Master retract what it sent, and refuses it a project\'s message or its own system send (#1873)', () => {
+      const x = sendMasterToBuilder();
+      const r = mx.retract('hub-m1', MASTER, { reason: 'sent-in-error' });
+      assert.equal(r.state, 'retracted');
+      assert.equal(r.exchange_id, x.exchange_id);
+
+      sendPmToBuilder({}, 'hub-2');
+      assert.throws(() => mx.retract('hub-2', MASTER, { reason: 'superseded' }), { code: 'NOT_INITIATOR', status: 403 });
+
+      const system = sendMasterToBuilder({ hubId: 'hub-sys-1', caller: SYSTEM });
+      assert.ok(mx.isSystemOrigin(system), 'the fixture is a system send');
+      assert.throws(() => mx.retract('hub-sys-1', MASTER, { reason: 'superseded' }), { code: 'NOT_INITIATOR', status: 403 });
+    });
+  });
+
+  describe('unansweredReplyRequiredForAck (#1976 Ack Gate)', () => {
+    it('names a reply-required exchange not yet replied, and only that one', () => {
+      sendPmToBuilder({ replyRequired: true }, 'hub-r1');
+      sendPmToBuilder({ replyRequired: false }, 'hub-r2');
+      const owed = mx.unansweredReplyRequiredForAck(['hub-r1', 'hub-r2'], 'builder-ws', BUILDER);
+      assert.deepEqual(owed.map((x) => x.hub_id), ['hub-r1']);
+    });
+
+    it('an acknowledgement alone does not discharge the debt — only a bound reply does', () => {
+      sendPmToBuilder({ replyRequired: true }, 'hub-r3');
+      mx.recordRead(['hub-r3'], 'builder-ws');
+      mx.recordAcknowledged(['hub-r3'], 'builder-ws', BUILDER);
+      assert.equal(mx.unansweredReplyRequiredForAck(['hub-r3'], 'builder-ws', BUILDER).length, 1,
+        'acknowledging is not replying — this debt is the whole point of #1976');
+
+      const reply = mx.createSendIntent({
+        meta: mx.validateSendMeta({ inReplyTo: 'hub-r3' }, BUILDER, 20),
+        sender: { projectId: 20 }, recipient: { workspaceId: 'pm-ws', projectId: 10 }
+      });
+      mx.bindHubId(reply.exchange_id, 'hub-reply-3');
+      assert.equal(mx.unansweredReplyRequiredForAck(['hub-r3'], 'builder-ws', BUILDER).length, 0,
+        'a bound reply clears it');
+    });
+
+    it('ignores a hub id not addressed to this recipient, and every caller but a verified project or Master', () => {
+      sendPmToBuilder({ replyRequired: true }, 'hub-r4');
+      assert.equal(mx.unansweredReplyRequiredForAck(['hub-r4'], 'someone-elses-ws', BUILDER).length, 0);
+      assert.equal(mx.unansweredReplyRequiredForAck(['hub-r4'], 'builder-ws', OPERATOR).length, 0);
+      assert.equal(mx.unansweredReplyRequiredForAck(['hub-r4'], 'builder-ws', { kind: 'operator-ui' }).length, 0);
+      assert.equal(mx.unansweredReplyRequiredForAck(['hub-r4'], 'builder-ws', UNBOUND).length, 0);
+      assert.equal(mx.unansweredReplyRequiredForAck(['hub-r4'], 'builder-ws', BUILDER).length, 1);
+    });
   });
 
   describe('retired recipients', () => {
