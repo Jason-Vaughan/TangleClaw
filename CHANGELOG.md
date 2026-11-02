@@ -4,6 +4,52 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.52.0] - 2026-11-01
+
+### Added
+- PortHub can now record a machine-wide ingress claim (`tailscale serve`/`funnel` naming a
+  hostname/port on this machine's tailnet identity) via `porthub.claimIngressRoute`, so a
+  session can answer "who already holds this route?" before running the command that claims
+  it — reservation, not enforcement (#815).
+- Plan share links now use the advertised Tailscale origin when
+  Tailscale mode is on, instead of the caller's own Host header — and report
+  honestly, with no link, when the Tailscale origin can't be resolved (#1380).
+- Add a Tailscale advertisement mode: a new `tailscaleMode` setting (Global Settings →
+  "Tailscale Advertisement") resolves and shows the Tailscale origin `GET`/`PATCH
+  /api/config` would advertise, with honest failure detection when the node, MagicDNS, or
+  the `tailscale` CLI aren't available — never a silent fallback. Plan share links use this setting; session-start and Medusa peer
+  links remain loopback-only by design (#1380).
+- The Caddyfile drift check now catches a hand-widened gate, not just a missing
+  one: a gate whose bypass exemption admits a path outside TangleClaw's own
+  bypass list is reported, naming the site and the count (#1403). An ungated
+  path-scoped block merged into an otherwise-gated site is a separate, still
+  open limitation, tracked as #2774.
+- The Caddy Drift banner has a "Resolve…" menu: Restore Security Baseline and
+  Acknowledge Intentional Drift (#1415). Acknowledging silences the banner for
+  the violations open right now; a genuinely new, unacknowledged violation
+  un-silences it. The server route ships in this release, and acknowledgment resets at server restart.
+- The Caddy Drift banner's Resolve/Acknowledge menu now actually works:
+  `POST /api/caddy-drift/resolve` restores the secure baseline Caddyfile (or
+  records an acknowledgment) and reloads Caddy, finishing the feature W1-A's
+  UI shipped (#1415).
+
+### Fixed
+- `HEAD` requests now answer with whatever the equivalent `GET` would — status,
+  headers, no body — on static files, pages, and API routes alike, instead of
+  404ing on every path the server actually serves (#923).
+- Added `curl` and `less` to the Testament container image and hardened `test/setup-wizard.test.js`, `test/update-release-link.test.js` and `test/tmux-named-paste-buffer.test.js` against real environment differences (no login shell, a non-GitHub origin remote, an older tmux's buffer-ordering behavior) so Stage 5's `large` tier passes or skips cleanly on `node:22-bookworm-slim` rather than failing on assumptions true only of a developer's own machine (#2758).
+- `GET /api/usage/windows` now serves a bound-cached, pre-warmed snapshot (30s TTL, refreshed in the background every 20s) instead of re-scanning every local transcript on every call, so `tc usage windows` no longer risks exceeding its CLI timeout on a cold scan. A scan that hits its bound before finishing reports `complete: false` honestly rather than silently underreporting totals, converges to `complete: true` over a few bounded retries, and `tc usage windows` prints a clear warming banner while it does (#2766).
+- Eliminated the 1-in-1000 coarse-second clock-alignment flake in `test/profile-reconciler.test.js` by pinning every `startedAtMs` fixture off a second boundary (#2768).
+- The dashboard's project list now loads promptly and reliably on a large
+  fleet: per-project facts are cached for 20s instead of re-read on every
+  10-second poll, `/api/projects` and `/api/awareness` are fetched in
+  parallel instead of one after the other, and a failed fetch now shows a
+  toast instead of leaving the list silently stale (#2771).
+
+### Internal
+- Recorded the `#1283` decision in `docs/configuration-reference.md`: deriving the launchd job labels, Caddy site label, and ingress port defaults from `TANGLECLAW_HOME`'s install identity is scoped out for now (it needs changes outside Caddy's own module). `TANGLECLAW_HOME` stays rehearsal/test isolation only; a genuine second install on one machine remains unsupported (#1283).
+- Verified and documented `#1340`: `lib/caddy.js#buildCaddyfileContent` only ever fronts TangleClaw's own `serverPort`, never a PortHub-registered port, and the real guard against a hand-added loopback-reach site is the already-shipped `lib/caddy-drift.js#checkLeaseReach` boot check (`#1394`). Added a unit test locking the generator's single-upstream invariant and a `docs/configuration-reference.md` section pointing at `docs/caddy-drift-check.md` for the detection mechanism (#1340).
+
 ## [5.51.0] - 2026-10-31
 
 ### Added
