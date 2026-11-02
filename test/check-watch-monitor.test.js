@@ -1452,3 +1452,255 @@ describe('check-watch monitor: it never throws, and what it does not do (#2323)'
     assert.equal(require('../lib/check-watch-api').MONITORED, true);
   });
 });
+
+/*
+ * #1783: a terminal CI state change is told to the coordinator and the
+ * architect — a separate path from the wake/alarm above (those tell the
+ * project that registered a watch; this tells two configured roles,
+ * regardless of any watch). Sent through `medusa.sendSystemMessage`
+ * directly (the same primitive `lib/shared-docs.js`'s own notices use), so
+ * these tests stub it themselves rather than relying on `installHub`'s
+ * stand-in Hub, which only covers the tracked-exchange `sendMessage` path.
+ */
+describe('check-watch monitor: CI state-change notifications (#1783)', () => {
+  let sent;
+  let realSendSystemMessage;
+
+  beforeEach(() => {
+    sent = [];
+    monitor._internal.resetCiNotified();
+    realSendSystemMessage = medusa.sendSystemMessage;
+    medusa.sendSystemMessage = async ({ to, message }) => {
+      sent.push({ to, message });
+      return { status: 'received', id: `sys-${sent.length}`, to };
+    };
+  });
+
+  afterEach(() => {
+    medusa.sendSystemMessage = realSendSystemMessage;
+  });
+
+  const EVENT = Object.freeze({ repo: REPO, prNumber: 2328, headSha: sha(1), conclusion: 'success' });
+
+  /**
+   * Set which projects `checkWatch.coordinatorProject`/`architectProject`
+   * name. Omitting a role leaves its current config untouched.
+   * @param {{coordinator?: string, architect?: string}} [roles]
+   * @returns {void}
+   */
+  function configureRoles({ coordinator, architect } = {}) {
+    const config = store.config.load();
+    config.checkWatch = { ...(config.checkWatch || {}) };
+    if (coordinator !== undefined) config.checkWatch.coordinatorProject = coordinator;
+    if (architect !== undefined) config.checkWatch.architectProject = architect;
+    store.config.save(config);
+  }
+
+  describe('notifyCoordinatorAndArchitectOnCiStateChange', () => {
+    it('tells both the coordinator and the architect, each their own notice', async () => {
+      const coord = live('coord-project');
+      const arch = live('arch-project');
+      configureRoles({ coordinator: coord.project.name, architect: arch.project.name });
+
+      const result = await monitor.notifyCoordinatorAndArchitectOnCiStateChange(EVENT);
+
+      assert.deepEqual(result.sent.slice().sort(), ['architect', 'coordinator']);
+      assert.equal(sent.length, 2);
+      assert.ok(sent.some((m) => m.to === coord.workspaceId));
+      assert.ok(sent.some((m) => m.to === arch.workspaceId));
+      assert.match(sent[0].message, /CI passed: PR #2328 of Jason-Vaughan\/TangleClaw/);
+    });
+
+    it('a FAILED conclusion reads as FAILED, not passed', async () => {
+      const coord = live('coord-project');
+      configureRoles({ coordinator: coord.project.name });
+      await monitor.notifyCoordinatorAndArchitectOnCiStateChange({ ...EVENT, conclusion: 'failure' }, { roles: ['coordinator'] });
+      assert.match(sent[0].message, /CI FAILED:/);
+      assert.match(sent[0].message, /Conclusion: failure/);
+    });
+
+    it('never sends the same role a second notice for the same (repo, PR, headSha, conclusion)', async () => {
+      const coord = live('coord-project');
+      configureRoles({ coordinator: coord.project.name });
+
+      const first = await monitor.notifyCoordinatorAndArchitectOnCiStateChange(EVENT, { roles: ['coordinator'] });
+      assert.deepEqual(first.sent, ['coordinator']);
+      const second = await monitor.notifyCoordinatorAndArchitectOnCiStateChange(EVENT, { roles: ['coordinator'] });
+      assert.deepEqual(second.alreadyNotified, ['coordinator']);
+      assert.equal(sent.length, 1, 'only one notice ever reached the coordinator');
+    });
+
+    it('a different headSha, or a different conclusion on the same headSha, is a genuinely new event', async () => {
+      const coord = live('coord-project');
+      configureRoles({ coordinator: coord.project.name });
+      await monitor.notifyCoordinatorAndArchitectOnCiStateChange(EVENT, { roles: ['coordinator'] });
+      await monitor.notifyCoordinatorAndArchitectOnCiStateChange({ ...EVENT, headSha: sha(2) }, { roles: ['coordinator'] });
+      await monitor.notifyCoordinatorAndArchitectOnCiStateChange({ ...EVENT, conclusion: 'failure' }, { roles: ['coordinator'] });
+      assert.equal(sent.length, 3);
+    });
+
+    it('skips, rather than throwing, a role with no configured recipient project', async () => {
+      const result = await monitor.notifyCoordinatorAndArchitectOnCiStateChange(EVENT);
+      assert.deepEqual(result.skipped.slice().sort((a, b) => a.role.localeCompare(b.role)), [
+        { role: 'architect', code: 'not-configured' },
+        { role: 'coordinator', code: 'not-configured' }
+      ]);
+      assert.equal(sent.length, 0);
+    });
+
+    it('skips a role whose configured project has no live session', async () => {
+      store.projects.create({ name: 'coord-only', path: path.join(tmpDir, 'coord-only') });
+      configureRoles({ coordinator: 'coord-only' });
+      const result = await monitor.notifyCoordinatorAndArchitectOnCiStateChange(EVENT, { roles: ['coordinator'] });
+      assert.deepEqual(result.skipped, [{ role: 'coordinator', code: 'no-live-session' }]);
+    });
+
+    it('skips a role whose configured project name does not resolve to a real project', async () => {
+      configureRoles({ coordinator: 'no-such-project' });
+      const result = await monitor.notifyCoordinatorAndArchitectOnCiStateChange(EVENT, { roles: ['coordinator'] });
+      assert.deepEqual(result.skipped, [{ role: 'coordinator', code: 'unknown-project' }]);
+    });
+
+    it('a failed send is skipped, not thrown, and does not block the other role\'s notice', async () => {
+      const coord = live('coord-project');
+      const arch = live('arch-project');
+      configureRoles({ coordinator: coord.project.name, architect: arch.project.name });
+      medusa.sendSystemMessage = async ({ to, message }) => {
+        if (to === coord.workspaceId) throw new Error('bridge unreachable');
+        sent.push({ to, message });
+        return { status: 'received', id: 'sys-1', to };
+      };
+
+      const result = await monitor.notifyCoordinatorAndArchitectOnCiStateChange(EVENT);
+
+      assert.deepEqual(result.sent, ['architect']);
+      assert.deepEqual(result.skipped, [{ role: 'coordinator', code: 'send-failed' }]);
+    });
+
+    it('a failed send is NOT marked notified, so a later call for the SAME event retries it', async () => {
+      const coord = live('coord-project');
+      configureRoles({ coordinator: coord.project.name });
+      medusa.sendSystemMessage = async () => { throw new Error('bridge unreachable'); };
+
+      const first = await monitor.notifyCoordinatorAndArchitectOnCiStateChange(EVENT, { roles: ['coordinator'] });
+      assert.deepEqual(first.skipped, [{ role: 'coordinator', code: 'send-failed' }]);
+
+      medusa.sendSystemMessage = async ({ to, message }) => { sent.push({ to, message }); return { status: 'received', id: 'sys-1', to }; };
+      const second = await monitor.notifyCoordinatorAndArchitectOnCiStateChange(EVENT, { roles: ['coordinator'] });
+      assert.deepEqual(second.sent, ['coordinator']);
+    });
+
+    it('a "roles" option narrows which roles are told', async () => {
+      const coord = live('coord-project');
+      const arch = live('arch-project');
+      configureRoles({ coordinator: coord.project.name, architect: arch.project.name });
+
+      const result = await monitor.notifyCoordinatorAndArchitectOnCiStateChange(EVENT, { roles: ['architect'] });
+
+      assert.deepEqual(result.sent, ['architect']);
+      assert.equal(sent.length, 1);
+    });
+
+    it('two overlapping calls for the same event send only ONE notice per role (#1783 Round 3)', async () => {
+      const coord = live('coord-project');
+      configureRoles({ coordinator: coord.project.name });
+      let resolveSend;
+      medusa.sendSystemMessage = ({ to, message }) => new Promise((resolve) => { resolveSend = resolve; })
+        .then(() => { sent.push({ to, message }); return { status: 'received', id: `sys-${sent.length}`, to }; });
+
+      const first = monitor.notifyCoordinatorAndArchitectOnCiStateChange(EVENT, { roles: ['coordinator'] });
+      const second = monitor.notifyCoordinatorAndArchitectOnCiStateChange(EVENT, { roles: ['coordinator'] }); // fired before the first's send resolves
+      resolveSend();
+      const [r1, r2] = await Promise.all([first, second]);
+
+      assert.deepEqual(r1.sent, ['coordinator']);
+      assert.deepEqual(r2.alreadyNotified, ['coordinator'], 'the overlapping call must see the reservation, not send a second notice');
+      assert.equal(sent.length, 1, 'only one notice ever reached the Bridge');
+    });
+
+    it('a failed send during an overlap stays retriable afterward, not permanently reserved', async () => {
+      const coord = live('coord-project');
+      configureRoles({ coordinator: coord.project.name });
+      medusa.sendSystemMessage = async () => { throw new Error('bridge unreachable'); };
+
+      const failed = await monitor.notifyCoordinatorAndArchitectOnCiStateChange(EVENT, { roles: ['coordinator'] });
+      assert.deepEqual(failed.skipped, [{ role: 'coordinator', code: 'send-failed' }]);
+
+      medusa.sendSystemMessage = async ({ to, message }) => { sent.push({ to, message }); return { status: 'received', id: 'sys-1', to }; };
+      const retried = await monitor.notifyCoordinatorAndArchitectOnCiStateChange(EVENT, { roles: ['coordinator'] });
+      assert.deepEqual(retried.sent, ['coordinator']);
+    });
+  });
+
+  describe('ingestGitHubCiWebhookEvent', () => {
+    it('notifies on a green terminal conclusion (success)', async () => {
+      const coord = live('coord-project');
+      configureRoles({ coordinator: coord.project.name });
+      const result = await monitor.ingestGitHubCiWebhookEvent(EVENT, { roles: ['coordinator'] });
+      assert.equal(result.ok, true);
+      assert.equal(result.notified, true);
+      assert.equal(sent.length, 1);
+    });
+
+    for (const conclusion of ['failure', 'cancelled', 'timed_out']) {
+      it(`notifies on the red terminal conclusion "${conclusion}"`, async () => {
+        const coord = live('coord-project');
+        configureRoles({ coordinator: coord.project.name });
+        const result = await monitor.ingestGitHubCiWebhookEvent({ ...EVENT, conclusion }, { roles: ['coordinator'] });
+        assert.equal(result.notified, true);
+        assert.equal(sent.length, 1);
+      });
+    }
+
+    for (const conclusion of ['neutral', 'skipped', 'stale', 'action_required', 'in_progress', 'queued']) {
+      it(`does not notify on the non-terminal conclusion/status "${conclusion}"`, async () => {
+        const coord = live('coord-project');
+        configureRoles({ coordinator: coord.project.name });
+        const result = await monitor.ingestGitHubCiWebhookEvent({ ...EVENT, conclusion }, { roles: ['coordinator'] });
+        assert.equal(result.ok, true);
+        assert.equal(result.notified, false);
+        assert.equal(result.reason, 'not-terminal');
+        assert.equal(sent.length, 0);
+      });
+    }
+
+    it('reads a malformed payload as a refusal, never throwing', async () => {
+      const bad = [
+        {},
+        { ...EVENT, repo: 'not-a-repo-slug' },
+        { ...EVENT, prNumber: 0 },
+        { ...EVENT, prNumber: '2328' },
+        { ...EVENT, headSha: 'not-hex' },
+        { ...EVENT, conclusion: '' }
+      ];
+      for (const payload of bad) {
+        const result = await monitor.ingestGitHubCiWebhookEvent(payload);
+        assert.equal(result.ok, false);
+        assert.equal(result.code, 'MALFORMED');
+      }
+      assert.equal(sent.length, 0);
+    });
+
+    it('a replayed webhook delivery for the same terminal event notifies nobody a second time', async () => {
+      const coord = live('coord-project');
+      configureRoles({ coordinator: coord.project.name });
+      const first = await monitor.ingestGitHubCiWebhookEvent(EVENT, { roles: ['coordinator'] });
+      assert.equal(first.notified, true);
+      const replay = await monitor.ingestGitHubCiWebhookEvent(EVENT, { roles: ['coordinator'] });
+      assert.equal(replay.notified, false);
+      assert.deepEqual(replay.result.alreadyNotified, ['coordinator']);
+      assert.equal(sent.length, 1);
+    });
+
+    it('carries runId, workflowName and htmlUrl into the notice text when given', async () => {
+      const coord = live('coord-project');
+      configureRoles({ coordinator: coord.project.name });
+      await monitor.ingestGitHubCiWebhookEvent({
+        ...EVENT, runId: '114669381605', workflowName: 'CI', htmlUrl: 'https://github.com/Jason-Vaughan/TangleClaw/actions/runs/114669381605'
+      }, { roles: ['coordinator'] });
+      assert.match(sent[0].message, /\(CI\)/);
+      assert.match(sent[0].message, /run 114669381605/);
+      assert.match(sent[0].message, /https:\/\/github\.com\/Jason-Vaughan\/TangleClaw\/actions\/runs\/114669381605/);
+    });
+  });
+});

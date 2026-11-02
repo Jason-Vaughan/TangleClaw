@@ -457,6 +457,41 @@ describe('a reader gets one shared-doc notice per quiet period (#1108)', () => {
     assert.equal(res.body.notifiedCount, 2);
   });
 
+  it('a third edit immediately after a re-send coalesces against the FRESH notice, not the stale one still sitting alongside it (#2655)', async () => {
+    // Manufacture a notice already past the default staleness bound, the
+    // same way the #2350 orphan-notice test above injects one directly
+    // rather than waiting out the real window.
+    inboxes.set(wsFor(readerA), [{
+      id: 'stale-1',
+      from: 'system',
+      message: JSON.stringify({
+        type: 'system', event: 'shared_doc_updated', doc: 'BOARD', docId,
+        sentAt: new Date(Date.now() - sharedDocRecord.limits.coalesceStaleMs - 1000).toISOString()
+      })
+    }]);
+
+    // Second edit: the stale notice no longer coalesces, so this reaches
+    // readerA again — leaving BOTH the stale notice and this fresh one
+    // pending in its inbox at once.
+    await change(docId);
+    assert.ok(sent.some((m) => m.to === wsFor(readerA)), 'the stale notice must not suppress this send');
+    assert.equal(depth(readerA), 2, 'both the stale notice and the fresh resend are now pending');
+
+    sent.length = 0;
+
+    // Third edit, immediately after: must coalesce against the FRESH notice
+    // (age ~0 ms), not the stale one still sitting alongside it. Taking the
+    // OLDEST pending notice's age (the pre-fix `Math.max` behavior) would
+    // still read as stale here and fire a THIRD notice — the exact
+    // unbounded-duplicate-notice defect #2655 reports (54 duplicates on the
+    // Project Master, because the stale notice never stops dominating the
+    // staleness check once it exists).
+    await change(docId);
+    assert.ok(!sent.some((m) => m.to === wsFor(readerA)),
+      'a third notice must not fire: the second, fresh notice already told this reader');
+    assert.equal(depth(readerA), 2, 'no third notice was added — still just the stale one plus the one fresh resend');
+  });
+
   it('the Master coalesces an un-handled notice the same way a project session does (#1084)', async () => {
     masterListens();
     setMasterScope('all');
