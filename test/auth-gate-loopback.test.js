@@ -217,6 +217,12 @@ describe('server.js — _gateIdentity wires the opt-in end to end (#1973)', () =
     const config = JSON.parse(goodJson);
     config.machineClientRequiresServiceToken = true;
     store.config.save(config);
+    // Warm _gateConfig()'s own last-known-good cache with the OPTED-IN
+    // value before corrupting the file — the fix this test guards reads
+    // that cache on a read failure, so the regression only reproduces when
+    // the cache actually saw the opt-in, same as it would on a real
+    // install that opted in and then later lost its config.
+    await send();
     const optedInJson = fs.readFileSync(configPath, 'utf8');
     fs.writeFileSync(configPath, '{ not valid json');
     try {
@@ -231,6 +237,35 @@ describe('server.js — _gateIdentity wires the opt-in end to end (#1973)', () =
       const restored = store.config.load();
       restored.machineClientRequiresServiceToken = false;
       store.config.save(restored);
+    }
+  });
+
+  it('keeps the pre-#1973 carve-out when config.json goes unreadable on an install that never opted in', async () => {
+    // The regression the first version of the fail-closed fix introduced:
+    // unconditionally requiring a token on ANY config-read failure broke
+    // this exact scenario for the entire fleet, not just opted-in
+    // installs — caught by test/launch-recovery-clear.test.js in CI, not
+    // locally. An install that never set machineClientRequiresServiceToken
+    // must keep today's behavior when its config breaks for an unrelated
+    // reason: a bare machine-shaped request still reaches the route (and
+    // whatever THAT route's own launch-binding floor decides), rather than
+    // being challenged by the login gate as if it were a browser.
+    const configPath = store._getConfigPath();
+    const goodJson = fs.readFileSync(configPath, 'utf8');
+    // Warm the cache with a config that has NEVER opted in.
+    await send();
+    fs.writeFileSync(configPath, '{ not valid json');
+    try {
+      const res = await send();
+      // Not the login gate's 401 challenge: machineClient:true still
+      // carries this request past `authGate.evaluate`, same as before
+      // #1973 existed. Whatever happens after that is a separate concern —
+      // GET /api/master/status reads config itself too, and genuinely
+      // cannot serve a normal answer while it is unreadable (500), which
+      // is not what this test is about.
+      assert.notEqual(res.status, 401, JSON.stringify(res));
+    } finally {
+      fs.writeFileSync(configPath, goodJson);
     }
   });
 });

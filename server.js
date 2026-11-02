@@ -7150,18 +7150,32 @@ function _gateIdentity(req, socket, pathname) {
       serviceTokenValid = gate.ok === true && config.serviceTokenEnabled === true;
     }
   } catch (err) {
-    // Fail CLOSED for machine-client identity, not open: `authGate.evaluate`
-    // allows `machineClient: true` unconditionally, including in the
-    // UNREADABLE gate state — so defaulting to `requireServiceToken: false`
-    // here would silently reopen the loopback carve-out an opted-in
-    // install turned this on specifically to close, exactly when its own
-    // config has gone unreadable. `serviceTokenValid: false` alongside
-    // `requireServiceToken: true` makes `isMachineClient` refuse the
-    // carve-out outright (PRR-A BLOCKING, round 1).
-    requireServiceToken = true;
+    // Fail toward the LAST KNOWN REQUIREMENT, not toward a blanket "always
+    // require a token now" — the two are different claims. An install that
+    // never opted in (no entry yet, or the cached config read `false`) must
+    // stay on the pre-#1973 default when its config goes unreadable: that
+    // default is what the ENTIRE existing fleet (`bin/tc`, hooks, PortHub,
+    // the switchboard, and every mutating route's OWN launch-binding floor,
+    // which independently refuses an unbound caller regardless of this
+    // carve-out) already depends on, and unconditionally requiring a token
+    // here regressed a real, unrelated scenario: an unidentified
+    // machine-shaped caller on an UNREADABLE gate used to reach the route
+    // and get refused there (403 LAUNCH_BINDING_REQUIRED) — informative,
+    // existing behavior — and instead got the login gate's OWN 401
+    // challenge first, which is both wrong for a non-browser caller and a
+    // behavior change nobody but an opted-in install asked for
+    // (`test/launch-recovery-clear.test.js`, caught by CI, not locally).
+    //
+    // An install that WAS opted in (the cache's last good read said so)
+    // keeps requiring one — PRR-A's actual scenario: the carve-out must not
+    // silently reopen just because config broke AFTER the operator turned
+    // this on. `serviceTokenValid` stays false either way: nothing here can
+    // validate a presented token against a config that cannot be read.
+    requireServiceToken = Boolean(_gateConfigCache && _gateConfigCache.value
+      && _gateConfigCache.value.machineClientRequiresServiceToken === true);
     serviceTokenValid = false;
-    log.error('Config read failed while resolving machine-client identity — failing closed for the #1973 carve-out', {
-      method: req.method, path: pathname, error: err.message
+    log.error('Config read failed while resolving machine-client identity — using the last known requirement for the #1973 carve-out', {
+      method: req.method, path: pathname, error: err.message, requireServiceToken
     });
   }
   const machineClient = authGate.isMachineClient({
