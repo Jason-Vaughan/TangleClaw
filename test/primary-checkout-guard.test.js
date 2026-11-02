@@ -1616,3 +1616,61 @@ describe('#1400 Round 4 — AC8 fail-closed self-test, locked sentinel fold, --s
     assert.ok(!fs.existsSync(sentinel));
   });
 });
+
+describe('#1400 Round 5 — durable outer-node sentinel claim, surviving a failed status write', () => {
+  let fx;
+  before(() => { fx = makeFixture(); });
+  after(() => fx.cleanup());
+
+  const statusPath = () => installer.statusFilePath(fx.primary);
+  const readStatusNow = () => installer.readStatus(statusPath());
+
+  it('a write failure AFTER the sentinel is claimed leaves it folded on the next successful update, not lost', () => {
+    const sentinel = installer.outerFailureSentinelPath(fx.primary);
+    fs.writeFileSync(sentinel, '{"code":"OUTER_NODE_FAILED"}\n');
+
+    const file = statusPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    // Pre-create the destination as a directory, so writeStatusAtomic's own
+    // rename-into-place throws — simulating a write that fails AFTER the
+    // sentinel has already been claimed, the exact gap Round 4 left open.
+    fs.rmSync(file, { recursive: true, force: true });
+    fs.mkdirSync(file);
+    try {
+      assert.throws(() => installer.updateStatus(fx.primary, (s) => s));
+    } finally {
+      fs.rmSync(file, { recursive: true, force: true });
+    }
+
+    assert.ok(!fs.existsSync(sentinel), 'the sentinel itself must have been claimed, not left in place');
+    const claimPath = `${sentinel}.claim`;
+    assert.ok(fs.existsSync(claimPath), 'the claimed content must survive the failed write as a `.claim` file');
+
+    // A later successful update must fold it exactly once — not lost, and
+    // not double-counted against whatever the failed attempt already saw.
+    const before_ = readStatusNow();
+    installer.updateStatus(fx.primary, (s) => s);
+    const after_ = readStatusNow();
+    assert.equal(after_.counts.error, before_.counts.error + 1);
+    assert.equal(after_.lastError, 'OUTER_NODE_FAILED');
+    assert.ok(!fs.existsSync(claimPath), 'the claim file must be removed once it is actually folded into a written status');
+  });
+
+  it('a leftover claim from an interrupted run folds together with a newly-arrived sentinel, neither overwriting the other', () => {
+    const sentinel = installer.outerFailureSentinelPath(fx.primary);
+    const claimPath = `${sentinel}.claim`;
+    fs.mkdirSync(path.dirname(claimPath), { recursive: true });
+    // A leftover claim from a run whose write never completed...
+    fs.writeFileSync(claimPath, '{"code":"OUTER_NODE_FAILED"}\n');
+    // ...plus a brand-new sentinel that arrived since.
+    fs.writeFileSync(sentinel, '{"code":"OUTER_NODE_FAILED"}\n');
+
+    const before_ = readStatusNow();
+    installer.updateStatus(fx.primary, (s) => s);
+    const after_ = readStatusNow();
+    assert.equal(after_.counts.error, before_.counts.error + 2,
+      'both the leftover claim and the newly-arrived sentinel must fold — a naive rename onto `claimPath` would have overwritten one');
+    assert.ok(!fs.existsSync(sentinel));
+    assert.ok(!fs.existsSync(claimPath));
+  });
+});
