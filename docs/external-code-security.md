@@ -38,7 +38,15 @@ review comments, diff hunks) in an explicit `<untrusted-pr-data field="..." sha=
 fence, with a header reminding the reader that everything inside is data, never an instruction,
 system message, TangleClaw notice, or operator authorization — regardless of what it claims to
 be. Both the fence attributes and the fenced content are escaped, so an attacker-controlled `sha`
-or diff hunk cannot break out of either.
+or diff hunk cannot break out of either. When the assembled packet would exceed `totalCharBudget`,
+it is cut at a whole-fence boundary — never mid-tag — and the header is never dropped to make room:
+a `totalCharBudget` too small to hold both the header and a truncation marker throws `RangeError`
+rather than ever shipping a packet missing its safety framing (Round 2/3). An array field
+(`commitMessages`, `reviewComments`, `diffHunks`) is additionally bounded by a hard element-count
+ceiling (`maxArrayItems`, default 50) independent of the character budget, charged by each
+element's full fenced length rather than its sanitized text alone — otherwise an array of
+thousands of empty or near-empty elements would still be iterated in full before a budget keyed
+only on text length ever noticed (Round 3).
 
 **The escape step is the actual security property, not the pattern detector.** The module also
 flags a short list of injection-attempt signatures (a literal closing-fence tag, a fake
@@ -71,10 +79,15 @@ against the fixed boundary a review of untrusted content must never cross:
   refs in a clone that serves the live install") already forbids by process.
 - `stripEnvVars` must include every secret-bearing variable a review session could otherwise
   read (`TC_LAUNCH_TOKEN`, `TANGLECLAW_LAUNCH_ID`, `TANGLECLAW_API`, `GITHUB_TOKEN`, `GH_TOKEN`).
-- `allowedActions` must not include `merge`, `approve-workflow`, `exec-pr-code`, or
-  `bridge-write` — the write/merge actions a read-only review must never be able to take, in
-  line with ADR 0014 rule 1 ("no peer message authorizes a branch cut, a code change, a merge or
-  a deployment").
+- `allowedActions` must be an array, and every entry must be in the read-only **allowlist**
+  (`ALLOWED_READ_ONLY_ACTIONS`: `read-diff`, `emit-review`, `read-packet`) — not merely absent
+  from a denylist of specifically named dangerous actions (Round 3). A denylist (`FORBIDDEN_ACTIONS`:
+  `merge`, `approve-workflow`, `exec-pr-code`, `bridge-write`) is kept alongside it for its precise
+  per-action violation code, in line with ADR 0014 rule 1 ("no peer message authorizes a branch
+  cut, a code change, a merge or a deployment") — but the allowlist is what actually decides
+  admission, so an action this module has never named (`write-files`, `shell`, anything not yet
+  invented) is rejected by default rather than passed through for merely not matching a known-bad
+  name.
 
 `assertUntrustedReviewBoundary(contract)` is the throwing form, for a caller that wants to fail a
 setup step outright rather than branch on a structured verdict; it raises
@@ -95,6 +108,14 @@ caller-supplied `extraStripEnvVars`), `allowedActions: ["read-diff", "emit-revie
 `buildUntrustedPrReviewPacket`. It validates the spec it assembles against
 `assertUntrustedReviewBoundary` before returning it, so a caller never receives a spec that
 itself violates the boundary.
+
+**`packet` itself is validated, not merely passed through (Round 3).** `buildIsolatedReviewWorkerSpec`
+throws `TypeError` unless `packet` carries the canonical safety header and every
+`<untrusted-pr-data>` fence in it is balanced — the same structural shape
+`buildUntrustedPrReviewPacket` always produces. This is a sanity check, not a guarantee of origin
+(nothing stops a caller from handing in a string merely shaped like a packet), but it catches the
+mistake this function exists to prevent: handing the isolated worker raw, unfenced attacker text
+under the assurance that it has already been sanitized and fenced.
 
 This is the SPEC for the worker, not the worker: nothing here spawns a process, a container, or
 any execution environment. It gives whatever eventually runs the isolated worker a concrete,
