@@ -21,7 +21,7 @@ const { execFileSync } = require('node:child_process');
 const { initRepo } = require('./_temp-repo');
 const {
   realOrSelf, locateCheckouts, linkedWorktreeRoots, landsInPrimary, OVERRIDE_FILE, OVERRIDE_ENV,
-  resolveServerCheckoutRoot, describeServerRootCoupling, SERVER_ROOT_ENV
+  resolveServerCheckoutRoot, describeServerRootCoupling, validateServerCheckoutRoot, SERVER_ROOT_ENV
 } = require('../lib/checkout-layout');
 const guardSource = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'guard-primary-checkout.js'), 'utf8');
 const installerSource = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'install-primary-guard.js'), 'utf8');
@@ -200,6 +200,53 @@ describe('realOrSelf', () => {
   });
 });
 
+/** A directory that passes `validateServerCheckoutRoot`: a real git checkout with a `server.js`. */
+function _makeValidServerCheckout(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+  initRepo(dir, ['-b', 'main']);
+  fs.writeFileSync(path.join(dir, 'server.js'), '// stand-in\n');
+  return dir;
+}
+
+describe('validateServerCheckoutRoot (#1672 Round 2)', () => {
+  let base;
+  beforeEach(() => { base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-validate-'))); });
+  afterEach(() => fs.rmSync(base, { recursive: true, force: true }));
+
+  it('passes a real checkout: exists, is a directory, has server.js, is a git checkout', () => {
+    const root = _makeValidServerCheckout(path.join(base, 'ok'));
+    assert.deepEqual(validateServerCheckoutRoot(root), { ok: true, reason: null });
+  });
+
+  it('fails for a path that does not exist', () => {
+    assert.deepEqual(validateServerCheckoutRoot(path.join(base, 'nope')), { ok: false, reason: 'path does not exist' });
+  });
+
+  it('fails for a file, not a directory', () => {
+    const aFile = path.join(base, 'a-file');
+    fs.writeFileSync(aFile, 'x\n');
+    assert.deepEqual(validateServerCheckoutRoot(aFile), { ok: false, reason: 'path is not a directory' });
+  });
+
+  it('fails for a directory with no server.js', () => {
+    const noServer = path.join(base, 'no-server');
+    fs.mkdirSync(noServer);
+    initRepo(noServer, ['-b', 'main']);
+    const result = validateServerCheckoutRoot(noServer);
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /server\.js/);
+  });
+
+  it('fails for a directory with server.js but no git checkout', () => {
+    const noGit = path.join(base, 'no-git');
+    fs.mkdirSync(noGit);
+    fs.writeFileSync(path.join(noGit, 'server.js'), '// stand-in\n');
+    const result = validateServerCheckoutRoot(noGit);
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /git checkout/);
+  });
+});
+
 describe('resolveServerCheckoutRoot (#1672)', () => {
   let base;
   beforeEach(() => { base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-serverroot-'))); });
@@ -209,9 +256,8 @@ describe('resolveServerCheckoutRoot (#1672)', () => {
     assert.deepEqual(resolveServerCheckoutRoot(base, { env: {} }), { root: base, source: 'default' });
   });
 
-  it('prefers an explicit TANGLECLAW_SERVER_ROOT override over the default', () => {
-    const override = path.join(base, 'dedicated');
-    fs.mkdirSync(override);
+  it('prefers an explicit TANGLECLAW_SERVER_ROOT override over the default, when the override validates', () => {
+    const override = _makeValidServerCheckout(path.join(base, 'dedicated'));
     const result = resolveServerCheckoutRoot(path.join(base, 'ignored-default'), { env: { [SERVER_ROOT_ENV]: override } });
     assert.deepEqual(result, { root: override, source: 'override' });
   });
@@ -232,6 +278,41 @@ describe('resolveServerCheckoutRoot (#1672)', () => {
       if (prior === undefined) delete process.env[SERVER_ROOT_ENV];
       else process.env[SERVER_ROOT_ENV] = prior;
     }
+  });
+
+  it('falls back to the default and reports invalidServerRootOverride for a nonexistent override path', () => {
+    const missing = path.join(base, 'does-not-exist');
+    const result = resolveServerCheckoutRoot(base, { env: { [SERVER_ROOT_ENV]: missing } });
+    assert.equal(result.root, base);
+    assert.equal(result.source, 'default');
+    assert.equal(result.invalidServerRootOverride.requested, missing);
+    assert.equal(result.invalidServerRootOverride.reason, 'path does not exist');
+  });
+
+  it('falls back to the default for an override that exists but has no server.js (not a TangleClaw checkout)', () => {
+    const notAServer = path.join(base, 'plain-repo');
+    fs.mkdirSync(notAServer);
+    initRepo(notAServer, ['-b', 'main']);
+    const result = resolveServerCheckoutRoot(base, { env: { [SERVER_ROOT_ENV]: notAServer } });
+    assert.equal(result.source, 'default');
+    assert.match(result.invalidServerRootOverride.reason, /server\.js/);
+  });
+
+  it('falls back to the default for an override with server.js but no git checkout', () => {
+    const notAGitRepo = path.join(base, 'no-git');
+    fs.mkdirSync(notAGitRepo);
+    fs.writeFileSync(path.join(notAGitRepo, 'server.js'), '// stand-in\n');
+    const result = resolveServerCheckoutRoot(base, { env: { [SERVER_ROOT_ENV]: notAGitRepo } });
+    assert.equal(result.source, 'default');
+    assert.match(result.invalidServerRootOverride.reason, /git checkout/);
+  });
+
+  it('falls back to the default for an override that is a file, not a directory', () => {
+    const aFile = path.join(base, 'a-file');
+    fs.writeFileSync(aFile, 'not a directory\n');
+    const result = resolveServerCheckoutRoot(base, { env: { [SERVER_ROOT_ENV]: aFile } });
+    assert.equal(result.source, 'default');
+    assert.match(result.invalidServerRootOverride.reason, /not a directory/);
   });
 });
 
