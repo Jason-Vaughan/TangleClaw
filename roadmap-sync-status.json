@@ -1,1 +1,1 @@
-{"state":"ok","component":"all","message":"The internal and sanitized public roadmap artifacts refreshed successfully.","checkedAt":"2026-11-02T23:30:00.876985+00:00","snapshot":"2026-11-02 15:30:00 PST"}
+{"state":"error","component":"public-publication","message":"The public roadmap publication failed; GitHub Pages retains its last successful version. See the sync log.","checkedAt":"2026-11-02T23:46:54.825426+00:00","snapshot":"2026-11-02 15:46:54 PST"}

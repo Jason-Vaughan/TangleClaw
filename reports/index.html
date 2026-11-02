@@ -235,7 +235,11 @@
       <span>TangleClaw Autonomous Sprint Reports</span>
     </div>
     <div class="nav-links">
-      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.51.0/">v5.51.0 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.55.0/">v5.55.0 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.54.0/">v5.54.0</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.53.1/">v5.53.1</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.52.0/">v5.52.0</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.51.0/">v5.51.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.50.0/">v5.50.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.49.0/">v5.49.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.48.1/">v5.48.1</a>
@@ -286,42 +290,41 @@
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Latest Release Report</div>
-          <div class="kpi-val" style="color:var(--green);">v5.51.0</div>
-          <div class="kpi-sub">Tag <code>v5.51.0 @ 45d4b5e9</code> · Live Server <code>PID 41855</code> · Schema <code>v76</code></div>
+          <div class="kpi-val" style="color:var(--green);">v5.55.0</div>
+          <div class="kpi-sub">Tag <code>v5.55.0 @ 98187576</code> · Live Server <code>PID 25594</code> · Schema <code>v77</code></div>
         </div>
       </div>
     </section>
 
     <div class="report-list">
-      <!-- LIVE_SPRINT_CARD_START -->
-      <article class="report-card" style="border-color:rgba(56,189,248,0.65);background:linear-gradient(135deg,rgba(15,23,42,0.96),rgba(14,116,144,0.18));">
-        <div class="report-header">
-          <div>
-            <span class="badge badge-cyan">● Live Sprint In Progress · Updated 2026-11-02 23:28 UTC</span>
-            <h2 class="report-title"><a href="./v5.55.0/">TangleClaw <code>v5.55.0</code> — Live Wave &amp; Gate Tracker</a></h2>
-          </div>
-          <span class="badge badge-purple">0/0 Cars Merged · 0 In Review</span>
-        </div>
-        <p style="color:#cbd5e1; margin:0;">
-          <strong>Live Sprint Telemetry (Auto-Synced from <code>LANE_QUEUE.md</code>):</strong> TangleClaw Sprint Lane Queue (`LANE_QUEUE.md`).
-          Current wave status: <code>ACTIVE — AUTHORIZED BY OPERATOR (OP-GO-V5540-V5560-20261102) — v5.54.0 COMPLETE; v5.55.0 Wave 1 (3/4 Merged, PR #2811 R3 Active) &amp; v5.56.0 Wave 1 Pipelined</code>.
-          Open the live interactive report below to inspect real-time car progress, Builder/PRR lane assignments, and gate statuses as waves progress.
-        </p>
-        <div class="meta-pills">
-          <span class="badge badge-cyan">0 Chartered Wave Rows</span>
-          <span class="badge badge-green">0 Merged · 0 In Review</span>
-          <span class="badge badge-purple">State: ACTIVE — AUTHORIZED BY OPERATOR (OP-GO-V5540-V5560-20261102) — v5.54.0 COMPLETE; v5.55.0 Wave 1 (3/4 Merged, PR #2811 R3 Active) &amp; v5.56.0 Wave 1 Pipelined</span>
-        </div>
-        <div class="actions">
-          <a class="btn btn-primary" href="./v5.55.0/">📡 Open v5.55.0 Live Sprint Tracker →</a>
-        </div>
-      </article>
-      <!-- LIVE_SPRINT_CARD_END -->
-      <!-- v5.54.0 Card -->
+      <!-- v5.55.0 Card -->
       <article class="report-card">
         <div class="report-header">
           <div>
             <span class="badge badge-green">● Latest Release · Nov 2, 2026</span>
+            <h2 class="report-title"><a href="./v5.55.0/">TangleClaw <code>v5.55.0</code>: “Checkout ownership and the live install”</a></h2>
+          </div>
+          <span class="badge badge-cyan">Tag v5.55.0 @ 98187576 · Live 5.55.0 (PID 25594) &amp; Testament v0.34.0 Verified</span>
+        </div>
+        <p style="color:#cbd5e1; margin:0;">
+          Two execution waves delivered <strong>6 Sprint PRs (#2803, #2804, #2806, #2811, #2812, #2814)</strong> under Charter <code>A493 v1.0</code> (<code>OP-GO-V5540-V5560-20261102</code>) as Leg 2 of the Triple-Version Autonomous Sprint (<code>v5.54.0 → v5.55.0 → v5.56.0</code>), closing all <strong>5 checkout ownership &amp; live install issues (#1267, #1332, #1672, #1710, #1977)</strong> and closing <strong>Milestone #40 (<code>open_issues: 0</code>)</strong>. Shipped safe worktree &amp; <code>[gone]</code> local branch retirement (<code>#1267</code>, <code>lib/branch-retire-safety.js</code>), exclusive worktree ownership markers and dirty-worktree provenance guards (<code>#1332</code>, <code>lib/checkout-ownership.js</code>), background server checkout resolution decoupled from active Builder worktrees (<code>#1672</code>, <code>lib/server-checkout-resolver.js</code>), three-layer stale-install classification, auto-pull, and PM-coordinated restart helpers (<code>#1710</code>, <code>lib/checkout-freshness.js</code>, <code>lib/update-applier.js</code>), and generation-bound branch ownership with review-evidence invalidation on rewrite (<code>#1977</code>, <code>lib/branch-ownership.js</code>). Published annotated tag and GitHub Release <strong><code>v5.55.0</code> at <code>98187576b0b8271f60021246d6ec792d4fc442c3</code></strong> (<code>Release #41545766903</code>) and updated live <code>:3102</code> (<code>OBSR-GATE3-LIVE-V5550-98187576-PASS</code>).
+        </p>
+        <div class="meta-pills">
+          <span class="badge badge-cyan">2 Waves · 6 Sprint PRs (4 Feature Cars + W2-REC #2812 + W2-REL #2814) · 5 Issues Shipped</span>
+          <span class="badge badge-green">Triple-Sprint Leg 2 Complete (Tag v5.55.0 @ 98187576 + Live :3102 PID 25594)</span>
+          <span class="badge badge-purple">Milestone #40 Closed (0 Open) · OBSR-OGATE-V5550-W2REL-PR2814-9ba2f5f3-PASS · OBSR-GATE3-LIVE-V5550-98187576-PASS</span>
+        </div>
+        <div class="actions">
+          <a class="btn btn-primary" href="./v5.55.0/">📊 Open v5.55.0 Interactive Sprint Report →</a>
+          <a class="btn" href="https://github.com/Jason-Vaughan/TangleClaw/releases/tag/v5.55.0" target="_blank" rel="noopener">GitHub Release v5.55.0</a>
+        </div>
+      </article>
+
+      <!-- v5.54.0 Card -->
+      <article class="report-card">
+        <div class="report-header">
+          <div>
+            <span class="badge badge-purple">Release · Nov 2, 2026</span>
             <h2 class="report-title"><a href="./v5.54.0/">TangleClaw <code>v5.54.0</code>: “External code and CI safety”</a></h2>
           </div>
           <span class="badge badge-cyan">Tag v5.54.0 @ 3b1817cf · Live 5.54.0 (PID 18745) &amp; Testament v0.34.0 Verified</span>
