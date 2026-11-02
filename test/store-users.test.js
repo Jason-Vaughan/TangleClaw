@@ -384,6 +384,88 @@ describe('the credential database is owner-only (#1417)', () => {
   });
 });
 
+describe('the data directory and db sidecars are owner-only (#1421)', () => {
+  it('a fresh base path directory is created at 0700', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-dirmode-fresh-'));
+    fs.rmSync(tmpDir, { recursive: true, force: true }); // init must create it itself
+    const prevBase = store._getBasePath();
+    try {
+      store.close();
+      store._setBasePath(tmpDir);
+      store.init();
+
+      const mode = fs.statSync(tmpDir).mode & 0o777;
+      assert.equal(mode, 0o700,
+        'the directory is the barrier now, not just the files inside it');
+    } finally {
+      store.close();
+      store._setBasePath(prevBase);
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('narrows a pre-existing 0755 base path directory to 0700 on boot', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-dirmode-existing-'));
+    const prevBase = store._getBasePath();
+    try {
+      store.close();
+      store._setBasePath(tmpDir);
+      store.init();
+      store.close();
+
+      // An install that predates the chmod, or whose directory drifted wider.
+      fs.chmodSync(tmpDir, 0o755);
+      assert.equal(fs.statSync(tmpDir).mode & 0o777, 0o755, 'fixture precondition');
+
+      store.init();
+      assert.equal(fs.statSync(tmpDir).mode & 0o777, 0o700,
+        'narrowing must run on every init, not only on create');
+    } finally {
+      store.close();
+      store._setBasePath(prevBase);
+      fs.chmodSync(tmpDir, 0o700);
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  // Only -wal and -shm are fixture-able here: a stale -journal is consumed by
+  // SQLite's own hot-journal recovery the instant `new DatabaseSync` opens the
+  // file (verified empirically — a garbage -journal written before `init()`
+  // is gone by the time init() returns, deleted by SQLite itself before any
+  // per-file chmod in this module ever runs). `_tightenDbSidecarPermissions`
+  // still narrows a `-journal` sidecar when `fs.existsSync` finds one
+  // (defense-in-depth for whatever briefly survives a crash mid-write), but
+  // that window cannot be reproduced through the public `init()` boot path.
+  it('narrows pre-existing -wal and -shm sidecars to 0600 on boot', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-dbsidecar-'));
+    const prevBase = store._getBasePath();
+    try {
+      store.close();
+      store._setBasePath(tmpDir);
+      store.init();
+      store.close();
+
+      const dbPath = path.join(tmpDir, 'tangleclaw.db');
+      const sidecars = [`${dbPath}-wal`, `${dbPath}-shm`];
+      for (const sidecar of sidecars) {
+        fs.writeFileSync(sidecar, 'sqlite sidecar fixture', { mode: 0o644 });
+        assert.equal(fs.statSync(sidecar).mode & 0o777, 0o644, 'fixture precondition');
+      }
+
+      store.init();
+
+      for (const sidecar of sidecars) {
+        assert.equal(fs.statSync(sidecar).mode & 0o777, 0o600,
+          `${path.basename(sidecar)} transiently holds the same page data as the db`);
+      }
+    } finally {
+      store.close();
+      store._setBasePath(prevBase);
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('#1417 — schema v35→v36 on a REAL old DB', () => {
   /**
    * Seed a database at schema v35 with one table this migration does not touch,
