@@ -5486,17 +5486,6 @@ function registerMedusaRoutes(prefix, resolve) {
     const { target } = r;
     const isOn = medusa.getStatus(target.sessionId).state !== 'off';
     const desired = (body && typeof body.enabled === 'boolean') ? body.enabled : !isOn;
-    // INTV-V5540-01: turning the listener off while mail sits unread would
-    // silently take the inbox panel's only live view of it away with it —
-    // require an explicit confirmation rather than let a reflexive toggle
-    // lose that visibility.
-    if (!desired && isOn) {
-      const unread = medusa.getStatus(target.sessionId).unread;
-      if (unread > 0 && !(body && body.confirm === true)) {
-        return errorResponse(res, 409, 'Turning Medusa off while unread messages are in the inbox requires confirm: true.',
-          'MEDUSA_UNREAD_CONFIRM_REQUIRED', { unreadCount: unread });
-      }
-    }
     // Preflight on the way ON, and it does NOT gate the toggle (#1130, operator
     // decision 2026-09-08). The listener still starts and still retries, because a
     // retrying listener registers by itself once the Bridge appears and a refused
