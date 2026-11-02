@@ -1698,4 +1698,37 @@ describe('#1400 Round 6 — unique-named sentinel claims, folded purely in memor
     installer.updateStatus(fx.primary, (s) => s);
     assert.equal(readStatusNow().counts.error, before2_.counts.error);
   });
+
+  it('a claim file that exists but fails to read for a real reason (not merely gone) is never unlinked, so its content is not silently lost (#1400 Round 7 finding)', () => {
+    const sentinel = installer.outerFailureSentinelPath(fx.primary);
+    const badClaim = `${sentinel}.claim.999.9.ccccc`;
+    const goodClaim = `${sentinel}.claim.888.8.ddddd`;
+    fs.writeFileSync(badClaim, '{"code":"OUTER_NODE_FAILED"}\n');
+    fs.writeFileSync(goodClaim, '{"code":"OUTER_NODE_FAILED"}\n');
+
+    // Both this test file and the installer `require('node:fs')` — the same
+    // cached module object — so stubbing one path's read here reaches the
+    // installer's own call without needing to export a seam for it.
+    const realReadFileSync = fs.readFileSync;
+    fs.readFileSync = (p, ...rest) => {
+      if (p === badClaim) {
+        const err = new Error(`EACCES: permission denied, open '${p}'`);
+        err.code = 'EACCES';
+        throw err;
+      }
+      return realReadFileSync(p, ...rest);
+    };
+    try {
+      const before_ = readStatusNow();
+      installer.updateStatus(fx.primary, (s) => s);
+      const after_ = readStatusNow();
+      assert.equal(after_.counts.error, before_.counts.error + 1, 'only the readable claim must fold');
+    } finally {
+      fs.readFileSync = realReadFileSync;
+    }
+
+    assert.ok(fs.existsSync(badClaim), 'a claim file whose read failed for a real reason must NOT be unlinked');
+    assert.ok(!fs.existsSync(goodClaim), 'the claim that WAS read and folded must be unlinked');
+    fs.rmSync(badClaim, { force: true });
+  });
 });

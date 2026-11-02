@@ -737,8 +737,12 @@ function reclaimStalePending(status) {
  *
  * @param {object} status - Status object, MUTATED in place.
  * @param {string} primary - Absolute primary checkout root.
- * @returns {string[]} The claim file paths to unlink once the caller's
- *   write actually lands. Empty when there was nothing to claim.
+ * @returns {string[]} The claim file paths that were actually read and
+ *   folded into `status` — safe to unlink once the caller's write actually
+ *   lands. A claim file found on disk but NOT successfully read (gone, or a
+ *   real read error) is excluded: its content never made it into `status`,
+ *   so unlinking it would lose that content outright. Empty when there was
+ *   nothing to claim.
  */
 function foldOuterFailureSentinelLocked(status, primary) {
   const sentinel = outerFailureSentinelPath(primary);
@@ -769,14 +773,21 @@ function foldOuterFailureSentinelLocked(status, primary) {
   }
   if (claimFiles.length === 0) return [];
 
+  // Only a claim file that was ACTUALLY read and folded belongs in the
+  // return value — `claimFiles` itself just lists what the directory scan
+  // saw, which is not the same claim as "its content made it into `status`"
+  // (#1400 Round 7 finding: a read failure other than "already gone" — e.g.
+  // EACCES — must not be unlinked by `updateStatus` as though it had been).
+  const foldedFiles = [];
   const now = new Date().toISOString();
   for (const claimFile of claimFiles) {
     let raw;
     try {
       raw = fs.readFileSync(claimFile, 'utf8');
     } catch (err) {
-      continue; // gone already — nothing to fold from this one
+      continue; // unreadable (gone, or a real error) — do not claim credit for folding it
     }
+    foldedFiles.push(claimFile);
     const lines = raw.split('\n').filter((l) => l.trim());
     for (let i = 0; i < lines.length; i += 1) {
       status.counts.total += 1;
@@ -786,7 +797,7 @@ function foldOuterFailureSentinelLocked(status, primary) {
       status.lastErrorAt = now;
     }
   }
-  return claimFiles;
+  return foldedFiles;
 }
 
 /**
