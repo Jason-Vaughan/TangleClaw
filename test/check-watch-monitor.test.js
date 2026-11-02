@@ -1600,6 +1600,36 @@ describe('check-watch monitor: CI state-change notifications (#1783)', () => {
       assert.deepEqual(result.sent, ['architect']);
       assert.equal(sent.length, 1);
     });
+
+    it('two overlapping calls for the same event send only ONE notice per role (#1783 Round 3)', async () => {
+      const coord = live('coord-project');
+      configureRoles({ coordinator: coord.project.name });
+      let resolveSend;
+      medusa.sendSystemMessage = ({ to, message }) => new Promise((resolve) => { resolveSend = resolve; })
+        .then(() => { sent.push({ to, message }); return { status: 'received', id: `sys-${sent.length}`, to }; });
+
+      const first = monitor.notifyCoordinatorAndArchitectOnCiStateChange(EVENT, { roles: ['coordinator'] });
+      const second = monitor.notifyCoordinatorAndArchitectOnCiStateChange(EVENT, { roles: ['coordinator'] }); // fired before the first's send resolves
+      resolveSend();
+      const [r1, r2] = await Promise.all([first, second]);
+
+      assert.deepEqual(r1.sent, ['coordinator']);
+      assert.deepEqual(r2.alreadyNotified, ['coordinator'], 'the overlapping call must see the reservation, not send a second notice');
+      assert.equal(sent.length, 1, 'only one notice ever reached the Bridge');
+    });
+
+    it('a failed send during an overlap stays retriable afterward, not permanently reserved', async () => {
+      const coord = live('coord-project');
+      configureRoles({ coordinator: coord.project.name });
+      medusa.sendSystemMessage = async () => { throw new Error('bridge unreachable'); };
+
+      const failed = await monitor.notifyCoordinatorAndArchitectOnCiStateChange(EVENT, { roles: ['coordinator'] });
+      assert.deepEqual(failed.skipped, [{ role: 'coordinator', code: 'send-failed' }]);
+
+      medusa.sendSystemMessage = async ({ to, message }) => { sent.push({ to, message }); return { status: 'received', id: 'sys-1', to }; };
+      const retried = await monitor.notifyCoordinatorAndArchitectOnCiStateChange(EVENT, { roles: ['coordinator'] });
+      assert.deepEqual(retried.sent, ['coordinator']);
+    });
   });
 
   describe('ingestGitHubCiWebhookEvent', () => {
