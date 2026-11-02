@@ -30,6 +30,36 @@ const rulesChannel = require('../lib/session-rules-channel');
 
 const HOOK = path.join(__dirname, '..', 'data', 'hooks', 'sessionstart-rules-claude.sh');
 
+// #2778 — on the Testament remote pool, five cases below failed with opaque
+// mismatches (a dropped receipt POST read as shard-2-posted, 'written' read
+// as a gate instead of 'delivered'), while the exact same file passed 38/38
+// locally. Root cause: the pool's container image lacked `curl` until #2758
+// added it, and the hook's own gate (`command -v curl >/dev/null 2>&1`,
+// checked identically here) silently skips the real receipt POST when it's
+// missing — "silent" is deliberate (see the hook's own comment on why a
+// broken audit path must never become a broken session), so the FAILURE,
+// not the skip, is what has to be loud. This precondition runs first and
+// names the exact fix instead of leaving five unrelated-looking assertions
+// to fail deep in the suite.
+describe('#2778 — curl must be on PATH for this file\'s real-POST cases to mean anything', () => {
+  it('is present (install it via .devcontainer/Dockerfile if this fails on the pool, #2758/#2778)', () => {
+    let present;
+    try {
+      execFileSync('/bin/bash', ['-c', 'command -v curl'], { stdio: 'ignore' });
+      present = true;
+    } catch {
+      present = false;
+    }
+    assert.equal(present, true,
+      'curl is missing from PATH on this runner. The hook (data/hooks/sessionstart-rules-claude.sh) silently '
+      + 'skips its real receipt POST without it (by design — a missing audit tool must never fail the session), '
+      + 'so every real-POST case below (shard-1-only receipt, the \'delivered\' outcome, stderr silence) will fail '
+      + 'with an opaque mismatch instead of this message. Fix: install curl in whatever built this image — on the '
+      + 'Testament pool, that is .devcontainer/Dockerfile (#2758 added it for exactly this reason; see its own '
+      + 'build comment).');
+  });
+});
+
 let tmpBase;
 before(() => {
   tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-1063-'));
