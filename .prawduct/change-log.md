@@ -41,17 +41,6 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
-## 2026-11-02 — W1-A: Medusa message retraction, the owed-reply Ack/Workload gates, and ?role=all (#1873, #1976, #2137)
-
-<!-- prawduct: type=feature | scope=v5560-w1a-1873-1976 -->
-
-- **Retraction (#1873):** `POST <prefix>/messages/:hubId/retract` and `tc message retract [--reason …] [--replacement <id>] <message-id>` let a sender withdraw a message nobody has read, acknowledged or closed yet — `lib/medusa-exchanges.js#retract` already existed; this adds the route/CLI and widens its auth gate to also accept a verified Master send (mirroring `close()`'s own master-caller branch), a best-effort local-inbox clear on the recipient's live session, and a best-effort system retraction notice when a wake had already been attempted.
-- **Owed-reply enforcement (#1976):** a new shared predicate, `medusaExchanges.isOwedReply`, backs two gates: the Ack Gate (`POST <prefix>/read` now refuses `REPLY_REQUIRED_BEFORE_ACK` for a reply-required message not yet replied to) and the Workload Completion Gate (`tc workload set` now refuses `WORKLOAD_OWED_REPLY_OUTSTANDING` for `state: complete`/`clearance: safe-to-clear` while one is outstanding) — closing the fleet-deadlock gap a missing semantic reply used to leave open.
-- **`?role=` query (#2137):** `GET <prefix>/exchanges` accepts `?role=recipient|sender` (aliasing `?direction=`) and `?role=all` (merging both sides, deduplicated by `exchange_id`, newest first, capped to the same limit either side alone would use).
-- **Cross-car scope correction:** the dispatch's own INTV-V5540-01 line asked for a server-side `MEDUSA_UNREAD_CONFIRM_REQUIRED` toggle-off gate; built and tested, then reverted on PM ruling once `public/api-helper.js` (and its test) proved to be PR #2808's (`V5560-W1-D`) exclusive scope, already shipping an incompatible client-side-only confirm (never sends `confirm: true`). `public/api-helper.js`, `test/medusa-control-component.test.js` and `test/api-medusa.test.js` are untouched by this branch's final diff; #2808's client-side confirm is the whole INTV-V5540-01 guard.
-- `lib/coordinator-rotation.js`'s `GATED_ACTIONS` gained `'medusa-retract'` — the dispatch's literal `coordinatorGateRefused(..., 'medusa-retract', ...)` call would otherwise throw on every single retract request, gated action or not; added with no reconciling-bypass, mirroring `medusa-loop`'s conservative default.
-- Four Critic review rounds (two BLOCKING, both fully resolved) added HTTP-level route coverage this branch's test files previously lacked: the retraction route's Master-caller branch and `CONTROL_NOT_RETRACTABLE` refusal, and `?role=all`'s actual sort order, a true sender/recipient dedup overlap, and its `?limit` cap.
-
 ## 2026-11-02 — v5.54.0 W2-REC: reconcile external-code and CI-safety records
 
 <!-- prawduct: type=internal | scope=v5540-w2-rec -->
