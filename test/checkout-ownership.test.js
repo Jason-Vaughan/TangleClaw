@@ -329,6 +329,51 @@ describe('captureBaselineTreeState / verifyTreeUnchangedSinceBaseline', () => {
     fx.git('merge', '--abort');
     fx.git('branch', '-D', 'theirs-branch');
   });
+
+  it('a tracked SYMLINK retargeted between two nonexistent paths is detected, not silently read through as ABSENT both times (#1332 Round 5 finding)', () => {
+    const linkPath = path.join(fx.worktree, 'link');
+    fs.symlinkSync('first-missing', linkPath);
+    fx.git('add', '-A');
+    fx.git('commit', '-q', '-m', 'add tracked symlink');
+
+    fs.unlinkSync(linkPath);
+    fs.symlinkSync('second-missing', linkPath);
+    const baseline = ownership.captureBaselineTreeState(fx.worktree);
+
+    // The real change under test: retarget again. `readFileSync` would
+    // dereference the link and hit the SAME ENOENT regardless of target —
+    // only `readlinkSync`'s own target text tells these two states apart.
+    fs.unlinkSync(linkPath);
+    fs.symlinkSync('third-missing', linkPath);
+    assert.equal(fx.git('status', '--porcelain').toString().trim(), 'M link');
+
+    const verified = ownership.verifyTreeUnchangedSinceBaseline(fx.worktree, baseline);
+    assert.equal(verified.ok, false,
+      'retargeting a broken symlink is a real change that reading through the dereference cannot see');
+    assert.equal(verified.code, 'FOREIGN_WORKTREE_MUTATION');
+
+    fx.git('add', '-A');
+    fx.git('commit', '-q', '-m', 'settle link at third-missing');
+  });
+
+  it('a chmod (+x) on an already-modified file is detected even though its content never changes', () => {
+    const modePath = path.join(fx.worktree, 'tracked.txt');
+    fs.writeFileSync(modePath, 'mode-test\n');
+    fs.chmodSync(modePath, 0o644);
+    const baseline = ownership.captureBaselineTreeState(fx.worktree);
+
+    fs.chmodSync(modePath, 0o755);
+    assert.equal(fx.git('status', '--porcelain').toString().trim(), 'M tracked.txt',
+      'content is unchanged, so the status code must stay exactly the same');
+
+    const verified = ownership.verifyTreeUnchangedSinceBaseline(fx.worktree, baseline);
+    assert.equal(verified.ok, false, 'a mode-only change must be caught, not hidden behind a content-only digest');
+    assert.equal(verified.code, 'FOREIGN_WORKTREE_MUTATION');
+
+    fs.chmodSync(modePath, 0o644);
+    fx.git('add', '-A');
+    fx.git('commit', '-q', '-m', 'settle tracked.txt mode and content');
+  });
 });
 
 describe('evaluateWorktreeWriteAdmission', () => {
