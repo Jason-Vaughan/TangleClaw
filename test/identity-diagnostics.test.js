@@ -11,6 +11,7 @@ const logger = require('../lib/logger');
 const guard = require('../lib/launch-binding-guard');
 const serviceToken = require('../lib/service-token');
 const wrapRunRegistry = require('../lib/wrap-run-registry');
+const tailscaleIngress = require('../lib/tailscale-ingress');
 const { createServer } = require('../server');
 const { operatorHeaders, bindProject, sendAs } = require('./_shared-docs-callers');
 
@@ -171,6 +172,62 @@ describe('launch identity diagnostics through the dispatcher (#2233)', () => {
         assert.equal(res.data.project.id, project.id);
       } finally {
         guard.describeBinding = real;
+      }
+    });
+  });
+
+  describe('#1380 whoami\'s operator host is Tailscale-authoritative when the mode is on', () => {
+    it('reports the resolved tailnet host, not the request Host header', async () => {
+      const config = store.config.load();
+      config.tailscaleMode = true;
+      store.config.save(config);
+      const real = tailscaleIngress.resolveAdvertisedOrigin;
+      tailscaleIngress.resolveAdvertisedOrigin = async () =>
+        ({ ok: true, origin: 'https://box.tailnet-name.ts.net:8443', host: 'box.tailnet-name.ts.net' });
+      try {
+        const res = await whoami(project.id, binding.headers);
+        assert.equal(res.status, 200);
+        assert.equal(res.data.operator.host, 'box.tailnet-name.ts.net');
+        assert.match(res.data.operator.note, /box\.tailnet-name\.ts\.net/);
+      } finally {
+        tailscaleIngress.resolveAdvertisedOrigin = real;
+        const c = store.config.load();
+        delete c.tailscaleMode;
+        store.config.save(c);
+      }
+    });
+
+    it('reports an honest failure rather than falling back to the Host header', async () => {
+      const config = store.config.load();
+      config.tailscaleMode = true;
+      store.config.save(config);
+      const real = tailscaleIngress.resolveAdvertisedOrigin;
+      tailscaleIngress.resolveAdvertisedOrigin = async () =>
+        ({ ok: false, reason: 'node-not-running', detail: 'this tailscale node is not running' });
+      try {
+        const res = await whoami(project.id, binding.headers);
+        assert.equal(res.status, 200);
+        assert.equal(res.data.operator.host, null, 'must not silently fall back to the Host header');
+        assert.match(res.data.operator.note, /Tailscale advertisement is on but could not resolve an origin/);
+        assert.match(res.data.operator.note, /this tailscale node is not running/);
+      } finally {
+        tailscaleIngress.resolveAdvertisedOrigin = real;
+        const c = store.config.load();
+        delete c.tailscaleMode;
+        store.config.save(c);
+      }
+    });
+
+    it('is unaffected when tailscaleMode is off', async () => {
+      const real = tailscaleIngress.resolveAdvertisedOrigin;
+      let called = false;
+      tailscaleIngress.resolveAdvertisedOrigin = async () => { called = true; return { ok: false }; };
+      try {
+        const res = await whoami(project.id, binding.headers);
+        assert.equal(res.status, 200);
+        assert.equal(called, false, 'must not probe tailscale at all when the mode is off');
+      } finally {
+        tailscaleIngress.resolveAdvertisedOrigin = real;
       }
     });
   });

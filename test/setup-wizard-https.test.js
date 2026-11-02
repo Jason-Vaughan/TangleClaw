@@ -486,6 +486,24 @@ describe('Setup wizard — HTTPS step (frontend)', () => {
       assert.match(body.innerHTML, /Restarting TangleClaw/);
       assert.equal(dismissed, false);
     });
+
+    it('renders the honest no-redirect state, never a fabricated URL, when Tailscale mode could not resolve one (#1380)', () => {
+      // PRR-A finding (PR #2795): `result.redirectUrl === null` (Tailscale
+      // mode on, resolution failed) used to be treated identically to
+      // `undefined` (the pre-#1380 "backend always supplies it" contract),
+      // silently substituting `window.location.origin` — an address the
+      // server explicitly could not establish was reachable. `null` must
+      // render an honest "no address" state instead: no button, no fabricated
+      // URL, the warning carried through.
+      const ctx = loadSetup({ apiMutate: async () => null });
+      ctx._renderRestartOverlay(null, ['Tailscale advertisement is on but could not resolve the restart redirect: this tailscale node is not running'], 'no-redirect');
+      const body = ctx.document.getElementById('setupBody');
+      assert.match(body.innerHTML, /Restarting TangleClaw/);
+      assert.doesNotMatch(body.innerHTML, /Open null/, 'must never render a fabricated "Open null" link');
+      assert.doesNotMatch(body.innerHTML, /<button[^>]*onclick="window\.location\.href/,
+        'no navigation button when there is no address to send the operator to');
+      assert.match(body.innerHTML, /could not resolve the restart redirect/, 'the honest failure reason must reach the screen');
+    });
   });
 
   describe('_pollRestartReady', () => {
