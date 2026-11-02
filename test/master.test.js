@@ -3416,6 +3416,21 @@ describe('GET/POST /api/master/authority (#2132, #966)', () => {
       store.sessions.kill(bound.sessionId, 'test cleanup');
     }
   });
+
+  it('POST refuses a caller sending an EMPTY launch-binding header, not just a missing one (Ruling A491-W2A-HF1-R3)', async () => {
+    // Presence, not truthiness: `x-tangleclaw-project-id: ''` is falsy but
+    // still a PRESENT header. A caller sending it alongside the forged
+    // dashboard shape must not slip past the exclusion just because the
+    // value itself is empty.
+    const sharedDocsAccess = require('../lib/shared-docs-access');
+    const res = await requestJson('POST', '/api/master/authority', { accessLevel: 'write' },
+      { ...operatorWriteHeaders, [sharedDocsAccess.PROJECT_HEADER]: '' });
+    assert.equal(res.status, 403);
+    assert.equal(res.data.code, 'OPERATOR_ONLY');
+    const config = store.config.load();
+    assert.equal(masterAuthority.getAuthorityState(config).toggleState, 'read-only',
+      'a caller with an empty launch-binding header must never move the canonical state');
+  });
 });
 
 describe('refreshMasterIdentity (#726)', () => {
