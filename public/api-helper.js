@@ -3812,11 +3812,25 @@
 
     /**
      * Toggle the listener (the heads click). Reflects the returned status at
-     * once; the next poll reconciles.
+     * once; the next poll reconciles. Turning OFF while the inbox holds
+     * unread mail is refused (409 `MEDUSA_UNREAD_CONFIRM_REQUIRED`,
+     * INTV-V5540-01) until the operator confirms losing that view of it.
      * @returns {Promise<void>}
      */
     async function toggle() {
-      applyStatus(await deps.api(`${deps.apiBase}/toggle`, { method: 'POST' }));
+      const data = await deps.api(`${deps.apiBase}/toggle`, { method: 'POST' });
+      if (data === null && deps.api.lastErrorCode === 'MEDUSA_UNREAD_CONFIRM_REQUIRED') {
+        const count = (deps.api.lastBody && deps.api.lastBody.unreadCount) || 0;
+        const yes = window.confirm(
+          `${count} unread message${count === 1 ? '' : 's'} will no longer be visible here once the listener is off. Turn it off anyway?`
+        );
+        if (!yes) return;
+        applyStatus(await deps.api(`${deps.apiBase}/toggle`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true })
+        }));
+        return;
+      }
+      applyStatus(data);
     }
 
     /**

@@ -5803,11 +5803,15 @@ function registerMedusaRoutes(prefix, resolve) {
     if (retracted.recipient_session_id != null) {
       medusa.markHandled(retracted.recipient_session_id, [params.hubId]);
       if (wasAttempted) {
-        medusa.sendSystemMessage({
-          to: retracted.recipient_workspace_id,
-          message: `[Medusa Retraction] Message ${params.hubId} was retracted by its sender (${retracted.terminal_code || 'retracted'})`
-            + `${retracted.replacement_hub_id ? '; replaced by ' + retracted.replacement_hub_id : ''}. No action required.`
-        }).catch(() => {});
+        try {
+          await medusa.sendSystemMessage({
+            to: retracted.recipient_workspace_id,
+            message: `[Medusa Retraction] Message ${params.hubId} was retracted by its sender (${retracted.terminal_code || 'retracted'})`
+              + `${retracted.replacement_hub_id ? '; replaced by ' + retracted.replacement_hub_id : ''}. No action required.`
+          });
+        } catch (err) { // prawduct:allow prawduct/broad-except -- the retraction already succeeded; a failed best-effort notice is logged, never turned into a failed retract
+          log.warn('Could not send Medusa retraction notice', { hubId: params.hubId, error: err.message });
+        }
       }
     }
     jsonResponse(res, 200, { exchange: medusaExchanges.view(retracted) });
