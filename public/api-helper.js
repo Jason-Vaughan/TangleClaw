@@ -3580,6 +3580,11 @@
     if (m.lastError === undefined) m.lastError = null;
     if (m.lastErrorCode === undefined) m.lastErrorCode = null;
     if (m.bridge === undefined) m.bridge = null;
+    // The install's Bridge version + update-status reading (#1009), carried
+    // on every status payload (`lib/medusa.js#getStatus`'s own cached read —
+    // never this control's own fetch).
+    if (m.bridgeVersion === undefined) m.bridgeVersion = null;
+    if (m.bridgeUpdaterStatus === undefined) m.bridgeUpdaterStatus = null;
     if (m.shown === undefined) m.shown = false;
     if (m.loops === undefined) m.loops = [];
     if (m.loopsError === undefined) m.loopsError = null;
@@ -3677,7 +3682,23 @@
         ? ` Sending is disabled: ${st.outbound.reason || 'the access level does not allow it'}`
         : '';
       return 'Medusa: session-to-session comms (the switchboard) — message your other '
-        + `TangleClaw sessions from the banner. ${doing}. Click the heads to ${action}.${blocked}`;
+        + `TangleClaw sessions from the banner. ${doing}. Click the heads to ${action}.${blocked}${bridgeVersionClause(st)}`;
+    }
+
+    /**
+     * The Bridge's own version + update-status clause appended to the hover
+     * tooltip (#1009), from `lib/medusa.js#getStatus`'s cached reading.
+     * `updaterStatus` is rendered verbatim — its vocabulary is the Bridge's
+     * own (an external process this repo does not own the source of), not
+     * reinterpreted into a local "up to date"/"update available" ladder this
+     * install cannot verify holds.
+     * @param {{bridgeVersion: (string|null), bridgeUpdaterStatus: (string|null)}} st - State.
+     * @returns {string}
+     */
+    function bridgeVersionClause(st) {
+      if (!st.bridgeVersion) return '';
+      const updater = st.bridgeUpdaterStatus ? ` (${st.bridgeUpdaterStatus})` : '';
+      return ` Medusa Bridge v${st.bridgeVersion}${updater}.`;
     }
 
     /**
@@ -3725,6 +3746,11 @@
         heads.setAttribute('aria-pressed', m.state !== 'off' ? 'true' : 'false');
         heads.setAttribute('aria-label', label);
         heads.title = helpText(m);
+        // Machine-readable mirror of `bridgeVersionClause()` (#1009) — set to
+        // '' rather than removed, since `setAttribute` is all the shared
+        // mini-DOM test stub implements.
+        heads.setAttribute('data-medusa-bridge-version', m.bridgeVersion || '');
+        heads.setAttribute('data-medusa-bridge-updater-status', m.bridgeUpdaterStatus || '');
       }
 
       const badge = el('badge');
@@ -3806,6 +3832,11 @@
       // the LISTENER's classification of why it is not listening. Two different
       // failures, one name, one file — read the receiver, not the property.
       m.lastErrorCode = data.lastErrorCode || null;
+      // Always present (#1009): `lib/medusa.js#getStatus` carries a cached
+      // read on every status payload, toggle or plain poll alike — unlike
+      // `bridge` below, which only rides a toggle-ON response.
+      m.bridgeVersion = data.bridgeVersion || null;
+      m.bridgeUpdaterStatus = data.bridgeUpdaterStatus || null;
       // Present only on a toggle-ON response, where a preflight actually ran.
       // Taken when present for the same reason `loops` and `enabled` are: a status
       // poll carries none, and blanking it would erase the diagnosis the operator

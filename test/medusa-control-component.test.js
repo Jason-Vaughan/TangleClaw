@@ -210,6 +210,37 @@ describe('tcCreateMedusaControl — renders from a status payload', () => {
     assert.equal(shared.state, 'connecting');
     assert.deepEqual(rendered, ['connecting'], 'the hook fires on each render with the state');
   });
+
+  // #1009 — the Bridge's own version/update-status, from `getStatus()`'s
+  // cached reading (never this control's own fetch).
+  it('shows the Bridge version and updater status in the tooltip and as data attributes', () => {
+    const ids = G.tcMedusaIds('');
+    const w = world(ids);
+    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
+    c.applyStatus({ state: 'listening', unread: 0, bridgeVersion: '1.0.0-rc2', bridgeUpdaterStatus: 'up-to-date' });
+    assert.match(w.el.medusaHeads.title, /Medusa Bridge v1\.0\.0-rc2 \(up-to-date\)\./);
+    assert.equal(w.el.medusaHeads.getAttribute('data-medusa-bridge-version'), '1.0.0-rc2');
+    assert.equal(w.el.medusaHeads.getAttribute('data-medusa-bridge-updater-status'), 'up-to-date');
+  });
+
+  it('renders the version alone when no updater status is known', () => {
+    const ids = G.tcMedusaIds('');
+    const w = world(ids);
+    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
+    c.applyStatus({ state: 'listening', unread: 0, bridgeVersion: '1.0.0-rc2' });
+    assert.match(w.el.medusaHeads.title, /Medusa Bridge v1\.0\.0-rc2\./);
+    assert.doesNotMatch(w.el.medusaHeads.title, /v1\.0\.0-rc2 \(/, 'no parenthetical when there is no updater status');
+  });
+
+  it('adds nothing when the Bridge version has never been measured', () => {
+    const ids = G.tcMedusaIds('');
+    const w = world(ids);
+    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
+    c.applyStatus({ state: 'off', unread: 0 });
+    assert.doesNotMatch(w.el.medusaHeads.title, /Medusa Bridge v/);
+    assert.equal(w.el.medusaHeads.getAttribute('data-medusa-bridge-version'), '');
+    assert.equal(w.el.medusaHeads.getAttribute('data-medusa-bridge-updater-status'), '');
+  });
 });
 
 describe('tcCreateMedusaControl — a receive-only participant says so (#996)', () => {
