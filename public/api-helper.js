@@ -359,10 +359,20 @@
    * @returns {(url: string, method: string, body: object) => Promise<object|null>}
    */
   function tcCreateApiMutate(api) {
-    return function apiMutate(url, method, body) {
+    return async function apiMutate(url, method, body) {
+      // #2132/#966, Ruling A491-W2A-R9b — a Project Master accessLevel
+      // transition through PATCH /api/config now needs the same operator
+      // proof POST /api/master/authority requires (lib/routes/config.js's
+      // _requireOperatorForMasterAuthority), which on an open install means
+      // the dashboard's own open-install token — this wrapper otherwise
+      // sends only Content-Type, with nothing proving the caller fetched
+      // its shape from this server.
+      const headers = (url === '/api/config' && body && body.master && body.master.accessLevel !== undefined)
+        ? await tcOperatorProofHeaders(api)
+        : { 'Content-Type': 'application/json' };
       return api(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(body)
       });
     };

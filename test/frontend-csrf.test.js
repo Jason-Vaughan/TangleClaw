@@ -205,6 +205,44 @@ describe('frontend CSRF plumbing (#1418)', () => {
       });
     });
 
+    it('attaches the open-install token to a master.accessLevel PATCH (#2132/#966, Ruling A491-W2A-R9b)', () => {
+      // lib/routes/config.js's _requireOperatorForMasterAuthority now needs
+      // the SAME operator proof POST /api/master/authority does — on an
+      // open install, that is the dashboard's own open-install token,
+      // fetched via /api/auth/me. Without this, the live Master bar toggle
+      // (public/api-helper.js's own apiMutate('/api/config', 'PATCH',
+      // {master: {accessLevel}}) call) would 403 on exactly the installs
+      // #1973-style anti-forgery protects: the ones with no login at all.
+      const { sandbox, calls } = withRecordingFetch('tc_csrf=tok');
+      sandbox.fetch = async (url, opts) => {
+        calls.push({ url, opts });
+        if (url === '/api/auth/me') {
+          return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ openInstallToken: 'mock-open-token' }) };
+        }
+        return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ ok: true }) };
+      };
+      const api = sandbox.tcCreateApi();
+      const apiMutate = sandbox.tcCreateApiMutate(api);
+      return apiMutate('/api/config', 'PATCH', { master: { accessLevel: 'write' } }).then(() => {
+        const patchCall = calls.find((c) => c.url === '/api/config');
+        assert.equal(patchCall.opts.headers['X-TC-Open-Token'], 'mock-open-token');
+      });
+    });
+
+    it('does NOT attach the open-install token to an unrelated master.* PATCH or a plain config PATCH', () => {
+      // The condition is specifically accessLevel, not "any master field" or
+      // "any /api/config write" — every other field stays on the plain
+      // Content-Type-only path this wrapper always used.
+      const { sandbox, calls } = withRecordingFetch('tc_csrf=tok');
+      const api = sandbox.tcCreateApi();
+      const apiMutate = sandbox.tcCreateApiMutate(api);
+      return apiMutate('/api/config', 'PATCH', { master: { engine: 'claude' } }).then(() => {
+        assert.equal(calls.find((c) => c.url === '/api/auth/me'), undefined,
+          'no /api/auth/me round trip for a field that is not accessLevel');
+        assert.equal(calls[0].opts.headers['X-TC-Open-Token'], undefined);
+      });
+    });
+
     it('labels a request without mutating the options the caller passed', () => {
       const { sandbox, calls } = withRecordingFetch('tc_csrf=tok');
       const api = sandbox.tcCreateApi();
