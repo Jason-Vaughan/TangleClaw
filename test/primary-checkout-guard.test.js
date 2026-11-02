@@ -1617,13 +1617,18 @@ describe('#1400 Round 4 — AC8 fail-closed self-test, locked sentinel fold, --s
   });
 });
 
-describe('#1400 Round 5 — durable outer-node sentinel claim, surviving a failed status write', () => {
+describe('#1400 Round 6 — unique-named sentinel claims, folded purely in memory', () => {
   let fx;
   before(() => { fx = makeFixture(); });
   after(() => fx.cleanup());
 
   const statusPath = () => installer.statusFilePath(fx.primary);
   const readStatusNow = () => installer.readStatus(statusPath());
+  const claimFilesNow = (sentinel) => {
+    const dir = path.dirname(sentinel);
+    const prefix = `${path.basename(sentinel)}.claim`;
+    return fs.readdirSync(dir).filter((f) => f.startsWith(prefix));
+  };
 
   it('a write failure AFTER the sentinel is claimed leaves it folded on the next successful update, not lost', () => {
     const sentinel = installer.outerFailureSentinelPath(fx.primary);
@@ -1643,8 +1648,7 @@ describe('#1400 Round 5 — durable outer-node sentinel claim, surviving a faile
     }
 
     assert.ok(!fs.existsSync(sentinel), 'the sentinel itself must have been claimed, not left in place');
-    const claimPath = `${sentinel}.claim`;
-    assert.ok(fs.existsSync(claimPath), 'the claimed content must survive the failed write as a `.claim` file');
+    assert.equal(claimFilesNow(sentinel).length, 1, 'the claimed content must survive the failed write as a claim file');
 
     // A later successful update must fold it exactly once — not lost, and
     // not double-counted against whatever the failed attempt already saw.
@@ -1653,15 +1657,15 @@ describe('#1400 Round 5 — durable outer-node sentinel claim, surviving a faile
     const after_ = readStatusNow();
     assert.equal(after_.counts.error, before_.counts.error + 1);
     assert.equal(after_.lastError, 'OUTER_NODE_FAILED');
-    assert.ok(!fs.existsSync(claimPath), 'the claim file must be removed once it is actually folded into a written status');
+    assert.equal(claimFilesNow(sentinel).length, 0, 'the claim file must be removed once it is actually folded into a written status');
   });
 
-  it('a leftover claim from an interrupted run folds together with a newly-arrived sentinel, neither overwriting the other', () => {
+  it('a leftover claim from a call that crashed right after claiming folds together with a newly-arrived sentinel, neither overwriting the other (#1400 Round 6 finding 1)', () => {
     const sentinel = installer.outerFailureSentinelPath(fx.primary);
-    const claimPath = `${sentinel}.claim`;
-    fs.mkdirSync(path.dirname(claimPath), { recursive: true });
-    // A leftover claim from a run whose write never completed...
-    fs.writeFileSync(claimPath, '{"code":"OUTER_NODE_FAILED"}\n');
+    // A leftover claim from a call that renamed the sentinel away but
+    // crashed before folding it — under Round 5's FIXED `.claim.incoming`
+    // name, the rename below would have overwritten this outright.
+    fs.writeFileSync(`${sentinel}.claim.leftover-from-a-dead-pid`, '{"code":"OUTER_NODE_FAILED"}\n');
     // ...plus a brand-new sentinel that arrived since.
     fs.writeFileSync(sentinel, '{"code":"OUTER_NODE_FAILED"}\n');
 
@@ -1669,8 +1673,29 @@ describe('#1400 Round 5 — durable outer-node sentinel claim, surviving a faile
     installer.updateStatus(fx.primary, (s) => s);
     const after_ = readStatusNow();
     assert.equal(after_.counts.error, before_.counts.error + 2,
-      'both the leftover claim and the newly-arrived sentinel must fold — a naive rename onto `claimPath` would have overwritten one');
+      'both the leftover claim and the newly-arrived sentinel must fold — a fixed claim name would have overwritten one');
     assert.ok(!fs.existsSync(sentinel));
-    assert.ok(!fs.existsSync(claimPath));
+    assert.equal(claimFilesNow(sentinel).length, 0);
+  });
+
+  it('two genuine leftover claims present at once each fold exactly once, never double-counted (#1400 Round 6 finding 2)', () => {
+    const sentinel = installer.outerFailureSentinelPath(fx.primary);
+    // Two claims left behind by two different calls that each crashed
+    // after claiming — Round 5's fix would have merged these onto a single
+    // on-disk file and risked re-reading both after a crash mid-merge; this
+    // design never writes a merged file at all.
+    fs.writeFileSync(`${sentinel}.claim.111.1.aaaaa`, '{"code":"OUTER_NODE_FAILED"}\n');
+    fs.writeFileSync(`${sentinel}.claim.222.2.bbbbb`, '{"code":"OUTER_NODE_FAILED"}\n{"code":"OUTER_NODE_FAILED"}\n');
+
+    const before_ = readStatusNow();
+    installer.updateStatus(fx.primary, (s) => s);
+    const after_ = readStatusNow();
+    assert.equal(after_.counts.error, before_.counts.error + 3, 'one line from the first claim plus two from the second — three total, not six');
+    assert.equal(claimFilesNow(sentinel).length, 0);
+
+    // And folding again right after must find nothing left to re-count.
+    const before2_ = readStatusNow();
+    installer.updateStatus(fx.primary, (s) => s);
+    assert.equal(readStatusNow().counts.error, before2_.counts.error);
   });
 });

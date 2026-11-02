@@ -609,10 +609,11 @@ function releaseLock(lockPath) {
  * (#1400 Round 4 finding 2 — see `foldOuterFailureSentinelLocked`'s doc).
  *
  * The sentinel is only CLAIMED by `foldOuterFailureSentinelLocked` here,
- * not consumed — its claim file is unlinked only AFTER `writeStatusAtomic`
- * below actually succeeds (#1400 Round 5 finding). If `mutate` or the
- * write throws, the claim file is left on disk and the next successful
- * update folds it again; nothing is lost to a write that never landed.
+ * not consumed — its claim file(s) are unlinked only AFTER
+ * `writeStatusAtomic` below actually succeeds (#1400 Round 5/6 findings).
+ * If `mutate` or the write throws, the claim files are left on disk and
+ * the next successful update folds them again; nothing is lost to a write
+ * that never landed.
  *
  * SKIPS the update entirely — never falls back to an unlocked
  * read-modify-write — when the lock cannot be acquired within its budget
@@ -636,11 +637,11 @@ function updateStatus(primary, mutate) {
   }
   try {
     const current = readStatus(file);
-    const claimedSentinelPath = foldOuterFailureSentinelLocked(current, primary);
+    const claimedSentinelPaths = foldOuterFailureSentinelLocked(current, primary);
     const result = mutate(current);
     writeStatusAtomic(file, current);
-    if (claimedSentinelPath) {
-      try { fs.unlinkSync(claimedSentinelPath); } catch (err) { /* already gone */ }
+    for (const claimedPath of claimedSentinelPaths) {
+      try { fs.unlinkSync(claimedPath); } catch (err) { /* already gone */ }
     }
     return result;
   } finally {
@@ -710,16 +711,24 @@ function reclaimStalePending(status) {
  * lock, BEFORE `updateStatus` had actually written the fold anywhere
  * durable — so a `mutate` or `writeStatusAtomic` throw after this function
  * returned still lost the signal, just one step later than before (#1400
- * Round 5 finding). This function now only CLAIMS the sentinel — renaming
- * it to a `.claim` file is itself the atomic hand-off, so a concurrent
- * shell-level `>>` after the rename starts a brand-new sentinel rather
- * than appending to the one just claimed — and folds the claim's content
- * into `status` in memory. The claim file itself is left on disk; it is
- * `updateStatus`'s job to unlink it, and only after `writeStatusAtomic`
- * actually lands. A `.claim` file already present (from a prior claim
- * whose write never completed) is merged together with anything newly
- * claimed here, via a third, never-colliding temp name, so neither can
- * overwrite the other.
+ * Round 5 finding). Round 5's fix claimed the sentinel into a FIXED `.claim`
+ * name, which opened two narrower races of its own (#1400 Round 6 finding):
+ * a process that died right after claiming left a leftover `.claim.incoming`
+ * in place, and a later claim's rename onto that same fixed name silently
+ * overwrote (and lost) it; and merging claims by WRITING the combined
+ * content back to `claimPath` before unlinking the other file meant a crash
+ * between that write and that unlink left both files holding the same
+ * content, double-counted on the next fold.
+ *
+ * This function now claims the sentinel into a UNIQUE name every time
+ * (`.claim.<pid>.<ms>.<rand>`) — never a name any other call could already
+ * be holding — and folds every `.claim*` file found on disk straight into
+ * `status`, PURELY IN MEMORY: nothing is ever written back to another claim
+ * file, so there is no on-disk merge step left for a crash to land inside
+ * of. The claim files themselves are left on disk; it is `updateStatus`'s
+ * job to unlink each one, and only after `writeStatusAtomic` actually
+ * lands. A crash before that just leaves them where a later call's own
+ * directory listing picks them straight back up.
  *
  * `>>` (append, not `>`) in `guardCommand`'s fallback means several
  * shell-level failures before anyone folds them leave several lines —
@@ -728,52 +737,56 @@ function reclaimStalePending(status) {
  *
  * @param {object} status - Status object, MUTATED in place.
  * @param {string} primary - Absolute primary checkout root.
- * @returns {string|null} The claim file path to unlink once the caller's
- *   write actually lands, or `null` if there was nothing to claim.
+ * @returns {string[]} The claim file paths to unlink once the caller's
+ *   write actually lands. Empty when there was nothing to claim.
  */
 function foldOuterFailureSentinelLocked(status, primary) {
   const sentinel = outerFailureSentinelPath(primary);
-  const claimPath = `${sentinel}.claim`;
-  const incomingPath = `${claimPath}.incoming`;
 
-  // Claim any newly-arrived sentinel into its OWN name first, never into
-  // `claimPath` directly — a plain rename onto `claimPath` would silently
-  // overwrite a leftover claim from a prior run whose write never
-  // completed. `renameSync` is atomic on POSIX, so a concurrent shell `>>`
-  // after this point creates a fresh sentinel file rather than appending
-  // to the one just claimed here.
+  // Claim any newly-arrived sentinel into a name unique to THIS call.
+  // `renameSync` is atomic on POSIX, so a concurrent shell `>>` after this
+  // point creates a fresh sentinel file rather than appending to the one
+  // just claimed here — and a unique name means this rename can never
+  // collide with (and overwrite) a claim file some other call left behind.
+  const uniqueClaim = `${sentinel}.claim.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
   try {
-    fs.renameSync(sentinel, incomingPath);
+    fs.renameSync(sentinel, uniqueClaim);
   } catch (err) { /* nothing new arrived since the last claim */ }
 
-  let raw = '';
+  // Every claim file still on disk: this call's own (if it just claimed
+  // one) plus any earlier call's claim that never made it past its own
+  // unlink. Sorted purely so results are deterministic to read.
+  const dir = path.dirname(sentinel);
+  const prefix = `${path.basename(sentinel)}.claim`;
+  let claimFiles;
   try {
-    raw += fs.readFileSync(claimPath, 'utf8');
-  } catch (err) { /* no leftover claim from an interrupted prior run */ }
-  try {
-    raw += fs.readFileSync(incomingPath, 'utf8');
-  } catch (err) { /* nothing newly claimed */ }
-
-  if (!raw.trim()) {
-    try { fs.unlinkSync(incomingPath); } catch (err) { /* already gone */ }
-    return null; // nothing claimed, nothing left over either
+    claimFiles = fs.readdirSync(dir)
+      .filter((f) => f.startsWith(prefix))
+      .sort()
+      .map((f) => path.join(dir, f));
+  } catch (err) {
+    claimFiles = [];
   }
+  if (claimFiles.length === 0) return [];
 
-  // Merge both sources into the single `claimPath` name `updateStatus`
-  // unlinks once its write actually lands.
-  fs.writeFileSync(claimPath, raw);
-  try { fs.unlinkSync(incomingPath); } catch (err) { /* already merged */ }
-
-  const lines = raw.split('\n').filter((l) => l.trim());
   const now = new Date().toISOString();
-  for (let i = 0; i < lines.length; i += 1) {
-    status.counts.total += 1;
-    status.counts.error += 1;
-    status.lastOutcome = 'error';
-    status.lastError = 'OUTER_NODE_FAILED';
-    status.lastErrorAt = now;
+  for (const claimFile of claimFiles) {
+    let raw;
+    try {
+      raw = fs.readFileSync(claimFile, 'utf8');
+    } catch (err) {
+      continue; // gone already — nothing to fold from this one
+    }
+    const lines = raw.split('\n').filter((l) => l.trim());
+    for (let i = 0; i < lines.length; i += 1) {
+      status.counts.total += 1;
+      status.counts.error += 1;
+      status.lastOutcome = 'error';
+      status.lastError = 'OUTER_NODE_FAILED';
+      status.lastErrorAt = now;
+    }
   }
-  return claimPath;
+  return claimFiles;
 }
 
 /**
