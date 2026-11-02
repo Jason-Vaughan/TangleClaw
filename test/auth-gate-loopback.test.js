@@ -18,7 +18,7 @@
  * is a `server.js` change, out of this car's file envelope.
  */
 
-const { describe, it } = require('node:test');
+const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const authGate = require('../lib/auth-gate');
 
@@ -124,5 +124,87 @@ describe('lib/auth-gate — isMachineClient\'s opt-in service-token requirement 
       const machineClient = authGate.isMachineClient({ ...local, requireServiceToken: true, serviceTokenValid: true });
       assert.deepEqual(authGate.evaluateUpgrade({ ...base, machineClient }), { action: 'allow' });
     });
+  });
+});
+
+describe('server.js — _gateIdentity wires the opt-in end to end (#1973)', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const http = require('node:http');
+  const store = require('../lib/store');
+  const serviceToken = require('../lib/service-token');
+  const { createServer } = require('../server');
+
+  let tmpDir;
+  let server;
+
+  function send(headers = {}) {
+    return new Promise((resolve, reject) => {
+      const req = http.request({
+        hostname: '127.0.0.1', port: server.address().port, path: '/api/master/status', method: 'GET', headers
+      }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({ status: res.statusCode }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  before(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-gate-1973-'));
+    store._setBasePath(tmpDir);
+    store.init();
+    // Arm the login gate: a bare, cookieless, non-browser-shaped GET is the
+    // exact shape the machine-client carve-out exists for — it would
+    // otherwise be challenged like any other anonymous caller.
+    store.users.create('gate-1973-operator', 'Fixture-Passphrase-2233');
+    const armed = store.config.load();
+    armed.authEnabled = true;
+    store.config.save(armed);
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('a bare machine call is let through while machineClientRequiresServiceToken is unset (unchanged default)', async () => {
+    const res = await send();
+    assert.equal(res.status, 200);
+  });
+
+  it('the same bare call is challenged once the operator opts in and presents no token', async () => {
+    const config = store.config.load();
+    config.machineClientRequiresServiceToken = true;
+    store.config.save(config);
+    try {
+      const res = await send();
+      assert.equal(res.status, 401);
+    } finally {
+      config.machineClientRequiresServiceToken = false;
+      store.config.save(config);
+    }
+  });
+
+  it('passes once the opted-in caller presents a valid AUTH-4 service token', async () => {
+    const config = store.config.load();
+    config.machineClientRequiresServiceToken = true;
+    config.serviceTokenEnabled = true;
+    serviceToken.ensureTokenWhenEnabled(config);
+    store.config.save(config);
+    try {
+      const res = await send({ Authorization: `Bearer ${config.serviceToken}` });
+      assert.equal(res.status, 200);
+    } finally {
+      config.machineClientRequiresServiceToken = false;
+      config.serviceTokenEnabled = false;
+      store.config.save(config);
+    }
   });
 });

@@ -3139,6 +3139,24 @@ describe('master API routes over HTTP', () => {
     assert.equal(data.exists === null, data.incomplete.includes('exists'),
       'exists === null and incomplete naming it are the same claim, and must not disagree');
     assert.equal(data.tmuxSession, 'tangleclaw-master');
+    // #2120/#2132/#966 — present on every answer, not only once asked for.
+    assert.equal(data.continuity.status, 'unmeasured', 'no reading was supplied on this call');
+    assert.equal(data.authority.accessLevel, 'read-only');
+    assert.equal(data.authority.toggleState, 'read-only');
+  });
+
+  it('GET /api/master/status forwards remainingPercent as the continuity reading (#2120)', async () => {
+    const { status, data } = await request('GET', '/api/master/status?remainingPercent=10');
+    assert.equal(status, 200);
+    assert.equal(data.continuity.status, 'critical');
+    assert.equal(data.continuity.remainingPercent, 10);
+    assert.equal(data.continuity.source, 'reported');
+  });
+
+  it('GET /api/master/status forwards usedBytes+capacityBytes as a pane-buffer estimate (#2120)', async () => {
+    const { status, data } = await request('GET', '/api/master/status?usedBytes=95&capacityBytes=100');
+    assert.equal(status, 200);
+    assert.equal(data.continuity.source, 'estimated');
   });
 
   it('POST /api/master/ensure returns 200 on success and 500 with a code on refusal', async () => {

@@ -1228,8 +1228,23 @@ route('POST', '/api/dashboard/boot', (_req, res, _params, body) => {
 // the M2M-gated path set: these are operator surfaces, not fleet surfaces.
 
 // GET /api/master/status — is the master session alive? Truth from tmux.
-route('GET', '/api/master/status', (_req, res) => {
-  jsonResponse(res, 200, master.getMasterStatus());
+// #2120 — `remainingPercent` (0-100), or `usedBytes`+`capacityBytes` as a
+// pane-buffer-size estimate, are optional continuity-handoff inputs; omitted
+// entirely, the continuity signal reads `unmeasured` rather than a false `ok`.
+route('GET', '/api/master/status', (req, res) => {
+  const query = parseQuery(reqUrl(req).search);
+  const continuityReading = {};
+  const remainingPercent = Number(query.remainingPercent);
+  if (query.remainingPercent !== undefined && Number.isFinite(remainingPercent)) {
+    continuityReading.remainingPercent = remainingPercent;
+  }
+  const usedBytes = Number(query.usedBytes);
+  const capacityBytes = Number(query.capacityBytes);
+  if (query.usedBytes !== undefined && query.capacityBytes !== undefined
+    && Number.isFinite(usedBytes) && Number.isFinite(capacityBytes)) {
+    continuityReading.paneBuffer = { usedBytes, capacityBytes };
+  }
+  jsonResponse(res, 200, master.getMasterStatus({ continuityReading }));
 });
 
 // POST /api/master/ensure — idempotent create-or-noop. Regenerates the
@@ -4822,13 +4837,16 @@ route('POST', '/api/projects/import', (req, res, _params, body) => {
     const engineId = importDefaultEngine;
 
     try {
-      store.projects.create({
+      const created = store.projects.create({
         name,
         path: projPath,
         engine: engineId,
         tags: [],
         ports: {}
       });
+      // #2125 — an imported project gets the standard onboarding trust rule
+      // exactly as a created one does; best-effort, never fails the import.
+      projects.ensureOnboardingTrustRule(created.id);
 
       // Write per-project config only when none is on disk — an existing (or
       // unusable) project.json is never clobbered by defaults (#2232).
@@ -7108,6 +7126,34 @@ function _gateIdentity(req, socket, pathname) {
   }
   const browserShaped = _looksLikeBrowser(req);
   const conn = socket || req.socket;
+  // #1973 — the opt-in fifth condition (Ruling A491-W1D-R2): while the
+  // operator has turned `machineClientRequiresServiceToken` on, the loopback
+  // carve-out additionally requires a valid AUTH-4 service token on THIS
+  // request. `_gateConfig()`, not a fresh `store.config.load()`: this runs on
+  // every request, and that cache is keyed on the file's own mtime/size.
+  // `serviceToken.validateRequest` answers `{ok: true}` when ITS OWN gate
+  // (`serviceTokenEnabled`) is off, which is not proof of a real token — only
+  // `gate.ok && config.serviceTokenEnabled` together are, the same condition
+  // the AUTH-4 M2M surface gate below already uses for the same reason.
+  // Guarded the same way the session lookup above is: `resolveGateState`
+  // already decided the gate is active despite whatever this read finds (a
+  // corrupt or missing config.json fails the gate CLOSED there, not here),
+  // and this function has no catch above it either — a throw must not be
+  // how that failure reaches the caller a second time.
+  let requireServiceToken = false;
+  let serviceTokenValid = false;
+  try {
+    const config = _gateConfig();
+    requireServiceToken = config.machineClientRequiresServiceToken === true;
+    if (requireServiceToken) {
+      const gate = serviceToken.validateRequest(req.headers, config);
+      serviceTokenValid = gate.ok === true && config.serviceTokenEnabled === true;
+    }
+  } catch (err) {
+    log.error('Config read failed while resolving machine-client identity — defaulting to the pre-#1973 carve-out', {
+      method: req.method, path: pathname, error: err.message
+    });
+  }
   const machineClient = authGate.isMachineClient({
     // `isLoopbackRemote` is `lib/admin-credential.js`'s, reused because
     // `POST /api/auth/credential` already authorises on exactly this predicate.
@@ -7117,7 +7163,9 @@ function _gateIdentity(req, socket, pathname) {
     // process. See `authGate.isMachineClient` condition 2.
     proxied: authIdentity.cameThroughProxy(req.headers),
     browserShaped,
-    hasSessionCookie: sessionToken !== null
+    hasSessionCookie: sessionToken !== null,
+    requireServiceToken,
+    serviceTokenValid
   });
   return { sessionToken, session, machineClient };
 }
