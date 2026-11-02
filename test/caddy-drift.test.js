@@ -560,13 +560,62 @@ describe('caddy-drift — route-order coverage helpers (#2774)', () => {
       assert.deepEqual(drift.checkRouteOrderCoverage(undefined), { ok: true, unmeasured: false });
     });
 
-    it('is immediately covered by an offbox guard route regardless of what follows it', () => {
+    it('is NOT covered by an offbox guard alone — the guard aborts non-loopback peers but does nothing for a loopback one (PRR-B BLOCKING 1, round 1)', () => {
+      // A loopback peer simply falls through the guard unmatched, so
+      // `[offboxGuard, proxy, auth]` would leave `proxy` reachable from
+      // loopback with no authentication at all if the guard were trusted
+      // as list-covering here. Peer-origin filtering and authentication
+      // coverage are two different properties; `checkOffboxRefused` owns
+      // the first.
       const guard = {
         match: [{ not: [{ remote_ip: { ranges: ['127.0.0.1/8', '::1'] } }] }],
         handle: [{ handler: 'static_response', abort: true }]
       };
       const uncoveredProxy = { handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: 'x' }] }] };
-      assert.deepEqual(drift.checkRouteOrderCoverage([guard, uncoveredProxy]), { ok: true, unmeasured: false });
+      const laterAuth = { handle: [{ handler: 'authentication' }] };
+      assert.deepEqual(drift.checkRouteOrderCoverage([guard, uncoveredProxy, laterAuth]), { ok: false, unmeasured: false });
+    });
+
+    it('does not read a bare offbox guard\'s own remote_ip matcher as unmeasured, having no proxy of its own to begin with', () => {
+      const guard = {
+        match: [{ not: [{ remote_ip: { ranges: ['127.0.0.1/8', '::1'] } }] }],
+        handle: [{ handler: 'static_response', abort: true }]
+      };
+      assert.deepEqual(drift.checkRouteOrderCoverage([guard]), { ok: true, unmeasured: false });
+    });
+  });
+
+  describe('authenticationPrecedesProxy', () => {
+    it('is false when authentication is absent, or listed after reverse_proxy in the same handler array', () => {
+      assert.equal(drift.authenticationPrecedesProxy([{ handler: 'reverse_proxy' }]), false);
+      assert.equal(drift.authenticationPrecedesProxy([{ handler: 'reverse_proxy' }, { handler: 'authentication' }]), false);
+    });
+
+    it('is true when authentication precedes reverse_proxy, or there is no reverse_proxy in this same array at all', () => {
+      assert.equal(drift.authenticationPrecedesProxy([{ handler: 'authentication' }, { handler: 'reverse_proxy' }]), true);
+      assert.equal(drift.authenticationPrecedesProxy([{ handler: 'authentication' }]), true);
+    });
+  });
+
+  describe('checkRouteOrderCoverage — handler order within one route (PRR-B BLOCKING 2, round 1)', () => {
+    it('does not cover a route whose own handle array runs reverse_proxy before authentication — the proxy already responded', () => {
+      const route = { handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: 'x' }] }, { handler: 'authentication' }] };
+      assert.deepEqual(drift.checkRouteOrderCoverage([route]), { ok: false, unmeasured: false });
+    });
+
+    it('still covers when authentication correctly precedes reverse_proxy in the same array', () => {
+      const route = { handle: [{ handler: 'authentication' }, { handler: 'reverse_proxy', upstreams: [{ dial: 'x' }] }] };
+      assert.deepEqual(drift.checkRouteOrderCoverage([route]), { ok: true, unmeasured: false });
+    });
+
+    it('applies the same ordering rule inside a nested subroute', () => {
+      const outer = {
+        handle: [{
+          handler: 'subroute',
+          routes: [{ handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: 'x' }] }, { handler: 'authentication' }] }]
+        }]
+      };
+      assert.deepEqual(drift.checkRouteOrderCoverage([outer]), { ok: false, unmeasured: false });
     });
   });
 });
