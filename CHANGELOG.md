@@ -18,6 +18,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 - Session launch and kill routes now independently admit only a verified Operator or an authorized Master. Wrap routes also admit the targeted project's current verified session acting on itself, never another project's session (#2129).
+- Both Master authority write paths reject requests carrying any launch-binding header, including an empty one, before verifying Operator identity. This closes a forged dashboard-shaped request path on open installs (#2129).
 
 ## [5.52.0] - 2026-11-01
 
