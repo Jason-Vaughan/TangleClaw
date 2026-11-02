@@ -21,7 +21,8 @@ const { execFileSync } = require('node:child_process');
 const { initRepo } = require('./_temp-repo');
 const {
   realOrSelf, locateCheckouts, linkedWorktreeRoots, landsInPrimary, OVERRIDE_FILE, OVERRIDE_ENV,
-  resolveServerCheckoutRoot, describeServerRootCoupling, validateServerCheckoutRoot, SERVER_ROOT_ENV
+  resolveServerCheckoutRoot, describeServerRootCoupling, validateServerCheckoutRoot, SERVER_ROOT_ENV,
+  renderLaunchdServerPlist, repointLaunchdServerPlist, provisionDedicatedServerCheckout, _runCli
 } = require('../lib/checkout-layout');
 const guardSource = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'guard-primary-checkout.js'), 'utf8');
 const installerSource = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'install-primary-guard.js'), 'utf8');
@@ -336,35 +337,44 @@ describe('describeServerRootCoupling (#1672)', () => {
     return { primary, wt };
   }
 
+  // A fixed, deterministic (never-existing) plist path for every test below
+  // that doesn't exercise `launchdWorkingDirectory` itself — without it,
+  // these would default to reading THIS machine's real
+  // ~/Library/LaunchAgents/com.tangleclaw.server.plist if one happens to be
+  // installed, making the assertion depend on ambient machine state.
+  function noPlist() { return { launchdPlistPath: path.join(base, 'no-such-plist.plist') }; }
+
   it('reports an uncoupled dedicated checkout: a primary with no linked worktrees', () => {
     const primary = path.join(base, 'dedicated');
     fs.mkdirSync(primary);
     initRepo(primary, ['-b', 'main']);
-    const result = describeServerRootCoupling(primary);
+    const result = describeServerRootCoupling(primary, noPlist());
     assert.deepEqual(result, {
       checkout: { primary, isWorktree: false },
       isLinkedWorktree: false,
       hasLinkedWorktrees: false,
       linkedWorktreeCount: 0,
-      coupled: false
+      coupled: false,
+      launchdWorkingDirectory: null
     });
   });
 
   it('flags the resolved root itself being a linked worktree', () => {
     const { primary, wt } = makePrimaryWithWorktree();
-    const result = describeServerRootCoupling(wt);
+    const result = describeServerRootCoupling(wt, noPlist());
     assert.deepEqual(result, {
       checkout: { primary, isWorktree: true },
       isLinkedWorktree: true,
       hasLinkedWorktrees: false,
       linkedWorktreeCount: 0,
-      coupled: true
+      coupled: true,
+      launchdWorkingDirectory: null
     });
   });
 
   it('flags a primary that has an active Builder/agent worktree linked off it, without miscounting the worktree itself', () => {
     const { primary } = makePrimaryWithWorktree();
-    const result = describeServerRootCoupling(primary);
+    const result = describeServerRootCoupling(primary, noPlist());
     assert.equal(result.isLinkedWorktree, false);
     assert.equal(result.hasLinkedWorktrees, true);
     assert.equal(result.linkedWorktreeCount, 1);
@@ -374,12 +384,258 @@ describe('describeServerRootCoupling (#1672)', () => {
   it('answers null/uncoupled for a root with no recognizable git layout at all', () => {
     const root = path.join(base, 'no-git');
     fs.mkdirSync(root);
-    assert.deepEqual(describeServerRootCoupling(root), {
+    assert.deepEqual(describeServerRootCoupling(root, noPlist()), {
       checkout: null,
       isLinkedWorktree: false,
       hasLinkedWorktrees: false,
       linkedWorktreeCount: 0,
-      coupled: false
+      coupled: false,
+      launchdWorkingDirectory: null
     });
+  });
+
+  it('reports launchdWorkingDirectory from an injected plist path (#1672 Round 3)', () => {
+    const plistPath = path.join(base, 'fake.plist');
+    fs.writeFileSync(plistPath, '<plist><dict><key>WorkingDirectory</key><string>/declared/root</string></dict></plist>');
+    const primary = path.join(base, 'dedicated');
+    fs.mkdirSync(primary);
+    initRepo(primary, ['-b', 'main']);
+    const result = describeServerRootCoupling(primary, { launchdPlistPath: plistPath });
+    assert.equal(result.launchdWorkingDirectory, '/declared/root');
+  });
+
+  it('reports launchdWorkingDirectory as null when the plist has no WorkingDirectory key', () => {
+    const plistPath = path.join(base, 'no-wd.plist');
+    fs.writeFileSync(plistPath, '<plist><dict><key>Label</key><string>com.tangleclaw.server</string></dict></plist>');
+    assert.equal(describeServerRootCoupling(base, { launchdPlistPath: plistPath }).launchdWorkingDirectory, null);
+  });
+
+  it('reports launchdWorkingDirectory as null, never throwing, for a malformed/unreadable plist', () => {
+    const plistPath = path.join(base, 'a-directory-not-a-file.plist');
+    fs.mkdirSync(plistPath); // exists, but readFileSync on a directory throws
+    assert.doesNotThrow(() => describeServerRootCoupling(base, { launchdPlistPath: plistPath }));
+    assert.equal(describeServerRootCoupling(base, { launchdPlistPath: plistPath }).launchdWorkingDirectory, null);
+  });
+});
+
+/*
+ * A fixture resembling `deploy/com.tangleclaw.server.plist`'s real shape
+ * closely enough to prove `renderLaunchdServerPlist` rewrites exactly the
+ * one key it should (`WorkingDirectory`) — inline, not read from the real
+ * deploy file, so these tests stay correct even if that file's other
+ * fields change for unrelated reasons.
+ */
+const SAMPLE_PLIST_XML = [
+  '<?xml version="1.0" encoding="UTF-8"?>',
+  '<plist version="1.0">',
+  '<dict>',
+  '\t<key>Label</key>',
+  '\t<string>com.tangleclaw.server</string>',
+  '\t<key>ProgramArguments</key>',
+  '\t<array>',
+  '\t\t<string>__NODE_PATH__</string>',
+  '\t\t<string>server.js</string>',
+  '\t</array>',
+  '\t<key>WorkingDirectory</key>',
+  '\t<string>__REPO_DIR__</string>',
+  '\t<key>StandardOutPath</key>',
+  '\t<string>/dev/null</string>',
+  '\t<key>StandardErrorPath</key>',
+  '\t<string>__HOME__/.tangleclaw/logs/server.err.log</string>',
+  '</dict>',
+  '</plist>',
+  ''
+].join('\n');
+
+describe('renderLaunchdServerPlist (#1672 Round 3)', () => {
+  it('rewrites ONLY WorkingDirectory, leaving ProgramArguments\' relative server.js entry and the HOME-relative log path untouched', () => {
+    const xml = renderLaunchdServerPlist('/dedicated/root', { templateXml: SAMPLE_PLIST_XML });
+    assert.match(xml, /<key>WorkingDirectory<\/key>\s*<string>\/dedicated\/root<\/string>/);
+    assert.match(xml, /<string>server\.js<\/string>/, 'the relative server.js argument must survive untouched');
+    assert.match(xml, /__HOME__\/\.tangleclaw\/logs\/server\.err\.log/, 'the HOME-relative log path must survive untouched');
+    assert.match(xml, /<string>\/dev\/null<\/string>/);
+  });
+
+  it('XML-escapes a path containing characters meaningful to XML', () => {
+    const xml = renderLaunchdServerPlist('/weird & <root>', { templateXml: SAMPLE_PLIST_XML });
+    assert.match(xml, /<string>\/weird &amp; &lt;root&gt;<\/string>/);
+  });
+
+  it('throws TypeError when templateXml is missing or empty', () => {
+    assert.throws(() => renderLaunchdServerPlist('/x', {}), TypeError);
+    assert.throws(() => renderLaunchdServerPlist('/x', { templateXml: '' }), TypeError);
+  });
+
+  it('throws when the template XML has no WorkingDirectory key to rewrite', () => {
+    assert.throws(() => renderLaunchdServerPlist('/x', { templateXml: '<plist><dict></dict></plist>' }));
+  });
+});
+
+describe('repointLaunchdServerPlist (#1672 Round 3)', () => {
+  let base;
+  beforeEach(() => { base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-repoint-'))); });
+  afterEach(() => fs.rmSync(base, { recursive: true, force: true }));
+
+  /** A real, valid server checkout: git-initialized, has server.js and deploy/<plist>. */
+  function makeValidTarget() {
+    const target = path.join(base, 'dedicated');
+    fs.mkdirSync(target);
+    initRepo(target, ['-b', 'main']);
+    fs.writeFileSync(path.join(target, 'server.js'), '// stand-in\n');
+    fs.mkdirSync(path.join(target, 'deploy'));
+    fs.writeFileSync(path.join(target, 'deploy', 'com.tangleclaw.server.plist'), SAMPLE_PLIST_XML);
+    return target;
+  }
+
+  it('fails closed for an invalid target checkout, touching no filesystem write at all', () => {
+    const plistPath = path.join(base, 'should-not-exist.plist');
+    assert.throws(() => repointLaunchdServerPlist(path.join(base, 'nope'), { plistPath }));
+    assert.equal(fs.existsSync(plistPath), false, 'nothing must be written when validation fails');
+  });
+
+  it('writes the rewritten plist to plistPath, reading from the target\'s own deploy/ template by default', () => {
+    const target = makeValidTarget();
+    const plistPath = path.join(base, 'out.plist');
+    const result = repointLaunchdServerPlist(target, { plistPath });
+    assert.equal(result.reloaded, false);
+    assert.equal(fs.existsSync(plistPath), true);
+    const written = fs.readFileSync(plistPath, 'utf8');
+    assert.ok(written.includes(`<string>${target}</string>`), 'the rewritten WorkingDirectory must be present');
+  });
+
+  it('reads from the existing plist at plistPath instead of the template when readFrom is "existing"', () => {
+    const target = makeValidTarget();
+    const plistPath = path.join(base, 'existing.plist');
+    // A pre-existing installed plist, deliberately different from the template
+    // (a custom StandardOutPath an operator added) — must survive the rewrite.
+    const existingXml = SAMPLE_PLIST_XML.replace('/dev/null', '/custom/out.log');
+    fs.writeFileSync(plistPath, existingXml);
+    const result = repointLaunchdServerPlist(target, { plistPath, readFrom: 'existing' });
+    assert.equal(result.sourcePath, plistPath);
+    assert.match(fs.readFileSync(plistPath, 'utf8'), /\/custom\/out\.log/, 'the existing custom field must survive');
+  });
+
+  it('never calls execFileSync unless reload is true', () => {
+    const target = makeValidTarget();
+    const plistPath = path.join(base, 'out.plist');
+    let called = false;
+    repointLaunchdServerPlist(target, { plistPath, execFileSync: () => { called = true; } });
+    assert.equal(called, false);
+  });
+
+  it('runs launchctl unload then load, through the injected execFileSync, only when reload is true', () => {
+    const target = makeValidTarget();
+    const plistPath = path.join(base, 'out.plist');
+    const calls = [];
+    const result = repointLaunchdServerPlist(target, {
+      plistPath, reload: true, execFileSync: (cmd, args) => calls.push([cmd, ...args])
+    });
+    assert.equal(result.reloaded, true);
+    assert.deepEqual(calls, [['launchctl', 'unload', plistPath], ['launchctl', 'load', plistPath]]);
+  });
+
+  it('writes atomically: no temp file is left behind on success', () => {
+    const target = makeValidTarget();
+    const plistPath = path.join(base, 'out.plist');
+    repointLaunchdServerPlist(target, { plistPath });
+    const leftovers = fs.readdirSync(base).filter((f) => f.startsWith('out.plist.tmp-'));
+    assert.deepEqual(leftovers, []);
+  });
+
+  it('throws a clear error, writing nothing, when the source plist cannot be read', () => {
+    const target = makeValidTarget();
+    fs.rmSync(path.join(target, 'deploy', 'com.tangleclaw.server.plist'));
+    const plistPath = path.join(base, 'out.plist');
+    assert.throws(() => repointLaunchdServerPlist(target, { plistPath }), /could not read source plist/);
+    assert.equal(fs.existsSync(plistPath), false);
+  });
+});
+
+describe('provisionDedicatedServerCheckout (#1672 Round 3)', () => {
+  let base, primary;
+  beforeEach(() => {
+    base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-provision-')));
+    primary = path.join(base, 'primary');
+    fs.mkdirSync(primary);
+    initRepo(primary, ['-b', 'main']);
+    const git = (...a) => execFileSync('git', a, { cwd: primary, stdio: ['pipe', 'pipe', 'pipe'] });
+    git('config', 'user.email', 't@example.invalid');
+    git('config', 'user.name', 'T');
+    fs.writeFileSync(path.join(primary, 'f.txt'), 'x\n');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'init');
+  });
+  afterEach(() => fs.rmSync(base, { recursive: true, force: true }));
+
+  it('provisions a linked worktree by default, sharing the primary\'s history', () => {
+    const dedicated = path.join(base, 'dedicated-wt');
+    const result = provisionDedicatedServerCheckout(primary, dedicated);
+    assert.equal(result.mode, 'worktree');
+    assert.equal(fs.existsSync(path.join(dedicated, 'f.txt')), true);
+    assert.deepEqual(describeServerRootCoupling(primary, { launchdPlistPath: path.join(base, 'no-plist') }).hasLinkedWorktrees, true);
+  });
+
+  it('provisions a clone when mode is "clone"', () => {
+    const dedicated = path.join(base, 'dedicated-clone');
+    const result = provisionDedicatedServerCheckout(primary, dedicated, { mode: 'clone' });
+    assert.equal(result.mode, 'clone');
+    assert.equal(fs.existsSync(path.join(dedicated, 'f.txt')), true);
+    assert.equal(fs.existsSync(path.join(dedicated, '.git')), true, 'a clone has its own .git');
+  });
+
+  it('refuses to provision over an existing path', () => {
+    const dedicated = path.join(base, 'already-here');
+    fs.mkdirSync(dedicated);
+    assert.throws(() => provisionDedicatedServerCheckout(primary, dedicated), /refusing to provision/);
+  });
+});
+
+describe('_runCli (#1672 Round 3)', () => {
+  let base;
+  beforeEach(() => { base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-cli-'))); });
+  afterEach(() => fs.rmSync(base, { recursive: true, force: true }));
+
+  it('--repoint drives repointLaunchdServerPlist end to end, never calling the real execFileSync', () => {
+    const target = path.join(base, 'dedicated');
+    fs.mkdirSync(target);
+    initRepo(target, ['-b', 'main']);
+    fs.writeFileSync(path.join(target, 'server.js'), '// stand-in\n');
+    fs.mkdirSync(path.join(target, 'deploy'));
+    fs.writeFileSync(path.join(target, 'deploy', 'com.tangleclaw.server.plist'), SAMPLE_PLIST_XML);
+    const plistPath = path.join(base, 'out.plist');
+
+    const logs = [];
+    const calls = [];
+    const result = _runCli(['--repoint', target, '--plist', plistPath, '--reload'], {
+      log: (m) => logs.push(m),
+      fns: { execFileSync: (cmd, args) => calls.push([cmd, ...args]) }
+    });
+    assert.equal(result.reloaded, true);
+    assert.equal(calls.length, 2);
+    assert.ok(logs[0].includes(plistPath));
+    assert.equal(fs.existsSync(plistPath), true);
+  });
+
+  it('--provision-dedicated drives provisionDedicatedServerCheckout end to end', () => {
+    const primary = path.join(base, 'primary');
+    fs.mkdirSync(primary);
+    initRepo(primary, ['-b', 'main']);
+    const git = (...a) => execFileSync('git', a, { cwd: primary, stdio: ['pipe', 'pipe', 'pipe'] });
+    git('config', 'user.email', 't@example.invalid');
+    git('config', 'user.name', 'T');
+    fs.writeFileSync(path.join(primary, 'f.txt'), 'x\n');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'init');
+
+    const dedicated = path.join(base, 'dedicated');
+    const logs = [];
+    const result = _runCli(['--provision-dedicated', dedicated, '--primary', primary], { log: (m) => logs.push(m) });
+    assert.equal(result.mode, 'worktree');
+    assert.equal(fs.existsSync(path.join(dedicated, 'f.txt')), true);
+  });
+
+  it('throws a usage error for no recognized flag', () => {
+    assert.throws(() => _runCli([]), /usage: node lib\/checkout-layout\.js/);
+    assert.throws(() => _runCli(['--bogus']), /usage: node lib\/checkout-layout\.js/);
   });
 });

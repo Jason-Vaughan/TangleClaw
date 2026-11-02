@@ -1263,6 +1263,29 @@ describe('getServerInfo carries checkoutCoupling (#1672)', () => {
     }
   });
 
+  it('bounds checkoutCoupling.error to 160 chars rather than leaking an unbounded message (#1672 Round 3)', () => {
+    const huge = 'x'.repeat(10000);
+    serverInfo._internal.describeServerRootCoupling = () => { throw new Error(huge); };
+    try {
+      const { checkoutCoupling } = serverInfo.getServerInfo();
+      assert.equal(checkoutCoupling.status, 'unknown');
+      assert.equal(checkoutCoupling.error.length, 160);
+      assert.equal(checkoutCoupling.error, huge.slice(0, 160));
+    } finally {
+      restore();
+    }
+  });
+
+  it('falls back to a fixed reason when the thrown value has no message', () => {
+    serverInfo._internal.describeServerRootCoupling = () => { throw 'not an Error object'; };
+    try {
+      const { checkoutCoupling } = serverInfo.getServerInfo();
+      assert.equal(checkoutCoupling.error, 'checkout_coupling_probe_failed');
+    } finally {
+      restore();
+    }
+  });
+
   it('a clean read reports status "ok"', () => {
     const { checkoutCoupling } = serverInfo.getServerInfo();
     assert.equal(checkoutCoupling.status, 'ok');
