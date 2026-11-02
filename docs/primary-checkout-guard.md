@@ -151,12 +151,16 @@ the decision — while recording, to a small liveness-telemetry file, which of t
 
 The wired command's own `||` fallback — for the one failure mode even `--invoke` cannot observe,
 `node` itself missing or this very file failing to parse — no longer stays silent either. It is pure
-shell (a `printf`, no `node`, so it works precisely when `node` does not) that drops a small sentinel
-beside the telemetry file; `foldOuterFailureSentinel` folds it into `counts.error` as
-`OUTER_NODE_FAILED` the next time anything can run JS against this primary again — a recovered real
-invocation, or an operator's own `--status`. The fold is claimed by an atomic `unlink`, not a lock:
-whichever caller's unlink succeeds is the one that gets to count it, so two near-simultaneous callers
-never double-count one shell-level failure.
+shell (a `printf`, no `node`, so it works precisely when `node` does not) that **appends** (`>>`, not
+`>` — several failures before anyone folds them leave several lines, not one overwriting the last) a
+small sentinel beside the telemetry file. It is folded into `counts.error` as `OUTER_NODE_FAILED`
+(one per line, so a burst of real failures is not under-counted) the next time anything can run JS
+against this primary again — a recovered real invocation, or an operator's own `--status`. The fold
+happens strictly INSIDE the same lock `updateStatus` already takes for everything else, not as a
+separate unlocked step beforehand: an earlier design unlinked the sentinel as its own atomic claim
+before acquiring the lock, which raced against the lock's own contention-skip (below) — a contended
+lock could let the unlink destroy the sentinel while the write meant to fold it never happened,
+losing the failure entirely. One lock, one atomic read-fold-unlink-write, closes that gap.
 
 Telemetry is written TWICE per invocation, not once: a `pending` entry is recorded *before* the
 child even runs, and cleared when the outcome above is recorded after. The gap this closes is the
@@ -184,21 +188,29 @@ and a bounded `lastError` code — never a raw path, command or message. A write
 swallowed and never alters the decision already computed — telemetry is strictly best-effort
 downstream of the thing that actually matters.
 
-`--self-test` runs four checks in order: the node binary it would re-spawn as the inner guard
+`--self-test` runs these checks, in order: the node binary it would re-spawn as the inner guard
 actually runs (naming that specific cause directly, rather than letting it surface only as a generic
 "the wired command failed to run"); `disableAllHooks` is not set in EITHER `.claude/settings.json`
 or `settings.local.json` (a flag `settings.local.json` alone could never reveal if it were set only
 in the shared file); this guard's entry appears in the UNION of both files' `PreToolUse` entries —
 Claude Code loads hooks from both additively, so the union is the honest model of what the engine
 actually has to work with, not a guess at precedence between them (there is none to guess at for two
-files that both contribute); then it genuinely drives the wired command through a refusal case, an
-allow case, and a THIRD, realistically engine-shaped payload (carrying `hook_event_name`,
-`session_id`, `transcript_path` — the fields a hand-built payload would not think to include) and
-asserts the liveness heartbeat advances as a result, proving the outer runner is the one actually
-live on this path, not just that the policy script works in isolation. All three probe invocations
-are counted into a **separate** `selfTest` bucket, never into the genuine `counts` or
-`engineInvocations` — a healthy self-test habit, however realistic its payload, must never be able to
-masquerade as evidence that real tool-call traffic is reaching the guard.
+files that both contribute).
+
+**Then it checks for an EXISTING genuine engine heartbeat — and fails closed if there is none, rather
+than skipping the check.** AC8's own text is explicit: *"Proof that the hook is on the live route must
+come from a heartbeat the engine's own invocation produced, never from one the self-test caused. A
+check that cannot be made is a failure, not a skip."* An earlier version of this file had self-test
+drive a third, realistically engine-shaped probe through the wired command itself — which is exactly
+the thing that sentence forbids: self-test manufacturing its own proof. Removed. Self-test may only
+ask "has `engineInvocations` ever been incremented by something that was NOT self-test" — if the
+answer is no, self-test FAILS, naming that as the reason, rather than quietly skipping the question.
+Only once that proof already exists does self-test go on to genuinely drive the wired command through
+a refusal case and an allow case and assert the liveness heartbeat advances — proving the outer
+runner is the one actually live on this path — and explicitly confirms its OWN two probes never moved
+`engineInvocations` either. Both probe invocations are counted into a **separate** `selfTest` bucket,
+never into the genuine `counts` or `engineInvocations` — a healthy self-test habit must never be able
+to masquerade as evidence that real tool-call traffic is reaching the guard.
 
 ```sh
 node scripts/install-primary-guard.js --status         # liveness telemetry, human-readable
@@ -206,10 +218,14 @@ node scripts/install-primary-guard.js --status --json  # same, as JSON
 ```
 
 `--status` reports `liveEngineVerified`: true once `engineInvocations` is nonzero — a GENUINE
-(non-self-test) invocation whose payload actually looks like Claude Code's own PreToolUse envelope,
-not merely any invocation that happened not to set the self-test probe flag. That distinction is
-deliberate: a hand-built CLI call satisfies the weaker "produced a real decision" test just as well
-as genuine engine traffic does, so only the envelope-shaped check can tell them apart. It also checks
+(non-self-test) invocation whose payload actually looks like Claude Code's own PreToolUse envelope:
+`hook_event_name === 'PreToolUse'` together with non-empty `session_id`/`transcript_path`/`cwd`, AND
+`transcript_path` resolving to a REAL, EXISTING `.jsonl` file whose basename matches `session_id`.
+The on-disk check is load-bearing, not decoration: a payload merely copying plausible-looking field
+names is indistinguishable from the exact kind of self-manufactured proof AC8 forbids, so matching
+field names alone is not enough — only a transcript file that genuinely exists at the claimed path is.
+`lastEngineHeartbeatAt` is stamped alongside every such increment; `--self-test` requires both to be
+present before it will run at all. It also checks
 whether the TRACKED, shared `.claude/settings.json` declares its own `PreToolUse` entry for one of
 this guard's two exact matchers (`'Bash'` or the write matcher) that is not this guard's own — this
 repo's own contract says that file carries no `hooks` block at all, so any such entry is already

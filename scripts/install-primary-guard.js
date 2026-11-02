@@ -190,7 +190,10 @@ function outerFailureSentinelPath(primary) {
  */
 function guardCommand(primary) {
   const sentinel = outerFailureSentinelPath(primary);
-  const fallback = `{ printf '%s\\n' '{"code":"OUTER_NODE_FAILED"}' > ${shellWord(sentinel)} 2>/dev/null; true; }`;
+  // `>>` (append), not `>` (overwrite, #1400 Round 4 finding 2): several
+  // outer-node failures before anyone folds them must leave several lines,
+  // not have each overwrite the last and silently under-count a burst.
+  const fallback = `{ printf '%s\\n' '{"code":"OUTER_NODE_FAILED"}' >> ${shellWord(sentinel)} 2>/dev/null; true; }`;
   // Single-quoted, not double: the primary checkout is an operator-chosen path,
   // and under double quotes a `$` or a backtick in it is expanded by the shell
   // before `node` ever sees it, while a literal `"` or `\\` breaks the quoting
@@ -424,6 +427,10 @@ function defaultStatus() {
     // and more honest than inferring liveness merely from `counts.allow +
     // counts.refusal`, which a hand-built CLI call could also produce.
     engineInvocations: 0,
+    // Set only alongside an `engineInvocations` increment — the existence
+    // proof `--self-test` requires BEFORE it will run its own probes (#1400
+    // Round 4 finding 1 / AC8): self-test may check for this, never cause it.
+    lastEngineHeartbeatAt: null,
     selfTest: { lastAt: null, lastSuccessfulAt: null, counts: emptyCounts() },
     activity: { lastCheckedCommitCount: null, countsTotalAtLastCheck: null },
     // Invocations that have STARTED but not yet finished, keyed by a random
@@ -593,19 +600,29 @@ function releaseLock(lockPath) {
 }
 
 /**
- * Read the status file, let `mutate` change it in place, and write it back —
- * under `acquireLock`'s exclusive lock, so two concurrent `--invoke`
- * processes updating the SAME counters never lose one side's increment to
- * the other's overwrite (#1400 Round 2 finding 2). SKIPS the update
- * entirely — never falls back to an unlocked read-modify-write — when the
- * lock cannot be acquired within its budget (#1400 Round 3 Warning): see
- * `acquireLock`'s own doc for why skipping is the correct degrade.
+ * Read the status file, fold any pending outer-failure sentinel into it,
+ * let `mutate` change it further in place, and write it back — all under
+ * `acquireLock`'s exclusive lock, so two concurrent `--invoke` processes
+ * updating the SAME counters never lose one side's increment to the
+ * other's overwrite (#1400 Round 2 finding 2), and the sentinel fold can
+ * never be claimed-then-dropped by a lock that turns out to be contended
+ * (#1400 Round 4 finding 2 — see `foldOuterFailureSentinelLocked`'s doc).
  *
- * @param {string} file - Absolute path to the status file.
+ * SKIPS the update entirely — never falls back to an unlocked
+ * read-modify-write — when the lock cannot be acquired within its budget
+ * (#1400 Round 3 Warning): see `acquireLock`'s own doc for why skipping is
+ * the correct degrade. Returns `undefined` in that case; a caller that
+ * must never see `undefined` (`reportStatus`, #1400 Round 4 finding 3)
+ * substitutes a plain `readStatus` itself rather than this function
+ * guessing at a one-size-fits-all fallback for every caller's own shape of
+ * return value.
+ *
+ * @param {string} primary - Absolute primary checkout root.
  * @param {function(object): *} mutate - Mutates the status object in place; its return value is returned.
  * @returns {*} Whatever `mutate` returned, or `undefined` if the update was skipped.
  */
-function updateStatus(file, mutate) {
+function updateStatus(primary, mutate) {
+  const file = statusFilePath(primary);
   const lockPath = acquireLock(file);
   if (!lockPath) {
     process.stderr.write('install-primary-guard: telemetry update skipped — lock contended\n');
@@ -613,6 +630,7 @@ function updateStatus(file, mutate) {
   }
   try {
     const current = readStatus(file);
+    foldOuterFailureSentinelLocked(current, primary);
     const result = mutate(current);
     writeStatusAtomic(file, current);
     return result;
@@ -664,59 +682,86 @@ function reclaimStalePending(status) {
 
 /**
  * Fold the shell-level outer-failure sentinel (`guardCommand`'s `||`
- * fallback) into telemetry, if one is sitting there (#1400 Round 3
- * finding 1).
+ * fallback) into an ALREADY-LOADED status object, if one is sitting there
+ * (#1400 Round 3 finding 1) — called from INSIDE `updateStatus`'s own
+ * locked critical section (#1400 Round 4 finding 2), not before it.
  *
- * The UNLINK is the atomic claim, not a lock: `fs.unlinkSync` succeeds for
- * exactly one caller when several race to notice the same sentinel, and
- * throws `ENOENT` for every other — so only the winner proceeds to fold it,
- * and nothing double-counts one shell-level failure as two telemetry
- * errors. Called from both `invoke()` (a recovered real invocation folds in
- * the failure that preceded it) and `reportStatus()` (an operator's
- * `--status` folds it in even if nothing has invoked the guard since).
+ * Moved here after a real bug: the original design unlinked the sentinel
+ * as its OWN atomic claim, BEFORE acquiring the status lock — correct
+ * across multiple PROCESSES racing to notice the same sentinel, but not
+ * against Round 3's OWN other fix (finding 3: skip, never unlocked-write,
+ * under lock contention). If the lock happened to be contended at exactly
+ * that moment, the unlink still destroyed the sentinel, but the locked
+ * write that was supposed to fold it got skipped — losing the
+ * `OUTER_NODE_FAILED` signal entirely. Doing both under the SAME lock
+ * `updateStatus` already acquires removes the gap: the lock itself is now
+ * the mutual exclusion, so read-fold-unlink-write is one atomic step.
  *
+ * `>>` (append, not `>`) in `guardCommand`'s fallback means several
+ * shell-level failures before anyone folds them leave several lines —
+ * folded here as that many errors, not just one, so a burst of real
+ * failures is not under-counted.
+ *
+ * @param {object} status - Status object, MUTATED in place.
  * @param {string} primary - Absolute primary checkout root.
  * @returns {void}
  */
-function foldOuterFailureSentinel(primary) {
+function foldOuterFailureSentinelLocked(status, primary) {
   const sentinel = outerFailureSentinelPath(primary);
+  let raw;
   try {
-    fs.unlinkSync(sentinel);
+    raw = fs.readFileSync(sentinel, 'utf8');
   } catch (err) {
-    return; // ENOENT (nothing to fold) or anything else — either way, nothing more to do
+    return; // nothing to fold
   }
   try {
-    const file = statusFilePath(primary);
-    updateStatus(file, (status) => {
-      status.counts.total += 1;
-      status.counts.error += 1;
-      status.lastOutcome = 'error';
-      status.lastError = 'OUTER_NODE_FAILED';
-      status.lastErrorAt = new Date().toISOString();
-    });
-  } catch (err) { // prawduct:allow prawduct/broad-except -- same best-effort posture as every other telemetry write in this file.
-    process.stderr.write(`install-primary-guard: telemetry write failed: ${boundedErrorCode(err)}\n`);
+    fs.unlinkSync(sentinel);
+  } catch (err) { /* already gone somehow — fine, still fold what was read */ }
+  const lines = raw.split('\n').filter((l) => l.trim());
+  const now = new Date().toISOString();
+  for (let i = 0; i < lines.length; i += 1) {
+    status.counts.total += 1;
+    status.counts.error += 1;
+    status.lastOutcome = 'error';
+    status.lastError = 'OUTER_NODE_FAILED';
+    status.lastErrorAt = now;
   }
 }
 
 /**
  * Does a PreToolUse payload look like a genuine Claude Code engine
- * invocation rather than a hand-built CLI call (#1400 Round 3 finding 2 /
- * AC8)? Claude Code's own PreToolUse hook payload carries `hook_event_name`,
- * `session_id` and `transcript_path` alongside `tool_name`/`tool_input`/
+ * invocation rather than a hand-built CLI call (#1400 Round 3 finding 2,
+ * tightened Round 4 finding 1 / AC8)? Requires `hook_event_name ===
+ * 'PreToolUse'` together with non-empty `session_id`, `transcript_path` and
  * `cwd` — fields nobody constructing a payload by hand (a test, a curious
- * operator) would think to add, and the ONLY fields this checks, precisely
- * so the check stays this narrow and auditable rather than guessing at the
- * engine's full envelope shape.
+ * operator) would think to add — AND that `transcript_path` resolves to a
+ * REAL, EXISTING regular `.jsonl` file whose basename matches `session_id`.
+ * The on-disk check is what makes this resistant to a payload that merely
+ * COPIES realistic-looking field names: a self-test or a hand-built call
+ * cannot cheaply fabricate a transcript file matching a session id, since
+ * doing so is indistinguishable from manufacturing the very engine
+ * heartbeat AC8 forbids self-test from causing.
  *
  * @param {object} parsed - Already-parsed stdin JSON.
  * @returns {boolean}
  */
 function looksLikeEngineEnvelope(parsed) {
   if (!parsed || typeof parsed !== 'object') return false;
-  if (parsed.hook_event_name === 'PreToolUse') return true;
-  return typeof parsed.session_id === 'string' && parsed.session_id !== ''
-    && typeof parsed.transcript_path === 'string' && parsed.transcript_path !== '';
+  if (parsed.hook_event_name !== 'PreToolUse') return false;
+  if (typeof parsed.session_id !== 'string' || !parsed.session_id.trim()) return false;
+  if (typeof parsed.transcript_path !== 'string' || !parsed.transcript_path.trim()) return false;
+  if (typeof parsed.cwd !== 'string' || !parsed.cwd.trim()) return false;
+
+  const tp = parsed.transcript_path.trim();
+  let st;
+  try {
+    st = fs.statSync(tp);
+  } catch (err) {
+    return false;
+  }
+  if (!st.isFile()) return false;
+  if (!tp.endsWith('.jsonl')) return false;
+  return path.basename(tp, '.jsonl') === String(parsed.session_id).trim();
 }
 
 /**
@@ -862,8 +907,7 @@ function runInner(guardPath, raw) {
  */
 function recordInvocation(primary, info) {
   try {
-    const file = statusFilePath(primary);
-    updateStatus(file, (current) => {
+    updateStatus(primary, (current) => {
       // Clears the `pending` entry `recordInvocationStart` opened for this
       // SAME invocation — this call reaching here at all means the outer
       // runner did not crash before finishing (#1400 Round 2 finding 1).
@@ -881,7 +925,13 @@ function recordInvocation(primary, info) {
         current.lastInvokedAt = now;
         current.lastHook = info.hook;
         current.lastOutcome = info.outcome;
-        if (info.engineInvocation) current.engineInvocations += 1;
+        if (info.engineInvocation) {
+          current.engineInvocations += 1;
+          // The heartbeat `--self-test` requires EXISTING proof of before it
+          // will even run its own probes (#1400 Round 4 finding 1) — set
+          // only by a GENUINE engine-shaped invocation, never a probe.
+          current.lastEngineHeartbeatAt = now;
+        }
       }
       if (info.outcome === 'error') {
         current.lastError = info.errorCode;
@@ -909,13 +959,13 @@ function recordInvocation(primary, info) {
  */
 function recordInvocationStart(primary, hook, probe) {
   try {
-    const file = statusFilePath(primary);
-    return updateStatus(file, (current) => {
+    const id = updateStatus(primary, (current) => {
       reclaimStalePending(current);
-      const id = newPendingId();
-      current.pending[id] = { startedAt: new Date().toISOString(), hook, probe };
-      return id;
+      const freshId = newPendingId();
+      current.pending[freshId] = { startedAt: new Date().toISOString(), hook, probe };
+      return freshId;
     });
+    return id === undefined ? null : id;
   } catch (err) { // prawduct:allow prawduct/broad-except -- same best-effort posture as `recordInvocation`: a failed start-marker write must never block the decision that follows.
     process.stderr.write(`install-primary-guard: telemetry write failed: ${boundedErrorCode(err)}\n`);
     return null;
@@ -951,10 +1001,10 @@ function invoke() {
     return 0;
   }
   const primary = located.primary;
-  // A recovered real invocation folds in whatever shell-level outer failure
-  // preceded it (#1400 Round 3 finding 1) — before anything else, so the
-  // fold happens even if THIS invocation's own outcome is itself an error.
-  foldOuterFailureSentinel(primary);
+  // The outer-failure sentinel (#1400 Round 3 finding 1) is folded inside
+  // `updateStatus`'s own lock, via `recordInvocationStart` below — not here
+  // as a separate unlocked pre-step (#1400 Round 4 finding 2 fixed exactly
+  // that gap).
   const guardPath = path.join(primary, GUARD_REL);
   const probeInvocation = Boolean(process.env[PROBE_ENV]);
   const hook = inferredHook(raw);
@@ -1109,25 +1159,30 @@ function mergedSettingsState(primary) {
  * @returns {number} 0 ordinarily; 1 when something here is actionable.
  */
 function reportStatus(primary, asJson) {
-  // Folded before anything else reads the status file, so an operator's own
-  // `--status` recovers a shell-level outer failure even when nothing has
-  // invoked the guard since (#1400 Round 3 finding 1).
-  foldOuterFailureSentinel(primary);
-  const file = statusFilePath(primary);
   // Computed OUTSIDE the lock: a `git` subprocess has no business holding up
   // a concurrent `--invoke`'s own telemetry write.
   const activitySignal = commitActivitySignal(primary);
-  let current;
   let staleWarning = false;
+  let current;
   try {
-    updateStatus(file, (status) => {
+    // The sentinel fold now happens INSIDE `updateStatus`'s own lock (#1400
+    // Round 4 finding 2), so a single locked pass here both folds it and
+    // advances the activity baseline — no separate unlocked pre-step.
+    current = updateStatus(primary, (status) => {
       reclaimStalePending(status);
       staleWarning = updateActivityAndWarn(status, activitySignal);
-      current = status;
+      return status;
     });
   } catch (err) { // prawduct:allow prawduct/broad-except -- a failed locked update must not block printing a best-effort status the operator asked for.
-    current = readStatus(file);
     process.stderr.write(`install-primary-guard: could not save the activity baseline: ${boundedErrorCode(err)}\n`);
+  }
+  if (!current) {
+    // `undefined` means the lock was contended (skipped, #1400 Round 3
+    // finding 3) or the try above threw before `current` was ever set —
+    // answer with a best-effort READ rather than crash dereferencing a
+    // field on `undefined` (#1400 Round 4 finding 3). The sentinel fold and
+    // the activity-baseline advance did not run in this path.
+    current = readStatus(statusFilePath(primary));
   }
   // "Any crash since the last successful wired-path self-test must be
   // flagged as actionable" (#1400 requirement 5) — a crash recorded before
@@ -1196,10 +1251,10 @@ function selfTest(command, primary) {
   // shell error instead of being told it directly. The OUTER wired
   // command's own `node` resolving at all is no longer undetectable in
   // PRODUCTION either (#1400 Round 3 finding 1: `guardCommand`'s shell-level
-  // sentinel, folded by `foldOuterFailureSentinel`) — this check is the
-  // immediate, on-demand version of the same question, for the one piece
-  // `--self-test` can ask about directly: whether the node binary this
-  // process would re-spawn as the inner guard actually runs, right now.
+  // sentinel, folded inside `updateStatus`) — this check is the immediate,
+  // on-demand version of the same question, for the one piece `--self-test`
+  // can ask about directly: whether the node binary this process would
+  // re-spawn as the inner guard actually runs, right now.
   const nodeCheck = checkNodeResolvable();
   if (!nodeCheck.ok) return nodeCheck;
 
@@ -1227,22 +1282,34 @@ function selfTest(command, primary) {
   const statusFile = statusFilePath(primary);
   const before = readStatus(statusFile);
 
+  // AC8's own text: "Proof that the hook is on the live route must come
+  // from a heartbeat the engine's own invocation produced, never from one
+  // the self-test caused. A check that cannot be made is a failure, not a
+  // skip." (#1400 Round 4 finding 1 — Round 3's `runEngineEnvelopeProbe`
+  // violated exactly this by having self-test manufacture an engine-shaped
+  // heartbeat itself; removed rather than patched.) Self-test may only
+  // check for EXISTING proof — it must fail closed, not skip the check,
+  // when none exists yet.
+  if (!(before.engineInvocations > 0 && before.lastEngineHeartbeatAt)) {
+    return { ok: false, detail: 'no genuine, engine-produced PreToolUse heartbeat has been observed '
+      + 'yet (engineInvocations is 0) — self-test cannot manufacture that proof itself (#1400 AC8); '
+      + 'this is a failure, not a skip, until real tool-call traffic reaches the guard at least once' };
+  }
+
   const refused = runProbe(command, primary, path.join(primary, 'server.js'), true);
   if (!refused.ok) return refused;
 
   const allowed = runProbe(command, primary, path.join(primary, 'package.json'), false);
   if (!allowed.ok) return allowed;
 
-  // A third, realistically engine-shaped probe (#1400 Round 3 finding 2):
-  // confirms the wired command still decides correctly on a payload
-  // carrying `hook_event_name`/`session_id`/`transcript_path`, the fields
-  // `looksLikeEngineEnvelope` keys on. Still tagged `PROBE_ENV`, so it never
-  // inflates `engineInvocations` — self-test traffic is never genuine
-  // traffic, whatever shape its payload takes.
-  const engineShaped = runEngineEnvelopeProbe(command, primary);
-  if (!engineShaped.ok) return engineShaped;
-
   const after = readStatus(statusFile);
+  // Self-test's OWN probes must never move `engineInvocations`, whatever
+  // shape their payload takes — the explicit proof, not just an inference
+  // from `runProbe` always setting `PROBE_ENV`.
+  if (after.engineInvocations !== before.engineInvocations) {
+    return { ok: false, detail: 'self-test\'s own probes advanced engineInvocations, which must '
+      + 'never happen — self-test traffic is never genuine traffic (#1400 AC8)' };
+  }
   const advanced = after.selfTest.counts.total > before.selfTest.counts.total
     && after.selfTest.lastAt && after.selfTest.lastAt !== before.selfTest.lastAt;
   if (!advanced) {
@@ -1252,7 +1319,7 @@ function selfTest(command, primary) {
   }
 
   try {
-    updateStatus(statusFile, (status) => {
+    updateStatus(primary, (status) => {
       status.selfTest.lastSuccessfulAt = new Date().toISOString();
     });
   } catch (err) { // prawduct:allow prawduct/broad-except -- a failed success-stamp write must not fail an otherwise-passing self-test; `--status`'s crash-since-last-success check degrades gracefully to "never" rather than wrongly.
@@ -1260,46 +1327,8 @@ function selfTest(command, primary) {
   }
 
   return { ok: true, detail: 'the wired command refused a write to the live surface, allowed an '
-    + 'ordinary one, decided correctly on an engine-shaped payload, and the liveness heartbeat '
+    + 'ordinary one, a genuine engine heartbeat was already on record, and the liveness heartbeat '
     + 'advanced' };
-}
-
-/**
- * A third self-test probe using a realistically engine-shaped ALLOW
- * payload (#1400 Round 3 finding 2) — confirms the wired command does not
- * choke on the extra fields a genuine Claude Code PreToolUse invocation
- * carries that `guard-primary-checkout.js` never reads.
- *
- * @param {string} command - The wired command string.
- * @param {string} primary - Absolute primary checkout root.
- * @returns {{ok:boolean, detail:string}}
- */
-function runEngineEnvelopeProbe(command, primary) {
-  const payload = JSON.stringify({
-    hook_event_name: 'PreToolUse',
-    session_id: 'self-test-simulated-session',
-    transcript_path: path.join(primary, '.claude', 'self-test-transcript.jsonl'),
-    tool_name: 'Write',
-    tool_input: { file_path: path.join(primary, 'package.json') },
-    cwd: primary
-  });
-  let stdout;
-  try {
-    stdout = execFileSync('/bin/sh', ['-c', command], {
-      input: payload,
-      encoding: 'utf8',
-      env: {
-        ...process.env, CLAUDE_PROJECT_DIR: primary, TANGLECLAW_ALLOW_PRIMARY_WRITE: '', [PROBE_ENV]: '1'
-      }
-    });
-  } catch (err) {
-    return { ok: false, detail: `the wired command failed to run on an engine-shaped payload: ${err.message}` };
-  }
-  if (stdout.trim()) {
-    return { ok: false, detail: 'the wired command REFUSED an ordinary write on an engine-shaped '
-      + `payload, which should have been allowed: ${stdout.slice(0, 200)}` };
-  }
-  return { ok: true, detail: '' };
 }
 
 /**
@@ -1454,6 +1483,6 @@ module.exports = {
   updateActivityAndWarn, reportStatus, isOwnScriptPath, acquireLock, releaseLock, updateStatus,
   reclaimStalePending, newPendingId, sharedSettingsHookConflicts, checkNodeResolvable,
   INNER_TIMEOUT_ENV, PENDING_STALE_ENV, LOCK_SUFFIX, LOCK_MAX_WAIT_ENV, lockMaxWaitMs,
-  outerFailureSentinelPath, foldOuterFailureSentinel, OUTER_FAILURE_BASENAME,
+  outerFailureSentinelPath, foldOuterFailureSentinelLocked, OUTER_FAILURE_BASENAME,
   looksLikeEngineEnvelope, isGenuineEngineInvocation, tolerantReadSettings, mergedSettingsState
 };

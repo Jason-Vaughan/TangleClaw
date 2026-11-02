@@ -203,6 +203,34 @@ function invokeCliAsync(fx, toolInput, env) {
   });
 }
 
+/**
+ * Seed `engineInvocations`/`lastEngineHeartbeatAt` with ONE genuine-looking
+ * engine invocation — the only thing `selfTest` will accept as proof the
+ * guard is on the live route (#1400 Round 4 finding 1 / AC8). A real,
+ * on-disk `.jsonl` transcript file whose basename matches `session_id` is
+ * required by `looksLikeEngineEnvelope` itself, not just a plausible field
+ * name — so this creates one for real, then cleans it up.
+ *
+ * @param {object} fx - Fixture from `makeFixture()`.
+ * @param {object} [toolInput] - Payload `tool_input`; defaults to an ordinary allow.
+ * @returns {{status:number, stdout:string, stderr:string}}
+ */
+function seedGenuineEngineHeartbeat(fx, toolInput) {
+  const sessionId = `self-test-seed-${Math.random().toString(36).slice(2, 10)}`;
+  const transcriptPath = path.join(os.tmpdir(), `${sessionId}.jsonl`);
+  fs.writeFileSync(transcriptPath, '{}\n');
+  try {
+    const payload = JSON.stringify({
+      hook_event_name: 'PreToolUse', session_id: sessionId, transcript_path: transcriptPath,
+      tool_name: 'Write', tool_input: toolInput || { file_path: path.join(fx.primary, 'lib', 'x.js') },
+      cwd: fx.primary
+    });
+    return invokeCli(fx, null, {}, null, payload);
+  } finally {
+    fs.rmSync(transcriptPath, { force: true });
+  }
+}
+
 describe('#798 primary-checkout guard — P1, the session is rooted in a worktree', () => {
   let fx;
   before(() => { fx = makeFixture(); });
@@ -914,6 +942,11 @@ describe('#798 installer — the CLI, against a real settings file', () => {
   });
 
   it('--self-test drives the WIRED command and sees a real refusal', () => {
+    // #1400 Round 4 finding 1 / AC8: self-test now requires an EXISTING
+    // genuine engine heartbeat before it will run its own probes at all —
+    // seed one first. (This also carries forward for every later test in
+    // this shared fixture, since engineInvocations never resets.)
+    seedGenuineEngineHeartbeat(fx);
     const r = cli('--self-test');
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /self-test: PASS/);
@@ -1098,6 +1131,7 @@ describe('#1400 — the stable outer runner (`--invoke`) and liveness telemetry'
   it('--self-test advances the self-test counter, not the genuine one, and stamps success', () => {
     fs.writeFileSync(path.join(fx.primary, '.claude', 'settings.local.json'),
       JSON.stringify(installer.apply({}, fx.primary, 'install').settings, null, 2));
+    seedGenuineEngineHeartbeat(fx); // #1400 Round 4 finding 1 / AC8: self-test now requires this first
     const before_ = readStatusNow();
     const r = spawnSync(process.execPath,
       [path.join(fx.primary, 'scripts', 'install-primary-guard.js'), '--self-test'], { encoding: 'utf8' });
@@ -1105,12 +1139,13 @@ describe('#1400 — the stable outer runner (`--invoke`) and liveness telemetry'
     assert.match(r.stdout, /self-test: PASS/);
 
     const after_ = readStatusNow();
-    assert.equal(after_.selfTest.counts.total, before_.selfTest.counts.total + 3,
-      'self-test drives three probes — a refusal case, an allow case, and an engine-shaped allow case');
+    assert.equal(after_.selfTest.counts.total, before_.selfTest.counts.total + 2,
+      'self-test drives two probes — a refusal case and an allow case (#1400 Round 4: the Round 3 '
+      + 'engine-shaped probe was removed — self-test must never manufacture its own engine proof)');
     assert.equal(after_.counts.total, before_.counts.total,
       'self-test traffic must never be counted as genuine traffic');
     assert.equal(after_.engineInvocations, before_.engineInvocations,
-      'self-test traffic must never inflate engineInvocations, even its engine-shaped probe');
+      'self-test traffic must never inflate engineInvocations');
     assert.ok(after_.selfTest.lastSuccessfulAt, 'a passing self-test must stamp its own success');
   });
 
@@ -1133,6 +1168,7 @@ describe('#1400 — the stable outer runner (`--invoke`) and liveness telemetry'
     try {
       fs.writeFileSync(path.join(fresh.primary, '.claude', 'settings.local.json'),
         JSON.stringify(installer.apply({}, fresh.primary, 'install').settings, null, 2));
+      seedGenuineEngineHeartbeat(fresh); // #1400 Round 4 finding 1 / AC8: self-test now requires this first
       const selfTestFirst = spawnSync(process.execPath,
         [path.join(fresh.primary, 'scripts', 'install-primary-guard.js'), '--self-test'],
         { encoding: 'utf8' });
@@ -1308,12 +1344,24 @@ describe('#1400 Round 2 — pre-invocation heartbeat, locking, bounded telemetry
         'a hand-built CLI call must not satisfy liveEngineVerified');
       assert.equal(JSON.parse(stillFalse.stdout).engineInvocations, 0);
 
-      const enginePayload = JSON.stringify({
-        hook_event_name: 'PreToolUse', session_id: 'real-session', transcript_path: '/tmp/t.jsonl',
+      // A payload with the right FIELD NAMES but a transcript_path that
+      // does not exist, or whose basename does not match session_id, must
+      // still be rejected (#1400 Round 4 finding 1) — plausible field
+      // names alone are not proof; the on-disk check is the point.
+      const fakeTranscript = JSON.stringify({
+        hook_event_name: 'PreToolUse', session_id: 'real-session', transcript_path: '/tmp/does-not-exist.jsonl',
         tool_name: 'Write', tool_input: { file_path: path.join(fresh.primary, 'public', 'sw.js') },
         cwd: fresh.primary
       });
-      invokeCli(fresh, null, {}, null, enginePayload);
+      invokeCli(fresh, null, {}, null, fakeTranscript);
+      const stillFakeRejected = spawnSync(process.execPath,
+        [path.join(fresh.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+        { encoding: 'utf8' });
+      assert.equal(JSON.parse(stillFakeRejected.stdout).liveEngineVerified, false,
+        'a nonexistent transcript file must not satisfy the engine-envelope check');
+
+      const r = seedGenuineEngineHeartbeat(fresh, { file_path: path.join(fresh.primary, 'public', 'sw.js') });
+      assert.equal(r.status, 0);
 
       const after_ = spawnSync(process.execPath,
         [path.join(fresh.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
@@ -1321,6 +1369,7 @@ describe('#1400 Round 2 — pre-invocation heartbeat, locking, bounded telemetry
       const parsedAfter = JSON.parse(after_.stdout);
       assert.equal(parsedAfter.liveEngineVerified, true);
       assert.equal(parsedAfter.engineInvocations, 1);
+      assert.ok(parsedAfter.lastEngineHeartbeatAt);
     } finally {
       fresh.cleanup();
     }
@@ -1451,5 +1500,119 @@ describe('#1400 Round 3 — outer-node sentinel, merged-settings AC8, lock-conte
     const resumed = invokeCli(fx, { file_path: path.join(fx.primary, 'public', 'sw.js') });
     assert.equal(JSON.parse(resumed.stdout).hookSpecificOutput.permissionDecision, 'deny');
     assert.equal(readStatusNow().counts.refusal > 0, true);
+  });
+});
+
+describe('#1400 Round 4 — AC8 fail-closed self-test, locked sentinel fold, --status under contention', () => {
+  let fx;
+  before(() => { fx = makeFixture(); });
+  after(() => fx.cleanup());
+
+  const statusPath = () => installer.statusFilePath(fx.primary);
+  const readStatusNow = () => installer.readStatus(statusPath());
+
+  const cliSelfTest = (dir) => spawnSync(process.execPath,
+    [path.join(dir, 'scripts', 'install-primary-guard.js'), '--self-test'], { encoding: 'utf8' });
+  const cliStatusJson = (dir) => spawnSync(process.execPath,
+    [path.join(dir, 'scripts', 'install-primary-guard.js'), '--status', '--json'], { encoding: 'utf8' });
+
+  it('selfTest FAILS CLOSED on a freshly-installed guard before any real engine invocation — never skips', () => {
+    const fresh = makeFixture();
+    try {
+      fs.writeFileSync(path.join(fresh.primary, '.claude', 'settings.local.json'),
+        JSON.stringify(installer.apply({}, fresh.primary, 'install').settings, null, 2));
+      // No seedGenuineEngineHeartbeat call — this is the whole point.
+      const r = cliSelfTest(fresh.primary);
+      assert.equal(r.status, 1, 'a check that cannot be made must be a failure, not a skip (#1400 AC8)');
+      assert.match(r.stdout, /self-test: FAIL/);
+      assert.match(r.stdout, /no genuine, engine-produced PreToolUse heartbeat/);
+      // And it must not have run its own probes at all — no selfTest counter movement.
+      const status = installer.readStatus(installer.statusFilePath(fresh.primary));
+      assert.equal(status.selfTest.counts.total, 0);
+    } finally {
+      fresh.cleanup();
+    }
+  });
+
+  it('selfTest never increments engineInvocations itself, confirmed directly by calling it', () => {
+    const fresh = makeFixture();
+    try {
+      fs.writeFileSync(path.join(fresh.primary, '.claude', 'settings.local.json'),
+        JSON.stringify(installer.apply({}, fresh.primary, 'install').settings, null, 2));
+      seedGenuineEngineHeartbeat(fresh);
+      const before_ = installer.readStatus(installer.statusFilePath(fresh.primary));
+      const r = cliSelfTest(fresh.primary);
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      const after_ = installer.readStatus(installer.statusFilePath(fresh.primary));
+      assert.equal(after_.engineInvocations, before_.engineInvocations,
+        'a passing self-test must not move engineInvocations at all');
+    } finally {
+      fresh.cleanup();
+    }
+  });
+
+  it('a lock held during a sentinel fold attempt preserves the sentinel, rather than losing it (#1400 Round 4 finding 2)', () => {
+    const sentinel = installer.outerFailureSentinelPath(fx.primary);
+    fs.writeFileSync(sentinel, '{"code":"OUTER_NODE_FAILED"}\n');
+    const file = statusPath();
+    const lockPath = `${file}${installer.LOCK_SUFFIX}`;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(lockPath, ''); // fresh, not stale
+    try {
+      const before_ = readStatusNow();
+      const r = invokeCli(fx, { file_path: path.join(fx.primary, 'lib', 'x.js') }, {
+        [installer.LOCK_MAX_WAIT_ENV]: '50'
+      });
+      assert.equal(r.status, 0);
+      assert.match(r.stderr, /telemetry update skipped/);
+      // The whole point of Round 4 finding 2: the sentinel must SURVIVE a
+      // contended lock, not be claimed-then-dropped by an unlink that ran
+      // before the (now-skipped) write.
+      assert.ok(fs.existsSync(sentinel), 'a contended lock must never destroy the still-unfolded sentinel');
+      const after_ = readStatusNow();
+      assert.deepEqual(after_.counts, before_.counts, 'nothing should have changed while the lock was held');
+    } finally {
+      fs.rmSync(lockPath, { force: true });
+    }
+
+    // Once the lock clears, the next update folds it correctly.
+    const resumed = invokeCli(fx, { file_path: path.join(fx.primary, 'lib', 'x.js') });
+    assert.equal(resumed.status, 0);
+    assert.ok(!fs.existsSync(sentinel), 'the sentinel must be folded once the lock is free');
+    assert.equal(readStatusNow().lastError, 'OUTER_NODE_FAILED');
+  });
+
+  it('--status answers with a real read, never crashes, when its own locked update is contended', () => {
+    const file = statusPath();
+    const lockPath = `${file}${installer.LOCK_SUFFIX}`;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(lockPath, '');
+    try {
+      const r = spawnSync(process.execPath,
+        [path.join(fx.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+        { encoding: 'utf8', env: { ...process.env, [installer.LOCK_MAX_WAIT_ENV]: '50' } });
+      assert.equal(r.status === 0 || r.status === 1, true, 'must answer with a clean exit code, never crash');
+      assert.doesNotThrow(() => JSON.parse(r.stdout), 'must still print a parseable status, not a stack trace');
+      assert.doesNotMatch(r.stderr, /TypeError|Cannot read properties of undefined/,
+        'reportStatus must not dereference a field on undefined when the lock is contended');
+    } finally {
+      fs.rmSync(lockPath, { force: true });
+    }
+  });
+
+  it('guardCommand appends (not overwrites) on repeated outer-node failures, and both lines fold as two errors', () => {
+    const cmd = installer.guardCommand(fx.primary);
+    spawnSync('/bin/sh', ['-c', cmd], { env: { PATH: '/nonexistent' }, encoding: 'utf8' });
+    spawnSync('/bin/sh', ['-c', cmd], { env: { PATH: '/nonexistent' }, encoding: 'utf8' });
+    const sentinel = installer.outerFailureSentinelPath(fx.primary);
+    const raw = fs.readFileSync(sentinel, 'utf8');
+    assert.equal(raw.trim().split('\n').length, 2, 'two failures must append two lines, not overwrite to one');
+
+    const before_ = readStatusNow();
+    const r = invokeCli(fx, { file_path: path.join(fx.primary, 'lib', 'x.js') });
+    assert.equal(r.status, 0);
+    const after_ = readStatusNow();
+    assert.equal(after_.counts.error, before_.counts.error + 2, 'both appended failures must fold as two errors');
+    assert.ok(!fs.existsSync(sentinel));
   });
 });
