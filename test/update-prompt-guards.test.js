@@ -85,7 +85,17 @@ function stripComments(src) {
  * @returns {string[]}
  */
 function applierCodes() {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'update-applier.js'), 'utf8');
+  const fullSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'update-applier.js'), 'utf8');
+  // Scoped to `applyUpdate` and what leads into it — #1710's Layer 2/3
+  // (`applyAutomaticRecordsOnlyFastForward`, `evaluateStaleInstallResponse`)
+  // is a separate, automatic flow this CLI's agent-facing prompt never runs
+  // through, and it reuses some of the same generic code names
+  // (`dirty-tree`, `git-error`, `no-git`) for its own unrelated refusals, so
+  // scanning past it would assert the prompt names codes this CLI's agent
+  // can never actually be handed.
+  const cutoff = fullSrc.indexOf('function applyAutomaticRecordsOnlyFastForward');
+  assert.ok(cutoff > 0, 'applyAutomaticRecordsOnlyFastForward must still exist to scope the scan before it');
+  const src = fullSrc.slice(0, cutoff);
   // Guard paths call _fail('<code>', …); the catch-all builds its result literal
   // directly, as `code: 'git-error'`. Both forms are read — hand-copying either
   // one back in would reintroduce the drift this function exists to stop.

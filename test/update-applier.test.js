@@ -641,7 +641,7 @@ describe('update-applier (UB #228/#229)', () => {
     });
 
     const FF_HAPPY = {
-      'rev-parse HEAD': 'aaaaaaa0000000000000000000000000000000\n',
+      'rev-parse HEAD': 'aaaaaaa000000000000000000000000000000000\n',
       'rev-parse --abbrev-ref HEAD': 'main\n',
       'status --porcelain': '',
       'merge --ff-only origin/main': '',
@@ -654,20 +654,77 @@ describe('update-applier (UB #228/#229)', () => {
         const key = args.join(' ');
         const table = {
           'rev-parse HEAD': calls <= 1
-            ? 'aaaaaaa0000000000000000000000000000000\n'
-            : 'bbbbbbb0000000000000000000000000000000\n',
+            ? 'aaaaaaa000000000000000000000000000000000\n'
+            : 'bbbbbbb000000000000000000000000000000000\n',
           'rev-parse --abbrev-ref HEAD': 'main\n',
           'status --porcelain': '',
-          'merge --ff-only origin/main': '',
+          'rev-parse origin/main': 'bbbbbbb000000000000000000000000000000000\n',
+          'merge --ff-only bbbbbbb000000000000000000000000000000000': '',
         };
         if (!(key in table)) throw new Error(`unexpected git call: ${key}`);
         return table[key];
       };
-      const r = applier.applyAutomaticRecordsOnlyFastForward({ delta: { delta: 'records-only' } });
+      const r = applier.applyAutomaticRecordsOnlyFastForward({
+        delta: {
+          delta: 'records-only',
+          fromSha: 'aaaaaaa000000000000000000000000000000000',
+          toSha: 'bbbbbbb000000000000000000000000000000000'
+        }
+      });
       assert.equal(r.ok, true);
-      assert.equal(r.fromSha, 'aaaaaaa0000000000000000000000000000000');
-      assert.equal(r.toSha, 'bbbbbbb0000000000000000000000000000000');
+      assert.equal(r.fromSha, 'aaaaaaa000000000000000000000000000000000');
+      assert.equal(r.toSha, 'bbbbbbb000000000000000000000000000000000');
       assert.equal(r.toRef, 'origin/main');
+    });
+
+    it('refuses when the classification carries no verifiable fromSha/toSha (PRR-B Round 1 Blocker 1)', () => {
+      applier._internal.git = gitStub(FF_HAPPY);
+      for (const bad of [
+        { delta: 'records-only' },
+        { delta: 'records-only', fromSha: 'not-a-sha', toSha: 'bbbbbbb000000000000000000000000000000000' },
+        { delta: 'records-only', fromSha: 'aaaaaaa000000000000000000000000000000000', toSha: null }
+      ]) {
+        const r = applier.applyAutomaticRecordsOnlyFastForward({ delta: bad });
+        assert.equal(r.ok, false);
+        assert.equal(r.code, 'unverified-delta');
+      }
+    });
+
+    it('refuses when HEAD has moved since the classification was computed, never merging anyway', () => {
+      applier._internal.git = gitStub({
+        'rev-parse HEAD': 'ccccccc000000000000000000000000000000000\n',
+        'rev-parse --abbrev-ref HEAD': 'main\n',
+        'status --porcelain': '',
+      });
+      const r = applier.applyAutomaticRecordsOnlyFastForward({
+        delta: {
+          delta: 'records-only',
+          fromSha: 'aaaaaaa000000000000000000000000000000000',
+          toSha: 'bbbbbbb000000000000000000000000000000000'
+        }
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'drift-detected');
+      assert.match(r.error, /HEAD/);
+    });
+
+    it('refuses when origin/main has moved since the classification was computed, never merging the moving ref', () => {
+      applier._internal.git = gitStub({
+        'rev-parse HEAD': 'aaaaaaa000000000000000000000000000000000\n',
+        'rev-parse --abbrev-ref HEAD': 'main\n',
+        'status --porcelain': '',
+        'rev-parse origin/main': 'ddddddd000000000000000000000000000000000\n',
+      });
+      const r = applier.applyAutomaticRecordsOnlyFastForward({
+        delta: {
+          delta: 'records-only',
+          fromSha: 'aaaaaaa000000000000000000000000000000000',
+          toSha: 'bbbbbbb000000000000000000000000000000000'
+        }
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'drift-detected');
+      assert.match(r.error, /origin\/main/);
     });
 
     it('refuses when the delta is not proven records-only', () => {
@@ -684,35 +741,41 @@ describe('update-applier (UB #228/#229)', () => {
       assert.equal(r.code, 'not-records-only');
     });
 
+    const VALID_DELTA = {
+      delta: 'records-only',
+      fromSha: 'aaaaaaa000000000000000000000000000000000',
+      toSha: 'bbbbbbb000000000000000000000000000000000'
+    };
+
     it('refuses off main, never attempting the merge', () => {
       applier._internal.git = gitStub({
-        'rev-parse HEAD': 'aaaaaaa0000000000000000000000000000000\n',
+        'rev-parse HEAD': 'aaaaaaa000000000000000000000000000000000\n',
         'rev-parse --abbrev-ref HEAD': 'feat/something\n',
       });
-      const r = applier.applyAutomaticRecordsOnlyFastForward({ delta: { delta: 'records-only' } });
+      const r = applier.applyAutomaticRecordsOnlyFastForward({ delta: VALID_DELTA });
       assert.equal(r.ok, false);
       assert.equal(r.code, 'wrong-ref');
     });
 
     it('refuses on a dirty tree, never discarding anything', () => {
       applier._internal.git = gitStub({
-        'rev-parse HEAD': 'aaaaaaa0000000000000000000000000000000\n',
+        'rev-parse HEAD': 'aaaaaaa000000000000000000000000000000000\n',
         'rev-parse --abbrev-ref HEAD': 'main\n',
         'status --porcelain': ' M some/file.js\n',
       });
-      const r = applier.applyAutomaticRecordsOnlyFastForward({ delta: { delta: 'records-only' } });
+      const r = applier.applyAutomaticRecordsOnlyFastForward({ delta: VALID_DELTA });
       assert.equal(r.ok, false);
       assert.equal(r.code, 'dirty-tree');
     });
 
     it('refuses while a wrap is running anywhere on the host', () => {
       applier._internal.git = gitStub({
-        'rev-parse HEAD': 'aaaaaaa0000000000000000000000000000000\n',
+        'rev-parse HEAD': 'aaaaaaa000000000000000000000000000000000\n',
         'rev-parse --abbrev-ref HEAD': 'main\n',
         'status --porcelain': '',
       });
       applier._internal.anyRunning = () => 'other-project';
-      const r = applier.applyAutomaticRecordsOnlyFastForward({ delta: { delta: 'records-only' } });
+      const r = applier.applyAutomaticRecordsOnlyFastForward({ delta: VALID_DELTA });
       assert.equal(r.ok, false);
       assert.equal(r.code, 'wrap-running');
       assert.match(r.error, /other-project/);
@@ -720,12 +783,13 @@ describe('update-applier (UB #228/#229)', () => {
 
     it('reports git-error when the fast-forward itself fails (non-ff-only history)', () => {
       applier._internal.git = gitStub({
-        'rev-parse HEAD': 'aaaaaaa0000000000000000000000000000000\n',
+        'rev-parse HEAD': 'aaaaaaa000000000000000000000000000000000\n',
         'rev-parse --abbrev-ref HEAD': 'main\n',
         'status --porcelain': '',
-        'merge --ff-only origin/main': new Error('fatal: Not possible to fast-forward, aborting.'),
+        'rev-parse origin/main': 'bbbbbbb000000000000000000000000000000000\n',
+        'merge --ff-only bbbbbbb000000000000000000000000000000000': new Error('fatal: Not possible to fast-forward, aborting.'),
       });
-      const r = applier.applyAutomaticRecordsOnlyFastForward({ delta: { delta: 'records-only' } });
+      const r = applier.applyAutomaticRecordsOnlyFastForward({ delta: VALID_DELTA });
       assert.equal(r.ok, false);
       assert.equal(r.code, 'git-error');
     });
@@ -755,18 +819,19 @@ describe('update-applier (UB #228/#229)', () => {
 
     it('auto-pulls a records-only delta end to end', () => {
       applier._internal.classifyUpstreamDelta = () => ({
-        delta: 'records-only', reason: null, fromSha: 'aaaaaaa0000000000000000000000000000000',
-        toSha: 'bbbbbbb0000000000000000000000000000000', executablePaths: [], recordsPaths: ['docs/x.md']
+        delta: 'records-only', reason: null, fromSha: 'aaaaaaa000000000000000000000000000000000',
+        toSha: 'bbbbbbb000000000000000000000000000000000', executablePaths: [], recordsPaths: ['docs/x.md']
       });
       let calls = 0;
       applier._internal.git = (args) => {
         calls += 1;
         const key = args.join(' ');
         const table = {
-          'rev-parse HEAD': calls <= 1 ? 'aaaaaaa0000000000000000000000000000000\n' : 'bbbbbbb0000000000000000000000000000000\n',
+          'rev-parse HEAD': calls <= 1 ? 'aaaaaaa000000000000000000000000000000000\n' : 'bbbbbbb000000000000000000000000000000000\n',
           'rev-parse --abbrev-ref HEAD': 'main\n',
           'status --porcelain': '',
-          'merge --ff-only origin/main': '',
+          'rev-parse origin/main': 'bbbbbbb000000000000000000000000000000000\n',
+          'merge --ff-only bbbbbbb000000000000000000000000000000000': '',
         };
         if (!(key in table)) throw new Error(`unexpected git call: ${key}`);
         return table[key];
@@ -778,10 +843,11 @@ describe('update-applier (UB #228/#229)', () => {
 
     it('reports auto-pull-refused when a records-only delta cannot be pulled (e.g. dirty tree)', () => {
       applier._internal.classifyUpstreamDelta = () => ({
-        delta: 'records-only', reason: null, fromSha: 'a', toSha: 'b', executablePaths: [], recordsPaths: ['docs/x.md']
+        delta: 'records-only', reason: null, fromSha: 'aaaaaaa000000000000000000000000000000000',
+        toSha: 'bbbbbbb000000000000000000000000000000000', executablePaths: [], recordsPaths: ['docs/x.md']
       });
       applier._internal.git = gitStub({
-        'rev-parse HEAD': 'aaaaaaa0000000000000000000000000000000\n',
+        'rev-parse HEAD': 'aaaaaaa000000000000000000000000000000000\n',
         'rev-parse --abbrev-ref HEAD': 'main\n',
         'status --porcelain': ' M docs/x.md\n',
       });
@@ -790,11 +856,23 @@ describe('update-applier (UB #228/#229)', () => {
       assert.equal(r.result.code, 'dirty-tree');
     });
 
+    it('reports pending-diagnosis for an unmeasured delta, never a restart prompt (PRR-B Round 1 Warning)', () => {
+      for (const deltaType of ['unknown', 'pending']) {
+        applier._internal.classifyUpstreamDelta = () => ({
+          delta: deltaType, reason: 'upstream not observed', fromSha: null, toSha: null, executablePaths: [], recordsPaths: []
+        });
+        const r = applier.evaluateStaleInstallResponse({ id: 1, name: 'p', path: '/x' });
+        assert.equal(r.action, 'pending-diagnosis');
+        assert.equal(r.prompt, undefined, 'no restart prompt is framed for a delta with nothing proven');
+        assert.equal(r.fleetQuiet, undefined, 'fleetQuiet answers a question this delta never raised');
+      }
+    });
+
     it('never restarts unilaterally for an executable delta — asks instead, fleet quiet', () => {
       applier._internal.classifyUpstreamDelta = () => ({
         delta: 'executable', reason: null, fromSha: 'a', toSha: 'b', executablePaths: ['lib/foo.js'], recordsPaths: []
       });
-      const r = applier.evaluateStaleInstallResponse({ id: 1, name: 'p', path: '/x' });
+      const r = applier.evaluateStaleInstallResponse({ id: 1, name: 'p', path: '/x' }, { sessionsMidTurn: false });
       assert.equal(r.action, 'await_operator_restart_confirmation');
       assert.equal(r.requiresOperatorAuthorization, true);
       assert.equal(r.fleetQuiet, true);
@@ -806,7 +884,7 @@ describe('update-applier (UB #228/#229)', () => {
         delta: 'mixed', reason: null, fromSha: 'a', toSha: 'b', executablePaths: ['lib/foo.js'], recordsPaths: ['docs/x.md']
       });
       applier._internal.anyRunning = () => 'another-project';
-      const r = applier.evaluateStaleInstallResponse({ id: 1, name: 'p', path: '/x' });
+      const r = applier.evaluateStaleInstallResponse({ id: 1, name: 'p', path: '/x' }, { sessionsMidTurn: false });
       assert.equal(r.action, 'await_operator_restart_confirmation');
       assert.equal(r.fleetQuiet, false);
       assert.match(r.prompt, /busy/);
@@ -814,17 +892,28 @@ describe('update-applier (UB #228/#229)', () => {
 
     it('reports the fleet as busy when the caller says a session is mid-turn', () => {
       applier._internal.classifyUpstreamDelta = () => ({
-        delta: 'unknown', reason: 'upstream not observed', fromSha: null, toSha: null, executablePaths: [], recordsPaths: []
+        delta: 'executable', reason: null, fromSha: 'a', toSha: 'b', executablePaths: ['lib/foo.js'], recordsPaths: []
       });
       const r = applier.evaluateStaleInstallResponse({ id: 1, name: 'p', path: '/x' }, { sessionsMidTurn: true });
       assert.equal(r.fleetQuiet, false);
+    });
+
+    it('reports the fleet as busy — never quiet — when the caller cannot answer whether anyone is mid-turn (PRR-B Round 1 Blocker 2)', () => {
+      applier._internal.classifyUpstreamDelta = () => ({
+        delta: 'executable', reason: null, fromSha: 'a', toSha: 'b', executablePaths: ['lib/foo.js'], recordsPaths: []
+      });
+      for (const opts of [{}, { sessionsMidTurn: null }, { sessionsMidTurn: undefined }]) {
+        const r = applier.evaluateStaleInstallResponse({ id: 1, name: 'p', path: '/x' }, opts);
+        assert.equal(r.fleetQuiet, false, `opts=${JSON.stringify(opts)}: an unanswered signal must never prove quiet`);
+        assert.equal(r.action, 'await_operator_restart_confirmation');
+      }
     });
 
     it('Mode (a): standing consent authorizes without a prompt when the fleet is quiet', () => {
       applier._internal.classifyUpstreamDelta = () => ({
         delta: 'executable', reason: null, fromSha: 'a', toSha: 'b', executablePaths: ['lib/foo.js'], recordsPaths: []
       });
-      const r = applier.evaluateStaleInstallResponse({ id: 1, name: 'p', path: '/x' }, { standingConsent: true });
+      const r = applier.evaluateStaleInstallResponse({ id: 1, name: 'p', path: '/x' }, { standingConsent: true, sessionsMidTurn: false });
       assert.equal(r.action, 'restart-authorized-by-standing-consent');
       assert.equal(r.fleetQuiet, true);
     });
