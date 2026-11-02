@@ -41,6 +41,17 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-02 — v5.54.0 W2-REC: reconcile external-code and CI-safety records
+
+<!-- prawduct: type=internal | scope=v5540-w2-rec -->
+
+- Reconciled the four merged Wave 1 PRs: #2799 (#1421, #1550), #2800 (#1554), #2801 (#1400), and #2802 (#2787). GitHub REST confirmed all five issues closed in Milestone #39. Their accepted `changelog.d/` fragments remain the release-note inputs.
+- **Primary-guard liveness (#1400):** the wired outer runner records genuine invocations and inner-script failures. Self-test drives refusal and allow paths and checks liveness; status exposes counts and crash/staleness signals. The guard's fail-open decision is unchanged.
+- **Store and CI hardening (#1421, #1550):** startup narrows the data directory and existing SQLite sidecars to owner-only modes. Fork-PR test CI does not persist checkout credentials and has a 20-minute job timeout.
+- **External PR review boundary (#1554):** a deterministic module sanitizes and fences untrusted PR text and validates read-only reviewer capabilities. It does not yet launch an isolated reviewer worker; ADR 0014's injection-hold operating rule remains in force.
+- **Per-session usage (#2787):** new session routes report live context remaining and live Codex weekly quota when visible, with operator calibration for five-hour quota and missing weekly readings. They expose a configurable low-usage hand-off signal. The test route fixtures now stub pane capture so the full CI suite does not contend with tmux tests.
+- Updated `FEATURES.md` with source and test anchors for the merged behavior. These records describe merged code; the release cut and deployment follow their own gates.
+
 ## 2026-11-02 — v5.53.1 W2-REC: reconcile residual and spin-off closure records
 
 <!-- prawduct: type=internal | scope=v5531-w2-rec -->
