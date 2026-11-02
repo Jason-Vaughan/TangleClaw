@@ -129,8 +129,44 @@ function pendingStaleMs() {
 /** Exclusive-lock tuning for `updateStatus` (#1400 Round 2 finding 2). */
 const LOCK_SUFFIX = '.lock';
 const LOCK_RETRY_MS = 15;
-const LOCK_MAX_WAIT_MS = 2000;
 const LOCK_STALE_MS = 10000;
+/** Overridable so a test can force a quick, bounded contention timeout instead of waiting out the real one. */
+const LOCK_MAX_WAIT_ENV = 'TANGLECLAW_PRIMARY_GUARD_LOCK_MAX_WAIT_MS';
+function lockMaxWaitMs() {
+  const override = parseInt(process.env[LOCK_MAX_WAIT_ENV], 10);
+  return Number.isFinite(override) && override > 0 ? override : 2000;
+}
+
+/**
+ * Basename of the shell-level sentinel `guardCommand`'s own `||` branch
+ * writes when the OUTER `node --invoke` invocation itself never completed
+ * (#1400 Round 3 finding 1 / AC3) — missing `node`, or a crash before any of
+ * this file's JS could run to report one, the one failure mode `--invoke`'s
+ * own exit-0 guarantee cannot cover because nothing JS ever starts to
+ * provide it. Pure shell (`printf`, no `node`), which is the point: it has
+ * to work precisely when node does not.
+ */
+const OUTER_FAILURE_BASENAME = 'tangleclaw-primary-guard-outer-failure.json';
+
+/**
+ * Where that sentinel lives — mirrors `statusFilePath`'s own resolution
+ * (and its override) so both land beside each other under the same
+ * git-common-dir, shared across every worktree of this primary.
+ *
+ * @param {string} primary - Absolute primary checkout root.
+ * @returns {string} Absolute path to the sentinel.
+ */
+function outerFailureSentinelPath(primary) {
+  if (process.env[STATUS_ENV]) return `${process.env[STATUS_ENV]}.outer-failure`;
+  let gitCommonDir;
+  try {
+    gitCommonDir = execFileSync('git', ['-C', primary, 'rev-parse', '--git-common-dir'],
+      { encoding: 'utf8' }).trim();
+  } catch (err) {
+    gitCommonDir = '.git';
+  }
+  return path.join(path.resolve(primary, gitCommonDir), OUTER_FAILURE_BASENAME);
+}
 
 /**
  * The shell command that invokes the guard.
@@ -139,20 +175,28 @@ const LOCK_STALE_MS = 10000;
  * happens — a missing node, a syntax error, a deleted script — so the guard can
  * never be the thing that starts the hook-failure loop it exists downstream of.
  * `--invoke` (below) now provides that same guarantee itself, by construction,
- * for every failure mode it can observe — but `|| true` stays as the
+ * for every failure mode it can observe — but the `||` branch stays as the
  * last-resort net for the one failure mode nothing inside this file can see:
- * this file's OWN script failing to parse at all.
+ * `node` itself missing, or this file's OWN script failing to parse at all.
+ * Round 3 (#1400 finding 1) makes that branch WRITE something rather than
+ * stay silent: a pure-shell `printf` (no `node`, so it works precisely when
+ * `node` does not) drops a sentinel `foldOuterFailureSentinel` later folds
+ * into telemetry as `OUTER_NODE_FAILED`, the next time anything — a real
+ * invocation once `node` recovers, or an operator's own `--status` — can
+ * actually run JS against this primary again.
  *
  * @param {string} primary - Absolute primary checkout root.
  * @returns {string} Shell command for a `hooks[].command` field.
  */
 function guardCommand(primary) {
+  const sentinel = outerFailureSentinelPath(primary);
+  const fallback = `{ printf '%s\\n' '{"code":"OUTER_NODE_FAILED"}' > ${shellWord(sentinel)} 2>/dev/null; true; }`;
   // Single-quoted, not double: the primary checkout is an operator-chosen path,
   // and under double quotes a `$` or a backtick in it is expanded by the shell
   // before `node` ever sees it, while a literal `"` or `\\` breaks the quoting
   // outright. The sibling generator of a `hooks[].command` shipped the
   // double-quoted form for the same reason (#1062).
-  return `node ${shellWord(path.join(primary, INSTALLER_REL))} --invoke || true`;
+  return `node ${shellWord(path.join(primary, INSTALLER_REL))} --invoke || ${fallback}`;
 }
 
 /**
@@ -375,6 +419,11 @@ function defaultStatus() {
     counts: emptyCounts(),
     lastError: null,
     lastErrorAt: null,
+    // Incremented only for a GENUINE (non-probe) invocation whose payload
+    // actually looks engine-shaped (#1400 Round 3 finding 2) — narrower
+    // and more honest than inferring liveness merely from `counts.allow +
+    // counts.refusal`, which a hand-built CLI call could also produce.
+    engineInvocations: 0,
     selfTest: { lastAt: null, lastSuccessfulAt: null, counts: emptyCounts() },
     activity: { lastCheckedCommitCount: null, countsTotalAtLastCheck: null },
     // Invocations that have STARTED but not yet finished, keyed by a random
@@ -478,8 +527,8 @@ function writeStatusAtomic(file, status) {
 }
 
 /**
- * Acquire an exclusive, local, best-effort lock for one status
- * read-modify-write (#1400 Round 2 finding 2).
+ * Acquire an exclusive, local lock for one status read-modify-write (#1400
+ * Round 2 finding 2).
  *
  * `fs.openSync(..., 'wx')` is the primitive: it creates the file only if it
  * does not already exist, atomically, so two processes racing to create it
@@ -487,13 +536,15 @@ function writeStatusAtomic(file, status) {
  * `LOCK_STALE_MS` is presumed abandoned by a holder that crashed between
  * acquiring it and releasing it — the same "a crash must not wedge the
  * guard forever" posture as everything else in this file — and is broken
- * rather than honoured. Giving up after `LOCK_MAX_WAIT_MS` (returning null
+ * rather than honoured. Giving up after `lockMaxWaitMs()` (returning null
  * rather than blocking indefinitely) is deliberate too: telemetry must
- * never be the reason a real tool call stalls, so a caller that cannot get
- * the lock proceeds UNLOCKED rather than waiting forever — the race window
- * narrows to near-zero; it is not promised to be exactly zero under
- * contention this guard does not expect to see in practice (one hook
- * invocation per tool call, not a high-throughput server).
+ * never be the reason a real tool call stalls. Null means `updateStatus`
+ * SKIPS the update entirely rather than proceeding unlocked (#1400 Round 3
+ * Warning) — an unlocked read-modify-write risks silently clobbering a
+ * concurrent process's own crash record, which is the one thing this
+ * telemetry exists to preserve, and a missed increment under contention
+ * this guard does not expect to see in practice (one hook invocation per
+ * tool call, not a high-throughput server) is the far cheaper failure.
  *
  * @param {string} file - The status file this lock protects.
  * @returns {string|null} The lock path to pass to `releaseLock`, or null
@@ -502,7 +553,7 @@ function writeStatusAtomic(file, status) {
 function acquireLock(file) {
   const lockPath = `${file}${LOCK_SUFFIX}`;
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const deadline = Date.now() + LOCK_MAX_WAIT_MS;
+  const deadline = Date.now() + lockMaxWaitMs();
   for (;;) {
     try {
       fs.closeSync(fs.openSync(lockPath, 'wx'));
@@ -543,19 +594,23 @@ function releaseLock(lockPath) {
 
 /**
  * Read the status file, let `mutate` change it in place, and write it back —
- * under `acquireLock`'s best-effort exclusive lock, so two concurrent
- * `--invoke` processes updating the SAME counters never lose one side's
- * increment to the other's overwrite (#1400 Round 2 finding 2). Falls back
- * to an unlocked read-modify-write when the lock cannot be acquired within
- * its budget — see `acquireLock`'s own doc for why that is the correct
- * degrade rather than blocking.
+ * under `acquireLock`'s exclusive lock, so two concurrent `--invoke`
+ * processes updating the SAME counters never lose one side's increment to
+ * the other's overwrite (#1400 Round 2 finding 2). SKIPS the update
+ * entirely — never falls back to an unlocked read-modify-write — when the
+ * lock cannot be acquired within its budget (#1400 Round 3 Warning): see
+ * `acquireLock`'s own doc for why skipping is the correct degrade.
  *
  * @param {string} file - Absolute path to the status file.
  * @param {function(object): *} mutate - Mutates the status object in place; its return value is returned.
- * @returns {*} Whatever `mutate` returned.
+ * @returns {*} Whatever `mutate` returned, or `undefined` if the update was skipped.
  */
 function updateStatus(file, mutate) {
   const lockPath = acquireLock(file);
+  if (!lockPath) {
+    process.stderr.write('install-primary-guard: telemetry update skipped — lock contended\n');
+    return undefined;
+  }
   try {
     const current = readStatus(file);
     const result = mutate(current);
@@ -604,6 +659,81 @@ function reclaimStalePending(status) {
       status.lastErrorAt = new Date().toISOString();
     }
     delete status.pending[id];
+  }
+}
+
+/**
+ * Fold the shell-level outer-failure sentinel (`guardCommand`'s `||`
+ * fallback) into telemetry, if one is sitting there (#1400 Round 3
+ * finding 1).
+ *
+ * The UNLINK is the atomic claim, not a lock: `fs.unlinkSync` succeeds for
+ * exactly one caller when several race to notice the same sentinel, and
+ * throws `ENOENT` for every other — so only the winner proceeds to fold it,
+ * and nothing double-counts one shell-level failure as two telemetry
+ * errors. Called from both `invoke()` (a recovered real invocation folds in
+ * the failure that preceded it) and `reportStatus()` (an operator's
+ * `--status` folds it in even if nothing has invoked the guard since).
+ *
+ * @param {string} primary - Absolute primary checkout root.
+ * @returns {void}
+ */
+function foldOuterFailureSentinel(primary) {
+  const sentinel = outerFailureSentinelPath(primary);
+  try {
+    fs.unlinkSync(sentinel);
+  } catch (err) {
+    return; // ENOENT (nothing to fold) or anything else — either way, nothing more to do
+  }
+  try {
+    const file = statusFilePath(primary);
+    updateStatus(file, (status) => {
+      status.counts.total += 1;
+      status.counts.error += 1;
+      status.lastOutcome = 'error';
+      status.lastError = 'OUTER_NODE_FAILED';
+      status.lastErrorAt = new Date().toISOString();
+    });
+  } catch (err) { // prawduct:allow prawduct/broad-except -- same best-effort posture as every other telemetry write in this file.
+    process.stderr.write(`install-primary-guard: telemetry write failed: ${boundedErrorCode(err)}\n`);
+  }
+}
+
+/**
+ * Does a PreToolUse payload look like a genuine Claude Code engine
+ * invocation rather than a hand-built CLI call (#1400 Round 3 finding 2 /
+ * AC8)? Claude Code's own PreToolUse hook payload carries `hook_event_name`,
+ * `session_id` and `transcript_path` alongside `tool_name`/`tool_input`/
+ * `cwd` — fields nobody constructing a payload by hand (a test, a curious
+ * operator) would think to add, and the ONLY fields this checks, precisely
+ * so the check stays this narrow and auditable rather than guessing at the
+ * engine's full envelope shape.
+ *
+ * @param {object} parsed - Already-parsed stdin JSON.
+ * @returns {boolean}
+ */
+function looksLikeEngineEnvelope(parsed) {
+  if (!parsed || typeof parsed !== 'object') return false;
+  if (parsed.hook_event_name === 'PreToolUse') return true;
+  return typeof parsed.session_id === 'string' && parsed.session_id !== ''
+    && typeof parsed.transcript_path === 'string' && parsed.transcript_path !== '';
+}
+
+/**
+ * Should THIS invocation count toward `engineInvocations`? Never for a
+ * self-test probe (same posture as every other genuine/probe split in this
+ * file), and only when the raw payload parses and looks engine-shaped.
+ *
+ * @param {string} raw - Raw stdin bytes.
+ * @param {boolean} probe - Whether this is a self-test probe invocation.
+ * @returns {boolean}
+ */
+function isGenuineEngineInvocation(raw, probe) {
+  if (probe) return false;
+  try {
+    return looksLikeEngineEnvelope(JSON.parse(raw));
+  } catch (err) {
+    return false;
   }
 }
 
@@ -751,6 +881,7 @@ function recordInvocation(primary, info) {
         current.lastInvokedAt = now;
         current.lastHook = info.hook;
         current.lastOutcome = info.outcome;
+        if (info.engineInvocation) current.engineInvocations += 1;
       }
       if (info.outcome === 'error') {
         current.lastError = info.errorCode;
@@ -820,16 +951,22 @@ function invoke() {
     return 0;
   }
   const primary = located.primary;
+  // A recovered real invocation folds in whatever shell-level outer failure
+  // preceded it (#1400 Round 3 finding 1) — before anything else, so the
+  // fold happens even if THIS invocation's own outcome is itself an error.
+  foldOuterFailureSentinel(primary);
   const guardPath = path.join(primary, GUARD_REL);
   const probeInvocation = Boolean(process.env[PROBE_ENV]);
   const hook = inferredHook(raw);
+  const engineInvocation = isGenuineEngineInvocation(raw, probeInvocation);
   // Recorded BEFORE `runInner`, not after (#1400 Round 2 finding 1): if this
   // whole process is killed while `runInner` is blocked, this is the only
   // telemetry write that already happened.
   const pendingId = recordInvocationStart(primary, hook, probeInvocation);
   const result = runInner(guardPath, raw);
   recordInvocation(primary, {
-    hook, outcome: result.outcome, errorCode: result.errorCode, probe: probeInvocation, pendingId
+    hook, outcome: result.outcome, errorCode: result.errorCode, probe: probeInvocation, pendingId,
+    engineInvocation
   });
   if (result.stdout) process.stdout.write(result.stdout);
   return 0;
@@ -909,12 +1046,7 @@ function updateActivityAndWarn(status, currentActivity) {
  *   be read.
  */
 function sharedSettingsHookConflicts(primary) {
-  let shared;
-  try {
-    shared = readSettings(path.join(primary, '.claude', 'settings.json'));
-  } catch (err) {
-    return [];
-  }
+  const shared = tolerantReadSettings(path.join(primary, '.claude', 'settings.json'));
   const entries = (shared && shared.hooks && shared.hooks.PreToolUse) || [];
   if (!Array.isArray(entries)) return [];
   const conflicts = [];
@@ -928,6 +1060,47 @@ function sharedSettingsHookConflicts(primary) {
 }
 
 /**
+ * `readSettings`, but tolerant of absence or malformed JSON — the right
+ * posture for a READ-ONLY diagnostic (`--self-test`/`--status`), unlike
+ * `readSettings`'s own refuse-to-clobber contract, which exists for the
+ * WRITE path (`apply`) where silently starting from `{}` would risk
+ * discarding the operator's real permissions block.
+ *
+ * @param {string} file - Absolute path.
+ * @returns {object} Parsed settings, or `{}` on absence or any read/parse failure.
+ */
+function tolerantReadSettings(file) {
+  try {
+    return readSettings(file);
+  } catch (err) {
+    return {};
+  }
+}
+
+/**
+ * The merged view `--self-test` checks against (#1400 Round 3 finding 2 /
+ * AC8): whether `disableAllHooks` is set in EITHER settings file (which
+ * disables every hook, this guard included, regardless of what is wired),
+ * and the union of both files' `PreToolUse` entries — Claude Code loads
+ * hooks from both `.claude/settings.json` and `.claude/settings.local.json`
+ * additively, so the union is the honest model of "what the engine actually
+ * has to work with", not a guess at precedence between them (there is none
+ * to guess at for two files that both contribute, rather than one
+ * overriding the other).
+ *
+ * @param {string} primary - Absolute primary checkout root.
+ * @returns {{disableAllHooks:boolean, entries:object[]}}
+ */
+function mergedSettingsState(primary) {
+  const shared = tolerantReadSettings(path.join(primary, '.claude', 'settings.json'));
+  const local = tolerantReadSettings(path.join(primary, '.claude', 'settings.local.json'));
+  const disableAllHooks = shared.disableAllHooks === true || local.disableAllHooks === true;
+  const sharedEntries = (shared.hooks && Array.isArray(shared.hooks.PreToolUse)) ? shared.hooks.PreToolUse : [];
+  const localEntries = (local.hooks && Array.isArray(local.hooks.PreToolUse)) ? local.hooks.PreToolUse : [];
+  return { disableAllHooks, entries: [...sharedEntries, ...localEntries] };
+}
+
+/**
  * `--status` (and `--status --json`): print liveness telemetry and the
  * actionable flags #1400 asks this surface to expose.
  *
@@ -936,6 +1109,10 @@ function sharedSettingsHookConflicts(primary) {
  * @returns {number} 0 ordinarily; 1 when something here is actionable.
  */
 function reportStatus(primary, asJson) {
+  // Folded before anything else reads the status file, so an operator's own
+  // `--status` recovers a shell-level outer failure even when nothing has
+  // invoked the guard since (#1400 Round 3 finding 1).
+  foldOuterFailureSentinel(primary);
   const file = statusFilePath(primary);
   // Computed OUTSIDE the lock: a `git` subprocess has no business holding up
   // a concurrent `--invoke`'s own telemetry write.
@@ -958,12 +1135,12 @@ function reportStatus(primary, asJson) {
   // re-covered; one recorded after it is new.
   const crashSinceLastSelfTest = Boolean(current.lastErrorAt
     && (!current.selfTest.lastSuccessfulAt || current.lastErrorAt > current.selfTest.lastSuccessfulAt));
-  // "has a GENUINE (non-self-test) invocation ever produced a real decision"
-  // — a narrower, honestly-scoped claim than full engine-route proof (#1400
-  // Round 2 finding 4), but a real one: it is false until this repo's actual
-  // wiring has actually been exercised by actual tool-call traffic at least
-  // once, self-test traffic never counting (#1400 Round 2 finding 4).
-  const liveEngineVerified = (current.counts.allow + current.counts.refusal) > 0;
+  // "has a GENUINE, engine-shaped invocation ever produced a real decision"
+  // (#1400 Round 3 finding 2) — narrower than Round 2's `counts.allow +
+  // counts.refusal > 0`, which a hand-built CLI call without
+  // `PROBE_ENV` set could also satisfy; `engineInvocations` only counts a
+  // payload that actually looks like Claude Code's own PreToolUse envelope.
+  const liveEngineVerified = current.engineInvocations > 0;
   const sharedConflicts = sharedSettingsHookConflicts(primary);
 
   if (asJson) {
@@ -1016,14 +1193,36 @@ function selfTest(command, primary) {
   // Named first (#1400 Round 2 finding 5): without it, a missing/broken
   // `node` surfaces only as `runProbe`'s generic "the wired command failed
   // to run" — true, but it makes the operator infer the real cause from a
-  // shell error instead of being told it directly. This does NOT close the
-  // structural gap that remains undetectable in production (the OUTER wired
-  // command's own `node` resolving at all — if that fails, nothing JS ever
-  // runs to report it); it only gives `--self-test` a direct, named check
-  // for the one piece it CAN ask about: whether the node binary this
-  // process would re-spawn as the inner guard actually runs.
+  // shell error instead of being told it directly. The OUTER wired
+  // command's own `node` resolving at all is no longer undetectable in
+  // PRODUCTION either (#1400 Round 3 finding 1: `guardCommand`'s shell-level
+  // sentinel, folded by `foldOuterFailureSentinel`) — this check is the
+  // immediate, on-demand version of the same question, for the one piece
+  // `--self-test` can ask about directly: whether the node binary this
+  // process would re-spawn as the inner guard actually runs, right now.
   const nodeCheck = checkNodeResolvable();
   if (!nodeCheck.ok) return nodeCheck;
+
+  // Merged-settings check (#1400 Round 3 finding 2 / AC8): `disableAllHooks`
+  // in EITHER file disables this guard regardless of what is wired, and
+  // settings.local.json alone would never show a flag set only in the
+  // shared settings.json.
+  const merged = mergedSettingsState(primary);
+  if (merged.disableAllHooks) {
+    return { ok: false, detail: 'disableAllHooks is set in the merged settings hierarchy '
+      + '(.claude/settings.json or settings.local.json) — every hook, including this guard, is '
+      + 'disabled regardless of what is wired' };
+  }
+  if (!merged.entries.some((e) => isGuardEntry(e))) {
+    // Reached only if settings.local.json's own PreToolUse array (already
+    // confirmed wired, or `command` would be null before `selfTest` is even
+    // called) somehow disagrees with what `mergedSettingsState` reads from
+    // the SAME file — defensive insurance against future drift between the
+    // two readers, not a case this file's own code can currently produce.
+    return { ok: false, detail: 'this guard\'s entry is wired in settings.local.json but does not '
+      + 'appear in the merged PreToolUse hierarchy across .claude/settings.json and '
+      + 'settings.local.json' };
+  }
 
   const statusFile = statusFilePath(primary);
   const before = readStatus(statusFile);
@@ -1033,6 +1232,15 @@ function selfTest(command, primary) {
 
   const allowed = runProbe(command, primary, path.join(primary, 'package.json'), false);
   if (!allowed.ok) return allowed;
+
+  // A third, realistically engine-shaped probe (#1400 Round 3 finding 2):
+  // confirms the wired command still decides correctly on a payload
+  // carrying `hook_event_name`/`session_id`/`transcript_path`, the fields
+  // `looksLikeEngineEnvelope` keys on. Still tagged `PROBE_ENV`, so it never
+  // inflates `engineInvocations` — self-test traffic is never genuine
+  // traffic, whatever shape its payload takes.
+  const engineShaped = runEngineEnvelopeProbe(command, primary);
+  if (!engineShaped.ok) return engineShaped;
 
   const after = readStatus(statusFile);
   const advanced = after.selfTest.counts.total > before.selfTest.counts.total
@@ -1052,7 +1260,46 @@ function selfTest(command, primary) {
   }
 
   return { ok: true, detail: 'the wired command refused a write to the live surface, allowed an '
-    + 'ordinary one, and the liveness heartbeat advanced' };
+    + 'ordinary one, decided correctly on an engine-shaped payload, and the liveness heartbeat '
+    + 'advanced' };
+}
+
+/**
+ * A third self-test probe using a realistically engine-shaped ALLOW
+ * payload (#1400 Round 3 finding 2) — confirms the wired command does not
+ * choke on the extra fields a genuine Claude Code PreToolUse invocation
+ * carries that `guard-primary-checkout.js` never reads.
+ *
+ * @param {string} command - The wired command string.
+ * @param {string} primary - Absolute primary checkout root.
+ * @returns {{ok:boolean, detail:string}}
+ */
+function runEngineEnvelopeProbe(command, primary) {
+  const payload = JSON.stringify({
+    hook_event_name: 'PreToolUse',
+    session_id: 'self-test-simulated-session',
+    transcript_path: path.join(primary, '.claude', 'self-test-transcript.jsonl'),
+    tool_name: 'Write',
+    tool_input: { file_path: path.join(primary, 'package.json') },
+    cwd: primary
+  });
+  let stdout;
+  try {
+    stdout = execFileSync('/bin/sh', ['-c', command], {
+      input: payload,
+      encoding: 'utf8',
+      env: {
+        ...process.env, CLAUDE_PROJECT_DIR: primary, TANGLECLAW_ALLOW_PRIMARY_WRITE: '', [PROBE_ENV]: '1'
+      }
+    });
+  } catch (err) {
+    return { ok: false, detail: `the wired command failed to run on an engine-shaped payload: ${err.message}` };
+  }
+  if (stdout.trim()) {
+    return { ok: false, detail: 'the wired command REFUSED an ordinary write on an engine-shaped '
+      + `payload, which should have been allowed: ${stdout.slice(0, 200)}` };
+  }
+  return { ok: true, detail: '' };
 }
 
 /**
@@ -1206,5 +1453,7 @@ module.exports = {
   recordInvocation, recordInvocationStart, runInner, invoke, boundedErrorCode, commitActivitySignal,
   updateActivityAndWarn, reportStatus, isOwnScriptPath, acquireLock, releaseLock, updateStatus,
   reclaimStalePending, newPendingId, sharedSettingsHookConflicts, checkNodeResolvable,
-  INNER_TIMEOUT_ENV, PENDING_STALE_ENV, LOCK_SUFFIX
+  INNER_TIMEOUT_ENV, PENDING_STALE_ENV, LOCK_SUFFIX, LOCK_MAX_WAIT_ENV, lockMaxWaitMs,
+  outerFailureSentinelPath, foldOuterFailureSentinel, OUTER_FAILURE_BASENAME,
+  looksLikeEngineEnvelope, isGenuineEngineInvocation, tolerantReadSettings, mergedSettingsState
 };

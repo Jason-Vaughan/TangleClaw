@@ -195,9 +195,13 @@ describe('the OTHER generator of a hooks[].command is in the same family (#1062)
     const primary = path.join(os.tmpdir(), HOSTILE);
     const cmd = guardCommand(primary);
 
-    // `node <path> || true` with a path that does not resolve exits 0 via the
-    // `|| true`, so run the argv through a shell that just echoes it instead.
-    const echoed = execFileSync('/bin/sh', ['-c', cmd.replace(/^node /, 'printf %s ').replace(/ \|\| true$/, '')],
+    // `node <path> --invoke || { ...; true; }` with a path that does not
+    // resolve exits 0 via the `||` fallback, so run the argv through a
+    // shell that just echoes it instead. Strips everything from the first
+    // ` || ` onward — the whole fallback clause, not just the pre-#1400-
+    // Round-3 literal `|| true` — since there is exactly one `||` in a
+    // command this generator ever emits.
+    const echoed = execFileSync('/bin/sh', ['-c', cmd.replace(/^node /, 'printf %s ').replace(/ \|\| .*$/, '')],
       { encoding: 'utf8' });
     assert.ok(echoed.startsWith(primary),
       `the guard path must reach node whole, got ${echoed}`);

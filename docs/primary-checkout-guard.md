@@ -145,9 +145,18 @@ the decision — while recording, to a small liveness-telemetry file, which of t
 - **`allow`** — the child returned no decision (a handled fail-open, or an ordinary fall-through;
   these are indistinguishable from outside the child, and the child's own contract already treats
   them the same).
-- **`error`** — the child could not be trusted to answer: a non-zero exit, a timeout, a missing
-  `node`, a syntax error in the policy script, or output that does not parse as this guard's own
-  shape. This is the state `|| true` alone cannot surface.
+- **`error`** — the child could not be trusted to answer: a non-zero exit, a timeout, a syntax error
+  in the policy script, or output that does not parse as this guard's own shape. This is the state
+  `|| true` alone cannot surface.
+
+The wired command's own `||` fallback — for the one failure mode even `--invoke` cannot observe,
+`node` itself missing or this very file failing to parse — no longer stays silent either. It is pure
+shell (a `printf`, no `node`, so it works precisely when `node` does not) that drops a small sentinel
+beside the telemetry file; `foldOuterFailureSentinel` folds it into `counts.error` as
+`OUTER_NODE_FAILED` the next time anything can run JS against this primary again — a recovered real
+invocation, or an operator's own `--status`. The fold is claimed by an atomic `unlink`, not a lock:
+whichever caller's unlink succeeds is the one that gets to count it, so two near-simultaneous callers
+never double-count one shell-level failure.
 
 Telemetry is written TWICE per invocation, not once: a `pending` entry is recorded *before* the
 child even runs, and cleared when the outcome above is recorded after. The gap this closes is the
@@ -157,12 +166,15 @@ identical to a guard that never fired. An entry still unclosed well past any rea
 time is folded into `counts.error` as `unclosed-entry` the next time telemetry is touched.
 
 Because a `PreToolUse` hook can fire for more than one tool call at once (parallel tool calls in one
-turn), every telemetry read-modify-write goes through a short, local, best-effort exclusive lock
-(a `fs.openSync(..., 'wx')` lockfile, breaking a lock whose own mtime says its holder is long gone)
-— without it, two concurrent invocations each incrementing the same counter from the same stale read
-would silently lose one side's increment. The lock has a bounded wait: telemetry must never be the
-reason a real tool call stalls, so a caller that cannot acquire it in time proceeds unlocked (today's
-pre-Round-2 behaviour) rather than hanging.
+turn), every telemetry read-modify-write goes through a short, local exclusive lock (a
+`fs.openSync(..., 'wx')` lockfile, breaking a lock whose own mtime says its holder is long gone) —
+without it, two concurrent invocations each incrementing the same counter from the same stale read
+would silently lose one side's increment. The lock has a bounded wait, and losing that race SKIPS
+the update rather than falling back to an unlocked read-modify-write: telemetry must never be the
+reason a real tool call stalls, but an unlocked write could silently clobber a concurrent process's
+own crash record — the one thing this telemetry exists to preserve — so a missed increment under
+contention this guard does not expect to see in practice (one hook invocation per tool call, not a
+high-throughput server) is the far cheaper failure.
 
 The telemetry file (`<git-common-dir>/tangleclaw-primary-guard-status.json` by default;
 `TANGLECLAW_PRIMARY_GUARD_STATUS_FILE` overrides it) tracks `lastInvokedAt`, a `lastHook` bounded to
@@ -172,28 +184,38 @@ and a bounded `lastError` code — never a raw path, command or message. A write
 swallowed and never alters the decision already computed — telemetry is strictly best-effort
 downstream of the thing that actually matters.
 
-`--self-test` first confirms the node binary it would re-spawn as the inner guard actually runs
-(naming that specific cause directly, rather than letting it surface only as a generic "the wired
-command failed to run"), then genuinely invokes the wired command twice — a refusal case and an
-allow case — and asserts the heartbeat advances as a result, proving the outer runner is the one
-actually live on this path, not just that the policy script works in isolation. Those two probe
-invocations are counted into a **separate** `selfTest` bucket, never into the genuine `counts` — a
-healthy self-test habit must never be able to masquerade as evidence that real tool-call traffic is
-reaching the guard.
+`--self-test` runs four checks in order: the node binary it would re-spawn as the inner guard
+actually runs (naming that specific cause directly, rather than letting it surface only as a generic
+"the wired command failed to run"); `disableAllHooks` is not set in EITHER `.claude/settings.json`
+or `settings.local.json` (a flag `settings.local.json` alone could never reveal if it were set only
+in the shared file); this guard's entry appears in the UNION of both files' `PreToolUse` entries —
+Claude Code loads hooks from both additively, so the union is the honest model of what the engine
+actually has to work with, not a guess at precedence between them (there is none to guess at for two
+files that both contribute); then it genuinely drives the wired command through a refusal case, an
+allow case, and a THIRD, realistically engine-shaped payload (carrying `hook_event_name`,
+`session_id`, `transcript_path` — the fields a hand-built payload would not think to include) and
+asserts the liveness heartbeat advances as a result, proving the outer runner is the one actually
+live on this path, not just that the policy script works in isolation. All three probe invocations
+are counted into a **separate** `selfTest` bucket, never into the genuine `counts` or
+`engineInvocations` — a healthy self-test habit, however realistic its payload, must never be able to
+masquerade as evidence that real tool-call traffic is reaching the guard.
 
 ```sh
 node scripts/install-primary-guard.js --status         # liveness telemetry, human-readable
 node scripts/install-primary-guard.js --status --json  # same, as JSON
 ```
 
-`--status` also reports `liveEngineVerified`: true once any GENUINE (non-self-test) invocation has
-ever produced a real decision — `counts.allow + counts.refusal > 0` — the honestly-scoped claim this
-surface can actually back: not "the engine's hook resolution is proven correct", but "this repo's
-actual wiring has actually been exercised by actual tool-call traffic at least once". It also checks
+`--status` reports `liveEngineVerified`: true once `engineInvocations` is nonzero — a GENUINE
+(non-self-test) invocation whose payload actually looks like Claude Code's own PreToolUse envelope,
+not merely any invocation that happened not to set the self-test probe flag. That distinction is
+deliberate: a hand-built CLI call satisfies the weaker "produced a real decision" test just as well
+as genuine engine traffic does, so only the envelope-shaped check can tell them apart. It also checks
 whether the TRACKED, shared `.claude/settings.json` declares its own `PreToolUse` entry for one of
 this guard's two exact matchers (`'Bash'` or the write matcher) that is not this guard's own — this
 repo's own contract says that file carries no `hooks` block at all, so any such entry is already
-anomalous by that contract, whatever wrote it, and `sharedSettingsHookConflicts` names it.
+anomalous by that contract, whatever wrote it, and `sharedSettingsHookConflicts` names it. (This one
+check is still deliberately narrow: an EXACT matcher collision, not a reproduction of general overlap
+between two *different* matcher patterns, which is a harder problem than this check claims to solve.)
 
 `--status` exits 1 and prints `ACTIONABLE` when any of three things is true: a crash was recorded
 *after* the last successful `--self-test` (an old crash a passing self-test already re-covered is
@@ -201,15 +223,8 @@ not new news); the primary gained commits since the last `--status` check while 
 invocation was recorded in that window (an independent activity signal the guard itself cannot move,
 used only as a *relative* check — commits advanced, invocations did not — never from wall-clock age
 alone, and never tripped by an install that is simply, genuinely idle); or the shared-settings
-conflict above.
-
-**Known gap, narrowed but not fully closed:** `sharedSettingsHookConflicts` is a real, checkable fact
-about an EXACT matcher collision, not a reproduction of how Claude Code itself resolves and orders
-hooks across every settings file at launch — general overlap between two *different* matcher
-patterns is a harder problem than this check claims to solve, and `liveEngineVerified` answers "has
-real traffic ever reached this at all", not "is the engine's own resolution provably correct right
-now". The full "Live-Route Proof" criterion (#1400 AC8) remains a follow-up rather than something
-guessed at here.
+conflict above. `--status` also folds the outer-node sentinel (above) before reading anything else,
+so a shell-level failure is caught even on a check run with no invocation in between.
 
 **Exemption hygiene:** this change introduces no new silence or exemption mechanism. The two
 existing override routes (the env var and the sentinel file, both named below) are unchanged, and
