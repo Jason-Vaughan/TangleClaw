@@ -114,6 +114,7 @@
     "test/master-settings-mount.test.js",
     "test/master-unknown-frontend.test.js",
     "test/medusa-control.test.js",
+    "test/medusa-escalation-watchdog.test.js",
     "test/medusa-listener.test.js",
     "test/merge-queue-github.test.js",
     "test/merge-queue-release-guard.test.js",

@@ -72,24 +72,41 @@ has been replied to reads "satisfied, awaiting initiator close".
 
 Who may claim what:
 
-- **Plain normal sends** still work without a launch binding, and are
-  recorded as unverified.
-- **`blocking` needs a verified launch** of the sending project (the
-  `x-tangleclaw-project-id` and `x-tangleclaw-launch-id` headers;
-  `tc message send` sends them).
+- **Every send — `normal` included — needs a verified launch (#2233).**
+  `POST <base>/send` is a mutating route, so `lib/launch-binding-guard.js`
+  refuses an unbound, stale, ended or superseded launch (`403
+  LAUNCH_BINDING_REQUIRED`) before the handler runs at all. There is no
+  "plain normal send" that skips this floor; it predates `validateSendMeta`'s
+  own, narrower binding requirement below, which is about which PRIORITY a
+  caller may claim, not whether a launch binding exists in the first place.
+- **The caller's verified identity must also match THIS route (#1865,
+  #1875).** Passing the launch-binding floor proves a caller is SOME
+  verified project or the Master — the sender-identity gate on `/send`
+  separately requires that identity to match the mount being called (the
+  project named in the URL, or the Master's own mount): a project with a
+  perfectly current launch of its own is still refused if it is not the
+  project this `/send` is for. A caller cannot send as a project, or the
+  Master, it is not.
+- **`blocking` additionally needs a verified launch of the SENDING project**
+  (the `x-tangleclaw-project-id` and `x-tangleclaw-launch-id` headers;
+  `tc message send` sends them) — the same identity the two checks above
+  already required, re-asserted at the priority-validation layer so a
+  priority claim is refused on its own terms (`403 PRIORITY_BINDING_REQUIRED`)
+  rather than only ever failing further upstream.
 - **`critical` is the operator's and TangleClaw's alone.** The operator's
   proof tier is recorded (`verified-session`, or `ambient-open` on a
   deliberately open gate).
 - **Anything that changes an existing exchange** (`inReplyTo`, closing,
   retracting) needs a verified launch of the right project, or the operator.
 - **A claim that cannot be proven is refused, never downgraded.** The codes
-  are `PRIORITY_BINDING_REQUIRED`, `PRIORITY_RESERVED` and
-  `EXCHANGE_BINDING_REQUIRED`.
+  are `LAUNCH_BINDING_REQUIRED`, `PRIORITY_BINDING_REQUIRED`,
+  `PRIORITY_RESERVED` and `EXCHANGE_BINDING_REQUIRED`.
 - **At most 5 open blocking messages per sender** (`429 BLOCKING_LIMIT`).
 - **Protected priorities are refused off-host.** A blocking or critical
   message to a workspace no live session on this host holds is refused
   (`422 WATCHDOG_UNAVAILABLE_REMOTE`), because nothing here could supervise
-  it. Normal mail to it is recorded as untracked.
+  it. Normal mail to it is recorded as untracked — a send still needs its own
+  verified launch to get that far at all.
 
 From a pane: `tc message send --priority blocking --reason awaiting-ruling <workspace-id> <text…>`.
 
