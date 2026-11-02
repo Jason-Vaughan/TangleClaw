@@ -1195,6 +1195,77 @@ describe('readMasterIdentityFreshness — has the RUNNING Master read this? (#96
       'and it must hand that probe on, or the freshness read spawns another tmux');
   });
 
+  describe('#2120 continuity auto-measure', () => {
+    it('measures a paneBuffer estimate from the live pane when no reading was supplied', () => {
+      const home = mk();
+      const captured = [];
+      const tmuxLib = Object.assign(fakeTmux({ alive: true }), {
+        capturePane: (name, opts) => { captured.push({ name, opts }); return { lines: ['x'.repeat(100)], alternateScreen: false }; }
+      });
+      const s = master.getMasterStatus({
+        home, tmuxLib,
+        enginesLib: { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' }
+      });
+      assert.equal(captured.length, 1, 'must capture the pane exactly once');
+      assert.deepEqual(captured[0], { name: 'tangleclaw-master', opts: { full: true } });
+      assert.equal(s.continuity.source, 'estimated');
+      assert.ok(Number.isFinite(s.continuity.remainingPercent));
+    });
+
+    it('does not capture the pane when a usable reading was already supplied', () => {
+      const home = mk();
+      let captured = false;
+      const tmuxLib = Object.assign(fakeTmux({ alive: true }), {
+        capturePane: () => { captured = true; return { lines: [], alternateScreen: false }; }
+      });
+      const s = master.getMasterStatus({
+        home, tmuxLib, continuityReading: { remainingPercent: 42 },
+        enginesLib: { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' }
+      });
+      assert.equal(captured, false, 'a supplied reading must not be overridden by a measurement');
+      assert.equal(s.continuity.source, 'reported');
+      assert.equal(s.continuity.remainingPercent, 42);
+    });
+
+    it('does not capture the pane when the Master is not live', () => {
+      const home = mk();
+      let captured = false;
+      const tmuxLib = Object.assign(fakeTmux({ alive: false }), {
+        capturePane: () => { captured = true; return { lines: [], alternateScreen: false }; }
+      });
+      const s = master.getMasterStatus({
+        home, tmuxLib,
+        enginesLib: { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' }
+      });
+      assert.equal(captured, false, 'nothing is there to read');
+      assert.equal(s.continuity.status, 'unmeasured');
+    });
+
+    it('does not capture the pane when the tmux lib does not model capturePane at all', () => {
+      // Every existing fixture built from plain `fakeTmux(...)` falls here —
+      // the regression this guards is capturing unconditionally and crashing
+      // every test in this file that does not stub the new method.
+      const home = mk();
+      const s = master.getMasterStatus({
+        home, tmuxLib: fakeTmux({ alive: true }),
+        enginesLib: { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' }
+      });
+      assert.equal(s.continuity.status, 'unmeasured');
+    });
+
+    it('falls back to unmeasured honestly when the capture itself throws', () => {
+      const home = mk();
+      const tmuxLib = Object.assign(fakeTmux({ alive: true }), {
+        capturePane: () => { throw new Error('no such session'); }
+      });
+      const s = master.getMasterStatus({
+        home, tmuxLib,
+        enginesLib: { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' }
+      });
+      assert.equal(s.continuity.status, 'unmeasured', 'a failed read must not be reported as a measured status');
+    });
+  });
+
   it('getMasterStatus carries it, so a surface can render it', () => {
     // THE MUTATION THIS CATCHES: computing the freshness and not spreading it
     // into settings — every unit test above stays green while the only consumer
@@ -3140,7 +3211,17 @@ describe('master API routes over HTTP', () => {
       'exists === null and incomplete naming it are the same claim, and must not disagree');
     assert.equal(data.tmuxSession, 'tangleclaw-master');
     // #2120/#2132/#966 — present on every answer, not only once asked for.
-    assert.equal(data.continuity.status, 'unmeasured', 'no reading was supplied on this call');
+    // No LONGER unconditionally 'unmeasured': a genuinely live Master on the
+    // machine running this suite is now auto-measured (#2120), so "no reading
+    // was supplied" and "unmeasured" stopped being the same claim exactly when
+    // a real session exists to read. `exists === false`/`null` still forces
+    // `unmeasured` — there is nothing to auto-measure from.
+    if (data.exists === true) {
+      assert.ok(['unmeasured', 'ok', 'warning', 'critical'].includes(data.continuity.status),
+        `a live Master auto-measures a tri-state health, or reports unmeasured if its pane could not be read, got ${data.continuity.status}`);
+    } else {
+      assert.equal(data.continuity.status, 'unmeasured', 'no reading was supplied and no live Master to auto-measure');
+    }
     assert.equal(data.authority.accessLevel, 'read-only');
     assert.equal(data.authority.toggleState, 'read-only');
   });

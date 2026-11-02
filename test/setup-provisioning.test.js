@@ -14,7 +14,7 @@
 // live install; lib/ingress-provision.js refuses a real spawn from a test
 // process, so a missed stub fails rather than causing an outage.
 
-const { describe, it, before, after, beforeEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const fs = require('node:fs');
@@ -24,6 +24,7 @@ const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const caddy = require('../lib/caddy');
 const provision = require('../lib/ingress-provision');
+const tailscaleIngress = require('../lib/tailscale-ingress');
 const { createServer, _setRestartScheduler, _setCutoverSpawner } = require('../server');
 const server864 = require('../server');
 const { installCaddyStub, withoutCaddy } = require('./_caddy-stub');
@@ -394,6 +395,67 @@ describe('setup provisions a login by default', () => {
       assert.equal(res.data.ingress.url, 'https://localhost:8443',
         'a malformed Host must fall back, not round-trip');
       assert.ok(!/alert\(1\)/.test(res.raw), 'the response echoed script-shaped text back');
+    });
+
+    describe('#1380 — Tailscale advertisement mode is authoritative for the cutover redirect', () => {
+      let realResolve;
+      beforeEach(() => {
+        realResolve = tailscaleIngress.resolveAdvertisedOrigin;
+      });
+      afterEach(() => {
+        tailscaleIngress.resolveAdvertisedOrigin = realResolve;
+        const c = store.config.load();
+        delete c.tailscaleMode;
+        store.config.save(c);
+      });
+
+      it('uses the resolved tailnet origin instead of the request Host header', async () => {
+        const c = store.config.load();
+        c.tailscaleMode = true;
+        c.caddyHttpsPort = 9443;
+        store.config.save(c);
+        let calledWith = null;
+        tailscaleIngress.resolveAdvertisedOrigin = async (opts) => {
+          calledWith = opts;
+          return { ok: true, origin: 'https://box.tailnet-name.ts.net:9443', host: 'box.tailnet-name.ts.net' };
+        };
+        const res = await request(server, 'POST', '/api/setup/complete', {
+          projectsDir: tmpDir, adminUser: 'jason', adminPassword: 'correct-horse-battery'
+        });
+        assert.equal(res.status, 200);
+        assert.equal(res.data.ingress.url, 'https://box.tailnet-name.ts.net:9443');
+        // Asked of the config the cutover is MOVING to (caddy, 9443/https), not
+        // the on-disk ingressMode the request started under.
+        assert.equal(calledWith.enabled, true);
+        assert.equal(calledWith.port, 9443);
+        assert.equal(calledWith.scheme, 'https');
+      });
+
+      it('reports an honest failure rather than falling back to the Host header', async () => {
+        const c = store.config.load();
+        c.tailscaleMode = true;
+        store.config.save(c);
+        tailscaleIngress.resolveAdvertisedOrigin = async () =>
+          ({ ok: false, reason: 'node-not-running', detail: 'this tailscale node is not running' });
+        const res = await request(server, 'POST', '/api/setup/complete', {
+          projectsDir: tmpDir, adminUser: 'jason', adminPassword: 'correct-horse-battery'
+        });
+        assert.equal(res.status, 200);
+        assert.equal(res.data.ingress.url, null, 'must not silently fall back to the Host header');
+        assert.match(res.data.ingress.reason, /Tailscale advertisement is on but could not resolve/);
+        assert.ok(res.data.warnings.some((w) => /tailscale node is not running/.test(w)));
+      });
+
+      it('is unaffected when tailscaleMode is off — unchanged Host-header behavior', async () => {
+        let called = false;
+        tailscaleIngress.resolveAdvertisedOrigin = async () => { called = true; return { ok: false }; };
+        const res = await request(server, 'POST', '/api/setup/complete', {
+          projectsDir: tmpDir, adminUser: 'jason', adminPassword: 'correct-horse-battery'
+        });
+        assert.equal(res.status, 200);
+        assert.equal(called, false, 'must not probe tailscale at all when the mode is off');
+        assert.equal(res.data.ingress.url, 'https://127.0.0.1:8443');
+      });
     });
 
     /*
