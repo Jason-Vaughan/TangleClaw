@@ -843,16 +843,22 @@ describe('lib/usage-windows — scan budget and per-file cache (#2766 BLOCKING 1
 });
 
 describe('lib/usage-windows — parseSessionTerminalUsage (#2787)', () => {
-  it('parses Codex\'s own "Context NN% left" status-row item', () => {
+  it('parses Codex\'s own "Context NN% left" status-row item, with no weekly segment present', () => {
     const pane = ['', '› Ask Codex to do anything', '', '  GPT-6-Astra default · Ready · never · Context 92% left'];
     const result = uw.parseSessionTerminalUsage(pane.join('\n'), 'codex');
-    assert.deepEqual(result, { contextRemainingPct: 92, source: 'terminal-statusline' });
+    assert.deepEqual(result, { contextRemainingPct: 92, weeklyRemainingPct: null, source: 'terminal-statusline' });
   });
 
-  it('parses Claude Code\'s own trailing "NN% left" status-row segment', () => {
+  it('parses Codex\'s own live "weekly NN% left" segment alongside context (verified live on three real Codex sessions, 2026-11-02, #2787 Round 2)', () => {
+    const pane = ['', '› Ask Codex to do anything', '', '  GPT-6-Sol medium · Ready · never · Context 43% left · weekly 1% left'];
+    const result = uw.parseSessionTerminalUsage(pane.join('\n'), 'codex');
+    assert.deepEqual(result, { contextRemainingPct: 43, weeklyRemainingPct: 1, source: 'terminal-statusline' });
+  });
+
+  it('parses Claude Code\'s own trailing "NN% left" status-row segment, never a weekly one (Claude\'s status row carries no quota item at all)', () => {
     const pane = ['done', '───', '  TangleClaw (main) | Opus 5 (1M context) | 77% left'];
     const result = uw.parseSessionTerminalUsage(pane.join('\n'), 'claude');
-    assert.deepEqual(result, { contextRemainingPct: 77, source: 'terminal-statusline' });
+    assert.deepEqual(result, { contextRemainingPct: 77, weeklyRemainingPct: null, source: 'terminal-statusline' });
   });
 
   it('reads the LAST matching row, not an earlier stale one left in scrollback', () => {
@@ -863,12 +869,12 @@ describe('lib/usage-windows — parseSessionTerminalUsage (#2787)', () => {
 
   it('returns nulls when the pane has no matching status row at all', () => {
     const result = uw.parseSessionTerminalUsage('just some ordinary pane text\nwith no status row', 'claude');
-    assert.deepEqual(result, { contextRemainingPct: null, source: null });
+    assert.deepEqual(result, { contextRemainingPct: null, weeklyRemainingPct: null, source: null });
   });
 
   it('returns nulls for empty or non-string pane text (a capture failure)', () => {
-    assert.deepEqual(uw.parseSessionTerminalUsage(null, 'codex'), { contextRemainingPct: null, source: null });
-    assert.deepEqual(uw.parseSessionTerminalUsage(undefined, 'claude'), { contextRemainingPct: null, source: null });
+    assert.deepEqual(uw.parseSessionTerminalUsage(null, 'codex'), { contextRemainingPct: null, weeklyRemainingPct: null, source: null });
+    assert.deepEqual(uw.parseSessionTerminalUsage(undefined, 'claude'), { contextRemainingPct: null, weeklyRemainingPct: null, source: null });
   });
 });
 
@@ -912,7 +918,7 @@ describe('lib/usage-windows — buildSessionUsageReadings (#2787)', () => {
     assert.match(r.handOffReason, /5-hour 8%/);
   });
 
-  it('a session with no calibration on file and no pane match gets an all-null, non-crashing row, sourced "provider-window"', async () => {
+  it('a session with no calibration on file and no pane match gets an all-null, non-crashing row, sourced "none" with a null observedAt (#2787 Round 2, Critic C4)', async () => {
     const readings = await uw.buildSessionUsageReadings({
       sessions: [SESSIONS[1]],
       projects: PROJECTS,
@@ -925,9 +931,39 @@ describe('lib/usage-windows — buildSessionUsageReadings (#2787)', () => {
     assert.equal(r.weeklyRemainingPct, null);
     assert.equal(r.fiveHourRemainingPct, null);
     assert.equal(r.model, null);
-    assert.equal(r.source, 'provider-window');
+    assert.equal(r.source, 'none');
+    assert.equal(r.observedAt, null);
     assert.equal(r.lowUsageHandOffRecommended, false);
     assert.equal(r.handOffReason, null);
+  });
+
+  it('a calibration-only session (no pane match, quota from calibration alone) is sourced "provider-window"', async () => {
+    uw.calibrateUsage({ provider: 'claude', weeklyPct: 30 });
+    const readings = await uw.buildSessionUsageReadings({
+      sessions: [SESSIONS[0]],
+      projects: PROJECTS,
+      capturePaneOutput: async () => null,
+      getActiveModel: async () => null
+    });
+    const r = readings[0];
+    assert.equal(r.contextRemainingPct, null);
+    assert.equal(r.weeklyRemainingPct, 30);
+    assert.equal(r.source, 'provider-window');
+    assert.ok(r.observedAt);
+  });
+
+  it('prefers a live Codex pane weekly reading over operator calibration when both are present (#2787 Round 2)', async () => {
+    uw.calibrateUsage({ provider: 'codex', weeklyPct: 50, fiveHourPct: 20 });
+    const readings = await uw.buildSessionUsageReadings({
+      sessions: [SESSIONS[1]],
+      projects: PROJECTS,
+      capturePaneOutput: async () => '  GPT-6-Sol medium · Ready · never · Context 43% left · weekly 7% left',
+      getActiveModel: async () => null
+    });
+    const r = readings[0];
+    assert.equal(r.weeklyRemainingPct, 7, 'the live pane reading (7%) wins over the stale calibration (50%)');
+    assert.equal(r.fiveHourRemainingPct, 20, 'fiveHourRemainingPct has no pane source, so calibration still supplies it');
+    assert.equal(r.source, 'combined', 'context+weekly are pane-sourced, fiveHourRemainingPct is calibration-sourced — a genuine mix');
   });
 
   it('a capturePaneOutput rejection is swallowed — one bad session never throws out the whole fleet-wide read', async () => {
@@ -989,8 +1025,8 @@ describe('lib/usage-windows — buildSessionUsageReadings (#2787)', () => {
   });
 });
 
-describe('lib/routes/usage — GET /api/usage/sessions (#2787)', () => {
-  const usageRoutes = require('../lib/routes/usage');
+describe('lib/routes/sessions — GET /api/usage/sessions (#2787)', () => {
+  const sessionsRoutes = require('../lib/routes/sessions');
   const { matchRoute } = require('../lib/routes/_kernel');
 
   /**
@@ -1009,7 +1045,7 @@ describe('lib/routes/usage — GET /api/usage/sessions (#2787)', () => {
   }
 
   before(() => {
-    usageRoutes.register();
+    sessionsRoutes.register({});
   });
 
   beforeEach(() => {

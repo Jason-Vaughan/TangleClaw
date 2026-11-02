@@ -8111,12 +8111,6 @@ require('./lib/routes/audit').register();
 // takes no deps.
 require('./lib/routes/engines-canary').register();
 
-// Per-session usage & context readings (#2787) are read-only and fleet-wide,
-// the same access GET /api/usage/windows (lib/routes/sessions.js) already
-// has — like launch-recovery, audit and engines-canary above, register()
-// takes no deps.
-require('./lib/routes/usage').register();
-
 // ── Server Creation ──
 
 /**
