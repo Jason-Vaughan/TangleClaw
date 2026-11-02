@@ -20,7 +20,8 @@ const { execFileSync } = require('node:child_process');
 
 const { initRepo } = require('./_temp-repo');
 const {
-  realOrSelf, locateCheckouts, linkedWorktreeRoots, landsInPrimary, OVERRIDE_FILE, OVERRIDE_ENV
+  realOrSelf, locateCheckouts, linkedWorktreeRoots, landsInPrimary, OVERRIDE_FILE, OVERRIDE_ENV,
+  resolveServerCheckoutRoot, describeServerRootCoupling, SERVER_ROOT_ENV
 } = require('../lib/checkout-layout');
 const guardSource = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'guard-primary-checkout.js'), 'utf8');
 const installerSource = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'install-primary-guard.js'), 'utf8');
@@ -196,5 +197,108 @@ describe('realOrSelf', () => {
     fs.writeFileSync(path.join(base, 'target.js'), '');
     fs.symlinkSync(path.join(base, 'target.js'), path.join(base, 'alias.js'));
     assert.equal(realOrSelf(path.join(base, 'alias.js')), path.join(base, 'target.js'));
+  });
+});
+
+describe('resolveServerCheckoutRoot (#1672)', () => {
+  let base;
+  beforeEach(() => { base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-serverroot-'))); });
+  afterEach(() => fs.rmSync(base, { recursive: true, force: true }));
+
+  it('uses the default root when no override env var is set', () => {
+    assert.deepEqual(resolveServerCheckoutRoot(base, { env: {} }), { root: base, source: 'default' });
+  });
+
+  it('prefers an explicit TANGLECLAW_SERVER_ROOT override over the default', () => {
+    const override = path.join(base, 'dedicated');
+    fs.mkdirSync(override);
+    const result = resolveServerCheckoutRoot(path.join(base, 'ignored-default'), { env: { [SERVER_ROOT_ENV]: override } });
+    assert.deepEqual(result, { root: override, source: 'override' });
+  });
+
+  it('ignores an empty or whitespace-only override and falls back to the default', () => {
+    for (const bad of ['', '   ']) {
+      const result = resolveServerCheckoutRoot(base, { env: { [SERVER_ROOT_ENV]: bad } });
+      assert.deepEqual(result, { root: base, source: 'default' });
+    }
+  });
+
+  it('reads process.env when no env option is given', () => {
+    const prior = process.env[SERVER_ROOT_ENV];
+    delete process.env[SERVER_ROOT_ENV];
+    try {
+      assert.equal(resolveServerCheckoutRoot(base).source, 'default');
+    } finally {
+      if (prior === undefined) delete process.env[SERVER_ROOT_ENV];
+      else process.env[SERVER_ROOT_ENV] = prior;
+    }
+  });
+});
+
+describe('describeServerRootCoupling (#1672)', () => {
+  let base;
+  beforeEach(() => { base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-coupling-'))); });
+  afterEach(() => fs.rmSync(base, { recursive: true, force: true }));
+
+  function makePrimaryWithWorktree() {
+    const primary = path.join(base, 'primary');
+    fs.mkdirSync(primary);
+    initRepo(primary, ['-b', 'main']);
+    const git = (...a) => execFileSync('git', a, { cwd: primary, stdio: ['pipe', 'pipe', 'pipe'] });
+    git('config', 'user.email', 't@example.invalid');
+    git('config', 'user.name', 'T');
+    fs.writeFileSync(path.join(primary, 'f.txt'), 'x\n');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'init');
+    const wt = path.join(primary, '.claude', 'worktrees', 'w');
+    git('worktree', 'add', '-q', wt, '-b', 'b');
+    return { primary, wt };
+  }
+
+  it('reports an uncoupled dedicated checkout: a primary with no linked worktrees', () => {
+    const primary = path.join(base, 'dedicated');
+    fs.mkdirSync(primary);
+    initRepo(primary, ['-b', 'main']);
+    const result = describeServerRootCoupling(primary);
+    assert.deepEqual(result, {
+      checkout: { primary, isWorktree: false },
+      isLinkedWorktree: false,
+      hasLinkedWorktrees: false,
+      linkedWorktreeCount: 0,
+      coupled: false
+    });
+  });
+
+  it('flags the resolved root itself being a linked worktree', () => {
+    const { primary, wt } = makePrimaryWithWorktree();
+    const result = describeServerRootCoupling(wt);
+    assert.deepEqual(result, {
+      checkout: { primary, isWorktree: true },
+      isLinkedWorktree: true,
+      hasLinkedWorktrees: false,
+      linkedWorktreeCount: 0,
+      coupled: true
+    });
+  });
+
+  it('flags a primary that has an active Builder/agent worktree linked off it, without miscounting the worktree itself', () => {
+    const { primary } = makePrimaryWithWorktree();
+    const result = describeServerRootCoupling(primary);
+    assert.equal(result.isLinkedWorktree, false);
+    assert.equal(result.hasLinkedWorktrees, true);
+    assert.equal(result.linkedWorktreeCount, 1);
+    assert.equal(result.coupled, true);
+  });
+
+  it('answers null/uncoupled for a root with no recognizable git layout at all', () => {
+    const root = path.join(base, 'no-git');
+    fs.mkdirSync(root);
+    assert.deepEqual(describeServerRootCoupling(root), {
+      checkout: null,
+      isLinkedWorktree: false,
+      hasLinkedWorktrees: false,
+      linkedWorktreeCount: 0,
+      coupled: false
+    });
   });
 });
