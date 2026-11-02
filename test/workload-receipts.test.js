@@ -513,6 +513,39 @@ describe('POST/GET /api/tc/workload (ADR 0020 §1–§2)', () => {
       assert.equal(now.status, 201, 'a bound reply discharges the debt — and this lane\'s first successful write, so no rate limit interferes');
     });
 
+    // Critic cumulative (rev-20261102T225819Z-124a30ca): a send whose Hub
+    // outcome was never bound never reached this lane's inbox — it cannot
+    // read or reply to a message it never received, so the gate must not
+    // count it as owed (same exclusion lib/session-finalize.js's own
+    // owed-reply check already makes, via hubBoundOnly: true).
+    it('does not count a reply-required send still send_pending or send_unknown as owed', async () => {
+      const lane = bindProject(mkProject('owed-reply-lane-unbound'));
+      medusa.getStatus = (sessionId) => (String(sessionId) === String(lane.sessionId)
+        ? { ...realGetStatus(sessionId), workspaceId: 'owed-ws-unbound' }
+        : realGetStatus(sessionId));
+      try {
+        const pending = mx.createSendIntent({
+          meta: mx.validateSendMeta({ replyRequired: true }, { kind: 'operator', proof: 'verified-session' }, null),
+          sender: { projectId: null, sessionId: 'pm', workspaceId: 'pm-ws' },
+          recipient: { workspaceId: 'owed-ws-unbound', projectId: builder.id, sessionId: lane.sessionId }
+        });
+        assert.equal(store.medusaExchanges.get(pending.exchange_id).state, 'send_pending');
+
+        const unknown = mx.markSendUnknown(mx.createSendIntent({
+          meta: mx.validateSendMeta({ replyRequired: true }, { kind: 'operator', proof: 'verified-session' }, null),
+          sender: { projectId: null, sessionId: 'pm', workspaceId: 'pm-ws' },
+          recipient: { workspaceId: 'owed-ws-unbound', projectId: builder.id, sessionId: lane.sessionId }
+        }).exchange_id, 'hub-id-invalid');
+        assert.equal(unknown.state, 'send_unknown');
+
+        const r = await send(server, 'POST', '/api/tc/workload',
+          { ...OK, state: 'complete', clearance: 'safe-to-clear' }, { ...lane.headers, ...TC });
+        assert.equal(r.status, 201, 'neither unbound row is owed — the lane never saw either message');
+      } finally {
+        medusa.getStatus = realGetStatus;
+      }
+    });
+
     it('neither state nor clearance alone trips the gate when nothing is owed', async () => {
       const lane = bindProject(mkProject('owed-reply-lane-control'));
       const r = await send(server, 'POST', '/api/tc/workload',
