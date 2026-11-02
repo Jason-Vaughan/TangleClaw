@@ -272,6 +272,23 @@ describe('recordReviewEvidence / invalidateReviewEvidenceOnRewrite', () => {
     assert.equal(result.invalidatedCount, 0);
     assert.equal(branchOwnership.readBranchOwnership(fx.worktreeRoot, 'feature').reviewEvidence.length, 1);
   });
+
+  it('recordReviewEvidence on an unbound branch does not block ordinary mutation, and the first bind afterward succeeds and preserves the evidence (#1977 Round 8 finding)', () => {
+    // 'feature' is still unbound at this point in the fixture — only
+    // evidence-only records exist on it from the tests above.
+    const guard = branchOwnership.evaluateBranchMutationGuard({
+      branch: 'feature', worktreeRoot: fx.worktreeRoot, caller: genA
+    });
+    assert.equal(guard.allowed, true,
+      'an evidence-only placeholder must not read as "owned by an unmatchable generation"');
+
+    const result = branchOwnership.bindBranchOwnership({
+      branch: 'feature', worktreeRoot: fx.worktreeRoot, ...genA, headSha: fx.headSha()
+    });
+    assert.equal(result.ok, true, 'the FIRST bind after evidence was recorded must succeed, not read as a conflict');
+    assert.equal(result.owner.generationId, 'gen-a');
+    assert.equal(result.owner.reviewEvidence.length, 1, 'the pre-recorded evidence must survive the first bind');
+  });
 });
 
 describe('handoffBranchOwnership', () => {
