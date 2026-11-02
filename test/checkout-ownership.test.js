@@ -226,6 +226,31 @@ describe('captureBaselineTreeState / verifyTreeUnchangedSinceBaseline', () => {
     assert.equal(ownership.verifyTreeUnchangedSinceBaseline(fx.worktree, null).code, 'INVALID_BASELINE');
     assert.equal(ownership.verifyTreeUnchangedSinceBaseline(fx.worktree, {}).code, 'INVALID_BASELINE');
   });
+
+  it('a SECOND edit to an already-modified NON-ASCII-named file is still detected (#1332 Round 2 finding)', () => {
+    // Git quotes a non-ASCII byte as a C-style OCTAL escape in default
+    // porcelain output ("\303\251.txt" for é.txt) — not valid JSON despite
+    // looking close to it. A JSON.parse-based parser throws, falls back to
+    // the literal (bogus) quoted string as the "path", and a read against
+    // that always fails — silently reading as ABSENT on every capture, so
+    // two DIFFERENT edits to the same real file both digest identically.
+    const nonAsciiPath = path.join(fx.worktree, 'é.txt');
+    fs.writeFileSync(nonAsciiPath, 'one\n');
+    fx.git('add', '-A');
+    fx.git('commit', '-q', '-m', 'add non-ascii file');
+
+    fs.writeFileSync(nonAsciiPath, 'two\n');
+    const baseline = ownership.captureBaselineTreeState(fx.worktree);
+
+    fs.writeFileSync(nonAsciiPath, 'three\n');
+    const verified = ownership.verifyTreeUnchangedSinceBaseline(fx.worktree, baseline);
+    assert.equal(verified.ok, false,
+      'a real second edit to a non-ASCII-named file must be caught, not silently digested as ABSENT both times');
+    assert.equal(verified.code, 'FOREIGN_WORKTREE_MUTATION');
+
+    fx.git('add', '-A');
+    fx.git('commit', '-q', '-m', 'settle é.txt at three');
+  });
 });
 
 describe('evaluateWorktreeWriteAdmission', () => {

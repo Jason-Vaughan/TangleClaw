@@ -159,6 +159,20 @@ describe('evaluateBranchMutationGuard', () => {
     assert.equal(result.allowed, false);
     assert.equal(result.code, 'CROSS_OWNER_FORCE_PUSH_FORBIDDEN');
   });
+
+  it('a caller with the SAME sessionId/launchId but no generationId does not bypass a bound generation (#1977 Round 2 finding)', () => {
+    // The bound record (genA) has a generationId. A caller sharing genA's
+    // sessionId/launchId but omitting generationId entirely — e.g. a stale
+    // reference, or simply forgetting to pass it — must not fall back to
+    // matching on identity alone once the record itself has a generation.
+    const callerNoGeneration = { sessionId: genA.sessionId, launchId: genA.launchId };
+    const result = branchOwnership.evaluateBranchMutationGuard({
+      branch: 'feature', worktreeRoot: fx.worktreeRoot, caller: callerNoGeneration
+    });
+    assert.equal(result.allowed, false,
+      'omitting generationId must not fall back to a sessionId/launchId match against a record that HAS one');
+    assert.equal(result.code, 'CROSS_OWNER_BRANCH_MUTATION_FORBIDDEN');
+  });
 });
 
 describe('recordReviewEvidence / invalidateReviewEvidenceOnRewrite', () => {
@@ -297,5 +311,28 @@ describe('handoffBranchOwnership', () => {
       branch: 'feature', worktreeRoot: fx.worktreeRoot, caller: genB
     });
     assert.equal(guardNew.allowed, true);
+  });
+
+  it('a caller-supplied fromOwner.headSha that merely mirrors the unpublished local HEAD does not substitute for real verification (#1977 Round 2 finding)', () => {
+    // A commit that exists locally and is NEVER pushed. A buggy/naive
+    // caller might set fromOwner.headSha to this same unpublished value —
+    // trivially "matching" localHead by construction — but that must not
+    // be enough: the actual upstream still points at the OLDER commit.
+    fs.writeFileSync(path.join(fx.worktreeRoot, 'f.txt'), 'never pushed\n');
+    fx.git('add', '-A');
+    fx.git('commit', '-q', '-m', 'local only, never pushed, mirrored into fromOwner.headSha');
+    const unpublishedHead = fx.headSha();
+
+    const result = branchOwnership.handoffBranchOwnership({
+      branch: 'feature', worktreeRoot: fx.worktreeRoot,
+      fromOwner: { ...genB, headSha: unpublishedHead }, toOwner: genA
+    });
+    assert.equal(result.ok, false, 'matching fromOwner.headSha to the unpublished local HEAD must not substitute for real upstream verification');
+    assert.equal(result.code, 'UNPUBLISHED_LOCAL_WORK');
+    assert.equal(result.details.localHead, unpublishedHead);
+    assert.notEqual(result.details.publishedHeadSha, unpublishedHead);
+
+    // Ownership must not have moved on a refused handoff.
+    assert.equal(branchOwnership.readBranchOwnership(fx.worktreeRoot, 'feature').generationId, 'gen-b');
   });
 });
