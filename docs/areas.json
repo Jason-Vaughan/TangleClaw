@@ -249,6 +249,7 @@
         "lib/checkout-*.js",
         "lib/behind-origin.js",
         "lib/branch-retire-safety.js",
+        "lib/branch-ownership.js",
         "lib/git.js",
         "lib/git-probe.js",
         "lib/github-*.js",
