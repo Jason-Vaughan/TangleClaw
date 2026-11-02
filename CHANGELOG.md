@@ -4,6 +4,21 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.53.0] - 2026-11-01
+
+### Added
+- Project Master status can report a structured continuity-health signal from a supplied remaining-context percentage or pane-buffer estimate. With no reading it reports `unmeasured`; it does not prepare or run a relaunch (#2120).
+- Imported and attached projects receive the ratified PM/Architect onboarding trust-rule template when they have no live copy. The rule is proposed for Operator review, not activated automatically (#2125).
+- Project listings report discrepancies in operator-owned settings. Recovery mode remains the existing DB-backed operator pin; this release adds no second settings schema (#1982).
+- The Master's lifecycle authority is a generation-tracked state derived from its existing `read-only`/`suggest`/`write` access level. Only `write` permits fleet lifecycle actions. A verified Operator may change that level through `POST /api/master/authority` or the guarded config PATCH; both paths require Operator proof (#2132).
+- The Master's launch, kill, and wrap calls now require a scoped `tc_master_` token, a current authority generation, and an allowlisted action. The token is stored outside the Master's writable home (#966).
+
+### Changed
+- A machine-client configuration flag can require an AUTH-4 service token from loopback callers. It defaults off so existing local clients keep working until an operator enables it; there is no settings UI for the flag yet (#1973).
+
+### Fixed
+- Session launch and kill routes now independently admit only a verified Operator or an authorized Master. Wrap routes also admit the targeted project's current verified session acting on itself, never another project's session (#2129).
+
 ## [5.52.0] - 2026-11-01
 
 ### Added
