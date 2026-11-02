@@ -553,3 +553,367 @@ describe('branch-retire-safety: failure paths (stubbed git)', () => {
     assert.ok(!out.includes(shas[24]));
   });
 });
+
+/*
+ * #1267 — a worktree/branch retirement PLANNER and EXECUTOR built on top of
+ * the oracle above. Every case here is a throwaway repository (never the
+ * real host's worktrees), per the issue's own acceptance criterion 4.
+ */
+describe('branch-retire-safety: worktree & branch retirement (#1267)', () => {
+  let root;
+  let n = 0;
+  const realExec = childProcess.execFile;
+
+  /**
+   * @returns {object} Environment for the git child.
+   */
+  function gitEnv() {
+    return { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_NOSYSTEM: '1', HOME: root };
+  }
+
+  /**
+   * @param {string} cwd
+   * @param {...string} args
+   * @returns {string}
+   */
+  function git(cwd, ...args) {
+    return childProcess.execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: gitEnv() }).trim();
+  }
+
+  /**
+   * @param {string} dir
+   * @param {string} file
+   * @param {string} content
+   * @param {string} msg
+   * @returns {string} The new commit's SHA.
+   */
+  function commit(dir, file, content, msg) {
+    fs.writeFileSync(path.join(dir, file), `${content}\n`);
+    git(dir, 'add', file);
+    git(dir, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', msg);
+    return git(dir, 'rev-parse', 'HEAD');
+  }
+
+  /**
+   * A bare origin plus a clone of it on main with one pushed commit.
+   * @returns {{origin: string, dir: string}}
+   */
+  function makeClone() {
+    const base = path.join(root, `case${++n}`);
+    fs.mkdirSync(base);
+    const origin = path.join(base, 'origin.git');
+    initRepo(base, ['--bare', '-b', 'main', origin], { env: gitEnv() });
+    const dir = path.join(base, 'work');
+    cloneRepo(origin, dir, [], { cwd: base, env: gitEnv() });
+    git(dir, 'checkout', '-q', '-b', 'main');
+    commit(dir, 'README.md', 'init', 'init');
+    git(dir, 'push', '-q', '-u', 'origin', 'main');
+    return { origin, dir, base };
+  }
+
+  before(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-branch-retire-1267-')); });
+  after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  describe('planWorktreeRetirement', () => {
+    it('a merged branch\'s worktree is eligible, class ancestor-of-main', async () => {
+      const { dir, base } = makeClone();
+      git(dir, 'checkout', '-q', '-b', 'feat');
+      commit(dir, 'a.txt', 'x', 'feature');
+      git(dir, 'checkout', '-q', 'main');
+      git(dir, 'merge', '-q', '--no-ff', '-m', 'Merge feat', 'feat');
+      git(dir, 'push', '-q', 'origin', 'main');
+      const linked = path.join(base, 'wt-feat');
+      git(dir, 'worktree', 'add', '-q', linked, 'feat');
+
+      const plan = await brs.planWorktreeRetirement({ repo: dir, cwd: path.join(base, 'elsewhere'), execFile: realExec });
+      assert.equal(plan.eligible.length, 1);
+      assert.equal(fs.realpathSync(plan.eligible[0].path), fs.realpathSync(linked));
+      assert.equal(plan.eligible[0].class, brs.WT_CLASS.ANCESTOR_OF_MAIN);
+      assert.equal(plan.skipped.length, 0);
+    });
+
+    it('a squash-merged branch\'s worktree is eligible, class identical-to-main, though not an ancestor', async () => {
+      const { dir, base } = makeClone();
+      git(dir, 'checkout', '-q', '-b', 'feat');
+      commit(dir, 'squash.txt', 'same content', 'feature');
+      git(dir, 'checkout', '-q', 'main');
+      // The "squash merge": main gets the same tree content under a brand new
+      // commit, so `feat` is never an ancestor of `main`.
+      commit(dir, 'squash.txt', 'same content', 'squash-merge feat');
+      git(dir, 'push', '-q', 'origin', 'main');
+      assert.throws(() => git(dir, 'merge-base', '--is-ancestor', 'feat', 'main'), 'precondition: feat is not an ancestor of main');
+      const linked = path.join(base, 'wt-feat');
+      git(dir, 'worktree', 'add', '-q', linked, 'feat');
+
+      const plan = await brs.planWorktreeRetirement({ repo: dir, execFile: realExec });
+      assert.equal(plan.eligible.length, 1);
+      assert.equal(plan.eligible[0].class, brs.WT_CLASS.IDENTICAL_TO_MAIN);
+    });
+
+    it('a branch worktree whose upstream is gone is eligible, class gone-upstream', async () => {
+      const { origin, dir, base } = makeClone();
+      git(dir, 'branch', 'feat');
+      git(dir, 'push', '-q', '-u', 'origin', 'feat');
+      const linked = path.join(base, 'wt-feat');
+      git(dir, 'worktree', 'add', '-q', linked, 'feat');
+      git(origin, 'update-ref', '-d', 'refs/heads/feat');
+
+      const plan = await brs.planWorktreeRetirement({ repo: dir, execFile: realExec });
+      assert.equal(plan.eligible.length, 1);
+      assert.equal(plan.eligible[0].class, brs.WT_CLASS.GONE_UPSTREAM);
+    });
+
+    it('a dirty worktree is skipped, never retired, even if otherwise merged', async () => {
+      const { dir, base } = makeClone();
+      git(dir, 'checkout', '-q', '-b', 'feat');
+      commit(dir, 'a.txt', 'x', 'feature');
+      git(dir, 'checkout', '-q', 'main');
+      git(dir, 'merge', '-q', '--no-ff', '-m', 'Merge feat', 'feat');
+      const linked = path.join(base, 'wt-feat');
+      git(dir, 'worktree', 'add', '-q', linked, 'feat');
+      fs.writeFileSync(path.join(linked, 'untracked.txt'), 'oops\n');
+
+      const plan = await brs.planWorktreeRetirement({ repo: dir, execFile: realExec });
+      assert.equal(plan.eligible.length, 0);
+      assert.equal(plan.skipped.length, 1);
+      assert.equal(plan.skipped[0].reason, brs.WT_SKIP.DIRTY);
+    });
+
+    it('the worktree matching the running process cwd is always skipped, whatever its state', async () => {
+      const { dir, base } = makeClone();
+      git(dir, 'checkout', '-q', '-b', 'feat');
+      commit(dir, 'a.txt', 'x', 'feature');
+      git(dir, 'checkout', '-q', 'main');
+      git(dir, 'merge', '-q', '--no-ff', '-m', 'Merge feat', 'feat');
+      const linked = path.join(base, 'wt-feat');
+      git(dir, 'worktree', 'add', '-q', linked, 'feat');
+
+      const plan = await brs.planWorktreeRetirement({ repo: dir, cwd: linked, execFile: realExec });
+      assert.equal(plan.eligible.length, 0);
+      assert.equal(plan.skipped.length, 1);
+      assert.equal(plan.skipped[0].reason, brs.WT_SKIP.ACTIVE_CWD);
+    });
+
+    it('a detached worktree at an ancestor of main is eligible', async () => {
+      const { dir, base } = makeClone();
+      const mainSha = git(dir, 'rev-parse', 'HEAD');
+      commit(dir, 'later.txt', 'x', 'later on main');
+      const linked = path.join(base, 'wt-detached');
+      git(dir, 'worktree', 'add', '-q', '--detach', linked, mainSha);
+
+      const plan = await brs.planWorktreeRetirement({ repo: dir, execFile: realExec });
+      assert.equal(plan.eligible.length, 1);
+      assert.equal(plan.eligible[0].class, brs.WT_CLASS.ANCESTOR_OF_MAIN);
+      assert.equal(plan.eligible[0].detached, true);
+    });
+
+    it('a detached worktree at an unmerged commit is refused, not retired', async () => {
+      const { dir, base } = makeClone();
+      git(dir, 'checkout', '-q', '-b', 'feat');
+      const sha = commit(dir, 'a.txt', 'x', 'unmerged feature');
+      git(dir, 'checkout', '-q', 'main');
+      const linked = path.join(base, 'wt-detached');
+      git(dir, 'worktree', 'add', '-q', '--detach', linked, sha);
+
+      const plan = await brs.planWorktreeRetirement({ repo: dir, execFile: realExec });
+      assert.equal(plan.eligible.length, 0);
+      assert.equal(plan.skipped[0].reason, brs.WT_SKIP.DETACHED_UNMERGED);
+    });
+
+    it('the primary checkout is never a candidate, eligible or skipped', async () => {
+      const { dir } = makeClone();
+      const plan = await brs.planWorktreeRetirement({ repo: dir, cwd: path.join(path.dirname(dir), 'nowhere'), execFile: realExec });
+      assert.equal(plan.eligible.length, 0);
+      assert.equal(plan.skipped.length, 0);
+    });
+  });
+
+  describe('retireWorktrees', () => {
+    /**
+     * @returns {Promise<{dir: string, base: string, linked: string}>}
+     */
+    async function eligibleFixture() {
+      const { dir, base } = makeClone();
+      git(dir, 'checkout', '-q', '-b', 'feat');
+      commit(dir, 'a.txt', 'x', 'feature');
+      git(dir, 'checkout', '-q', 'main');
+      git(dir, 'merge', '-q', '--no-ff', '-m', 'Merge feat', 'feat');
+      git(dir, 'push', '-q', 'origin', 'main');
+      const linked = path.join(base, 'wt-feat');
+      git(dir, 'worktree', 'add', '-q', linked, 'feat');
+      return { dir, base, linked };
+    }
+
+    it('--dry-run reports what would be removed and removes nothing', async () => {
+      const { dir, linked } = await eligibleFixture();
+      const plan = await brs.planWorktreeRetirement({ repo: dir, execFile: realExec });
+      const result = await brs.retireWorktrees(plan, { repo: dir, apply: false, execFile: realExec });
+      assert.equal(result.dryRun, true);
+      assert.equal(result.removed[0].action, 'would-remove');
+      assert.equal(fs.existsSync(linked), true);
+    });
+
+    it('--apply actually removes an eligible worktree', async () => {
+      const { dir, linked } = await eligibleFixture();
+      const plan = await brs.planWorktreeRetirement({ repo: dir, execFile: realExec });
+      const result = await brs.retireWorktrees(plan, { repo: dir, apply: true, execFile: realExec });
+      assert.equal(result.removed[0].action, 'removed');
+      assert.equal(fs.existsSync(linked), false);
+    });
+
+    it('re-verifies immediately before removing: a worktree dirtied after planning is skipped at apply, not removed', async () => {
+      const { dir, linked } = await eligibleFixture();
+      const plan = await brs.planWorktreeRetirement({ repo: dir, execFile: realExec });
+      fs.writeFileSync(path.join(linked, 'late.txt'), 'snuck in after the plan\n');
+
+      const result = await brs.retireWorktrees(plan, { repo: dir, apply: true, execFile: realExec });
+      assert.equal(result.removed.length, 0);
+      assert.equal(result.skipped[0].action, 'skipped-at-apply');
+      assert.equal(fs.existsSync(linked), true);
+    });
+  });
+
+  describe('planBranchRetirement', () => {
+    it('runs branch-first order correctly: a gone branch no worktree holds, with every commit reachable, is eligible', async () => {
+      const { origin, dir } = makeClone();
+      git(dir, 'branch', 'feat');
+      git(dir, 'push', '-q', '-u', 'origin', 'feat');
+      git(dir, 'merge', '-q', '--no-ff', '-m', 'Merge feat', 'feat');
+      git(origin, 'update-ref', '-d', 'refs/heads/feat');
+
+      const plan = await brs.planBranchRetirement({ repo: dir, execFile: realExec });
+      assert.equal(plan.eligible.length, 1);
+      assert.equal(plan.eligible[0].branch, 'feat');
+      assert.equal(plan.eligible[0].assessment.verdict, brs.VERDICTS.SAFE);
+    });
+
+    it('a gone branch still held by a worktree is skipped, not retired (worktrees must retire first)', async () => {
+      const { origin, dir, base } = makeClone();
+      git(dir, 'branch', 'feat');
+      git(dir, 'push', '-q', '-u', 'origin', 'feat');
+      git(dir, 'merge', '-q', '--no-ff', '-m', 'Merge feat', 'feat');
+      git(origin, 'update-ref', '-d', 'refs/heads/feat');
+      git(dir, 'worktree', 'add', '-q', path.join(base, 'wt-feat'), 'feat');
+
+      const plan = await brs.planBranchRetirement({ repo: dir, execFile: realExec });
+      assert.equal(plan.eligible.length, 0);
+      const feat = plan.skipped.find((s) => s.branch === 'feat');
+      assert.equal(feat.verdict, brs.VERDICTS.PRESERVE);
+    });
+
+    it('a gone branch with a commit unique to it is skipped (preserve), never force-deleted', async () => {
+      const { origin, dir } = makeClone();
+      git(dir, 'checkout', '-q', '-b', 'feat');
+      const wrap = commit(dir, 'wrap.md', 'x', 'unpushed wrap commit');
+      git(dir, 'push', '-q', '-u', 'origin', 'feat');
+      // The remote branch existed only transiently — delete it, simulating a
+      // branch whose upstream went gone before the wrap commit was ever seen.
+      git(origin, 'update-ref', '-d', 'refs/heads/feat');
+      git(dir, 'checkout', '-q', 'main');
+
+      const plan = await brs.planBranchRetirement({ repo: dir, execFile: realExec });
+      assert.equal(plan.eligible.length, 0);
+      const feat = plan.skipped.find((s) => s.branch === 'feat');
+      assert.equal(feat.verdict, brs.VERDICTS.PRESERVE);
+      assert.ok(feat.reasons.some((r) => r.code === brs.REASONS.UNIQUE_COMMITS));
+      assert.equal(git(dir, 'rev-parse', 'feat'), wrap, 'the branch and its commit still exist');
+    });
+
+    it('a branch whose upstream is not gone is skipped outright, assess() never consulted for it', async () => {
+      const { dir } = makeClone();
+      git(dir, 'branch', 'feat');
+      git(dir, 'push', '-q', '-u', 'origin', 'feat');
+
+      const plan = await brs.planBranchRetirement({ repo: dir, execFile: realExec });
+      const feat = plan.skipped.find((s) => s.branch === 'feat');
+      assert.equal(feat.verdict, null);
+      assert.match(feat.detail, /not gone/);
+    });
+  });
+
+  describe('retireBranches', () => {
+    /**
+     * @returns {Promise<{dir: string, origin: string}>}
+     */
+    async function eligibleFixture() {
+      const { origin, dir } = makeClone();
+      git(dir, 'branch', 'feat');
+      git(dir, 'push', '-q', '-u', 'origin', 'feat');
+      git(dir, 'merge', '-q', '--no-ff', '-m', 'Merge feat', 'feat');
+      git(origin, 'update-ref', '-d', 'refs/heads/feat');
+      return { origin, dir };
+    }
+
+    it('--dry-run reports what would be deleted and deletes nothing', async () => {
+      const { dir } = await eligibleFixture();
+      const plan = await brs.planBranchRetirement({ repo: dir, execFile: realExec });
+      const result = await brs.retireBranches(plan, { repo: dir, apply: false, execFile: realExec });
+      assert.equal(result.removed[0].action, 'would-delete');
+      assert.doesNotThrow(() => git(dir, 'rev-parse', '--verify', 'feat'));
+    });
+
+    it('--apply deletes an eligible branch with plain `git branch -d`', async () => {
+      const { dir } = await eligibleFixture();
+      const plan = await brs.planBranchRetirement({ repo: dir, execFile: realExec });
+      const result = await brs.retireBranches(plan, { repo: dir, apply: true, execFile: realExec });
+      assert.equal(result.removed[0].action, 'deleted');
+      assert.throws(() => git(dir, 'rev-parse', '--verify', 'refs/heads/feat'));
+    });
+
+    it('re-verifies immediately before deleting: a branch that grows a unique commit after planning is skipped at apply', async () => {
+      const { dir } = await eligibleFixture();
+      const plan = await brs.planBranchRetirement({ repo: dir, execFile: realExec });
+      git(dir, 'checkout', '-q', 'feat');
+      commit(dir, 'late.txt', 'x', 'snuck in after the plan');
+      git(dir, 'checkout', '-q', 'main');
+
+      const result = await brs.retireBranches(plan, { repo: dir, apply: true, execFile: realExec });
+      assert.equal(result.removed.length, 0);
+      assert.equal(result.skipped[0].action, 'skipped-at-apply');
+      assert.doesNotThrow(() => git(dir, 'rev-parse', '--verify', 'feat'));
+    });
+  });
+
+  describe('describeProvenance', () => {
+    it('parses an issue number and reads a creation time from an agent-<hash>-<issue> directory', async () => {
+      const dir = path.join(root, `agent-3f9a1c2b-1267`);
+      fs.mkdirSync(dir);
+      const p = await brs.describeProvenance(dir);
+      assert.equal(p.issueNumber, 1267);
+      assert.equal(p.source, 'name-parse');
+      assert.ok(p.createdAt && !Number.isNaN(Date.parse(p.createdAt)));
+      assert.equal(p.sessionId, null);
+    });
+
+    it('cross-references a caller-supplied session lookup when one resolves', async () => {
+      const dir = path.join(root, `agent-00ff00ff`);
+      fs.mkdirSync(dir);
+      const p = await brs.describeProvenance(dir, { lookupSession: async () => ({ sessionId: 'sess-42' }) });
+      assert.equal(p.sessionId, 'sess-42');
+      assert.equal(p.source, 'name-parse+store');
+    });
+
+    it('an unparseable directory name yields source unknown, nothing guessed', async () => {
+      const dir = path.join(root, 'scratch-dir');
+      fs.mkdirSync(dir);
+      const p = await brs.describeProvenance(dir);
+      assert.equal(p.source, 'unknown');
+      assert.equal(p.issueNumber, null);
+      assert.equal(p.createdAt, null);
+      assert.equal(p.sessionId, null);
+    });
+
+    it('never throws when the lookup or the stat fails', async () => {
+      const missing = path.join(root, 'agent-deadbeef');
+      const p1 = await brs.describeProvenance(missing);
+      assert.equal(p1.source, 'name-parse');
+      assert.equal(p1.createdAt, null);
+
+      const dir = path.join(root, 'agent-cafef00d');
+      fs.mkdirSync(dir);
+      const p2 = await brs.describeProvenance(dir, { lookupSession: async () => { throw new Error('store unreachable'); } });
+      assert.equal(p2.source, 'name-parse');
+      assert.equal(p2.sessionId, null);
+    });
+  });
+});
