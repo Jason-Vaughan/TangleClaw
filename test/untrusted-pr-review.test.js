@@ -8,10 +8,12 @@ const {
   buildUntrustedPrReviewPacket,
   evaluateReviewCapabilities,
   assertUntrustedReviewBoundary,
+  buildIsolatedReviewWorkerSpec,
   UntrustedReviewBoundaryError,
   REQUIRED_CHECKOUT_MODE,
   REQUIRED_STRIPPED_ENV_VARS,
-  FORBIDDEN_ACTIONS
+  FORBIDDEN_ACTIONS,
+  ISOLATED_REVIEWER_ALLOWED_ACTIONS
 } = require('../lib/untrusted-pr-review');
 
 /** A contract that satisfies `evaluateReviewCapabilities` exactly. */
@@ -127,6 +129,15 @@ describe('sanitizeUntrustedPrText', () => {
     assert.equal(result.text, 'exact');
   });
 
+  test('clamps a non-finite or non-positive maxLength to the default budget rather than disabling truncation', () => {
+    const long = 'x'.repeat(50000);
+    for (const bad of [Infinity, -Infinity, NaN, 0, -10]) {
+      const result = sanitizeUntrustedPrText(long, { maxLength: bad });
+      assert.equal(result.truncated, true, `expected truncation for maxLength=${bad}`);
+      assert.ok(result.text.length < long.length, `expected a bounded result for maxLength=${bad}`);
+    }
+  });
+
   test('treats a non-string field as empty and flags it, rather than throwing', () => {
     const result = sanitizeUntrustedPrText(undefined);
     assert.equal(result.text, '');
@@ -212,7 +223,7 @@ describe('buildUntrustedPrReviewPacket', () => {
     assert.equal(sanitizationReport.fieldsTruncated.includes('title'), false);
   });
 
-  test('enforces an overall packet budget on top of per-field budgets, with a visible marker', () => {
+  test('enforces an overall packet budget on top of per-field budgets, with a visible marker, never exceeding the budget', () => {
     const { packet, sanitizationReport } = buildUntrustedPrReviewPacket(
       {
         title: 'x'.repeat(50),
@@ -221,9 +232,54 @@ describe('buildUntrustedPrReviewPacket', () => {
       },
       { fieldCharBudget: 1000, totalCharBudget: 80 }
     );
-    assert.equal(packet.length <= 80 + 200, true); // marker text adds a bounded suffix
+    assert.ok(packet.length <= 80, `expected packet.length <= 80, got ${packet.length}`);
     assert.equal(sanitizationReport.totalTruncated, true);
     assert.match(packet, /packet truncated/);
+  });
+
+  test('never cuts an <untrusted-pr-data> fence in half — every fence in a truncated packet is whole and closed', () => {
+    const { packet } = buildUntrustedPrReviewPacket(
+      {
+        title: 'x'.repeat(50),
+        body: 'y'.repeat(50),
+        commitMessages: ['z'.repeat(50), 'w'.repeat(50)]
+      },
+      { fieldCharBudget: 1000, totalCharBudget: 150 }
+    );
+    const contentBeforeMarker = packet.split('<!-- packet truncated')[0];
+    const opens = (contentBeforeMarker.match(/<untrusted-pr-data /g) || []).length;
+    const closes = (contentBeforeMarker.match(/<\/untrusted-pr-data>/g) || []).length;
+    assert.equal(opens, closes, 'every opened fence before the marker must also be closed');
+    // No partial fence: either a section's full closing tag is present, or the
+    // section does not appear at all.
+    for (const open of contentBeforeMarker.matchAll(/<untrusted-pr-data field="([^"]*)"/g)) {
+      assert.ok(
+        contentBeforeMarker.includes(`field="${open[1]}"`) && contentBeforeMarker.includes('</untrusted-pr-data>'),
+        `field ${open[1]}'s fence must be complete`
+      );
+    }
+  });
+
+  test('bounds an oversized array field so it stops once the packet budget is reached, rather than sanitizing every element', () => {
+    const hugeArray = new Array(5000).fill('x'.repeat(50));
+    const { packet, sanitizationReport } = buildUntrustedPrReviewPacket(
+      { diffHunks: hugeArray, sha: 'x' },
+      { fieldCharBudget: 1000, totalCharBudget: 200 }
+    );
+    assert.ok(sanitizationReport.fieldsTruncated.includes('diffHunks'));
+    const fencedCount = (packet.match(/field="diffHunks\[\d+\]"/g) || []).length;
+    assert.ok(
+      fencedCount < hugeArray.length,
+      `expected far fewer than ${hugeArray.length} fenced sections, got ${fencedCount}`
+    );
+  });
+
+  test('clamps a non-finite or non-positive fieldCharBudget/totalCharBudget to the defaults', () => {
+    const { sanitizationReport } = buildUntrustedPrReviewPacket(
+      { title: 'x'.repeat(50000) },
+      { fieldCharBudget: -1, totalCharBudget: NaN }
+    );
+    assert.ok(sanitizationReport.fieldsTruncated.includes('title'));
   });
 
   test('defaults sha to "unknown" when none is supplied', () => {
@@ -278,9 +334,19 @@ describe('evaluateReviewCapabilities', () => {
     assert.ok(result.violations.length > 0);
   });
 
-  test('ignores a non-array allowedActions rather than throwing', () => {
+  test('flags a non-array allowedActions as a capability violation rather than silently defaulting to []', () => {
     const result = evaluateReviewCapabilities({ ..._cleanContract(), allowedActions: 'merge' });
+    assert.equal(result.ok, false);
+    assert.ok(result.violations.some((v) => v.code === 'ALLOWED_ACTIONS_NOT_ARRAY'));
+    // A string isn't iterated as an array of actions, so no FORBIDDEN_ACTION_ALLOWED fires for it.
     assert.equal(result.violations.some((v) => v.code === 'FORBIDDEN_ACTION_ALLOWED'), false);
+  });
+
+  test('flags a missing allowedActions as a capability violation', () => {
+    const contract = { ..._cleanContract() };
+    delete contract.allowedActions;
+    const result = evaluateReviewCapabilities(contract);
+    assert.ok(result.violations.some((v) => v.code === 'ALLOWED_ACTIONS_NOT_ARRAY'));
   });
 });
 
@@ -299,6 +365,47 @@ describe('assertUntrustedReviewBoundary', () => {
         assert.ok(err.violations.some((v) => v.code === 'FORBIDDEN_ACTION_ALLOWED'));
         return true;
       }
+    );
+  });
+});
+
+describe('buildIsolatedReviewWorkerSpec', () => {
+  test('produces a read-only, diff-only, credential-stripped spec carrying the given packet', () => {
+    const { packet } = buildUntrustedPrReviewPacket({ title: 'x', sha: 'abc' });
+    const spec = buildIsolatedReviewWorkerSpec(packet);
+    assert.equal(spec.checkoutMode, REQUIRED_CHECKOUT_MODE);
+    assert.equal(spec.readOnlyFilesystem, true);
+    assert.deepEqual(spec.allowedActions, [...ISOLATED_REVIEWER_ALLOWED_ACTIONS]);
+    for (const required of REQUIRED_STRIPPED_ENV_VARS) {
+      assert.ok(spec.stripEnvVars.includes(required));
+    }
+    assert.equal(spec.packet, packet);
+  });
+
+  test('the returned spec always satisfies the read-only review boundary', () => {
+    const { packet } = buildUntrustedPrReviewPacket({ title: 'x' });
+    const spec = buildIsolatedReviewWorkerSpec(packet);
+    assert.deepEqual(evaluateReviewCapabilities(spec), { ok: true, violations: [] });
+  });
+
+  test('merges caller-supplied extra env vars to strip, without dropping the required ones', () => {
+    const { packet } = buildUntrustedPrReviewPacket({ title: 'x' });
+    const spec = buildIsolatedReviewWorkerSpec(packet, { extraStripEnvVars: ['CUSTOM_SECRET'] });
+    assert.ok(spec.stripEnvVars.includes('CUSTOM_SECRET'));
+    for (const required of REQUIRED_STRIPPED_ENV_VARS) {
+      assert.ok(spec.stripEnvVars.includes(required));
+    }
+  });
+
+  test('a non-string packet is coerced to an empty string rather than thrown', () => {
+    const spec = buildIsolatedReviewWorkerSpec(undefined);
+    assert.equal(spec.packet, '');
+  });
+
+  test('a caller-supplied allowedActions is still checked against the boundary', () => {
+    assert.throws(
+      () => buildIsolatedReviewWorkerSpec('packet', { allowedActions: ['merge'] }),
+      UntrustedReviewBoundaryError
     );
   });
 });

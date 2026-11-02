@@ -50,6 +50,17 @@ that give text structural meaning cannot. See `.claude/rules/learnings/core.md`'
 trust-boundary parser that scans for the ABSENCE of bad signals never converges" for why this
 module is built that way on purpose.
 
+**WARNING — escaping closes a structural gap, not a semantic one.** Escaping `<`, `>` and `&`
+guarantees that no substring of untrusted text can be parsed as a tag: it cannot splice content
+out of its fence, close the fence early, or open a fake one, however it is spelled. It makes no
+claim about, and cannot prevent, a reviewer being influenced by the ORDINARY-LANGUAGE CONTENT
+inside a still-intact fence — persuasive, authoritative-sounding, or urgent-sounding prose needs
+no tag-shaped character at all to attempt that, and no escaping step touches it. That is exactly
+why the fence is paired with the read-only review execution contract below (and, since Round 2,
+`buildIsolatedReviewWorkerSpec`'s isolated, diff-only worker invocation spec): the fence keeps the
+data structurally inert, and the contract keeps whatever reads it unable to act on what it reads,
+however persuasive. Neither half substitutes for the other.
+
 ## The read-only review execution contract
 
 `evaluateReviewCapabilities(contract)` checks a proposed review session's declared capabilities
@@ -74,11 +85,29 @@ declares what it intends to expose and is checked against that declaration — t
 way to verify the declaration matches reality, which is a limit worth stating rather than
 implying otherwise.
 
+## Isolated reviewer worker invocation spec
+
+`buildIsolatedReviewWorkerSpec(packet, options)` assembles the concrete invocation spec for the
+isolated reviewer worker ADR 0014 and issue #1554 call for: `checkoutMode: "diff-only"`,
+credential-stripped (`stripEnvVars` always includes `REQUIRED_STRIPPED_ENV_VARS`, plus any
+caller-supplied `extraStripEnvVars`), `allowedActions: ["read-diff", "emit-review"]` by default,
+`readOnlyFilesystem: true`, and the already-fenced `packet` a caller built with
+`buildUntrustedPrReviewPacket`. It validates the spec it assembles against
+`assertUntrustedReviewBoundary` before returning it, so a caller never receives a spec that
+itself violates the boundary.
+
+This is the SPEC for the worker, not the worker: nothing here spawns a process, a container, or
+any execution environment. It gives whatever eventually runs the isolated worker a concrete,
+already-validated invocation contract to launch it with, deterministically, from pure data.
+
 ## What is still open
 
-The isolated reviewer worker itself (disposable execution, no write access to host state, no
-switchboard credentials, minimal model-only egress) is unbuilt; ADR 0014 names it as the
-mechanism that would finally retire the "injection hold" operating rule. Until it lands, this
-module reduces how much raw untrusted text a reviewing session (human or agent) has to read
-unfenced, and gives any read-only review tooling a mechanical capabilities check — it does not
-by itself authorize skipping the hold-and-flag process ADR 0014 rule 3 still requires.
+The isolated reviewer worker's EXECUTION — an actual disposable process or container that runs
+with no write access to host state, no switchboard credentials, and minimal model-only egress —
+is unbuilt. `buildIsolatedReviewWorkerSpec` above gives it a concrete, pre-validated invocation
+spec to launch with once it exists, but nothing in this module spawns, sandboxes, or runs
+anything. ADR 0014 names the worker's execution as the mechanism that would finally retire the
+"injection hold" operating rule. Until it lands, this module reduces how much raw untrusted text a
+reviewing session (human or agent) has to read unfenced, and gives any read-only review tooling a
+mechanical capabilities check — it does not by itself authorize skipping the hold-and-flag process
+ADR 0014 rule 3 still requires.
