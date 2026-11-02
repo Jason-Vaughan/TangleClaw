@@ -1241,6 +1241,35 @@ describe('readMasterIdentityFreshness — has the RUNNING Master read this? (#96
       assert.equal(s.continuity.status, 'unmeasured');
     });
 
+    it('honors an explicit paneBufferCapacityBytes override', () => {
+      const home = mk();
+      const tmuxLib = Object.assign(fakeTmux({ alive: true }), {
+        capturePane: () => ({ lines: ['x'.repeat(50)], alternateScreen: false })
+      });
+      const s = master.getMasterStatus({
+        home, tmuxLib, paneBufferCapacityBytes: 100,
+        enginesLib: { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' }
+      });
+      assert.equal(s.continuity.source, 'estimated');
+      // 50 used of a 100-byte capacity override is 50% remaining, not the
+      // ~100% the real 256KiB default would have reported for the same pane.
+      assert.equal(s.continuity.remainingPercent, 50);
+    });
+
+    it('ignores a non-positive or non-finite capacity override, falling back to the default', () => {
+      const home = mk();
+      const tmuxLib = Object.assign(fakeTmux({ alive: true }), {
+        capturePane: () => ({ lines: ['x'.repeat(50)], alternateScreen: false })
+      });
+      for (const bad of [0, -1, NaN, 'not-a-number']) {
+        const s = master.getMasterStatus({
+          home, tmuxLib, paneBufferCapacityBytes: bad,
+          enginesLib: { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' }
+        });
+        assert.equal(s.continuity.source, 'estimated', `bad override ${bad} must not break measurement`);
+      }
+    });
+
     it('does not capture the pane when the tmux lib does not model capturePane at all', () => {
       // Every existing fixture built from plain `fakeTmux(...)` falls here —
       // the regression this guards is capturing unconditionally and crashing
