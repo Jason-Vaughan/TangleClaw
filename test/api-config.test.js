@@ -12,6 +12,7 @@ const master = require('../lib/master');
 const portScanner = require('../lib/port-scanner');
 const { createServer, _setInstallPriorUse } = require('../server');
 const { operatorHeaders, signInOperator, attemptUnidentified, bindProject } = require('./_shared-docs-callers');
+const openInstallToken = require('../lib/open-install-token');
 
 /**
  * The methods a caller must be identified for (#2233). The request helper below
@@ -43,7 +44,10 @@ function request(server, method, urlPath, body, as) {
       port: addr.port,
       path: urlPath,
       method,
-      headers: { 'Content-Type': 'application/json', ...(as || (WRITES.has(method) ? operatorHeaders(server) : {})) }
+      headers: {
+        'Content-Type': 'application/json',
+        ...(as || (WRITES.has(method) ? { ...operatorHeaders(server), 'x-tc-open-token': openInstallToken.mint() } : {}))
+      }
     };
 
     const req = http.request(options, (res) => {
@@ -1259,31 +1263,77 @@ describe('API endpoints', () => {
         }
       });
 
-      it('refuses a project-bound caller changing accessLevel — only the operator may (PRR-A BLOCKING, round 2)', async () => {
-        // The exact gap PRR-A's round-2 pre-inspection named: a verified
-        // project session is admitted by the generic launch-binding floor to
-        // PATCH /api/config at all (every OTHER field on this route is
-        // reachable that way), but an accessLevel transition grants the
-        // Master standing write authority over the fleet API — the same
-        // authority POST /api/master/authority already requires operator
-        // proof for. Without this check, a project session could grant that
-        // authority to itself via a PATCH the audit trail would misrecord as
-        // the operator's own action.
-        given(BYPASS_ON_CLAUDE);
-        const before = store.config.load().master;
-        const projDir = path.join(tmpDir, 'authz-escalation-probe');
-        fs.mkdirSync(projDir, { recursive: true });
-        const project = store.projects.create({ name: 'authz-escalation-probe', path: projDir, engine: 'claude' });
-        const bound = bindProject(project);
-        try {
+      describe('an accessLevel transition requires real operator proof (PRR-A BLOCKING, rounds 2 and 2-HOLD)', () => {
+        let project;
+        let bound;
+        let before;
+
+        beforeEach(() => {
+          given(BYPASS_ON_CLAUDE);
+          before = store.config.load().master;
+          const projDir = path.join(tmpDir, `authz-escalation-probe-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+          fs.mkdirSync(projDir, { recursive: true });
+          project = store.projects.create({ name: path.basename(projDir), path: projDir, engine: 'claude' });
+          bound = bindProject(project);
+        });
+
+        afterEach(() => {
+          store.sessions.kill(bound.sessionId, 'test cleanup');
+        });
+
+        it('refuses a project-bound caller changing accessLevel — only the operator may (round 2)', async () => {
+          // The exact gap PRR-A's round-2 pre-inspection named: a verified
+          // project session is admitted by the generic launch-binding floor
+          // to PATCH /api/config at all (every OTHER field on this route is
+          // reachable that way), but an accessLevel transition grants the
+          // Master standing write authority over the fleet API — the same
+          // authority POST /api/master/authority already requires operator
+          // proof for. Without this check, a project session could grant
+          // that authority to itself via a PATCH the audit trail would
+          // misrecord as the operator's own action.
           const { status, data } = await request(server, 'PATCH', '/api/config',
             { master: { accessLevel: 'write' } }, bound.headers);
           assert.equal(status, 403);
           assert.equal(data.code, 'OPERATOR_ONLY');
           assert.deepEqual(store.config.load().master, before, 'nothing was granted — not accessLevel, not a generation bump');
-        } finally {
-          store.sessions.kill(bound.sessionId, 'test cleanup');
-        }
+        });
+
+        it('still refuses a project-bound caller that ALSO forges the dashboard-shaped headers (round 2-HOLD, Ruling A491-W2A-R8)', async () => {
+          // sharedDocsAccess._isOperator reads ANY dashboard- or
+          // browser-shaped request as the operator on an open install —
+          // before resolving any project binding at all. A project session
+          // could add `x-tangleclaw-client: dashboard` (or an Origin
+          // header) to its own request and be read as the operator by the
+          // simpler check this route used in round 2. The caller still
+          // carries its own launch-binding headers, which is what this
+          // route must refuse on regardless of what else it also sends.
+          const forged = {
+            ...bound.headers,
+            ...operatorHeaders(server),
+            'x-tangleclaw-client': 'dashboard',
+            'x-tc-open-token': openInstallToken.mint()
+          };
+          const { status, data } = await request(server, 'PATCH', '/api/config',
+            { master: { accessLevel: 'write' } }, forged);
+          assert.equal(status, 403);
+          assert.equal(data.code, 'OPERATOR_ONLY');
+          assert.deepEqual(store.config.load().master, before, 'nothing was granted — not accessLevel, not a generation bump');
+        });
+
+        it('refuses a dashboard-shaped caller with no launch binding that lacks the open-install token (round 2-HOLD)', async () => {
+          // The flip side: a caller with NO launch-binding headers, shaped
+          // like the dashboard, but missing the one thing that actually
+          // proves it fetched that shape from this server — the
+          // open-install token `_requireOperatorWrite` itself checks. This
+          // is the proof POST /api/master/authority already requires, and
+          // this route must now ask for the same thing.
+          const noToken = { ...operatorHeaders(server), 'x-tangleclaw-client': 'dashboard' };
+          const { status, data } = await request(server, 'PATCH', '/api/config',
+            { master: { accessLevel: 'write' } }, noToken);
+          assert.equal(status, 403);
+          assert.equal(data.code, 'OPEN_INSTALL_TOKEN_INVALID');
+          assert.deepEqual(store.config.load().master, before, 'nothing was granted — not accessLevel, not a generation bump');
+        });
       });
 
       it('persists the authority transition to disk even when the LATER write-guard apply fails (#2132, R4)', async () => {
