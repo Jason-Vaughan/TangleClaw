@@ -109,6 +109,7 @@ const launchSequence = require('./lib/launch-sequence');
 const launchRecoveryClear = require('./lib/launch-recovery-clear');
 const recoveryDefault = require('./lib/recovery-default');
 const master = require('./lib/master');
+const masterAuthority = require('./lib/master-authority');
 const sharedDocsAccess = require('./lib/shared-docs-access');
 const sharedDocRecord = require('./lib/shared-docs');
 const launchBindingGuard = require('./lib/launch-binding-guard');
@@ -1235,7 +1236,8 @@ route('GET', '/api/master/status', (_req, res) => {
 // master's CLAUDE.md identity every call (so guide/token changes propagate),
 // launches the session only when absent. The UI calls this before attaching
 // the terminal iframe (ttyd only attaches to EXISTING tmux sessions).
-route('POST', '/api/master/ensure', (_req, res) => {
+route('POST', '/api/master/ensure', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'start the Project Master')) return;
   const result = master.ensureMasterSession();
   if (result.error) {
     // Refused before anything started: the engine could not be shown isolated
@@ -1260,7 +1262,8 @@ route('POST', '/api/master/ensure', (_req, res) => {
 // master is success, because the operator's intent is "not running". The remedy
 // for #968 — a level change binds on the guard at once, but the running master
 // reads its instructions only at launch, so it has to restart to act on one.
-route('POST', '/api/master/kill', (_req, res) => {
+route('POST', '/api/master/kill', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'stop the Project Master')) return;
   const result = master.killMasterSession();
   if (result.error) {
     // Same distinction ensure draws, and for the same reason: tmux declining to
@@ -1274,6 +1277,77 @@ route('POST', '/api/master/kill', (_req, res) => {
     return errorResponse(res, 500, result.error, 'MASTER_LIVENESS_UNKNOWN', { cause: result.cause });
   }
   jsonResponse(res, 200, result);
+});
+
+/**
+ * `_requireOperatorWrite` proof options for a Project Master authority
+ * change (#2132/#966) — same shape as `_startupPromptProofOptions`, for the
+ * same reason: this changes what the Master may do fleet-wide, so only a
+ * provably signed-in operator (never the Master itself, never a project)
+ * may change it.
+ * @param {string} action - Completing "...to {action}".
+ * @returns {object}
+ */
+function _masterAuthorityProofOptions(action) {
+  return {
+    logEvent: 'Refused a Project Master authority change',
+    logContext: {},
+    fallbackAction: action,
+    sameOriginWhat: 'A Project Master authority change',
+    unauthenticated: `Sign in to ${action}: this is the operator's to change, never the Master's own.`,
+    machineClient: `Only the operator may ${action}. A local process is not the operator, and the Master cannot grant itself authority.`,
+    openToken: `This install has no login, so a request to ${action} must carry the anti-forgery token its `
+      + 'dashboard was issued. Reload the dashboard and try again.',
+    gateUnsupported: (gateState) => `Cannot ${action} while the login gate is "${gateState}". Resolve the gate first.`
+  };
+}
+
+// GET /api/master/authority — the Project Master's current lifecycle
+// authority state (#2132/#966): the 3-tier accessLevel, the binary
+// toggleState it derives to, and the generation/updatedAt/updatedBy of its
+// last recorded Operator transition.
+route('GET', '/api/master/authority', (_req, res) => {
+  jsonResponse(res, 200, masterAuthority.getAuthorityState(store.config.load()));
+});
+
+// POST /api/master/authority — an Operator-authorized lifecycle-authority
+// transition. Body: { accessLevel? , toggleState? } (either, not both
+// disagreeing — masterAuthority.applyOperatorAuthorityChange itself refuses
+// a contradiction). The operator only: the Master cannot grant itself
+// standing fleet-mutation authority (#2132 acceptance criterion 2).
+route('POST', '/api/master/authority', (req, res, _params, body) => {
+  const proof = _requireOperatorWrite(req, res, _masterAuthorityProofOptions('change the Project Master\'s lifecycle authority'));
+  if (!proof) return;
+  const config = store.config.load();
+  // `load()` shallow-spreads `DEFAULT_CONFIG` under a config that has no
+  // `master` key of its own (a fresh install, or a config.json saved before
+  // `master` ever existed on it) — so `config.master`, left untouched, can be
+  // the literal shared `DEFAULT_CONFIG.master` object. `applyOperatorAuthorityChange`
+  // mutates `config.master` in place; breaking the reference here, before that
+  // call, is what keeps a stored transition from corrupting every future
+  // config.load() for the life of this process.
+  if (config.master && typeof config.master === 'object') config.master = { ...config.master };
+  const previousAccessLevel = masterAuthority.getAuthorityState(config).accessLevel;
+  let next;
+  try {
+    next = masterAuthority.applyOperatorAuthorityChange(config, {
+      accessLevel: body ? body.accessLevel : undefined,
+      toggleState: body ? body.toggleState : undefined,
+      actor: proof.actor || 'operator'
+    });
+  } catch (err) {
+    if (err.code === 'AUTHORITY_BAD_REQUEST') {
+      return errorResponse(res, 400, err.message, err.code);
+    }
+    throw err;
+  }
+  masterAuthority.ensureApiTokenWhenEnabled(config);
+  store.config.save(config);
+  // Regenerate the Master's own file-write guard only when the level actually
+  // moved — `applyMasterAccessLevel` is a no-op when the Master has never been
+  // launched, but still touches disk and can throw when it has.
+  if (next.accessLevel !== previousAccessLevel) master.applyMasterAccessLevel(next.accessLevel);
+  jsonResponse(res, 200, next);
 });
 
 // POST /api/master/rules/restore-defaults — replace every master Hard rule
