@@ -1048,12 +1048,24 @@ describe('lib/routes/sessions — GET /api/usage/sessions (#2787)', () => {
     sessionsRoutes.register({});
   });
 
+  // These routes have no injectable `capturePaneOutput` seam of their own
+  // (`_buildUsageSessionReadings` calls `buildSessionUsageReadings` with
+  // none, so it falls back to `_defaultCapturePaneOutput`'s real
+  // `tmux.readPaneAsync`). Stubbed here so these route tests never spawn a
+  // real `tmux capture-pane -t route-proj` against the default tmux server —
+  // CI's "large" suite runs this file alongside test/tmux-tcc.test.js, which
+  // exercises that same default server concurrently.
+  const tmux = require('../lib/tmux');
+  const _readPaneAsync = tmux.readPaneAsync;
+
   beforeEach(() => {
     store.projects.create({ name: 'route-proj', path: '/repo/route-proj', engine: 'claude' });
+    tmux.readPaneAsync = async () => ({ cap: { lines: [] }, err: null });
   });
 
   afterEach(() => {
     for (const p of store.projects.list()) store.projects.delete(p.id);
+    tmux.readPaneAsync = _readPaneAsync;
   });
 
   it('GET /api/usage/sessions returns one row per live session, with no live sessions returning an empty list', async () => {
