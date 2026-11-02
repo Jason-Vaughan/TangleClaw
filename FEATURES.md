@@ -17,6 +17,14 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v5.54.0 — External code and CI safety
+
+- **Check primary-guard liveness** (#1400) — the wired hook uses an outer runner that records allow, refusal, and inner-script errors without changing the guard's fail-open decision. Self-test exercises both decisions and checks the heartbeat; status reports invocation counts, crashes since a successful self-test, and whether a primary gained commits without a genuine invocation. `scripts/install-primary-guard.js#invoke`, `scripts/install-primary-guard.js#selfTest`, `scripts/install-primary-guard.js#reportStatus`. Tests: `test/primary-checkout-guard.test.js`, `test/engines-hook-shell-safety.test.js`.
+- **Narrow store permissions on boot** (#1421) — startup narrows the data directory to `0700` and existing SQLite journal, WAL, and shared-memory sidecars to `0600`; the permission check rejects a wider directory. `lib/store.js#_tightenDbPermissions`, `lib/store.js#_checkPermissions`. Tests: `test/store-users.test.js`.
+- **Bound fork-PR CI credentials and runtime** (#1550) — the test workflow disables persisted checkout credentials and limits the test job to 20 minutes. `.github/workflows/test.yml`. Tests: `test/ci-workflow.test.js`.
+- **Prepare untrusted PR review data** (#1554) — a review-boundary module sanitizes and fences external PR text, bounds packet size, and validates a read-only, credential-stripped worker specification. The isolated reviewer worker remains a separate follow-on; ADR 0014's injection-hold rule remains in force. `lib/untrusted-pr-review.js#buildUntrustedPrReviewPacket`, `lib/untrusted-pr-review.js#buildIsolatedReviewWorkerSpec`, `lib/untrusted-pr-review.js#assertUntrustedReviewBoundary`. Tests: `test/untrusted-pr-review.test.js`.
+- **Read per-session usage and context** (#2787) — session routes report live context remaining and, when a Codex status line provides it, live weekly quota; operator calibration supplies five-hour quota and weekly fallback. Each reading includes a configurable low-usage hand-off signal. `lib/usage-windows.js#buildSessionUsageReadings`, `lib/routes/sessions.js` ("GET /api/usage/sessions", "GET /api/usage/sessions/:sessionId"). Tests: `test/usage-windows.test.js`.
+
 ## v5.53.1 — Residual and spin-off closure
 
 - **Advertise the configured operator origin** (#1380) — `tc whoami` operator-host and setup cutover/restart redirects honor Tailscale mode. If the advertised origin cannot be resolved, they expose the failure instead of substituting the request Host; mode off retains local behavior. Medusa peer links remain loopback-only. `lib/tailscale-ingress.js#resolveAdvertisedOrigin`, `lib/routes/tc.js`, `lib/routes/setup.js`, `public/setup.js`. Tests: `test/identity-diagnostics.test.js`, `test/setup-provisioning.test.js`, `test/api-setup-https.test.js`, `test/setup-wizard-https.test.js`.
