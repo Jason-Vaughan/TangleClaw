@@ -49,7 +49,7 @@ describe('branch-retire-safety: parsers', () => {
     assert.equal(t[3].bare, true);
   });
 
-  it('counts staged, unstaged, unmerged and untracked separately, skipping a rename\'s original path', () => {
+  it('counts staged, unstaged, unmerged, untracked and ignored separately, skipping a rename\'s original path', () => {
     const recs = [
       '# branch.oid ' + 'a'.repeat(40),
       '1 M. N... 100644 100644 100644 x x staged.js',
@@ -57,9 +57,14 @@ describe('branch-retire-safety: parsers', () => {
       '1 MM N... 100644 100644 100644 x x both.js',
       '2 R. N... 100644 100644 100644 x x R100 new.js', 'old.js',
       'u UU N... 100644 100644 100644 100644 x x x conflict.js',
-      '? plan.md'
+      '? plan.md',
+      '! local.env'
     ];
-    assert.deepEqual(brs.parseDirt(recs.join('\0') + '\0'), { staged: 3, unstaged: 2, unmerged: 1, untracked: 1 });
+    assert.deepEqual(brs.parseDirt(recs.join('\0') + '\0'), { staged: 3, unstaged: 2, unmerged: 1, untracked: 1, ignored: 1 });
+  });
+
+  it('an ignored-only status is parsed as dirt (the module\'s dirtiness checks treat ignored > 0 as dirty)', () => {
+    assert.deepEqual(brs.parseDirt('! secret.env\0'), { staged: 0, unstaged: 0, unmerged: 0, untracked: 0, ignored: 1 });
   });
 });
 
@@ -194,10 +199,26 @@ describe('branch-retire-safety: against real git', () => {
     assert.deepEqual(codes(a).sort(), [REASONS.CHECKED_OUT, REASONS.WORKTREE_DIRTY].sort());
     const held = a.worktrees.filter((w) => w.holdsTarget);
     assert.equal(held.length, 1);
-    assert.deepEqual(held[0].dirt, { staged: 0, unstaged: 0, unmerged: 0, untracked: 1 });
+    assert.deepEqual(held[0].dirt, { staged: 0, unstaged: 0, unmerged: 0, untracked: 1, ignored: 0 });
     assert.match(a.safeNextAction, /plain `git worktree remove <tree>` \(never `--force`\)/);
     assert.match(a.safeNextAction, /--ignored/);
     assert.ok(a.safeNextAction.includes(held[0].path), 'the advice names the tree holding the branch');
+  });
+
+  it('a gitignored file (no other changes) in the worktree holding the branch is also preserved, not just untracked ones', async () => {
+    const { dir } = makeClone();
+    git(dir, 'checkout', '-q', '-b', 'feat');
+    fs.writeFileSync(path.join(dir, '.gitignore'), 'local.env\n');
+    git(dir, 'add', '.gitignore');
+    git(dir, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'ignore local.env');
+    git(dir, 'push', '-q', '-u', 'origin', 'feat');
+    fs.writeFileSync(path.join(dir, 'local.env'), 'SECRET=1\n');
+
+    const a = await check(dir, 'feat');
+    assert.equal(a.verdict, VERDICTS.PRESERVE);
+    assert.ok(codes(a).includes(REASONS.WORKTREE_DIRTY));
+    const held = a.worktrees.filter((w) => w.holdsTarget);
+    assert.deepEqual(held[0].dirt, { staged: 0, unstaged: 0, unmerged: 0, untracked: 0, ignored: 1 });
   });
 
   it('a stale remote-tracking ref is never evidence: the fresh fetch prunes it and the commit is unique again', async () => {
@@ -256,7 +277,7 @@ describe('branch-retire-safety: against real git', () => {
     const held = a.worktrees.filter((w) => w.holdsTarget);
     assert.equal(held.length, 1);
     assert.equal(fs.realpathSync(held[0].path), fs.realpathSync(linked));
-    assert.deepEqual(held[0].dirt, { staged: 1, unstaged: 1, unmerged: 0, untracked: 0 });
+    assert.deepEqual(held[0].dirt, { staged: 1, unstaged: 1, unmerged: 0, untracked: 0, ignored: 0 });
 
     // The same repository answers safe for a branch no tree holds, whatever
     // dirt sits in trees that do not hold it.
@@ -679,6 +700,28 @@ describe('branch-retire-safety: worktree & branch retirement (#1267)', () => {
       assert.equal(plan.skipped[0].reason, brs.WT_SKIP.DIRTY);
     });
 
+    it('a worktree with only a gitignored file is held, never retired — `git worktree remove` deletes ignored files too', async () => {
+      const { dir, base } = makeClone();
+      git(dir, 'checkout', '-q', '-b', 'feat');
+      fs.writeFileSync(path.join(dir, '.gitignore'), 'local.env\n');
+      commit(dir, '.gitignore', 'local.env', 'ignore local.env');
+      git(dir, 'checkout', '-q', 'main');
+      git(dir, 'merge', '-q', '--no-ff', '-m', 'Merge feat', 'feat');
+      git(dir, 'push', '-q', 'origin', 'main');
+      const linked = path.join(base, 'wt-feat');
+      git(dir, 'worktree', 'add', '-q', linked, 'feat');
+      fs.writeFileSync(path.join(linked, 'local.env'), 'SECRET=1\n');
+
+      const plan = await brs.planWorktreeRetirement({ repo: dir, execFile: realExec });
+      assert.equal(plan.eligible.length, 0, 'an ignored-only file must still hold the worktree');
+      assert.equal(plan.skipped.length, 1);
+      assert.equal(plan.skipped[0].reason, brs.WT_SKIP.DIRTY);
+
+      const result = await brs.retireWorktrees({ eligible: [plan.skipped[0]] }, { repo: dir, apply: true, execFile: realExec });
+      assert.equal(result.removed.length, 0, 'the re-verify at apply must also catch the ignored file');
+      assert.equal(fs.existsSync(path.join(linked, 'local.env')), true);
+    });
+
     it('the worktree matching the running process cwd is always skipped, whatever its state', async () => {
       const { dir, base } = makeClone();
       git(dir, 'checkout', '-q', '-b', 'feat');
@@ -725,6 +768,52 @@ describe('branch-retire-safety: worktree & branch retirement (#1267)', () => {
       const plan = await brs.planWorktreeRetirement({ repo: dir, cwd: path.join(path.dirname(dir), 'nowhere'), execFile: realExec });
       assert.equal(plan.eligible.length, 0);
       assert.equal(plan.skipped.length, 0);
+    });
+
+    it('fails closed when the fetch fails: an otherwise-eligible worktree is held, reason fetch-failed, never classified against stale remote refs', async () => {
+      const { dir, base } = makeClone();
+      git(dir, 'checkout', '-q', '-b', 'feat');
+      commit(dir, 'a.txt', 'x', 'feature');
+      git(dir, 'checkout', '-q', 'main');
+      git(dir, 'merge', '-q', '--no-ff', '-m', 'Merge feat', 'feat');
+      git(dir, 'push', '-q', 'origin', 'main');
+      const linked = path.join(base, 'wt-feat');
+      git(dir, 'worktree', 'add', '-q', linked, 'feat');
+      // Break the remote so `git fetch --prune origin` fails, the same way a
+      // network blip or a dead remote would — the worktree is a genuine
+      // ancestor-of-main candidate were the fetch to succeed.
+      git(dir, 'remote', 'set-url', 'origin', path.join(base, 'does-not-exist.git'));
+
+      const plan = await brs.planWorktreeRetirement({ repo: dir, execFile: realExec });
+      assert.equal(plan.fetch.ok, false);
+      assert.equal(plan.eligible.length, 0, 'nothing may be classified eligible off a failed fetch');
+      assert.equal(plan.skipped.length, 1);
+      assert.equal(plan.skipped[0].reason, brs.WT_SKIP.FETCH_FAILED);
+      assert.match(plan.skipped[0].detail, /fetch failed/);
+    });
+
+    it('a worktree bound to a live session is held even though it would otherwise be eligible — checked for any path, not only agent-<hash>-named ones', async () => {
+      const { dir, base } = makeClone();
+      git(dir, 'checkout', '-q', '-b', 'feat');
+      commit(dir, 'a.txt', 'x', 'feature');
+      git(dir, 'checkout', '-q', 'main');
+      git(dir, 'merge', '-q', '--no-ff', '-m', 'Merge feat', 'feat');
+      git(dir, 'push', '-q', 'origin', 'main');
+      const linked = path.join(base, 'wt-feat'); // plain name, does not match agent-<hash>
+      git(dir, 'worktree', 'add', '-q', linked, 'feat');
+
+      const seen = [];
+      const lookupSession = async (p) => {
+        seen.push(p);
+        return fs.realpathSync(p) === fs.realpathSync(linked) ? { sessionId: 'sess-live-1' } : null;
+      };
+      const plan = await brs.planWorktreeRetirement({ repo: dir, execFile: realExec, lookupSession });
+      assert.equal(plan.eligible.length, 0, 'the live session must hold the tree, even though it is otherwise an ancestor-of-main');
+      assert.equal(plan.skipped.length, 1);
+      assert.equal(plan.skipped[0].reason, brs.WT_SKIP.LIVE_SESSION);
+      assert.match(plan.skipped[0].detail, /sess-live-1/);
+      assert.equal(plan.skipped[0].provenance.sessionId, 'sess-live-1');
+      assert.ok(seen.length > 0, 'lookupSession must be consulted for a non-agent-named worktree too');
     });
   });
 
@@ -829,6 +918,31 @@ describe('branch-retire-safety: worktree & branch retirement (#1267)', () => {
       assert.equal(feat.verdict, null);
       assert.match(feat.detail, /not gone/);
     });
+
+    it('a branch named in activeBranches is held even though it would otherwise be safe to retire', async () => {
+      const { origin, dir } = makeClone();
+      git(dir, 'branch', 'feat');
+      git(dir, 'push', '-q', '-u', 'origin', 'feat');
+      git(dir, 'merge', '-q', '--no-ff', '-m', 'Merge feat', 'feat');
+      git(origin, 'update-ref', '-d', 'refs/heads/feat');
+
+      const plan = await brs.planBranchRetirement({ repo: dir, execFile: realExec, activeBranches: new Set(['feat']) });
+      assert.equal(plan.eligible.length, 0, 'a live-session-held branch must never be eligible');
+      const feat = plan.skipped.find((s) => s.branch === 'feat');
+      assert.equal(feat.verdict, null, 'assess() must never even run for a branch already held by a live session');
+      assert.match(feat.detail, /live session/);
+    });
+
+    it('activeBranches also accepts a plain array, not only a Set', async () => {
+      const { origin, dir } = makeClone();
+      git(dir, 'branch', 'feat');
+      git(dir, 'push', '-q', '-u', 'origin', 'feat');
+      git(dir, 'merge', '-q', '--no-ff', '-m', 'Merge feat', 'feat');
+      git(origin, 'update-ref', '-d', 'refs/heads/feat');
+
+      const plan = await brs.planBranchRetirement({ repo: dir, execFile: realExec, activeBranches: ['feat'] });
+      assert.equal(plan.eligible.length, 0);
+    });
   });
 
   describe('retireBranches', () => {
@@ -901,6 +1015,15 @@ describe('branch-retire-safety: worktree & branch retirement (#1267)', () => {
       assert.equal(p.issueNumber, null);
       assert.equal(p.createdAt, null);
       assert.equal(p.sessionId, null);
+    });
+
+    it('cross-references a caller-supplied session lookup even when the directory name does not parse — a live session is not only ever named agent-<hash>', async () => {
+      const dir = path.join(root, 'wt-plain-name');
+      fs.mkdirSync(dir);
+      const p = await brs.describeProvenance(dir, { lookupSession: async () => ({ sessionId: 'sess-99' }) });
+      assert.equal(p.sessionId, 'sess-99');
+      assert.equal(p.source, 'store');
+      assert.equal(p.issueNumber, null, 'no name to parse an issue number from');
     });
 
     it('never throws when the lookup or the stat fails', async () => {

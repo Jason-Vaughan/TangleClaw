@@ -14,7 +14,15 @@
  * retired before branches — a worktree pins its branch — via
  * `lib/branch-retire-safety.js`'s planner/executor pair for each. Never
  * passes `--force` to `git worktree remove`, and only ever runs
- * `git branch -d` (never `-D`).
+ * `git branch -d` (never `-D`). Both planners fail closed when a `git
+ * fetch` fails (reason `fetch-failed`, no classification against stale
+ * remote-tracking refs) and never retire a worktree or branch a live
+ * session holds (reason `live-session`) — see those functions' own
+ * docstrings for the `lookupSession`/`activeBranches` seam a caller can
+ * supply. This CLI does not yet call a real session store (no durable,
+ * path-keyed "which live session owns this worktree" API exists in this
+ * codebase today); the seam is wired so one can be supplied once such an
+ * API exists.
  *
  * Exit codes: 0 the pipeline ran to completion, including with skips; 2 a
  * usage error; 1 an uncaught failure (a bad `--repo`, an unreadable repository).
@@ -58,14 +66,34 @@ function parseArgs(argv) {
  *
  * @param {string} repo
  * @param {boolean} apply
+ * @param {object} [opts]
+ * @param {Function} [opts.lookupSession] - Passed through to
+ *   {@link module:lib/branch-retire-safety.planWorktreeRetirement}'s same-named option.
+ * @param {Set<string>|string[]} [opts.activeBranches] - Passed through to
+ *   {@link module:lib/branch-retire-safety.planBranchRetirement}'s same-named option.
  * @returns {Promise<object>} `{worktrees: {plan, result}, branches: {plan, result}}`
  */
-async function runPipeline(repo, apply) {
-  const worktreePlan = await brs.planWorktreeRetirement({ repo });
+async function runPipeline(repo, apply, opts = {}) {
+  const worktreePlan = await brs.planWorktreeRetirement({ repo, lookupSession: opts.lookupSession });
   const worktreeResult = await brs.retireWorktrees(worktreePlan, { repo, apply });
-  const branchPlan = await brs.planBranchRetirement({ repo });
+  const branchPlan = await brs.planBranchRetirement({ repo, activeBranches: opts.activeBranches });
   const branchResult = await brs.retireBranches(branchPlan, { repo, apply });
   return { worktrees: { plan: worktreePlan, result: worktreeResult }, branches: { plan: branchPlan, result: branchResult } };
+}
+
+/**
+ * A skipped worktree entry's provenance, rendered for a terminal when present
+ * (best-effort; absent for entries {@link runPipeline} never reached, like a prunable tree).
+ * @param {object} w - A skipped worktree entry, possibly carrying `provenance`.
+ * @returns {string}
+ */
+function _provenanceSuffix(w) {
+  const p = w.provenance;
+  if (!p || (p.issueNumber === null && p.sessionId === null)) return '';
+  const bits = [];
+  if (p.issueNumber !== null) bits.push(`issue #${p.issueNumber}`);
+  if (p.sessionId !== null) bits.push(`session ${p.sessionId}`);
+  return ` (${bits.join(', ')})`;
 }
 
 /**
@@ -79,7 +107,7 @@ function render(out, apply) {
   const lines = [];
   lines.push(`worktrees: ${out.worktrees.result.removed.length} ${verb}, ${out.worktrees.plan.skipped.length + out.worktrees.result.skipped.length} skipped`);
   for (const w of out.worktrees.result.removed) lines.push(`  ${w.action}: ${w.path} (${w.class})`);
-  for (const w of out.worktrees.plan.skipped) lines.push(`  skipped: ${w.path} [${w.reason}] ${w.detail}`);
+  for (const w of out.worktrees.plan.skipped) lines.push(`  skipped: ${w.path} [${w.reason}] ${w.detail}${_provenanceSuffix(w)}`);
   for (const w of out.worktrees.result.skipped) lines.push(`  skipped: ${w.path} [${w.action}] ${w.detail}`);
   lines.push(`branches: ${out.branches.result.removed.length} ${apply ? 'deleted' : 'would delete'}, ${out.branches.plan.skipped.length + out.branches.result.skipped.length} skipped`);
   for (const b of out.branches.result.removed) lines.push(`  ${b.action}: ${b.branch}`);
