@@ -436,6 +436,38 @@ describe('named delivery buffers on a real tmux server (#2173)', () => {
       'the Copy button still reads the operator\'s selection (#438)');
   });
 
+  it('an empty buffer list answers no-buffer WITHOUT ever calling bare show-buffer — closing the race a fallback would reopen (#2773, PRR-B Round 2)', () => {
+    // A fallback to bare `show-buffer` when the list came back empty would
+    // re-split `list-buffers` and the read into two commands with a gap a
+    // concurrent `_loadPasteBuffer` could fill with a `tc-send-*` buffer in
+    // between — on tmux 3.3a the bare call would then answer with THAT
+    // text, the exact #2773 bug. Proven here by recording every tmux
+    // invocation on a fake PATH entry and asserting show-buffer is never
+    // called at all (bare or otherwise) once list-buffers reports nothing.
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-2773-fake-'));
+    const log = path.join(binDir, 'calls.log');
+    fs.writeFileSync(path.join(binDir, 'tmux'), [
+      '#!/bin/sh',
+      `echo "$1" >> '${log}'`,
+      'case "$1" in',
+      '  list-buffers) ;;', // empty stdout, exit 0 — the state under test
+      '  *) exit 0 ;;',
+      'esac'
+    ].join('\n') + '\n', { mode: 0o755 });
+    const savedPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${savedPath}`;
+    try {
+      const result = tmux.readNewestBuffer();
+      assert.equal(result.ok, false);
+      assert.equal(result.cause, 'no-buffer');
+      const calls = fs.readFileSync(log, 'utf8').split('\n').filter(Boolean);
+      assert.deepEqual(calls, ['list-buffers'], 'show-buffer must never be called once the list is empty');
+    } finally {
+      process.env.PATH = savedPath;
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+
   it('a delivery buffer is never the newest one while it exists (#2773 — readNewestBuffer skips tc-send-* explicitly, not via tmux\'s own "newest" notion)', () => {
     // Between the load and the paste the buffer is on the server. An unnamed
     // read must still see the operator's copy, not the delivery in flight.
