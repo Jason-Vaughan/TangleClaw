@@ -41,6 +41,17 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-01 — v5.53.0 W2-REC: reconcile Master authority and session lifecycle records
+
+<!-- prawduct: type=internal | scope=v553-w2-rec -->
+
+- Reconciled the seven Charter A491 issues across Wave 1 PRs #2776, #2780, and #2781 and Wave 2's session-route wiring: #2120, #2125, #1982, #1973, #2132, #966, and #2129. The issue fragments in `changelog.d/` remain the release-note inputs; this entry records their combined behavior.
+- **Master continuity and onboarding (#2120, #2125):** `GET /api/master/status` reports a structured continuity signal from an optional context or pane-buffer reading; with no reading it says `unmeasured` and does not prepare or run a relaunch. Imported and attached projects receive the ratified PM/Architect onboarding trust rule as a proposal for Operator review when no live copy exists.
+- **Operator-owned project settings and loopback admission (#1982, #1973):** `launchSequence.recoveryMode` remains the operator-pinned DB-backed setting, and project listings expose authority discrepancies. A configurable machine-client gate can require an AUTH-4 service token from loopback callers; it is off by default, preserving the existing local fleet until the operator enables it.
+- **Master lifecycle authority (#2132, #966):** the existing `read-only`/`suggest`/`write` level determines a generation-tracked lifecycle toggle, with only `write` granting fleet-lifecycle mutation. A verified Operator can change it through `POST /api/master/authority`; the Master's own lifecycle calls require its scoped `tc_master_` token, a current generation, and an allowlisted action.
+- **Session mutation boundary (#2129):** launch and kill admit the Operator or an authorized Master, never a project's own session. Wrap routes also admit the project's current verified session acting on itself, but never another project's session; each route checks the caller independently of the general launch-binding floor.
+- Updated the Feature Index with stable source and test anchors. These records describe merged code; tag, GitHub Release, local production update, and live activation remain separate gates.
+
 ## 2026-11-01 — v5.52.0 W2-REC: reconcile ingress and dashboard records
 
 <!-- prawduct: type=internal | scope=v552-w2-rec -->
