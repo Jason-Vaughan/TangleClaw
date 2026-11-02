@@ -1094,6 +1094,306 @@ describe('getCheckoutId (#1949)', () => {
   });
 });
 
+// Whether the checkout the server runs from is coupled to an active
+// Builder/agent checkout's lifecycle — a linked worktree itself, or a
+// primary with a Builder/agent worktree linked off it (#1672). Stubs
+// `_internal.describeServerRootCoupling` rather than building real git
+// worktrees here: `test/checkout-layout.test.js` already proves the real
+// detection logic end-to-end against real repositories; this file only needs
+// to prove `getServerInfo()` wires that answer through correctly and fails
+// safe when the read throws.
+describe('getServerInfo carries checkoutCoupling (#1672)', () => {
+  let origInternal;
+  beforeEach(() => { origInternal = { ...serverInfo._internal }; });
+  function restore() { Object.assign(serverInfo._internal, origInternal); }
+
+  it('reports root from _internal.repoRoot regardless of coupling state', () => {
+    serverInfo._internal.repoRoot = '/fake/dedicated/root';
+    serverInfo._internal.describeServerRootCoupling = () => ({
+      checkout: { primary: '/fake/dedicated/root', isWorktree: false },
+      isLinkedWorktree: false,
+      hasLinkedWorktrees: false,
+      linkedWorktreeCount: 0,
+      coupled: false
+    });
+    try {
+      const { checkoutCoupling } = serverInfo.getServerInfo();
+      assert.equal(checkoutCoupling.root, '/fake/dedicated/root');
+      assert.equal(checkoutCoupling.status, 'ok');
+      assert.equal(checkoutCoupling.coupled, false);
+    } finally {
+      restore();
+    }
+  });
+
+  it('declaredRoot/matchesRunningProcess are null when no TANGLECLAW_SERVER_ROOT was declared', () => {
+    serverInfo._internal.declaredServerRoot = { root: serverInfo._internal.repoRoot, source: 'default' };
+    try {
+      const { checkoutCoupling } = serverInfo.getServerInfo();
+      assert.equal(checkoutCoupling.declaredRoot, null);
+      assert.equal(checkoutCoupling.matchesRunningProcess, null);
+      assert.equal(checkoutCoupling.invalidServerRootOverride, null);
+    } finally {
+      restore();
+    }
+  });
+
+  it('reports matchesRunningProcess=true when a declared override equals the real running root', () => {
+    serverInfo._internal.repoRoot = '/real/running/root';
+    serverInfo._internal.declaredServerRoot = { root: '/real/running/root', source: 'override' };
+    serverInfo._internal.describeServerRootCoupling = () => ({
+      checkout: { primary: '/real/running/root', isWorktree: false },
+      isLinkedWorktree: false, hasLinkedWorktrees: false, linkedWorktreeCount: 0, coupled: false
+    });
+    try {
+      const { checkoutCoupling } = serverInfo.getServerInfo();
+      assert.equal(checkoutCoupling.declaredRoot, '/real/running/root');
+      assert.equal(checkoutCoupling.matchesRunningProcess, true);
+    } finally {
+      restore();
+    }
+  });
+
+  it('reports matchesRunningProcess=false when a declared override does NOT match the real running root — the server declares a dedicated root it is not actually running from', () => {
+    serverInfo._internal.repoRoot = '/real/running/root';
+    serverInfo._internal.declaredServerRoot = { root: '/some/other/dedicated/install', source: 'override' };
+    serverInfo._internal.describeServerRootCoupling = () => ({
+      checkout: { primary: '/real/running/root', isWorktree: false },
+      isLinkedWorktree: false, hasLinkedWorktrees: false, linkedWorktreeCount: 0, coupled: false
+    });
+    try {
+      const { checkoutCoupling } = serverInfo.getServerInfo();
+      assert.equal(checkoutCoupling.declaredRoot, '/some/other/dedicated/install');
+      assert.equal(checkoutCoupling.matchesRunningProcess, false);
+      // The git/disk probing root must still be the REAL running root, never the declared one.
+      assert.equal(checkoutCoupling.root, '/real/running/root');
+    } finally {
+      restore();
+    }
+  });
+
+  it('surfaces invalidServerRootOverride when the declared override failed validation', () => {
+    serverInfo._internal.declaredServerRoot = {
+      root: serverInfo._internal.repoRoot,
+      source: 'default',
+      invalidServerRootOverride: { requested: '/typo/path', resolved: '/typo/path', reason: 'path does not exist' }
+    };
+    try {
+      const { checkoutCoupling } = serverInfo.getServerInfo();
+      assert.equal(checkoutCoupling.declaredRoot, null);
+      assert.deepEqual(checkoutCoupling.invalidServerRootOverride, {
+        requested: '/typo/path', resolved: '/typo/path', reason: 'path does not exist'
+      });
+    } finally {
+      restore();
+    }
+  });
+
+  it('surfaces the resolved root being a linked worktree itself', () => {
+    serverInfo._internal.describeServerRootCoupling = () => ({
+      checkout: { primary: '/fake/primary', isWorktree: true },
+      isLinkedWorktree: true,
+      hasLinkedWorktrees: false,
+      linkedWorktreeCount: 0,
+      coupled: true
+    });
+    try {
+      const { checkoutCoupling } = serverInfo.getServerInfo();
+      assert.equal(checkoutCoupling.isLinkedWorktree, true);
+      assert.equal(checkoutCoupling.coupled, true);
+    } finally {
+      restore();
+    }
+  });
+
+  it('surfaces a primary with a Builder/agent worktree linked off it, without flagging the primary itself as a worktree', () => {
+    serverInfo._internal.describeServerRootCoupling = () => ({
+      checkout: { primary: '/fake/primary', isWorktree: false },
+      isLinkedWorktree: false,
+      hasLinkedWorktrees: true,
+      linkedWorktreeCount: 2,
+      coupled: true
+    });
+    try {
+      const { checkoutCoupling } = serverInfo.getServerInfo();
+      assert.equal(checkoutCoupling.isLinkedWorktree, false);
+      assert.equal(checkoutCoupling.hasLinkedWorktrees, true);
+      assert.equal(checkoutCoupling.linkedWorktreeCount, 2);
+      assert.equal(checkoutCoupling.coupled, true);
+    } finally {
+      restore();
+    }
+  });
+
+  it('never changes isStale/currentDiskSha/startupSha — coupling is informational only', () => {
+    serverInfo.__unsafeResetForTest();
+    serverInfo._internal.execSync = () => 'same-sha\n';
+    serverInfo._internal.describeServerRootCoupling = () => ({
+      checkout: { primary: '/fake/primary', isWorktree: false },
+      isLinkedWorktree: false,
+      hasLinkedWorktrees: true,
+      linkedWorktreeCount: 5,
+      coupled: true
+    });
+    try {
+      serverInfo.captureStartup();
+      const info = serverInfo.getServerInfo();
+      assert.equal(info.isStale, false);
+      assert.equal(info.startupSha, 'same-sha');
+      assert.equal(info.currentDiskSha, 'same-sha');
+      assert.equal(info.checkoutCoupling.coupled, true);
+    } finally {
+      restore();
+    }
+  });
+
+  it('fails CLOSED (coupled: null, status: "unknown") rather than falsely reporting uncoupled when the coupling read itself throws (#1672 Round 2)', () => {
+    serverInfo._internal.describeServerRootCoupling = () => { throw new Error('fs exploded'); };
+    try {
+      const { checkoutCoupling } = serverInfo.getServerInfo();
+      assert.equal(checkoutCoupling.status, 'unknown');
+      assert.equal(checkoutCoupling.error, 'fs exploded');
+      assert.equal(checkoutCoupling.coupled, null, 'must never claim a clean/uncoupled install when the read failed');
+      assert.equal(checkoutCoupling.isLinkedWorktree, null);
+      assert.equal(checkoutCoupling.hasLinkedWorktrees, null);
+      assert.equal(checkoutCoupling.checkout, null);
+      assert.equal(checkoutCoupling.root, serverInfo._internal.repoRoot);
+    } finally {
+      restore();
+    }
+  });
+
+  it('bounds checkoutCoupling.error to 160 chars rather than leaking an unbounded message (#1672 Round 3)', () => {
+    const huge = 'x'.repeat(10000);
+    serverInfo._internal.describeServerRootCoupling = () => { throw new Error(huge); };
+    try {
+      const { checkoutCoupling } = serverInfo.getServerInfo();
+      assert.equal(checkoutCoupling.status, 'unknown');
+      assert.equal(checkoutCoupling.error.length, 160);
+      assert.equal(checkoutCoupling.error, huge.slice(0, 160));
+    } finally {
+      restore();
+    }
+  });
+
+  it('falls back to a fixed reason when the thrown value has no message', () => {
+    serverInfo._internal.describeServerRootCoupling = () => { throw 'not an Error object'; };
+    try {
+      const { checkoutCoupling } = serverInfo.getServerInfo();
+      assert.equal(checkoutCoupling.error, 'checkout_coupling_probe_failed');
+    } finally {
+      restore();
+    }
+  });
+
+  it('a clean read reports status "ok"', () => {
+    const { checkoutCoupling } = serverInfo.getServerInfo();
+    assert.equal(checkoutCoupling.status, 'ok');
+    assert.equal(checkoutCoupling.error, null);
+  });
+
+  it('reflects the real checkout this test suite runs from when nothing is stubbed', () => {
+    const { checkoutCoupling } = serverInfo.getServerInfo();
+    assert.equal(checkoutCoupling.checkout.isWorktree, false);
+    assert.equal(checkoutCoupling.isLinkedWorktree, false);
+  });
+});
+
+// TANGLECLAW_SERVER_ROOT is read once, at module load (`_declaredServerRoot`
+// is a module-level constant, not re-derived per call) — so proving its
+// behavior at load time needs a fresh process with the env var set before
+// the module is ever required, not a stub on an already-loaded instance.
+// Spawned, not stubbed, for exactly that reason (#1672).
+//
+// Round 2 (#1672): a declared TANGLECLAW_SERVER_ROOT, even a VALID one,
+// must never change getRepoRoot() or the git/disk probing root — only the
+// actual running code's own checkout (`__dirname`-derived) may ever be
+// that root, or /api/server-info could report a different checkout's
+// freshness than the one whose code is actually executing. The override is
+// surfaced only as `checkoutCoupling.declaredRoot`, compared against the
+// real root via `matchesRunningProcess`.
+describe('TANGLECLAW_SERVER_ROOT never overrides the running-code checkout root (#1672 Round 2)', () => {
+  const { execFileSync } = require('node:child_process');
+  const fsMod = require('node:fs');
+  const osMod = require('node:os');
+  const pathMod = require('node:path');
+  const { initRepo } = require('./_temp-repo');
+
+  it("a declared (even valid-looking) override never changes getRepoRoot() — only declaredRoot/matchesRunningProcess reflect it", () => {
+    const dedicated = fsMod.realpathSync(fsMod.mkdtempSync(pathMod.join(osMod.tmpdir(), 'tc-dedicated-')));
+    try {
+      const modulePath = JSON.stringify(require.resolve('../lib/server-info'));
+      const probe = `
+        const si = require(${modulePath});
+        const info = si.getServerInfo();
+        process.stdout.write(JSON.stringify({
+          repoRoot: si.getRepoRoot(),
+          declaredRoot: info.checkoutCoupling.declaredRoot,
+          matchesRunningProcess: info.checkoutCoupling.matchesRunningProcess,
+          coupledRoot: info.checkoutCoupling.root
+        }));
+      `;
+      const out = execFileSync(process.execPath, ['-e', probe], {
+        encoding: 'utf8',
+        env: { ...process.env, TANGLECLAW_SERVER_ROOT: dedicated }
+      });
+      const result = JSON.parse(out);
+      // getRepoRoot() stays the real server-info.js checkout — the dedicated
+      // temp dir (no server.js, no .git) fails validation anyway, so it was
+      // never a candidate either way; a real dedicated checkout that DID
+      // validate would still not win here (see the next test).
+      assert.notEqual(result.repoRoot, dedicated);
+      assert.equal(result.coupledRoot, result.repoRoot);
+      assert.equal(result.declaredRoot, null, 'an invalid override must not surface as declaredRoot');
+    } finally {
+      fsMod.rmSync(dedicated, { recursive: true, force: true });
+    }
+  });
+
+  it('a VALID dedicated checkout declared via the override still never becomes getRepoRoot() — it only shows up as declaredRoot, with matchesRunningProcess: false', () => {
+    const dedicated = fsMod.realpathSync(fsMod.mkdtempSync(pathMod.join(osMod.tmpdir(), 'tc-dedicated-valid-')));
+    try {
+      initRepo(dedicated, ['-b', 'main']);
+      fsMod.writeFileSync(pathMod.join(dedicated, 'server.js'), '// stand-in\n');
+      const modulePath = JSON.stringify(require.resolve('../lib/server-info'));
+      const probe = `
+        const si = require(${modulePath});
+        const info = si.getServerInfo();
+        process.stdout.write(JSON.stringify({
+          repoRoot: si.getRepoRoot(),
+          declaredRoot: info.checkoutCoupling.declaredRoot,
+          matchesRunningProcess: info.checkoutCoupling.matchesRunningProcess
+        }));
+      `;
+      const out = execFileSync(process.execPath, ['-e', probe], {
+        encoding: 'utf8',
+        env: { ...process.env, TANGLECLAW_SERVER_ROOT: dedicated }
+      });
+      const result = JSON.parse(out);
+      assert.notEqual(result.repoRoot, dedicated, 'the probing root must always be the real running-code checkout');
+      assert.equal(result.declaredRoot, dedicated, 'a VALID override must still surface as the declared target');
+      assert.equal(result.matchesRunningProcess, false, 'the process is not actually running from the declared root');
+    } finally {
+      fsMod.rmSync(dedicated, { recursive: true, force: true });
+    }
+  });
+
+  it('declaredRoot/matchesRunningProcess are both null when the override is unset', () => {
+    const env = { ...process.env };
+    delete env.TANGLECLAW_SERVER_ROOT;
+    const modulePath = JSON.stringify(require.resolve('../lib/server-info'));
+    const probe = `
+      const si = require(${modulePath});
+      const c = si.getServerInfo().checkoutCoupling;
+      process.stdout.write(JSON.stringify({ declaredRoot: c.declaredRoot, matchesRunningProcess: c.matchesRunningProcess }));
+    `;
+    const out = execFileSync(process.execPath, ['-e', probe], { encoding: 'utf8', env });
+    const result = JSON.parse(out);
+    assert.equal(result.declaredRoot, null);
+    assert.equal(result.matchesRunningProcess, null);
+  });
+});
+
 // What the boot-time read of tmux's global environment found (#2268), carried
 // on the object `GET /api/server-info` answers with. The notice is built by
 // `launchIdentity.reportGlobalIdentity` from `tmux`'s reading of a listing;
