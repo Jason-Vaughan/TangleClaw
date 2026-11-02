@@ -41,44 +41,6 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
-## 2026-11-02 — v5.54.0 W1-D: live per-session usage & context readings (#2787)
-
-<!-- prawduct: type=feature | scope=w1d-2787-usage-sessions -->
-
-- **`GET /api/usage/sessions` and `GET /api/usage/sessions/:sessionId` (#2787):** one reading per
-  live session — context-remaining percentage parsed from the session's own status line (the only
-  place that number exists today), weekly/5-hour quota from operator calibration (the only quota
-  source this repo has today), and a `lowUsageHandOffRecommended` flag against a configurable
-  threshold (default 12%, the operator's own stated hand-off target) so a mechanical hand-off no
-  longer needs an operator eyeballing each pane's own warning by hand — today's repro was four
-  Codex sessions frozen 7 hours on a rate-limit prompt nobody was watching for.
-- New `lib/routes/usage.js` rather than extending `lib/routes/sessions.js`, where the sibling
-  `GET /api/usage/windows` actually lives: this car's own file scope (`V5540-W1-D`, confirmed
-  against the live `LANE_QUEUE.md`) is `lib/usage-windows.js`, `lib/routes/usage.js`,
-  `test/usage-windows.test.js`, `changelog.d/2787.*` — `lib/routes/sessions.js` and `server.js`
-  are both outside it. Wiring the new route's `register()` into `server.js` is left for
-  integration.
-- Per-session `model` is read from the engine's own trusted out-of-band transcript record
-  (`profile-reconciler.js`'s `_observeViaTrustedSource`, the same reader `lib/model-switch.js`
-  already uses for live model detection) — never parsed from pane text, per that module's own
-  "retired for good" doc comment. A Critic BLOCKING finding (`rev-20261102T192012Z-68f2d3e9`
-  R-2) caught that the session's `startedAt` (a SQLite datetime string) was being passed straight
-  through as `startedAtMs` without the epoch-ms conversion `lib/model-switch.js` already does,
-  which would have silently nulled `model` in production for every session; fixed and verified in
-  the follow-up commit.
-- No live-parsing of Codex's richer `/status` panel for its own weekly/5-hour numbers — no proven
-  pane format exists in this repo for that (only the passive one-line footer, which this change
-  does parse for context), so weekly/5-hour readings come from operator calibration instead.
-  Descoped explicitly rather than guessed at.
-
-Cumulative Critic review (`rev-20261102T192012Z-68f2d3e9`, verified clean via
-`rev-20261102T193158Z-df18e050`): 3 blocking (startedAtMs conversion, two untested route filters,
-a build-plan record-lint gap) fixed in one follow-up commit; 2 warning accepted (server.js wiring
-deferred to integration; full-suite evidence deferred to this PR's own CI run rather than risking a
-long local stall from the three other Builder lanes concurrently active on this host).
-
-**Classification:** feature
-
 ## 2026-11-02 — v5.53.1 W2-REC: reconcile residual and spin-off closure records
 
 <!-- prawduct: type=internal | scope=v5531-w2-rec -->
