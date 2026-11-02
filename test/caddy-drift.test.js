@@ -617,6 +617,26 @@ describe('caddy-drift — route-order coverage helpers (#2774)', () => {
       };
       assert.deepEqual(drift.checkRouteOrderCoverage([outer]), { ok: false, unmeasured: false });
     });
+
+    it('does not cover [subroute(proxy), authentication] — the subroute\'s own proxy runs one level down but strictly before the sibling authentication handler (PRR-B BLOCKING, round 2)', () => {
+      const route = {
+        handle: [
+          { handler: 'subroute', routes: [{ handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: 'x' }] }] }] },
+          { handler: 'authentication' }
+        ]
+      };
+      assert.deepEqual(drift.checkRouteOrderCoverage([route]), { ok: false, unmeasured: false });
+    });
+
+    it('still covers [authentication, subroute(proxy)] — authentication precedes the subroute that proxies', () => {
+      const route = {
+        handle: [
+          { handler: 'authentication' },
+          { handler: 'subroute', routes: [{ handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: 'x' }] }] }] }
+        ]
+      };
+      assert.deepEqual(drift.checkRouteOrderCoverage([route]), { ok: true, unmeasured: false });
+    });
   });
 });
 
