@@ -38,6 +38,12 @@ const ROOT = path.join(__dirname, '..');
  * every other verb exits 0 silently so a server-side poller that fires during
  * the test cannot fail the run.
  *
+ * `readNewestBuffer` (#2773) lists buffers before reading one, so `list-buffers`
+ * answers with a single synthetic non-`tc-send-*` name — the real production
+ * call then reads it via `show-buffer -b <name>`, which this fake's
+ * `show-buffer)` branch matches regardless of the `-b` arguments that follow
+ * `$1`, reaching `showBufferScript` exactly as before this fake needed to
+ * simulate `list-buffers` at all.
  * @param {string} showBufferScript - Shell for the `show-buffer` branch.
  * @returns {() => void} Restores PATH and removes the fake.
  */
@@ -46,6 +52,7 @@ function installFakeTmux(showBufferScript) {
   const script = [
     '#!/bin/sh',
     'case "$1" in',
+    '  list-buffers) echo "buffer0" ;;',
     `  show-buffer) ${showBufferScript} ;;`,
     '  has-session) exit 0 ;;',
     '  *) exit 0 ;;',
