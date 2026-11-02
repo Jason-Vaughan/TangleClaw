@@ -199,7 +199,7 @@ const { route, matchRoute, _routePatterns, jsonResponse, errorResponse, parseBod
 // defined when this line runs.
 const callers = require('./lib/routes/_callers');
 callers._bind({ _gateIdentity, _isSameOriginClear, _refuseDuringFallback });
-const { _callerProjectId, _operatorProofOf, _requireOperatorWrite, coordinatorGateRefused } = callers;
+const { _callerProjectId, _operatorProofOf, _requireOperatorWrite, _requireOperatorWriteExcludingLaunchBinding, coordinatorGateRefused } = callers;
 
 // The OpenClaw connection, tunnel and approval routes live in their own module
 // with the proxy helpers the request and upgrade dispatchers below still call;
@@ -1331,7 +1331,14 @@ route('GET', '/api/master/authority', (_req, res) => {
 // a contradiction). The operator only: the Master cannot grant itself
 // standing fleet-mutation authority (#2132 acceptance criterion 2).
 route('POST', '/api/master/authority', (req, res, _params, body) => {
-  const proof = _requireOperatorWrite(req, res, _masterAuthorityProofOptions('change the Project Master\'s lifecycle authority'));
+  // PRR-B BLOCKING (on PR #2789, same class Ruling A491-W2A-R8 already
+  // closed for PATCH /api/config's sibling transition): a project session
+  // on an open install could forge the dashboard's shape (an Origin header,
+  // or x-tangleclaw-client: dashboard) alongside its own launch-binding
+  // headers and a page token fetched from its own GET /api/auth/me, and
+  // _requireOperatorWrite alone would accept it. _requireOperatorWriteExcludingLaunchBinding
+  // refuses any caller carrying a launch-binding header outright, first.
+  const proof = _requireOperatorWriteExcludingLaunchBinding(req, res, _masterAuthorityProofOptions('change the Project Master\'s lifecycle authority'));
   if (!proof) return;
   const config = store.config.load();
   // `load()` shallow-spreads `DEFAULT_CONFIG` under a config that has no

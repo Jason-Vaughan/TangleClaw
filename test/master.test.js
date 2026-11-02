@@ -3297,7 +3297,7 @@ describe('GET/POST /api/master/authority (#2132, #966)', () => {
   let server;
   let operatorWriteHeaders;
   const masterAuthority = require('../lib/master-authority');
-  const { operatorHeaders, sendAs } = require('./_shared-docs-callers');
+  const { operatorHeaders, sendAs, bindProject } = require('./_shared-docs-callers');
 
   const realApplyMasterAccessLevel = master.applyMasterAccessLevel;
 
@@ -3387,6 +3387,34 @@ describe('GET/POST /api/master/authority (#2132, #966)', () => {
     const config = store.config.load();
     assert.equal(masterAuthority.getAuthorityState(config).toggleState, 'read-only',
       'a refused caller must never move the canonical state');
+  });
+
+  it('POST refuses a project-bound caller forging the dashboard shape (PRR-B BLOCKING, PR #2789)', async () => {
+    // The same forgery class Ruling A491-W2A-R8 closed for PATCH
+    // /api/config's sibling transition: on an open install,
+    // sharedDocsAccess._isOperator reads ANY dashboard- or browser-shaped
+    // request as the operator, checked BEFORE any launch binding is
+    // resolved. A project session could add the dashboard's own headers
+    // (Origin, Sec-Fetch-Site, x-tangleclaw-client) plus a page token
+    // fetched from its own GET /api/auth/me, and _requireOperatorWrite
+    // alone would have accepted it. The launch-binding exclusion in
+    // _requireOperatorWriteExcludingLaunchBinding refuses it outright,
+    // before any of that shape is asked anything.
+    const projDir = path.join(tmpDir, 'authority-forgery-probe');
+    fs.mkdirSync(projDir, { recursive: true });
+    const project = store.projects.create({ name: 'authority-forgery-probe', path: projDir, engine: 'claude' });
+    const bound = bindProject(project);
+    try {
+      const forged = { ...bound.headers, ...operatorWriteHeaders };
+      const res = await requestJson('POST', '/api/master/authority', { accessLevel: 'write' }, forged);
+      assert.equal(res.status, 403);
+      assert.equal(res.data.code, 'OPERATOR_ONLY');
+      const config = store.config.load();
+      assert.equal(masterAuthority.getAuthorityState(config).toggleState, 'read-only',
+        'a forged caller must never move the canonical state');
+    } finally {
+      store.sessions.kill(bound.sessionId, 'test cleanup');
+    }
   });
 });
 
