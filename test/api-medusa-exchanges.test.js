@@ -467,7 +467,7 @@ describe('API — Medusa exchanges (#1839)', () => {
   });
 
   // #2137 — ?role= aliases direction, and role=all merges both sides.
-  it('?role=sender/recipient alias direction, and ?role=all merges both sides deduplicated, newest first', async () => {
+  it('?role=sender/recipient alias direction', async () => {
     const sentByPm = await call(server, 'POST', `${pmBase()}/send`, { to: builderWs, message: 'from pm' }, bPM.headers);
     deliverToBuilder(sentByPm.data.id);
     const sentByBuilder = await call(server, 'POST', `${builderBase()}/send`, { to: pmWs, message: 'from builder' }, bBuilder.headers);
@@ -483,11 +483,59 @@ describe('API — Medusa exchanges (#1839)', () => {
     const asRecipient = await call(server, 'GET', `${pmBase()}/exchanges?role=recipient`, null, bPM.headers);
     assert.equal(asRecipient.status, 200);
     assert.deepEqual(asRecipient.data.exchanges.map((x) => x.hubId), [sentByBuilder.data.id]);
+  });
+
+  /**
+   * A send recorded directly through the library (not the HTTP route), so its
+   * `created_at` can be pinned via {@link medusaExchanges._internal}.now — the
+   * precision a real `/send` round-trip cannot offer when several must sort
+   * in a known order.
+   * @param {{senderProjectId: number, senderWs: string, recipientWs: string, recipientProjectId: (number|null),
+   *   hubId: string, atMs: number}} opts
+   * @returns {object} The bound exchange row
+   */
+  function sendAt({ senderProjectId, senderWs, recipientWs, recipientProjectId, hubId, atMs }) {
+    const real = medusaExchanges._internal.now;
+    medusaExchanges._internal.now = () => new Date(atMs);
+    try {
+      const x = medusaExchanges.createSendIntent({
+        meta: medusaExchanges.validateSendMeta({}, { kind: 'project', projectId: senderProjectId }, senderProjectId),
+        sender: { projectId: senderProjectId, sessionId: 9, workspaceId: senderWs },
+        recipient: { workspaceId: recipientWs, projectId: recipientProjectId, sessionId: null }
+      });
+      return medusaExchanges.bindHubId(x.exchange_id, hubId, { hubStatus: 'received' });
+    } finally {
+      medusaExchanges._internal.now = real;
+    }
+  }
+
+  it('?role=all merges both sides newest-first, collapses a TRUE duplicate (sender and recipient are the same exchange), and caps at ?limit', async () => {
+    const t0 = Date.parse('2026-11-01T00:00:00Z');
+    // Oldest to newest: a plain received, a plain sent, then one exchange that
+    // is BOTH sent and received by this project (PM messaging itself) — the
+    // one row a naive concat (rather than a true id-keyed dedup) would double.
+    const received = sendAt({
+      senderProjectId: builder.id, senderWs: builderWs, recipientWs: pmWs, recipientProjectId: pm.id,
+      hubId: 'hub-role-all-received', atMs: t0
+    });
+    const sent = sendAt({
+      senderProjectId: pm.id, senderWs: pmWs, recipientWs: builderWs, recipientProjectId: builder.id,
+      hubId: 'hub-role-all-sent', atMs: t0 + 1000
+    });
+    const self = sendAt({
+      senderProjectId: pm.id, senderWs: pmWs, recipientWs: pmWs, recipientProjectId: pm.id,
+      hubId: 'hub-role-all-self', atMs: t0 + 2000
+    });
 
     const all = await call(server, 'GET', `${pmBase()}/exchanges?role=all`, null, bPM.headers);
     assert.equal(all.status, 200);
-    assert.deepEqual(all.data.exchanges.map((x) => x.hubId).sort(), [sentByBuilder.data.id, sentByPm.data.id].sort());
-    assert.equal(new Set(all.data.exchanges.map((x) => x.exchangeId)).size, all.data.exchanges.length, 'no duplicate exchange');
+    assert.deepEqual(all.data.exchanges.map((x) => x.exchangeId), [self.exchange_id, sent.exchange_id, received.exchange_id],
+      'newest first — the self-exchange appears exactly once, not twice');
+
+    const capped = await call(server, 'GET', `${pmBase()}/exchanges?role=all&limit=2`, null, bPM.headers);
+    assert.equal(capped.status, 200);
+    assert.deepEqual(capped.data.exchanges.map((x) => x.exchangeId), [self.exchange_id, sent.exchange_id],
+      'limit caps the MERGED, deduplicated result — not each side independently');
   });
 
   // #1873 — the retraction route itself (the library function has its own
@@ -525,6 +573,16 @@ describe('API — Medusa exchanges (#1839)', () => {
       const refused = await call(server, 'POST', `${pmBase()}/messages/${hubId}/retract`, { reason: 'superseded' }, bPM.headers);
       assert.equal(refused.status, 409);
       assert.equal(refused.data.code, 'NOT_RETRACTABLE');
+    });
+
+    it('is refused for a HOLD/STOP/RELEASE control notice, even for the operator', async () => {
+      store.control.insertReceipt({
+        event_id: 'evt-retract-ctl-1', fact: 'notify_attempted', outcome_code: 'sent',
+        actor_principal: 'system', notice_ref: 'hub-ctl-retract-1'
+      });
+      const refused = await call(server, 'POST', `${pmBase()}/messages/hub-ctl-retract-1/retract`, { reason: 'superseded' }, op);
+      assert.equal(refused.status, 409);
+      assert.equal(refused.data.code, 'CONTROL_NOT_RETRACTABLE');
     });
 
     it('clears the retracted message from a live recipient session\'s own inbox', async () => {

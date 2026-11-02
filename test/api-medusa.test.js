@@ -976,6 +976,24 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
     assert.ok(!('bridge' in data), 'a toggle-off carries no preflight verdict');
   });
 
+  // INTV-V5540-01: turning the listener off over unread mail is refused
+  // until the caller confirms it.
+  it('toggle {enabled:false} with unread mail is refused, then succeeds with confirm:true', async () => {
+    const fake = seedListener();
+    fake._recv({ type: 'new_message', messageId: 'hub-unread-1', message: { id: 'hub-unread-1', from: 'ws-someone', message: 'hi' } });
+    assert.equal(medusa.getStatus(active.id).unread, 1);
+
+    const refused = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: false }, dashboard());
+    assert.equal(refused.status, 409);
+    assert.equal(refused.data.code, 'MEDUSA_UNREAD_CONFIRM_REQUIRED');
+    assert.equal(refused.data.unreadCount, 1);
+    assert.equal(medusa.getStatus(active.id).state, 'listening', 'nothing was turned off');
+
+    const confirmed = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: false, confirm: true }, dashboard());
+    assert.equal(confirmed.status, 200);
+    assert.equal(confirmed.data.state, 'off');
+  });
+
   it('toggle {enabled:true} is idempotent against an already-listening session', async () => {
     const fake = seedListener();
     const before = medusa.getStatus(active.id);

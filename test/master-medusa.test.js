@@ -942,4 +942,47 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
     assert.equal(store.medusaExchanges.get(mine.exchange_id).terminal_at, null);
     assert.equal(store.medusaExchanges.get(theirs.exchange_id).terminal_at, null);
   });
+
+  /**
+   * Record a Hub-bound send from the Master, as its own unbound send route
+   * records it (mirrors {@link orphanedSend}, but with a real Hub id so
+   * `retract` can look it up).
+   * @param {string} hubId - Hub id to bind
+   * @returns {object} The exchange row
+   */
+  function masterSentWithHub(hubId) {
+    const x = medusaExchanges.createSendIntent({
+      meta: medusaExchanges.validateSendMeta({}, { kind: 'unbound' }, null),
+      sender: { projectId: null, sessionId: master.MASTER_MEDUSA_KEY, workspaceId: 'master-ws' },
+      recipient: { workspaceId: 'live-ws', projectId: null, sessionId: null }
+    });
+    return medusaExchanges.bindHubId(x.exchange_id, hubId, { hubStatus: 'received' });
+  }
+
+  it('the verified Master retracts its own send on its mount, and is refused a project\'s send (#1873)', async () => {
+    const mine = masterSentWithHub('hub-master-retract-1');
+    const { status, data } = await req(`/api/master/medusa/messages/${mine.hub_id}/retract`, 'POST', { reason: 'superseded' }, MASTER_PANE);
+    assert.equal(status, 200, JSON.stringify(data));
+    assert.equal(data.exchange.state, 'retracted');
+    assert.equal(store.medusaExchanges.get(mine.exchange_id).terminal_by, 'master');
+
+    const project = store.projects.create({ name: 'master-retract-sender', path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-mrs-')) });
+    const theirs = medusaExchanges.bindHubId(medusaExchanges.createSendIntent({
+      meta: medusaExchanges.validateSendMeta({}, { kind: 'unbound' }, project.id),
+      sender: { projectId: project.id, sessionId: 7, workspaceId: 'proj-ws' },
+      recipient: { workspaceId: 'live-ws', projectId: null, sessionId: null }
+    }).exchange_id, 'hub-master-retract-2', { hubStatus: 'received' });
+    const refused = await req(`/api/master/medusa/messages/${theirs.hub_id}/retract`, 'POST', { reason: 'superseded' }, MASTER_PANE);
+    assert.equal(refused.status, 403);
+    assert.equal(refused.data.code, 'NOT_INITIATOR');
+    assert.equal(store.medusaExchanges.get(theirs.exchange_id).terminal_at, null);
+  });
+
+  it('the Master retract mount refuses an unbound caller before retract is asked (#1873)', async () => {
+    const mine = masterSentWithHub('hub-master-retract-3');
+    const unbound = await req(`/api/master/medusa/messages/${mine.hub_id}/retract`, 'POST', { reason: 'superseded' });
+    assert.equal(unbound.status, 403);
+    assert.equal(unbound.data.code, 'LAUNCH_BINDING_REQUIRED');
+    assert.equal(store.medusaExchanges.get(mine.exchange_id).terminal_at, null);
+  });
 });
