@@ -165,6 +165,29 @@ class FakeWS {
   }
 }
 
+// #1009 R-Gate Round 2: `getStatus()` now kicks off a fire-and-forget
+// `checkBridgeHealth()` refresh for every active listener, so ANY test in
+// this file that starts one can trigger a REAL, unseamed network probe
+// against whatever `bridgeHttpUrl`/`wsUrl` happen to be configured at that
+// moment — and this file reconfigures those constantly for its own fixture
+// tests (`_bridge-hub.js`, `_setBridgeHttpUrl`), so stubbing the network
+// itself isn't viable here (tried; broke the file's own real HTTP-fixture
+// tests, which need `fetch`/`net` working).
+//
+// What actually makes this safe is the production fix's OWN generation
+// counter (`lib/medusa.js`'s `_bridgeProbeGeneration`): a probe that
+// resolves after the cache has been reset discards its result instead of
+// writing it. Resetting before AND after every test, file-wide, guarantees
+// a straggling background probe from test N can never be observed by test
+// N+1 — not because it never fires, but because by the time it resolves,
+// the generation it started under has already moved on.
+beforeEach(() => {
+  medusa._resetBridgeProbe();
+});
+afterEach(() => {
+  medusa._resetBridgeProbe();
+});
+
 describe('lib/medusa — service layer', () => {
   let tempDir;
   const started = [];
@@ -568,6 +591,52 @@ describe('lib/medusa — service layer', () => {
         assert.equal(medusa.getStatus(sid).bridgeUpdaterStatus, 'update-available');
       } finally {
         medusa.stopSession(sid);
+      }
+    });
+
+    it('a status read on an active listener refreshes a stale/absent cache via the normal flow — no toggle, no dashboard poll (#1009 R-Gate Round 2)', async () => {
+      // PRR-B's finding: a pure cache READ alone leaves a session that
+      // reconnects with no toggle and no dashboard tab open carrying a
+      // stale or absent reading forever. getStatus() on an active listener
+      // must itself keep the cache warm.
+      const sid = 'bridge-refresh-flow';
+      medusa.startSession({ projectPath: tempDir, sessionId: sid, name: 'Refresh', wsFactory: (u) => new FakeWS(u) });
+      const realFetch = global.fetch;
+      const net = require('node:net');
+      const realConnect = net.connect;
+      let version = '1.0.0';
+      global.fetch = async () => ({
+        ok: true, status: 200,
+        json: async () => ({ status: 'hissing', version, updaterStatus: 'checking' })
+      });
+      net.connect = () => {
+        const EventEmitter = require('node:events');
+        const socket = new EventEmitter();
+        socket.destroy = () => {};
+        setImmediate(() => socket.emit('connect'));
+        return socket;
+      };
+      const settle = () => new Promise((r) => setImmediate(r));
+      try {
+        assert.equal(medusa.getStatus(sid).bridgeVersion, null, 'nothing measured yet');
+        medusa.getStatus(sid); // the normal status-poll flow — fires the refresh
+        await settle(); await settle(); await settle();
+        assert.equal(medusa.getStatus(sid).bridgeVersion, '1.0.0',
+          'refreshed with no toggle and no /api/system/health poll involved');
+
+        // The Bridge updates; once the cache is due to refresh again, the
+        // NEW version reaches the status payload the same way.
+        version = '1.1.0';
+        medusa._resetBridgeProbe(); // simulates the real TTL having elapsed
+        medusa.getStatus(sid);
+        await settle(); await settle(); await settle();
+        assert.equal(medusa.getStatus(sid).bridgeVersion, '1.1.0',
+          'a later Bridge version reaches the status payload once refreshed');
+      } finally {
+        global.fetch = realFetch;
+        net.connect = realConnect;
+        medusa.stopSession(sid);
+        medusa._resetBridgeProbe();
       }
     });
   });
