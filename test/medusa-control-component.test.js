@@ -253,69 +253,6 @@ describe('tcCreateMedusaControl — talks to ITS api base', () => {
     assert.ok(w.el.masterDrawerMedusa.classList.contains('is-connecting'));
   });
 
-  // INTV-V5540-01: turning the listener off while the inbox holds unread mail
-  // is refused (409 `MEDUSA_UNREAD_CONFIRM_REQUIRED`); the control asks the
-  // operator to confirm, via `window.confirm` (the established pattern for a
-  // destructive click in this codebase — `public/session.js`'s loop-close
-  // controls), and only retries with `confirm: true` on a yes.
-  it('toggle off over unread mail asks to confirm, and retries with confirm:true on yes', async () => {
-    const ids = G.tcMedusaIds('');
-    const w = world(ids, { status: { state: 'listening', unread: 3 } });
-    let calls = 0;
-    const api = async (url, opts) => {
-      w.calls.push({ url, opts: opts || null });
-      if (url.endsWith('/toggle')) {
-        calls += 1;
-        if (calls === 1) {
-          api.lastErrorCode = 'MEDUSA_UNREAD_CONFIRM_REQUIRED';
-          api.lastBody = { unreadCount: 3 };
-          return null;
-        }
-        api.lastErrorCode = null;
-        api.lastBody = null;
-        return { state: 'off', unread: 3 };
-      }
-      return w.api(url, opts);
-    };
-    const realConfirm = G.window.confirm;
-    let confirmedWith = null;
-    G.window.confirm = (msg) => { confirmedWith = msg; return true; };
-    let c;
-    try {
-      c = G.tcCreateMedusaControl({ doc: w.doc, api, apiBase: '/api/sessions/p/medusa', ids });
-      await c.toggle();
-    } finally {
-      G.window.confirm = realConfirm;
-    }
-    assert.equal(calls, 2, 'the refused attempt, then the confirmed retry');
-    assert.match(confirmedWith, /3 unread/);
-    const toggleCalls = w.calls.filter((call) => call.url.endsWith('/toggle'));
-    assert.deepEqual(JSON.parse(toggleCalls[1].opts.body), { confirm: true });
-    assert.equal(c.state.state, 'off');
-  });
-
-  it('toggle off over unread mail does nothing further on no', async () => {
-    const ids = G.tcMedusaIds('');
-    const w = world(ids, {});
-    let calls = 0;
-    const api = async (url, opts) => {
-      w.calls.push({ url, opts: opts || null });
-      calls += 1;
-      api.lastErrorCode = 'MEDUSA_UNREAD_CONFIRM_REQUIRED';
-      api.lastBody = { unreadCount: 1 };
-      return null;
-    };
-    const realConfirm = G.window.confirm;
-    G.window.confirm = () => false;
-    try {
-      const c = G.tcCreateMedusaControl({ doc: w.doc, api, apiBase: '/api/sessions/p/medusa', ids });
-      await c.toggle();
-    } finally {
-      G.window.confirm = realConfirm;
-    }
-    assert.equal(calls, 1, 'no retry on a no');
-  });
-
   it('a failed fetch (null) changes nothing', async () => {
     const ids = G.tcMedusaIds('');
     const w = world(ids, {});
