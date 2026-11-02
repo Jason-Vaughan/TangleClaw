@@ -4,6 +4,34 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.53.1] - 2026-11-02
+
+### Added
+- `GET /api/master/status` now auto-measures continuity health from the live Master pane
+  (a `paneBuffer` byte-count estimate) when no explicit reading was supplied and the Master is
+  running, instead of always reporting `unmeasured`. The engine-reported status-bar percentage
+  source is not yet implemented — no verified status-bar text format exists to parse against —
+  so every auto-measured reading is `source: 'estimated'` (#2120).
+
+### Changed
+- `tc whoami`'s operator host and the setup wizard's post-cutover/restart redirects now honor
+  Tailscale advertisement mode (`config.tailscaleMode`) the same way `GET
+  /api/projects/:project/plans` already did: when it is on, the tailnet-resolved origin is
+  authoritative, with an honest failure reported rather than a silent fallback to the request's
+  own `Host` header. With the mode off, behavior is unchanged (#1380).
+
+### Fixed
+- `lib/tmux.js#readNewestBuffer` now explicitly lists the buffer stack and skips every `tc-send-*` delivery buffer by name, rather than trusting a bare `tmux show-buffer`'s own notion of "newest" — on tmux 3.3a (Debian bookworm's packaged version, so the Testament container pool's) that call could briefly return an in-flight delivery buffer's text instead of the operator's own clipboard selection (#2773).
+- Fix the Caddyfile drift check (`lib/caddy-drift.js#checkGates`): an ungated,
+  path-scoped `handle` block sitting beside a real gate on the same site previously read as
+  `holds` (the per-site merge satisfied gate presence for the whole site). A new route-order
+  coverage pass now walks each site in Caddy's actual evaluation order and reports `DIVERGED`
+  when a proxying route is reached before any gate without its own matcher being provably
+  restricted to TangleClaw's bypass path set (#2774).
+
+### Internal
+- Added a `curl`-on-`PATH` precondition test to `test/rule-delivery-receipt.test.js` that fails first and names `.devcontainer/Dockerfile` (#2758), rather than leaving five real-receipt-POST cases to fail with opaque mismatches when the pool image lacks `curl` (#2778). Confirmed 39/39 passing both locally and on the remote Testament pool now that #2758 has installed `curl`.
+
 ## [5.53.0] - 2026-11-01
 
 ### Added
