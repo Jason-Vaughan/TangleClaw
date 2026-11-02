@@ -19,6 +19,7 @@ const path = require('node:path');
 const childProcess = require('node:child_process');
 
 const brs = require('../lib/branch-retire-safety');
+const cli = require('../scripts/retire-stale-worktrees');
 const { initRepo, cloneRepo } = require('./_temp-repo');
 
 const { VERDICTS, REASONS } = brs;
@@ -717,8 +718,9 @@ describe('branch-retire-safety: worktree & branch retirement (#1267)', () => {
       assert.equal(plan.skipped.length, 1);
       assert.equal(plan.skipped[0].reason, brs.WT_SKIP.DIRTY);
 
-      const result = await brs.retireWorktrees({ eligible: [plan.skipped[0]] }, { repo: dir, apply: true, execFile: realExec });
+      const result = await brs.retireWorktrees({ eligible: [plan.skipped[0]] }, { repo: dir, apply: true, execFile: realExec, lookupSession: async () => null });
       assert.equal(result.removed.length, 0, 'the re-verify at apply must also catch the ignored file');
+      assert.match(result.skipped[0].detail, /ignored changes/);
       assert.equal(fs.existsSync(path.join(linked, 'local.env')), true);
     });
 
@@ -815,6 +817,25 @@ describe('branch-retire-safety: worktree & branch retirement (#1267)', () => {
       assert.equal(plan.skipped[0].provenance.sessionId, 'sess-live-1');
       assert.ok(seen.length > 0, 'lookupSession must be consulted for a non-agent-named worktree too');
     });
+
+    it('a worktree is held fail-closed when lookupSession throws, never read as "no live session"', async () => {
+      const { dir, base } = makeClone();
+      git(dir, 'checkout', '-q', '-b', 'feat');
+      commit(dir, 'a.txt', 'x', 'feature');
+      git(dir, 'checkout', '-q', 'main');
+      git(dir, 'merge', '-q', '--no-ff', '-m', 'Merge feat', 'feat');
+      git(dir, 'push', '-q', 'origin', 'main');
+      const linked = path.join(base, 'wt-feat');
+      git(dir, 'worktree', 'add', '-q', linked, 'feat');
+
+      const lookupSession = async () => { throw new Error('session store unreachable'); };
+      const plan = await brs.planWorktreeRetirement({ repo: dir, execFile: realExec, lookupSession });
+      assert.equal(plan.eligible.length, 0, 'a lookup failure must never be read as proof of no live session');
+      assert.equal(plan.skipped.length, 1);
+      assert.equal(plan.skipped[0].reason, brs.WT_SKIP.LOOKUP_FAILED);
+      assert.match(plan.skipped[0].detail, /session store unreachable/);
+      assert.equal(plan.skipped[0].provenance.lookupError, 'session store unreachable');
+    });
   });
 
   describe('retireWorktrees', () => {
@@ -842,12 +863,48 @@ describe('branch-retire-safety: worktree & branch retirement (#1267)', () => {
       assert.equal(fs.existsSync(linked), true);
     });
 
-    it('--apply actually removes an eligible worktree', async () => {
+    it('--apply actually removes an eligible worktree, given a lookupSession that finds nothing live', async () => {
+      const { dir, linked } = await eligibleFixture();
+      const plan = await brs.planWorktreeRetirement({ repo: dir, execFile: realExec });
+      const result = await brs.retireWorktrees(plan, { repo: dir, apply: true, execFile: realExec, lookupSession: async () => null });
+      assert.equal(result.removed[0].action, 'removed');
+      assert.equal(fs.existsSync(linked), false);
+    });
+
+    it('--apply with no lookupSession at all refuses to remove anything, fail-closed', async () => {
       const { dir, linked } = await eligibleFixture();
       const plan = await brs.planWorktreeRetirement({ repo: dir, execFile: realExec });
       const result = await brs.retireWorktrees(plan, { repo: dir, apply: true, execFile: realExec });
-      assert.equal(result.removed[0].action, 'removed');
-      assert.equal(fs.existsSync(linked), false);
+      assert.equal(result.removed.length, 0);
+      assert.equal(result.skipped[0].action, 'skipped-at-apply');
+      assert.equal(result.skipped[0].reason, brs.WT_SKIP.NO_LOOKUP_SESSION);
+      assert.equal(fs.existsSync(linked), true);
+    });
+
+    it('--apply holds and does not remove when lookupSession throws immediately before removal', async () => {
+      const { dir, linked } = await eligibleFixture();
+      const plan = await brs.planWorktreeRetirement({ repo: dir, execFile: realExec });
+      const result = await brs.retireWorktrees(plan, {
+        repo: dir, apply: true, execFile: realExec,
+        lookupSession: async () => { throw new Error('session store unreachable'); }
+      });
+      assert.equal(result.removed.length, 0);
+      assert.equal(result.skipped[0].reason, brs.WT_SKIP.LOOKUP_FAILED);
+      assert.match(result.skipped[0].detail, /session store unreachable/);
+      assert.equal(fs.existsSync(linked), true);
+    });
+
+    it('--apply holds and does not remove when lookupSession reports a session newly attached at apply time', async () => {
+      const { dir, linked } = await eligibleFixture();
+      const plan = await brs.planWorktreeRetirement({ repo: dir, execFile: realExec });
+      const result = await brs.retireWorktrees(plan, {
+        repo: dir, apply: true, execFile: realExec,
+        lookupSession: async () => ({ sessionId: 'sess-attached-late' })
+      });
+      assert.equal(result.removed.length, 0);
+      assert.equal(result.skipped[0].reason, brs.WT_SKIP.LIVE_SESSION);
+      assert.match(result.skipped[0].detail, /sess-attached-late/);
+      assert.equal(fs.existsSync(linked), true);
     });
 
     it('re-verifies immediately before removing: a worktree dirtied after planning is skipped at apply, not removed', async () => {
@@ -855,7 +912,7 @@ describe('branch-retire-safety: worktree & branch retirement (#1267)', () => {
       const plan = await brs.planWorktreeRetirement({ repo: dir, execFile: realExec });
       fs.writeFileSync(path.join(linked, 'late.txt'), 'snuck in after the plan\n');
 
-      const result = await brs.retireWorktrees(plan, { repo: dir, apply: true, execFile: realExec });
+      const result = await brs.retireWorktrees(plan, { repo: dir, apply: true, execFile: realExec, lookupSession: async () => null });
       assert.equal(result.removed.length, 0);
       assert.equal(result.skipped[0].action, 'skipped-at-apply');
       assert.equal(fs.existsSync(linked), true);
@@ -1026,7 +1083,7 @@ describe('branch-retire-safety: worktree & branch retirement (#1267)', () => {
       assert.equal(p.issueNumber, null, 'no name to parse an issue number from');
     });
 
-    it('never throws when the lookup or the stat fails', async () => {
+    it('never throws itself when the lookup or the stat fails', async () => {
       const missing = path.join(root, 'agent-deadbeef');
       const p1 = await brs.describeProvenance(missing);
       assert.equal(p1.source, 'name-parse');
@@ -1037,6 +1094,206 @@ describe('branch-retire-safety: worktree & branch retirement (#1267)', () => {
       const p2 = await brs.describeProvenance(dir, { lookupSession: async () => { throw new Error('store unreachable'); } });
       assert.equal(p2.source, 'name-parse');
       assert.equal(p2.sessionId, null);
+    });
+
+    it('reports a thrown lookupSession via lookupError, rather than swallowing it into a false "no session"', async () => {
+      const dir = path.join(root, 'agent-fadedbee');
+      fs.mkdirSync(dir);
+      const p = await brs.describeProvenance(dir, { lookupSession: async () => { throw new Error('store unreachable'); } });
+      assert.equal(p.sessionId, null);
+      assert.equal(p.lookupError, 'store unreachable');
+    });
+
+    it('lookupError is null when no lookupSession is supplied at all', async () => {
+      const dir = path.join(root, 'agent-0b00b00b');
+      fs.mkdirSync(dir);
+      const p = await brs.describeProvenance(dir);
+      assert.equal(p.lookupError, null);
+    });
+  });
+});
+
+describe('scripts/retire-stale-worktrees.js: default live-session/active-branch detectors (#1267 R3)', () => {
+  /**
+   * A fake `execFileSync` answering `tmux list-panes` and `git rev-parse` by
+   * argv, like {@link test/branch-retire-safety.test.js}'s `fakeGit` but for
+   * the synchronous API these detectors use.
+   * @param {object} answers - `{tmux: string|Error, git: (args) => string|Error}`
+   * @returns {Function}
+   */
+  function fakeExecFileSync(answers) {
+    return (file, args) => {
+      if (file === 'tmux') {
+        if (answers.tmux instanceof Error) throw answers.tmux;
+        return answers.tmux;
+      }
+      if (file === 'git') {
+        const v = typeof answers.git === 'function' ? answers.git(args) : answers.git;
+        if (v instanceof Error) throw v;
+        return v;
+      }
+      throw new Error(`unexpected execFileSync ${file}`);
+    };
+  }
+
+  describe('_tmuxPanes / _defaultLookupSession', () => {
+    it('finds a pane whose current directory is exactly the worktree', async () => {
+      const execFileSync = fakeExecFileSync({ tmux: 'tc-lane-b\t/repo/wt-feat\nother-sess\t/repo\n' });
+      const session = await cli._defaultLookupSession('/repo/wt-feat', { execFileSync });
+      assert.deepEqual(session, { sessionId: 'tc-lane-b' });
+    });
+
+    it('returns null when no pane matches', async () => {
+      const execFileSync = fakeExecFileSync({ tmux: 'other-sess\t/repo\n' });
+      const session = await cli._defaultLookupSession('/repo/wt-feat', { execFileSync });
+      assert.equal(session, null);
+    });
+
+    it('dry-run swallows a probe failure (nothing destructive to fail closed on)', async () => {
+      const execFileSync = fakeExecFileSync({ tmux: new Error('no server running on /tmp/tmux-x') });
+      const session = await cli._defaultLookupSession('/repo/wt-feat', { execFileSync, apply: false });
+      assert.equal(session, null);
+    });
+
+    it('--apply propagates a probe failure, never reading it as "no live session"', async () => {
+      const execFileSync = fakeExecFileSync({ tmux: new Error('no server running on /tmp/tmux-x') });
+      await assert.rejects(
+        () => cli._defaultLookupSession('/repo/wt-feat', { execFileSync, apply: true }),
+        /no server running/
+      );
+    });
+  });
+
+  describe('_defaultActiveBranches', () => {
+    it('collects the branch checked out at each pane that is a git checkout, skipping panes that are not', () => {
+      const execFileSync = fakeExecFileSync({
+        tmux: 'a\t/repo\nb\t/not-a-repo\nc\t/repo-detached\n',
+        git: (args) => {
+          const cwd = args[args.indexOf('-C') + 1];
+          if (cwd === '/repo') return 'feat\n';
+          if (cwd === '/repo-detached') return 'HEAD\n';
+          return new Error('not a git repository');
+        }
+      });
+      const branches = cli._defaultActiveBranches({ execFileSync });
+      assert.deepEqual(branches, new Set(['feat']));
+    });
+
+    it('--apply propagates a probe failure as a thrown error', () => {
+      const execFileSync = fakeExecFileSync({ tmux: new Error('tmux: command not found') });
+      assert.throws(() => cli._defaultActiveBranches({ execFileSync, apply: true }), /command not found/);
+    });
+
+    it('dry-run swallows a probe failure, returning an empty set', () => {
+      const execFileSync = fakeExecFileSync({ tmux: new Error('tmux: command not found') });
+      assert.deepEqual(cli._defaultActiveBranches({ execFileSync, apply: false }), new Set());
+    });
+  });
+
+  describe('render', () => {
+    it('includes provenance createdAt alongside session/issue in the human output', () => {
+      const out = {
+        worktrees: {
+          plan: {
+            skipped: [{
+              path: '/repo/agent-abc123-42', reason: brs.WT_SKIP.LIVE_SESSION, detail: "bound to live session 'sess-1'",
+              provenance: { issueNumber: 42, sessionId: 'sess-1', createdAt: '2026-01-01T00:00:00.000Z' }
+            }]
+          },
+          result: { removed: [], skipped: [] }
+        },
+        branches: { plan: { skipped: [] }, result: { removed: [], skipped: [] } }
+      };
+      const text = cli.render(out, false);
+      assert.match(text, /issue #42/);
+      assert.match(text, /session sess-1/);
+      assert.match(text, /created 2026-01-01T00:00:00\.000Z/);
+    });
+  });
+
+  describe('runPipeline: default wiring end to end', () => {
+    let root;
+    let n = 0;
+    const realExec = childProcess.execFile;
+
+    function gitEnv() {
+      return { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_NOSYSTEM: '1', HOME: root };
+    }
+    function git(cwd, ...args) {
+      return childProcess.execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: gitEnv() }).trim();
+    }
+    function commit(dir, file, content, msg) {
+      fs.writeFileSync(path.join(dir, file), `${content}\n`);
+      git(dir, 'add', file);
+      git(dir, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', msg);
+      return git(dir, 'rev-parse', 'HEAD');
+    }
+    function makeClone() {
+      const base = path.join(root, `case${++n}`);
+      fs.mkdirSync(base);
+      const origin = path.join(base, 'origin.git');
+      initRepo(base, ['--bare', '-b', 'main', origin], { env: gitEnv() });
+      const dir = path.join(base, 'work');
+      cloneRepo(origin, dir, [], { cwd: base, env: gitEnv() });
+      git(dir, 'checkout', '-q', '-b', 'main');
+      commit(dir, 'README.md', 'init', 'init');
+      git(dir, 'push', '-q', '-u', 'origin', 'main');
+      return { origin, dir, base };
+    }
+
+    before(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-cli-retire-1267-r3-')); });
+    after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    it('with no lookupSession/activeBranches injected, a tmux pane reported by the default detector holds an otherwise-eligible worktree', async () => {
+      const { dir, base } = makeClone();
+      git(dir, 'checkout', '-q', '-b', 'feat');
+      commit(dir, 'a.txt', 'x', 'feature');
+      git(dir, 'checkout', '-q', 'main');
+      git(dir, 'merge', '-q', '--no-ff', '-m', 'Merge feat', 'feat');
+      git(dir, 'push', '-q', 'origin', 'main');
+      const linked = path.join(base, 'wt-feat');
+      git(dir, 'worktree', 'add', '-q', linked, 'feat');
+
+      const execFileSync = fakeExecFileSync({ tmux: `tc-lane-default\t${linked}\n` });
+      const out = await cli.runPipeline(dir, false, { execFile: realExec, execFileSync });
+      assert.equal(out.worktrees.plan.eligible.length, 0, 'the default tmux detector must be the thing holding this tree');
+      const held = out.worktrees.plan.skipped.find((s) => fs.realpathSync(s.path) === fs.realpathSync(linked));
+      assert.ok(held, 'the worktree must appear in skipped');
+      assert.equal(held.reason, brs.WT_SKIP.LIVE_SESSION);
+      assert.equal(held.provenance.sessionId, 'tc-lane-default');
+    });
+
+    it('with no tmux pane reported, the same worktree is eligible (the default detector found nothing live)', async () => {
+      const { dir, base } = makeClone();
+      git(dir, 'checkout', '-q', '-b', 'feat');
+      commit(dir, 'a.txt', 'x', 'feature');
+      git(dir, 'checkout', '-q', 'main');
+      git(dir, 'merge', '-q', '--no-ff', '-m', 'Merge feat', 'feat');
+      git(dir, 'push', '-q', 'origin', 'main');
+      const linked = path.join(base, 'wt-feat');
+      git(dir, 'worktree', 'add', '-q', linked, 'feat');
+
+      const execFileSync = fakeExecFileSync({ tmux: 'unrelated-sess\t/somewhere/else\n' });
+      const out = await cli.runPipeline(dir, false, { execFile: realExec, execFileSync });
+      assert.equal(out.worktrees.plan.eligible.length, 1);
+      assert.equal(out.worktrees.plan.eligible[0].class, brs.WT_CLASS.ANCESTOR_OF_MAIN);
+    });
+
+    it('an explicitly injected lookupSession overrides the default detector entirely', async () => {
+      const { dir, base } = makeClone();
+      git(dir, 'checkout', '-q', '-b', 'feat');
+      commit(dir, 'a.txt', 'x', 'feature');
+      git(dir, 'checkout', '-q', 'main');
+      git(dir, 'merge', '-q', '--no-ff', '-m', 'Merge feat', 'feat');
+      git(dir, 'push', '-q', 'origin', 'main');
+      const linked = path.join(base, 'wt-feat');
+      git(dir, 'worktree', 'add', '-q', linked, 'feat');
+
+      // The default detector would hold this tree (the fake tmux pane sits
+      // right in it) — an explicit lookupSession must win regardless.
+      const execFileSync = fakeExecFileSync({ tmux: `tc-lane-default\t${linked}\n` });
+      const out = await cli.runPipeline(dir, false, { execFile: realExec, execFileSync, lookupSession: async () => null });
+      assert.equal(out.worktrees.plan.eligible.length, 1, 'the injected lookupSession, not the default, must have been consulted');
     });
   });
 });
