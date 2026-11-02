@@ -207,4 +207,30 @@ describe('server.js — _gateIdentity wires the opt-in end to end (#1973)', () =
       store.config.save(config);
     }
   });
+
+  it('fails CLOSED for the machine-client carve-out when config.json goes unreadable after opting in (PRR-A BLOCKING, round 1)', async () => {
+    // Opt in first, as the prior tests do, then corrupt the file directly
+    // (bypassing store.config.save, which would refuse or normalize bad
+    // JSON) to reach the exact state _gateConfig()'s try/catch exists for.
+    const configPath = store._getConfigPath();
+    const goodJson = fs.readFileSync(configPath, 'utf8');
+    const config = JSON.parse(goodJson);
+    config.machineClientRequiresServiceToken = true;
+    store.config.save(config);
+    const optedInJson = fs.readFileSync(configPath, 'utf8');
+    fs.writeFileSync(configPath, '{ not valid json');
+    try {
+      const res = await send();
+      // Refused, not silently waved through as a machine client: an
+      // unreadable config is the UNREADABLE gate state, which is meant to
+      // enforce, not to reopen the loopback carve-out this opt-in exists to
+      // close.
+      assert.notEqual(res.status, 200);
+    } finally {
+      fs.writeFileSync(configPath, optedInJson);
+      const restored = store.config.load();
+      restored.machineClientRequiresServiceToken = false;
+      store.config.save(restored);
+    }
+  });
 });

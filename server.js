@@ -7150,7 +7150,17 @@ function _gateIdentity(req, socket, pathname) {
       serviceTokenValid = gate.ok === true && config.serviceTokenEnabled === true;
     }
   } catch (err) {
-    log.error('Config read failed while resolving machine-client identity — defaulting to the pre-#1973 carve-out', {
+    // Fail CLOSED for machine-client identity, not open: `authGate.evaluate`
+    // allows `machineClient: true` unconditionally, including in the
+    // UNREADABLE gate state — so defaulting to `requireServiceToken: false`
+    // here would silently reopen the loopback carve-out an opted-in
+    // install turned this on specifically to close, exactly when its own
+    // config has gone unreadable. `serviceTokenValid: false` alongside
+    // `requireServiceToken: true` makes `isMachineClient` refuse the
+    // carve-out outright (PRR-A BLOCKING, round 1).
+    requireServiceToken = true;
+    serviceTokenValid = false;
+    log.error('Config read failed while resolving machine-client identity — failing closed for the #1973 carve-out', {
       method: req.method, path: pathname, error: err.message
     });
   }

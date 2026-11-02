@@ -1241,8 +1241,43 @@ describe('API endpoints', () => {
           const before = store.config.load().master;
           const { status, data } = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'write' } });
           assert.equal(status, 200);
-          assert.deepEqual(store.config.load().master, { ...before, accessLevel: 'write' });
+          // #2132, Ruling A491-W2A-R4 — a PATCH that moves accessLevel is an
+          // Operator-authorized transition too, so it now ALSO persists the
+          // same audit fields POST /api/master/authority records
+          // (lifecycleGeneration/lifecycleUpdatedAt/lifecycleUpdatedBy) — the
+          // exact regression assertion that this save, not just the response,
+          // carries the new generation to disk.
+          const stored = store.config.load().master;
+          assert.deepEqual(stored, {
+            ...before, accessLevel: 'write',
+            lifecycleGeneration: 1, lifecycleUpdatedAt: stored.lifecycleUpdatedAt, lifecycleUpdatedBy: 'operator'
+          });
+          assert.match(stored.lifecycleUpdatedAt, /^\d{4}-\d{2}-\d{2}T/);
           assert.deepEqual(data.warnings, []);
+        } finally {
+          master.applyMasterAccessLevel = realApply;
+        }
+      });
+
+      it('persists the authority transition to disk even when the LATER write-guard apply fails (#2132, R4)', async () => {
+        // The regression PRR-A's BLOCKING finding named directly: a prior
+        // version of this route called store.config.save(config) BEFORE
+        // applyOperatorAuthorityChange mutated config.master, so the audit
+        // fields never reached disk even though the HTTP response reported
+        // them. This specifically exercises the ordering: the save (now
+        // carrying the audit fields) happens BEFORE the write-guard apply
+        // below ever runs, so a failure there must not un-persist it.
+        given(BYPASS_ON_CLAUDE);
+        const realApply = master.applyMasterAccessLevel;
+        master.applyMasterAccessLevel = () => { throw new Error('disk on fire'); };
+        try {
+          const { status } = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'write' } });
+          assert.equal(status, 500, 'the write-guard failure still surfaces as an error');
+          const reloaded = store.config.load().master;
+          assert.equal(reloaded.accessLevel, 'write');
+          assert.equal(reloaded.lifecycleGeneration, 1);
+          assert.equal(reloaded.lifecycleUpdatedBy, 'operator');
+          assert.ok(typeof reloaded.lifecycleUpdatedAt === 'string' && reloaded.lifecycleUpdatedAt.length > 0);
         } finally {
           master.applyMasterAccessLevel = realApply;
         }
