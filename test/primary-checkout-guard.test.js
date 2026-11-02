@@ -25,7 +25,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { execFileSync, spawnSync, spawn } = require('node:child_process');
 
 const { initRepo } = require('./_temp-repo');
 const engines = require('../lib/engines');
@@ -162,8 +162,9 @@ function runGuard(opts) {
  * @param {string} [tool] - Tool name; default 'Write'.
  * @returns {{status:number, stdout:string, stderr:string}}
  */
-function invokeCli(fx, toolInput, env, tool) {
-  const payload = JSON.stringify({ tool_name: tool || 'Write', tool_input: toolInput, cwd: fx.primary });
+function invokeCli(fx, toolInput, env, tool, rawStdin) {
+  const payload = rawStdin !== undefined ? rawStdin
+    : JSON.stringify({ tool_name: tool || 'Write', tool_input: toolInput, cwd: fx.primary });
   const res = spawnSync(process.execPath,
     [path.join(fx.primary, 'scripts', 'install-primary-guard.js'), '--invoke'],
     {
@@ -172,6 +173,34 @@ function invokeCli(fx, toolInput, env, tool) {
       env: { ...process.env, CLAUDE_PROJECT_DIR: fx.primary, TANGLECLAW_ALLOW_PRIMARY_WRITE: '', ...(env || {}) }
     });
   return { status: res.status, stdout: res.stdout, stderr: res.stderr };
+}
+
+/**
+ * Run `install-primary-guard.js --invoke` ASYNCHRONOUSLY (not `spawnSync`),
+ * so two calls can genuinely overlap — the only way to exercise the lock
+ * `updateStatus` takes around a real read-modify-write race (#1400 Round 2
+ * finding 2).
+ *
+ * @param {object} fx - Fixture from `makeFixture()`.
+ * @param {object} toolInput - Payload `tool_input`.
+ * @param {object} [env] - Extra environment.
+ * @returns {Promise<{status:number, stdout:string, stderr:string}>}
+ */
+function invokeCliAsync(fx, toolInput, env) {
+  return new Promise((resolve) => {
+    const payload = JSON.stringify({ tool_name: 'Write', tool_input: toolInput, cwd: fx.primary });
+    const child = spawn(process.execPath,
+      [path.join(fx.primary, 'scripts', 'install-primary-guard.js'), '--invoke'],
+      {
+        env: { ...process.env, CLAUDE_PROJECT_DIR: fx.primary, TANGLECLAW_ALLOW_PRIMARY_WRITE: '', ...(env || {}) }
+      });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (c) => { stdout += c; });
+    child.stderr.on('data', (c) => { stderr += c; });
+    child.on('close', (status) => resolve({ status, stdout, stderr }));
+    child.stdin.end(payload);
+  });
 }
 
 describe('#798 primary-checkout guard — P1, the session is rooted in a worktree', () => {
@@ -1154,5 +1183,149 @@ describe('#1400 — the stable outer runner (`--invoke`) and liveness telemetry'
     } finally {
       fresh.cleanup();
     }
+  });
+});
+
+describe('#1400 Round 2 — pre-invocation heartbeat, locking, bounded telemetry, live-engine proof', () => {
+  let fx;
+  before(() => { fx = makeFixture(); });
+  after(() => fx.cleanup());
+
+  const statusPath = () => installer.statusFilePath(fx.primary);
+  const readStatusNow = () => installer.readStatus(statusPath());
+
+  it('lastHook is bounded/sanitized, never the raw tool_name verbatim', () => {
+    const hostile = JSON.stringify({
+      tool_name: '../../etc/passwd; rm -rf /',
+      tool_input: { file_path: path.join(fx.primary, 'lib', 'x.js') },
+      cwd: fx.primary
+    });
+    const r = invokeCli(fx, null, {}, null, hostile);
+    assert.equal(r.status, 0);
+    const status = readStatusNow();
+    assert.equal(status.lastHook, 'unknown',
+      'a tool_name outside the bounded pattern must never reach telemetry verbatim');
+  });
+
+  it('a hung inner script is killed and recorded as `error`, not left to hang forever', () => {
+    const guardPath = path.join(fx.primary, installer.GUARD_REL);
+    const saved = fs.readFileSync(guardPath, 'utf8');
+    // Never reads stdin, never exits on its own — exactly the shape a
+    // timeout has to catch, not a crash `runInner`'s try/catch would see
+    // immediately on its own.
+    fs.writeFileSync(guardPath, 'setInterval(() => {}, 1000);\n');
+    try {
+      const before_ = readStatusNow();
+      const start = Date.now();
+      const r = invokeCli(fx, { file_path: path.join(fx.primary, 'public', 'sw.js') }, {
+        [installer.INNER_TIMEOUT_ENV]: '300'
+      });
+      const elapsed = Date.now() - start;
+      assert.equal(r.status, 0, 'the outer runner must still exit 0 when its child is killed');
+      assert.equal(r.stdout, '');
+      assert.ok(elapsed < 5000, `expected the 300ms timeout to bound this, took ${elapsed}ms`);
+      const after_ = readStatusNow();
+      assert.equal(after_.counts.error, before_.counts.error + 1);
+      assert.ok(after_.lastError, 'a killed child must leave a reason code');
+    } finally {
+      fs.writeFileSync(guardPath, saved);
+    }
+  });
+
+  it('an abandoned pending entry is reclaimed as `unclosed-entry` on the next status update', () => {
+    // Simulates the OUTER `--invoke` process itself being killed between
+    // `recordInvocationStart` and `recordInvocation` — the one case nothing
+    // in THIS process's own lifetime can close (#1400 Round 2 finding 1).
+    const file = statusPath();
+    const id = installer.recordInvocationStart(fx.primary, 'Bash', false);
+    assert.ok(id, 'recordInvocationStart must return an id to test against');
+    const before_ = installer.readStatus(file);
+    assert.ok(id in before_.pending, 'the entry must exist while "in flight"');
+
+    const r = spawnSync(process.execPath,
+      [path.join(fx.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+      { encoding: 'utf8', env: { ...process.env, [installer.PENDING_STALE_ENV]: '1' } });
+    // `--status`'s exit code is not asserted here: this shared fixture may
+    // already carry an unrelated crash/staleness flag from an earlier test
+    // in this block, and that is not what this test is about.
+    const after_ = JSON.parse(r.stdout);
+    assert.equal(after_.lastOutcome, 'error');
+    assert.equal(after_.lastError, 'unclosed-entry');
+    assert.ok(!(id in after_.pending), 'the reclaimed entry must be removed, not left to be reclaimed again');
+  });
+
+  it('two concurrent invocations do not lose an increment to each other', async () => {
+    const before_ = readStatusNow();
+    await Promise.all([
+      invokeCliAsync(fx, { file_path: path.join(fx.primary, 'lib', 'x.js') }),
+      invokeCliAsync(fx, { file_path: path.join(fx.primary, 'public', 'sw.js') })
+    ]);
+    const after_ = readStatusNow();
+    assert.equal(after_.counts.total, before_.counts.total + 2,
+      'both concurrent invocations must be counted — a lost update means the lock did not hold');
+  });
+
+  it('acquireLock breaks a stale lock rather than waiting out the full budget', () => {
+    const file = statusPath();
+    const lockPath = `${file}${installer.LOCK_SUFFIX}`;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(lockPath, '');
+    const old = Date.now() / 1000 - 60; // 60s old — well past the staleness threshold
+    fs.utimesSync(lockPath, old, old);
+    const start = Date.now();
+    const acquired = installer.acquireLock(file);
+    try {
+      assert.ok(acquired, 'a stale lock must be broken, not waited out');
+      assert.ok(Date.now() - start < 1000, 'breaking a stale lock must be fast, not a full timeout wait');
+    } finally {
+      installer.releaseLock(acquired);
+    }
+  });
+
+  it('liveEngineVerified is false until a genuine (non-self-test) invocation produces a decision', () => {
+    const fresh = makeFixture();
+    try {
+      const before_ = spawnSync(process.execPath,
+        [path.join(fresh.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+        { encoding: 'utf8' });
+      assert.equal(JSON.parse(before_.stdout).liveEngineVerified, false);
+
+      invokeCli(fresh, { file_path: path.join(fresh.primary, 'public', 'sw.js') });
+
+      const after_ = spawnSync(process.execPath,
+        [path.join(fresh.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+        { encoding: 'utf8' });
+      assert.equal(JSON.parse(after_.stdout).liveEngineVerified, true);
+    } finally {
+      fresh.cleanup();
+    }
+  });
+
+  it('flags a competing exact-matcher PreToolUse entry in the shared settings.json as actionable', () => {
+    const fresh = makeFixture();
+    try {
+      fs.writeFileSync(path.join(fresh.primary, '.claude', 'settings.json'), JSON.stringify({
+        hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'echo unrelated' }] }] }
+      }));
+      const r = spawnSync(process.execPath,
+        [path.join(fresh.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+        { encoding: 'utf8' });
+      assert.equal(r.status, 1);
+      const parsed = JSON.parse(r.stdout);
+      assert.deepEqual(parsed.sharedSettingsHookConflicts, ['Bash']);
+    } finally {
+      fresh.cleanup();
+    }
+  });
+
+  it('does not flag settings.json when it declares no PreToolUse hooks at all', () => {
+    const r = spawnSync(process.execPath,
+      [path.join(fx.primary, 'scripts', 'install-primary-guard.js'), '--status', '--json'],
+      { encoding: 'utf8' });
+    assert.equal(JSON.parse(r.stdout).sharedSettingsHookConflicts.length, 0);
+  });
+
+  it('checkNodeResolvable passes under the real node binary', () => {
+    assert.equal(installer.checkNodeResolvable().ok, true);
   });
 });

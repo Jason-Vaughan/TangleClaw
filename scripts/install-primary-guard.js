@@ -94,6 +94,44 @@ const STATUS_ENV = 'TANGLECLAW_PRIMARY_GUARD_STATUS_FILE';
 /** Status file basename, under the resolved git-common-dir. */
 const STATUS_BASENAME = 'tangleclaw-primary-guard-status.json';
 
+/** Bounded shape for telemetry's `lastHook` — never raw `tool_name` text past this (#1400 Round 2). */
+const HOOK_NAME_RE = /^[A-Za-z0-9_-]{1,32}$/;
+
+/**
+ * How long `runInner`'s child is allowed to run before being killed and
+ * treated as an `error` (#1400 Round 2: "a hung... inner child"). Generous
+ * relative to this guard's own work (a handful of filesystem/git checks),
+ * conservative enough that a genuinely stuck child cannot freeze the tool
+ * call that triggered it forever. Overridable so a test can use a short
+ * value instead of waiting out the production default.
+ */
+const INNER_TIMEOUT_ENV = 'TANGLECLAW_PRIMARY_GUARD_INNER_TIMEOUT_MS';
+function innerTimeoutMs() {
+  const override = parseInt(process.env[INNER_TIMEOUT_ENV], 10);
+  return Number.isFinite(override) && override > 0 ? override : 10000;
+}
+
+/**
+ * How long a `pending` (started, not yet finished) invocation entry may sit
+ * before `reclaimStalePending` treats it as abandoned rather than merely
+ * slow (#1400 Round 2 finding 1). Generous relative to `innerTimeoutMs()` —
+ * a hung child is already killed well before this fires, so reaching this
+ * threshold means the OUTER `--invoke` process itself was killed between
+ * starting and finishing, not that its child was merely slow. Overridable
+ * for the same reason as the timeout above.
+ */
+const PENDING_STALE_ENV = 'TANGLECLAW_PRIMARY_GUARD_PENDING_STALE_MS';
+function pendingStaleMs() {
+  const override = parseInt(process.env[PENDING_STALE_ENV], 10);
+  return Number.isFinite(override) && override > 0 ? override : 5 * 60 * 1000;
+}
+
+/** Exclusive-lock tuning for `updateStatus` (#1400 Round 2 finding 2). */
+const LOCK_SUFFIX = '.lock';
+const LOCK_RETRY_MS = 15;
+const LOCK_MAX_WAIT_MS = 2000;
+const LOCK_STALE_MS = 10000;
+
 /**
  * The shell command that invokes the guard.
  *
@@ -338,7 +376,14 @@ function defaultStatus() {
     lastError: null,
     lastErrorAt: null,
     selfTest: { lastAt: null, lastSuccessfulAt: null, counts: emptyCounts() },
-    activity: { lastCheckedCommitCount: null, countsTotalAtLastCheck: null }
+    activity: { lastCheckedCommitCount: null, countsTotalAtLastCheck: null },
+    // Invocations that have STARTED but not yet finished, keyed by a random
+    // id so genuinely concurrent invocations each get their own entry rather
+    // than stomping one shared slot (#1400 Round 2 finding 1). An entry still
+    // here past `pendingStaleMs()` means the OUTER `--invoke` process itself
+    // was killed between starting and finishing — `reclaimStalePending`
+    // folds it into `counts.error` as `unclosed-entry`.
+    pending: {}
   };
 }
 
@@ -405,7 +450,8 @@ function readStatus(file) {
         ...(parsed.selfTest || {}),
         counts: { ...base.selfTest.counts, ...((parsed.selfTest || {}).counts || {}) }
       },
-      activity: { ...base.activity, ...(parsed.activity || {}) }
+      activity: { ...base.activity, ...(parsed.activity || {}) },
+      pending: { ...base.pending, ...(parsed.pending || {}) }
     };
   } catch (err) {
     return base;
@@ -429,6 +475,136 @@ function writeStatusAtomic(file, status) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(tmp, `${JSON.stringify(status, null, 2)}\n`);
   fs.renameSync(tmp, file);
+}
+
+/**
+ * Acquire an exclusive, local, best-effort lock for one status
+ * read-modify-write (#1400 Round 2 finding 2).
+ *
+ * `fs.openSync(..., 'wx')` is the primitive: it creates the file only if it
+ * does not already exist, atomically, so two processes racing to create it
+ * can never both believe they hold it. A lock whose own mtime is older than
+ * `LOCK_STALE_MS` is presumed abandoned by a holder that crashed between
+ * acquiring it and releasing it — the same "a crash must not wedge the
+ * guard forever" posture as everything else in this file — and is broken
+ * rather than honoured. Giving up after `LOCK_MAX_WAIT_MS` (returning null
+ * rather than blocking indefinitely) is deliberate too: telemetry must
+ * never be the reason a real tool call stalls, so a caller that cannot get
+ * the lock proceeds UNLOCKED rather than waiting forever — the race window
+ * narrows to near-zero; it is not promised to be exactly zero under
+ * contention this guard does not expect to see in practice (one hook
+ * invocation per tool call, not a high-throughput server).
+ *
+ * @param {string} file - The status file this lock protects.
+ * @returns {string|null} The lock path to pass to `releaseLock`, or null
+ *   when the lock could not be acquired within the wait budget.
+ */
+function acquireLock(file) {
+  const lockPath = `${file}${LOCK_SUFFIX}`;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const deadline = Date.now() + LOCK_MAX_WAIT_MS;
+  for (;;) {
+    try {
+      fs.closeSync(fs.openSync(lockPath, 'wx'));
+      return lockPath;
+    } catch (err) {
+      if (err.code !== 'EEXIST') return null; // an unexpected filesystem error: proceed unlocked rather than loop on it
+      let stale;
+      try {
+        stale = (Date.now() - fs.statSync(lockPath).mtimeMs) > LOCK_STALE_MS;
+      } catch (statErr) {
+        stale = true; // the lock vanished between our open() and this stat(): treat as gone, retry below
+      }
+      if (stale) {
+        try { fs.unlinkSync(lockPath); } catch (unlinkErr) { /* another holder already cleared it first */ }
+        continue;
+      }
+      if (Date.now() >= deadline) return null;
+      const spinUntil = Date.now() + LOCK_RETRY_MS;
+      while (Date.now() < spinUntil) { /* short, local, synchronous lock — no async primitive to await here */ }
+    }
+  }
+}
+
+/**
+ * Release a lock acquired by `acquireLock`. Idempotent and silent if the
+ * lock is already gone — releasing twice, or after a stale-break already
+ * removed it, must never throw.
+ *
+ * @param {string|null} lockPath - What `acquireLock` returned, or null.
+ * @returns {void}
+ */
+function releaseLock(lockPath) {
+  if (!lockPath) return;
+  try {
+    fs.unlinkSync(lockPath);
+  } catch (err) { /* already gone */ }
+}
+
+/**
+ * Read the status file, let `mutate` change it in place, and write it back —
+ * under `acquireLock`'s best-effort exclusive lock, so two concurrent
+ * `--invoke` processes updating the SAME counters never lose one side's
+ * increment to the other's overwrite (#1400 Round 2 finding 2). Falls back
+ * to an unlocked read-modify-write when the lock cannot be acquired within
+ * its budget — see `acquireLock`'s own doc for why that is the correct
+ * degrade rather than blocking.
+ *
+ * @param {string} file - Absolute path to the status file.
+ * @param {function(object): *} mutate - Mutates the status object in place; its return value is returned.
+ * @returns {*} Whatever `mutate` returned.
+ */
+function updateStatus(file, mutate) {
+  const lockPath = acquireLock(file);
+  try {
+    const current = readStatus(file);
+    const result = mutate(current);
+    writeStatusAtomic(file, current);
+    return result;
+  } finally {
+    releaseLock(lockPath);
+  }
+}
+
+/**
+ * A fresh, unique id for one in-flight invocation's `pending` entry.
+ * @returns {string}
+ */
+function newPendingId() {
+  return `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * Fold every `pending` entry older than `pendingStaleMs()` into `counts.error`
+ * (or `selfTest.counts.error` for a probe) as `unclosed-entry`, and remove it.
+ *
+ * Called at the START of the next `recordInvocationStart`/`reportStatus`
+ * update — reached this file's own telemetry still eventually, even though
+ * nothing explicit ever ran at the moment the abandoned entry's own process
+ * died. By the time this fires, `runInner`'s own timeout (`innerTimeoutMs()`)
+ * has already ruled out "the inner child was merely slow" — reaching this
+ * means the OUTER `--invoke` process itself was killed between starting and
+ * finishing an invocation.
+ *
+ * @param {object} status - Status object, MUTATED in place.
+ * @returns {void}
+ */
+function reclaimStalePending(status) {
+  const threshold = pendingStaleMs();
+  const now = Date.now();
+  for (const [id, entry] of Object.entries(status.pending)) {
+    const startedAt = Date.parse(entry.startedAt);
+    if (!Number.isFinite(startedAt) || now - startedAt <= threshold) continue;
+    const bucket = entry.probe ? status.selfTest.counts : status.counts;
+    bucket.total += 1;
+    bucket.error += 1;
+    if (!entry.probe) {
+      status.lastOutcome = 'error';
+      status.lastError = 'unclosed-entry';
+      status.lastErrorAt = new Date().toISOString();
+    }
+    delete status.pending[id];
+  }
 }
 
 /**
@@ -483,7 +659,14 @@ function readStdinSync() {
 function inferredHook(raw) {
   try {
     const parsed = JSON.parse(raw);
-    return typeof parsed.tool_name === 'string' && parsed.tool_name ? parsed.tool_name : 'unknown';
+    const name = parsed.tool_name;
+    // Bounded against `HOOK_NAME_RE`, not merely "is it a string" (#1400
+    // Round 2 finding 3 / AC7): `tool_name` is harness-supplied and normally
+    // one of a short fixed set, but telemetry security requires never
+    // persisting a raw command, path or secret, and a bare type check lets
+    // whatever this field is through unexamined. A value that fails the
+    // pattern is treated the same as an absent one.
+    return typeof name === 'string' && HOOK_NAME_RE.test(name) ? name : 'unknown';
   } catch (err) {
     return 'unknown';
   }
@@ -514,7 +697,12 @@ function inferredHook(raw) {
 function runInner(guardPath, raw) {
   let stdout;
   try {
-    stdout = execFileSync(process.execPath, [guardPath], { input: raw, encoding: 'utf8' });
+    // `timeout`/`killSignal` (#1400 Round 2 finding 1): without a bound, a
+    // hung inner script would block this call — and the hook invocation it
+    // is answering for — indefinitely. `execFileSync`'s own timeout throws
+    // with `err.signal` set, which `boundedErrorCode` already classifies.
+    stdout = execFileSync(process.execPath, [guardPath],
+      { input: raw, encoding: 'utf8', timeout: innerTimeoutMs(), killSignal: 'SIGKILL' });
   } catch (err) {
     return { outcome: 'error', stdout: '', errorCode: boundedErrorCode(err) };
   }
@@ -545,28 +733,61 @@ function runInner(guardPath, raw) {
 function recordInvocation(primary, info) {
   try {
     const file = statusFilePath(primary);
-    const current = readStatus(file);
-    const now = new Date().toISOString();
-    const bucket = info.probe ? current.selfTest.counts : current.counts;
-    bucket.total += 1;
-    if (info.outcome === 'allow') bucket.allow += 1;
-    else if (info.outcome === 'refusal') bucket.refusal += 1;
-    else bucket.error += 1;
+    updateStatus(file, (current) => {
+      // Clears the `pending` entry `recordInvocationStart` opened for this
+      // SAME invocation — this call reaching here at all means the outer
+      // runner did not crash before finishing (#1400 Round 2 finding 1).
+      if (info.pendingId) delete current.pending[info.pendingId];
+      const now = new Date().toISOString();
+      const bucket = info.probe ? current.selfTest.counts : current.counts;
+      bucket.total += 1;
+      if (info.outcome === 'allow') bucket.allow += 1;
+      else if (info.outcome === 'refusal') bucket.refusal += 1;
+      else bucket.error += 1;
 
-    if (info.probe) {
-      current.selfTest.lastAt = now;
-    } else {
-      current.lastInvokedAt = now;
-      current.lastHook = info.hook;
-      current.lastOutcome = info.outcome;
-    }
-    if (info.outcome === 'error') {
-      current.lastError = info.errorCode;
-      current.lastErrorAt = now;
-    }
-    writeStatusAtomic(file, current);
+      if (info.probe) {
+        current.selfTest.lastAt = now;
+      } else {
+        current.lastInvokedAt = now;
+        current.lastHook = info.hook;
+        current.lastOutcome = info.outcome;
+      }
+      if (info.outcome === 'error') {
+        current.lastError = info.errorCode;
+        current.lastErrorAt = now;
+      }
+    });
   } catch (err) { // prawduct:allow prawduct/broad-except -- telemetry is strictly best-effort; the decision runInner already computed must reach the harness whether or not this write succeeds, and there is no operator reading this stream for a more specific message to help.
     process.stderr.write(`install-primary-guard: telemetry write failed: ${boundedErrorCode(err)}\n`);
+  }
+}
+
+/**
+ * Record that an invocation STARTED, before `runInner` even runs (#1400
+ * Round 2 finding 1). The one write that can survive the OUTER `--invoke`
+ * process itself being killed before `recordInvocation` ever runs: without
+ * it, a hung-then-killed invocation leaves no trace at all, indistinguishable
+ * from one that never fired. `reclaimStalePending` is what eventually turns
+ * an entry nothing ever closed into a counted `error`.
+ *
+ * @param {string} primary - Absolute primary checkout root.
+ * @param {string} hook - Already-bounded hook name from `inferredHook`.
+ * @param {boolean} probe - Whether this is a self-test probe invocation.
+ * @returns {string|null} The pending entry's id, to hand back to
+ *   `recordInvocation`, or null if even this best-effort write failed.
+ */
+function recordInvocationStart(primary, hook, probe) {
+  try {
+    const file = statusFilePath(primary);
+    return updateStatus(file, (current) => {
+      reclaimStalePending(current);
+      const id = newPendingId();
+      current.pending[id] = { startedAt: new Date().toISOString(), hook, probe };
+      return id;
+    });
+  } catch (err) { // prawduct:allow prawduct/broad-except -- same best-effort posture as `recordInvocation`: a failed start-marker write must never block the decision that follows.
+    process.stderr.write(`install-primary-guard: telemetry write failed: ${boundedErrorCode(err)}\n`);
+    return null;
   }
 }
 
@@ -601,9 +822,14 @@ function invoke() {
   const primary = located.primary;
   const guardPath = path.join(primary, GUARD_REL);
   const probeInvocation = Boolean(process.env[PROBE_ENV]);
+  const hook = inferredHook(raw);
+  // Recorded BEFORE `runInner`, not after (#1400 Round 2 finding 1): if this
+  // whole process is killed while `runInner` is blocked, this is the only
+  // telemetry write that already happened.
+  const pendingId = recordInvocationStart(primary, hook, probeInvocation);
   const result = runInner(guardPath, raw);
   recordInvocation(primary, {
-    hook: inferredHook(raw), outcome: result.outcome, errorCode: result.errorCode, probe: probeInvocation
+    hook, outcome: result.outcome, errorCode: result.errorCode, probe: probeInvocation, pendingId
   });
   if (result.stdout) process.stdout.write(result.stdout);
   return 0;
@@ -661,7 +887,48 @@ function updateActivityAndWarn(status, currentActivity) {
 }
 
 /**
- * `--status` (and `--status --json`): print liveness telemetry and the two
+ * Does the TRACKED, shared `.claude/settings.json` declare its own
+ * `PreToolUse` entry for one of this guard's two exact matchers, that is not
+ * this guard's own entry (#1400 Round 2 finding 4, partial AC8)?
+ *
+ * Deliberately narrow, and the limit is stated rather than hidden: this
+ * checks for an EXACT matcher collision (`'Bash'` or `WRITE_MATCHER`
+ * verbatim), not general regex overlap between two different matcher
+ * strings — real overlap detection between two hook-matcher patterns is a
+ * harder problem than this check claims to solve, and a check that
+ * overclaimed would be worse than one that is honest about its scope. It is
+ * still a genuine, checkable fact: this repo's own contract says
+ * `settings.json` carries no `hooks` block at all (`test/repo-governance-
+ * reference.test.js`), so ANY `PreToolUse` entry appearing there for this
+ * guard's exact matchers is already anomalous by that contract, whatever
+ * wrote it.
+ *
+ * @param {string} primary - Absolute primary checkout root.
+ * @returns {string[]} Matchers where `settings.json` declares a competing,
+ *   non-guard `PreToolUse` entry. Empty when none does, or the file cannot
+ *   be read.
+ */
+function sharedSettingsHookConflicts(primary) {
+  let shared;
+  try {
+    shared = readSettings(path.join(primary, '.claude', 'settings.json'));
+  } catch (err) {
+    return [];
+  }
+  const entries = (shared && shared.hooks && shared.hooks.PreToolUse) || [];
+  if (!Array.isArray(entries)) return [];
+  const conflicts = [];
+  for (const entry of entries) {
+    if (isGuardEntry(entry)) continue;
+    if (entry && (entry.matcher === 'Bash' || entry.matcher === WRITE_MATCHER)) {
+      conflicts.push(entry.matcher);
+    }
+  }
+  return conflicts;
+}
+
+/**
+ * `--status` (and `--status --json`): print liveness telemetry and the
  * actionable flags #1400 asks this surface to expose.
  *
  * @param {string} primary - Absolute primary checkout root.
@@ -670,22 +937,40 @@ function updateActivityAndWarn(status, currentActivity) {
  */
 function reportStatus(primary, asJson) {
   const file = statusFilePath(primary);
-  const current = readStatus(file);
-  const staleWarning = updateActivityAndWarn(current, commitActivitySignal(primary));
+  // Computed OUTSIDE the lock: a `git` subprocess has no business holding up
+  // a concurrent `--invoke`'s own telemetry write.
+  const activitySignal = commitActivitySignal(primary);
+  let current;
+  let staleWarning = false;
+  try {
+    updateStatus(file, (status) => {
+      reclaimStalePending(status);
+      staleWarning = updateActivityAndWarn(status, activitySignal);
+      current = status;
+    });
+  } catch (err) { // prawduct:allow prawduct/broad-except -- a failed locked update must not block printing a best-effort status the operator asked for.
+    current = readStatus(file);
+    process.stderr.write(`install-primary-guard: could not save the activity baseline: ${boundedErrorCode(err)}\n`);
+  }
   // "Any crash since the last successful wired-path self-test must be
   // flagged as actionable" (#1400 requirement 5) — a crash recorded before
   // the last successful self-test is old news a passing self-test already
   // re-covered; one recorded after it is new.
   const crashSinceLastSelfTest = Boolean(current.lastErrorAt
     && (!current.selfTest.lastSuccessfulAt || current.lastErrorAt > current.selfTest.lastSuccessfulAt));
-  try {
-    writeStatusAtomic(file, current);
-  } catch (err) { // prawduct:allow prawduct/broad-except -- a failed baseline-advance write must not block printing the status the operator asked for.
-    process.stderr.write(`install-primary-guard: could not save the activity baseline: ${boundedErrorCode(err)}\n`);
-  }
+  // "has a GENUINE (non-self-test) invocation ever produced a real decision"
+  // — a narrower, honestly-scoped claim than full engine-route proof (#1400
+  // Round 2 finding 4), but a real one: it is false until this repo's actual
+  // wiring has actually been exercised by actual tool-call traffic at least
+  // once, self-test traffic never counting (#1400 Round 2 finding 4).
+  const liveEngineVerified = (current.counts.allow + current.counts.refusal) > 0;
+  const sharedConflicts = sharedSettingsHookConflicts(primary);
 
   if (asJson) {
-    process.stdout.write(`${JSON.stringify({ ...current, staleWarning, crashSinceLastSelfTest }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({
+      ...current, staleWarning, crashSinceLastSelfTest, liveEngineVerified,
+      sharedSettingsHookConflicts: sharedConflicts
+    }, null, 2)}\n`);
   } else {
     process.stdout.write(`invocations: ${current.counts.total} (allow ${current.counts.allow}, `
       + `refusal ${current.counts.refusal}, error ${current.counts.error})\n`);
@@ -696,6 +981,7 @@ function reportStatus(primary, asJson) {
     }
     process.stdout.write(`self-test: ${current.selfTest.counts.total} run(s), last success `
       + `${current.selfTest.lastSuccessfulAt || 'never'}\n`);
+    process.stdout.write(`live-engine-verified: ${liveEngineVerified}\n`);
     if (crashSinceLastSelfTest) {
       process.stdout.write('ACTIONABLE: a crash was recorded since the last successful --self-test.\n');
     }
@@ -703,8 +989,13 @@ function reportStatus(primary, asJson) {
       process.stdout.write('ACTIONABLE: the primary gained commits since the last --status check, but '
         + 'no genuine guard invocation was recorded in that window — the hook may be unwired.\n');
     }
+    if (sharedConflicts.length) {
+      process.stdout.write('ACTIONABLE: .claude/settings.json declares its own PreToolUse entry for '
+        + `matcher(s) ${sharedConflicts.join(', ')}, which this repo's own contract says it should not `
+        + '— it may shadow or conflict with this guard\'s entry in settings.local.json.\n');
+    }
   }
-  return (crashSinceLastSelfTest || staleWarning) ? 1 : 0;
+  return (crashSinceLastSelfTest || staleWarning || sharedConflicts.length > 0) ? 1 : 0;
 }
 
 /**
@@ -722,6 +1013,18 @@ function reportStatus(primary, asJson) {
  * @returns {{ok:boolean, detail:string}}
  */
 function selfTest(command, primary) {
+  // Named first (#1400 Round 2 finding 5): without it, a missing/broken
+  // `node` surfaces only as `runProbe`'s generic "the wired command failed
+  // to run" — true, but it makes the operator infer the real cause from a
+  // shell error instead of being told it directly. This does NOT close the
+  // structural gap that remains undetectable in production (the OUTER wired
+  // command's own `node` resolving at all — if that fails, nothing JS ever
+  // runs to report it); it only gives `--self-test` a direct, named check
+  // for the one piece it CAN ask about: whether the node binary this
+  // process would re-spawn as the inner guard actually runs.
+  const nodeCheck = checkNodeResolvable();
+  if (!nodeCheck.ok) return nodeCheck;
+
   const statusFile = statusFilePath(primary);
   const before = readStatus(statusFile);
 
@@ -741,15 +1044,32 @@ function selfTest(command, primary) {
   }
 
   try {
-    const stamp = readStatus(statusFile);
-    stamp.selfTest.lastSuccessfulAt = new Date().toISOString();
-    writeStatusAtomic(statusFile, stamp);
+    updateStatus(statusFile, (status) => {
+      status.selfTest.lastSuccessfulAt = new Date().toISOString();
+    });
   } catch (err) { // prawduct:allow prawduct/broad-except -- a failed success-stamp write must not fail an otherwise-passing self-test; `--status`'s crash-since-last-success check degrades gracefully to "never" rather than wrongly.
     process.stderr.write(`install-primary-guard: could not stamp self-test success: ${boundedErrorCode(err)}\n`);
   }
 
   return { ok: true, detail: 'the wired command refused a write to the live surface, allowed an '
     + 'ordinary one, and the liveness heartbeat advanced' };
+}
+
+/**
+ * Confirm the node binary this process would re-spawn as the inner guard
+ * (`runInner`) actually runs, BEFORE `selfTest` drives any probe through it
+ * (#1400 Round 2 finding 5).
+ *
+ * @returns {{ok:boolean, detail:string}}
+ */
+function checkNodeResolvable() {
+  try {
+    execFileSync(process.execPath, ['--version'], { encoding: 'utf8' });
+    return { ok: true, detail: '' };
+  } catch (err) {
+    return { ok: false, detail: `the node binary this runner would re-spawn as the inner guard `
+      + `could not be invoked: ${boundedErrorCode(err)}` };
+  }
 }
 
 /**
@@ -883,6 +1203,8 @@ module.exports = {
   main, apply, isGuardEntry, guardCommand, guardEntries, wiredCommand, pinnedScript, selfTest,
   readSettings, writeSettings, GUARD_REL, WRITE_MATCHER, INSTALLER_REL, PROBE_ENV, STATUS_ENV,
   STATUS_BASENAME, statusFilePath, readStatus, writeStatusAtomic, defaultStatus, emptyCounts,
-  recordInvocation, runInner, invoke, boundedErrorCode, commitActivitySignal, updateActivityAndWarn,
-  reportStatus, isOwnScriptPath
+  recordInvocation, recordInvocationStart, runInner, invoke, boundedErrorCode, commitActivitySignal,
+  updateActivityAndWarn, reportStatus, isOwnScriptPath, acquireLock, releaseLock, updateStatus,
+  reclaimStalePending, newPendingId, sharedSettingsHookConflicts, checkNodeResolvable,
+  INNER_TIMEOUT_ENV, PENDING_STALE_ENV, LOCK_SUFFIX
 };
