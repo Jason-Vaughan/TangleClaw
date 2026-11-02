@@ -1317,6 +1317,7 @@ describe('TANGLECLAW_SERVER_ROOT never overrides the running-code checkout root 
   const fsMod = require('node:fs');
   const osMod = require('node:os');
   const pathMod = require('node:path');
+  const { initRepo } = require('./_temp-repo');
 
   it("a declared (even valid-looking) override never changes getRepoRoot() — only declaredRoot/matchesRunningProcess reflect it", () => {
     const dedicated = fsMod.realpathSync(fsMod.mkdtempSync(pathMod.join(osMod.tmpdir(), 'tc-dedicated-')));
@@ -1352,7 +1353,7 @@ describe('TANGLECLAW_SERVER_ROOT never overrides the running-code checkout root 
   it('a VALID dedicated checkout declared via the override still never becomes getRepoRoot() — it only shows up as declaredRoot, with matchesRunningProcess: false', () => {
     const dedicated = fsMod.realpathSync(fsMod.mkdtempSync(pathMod.join(osMod.tmpdir(), 'tc-dedicated-valid-')));
     try {
-      execFileSync('git', ['init', '--template=', '-q', '-b', 'main'], { cwd: dedicated, stdio: ['pipe', 'pipe', 'pipe'] });
+      initRepo(dedicated, ['-b', 'main']);
       fsMod.writeFileSync(pathMod.join(dedicated, 'server.js'), '// stand-in\n');
       const modulePath = JSON.stringify(require.resolve('../lib/server-info'));
       const probe = `
