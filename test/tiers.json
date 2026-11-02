@@ -233,6 +233,7 @@
     "test/ttyd-churn.test.js",
     "test/tunnel-monitor.test.js",
     "test/ub-self-update-action.test.js",
+    "test/untrusted-pr-review.test.js",
     "test/update-beacon-pages.test.js",
     "test/update-beacon.test.js",
     "test/update-prompt-guards.test.js",

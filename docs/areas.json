@@ -297,6 +297,13 @@
       "paths": [
         "lib/routes/config.js"
       ]
+    },
+    "external-code-security": {
+      "label": "area:external-code-security",
+      "why": "The untrusted-PR review boundary (#1554): sanitizing and non-executably fencing untrusted external PR text, and checking a review session's declared capabilities against the read-only review contract ADR 0014 requires. Owned by no other family; docs/external-code-security.md is the full write-up.",
+      "paths": [
+        "lib/untrusted-pr-review.js"
+      ]
     }
   },
   "shared": {
