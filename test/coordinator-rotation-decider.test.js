@@ -1,13 +1,14 @@
 'use strict';
 
-// #2351 (v5.57.0 Wave 2 Car 57-E): unreachable appointed decider detection
-// and fallback, via `lib/coordinator-rotation.js#checkDeciderReachability`.
-// A fresh temp store per test (not the shared fixture
-// `test/coordinator-rotation.test.js` uses for Codex rebinding, which this
-// file has no need to entangle with) — real `coordinator_roles`,
+// #2351/#2353 (v5.57.0 Wave 2 Car 57-E): unreachable appointed decider
+// detection/fallback and governed refresh scheduling, via
+// `lib/coordinator-rotation.js#checkDeciderReachability`/
+// `#checkGovernedRefreshDue`. A fresh temp store per test (not the shared
+// fixture `test/coordinator-rotation.test.js` uses for Codex rebinding,
+// which this file has no need to entangle with) — real `coordinator_roles`,
 // `sessions`, `launch_sequences`, `workload_receipts` and `medusa_exchanges`
-// rows, with the wake-verdict/Medusa-status seams injected per Architect
-// Ruling A2351's composition design.
+// rows, with the wake-verdict/Medusa-status/pane-capture seams injected per
+// Architect Rulings A2351/A2353's composition design.
 
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
@@ -43,6 +44,7 @@ function startDeciderSession(projectId, { receiptState = 'working', receiptAgeMs
   const session = store.sessions.start({
     projectId,
     engineId: 'codex',
+    tmuxSession: `test-tmux-${projectId}-${Math.floor(Math.random() * 1e9)}`,
     launchSequence: {
       launchId, pageBudget: 0, applicability: 'not-applicable',
       notApplicableReason: 'test fixture', preflight: {}, sourceManifest: {}
@@ -333,5 +335,136 @@ describe('checkDeciderReachability — recovery closes the open alert (Acceptanc
 
     const stillAnswered = decisionRouting.getDecisionRequest(fired.request.decisionId);
     assert.equal(stillAnswered.state, decisionRouting.STATES.ANSWERED);
+  });
+});
+
+/** Refresh-scheduling deps: a healthy, idle, no-mail, no-pane-reading baseline a test overrides from. */
+function refreshDeps(overrides = {}) {
+  const nowMs = Date.parse(START);
+  return {
+    now: () => new Date(nowMs).toISOString(),
+    medusaStatus: () => ({ workspaceId: 'pm-workspace' }),
+    unreadExchanges: () => [],
+    capturePane: async () => null,
+    ...overrides
+  };
+}
+
+describe('checkGovernedRefreshDue — not yet due', () => {
+  it('a project with no active coordinator role is not checked', async () => {
+    const result = await rotation.checkGovernedRefreshDue(PM_PROJECT, refreshDeps());
+    assert.equal(result.checked, false);
+    assert.equal(result.reason, 'not an appointed coordinator');
+  });
+
+  it('a fresh session, well under the runtime interval, with no pane reading, is not due', async () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptAgeMs: MINUTE, nowMs });
+    const result = await rotation.checkGovernedRefreshDue(PM_PROJECT, refreshDeps());
+    assert.equal(result.checked, true);
+    assert.equal(result.due, false);
+    assert.equal(result.reason, 'not due');
+  });
+
+  it('a pane reading above the low-context threshold does not trigger low-context due', async () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptAgeMs: MINUTE, nowMs });
+    const result = await rotation.checkGovernedRefreshDue(PM_PROJECT, refreshDeps({ capturePane: async () => 'Context 40% left' }));
+    assert.equal(result.due, false);
+  });
+});
+
+describe('checkGovernedRefreshDue — fires a durable refresh-due alert, never an autonomous rotation', () => {
+  it('is due on role runtime past the interval, and records a decision_requests alert', async () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    const { session } = startDeciderSession(PM_PROJECT, { receiptState: 'complete', receiptAgeMs: MINUTE, nowMs });
+    // store.sessions.start stamps startedAt as "now" — backdate it directly to simulate a long-running session.
+    store.getDb().prepare('UPDATE sessions SET started_at = ? WHERE id = ?')
+      .run(new Date(nowMs - rotation.ROLE_REFRESH_INTERVAL_MS - MINUTE).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ''), session.id);
+
+    const result = await rotation.checkGovernedRefreshDue(PM_PROJECT, refreshDeps());
+    assert.equal(result.checked, true);
+    assert.equal(result.due, true);
+    assert.equal(result.held, false);
+    assert.equal(result.reason, 'role-runtime');
+    assert.equal(result.request.gate, rotation.GOVERNED_REFRESH_GATE);
+    assert.equal(result.request.requiredAuthority, 'human');
+    assert.match(result.request.prompt, /tc rotation prepare/);
+  });
+
+  it('is due on low context remaining, from the live pane statusline, even with fresh runtime', async () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptState: 'complete', receiptAgeMs: MINUTE, nowMs });
+    const result = await rotation.checkGovernedRefreshDue(PM_PROJECT, refreshDeps({ capturePane: async () => 'Context 8% left' }));
+    assert.equal(result.due, true);
+    assert.equal(result.reason, 'low-context');
+    assert.match(result.request.prompt, /8%/);
+  });
+
+  it('never invents a context reading from session age — an unreadable pane stays "due" only via runtime, never via a fabricated low-context reason', async () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    const { session } = startDeciderSession(PM_PROJECT, { receiptState: 'complete', receiptAgeMs: MINUTE, nowMs });
+    store.getDb().prepare('UPDATE sessions SET started_at = ? WHERE id = ?')
+      .run(new Date(nowMs - rotation.ROLE_REFRESH_INTERVAL_MS - MINUTE).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ''), session.id);
+    // capturePane returns null (unreadable/unsupported engine) — the default in refreshDeps().
+    const result = await rotation.checkGovernedRefreshDue(PM_PROJECT, refreshDeps());
+    assert.equal(result.due, true);
+    assert.equal(result.reason, 'role-runtime', 'due for a real reason, not a fabricated context one');
+  });
+
+  it('holds (defers) rather than firing while the coordinator\'s workload is "working"', async () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptState: 'working', receiptAgeMs: MINUTE, nowMs });
+    const result = await rotation.checkGovernedRefreshDue(PM_PROJECT, refreshDeps({ capturePane: async () => 'Context 8% left' }));
+    assert.equal(result.due, true);
+    assert.equal(result.held, true);
+    assert.equal(result.reason, 'deferred-busy');
+    assert.equal(result.request, null, 'no alert is written while held');
+  });
+
+  it('holds while the coordinator has an open owed Medusa reply, even with an idle-shaped receipt', async () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptState: 'waiting-external', receiptAgeMs: MINUTE, nowMs });
+    const result = await rotation.checkGovernedRefreshDue(PM_PROJECT, refreshDeps({
+      capturePane: async () => 'Context 8% left',
+      unreadExchanges: () => [{ terminal_at: null, reply_required: 1, state: 'read' }]
+    }));
+    assert.equal(result.held, true);
+    assert.equal(result.reason, 'ruling-in-flight');
+  });
+
+  it('repeated ticks of the same due condition replay into one open alert', async () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptState: 'complete', receiptAgeMs: MINUTE, nowMs });
+    const d = refreshDeps({ capturePane: async () => 'Context 8% left' });
+    const first = await rotation.checkGovernedRefreshDue(PM_PROJECT, d);
+    const second = await rotation.checkGovernedRefreshDue(PM_PROJECT, d);
+    assert.equal(first.request.decisionId, second.request.decisionId);
+  });
+});
+
+describe('checkGovernedRefreshDue — recovery', () => {
+  it('closes the open alert once context/runtime moves back under threshold', async () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptState: 'complete', receiptAgeMs: MINUTE, nowMs });
+    const fired = await rotation.checkGovernedRefreshDue(PM_PROJECT, refreshDeps({ capturePane: async () => 'Context 8% left' }));
+    assert.equal(fired.due, true);
+
+    const recovered = await rotation.checkGovernedRefreshDue(PM_PROJECT, refreshDeps({ capturePane: async () => 'Context 50% left' }));
+    assert.equal(recovered.due, false);
+    assert.equal(recovered.reason, 'no-longer-due');
+
+    const closed = decisionRouting.getDecisionRequest(fired.request.decisionId);
+    assert.equal(closed.state, decisionRouting.STATES.SUPERSEDED);
+    assert.match(closed.auditRationale, /recovered/);
   });
 });
