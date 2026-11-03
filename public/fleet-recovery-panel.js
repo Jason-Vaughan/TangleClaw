@@ -158,8 +158,10 @@
     const state = prior && prior.state;
     if (state === 'recorded') {
       return `<div class="fleet-recovery-line">Prior session ${escapeHtml(prior.sessionId)}: stored status `
-        + `${stored(prior.status)}, ended ${prior.endedAt ? escapeHtml(prior.endedAt) : '<em>no end time recorded</em>'}. `
-        + 'The status is the session row\'s own word; no reason for the end is recorded.</div>';
+        + `${stored(prior.status)}, ended ${prior.endedAt ? escapeHtml(prior.endedAt) : '<em>no end time recorded</em>'}, `
+        + `stopped by ${stored(prior.stoppedBy)}, reason ${stored(prior.stopReason)}. `
+        + 'The status is the session row\'s own word; the stop source is the server\'s own fact; the reason is '
+        + 'caller-supplied text, never verified.</div>';
     }
     if (state === 'none-recorded') {
       return '<div class="fleet-recovery-line">Prior session: this project has no earlier session on record.</div>';

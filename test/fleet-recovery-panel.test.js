@@ -463,7 +463,28 @@ describe('the fleet recovery panel (#2049)', () => {
     it('shows the prior session\'s stored status as the row\'s own word', async () => {
       const panel = controller(scriptedFleet([heldRow(1)]));
       await panel.load();
-      assert.match(panel.html(), /Prior session 91: stored status <code>killed<\/code>, ended 2026-10-09 00:59:00\. The status is the session row's own word; no reason for the end is recorded\./);
+      assert.match(panel.html(), /Prior session 91: stored status <code>killed<\/code>, ended 2026-10-09 00:59:00, /);
+    });
+
+    it('shows stoppedBy/stopReason as not recorded when the prior session predates #2249', async () => {
+      // heldRow's default priorSession carries neither field (undefined),
+      // the shape a session that ended before the migration reads as.
+      const panel = controller(scriptedFleet([heldRow(1)]));
+      await panel.load();
+      assert.match(panel.html(),
+        /stopped by <em>not recorded<\/em>, reason <em>not recorded<\/em>\. The status is the session row's own word; the stop source is the server's own fact; the reason is caller-supplied text, never verified\./
+      );
+    });
+
+    it('shows the recorded stop source and caller-supplied reason (#2249)', async () => {
+      const panel = controller(scriptedFleet([heldRow(1, {
+        priorSession: {
+          source: 'sessions', state: 'recorded', sessionId: 91, status: 'killed',
+          endedAt: '2026-10-09 00:59:00', stoppedBy: 'api', stopReason: 'operator pressed Kill'
+        }
+      })]));
+      await panel.load();
+      assert.match(panel.html(), /stopped by <code>api<\/code>, reason <code>operator pressed Kill<\/code>\./);
     });
 
     it('escapes what it prints', async () => {

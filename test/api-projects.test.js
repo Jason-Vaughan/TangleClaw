@@ -625,6 +625,21 @@ describe('api-projects', () => {
         assert.equal(status, 200);
       });
 
+      // #2037: decisionAuthorityPolicy is project-owned (every authority
+      // class answers through the Operator alone regardless of this value —
+      // see lib/decision-routing.js's module docstring), so only its shape
+      // is validated, not who may set it.
+      it('refuses a malformed decisionAuthorityPolicy value even from the operator', async () => {
+        const { status } = await request('PATCH', '/api/projects/gate-a', { decisionAuthorityPolicy: 'king' }, asOperator());
+        assert.equal(status, 400);
+      });
+
+      it('lets a project set its own decisionAuthorityPolicy', async () => {
+        const { status } = await request('PATCH', '/api/projects/gate-a', { decisionAuthorityPolicy: 'architect' }, a.headers);
+        assert.equal(status, 200);
+        assert.equal(store.projectConfig.load(store.projects.getByName('gate-a').path).decisionAuthorityPolicy, 'architect');
+      });
+
       // #1937, Architect ruling: the recovery mode decides whether a session may
       // clear its own launch gate, so a session choosing it would be loosening
       // its own gate. Presence of the field is what is refused, not a change of

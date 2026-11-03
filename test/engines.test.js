@@ -1449,6 +1449,34 @@ describe('engines', () => {
       assert.ok(lines.length > 0 && lines.every((l) => l.startsWith('#')), 'comment form must be all #-prefixed');
     });
 
+    describe('a rotated coordinator is warned off a raw call the epoch gate refuses (#2034 item 1)', () => {
+      it('the committed (checkout-neutral) form names the engine-thread header and tc message', () => {
+        const lines = engines._medusaSwitchboardLines(
+          { medusaEnabled: true, medusaProjectName: 'p', serverProtocol: 'http', serverPort: 3102 },
+          'md', { committedCarrier: true }
+        );
+        assert.ok(lines.some((l) => l.includes('x-tangleclaw-engine-thread')),
+          'must warn that the epoch gate needs this header, not just the launch headers');
+        assert.ok(lines.some((l) => l.includes('tc message')), 'and name tc message as what sends it');
+      });
+
+      it('the engine-private md form carries the same caveat', () => {
+        const lines = engines._medusaSwitchboardLines(
+          { medusaEnabled: true, medusaProjectName: 'p', serverProtocol: 'http', serverPort: 3102 },
+          'md', { committedCarrier: false }
+        );
+        assert.ok(lines.some((l) => l.includes('x-tangleclaw-engine-thread')));
+      });
+
+      it('the engine-private comment form carries the same caveat', () => {
+        const lines = engines._medusaSwitchboardLines(
+          { medusaEnabled: true, medusaProjectName: 'p', serverProtocol: 'http', serverPort: 3102 },
+          'comment', { committedCarrier: false }
+        );
+        assert.ok(lines.some((l) => l.includes('x-tangleclaw-engine-thread')));
+      });
+    });
+
     describe('replyGuidance override (#2402)', () => {
       it('_getRulesContent carries null by default — every carrier keeps its built-in text', () => {
         assert.equal(engines._getRulesContent({}).replyGuidance, null);

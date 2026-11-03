@@ -908,16 +908,25 @@ describe('the session keeps its blocker (#2128)', () => {
         const db = new DatabaseSync(path.join(dir, 'tangleclaw.db'));
         // Put `sessions` back to its earlier shape by rebuilding it from its own
         // stored DDL with the one column line removed. Not `DROP COLUMN`: the
-        // column is the last one and its line carries a trailing SQL comment,
-        // and some SQLite builds rewrite that into DDL they then cannot parse.
+        // column's line carries a trailing SQL comment, and some SQLite builds
+        // rewrite that into DDL they then cannot parse.
+        //
+        // Positionally robust on purpose (#2249 added columns after this one,
+        // which is what first broke a version of this that assumed
+        // `launch_blocker` was always the LAST column): strip the comment to
+        // tell whether the line itself ends with a comma — if it does, later
+        // columns follow it and nothing else needs adjusting; if it doesn't,
+        // it was last and the line above it must lose the comma that used to
+        // separate the two.
         const ddl = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sessions'").get().sql;
-        const beforeDdl = ddl
-          .split('\n')
-          .filter((line) => !/^\s*launch_blocker\b/.test(line))
-          .join('\n')
-          // The line above it ended with the comma that separated the two.
-          .replace(/(launch_dirty\s+TEXT),/, '$1')
-          .replace(/^CREATE TABLE\s+(IF NOT EXISTS\s+)?"?sessions"?/, 'CREATE TABLE sessions_before');
+        const ddlLines = ddl.split('\n');
+        const blockerIndex = ddlLines.findIndex((line) => /^\s*launch_blocker\b/.test(line));
+        const blockerHadTrailingComma = ddlLines[blockerIndex].replace(/--.*$/, '').trimEnd().endsWith(',');
+        const withoutBlockerLine = ddlLines.filter((_, i) => i !== blockerIndex).join('\n');
+        const beforeDdl = (blockerHadTrailingComma
+          ? withoutBlockerLine
+          : withoutBlockerLine.replace(/(launch_dirty\s+TEXT),/, '$1')
+        ).replace(/^CREATE TABLE\s+(IF NOT EXISTS\s+)?"?sessions"?/, 'CREATE TABLE sessions_before');
         assert.doesNotMatch(beforeDdl, /launch_blocker/, 'precondition: the rebuilt DDL has no such column');
         const kept = db.prepare('PRAGMA table_info(sessions)').all().map((c) => c.name).filter((c) => c !== 'launch_blocker').join(', ');
         db.exec('PRAGMA foreign_keys = OFF');

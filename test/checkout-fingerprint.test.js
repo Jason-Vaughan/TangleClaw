@@ -123,6 +123,51 @@ describe('checkout fingerprint (#2032 A7a)', () => {
     assert.match(r.fingerprint.untracked['new.txt'], /^sha256:/, 'a repo-relative path is read from the root, not the subdirectory');
   });
 
+  it('a declared important-ignored path resolves from the repository root too, same as untracked (#2034 item 7)', async () => {
+    fs.mkdirSync(path.join(dir, 'sub'));
+    fs.writeFileSync(path.join(dir, '.env'), 'SECRET=1'); // at the repo root, not under sub/
+    const r = await fp.fingerprint(path.join(dir, 'sub'), { importantIgnored: ['.env'] });
+    assert.ok(r.ok, r.reason);
+    assert.equal(r.fingerprint.path, dir);
+    assert.match(r.fingerprint.importantIgnored['.env'], /^sha256:/,
+      'declared as repo-root-relative, it must resolve and hash from there, same as the subdirectory fingerprinted from its own call');
+  });
+
+  it('_runGit captures the failure cause (stderr, code) instead of discarding it (#2034 item 4)', async () => {
+    const diag = {};
+    const result = await fp._seams.git(dir, ['rev-parse', '--verify', 'not-a-real-ref'], { timeoutMs: 5000, diag });
+    assert.equal(result, null);
+    assert.equal(typeof diag.code, 'number');
+    assert.ok(diag.code !== 0);
+    assert.ok(diag.stderr && diag.stderr.length > 0, 'stderr must survive instead of being discarded into a bare null');
+  });
+
+  it('a git failure past the toplevel check surfaces its cause on the fingerprint result, not just the bare reason (#2034 item 4)', async () => {
+    const failing = (d, args, o) => {
+      if (args[0] === 'status') {
+        if (o.diag) { o.diag.code = 128; o.diag.stderr = 'fatal: simulated status failure'; }
+        return Promise.resolve(null);
+      }
+      return fp._seams.git(d, args, o);
+    };
+    const r = await fp.fingerprint(dir, {}, { git: failing });
+    assert.equal(r.ok, false);
+    assert.equal(r.reason, 'status-unreadable');
+    assert.equal(r.cause, 'fatal: simulated status failure');
+  });
+
+  it('an untracked file that becomes unreadable mid-fingerprint carries its real OS error code (#2034 item 4)', async () => {
+    const p = path.join(dir, 'locked.txt');
+    fs.writeFileSync(p, 'secret');
+    fs.chmodSync(p, 0o000);
+    try {
+      const f = await take();
+      assert.match(f.untracked['locked.txt'], /^unavailable:unreadable:EACCES$/);
+    } finally {
+      fs.chmodSync(p, 0o644);
+    }
+  });
+
   it('refuses more important-ignored paths than the cap, and a declared set it cannot finish in time', async () => {
     const many = Array.from({ length: fp.MAX_IMPORTANT_IGNORED + 1 }, (_, i) => `f${i}.env`);
     assert.deepEqual(await fp.fingerprint(dir, { importantIgnored: many }), { ok: false, reason: 'too-many-important-ignored' });

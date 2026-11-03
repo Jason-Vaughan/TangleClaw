@@ -76,6 +76,7 @@ describe('the fleet recovery read (#2049)', () => {
    */
   function relaunchAfter(held, how) {
     if (how === 'killed') store.sessions.kill(held.sequence.sessionId, 'test');
+    else if (how === 'wrapped') store.sessions.wrap(held.sequence.sessionId, 'test summary');
     else store.sessions.markCrashed(held.sequence.sessionId, 'test');
     const session = fixture.launchStubbed(env.sessions, held.project.name).session;
     const sequence = store.launchSequences.getBySession(session.id);
@@ -283,6 +284,40 @@ describe('the fleet recovery read (#2049)', () => {
         assert.ok(entry.priorSession.endedAt);
       });
     }
+
+    describe('stop provenance (#2249)', () => {
+      const expected = { killed: 'api', crashed: 'crash', wrapped: 'wrap' };
+      for (const how of ['killed', 'crashed', 'wrapped']) {
+        it(`reports stoppedBy '${expected[how]}' for a ${how} prior session`, async () => {
+          const relaunched = relaunchAfter(fixture.launchInRecovery(env), how);
+          const entry = entryFor(await readAsOperator(), relaunched);
+          assert.equal(entry.priorSession.stoppedBy, expected[how]);
+        });
+      }
+
+      it('reports the caller-supplied kill reason as stopReason, unverified', async () => {
+        const relaunched = relaunchAfter(fixture.launchInRecovery(env), 'killed');
+        const entry = entryFor(await readAsOperator(), relaunched);
+        assert.equal(entry.priorSession.stopReason, 'test');
+      });
+
+      it('reports a wrap with no stopReason — a wrap carries no caller-supplied reason text', async () => {
+        const relaunched = relaunchAfter(fixture.launchInRecovery(env), 'wrapped');
+        const entry = entryFor(await readAsOperator(), relaunched);
+        assert.equal(entry.priorSession.stopReason, null);
+      });
+
+      it('reports both as null for a session that ended before #2249, not as recorded-but-empty', async () => {
+        const relaunched = relaunchAfter(fixture.launchInRecovery(env), 'killed');
+        // Simulate a row written before the migration: directly null out both
+        // columns, bypassing the API that always sets stopped_by.
+        store.getDb().prepare('UPDATE sessions SET stopped_by = NULL, stop_reason = NULL WHERE id = ?')
+          .run(relaunched.priorSessionId);
+        const entry = entryFor(await readAsOperator(), relaunched);
+        assert.equal(entry.priorSession.stoppedBy, null);
+        assert.equal(entry.priorSession.stopReason, null);
+      });
+    });
 
     it('says none is recorded for a project\'s first session, and does not invent a status', async () => {
       const held = fixture.launchInRecovery(env);

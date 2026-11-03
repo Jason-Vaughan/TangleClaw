@@ -341,6 +341,8 @@ describe('sessions', () => {
         assert.ok(prompt.includes('the initiator ends the conversation'), 'prime should carry the participant role');
         assert.ok(prompt.includes('GET /api/sessions/prime-test/medusa/messages'), 'prime should point at the TC inbox API');
         assert.ok(prompt.includes('do NOT register your own WS connection'), 'prime must forbid a second consumer on the id');
+        assert.ok(prompt.includes('x-tangleclaw-engine-thread'),
+          'prime must warn a rotated coordinator off a raw call the epoch gate refuses (#2034 item 1)');
         assert.ok(prompt.includes('# Fixture Consumer Contract'), 'prime should embed the contract text');
         assert.ok(prompt.includes(contractFile), 'prime should name the contract source');
       });
@@ -569,12 +571,17 @@ describe('sessions', () => {
           assert.ok(prompt.includes('## Wrapping this session'), 'wrap instructions survive the cap');
           assert.ok(prompt.includes(WRAP_DIRECTIVE_TAIL), 'the wrap directive survives the cap');
           assert.ok(prompt.includes('`prime-test-cafe0123`'), 'the workspace identity survives the cap');
-          // The contract yields — trimmed with an honest note, never a blind slice.
+          // The contract yields — trimmed with an honest note, or (at a tighter
+          // margin, same as `_medusaContractSection`'s own dedicated branch
+          // tests) omitted with a pointer — but never a blind slice. Which of
+          // the two honest branches fires here is incidental to what this case
+          // is actually about (every OTHER directive section surviving the
+          // cap); both are asserted explicitly and in isolation elsewhere.
           assert.ok(
-            prompt.includes('truncated to fit the prime size budget'),
-            'the contract trim is announced honestly'
+            /truncated to fit the prime size budget|Omitted to fit the prime size budget/.test(prompt),
+            'the contract yields honestly, trimmed or omitted, never a blind slice'
           );
-          assert.ok(prompt.includes(contractFile), 'the trim note names the source doc');
+          assert.ok(prompt.includes(contractFile), 'the trim or omission note names the source doc');
           assert.equal(
             prompt.includes('[Prime prompt truncated]'), false,
             'the blind tail truncation must not fire on the medusa path'
@@ -602,6 +609,17 @@ describe('sessions', () => {
         assert.ok(section.includes('Omitted to fit the prime size budget'), 'omission is announced');
         assert.ok(section.includes(contractFile), 'the pointer names the source doc');
         assert.equal(section.includes('line\nline'), false, 'no contract body ships');
+      });
+
+      it('#557: the contract is trimmed with an honest note when the budget holds a useful fragment but not the whole text', () => {
+        const contractFile = path.join(projDir, 'fixture-contract.md');
+        fs.writeFileSync(contractFile, '# Fixture Consumer Contract\n' + 'line\n'.repeat(200));
+        process.env.MEDUSA_CONTRACT_PATH = contractFile;
+
+        const section = sessions._medusaContractSection(1000).join('\n');
+        assert.ok(section.includes('truncated to fit the prime size budget'), 'the trim is announced honestly');
+        assert.ok(section.includes(contractFile), 'the trim note names the source doc');
+        assert.equal(section.includes('Omitted to fit the prime size budget'), false, 'a budget this size must trim, not omit');
       });
 
       it('#557: the full contract still embeds when no cap constrains it', () => {
