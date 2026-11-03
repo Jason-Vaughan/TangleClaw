@@ -66,8 +66,19 @@ describe('coordinator context rotation (#2032)', () => {
   let project;
   let session;
   let projectPath;
-  /** The fake inbox, oldest first. */
+  /** The fake inbox, oldest first. Shared by every session unless `sessionInboxes` names one specifically. */
   let inbox;
+  /**
+   * Per-session inboxes, for a test that must distinguish one session's
+   * (freshly-minted-workspace) listener from another's -- #2034 item 3: a
+   * relaunch rebinds the rotation to a successor session with its own
+   * Medusa workspace id, so "the old session's inbox" and "the resumed
+   * rotation's inbox" are NOT the same thing once a relaunch has happened,
+   * and the fixture must be able to say so. Most tests never populate this
+   * and get the shared `inbox` for every sessionId, as before.
+   * @type {Map<number, Array<{id: string}>>}
+   */
+  let sessionInboxes;
   /** Every command typed into the pane. */
   let typed;
   /** What typing `/clear` does to the fake server's threads. */
@@ -131,6 +142,7 @@ describe('coordinator context rotation (#2032)', () => {
     for (const t of ['startup_control_channels', 'coordinator_rotations', 'coordinator_roles']) store.getDb().prepare(`DELETE FROM ${t}`).run();
     grant();
     inbox = [];
+    sessionInboxes = new Map();
     typed = [];
     checkout = { ok: true, fingerprint: cleanCheckout() };
     listening = true;
@@ -219,7 +231,7 @@ describe('coordinator context rotation (#2032)', () => {
   /** Seams for the rotation module, bound to this test's fakes. */
   const deps = () => ({
     adapterDeps: OURS,
-    messages: () => inbox.slice(),
+    messages: (sessionId) => (sessionInboxes.has(sessionId) ? sessionInboxes.get(sessionId).slice() : inbox.slice()),
     listening: () => listening,
     medusaEnabled: () => medusaOn,
     github: async (facts) => githubSeam(facts),
@@ -1410,6 +1422,53 @@ describe('coordinator context rotation (#2032)', () => {
       store.getDb().prepare('UPDATE launch_sequences SET ready_at = ? WHERE launch_id = ?').run(new Date(clockMs).toISOString(), r.launchId);
       const done = await rotation.resume({ access: successorAccess, threadId: SUCCESSOR_THREAD, body }, deps());
       assert.equal(done.status, 200, JSON.stringify(done.body));
+    });
+
+    it('relaunch-mode resume cannot see pre-rotation mail left under the old session\'s inbox — a known limitation, now documented and tested rather than silent (#2034 item 3)', async () => {
+      await serve();
+      channel();
+      // Two messages sit in the OLD session's inbox before the coordinator
+      // ever prepares a rotation -- prepare() records their ids into
+      // rotation.inboxIds as what the resumed context must prove drained.
+      sessionInboxes.set(session.id, [{ id: 'msg-old-1' }, { id: 'msg-old-2' }]);
+      const rot = (await prepare({ mode: 'relaunch' })).body.rotation;
+      assert.deepEqual(rot.inboxIds, ['msg-old-1', 'msg-old-2']);
+      endOld();
+      server.state.threads = new Map([[SUCCESSOR_THREAD, { status: { type: 'idle' } }]]);
+      const claimed = await rotation.claimRelaunch({ caller: operator, body: { rotationId: rot.rotationId } }, relaunchDeps());
+      assert.equal(claimed.status, 200, JSON.stringify(claimed.body));
+      assert.equal(claimed.body.rotation.sessionId, successor.id, 'the rotation is now bound to a DIFFERENT session id than the one the mail sat under');
+      const r = await rotation.drive(rot.rotationId, { attempts: 5, deps: deps() });
+      assert.equal(r.state, 'reconciling', JSON.stringify(r));
+
+      // The successor's own (freshly-minted-workspace) listener has its own,
+      // separate inbox -- empty here, modeling that Hub mail queued for the
+      // OLD workspace id has no path to the successor's NEW one. The old
+      // session's inbox (still set above) is left exactly as it was: nobody
+      // drained it, and nothing in this flow ever looks at it again.
+      sessionInboxes.set(successor.id, []);
+
+      const successorAccess = { kind: 'project', projectId: project.id, sessionId: successor.id, launchId: r.launchId };
+      const nowMs = clockMs + 60000;
+      store.workloadReceipts.append({
+        project_id: project.id, session_id: successor.id, launch_id: r.launchId, assignment_id: null, state: 'working', clearance: 'do-not-clear',
+        summary: 'reconciling', wait_kind: null, wait_detail: null, refs_json: '[]', branch: null, head_sha: null, source: 'tc-cli',
+        received_at: new Date(nowMs).toISOString()
+      }, { minIntervalMs: 0, nowMs });
+      const text = server.calls('turn/start').at(-1).params.input[0].text;
+      const nonceNow = /Resume nonce[^`]*`([^`]+)`/.exec(text)[1];
+      const body = { rotationId: r.rotationId, attemptKey: r.attemptKey, generation: r.generation, resumeNonce: nonceNow, receipt: receipt(rotation.view(r)) };
+      store.getDb().prepare('UPDATE launch_sequences SET ready_at = ? WHERE launch_id = ?').run(new Date(clockMs).toISOString(), r.launchId);
+
+      // This is the limitation itself: resume succeeds -- the cross-check
+      // reports no unhandled mail -- even though the two messages recorded at
+      // prepare are still, as far as this fixture's model goes, sitting
+      // undrained under the old session's inbox. The check only ever asks
+      // the CURRENT (successor) session, which structurally cannot see them.
+      const done = await rotation.resume({ access: successorAccess, threadId: SUCCESSOR_THREAD, body }, deps());
+      assert.equal(done.status, 200, JSON.stringify(done.body));
+      assert.deepEqual(sessionInboxes.get(session.id).map((m) => m.id), ['msg-old-1', 'msg-old-2'],
+        'the old inbox was never consulted, let alone drained, by this resume');
     });
 
     it('a successor whose channel has not recorded its thread is never bound by inference from a visible thread (A16)', async () => {

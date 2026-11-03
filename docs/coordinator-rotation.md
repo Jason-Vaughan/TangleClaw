@@ -284,7 +284,15 @@ checks are:
   (`medusaEnabled`; an unreadable config counts as enabled) or when the prepare recorded messages.
   Prepare also refuses a switchboard coordinator whose listener is down
   (`409 ROTATION_LISTENER_DOWN`). Only a coordinator that runs without the switchboard, with nothing
-  recorded, is not held for a listener;
+  recorded, is not held for a listener.
+  **In `relaunch` mode this check only ever asks the successor's own inbox**, under the fresh
+  Medusa workspace id its launch mints — never the prior session's, which is torn down (and its
+  workspace id retired) when that session ends. Hub mail queued for the prior workspace id has no
+  path to the successor's new one, so this check cannot see it: it reports "nothing unhandled" for
+  a relaunch regardless of whether the prepare-time messages were ever actually read. This is a
+  real limitation, not a hypothetical — the check is still worth having for `resume` without a
+  relaunch, where the session and workspace id never change — but a relaunch's prepare-time inbox
+  interval is not currently a reliable signal of unhandled pre-rotation mail;
 - `control.stateGeneration` is the lane's current control generation, or `null` when there is no
   assignment;
 - for a relaunch, the successor's own launch sequence has been attested READY. Until then the
