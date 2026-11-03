@@ -62,26 +62,33 @@ function startDeciderSession(projectId, { receiptState = 'working', receiptAgeMs
 /**
  * A tracked, open (non-terminal) exchange addressed to `recipientWorkspaceId`,
  * via the real `createSendIntent` so every required column is populated the
- * way production code populates it — not a hand-rolled raw INSERT.
+ * way production code populates it — not a hand-rolled raw INSERT. Advanced
+ * past `send_pending` to `stored` via the real `bindHubId` (simulating the
+ * Hub accepting the send), so it lands in a state `checkDeciderReachability`'s
+ * genuinely-unread filter actually treats as awaiting read — `send_pending`
+ * itself is excluded there (PRR-A I-Gate Round 2), the same way
+ * `lib/medusa-exchanges.js`'s own private `_awaitingRead` excludes it.
  * @param {string} recipientWorkspaceId
  * @param {number} recipientProjectId
  * @param {string} createdAt - ISO instant to backdate the exchange to
+ * @param {string} [senderWorkspaceId] - The sender's own workspace, for blocked-sender-notification tests
  * @returns {object} The exchange row
  */
-function openExchangeTo(recipientWorkspaceId, recipientProjectId, createdAt) {
+function openExchangeTo(recipientWorkspaceId, recipientProjectId, createdAt, senderWorkspaceId = 'sender-ws') {
   const realNow = medusaExchanges._internal.now;
   medusaExchanges._internal.now = () => new Date(createdAt);
   try {
-    return medusaExchanges.createSendIntent({
+    const row = medusaExchanges.createSendIntent({
       meta: {
         requestId: `req-${Math.random().toString(36).slice(2)}`,
         priority: 'normal', replyRequired: true, escalateAfterMs: null, reasonCode: null,
         verified: true, proof: 'system'
       },
-      sender: { projectId: null, sessionId: 'sender-session', workspaceId: 'sender-ws' },
+      sender: { projectId: null, sessionId: 'sender-session', workspaceId: senderWorkspaceId },
       recipient: { workspaceId: recipientWorkspaceId, projectId: recipientProjectId, sessionId: null },
       tracking: 'tracked'
     });
+    return medusaExchanges.bindHubId(row.exchange_id, `hub-${Math.random().toString(36).slice(2)}`);
   } finally {
     medusaExchanges._internal.now = realNow;
   }
@@ -184,6 +191,50 @@ describe('checkDeciderReachability — fires and records a durable decision_requ
     // so compare against the request's own createdAt, the same clock read.
     assert.equal(Date.parse(read.deadlineAt) - Date.parse(read.createdAt), rotation.DECIDER_ALERT_TTL_MS);
     void exchange;
+  });
+
+  it('a message the coordinator already read does not count toward silence, even sitting alongside a genuinely unread one (PRR-A I-Gate Round 2)', () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptAgeMs: MINUTE, nowMs });
+    // Old enough on its own to meet the silence bound, but already read --
+    // must not count.
+    const readOne = openExchangeTo('pm-workspace', PM_PROJECT, new Date(nowMs - 2 * rotation.DECIDER_SILENCE_MS).toISOString());
+    medusaExchanges.recordRead([readOne.hub_id], 'pm-workspace', null);
+    // Genuinely unread, but too recent on its own to meet the silence bound.
+    openExchangeTo('pm-workspace', PM_PROJECT, new Date(nowMs - 5 * MINUTE).toISOString());
+
+    const result = rotation.checkDeciderReachability(PM_PROJECT, deps({ wakeVerdict: () => ({ reason: 'engine-thread-unknown' }) }));
+    assert.equal(result.fired, false, 'the read exchange must not be mistaken for unread mail old enough to fire');
+  });
+
+  it('includes both diagnostic signals in the prompt when wake AND workload are both bad, and notifies the blocked sender once per new outage (PRR-A I-Gate Round 2)', () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptState: 'working', receiptAgeMs: 40 * MINUTE, nowMs }); // expired
+    openExchangeTo('pm-workspace', PM_PROJECT, new Date(nowMs - 30 * MINUTE).toISOString(), 'blocked-sender-ws');
+
+    const notified = [];
+    const result = rotation.checkDeciderReachability(PM_PROJECT, deps({
+      wakeVerdict: () => ({ reason: 'engine-thread-unknown' }),
+      notifySender: (workspaceId, message) => notified.push({ workspaceId, message })
+    }));
+
+    assert.equal(result.fired, true);
+    assert.match(result.request.prompt, /engine-thread-unknown/);
+    assert.match(result.request.prompt, /workload receipt: expired/);
+    assert.equal(notified.length, 1);
+    assert.equal(notified[0].workspaceId, 'blocked-sender-ws');
+    assert.match(notified[0].message, /unanswered/);
+
+    // A second tick of the SAME episode (same oldest-unread exchange) must
+    // not notify the sender again.
+    const second = rotation.checkDeciderReachability(PM_PROJECT, deps({
+      wakeVerdict: () => ({ reason: 'engine-thread-unknown' }),
+      notifySender: (workspaceId, message) => notified.push({ workspaceId, message })
+    }));
+    assert.equal(second.request.decisionId, result.request.decisionId, 'same episode, replayed');
+    assert.equal(notified.length, 1, 'no second notification for a replayed alert');
   });
 
   it('fires exactly at the silence bound, not a moment before (DECIDER_SILENCE_MS boundary)', () => {
@@ -437,6 +488,21 @@ describe('checkGovernedRefreshDue — fires a durable refresh-due alert, never a
     assert.equal(result.held, true);
     assert.equal(result.reason, 'deferred-busy');
     assert.equal(result.request, null, 'no alert is written while held');
+  });
+
+  it('does NOT hold forever on an EXPIRED "working" receipt with no owed reply (PRR-A I-Gate Round 2)', async () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    // > 30m working-expiry (same threshold the checkDeciderReachability
+    // "fires on unread mail + expired workload receipt" test uses) -- a
+    // receipt that still SAYS "working" but has gone stale is not evidence
+    // the coordinator is actually busy right now.
+    startDeciderSession(PM_PROJECT, { receiptState: 'working', receiptAgeMs: 40 * MINUTE, nowMs });
+    const result = await rotation.checkGovernedRefreshDue(PM_PROJECT, refreshDeps({ capturePane: async () => 'Context 8% left' }));
+    assert.equal(result.due, true);
+    assert.equal(result.held, false, 'an expired "working" receipt must not hold the refresh forever');
+    assert.equal(result.reason, 'low-context');
+    assert.ok(result.request, 'the alert is actually written, not withheld behind a stale-busy hold');
   });
 
   it('holds while the coordinator has an open owed Medusa reply, even with an idle-shaped receipt', async () => {
