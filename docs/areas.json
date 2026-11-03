@@ -199,6 +199,7 @@
       "why": "Project records, config, paths and versions, generated files, git hooks and templates, plan docs and actions.",
       "paths": [
         "lib/projects.js",
+        "lib/projects-async-io.js",
         "lib/project-*.js",
         "lib/tcc-folders.js",
         "lib/git-hooks.js",
