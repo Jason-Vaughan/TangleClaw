@@ -141,6 +141,19 @@ describe('fleet-provisioning: input validation', () => {
     assert.equal(r.result.laneQueue.scaffolded, false);
     assert.equal(fs.readFileSync(laneQueuePath, 'utf8'), '# already here');
   });
+
+  it('refuses an existing directory at the lane-queue path rather than registering it (PRR-B I-Gate Round 3 on PR #2869)', () => {
+    const a = makeProject('Lane-A');
+    const sharedDir = path.join(tmpDir, 'shared-dir-at-lanequeue-path');
+    const laneQueuePath = path.join(sharedDir, 'LANE_QUEUE.md');
+    fs.mkdirSync(laneQueuePath, { recursive: true });
+
+    const r = fp.provisionFleetResources({ groupName: 'Fleet DirAtLaneQueue', sharedDir, memberProjectIds: [a.id] });
+
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'FLEET_PROVISIONING_UNSAFE_PATH');
+    assert.ok(fs.statSync(laneQueuePath).isDirectory(), 'the directory must be left untouched, not written through');
+  });
 });
 
 describe('fleet-provisioning: provisionFleetResources (#2825)', () => {
