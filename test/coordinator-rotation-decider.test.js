@@ -208,7 +208,7 @@ describe('checkDeciderReachability — fires and records a durable decision_requ
     assert.equal(result.fired, false, 'the read exchange must not be mistaken for unread mail old enough to fire');
   });
 
-  it('includes both diagnostic signals in the prompt when wake AND workload are both bad, and notifies the blocked sender once per new outage (PRR-A I-Gate Round 2)', () => {
+  it('includes both diagnostic signals in the prompt when wake AND workload are both bad, and notifies the blocked sender (PRR-A I-Gate Round 2)', async () => {
     const nowMs = Date.parse(START);
     store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
     startDeciderSession(PM_PROJECT, { receiptState: 'working', receiptAgeMs: 40 * MINUTE, nowMs }); // expired
@@ -219,6 +219,7 @@ describe('checkDeciderReachability — fires and records a durable decision_requ
       wakeVerdict: () => ({ reason: 'engine-thread-unknown' }),
       notifySender: (workspaceId, message) => notified.push({ workspaceId, message })
     }));
+    await Promise.resolve(); // let the fire-and-forget notify bookkeeping settle
 
     assert.equal(result.fired, true);
     assert.match(result.request.prompt, /engine-thread-unknown/);
@@ -227,14 +228,76 @@ describe('checkDeciderReachability — fires and records a durable decision_requ
     assert.equal(notified[0].workspaceId, 'blocked-sender-ws');
     assert.match(notified[0].message, /unanswered/);
 
-    // A second tick of the SAME episode (same oldest-unread exchange) must
-    // not notify the sender again.
+    // A second tick of the SAME episode (same oldest-unread exchange), same
+    // sender, must not notify again.
     const second = rotation.checkDeciderReachability(PM_PROJECT, deps({
       wakeVerdict: () => ({ reason: 'engine-thread-unknown' }),
       notifySender: (workspaceId, message) => notified.push({ workspaceId, message })
     }));
+    await Promise.resolve();
     assert.equal(second.request.decisionId, result.request.decisionId, 'same episode, replayed');
     assert.equal(notified.length, 1, 'no second notification for a replayed alert');
+  });
+
+  it('notifies a SECOND sender who joins an already-open outage episode (PRR-A I-Gate Round 3)', async () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptAgeMs: MINUTE, nowMs });
+    openExchangeTo('pm-workspace', PM_PROJECT, new Date(nowMs - 30 * MINUTE).toISOString(), 'first-sender-ws');
+
+    const notified = [];
+    const d = deps({
+      wakeVerdict: () => ({ reason: 'engine-thread-unknown' }),
+      notifySender: (workspaceId, message) => notified.push({ workspaceId, message })
+    });
+    const first = rotation.checkDeciderReachability(PM_PROJECT, d);
+    await Promise.resolve();
+    assert.equal(notified.length, 1);
+    assert.equal(notified[0].workspaceId, 'first-sender-ws');
+
+    // A second sender's own mail ages into "genuinely unread" during the
+    // SAME open episode -- a replay of the same decision, but a sender this
+    // episode has never notified yet.
+    openExchangeTo('pm-workspace', PM_PROJECT, new Date(nowMs - 25 * MINUTE).toISOString(), 'second-sender-ws');
+    const second = rotation.checkDeciderReachability(PM_PROJECT, d);
+    await Promise.resolve();
+    assert.equal(second.request.decisionId, first.request.decisionId, 'still the same open episode');
+    assert.equal(notified.length, 2);
+    assert.ok(notified.some((n) => n.workspaceId === 'second-sender-ws'));
+
+    // A third tick with no new sender notifies nobody further.
+    rotation.checkDeciderReachability(PM_PROJECT, d);
+    await Promise.resolve();
+    assert.equal(notified.length, 2, 'no new sender, no new notification');
+  });
+
+  it('a transient notifySender failure is not marked notified, and retries on the next tick (PRR-A I-Gate Round 3)', async () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptAgeMs: MINUTE, nowMs });
+    openExchangeTo('pm-workspace', PM_PROJECT, new Date(nowMs - 30 * MINUTE).toISOString(), 'flaky-sender-ws');
+
+    let calls = 0;
+    const attemptedWorkspaces = [];
+    const notifySender = (workspaceId) => {
+      calls += 1;
+      attemptedWorkspaces.push(workspaceId);
+      if (calls === 1) return Promise.reject(new Error('synthetic transient send failure'));
+      return Promise.resolve();
+    };
+    const d = deps({ wakeVerdict: () => ({ reason: 'engine-thread-unknown' }), notifySender });
+
+    rotation.checkDeciderReachability(PM_PROJECT, d);
+    await Promise.resolve();
+    await Promise.resolve(); // let the rejection's handler run too
+    assert.equal(calls, 1, 'the first attempt was made and failed');
+
+    // A second tick retries the SAME sender, since the failed attempt was
+    // never marked notified.
+    rotation.checkDeciderReachability(PM_PROJECT, d);
+    await Promise.resolve();
+    assert.equal(calls, 2, 'the failed send is retried on the next tick, not abandoned');
+    assert.deepEqual(attemptedWorkspaces, ['flaky-sender-ws', 'flaky-sender-ws']);
   });
 
   it('fires exactly at the silence bound, not a moment before (DECIDER_SILENCE_MS boundary)', () => {
@@ -363,6 +426,46 @@ describe('checkDeciderReachability — recovery closes the open alert (Acceptanc
     startDeciderSession(PM_PROJECT, { receiptState: 'working', receiptAgeMs: 0, nowMs }).session;
     const recovered = rotation.checkDeciderReachability(PM_PROJECT, deps({ wakeVerdict: () => ({ reason: 'idle' }) }));
     assert.equal(recovered.fired, false);
+  });
+
+  it('a renewed outage on the SAME still-unread exchange after recovery opens a FRESH alert, not the superseded one (PRR-A I-Gate Round 3)', () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    // ONE session/launch throughout -- a fresh workload receipt posted by
+    // the SAME session, not a new session starting, is what actually
+    // recovers in production; starting a new session each step would
+    // trigger decision-routing's own, unrelated launch-currency
+    // supersession and mask whether THIS recovery path does its own job.
+    const { session, launchId } = startDeciderSession(PM_PROJECT, { receiptState: 'working', receiptAgeMs: 40 * MINUTE, nowMs });
+    const postReceipt = (state, receiptAgeMs) => store.workloadReceipts.append({
+      launch_id: launchId, session_id: session.id, project_id: PM_PROJECT, assignment_id: null,
+      state, clearance: 'do-not-clear', summary: 'test fixture', wait_kind: null, wait_detail: null,
+      refs_json: '{"issues":[],"prs":[],"tasks":[]}', branch: null, head_sha: null, source: 'tc-cli',
+      received_at: new Date(nowMs - receiptAgeMs).toISOString()
+    }, { minIntervalMs: 0, nowMs });
+    openExchangeTo('pm-workspace', PM_PROJECT, new Date(nowMs - 30 * MINUTE).toISOString());
+
+    const first = rotation.checkDeciderReachability(PM_PROJECT, deps({ wakeVerdict: () => ({ reason: 'idle' }) }));
+    assert.equal(first.fired, true);
+    const firstDecisionId = first.request.decisionId;
+
+    // Recovery: a fresh, current receipt lands FROM THE SAME SESSION, but
+    // the SAME old mail stays unread throughout (never touched) -- the
+    // exact scenario that shares one idemKey base across both episodes.
+    postReceipt('working', 0);
+    const recovered = rotation.checkDeciderReachability(PM_PROJECT, deps({ wakeVerdict: () => ({ reason: 'idle' }) }));
+    assert.equal(recovered.fired, false);
+    assert.equal(recovered.recovered, true);
+    assert.equal(decisionRouting.getDecisionRequest(firstDecisionId).state, decisionRouting.STATES.SUPERSEDED);
+
+    // Renewed outage: the receipt goes stale again, the mail is STILL that
+    // same unread exchange. Must fire a genuinely NEW, live alert -- not
+    // replay the now-dead superseded one.
+    postReceipt('working', 40 * MINUTE);
+    const renewed = rotation.checkDeciderReachability(PM_PROJECT, deps({ wakeVerdict: () => ({ reason: 'idle' }) }));
+    assert.equal(renewed.fired, true);
+    assert.notEqual(renewed.request.decisionId, firstDecisionId, 'a fresh episode, not the superseded one');
+    assert.equal(renewed.request.state, decisionRouting.STATES.WAITING_DECISION, 'the renewed alert is actually live');
   });
 
   it('never re-closes an already-answered alert as a recovery (an Operator answer wins)', () => {
