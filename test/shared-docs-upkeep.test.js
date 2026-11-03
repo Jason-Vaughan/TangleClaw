@@ -87,8 +87,9 @@ describe('shared-docs: inspectSharedDocRegistrations (#1306)', () => {
   });
 
   const GROUPS = () => [
-    { id: 'g1', name: 'Group One', sharedDir: '/placeholder' },
-    { id: 'g2', name: 'Group Two', sharedDir: null }
+    { id: 'g1', name: 'Group One', sharedDir: tmpDir },
+    { id: 'g2', name: 'Group Two', sharedDir: null },
+    { id: 'g3', name: 'Group Three', sharedDir: path.join(tmpDir, 'never-existed') }
   ];
 
   it('an existing, readable doc reports resolved: true, status: "ok"', () => {
@@ -116,6 +117,25 @@ describe('shared-docs: inspectSharedDocRegistrations (#1306)', () => {
   it('a group with no sharedDir configured at all is reported as "missing_shared_dir"', () => {
     const r = sharedDocs.inspectSharedDocRegistrations(
       [{ docId: 'd3', groupId: 'g2', name: 'No Dir Doc', filePath: okFile }], GROUPS()
+    );
+    assert.equal(r.docs[0].status, 'missing_shared_dir');
+  });
+
+  it('a group whose configured sharedDir no longer exists on disk is "missing_shared_dir", even when the doc\'s own file is independently readable elsewhere (PRR-B I-Gate Round 1 #2 on PR #2869)', () => {
+    const r = sharedDocs.inspectSharedDocRegistrations(
+      [{ docId: 'd7', groupId: 'g3', name: 'Orphaned sharedDir Doc', filePath: okFile }], GROUPS()
+    );
+    assert.equal(r.docs[0].resolved, false);
+    assert.equal(r.docs[0].status, 'missing_shared_dir');
+    assert.equal(r.unresolvableDocs[0].groupName, 'Group Three');
+  });
+
+  it('a group whose configured sharedDir exists but is a file, not a directory, is "missing_shared_dir"', () => {
+    const notADir = path.join(tmpDir, 'sharedDir-is-a-file.txt');
+    fs.writeFileSync(notADir, 'x');
+    const groups = [{ id: 'g4', name: 'Group Four', sharedDir: notADir }];
+    const r = sharedDocs.inspectSharedDocRegistrations(
+      [{ docId: 'd8', groupId: 'g4', name: 'File-as-Dir Doc', filePath: okFile }], groups
     );
     assert.equal(r.docs[0].status, 'missing_shared_dir');
   });

@@ -58,6 +58,45 @@ describe('fleet-provisioning: input validation', () => {
     assert.equal(r.ok, false);
     assert.equal(r.code, 'SHARED_DIR_INVALID');
   });
+
+  it('refuses a laneQueueFilename that would traverse outside sharedDir, before any write (PRR-B I-Gate Round 1 #1 on PR #2869)', () => {
+    const a = makeProject('Lane-A');
+    const sharedDir = path.join(tmpDir, 'shared-traversal');
+    const outsidePath = path.join(tmpDir, 'outside.md');
+
+    for (const bad of ['../outside.md', '..\\outside.md', '/etc/outside.md', '.', '..', '']) {
+      const r = fp.provisionFleetResources({
+        groupName: `Fleet Traversal ${bad}`, sharedDir, memberProjectIds: [a.id], laneQueueFilename: bad
+      });
+      assert.equal(r.ok, false, `expected a refusal for laneQueueFilename ${JSON.stringify(bad)}`);
+      assert.equal(r.code, 'FLEET_PROVISIONING_INVALID');
+    }
+    assert.ok(!fs.existsSync(sharedDir), 'sharedDir must never be created when the filename is rejected up front');
+    assert.ok(!fs.existsSync(outsidePath), 'nothing must be written outside sharedDir');
+  });
+
+  it('accepts a plain custom laneQueueFilename and scaffolds it inside sharedDir', () => {
+    const a = makeProject('Lane-A');
+    const sharedDir = path.join(tmpDir, 'shared-custom-filename');
+
+    const r = fp.provisionFleetResources({
+      groupName: 'Fleet CustomFilename', sharedDir, memberProjectIds: [a.id], laneQueueFilename: 'QUEUE.md'
+    });
+
+    assert.equal(r.ok, true);
+    assert.equal(r.result.laneQueue.path, path.join(sharedDir, 'QUEUE.md'));
+    assert.ok(fs.existsSync(r.result.laneQueue.path));
+  });
+
+  it('still defaults to LANE_QUEUE.md when laneQueueFilename is omitted', () => {
+    const a = makeProject('Lane-A');
+    const sharedDir = path.join(tmpDir, 'shared-default-filename');
+
+    const r = fp.provisionFleetResources({ groupName: 'Fleet DefaultFilename', sharedDir, memberProjectIds: [a.id] });
+
+    assert.equal(r.ok, true);
+    assert.equal(r.result.laneQueue.path, path.join(sharedDir, 'LANE_QUEUE.md'));
+  });
 });
 
 describe('fleet-provisioning: provisionFleetResources (#2825)', () => {
