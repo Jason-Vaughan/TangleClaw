@@ -625,6 +625,32 @@ describe('api-projects', () => {
         assert.equal(status, 200);
       });
 
+      // #2037 PRR-B I-Gate: a project naming its own gate reversible-and-
+      // allowlisted, then answering its own decision, is an unverified
+      // self-approval — the allowlist itself must be the operator's alone to
+      // change, the same presence-gated shape a rename is.
+      it('refuses a project changing its own autonomous-decision gate allowlist: that is the operator\'s (#2037)', async () => {
+        const { status, data } = await request('PATCH', '/api/projects/gate-a',
+          { decisionAutonomousAllowlist: ['smuggled-gate'] }, a.headers);
+        assert.equal(status, 403);
+        assert.equal(data.code, 'OPERATOR_ONLY');
+        assert.deepEqual(store.projectConfig.load(store.projects.getByName('gate-a').path).decisionAutonomousAllowlist, []);
+      });
+
+      it('lets the operator change the autonomous-decision gate allowlist', async () => {
+        const { status } = await request('PATCH', '/api/projects/gate-a',
+          { decisionAutonomousAllowlist: ['re-run-ci'] }, asOperator());
+        assert.equal(status, 200);
+        assert.deepEqual(store.projectConfig.load(store.projects.getByName('gate-a').path).decisionAutonomousAllowlist, ['re-run-ci']);
+      });
+
+      it('refuses a malformed allowlist or policy value even from the operator', async () => {
+        const badAllowlist = await request('PATCH', '/api/projects/gate-a', { decisionAutonomousAllowlist: ['', 42] }, asOperator());
+        assert.equal(badAllowlist.status, 400);
+        const badPolicy = await request('PATCH', '/api/projects/gate-a', { decisionAuthorityPolicy: 'king' }, a.headers);
+        assert.equal(badPolicy.status, 400);
+      });
+
       // #1937, Architect ruling: the recovery mode decides whether a session may
       // clear its own launch gate, so a session choosing it would be loosening
       // its own gate. Presence of the field is what is refused, not a change of

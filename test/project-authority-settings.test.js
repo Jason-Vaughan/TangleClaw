@@ -24,15 +24,16 @@ const PINNED = { pinnedMode: 'operator', pinnedAt: '2026-10-06 00:00:00', pinned
 const CHOSEN_ADVISORY = { pinnedMode: null, pinnedAt: '2026-10-06 00:00:00', pinnedBy: 'operator' };
 
 describe('lib/project-authority-settings — AUTHORITY_TIERS and OPERATOR_AUTHORITY_SETTINGS (#1982)', () => {
-  it('classifies launchSequence.recoveryMode, and only it, as operator-pinned', () => {
+  it('classifies launchSequence.recoveryMode and decisionAutonomousAllowlist, and only those two, as operator-pinned (#2037 PRR-B I-Gate)', () => {
     const pinnedKeys = Object.entries(pas.OPERATOR_AUTHORITY_SETTINGS)
       .filter(([, entry]) => entry.tier === pas.AUTHORITY_TIERS.OPERATOR_PINNED)
       .map(([key]) => key);
-    assert.deepEqual(pinnedKeys, ['launchSequence.recoveryMode']);
+    assert.deepEqual(pinnedKeys, ['launchSequence.recoveryMode', 'decisionAutonomousAllowlist']);
   });
 
-  it('classifies every other DEFAULT_PROJECT_CONFIG top-level setting as project-owned — verified against server.js, which gates only a rename and recoveryMode to the operator', () => {
-    const topLevelKeys = Object.keys(projectConfig.DEFAULT_PROJECT_CONFIG).filter((k) => k !== 'rules' && k !== 'launchSequence');
+  it('classifies every other DEFAULT_PROJECT_CONFIG top-level setting as project-owned — verified against server.js, which gates only a rename, recoveryMode, and decisionAutonomousAllowlist to the operator', () => {
+    const topLevelKeys = Object.keys(projectConfig.DEFAULT_PROJECT_CONFIG)
+      .filter((k) => k !== 'rules' && k !== 'launchSequence' && k !== 'decisionAutonomousAllowlist');
     for (const key of topLevelKeys) {
       assert.equal(pas.authorityTierOf(key), pas.AUTHORITY_TIERS.PROJECT_OWNED, `${key} must be classified project-owned`);
     }

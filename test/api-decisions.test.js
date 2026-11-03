@@ -187,6 +187,53 @@ describe('decision-request routes (#2037)', () => {
     fs.rmSync(path.join(projectDir, '.tangleclaw'), { recursive: true, force: true });
   });
 
+  it('falls back to the project\'s configured decisionAuthorityPolicy when the request names no authority class (#2037 PRR-B)', async () => {
+    fs.mkdirSync(path.join(projectDir, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(path.join(projectDir, '.tangleclaw', 'project.json'), JSON.stringify({ decisionAuthorityPolicy: 'architect' }));
+
+    const res = await createAs(binding.headers, { requestId: 'req-for-policy-fallback', requiredAuthority: undefined });
+    assert.equal(res.status, 201);
+    assert.equal(res.data.request.requiredAuthority, 'architect');
+
+    fs.rmSync(path.join(projectDir, '.tangleclaw'), { recursive: true, force: true });
+  });
+
+  it('a request that does name an authority class is not overridden by the project\'s policy', async () => {
+    fs.mkdirSync(path.join(projectDir, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(path.join(projectDir, '.tangleclaw', 'project.json'), JSON.stringify({ decisionAuthorityPolicy: 'architect' }));
+
+    const res = await createAs(binding.headers, { requestId: 'req-for-explicit-authority', requiredAuthority: 'pm' });
+    assert.equal(res.status, 201);
+    assert.equal(res.data.request.requiredAuthority, 'pm');
+
+    fs.rmSync(path.join(projectDir, '.tangleclaw'), { recursive: true, force: true });
+  });
+
+  it('refuses a project changing its own autonomous-decision gate allowlist via PATCH /api/projects/:name: that is the operator\'s (#2037 PRR-B I-Gate)', async () => {
+    const res = await sendAs(server, 'PATCH', `/api/projects/${encodeURIComponent(project.name)}`,
+      { decisionAutonomousAllowlist: ['smuggled-gate'] }, binding.headers);
+    assert.equal(res.status, 403);
+    const { load } = require('../lib/project-config');
+    assert.deepEqual(load(projectDir).decisionAutonomousAllowlist, []);
+  });
+
+  it('the operator can change the autonomous-decision gate allowlist via PATCH, and it actually persists and takes effect', async () => {
+    const res = await sendAs(server, 'PATCH', `/api/projects/${encodeURIComponent(project.name)}`,
+      { decisionAutonomousAllowlist: ['re-run-ci'] }, writeHeaders);
+    assert.equal(res.status, 200);
+    const { load } = require('../lib/project-config');
+    assert.deepEqual(load(projectDir).decisionAutonomousAllowlist, ['re-run-ci']);
+
+    const created = await createAs(binding.headers, {
+      requestId: 'req-for-patched-allowlist', requiredAuthority: 'autonomous-within-lease', reversible: true, gate: 're-run-ci'
+    });
+    const answer = await sendAs(server, 'POST', `/api/decisions/${encodeURIComponent(created.data.request.decisionId)}/answer`,
+      { answer: 'yes', expectedPromptDigest: created.data.request.promptDigest }, binding.headers);
+    assert.equal(answer.status, 201);
+
+    await sendAs(server, 'PATCH', `/api/projects/${encodeURIComponent(project.name)}`, { decisionAutonomousAllowlist: [] }, writeHeaders);
+  });
+
   it('the Operator may still answer an autonomous-within-lease decision directly (the ceiling)', async () => {
     const created = await createAs(binding.headers, {
       requestId: 'req-for-operator-over-autonomous', requiredAuthority: 'autonomous-within-lease', reversible: true, gate: 'whatever-gate'

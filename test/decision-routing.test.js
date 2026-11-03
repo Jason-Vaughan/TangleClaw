@@ -319,3 +319,17 @@ describe('resolveDecisionAutonomousAllowlist', () => {
     assert.deepEqual(decisionRouting.resolveDecisionAutonomousAllowlist(loaded), ['re-run-ci']);
   });
 });
+
+describe('resolveDecisionAuthorityPolicy (#2037 PRR-B: gives decisionAuthorityPolicy an actual effect)', () => {
+  it('defaults to human when unset', () => {
+    assert.equal(decisionRouting.resolveDecisionAuthorityPolicy({}), 'human');
+  });
+
+  it('defaults to human on an unrecognized value, rather than trusting it', () => {
+    assert.equal(decisionRouting.resolveDecisionAuthorityPolicy({ decisionAuthorityPolicy: 'king' }), 'human');
+  });
+
+  it('honors a recognized configured policy', () => {
+    assert.equal(decisionRouting.resolveDecisionAuthorityPolicy({ decisionAuthorityPolicy: 'autonomous-within-lease' }), 'autonomous-within-lease');
+  });
+});
