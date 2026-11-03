@@ -7245,6 +7245,24 @@ function paintWrapRun(prev, next) {
         'The wrap pipeline was killed mid-run (most likely a server restart). Its commit step never ran, so nothing was committed. It is safe to start a new wrap.'
       );
       return;
+    case 'interrupted': {
+      // #1816/#2642: discovered only on page load, from the durable
+      // checkpoint trail — never followed live, so unlike 'lost' there is no
+      // run this tab watched end. `interruptedCommitStarted` is the one fact
+      // worth naming: unlike 'lost' (commit never ran, by construction of
+      // which step can throw), an interrupted run MAY have begun committing
+      // before the restart, so this can't promise nothing was committed.
+      if (!entered) return;
+      const step = next.interruptedStepId ? ` at step "${next.interruptedStepId}"` : '';
+      const commitNote = next.interruptedCommitStarted
+        ? ' It may have already started committing — check the repository before starting another wrap.'
+        : ' It had not started committing, so it is safe to start a new wrap.';
+      openWrapDrawerNotice(
+        'A wrap was interrupted',
+        `A previous wrap${step} did not finish (most likely a server restart).${commitNote}`
+      );
+      return;
+    }
     case 'refused':
       // Only a refused Retry is visible: its reason goes on the report it was
       // retrying. A refused first wrap shows its reason in the wrap modal.
@@ -7299,6 +7317,12 @@ function recallFollowedWrapRun() {
  * blocked, whose report the operator had not closed. Any other finished run
  * belongs to whichever page watched it, and re-opening it on every load would
  * resurface a report closed long ago.
+ *
+ * Neither of those: a restart cut a wrap off before it could `finish`, and
+ * nothing is live to follow it (#1816/#2642). `/wrap/status` reports that as
+ * `interrupted: true`, named by `interruptedStepId`/`interruptedCommitStarted`
+ * rather than a `runId` with anything live behind it — dispatched once, here,
+ * since this is the one place a project's wrap state is first read after load.
  */
 async function restoreWrapRunOnLoad() {
   const status = await _probeWrapStatus(wrapStatusUrl());
@@ -7309,6 +7333,12 @@ async function restoreWrapRunOnLoad() {
   if (status.running === true || status.runId === recallFollowedWrapRun()) {
     adoptWrapRunChoices(status.options);
     dispatchWrapRun({ type: 'follow', runId: status.runId });
+  } else if (status.interrupted === true) {
+    // #1816/#2642 — a restart cut a wrap off before `finish`; nothing is live
+    // to follow, but the operator should still be told it happened. Only
+    // reached when the branch above did not already claim this run (a live
+    // run, or the one this tab was following before the reload).
+    dispatchWrapRun({ type: 'interrupted', runId: status.runId, lastStepId: status.interruptedStepId, commitStarted: status.interruptedCommitStarted });
   }
 }
 

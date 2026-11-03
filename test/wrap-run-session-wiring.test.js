@@ -565,6 +565,48 @@ describe('wrap-run wiring in session.js — executed', () => {
       assert.equal(h.w.wrapRunState().phase, 'idle');
       assert.equal(h.storage.has('tc.wrap.followedRun.demo'), false);
     });
+
+    it('dispatches the interrupted report when nothing is live or remembered, and renders it (#1816/#2642)', async () => {
+      h.net.status = {
+        runId: RUN, running: false, result: null,
+        interrupted: true, interruptedStepId: 'commit', interruptedCommitStarted: true
+      };
+      await h.w.restoreWrapRunOnLoad();
+      const s = h.w.wrapRunState();
+      assert.equal(s.phase, 'interrupted');
+      assert.equal(s.runId, RUN);
+      assert.equal(s.interruptedStepId, 'commit');
+      assert.equal(s.interruptedCommitStarted, true);
+      // syncWrapRunEffects had no 'interrupted' case at all before #2642 --
+      // the reducer's own phase existed and was tested, but nothing painted
+      // it. Asserting the render call, not just the state, is what catches
+      // that gap again if it recurs.
+      assert.equal(h.last('openWrapDrawerNotice')[0], 'A wrap was interrupted');
+      assert.match(h.last('openWrapDrawerNotice')[1], /step "commit"/);
+      assert.match(h.last('openWrapDrawerNotice')[1], /may have already started committing/);
+    });
+
+    it('an interrupted report that had not started committing says so, and it is safe to re-wrap', async () => {
+      h.net.status = {
+        runId: RUN, running: false, result: null,
+        interrupted: true, interruptedStepId: 'preflight', interruptedCommitStarted: false
+      };
+      await h.w.restoreWrapRunOnLoad();
+      assert.match(h.last('openWrapDrawerNotice')[1], /step "preflight"/);
+      assert.match(h.last('openWrapDrawerNotice')[1], /safe to start a new wrap/);
+    });
+
+    it('a live or remembered run takes priority over an interrupted report on the same status read', async () => {
+      h.net.status = { runId: RUN, running: true, result: null, interrupted: true, interruptedStepId: 'preflight', interruptedCommitStarted: false };
+      await h.w.restoreWrapRunOnLoad();
+      assert.equal(h.w.wrapRunState().phase, 'following', 'a live run is followed, not reported as interrupted');
+    });
+
+    it('no interrupted dispatch when the server reports nothing interrupted', async () => {
+      h.net.status = { runId: null, running: false, result: null, interrupted: false };
+      await h.w.restoreWrapRunOnLoad();
+      assert.equal(h.w.wrapRunState().phase, 'idle');
+    });
   });
 });
 
