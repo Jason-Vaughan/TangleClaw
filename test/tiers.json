@@ -307,6 +307,7 @@
     "test/codex-preflight.test.js",
     "test/codex-readiness-timeout-paste.test.js",
     "test/control-state.test.js",
+    "test/coordinator-rotation-decider.test.js",
     "test/coordinator-rotation.test.js",
     "test/dashboard-boot-beacon.test.js",
     "test/decision-routing.test.js",

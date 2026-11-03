@@ -1,0 +1,337 @@
+'use strict';
+
+// #2351 (v5.57.0 Wave 2 Car 57-E): unreachable appointed decider detection
+// and fallback, via `lib/coordinator-rotation.js#checkDeciderReachability`.
+// A fresh temp store per test (not the shared fixture
+// `test/coordinator-rotation.test.js` uses for Codex rebinding, which this
+// file has no need to entangle with) — real `coordinator_roles`,
+// `sessions`, `launch_sequences`, `workload_receipts` and `medusa_exchanges`
+// rows, with the wake-verdict/Medusa-status seams injected per Architect
+// Ruling A2351's composition design.
+
+const { describe, it, beforeEach, afterEach } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+const { setLevel } = require('../lib/logger');
+
+setLevel('error');
+
+const store = require('../lib/store');
+const rotation = require('../lib/coordinator-rotation');
+const medusaExchanges = require('../lib/medusa-exchanges');
+const decisionRouting = require('../lib/decision-routing');
+
+const START = '2026-11-03T08:00:00.000Z';
+const MINUTE = 60 * 1000;
+
+let tmpDir = null;
+let PM_PROJECT = null;
+let ARCHITECT_PROJECT = null;
+
+/**
+ * Start a session bound to a fresh launch sequence AND give it a workload
+ * receipt — both are what `checkDeciderReachability` reads to resolve
+ * `launchId` and the receipt's own currency.
+ * @param {number} projectId
+ * @param {{receiptState?: string, receiptAgeMs?: number, nowMs: number}} opts
+ * @returns {{session: object, launchId: string}}
+ */
+function startDeciderSession(projectId, { receiptState = 'working', receiptAgeMs = MINUTE, nowMs }) {
+  const launchId = `launch-${projectId}-${Math.floor(Math.random() * 1e9)}`;
+  const session = store.sessions.start({
+    projectId,
+    engineId: 'codex',
+    launchSequence: {
+      launchId, pageBudget: 0, applicability: 'not-applicable',
+      notApplicableReason: 'test fixture', preflight: {}, sourceManifest: {}
+    }
+  });
+  const receivedAt = new Date(nowMs - receiptAgeMs).toISOString();
+  store.workloadReceipts.append({
+    launch_id: launchId, session_id: session.id, project_id: projectId, assignment_id: null,
+    state: receiptState, clearance: 'do-not-clear', summary: 'test fixture', wait_kind: null, wait_detail: null,
+    refs_json: '{"issues":[],"prs":[],"tasks":[]}', branch: null, head_sha: null, source: 'tc-cli', received_at: receivedAt
+  }, { minIntervalMs: 0, nowMs });
+  return { session, launchId };
+}
+
+/**
+ * A tracked, open (non-terminal) exchange addressed to `recipientWorkspaceId`,
+ * via the real `createSendIntent` so every required column is populated the
+ * way production code populates it — not a hand-rolled raw INSERT.
+ * @param {string} recipientWorkspaceId
+ * @param {number} recipientProjectId
+ * @param {string} createdAt - ISO instant to backdate the exchange to
+ * @returns {object} The exchange row
+ */
+function openExchangeTo(recipientWorkspaceId, recipientProjectId, createdAt) {
+  const realNow = medusaExchanges._internal.now;
+  medusaExchanges._internal.now = () => new Date(createdAt);
+  try {
+    return medusaExchanges.createSendIntent({
+      meta: {
+        requestId: `req-${Math.random().toString(36).slice(2)}`,
+        priority: 'normal', replyRequired: true, escalateAfterMs: null, reasonCode: null,
+        verified: true, proof: 'system'
+      },
+      sender: { projectId: null, sessionId: 'sender-session', workspaceId: 'sender-ws' },
+      recipient: { workspaceId: recipientWorkspaceId, projectId: recipientProjectId, sessionId: null },
+      tracking: 'tracked'
+    });
+  } finally {
+    medusaExchanges._internal.now = realNow;
+  }
+}
+
+beforeEach(() => {
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-decider-reachability-'));
+  store._setBasePath(tmpDir);
+  store.init();
+  const pmDir = path.join(tmpDir, 'pm-project');
+  const archDir = path.join(tmpDir, 'architect-project');
+  fs.mkdirSync(pmDir);
+  fs.mkdirSync(archDir);
+  PM_PROJECT = store.projects.create({ name: 'pm-project', path: pmDir, engine: 'codex' }).id;
+  ARCHITECT_PROJECT = store.projects.create({ name: 'architect-project', path: archDir, engine: 'codex' }).id;
+});
+
+afterEach(() => {
+  store.close();
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+/** A deps object the test controls: fixed clock, no real Medusa/wake monitor calls. */
+function deps(overrides = {}) {
+  const nowMs = Date.parse(START);
+  return {
+    now: () => new Date(nowMs).toISOString(),
+    medusaStatus: () => ({ workspaceId: 'pm-workspace' }),
+    wakeVerdict: () => null,
+    ...overrides
+  };
+}
+
+describe('checkDeciderReachability — not yet a problem', () => {
+  it('a project with no active coordinator role is not checked at all', () => {
+    const result = rotation.checkDeciderReachability(PM_PROJECT, deps());
+    assert.equal(result.checked, false);
+    assert.equal(result.reason, 'not an appointed coordinator');
+  });
+
+  it('a coordinator with no active session is not checked', () => {
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    const result = rotation.checkDeciderReachability(PM_PROJECT, deps());
+    assert.equal(result.checked, false);
+    assert.equal(result.reason, 'no active session');
+  });
+
+  it('a coordinator with no unread mail is healthy, regardless of wake/workload', () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptState: 'working', receiptAgeMs: 40 * MINUTE, nowMs }); // expired, but no mail
+    const result = rotation.checkDeciderReachability(PM_PROJECT, deps({ wakeVerdict: () => ({ reason: 'engine-thread-unknown' }) }));
+    assert.equal(result.checked, true);
+    assert.equal(result.fired, false);
+    assert.equal(result.reason, 'healthy');
+  });
+
+  it('unread mail under the silence bound does not fire even with an unknown wake', () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    const { session } = startDeciderSession(PM_PROJECT, { nowMs });
+    openExchangeTo('pm-workspace', PM_PROJECT, new Date(nowMs - (rotation.DECIDER_SILENCE_MS - MINUTE)).toISOString());
+    const result = rotation.checkDeciderReachability(PM_PROJECT, deps({ wakeVerdict: () => ({ reason: 'engine-thread-unknown' }), now: () => new Date(nowMs).toISOString() }));
+    assert.equal(result.fired, false, JSON.stringify(result));
+    void session;
+  });
+
+  it('unread mail past the bound with a HEALTHY wake and current workload does not fire', () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptAgeMs: MINUTE, nowMs });
+    openExchangeTo('pm-workspace', PM_PROJECT, new Date(nowMs - 30 * MINUTE).toISOString());
+    const result = rotation.checkDeciderReachability(PM_PROJECT, deps({ wakeVerdict: () => ({ reason: 'idle' }) }));
+    assert.equal(result.fired, false);
+  });
+});
+
+describe('checkDeciderReachability — fires and records a durable decision_requests alert', () => {
+  it('fires on unread mail + engine-thread-unknown, via decisionRouting.createDecisionRequest', () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    const { session } = startDeciderSession(PM_PROJECT, { receiptAgeMs: MINUTE, nowMs });
+    const exchange = openExchangeTo('pm-workspace', PM_PROJECT, new Date(nowMs - 30 * MINUTE).toISOString());
+
+    const result = rotation.checkDeciderReachability(PM_PROJECT, deps({ wakeVerdict: () => ({ reason: 'engine-thread-unknown' }) }));
+    assert.equal(result.fired, true);
+    assert.equal(result.reason, 'engine-thread-unknown');
+    assert.equal(result.request.gate, rotation.DECIDER_UNREACHABLE_GATE);
+    assert.equal(result.request.requiredAuthority, 'human');
+    assert.equal(result.request.state, decisionRouting.STATES.WAITING_DECISION);
+    assert.equal(result.request.sessionId, session.id);
+
+    // Really is a decision_requests row, readable through the normal API.
+    const read = decisionRouting.getDecisionRequest(result.request.decisionId);
+    assert.equal(read.decisionId, result.request.decisionId);
+    // The alert's TTL is a dead-man's-switch backstop, not the primary
+    // closure path (recovery is) — long enough that it never expires out
+    // from under an outage still being worked. decisionRouting's OWN clock
+    // (not this test's fixed `nowMs`) is what deadlineAt is computed from,
+    // so compare against the request's own createdAt, the same clock read.
+    assert.equal(Date.parse(read.deadlineAt) - Date.parse(read.createdAt), rotation.DECIDER_ALERT_TTL_MS);
+    void exchange;
+  });
+
+  it('fires exactly at the silence bound, not a moment before (DECIDER_SILENCE_MS boundary)', () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptAgeMs: MINUTE, nowMs });
+    openExchangeTo('pm-workspace', PM_PROJECT, new Date(nowMs - rotation.DECIDER_SILENCE_MS).toISOString());
+    const result = rotation.checkDeciderReachability(PM_PROJECT, deps({ wakeVerdict: () => ({ reason: 'engine-thread-unknown' }) }));
+    assert.equal(result.fired, true);
+  });
+
+  it('fires on unread mail + expired workload receipt (no wake-unknown needed)', () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptState: 'working', receiptAgeMs: 40 * MINUTE, nowMs }); // > 30m working-expiry
+    openExchangeTo('pm-workspace', PM_PROJECT, new Date(nowMs - 30 * MINUTE).toISOString());
+
+    const result = rotation.checkDeciderReachability(PM_PROJECT, deps({ wakeVerdict: () => ({ reason: 'idle' }) }));
+    assert.equal(result.fired, true);
+    assert.equal(result.reason, 'workload-expired');
+  });
+
+  it('a PM decider\'s fallback names the active architect role when one exists', () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-pm', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    store.coordinatorRoles.grant({ roleId: 'role-arch', projectId: ARCHITECT_PROJECT, role: 'architect', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptAgeMs: MINUTE, nowMs });
+    openExchangeTo('pm-workspace', PM_PROJECT, new Date(nowMs - 30 * MINUTE).toISOString());
+
+    const result = rotation.checkDeciderReachability(PM_PROJECT, deps({ wakeVerdict: () => ({ reason: 'engine-thread-unknown' }) }));
+    assert.equal(result.fired, true);
+    assert.ok(result.request.choices.some((c) => c.includes('architect') && c.includes(String(ARCHITECT_PROJECT))), JSON.stringify(result.request.choices));
+  });
+
+  it('a PM decider\'s fallback is the Operator when no architect role is active', () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-pm', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptAgeMs: MINUTE, nowMs });
+    openExchangeTo('pm-workspace', PM_PROJECT, new Date(nowMs - 30 * MINUTE).toISOString());
+
+    const result = rotation.checkDeciderReachability(PM_PROJECT, deps({ wakeVerdict: () => ({ reason: 'engine-thread-unknown' }) }));
+    assert.ok(result.request.choices.some((c) => c.toLowerCase().includes('operator')));
+  });
+
+  it('an architect decider\'s fallback is always the Operator', () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-arch', projectId: ARCHITECT_PROJECT, role: 'architect', note: null, now: START });
+    startDeciderSession(ARCHITECT_PROJECT, { receiptAgeMs: MINUTE, nowMs });
+    openExchangeTo('arch-workspace', ARCHITECT_PROJECT, new Date(nowMs - 30 * MINUTE).toISOString());
+
+    const result = rotation.checkDeciderReachability(ARCHITECT_PROJECT, deps({
+      medusaStatus: () => ({ workspaceId: 'arch-workspace' }),
+      wakeVerdict: () => ({ reason: 'engine-thread-unknown' })
+    }));
+    assert.equal(result.fired, true);
+    assert.ok(result.request.choices.some((c) => c.toLowerCase().includes('operator')));
+    assert.ok(!result.request.choices.some((c) => c.includes('architect')));
+  });
+
+  it('repeated ticks of the SAME outage episode replay into one open row, not several', () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptAgeMs: MINUTE, nowMs });
+    openExchangeTo('pm-workspace', PM_PROJECT, new Date(nowMs - 30 * MINUTE).toISOString());
+
+    const d = deps({ wakeVerdict: () => ({ reason: 'engine-thread-unknown' }) });
+    const first = rotation.checkDeciderReachability(PM_PROJECT, d);
+    const second = rotation.checkDeciderReachability(PM_PROJECT, d);
+    assert.equal(first.request.decisionId, second.request.decisionId);
+  });
+
+  it('a later, genuinely distinct outage (a different oldest-unread exchange) opens a fresh alert', () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptAgeMs: MINUTE, nowMs });
+    openExchangeTo('pm-workspace', PM_PROJECT, new Date(nowMs - 30 * MINUTE).toISOString());
+    const d = deps({ wakeVerdict: () => ({ reason: 'engine-thread-unknown' }) });
+    const first = rotation.checkDeciderReachability(PM_PROJECT, d);
+
+    // The first exchange gets answered/closed (simulated by directly marking
+    // it terminal), and a NEW, later one arrives — a distinct episode.
+    store.getDb().prepare("UPDATE medusa_exchanges SET terminal_at = ?, state = 'closed' WHERE recipient_workspace_id = 'pm-workspace'")
+      .run(new Date(nowMs - 1000).toISOString());
+    openExchangeTo('pm-workspace', PM_PROJECT, new Date(nowMs - 25 * MINUTE).toISOString());
+    const second = rotation.checkDeciderReachability(PM_PROJECT, d);
+
+    assert.notEqual(first.request.decisionId, second.request.decisionId);
+  });
+});
+
+describe('checkDeciderReachability — recovery closes the open alert (Acceptance Bullet 4)', () => {
+  it('closes the open alert once unread mail drains, with a recovery rationale', () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptAgeMs: MINUTE, nowMs });
+    openExchangeTo('pm-workspace', PM_PROJECT, new Date(nowMs - 30 * MINUTE).toISOString());
+    const d = deps({ wakeVerdict: () => ({ reason: 'engine-thread-unknown' }) });
+    const fired = rotation.checkDeciderReachability(PM_PROJECT, d);
+    assert.equal(fired.fired, true);
+
+    // Mail drains (closed), simulating the decider having answered/the mail being read).
+    store.getDb().prepare("UPDATE medusa_exchanges SET terminal_at = ?, state = 'closed' WHERE recipient_workspace_id = 'pm-workspace'")
+      .run(new Date(nowMs).toISOString());
+
+    const recovered = rotation.checkDeciderReachability(PM_PROJECT, d);
+    assert.equal(recovered.fired, false);
+    assert.equal(recovered.recovered, true);
+
+    const closedRequest = decisionRouting.getDecisionRequest(fired.request.decisionId);
+    assert.equal(closedRequest.state, decisionRouting.STATES.SUPERSEDED);
+    assert.match(closedRequest.auditRationale, /recovered/);
+  });
+
+  it('closes the open alert once wake and workload are both healthy again, even with no mail drain', () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptState: 'working', receiptAgeMs: 40 * MINUTE, nowMs });
+    openExchangeTo('pm-workspace', PM_PROJECT, new Date(nowMs - 30 * MINUTE).toISOString());
+    const fired = rotation.checkDeciderReachability(PM_PROJECT, deps({ wakeVerdict: () => ({ reason: 'idle' }) }));
+    assert.equal(fired.fired, true, JSON.stringify(fired));
+
+    // A fresh, current receipt lands (the session answered something), but
+    // the SAME old mail is still technically unread in this fixture — the
+    // recovery condition is "no longer (unread-past-bound AND (wake-unknown
+    // OR workload-expired))", so a current receipt alone clears it.
+    startDeciderSession(PM_PROJECT, { receiptState: 'working', receiptAgeMs: 0, nowMs }).session;
+    const recovered = rotation.checkDeciderReachability(PM_PROJECT, deps({ wakeVerdict: () => ({ reason: 'idle' }) }));
+    assert.equal(recovered.fired, false);
+  });
+
+  it('never re-closes an already-answered alert as a recovery (an Operator answer wins)', () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptAgeMs: MINUTE, nowMs });
+    openExchangeTo('pm-workspace', PM_PROJECT, new Date(nowMs - 30 * MINUTE).toISOString());
+    const d = deps({ wakeVerdict: () => ({ reason: 'engine-thread-unknown' }) });
+    const fired = rotation.checkDeciderReachability(PM_PROJECT, d);
+
+    const answered = decisionRouting.answerDecisionRequest(fired.request.decisionId, {
+      answer: fired.request.choices[0], answeredBySurface: 'operator', answeredByActor: 'operator',
+      expectedPromptDigest: fired.request.promptDigest
+    });
+    assert.equal(answered.ok, true);
+
+    store.getDb().prepare("UPDATE medusa_exchanges SET terminal_at = ?, state = 'closed' WHERE recipient_workspace_id = 'pm-workspace'")
+      .run(new Date(nowMs).toISOString());
+    const recovered = rotation.checkDeciderReachability(PM_PROJECT, d);
+    assert.equal(recovered.recovered, false, 'nothing open left to recover');
+
+    const stillAnswered = decisionRouting.getDecisionRequest(fired.request.decisionId);
+    assert.equal(stillAnswered.state, decisionRouting.STATES.ANSWERED);
+  });
+});

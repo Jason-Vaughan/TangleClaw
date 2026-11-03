@@ -277,6 +277,52 @@ describe('answerDecisionRequest', () => {
   });
 });
 
+describe('supersedeDecisionRequest (#2351: closes an alert the situation resolved, not an answer)', () => {
+  it('closes a live request as superseded, recording the reason as audit_rationale', () => {
+    const { result } = create();
+    const closed = decisionRouting.supersedeDecisionRequest(result.request.decisionId, { reason: 'decider recovered: mail drained' });
+    assert.equal(closed.ok, true);
+    assert.equal(closed.request.state, STATES.SUPERSEDED);
+    assert.equal(closed.request.auditRationale, 'decider recovered: mail drained');
+    assert.equal(closed.request.answer, null, 'a recovery closure is not an answer');
+    assert.equal(closed.request.answeredBySurface, null);
+  });
+
+  it('refuses a reason that is empty or not a string', () => {
+    const { result } = create();
+    const r1 = decisionRouting.supersedeDecisionRequest(result.request.decisionId, { reason: '' });
+    assert.equal(r1.ok, false);
+    assert.equal(r1.code, 'DECISION_ANSWER_INVALID');
+  });
+
+  it('is idempotent: superseding an already-superseded request replays, does not throw or re-write', () => {
+    const { result } = create();
+    const first = decisionRouting.supersedeDecisionRequest(result.request.decisionId, { reason: 'recovered' });
+    const second = decisionRouting.supersedeDecisionRequest(result.request.decisionId, { reason: 'recovered again' });
+    assert.equal(second.ok, true);
+    assert.equal(second.replay, true);
+    assert.equal(second.request.auditRationale, 'recovered', 'the replay does not overwrite the original reason');
+    assert.equal(first.request.auditRationale, second.request.auditRationale);
+  });
+
+  it('is a no-op (replay) on an already-answered request — recovery never overrides an actual answer', () => {
+    const { result } = create();
+    decisionRouting.answerDecisionRequest(result.request.decisionId, {
+      answer: 'yes', answeredBySurface: 'operator', answeredByActor: 'operator', expectedPromptDigest: result.request.promptDigest
+    });
+    const closed = decisionRouting.supersedeDecisionRequest(result.request.decisionId, { reason: 'recovered' });
+    assert.equal(closed.ok, true);
+    assert.equal(closed.replay, true);
+    assert.equal(closed.request.state, STATES.ANSWERED, 'an answered request stays answered');
+  });
+
+  it('refuses an unknown decision id', () => {
+    const closed = decisionRouting.supersedeDecisionRequest('dec_does_not_exist', { reason: 'recovered' });
+    assert.equal(closed.ok, false);
+    assert.equal(closed.code, 'DECISION_REQUEST_NOT_FOUND');
+  });
+});
+
 describe('listDecisionRequestsForSession', () => {
   it('lists only the given session\'s requests, newest first', () => {
     const { session: sessionA } = create();
