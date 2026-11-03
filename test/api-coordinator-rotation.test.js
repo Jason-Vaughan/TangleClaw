@@ -319,6 +319,53 @@ describe('API — every gated route answers the epoch gate (#2032)', () => {
       assert.notEqual(data && data.code, 'COORDINATOR_FENCED', `${r.method} ${url}`);
     }
   });
+
+  // The completeness half of the single-source-of-truth derivation (PRR-A,
+  // PR #2827 I-Gate R1): GATED above answers "is every ROUTE that declares a
+  // gatedAction actually fenced" -- it cannot answer "did a route that calls
+  // coordinatorGateRefused forget to declare one," because an undeclared
+  // route is invisible to a filter keyed on the declaration. A route in one
+  // of these families that still calls the gate directly but carries no
+  // gatedAction would silently vanish from GATED with nothing to catch it,
+  // exactly the failure mode #2034 item 5 set out to close in the first
+  // place, just moved one level up. Closing it behaviorally (actually
+  // calling every undeclared route as a fenced coordinator) would invoke
+  // real side effects for the ones below (a real session launch, a real
+  // session end) -- this instead requires every undeclared route in these
+  // families to carry a REASON, so a newly-gated route with no declaration
+  // fails this check immediately instead of silently passing by omission,
+  // and a genuinely new exemption is a one-line, reviewed addition naming
+  // why, not a silent gap.
+  const GATE_RELEVANT_FAMILIES = [
+    /^\/api\/sessions\/:project\/medusa\//, /^\/api\/master\/medusa\//, /^\/api\/control\/assignments/,
+    /^\/api\/session-rules/, /^\/api\/sessions\/:project(\/|$)/, /^\/api\/tc\/workload$/
+  ];
+  const KNOWN_UNGATED = {
+    'POST /api/session-rules/conflicts': 'a read: it checks text for conflicts and writes nothing',
+    'POST /api/sessions/:project': 'launching a session: during a relaunch rotation an unclaimed launch stays fenced by the gate itself; only the claim binds',
+    'DELETE /api/sessions/:project': 'ending a session is how a relaunch rotation begins; it dispatches nothing',
+    'POST /api/sessions/:project/launch/recovery-clear': 'the operator clears a launch-recovery requirement; no coordinator authority is exercised',
+    'POST /api/sessions/:project/launch/reconciliation': 'a read, sent as a POST only so the operator proof applies whole: it writes nothing, and it serves a signed-in operator only',
+    'POST /api/sessions/:project/wrap/cancel': 'stops a wrap before its commit step; it publishes and finalizes nothing'
+  };
+
+  it('every mutating route in the gate-relevant families either declares gatedAction or names a reason it does not', () => {
+    const undeclared = require('../server')._routePatterns()
+      .filter((r) => r.method !== 'GET' && GATE_RELEVANT_FAMILIES.some((f) => f.test(r.pattern)) && !(r.options && r.options.gatedAction));
+    for (const r of undeclared) {
+      const key = `${r.method} ${r.pattern}`;
+      assert.ok(KNOWN_UNGATED[key],
+        `${key} has no gatedAction and no exemption reason -- either declare gatedAction at its registration, `
+          + 'or add it to KNOWN_UNGATED above naming why it is genuinely not gated (reviewed, not silent)');
+    }
+    // And the reverse of the existing exemption-hygiene check: every reason
+    // above must still name a route that actually exists and is still
+    // undeclared -- a stale entry would otherwise hide a route that got
+    // gatedAction added later without the exemption being removed.
+    for (const key of Object.keys(KNOWN_UNGATED)) {
+      assert.ok(undeclared.some((r) => `${r.method} ${r.pattern}` === key), `${key} is stale: remove it or re-verify it is still ungated`);
+    }
+  });
 });
 
 describe('API — GET /api/tc/rotation answers a resumed coordinator with `latest` (#2032)', () => {
