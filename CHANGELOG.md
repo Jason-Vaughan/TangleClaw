@@ -4,6 +4,83 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.56.0] - 2026-11-02
+
+### Added
+- Hovering the Medusa heads control now shows the message Bridge's own installed version and
+  update status (e.g. "Medusa Bridge v1.0.0-rc2 (up-to-date)") in the tooltip, from the same
+  `/health` response `checkBridgeHealth()` already probes — carried on every status read, not
+  only right after a toggle (#1009).
+- `lib/check-watch.js` adds `ingestGitHubCiWebhookEvent(payload, opts)` and
+  `notifyCoordinatorAndArchitectOnCiStateChange(event, opts)`: when a PR's CI reaches a terminal
+  state (green `success`, or red `failure`/`cancelled`/`timed_out`), the coordinator and the
+  architect (each a `config.checkWatch`-named project with a live session, the same resolution
+  `workloadNudge.coordinatorProject` already uses) are sent a structured Medusa notice, idempotent
+  per (repo, PR, headSha, conclusion, role) so a replayed or duplicate webhook delivery never
+  spams duplicate notices. No HTTP webhook route is wired up yet — this is the ingestion entry
+  point a future route calls once it normalizes a raw GitHub payload (#1783).
+- A sender can now retract a Medusa message nobody has read yet: `POST <prefix>/messages/:hubId/retract`
+  (operator, a verified launch of the sending project, or a verified Master launch for what the Master
+  sent) and `tc message retract [--reason superseded|sent-in-error|no-longer-needed|other]
+  [--replacement <message-id>] <message-id>`. The exchange row and its facts are kept as a durable
+  tombstone — retraction is a terminal outcome, never a deletion — and is refused once the message has
+  been read, acknowledged or closed. A retracted message is cleared from a live recipient session's
+  local inbox, and a recipient already woken for it gets a best-effort system notice naming the
+  retraction and any replacement message id (#1873).
+- `lib/medusa-escalation-watchdog.js` adds opt-in delivery of Medusa escalations to an external
+  channel (a webhook, or ntfy), on top of the existing dashboard alert (#1839), which it never
+  weakens: disabling or misconfiguring the external adapter only stops the external send,
+  nothing about the local alert. A credential is a reference to an environment variable, never a
+  plaintext secret in config, and is read fresh at send time, never logged or stored. Each alert
+  is built only from structured exchange facts (ids, ages, codes, names) the dashboard already
+  uses, never message text, and is idempotent per `(exchangeId, escalationLevel)` with bounded
+  exponential backoff, so a duplicate tick or a failed attempt never pages twice for the same
+  still-open escalation. External delivery is opt-in and requires host integration (#1876).
+- Medusa wake now runs a periodic sweep of `medusa_deliveries` for every known
+  project, independent of `record()` — so a dormant project (every session
+  ended, nothing left to trigger the sweep) still has its ledger trimmed over
+  time (#2720).
+
+### Fixed
+- Medusa listener: a Bridge that keeps the socket open but stops answering
+  `listener_heartbeat` with `heartbeat_ack` is now detected and reconnected
+  (`HEARTBEAT_TIMEOUT`), instead of leaving the listener reporting `listening`
+  with nothing behind it (#1364).
+- Medusa wake: a tmux nudge whose Enter was lost is now resubmitted by pressing
+  Enter again over the same stranded text, the moment the receipt check sees
+  it still sitting unsubmitted — faster and cheaper than waiting for the
+  existing re-arm cycle to retype it. This is tmux resubmission, not an engine-native
+  receipt channel (#1621).
+- Closed the fleet-deadlock gap left by a missing semantic reply: a reply-required Medusa message can
+  no longer be marked handled (`POST <prefix>/read`) while the reply is still outstanding, and a lane
+  can no longer assert `state: complete` or `clearance: safe-to-clear` (`tc workload set`) while it owes
+  one — both now refuse (`REPLY_REQUIRED_BEFORE_ACK`, `WORKLOAD_OWED_REPLY_OUTSTANDING`) naming the
+  message id(s) still owed and the reply command to send. `GET <prefix>/exchanges` also accepts
+  `?role=recipient|sender|all` (aliasing and, for `all`, merging `?direction=`) so a caller can see
+  everything it owes and everything it sent in one read (#1976).
+- The dashboard's Medusa escalation banner now has a clickable "Open recipient" action
+  that opens the escalated exchange's recipient session directly, instead of requiring the
+  operator to transcribe the banner's text to an AI session by hand (#2137). The server-side
+  half of this issue — making the exchange itself discoverable to the recipient session via
+  `GET .../medusa/exchanges?role=recipient|all` — also ships in this release through PR #2813.
+- `lib/medusa.js#sendSystemMessage` now bounds its send to the Bridge with a 30s timeout
+  (`AbortSignal.timeout`, overridable via `timeoutMs`): a Bridge that accepts the connection and
+  never answers now settles as `BRIDGE_UNREACHABLE`, the same outcome an unreachable Bridge
+  already produced, instead of leaving an awaiting caller's pass stalled indefinitely (#2270).
+- Shared-document notice coalescing no longer stays permanently disabled once a reader's oldest
+  unread notice for a doc passes the staleness bound. `pendingNoticeAgeMs` measured staleness
+  against the OLDEST pending notice, so once one went stale every later edit re-sent (logging
+  "still coalescing past its staleness bound") and left yet another notice sitting alongside the
+  original stale one, which then dominated every future check forever — the exact unbounded-
+  duplicate-notice pattern seen as 54 duplicate notices to the Project Master. It now measures
+  against the NEWEST pending notice instead, so the moment a fresh resend exists, the next edit
+  coalesces against it (#2655).
+- `docs/medusa-delivery.md` no longer claims a plain `normal` Medusa send works without a launch
+  binding. `lib/launch-binding-guard.js` (#2233) refuses every unbound mutating request,
+  `POST <base>/send` included, and the sender-identity gate (#1865, #1875) separately requires
+  the caller's own verified identity to match the specific route being called — neither was
+  reflected in the doc's "who may claim what" table (#2663).
+
 ## [5.55.0] - 2026-11-02
 
 ### Added
