@@ -468,3 +468,59 @@ describe('checkGovernedRefreshDue — recovery', () => {
     assert.match(closed.auditRationale, /recovered/);
   });
 });
+
+describe('refreshMonitorTick — the recurring caller both checks above need (#2351/#2353 Critic BLOCKING)', () => {
+  afterEach(() => rotation.stopRefreshMonitor());
+
+  it('is empty when no project has an active coordinator role', async () => {
+    const results = await rotation.refreshMonitorTick(refreshDeps());
+    assert.deepEqual(results, {});
+  });
+
+  it('runs both checks for every project with an active coordinator role', async () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    store.coordinatorRoles.grant({ roleId: 'role-2', projectId: ARCHITECT_PROJECT, role: 'architect', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptState: 'complete', receiptAgeMs: MINUTE, nowMs });
+    startDeciderSession(ARCHITECT_PROJECT, { receiptState: 'complete', receiptAgeMs: MINUTE, nowMs });
+
+    const results = await rotation.refreshMonitorTick(refreshDeps());
+    assert.equal(results[PM_PROJECT].reachability.checked, true);
+    assert.equal(results[PM_PROJECT].refresh.checked, true);
+    assert.equal(results[ARCHITECT_PROJECT].reachability.checked, true);
+    assert.equal(results[ARCHITECT_PROJECT].refresh.checked, true);
+  });
+
+  it('skips a project with no active session without crashing the pass', async () => {
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    const results = await rotation.refreshMonitorTick(refreshDeps());
+    assert.equal(results[PM_PROJECT].reachability.reason, 'no active session');
+    assert.equal(results[PM_PROJECT].refresh.reason, 'no active session');
+  });
+
+  it('one project throwing does not stop the pass over the rest', async () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    store.coordinatorRoles.grant({ roleId: 'role-2', projectId: ARCHITECT_PROJECT, role: 'architect', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptState: 'complete', receiptAgeMs: MINUTE, nowMs });
+    startDeciderSession(ARCHITECT_PROJECT, { receiptState: 'complete', receiptAgeMs: MINUTE, nowMs });
+
+    let calls = 0;
+    const throwingMedusaStatus = () => {
+      calls += 1;
+      if (calls === 1) throw new Error('synthetic failure for the first project checked');
+      return { workspaceId: 'pm-workspace' };
+    };
+    const results = await rotation.refreshMonitorTick(refreshDeps({ medusaStatus: throwingMedusaStatus }));
+    const outcomes = Object.values(results);
+    assert.ok(outcomes.some((r) => r.error), 'the throwing project is recorded as an error, not silently dropped');
+    assert.ok(outcomes.some((r) => r.reachability && r.reachability.checked === true), 'the other project was still checked');
+  });
+
+  it('start/stop arm and clear the timer, idempotently', () => {
+    rotation.startRefreshMonitor({ intervalMs: 5000 });
+    rotation.startRefreshMonitor({ intervalMs: 5000 }); // second call is a no-op, not a second timer
+    rotation.stopRefreshMonitor();
+    rotation.stopRefreshMonitor(); // stopping twice is also a no-op
+  });
+});
