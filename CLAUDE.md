@@ -276,6 +276,7 @@ Critic findings.
 - inbox `GET <base>/medusa/messages`; mark handled `POST <base>/medusa/read` with `{"ids": ["<id>", ...]}`;
 - send (initiate or respond) `POST <base>/medusa/send` with `{"to": "<workspace-id>", "message": "..."}`;
 - every write (`/read`, `/send`, `/exchanges/.../close`) is refused without your launch headers, `x-tangleclaw-launch-id: $TANGLECLAW_LAUNCH_ID` and `x-tangleclaw-project-id: $TANGLECLAW_PROJECT_ID`; `tc message` sends them for you;
+- a coordinator (Architect, ProjectManager) bound to a rotation epoch (#2032) is answered only when the call also carries `x-tangleclaw-engine-thread`; only `tc message ...` sends that header, so a raw call following the routes above is refused once that coordinator has rotated — use `tc message` there, never a bare `curl`/`fetch`;
 - peers `GET <base>/medusa/roster`; why a peer has not picked up `GET <base>/medusa/peers/<workspace-id>`.
 - Resolve both placeholders at run time — they are launch facts, not repository facts, and this file is shared by every checkout:
 - `<api>` — the `TANGLECLAW_API` your launch exported.
