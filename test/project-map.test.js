@@ -195,21 +195,19 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
       assert.match(projects._buildSharedDirsSection(undefined), /not a member/);
     });
 
-    it('publishes NO group name, doc name, or path — only a count and a pointer', () => {
+    it('publishes NO group name, doc name, path, or count (#1705) — only a fixed pointer', () => {
       const md = projects._buildSharedDirsSection(IDENTIFYING);
       for (const leak of ['AI Inference', 'Tangle-Shared', 'LITELLM', 'DESIGN', '/abs/Web-API']) {
         assert.ok(!md.includes(leak), `section must not publish "${leak}": ${md}`);
       }
       assert.ok(!md.includes(os.homedir()), 'must not publish the home path');
       assert.ok(!md.includes('~/'), 'must not publish a path at all, tilde-relative or otherwise');
-      assert.match(md, /2 shared-doc groups/);
+      assert.ok(!/\d/.test(md), 'must not publish a count -- it differs between checkouts of one repository (#1705)');
       assert.match(md, /machine-local/);
     });
 
-    it('singularizes the count for one group', () => {
-      const md = projects._buildSharedDirsSection([IDENTIFYING[0]]);
-      assert.match(md, /1 shared-doc group\./);
-      assert.ok(!md.includes('AI Inference'));
+    it('renders the identical fixed sentence regardless of how many groups there are (#1705)', () => {
+      assert.equal(projects._buildSharedDirsSection(IDENTIFYING), projects._buildSharedDirsSection([IDENTIFYING[0]]));
     });
   });
 
@@ -259,14 +257,14 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
   });
 
   describe('_buildProjectMapContent with membership', () => {
-    it('reports the membership count without embedding any identifier', () => {
+    it('points at the TangleClaw UI without embedding any identifier or count (#1705)', () => {
       const p = path.join(tmpDir, 'content-with-groups');
       fs.mkdirSync(path.join(p, 'lib'), { recursive: true });
       const content = projects._buildProjectMapContent(p, [
         { name: 'GroupX', sharedDir: '/shared/x', docs: [{ name: 'DOC' }] }
       ]);
       assert.ok(content.includes('## Shared directories / doc groups'));
-      assert.match(content, /1 shared-doc group\./);
+      assert.match(content, /machine-local state/);
       for (const leak of ['GroupX', '/shared/x', '`DOC`']) {
         assert.ok(!content.includes(leak), `generated map must not embed "${leak}"`);
       }
@@ -274,7 +272,7 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
   });
 
   describe('updateProject — seeds PROJECT-MAP.md from real group membership', () => {
-    it('records the count on toggle-on without publishing membership', async () => {
+    it('points at the TangleClaw UI on toggle-on without publishing membership or its count (#1705)', async () => {
       const group = store.projectGroups.create({ name: 'PM Membership Group', sharedDir: '/abs/pm-shared' });
       const project = projects.createProject({ name: 'pm-with-membership' }).project;
       store.projectGroups.addMember(group.id, project.id);
@@ -283,10 +281,11 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
       await projects.updateProject('pm-with-membership', { projectMapEnabled: true });
 
       // End-to-end: real store membership, real seeded file on disk. The file is
-      // committed by managed projects, so it must carry the count and nothing that
-      // identifies the operator's other work.
+      // committed by managed projects, so it must carry nothing that identifies
+      // the operator's other work, or even counts it (#1705: a count differs
+      // between checkouts of one repository the same way a name would).
       const content = fs.readFileSync(path.join(project.path, projects.PROJECT_MAP_FILENAME), 'utf8');
-      assert.match(content, /1 shared-doc group\./, 'count reported');
+      assert.match(content, /machine-local state/, 'points at the UI, not a count');
       for (const leak of ['PM Membership Group', '/abs/pm-shared', 'NETWORK']) {
         assert.ok(!content.includes(leak), `seeded PROJECT-MAP.md must not contain "${leak}"`);
       }
@@ -430,12 +429,12 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
       assert.ok(!out.includes('gone/'), 'removed dir dropped');
     });
 
-    it('refreshes the shared-dir snapshot from current membership', () => {
+    it('refreshes the shared-dir snapshot from current membership, without ever rendering its count (#1705)', () => {
       const seed = '# Project Map\n\n## Structure\n\n- `lib/` — <!-- describe -->\n\n## Shared directories / doc groups\n\n<!-- This project is not a member of any shared-doc group. -->\n';
       const out = projects._refreshProjectMapContent(seed, ['lib'], [
         { name: 'Backend', sharedDir: '/abs/be', docs: [{ name: 'NET' }] }
       ]);
-      assert.match(out, /1 shared-doc group\./, 'count refreshed');
+      assert.match(out, /machine-local state/, 'placeholder replaced with the fixed pointer sentence');
       assert.ok(!out.includes('not a member'), 'placeholder replaced');
       for (const leak of ['Backend', '/abs/be', 'NET']) {
         assert.ok(!out.includes(leak), `refresh must not render "${leak}"`);
