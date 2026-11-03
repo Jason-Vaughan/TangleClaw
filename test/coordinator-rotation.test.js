@@ -1731,4 +1731,68 @@ describe('coordinator context rotation (#2032)', () => {
       assert.throws(() => row('d', 'reconciling'), /UNIQUE/);
     });
   });
+
+  describe('retention (#2034 item 2)', () => {
+    afterEach(() => {
+      // Restore each default so a later test file sharing this process isn't
+      // left running against the small retention this describe block sets.
+      store.coordinatorRotations._setRetention({ historical: 50 });
+      store.coordinatorRoles._setRetention({ historical: 50 });
+    });
+
+    /**
+     * Insert one minimal rotation row via the real store API (so `insert()`'s
+     * own prune-on-insert hook fires exactly as it does in production), at the
+     * given generation, immediately fenced -- the caller transitions it
+     * onward if the scenario needs a non-open state.
+     * @param {number} generation
+     * @returns {object} The stored rotation.
+     */
+    function insertRotation(generation) {
+      return store.coordinatorRotations.insert({
+        rotationId: `rot-ret-${generation}`, attemptKey: `ret-attempt-${generation}-0000`, projectId: project.id,
+        sessionId: session.id, launchId: 'l', engineId: 'codex', channelId: 1, sequenceId: 1, generation,
+        priorThreadId: 't', checkpointSchema: 1, checkpointDigest: 'd'.repeat(64), checkpoint: {}, inboxIds: [],
+        roleId: 'r', authorityVersion: 1, checkout: {}, github: [], now: new Date().toISOString()
+      });
+    }
+
+    it('insert() prunes historical rows beyond retention, but the highest generation is never a candidate even at retention 0', () => {
+      store.coordinatorRotations._setRetention({ historical: 2 });
+      const now = new Date().toISOString();
+      const r1 = insertRotation(1);
+      store.coordinatorRotations.updateIf(r1.rotationId, 'fenced', { state: 'active', completedAt: now }, { now });
+      const r2 = insertRotation(2); // ranks: r2(1,open) r1(2,active) -- neither beyond retention 2 yet
+      store.coordinatorRotations.updateIf(r2.rotationId, 'fenced', { state: 'active', completedAt: now }, { now });
+      const r3 = insertRotation(3); // ranks: r3(1,open) r2(2,active) r1(3,active) -- r1 is now rank 3, pruned
+      assert.equal(store.coordinatorRotations.get(r1.rotationId), null, 'the oldest active row beyond retention is pruned');
+      assert.ok(store.coordinatorRotations.get(r2.rotationId), 'still within retention');
+      assert.ok(store.coordinatorRotations.get(r3.rotationId), 'the open (highest-generation) row');
+
+      store.coordinatorRotations.updateIf(r3.rotationId, 'fenced', { state: 'active', completedAt: now }, { now });
+      store.coordinatorRotations.updateIf(r3.rotationId, 'active', { state: 'abandoned', completedAt: now, failureCode: 'abandoned', failureDetail: 'test' }, { now });
+      // r3 is now the project's highest generation, abandoned. Even an explicit
+      // sweep at retention 0 must not touch it -- it is what the gate reads as
+      // "latest" (latestForProject), never a candidate regardless of count.
+      const pruned = store.coordinatorRotations.prune(project.id, { historical: 0 });
+      assert.ok(!pruned.includes(r3.rotationId), 'the highest generation survives retention 0');
+      assert.ok(store.coordinatorRotations.get(r3.rotationId));
+    });
+
+    it('coordinator_roles retention keeps the active grant and prunes old revoked ones beyond retention', () => {
+      store.coordinatorRoles._setRetention({ historical: 1 });
+      // beforeEach already granted one role (the fixture's own grant()); two
+      // more grants revoke it, then revoke that one in turn.
+      const first = store.coordinatorRoles.getActiveForProject(project.id);
+      grant();
+      const second = store.coordinatorRoles.getActiveForProject(project.id);
+      grant();
+      const third = store.coordinatorRoles.getActiveForProject(project.id);
+      assert.equal(store.coordinatorRoles.get(first.roleId), null, 'pruned: revoked and beyond retention 1');
+      assert.ok(store.coordinatorRoles.get(second.roleId), 'the one revoked row retention keeps');
+      assert.equal(store.coordinatorRoles.get(second.roleId).status, 'revoked');
+      assert.ok(store.coordinatorRoles.get(third.roleId), 'the active grant');
+      assert.equal(store.coordinatorRoles.get(third.roleId).status, 'active');
+    });
+  });
 });
