@@ -129,8 +129,47 @@ describe('transcript (CC-4b #376, Codex #2074)', () => {
     });
   });
 
+  describe('_parseStoreTimestamp (bare SQLite UTC shape, I-Gate Round 2)', () => {
+    it('parses SQLite\'s own datetime(\'now\') shape as UTC, not local time', () => {
+      // The exact bug PRR-A caught: Date.parse('2026-11-03 09:00:00') reads
+      // local time on a non-UTC host (17:00:00Z on America/Los_Angeles), not
+      // the 09:00:00Z the string actually means. Asserting against the known
+      // millisecond value (not just "doesn't throw") makes this test fail the
+      // same way regardless of which TZ the suite itself runs under.
+      const ms = transcript._parseStoreTimestamp('2026-11-03 09:00:00');
+      assert.equal(ms, Date.parse('2026-11-03T09:00:00.000Z'));
+    });
+
+    it('parses a real ISO string (with its own zone) exactly as Date.parse would, unchanged', () => {
+      const iso = '2026-11-03T09:00:00.000Z';
+      assert.equal(transcript._parseStoreTimestamp(iso), Date.parse(iso));
+    });
+
+    it('returns NaN for null/undefined/non-string input, never throws', () => {
+      assert.ok(Number.isNaN(transcript._parseStoreTimestamp(null)));
+      assert.ok(Number.isNaN(transcript._parseStoreTimestamp(undefined)));
+      assert.ok(Number.isNaN(transcript._parseStoreTimestamp(12345)));
+      assert.ok(Number.isNaN(transcript._parseStoreTimestamp('')));
+    });
+  });
+
   describe('resolve (Codex adapter, #2074)', () => {
     const START = '2026-06-01T12:00:00.000Z';
+
+    it('resolves against a real SQLite-shaped session.startedAt/endedAt, not just ISO test fixtures (I-Gate Round 2)', () => {
+      // Real store rows carry 'YYYY-MM-DD HH:MM:SS', never the ISO strings
+      // every other test in this file uses for convenience. This is the one
+      // test that uses the store's own real shape end to end, so a future
+      // regression in _parseStoreTimestamp fails here even if every
+      // ISO-fixture test above it keeps passing (which, on a UTC CI host,
+      // they would — the bug is invisible unless the parsed value is checked
+      // against the real intended UTC instant).
+      const file = writeCodexRollout({ uuid: 'sqlite-shape-1', cwd: projectPath, startedAt: '2026-11-03T09:00:00.000Z' });
+      const hit = transcript.resolve('codex', projectPath, {
+        engineId: 'codex', startedAt: '2026-11-03 09:00:00', endedAt: '2026-11-03 09:10:00'
+      });
+      assert.equal(hit, file);
+    });
 
     it('resolves the cwd-matching rollout', () => {
       const file = writeCodexRollout({ uuid: 'aaaa-1111', cwd: projectPath, startedAt: START });
