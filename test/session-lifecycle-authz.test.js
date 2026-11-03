@@ -20,6 +20,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
+const crypto = require('node:crypto');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -242,6 +243,117 @@ describe('session-lifecycle caller-identity enforcement (#2129)', () => {
       assert.equal(res.body.code, 'LAUNCH_BINDING_INVALID');
       store.sessions.kill(first.sessionId, 'test cleanup');
       store.sessions.kill(second.sessionId, 'test cleanup');
+    });
+  });
+
+  describe('delegated lifecycle authority (#2824): a Fleet Coordinator/ProjectManager session named in a target\'s own open assignment', () => {
+    /**
+     * Grant `delegate`'s project lifecycle authority over `target` through a
+     * real open control assignment, as the operator — the same mechanism
+     * `lib/session-finalize.js`'s DELEGATED mode already honors. Each test
+     * closes what it opens (`closeAssignment`): a project may hold only one
+     * open assignment at a time, and these tests share `projectA`/`projectB`.
+     * @param {object} target - Project row the assignment governs
+     * @param {string[]} lifecycle - `authority.lifecycle`, as `project:<id>` strings
+     * @returns {Promise<string>} Assignment id
+     */
+    async function grantLifecycleAuthority(target, lifecycle) {
+      const res = await operatorRequest(server, 'POST', '/api/control/assignments', {
+        projectId: target.id, requestId: crypto.randomUUID(), issueRef: '#2824', authority: { lifecycle }
+      });
+      assert.equal(res.status, 201, JSON.stringify(res.body));
+      return res.body.assignment.assignmentId;
+    }
+
+    /**
+     * Close an assignment opened by {@link grantLifecycleAuthority}, directly
+     * at the store layer. The real `/close` route needs a genuinely
+     * signed-in operator (`signedInOperator`), which this bare test server
+     * (no login configured) cannot produce — this is test-fixture cleanup
+     * between cases sharing `projectA`/`projectB`, not something under test,
+     * the same way the "unreadable matrix" case below stubs the store
+     * directly rather than going through HTTP.
+     * @param {string} assignmentId
+     * @returns {void}
+     */
+    function closeAssignment(assignmentId) {
+      const row = store.control.getAssignment(assignmentId);
+      store.control.setAssignmentState(assignmentId, { state: 'closed', state_generation: row.state_generation + 1 });
+    }
+
+    it('a delegated coordinator may launch a member lane it does not own (never SESSION_LIFECYCLE_FORBIDDEN)', async () => {
+      const pmBound = bindProject(projectA);
+      const assignmentId = await grantLifecycleAuthority(projectB, [`project:${projectA.id}`]);
+      try {
+        const res = await request(server, 'POST', '/api/sessions/authz-b', {}, pmBound.headers);
+        assert.notEqual(res.status, 403, JSON.stringify(res.body));
+        assert.notEqual(res.body && res.body.code, 'SESSION_LIFECYCLE_FORBIDDEN');
+        if (res.status === 201) await operatorRequest(server, 'DELETE', '/api/sessions/authz-b', {});
+      } finally {
+        store.sessions.kill(pmBound.sessionId, 'test cleanup');
+        await closeAssignment(assignmentId);
+      }
+    });
+
+    it('a delegated coordinator may wrap a member lane it does not own (never SESSION_LIFECYCLE_FORBIDDEN)', async () => {
+      const pmBound = bindProject(projectA);
+      const targetBound = bindProject(projectB);
+      const assignmentId = await grantLifecycleAuthority(projectB, [`project:${projectA.id}`]);
+      try {
+        const res = await request(server, 'POST', '/api/sessions/authz-b/wrap', {}, pmBound.headers);
+        assert.notEqual(res.status, 403, JSON.stringify(res.body));
+        assert.notEqual(res.body && res.body.code, 'SESSION_LIFECYCLE_FORBIDDEN');
+      } finally {
+        store.sessions.kill(pmBound.sessionId, 'test cleanup');
+        store.sessions.kill(targetBound.sessionId, 'test cleanup');
+        await closeAssignment(assignmentId);
+      }
+    });
+
+    it('an assignment naming a DIFFERENT project still refuses the actual caller (403 SESSION_LIFECYCLE_FORBIDDEN)', async () => {
+      // projectA's assignment over authz-b names some other principal, not
+      // projectA itself: the grant must be read exactly, never "any open
+      // assignment on the target admits any coordinator".
+      const pmBound = bindProject(projectA);
+      const assignmentId = await grantLifecycleAuthority(projectB, ['project:999999']);
+      try {
+        const res = await request(server, 'POST', '/api/sessions/authz-b/wrap', {}, pmBound.headers);
+        assert.equal(res.status, 403);
+        assert.equal(res.body.code, 'SESSION_LIFECYCLE_FORBIDDEN');
+      } finally {
+        store.sessions.kill(pmBound.sessionId, 'test cleanup');
+        await closeAssignment(assignmentId);
+      }
+    });
+
+    it('the control layer itself refuses a project lifecycle authority over its own assignment — belt-and-suspenders with `allowOwnProject`', async () => {
+      const res = await operatorRequest(server, 'POST', '/api/control/assignments', {
+        projectId: projectA.id, requestId: crypto.randomUUID(), issueRef: '#2824',
+        authority: { lifecycle: [`project:${projectA.id}`] }
+      });
+      assert.equal(res.status, 400, JSON.stringify(res.body));
+      assert.equal(res.body.code, 'CONTROL_MALFORMED');
+    });
+
+    it('an unreadable target authority matrix answers 503 CONTROL_STATE_UNAVAILABLE, not a caller-blaming refusal', async () => {
+      const pmBound = bindProject(projectA);
+      const targetBound = bindProject(projectB);
+      const assignmentId = await grantLifecycleAuthority(projectB, [`project:${projectA.id}`]);
+      const origGetOpen = store.control.getOpenForProject;
+      store.control.getOpenForProject = (projectId) => {
+        const row = origGetOpen.call(store.control, projectId);
+        return row ? { ...row, authority_json: '{not json' } : row;
+      };
+      try {
+        const res = await request(server, 'POST', '/api/sessions/authz-b/wrap', {}, pmBound.headers);
+        assert.equal(res.status, 503, JSON.stringify(res.body));
+        assert.equal(res.body.code, 'CONTROL_STATE_UNAVAILABLE');
+      } finally {
+        store.control.getOpenForProject = origGetOpen;
+        store.sessions.kill(pmBound.sessionId, 'test cleanup');
+        store.sessions.kill(targetBound.sessionId, 'test cleanup');
+        await closeAssignment(assignmentId);
+      }
     });
   });
 });
