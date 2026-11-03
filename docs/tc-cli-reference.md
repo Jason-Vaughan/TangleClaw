@@ -54,6 +54,7 @@ The important distinction is: **new or unattested launch = `tc start next`; alre
 
 | Command | What it does |
 | --- | --- |
+| `tc help --json` | Prints the whole verb roster as a stable, machine-readable manifest (id, usage, summary per verb) -- for an agent to retrieve rather than parse the prose `tc --help` prints. |
 | `tc whoami` | Shows this pane's resolved project/session identity, TangleClaw location and available capabilities. |
 | `tc capabilities` | Lists enabled and disabled capabilities and the reason for each state. |
 | `tc sessions` | Lists every live TangleClaw session visible across projects, with its composed workload state. |
@@ -267,7 +268,7 @@ Only exit `0` means safe. Exit `3` means preserve; exit `4` means unknown. Neith
 | --- | --- |
 | `0` | The command answered successfully; for safety checks, confirm that the documented verdict also grants the intended action. |
 | `1` | Usage error (no verb, an unknown verb, a malformed command) or a missing session environment, such as `TANGLECLAW_API` not set. |
-| `2` | API unreachable from this execution context, API refusal/error, or action failure. This alone does not prove the TangleClaw server is down. `tc` also exits 2, sending nothing, when this shell's launch identity differs from the one recorded for the pane it runs in. |
+| `2` | API unreachable from this execution context, API refusal/error, or action failure. `tc` carries this as `API_UNREACHABLE_FROM_CONTEXT`: it is not proof the TangleClaw server is down -- a managed sandbox (a cloud agent's own, for one) can block localhost even while the host service is healthy. Before reporting an outage, have a host-context check made (the launchd state of `com.tangleclaw.server`, or a listening socket on the port) by the operator or the Project Master; until then, say the API was unreachable from here, and stop. `tc` also exits 2, sending nothing, when this shell's launch identity differs from the one recorded for the pane it runs in. |
 | `3` | Command-specific refusal/preserve result, notably `tc finalize` refusal/incomplete or `tc branch check` preserve. |
 | `4` | `tc branch check` could not prove safety. |
 

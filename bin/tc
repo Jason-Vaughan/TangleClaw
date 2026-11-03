@@ -32,7 +32,7 @@
  */
 
 const path = require('node:path');
-const { VERB_ROSTER, renderUsage, receiptVerbLabel, renderBodyTooLarge, renderControlBanner, bridgeCredentialHeader, readPaneEnvironment, judgePaneIdentity, readPaneStartCommand, renderPaneMismatch, requestTimeoutMs } = require(path.join(__dirname, '..', 'lib', 'tc-verbs.js'));
+const { VERB_ROSTER, renderUsage, renderFamilyHelp, receiptVerbLabel, renderBodyTooLarge, renderControlBanner, bridgeCredentialHeader, readPaneEnvironment, judgePaneIdentity, readPaneStartCommand, renderPaneMismatch, requestTimeoutMs } = require(path.join(__dirname, '..', 'lib', 'tc-verbs.js'));
 
 async function main() {
   const verb = process.argv[2];
@@ -47,6 +47,26 @@ async function main() {
   if (!entry) {
     process.stderr.write(`tc: unknown verb '${verb}'\n${renderUsage()}`);
     process.exit(1);
+  }
+
+  // Family help (#2070): `tc <verb> --help` answers from the roster entry
+  // itself, same as the top-level `tc --help` above, instead of running the
+  // verb — needs no environment, no server, and works for every verb the
+  // same way, since `usage`/`summary` are the one place this detail lives.
+  if (argv[0] === '--help' || argv[0] === '-h') {
+    process.stdout.write(renderFamilyHelp(entry));
+    process.exit(0);
+  }
+
+  // `tc help --json` (#2070): reads only VERB_ROSTER, so it answers the same
+  // way `--help` does above — before the environment check below, not after
+  // it. A caller discovering what `tc` can do should never need a live
+  // launch to ask.
+  if (verb === 'help') {
+    const result = await entry.run({ argv });
+    if (result.stdout) process.stdout.write(result.stdout);
+    if (result.stderr) process.stderr.write(result.stderr);
+    process.exit(result.code);
   }
 
   const api = process.env.TANGLECLAW_API;
