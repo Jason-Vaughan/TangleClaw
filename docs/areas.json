@@ -275,6 +275,7 @@
       "why": "The `tc` command line.",
       "paths": [
         "lib/tc-verbs.js",
+        "lib/operating-primer.js",
         "lib/routes/tc.js"
       ]
     },
