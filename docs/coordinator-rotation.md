@@ -217,6 +217,12 @@ than as "nothing there":
   The fingerprint hashes the whole tracked diff against HEAD, every untracked file (directories are
   expanded) and each declared important ignored file. It never reads an ignored dependency or build
   cache.
+
+  **Paths are resolved from the repository root, not the project's own directory.** When the project
+  lives in a subdirectory of its git repository, `ownedDirt` and `importantIgnored` paths (`.env` in
+  the example above) are still read relative to the repository's top level — the same place `git
+  status`/`git check-ignore` itself reports paths from — not relative to the project directory the
+  checkpoint was written against. Declare them repo-root-relative.
 - **GitHub.** `github` lists each issue or PR the coordinator's plan depends on, or `[]` when there
   are none, up to 100 facts. At prepare the server reads each one itself through `gh`, using
   `lib/github-facts.js`. A fact it cannot read, or one the checkpoint declares wrongly, refuses the
