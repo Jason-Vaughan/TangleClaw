@@ -197,6 +197,38 @@ describe('the state machine: only the documented forward edges are allowed', () 
     assert.equal(r.ok, true);
   });
 
+  it('an older failed wrap on the same source session cannot satisfy a NEW handoff\'s wrap-initiated transition (PRR-B I-Gate Round 3 Finding)', () => {
+    // Begin and finish a failed wrap FIRST -- the source stays active, the
+    // same real-world shape a crashed or refused pipeline leaves behind.
+    const old = wrapRunRegistry.begin(project.name, session.id);
+    wrapRunRegistry.finish(project.name, old.runId, { ok: false, error: 'simulated failure' });
+    assert.equal(store.sessions.get(session.id).status, 'active', 'sanity: the failed wrap never touched the source');
+
+    // A new handoff opens AFTER that failure -- its own baseline must
+    // exclude the old wrap's checkpoint.
+    const created = create();
+    const r = lh.recordWrapInitiated(created.handoff.handoffId);
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'LIFECYCLE_HANDOFF_NOT_INITIATED', 'the old wrap\'s own checkpoint must not satisfy a handoff opened after it failed');
+
+    // A genuinely NEW wrap, begun after the handoff, does satisfy it.
+    wrapRunRegistry.begin(project.name, session.id);
+    const r2 = lh.recordWrapInitiated(created.handoff.handoffId);
+    assert.equal(r2.ok, true);
+  });
+
+  it('an older finalize activity record on the same source session cannot satisfy a NEW handoff\'s wrap-initiated transition (PRR-B I-Gate Round 3 Finding)', () => {
+    store.activity.log({ projectId: project.id, sessionId: session.id, eventType: 'session.finalized', detail: {} });
+    const created = create({ transitionType: 'finalize' });
+    const r = lh.recordWrapInitiated(created.handoff.handoffId);
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'LIFECYCLE_HANDOFF_NOT_INITIATED', 'the old finalize record predates this handoff and must not satisfy it');
+
+    store.activity.log({ projectId: project.id, sessionId: session.id, eventType: 'session.finalized', detail: {} });
+    const r2 = lh.recordWrapInitiated(created.handoff.handoffId);
+    assert.equal(r2.ok, true);
+  });
+
   it('one-generation rule: a HOLD landing after checkpointing blocks every later step with GENERATION_MOVED', () => {
     const control = require('../lib/control-state');
     control.create({ projectId: project.id, requestId: 'req-2', issueRef: '#2073', authority: { hold: ['project:9'] } },
