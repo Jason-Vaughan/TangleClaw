@@ -377,3 +377,70 @@ describe('API — GET /api/tc/rotation answers a resumed coordinator with `lates
     assert.equal(data.body.binding.forwardedThread, 'new-thread');
   });
 });
+
+describe('API — currentGeneration agrees with the gate once the true latest rotation is abandoned (#2034 item 8)', () => {
+  let tempDir;
+  let server;
+  let port;
+  let project;
+  const LAUNCH = 'launch-abandoned-latest-1';
+
+  before(async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-rotation-abandoned-latest-'));
+    store._setBasePath(tempDir);
+    store.init();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-abandoned-latest-proj-'));
+    project = store.projects.create({ name: 'abandoned-latest-coordinator', path: dir, engine: 'codex' });
+    const sess = store.sessions.start({
+      projectId: project.id, engineId: 'codex', tmuxSession: 'tc-abandoned-latest', primePrompt: '',
+      launchSequence: { launchId: LAUNCH, pageBudget: 10000, applicability: 'not-applicable', notApplicableReason: 'test',
+        preflight: {}, sourceManifest: {}, steps: [] }
+    });
+    const now = new Date().toISOString();
+    // Generation 1 completes normally and stays active — an earlier, superseded epoch.
+    store.coordinatorRotations.insert({
+      rotationId: 'rot_abandoned_latest_g1', attemptKey: 'abandoned-latest-0001', projectId: project.id, sessionId: sess.id,
+      launchId: LAUNCH, engineId: 'codex', channelId: 1, sequenceId: 1, generation: 1, priorThreadId: 'thread-0',
+      checkpointSchema: 1, checkpointDigest: 'd'.repeat(64), checkpoint: { exchanges: [] }, inboxIds: [],
+      roleId: 'role_x', authorityVersion: 1, checkout: {}, github: [], now
+    });
+    store.coordinatorRotations.updateIf('rot_abandoned_latest_g1', 'fenced', { state: 'active', replacementThreadId: 'thread-1', completedAt: now }, { now });
+    // Generation 2 is the true latest (highest generation) — relaunched out of band, then
+    // abandoned by the operator to release its epoch binding (lib/coordinator-rotation.js abandon()).
+    store.coordinatorRotations.insert({
+      rotationId: 'rot_abandoned_latest_g2', attemptKey: 'abandoned-latest-0002', projectId: project.id, sessionId: sess.id,
+      launchId: LAUNCH, engineId: 'codex', channelId: 1, sequenceId: 1, generation: 2, priorThreadId: 'thread-1',
+      checkpointSchema: 1, checkpointDigest: 'e'.repeat(64), checkpoint: { exchanges: [] }, inboxIds: [],
+      roleId: 'role_x', authorityVersion: 1, checkout: {}, github: [], now
+    });
+    store.coordinatorRotations.updateIf('rot_abandoned_latest_g2', 'fenced', { state: 'active', replacementThreadId: 'thread-2', completedAt: now }, { now });
+    store.coordinatorRotations.updateIf('rot_abandoned_latest_g2', 'active', { state: 'abandoned', completedAt: now, failureCode: 'abandoned', failureDetail: 'released for test' }, { now });
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', () => { port = server.address().port; resolve(); }));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('reports generation 0 — matching the gate, which treats an abandoned latest as never-rotated — instead of falling back to the superseded generation 1', async () => {
+    assert.equal(store.coordinatorRotations.currentGeneration(project.id), 0, 'store-level: must not fall back to generation 1 just because it still carries state=active');
+    const data = await new Promise((resolve, reject) => {
+      const r = http.request({ hostname: '127.0.0.1', port, path: '/api/tc/rotation', method: 'GET', headers: {
+        'x-tangleclaw-cli': 'tc', 'x-tangleclaw-verb': 'rotation.show',
+        'x-tangleclaw-project-id': String(project.id), 'x-tangleclaw-launch-id': LAUNCH, 'x-tangleclaw-engine-thread': 'thread-2'
+      } }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) }));
+      });
+      r.on('error', reject);
+      r.end();
+    });
+    assert.equal(data.status, 200, JSON.stringify(data.body));
+    assert.equal(data.body.latest.state, 'abandoned');
+    assert.equal(data.body.generation, 0, 'the route must agree with the gate, not report the stale generation-1 epoch as current');
+  });
+});

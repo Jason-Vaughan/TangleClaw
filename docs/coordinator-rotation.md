@@ -337,7 +337,7 @@ binding or one that does not verify is refused earlier, with `403 LAUNCH_BINDING
 | `tc rotation resume --receipt <file>` | `POST /api/tc/rotation/resume` | Submit the receipt. `tc` fills in the rotation id, attempt key and generation from the server. |
 | — | `POST /api/tc/rotation/relaunch` `{rotationId}` | The operator's relaunch claim: launch the successor and bind exactly it. |
 | — | `GET /api/rotations` | The operator's read surface. |
-| — | `POST /api/tc/rotation/abandon` `{rotationId, reason}` | The operator ends a rotation that cannot finish. |
+| — | `POST /api/tc/rotation/abandon` `{rotationId, reason}` | The operator ends a rotation that cannot finish, or releases an `active` rotation's epoch binding (for example after the coordinator was relaunched without a governed rotation). |
 
 After a restart, the server resumes the driver for every rotation still `fenced` or `rebinding`.
 
