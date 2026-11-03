@@ -1032,40 +1032,40 @@
     <section class="section" id="next-sprint">
       <div class="section-header">
         <div>
-          <span class="section-tag">Section 07 · Active Sprint Guardrails &amp; Wave Reset Protocol</span>
-          <h2 class="section-title">6 Enforced Operational Guardrails During Sprint v5.56.0</h2>
+          <span class="section-tag">Section 07 · Recommended Next Sprint Plan &amp; Charter Guardrails (v5.57.0+)</span>
+          <h2 class="section-title">6 Actionable Recommendations &amp; Charter Guardrails for Sprint v5.57.0+</h2>
         </div>
       </div>
       <div class="grid-3">
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 01 · PRE-EDIT BASE-SHA VERIFICATION</span>
-          <h4>Verify Local HEAD Matches Charter Base SHA Before Any Edit</h4>
-          <p>Builders verify <code>git rev-parse HEAD</code> matches the wave base SHA before touching any file.</p>
+          <span class="pillar-num">NEXT SPRINT 01 · INTER-VERSION CHARTER ADDENDUM GATE</span>
+          <h4>Write &amp; Co-Sign Explicit Per-Version Charter Addendum at Each Wrap</h4>
+          <p>In multi-version sprints, require PM + Architect to publish a signed <code>Charter vN+1 Addendum</code> translating version <code>vN</code>'s wrap-report findings into explicit next-version guardrails before Wave 1 closes.</p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 02 · INTER-WAVE SESSION RESET (RULE #291 CL. 5)</span>
-          <h4>Finalize &amp; Relaunch Active Lanes Between Waves</h4>
-          <p>After a wave merges and branches are deleted on clean <code>main</code>, active Builder/PRR lanes run <code>tc finalize</code> + fresh launch so context never over-compacts.</p>
+          <span class="pillar-num">NEXT SPRINT 02 · WIRE STANDALONE MODULES INTO SERVER.JS</span>
+          <h4>Connect Shipped v5.54.0–v5.56.0 Library Primitives to Live Routes</h4>
+          <p>Wire standalone modules shipped across <code>v5.54.0–v5.56.0</code> (<code>#1554</code> untrusted PR review, <code>#1332/#1977</code> worktree/branch ownership, <code>#1621/#1783/#1876</code> inbox/CI/escalation helpers) into live <code>server.js</code> routes.</p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 03 · LIVE ROADMAP &amp; SPRINT REPORT AUTO-SYNC</span>
-          <h4>Update LANE_QUEUE.md at Every Dispatch, PR Open &amp; Merge</h4>
-          <p>Every wave transition in <code>LANE_QUEUE.md</code> immediately updates both the Roadmap Board and this live Sprint Report.</p>
+          <span class="pillar-num">NEXT SPRINT 03 · PRE-WAVE /API/USAGE/SESSIONS GATE (#2787)</span>
+          <h4>Automate Continuity Capsule &amp; Quota Checks Before Every Dispatch</h4>
+          <p>Query <code>GET /api/usage/sessions</code> (<code>#2787</code>) before each wave dispatch so any lane below <code>20%</code> context or <code>5%</code> weekly quota automatically triggers a continuity capsule or <code>Guardrail 07</code> reset.</p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 04 · SUBSYSTEM SIBLING TEST EXECUTION</span>
-          <h4>Run All Touched Subsystem Tests Locally Before Push</h4>
-          <p>Builders run all sibling tests for touched modules before pushing PR heads or review fixes.</p>
+          <span class="pillar-num">NEXT SPRINT 04 · AUTOMATED GH PR VIEW --JSON FILES SCOPE GATE</span>
+          <h4>Verify Exact PR File List Against Signed Scope Before R-Gate</h4>
+          <p>Keep the <code>v5.55.0 → v5.56.0</code> feed-forward check permanent: verify <code>gh pr view &lt;N&gt; --json files</code> matches the dispatch scope and excludes <code>.prawduct/change-log.md</code> before dispatching reviewers.</p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 05 · SINGLE HOST SUITE_SLOT COORDINATION</span>
-          <h4>One Full Local Suite at a Time via TC-Lane-INT</h4>
-          <p>Builders run targeted/staged tests while <code>TC-Lane-INT</code> serializes full pre-deploy local suite runs under <code>SUITE_SLOT</code>.</p>
+          <span class="pillar-num">NEXT SPRINT 05 · PROACTIVE W2 TRUTH-IN-LABELING</span>
+          <h4>Pre-Qualify Library vs. Route-Wired Scope in W2-REC &amp; W2-REL</h4>
+          <p>Preserve <code>v5.55.0</code> and <code>v5.56.0</code>'s Round 1 Wave 2 convergence by explicitly distinguishing live-wired endpoints from standalone library primitives in <code>FEATURES.md</code> and release docs.</p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 06 · THREE HONEST FINISH LINES AT W4-REL</span>
-          <h4>Code Released, Production Updated &amp; Feature Activated</h4>
-          <p>Release status documents report each finish line honestly with exact commit SHAs, backup hashes, and live readback receipts.</p>
+          <span class="pillar-num">NEXT SPRINT 06 · VALIDATOR CHECK AGAINST BOILERPLATE POST-MORTEMS</span>
+          <h4>Enforce Version-Specific Post-Mortem &amp; Next-Sprint Cards in Gate 4</h4>
+          <p>Enforce in <code>validate-sprint-report.py</code> that every sprint report and retrospective contains version-specific <code>#postmortem</code> and <code>#next-sprint</code> cards and an explicit <code>Total Run Time (Start → Finish)</code> KPI.</p>
         </div>
       </div>
     </section>

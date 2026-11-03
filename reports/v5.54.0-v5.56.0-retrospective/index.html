@@ -1038,40 +1038,40 @@
     <section class="section" id="next-sprint">
       <div class="section-header">
         <div>
-          <span class="section-tag">Section 07 · Active Sprint Guardrails &amp; Wave Reset Protocol</span>
-          <h2 class="section-title">6 Enforced Operational Guardrails During Sprint v5.56.0</h2>
+          <span class="section-tag">Section 07 · Cross-Version Feed-Forward Audit &amp; Next Sprint Plan (v5.57.0+)</span>
+          <h2 class="section-title">How v5.54.0 &amp; v5.55.0 Wrap Findings Fed Into v5.56.0 — and 6 Guardrails for v5.57.0+</h2>
         </div>
       </div>
       <div class="grid-3">
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 01 · PRE-EDIT BASE-SHA VERIFICATION</span>
-          <h4>Verify Local HEAD Matches Charter Base SHA Before Any Edit</h4>
-          <p>Builders verify <code>git rev-parse HEAD</code> matches the wave base SHA before touching any file.</p>
+          <span class="pillar-num">FEED-FORWARD 01 · v5.54.0 → v5.56.0 CODE SELF-HEAL</span>
+          <h4>INTV-V5540-01 Medusa Toggle-Off Diagnosed in Leg 1 &amp; Fixed in Leg 3</h4>
+          <p><code>TC-Lane-Obsr</code> diagnosed the <code>server.js:5478</code> / <code>public/api-helper.js:3943</code> toggle-off bug during <code>v5.54.0</code>; PM fed the fix directly into <code>v5.56.0</code> Wave 1 (<code>PR #2808</code> &amp; <code>PR #2813</code>).</p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 02 · INTER-WAVE SESSION RESET (RULE #291 CL. 5)</span>
-          <h4>Finalize &amp; Relaunch Active Lanes Between Waves</h4>
-          <p>After a wave merges and branches are deleted on clean <code>main</code>, active Builder/PRR lanes run <code>tc finalize</code> + fresh launch so context never over-compacts.</p>
+          <span class="pillar-num">FEED-FORWARD 02 · v5.54.0 → v5.55.0/v5.56.0 MERGE DISCIPLINE</span>
+          <h4>Rule #282 True Merge Enforcement (1 Squash Breach → 12/12 True Merges)</h4>
+          <p>After <code>PR #2801</code> in <code>v5.54.0</code> was squash-merged, <code>v5.54.0</code>'s audit enforced <code>merge_method=merge</code> across <code>v5.55.0</code> (<code>6/6</code>) and <code>v5.56.0</code> (<code>6/6</code>) with zero repeat breaches.</p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 03 · LIVE ROADMAP &amp; SPRINT REPORT AUTO-SYNC</span>
-          <h4>Update LANE_QUEUE.md at Every Dispatch, PR Open &amp; Merge</h4>
-          <p>Every wave transition in <code>LANE_QUEUE.md</code> immediately updates both the Roadmap Board and this live Sprint Report.</p>
+          <span class="pillar-num">FEED-FORWARD 03 · v5.54.0 → v5.55.0/v5.56.0 ROUND 1 WAVE 2</span>
+          <h4>Proactive Standalone-Module Qualifications in W2-REC &amp; W2-REL</h4>
+          <p>After <code>v5.54.0</code> <code>W2-REL</code> (<code>PR #2810</code>) needed Round 2 to qualify standalone <code>#1554</code>, pre-qualifying standalone modules in <code>v5.55.0</code> and <code>v5.56.0</code> achieved Round 1 <code>ACCEPT</code> on all Wave 2 PRs.</p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 04 · SUBSYSTEM SIBLING TEST EXECUTION</span>
-          <h4>Run All Touched Subsystem Tests Locally Before Push</h4>
-          <p>Builders run all sibling tests for touched modules before pushing PR heads or review fixes.</p>
+          <span class="pillar-num">FEED-FORWARD 04 · v5.55.0 → v5.56.0 R-GATE SCOPE CHECK</span>
+          <h4>Verify gh pr view --json files Before Every R-Gate Dispatch</h4>
+          <p>After <code>v5.55.0</code> <code>PR #2811</code> Round 8 hit a stale scope-list mismatch, verifying <code>gh pr view &lt;N&gt; --json files</code> before R-Gate dispatches eliminated scope rejections in <code>v5.56.0</code> (<code>0</code> mismatches).</p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 05 · SINGLE HOST SUITE_SLOT COORDINATION</span>
-          <h4>One Full Local Suite at a Time via TC-Lane-INT</h4>
-          <p>Builders run targeted/staged tests while <code>TC-Lane-INT</code> serializes full pre-deploy local suite runs under <code>SUITE_SLOT</code>.</p>
+          <span class="pillar-num">NEXT SPRINT 05 · FORMAL INTER-VERSION CHARTER ADDENDUM</span>
+          <h4>Publish Signed Charter Addendum (v1.1 / v1.2) at Each Version Wrap</h4>
+          <p>Because <code>Charter A493 v1.0</code> was written once upfront and <code>Guardrail 06</code> pipelined Wave 1 cars early, future multi-version sprints must publish a formal <code>Charter vN+1 Addendum</code> at each version wrap.</p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 06 · THREE HONEST FINISH LINES AT W4-REL</span>
-          <h4>Code Released, Production Updated &amp; Feature Activated</h4>
-          <p>Release status documents report each finish line honestly with exact commit SHAs, backup hashes, and live readback receipts.</p>
+          <span class="pillar-num">NEXT SPRINT 06 · VALIDATOR CHECK ON POST-MORTEM &amp; NEXT-SPRINT</span>
+          <h4>Reject Generic Template Cards in #postmortem &amp; #next-sprint</h4>
+          <p><code>validate-sprint-report.py</code> now enforces both the <code>Total Run Time (Start → Finish)</code> KPI card and version-specific (non-boilerplate) cards in <code>#postmortem</code> and <code>#next-sprint</code>.</p>
         </div>
       </div>
     </section>

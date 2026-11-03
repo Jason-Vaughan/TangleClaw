@@ -791,41 +791,41 @@
       </div>
       <div class="grid-2" style="margin-bottom:22px;">
         <div>
-          <h3 style="margin-bottom:12px;color:var(--green);">✅ What Worked Exceptionally Well (Active Guardrails)</h3>
+          <h3 style="margin-bottom:12px;color:var(--green);">✅ What Worked Exceptionally Well in v5.55.0 (Fed Forward From v5.54.0)</h3>
           <div class="pm-item">
-            <h4>1. Deterministic Pre-Sprint Fleet Reset &amp; Clean Clones</h4>
-            <p>All 10 fleet clones verified on clean <code>main</code> with 1 branch and 1 worktree prior to Wave 1 dispatch, with <code>LANE_QUEUE.md</code> archived and reset below 6 KB.</p>
+            <h4>1. 3 of 4 Wave 1 PRs Merged Within 180 Seconds of v5.54.0 Going Live</h4>
+            <p>Because <code>Guardrail 06</code> pipelined <code>PR #2803</code>, <code>PR #2804</code>, and <code>PR #2806</code> during <code>v5.54.0</code> Wave 1, all 3 merged to <code>main</code> between <code>22:14:14Z</code> and <code>22:14:52Z</code> (less than 3 minutes after <code>v5.54.0</code> deployed on <code>:3102</code>).</p>
           </div>
           <div class="pm-item">
-            <h4>2. Automatic Real-Time Sprint Report &amp; Roadmap Board Tracking</h4>
-            <p><code>reconcile-milestones.py</code> and <code>sync-live-sprint.py</code> automatically update both the Roadmap Board and this live Sprint Report as waves move from Dispatched to In Review to Merged.</p>
+            <h4>2. 100% True Merge Commits Restored After v5.54.0 Audit (6/6 PRs)</h4>
+            <p>Applying the <code>v5.54.0</code> Row #11 fix, all 6 <code>v5.55.0</code> PRs (<code>#2803, #2804, #2806, #2811, #2812, #2814</code>) landed via true merge commits (<code>merge_method=merge</code>) with <code>0</code> Rule #282 breaches.</p>
           </div>
           <div class="pm-item">
-            <h4>3. Builder Bypass Mode &amp; Calibrated Codex Medium Effort</h4>
-            <p><code>TC-Lane-A..D</code> run in <code>bypassPermissions</code> mode to prevent interactive prompt stalls, while Codex lanes run on <code>medium</code> effort to preserve quota longevity.</p>
+            <h4>3. Round 1 W2-REC (#2812) &amp; W2-REL (#2814) Convergence via Truth-in-Labeling</h4>
+            <p>Applying the <code>v5.54.0</code> <code>PR #2810</code> lesson, <code>TC-Lane-INT</code> proactively qualified standalone modules (<code>#1332, #1710, #1977</code>) in both <code>W2-REC</code> and <code>W2-REL</code>, passing <code>A-Gate</code>, <code>R-Gate</code>, and <code>O-Gate</code> on Round 1.</p>
           </div>
           <div class="pm-item">
-            <h4>4. Inter-Wave Session Reset Guardrail</h4>
-            <p>Active lanes run <code>tc finalize</code> + fresh session launch at wave boundaries so no session accumulates stale context or hits mid-wave auto-compaction.</p>
+            <h4>4. Zero Operator Interventions &amp; Zero Post-Ready CI Reds</h4>
+            <p><code>v5.55.0</code> completed in <code>1h 31m</code> total leg time (<code>75m</code> merge window) with <code>0</code> Operator interventions, <code>0</code> git conflicts, and <code>0</code> post-ready CI failures across all 6 PRs.</p>
           </div>
         </div>
         <div>
-          <h3 style="margin-bottom:12px;color:var(--amber);">⚠️ What Didn't Work Previously &amp; Active Fixes Enforced Now</h3>
+          <h3 style="margin-bottom:12px;color:var(--amber);">⚠️ What Didn't Work in v5.55.0 &amp; Fixes Fed Forward to v5.56.0</h3>
           <div class="pm-item warn">
-            <h4>1. Hardcoded Issue Ceiling (&lt; 2600) &amp; Missing Audit Entries Hid Live Progress</h4>
-            <p>Previously, <code>reconcile-milestones.py</code> filtered out issues <code>&gt;= 2600</code> and omitted full-release <code>progress_audits</code> entries. <strong>Fix / Guardrail (Rule #283.5):</strong> Removed the issue number ceiling and wired full-release <code>progress_audits</code> + <code>sync-live-sprint.py</code> into <code>sync-board.sh</code>.</p>
+            <h4>1. Top-Level Store Require in Update-Applier Tripped Carrier Isolation (PR #2806 R1)</h4>
+            <p>Top-level <code>require('./checkout-freshness')</code> in <code>lib/update-applier.js</code> transitively loaded <code>lib/store.js</code>, tripping <code>test/update-applier-managed-carrier.test.js</code>. <strong>Fix / Guardrail:</strong> Moved store-backed helper to a lazy require inside the execution seam.</p>
           </div>
           <div class="pm-item warn">
-            <h4>2. Interactive Permission Prompts Stalled Unattended Builder Lanes</h4>
-            <p>Builders in interactive permission mode could park on selector dialogs. <strong>Fix / Guardrail (Rule #291):</strong> Verified <code>bypassPermissions</code> mode across all 4 Builder lanes before Wave 1 start gate.</p>
+            <h4>2. Whole-File Refusal-Code Regex Matched Non-Interactive Helpers (PR #2806 R1)</h4>
+            <p><code>test/update-prompt-guards.test.js</code> scanned all of <code>lib/update-applier.js</code> for refusal codes. <strong>Fix / Guardrail:</strong> Scoped <code>applierCodes()</code> to the interactive CLI function boundary and included guard tests in car scopes.</p>
           </div>
           <div class="pm-item warn">
-            <h4>3. High-Effort Codex Quota Burn Across Multi-Wave Sprints</h4>
-            <p>Running Codex reviewers and integrator on max effort burned weekly quota early. <strong>Fix / Guardrail:</strong> Standardized <code>TC-Lane-INT</code>, <code>PRR-A</code>, and <code>PRR-B</code> on <code>medium</code> effort.</p>
+            <h4>3. Stale R-Gate Scope List in Round 8 Dispatch Delayed PR #2811</h4>
+            <p><code>PR #2811</code> Round 8 received an initial <code>R-Gate REJECT</code> because the PM dispatch message listed an outdated 9-file list instead of the actual 9 files on <code>7f607301</code>. <strong>Fix / Guardrail Fed Forward to v5.56.0:</strong> Verified <code>gh pr view --json files</code> before every <code>R-Gate</code> dispatch in <code>v5.56.0</code> (<code>0</code> scope-list rejections in <code>v5.56.0</code>).</p>
           </div>
           <div class="pm-item warn">
-            <h4>4. Mid-Sprint Context Compaction Degraded Late-Wave Turn Speed</h4>
-            <p>Long multi-wave sessions risked auto-compaction during W3/W4. <strong>Fix / Guardrail (Rule #291 cl. 5):</strong> Enforce inter-wave <code>tc finalize</code> + fresh relaunch between waves once branches are merged and deleted.</p>
+            <h4>4. No Formal Inter-Version Charter Addendum Written Between v5.54.0 and v5.55.0</h4>
+            <p>Because <code>Guardrail 06</code> pipelined <code>v5.55.0</code> Wave 1 during <code>v5.54.0</code> Wave 1 under single <code>Charter A493 v1.0</code>, feed-forward fixes were applied in dispatch prompts rather than a signed <code>Charter A493 v1.1</code> addendum. <strong>Fix / Guardrail (Rule #285):</strong> Require an explicit inter-version Charter Addendum at each version boundary.</p>
           </div>
         </div>
       </div>
@@ -1029,40 +1029,40 @@
     <section class="section" id="next-sprint">
       <div class="section-header">
         <div>
-          <span class="section-tag">Section 07 · Active Sprint Guardrails &amp; Wave Reset Protocol</span>
-          <h2 class="section-title">6 Enforced Operational Guardrails During Sprint v5.55.0</h2>
+          <span class="section-tag">Section 07 · v5.55.0 Wrap Recommendations &amp; Feed-Forward Into v5.56.0</span>
+          <h2 class="section-title">6 Actionable Improvements Fed Forward From v5.55.0 Wrap Into Leg 3 (v5.56.0)</h2>
         </div>
       </div>
       <div class="grid-3">
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 01 · PRE-EDIT BASE-SHA VERIFICATION</span>
-          <h4>Verify Local HEAD Matches Charter Base SHA Before Any Edit</h4>
-          <p>Builders verify <code>git rev-parse HEAD</code> matches the wave base SHA before touching any file.</p>
+          <span class="pillar-num">FEED-FORWARD 01 · EXACT PR FILE-LIST PRE-CHECK</span>
+          <h4>Verify gh pr view --json files Before Every R-Gate Dispatch</h4>
+          <p>After <code>PR #2811</code> Round 8's stale scope list caused an extra R-Gate round, verify the exact changed file list via <code>gh pr view &lt;N&gt; --json files</code> before dispatching <code>PRR-A</code>/<code>PRR-B</code> in <code>v5.56.0</code> (achieved <code>0</code> scope mismatches in <code>v5.56.0</code>).</p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 02 · INTER-WAVE SESSION RESET (RULE #291 CL. 5)</span>
-          <h4>Finalize &amp; Relaunch Active Lanes Between Waves</h4>
-          <p>After a wave merges and branches are deleted on clean <code>main</code>, active Builder/PRR lanes run <code>tc finalize</code> + fresh launch so context never over-compacts.</p>
+          <span class="pillar-num">FEED-FORWARD 02 · RULE #273 .PRAWDUCT/CHANGE-LOG.MD EXCLUSION</span>
+          <h4>Keep .prawduct/change-log.md Strictly Reserved for W2-REC</h4>
+          <p>Ensure <code>v5.56.0</code> Wave 1 feature PRs (<code>#2805, #2807, #2808, #2813</code>) do not touch <code>.prawduct/change-log.md</code> so <code>W2-REC</code> (<code>PR #2815</code>) reconciles all 12 issues conflict-free.</p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 03 · LIVE ROADMAP &amp; SPRINT REPORT AUTO-SYNC</span>
-          <h4>Update LANE_QUEUE.md at Every Dispatch, PR Open &amp; Merge</h4>
-          <p>Every wave transition in <code>LANE_QUEUE.md</code> immediately updates both the Roadmap Board and this live Sprint Report.</p>
+          <span class="pillar-num">FEED-FORWARD 03 · LISTENER-OFF WORKSPACEID FALLBACK (#2813)</span>
+          <h4>Fall Back to medusaRegistry.getWorkspaceId When Listener Is Stopped</h4>
+          <p>Ensure <code>lib/workload.js</code> and <code>server.js</code> (<code>/exchanges?role=all</code> and <code>/medusa/read</code> Ack Gate) resolve <code>workspaceId</code> from the registry even when a session's Medusa listener is off.</p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 04 · SUBSYSTEM SIBLING TEST EXECUTION</span>
-          <h4>Run All Touched Subsystem Tests Locally Before Push</h4>
-          <p>Builders run all sibling tests for touched modules before pushing PR heads or review fixes.</p>
+          <span class="pillar-num">FEED-FORWARD 04 · ROUND 1 WAVE 2 CONVERGENCE</span>
+          <h4>Carry Standalone Module Qualifications Into v5.56.0 W2-REC &amp; W2-REL</h4>
+          <p>Qualify standalone/unwired modules (<code>#1621, #1783, #1876</code>) upfront in <code>PR #2815</code> (<code>V5560-W2-REC</code>) and <code>PR #2816</code> (<code>V5560-W2-REL</code>) so both pass all gates on Round 1.</p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 05 · SINGLE HOST SUITE_SLOT COORDINATION</span>
-          <h4>One Full Local Suite at a Time via TC-Lane-INT</h4>
-          <p>Builders run targeted/staged tests while <code>TC-Lane-INT</code> serializes full pre-deploy local suite runs under <code>SUITE_SLOT</code>.</p>
+          <span class="pillar-num">FEED-FORWARD 05 · INSTANT V5.56.0 WAVE 1 MERGE CADENCE</span>
+          <h4>Merge Pre-Reviewed v5.56.0 Cars (#2805, #2807, #2808) Right After v5.55.0 Gate 3</h4>
+          <p>With 3 of 4 <code>v5.56.0</code> Wave 1 PRs already green at <code>v5.55.0</code> Gate 3, merge all 3 within 95 seconds of <code>v5.55.0</code> deploying on <code>:3102</code>, compressing <code>v5.56.0</code>'s merge window to <code>25m</code>.</p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 06 · THREE HONEST FINISH LINES AT W4-REL</span>
-          <h4>Code Released, Production Updated &amp; Feature Activated</h4>
-          <p>Release status documents report each finish line honestly with exact commit SHAs, backup hashes, and live readback receipts.</p>
+          <span class="pillar-num">FEED-FORWARD 06 · INTER-VERSION CHARTER ADDENDUM GATE</span>
+          <h4>Publish Explicit Per-Version Charter Addendum Between Multi-Sprint Legs</h4>
+          <p>In future multi-version sprints, publish a formal <code>Charter vN+1 Addendum</code> at each version wrap so wrap-report improvements are codified in the charter document before the next version closes Wave 1.</p>
         </div>
       </div>
     </section>

@@ -791,41 +791,41 @@
       </div>
       <div class="grid-2" style="margin-bottom:22px;">
         <div>
-          <h3 style="margin-bottom:12px;color:var(--green);">✅ What Worked Exceptionally Well (Active Guardrails)</h3>
+          <h3 style="margin-bottom:12px;color:var(--green);">✅ What Worked Exceptionally Well in v5.54.0</h3>
           <div class="pm-item">
-            <h4>1. Deterministic Pre-Sprint Fleet Reset &amp; Clean Clones</h4>
-            <p>All 10 fleet clones verified on clean <code>main</code> with 1 branch and 1 worktree prior to Wave 1 dispatch, with <code>LANE_QUEUE.md</code> archived and reset below 6 KB.</p>
+            <h4>1. Guardrail 07 Live Codex 0% Free Weekly Reset (1% → 0% → 100%)</h4>
+            <p>Codex lanes started <code>v5.54.0</code> at <code>1%</code> weekly quota, hit <code>0%</code> mid-Wave 1, and autonomously redeemed the free weekly reset via <code>/usage</code> (<code>Redeem reset → Yes, use reset</code>), restoring <code>100%</code> weekly quota without pausing the sprint.</p>
           </div>
           <div class="pm-item">
-            <h4>2. Automatic Real-Time Sprint Report &amp; Roadmap Board Tracking</h4>
-            <p><code>reconcile-milestones.py</code> and <code>sync-live-sprint.py</code> automatically update both the Roadmap Board and this live Sprint Report as waves move from Dispatched to In Review to Merged.</p>
+            <h4>2. Guardrail 06 Cross-Version Wave Pipelining Into v5.55.0</h4>
+            <p>As soon as <code>TC-Lane-B</code> (<code>PR #2799</code>), <code>TC-Lane-C</code> (<code>PR #2800</code>), and <code>TC-Lane-D</code> (<code>PR #2802</code>) cleared their <code>v5.54.0</code> cars, they were immediately pipelined into <code>v5.55.0</code> Wave 1 (<code>PR #2803, #2804, #2806</code>), eliminating idle Builder wait time.</p>
           </div>
           <div class="pm-item">
-            <h4>3. Builder Bypass Mode &amp; Calibrated Codex Medium Effort</h4>
-            <p><code>TC-Lane-A..D</code> run in <code>bypassPermissions</code> mode to prevent interactive prompt stalls, while Codex lanes run on <code>medium</code> effort to preserve quota longevity.</p>
+            <h4>3. Guardrail 10 100% Remote Testament 0.34.0 Pool Verification</h4>
+            <p>All 6 <code>v5.54.0</code> PRs (<code>#2799, #2800, #2801, #2802, #2809, #2810</code>) executed test suites on the remote Testament 0.34.0 pool with recorded Run IDs, preventing local CPU/RAM contention.</p>
           </div>
           <div class="pm-item">
-            <h4>4. Inter-Wave Session Reset Guardrail</h4>
-            <p>Active lanes run <code>tc finalize</code> + fresh session launch at wave boundaries so no session accumulates stale context or hits mid-wave auto-compaction.</p>
+            <h4>4. In-Place Coordinator Session Continuity (&lt;3% Context Load)</h4>
+            <p><code>TC-LANE-PM-CONTINUITY-G1</code> executed an in-place <code>/clear</code> and generation-bound continuity capsule re-entry at <code>&lt;3%</code> context load with zero lost sprint state.</p>
           </div>
         </div>
         <div>
-          <h3 style="margin-bottom:12px;color:var(--amber);">⚠️ What Didn't Work Previously &amp; Active Fixes Enforced Now</h3>
+          <h3 style="margin-bottom:12px;color:var(--amber);">⚠️ What Didn't Work in v5.54.0 &amp; Fixes Fed Forward to v5.55.0 / v5.56.0</h3>
           <div class="pm-item warn">
-            <h4>1. Hardcoded Issue Ceiling (&lt; 2600) &amp; Missing Audit Entries Hid Live Progress</h4>
-            <p>Previously, <code>reconcile-milestones.py</code> filtered out issues <code>&gt;= 2600</code> and omitted full-release <code>progress_audits</code> entries. <strong>Fix / Guardrail (Rule #283.5):</strong> Removed the issue number ceiling and wired full-release <code>progress_audits</code> + <code>sync-live-sprint.py</code> into <code>sync-board.sh</code>.</p>
+            <h4>1. Accidental Single-Click Medusa Listener Toggle-Off (INTV-V5540-01)</h4>
+            <p>At <code>19:13:43Z</code>, a bodyless <code>POST /api/sessions/TC-Lane-PM/medusa/toggle</code> stopped <code>TC-Lane-PM</code>'s listener during continuity handoff. <strong>Fix / Guardrail Fed Forward:</strong> Diagnosed in <code>server.js:5478</code> &amp; <code>public/api-helper.js:3943</code> and injected directly into <code>v5.56.0</code> Wave 1 (<code>PR #2808</code> &amp; <code>PR #2813</code>).</p>
           </div>
           <div class="pm-item warn">
-            <h4>2. Interactive Permission Prompts Stalled Unattended Builder Lanes</h4>
-            <p>Builders in interactive permission mode could park on selector dialogs. <strong>Fix / Guardrail (Rule #291):</strong> Verified <code>bypassPermissions</code> mode across all 4 Builder lanes before Wave 1 start gate.</p>
+            <h4>2. PR #2801 Squash-Merged Instead of True Merge Commit (Rule #282 Breach)</h4>
+            <p><code>TC-Lane-INT</code> merged <code>PR #2801</code> (<code>6a48afa4</code>) with <code>squash</code> instead of <code>merge_method=merge</code>. <strong>Fix / Guardrail Fed Forward to v5.55.0:</strong> Enforced explicit <code>merge_method=merge</code> verification on every merge call — resulting in <code>12/12</code> (<code>100%</code>) true merge commits across <code>v5.55.0</code> and <code>v5.56.0</code>.</p>
           </div>
           <div class="pm-item warn">
-            <h4>3. High-Effort Codex Quota Burn Across Multi-Wave Sprints</h4>
-            <p>Running Codex reviewers and integrator on max effort burned weekly quota early. <strong>Fix / Guardrail:</strong> Standardized <code>TC-Lane-INT</code>, <code>PRR-A</code>, and <code>PRR-B</code> on <code>medium</code> effort.</p>
+            <h4>3. Default-Server tmux Contention in Route Unit Tests (PR #2802 R3 CI Red)</h4>
+            <p><code>test/usage-windows.test.js</code> spawned real <code>tmux capture-pane</code> calls against the default server, racing <code>test/tmux-tcc.test.js</code> in CI run <code>41519607351</code>. <strong>Fix / Guardrail Fed Forward:</strong> Stubbed <code>tmux.readPaneAsync</code> in <code>PR #2802</code> R4 and enforced subprocess/store isolation in <code>v5.55.0</code>/<code>v5.56.0</code> route tests (<code>0</code> CI reds in <code>v5.55.0</code> &amp; <code>v5.56.0</code>).</p>
           </div>
           <div class="pm-item warn">
-            <h4>4. Mid-Sprint Context Compaction Degraded Late-Wave Turn Speed</h4>
-            <p>Long multi-wave sessions risked auto-compaction during W3/W4. <strong>Fix / Guardrail (Rule #291 cl. 5):</strong> Enforce inter-wave <code>tc finalize</code> + fresh relaunch between waves once branches are merged and deleted.</p>
+            <h4>4. Unqualified Standalone Module Claims in W2-REL Release Docs (PR #2810 R1)</h4>
+            <p><code>PR #2810</code> R1 described <code>#1554</code> (<code>lib/untrusted-pr-review.js</code>) without noting it is a standalone library pending live route wiring. <strong>Fix / Guardrail Fed Forward to v5.55.0:</strong> Pre-qualified standalone modules in both <code>W2-REC</code> and <code>W2-REL</code>, achieving Round 1 <code>ACCEPT</code> on <code>v5.55.0</code> <code>W2-REL</code> (<code>#2814</code>) and <code>v5.56.0</code> <code>W2-REC</code>/<code>W2-REL</code> (<code>#2815, #2816</code>).</p>
           </div>
         </div>
       </div>
@@ -1029,40 +1029,40 @@
     <section class="section" id="next-sprint">
       <div class="section-header">
         <div>
-          <span class="section-tag">Section 07 · Active Sprint Guardrails &amp; Wave Reset Protocol</span>
-          <h2 class="section-title">6 Enforced Operational Guardrails During Sprint v5.54.0</h2>
+          <span class="section-tag">Section 07 · v5.54.0 Wrap Recommendations &amp; Feed-Forward Into v5.55.0 / v5.56.0</span>
+          <h2 class="section-title">6 Actionable Improvements Fed Forward From v5.54.0 Wrap Into Leg 2 (v5.55.0) &amp; Leg 3 (v5.56.0)</h2>
         </div>
       </div>
       <div class="grid-3">
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 01 · PRE-EDIT BASE-SHA VERIFICATION</span>
-          <h4>Verify Local HEAD Matches Charter Base SHA Before Any Edit</h4>
-          <p>Builders verify <code>git rev-parse HEAD</code> matches the wave base SHA before touching any file.</p>
+          <span class="pillar-num">FEED-FORWARD 01 · INTV-V5540-01 REMEDIATION</span>
+          <h4>Ship Medusa Toggle-Off Authority &amp; Open-Exchange Guard (#2808, #2813)</h4>
+          <p>Fold the <code>server.js:5478</code> and <code>public/api-helper.js:3943</code> single-click toggle-off vulnerability discovered in <code>v5.54.0</code> directly into <code>v5.56.0</code> Wave 1 (<code>PR #2808</code> &amp; <code>PR #2813</code>).</p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 02 · INTER-WAVE SESSION RESET (RULE #291 CL. 5)</span>
-          <h4>Finalize &amp; Relaunch Active Lanes Between Waves</h4>
-          <p>After a wave merges and branches are deleted on clean <code>main</code>, active Builder/PRR lanes run <code>tc finalize</code> + fresh launch so context never over-compacts.</p>
+          <span class="pillar-num">FEED-FORWARD 02 · RULE #282 TRUE MERGE ENFORCEMENT</span>
+          <h4>Enforce 100% True Merge Commits (merge_method=merge) on v5.55.0+</h4>
+          <p>After <code>PR #2801</code> landed via squash merge, enforce explicit <code>merge_method=merge</code> verification on all <code>v5.55.0</code> and <code>v5.56.0</code> merges (achieved <code>12/12</code> true merges across Legs 2 &amp; 3).</p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 03 · LIVE ROADMAP &amp; SPRINT REPORT AUTO-SYNC</span>
-          <h4>Update LANE_QUEUE.md at Every Dispatch, PR Open &amp; Merge</h4>
-          <p>Every wave transition in <code>LANE_QUEUE.md</code> immediately updates both the Roadmap Board and this live Sprint Report.</p>
+          <span class="pillar-num">FEED-FORWARD 03 · PROACTIVE W2 TRUTH-IN-LABELING</span>
+          <h4>Qualify Unwired/Standalone Modules Upfront in W2-REC &amp; W2-REL</h4>
+          <p>Carry explicit standalone-module qualifications (<code>#1332, #1710, #1977</code> in <code>v5.55.0</code>; <code>#1621, #1783, #1876</code> in <code>v5.56.0</code>) into <code>W2-REC</code> and <code>W2-REL</code> so Wave 2 passes Round 1 without revision.</p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 04 · SUBSYSTEM SIBLING TEST EXECUTION</span>
-          <h4>Run All Touched Subsystem Tests Locally Before Push</h4>
-          <p>Builders run all sibling tests for touched modules before pushing PR heads or review fixes.</p>
+          <span class="pillar-num">FEED-FORWARD 04 · SUBPROCESS &amp; TMUX TEST ISOLATION</span>
+          <h4>Stub Default-Server tmux &amp; Store Imports in Unit Tests</h4>
+          <p>Following <code>PR #2802</code> R3's default-server <code>tmux</code> race, require route and applier unit tests in <code>v5.55.0</code>/<code>v5.56.0</code> to stub external subprocess/store seams (achieved <code>0</code> CI reds in <code>v5.55.0</code> &amp; <code>v5.56.0</code>).</p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 05 · SINGLE HOST SUITE_SLOT COORDINATION</span>
-          <h4>One Full Local Suite at a Time via TC-Lane-INT</h4>
-          <p>Builders run targeted/staged tests while <code>TC-Lane-INT</code> serializes full pre-deploy local suite runs under <code>SUITE_SLOT</code>.</p>
+          <span class="pillar-num">FEED-FORWARD 05 · GUARDRAIL 06 WAVE PIPELINING</span>
+          <h4>Merge Pre-Staged v5.55.0 Wave 1 Cars Immediately After v5.54.0 Gate 3</h4>
+          <p>With <code>PR #2803</code>, <code>PR #2804</code>, and <code>PR #2806</code> built and reviewed during <code>v5.54.0</code> Wave 1, merge all 3 within 3 minutes of <code>v5.54.0</code> going live on <code>:3102</code>.</p>
         </div>
         <div class="subcard">
-          <span class="pillar-num">GUARDRAIL 06 · THREE HONEST FINISH LINES AT W4-REL</span>
-          <h4>Code Released, Production Updated &amp; Feature Activated</h4>
-          <p>Release status documents report each finish line honestly with exact commit SHAs, backup hashes, and live readback receipts.</p>
+          <span class="pillar-num">FEED-FORWARD 06 · LIVE /API/USAGE/SESSIONS TELEMETRY (#2787)</span>
+          <h4>Monitor Per-Session Context &amp; Codex Weekly Quota via #2787</h4>
+          <p>Use the newly deployed <code>GET /api/usage/sessions</code> endpoint from <code>v5.54.0</code> (<code>#2787</code>) during <code>v5.55.0</code> and <code>v5.56.0</code> to verify post-reset Codex weekly quota (<code>98% → 95%</code>) and lane context load.</p>
         </div>
       </div>
     </section>
