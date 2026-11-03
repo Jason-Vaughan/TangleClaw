@@ -254,7 +254,7 @@ describe('the recovery wake (#2250)', () => {
       assert.equal(store.launchSequences.getBySession(held.binding.sessionId).nudgeCount, 1, 'only the first wake typed anything');
     });
 
-    it('the wake cap evicts only the single oldest pair when full, never a wholesale clear (PRR-B finding #3)', () => {
+    it('the wake cap evicts only the single oldest pair when full, never a wholesale clear', () => {
       // Driven directly against _internal.recordWoken at a small cap: the
       // real cap (1000) is impractical to reach through real launches.
       const map = new Map();
@@ -274,8 +274,8 @@ describe('the recovery wake (#2250)', () => {
       const first = await wakeAsOperator([itemFor(held)]);
       assert.equal(first.items[0].send.outcome, launchRecoveryWake.SEND_OUTCOMES.PANE_BUSY);
       assert.equal(first.items[0].send.reason, 'turn-running');
-      // PRR-B finding #2: a busy pane never reached injectLine, so A2250's
-      // "attempted" (the typed-send was invoked) must read false here.
+      // A busy pane never reached injectLine, so A2250's "attempted" (the
+      // typed-send was invoked) must read false here.
       assert.equal(first.items[0].send.attempted, false);
       // The slot was not consumed: retrying once the pane is idle still sends.
       launchRecoveryWake._internal.assessIdle = () => ({ idle: true, reason: 'at-prompt', digest: 'd', idleTicks: 1 });
@@ -290,7 +290,7 @@ describe('the recovery wake (#2250)', () => {
       launchRecoveryWake._internal.capturePane = () => { throw new Error('pane vanished'); };
       const answer = await wakeAsOperator([itemFor(held)]);
       assert.equal(answer.items[0].send.outcome, launchRecoveryWake.SEND_OUTCOMES.PANE_CAPTURE_FAILED);
-      // Same PRR-B finding #2: a capture failure never reached injectLine either.
+      // A capture failure never reached injectLine either.
       assert.equal(answer.items[0].send.attempted, false);
     });
 
