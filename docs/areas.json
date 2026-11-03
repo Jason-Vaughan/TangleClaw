@@ -148,6 +148,7 @@
         "lib/ttyd-*.js",
         "lib/pty-activity.js",
         "lib/transcript.js",
+        "lib/workspace-rename-check.js",
         "lib/continuity.js",
         "lib/master-continuity.js",
         "lib/workload*.js",
@@ -204,6 +205,7 @@
       "why": "Project records, config, paths and versions, generated files, git hooks and templates, plan docs and actions.",
       "paths": [
         "lib/projects.js",
+        "lib/projects-async-io.js",
         "lib/project-*.js",
         "lib/tcc-folders.js",
         "lib/git-hooks.js",
