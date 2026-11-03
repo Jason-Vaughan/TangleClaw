@@ -519,6 +519,39 @@ describe('/api/control (#1861)', () => {
       assert.ok(receipts.some((rc) => rc.fact === 'observed' && rc.outcomeCode === 'pause-timeout'));
     });
 
+    it('a project lookup that throws costs nothing: the timeout budget is not spent, and a later read still escalates (#2109 PRR-B Round 3)', async () => {
+      // Same stub-to-throw pattern as test/awareness-observability.test.js's
+      // "a claimed-project lookup failure never breaks the answer it serves".
+      const { project, assignmentId } = await pausable();
+      const holdEventId = (await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers)).data.event.eventId;
+      await settle();
+      controlApi._internal.now = () => Date.now() + 20 * 60 * 1000;
+
+      const escalations = [];
+      controlApi._internal.sendSystemMessage = async (m) => { escalations.push(m); return { status: 'received', id: 'msg-timeout' }; };
+      const realGet = store.projects.get;
+      store.projects.get = () => { throw new Error('synthetic store failure'); };
+      try {
+        const r1 = await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+        assert.equal(r1.status, 200, 'a project-lookup failure must not break the status read it serves');
+      } finally {
+        store.projects.get = realGet;
+      }
+      await settle();
+      assert.equal(escalations.length, 0, 'nothing escalated while the project lookup was failing');
+
+      // The lookup works again on this read: the budget must not have been
+      // spent by the failed attempt above, or this would silently find
+      // nothing new to observe and never escalate at all.
+      await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+      await settle();
+      assert.equal(escalations.filter((m) => /Pause timeout/.test(m.message)).length, 1, 'the escalation must still fire once the project lookup recovers');
+
+      const st = await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+      const receipts = st.data.events.find((e) => e.eventId === holdEventId).receipts;
+      assert.ok(receipts.some((rc) => rc.fact === 'observed' && rc.outcomeCode === 'pause-timeout'));
+    });
+
     it('/api/control/mine also escalates a timed-out pause it reads, from the target\'s own side (#2109 PRR-B Round 3)', async () => {
       const { project, binding } = await pausable();
       await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
