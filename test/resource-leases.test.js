@@ -34,8 +34,14 @@ describe('resource-leases: acquireLease (#2014)', () => {
     assert.equal(rl.acquireLease({ resourceId: 'r1', holderSessionId: 's1', holderProjectId: 'p1', mode: 'exclusive', ttlMs: 0 }).code, 'RESOURCE_LEASE_INVALID');
   });
 
-  it('grants a fresh exclusive lease on an empty resource, starting at epoch 1 and state active', () => {
+  it('refuses a missing (non-array) existingLeases -- never silently treated as empty', () => {
     const r = rl.acquireLease({ resourceId: 'r1', holderSessionId: 's1', holderProjectId: 'p1', mode: 'exclusive', ttlMs: 10 * MINUTE, now: NOW });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'RESOURCE_LEASE_INVALID');
+  });
+
+  it('grants a fresh exclusive lease on an empty resource, starting at epoch 1 and state active', () => {
+    const r = rl.acquireLease({ resourceId: 'r1', holderSessionId: 's1', holderProjectId: 'p1', mode: 'exclusive', ttlMs: 10 * MINUTE, existingLeases: [], now: NOW });
     assert.equal(r.ok, true);
     assert.equal(r.lease.state, 'active');
     assert.equal(r.lease.epoch, 1);
@@ -43,7 +49,7 @@ describe('resource-leases: acquireLease (#2014)', () => {
   });
 
   it('refuses a second exclusive acquire while one is already live', () => {
-    const first = rl.acquireLease({ resourceId: 'r1', holderSessionId: 's1', holderProjectId: 'p1', mode: 'exclusive', ttlMs: 10 * MINUTE, now: NOW });
+    const first = rl.acquireLease({ resourceId: 'r1', holderSessionId: 's1', holderProjectId: 'p1', mode: 'exclusive', ttlMs: 10 * MINUTE, existingLeases: [], now: NOW });
     const second = rl.acquireLease({
       resourceId: 'r1', holderSessionId: 's2', holderProjectId: 'p1', mode: 'exclusive', ttlMs: 10 * MINUTE,
       existingLeases: [first.lease], now: NOW
@@ -53,7 +59,7 @@ describe('resource-leases: acquireLease (#2014)', () => {
   });
 
   it('refuses a shared acquire while a live exclusive lease exists', () => {
-    const excl = rl.acquireLease({ resourceId: 'r1', holderSessionId: 's1', holderProjectId: 'p1', mode: 'exclusive', ttlMs: 10 * MINUTE, now: NOW });
+    const excl = rl.acquireLease({ resourceId: 'r1', holderSessionId: 's1', holderProjectId: 'p1', mode: 'exclusive', ttlMs: 10 * MINUTE, existingLeases: [], now: NOW });
     const shared = rl.acquireLease({
       resourceId: 'r1', holderSessionId: 's2', holderProjectId: 'p1', mode: 'shared', ttlMs: 10 * MINUTE,
       existingLeases: [excl.lease], now: NOW
@@ -63,7 +69,7 @@ describe('resource-leases: acquireLease (#2014)', () => {
   });
 
   it('allows two shared leases to coexist', () => {
-    const first = rl.acquireLease({ resourceId: 'r1', holderSessionId: 's1', holderProjectId: 'p1', mode: 'shared', ttlMs: 10 * MINUTE, now: NOW });
+    const first = rl.acquireLease({ resourceId: 'r1', holderSessionId: 's1', holderProjectId: 'p1', mode: 'shared', ttlMs: 10 * MINUTE, existingLeases: [], now: NOW });
     const second = rl.acquireLease({
       resourceId: 'r1', holderSessionId: 's2', holderProjectId: 'p1', mode: 'shared', ttlMs: 10 * MINUTE,
       existingLeases: [first.lease], now: NOW
@@ -80,8 +86,36 @@ describe('resource-leases: acquireLease (#2014)', () => {
     assert.equal(r.ok, true);
   });
 
+  it('a lease fencing epoch never resets on reacquisition -- it is derived from the resource\'s WHOLE history (PRR-B R1 #1)', () => {
+    const expiredGeneration1 = { resourceId: 'r1', leaseId: 'gen1', mode: 'exclusive', epoch: 5, state: 'active', expiresAt: at(-MINUTE) };
+    const reacquired = rl.acquireLease({
+      resourceId: 'r1', holderSessionId: 's2', holderProjectId: 'p1', mode: 'exclusive', ttlMs: 10 * MINUTE,
+      existingLeases: [expiredGeneration1], now: NOW
+    });
+    assert.equal(reacquired.ok, true);
+    assert.equal(reacquired.lease.epoch, 6, 'the next epoch must exceed every epoch this resource has ever issued, not reset to 1');
+  });
+
+  it('a released (not just expired) prior lease on the same resource also advances the next epoch', () => {
+    const released = { resourceId: 'r1', leaseId: 'gen1', mode: 'shared', epoch: 3, state: 'released', expiresAt: at(10 * MINUTE) };
+    const r = rl.acquireLease({
+      resourceId: 'r1', holderSessionId: 's2', holderProjectId: 'p1', mode: 'exclusive', ttlMs: 10 * MINUTE,
+      existingLeases: [released], now: NOW
+    });
+    assert.equal(r.lease.epoch, 4);
+  });
+
+  it('epoch history on resource B never advances a fresh acquire on resource A', () => {
+    const highEpochOnB = { resourceId: 'r-B', leaseId: 'b1', mode: 'exclusive', epoch: 99, state: 'released', expiresAt: at(10 * MINUTE) };
+    const r = rl.acquireLease({
+      resourceId: 'r-A', holderSessionId: 's1', holderProjectId: 'p1', mode: 'exclusive', ttlMs: 10 * MINUTE,
+      existingLeases: [highEpochOnB], now: NOW
+    });
+    assert.equal(r.lease.epoch, 1);
+  });
+
   it('a conflict check on resource A never sees a live lease on resource B', () => {
-    const onB = rl.acquireLease({ resourceId: 'r-B', holderSessionId: 's1', holderProjectId: 'p1', mode: 'exclusive', ttlMs: 10 * MINUTE, now: NOW });
+    const onB = rl.acquireLease({ resourceId: 'r-B', holderSessionId: 's1', holderProjectId: 'p1', mode: 'exclusive', ttlMs: 10 * MINUTE, existingLeases: [], now: NOW });
     const onA = rl.acquireLease({
       resourceId: 'r-A', holderSessionId: 's2', holderProjectId: 'p1', mode: 'exclusive', ttlMs: 10 * MINUTE,
       existingLeases: [onB.lease], now: NOW
@@ -262,6 +296,32 @@ describe('resource-leases: provisionResourceModule (#2071)', () => {
     });
     assert.equal(r.ok, true);
   });
+
+  it('a non-operator caller omitting currentInstanceCount fails closed, never defaults to 0 (PRR-B R1 #2)', () => {
+    const r = rl.provisionResourceModule({
+      caller: { id: 'arc-1' }, grant, resourceId: 'gpu-3', kind: 'gpu', projectId: 'p1', capacity: 4, now: NOW
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'RESOURCE_LEASE_INVALID');
+  });
+
+  it('a non-operator caller with a non-integer or negative currentInstanceCount fails closed the same way', () => {
+    const fractional = rl.provisionResourceModule({
+      caller: { id: 'arc-1' }, grant, resourceId: 'gpu-3', kind: 'gpu', projectId: 'p1', capacity: 4, currentInstanceCount: 1.5, now: NOW
+    });
+    assert.equal(fractional.code, 'RESOURCE_LEASE_INVALID');
+    const negative = rl.provisionResourceModule({
+      caller: { id: 'arc-1' }, grant, resourceId: 'gpu-3', kind: 'gpu', projectId: 'p1', capacity: 4, currentInstanceCount: -1, now: NOW
+    });
+    assert.equal(negative.code, 'RESOURCE_LEASE_INVALID');
+  });
+
+  it('a non-operator caller with currentInstanceCount: 0 is a valid, explicit count, not treated as invalid', () => {
+    const r = rl.provisionResourceModule({
+      caller: { id: 'arc-1' }, grant, resourceId: 'gpu-3', kind: 'gpu', projectId: 'p1', capacity: 4, currentInstanceCount: 0, now: NOW
+    });
+    assert.equal(r.ok, true);
+  });
 });
 
 describe('resource-leases: retireResourceModule (#2071)', () => {
@@ -306,5 +366,11 @@ describe('resource-leases: retireResourceModule (#2071)', () => {
   it('the operator may always retire, with no grant', () => {
     const r = rl.retireResourceModule({ caller: { principal: 'operator', id: 'op-1' }, resource, projectId: 'p1', activeLeases: [], now: NOW });
     assert.equal(r.ok, true);
+  });
+
+  it('refuses a missing (non-array) activeLeases -- never silently treated as empty (PRR-B R1 #3)', () => {
+    const r = rl.retireResourceModule({ caller: { principal: 'operator', id: 'op-1' }, resource, projectId: 'p1', now: NOW });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'RESOURCE_LEASE_INVALID');
   });
 });
