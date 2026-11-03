@@ -407,7 +407,7 @@ describe('one look before a send (#2128)', () => {
 
   it('the composer is clear', () => {
     frames = [COMPOSER];
-    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: true, noncomposer: false, selector: false, unread: null, promptKnown: true, unreadable: null, unresolved: null, unresolvedCause: null });
+    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: true, noncomposer: false, selector: false, midSessionQuestion: false, unread: null, promptKnown: true, unreadable: null, unresolved: null, unresolvedCause: null });
   });
 
   it('a session quoting the dialog above its composer is clear: the prompt is the evidence', () => {
@@ -526,7 +526,7 @@ describe('one look before a send (#2128)', () => {
   it('a profile with no prompt glyph is never read as clear: it has no positive evidence to give', () => {
     startupDialog._internal.wakeProfiles = () => ({});
     frames = [COMPOSER];
-    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, noncomposer: false, selector: false, unread: null, promptKnown: false, unreadable: null, unresolved: null, unresolvedCause: null });
+    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, noncomposer: false, selector: false, midSessionQuestion: false, unread: null, promptKnown: false, unreadable: null, unresolved: null, unresolvedCause: null });
     frames = [TRUST_DIALOG];
     assert.equal(look().dialog.code, 'trust_required', 'though it still sees the dialog by its markers');
   });
@@ -615,13 +615,13 @@ describe('one look before a send (#2128)', () => {
 
   it('a screen with neither a dialog nor a prompt is not clear', () => {
     frames = [['  Verifying your account…']];
-    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, noncomposer: false, selector: false, unread: null, promptKnown: true, unreadable: null, unresolved: null, unresolvedCause: null });
+    assert.deepEqual(look(), { declared: true, dialog: null, suspect: null, clear: false, noncomposer: false, selector: false, midSessionQuestion: false, unread: null, promptKnown: true, unreadable: null, unresolved: null, unresolvedCause: null });
   });
 
   it('an engine that declares nothing is not read', () => {
     frames = [new Error('must not be read')];
     assert.deepEqual(startupDialog.check('t', { id: 'aider', command: 'aider', capabilities: { startupDialogs: [] } }),
-      { declared: false, dialog: null, suspect: null, clear: false, noncomposer: false, selector: false, unread: null, promptKnown: false, unreadable: null, unresolved: null, unresolvedCause: null });
+      { declared: false, dialog: null, suspect: null, clear: false, noncomposer: false, selector: false, midSessionQuestion: false, unread: null, promptKnown: false, unreadable: null, unresolved: null, unresolvedCause: null });
   });
 });
 
