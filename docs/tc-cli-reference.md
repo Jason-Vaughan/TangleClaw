@@ -224,7 +224,7 @@ Optional `workload set` metadata:
 | `tc decision ask --prompt "<text>" --choice <c> [--choice <c> ...] --gate <gate> --authority <human\|architect\|pm\|role-based\|autonomous-within-lease> --ttl <ms>` | Records a durable decision this lane is blocked on, bound to a prompt digest. `--recommendation`, `--head` and `--reversible` are optional; `--request-id` makes a retry idempotent. |
 | `tc decision list [--state waiting_decision\|answered\|expired\|superseded]` | Lists this session's decision requests, newest first. |
 | `tc decision show <decision-id>` | Shows one decision request, its choices, prompt digest and (once answered) its answer and rationale. |
-| `tc decision answer <decision-id> --answer "<text>" --digest <prompt-digest>` | Answers a decision bound to its exact prompt digest. The Operator may always answer; this session's own current launch may answer only an explicitly allowlisted, reversible, `autonomous-within-lease` decision. `--rationale` records why, for the audit trail. |
+| `tc decision answer <decision-id> --answer "<text>" --digest <prompt-digest>` | Answers a decision bound to its exact prompt digest. The Operator alone may answer, for every authority class including `autonomous-within-lease` — no self-answer path exists today. `--rationale` records why, for the audit trail. |
 
 ## Managed coordinator rotation
 
