@@ -18,7 +18,6 @@ setLevel('error');
 
 const store = require('../lib/store');
 const decisionRouting = require('../lib/decision-routing');
-const projectConfig = require('../lib/project-config');
 
 const { STATES } = decisionRouting;
 
@@ -29,7 +28,6 @@ const realNow = decisionRouting._internal.now;
 
 let tmpDir = null;
 let PROJECT_A = null;
-let PROJECT_A_PATH = null;
 let PROJECT_B = null;
 
 /**
@@ -99,7 +97,6 @@ beforeEach(() => {
   const dirB = path.join(tmpDir, 'proj-b');
   fs.mkdirSync(dirA);
   fs.mkdirSync(dirB);
-  PROJECT_A_PATH = dirA;
   PROJECT_A = store.projects.create({ name: 'decision-project-a', path: dirA, engine: 'claude' }).id;
   PROJECT_B = store.projects.create({ name: 'decision-project-b', path: dirB, engine: 'claude' }).id;
   clockAt(0);
@@ -296,27 +293,6 @@ describe('listDecisionRequestsForSession', () => {
     create({ session, launchId: `launch-live-${Date.now()}`, idemKey: 'still-waiting' });
     const waiting = decisionRouting.listDecisionRequestsForSession(session.id, { state: STATES.WAITING_DECISION });
     assert.equal(waiting.every((r) => r.state === STATES.WAITING_DECISION), true);
-  });
-});
-
-describe('resolveDecisionAutonomousAllowlist', () => {
-  it('defaults to empty when unset', () => {
-    assert.deepEqual(decisionRouting.resolveDecisionAutonomousAllowlist({}), []);
-  });
-
-  it('filters out non-string entries', () => {
-    const allowlist = decisionRouting.resolveDecisionAutonomousAllowlist({
-      decisionAutonomousAllowlist: ['safe-gate', 42, null, 'another-gate']
-    });
-    assert.deepEqual(allowlist, ['safe-gate', 'another-gate']);
-  });
-
-  it('reads the project\'s real persisted config', () => {
-    const configPath = path.join(PROJECT_A_PATH, '.tangleclaw');
-    fs.mkdirSync(configPath, { recursive: true });
-    fs.writeFileSync(path.join(configPath, 'project.json'), JSON.stringify({ decisionAutonomousAllowlist: ['re-run-ci'] }));
-    const loaded = projectConfig.load(PROJECT_A_PATH);
-    assert.deepEqual(decisionRouting.resolveDecisionAutonomousAllowlist(loaded), ['re-run-ci']);
   });
 });
 

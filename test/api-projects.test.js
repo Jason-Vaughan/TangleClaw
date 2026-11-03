@@ -625,30 +625,19 @@ describe('api-projects', () => {
         assert.equal(status, 200);
       });
 
-      // #2037 PRR-B I-Gate: a project naming its own gate reversible-and-
-      // allowlisted, then answering its own decision, is an unverified
-      // self-approval — the allowlist itself must be the operator's alone to
-      // change, the same presence-gated shape a rename is.
-      it('refuses a project changing its own autonomous-decision gate allowlist: that is the operator\'s (#2037)', async () => {
-        const { status, data } = await request('PATCH', '/api/projects/gate-a',
-          { decisionAutonomousAllowlist: ['smuggled-gate'] }, a.headers);
-        assert.equal(status, 403);
-        assert.equal(data.code, 'OPERATOR_ONLY');
-        assert.deepEqual(store.projectConfig.load(store.projects.getByName('gate-a').path).decisionAutonomousAllowlist, []);
+      // #2037: decisionAuthorityPolicy is project-owned (every authority
+      // class answers through the Operator alone regardless of this value —
+      // see lib/decision-routing.js's module docstring), so only its shape
+      // is validated, not who may set it.
+      it('refuses a malformed decisionAuthorityPolicy value even from the operator', async () => {
+        const { status } = await request('PATCH', '/api/projects/gate-a', { decisionAuthorityPolicy: 'king' }, asOperator());
+        assert.equal(status, 400);
       });
 
-      it('lets the operator change the autonomous-decision gate allowlist', async () => {
-        const { status } = await request('PATCH', '/api/projects/gate-a',
-          { decisionAutonomousAllowlist: ['re-run-ci'] }, asOperator());
+      it('lets a project set its own decisionAuthorityPolicy', async () => {
+        const { status } = await request('PATCH', '/api/projects/gate-a', { decisionAuthorityPolicy: 'architect' }, a.headers);
         assert.equal(status, 200);
-        assert.deepEqual(store.projectConfig.load(store.projects.getByName('gate-a').path).decisionAutonomousAllowlist, ['re-run-ci']);
-      });
-
-      it('refuses a malformed allowlist or policy value even from the operator', async () => {
-        const badAllowlist = await request('PATCH', '/api/projects/gate-a', { decisionAutonomousAllowlist: ['', 42] }, asOperator());
-        assert.equal(badAllowlist.status, 400);
-        const badPolicy = await request('PATCH', '/api/projects/gate-a', { decisionAuthorityPolicy: 'king' }, a.headers);
-        assert.equal(badPolicy.status, 400);
+        assert.equal(store.projectConfig.load(store.projects.getByName('gate-a').path).decisionAuthorityPolicy, 'architect');
       });
 
       // #1937, Architect ruling: the recovery mode decides whether a session may

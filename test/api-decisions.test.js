@@ -161,30 +161,19 @@ describe('decision-request routes (#2037)', () => {
     assert.equal(res.data.code, 'DECISION_PROMPT_MISMATCH');
   });
 
-  it('refuses an autonomous-within-lease answer from the requesting launch when the gate is not allowlisted', async () => {
+  it('refuses a self-answer regardless of requiredAuthority, reversible or gate — every decision is Operator-only (#2037 PRR-B Round 2)', async () => {
+    // Round 1 let a session self-answer an "autonomous-within-lease" +
+    // reversible + allowlisted-gate decision. Round 2 found the allowlist
+    // itself unenforceable (the answering session can write its own
+    // project.json directly, bypassing any HTTP admission check) and the
+    // gate/reversible fields unverified free text — so self-answering was
+    // removed entirely rather than patched a third time.
     const created = await createAs(binding.headers, {
-      requestId: 'req-for-unlisted-gate', requiredAuthority: 'autonomous-within-lease', reversible: true, gate: 'not-on-the-list'
+      requestId: 'req-for-no-self-answer', requiredAuthority: 'autonomous-within-lease', reversible: true, gate: 'anything-at-all'
     });
     const res = await sendAs(server, 'POST', `/api/decisions/${encodeURIComponent(created.data.request.decisionId)}/answer`,
       { answer: 'yes', expectedPromptDigest: created.data.request.promptDigest }, binding.headers);
     assert.equal(res.status, 403);
-  });
-
-  it('lets the requesting launch answer its own autonomous-within-lease, reversible, allowlisted decision', async () => {
-    fs.mkdirSync(path.join(projectDir, '.tangleclaw'), { recursive: true });
-    fs.writeFileSync(path.join(projectDir, '.tangleclaw', 'project.json'),
-      JSON.stringify({ decisionAutonomousAllowlist: ['re-run-ci'] }));
-
-    const created = await createAs(binding.headers, {
-      requestId: 'req-for-allowlisted-gate', requiredAuthority: 'autonomous-within-lease', reversible: true, gate: 're-run-ci'
-    });
-    const res = await sendAs(server, 'POST', `/api/decisions/${encodeURIComponent(created.data.request.decisionId)}/answer`,
-      { answer: 'yes', expectedPromptDigest: created.data.request.promptDigest }, binding.headers);
-    assert.equal(res.status, 201);
-    assert.equal(res.data.request.state, 'answered');
-    assert.equal(res.data.request.answeredBySurface, 'autonomous-lease');
-
-    fs.rmSync(path.join(projectDir, '.tangleclaw'), { recursive: true, force: true });
   });
 
   it('falls back to the project\'s configured decisionAuthorityPolicy when the request names no authority class (#2037 PRR-B)', async () => {
@@ -209,32 +198,7 @@ describe('decision-request routes (#2037)', () => {
     fs.rmSync(path.join(projectDir, '.tangleclaw'), { recursive: true, force: true });
   });
 
-  it('refuses a project changing its own autonomous-decision gate allowlist via PATCH /api/projects/:name: that is the operator\'s (#2037 PRR-B I-Gate)', async () => {
-    const res = await sendAs(server, 'PATCH', `/api/projects/${encodeURIComponent(project.name)}`,
-      { decisionAutonomousAllowlist: ['smuggled-gate'] }, binding.headers);
-    assert.equal(res.status, 403);
-    const { load } = require('../lib/project-config');
-    assert.deepEqual(load(projectDir).decisionAutonomousAllowlist, []);
-  });
-
-  it('the operator can change the autonomous-decision gate allowlist via PATCH, and it actually persists and takes effect', async () => {
-    const res = await sendAs(server, 'PATCH', `/api/projects/${encodeURIComponent(project.name)}`,
-      { decisionAutonomousAllowlist: ['re-run-ci'] }, writeHeaders);
-    assert.equal(res.status, 200);
-    const { load } = require('../lib/project-config');
-    assert.deepEqual(load(projectDir).decisionAutonomousAllowlist, ['re-run-ci']);
-
-    const created = await createAs(binding.headers, {
-      requestId: 'req-for-patched-allowlist', requiredAuthority: 'autonomous-within-lease', reversible: true, gate: 're-run-ci'
-    });
-    const answer = await sendAs(server, 'POST', `/api/decisions/${encodeURIComponent(created.data.request.decisionId)}/answer`,
-      { answer: 'yes', expectedPromptDigest: created.data.request.promptDigest }, binding.headers);
-    assert.equal(answer.status, 201);
-
-    await sendAs(server, 'PATCH', `/api/projects/${encodeURIComponent(project.name)}`, { decisionAutonomousAllowlist: [] }, writeHeaders);
-  });
-
-  it('the Operator may still answer an autonomous-within-lease decision directly (the ceiling)', async () => {
+  it('the Operator answers an autonomous-within-lease decision directly — no self-answer path exists for any class', async () => {
     const created = await createAs(binding.headers, {
       requestId: 'req-for-operator-over-autonomous', requiredAuthority: 'autonomous-within-lease', reversible: true, gate: 'whatever-gate'
     });

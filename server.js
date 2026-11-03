@@ -4987,17 +4987,9 @@ route('PATCH', '/api/projects/:name', async (req, res, params, body) => {
   const launchBlock = body && typeof body === 'object' ? body.launchSequence : undefined;
   const choosingRecoveryMode = Boolean(launchBlock) && typeof launchBlock === 'object'
     && Object.prototype.hasOwnProperty.call(launchBlock, 'recoveryMode');
-  // #2037 PRR-B I-Gate: a project's own session could otherwise name its own
-  // gate reversible-and-allowlisted, then answer its own decision — the
-  // allowlist is the ONE thing standing between "autonomous-within-lease" and
-  // an unverified self-approval, so only the operator may change it, the same
-  // presence-gated shape as choosing the recovery mode above.
-  const choosingDecisionAllowlist = Boolean(body) && typeof body === 'object'
-    && Object.prototype.hasOwnProperty.call(body, 'decisionAutonomousAllowlist');
   let admitted;
   if (renaming) admitted = operatorProjectCaller(req, res, 'rename a project');
   else if (choosingRecoveryMode) admitted = operatorProjectCaller(req, res, 'choose a project\'s launch recovery mode');
-  else if (choosingDecisionAllowlist) admitted = operatorProjectCaller(req, res, 'change a project\'s autonomous-decision gate allowlist');
   else admitted = ownProjectCaller(req, res, params.name, projects.getProjectRow);
   if (!admitted) return;
   // Choosing the mode is granting a session that loosening, so the operator
