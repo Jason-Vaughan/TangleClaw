@@ -70,6 +70,12 @@ function toTerminalConfirmed(overrides = {}) {
   return created.handoff.handoffId;
 }
 
+/** The reconciliation receipt `reconcileStartup` requires: this exact handoff's own checkpointDigest/observedGeneration. */
+function reconciliationFor(handoffId) {
+  const handoff = lh.getHandoff(handoffId);
+  return { checkpointDigest: handoff.checkpointDigest, generation: handoff.observedGeneration };
+}
+
 describe('createHandoff', () => {
   it('creates in CHECKPOINTED with the checkpoint and its digest recorded', () => {
     const r = create();
@@ -252,25 +258,61 @@ describe('launchReplacement', () => {
     assert.equal(r.code, 'LIFECYCLE_HANDOFF_INVALID_TRANSITION');
   });
 
-  it('restart-safety: a retry adopts an already-active session rather than launching a second one (PRR-B I-Gate Round 1 Finding 4)', () => {
-    const stub = stubLaunch();
-    try {
-      const handoffId = toTerminalConfirmed();
-      // Simulate the crash window: a real successor is already active for
-      // this project (as if an earlier launchSession call succeeded but the
-      // process crashed before this function's own DB write landed).
+  it('restart-safety: a retry adopts the exact session its own earlier attempt launched, after the crash window (PRR-B I-Gate Round 1 Finding 4 / Round 2 Finding 2)', () => {
+    const stub = stubLaunch((projectName, options) => {
+      // The stub itself launches for real -- a genuine session row exists,
+      // same as a real launchSession succeeding.
       const launchId = launchSequence.mintLaunchId();
       const snapshot = launchSequence.buildSnapshot({
         launchId, project, engineProfile: store.engines.get('claude'),
         applicability: { applicable: false, reason: 'test binding' }, rendered: null, rules: []
       });
-      const alreadyLaunched = store.sessions.start({ projectId: project.id, engineId: 'claude', launchSequence: snapshot });
+      const started = store.sessions.start({ projectId: project.id, engineId: 'claude', launchSequence: snapshot });
+      return { session: started, primePrompt: null, ttydUrl: 'http://x', error: null };
+    });
+    try {
+      const handoffId = toTerminalConfirmed();
+      const first = lh.launchReplacement(handoffId);
+      assert.equal(first.ok, true);
+      const launchedSessionId = first.handoff.replacementSessionId;
+      assert.equal(stub.calls.length, 1);
+
+      // Simulate the crash window: the launch above genuinely succeeded,
+      // but the write recording it on THIS handoff never landed -- roll the
+      // row back to TERMINAL_CONFIRMED by hand, the same state a crash
+      // right after `launchSession` returned would leave it in.
+      store.getDb().prepare(
+        "UPDATE lifecycle_handoffs SET state = 'terminal_confirmed', replacement_session_id = NULL, replacement_launch_id = NULL WHERE handoff_id = ?"
+      ).run(handoffId);
+
+      const retry = lh.launchReplacement(handoffId);
+      assert.equal(retry.ok, true);
+      assert.equal(retry.handoff.replacementSessionId, launchedSessionId, 'adopted the exact session its own earlier attempt launched');
+      assert.equal(retry.launched.adopted, true);
+      assert.equal(stub.calls.length, 1, 'launchSession is never called again');
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('refuses to adopt an active session unrelated to this handoff\'s own launch attempt, rather than silently claiming it (PRR-B I-Gate Round 2 Finding 2)', () => {
+    const stub = stubLaunch();
+    try {
+      const handoffId = toTerminalConfirmed();
+      // An unrelated session already occupies the project's slot -- NOT
+      // launched by this handoff's own attempt (no attempt has been made
+      // yet at all).
+      const launchId = launchSequence.mintLaunchId();
+      const snapshot = launchSequence.buildSnapshot({
+        launchId, project, engineProfile: store.engines.get('claude'),
+        applicability: { applicable: false, reason: 'test binding' }, rendered: null, rules: []
+      });
+      store.sessions.start({ projectId: project.id, engineId: 'claude', launchSequence: snapshot });
 
       const r = lh.launchReplacement(handoffId);
-      assert.equal(r.ok, true);
-      assert.equal(r.handoff.replacementSessionId, alreadyLaunched.id, 'adopted the already-active session');
-      assert.equal(r.launched.adopted, true);
-      assert.equal(stub.calls.length, 0, 'launchSession is never called again');
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'LIFECYCLE_HANDOFF_LAUNCH_UNRELATED_SESSION');
+      assert.equal(stub.calls.length, 0, 'never launches blindly over an unrelated active session either');
     } finally {
       stub.restore();
     }
@@ -309,7 +351,7 @@ describe('reconcileStartup', () => {
 
       const seq = store.launchSequences.getBySession(replacement.id);
       store.launchSequences.markReady(seq.id, seq.revision, { ok: true }, 'ready-digest-x');
-      const r2 = lh.reconcileStartup(handoffId, caller);
+      const r2 = lh.reconcileStartup(handoffId, caller, reconciliationFor(handoffId));
       assert.equal(r2.ok, true);
       assert.equal(r2.handoff.state, lh.STATES.STARTUP_READY);
     } finally {
@@ -342,7 +384,7 @@ describe('reconcileStartup', () => {
       lh.launchReplacement(handoffId);
       const seq = store.launchSequences.getBySession(replacement.id);
       store.launchSequences.markReady(seq.id, seq.revision, { ok: true }, 'ready-digest-x');
-      const r = lh.reconcileStartup(handoffId, { kind: 'operator' });
+      const r = lh.reconcileStartup(handoffId, { kind: 'operator' }, reconciliationFor(handoffId));
       assert.equal(r.ok, true);
       assert.equal(r.handoff.state, lh.STATES.STARTUP_READY);
     } finally {
@@ -359,6 +401,37 @@ describe('reconcileStartup', () => {
       const r = lh.reconcileStartup(handoffId, null);
       assert.equal(r.ok, false);
       assert.equal(r.code, 'LIFECYCLE_HANDOFF_NOT_REPLACEMENT');
+    } finally {
+      restore();
+    }
+  });
+
+  it('refuses a reconciliation receipt that does not echo this handoff\'s own checkpoint digest (PRR-B I-Gate Round 2 Finding 1)', () => {
+    const replacement = launchedReplacement();
+    const restore = stubLaunch(replacement.id);
+    try {
+      const handoffId = toTerminalConfirmed();
+      lh.launchReplacement(handoffId);
+      const replacementLaunchId = store.launchSequences.getBySession(replacement.id).launchId;
+      const caller = { kind: 'project', sessionId: replacement.id, launchId: replacementLaunchId };
+      const seq = store.launchSequences.getBySession(replacement.id);
+      store.launchSequences.markReady(seq.id, seq.revision, { ok: true }, 'ready-digest-x');
+
+      const wrongDigest = lh.reconcileStartup(handoffId, caller, { checkpointDigest: 'x'.repeat(64), generation: null });
+      assert.equal(wrongDigest.ok, false);
+      assert.equal(wrongDigest.code, 'LIFECYCLE_HANDOFF_CHECKPOINT_NOT_RECONCILED');
+
+      const missing = lh.reconcileStartup(handoffId, caller);
+      assert.equal(missing.ok, false);
+      assert.equal(missing.code, 'LIFECYCLE_HANDOFF_CHECKPOINT_NOT_RECONCILED');
+
+      const read = lh.getHandoff(handoffId);
+      assert.equal(read.state, lh.STATES.REPLACEMENT_LAUNCHED, 'neither bad receipt advanced the handoff');
+
+      const ok = lh.reconcileStartup(handoffId, caller, reconciliationFor(handoffId));
+      assert.equal(ok.ok, true);
+      assert.equal(ok.handoff.state, lh.STATES.STARTUP_READY);
+      assert.equal(ok.handoff.reconciledDigest, ok.handoff.checkpointDigest);
     } finally {
       restore();
     }
@@ -385,7 +458,7 @@ describe('recordTakeover', () => {
       const caller = { kind: 'project', sessionId: replacement.id, launchId: replacementLaunchId };
       const seq = store.launchSequences.getBySession(replacement.id);
       store.launchSequences.markReady(seq.id, seq.revision, { ok: true }, 'ready-digest-x');
-      lh.reconcileStartup(handoffId, caller);
+      lh.reconcileStartup(handoffId, caller, reconciliationFor(handoffId));
       const r = lh.recordTakeover(handoffId, caller);
       assert.equal(r.ok, true);
       assert.equal(r.handoff.state, lh.STATES.TAKEOVER_COMPLETE);
@@ -418,7 +491,7 @@ describe('recordTakeover', () => {
       const replacementLaunchId = store.launchSequences.getBySession(replacement.id).launchId;
       const seq = store.launchSequences.getBySession(replacement.id);
       store.launchSequences.markReady(seq.id, seq.revision, { ok: true }, 'ready-digest-x');
-      lh.reconcileStartup(handoffId, { kind: 'project', sessionId: replacement.id, launchId: replacementLaunchId });
+      lh.reconcileStartup(handoffId, { kind: 'project', sessionId: replacement.id, launchId: replacementLaunchId }, reconciliationFor(handoffId));
       const r = lh.recordTakeover(handoffId, { kind: 'project', sessionId: session.id, launchId: 'wrong' });
       assert.equal(r.ok, false);
       assert.equal(r.code, 'LIFECYCLE_HANDOFF_NOT_REPLACEMENT');

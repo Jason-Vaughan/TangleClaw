@@ -124,6 +124,57 @@ describe('lifecycle-handoff HTTP surface (#2073 Slice 1)', () => {
     assert.equal(second.body.code, 'LIFECYCLE_HANDOFF_IN_PROGRESS');
   });
 
+  it('a caller with general wrap authority over the target, but who is not this handoff\'s own recorded delegate, is refused driving its steps '
+    + '(PRR-B I-Gate Round 2 Finding 4)', async () => {
+    bound = bindProject(project);
+    const crypto = require('node:crypto');
+    const pm = store.projects.create({ name: 'lho-pm-nd', path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-lho-pm-nd-')), engine: 'claude' });
+    const pmBound = bindProject(pm);
+    let assignmentId;
+    try {
+      const assignment = await operatorRequest(server, 'POST', '/api/control/assignments', {
+        projectId: project.id, requestId: crypto.randomUUID(), issueRef: '#2073-nd', authority: { lifecycle: [`project:${pm.id}`] }
+      });
+      assignmentId = assignment.body.assignment.assignmentId;
+      const created = await request(server, 'POST', '/api/sessions/lho-project/lifecycle-handoff',
+        { sourceSessionId: bound.sessionId, transitionType: 'wrap', checkpoint: { note: 'delegate-bound' } }, pmBound.headers);
+      assert.equal(created.status, 201, JSON.stringify(created.body));
+      assert.equal(created.body.handoff.delegatePrincipal, `project:${pm.id}`);
+      const handoffId = created.body.handoff.handoffId;
+
+      // The TARGET's own session has general `wrap` authority over itself
+      // (`allowOwnProject`) but is NOT the delegate this handoff recorded.
+      const selfAttempt = await request(server, 'POST', `/api/sessions/lho-project/lifecycle-handoff/${handoffId}/wrap-initiated`, {}, bound.headers);
+      assert.equal(selfAttempt.status, 403, JSON.stringify(selfAttempt.body));
+      assert.equal(selfAttempt.body.code, 'LIFECYCLE_HANDOFF_NOT_DELEGATE');
+
+      const cancelAttempt = await request(server, 'POST', `/api/sessions/lho-project/lifecycle-handoff/${handoffId}/cancel`, {}, bound.headers);
+      assert.equal(cancelAttempt.status, 403, JSON.stringify(cancelAttempt.body));
+      assert.equal(cancelAttempt.body.code, 'LIFECYCLE_HANDOFF_NOT_DELEGATE');
+
+      // The real delegate still can.
+      const real = await request(server, 'POST', `/api/sessions/lho-project/lifecycle-handoff/${handoffId}/cancel`, {}, pmBound.headers);
+      assert.equal(real.status, 200, JSON.stringify(real.body));
+
+      // The operator always has the explicit recovery path.
+      const created2 = await request(server, 'POST', '/api/sessions/lho-project/lifecycle-handoff',
+        { sourceSessionId: bound.sessionId, transitionType: 'wrap', checkpoint: { note: 'delegate-bound-2' } }, pmBound.headers);
+      const operatorCancel = await operatorRequest(server, 'POST', `/api/sessions/lho-project/lifecycle-handoff/${created2.body.handoff.handoffId}/cancel`, {});
+      assert.equal(operatorCancel.status, 200, JSON.stringify(operatorCancel.body));
+    } finally {
+      store.sessions.kill(pmBound.sessionId, 'test cleanup');
+      // This test's own control assignment must not outlive it -- a later
+      // test in this file creates its OWN assignment for the SAME project,
+      // and only one may be open at a time.
+      if (assignmentId) {
+        const row = store.control.getAssignment(assignmentId);
+        if (row && row.state !== 'closed') {
+          store.control.setAssignmentState(assignmentId, { state: 'closed', state_generation: row.state_generation + 1 });
+        }
+      }
+    }
+  });
+
   it('drives the full step sequence through to takeover, with launchSession stubbed', async () => {
     // The DELEGATE driving steps 2-5 is a SEPARATE, standing session -- never
     // `bound` itself, which (correctly) loses its own launch binding the
@@ -137,9 +188,24 @@ describe('lifecycle-handoff HTTP surface (#2073 Slice 1)', () => {
       projectId: project.id, requestId: crypto.randomUUID(), issueRef: '#2073', authority: { lifecycle: [`project:${pm.id}`] }
     });
 
+    const launchSequence = require('../lib/launch-sequence');
+    // Minted ahead of time so `replacementHeaders` below can be built before
+    // the replacement session itself exists -- the session is created
+    // for real INSIDE the stub, the moment `launch-replacement` actually
+    // calls `launchSession`, so the step's own durable attempt marker
+    // (PRR-B I-Gate Round 2 Finding 2) is written exactly as it would be in
+    // production, rather than a pre-made session the route never launched.
+    const replacementLaunchId = launchSequence.mintLaunchId();
     const real = sessionsLib.launchSession;
     let replacement;
-    sessionsLib.launchSession = () => ({ session: { id: replacement.id }, primePrompt: null, ttydUrl: 'http://x', error: null });
+    sessionsLib.launchSession = () => {
+      const snapshot = launchSequence.buildSnapshot({
+        launchId: replacementLaunchId, project, engineProfile: store.engines.get('claude'),
+        applicability: { applicable: false, reason: 'test' }, rendered: null, rules: []
+      });
+      replacement = store.sessions.start({ projectId: project.id, engineId: 'claude', launchSequence: snapshot });
+      return { session: replacement, primePrompt: null, ttydUrl: 'http://x', error: null };
+    };
     try {
       const created = await request(server, 'POST', '/api/sessions/lho-project/lifecycle-handoff',
         { sourceSessionId: bound.sessionId, transitionType: 'wrap', checkpoint: { note: 'full-run' } }, pmBound.headers);
@@ -156,13 +222,6 @@ describe('lifecycle-handoff HTTP surface (#2073 Slice 1)', () => {
       assert.equal(step2.status, 200, JSON.stringify(step2.body));
       assert.equal(step2.body.handoff.state, 'terminal_confirmed');
 
-      const launchSequence = require('../lib/launch-sequence');
-      const replacementLaunchId = launchSequence.mintLaunchId();
-      const snapshot = launchSequence.buildSnapshot({
-        launchId: replacementLaunchId, project, engineProfile: store.engines.get('claude'),
-        applicability: { applicable: false, reason: 'test' }, rendered: null, rules: []
-      });
-      replacement = store.sessions.start({ projectId: project.id, engineId: 'claude', launchSequence: snapshot });
       // Steps 6-7 below are the REPLACEMENT's own to attest -- never the
       // delegate's -- so they ride on the replacement's own launch binding.
       const replacementHeaders = { 'x-tangleclaw-project-id': String(project.id), 'x-tangleclaw-launch-id': replacementLaunchId };
@@ -176,7 +235,7 @@ describe('lifecycle-handoff HTTP surface (#2073 Slice 1)', () => {
       store.launchSequences.markReady(seq.id, seq.revision, { ok: true }, 'digest');
 
       const step4 = await request(server, 'POST', `/api/sessions/lho-project/lifecycle-handoff/${handoffId}/reconcile-startup`,
-        {}, replacementHeaders);
+        { checkpointDigest: step2.body.handoff.checkpointDigest, generation: step2.body.handoff.observedGeneration }, replacementHeaders);
       assert.equal(step4.status, 200, JSON.stringify(step4.body));
       assert.equal(step4.body.handoff.state, 'startup_ready');
 
