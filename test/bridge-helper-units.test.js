@@ -180,7 +180,10 @@ describe('bridge helper: its parts (#2031)', () => {
     it('is written owner-only and whole, and a value that does not pass writes nothing', () => {
       const file = config.paths(tmpDir).config;
       const written = config.writeConfig(file, { baseUrl: 'http://127.0.0.1:3102/x', ...IDS });
-      assert.deepEqual(written, { baseUrl: 'http://127.0.0.1:3102', ...IDS, pollSeconds: 15, dmChannelId: null, dmEnabled: false });
+      assert.deepEqual(written, {
+        baseUrl: 'http://127.0.0.1:3102', ...IDS, pollSeconds: 15, dmChannelId: null, dmEnabled: false,
+        advisoryChannelId: null, advisoryAuthorIds: [], advisoryEnabled: false
+      });
       assert.equal(fs.statSync(file).mode & 0o777, 0o600);
       assert.equal(fs.statSync(path.dirname(file)).mode & 0o777, 0o700);
       assert.deepEqual(config.readConfig(file), written);

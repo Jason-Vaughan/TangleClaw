@@ -17,6 +17,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { DatabaseSync } = require('node:sqlite');
+const bridgeSchema = require('../lib/bridge-schema');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -883,6 +884,11 @@ function seedV70(extraSql = '') {
     ${V70_LAUNCH_SEQUENCES_DDL}
     ${extraSql}
   `);
+  // Every real store since v52 has the bridge's tables (#2817-A's v77→v78
+  // migration refuses a store that claims v65-bridge soundness without
+  // them, by design); a real v70 store always has them, so this fixture
+  // must too.
+  bridgeSchema.createBridgeSchema(seed, 'v70 test fixture');
   seed.close();
   return dir;
 }

@@ -310,6 +310,7 @@ files = [
   "test/bridge-confirmation.test.js",
   "test/bridge-dm-inbound.test.js",
   "test/bridge-gateway.test.js",
+  "test/bridge-helper-advisory.test.js",
   "test/bridge-helper-gateway.test.js",
   "test/bridge-helper-relay.test.js",
   "test/bridge-helper-units.test.js",

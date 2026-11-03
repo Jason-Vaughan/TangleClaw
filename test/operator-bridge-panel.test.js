@@ -36,6 +36,14 @@ const SIGNED_IN = { tcSession: { username: 'rosie' }, tcGateState: 'guarding', h
 /** A dashboard-shaped request on an open gate: the operator in appearance only. */
 const AMBIENT = { tcGateActive: false, tcGateState: 'open', headers: { 'sec-fetch-site': 'same-origin' } };
 const IDS = { authorId: '100000000000000001', spaceId: '200000000000000002', channelId: '300000000000000003' };
+/** The advisory-channel surface's defaults (#2817-A), unchanged by this file's DM-surface tests. */
+const ADVISORY_DEFAULTS = {
+  advisoryChannelId: null,
+  advisoryAuthorIds: [],
+  advisoryEnabled: false,
+  advisoryRequireMention: true,
+  advisoryMaxConsecutiveTurns: 6
+};
 
 /**
  * Lift the panel script into a sandbox.
@@ -355,7 +363,7 @@ describe('the Operator Bridge panel (#2031)', () => {
       assert.match(panel.state.notice.text, /must be the number Discord shows for it/);
       assert.equal(gateway.allowlist(), null);
       assert.equal(await panel.act('allowlist', IDS), 'done');
-      assert.deepEqual(gateway.allowlist(), { ...IDS, dmChannelId: null, dmEnabled: false });
+      assert.deepEqual(gateway.allowlist(), { ...IDS, ...ADVISORY_DEFAULTS, dmChannelId: null, dmEnabled: false });
       assert.equal(await panel.act('nonsense'), 'unknown');
     });
 
@@ -371,11 +379,11 @@ describe('the Operator Bridge panel (#2031)', () => {
 
       await panel.act('allowlist', IDS);
       assert.equal(await panel.act('dm-allowlist', { dmChannelId: DM_ID }), 'done');
-      assert.deepEqual(gateway.allowlist(), { ...IDS, dmChannelId: DM_ID, dmEnabled: true });
+      assert.deepEqual(gateway.allowlist(), { ...IDS, ...ADVISORY_DEFAULTS, dmChannelId: DM_ID, dmEnabled: true });
       assert.match(panel.html(), /DM surface[\s\S]*channel 400000000000000004, <strong>on<\/strong>/);
 
       assert.equal(await panel.act('dm-allowlist-off'), 'done');
-      assert.deepEqual(gateway.allowlist(), { ...IDS, dmChannelId: DM_ID, dmEnabled: false }, 'the pinned channel id is unchanged, only the switch moved');
+      assert.deepEqual(gateway.allowlist(), { ...IDS, ...ADVISORY_DEFAULTS, dmChannelId: DM_ID, dmEnabled: false }, 'the pinned channel id is unchanged, only the switch moved');
       assert.match(panel.html(), /DM surface[\s\S]*channel 400000000000000004, off/);
     });
 
@@ -952,7 +960,7 @@ describe('the Operator Bridge panel (#2031)', () => {
       doc.getElementById('obSpaceId').value = IDS.spaceId;
       doc.getElementById('obChannelId').value = IDS.channelId;
       await press({ bridgeAction: 'allowlist' });
-      assert.deepEqual(gateway.allowlist(), { ...IDS, dmChannelId: null, dmEnabled: false }, 'the three inputs, trimmed');
+      assert.deepEqual(gateway.allowlist(), { ...IDS, ...ADVISORY_DEFAULTS, dmChannelId: null, dmEnabled: false }, 'the three inputs, trimmed');
       assert.match(container.innerHTML, new RegExp(`author ${IDS.authorId}`));
 
       await press({ bridgeAction: 'mint-token' });

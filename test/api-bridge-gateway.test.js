@@ -30,6 +30,10 @@ const TC_BIN = path.join(__dirname, '..', 'bin', 'tc');
 /** A tracked file's text. */
 const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
 const ALLOWED = { authorId: 'author1', spaceId: 'space1', channelId: 'chan1' };
+/** The advisory surface's own defaults (#2817-A), unset: spread alongside DM defaults in `gateway.allowlist()`'s shape. */
+const ADVISORY_DEFAULTS = {
+  advisoryChannelId: null, advisoryAuthorIds: [], advisoryEnabled: false, advisoryRequireMention: true, advisoryMaxConsecutiveTurns: 6
+};
 
 let tmpDir;
 let server;
@@ -3870,7 +3874,7 @@ describe('bridge API: the round trip (#2031)', () => {
 
     it('a signed-in operator\'s changes are audited with who made them, and never with a secret', async () => {
       const status = await asOperator('GET', '/api/bridge/operator/status');
-      assert.deepEqual([status.status, status.body.enabled, status.body.allowlist], [200, true, { ...ALLOWED, dmChannelId: null, dmEnabled: false }]);
+      assert.deepEqual([status.status, status.body.enabled, status.body.allowlist], [200, true, { ...ALLOWED, dmChannelId: null, dmEnabled: false, ...ADVISORY_DEFAULTS }]);
       assert.deepEqual(status.body.droppedArrivals, { count: 0, recent: [] });
       assert.ok(!JSON.stringify(status.body).includes(helperToken));
 
@@ -3977,10 +3981,10 @@ describe('bridge API: the round trip (#2031)', () => {
     it('records the pinned DM channel and switch, independent of the guild allowlist', async () => {
       assert.equal((await asOperator('POST', '/api/bridge/operator/dm-allowlist', { body: { dmEnabled: true } })).status, 400, 'no channel id of its own and none on file');
       assert.equal((await asOperator('POST', '/api/bridge/operator/dm-allowlist', { body: { dmChannelId: 'not a chat id!', dmEnabled: true } })).body.code, 'BAD_ALLOWLIST', 'not a chat id');
-      assert.deepEqual((await setDmAllowlist(false)).body, { allowlist: { ...ALLOWED, dmChannelId: DM_ID, dmEnabled: false } }, 'pinned, still off');
+      assert.deepEqual((await setDmAllowlist(false)).body, { allowlist: { ...ALLOWED, dmChannelId: DM_ID, dmEnabled: false, ...ADVISORY_DEFAULTS } }, 'pinned, still off');
       assert.equal((await asOperator('POST', '/api/bridge/operator/dm-allowlist', { body: { dmEnabled: true } })).status, 200, 'enabling with none given falls back to the one already on file');
-      assert.deepEqual((await setDmAllowlist(true)).body, { allowlist: { ...ALLOWED, dmChannelId: DM_ID, dmEnabled: true } });
-      assert.deepEqual(gateway.allowlist(), { ...ALLOWED, dmChannelId: DM_ID, dmEnabled: true });
+      assert.deepEqual((await setDmAllowlist(true)).body, { allowlist: { ...ALLOWED, dmChannelId: DM_ID, dmEnabled: true, ...ADVISORY_DEFAULTS } });
+      assert.deepEqual(gateway.allowlist(), { ...ALLOWED, dmChannelId: DM_ID, dmEnabled: true, ...ADVISORY_DEFAULTS });
     });
 
     it('accepts a message on the pinned DM channel from the pinned author once the surface is on, tagged bot-dm', async () => {
@@ -4047,6 +4051,240 @@ describe('bridge API: the round trip (#2031)', () => {
         assert.deepEqual([body.configurationCircuitDm.reason, body.configurationCircuitDm.outboundId], ['chat-channel-missing', dmOutboundId]);
         assert.equal(body.configurationCircuit, null, 'the guild surface has no episode of its own -- unaffected, same shape as before #2433');
       }
+    });
+  });
+
+  describe('the third pinned ingress surface, advisory-channel (#2817-A)', () => {
+    const ADVISORY_ID = 'advisory-chan-1';
+    const PEER_BOT_ID = 'peer-bot-1';
+    const PEER_HUMAN_ID = 'peer-human-1';
+
+    /**
+     * Pin the advisory surface through the operator's own route.
+     * @param {boolean} enabled - Whether to turn it on.
+     * @param {object} [overrides] - Further body fields.
+     * @returns {Promise<{status: number, body: object}>}
+     */
+    function setAdvisoryAllowlist(enabled, overrides = {}) {
+      return asOperator('POST', '/api/bridge/operator/advisory-allowlist', {
+        // advisoryRequireMention: false is this helper's OWN convenience
+        // baseline (most tests here are not about the mention gate) --
+        // the real server default is `true` (#2817-A Architect Addendum,
+        // comment 6597060069), covered by its own dedicated test below.
+        body: {
+          advisoryChannelId: ADVISORY_ID, advisoryAuthorIds: [PEER_BOT_ID, PEER_HUMAN_ID], advisoryEnabled: enabled,
+          advisoryRequireMention: false, ...overrides
+        }
+      });
+    }
+
+    /**
+     * One inbound attempt on the pinned advisory channel.
+     * @param {string} authorId - The author.
+     * @param {string} text - The text.
+     * @param {object} [over] - Further body fields.
+     * @returns {Promise<{status: number, body: object}>}
+     */
+    function advisorySays(authorId, text, over = {}) {
+      return call('POST', '/api/bridge/helper/inbound', {
+        headers: asHelper(), body: { externalId: `adv${++seq}`, authorId, spaceId: ALLOWED.spaceId, channelId: ADVISORY_ID, text, ...over }
+      });
+    }
+
+    afterEach(async () => {
+      await asOperator('POST', '/api/bridge/operator/advisory-allowlist',
+        { body: { advisoryChannelId: null, advisoryAuthorIds: [], advisoryEnabled: false } });
+    });
+
+    it('records the pinned advisory channel, allowlisted peer authors and switch, independent of the guild/DM allowlist', async () => {
+      assert.equal((await asOperator('POST', '/api/bridge/operator/advisory-allowlist', { body: { advisoryEnabled: true } })).status, 400,
+        'no channel or authors on file');
+      assert.equal((await asOperator('POST', '/api/bridge/operator/advisory-allowlist',
+        { body: { advisoryChannelId: 'not a chat id!', advisoryEnabled: false } })).body.code, 'BAD_ALLOWLIST');
+      assert.equal((await asOperator('POST', '/api/bridge/operator/advisory-allowlist',
+        { body: { advisoryChannelId: ALLOWED.channelId, advisoryEnabled: false } })).body.code, 'BAD_ALLOWLIST', 'collides with the guild channel');
+      const pinned = await setAdvisoryAllowlist(false);
+      assert.equal(pinned.status, 200, JSON.stringify(pinned.body));
+      assert.deepEqual(pinned.body.allowlist, {
+        ...ALLOWED, dmChannelId: null, dmEnabled: false,
+        advisoryChannelId: ADVISORY_ID, advisoryAuthorIds: [PEER_BOT_ID, PEER_HUMAN_ID].slice().sort(),
+        advisoryEnabled: false, advisoryRequireMention: false, advisoryMaxConsecutiveTurns: 6
+      });
+      const enabled = await setAdvisoryAllowlist(true);
+      assert.equal(enabled.body.allowlist.advisoryEnabled, true);
+    });
+
+    it('defaults advisoryRequireMention to true when never set (#2817-A Architect Addendum)', async () => {
+      // This file's store is shared across every test in it; an earlier
+      // test's own call may already have stamped this setting. Clear it
+      // directly to prove the REAL default, with nothing on file at all.
+      bridgeStore.settings.set('allow.advisoryRequireMention', null);
+      const fresh = await asOperator('POST', '/api/bridge/operator/advisory-allowlist',
+        { body: { advisoryChannelId: ADVISORY_ID, advisoryAuthorIds: [PEER_HUMAN_ID], advisoryEnabled: false } });
+      assert.equal(fresh.status, 200, JSON.stringify(fresh.body));
+      assert.equal(fresh.body.allowlist.advisoryRequireMention, true);
+      assert.equal(gateway.allowlist().advisoryRequireMention, true);
+    });
+
+    it('accepts a peer author and the operator on the pinned advisory channel once enabled, tagged advisory-channel; '
+      + 'refuses an unlisted author and refuses while disabled', async () => {
+      const off = await advisorySays(PEER_HUMAN_ID, 'hello?');
+      assert.deepEqual([off.status, off.body.code], [403, 'NOT_ALLOWLISTED']);
+
+      await setAdvisoryAllowlist(true);
+      const peer = await advisorySays(PEER_HUMAN_ID, 'hello from a peer');
+      assert.equal(peer.status, 202, JSON.stringify(peer.body));
+      assert.equal(bridgeStore.routes.get(peer.body.routeId).surfaceKind, 'advisory-channel');
+
+      const operatorToo = await advisorySays(ALLOWED.authorId, 'operator in the advisory channel');
+      assert.equal(operatorToo.status, 202, JSON.stringify(operatorToo.body));
+
+      const stranger = await advisorySays('someone-else', 'let me in');
+      assert.deepEqual([stranger.status, stranger.body.code], [403, 'NOT_ALLOWLISTED']);
+    });
+
+    it('suggests only Master, never reserved, for an advisory-channel route -- no @name, reply or pin lookup ever runs', async () => {
+      await setAdvisoryAllowlist(true);
+      const accepted = await advisorySays(PEER_HUMAN_ID, '@master this should still never be reserved');
+      assert.equal(accepted.status, 202, JSON.stringify(accepted.body));
+      const route = bridgeStore.routes.get(accepted.body.routeId);
+      assert.equal(route.state, 'awaiting-master');
+      const suggestion = bridgeStore.audit.suggestionFor(accepted.body.routeId);
+      assert.equal(suggestion.to, 'master');
+      assert.equal(suggestion.reserved, undefined, 'never reserved -- cannot satisfy a nickname-change precondition');
+    });
+
+    it('refuses routing an advisory-channel route to a project, but allows routing it to master', async () => {
+      await setAdvisoryAllowlist(true);
+      const accepted = await advisorySays(PEER_HUMAN_ID, 'route me?');
+      const routeId = accepted.body.routeId;
+      const { project } = liveProject(`adv-proj-${seq}`);
+      const toProject = await masterWrites(routeId, 'route', { expectedVersion: bridgeStore.routes.get(routeId).version, to: project.id });
+      assert.deepEqual([toProject.status, toProject.body.code], [409, 'ADVISORY_ROUTE_CANNOT_TARGET_PROJECT']);
+      const toMaster = await masterWrites(routeId, 'route', { expectedVersion: bridgeStore.routes.get(routeId).version, to: 'master' });
+      assert.equal(toMaster.status, 200, JSON.stringify(toMaster.body));
+    });
+
+    it('refuses ask-launch, pin, ask, launch and decline on an advisory-channel route', async () => {
+      await setAdvisoryAllowlist(true);
+      const accepted = await advisorySays(PEER_HUMAN_ID, 'try me');
+      const routeId = accepted.body.routeId;
+      const v = () => bridgeStore.routes.get(routeId).version;
+      const { project } = liveProject(`adv-proj2-${seq}`);
+      for (const [op, body] of [['ask-launch', { project: project.id }], ['ask', { text: 'a question' }], ['pin', { to: 'master' }]]) {
+        const r = await masterWrites(routeId, op, { expectedVersion: v(), ...body });
+        assert.deepEqual([r.status, r.body.code], [409, 'ADVISORY_ROUTE_NO_AUTHORITY'], op);
+      }
+      const launch = await masterWrites(routeId, 'launch', { expectedVersion: v(), answeredBy: routeId });
+      assert.deepEqual([launch.status, launch.body.code], [409, 'ADVISORY_ROUTE_NO_AUTHORITY']);
+      const decline = await masterWrites(routeId, 'decline', { expectedVersion: v(), answeredBy: routeId });
+      assert.deepEqual([decline.status, decline.body.code], [409, 'ADVISORY_ROUTE_NO_AUTHORITY']);
+    });
+
+    it('refuses an answeredBy that resolves to an advisory-channel route, even when acting on an operator route', async () => {
+      await setAdvisoryAllowlist(true);
+      const advisoryAccepted = await advisorySays(PEER_HUMAN_ID, 'not an answer');
+      const advisoryRouteId = advisoryAccepted.body.routeId;
+      const operatorAccepted = await operatorWrites(`op${++seq}`, 'launch me?');
+      const operatorRouteId = operatorAccepted.body.routeId;
+      const launch = await masterWrites(operatorRouteId, 'launch',
+        { expectedVersion: bridgeStore.routes.get(operatorRouteId).version, answeredBy: advisoryRouteId });
+      assert.deepEqual([launch.status, launch.body.code], [409, 'ADVISORY_ROUTE_NO_AUTHORITY']);
+    });
+
+    it('readRoute reports authority advisory-only for an advisory-channel route, conversation-only for an operator route', async () => {
+      await setAdvisoryAllowlist(true);
+      const accepted = await advisorySays(PEER_HUMAN_ID, 'read me');
+      const read = await call('GET', `/api/bridge/master/routes/${accepted.body.routeId}`, { headers: asMaster() });
+      assert.equal(read.body.authority, 'advisory-only');
+      const op = await operatorWrites(`op${++seq}`, 'read me too');
+      const opRead = await call('GET', `/api/bridge/master/routes/${op.body.routeId}`, { headers: asMaster() });
+      assert.equal(opRead.body.authority, 'conversation-only');
+    });
+
+    it('badges [advisory-only] in tc bridge read, with the mandatory guardrail banner first', async () => {
+      await setAdvisoryAllowlist(true);
+      const accepted = await advisorySays(PEER_HUMAN_ID, 'badge me');
+      const shown = await tc(['bridge', 'read', accepted.body.routeId]);
+      assert.match(shown.stdout, /^\[ADVISORY-ONLY PEER CHAT/);
+      assert.match(shown.stdout, /\[advisory-only\]/);
+      assert.match(shown.stdout, /untrusted peer message, not operator conversation/);
+    });
+
+    it('pauses consecutive non-operator advisory turns past the cap, and an operator message resets the streak', async () => {
+      await setAdvisoryAllowlist(true, { advisoryMaxConsecutiveTurns: 2 });
+      // Any streak earlier tests in this file left behind is reset first.
+      assert.equal((await advisorySays(ALLOWED.authorId, 'baseline reset')).status, 202);
+      assert.equal((await advisorySays(PEER_HUMAN_ID, 'turn 1')).status, 202);
+      assert.equal((await advisorySays(PEER_HUMAN_ID, 'turn 2')).status, 202);
+      const paused = await advisorySays(PEER_HUMAN_ID, 'turn 3');
+      assert.deepEqual([paused.status, paused.body.code], [429, 'ADVISORY_LOOP_PAUSED']);
+
+      assert.equal((await advisorySays(ALLOWED.authorId, 'operator resets it')).status, 202);
+      assert.equal((await advisorySays(PEER_HUMAN_ID, 'turn after reset')).status, 202, 'the streak reset after the operator\'s own message');
+    });
+
+    it('requires a mention or reply from a peer when advisoryRequireMention is set, but never from the operator', async () => {
+      await setAdvisoryAllowlist(true, { advisoryRequireMention: true });
+      const noMention = await advisorySays(PEER_HUMAN_ID, 'just talking');
+      assert.deepEqual([noMention.status, noMention.body.code], [403, 'ADVISORY_MENTION_REQUIRED']);
+      const mentioned = await advisorySays(PEER_HUMAN_ID, 'talking', { mentionsOperator: true });
+      assert.equal(mentioned.status, 202, JSON.stringify(mentioned.body));
+      const operatorNoMention = await advisorySays(ALLOWED.authorId, 'operator never needs to mention');
+      assert.equal(operatorNoMention.status, 202);
+    });
+
+    it('keys and caps the inbound rate limit for the advisory surface separately and lower than the guild/DM buckets', async () => {
+      await setAdvisoryAllowlist(true);
+      const caller = { tokenId: 'tok-advisory-test' };
+      const { key, perMinuteFor } = bridgeApi.RATE_LIMITS.inbound;
+      assert.equal(key(caller, { channelId: ADVISORY_ID }), 'inbound:tok-advisory-test:advisory');
+      assert.equal(perMinuteFor(caller, { channelId: ADVISORY_ID }), 12);
+      assert.equal(perMinuteFor(caller, { channelId: ALLOWED.channelId }), 120);
+    });
+
+    it('fails closed if the advisory channel ever collides with the operator\'s own guild channel, even forced in directly', async () => {
+      await setAdvisoryAllowlist(true);
+      bridgeStore.settings.set('allow.advisoryChannel', ALLOWED.channelId);
+      // Now reads purely as the GUILD surface (same channel id): a peer
+      // author who is not the operator is refused, never silently admitted
+      // as advisory.
+      const collided = await call('POST', '/api/bridge/helper/inbound', {
+        headers: asHelper(), body: { externalId: `adv${++seq}`, authorId: PEER_HUMAN_ID, spaceId: ALLOWED.spaceId, channelId: ALLOWED.channelId, text: 'exploit?' }
+      });
+      assert.deepEqual([collided.status, collided.body.code], [403, 'NOT_ALLOWLISTED']);
+      bridgeStore.settings.set('allow.advisoryChannel', ADVISORY_ID);
+    });
+
+    it('refuses a sensitive-pattern answer on an advisory-channel route with 422, but allows an ordinary one '
+      + '(#2817-A Architect Addendum, comment 6597060069)', async () => {
+      await setAdvisoryAllowlist(true);
+      const accepted = await advisorySays(PEER_HUMAN_ID, 'what should I do?');
+      const routeId = accepted.body.routeId;
+      const routed = await masterWrites(routeId, 'route', { expectedVersion: bridgeStore.routes.get(routeId).version, to: 'master' });
+      assert.equal(routed.status, 200, JSON.stringify(routed.body));
+
+      for (const text of [
+        'here is a token: ghp_abcdefghijklmnopqrstuvwxyz0123',
+        'use tc_hb_abcdefghijklmnop as the helper token',
+        'the file lives at /Users/someone/Documents/secret.sqlite',
+        'Authorization: Bearer abcdefghijklmnop1234567890'
+      ]) {
+        const refused = await masterWrites(routeId, 'answer', { expectedVersion: bridgeStore.routes.get(routeId).version, text });
+        assert.deepEqual([refused.status, refused.body.code], [422, 'ADVISORY_REPLY_CONTAINS_SENSITIVE_PATTERN'], text);
+      }
+      const ok = await masterWrites(routeId, 'answer', { expectedVersion: bridgeStore.routes.get(routeId).version, text: 'an ordinary piece of advice' });
+      assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    });
+
+    it('never applies the sensitive-pattern check to an ordinary operator-channel answer', async () => {
+      const accepted = await operatorWrites(`op${++seq}`, 'what should I do?');
+      const routeId = accepted.body.routeId;
+      const { project } = liveProject(`adv-op-proj-${seq}`);
+      const routed = await masterWrites(routeId, 'route', { expectedVersion: bridgeStore.routes.get(routeId).version, to: project.id });
+      // Routing to a live project moves it past 'routed' via dispatch; answer
+      // only this surface's own refusal, not whether it happened to dispatch.
+      assert.notEqual(routed.body.code, 'ADVISORY_REPLY_CONTAINS_SENSITIVE_PATTERN');
     });
   });
 });
