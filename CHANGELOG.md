@@ -4,6 +4,56 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.60.0] - 2026-11-03
+
+### Added
+- `lib/fleet-workload-view.js` adds a passive per-session idle/working/wedged/offline state classifier: a session's workload status, last observed activity, owed switchboard debt and pane/process heartbeat are enough to distinguish normal `idle` (workload complete, nothing owed) from `wedged` (a `working` declaration or owed messages gone stale with no recent activity), with no probing or mutating of the session itself (#349). Landing-page DOM wiring is a tracked Slice 2 follow-up.
+- `lib/switchboard-swarm-stats.js` adds a delivery-guarantee-gated opt-in auto-inject evaluator (refusing with `SWITCHBOARD_AUTO_INJECT_DISABLED` when a session never opted in, or `SWITCHBOARD_DELIVERY_GUARANTEE_UNMET` when it opted in but its live binding, wedged state, or ack-tracking can't be verified) plus deterministic per-lane and fleet-wide Switchboard v2 swarm metrics (exchange counts, owed replies, p50/p95 ack latency, auto-inject-eligible and delivery-guarantee-verified lane counts) (#801). Route/UI wiring is a tracked Slice 2 follow-up.
+- `lib/version-cache-diagnostic.js` adds a visible diagnostic for persistent project-version-cache write failures: tracks consecutive failures, the last error code, and first/last failure timestamps per project/cache path, escalating to a diagnostic banner payload once 3 consecutive failures accrue and clearing automatically the moment a write recovers (#1046). Wiring into the real write path and a dashboard banner is a tracked Slice 2 follow-up.
+- `lib/adr-viewer.js`: a deterministic projection and shareable-export engine for ADRs and session
+  rules (`projectRulesView`, `buildShareableRulesView`, `renderShareableRulesMarkdown`) with stable
+  anchor slugs, status/tag/search filtering, deep-link route descriptors, and a SHA-256 content
+  digest over the canonical set, stripping internal-only secret/token fields. Core engine only
+  (#1259 Slice 1) -- not yet wired to a route or the dashboard.
+- `lib/terminal-identity.js` adds deterministic per-project visual identity derivation for terminal views: a stable hash of `projectId` (never `projectName`, which can be renamed) derives an accent, border, badge background and a readable badge text color that always clears 4.5:1 contrast by construction, plus a sigil and decorative pattern class -- with explicit project color/icon overrides replacing the derived values outright (#1573). Project Settings UI controls (background/logo/size/opacity/position, live preview) are a tracked Slice 2 follow-up.
+- `lib/upload-pills.js` adds multi-file upload queue state and auto-appending Attachment Pills: queues dedupe identical attachments, enforce the existing per-file size bound and a new 10-file per-batch bound, support individual pill removal and failed→queued retry, and deterministically serialize every `ready` pill into composer prompt tokens carrying its absolute remote path (#1577). Drag-and-drop UI and the real upload wiring (`public/app.js`, `server.js`) are a tracked Slice 2 follow-up.
+- `lib/rules-compress-preview.js`: a deterministic, read-only rules-compression preview engine
+  (`buildRulesCompressPreview`) -- drops exact-duplicate clauses, normalizes whitespace, strips a
+  small fixed list of filler phrases, and reports character/token savings, a diff, and a content
+  digest for drift detection, never mutating stored rules. A `[PINNED]`/`DO NOT COMPRESS` clause is
+  never touched, and a clause whose compression would drop a guardrail keyword (never/always/must/
+  required/forbidden/prohibited) is left uncompressed with a warning. Core engine only (#1604 Slice
+  1) -- not yet wired to a route or Settings UI.
+- `lib/test-duration-stats.js` adds recorded test-suite duration extraction and project-stats-card projection: normalizes a recorded duration (`testament`/`ci`/`stage`) into a human-readable label and projects a clean `hasDuration`/`durationMs`/`displayLabel`/`stale` summary, staleness preferring a commit-sha mismatch against the project's current HEAD and falling back to a 7-day age window (#1784). Route/UI wiring is a tracked Slice 2 follow-up.
+- `lib/fleet-workload-view.js` adds a deterministic fleet-workload view model for the dashboard and the Master fleet view: aggregates per-session workload declarations (state, clearance, summary, refs, branch, headSha, updatedAt) together with each session's passive idle/wedged state (#349) into both a fleet-wide view (`countsByState`, `countsByClearance`, `safeToClearCount`, `doNotClearCount`, `wedgedCount`) and a per-project breakdown of the same shape (#1923, deferred under A24, #1912 follow-up). Route/UI wiring is a tracked Slice 2 follow-up.
+- `lib/resource-leases.js` adds a runtime-enforced Resource Module lease state machine: exclusive/shared leases with monotonic epoch fencing tokens, so a stale lease holder cannot mutate or claim a resource after expiry or revocation (`RESOURCE_LEASE_FENCED` / `RESOURCE_LEASE_EXPIRED` / `RESOURCE_LEASE_CONFLICT`), plus a safe `active` -> `draining` -> `released` transition path and an operator-only force-reclaim with an audit trail (#2014). Wiring into shared routes and the dashboard is a tracked Slice 2 follow-up.
+- `lib/session-rules-bulk.js`: a delegated and bulk session-rule approval engine
+  (`decideSessionRuleProposal`, `bulkDecideSessionRuleProposals`) supporting `operator-only`,
+  `delegated-architect`, `delegated-pm` and `custom-delegate` approval modes, with the operator
+  always authorized in every mode. A caller may never approve or reject its own proposal, even as a
+  delegated approver. Bulk decisions are per-item: each proposal's own authorization, self-approval,
+  and version/digest drift checks run independently, with structured `approved`/`rejected`/
+  `skipped`/`errors` results and audit metadata. Core engine only (#2016 Slice 1) -- not yet wired
+  to a route or the dashboard.
+- `lib/resource-leases.js` adds scoped delegated authority for a project Architect to provision and retire Resource Modules on the operator's behalf: an operator-issued, revocable grant (project, kind and instance-count scoped, with its own expiry), enforced on every provision/retire call, plus a quota check against the grant's `maxInstances` and a busy-lease refusal (`RESOURCE_BUSY_ACTIVE_LEASE`) that blocks retiring a resource still under an active lease (#2071). Wiring into shared routes and the dashboard is a tracked Slice 2 follow-up.
+- `lib/team-templates.js`: a Sprint Team Template package schema, validator and Settings preview
+  generator. `validateTeamTemplate` fails closed on a duplicate role id, an unrecognized lane class,
+  or a review-gate reference that names no role in the same package. `previewTeamTemplateApplication`
+  is a non-mutating diff against a project's current seats (`addedSeats`/`updatedSeats`/
+  `unchangedSeats`/`ruleChanges`/`warnings`), content-addressed by a package digest, and never
+  proposes removing a seat the template says nothing about. Core engine only (#2395 Slice 1) -- not
+  yet wired to a route or Settings UI.
+- `lib/session-rules-bulk.js` also carries in-place rule editing (`editRuleInPlace`, #2396): edits
+  one of a rule's title/body/category/scope/enabled fields while preserving its stable `ruleId`/
+  number, under an optimistic concurrency check (`expectedVersion` or `expectedDigestSha256`) that
+  fails closed (`RULE_EDIT_CONFLICT`) on concurrent drift, increments the version, recomputes the
+  content digest, and records a full revision history entry. Core engine only (#2396 Slice 1) -- not
+  yet wired to a route or the Project Rules Settings modal.
+- `lib/role-instruction-guard.js` adds a role-instruction mismatch classifier and confirmation gate: before an outbound instruction is forwarded, it is checked against the target role's own responsibility signature (e.g. a code-implementation or commit instruction sent to the coordinator-only `pm` or a read-only `advisor`/`reviewer`, or a merge/release/deploy instruction sent to a non-integrator lane), holding for an explicit, instruction-digest-bound override instead of silently forwarding or silently blocking (#2397). Wiring into shared dispatch routes and the composer UI is a tracked Slice 2 follow-up.
+
+### Fixed
+- Six v2 palette foreground/background pairs in `public/style.css` that measured below the 4.5:1 WCAG AA contrast floor now clear it: `:root`'s `--text-muted` (`#777` → `#848484`, now 5.20:1 on `--card-bg` and 4.65:1 on `--elevated-bg`), the light theme's `--text-muted` (`#666` → `#5f5f5f`, now 4.84:1 on `--elevated-bg`) and a new light-theme-only `--danger` override (`#8f3230`, clearing `--bg`/`--card-bg`/`--elevated-bg` at 7.22:1/7.87:1/5.97:1, replacing the inherited dark-theme red that measured as low as 2.64:1 there) (#1265). `public/session.css` carries the same unremediated values and is unaffected -- out of this issue's authorized file envelope.
+
 ## [5.59.0] - 2026-11-03
 
 ### Added
