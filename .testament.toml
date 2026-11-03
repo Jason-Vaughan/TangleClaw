@@ -608,6 +608,7 @@ files = [
   "test/launch-recovery-clearance-audit.test.js",
   "test/launch-recovery-gate.test.js",
   "test/launch-recovery-held.test.js",
+  "test/launch-recovery-wake.test.js",
   "test/launch-review.test.js",
   "test/launch-sequence-settings.test.js",
   "test/launch-sequence.test.js",
