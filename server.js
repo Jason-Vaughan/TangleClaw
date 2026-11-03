@@ -6000,6 +6000,7 @@ controlRoute('GET', '/api/control/assignments', (req) => controlApi.listOpen(req
 controlRoute('POST', '/api/control/assignments', (req, _params, body) => controlApi.createAssignment(req, body), 'control-mutate');
 controlRoute('GET', '/api/control/assignments/:id', (req, params) => controlApi.getStatus(req, params));
 controlRoute('POST', '/api/control/assignments/:id/hold', (req, params, body) => controlApi.holdAssignment(req, params, body), 'control-mutate');
+controlRoute('POST', '/api/control/pause', (req, _params, body) => controlApi.pauseAssignment(req, body), 'control-mutate');
 controlRoute('POST', '/api/control/assignments/:id/release', (req, params, body) => controlApi.releaseAssignment(req, params, body), 'control-mutate',
   { signedInOperator: { action: 'release a HOLD or STOP' } });
 controlRoute('POST', '/api/control/assignments/:id/stop', (req, params, body) => controlApi.stopAssignment(req, params, body), 'control-mutate');

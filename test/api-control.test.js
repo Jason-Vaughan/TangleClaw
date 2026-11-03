@@ -6,7 +6,7 @@
 // is never a principal. Accepted means stored, before any notice is attempted,
 // and a notice that fails is recorded without undoing the command.
 
-const { describe, it, before, after, afterEach } = require('node:test');
+const { describe, it, before, beforeEach, after, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const fs = require('node:fs');
@@ -71,6 +71,7 @@ describe('/api/control (#1861)', () => {
   const rid = () => { n += 1; return `api-req-${n}`; };
   const origSend = controlApi._internal.sendSystemMessage;
   const origWs = controlApi._internal.workspaceIdFor;
+  const origPaneSeams = { ...controlApi._internal };
 
   const mkProject = (name) => {
     const dir = path.join(tmpDir, name);
@@ -102,6 +103,7 @@ describe('/api/control (#1861)', () => {
   after(async () => {
     controlApi._internal.sendSystemMessage = origSend;
     controlApi._internal.workspaceIdFor = origWs;
+    Object.assign(controlApi._internal, origPaneSeams);
     await new Promise((resolve) => server.close(resolve));
     store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -314,5 +316,156 @@ describe('/api/control (#1861)', () => {
     const cap = (r.data.capabilities || []).find((c) => c.id === 'control');
     assert.ok(cap && cap.enabled, r.raw.slice(0, 300));
     assert.match(cap.detail, /cannot block shell git\/gh/);
+  });
+
+  describe('POST /api/control/pause (#2109, Architect Ruling A26/A2109)', () => {
+    /**
+     * Bind a project's launch with a real tmux session name, so the pause
+     * nudge's pane-busy check has something to read — plain `bindProject`
+     * starts a session with no pane at all, which is the 'no-pane' case on
+     * its own and cannot exercise 'sent'/'deferred-busy'.
+     * @param {object} project
+     * @returns {{launchId: string, sessionId: number, headers: object}}
+     */
+    function bindProjectWithPane(project) {
+      const b = bindProject(project);
+      store.getDb().prepare('UPDATE sessions SET tmux_session = ? WHERE id = ?').run(`tc-test-${b.sessionId}`, b.sessionId);
+      return b;
+    }
+
+    /**
+     * A target project paused by PM, escalating to the Architect, with a
+     * real pane.
+     * @returns {Promise<{project: object, assignmentId: string, binding: object}>}
+     */
+    async function pausable() {
+      const project = mkProject(`pausable-${rid()}`);
+      const binding = bindProjectWithPane(project);
+      const res = await send(server, 'POST', '/api/control/assignments', {
+        projectId: project.id, requestId: rid(), issueRef: '#2109',
+        authority: { hold: [`project:${pm.id}`], escalation: { blocking: [`project:${architect.id}`] } }
+      }, op);
+      assert.equal(res.status, 201, res.raw);
+      return { project, assignmentId: res.data.assignment.assignmentId, binding };
+    }
+
+    beforeEach(() => {
+      Object.assign(controlApi._internal, origPaneSeams, {
+        sendSystemMessage: async () => ({ status: 'received' }),
+        workspaceIdFor: () => 'ws-builder',
+        wakeProfiles: () => ({ claude: { busyMarker: 'esc to interrupt', promptRe: /^> / } }),
+        capturePane: () => ({ lines: ['> '], alternateScreen: false }),
+        cursorInfo: () => null,
+        assessIdle: () => ({ idle: true, reason: 'at-prompt', digest: 'd', idleTicks: 1 }),
+        inject: () => ({ ok: true, error: null })
+      });
+    });
+
+    afterEach(() => { Object.assign(controlApi._internal, origPaneSeams); });
+
+    it('an authorized peer pauses; the hold is distinct from an ordinary hold, and the pane nudge is sent', async () => {
+      const { project, assignmentId } = await pausable();
+      const injected = [];
+      controlApi._internal.inject = (projectName, line, options) => { injected.push({ projectName, line, options }); return { ok: true, error: null }; };
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      assert.equal(r.status, 201, r.raw);
+      assert.equal(r.data.assignment.state, 'held');
+      assert.equal(r.data.nudge.status, 'sent');
+      assert.equal(injected.length, 1);
+      assert.equal(injected[0].projectName, project.name);
+      assert.equal(injected[0].options.controlExempt, 'medusa-wake', 'without this, injectCommand\'s own controlGate would refuse to type into the lane this just HELD');
+      const st = await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+      assert.equal(st.data.events.at(-1).reasonCode, 'peer-pause-request');
+    });
+
+    it('a peer with no hold authority is refused, and nothing is paused or typed', async () => {
+      const { project } = await pausable();
+      const injected = [];
+      controlApi._internal.inject = (...args) => { injected.push(args); return { ok: true, error: null }; };
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bArch.headers);
+      assert.equal(r.status, 403);
+      assert.equal(r.data.code, 'CONTROL_UNAUTHORIZED');
+      assert.equal(injected.length, 0);
+      const st = await send(server, 'GET', '/api/control/mine', null, bT.headers);
+      assert.equal(st.data.assignment, null, 'unrelated projects are unaffected');
+    });
+
+    it('a project with no open assignment at all is 404, never a parallel pause record', async () => {
+      const ungoverned = mkProject(`ungoverned-${rid()}`);
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: ungoverned.name }, bPM.headers);
+      assert.equal(r.status, 404);
+      assert.equal(r.data.code, 'ASSIGNMENT_NOT_FOUND');
+    });
+
+    it('a mid-turn (busy) target defers the pane nudge, escalates, and still blocks the next governed mutation', async () => {
+      const { project, assignmentId } = await pausable();
+      controlApi._internal.assessIdle = () => ({ idle: false, reason: 'turn-running', digest: 'd', idleTicks: 0 });
+      const escalations = [];
+      controlApi._internal.sendSystemMessage = async (m) => { escalations.push(m); return { status: 'received' }; };
+      const injected = [];
+      controlApi._internal.inject = (...args) => { injected.push(args); return { ok: true, error: null }; };
+
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      assert.equal(r.status, 201, r.raw);
+      assert.equal(r.data.nudge.status, 'deferred-busy');
+      assert.equal(r.data.nudge.reason, 'turn-running');
+      assert.equal(injected.length, 0, 'a busy pane is never typed into');
+
+      await settle();
+      // Two system messages: the ordinary control_changed notice every hold
+      // gets, and the pause's own escalation to the Architect (in
+      // authority.escalation.blocking, not authority.hold).
+      assert.ok(escalations.some((m) => /Pause escalation/.test(m.message) && m.to === 'ws-builder'));
+
+      // The durable HOLD still blocks the next governed mutation, worktree
+      // untouched: controlGate reads the committed state synchronously, no
+      // git command runs anywhere in this path.
+      const check = controlGate.checkMutation({ surface: 'wrap-commit', subject: { kind: 'target', projectId: project.id } });
+      assert.equal(check && check.code, 'CONTROL_HELD');
+      const st = await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+      assert.equal(st.data.assignment.state, 'held');
+    });
+
+    it('a pane that cannot be captured defers and escalates, same as busy', async () => {
+      const { project } = await pausable();
+      controlApi._internal.capturePane = () => { throw new Error('pane vanished'); };
+      const escalations = [];
+      controlApi._internal.sendSystemMessage = async (m) => { escalations.push(m); return { status: 'received' }; };
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      assert.equal(r.status, 201, r.raw);
+      assert.equal(r.data.nudge.status, 'pane-capture-failed');
+      await settle();
+      assert.ok(escalations.some((m) => /Pause escalation/.test(m.message)));
+    });
+
+    it('never calls killSession, and never on a deferred-busy pause either', async () => {
+      const { project } = await pausable();
+      const sessions = require('../lib/sessions');
+      const originalKill = sessions.killSession;
+      let killed = false;
+      sessions.killSession = (...args) => { killed = true; return originalKill(...args); };
+      try {
+        controlApi._internal.assessIdle = () => ({ idle: false, reason: 'turn-running', digest: 'd', idleTicks: 0 });
+        await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+        assert.equal(killed, false);
+      } finally {
+        sessions.killSession = originalKill;
+      }
+    });
+
+    it('is safe to send twice: the replay does not re-attempt the pane nudge', async () => {
+      const { project } = await pausable();
+      const reqId = rid();
+      const injected = [];
+      controlApi._internal.inject = (...args) => { injected.push(args); return { ok: true, error: null }; };
+      const first = await send(server, 'POST', '/api/control/pause', { requestId: reqId, project: project.name }, bPM.headers);
+      assert.equal(first.data.nudge.status, 'sent');
+      assert.equal(injected.length, 1);
+      const second = await send(server, 'POST', '/api/control/pause', { requestId: reqId, project: project.name }, bPM.headers);
+      assert.equal(second.status, 200);
+      assert.equal(second.data.replayed, true);
+      assert.equal(second.data.nudge.status, 'replayed');
+      assert.equal(injected.length, 1, 'a replay never re-attempts the pane nudge');
+    });
   });
 });

@@ -73,7 +73,8 @@ describe('control routes (#1861)', () => {
       'POST /api/control/assignments/:id/exchange-closed',
       'POST /api/control/assignments/:id/hold',
       'POST /api/control/assignments/:id/release',
-      'POST /api/control/assignments/:id/stop'
+      'POST /api/control/assignments/:id/stop',
+      'POST /api/control/pause'
     ]);
     const anyControl = [...src.matchAll(/route\('[A-Z]+', '(\/api\/control[^']*)'/g)].map((m) => m[1]);
     assert.deepEqual(anyControl, [], 'every control route goes through controlRoute');

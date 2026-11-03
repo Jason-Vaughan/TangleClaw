@@ -43,7 +43,8 @@ const HELD = {
 
 describe('tc control (#1861)', () => {
   it('rejects a missing or unknown subverb and malformed arguments before any request', async () => {
-    for (const argv of [[], ['bogus'], ['ack'], ['ack', 'x'], ['hold', 'asg_1'], ['release', 'asg_1', '2', 'resolved'], ['release', 'asg_1', 'two', 'resolved', 'evt_a']]) {
+    for (const argv of [[], ['bogus'], ['ack'], ['ack', 'x'], ['hold', 'asg_1'], ['pause'],
+      ['release', 'asg_1', '2', 'resolved'], ['release', 'asg_1', 'two', 'resolved', 'evt_a']]) {
       const { ctx, calls } = fakeCtx(argv);
       const r = await control.run(ctx);
       assert.equal(r.code, 1, argv.join(' '));
@@ -70,6 +71,26 @@ describe('tc control (#1861)', () => {
     await control.run(r.ctx);
     assert.deepEqual(r.calls[0][2].holdIds, ['evt_a', 'evt_b']);
     assert.equal(r.calls[0][2].expectedGeneration, 3);
+  });
+
+  it('pause (#2109) posts the target project name and reports the nudge status, needing no assignment id', async () => {
+    const calls = [];
+    const ctx = {
+      argv: ['pause', 'builder-b2'],
+      env: {},
+      getJson: async () => ({ assignment: null }),
+      postJson: async (p, body) => {
+        calls.push(['POST', p, body]);
+        return { assignment: { state: 'held', stateGeneration: 2 }, nudge: { status: 'deferred-busy', reason: 'turn-running' } };
+      }
+    };
+    const r = await control.run(ctx);
+    assert.equal(r.code, 0);
+    assert.equal(calls[0][1], '/api/control/pause');
+    assert.equal(calls[0][2].project, 'builder-b2');
+    assert.match(calls[0][2].requestId, /^tc-/);
+    assert.match(r.stdout, /HELD at generation 2/);
+    assert.match(r.stdout, /deferred-busy \(turn-running\)/);
   });
 
   it('ack posts the generation the caller saw to its own assignment', async () => {

@@ -187,6 +187,7 @@ carry commands, paths, launch ids or free-text reasons.
 tc control status                                    your lane, its holds, and whether shell git is intercepted here
 tc control ack <generation>                          acknowledge the state you saw
 tc control hold <assignment-id> <reason>             with authority (or on your own lane)
+tc control pause <project>                           peer safe-boundary pause (#2109) — needs authority.hold
 tc control release <assignment-id> <generation> <reason> <hold-id…>
 tc control stop <assignment-id> <reason>
 ```
