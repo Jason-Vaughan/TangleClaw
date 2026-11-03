@@ -15,11 +15,13 @@ const transcript = require('../lib/transcript');
 // this tracked test file (GitHub push-protection lesson from CC-4).
 const FAKE_AWS = 'AKIA' + 'IOSFODNN7EXAMPLE';
 
-describe('transcript (CC-4b #376)', () => {
+describe('transcript (CC-4b #376, Codex #2074)', () => {
   let tmp; // sandbox root
   let home; // fake ~/.claude
+  let codexHome; // fake ~/.codex
   let projectPath;
   let realClaudeHome;
+  let realCodexHome;
 
   /** Write a JSONL transcript into the fake ~/.claude for the given cwd. */
   function writeTranscript(dirName, uuid, cwd, extraLines = []) {
@@ -35,17 +37,41 @@ describe('transcript (CC-4b #376)', () => {
     return file;
   }
 
+  /**
+   * Write a JSONL rollout into the fake `~/.codex/sessions/<datePath>`,
+   * shaped exactly like a real Codex rollout's first line (confirmed against
+   * real files under `~/.codex/sessions` for #2074): `{type: "session_meta",
+   * payload: {id, cwd, timestamp}}`, followed by whatever extra lines a test
+   * needs. `datePath` defaults to a fixed partition since the resolver walks
+   * every subdirectory regardless of its name.
+   */
+  function writeCodexRollout({ uuid, cwd, startedAt, datePath = '2026/01/01', extraLines = [] }) {
+    const dir = path.join(codexHome, 'sessions', datePath);
+    fs.mkdirSync(dir, { recursive: true });
+    const lines = [
+      JSON.stringify({ type: 'session_meta', payload: { id: uuid, cwd, timestamp: startedAt } }),
+      ...extraLines
+    ];
+    const file = path.join(dir, `rollout-${startedAt.replace(/[:.]/g, '-')}-${uuid}.jsonl`);
+    fs.writeFileSync(file, lines.join('\n') + '\n');
+    return file;
+  }
+
   beforeEach(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-transcript-'));
     home = path.join(tmp, 'claude-home');
+    codexHome = path.join(tmp, 'codex-home');
     projectPath = path.join(tmp, 'proj');
     fs.mkdirSync(projectPath, { recursive: true });
     realClaudeHome = transcript._internal.claudeHome;
+    realCodexHome = transcript._internal.codexHome;
     transcript._internal.claudeHome = () => home;
+    transcript._internal.codexHome = () => codexHome;
   });
 
   afterEach(() => {
     transcript._internal.claudeHome = realClaudeHome;
+    transcript._internal.codexHome = realCodexHome;
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
@@ -94,12 +120,91 @@ describe('transcript (CC-4b #376)', () => {
       assert.equal(transcript.resolve('claude', projectPath, {}), null);
     });
 
-    it('returns null for non-Claude harnesses (seam stubs)', () => {
+    it('returns null for non-Claude harnesses still backed by a stub (#2074: codex has its own real adapter, tested separately)', () => {
       const enc = transcript._encodeDir(projectPath);
       writeTranscript(enc, 'x-1', projectPath); // present, but harness has no adapter impl
-      for (const h of ['gemini', 'codex', 'aider', 'openclaw', 'unknown']) {
+      for (const h of ['gemini', 'aider', 'openclaw', 'unknown']) {
         assert.equal(transcript.resolve(h, projectPath, {}), null, `${h} must resolve null`);
       }
+    });
+  });
+
+  describe('resolve (Codex adapter, #2074)', () => {
+    const START = '2026-06-01T12:00:00.000Z';
+
+    it('resolves the cwd-matching rollout', () => {
+      const file = writeCodexRollout({ uuid: 'aaaa-1111', cwd: projectPath, startedAt: START });
+      const hit = transcript.resolve('codex', projectPath, { engineId: 'codex', startedAt: START });
+      assert.equal(hit, file);
+    });
+
+    it('ignores a rollout whose cwd does not match', () => {
+      writeCodexRollout({ uuid: 'other-0000', cwd: '/some/other/project', startedAt: START });
+      assert.equal(transcript.resolve('codex', projectPath, { engineId: 'codex', startedAt: START }), null);
+    });
+
+    it('returns null when ~/.codex/sessions has no match / is empty', () => {
+      assert.equal(transcript.resolve('codex', projectPath, { engineId: 'codex', startedAt: START }), null);
+    });
+
+    it('finds a rollout nested several date-partitioned directories deep', () => {
+      const file = writeCodexRollout({ uuid: 'deep-1', cwd: projectPath, startedAt: START, datePath: '2026/06/01' });
+      assert.equal(transcript.resolve('codex', projectPath, { engineId: 'codex', startedAt: START }), file);
+    });
+
+    it('time-window boundary: a rollout just inside the grace window matches; just outside it does not', () => {
+      const windowMs = transcript._internal.codexWindowMs;
+      const tcStartedMs = Date.parse(START);
+
+      const justInside = new Date(tcStartedMs - windowMs + 1000).toISOString();
+      const insideFile = writeCodexRollout({ uuid: 'inside-1', cwd: projectPath, startedAt: justInside });
+      assert.equal(
+        transcript.resolve('codex', projectPath, { engineId: 'codex', startedAt: START }),
+        insideFile,
+        'a rollout 1s inside the grace window must match'
+      );
+      fs.rmSync(insideFile);
+
+      const justOutside = new Date(tcStartedMs - windowMs - 1000).toISOString();
+      writeCodexRollout({ uuid: 'outside-1', cwd: projectPath, startedAt: justOutside });
+      assert.equal(
+        transcript.resolve('codex', projectPath, { engineId: 'codex', startedAt: START }),
+        null,
+        'a rollout 1s outside the grace window must not match'
+      );
+    });
+
+    it('fails closed (refuses, does not guess) when two rollouts match the same cwd and time window', () => {
+      writeCodexRollout({ uuid: 'amb-1', cwd: projectPath, startedAt: START, datePath: '2026/06/01' });
+      writeCodexRollout({ uuid: 'amb-2', cwd: projectPath, startedAt: '2026-06-01T12:05:00.000Z', datePath: '2026/06/01' });
+      assert.equal(transcript.resolve('codex', projectPath, { engineId: 'codex', startedAt: START }), null);
+    });
+
+    it('does not fail closed on two same-cwd rollouts when only one falls in the time window', () => {
+      // A much earlier, unrelated session at the same cwd must not make a
+      // genuinely unambiguous later one refuse.
+      writeCodexRollout({ uuid: 'old-session', cwd: projectPath, startedAt: '2026-01-15T00:00:00.000Z' });
+      const file = writeCodexRollout({ uuid: 'current-session', cwd: projectPath, startedAt: START });
+      assert.equal(transcript.resolve('codex', projectPath, { engineId: 'codex', startedAt: START }), file);
+    });
+
+    it('resolves without a time filter when the TC session carries no startedAt (matches on cwd alone)', () => {
+      const file = writeCodexRollout({ uuid: 'no-started-at', cwd: projectPath, startedAt: START });
+      assert.equal(transcript.resolve('codex', projectPath, { engineId: 'codex' }), file);
+    });
+
+    it('honest skip on a rollout whose first line is not valid session_meta JSON', () => {
+      const dir = path.join(codexHome, 'sessions', '2026/06/01');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'rollout-corrupt.jsonl'), 'not json at all\n');
+      assert.equal(transcript.resolve('codex', projectPath, { engineId: 'codex', startedAt: START }), null);
+    });
+
+    it('a file not ending in .jsonl under the sessions tree is never considered', () => {
+      const dir = path.join(codexHome, 'sessions', '2026/06/01');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'README.md'), JSON.stringify({ type: 'session_meta', payload: { id: 'x', cwd: projectPath, timestamp: START } }));
+      assert.equal(transcript.resolve('codex', projectPath, { engineId: 'codex', startedAt: START }), null);
     });
   });
 
@@ -168,6 +273,78 @@ describe('transcript (CC-4b #376)', () => {
       assert.ok(r.reason.includes('gemini'));
       // Nothing written to the store.
       const sessDir = require('../lib/continuity').sessionDir(projectPath, 1);
+      assert.ok(!fs.existsSync(sessDir));
+    });
+
+    it('a stub harness reads as "not supported yet", distinct from an implemented harness finding no match (#2074)', async () => {
+      const stubResult = await transcript.snapshot({ name: 'proj', path: projectPath }, { engineId: 'aider' }, 2);
+      assert.match(stubResult.reason, /does not support transcript capture yet/);
+
+      const noMatchResult = await transcript.snapshot({ name: 'proj', path: projectPath }, { engineId: 'codex', startedAt: '2026-06-01T12:00:00.000Z' }, 3);
+      assert.match(noMatchResult.reason, /no matching transcript found/);
+    });
+
+    it('captures a Codex transcript, preserving the same meta contract as Claude', async () => {
+      const START = '2026-06-01T12:00:00.000Z';
+      const FAKE_SECRET_LINE = JSON.stringify({ type: 'response_item', payload: { content: [{ type: 'input_text', text: `export K=${FAKE_AWS}` }] } });
+      writeCodexRollout({ uuid: 'snap-1', cwd: projectPath, startedAt: START, extraLines: [FAKE_SECRET_LINE] });
+
+      const r = await transcript.snapshot({ name: 'proj', path: projectPath }, { engineId: 'codex', startedAt: START }, 11);
+      assert.equal(r.captured, true);
+      assert.equal(r.secretsFlagged, true);
+      assert.ok(r.secretTypes.includes('aws-access-key'));
+
+      const sessDir = require('../lib/continuity').sessionDir(projectPath, 11);
+      assert.ok(fs.existsSync(path.join(sessDir, 'transcript.jsonl')));
+      const meta = JSON.parse(fs.readFileSync(path.join(sessDir, 'transcript.meta.json'), 'utf8'));
+      assert.equal(meta.harness, 'codex');
+      assert.equal(meta.cwd, projectPath);
+      assert.equal(meta.secretsFlagged, true);
+      assert.ok(!fs.readFileSync(path.join(sessDir, 'transcript.meta.json'), 'utf8').includes(FAKE_AWS), 'meta must not contain the secret value');
+    });
+  });
+
+  describe('backfillTranscript (#2074)', () => {
+    const START = '2026-06-01T12:00:00.000Z';
+
+    it('is idempotent: never overwrites or re-scans a session that already has a captured transcript', async () => {
+      writeCodexRollout({ uuid: 'bf-1', cwd: projectPath, startedAt: START });
+      const project = { name: 'proj', path: projectPath };
+      const session = { engineId: 'codex', startedAt: START };
+
+      const first = await transcript.backfillTranscript(project, session, 20);
+      assert.equal(first.captured, true);
+
+      const sessDir = require('../lib/continuity').sessionDir(projectPath, 20);
+      const metaPath = path.join(sessDir, 'transcript.meta.json');
+      const firstMeta = fs.readFileSync(metaPath, 'utf8');
+
+      // A second rollout now also matches this cwd — if backfill re-resolved
+      // and re-captured, this would be ambiguous (refused) or simply
+      // overwrite; either way the already-captured session must be untouched.
+      writeCodexRollout({ uuid: 'bf-2', cwd: projectPath, startedAt: '2026-06-01T12:30:00.000Z' });
+      const second = await transcript.backfillTranscript(project, session, 20);
+      assert.equal(second.captured, false);
+      assert.equal(second.reason, 'already captured');
+      assert.equal(fs.readFileSync(metaPath, 'utf8'), firstMeta, 'the existing capture must be byte-for-byte unchanged');
+    });
+
+    it('captures a transcript for a previously-wrapped session that has none yet', async () => {
+      const file = writeCodexRollout({ uuid: 'bf-3', cwd: projectPath, startedAt: START });
+      const r = await transcript.backfillTranscript({ name: 'proj', path: projectPath }, { engineId: 'codex', startedAt: START }, 21);
+      assert.equal(r.captured, true);
+      const sessDir = require('../lib/continuity').sessionDir(projectPath, 21);
+      const meta = JSON.parse(fs.readFileSync(path.join(sessDir, 'transcript.meta.json'), 'utf8'));
+      assert.equal(meta.source, file);
+    });
+
+    it('never selects an ambiguous source: an unresolved backfill leaves nothing written', async () => {
+      writeCodexRollout({ uuid: 'bf-amb-1', cwd: projectPath, startedAt: START });
+      writeCodexRollout({ uuid: 'bf-amb-2', cwd: projectPath, startedAt: '2026-06-01T12:01:00.000Z' });
+      const r = await transcript.backfillTranscript({ name: 'proj', path: projectPath }, { engineId: 'codex', startedAt: START }, 22);
+      assert.equal(r.captured, false);
+      assert.match(r.reason, /no matching transcript found/);
+      const sessDir = require('../lib/continuity').sessionDir(projectPath, 22);
       assert.ok(!fs.existsSync(sessDir));
     });
   });
