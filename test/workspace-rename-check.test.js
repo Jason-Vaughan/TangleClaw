@@ -174,16 +174,14 @@ describe('renameWarningFor', () => {
 
 describe('decideWorkspaceRename', () => {
   it('allows a rename outright when there is no orphan risk', () => {
-    const impact = { hasOrphanRisk: false, affectedEngines: [], migrationSteps: [] };
-    assert.deepEqual(wrc.decideWorkspaceRename('/a', '/b', impact), { allowed: true, requiresConfirmation: false, warning: null });
+    assert.deepEqual(wrc.decideWorkspaceRename('/a', '/b', { claudeHome, codexHome }), { allowed: true, requiresConfirmation: false, warning: null });
   });
 
   it('refuses an at-risk rename without explicit confirmation (A1370 addendum §1.3)', () => {
     const oldPath = path.join(tmp, 'old-name');
     const newPath = path.join(tmp, 'new-name');
     writeClaudeTranscript(oldPath);
-    const impact = wrc.inspectWorkspaceRenameImpact(oldPath, newPath, { claudeHome, codexHome });
-    const decision = wrc.decideWorkspaceRename(oldPath, newPath, impact);
+    const decision = wrc.decideWorkspaceRename(oldPath, newPath, { claudeHome, codexHome });
     assert.equal(decision.allowed, false);
     assert.equal(decision.requiresConfirmation, true);
     assert.match(decision.warning, /WARNING/);
@@ -193,9 +191,8 @@ describe('decideWorkspaceRename', () => {
     const oldPath = path.join(tmp, 'old-name');
     const newPath = path.join(tmp, 'new-name');
     writeClaudeTranscript(oldPath);
-    const impact = wrc.inspectWorkspaceRenameImpact(oldPath, newPath, { claudeHome, codexHome });
     for (const bad of [undefined, null, false, 'true', 1]) {
-      assert.equal(wrc.decideWorkspaceRename(oldPath, newPath, impact, { confirmOrphanRisk: bad }).allowed, false,
+      assert.equal(wrc.decideWorkspaceRename(oldPath, newPath, { claudeHome, codexHome, confirmOrphanRisk: bad }).allowed, false,
         `confirmOrphanRisk: ${JSON.stringify(bad)} must not pass as confirmation`);
     }
   });
@@ -204,11 +201,31 @@ describe('decideWorkspaceRename', () => {
     const oldPath = path.join(tmp, 'old-name');
     const newPath = path.join(tmp, 'new-name');
     writeClaudeTranscript(oldPath);
-    const impact = wrc.inspectWorkspaceRenameImpact(oldPath, newPath, { claudeHome, codexHome });
-    const decision = wrc.decideWorkspaceRename(oldPath, newPath, impact, { confirmOrphanRisk: true });
+    const decision = wrc.decideWorkspaceRename(oldPath, newPath, { claudeHome, codexHome, confirmOrphanRisk: true });
     assert.equal(decision.allowed, true);
     assert.equal(decision.requiresConfirmation, true);
     assert.match(decision.warning, /WARNING/);
+  });
+
+  // I-Gate Round 2 (#2863, review 5756902464): the earlier signature took a
+  // caller-supplied impact and trusted it outright -- omitting inspection
+  // (passing null) or passing a report for an unrelated workspace got
+  // allowed: true with no confirmation check. Fixed by removing the
+  // parameter entirely: there is no longer a caller-reachable argument
+  // position where a missing or mismatched report could be supplied, so
+  // these regressions prove the fix by construction -- there is no way to
+  // ask this function to skip its own inspection anymore.
+  it('refuses a genuinely risky rename even when the caller never computed or saw any risk report itself', () => {
+    const oldPath = path.join(tmp, 'risky-old');
+    const newPath = path.join(tmp, 'new-name');
+    writeClaudeTranscript(oldPath);
+    // The caller supplies only oldPath/newPath/options -- exactly the
+    // vulnerable repro from the review (`decideWorkspaceRename('/risky/old',
+    // '/new', null)`), now structurally impossible to reproduce since the
+    // third argument IS options, never an impact report.
+    const decision = wrc.decideWorkspaceRename(oldPath, newPath, { claudeHome, codexHome });
+    assert.equal(decision.allowed, false);
+    assert.equal(decision.requiresConfirmation, true);
   });
 });
 
