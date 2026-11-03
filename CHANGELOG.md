@@ -4,6 +4,43 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.57.0] - 2026-11-03
+
+### Added
+- Durable interactive decision requests: a session can record a prompt,
+  choices and required authority it is blocked on (`POST /api/sessions/:project/decisions`,
+  `tc decision ask`), read it back (`GET`, `tc decision list|show`), and answer
+  one bound to its exact prompt digest (`POST /api/decisions/:id/answer`,
+  `tc decision answer`) — the Operator alone answers, for every authority
+  class (#2037).
+- A session with standing over another lane (its own dispatcher, or the Architect — anyone listed in that lane's `authority.hold`) can now request a safe-boundary pause on it, `tc control pause <project>` (`POST /api/control/pause`), without resorting to a destructive kill. The pause commits a durable HOLD first, then attempts one best-effort direct pane nudge; a busy or unreachable pane escalates instead of retrying, and the HOLD already blocks the target's next governed mutation regardless of whether the nudge lands. Never touches the worktree, never falls back to killing the session.
+- Every pane nudge AND every escalation attempt is now recorded durably as a `notify_attempted` receipt against the HOLD's own event — including `no-recipient` when no project principal is configured for escalation, so the operator's dashboard has something to show for a pause whose nudge and escalation both went nowhere (PRR-B Round 2: neither case left a record before this). `GET /api/control/assignments/:id`/`/mine` now also carry `assignment.pauseTimeout` (`{acked, ageMs, timedOut}`, `null` outside a peer-pause HOLD) — a read-only helper answering whether the current pause has gone unacknowledged past a threshold.
+- PRR-B Round 3: an unacknowledged pause now escalates automatically, not just readably. Any status read of a HELD assignment (`GET /api/control/assignments/:id`, `/mine`, or the operator's `/api/control/assignments` list) durably observes a timed-out, unescalated peer-pause HOLD exactly once and sends the same escalation route a "[Pause timeout]" notice — no new background scheduler, since status reads are frequent enough to serve as the tick. Also fixed: the timeout check now evaluates every ACTIVE HOLD on the assignment, not just the latest one, so an ordinary HOLD stacked on top of an unacknowledged pause (HOLDs are cumulative) no longer hides it. `tc control status` now renders `pauseTimeout` for the one peer who'd actually check it; the project lookup in the escalation path is resolved before the one-time observation budget is spent, so a transient lookup failure can never permanently lose a HOLD's escalation.
+- A session's `GET /api/launch/recovery-held` and the fleet recovery panel now show how and why its prior session stopped — `stoppedBy` (`api`, `model-switch`, `wrap`, or `crash`, the server's own fact) and `stopReason` (caller-supplied text, never verified). Both read as not-recorded for a session that ended before this release.
+- An operator can now explicitly re-nudge several launches past their cleared recovery in one request, `POST /api/launch/recovery-wake-batch` — its own write, separate from a recovery clear and from the automatic unready nudge, reporting each launch's send attempt, step acknowledgement and READY attestation as three separate facts.
+- An unreachable appointed Architect/PM is now detected (persisted unread switchboard mail plus an unresolved wake verdict or an expired workload receipt) and surfaces a durable decision-routing alert naming the fallback route (the other appointed role, or the Operator), rather than the fleet silently waiting on a decider nobody can reach (#2351).
+- An appointed Architect/PM session now gets a governed-refresh alert once its role runtime passes 8h or its live pane's context remaining drops to 12% or below, deferring while the coordinator is working or has an open owed reply, and recovering (superseding the alert) once neither condition holds (#2353). It never forces a rotation itself -- `tc rotation prepare` stays self/operator-initiated.
+
+### Fixed
+- Closed eight gaps the #2032 Critic review left for follow-up: `currentGeneration()` now agrees
+  with the coordinator epoch gate once the true-latest rotation is abandoned instead of falling
+  back to a stale generation; a failed checkout fingerprint's git/filesystem cause now reaches the
+  real refusal and log messages instead of a bare reason code; `coordinator_rotations`/
+  `coordinator_roles` are pruned on insert/grant, exempting whatever the gate reads as current;
+  every generated Medusa guide now warns a rotated coordinator that a raw call is refused without
+  `x-tangleclaw-engine-thread`; every gated route now declares its action at registration, closing
+  a gap where the `/api/master/medusa/...` mount's gated routes were invisible to the test's own
+  dynamic sweep; and the relaunch-mode resume cross-check's inability to see pre-rotation mail left
+  under the prior session's inbox is now documented and tested rather than silent (#2034).
+- A Codex session's wrap now captures its native transcript: the Codex adapter
+  in `lib/transcript.js` resolves the matching rollout under
+  `~/.codex/sessions/**/*.jsonl` by its own recorded `cwd` and start time,
+  fails closed (refuses rather than guesses) when more than one rollout
+  matches, and applies the same secret-scan and metadata contract Claude
+  transcripts already get. A new `backfillTranscript` primitive captures a
+  transcript for a previously-wrapped session that has none, idempotently —
+  never overwriting an existing capture (#2074).
+
 ## [5.56.0] - 2026-11-02
 
 ### Added

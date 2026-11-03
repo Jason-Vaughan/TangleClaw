@@ -289,6 +289,22 @@ Critic findings.
 - The peer route returns the wake monitor's latest reason code for a peer on this host, with its `meaning` (`local: false` for one it cannot see).
 - Reply with `tc message send --in-reply-to <message-id> <workspace-id> "<reply>"` (a raw send carrying `inReplyTo` needs your launch headers, or it is refused), BEFORE you mark the message handled; `tc message owed` lists what you still owe. Never use `/clear` as an acknowledgement.
 
+## Chunk-Boundary Protocol v1.0.0 (#1889)
+
+_Digest `a3907634ea5a` -- for diagnosing which version of this text a session loaded._
+
+A Chunk is complete only once a **durable receipt** records it, not a conversational acknowledgment that can be lost or bypassed. A receipt requires, together: the exact completed commit, this project's own verification evidence, a durable plan checkpoint, reflection-gate and child-accounting completion, and -- the one piece nothing else can substitute for -- **the Builder's own acknowledgment**. A PM assertion alone, or automatic context compaction, never creates or completes one.
+
+| Lifecycle step | What it means |
+|---|---|
+| `compact` | Continuity/pressure relief inside active work. Never advances the Train. |
+| `/clear` | A planned boundary, taken only once the Chunk's receipt exists and is complete. |
+| `wrap` | Closes the Train lifecycle. Release/merge/deploy authority is separately governed. |
+
+**If you are the Project Manager:** before dispatching Chunk N+1 to a lane, its receipt for Chunk N must exist and read `ready_after_clear` -- `lib/chunk-boundary.js#validateNextChunkDispatch` is the one place that checks this honestly; do not dispatch around a HOLD it returns.
+
+**If you are the Builder:** independently refuse a Chunk N+1 dispatch that cites no valid prior-chunk receipt, even if the PM asserts the prior chunk is done -- the receipt, not the assertion, is what the next session (yours or a fresh one) can actually trust after a restart.
+
 ## Port Management (PortHub)
 
 TangleClaw is the central port registry for every project on this machine — register each port here to prevent conflicts. (This replaces the old standalone `porthub` CLI: use the TangleClaw API, not `porthub lease`/`porthub release`.)

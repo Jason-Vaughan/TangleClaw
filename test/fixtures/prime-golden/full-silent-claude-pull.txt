@@ -56,6 +56,9 @@ This project opted into Medusa session-to-session messaging. You are a Medusa pa
 - tmux targets need an exact-match prefix.
 - The store opens SQLite at require time.
 
+## Chunk-Boundary Protocol v1.0.0 (#1889)
+_(Omitted here to fit the prime size budget — see this project's generated carrier file, or `lib/chunk-boundary.js#roleProjectionLines`, for the full text.)_
+
 ## Resume — the proposal that closes your initialization
 This prime is hidden context; the operator does not see it, so what the last session recorded reaches them only if you say it. Emit a short, visible resume proposal — after the launch sequence where this launch has one, otherwise as your first visible reply. You MUST NOT start the work it proposes until the operator confirms.
 

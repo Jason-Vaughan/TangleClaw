@@ -6000,6 +6000,7 @@ controlRoute('GET', '/api/control/assignments', (req) => controlApi.listOpen(req
 controlRoute('POST', '/api/control/assignments', (req, _params, body) => controlApi.createAssignment(req, body), 'control-mutate');
 controlRoute('GET', '/api/control/assignments/:id', (req, params) => controlApi.getStatus(req, params));
 controlRoute('POST', '/api/control/assignments/:id/hold', (req, params, body) => controlApi.holdAssignment(req, params, body), 'control-mutate');
+controlRoute('POST', '/api/control/pause', (req, _params, body) => controlApi.pauseAssignment(req, body), 'control-mutate');
 controlRoute('POST', '/api/control/assignments/:id/release', (req, params, body) => controlApi.releaseAssignment(req, params, body), 'control-mutate',
   { signedInOperator: { action: 'release a HOLD or STOP' } });
 controlRoute('POST', '/api/control/assignments/:id/stop', (req, params, body) => controlApi.stopAssignment(req, params, body), 'control-mutate');
@@ -8906,6 +8907,12 @@ if (require.main === module) {
     // interrupted (#2032); each step is a compare-and-set, so a pass that had
     // already landed is not repeated.
     coordinatorRotation.recover();
+    // Start the decider-reachability/governed-refresh monitor (#2351, #2353):
+    // every project with an active coordinator role gets a recurring check
+    // for an unreachable appointed decider and a governed refresh falling
+    // due. It records a durable decision-routing alert; it never forces a
+    // rotation itself.
+    coordinatorRotation.startRefreshMonitor();
     // The Master's half of that re-sync (#996): a Master left running across
     // a TangleClaw restart would otherwise drop off the switchboard until its
     // next ensure. Probes tmux and starts nothing when tmux does not answer.
@@ -8961,6 +8968,7 @@ if (require.main === module) {
     launchUnready.stop();
     sessions.stopLaunchBlockerSweep();
     workloadNudge.stop();
+    coordinatorRotation.stopRefreshMonitor();
     checkWatch.stop();
     // Each startupControl adapter's reaper timer (#1825): the timers are unref'd,
     // so this is bookkeeping symmetry with `start`, not what lets the process exit.
