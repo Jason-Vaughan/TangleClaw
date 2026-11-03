@@ -420,6 +420,7 @@ files = [
   "test/store-projects.test.js",
   "test/store-recovery-codes.test.js",
   "test/store-session-mode.test.js",
+  "test/store-session-stop-provenance-migration.test.js",
   "test/store-sessions.test.js",
   "test/store-shared-doc-events-migration.test.js",
   "test/store-shared-doc-prefs-migration.test.js",

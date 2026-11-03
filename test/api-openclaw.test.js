@@ -806,6 +806,33 @@ describe('API /api/openclaw/connections/:id/tunnel', () => {
     assert.equal(status, 404);
   });
 
+  it('DELETE .../tunnel kills a dependent webui session, recording stoppedBy \'api\' (#2249)', async () => {
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'TunnelKillsWebuiSession',
+      host: '127.0.0.1',
+      sshUser: 'nobody',
+      sshKeyPath: '/nonexistent/key',
+      localPort: 19993
+    });
+    const connId = created.data.id;
+    const project = store.projects.create({
+      name: `oc-webui-${connId}`,
+      path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-oc-webui-')),
+      engine: `openclaw:${connId}`
+    });
+    const session = store.sessions.start({
+      projectId: project.id, engineId: project.engineId, sessionMode: 'webui', primePrompt: null
+    });
+
+    const { status } = await request(server, 'DELETE', `/api/openclaw/connections/${connId}/tunnel`);
+    assert.equal(status, 200);
+
+    const row = store.sessions.get(session.id);
+    assert.equal(row.status, 'killed', 'the dependent webui session must be killed when its tunnel is torn down');
+    assert.equal(row.stoppedBy, 'api', 'this route is an HTTP kill, not an automation — SESSION_STOP_SOURCES.API');
+    assert.equal(row.stopReason, 'Tunnel killed from connection panel');
+  });
+
   it('POST /api/openclaw/connections/:id/approve-pending returns 404 for unknown id', async () => {
     const { status, data } = await request(server, 'POST', '/api/openclaw/connections/nonexistent/approve-pending');
     assert.equal(status, 404);
