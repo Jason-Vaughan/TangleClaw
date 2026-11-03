@@ -222,6 +222,19 @@ describe('Advisor (#2819)', () => {
       assert.match(r.permissionDecisionReason, /parent directory/);
     });
 
+    it('denies an ABSOLUTE Glob pattern even when "path" is in-sandbox -- an in-sandbox path does not make an out-of-sandbox pattern safe (PRR-B I-Gate R2)', () => {
+      const withPath = runGuard({ tool_name: 'Glob', tool_input: { pattern: '/etc/*', path: home } });
+      assert.equal(withPath.permissionDecision, 'deny');
+      assert.match(withPath.permissionDecisionReason, /absolute/);
+      const withoutPath = runGuard({ tool_name: 'Glob', tool_input: { pattern: '/etc/*' } });
+      assert.equal(withoutPath.permissionDecision, 'deny');
+    });
+
+    it('does NOT deny a Grep pattern merely for starting with "/" -- Grep\'s pattern is a content regex, not a path', () => {
+      const r = runGuard({ tool_name: 'Grep', tool_input: { pattern: '/usr/bin' } });
+      assert.equal(r.permissionDecision, 'allow', 'a regex searching for the literal text "/usr/bin" is not a path escape');
+    });
+
     it('denies every other tool by allowlist, not denylist -- including ones disallowedTools cannot name', () => {
       for (const name of ['Bash', 'Edit', 'Write', 'Task', 'WebFetch', 'mcp__claude-in-chrome__navigate', 'SomeFutureTool']) {
         const r = runGuard({ tool_name: name, tool_input: {} });
