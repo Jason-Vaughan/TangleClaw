@@ -337,11 +337,11 @@ describe('the fleet recovery read (#2049)', () => {
   });
 
   describe('uncertain queued work', () => {
-    it('reports five separately sourced parts in a fixed order, each with a state and a source', async () => {
+    it('reports six separately sourced parts in a fixed order, each with a state and a source', async () => {
       const held = fixture.launchInRecovery(env);
       const entry = entryFor(await readAsOperator(), held);
       assert.deepEqual(entry.uncertainWork.map((p) => p.kind),
-        ['strandedWraps', 'stagedHandoff', 'startupPromptFire', 'launchNudge', 'paneInput']);
+        ['strandedWraps', 'wrapRunInterrupted', 'stagedHandoff', 'startupPromptFire', 'launchNudge', 'paneInput']);
       for (const p of entry.uncertainWork) {
         assert.ok(['recorded', 'none-recorded', 'unavailable'].includes(p.state), `${p.kind}: ${p.state}`);
         assert.equal(typeof p.source, 'string');
@@ -395,6 +395,43 @@ describe('the fleet recovery read (#2049)', () => {
         'one project\'s unreadable source does not change another\'s answer');
       assert.equal(part(entryFor(answer, held), 'launchNudge').state, 'none-recorded',
         'the same launch\'s other parts are still read');
+    });
+
+    it('reports no interrupted wrap run when the registry holds none for the project (#1816/#2643)', async () => {
+      const held = fixture.launchInRecovery(env);
+      const part0 = part(entryFor(await readAsOperator(), held), 'wrapRunInterrupted');
+      assert.equal(part0.state, 'none-recorded');
+      assert.deepEqual(part0.items, []);
+      assert.match(part0.note, /no.*matching settled marker|no wrap run/i);
+    });
+
+    it('reports an interrupted wrap run by id, step and commit-started, from the registry (#1816/#2643)', async () => {
+      const held = fixture.launchInRecovery(env);
+      launchRecoveryHeld._internal.wrapRunForProject = (projectName) => (projectName === held.project.name ? {
+        runId: 'run-interrupted-1', running: false, stale: false, interrupted: true,
+        interruptedStepId: 'commit', interruptedCommitStarted: true, interruptedAt: '2026-10-07T00:00:00.000Z'
+      } : realInternal.wrapRunForProject(projectName));
+      const wri = part(entryFor(await readAsOperator(), held), 'wrapRunInterrupted');
+      assert.equal(wri.state, 'recorded');
+      assert.deepEqual(wri.items, [{
+        runId: 'run-interrupted-1', lastStepId: 'commit', commitStarted: true, checkpointAt: '2026-10-07T00:00:00.000Z'
+      }]);
+    });
+
+    it('reports an unreadable wrap-run registry as unavailable, with a code and none of the error', async () => {
+      const held = fixture.launchInRecovery(env);
+      const other = fixture.launchInRecovery(env);
+      launchRecoveryHeld._internal.wrapRunForProject = (projectName) => {
+        if (projectName === held.project.name) throw new Error('SQLITE_CORRUPT in /Users/someone/.tangleclaw/db');
+        return realInternal.wrapRunForProject(projectName);
+      };
+      const answer = await readAsOperator();
+      assert.deepEqual(part(entryFor(answer, held), 'wrapRunInterrupted'), {
+        kind: 'wrapRunInterrupted', source: 'wrap-run registry (checkpoint trail), this project',
+        state: 'unavailable', reasonCode: 'SOURCE_READ_FAILED'
+      });
+      assert.equal(part(entryFor(answer, other), 'wrapRunInterrupted').state, 'none-recorded',
+        'one project\'s unreadable registry read does not change another\'s answer');
     });
 
     it('lists a handoff the prior session staged and never finished', async () => {

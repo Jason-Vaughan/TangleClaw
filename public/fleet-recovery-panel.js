@@ -96,6 +96,7 @@
   /** How each part of the uncertain-work evidence is named. An unknown kind is shown by its own name. */
   const PART_LABELS = Object.freeze({
     strandedWraps: 'Stranded wraps',
+    wrapRunInterrupted: 'Interrupted wrap run',
     stagedHandoff: 'Staged handoff',
     startupPromptFire: 'Startup prompt dispatch',
     launchNudge: 'Launch nudges',

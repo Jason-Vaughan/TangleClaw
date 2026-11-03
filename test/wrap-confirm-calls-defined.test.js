@@ -42,6 +42,23 @@ function stripComments(t) {
 }
 
 /**
+ * Blank template-literal LITERAL text, keeping `${...}` interpolations
+ * intact so a real call inside one is still caught. Without this, prose
+ * like "did not finish (most likely a server restart)" reads as a call to
+ * `finish` — the same false-positive class the single-quote blanking below
+ * already guards against for `'...'` strings, just not yet for backtick
+ * ones (#2846 Round 3).
+ * @param {string} t - Source.
+ * @returns {string}
+ */
+function blankTemplateLiteralText(t) {
+  return t.replace(/`(?:\\.|\$\{[^}]*\}|[^`\\])*`/g, (whole) => {
+    const parts = whole.slice(1, -1).split(/(\$\{[^}]*\})/g);
+    return '`' + parts.map((p) => (p.startsWith('${') ? p : '')).join('') + '`';
+  });
+}
+
+/**
  * Names defined in a file: function declarations, assignments, and the
  * `global.x = x` exports `api-helper.js` uses to publish shared helpers.
  * @param {string} t - Source.
@@ -80,9 +97,13 @@ describe('the wrap-confirm path calls only functions that exist', () => {
   });
 
   it('every function it calls is defined in session.js or api-helper.js', () => {
-    // Single-quoted strings are blanked too: notice copy like "killed mid-run
-    // (most likely …)" reads as a call to `run`.
-    const body = stripComments(bodies.map(([, b]) => b).join('\n')).replace(/'(?:[^'\\\n]|\\.)*'/g, "''");
+    // Single-quoted strings and backtick template-literal text are blanked
+    // too: notice copy like "killed mid-run (most likely …)" reads as a call
+    // to `run`. Template literals are blanked FIRST so an apostrophe inside
+    // one (a contraction in prose) isn't mistaken by the single-quote
+    // regex for the start of a real string.
+    const body = blankTemplateLiteralText(stripComments(bodies.map(([, b]) => b).join('\n')))
+      .replace(/'(?:[^'\\\n]|\\.)*'/g, "''");
     const called = [...new Set(
       [...body.matchAll(/(?:^|[^\w$.])([a-z_][\w$]*)\s*\(/g)].map((m) => m[1])
     )].filter((n) => !NOT_FUNCTIONS.has(n));
