@@ -647,6 +647,28 @@ describe('checkGovernedRefreshDue — recovery', () => {
     assert.equal(closed.state, decisionRouting.STATES.SUPERSEDED);
     assert.match(closed.auditRationale, /recovered/);
   });
+
+  it('due (8%) -> recovered (50%) -> due again (8%) in the SAME launch opens a FRESH alert, not the superseded one (PRR-A I-Gate Round 4)', async () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptState: 'complete', receiptAgeMs: MINUTE, nowMs });
+
+    const fired = await rotation.checkGovernedRefreshDue(PM_PROJECT, refreshDeps({ capturePane: async () => 'Context 8% left' }));
+    assert.equal(fired.due, true);
+    const firstDecisionId = fired.request.decisionId;
+
+    const recovered = await rotation.checkGovernedRefreshDue(PM_PROJECT, refreshDeps({ capturePane: async () => 'Context 50% left' }));
+    assert.equal(recovered.due, false);
+    assert.equal(decisionRouting.getDecisionRequest(firstDecisionId).state, decisionRouting.STATES.SUPERSEDED);
+
+    // Context drops to 8% again, same launch, same base idemKey. Must fire
+    // a genuinely NEW, live alert -- not replay the now-dead superseded one.
+    const renewed = await rotation.checkGovernedRefreshDue(PM_PROJECT, refreshDeps({ capturePane: async () => 'Context 8% left' }));
+    assert.equal(renewed.due, true);
+    assert.equal(renewed.held, false);
+    assert.notEqual(renewed.request.decisionId, firstDecisionId, 'a fresh episode, not the superseded one');
+    assert.equal(renewed.request.state, decisionRouting.STATES.WAITING_DECISION, 'the renewed alert is actually live');
+  });
 });
 
 describe('refreshMonitorTick — the recurring caller both checks above need (#2351/#2353 Critic BLOCKING)', () => {
