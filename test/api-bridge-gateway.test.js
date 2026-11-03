@@ -32,7 +32,7 @@ const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8')
 const ALLOWED = { authorId: 'author1', spaceId: 'space1', channelId: 'chan1' };
 /** The advisory surface's own defaults (#2817-A), unset: spread alongside DM defaults in `gateway.allowlist()`'s shape. */
 const ADVISORY_DEFAULTS = {
-  advisoryChannelId: null, advisoryAuthorIds: [], advisoryEnabled: false, advisoryRequireMention: false, advisoryMaxConsecutiveTurns: 6
+  advisoryChannelId: null, advisoryAuthorIds: [], advisoryEnabled: false, advisoryRequireMention: true, advisoryMaxConsecutiveTurns: 6
 };
 
 let tmpDir;
@@ -4067,7 +4067,14 @@ describe('bridge API: the round trip (#2031)', () => {
      */
     function setAdvisoryAllowlist(enabled, overrides = {}) {
       return asOperator('POST', '/api/bridge/operator/advisory-allowlist', {
-        body: { advisoryChannelId: ADVISORY_ID, advisoryAuthorIds: [PEER_BOT_ID, PEER_HUMAN_ID], advisoryEnabled: enabled, ...overrides }
+        // advisoryRequireMention: false is this helper's OWN convenience
+        // baseline (most tests here are not about the mention gate) --
+        // the real server default is `true` (#2817-A Architect Addendum,
+        // comment 6597060069), covered by its own dedicated test below.
+        body: {
+          advisoryChannelId: ADVISORY_ID, advisoryAuthorIds: [PEER_BOT_ID, PEER_HUMAN_ID], advisoryEnabled: enabled,
+          advisoryRequireMention: false, ...overrides
+        }
       });
     }
 
@@ -4105,6 +4112,18 @@ describe('bridge API: the round trip (#2031)', () => {
       });
       const enabled = await setAdvisoryAllowlist(true);
       assert.equal(enabled.body.allowlist.advisoryEnabled, true);
+    });
+
+    it('defaults advisoryRequireMention to true when never set (#2817-A Architect Addendum)', async () => {
+      // This file's store is shared across every test in it; an earlier
+      // test's own call may already have stamped this setting. Clear it
+      // directly to prove the REAL default, with nothing on file at all.
+      bridgeStore.settings.set('allow.advisoryRequireMention', null);
+      const fresh = await asOperator('POST', '/api/bridge/operator/advisory-allowlist',
+        { body: { advisoryChannelId: ADVISORY_ID, advisoryAuthorIds: [PEER_HUMAN_ID], advisoryEnabled: false } });
+      assert.equal(fresh.status, 200, JSON.stringify(fresh.body));
+      assert.equal(fresh.body.allowlist.advisoryRequireMention, true);
+      assert.equal(gateway.allowlist().advisoryRequireMention, true);
     });
 
     it('accepts a peer author and the operator on the pinned advisory channel once enabled, tagged advisory-channel; '
@@ -4235,6 +4254,37 @@ describe('bridge API: the round trip (#2031)', () => {
       });
       assert.deepEqual([collided.status, collided.body.code], [403, 'NOT_ALLOWLISTED']);
       bridgeStore.settings.set('allow.advisoryChannel', ADVISORY_ID);
+    });
+
+    it('refuses a sensitive-pattern answer on an advisory-channel route with 422, but allows an ordinary one '
+      + '(#2817-A Architect Addendum, comment 6597060069)', async () => {
+      await setAdvisoryAllowlist(true);
+      const accepted = await advisorySays(PEER_HUMAN_ID, 'what should I do?');
+      const routeId = accepted.body.routeId;
+      const routed = await masterWrites(routeId, 'route', { expectedVersion: bridgeStore.routes.get(routeId).version, to: 'master' });
+      assert.equal(routed.status, 200, JSON.stringify(routed.body));
+
+      for (const text of [
+        'here is a token: ghp_abcdefghijklmnopqrstuvwxyz0123',
+        'use tc_hb_abcdefghijklmnop as the helper token',
+        'the file lives at /Users/someone/Documents/secret.sqlite',
+        'Authorization: Bearer abcdefghijklmnop1234567890'
+      ]) {
+        const refused = await masterWrites(routeId, 'answer', { expectedVersion: bridgeStore.routes.get(routeId).version, text });
+        assert.deepEqual([refused.status, refused.body.code], [422, 'ADVISORY_REPLY_CONTAINS_SENSITIVE_PATTERN'], text);
+      }
+      const ok = await masterWrites(routeId, 'answer', { expectedVersion: bridgeStore.routes.get(routeId).version, text: 'an ordinary piece of advice' });
+      assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    });
+
+    it('never applies the sensitive-pattern check to an ordinary operator-channel answer', async () => {
+      const accepted = await operatorWrites(`op${++seq}`, 'what should I do?');
+      const routeId = accepted.body.routeId;
+      const { project } = liveProject(`adv-op-proj-${seq}`);
+      const routed = await masterWrites(routeId, 'route', { expectedVersion: bridgeStore.routes.get(routeId).version, to: project.id });
+      // Routing to a live project moves it past 'routed' via dispatch; answer
+      // only this surface's own refusal, not whether it happened to dispatch.
+      assert.notEqual(routed.body.code, 'ADVISORY_REPLY_CONTAINS_SENSITIVE_PATTERN');
     });
   });
 });

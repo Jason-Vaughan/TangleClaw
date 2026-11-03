@@ -18,7 +18,7 @@ const path = require('node:path');
 const os = require('node:os');
 
 const config = require('../lib/bridge-helper/config');
-const { createInbound, isAdvisoryMessage, REFUSAL_TEXT } = require('../lib/bridge-helper/inbound');
+const { createInbound, isAdvisoryMessage, mentionsOperatorOrBot, REFUSAL_TEXT } = require('../lib/bridge-helper/inbound');
 const { createOutbound } = require('../lib/bridge-helper/outbound');
 const { openState } = require('../lib/bridge-helper/state');
 const { BridgeError } = require('../lib/bridge-helper/bridge-client');
@@ -124,6 +124,25 @@ describe('isAdvisoryMessage (#2817-A)', () => {
   });
 });
 
+describe('mentionsOperatorOrBot (#2817-A I-Gate Round 1 Finding 1 on PR #2859)', () => {
+  const SELF_ID = '800000000000000008';
+
+  it('is true when Discord\'s own structured mentions name the operator or the bot', () => {
+    assert.equal(mentionsOperatorOrBot(message(PEER_HUMAN_ID, `<@${IDS.authorId}>?`, { mentions: [{ id: IDS.authorId }] }), ALLOW, SELF_ID), true);
+    assert.equal(mentionsOperatorOrBot(message(PEER_HUMAN_ID, `<@${SELF_ID}>?`, { mentions: [{ id: SELF_ID }] }), ALLOW, SELF_ID), true);
+  });
+
+  it('is true for the literal @master/@tangleclaw names, even with no structured mention', () => {
+    assert.equal(mentionsOperatorOrBot(message(PEER_HUMAN_ID, 'hey @master, question'), ALLOW, SELF_ID), true);
+    assert.equal(mentionsOperatorOrBot(message(PEER_HUMAN_ID, '@tangleclaw can you help'), ALLOW, SELF_ID), true);
+  });
+
+  it('is false for a mention of some unrelated user, or no mention at all', () => {
+    assert.equal(mentionsOperatorOrBot(message(PEER_HUMAN_ID, 'hi', { mentions: [{ id: '900000000000000009' }] }), ALLOW, SELF_ID), false);
+    assert.equal(mentionsOperatorOrBot(message(PEER_HUMAN_ID, 'just talking'), ALLOW, SELF_ID), false);
+  });
+});
+
 describe('createInbound: the advisory anti-loop invariant (#2817-A)', () => {
   /**
    * An inbound handler whose bridge refuses every message with the given
@@ -192,6 +211,23 @@ describe('createInbound: the advisory anti-loop invariant (#2817-A)', () => {
     assert.equal(sent.length, 1);
     assert.equal(sent[0].authorId, PEER_HUMAN_ID);
     assert.equal(sent[0].channelId, ADVISORY_ID);
+  });
+
+  it('derives mentionsOperator from real Discord mention data and sends it to the bridge -- never a bare unbacked field '
+    + '(#2817-A I-Gate Round 1 Finding 1 on PR #2859)', async () => {
+    const sent = [];
+    const handle = createInbound({
+      allow: ALLOW,
+      bridge: { sendInbound: async (m) => { sent.push(m); return { status: 202 }; } },
+      rest: { createMessage: async () => ({ id: 'r' }), addReaction: async () => {} },
+      log: () => {},
+      sleep: async () => {}
+    });
+    await handle(message(PEER_HUMAN_ID, 'no mention here'), {});
+    await handle(message(PEER_HUMAN_ID, `<@${IDS.authorId}>, a question`, { id: '700000000000000008', mentions: [{ id: IDS.authorId }] }), {});
+    assert.equal(sent.length, 2);
+    assert.equal(sent[0].mentionsOperator, false, 'no mention present');
+    assert.equal(sent[1].mentionsOperator, true, 'a real Discord mention of the operator, derived by the helper itself');
   });
 });
 
