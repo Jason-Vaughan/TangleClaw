@@ -491,39 +491,45 @@
     <!-- SECTION 1: HERO & EXECUTIVE OVERVIEW -->
     <section class="hero" id="overview">
       <div class="hero-card">
-        <div class="eyebrow">● FIVE-VERSION AUTONOMOUS SELF-IMPROVING SPRINT TRAIN RETROSPECTIVE · OP-GO-V5570-V5610-20261102 · CHARTERS A494–A498 ([03140778]) · MILESTONES #42–#46</div>
-        <h1 class="hero-title">TangleClaw <code>v5.57.0 → v5.61.0</code>: Five-Version Autonomous Sprint Train Retrospective</h1>
-        <p class="hero-sub">
-          Executed across <strong>5 consecutive versions (<code>v5.57.0 → v5.58.0 → v5.59.0 → v5.60.0 → v5.61.0</code>)</strong> from base <code>1ce2dd19</code> (<code>tag: v5.56.0</code>) to <code>d5b3491c577b0f8da5abf771f91811b9382b7b23</code> (<code>tag: v5.61.0</code>) under a single Operator Standing Authorization (<strong><code>OP-GO-V5570-V5610-20261102</code></strong>) and Architect Gate 0 Co-Sign <strong><code>[03140778]</code></strong> (<code>Charters A494–A498</code>).
-          Across <strong>11 waves and 26 true-merged pull requests</strong> (<code>Rule #282</code>, 2 parents on all 26 PRs), the 10-lane fleet + Morpheus <code>🕶️ Advisor</code> closed <strong>100% of all chartered issues across Milestones #42–#46</strong> (<code>54</code> chartered issues / <code>52</code> unique feature issues + Slice 2 governance / <code>68</code> total milestone issues closed; <code>open_issues: 0</code> across all 5 milestones) with <strong><code>+29,421 / -881</code> net lines across 186 files</strong> and <strong>0 unplanned Operator interventions during execution</strong>.
-          Through <strong><code>Guardrail 06</code> (Cross-Version Pipelining)</strong> and <strong><code>Guardrail 10</code> (100% Remote Testament <code>v0.34.0</code> Pool Execution)</strong>, per-version wall-clock duration compressed by <strong>93.5%</strong> across the train: from <strong><code>5h 36m</code></strong> on Leg 1 (<code>v5.57.0</code>) → <strong><code>4h 09m</code></strong> on Leg 2 (<code>v5.58.0</code>) → <strong><code>1h 15m</code></strong> on Leg 3 (<code>v5.59.0</code>) → <strong><code>56m</code></strong> on Leg 4 (<code>v5.60.0</code>, 16 issues!) → <strong><code>22m</code></strong> on Final Leg 5 (<code>v5.61.0</code>, 14 issues merged in a <strong>47-second</strong> 4-car Wave 1 burst!).
-          Upon live deployment of <code>v5.61.0</code> on <code>:3102</code>, post-deploy telemetry also captured a high-value production observation on <strong><code>#2853</code> (<code>_operatorResolved()</code>)</strong>: first boot scanned <code>192</code> historical resolved exchanges, <code>52</code> of which <code>TC-Lane-PM</code> suppressed via <code>drop_code='historical-backfill-suppressed'</code> in <code>bridge_outbound</code>, yielding our top feed-forward guardrail to bound <code>_operatorResolved(since)</code> by the reconciler watermark window.
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:14px;">
+          <div style="flex:1;min-width:320px;">
+            <div class="eyebrow">🏆 CHARTERS A494–A498 FIVE-VERSION RETROSPECTIVE · MILESTONES #42, #43, #44, #45 &amp; #46 (54/54 CHARTERED / 52/52 FEATURE ISSUES · 26 PRs · TOTAL RUN TIME: 12h 16m TO LIVE :3102 / 12h 20m TO CLOSEOUT)</div>
+            <h1 class="hero-title">v5.57.0 → v5.58.0 → v5.59.0 → v5.60.0 → v5.61.0: Five-Version Autonomous Sprint Train &amp; Multi-Version Comparison Report</h1>
+          </div>
+          <div class="status-pill" style="display:inline-flex;align-items:center;padding:8px 14px;border-radius:999px;background:rgba(52,211,153,0.14);border:1px solid rgba(52,211,153,0.4);color:var(--green);font-weight:700;font-size:0.82rem;white-space:nowrap;">
+            ● Total Run Time: 12h 16m (22:58 → 11:14 PST · 5 Versions · 52/52 Issues · 26/26 PRs)
+          </div>
+        </div>
+        <p class="hero-sub hero-subtitle">
+          Executed under a single standing Operator authorization (<strong><code>OP-GO-V5570-V5610-20261102</code></strong> at <code>22:58 PST</code> Nov 2) and Architect Gate 0 Co-Sign <strong><code>[03140778]</code></strong> (<code>Charters A494–A498</code>), the TangleClaw 10-lane fleet + Morpheus <code>🕶️ Advisor</code> autonomously shipped <strong>5 consecutive versions</strong> in a <strong>total start-to-finish wall-clock run time of <code>12h 16m</code> (<code>736m</code>, <code>22:58 PST → 11:14 PST</code>) to live <code>:3102</code> activation</strong> (<code>12h 20m</code> to final O-Gate closeout at <code>11:18 PST</code>; <code>9h 12m</code> active merge-to-deploy train from first Wave 1 merge at <code>02:02 PST</code> to <code>11:14 PST</code>) — <strong>v5.57.0</strong> (<em>"Session stops and decisions"</em>, Milestone <code>#42</code>, 8 chartered / 18 milestone issues, <code>33bcfbca</code>), <strong>v5.58.0</strong> (<em>"Wrapping up a session"</em>, Milestone <code>#43</code>, 8 chartered / 12 milestone issues, <code>1a4ac404</code>), <strong>v5.59.0</strong> (<em>"Discord and external comms"</em>, Milestone <code>#44</code>, 8 issues, <code>87d49f8d</code>), <strong>v5.60.0</strong> (<em>"Fleet and dashboard views"</em>, Milestone <code>#45</code>, 16 issues, <code>6efd74eb</code>), and <strong>v5.61.0</strong> (<em>"Shared documents and project upkeep"</em>, Milestone <code>#46</code>, 14 issues, <code>d5b3491c</code>) — closing <strong>54 of 54 chartered issues (52/52 unique feature issues and 68/68 total milestone issues; <code>0</code> open)</strong> across <strong>26 true-merged PRs</strong> (<code>+29,421 / -881</code> LOC across <code>186</code> files).
+          Through <strong><code>Guardrail 06</code> (Cross-Version Pipelining)</strong> and <strong><code>Guardrail 10</code> (100% Remote Testament <code>v0.34.0</code> Pool Execution)</strong>, per-leg wall-clock run time compressed by <strong>93.5% (15.3x acceleration)</strong> across the 5 legs: <strong><code>5h 36m</code> (<code>v5.57.0</code>, <code>22:58 → 04:34 PST</code>) → <code>4h 09m</code> (<code>v5.58.0</code>, <code>04:34 → 08:43 PST</code>; <code>1h 15m</code> active leg) → <code>1h 15m</code> (<code>v5.59.0</code>, <code>08:43 → 09:58 PST</code>) → <code>56m</code> (<code>v5.60.0</code>, <code>09:58 → 10:54 PST</code>, 16 issues!) → <code>22m</code> (<code>v5.61.0</code>, <code>10:52 → 11:14 PST</code>, 14 issues with a <code>47s</code> Wave 1 merge burst!)</strong>.
+          Post-deploy telemetry on <code>v5.61.0</code> also captured a key production observation on <strong><code>#2853</code> (<code>_operatorResolved()</code>)</strong>: first boot scanned <code>192</code> historical resolved exchanges, <code>52</code> of which <code>TC-Lane-PM</code> suppressed via <code>drop_code='historical-backfill-suppressed'</code> in <code>bridge_outbound</code>, motivating our feed-forward recommendation to bound <code>_operatorResolved(since)</code> by the reconciler window.
         </p>
 
         <div class="meta-bar">
-          <div class="meta-pill"><span>Train Span:</span> <code>v5.57.0 (#42)</code> → <code>v5.58.0 (#43)</code> → <code>v5.59.0 (#44)</code> → <code>v5.60.0 (#45)</code> → <code>v5.61.0 (#46)</code></div>
+          <div class="meta-pill"><span>Total Run Time (TRT):</span> <code>12h 16m</code> to Live <code>:3102</code> (<code>22:58 → 11:14 PST</code>) · <code>12h 20m</code> to Closeout (<code>9h 12m</code> Merge-to-Live)</div>
+          <div class="meta-pill"><span>Leg-by-Leg TRT Breakdown:</span> <code>5h 36m</code> (L1 <code>v5.57.0</code>) → <code>4h 09m</code> (L2 <code>v5.58.0</code>) → <code>1h 15m</code> (L3 <code>v5.59.0</code>) → <code>56m</code> (L4 <code>v5.60.0</code>) → <code>22m</code> (L5 <code>v5.61.0</code>)</div>
           <div class="meta-pill"><span>Release Tags:</span> <code>v5.57.0 @ 33bcfbca</code> · <code>v5.58.0 @ 1a4ac404</code> · <code>v5.59.0 @ 87d49f8d</code> · <code>v5.60.0 @ 6efd74eb</code> · <code>v5.61.0 @ d5b3491c</code></div>
-          <div class="meta-pill"><span>Scope Closed:</span> <code>54/54</code> Chartered Issues (<code>52</code> Feature Issues · <code>68/68</code> Total Milestone Issues · <code>0</code> Open) across <code>26</code> True-Merged PRs</div>
-          <div class="meta-pill"><span>Velocity Compression:</span> <code>5h 36m</code> (L1) → <code>4h 09m</code> (L2) → <code>1h 15m</code> (L3) → <code>56m</code> (L4) → <code>22m</code> (L5 · 47s Wave 1 Burst)</div>
+          <div class="meta-pill"><span>Scope Closed:</span> <code>54/54</code> Chartered Issues (<code>52/52</code> Feature Issues · <code>68/68</code> Total Milestone Issues · <code>0</code> Open) across <code>26/26</code> True-Merged PRs</div>
           <div class="meta-pill"><span>Post-Deploy #2853 Observation:</span> <code>192</code> historical resolved exchanges scanned on first boot; <code>52</code> suppressed via <code>historical-backfill-suppressed</code></div>
           <div class="meta-pill"><span>Observer Participant Disclosure:</span> <code>TC-Lane-Obsr</code> (#1540) operated as Gate 3/4 Observer &amp; Continuity Companion across all 5 legs (Rule #283 cl. 1)</div>
         </div>
 
         <div class="kpi-grid">
           <div class="kpi-card">
-            <div class="kpi-label">Releases Shipped</div>
-            <div class="kpi-value cyan">5 / 5 Versions</div>
-            <div class="kpi-sub"><code>v5.57.0 → v5.61.0</code> · Milestones <code>#42–#46</code> all at <code>open_issues: 0</code></div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-label">Chartered &amp; Milestone Issues</div>
-            <div class="kpi-value green">54 / 54 (68 Total)</div>
-            <div class="kpi-sub"><code>8 + 8 + 8 + 16 + 14</code> chartered (<code>52</code> unique feature issues · <code>68</code> milestone closures)</div>
-          </div>
-          <div class="kpi-card">
             <div class="kpi-label">Total Run Time (Start → Finish)</div>
-            <div class="kpi-value green">9h 16m Train</div>
-            <div class="kpi-sub"><code>02:02 PST → 11:18 PST</code> (Nov 3) · Per-leg wall time compressed <code>5h 36m → 22m</code> (-93.5%)</div>
+            <div class="kpi-value green">12h 16m (736m)</div>
+            <div class="kpi-sub"><code>22:58 → 11:14 PST</code> to live <code>:3102</code> (<code>12h 20m</code> to closeout · <code>9h 12m</code> merge-to-live)</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Leg Cadence (Start → Finish)</div>
+            <div class="kpi-value cyan">5.6h → 4.1h → 75m → 56m → 22m</div>
+            <div class="kpi-sub">15.3x wall-time acceleration (<code>-93.5%</code> per-leg duration from L1 to L5)</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Versions &amp; Issues Shipped</div>
+            <div class="kpi-value green">5 / 5 · 52 / 52</div>
+            <div class="kpi-sub"><code>54/54</code> chartered (<code>52</code> unique feature · <code>68/68</code> milestone issues across <code>#42–#46</code>)</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">True Merge Commits (Rule #282)</div>
@@ -555,30 +561,30 @@
         <!-- PLAIN-ENGLISH SUMMARY FOR NON-TECHNICAL READERS (MANDATORY v5.47.0+ CONTRACT) -->
         <div id="plain-english" style="margin-top:22px;padding:22px 24px;border-radius:14px;background:linear-gradient(135deg,rgba(52,211,153,0.10),rgba(56,189,248,0.08));border:1px solid rgba(52,211,153,0.35);">
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
-            <span class="badge badge-green" style="font-size:0.76rem;padding:4px 10px;">📖 Plain-English Summary — How the Five-Version Autonomous Sprint Train Worked &amp; What We Learned</span>
-            <span style="font-size:0.78rem;color:var(--text-muted);">Written for operators, stakeholders &amp; non-specialist readers</span>
+            <span class="badge badge-green" style="font-size:0.76rem;padding:4px 10px;">📖 PLAIN-ENGLISH SUMMARY · FIVE VERSIONS SHIPPED BACK-TO-BACK IN 12h 16m TOTAL WALL-CLOCK TIME (5h 36m → 22m)</span>
+            <span class="badge badge-cyan" style="font-size:0.76rem;padding:4px 10px;">Start 22:58 PST (Nov 2) → Finish 11:14 PST (:3102 Live) / 11:18 PST (Closeout)</span>
           </div>
-          <h3 style="margin:0 0 10px;font-size:1.12rem;color:var(--text);">Five Releases in One Continuous Operation: Self-Improving Velocity (5h 36m → 22m), 26 Pull Requests, and Real-World Post-Deploy Telemetry</h3>
-          <p style="margin:0 0 14px;font-size:0.93rem;color:var(--text-muted);line-height:1.65;">
-            Under a single standing authorization from the Operator (<code>OP-GO-V5570-V5610-20261102</code>), TangleClaw’s 10-lane multi-agent engineering fleet planned, built, reviewed, tested, released, and live-deployed <strong>five consecutive software versions (<code>v5.57.0</code> through <code>v5.61.0</code>)</strong> without pausing for manual intervention between versions. Even more importantly, the fleet actively improved its own workflow after each leg—cutting release wall-clock time from over five hours on Leg 1 down to just 22 minutes on Leg 5:
-          </p>
-          <div class="grid-3" style="gap:14px;">
-            <div style="background:rgba(10,15,29,0.65);border:1px solid var(--border);border-radius:10px;padding:14px;">
-              <strong style="color:var(--green);display:block;margin-bottom:6px;font-size:0.92rem;">1. Five Cohesive Architectural Themes Shipped Live (`v5.57.0 → v5.61.0`)</strong>
-              <p style="margin:0;font-size:0.84rem;color:var(--text-muted);line-height:1.55;">
-                Across 26 pull requests (`+29,421 / -881` LOC), the train delivered: <strong>Session stops &amp; decision routing</strong> (`v5.57.0`), <strong>Governed wrap, chunk boundaries &amp; coordinator rotation</strong> (`v5.58.0`), <strong>3-tier remote operator authority, Morpheus Advisor &amp; advisory Discord channels</strong> (`v5.59.0`), <strong>Master Fleet Workload views, resource leases, team templates &amp; WCAG contrast</strong> (`v5.60.0`), and <strong>Shared docs MagicDNS serving, async project I/O &amp; runtime merge guards</strong> (`v5.61.0`).
-              </p>
+          <h3 style="margin:0 0 12px;font-size:1.15rem;color:var(--text);">What the 5-Version Sprint Train Delivered — and Start-to-Finish Wall-Clock Run Time Breakdown</h3>
+          <div class="grid-2" style="gap:18px;">
+            <div style="background:rgba(10,15,29,0.65);border:1px solid var(--border);border-radius:10px;padding:15px 17px;">
+              <h4 style="margin:0 0 8px;color:var(--accent2);font-size:0.98rem;">🛠️ What Shipped Across v5.57.0 → v5.61.0 (52 Unique Feature Issues / 54 Chartered / 68 Milestone Issues)</h4>
+              <ul style="margin:0;padding-left:18px;font-size:0.88rem;line-height:1.55;color:var(--text-muted);">
+                <li><strong>Leg 1 — <code>v5.57.0</code> (<code>Milestone #42</code> · 8 Chartered / 18 Milestone Issues · <code>33bcfbca</code>):</strong> Session stop provenance (<code>#2249</code>), held recovery wakes (<code>#2250</code>), durable decision routing (<code>#2037</code>), coordinator-rotation follow-ups (<code>#2034</code>), Codex transcript backfill (<code>#2074</code>), unreachable decider fallback &amp; 8h/12% refresh alerts (<code>#2351, #2353</code>), and safe peer pause (<code>#2109</code>).</li>
+                <li><strong>Leg 2 — <code>v5.58.0</code> (<code>Milestone #43</code> · 8 Chartered / 12 Milestone Issues · <code>1a4ac404</code>):</strong> Governed wrap sequence (<code>#2154</code>), active chunk wrap guard (<code>#2352</code>), <code>/clear</code> handoff survival (<code>#2356</code>), coordinator rotation (<code>#2032</code>), wrap vs clear badges (<code>#1956</code>), and re-entry primer cards (<code>#1291</code>).</li>
+                <li><strong>Leg 3 — <code>v5.59.0</code> (<code>Milestone #44</code> · 8 Issues · <code>87d49f8d</code>):</strong> 3-tier remote operator authority (<code>#2741</code>), Morpheus <code>🕶️ Advisor</code> (<code>#2740</code>), group addressing (<code>#2744</code>), <code>#ai-to-ai-chatroom</code> &amp; <code>#sprint-milestones</code> bridges (<code>#2738, #2739</code>), and phone-friendly Discord summaries (<code>#2742, #2743, #2745</code>).</li>
+                <li><strong>Leg 4 — <code>v5.60.0</code> (<code>Milestone #45</code> · 16 Issues · <code>6efd74eb</code>):</strong> Resource Module leases &amp; delegated provisioning (<code>#2014, #2071, #2397</code>), ADR viewer, rule preview, bulk approvals &amp; team templates (<code>#1259, #1604, #2016, #2395, #2396</code>), Master Fleet Workload &amp; Switchboard stats (<code>#349, #801, #1046, #1784, #1923</code>), and WCAG 4.5:1 contrast &amp; attachment pills (<code>#1265, #1573, #1577</code>).</li>
+                <li><strong>Leg 5 — <code>v5.61.0</code> (<code>Milestone #46</code> · 14 Issues · <code>d5b3491c</code>):</strong> Async project I/O, rename impact &amp; <code>PROJECT-MAP.md</code> regeneration (<code>#1350, #1370, #1705</code>), Switchboard toggle sync, scratch defaults &amp; drift repair (<code>#1677, #2604, #2823</code>), shared doc auto-create &amp; MagicDNS serving (<code>#1305, #1306, #1307, #2825</code>), and <code>AskUserQuestion</code> state, merge guard &amp; <code>_operatorResolved()</code> all-clear (<code>#2826, #2601, #2853, #2854</code> — where first boot scanned <code>192</code> historical exchanges and suppressed <code>52</code> via <code>historical-backfill-suppressed</code>).</li>
+              </ul>
             </div>
-            <div style="background:rgba(10,15,29,0.65);border:1px solid var(--border);border-radius:10px;padding:14px;">
-              <strong style="color:var(--accent2);display:block;margin-bottom:6px;font-size:0.92rem;">2. Compounding Pipelined Velocity (`5h 36m → 4h 09m → 1h 15m → 56m → 22m`)</strong>
-              <p style="margin:0;font-size:0.84rem;color:var(--text-muted);line-height:1.55;">
-                By pre-co-signing all five charters (`A494–A498`) and allowing Builder and Reviewer lanes to build and certify the next version's cars while the Integrator merged and deployed the current version (`Guardrail 06`), idle handoff wait dropped to near zero—culminating in all four `v5.61.0` feature cars merging in just <strong>47 seconds</strong>.
-              </p>
-            </div>
-            <div style="background:rgba(10,15,29,0.65);border:1px solid var(--border);border-radius:10px;padding:14px;">
-              <strong style="color:var(--purple);display:block;margin-bottom:6px;font-size:0.92rem;">3. Post-Deploy `#2853` Observation: Catching Historical Backfill Noise Safely</strong>
-              <p style="margin:0;font-size:0.84rem;color:var(--text-muted);line-height:1.55;">
-                When `v5.61.0` booted on live `:3102`, the new `#2853` `_operatorResolved()` detector scanned `192` historical resolved exchanges on first boot. Because `TC-Lane-PM`'s outbound bridge layer already enforced a backfill safety filter, `52` stale notifications were cleanly dropped with `drop_code='historical-backfill-suppressed'`—and our top post-train action bounds `_operatorResolved(since)` by the reconciler window.
+            <div style="background:rgba(10,15,29,0.65);border:1px solid var(--border);border-radius:10px;padding:15px 17px;">
+              <h4 style="margin:0 0 8px;color:var(--green);font-size:0.98rem;">⏱️ Total Run Time: 12h 16m Start-to-Finish (5h 36m → 4h 09m → 1h 15m → 56m → 22m)</h4>
+              <p style="margin:0;font-size:0.88rem;line-height:1.58;color:var(--text-muted);">
+                From Operator Go (<code>22:58 PST</code> Nov 2) to <code>v5.61.0</code> live on <code>:3102</code> (<code>11:14 PST</code> Nov 3), total elapsed wall-clock time was <strong><code>12h 16m</code> (<code>736m</code>)</strong> (<code>12h 20m</code> to final O-Gate closeout at <code>11:18 PST</code>; <code>9h 12m</code> active merge-to-live train from first PR merge at <code>02:02 PST</code>):<br/>
+                • <strong>Leg 1 (<code>v5.57.0</code>):</strong> <code>22:58 → 04:34 PST</code> = <strong><code>5h 36m</code> (<code>336m</code>)</strong> to live <code>:3102</code> / O-Gate (<code>2h 17m</code> merge window <code>02:02 → 04:19 PST</code> across 6 PRs).<br/>
+                • <strong>Leg 2 (<code>v5.58.0</code>):</strong> <code>04:34 → 08:43 PST</code> = <strong><code>4h 09m</code> (<code>249m</code>)</strong> total leg wall time to live <code>:3102</code> (<strong><code>1h 15m</code></strong> active merge-to-deploy window <code>07:28 → 08:43 PST</code> across 5 PRs).<br/>
+                • <strong>Leg 3 (<code>v5.59.0</code>):</strong> <code>08:43 → 09:58 PST</code> = <strong><code>1h 15m</code> (<code>75m</code>)</strong> to live <code>:3102</code> (<code>1h 06m</code> merge window <code>08:43 → 09:49 PST</code> across 5 PRs + <code>9m</code> Release CI/deploy).<br/>
+                • <strong>Leg 4 (<code>v5.60.0</code>):</strong> <code>09:58 → 10:54 PST</code> = <strong><code>56m</code></strong> to live <code>:3102</code> while doubling scope to 16 issues (<code>25m</code> merge window <code>10:18 → 10:43 PST</code> across 5 PRs + <code>11m</code> Release CI/deploy).<br/>
+                • <strong>Leg 5 (<code>v5.61.0</code>):</strong> <code>10:52 → 11:14 PST</code> = <strong><code>22m</code></strong> to live <code>:3102</code> across 14 issues (<strong><code>47s</code></strong> 4-car Wave 1 merge burst <code>10:52:06 → 10:52:53 PST</code> + <code>PR #2873</code> merged at <code>11:02 PST</code> + live <code>:3102</code> at <code>11:14 PST</code>).
               </p>
             </div>
           </div>
