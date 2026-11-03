@@ -438,6 +438,28 @@ describe('/api/control (#1861)', () => {
       assert.ok(escalations.some((m) => /Pause escalation/.test(m.message)));
     });
 
+    it('a busy pane whose own escalation notice fails to send still returns 201 with the HOLD committed', async () => {
+      // Mirrors the sibling notify() failure path above ('accepted means
+      // stored...') for _escalateUndeliveredPause's own catch: a rejecting
+      // sendSystemMessage is fire-and-forget there too (a .catch on the
+      // promise, never awaited), so it must never surface as a thrown error
+      // or an unhandled rejection, and the durable HOLD must stand regardless.
+      const { project, assignmentId } = await pausable();
+      controlApi._internal.assessIdle = () => ({ idle: false, reason: 'turn-running', digest: 'd', idleTicks: 0 });
+      controlApi._internal.sendSystemMessage = async () => { throw Object.assign(new Error('bridge down'), { code: 'BRIDGE_UNREACHABLE' }); };
+      const injected = [];
+      controlApi._internal.inject = (...args) => { injected.push(args); return { ok: true, error: null }; };
+
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      assert.equal(r.status, 201, r.raw);
+      assert.equal(r.data.nudge.status, 'deferred-busy');
+      assert.equal(injected.length, 0, 'a busy pane is never typed into');
+
+      await settle();
+      const st = await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+      assert.equal(st.data.assignment.state, 'held', 'the HOLD stands regardless of escalation delivery');
+    });
+
     it('never calls killSession, and never on a deferred-busy pause either', async () => {
       const { project } = await pausable();
       const sessions = require('../lib/sessions');
