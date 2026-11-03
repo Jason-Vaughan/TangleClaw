@@ -175,6 +175,8 @@ describe('bridge API: the Master surface (#2031)', () => {
       enabled: false, masterGeneration: generation, proof: 'master-launch', scope: { kind: 'all' }, openRoutes: before, configurationCircuit: null,
       // The DM surface's own circuit, additive beside the guild-only field above (#2433).
       configurationCircuitDm: null,
+      // The advisory surface's own circuit, additive the same way (#2817-A).
+      configurationCircuitAdvisory: null,
       // No helper has reported in this file: the reading says so in as many words (#2272).
       discordGateway: { reading: 'never-reported', state: null, since: null, fatalCloseCode: null, reportedAt: null, sinceText: null, reportedAtText: null }
     });
