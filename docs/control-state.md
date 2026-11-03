@@ -188,6 +188,7 @@ tc control status                                    your lane, its holds, and w
 tc control ack <generation>                          acknowledge the state you saw
 tc control hold <assignment-id> <reason>             with authority (or on your own lane)
 tc control pause <project>                           peer safe-boundary pause (#2109) — needs authority.hold
+                                                      (or the operator, or on your own lane, same as hold)
 tc control release <assignment-id> <generation> <reason> <hold-id…>
 tc control stop <assignment-id> <reason>
 ```
