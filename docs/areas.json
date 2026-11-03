@@ -140,6 +140,7 @@
         "lib/session-ownership.js",
         "lib/master.js",
         "lib/master-authority.js",
+        "lib/advisor.js",
         "lib/tmux.js",
         "lib/ttyd-*.js",
         "lib/pty-activity.js",
