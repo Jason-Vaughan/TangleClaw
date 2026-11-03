@@ -176,6 +176,8 @@ files = [
   "test/remote-output-callers.test.js",
   "test/remote-output.test.js",
   "test/require-graph.test.js",
+  "test/resource-leases.test.js",
+  "test/role-instruction-guard.test.js",
   "test/rule-label-drift.test.js",
   "test/rule-label.test.js",
   "test/scorecard-cache.test.js",
