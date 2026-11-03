@@ -10,8 +10,10 @@ const { setLevel } = require('../lib/logger');
 
 setLevel('error');
 
+const crypto = require('node:crypto');
 const store = require('../lib/store');
-const { createServer } = require('../server');
+const serverModule = require('../server');
+const { createServer } = serverModule;
 const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
 
 /**
@@ -560,6 +562,151 @@ describe('api-sessions', () => {
       }
     });
 
+  });
+
+  describe('POST /api/sessions/:project/command — governed /clear for a delegated coordinator (#2824)', () => {
+    /**
+     * Grant `delegateProject` lifecycle authority over `targetProject`
+     * through a real open control assignment, as the operator.
+     * @param {object} targetProject
+     * @param {object} delegateProject
+     * @returns {Promise<string>} Assignment id
+     */
+    async function grantLifecycleAuthority(targetProject, delegateProject) {
+      const res = await operatorRequest(server, 'POST', '/api/control/assignments', {
+        projectId: targetProject.id, requestId: crypto.randomUUID(), issueRef: '#2824',
+        authority: { lifecycle: [`project:${delegateProject.id}`] }
+      });
+      assert.equal(res.status, 201, JSON.stringify(res.body));
+      return res.body.assignment.assignmentId;
+    }
+
+    /**
+     * Give the target session a current `complete`/`safe-to-clear` receipt
+     * and stub the activity observer at-rest, so it genuinely composes
+     * AVAILABLE/safe-to-clear — the exact boundary the governed /clear
+     * depends on, not merely "an assignment exists".
+     * @param {object} bound - From `bindProject`
+     * @returns {() => void} Restores the observer stub
+     */
+    async function makeSafeToClear(bound) {
+      const res = await request(server, 'POST', '/api/tc/workload',
+        { schema: 'tc.workload/1', state: 'complete', clearance: 'safe-to-clear', summary: 'chunk shipped' },
+        { ...bound.headers, 'x-tangleclaw-cli': 'tc', 'x-tangleclaw-verb': 'workload.set' });
+      assert.equal(res.status, 201, JSON.stringify(res.body));
+      const real = serverModule._activityObserver.get;
+      serverModule._activityObserver.get = () => ({ activity: 'at-rest', reason: 'test', observedAt: null, ageSeconds: 0 });
+      return () => { serverModule._activityObserver.get = real; };
+    }
+
+    function newProject(prefix) {
+      return store.projects.create({
+        name: `${prefix}-${Math.random().toString(36).slice(2)}`,
+        path: fs.mkdtempSync(path.join(os.tmpdir(), `tc-${prefix}-`)), engine: 'claude'
+      });
+    }
+
+    it('a delegated coordinator may /clear a target lane that composes AVAILABLE/safe-to-clear', async () => {
+      const pm = newProject('pm-2824a');
+      const target = newProject('target-2824a');
+      const pmBound = bindProject(pm);
+      const targetBound = bindProject(target);
+      await grantLifecycleAuthority(target, pm);
+      const restore = await makeSafeToClear(targetBound);
+      try {
+        const res = await request(server, 'POST', `/api/sessions/${encodeURIComponent(target.name)}/command`,
+          { command: '/clear', startupIntervention: true }, pmBound.headers);
+        assert.notEqual(res.status, 403, JSON.stringify(res.body));
+        assert.notEqual(res.body && res.body.code, 'SLASH_COMMAND_OPERATOR_ONLY');
+      } finally {
+        restore();
+        store.sessions.kill(pmBound.sessionId, 'test cleanup');
+        store.sessions.kill(targetBound.sessionId, 'test cleanup');
+      }
+    });
+
+    it('a delegated coordinator is still refused a /clear while the target lane is NOT safe-to-clear (busy)', async () => {
+      const pm = newProject('pm-2824b');
+      const target = newProject('target-2824b');
+      const pmBound = bindProject(pm);
+      const targetBound = bindProject(target);
+      await grantLifecycleAuthority(target, pm);
+      const real = serverModule._activityObserver.get;
+      serverModule._activityObserver.get = () => ({ activity: 'busy', reason: 'test', observedAt: null, ageSeconds: 0 });
+      try {
+        const res = await request(server, 'POST', `/api/sessions/${encodeURIComponent(target.name)}/command`,
+          { command: '/clear', startupIntervention: true }, pmBound.headers);
+        assert.equal(res.status, 403);
+        assert.equal(res.body.code, 'SLASH_COMMAND_OPERATOR_ONLY');
+      } finally {
+        serverModule._activityObserver.get = real;
+        store.sessions.kill(pmBound.sessionId, 'test cleanup');
+        store.sessions.kill(targetBound.sessionId, 'test cleanup');
+      }
+    });
+
+    it('delegated lifecycle authority covers /clear only, never another slash command', async () => {
+      const pm = newProject('pm-2824c');
+      const target = newProject('target-2824c');
+      const pmBound = bindProject(pm);
+      const targetBound = bindProject(target);
+      await grantLifecycleAuthority(target, pm);
+      const restore = await makeSafeToClear(targetBound);
+      try {
+        const res = await request(server, 'POST', `/api/sessions/${encodeURIComponent(target.name)}/command`,
+          { command: '/not-clear', startupIntervention: true }, pmBound.headers);
+        assert.equal(res.status, 403);
+        assert.equal(res.body.code, 'SLASH_COMMAND_OPERATOR_ONLY');
+      } finally {
+        restore();
+        store.sessions.kill(pmBound.sessionId, 'test cleanup');
+        store.sessions.kill(targetBound.sessionId, 'test cleanup');
+      }
+    });
+
+    it('a PROJECT caller with no delegated authority is refused /clear even on a safe-to-clear lane', async () => {
+      const stranger = newProject('stranger-2824');
+      const target = newProject('target-2824d');
+      const strangerBound = bindProject(stranger);
+      const targetBound = bindProject(target);
+      // No grantLifecycleAuthority call: stranger holds nothing over target.
+      const restore = await makeSafeToClear(targetBound);
+      try {
+        const res = await request(server, 'POST', `/api/sessions/${encodeURIComponent(target.name)}/command`,
+          { command: '/clear', startupIntervention: true }, strangerBound.headers);
+        assert.equal(res.status, 403);
+        assert.equal(res.body.code, 'SLASH_COMMAND_OPERATOR_ONLY');
+      } finally {
+        restore();
+        store.sessions.kill(strangerBound.sessionId, 'test cleanup');
+        store.sessions.kill(targetBound.sessionId, 'test cleanup');
+      }
+    });
+
+    it('an unreadable target authority matrix answers 503 CONTROL_STATE_UNAVAILABLE, not a caller-blaming refusal', async () => {
+      const pm = newProject('pm-2824e');
+      const target = newProject('target-2824e');
+      const pmBound = bindProject(pm);
+      const targetBound = bindProject(target);
+      await grantLifecycleAuthority(target, pm);
+      const restore = await makeSafeToClear(targetBound);
+      const origGetOpen = store.control.getOpenForProject;
+      store.control.getOpenForProject = (projectId) => {
+        const row = origGetOpen.call(store.control, projectId);
+        return row ? { ...row, authority_json: '{not json' } : row;
+      };
+      try {
+        const res = await request(server, 'POST', `/api/sessions/${encodeURIComponent(target.name)}/command`,
+          { command: '/clear', startupIntervention: true }, pmBound.headers);
+        assert.equal(res.status, 503, JSON.stringify(res.body));
+        assert.equal(res.body.code, 'CONTROL_STATE_UNAVAILABLE');
+      } finally {
+        store.control.getOpenForProject = origGetOpen;
+        restore();
+        store.sessions.kill(pmBound.sessionId, 'test cleanup');
+        store.sessions.kill(targetBound.sessionId, 'test cleanup');
+      }
+    });
   });
 
   describe('POST /api/sessions/:project/command — startup admission gate (#1633)', () => {

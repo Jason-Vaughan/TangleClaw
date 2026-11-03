@@ -109,6 +109,7 @@ const launchSequence = require('./lib/launch-sequence');
 const launchRecoveryClear = require('./lib/launch-recovery-clear');
 const recoveryDefault = require('./lib/recovery-default');
 const master = require('./lib/master');
+const advisor = require('./lib/advisor');
 const masterAuthority = require('./lib/master-authority');
 const sharedDocsAccess = require('./lib/shared-docs-access');
 const sharedDocRecord = require('./lib/shared-docs');
@@ -1291,6 +1292,73 @@ route('POST', '/api/master/kill', (req, res) => {
     // without the cause a client cannot tell a timeout from the second case,
     // which are different things to tell the operator.
     return errorResponse(res, 500, result.error, 'MASTER_LIVENESS_UNKNOWN', { cause: result.cause });
+  }
+  jsonResponse(res, 200, result);
+});
+
+// ── Advisor (Morpheus 🕶️, #2819, #2817-C) ──
+// Operator routes for the second global singleton — a reserved tmux session
+// beside the Master's, always zero-privilege. The Advisor's own API is the
+// one mutating surface it IS allowed to reach (the dispatch-floor refusal
+// above names it by this exact prefix).
+
+// GET /api/advisor/status — is the Advisor session alive? Truth from tmux,
+// same discipline as GET /api/master/status.
+route('GET', '/api/advisor/status', (req, res) => {
+  jsonResponse(res, 200, advisor.getAdvisorStatus());
+});
+
+// GET /api/advisor/settings — the stored engine/model/autoStart, for the
+// drawer's picker to render against.
+route('GET', '/api/advisor/settings', (req, res) => {
+  jsonResponse(res, 200, advisor.advisorSettings(store.config.load()));
+});
+
+// POST /api/advisor/settings — operator-only (#2819): the Advisor cannot
+// change its own engine or model, same reasoning as the Master's authority
+// route never letting the Master grant itself anything. Body:
+// {engine?, model?, autoStart?}. Takes effect on the NEXT launch — an
+// already-running Advisor is not restarted out from under itself.
+route('POST', '/api/advisor/settings', (req, res, _params, body) => {
+  if (!operatorProjectCaller(req, res, 'change the Advisor\'s settings')) return;
+  const b = (body && typeof body === 'object') ? body : {};
+  if (b.engine !== undefined && b.engine !== null && typeof b.engine !== 'string') {
+    return errorResponse(res, 400, 'engine must be a string or null', 'BAD_REQUEST');
+  }
+  if (b.model !== undefined && b.model !== null && typeof b.model !== 'string') {
+    return errorResponse(res, 400, 'model must be a string or null', 'BAD_REQUEST');
+  }
+  if (b.autoStart !== undefined && typeof b.autoStart !== 'boolean') {
+    return errorResponse(res, 400, 'autoStart must be a boolean', 'BAD_REQUEST');
+  }
+  jsonResponse(res, 200, advisor.saveAdvisorSettings(b));
+});
+
+// POST /api/advisor/launch — idempotent create-or-noop, same shape as
+// POST /api/master/ensure. The UI calls this before attaching the terminal
+// iframe (ttyd only attaches to EXISTING tmux sessions).
+route('POST', '/api/advisor/launch', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'start the Advisor')) return;
+  const result = advisor.ensureAdvisorSession();
+  if (result.error) {
+    if (result.code === 'LAUNCH_ISOLATION_UNVERIFIED') {
+      return errorResponse(res, 409, result.error, result.code, result.isolation);
+    }
+    const code = (result.incomplete || []).includes('exists')
+      ? 'ADVISOR_LIVENESS_UNKNOWN'
+      : 'ADVISOR_LAUNCH_FAILED';
+    return errorResponse(res, 500, result.error, code);
+  }
+  jsonResponse(res, 200, result);
+});
+
+// POST /api/advisor/kill — stop the Advisor's tmux session. Idempotent, same
+// shape as POST /api/master/kill.
+route('POST', '/api/advisor/kill', (req, res) => {
+  if (!operatorProjectCaller(req, res, 'stop the Advisor')) return;
+  const result = advisor.killAdvisorSession();
+  if (result.error) {
+    return errorResponse(res, 500, result.error, 'ADVISOR_LIVENESS_UNKNOWN', { cause: result.cause });
   }
   jsonResponse(res, 200, result);
 });
@@ -7995,6 +8063,27 @@ async function handleRequest(req, res) {
       serviceTokenVerified = Boolean(tokenConfig && tokenConfig.serviceTokenEnabled);
     }
 
+    // #2819, Charter A496 section 3 (Architect Ruling A2819, R1): the
+    // Advisor is mechanically refused on every /api/* route except its own
+    // (/api/advisor/*) -- GET included, not just mutations. Genuinely ahead
+    // of the mutating-only binding.allowed check below now (an R1 finding:
+    // an earlier version of this comment claimed the ordering this code did
+    // not yet have) -- otherwise a verified Advisor's own MUTATING request
+    // (POST/PUT/PATCH/DELETE) hits launchBindingGuard.judge first and is
+    // refused as a generic 403 LAUNCH_BINDING_INVALID/project-claim-missing,
+    // never reaching this route's own ADVISOR_SCOPE_VIOLATION message, since
+    // sharedDocsAccess.resolveBinding has no concept of an advisor caller to
+    // resolve to. Session launch/kill/wrap is also independently refused in
+    // lib/routes/_callers.js#_requireSessionLifecycleCaller (that route
+    // family has its own, more specific message); this is the blanket floor
+    // behind it, covering every other route family (Medusa send,
+    // project/group mutations, non-advisory bridge routes, and any future
+    // route) with one check rather than a per-family list that could go
+    // stale as new routes are added.
+    if (!pathname.startsWith('/api/advisor/') && advisor.isAdvisorRequest(req)) {
+      log.warn('Request refused: the Advisor role may act only through its own API', { method, path: pathname });
+      return errorResponse(res, 403, 'The Advisor role may act only through its own API (/api/advisor/*).', 'ADVISOR_SCOPE_VIOLATION');
+    }
     // The floor under every mutating route (#2233): the caller must be known
     // before a handler runs. It establishes who is asking and nothing more; each
     // route's own check of what that caller may touch still runs after it.
@@ -8583,6 +8672,12 @@ if (require.main === module) {
   // no request or gateway pass can create a Master first. Never fatal — the
   // brain icon's on-demand ensure remains the fallback path.
   master.bootMaster();
+
+  // The Advisor at boot (#2819, Architect Ruling A2819 R1): auto-start it if
+  // the operator turned that on (advisor.autoStart). Same never-fatal
+  // reasoning as the Master's own boot call — the Morpheus toggle's
+  // on-demand launch remains the fallback path.
+  advisor.bootAdvisor();
 
   // Drift detector (#595): TangleClaw's own CLAUDE.md is hand-maintained because
   // the Prawduct plugin governs this repo. Compare it against data/global-rules.md

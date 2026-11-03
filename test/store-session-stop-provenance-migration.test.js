@@ -20,6 +20,7 @@ const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 
 const store = require('../lib/store.js');
+const bridgeSchema = require('../lib/bridge-schema.js');
 
 const tmpDirs = [];
 
@@ -54,6 +55,11 @@ function seedV76(extraSql = '') {
     ${V76_SESSIONS_DDL}
     ${extraSql}
   `);
+  // Every real store since v52 has the bridge's tables (#2817-A's v77→v78
+  // migration refuses a store that claims v65-bridge soundness without
+  // them, by design -- a half-applied bridge is corruption, not an absent
+  // feature). A real v76 store always has them; this fixture must too.
+  bridgeSchema.createBridgeSchema(seed, 'v76 test fixture');
   seed.close();
   return dir;
 }
@@ -145,6 +151,7 @@ describe('v76→v77 sessions stop provenance (#2249)', () => {
       ALTER TABLE sessions ADD COLUMN stopped_by TEXT
         CHECK (stopped_by IS NULL OR stopped_by IN ('api','model-switch','wrap','crash'));
     `);
+    bridgeSchema.createBridgeSchema(seed, 'v76 test fixture (divergent build)');
     seed.close();
     open(dir);
     assert.ok(columns().has('stop_reason'),

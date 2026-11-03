@@ -4,6 +4,50 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.59.0] - 2026-11-03
+
+### Added
+- Sensitive Operator Bridge actions (launch consent, nickname mutation, merge, release, deploy,
+  session lifecycle) now have a library-level single-use confirmation card
+  (`lib/bridge-confirmation.js`) binding the exact operator, guild, channel, action, target and
+  digest, replayable never and expiring on a short TTL -- closing the residual same-user
+  local-process gap accepted at v5.31.0 (#2106). Not yet wired to a live route (Slice 2, `#2842`).
+- A three-tier Remote Operator Authority policy (`classifyBridgeActionTier` in
+  `lib/bridge-confirmation.js`): ordinary work (investigate, plan, implement, test, file issues/
+  PRs, status, route, dispatch) authorizes directly from verified Discord input; merge/release/
+  deploy/session-lifecycle/launch-consent/nickname-mutation require the new single-use
+  confirmation card; data-deletion/credential/permission/rule-change require a dashboard step-up
+  token unless the Operator has explicitly opted that one category into Discord-only risk (#2116).
+  Not yet wired to a live route (Slice 2, `#2842`).
+- Operator bridge reach now defaults new activations to a narrow project group instead of every project (`lib/bridge-reach.js#defaultActivationScope`), offers a non-destructive one-time prompt to narrow an existing all-projects install when groups exist (`needsGroupNarrowingPrompt`), and supports taking a whole batch of projects out of (or back within) reach in one atomic call (`setProjectsOutOfReachBatch`) instead of one request per row (#2117).
+- A session can now ask whether the operator bridge is configured, enabled, and whether its own project is in reach, before trying to use it (`lib/bridge-awareness.js#resolveSessionBridgeAwareness`). Bridge notifications now support a fleet-wide global default per event kind, layered with a per-project override that wins when it exists (`resolveNotificationPolicy`, `setGlobalNotificationPolicy`, `setProjectNotificationOverride`) -- every existing notification stays on by default until the operator turns one off (#2119).
+- The operator bridge can now register multiple watched Discord channels and forum threads (`lib/bridge-channels.js`), each with its own `mode` (watch-only or two-way) and a separate `sendAllowed` flag; a broad "every thread" forum scope requires the operator's explicit approval. Watched messages -- including ones the Operator themself typed into a watched channel -- are stored as bounded, explicitly untrusted data (`authority: 'watched-untrusted'`) with a retention bound, never promoted into a bridge route, answer, candidate or approval. Posting to a channel is held unless backed by a scoped publication grant bound to the exact destination, text, route and idempotency key, with safe idempotent retry/readback when the outcome of a post is unknown (#2394).
+- A third pinned Discord ingress surface, `advisory-channel` (#2817): one channel where several allowlisted peer authors (plus the operator) may be heard, carrying no routing, launch or nickname authority at all -- enforced by a database CHECK and two triggers, every server-side write that could grant authority (route-to-project, ask-launch, launch, decline, pin, ask, and any `--answered-by` naming an advisory route), the gateway's suggestion (always Master, never reserved), a dedicated rate-limit bucket, a consecutive-turn anti-loop cap, an optional mention/reply gate, and `[advisory-only]` CLI badging with a mandatory guardrail banner on `tc bridge read`.
+- The bridge helper's own half of the advisory-only surface (#2818): `configure --advisory-channel/--advisory-authors/--advisory-enabled|--advisory-disabled`, a startup/preflight check that the pinned channel belongs to the operator's own guild and differs from the operator channel (disabling only the advisory surface on failure), inbound admission of allowlisted peer authors including specific bots, and outbound replies resolved to the verified advisory channel. A refusal reply is never posted back to a bot sender, closing the automated reply-loop an error message to another bot would otherwise start.
+- A second, persistent global role beside Project Master: the Advisor (Morpheus 🕶️), always
+  zero-privilege. Toggle it from the dashboard header or any session banner (`/api/advisor/status`,
+  `/settings`, `/launch`, `/kill`); it launches tool-stripped (no Bash/Edit/Write/MultiEdit/
+  NotebookEdit/WebFetch/WebSearch) into its own sandbox (`~/.tangleclaw/advisor-sandbox/`, never a
+  project or the database), seeded with curated public TangleClaw knowledge, and is mechanically
+  refused every route outside its own API — session launch/kill/wrap, project/group mutations,
+  Medusa send, and everything else (#2819).
+
+## [5.58.0] - 2026-11-03
+
+### Added
+- Durable chunk-boundary receipts and a next-Chunk-dispatch admission gate: a Chunk is complete only once a receipt records the exact commit, this project's own verification evidence, a plan checkpoint, reflection/child-accounting completion, and the Builder's own acknowledgment -- never a PM assertion alone or automatic context compaction. A versioned role-aware projection of this contract, for both the Project Manager and the Builder, is now part of every session's prime and generated carrier file (#1889). HTTP/dashboard wiring for the admission gate is tracked separately in #2836.
+- `tc <verb> --help`/`-h` now answers from that verb's own roster entry, and a new `tc help --json` prints the whole `tc` verb roster as a stable, machine-readable manifest. Role-scoped operating primers (worker/reviewer/coordinator/master), composed directly from the live roster, are available via `lib/operating-primer.js` -- each states the `tc start next` vs `tc start review` distinction and that an API-unreachable result from a sandbox is not proof the host service is down (#2070). The AI documentation router and repo-wide Markdown manifest are tracked separately in #2835.
+- Governed background wrap, Slice 1 core engine (`lib/governed-wrap.js`, `POST`/`GET /api/sessions/:project/governed-wrap` and its `/decision`/`/cancel` sub-routes): a verified ProjectManager/Fleet Coordinator or the Project Master can now open a versioned preflight request, supply a `ready`/`needs-operator` decision, and have it executed against the existing deterministic wrap pipeline -- with fresh target/head/control-state digest revalidation before execution, one open request per lane at a time, and a server-side bulk file policy (`leave-all-preexisting` / `include-owned-only`) so a lane with hundreds of pre-existing dirty paths needs no per-path request body. Reuses the same delegated-lifecycle-authority gate #2824 restored, never a second authority check. Browser Wrap-button UI and daemon-polling follow-ups are out of this slice, tracked in #2837 (#2072).
+- Closed-loop session lifecycle handoff, Slice 1 state machine (`lib/lifecycle-handoff.js`, `POST`/`GET /api/sessions/:project/lifecycle-handoff` and its step sub-routes): a delegate session can now checkpoint a source session's durable state, record the real wrap/finalize initiation (never Kill), confirm genuine terminal inactivity from the session's own stored status, launch exactly one replacement for the same project, reconcile the replacement's attested-READY startup against the checkpoint's own digest, and record an atomic takeover -- all gated by the same delegated-lifecycle-authority check #2824 restored, and bound to the control generation observed at checkpoint time so a HOLD/STOP/release landing mid-handoff invalidates it rather than racing it. Any step failure fails closed with a typed blocker and never clears the checkpoint. Managed-clear/restart/rebind/context-replacement transition types and the unattended background daemon are tracked separately in #2838 (#2073).
+- On page load, the session page now reads `GET /wrap/status`'s `interrupted` field and, when a restart cut a wrap off before it could finish, tells the Wrap drawer about it (dispatching to the already-built `interrupted` phase) instead of leaving the operator to reopen a project after a stranding restart with no sign anything happened. Only reached when nothing is live or remembered to follow instead (#1816 follow-up).
+- The fleet recovery read (`GET /api/launch/recovery-held`) now reports a wrap run a restart cut off mid-flight as its own `wrapRunInterrupted` part of `uncertainWork`, naming the run id, the last step reached, whether it had begun committing, and when the checkpoint was taken — the same durable checkpoint trail `GET /wrap/status`'s `interrupted` field already reads, surfaced here too since this module exists specifically to answer "what might have been queued or in flight" (#1816 follow-up). The fleet recovery panel shows it as "Interrupted wrap run", not the raw field name; `docs/configuration-reference.md`'s `uncertainWork` row names it as the sixth part.
+
+### Fixed
+- Restored a ProjectManager/Fleet Coordinator session's ability to launch, relaunch, wrap and governed-`/clear` a member lane it does not own, through the same delegated lifecycle authority (`authority.lifecycle` on the target's own open control assignment) `lib/session-finalize.js` already honors for governed finalization. Two prior fixes (#2129, #2402) had locked PM sessions out of all four hooks Rule #285 §5 requires; a governed `/clear` is admitted only while the target lane itself currently composes AVAILABLE/safe-to-clear (#2824).
+
+### Internal
+- Documented `GET /wrap/status`'s `interrupted`/`interruptedStepId`/`interruptedCommitStarted`/`interruptedAt` fields and `POST /wrap`'s 409 `WRAP_IN_PROGRESS` `stale` behavior in `docs/configuration-reference.md` (#1321/#1805/#1816 follow-up) — restores wording drafted and Critic-reviewed clean in an earlier PR, reverted there only for file-scope reasons.
+
 ## [5.57.0] - 2026-11-03
 
 ### Added
