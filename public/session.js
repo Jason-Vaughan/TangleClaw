@@ -96,6 +96,9 @@ let masterSettings = null;
 // from well above its mount site.
 let masterBar = null;
 
+// The Advisor control bar (#2819) — same reasoning as `masterBar` above.
+let advisorBar = null;
+
 // Serializes the update-and-restart against itself. The dashboard shares this
 // latch with its #235 stale-server restart button; this page has no such
 // button, so the beacon is its only holder.
@@ -3199,6 +3202,74 @@ function attachMasterDrawerFrame() {
   window.tcWireTerminalFrame(window, frame,
     () => (sessionState.config && sessionState.config.theme) || 'dark');
   frame.src = '/terminal/?arg=tangleclaw-master';
+}
+
+// ── Advisor (Morpheus) Drawer (#2819) ──
+// Mirrors the Master drawer one section up, trimmed to what the Advisor
+// actually has: no access level, so no `loadAccess` call anywhere below.
+
+/**
+ * Paint the Advisor drawer's status line via the bar.
+ * @param {string} status - 'live' | 'pending' | 'down' | '' (unknown/neutral)
+ * @param {string} [text] - Status line
+ */
+function setAdvisorDrawerStatus(status, text) {
+  if (advisorBar) advisorBar.setStatus(status, text);
+}
+
+/**
+ * Open the Advisor drawer and run the ensure-then-attach flow.
+ */
+function openAdvisorDrawer() {
+  sessionState.advisorOpen = true;
+  document.getElementById('advisorBackdrop').classList.add('open');
+  document.getElementById('advisorDrawer').classList.add('open');
+  document.getElementById('advisorBtn').setAttribute('aria-expanded', 'true');
+  ensureAdvisorDrawerAttached();
+}
+
+/**
+ * Close the Advisor drawer. The Advisor session persists — closing only
+ * hides the surface.
+ */
+function closeAdvisorDrawer() {
+  sessionState.advisorOpen = false;
+  document.getElementById('advisorBackdrop').classList.remove('open');
+  document.getElementById('advisorDrawer').classList.remove('open');
+  document.getElementById('advisorBtn').setAttribute('aria-expanded', 'false');
+}
+
+/**
+ * Ensure the Advisor session exists, then attach the terminal iframe.
+ * Re-entrant-guarded, same reasoning as `ensureMasterDrawerAttached`.
+ * @returns {Promise<void>}
+ */
+async function ensureAdvisorDrawerAttached() {
+  if (sessionState.advisorEnsuring) return;
+  sessionState.advisorEnsuring = true;
+  setAdvisorDrawerStatus('pending', 'Starting Advisor session…');
+  const result = await api('/api/advisor/launch', { method: 'POST' });
+  sessionState.advisorEnsuring = false;
+  if (!result) {
+    const unknown = api.lastErrorCode === 'ADVISOR_LIVENESS_UNKNOWN';
+    setAdvisorDrawerStatus(unknown ? '' : 'down', api.lastError || 'Failed to start the Advisor session');
+    return;
+  }
+  setAdvisorDrawerStatus('live', result.created ? 'Advisor session started' : 'Advisor session live');
+  if (advisorBar) advisorBar.loadModel(result.engine || null);
+  attachAdvisorDrawerFrame();
+}
+
+/**
+ * Point the Advisor drawer iframe at the ttyd attach URL (once per page load).
+ */
+function attachAdvisorDrawerFrame() {
+  const frame = document.getElementById('advisorDrawerFrame');
+  if (frame.dataset.attached === 'true') return;
+  frame.dataset.attached = 'true';
+  window.tcWireTerminalFrame(window, frame,
+    () => (sessionState.config && sessionState.config.theme) || 'dark');
+  frame.src = '/terminal/?arg=tangleclaw-advisor';
 }
 
 // ── Terminal Setup ──
@@ -7245,6 +7316,24 @@ function paintWrapRun(prev, next) {
         'The wrap pipeline was killed mid-run (most likely a server restart). Its commit step never ran, so nothing was committed. It is safe to start a new wrap.'
       );
       return;
+    case 'interrupted': {
+      // #1816/#2642: discovered only on page load, from the durable
+      // checkpoint trail — never followed live, so unlike 'lost' there is no
+      // run this tab watched end. `interruptedCommitStarted` is the one fact
+      // worth naming: unlike 'lost' (commit never ran, by construction of
+      // which step can throw), an interrupted run MAY have begun committing
+      // before the restart, so this can't promise nothing was committed.
+      if (!entered) return;
+      const step = next.interruptedStepId ? ` at step "${next.interruptedStepId}"` : '';
+      const commitNote = next.interruptedCommitStarted
+        ? ' It may have already started committing — check the repository before starting another wrap.'
+        : ' It had not started committing, so it is safe to start a new wrap.';
+      openWrapDrawerNotice(
+        'A wrap was interrupted',
+        `A previous wrap${step} did not finish (most likely a server restart).${commitNote}`
+      );
+      return;
+    }
     case 'refused':
       // Only a refused Retry is visible: its reason goes on the report it was
       // retrying. A refused first wrap shows its reason in the wrap modal.
@@ -7299,6 +7388,12 @@ function recallFollowedWrapRun() {
  * blocked, whose report the operator had not closed. Any other finished run
  * belongs to whichever page watched it, and re-opening it on every load would
  * resurface a report closed long ago.
+ *
+ * Neither of those: a restart cut a wrap off before it could `finish`, and
+ * nothing is live to follow it (#1816/#2642). `/wrap/status` reports that as
+ * `interrupted: true`, named by `interruptedStepId`/`interruptedCommitStarted`
+ * rather than a `runId` with anything live behind it — dispatched once, here,
+ * since this is the one place a project's wrap state is first read after load.
  */
 async function restoreWrapRunOnLoad() {
   const status = await _probeWrapStatus(wrapStatusUrl());
@@ -7306,7 +7401,29 @@ async function restoreWrapRunOnLoad() {
     rememberFollowedWrapRun(null);
     return;
   }
-  if (status.running === true || status.runId === recallFollowedWrapRun()) {
+  if (status.running === true) {
+    adoptWrapRunChoices(status.options);
+    dispatchWrapRun({ type: 'follow', runId: status.runId });
+    return;
+  }
+  if (status.interrupted === true) {
+    // #1816/#2642 — a restart cut a wrap off before `finish`; nothing is live
+    // to follow, but the operator should still be told it happened. Checked
+    // BEFORE the remembered-run fallback below, not after (PRR-A, PR #2846
+    // Round 2): the run this tab remembers following is the SAME run the
+    // registry now reports interrupted (the tab started it, then a restart
+    // cut it off) at least as often as it is some other, genuinely-settled
+    // run — falling through to 'follow' for it attaches no live stream,
+    // repaints as 'lost' once the poll gives up, and reports a misdiagnosis
+    // ("nothing was committed") that ignores `interruptedCommitStarted`. A
+    // reload while still interrupted re-reaches this branch regardless of
+    // what is remembered, since this check runs before that fallback either
+    // way — `syncWrapRunEffects` re-remembers this run's id for its own
+    // bookkeeping once dispatched, same as it does for every other phase.
+    dispatchWrapRun({ type: 'interrupted', runId: status.runId, lastStepId: status.interruptedStepId, commitStarted: status.interruptedCommitStarted });
+    return;
+  }
+  if (status.runId === recallFollowedWrapRun()) {
     adoptWrapRunChoices(status.options);
     dispatchWrapRun({ type: 'follow', runId: status.runId });
   }
@@ -7903,6 +8020,21 @@ function bindEvents() {
     onOpenSettings: () => { masterBar.setError(''); masterSettings.open(); }
   });
   masterBar.mount();
+
+  // The Advisor control bar (#2819). Same component as the dashboard panel.
+  advisorBar = window.tcCreateAdvisorControlBar({
+    doc: document,
+    rootId: 'advisorDrawerBar',
+    prefix: 'advisorDrawer',
+    api,
+    apiMutate,
+    esc,
+    onLaunch: ensureAdvisorDrawerAttached
+  });
+  advisorBar.mount();
+  $('advisorBtn').addEventListener('click', openAdvisorDrawer);
+  $('advisorCloseBtn').addEventListener('click', closeAdvisorDrawer);
+  $('advisorBackdrop').addEventListener('click', closeAdvisorDrawer);
 
   // Close banner popovers on outside click; see `onBannerOutsideClick`.
   bindPillDetails();

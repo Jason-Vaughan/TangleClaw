@@ -64,6 +64,21 @@
               title="Project Master — the global assistant above all projects; what it may write is the access level on its control bar">
         &#129504; Master <span class="master-dot" id="masterDot" aria-hidden="true"></span>
       </button>
+      <!-- #2819: a minimal inline "round rimless sunglasses" glyph (two solid
+           lens circles on a bridge, no rim stroke, short temple ticks for
+           legibility at 16px) rather than a literal bald-dome illustration —
+           the recognizable Morpheus silhouette reduces to the glasses at
+           banner-button size. -->
+      <button class="dash-action" id="advisorToggle" aria-expanded="false" aria-controls="advisorPanel"
+              title="Advisor (Morpheus) — a second global role, always zero-privilege: tool-stripped at launch, its own filesystem sandbox, never session launch/kill/wrap or any route outside its own API (#2819)">
+        <svg class="advisor-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="7" cy="12" r="5" fill="currentColor"/>
+          <circle cx="17" cy="12" r="5" fill="currentColor"/>
+          <path d="M12 12h0" stroke="currentColor" stroke-width="2"/>
+          <path d="M2 11c0-1 1-2 2-2M22 11c0-1-1-2-2-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        Advisor <span class="master-dot" id="advisorDot" aria-hidden="true"></span>
+      </button>
       <button class="dash-action" id="portsToggle" aria-expanded="false" aria-controls="portsGrid">
         Ports <span class="dash-badge" id="portsCount">0</span>
       </button>
@@ -103,6 +118,18 @@
     <div class="master-status-row" id="masterPanelBar"></div>
     <div class="master-frame-wrap">
       <iframe id="masterFrame" class="master-frame" title="Project Master terminal"></iframe>
+    </div>
+  </div>
+
+  <!-- Advisor (Morpheus) Panel (expandable) — #2819. Reuses Master's panel/
+       frame CSS classes (generic layout, not Master-specific despite the
+       name) rather than duplicating them; only the ids differ, and the
+       #advisorPanel/#advisorFrame fullscreen override lives beside Master's
+       own in shared-controls.css. -->
+  <div id="advisorPanel" class="master-panel" aria-label="Advisor">
+    <div class="master-status-row" id="advisorPanelBar"></div>
+    <div class="master-frame-wrap">
+      <iframe id="advisorFrame" class="master-frame" title="Advisor terminal"></iframe>
     </div>
   </div>
 

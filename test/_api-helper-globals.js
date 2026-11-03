@@ -18,7 +18,13 @@ const vm = require('node:vm');
  */
 module.exports = function loadApiHelperGlobals() {
   const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
-  const sandbox = { console };
+  // `vm.createContext` gives an isolated global with no timers of its own —
+  // Node's real `setTimeout`/`clearTimeout` are not inherited automatically.
+  // Several shared components schedule a transient auto-dismiss (an inline
+  // "Saved" confirmation, a rules-status banner) via a bare or `global.`-
+  // qualified call; without this, exercising that code path in a test throws
+  // "setTimeout is not defined"/"is not a function" instead of running it.
+  const sandbox = { console, setTimeout, clearTimeout };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);

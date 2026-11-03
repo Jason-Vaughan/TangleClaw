@@ -434,6 +434,22 @@ describe('the fleet recovery panel (#2049)', () => {
       assert.match(drawn, /Pane input:<\/strong> unknown \(NO_DURABLE_SOURCE\)/);
     });
 
+    it('labels an interrupted wrap run by name, not its raw camelCase kind (#2643)', async () => {
+      const panel = controller(scriptedFleet([heldRow(1, {
+        uncertainWork: [
+          {
+            kind: 'wrapRunInterrupted', source: 'wrap-run registry (checkpoint trail), this project', state: 'recorded',
+            completeness: 'complete-while-process-alive', note: 'A restart cut it off before `finish`.',
+            items: [{ runId: 'run-1', lastStepId: 'commit', commitStarted: true, checkpointAt: '2026-10-09T00:00:00.000Z' }]
+          }
+        ]
+      })]));
+      await panel.load();
+      const drawn = panel.html();
+      assert.match(drawn, /Interrupted wrap run:<\/strong> recorded\./);
+      assert.doesNotMatch(drawn, /wrapRunInterrupted/, 'the raw kind never leaks through when a label exists');
+    });
+
     it('shows the stored preflight record whole, and a value never measured as not recorded', async () => {
       const panel = controller(scriptedFleet([heldRow(1, {
         preflight: { verdict: 'handoff-unreadable', reason: 'unreadable', requiresRecovery: true, worktreeDirty: null, addedLater: { nested: 1 } }
