@@ -80,13 +80,14 @@
     },
     "control": {
       "label": "area:control",
-      "why": "Durable HOLD/RELEASE/STOP, the merge queue, check watches, and scoped permission requests.",
+      "why": "Durable HOLD/RELEASE/STOP, the merge queue, check watches, scoped permission requests, and durable interactive decision requests.",
       "paths": [
         "lib/control-*.js",
         "lib/merge-queue*.js",
         "lib/merge-authority.js",
         "lib/check-watch*.js",
-        "lib/permission-requests.js"
+        "lib/permission-requests.js",
+        "lib/decision-routing.js"
       ]
     },
     "launch": {
