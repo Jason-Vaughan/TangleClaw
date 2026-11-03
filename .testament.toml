@@ -295,7 +295,6 @@ adapter = "files"
 cwd = "."
 files = [
   "test/admin-credential.test.js",
-  "test/advisor.test.js",
   "test/api-coordinator-rotation.test.js",
   "test/api-ingress-door.test.js",
   "test/api-update-apply.test.js",
@@ -465,6 +464,7 @@ files = [
   "test/actions-dispatcher.test.js",
   "test/actions-invoke-critic.test.js",
   "test/activity-observer.test.js",
+  "test/advisor.test.js",
   "test/advisory-ready-audit.test.js",
   "test/aider-engine.test.js",
   "test/aider-task-contract.test.js",

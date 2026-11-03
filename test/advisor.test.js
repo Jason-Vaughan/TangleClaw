@@ -4,7 +4,10 @@
 // test/master.test.js's own style for the launch lifecycle (a tmux/engines
 // stub injected via options, the REAL lib/sessions.js module monkey-patched
 // for the isolation-refusal branches), scaled to the Advisor's much smaller
-// surface: no access-level tiers, no guard hook, no Medusa/bridge wiring.
+// surface: no access-level tiers, no Medusa/bridge wiring. It DOES have a
+// guard hook (R1: PRR-B found the sandbox's cwd confinement alone was not
+// a real filesystem boundary) -- a read-confinement allowlist, not the
+// Master's write-confinement denylist.
 
 const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
@@ -139,6 +142,95 @@ describe('Advisor (#2819)', () => {
       advisor.ensureAdvisorSandbox(home);
       assert.notEqual(fs.readFileSync(path.join(home, 'README.md'), 'utf8'), 'hand-edited');
     });
+
+    it('also writes the structural guardrails: an empty Advisor-only MCP config and the read-confinement hook (#2819 PRR-B R1)', () => {
+      advisor.ensureAdvisorSandbox(home);
+      const mcpConfig = JSON.parse(fs.readFileSync(advisor.advisorMcpConfigPath(home), 'utf8'));
+      assert.deepEqual(mcpConfig, { mcpServers: {} });
+      assert.ok(fs.existsSync(advisor.advisorGuardScriptPath(home)));
+      const settings = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'));
+      assert.equal(settings.hooks.PreToolUse[0].matcher, '', 'the catch-all matcher, not a Read/Glob/Grep-only one');
+      assert.match(settings.hooks.PreToolUse[0].hooks[0].command, /guard-reads\.js/);
+    });
+  });
+
+  describe('buildAdvisorGuardScript (#2819 PRR-B R1 finding 1): the read-confinement PreToolUse hook', () => {
+    let home;
+    let scriptPath;
+
+    beforeEach(() => {
+      home = path.join(tmpDir, `guard-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      fs.mkdirSync(path.join(home, 'knowledge'), { recursive: true });
+      fs.writeFileSync(path.join(home, 'knowledge', 'a.md'), 'hi');
+      scriptPath = path.join(home, 'guard.js');
+      fs.writeFileSync(scriptPath, advisor.buildAdvisorGuardScript(home));
+    });
+
+    /**
+     * Run the generated guard script against one tool-call shape, the same
+     * way Claude Code's own PreToolUse harness would: JSON on stdin,
+     * `hookSpecificOutput` parsed from stdout.
+     * @param {object} input - `{tool_name, tool_input}`
+     * @returns {{permissionDecision: string, permissionDecisionReason: string}}
+     */
+    function runGuard(input) {
+      const { execFileSync } = require('node:child_process');
+      const out = execFileSync(process.execPath, [scriptPath], { input: JSON.stringify(input) });
+      return JSON.parse(out.toString()).hookSpecificOutput;
+    }
+
+    it('is valid, syntactically-standalone JavaScript', () => {
+      assert.doesNotThrow(() => require('node:child_process').execFileSync(process.execPath, ['-c', scriptPath]));
+    });
+
+    it('allows Read inside the sandbox', () => {
+      const r = runGuard({ tool_name: 'Read', tool_input: { file_path: path.join(home, 'knowledge', 'a.md') } });
+      assert.equal(r.permissionDecision, 'allow');
+    });
+
+    it('denies Read outside the sandbox', () => {
+      const r = runGuard({ tool_name: 'Read', tool_input: { file_path: '/etc/passwd' } });
+      assert.equal(r.permissionDecision, 'deny');
+    });
+
+    it('denies Read via a relative traversal that climbs out of the sandbox', () => {
+      const r = runGuard({ tool_name: 'Read', tool_input: { file_path: path.join(home, '..', '..', 'etc', 'passwd') } });
+      assert.equal(r.permissionDecision, 'deny');
+    });
+
+    it('denies a Read with no file_path at all, rather than defaulting to allow', () => {
+      const r = runGuard({ tool_name: 'Read', tool_input: {} });
+      assert.equal(r.permissionDecision, 'deny');
+    });
+
+    it('allows Glob/Grep with no explicit path (defaults to the sandbox cwd)', () => {
+      assert.equal(runGuard({ tool_name: 'Glob', tool_input: { pattern: '*.md' } }).permissionDecision, 'allow');
+      assert.equal(runGuard({ tool_name: 'Grep', tool_input: { pattern: 'hi' } }).permissionDecision, 'allow');
+    });
+
+    it('denies Glob/Grep given an explicit path outside the sandbox', () => {
+      assert.equal(runGuard({ tool_name: 'Glob', tool_input: { pattern: '*', path: '/etc' } }).permissionDecision, 'deny');
+      assert.equal(runGuard({ tool_name: 'Grep', tool_input: { pattern: 'x', path: '/etc' } }).permissionDecision, 'deny');
+    });
+
+    it('denies a Glob/Grep pattern that embeds its own parent-directory traversal, independent of "path"', () => {
+      const r = runGuard({ tool_name: 'Glob', tool_input: { pattern: '../../etc/*' } });
+      assert.equal(r.permissionDecision, 'deny');
+      assert.match(r.permissionDecisionReason, /parent directory/);
+    });
+
+    it('denies every other tool by allowlist, not denylist -- including ones disallowedTools cannot name', () => {
+      for (const name of ['Bash', 'Edit', 'Write', 'Task', 'WebFetch', 'mcp__claude-in-chrome__navigate', 'SomeFutureTool']) {
+        const r = runGuard({ tool_name: name, tool_input: {} });
+        assert.equal(r.permissionDecision, 'deny', `tool "${name}"`);
+      }
+    });
+
+    it('fails closed on unparseable stdin', () => {
+      const { execFileSync } = require('node:child_process');
+      const out = execFileSync(process.execPath, [scriptPath], { input: 'not json' });
+      assert.equal(JSON.parse(out.toString()).hookSpecificOutput.permissionDecision, 'deny');
+    });
   });
 
   describe('advisorSettings / saveAdvisorSettings', () => {
@@ -185,6 +277,18 @@ describe('Advisor (#2819)', () => {
 
     it('refuses (null) for an engine with no verified flag', () => {
       assert.equal(advisor._toolStrippedLaunchCommand('codex', 'codex'), null);
+    });
+
+    it('with no home given, appends no MCP isolation flags (the units that exercise tool-stripping alone)', () => {
+      const cmd = advisor._toolStrippedLaunchCommand('claude --model x', 'claude');
+      assert.doesNotMatch(cmd, /--mcp-config/);
+      assert.doesNotMatch(cmd, /--strict-mcp-config/);
+    });
+
+    it('with a home given, also isolates MCP servers (#2819 PRR-B R1 finding 1): --mcp-config pointing at an empty, Advisor-only config, plus --strict-mcp-config', () => {
+      const cmd = advisor._toolStrippedLaunchCommand('claude --model x', 'claude', '/tmp/some-advisor-home');
+      assert.match(cmd, /--mcp-config '\/tmp\/some-advisor-home\/\.claude\/mcp-config\.json'|--mcp-config \/tmp\/some-advisor-home\/\.claude\/mcp-config\.json/);
+      assert.match(cmd, /--strict-mcp-config/);
     });
   });
 
@@ -303,6 +407,48 @@ describe('Advisor (#2819)', () => {
     it('reports exists:true for a live session', () => {
       const r = advisor.getAdvisorStatus({ tmuxLib: fakeTmux({ alive: true }) });
       assert.equal(r.exists, true);
+    });
+  });
+
+  describe('bootAdvisor (#2819, Architect Ruling A2819 R1)', () => {
+    it('server startup runs the Advisor boot sequence', () => {
+      const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+      assert.match(src, /advisor\.bootAdvisor\(\)/, 'server startup must run the Advisor boot sequence');
+    });
+
+    it('honors advisor.autoStart, and a launch that throws is never fatal', () => {
+      let launched = 0;
+      const counting = () => { launched += 1; return { created: true }; };
+      advisor.bootAdvisor({ config: { advisor: { autoStart: false } }, ensureAdvisorSession: counting });
+      assert.equal(launched, 0, 'auto-start off launches nothing');
+      const r = advisor.bootAdvisor({ config: { advisor: { autoStart: true } }, ensureAdvisorSession: counting });
+      assert.equal(launched, 1, 'auto-start on launches the Advisor');
+      assert.deepEqual(r, { attempted: true, created: true, error: null });
+
+      // "Never fatal" needs a real catch: ensureAdvisorSession types tmux/
+      // engine failures into result.error but can still throw on fs faults.
+      const boot = advisor.bootAdvisor({
+        config: { advisor: { autoStart: true } },
+        ensureAdvisorSession: () => { throw new Error('home unwritable'); }
+      });
+      assert.match(boot.error, /home unwritable/, 'a throw is caught and reported');
+      assert.equal(boot.attempted, true);
+      assert.equal(boot.created, false);
+    });
+
+    it('reports attempted:false, created:false when auto-start is off', () => {
+      const r = advisor.bootAdvisor({ config: { advisor: { autoStart: false } } });
+      assert.deepEqual(r, { attempted: false, created: false, error: null });
+    });
+
+    it('reports a typed launch error from ensureAdvisorSession without throwing', () => {
+      const r = advisor.bootAdvisor({
+        config: { advisor: { autoStart: true } },
+        ensureAdvisorSession: () => ({ created: false, error: 'no engine installed' })
+      });
+      assert.equal(r.attempted, true);
+      assert.equal(r.created, false);
+      assert.equal(r.error, 'no engine installed');
     });
   });
 
@@ -489,6 +635,38 @@ describe('Advisor (#2819)', () => {
       } finally {
         advisor.isAdvisorRequest = original;
       }
+    });
+
+    it('the dispatch floor refuses a MUTATING (POST) request from a verified Advisor before the mutating-only launch-binding floor ever runs (Architect Ruling A2819 R1)', async () => {
+      // The bug this guards: sharedDocsAccess.resolveBinding has no concept
+      // of an advisor caller, so a verified Advisor's own POST used to reach
+      // launchBindingGuard.judge FIRST and get refused as a generic 403
+      // LAUNCH_BINDING_INVALID/project-claim-missing -- never reaching this
+      // route's own ADVISOR_SCOPE_VIOLATION message. Ordering, not logic, was
+      // the defect: this check must run before binding.allowed, not after.
+      const original = advisor.isAdvisorRequest;
+      advisor.isAdvisorRequest = (req) => req.headers['x-tangleclaw-role'] === 'advisor';
+      try {
+        const r = await send(server, 'POST', '/api/master/kill', null, { 'x-tangleclaw-role': 'advisor', 'x-tangleclaw-launch-id': 'x' });
+        assert.equal(r.status, 403);
+        assert.equal(r.data.code, 'ADVISOR_SCOPE_VIOLATION');
+        assert.notEqual(r.data.code, 'LAUNCH_BINDING_INVALID');
+      } finally {
+        advisor.isAdvisorRequest = original;
+      }
+    });
+
+    it('omitting the role header entirely is NOT read as the Advisor -- it falls through to whatever the pre-existing floor already does for an unclaimed caller (PRR-B R1 finding 2)', async () => {
+      // isAdvisorRequest is NOT stubbed: a request carrying no
+      // x-tangleclaw-role header at all must not be treated as the Advisor,
+      // and this check must not be the thing standing between it and
+      // /api/master/status -- that is the PRE-EXISTING launch-binding/
+      // open-mode floor's job, unchanged by this car. Documented reasoning
+      // for why this is the system's existing trust model, not a gap this
+      // PR introduces, lives in lib/advisor.js#isAdvisorRequest's own
+      // docstring.
+      const r = await send(server, 'GET', '/api/master/status', null, {});
+      assert.notEqual(r.data && r.data.code, 'ADVISOR_SCOPE_VIOLATION');
     });
 
     it('the dispatch floor does NOT refuse the Advisor calling its own API', async () => {

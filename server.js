@@ -8063,6 +8063,27 @@ async function handleRequest(req, res) {
       serviceTokenVerified = Boolean(tokenConfig && tokenConfig.serviceTokenEnabled);
     }
 
+    // #2819, Charter A496 section 3 (Architect Ruling A2819, R1): the
+    // Advisor is mechanically refused on every /api/* route except its own
+    // (/api/advisor/*) -- GET included, not just mutations. Genuinely ahead
+    // of the mutating-only binding.allowed check below now (an R1 finding:
+    // an earlier version of this comment claimed the ordering this code did
+    // not yet have) -- otherwise a verified Advisor's own MUTATING request
+    // (POST/PUT/PATCH/DELETE) hits launchBindingGuard.judge first and is
+    // refused as a generic 403 LAUNCH_BINDING_INVALID/project-claim-missing,
+    // never reaching this route's own ADVISOR_SCOPE_VIOLATION message, since
+    // sharedDocsAccess.resolveBinding has no concept of an advisor caller to
+    // resolve to. Session launch/kill/wrap is also independently refused in
+    // lib/routes/_callers.js#_requireSessionLifecycleCaller (that route
+    // family has its own, more specific message); this is the blanket floor
+    // behind it, covering every other route family (Medusa send,
+    // project/group mutations, non-advisory bridge routes, and any future
+    // route) with one check rather than a per-family list that could go
+    // stale as new routes are added.
+    if (!pathname.startsWith('/api/advisor/') && advisor.isAdvisorRequest(req)) {
+      log.warn('Request refused: the Advisor role may act only through its own API', { method, path: pathname });
+      return errorResponse(res, 403, 'The Advisor role may act only through its own API (/api/advisor/*).', 'ADVISOR_SCOPE_VIOLATION');
+    }
     // The floor under every mutating route (#2233): the caller must be known
     // before a handler runs. It establishes who is asking and nothing more; each
     // route's own check of what that caller may touch still runs after it.
@@ -8084,23 +8105,6 @@ async function handleRequest(req, res) {
         method, path: pathname, code: binding.code, reason: binding.reason
       });
       return errorResponse(res, binding.status, binding.message, binding.code, { reason: binding.reason });
-    }
-    // #2819, Charter A496 section 3: the Advisor is mechanically refused on
-    // every /api/* route except its own (/api/advisor/*) -- GET included,
-    // not just mutations: this check sits ahead of the mutating-only
-    // binding.allowed check above (launchBindingGuard.judge's own
-    // isMutating() gate lets every GET straight through), so a verified
-    // Advisor request still must not read e.g. GET /api/master/status.
-    // Session launch/kill/wrap is also independently refused in
-    // lib/routes/_callers.js#_requireSessionLifecycleCaller (that route
-    // family has its own, more specific message); this is the blanket floor
-    // behind it, covering every other route family (Medusa send,
-    // project/group mutations, non-advisory bridge routes, and any future
-    // route) with one check rather than a per-family list that could go
-    // stale as new routes are added.
-    if (!pathname.startsWith('/api/advisor/') && advisor.isAdvisorRequest(req)) {
-      log.warn('Mutating request refused: the Advisor role may act only through its own API', { method, path: pathname });
-      return errorResponse(res, 403, 'The Advisor role may act only through its own API (/api/advisor/*).', 'ADVISOR_SCOPE_VIOLATION');
     }
     // A route that grants or approves authority over sessions (#2378) admits the
     // operator only signed in. Keyed on what admitted the request: a project,
@@ -8668,6 +8672,12 @@ if (require.main === module) {
   // no request or gateway pass can create a Master first. Never fatal — the
   // brain icon's on-demand ensure remains the fallback path.
   master.bootMaster();
+
+  // The Advisor at boot (#2819, Architect Ruling A2819 R1): auto-start it if
+  // the operator turned that on (advisor.autoStart). Same never-fatal
+  // reasoning as the Master's own boot call — the Morpheus toggle's
+  // on-demand launch remains the fallback path.
+  advisor.bootAdvisor();
 
   // Drift detector (#595): TangleClaw's own CLAUDE.md is hand-maintained because
   // the Prawduct plugin governs this repo. Compare it against data/global-rules.md
