@@ -35,6 +35,22 @@ function git(args) {
 /** The initiator every test uses unless it says otherwise. */
 const COORDINATOR = { kind: 'coordinator', principal: 'project:9' };
 
+/**
+ * A well-formed decision bound to the exact request/version/digest it was
+ * read from (PRR-B I-Gate Round 1 Finding 3) -- `r` is a
+ * `createPreflightRequest` result; `extra` supplies `result` and whatever
+ * else that result needs.
+ * @param {{request: object}} r
+ * @param {object} [extra]
+ * @returns {object}
+ */
+function decisionFor(r, extra = { result: 'ready' }) {
+  return {
+    requestId: r.request.requestId, optionSchemaVersion: r.request.optionSchemaVersion,
+    preflightDigest: r.request.preflightDigest, ...extra
+  };
+}
+
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-governed-wrap-'));
   store._setBasePath(tmpDir);
@@ -124,19 +140,19 @@ describe('submitDecision', () => {
     const r = await gw.createPreflightRequest({ projectName: project.name, initiator: COORDINATOR });
     const d = gw.submitDecision({
       requestId: r.request.requestId, principal: 'project:9',
-      decision: { result: 'ready', options: { skipTests: true } }
+      decision: decisionFor(r, { result: 'ready', options: { skipTests: true } })
     });
     assert.equal(d.ok, true);
     assert.equal(d.request.state, gw.STATES.READY);
     assert.equal(d.request.decidedByPrincipal, 'project:9');
-    assert.deepEqual(d.request.decision, { result: 'ready', options: { skipTests: true } });
+    assert.deepEqual(d.request.decision, decisionFor(r, { result: 'ready', options: { skipTests: true } }));
   });
 
   it('a "needs-operator" decision moves the request to NEEDS_OPERATOR', async () => {
     const r = await gw.createPreflightRequest({ projectName: project.name, initiator: COORDINATOR });
     const d = gw.submitDecision({
       requestId: r.request.requestId, principal: 'master',
-      decision: { result: 'needs-operator', question: 'Skip tests for this wrap?' }
+      decision: decisionFor(r, { result: 'needs-operator', question: 'Skip tests for this wrap?' })
     });
     assert.equal(d.ok, true);
     assert.equal(d.request.state, gw.STATES.NEEDS_OPERATOR);
@@ -144,14 +160,14 @@ describe('submitDecision', () => {
 
   it('refuses a decision with neither "ready" nor "needs-operator"', async () => {
     const r = await gw.createPreflightRequest({ projectName: project.name, initiator: COORDINATOR });
-    const d = gw.submitDecision({ requestId: r.request.requestId, principal: 'project:9', decision: { result: 'maybe' } });
+    const d = gw.submitDecision({ requestId: r.request.requestId, principal: 'project:9', decision: decisionFor(r, { result: 'maybe' }) });
     assert.equal(d.ok, false);
     assert.equal(d.code, 'GOVERNED_WRAP_INVALID');
   });
 
   it('refuses "needs-operator" with no question', async () => {
     const r = await gw.createPreflightRequest({ projectName: project.name, initiator: COORDINATOR });
-    const d = gw.submitDecision({ requestId: r.request.requestId, principal: 'project:9', decision: { result: 'needs-operator' } });
+    const d = gw.submitDecision({ requestId: r.request.requestId, principal: 'project:9', decision: decisionFor(r, { result: 'needs-operator' }) });
     assert.equal(d.ok, false);
     assert.equal(d.code, 'GOVERNED_WRAP_INVALID');
   });
@@ -160,7 +176,7 @@ describe('submitDecision', () => {
     const r = await gw.createPreflightRequest({ projectName: project.name, initiator: COORDINATOR });
     const d = gw.submitDecision({
       requestId: r.request.requestId, principal: 'project:9',
-      decision: { result: 'ready', options: { rm: '-rf' } }
+      decision: decisionFor(r, { result: 'ready', options: { rm: '-rf' } })
     });
     assert.equal(d.ok, false);
     assert.equal(d.code, 'GOVERNED_WRAP_INVALID');
@@ -170,7 +186,7 @@ describe('submitDecision', () => {
     const r = await gw.createPreflightRequest({ projectName: project.name, initiator: COORDINATOR });
     const d = gw.submitDecision({
       requestId: r.request.requestId, principal: 'project:9',
-      decision: { result: 'ready', filePolicy: 'leave-everything-forever' }
+      decision: decisionFor(r, { result: 'ready', filePolicy: 'leave-everything-forever' })
     });
     assert.equal(d.ok, false);
     assert.equal(d.code, 'GOVERNED_WRAP_INVALID');
@@ -178,16 +194,36 @@ describe('submitDecision', () => {
 
   it('refuses a decision against a request that already has one', async () => {
     const r = await gw.createPreflightRequest({ projectName: project.name, initiator: COORDINATOR });
-    gw.submitDecision({ requestId: r.request.requestId, principal: 'project:9', decision: { result: 'ready' } });
-    const again = gw.submitDecision({ requestId: r.request.requestId, principal: 'project:9', decision: { result: 'ready' } });
+    gw.submitDecision({ requestId: r.request.requestId, principal: 'project:9', decision: decisionFor(r) });
+    const again = gw.submitDecision({ requestId: r.request.requestId, principal: 'project:9', decision: decisionFor(r) });
     assert.equal(again.ok, false);
     assert.equal(again.code, 'GOVERNED_WRAP_NOT_AWAITING_DECISION');
   });
 
   it('refuses an unknown request id', () => {
-    const d = gw.submitDecision({ requestId: 'gwr_doesnotexist', principal: 'project:9', decision: { result: 'ready' } });
+    const d = gw.submitDecision({ requestId: 'gwr_doesnotexist', principal: 'project:9', decision: { result: 'ready', requestId: 'gwr_doesnotexist', optionSchemaVersion: '1.0.0', preflightDigest: 'x'.repeat(64) } });
     assert.equal(d.ok, false);
     assert.equal(d.code, 'NOT_FOUND');
+  });
+
+  it('refuses a decision missing requestId/optionSchemaVersion/preflightDigest -- never bound to nothing', async () => {
+    const r = await gw.createPreflightRequest({ projectName: project.name, initiator: COORDINATOR });
+    const base = decisionFor(r);
+    for (const field of ['requestId', 'optionSchemaVersion', 'preflightDigest']) {
+      const bad = { ...base };
+      delete bad[field];
+      const d = gw.submitDecision({ requestId: r.request.requestId, principal: 'project:9', decision: bad });
+      assert.equal(d.ok, false, `missing ${field} should refuse`);
+      assert.equal(d.code, 'GOVERNED_WRAP_INVALID');
+    }
+  });
+
+  it('refuses a stale decision bound to a requestId, version or digest that no longer matches (PRR-B I-Gate Round 1 Finding 3)', async () => {
+    const r = await gw.createPreflightRequest({ projectName: project.name, initiator: COORDINATOR });
+    const stale = decisionFor(r, { result: 'ready', preflightDigest: 'f'.repeat(64) });
+    const d = gw.submitDecision({ requestId: r.request.requestId, principal: 'project:9', decision: stale });
+    assert.equal(d.ok, false);
+    assert.equal(d.code, 'GOVERNED_WRAP_STALE');
   });
 });
 
@@ -207,7 +243,7 @@ describe('executeReadyRequest', () => {
     const stub = stubStartWrap();
     try {
       const r = await gw.createPreflightRequest({ projectName: project.name, initiator: COORDINATOR });
-      gw.submitDecision({ requestId: r.request.requestId, principal: 'project:9', decision: { result: 'ready' } });
+      gw.submitDecision({ requestId: r.request.requestId, principal: 'project:9', decision: decisionFor(r) });
       const exec = await gw.executeReadyRequest(r.request.requestId);
       assert.equal(exec.ok, true);
       assert.equal(exec.request.state, gw.STATES.EXECUTING);
@@ -225,7 +261,7 @@ describe('executeReadyRequest', () => {
       const r = await gw.createPreflightRequest({ projectName: project.name, initiator: COORDINATOR });
       gw.submitDecision({
         requestId: r.request.requestId, principal: 'project:9',
-        decision: { result: 'ready', filePolicy: gw.FILE_POLICIES.LEAVE_ALL_PREEXISTING, options: { skipTests: true } }
+        decision: decisionFor(r, { result: 'ready', filePolicy: gw.FILE_POLICIES.LEAVE_ALL_PREEXISTING, options: { skipTests: true } })
       });
       await gw.executeReadyRequest(r.request.requestId);
       assert.deepEqual(stub.calls[0].options, { skipTests: true, foreignPathDefault: 'leave' });
@@ -240,7 +276,7 @@ describe('executeReadyRequest', () => {
       const r = await gw.createPreflightRequest({ projectName: project.name, initiator: COORDINATOR });
       gw.submitDecision({
         requestId: r.request.requestId, principal: 'project:9',
-        decision: { result: 'ready', filePolicy: gw.FILE_POLICIES.INCLUDE_OWNED_ONLY }
+        decision: decisionFor(r, { result: 'ready', filePolicy: gw.FILE_POLICIES.INCLUDE_OWNED_ONLY })
       });
       await gw.executeReadyRequest(r.request.requestId);
       assert.deepEqual(stub.calls[0].options, {});
@@ -253,7 +289,7 @@ describe('executeReadyRequest', () => {
     const stub = stubStartWrap();
     try {
       const r = await gw.createPreflightRequest({ projectName: project.name, initiator: COORDINATOR });
-      gw.submitDecision({ requestId: r.request.requestId, principal: 'project:9', decision: { result: 'ready' } });
+      gw.submitDecision({ requestId: r.request.requestId, principal: 'project:9', decision: decisionFor(r) });
       execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-q', '-m', 'moved'], { cwd: project.path });
       const exec = await gw.executeReadyRequest(r.request.requestId);
       assert.equal(exec.ok, false);
@@ -270,7 +306,7 @@ describe('executeReadyRequest', () => {
     const stub = stubStartWrap();
     try {
       const r = await gw.createPreflightRequest({ projectName: project.name, initiator: COORDINATOR });
-      gw.submitDecision({ requestId: r.request.requestId, principal: 'project:9', decision: { result: 'ready' } });
+      gw.submitDecision({ requestId: r.request.requestId, principal: 'project:9', decision: decisionFor(r) });
       const control = require('../lib/control-state');
       control.create({ projectId: project.id, requestId: 'req-1', issueRef: '#2072', authority: {} },
         { principal: 'operator', operatorProof: 'ambient-open' });
@@ -286,7 +322,7 @@ describe('executeReadyRequest', () => {
     const stub = stubStartWrap(() => ({ ok: false, code: 'WRAP_IN_PROGRESS', error: 'already running', sessionId: session.id }));
     try {
       const r = await gw.createPreflightRequest({ projectName: project.name, initiator: COORDINATOR });
-      gw.submitDecision({ requestId: r.request.requestId, principal: 'project:9', decision: { result: 'ready' } });
+      gw.submitDecision({ requestId: r.request.requestId, principal: 'project:9', decision: decisionFor(r) });
       const exec = await gw.executeReadyRequest(r.request.requestId);
       assert.equal(exec.ok, false);
       assert.equal(exec.code, 'WRAP_IN_PROGRESS');
@@ -322,7 +358,7 @@ describe('cancelRequest', () => {
 
   it('cancels a READY request before it executes', async () => {
     const r = await gw.createPreflightRequest({ projectName: project.name, initiator: COORDINATOR });
-    gw.submitDecision({ requestId: r.request.requestId, principal: 'project:9', decision: { result: 'ready' } });
+    gw.submitDecision({ requestId: r.request.requestId, principal: 'project:9', decision: decisionFor(r) });
     const c = gw.cancelRequest(r.request.requestId, 'test');
     assert.equal(c.ok, true);
   });
@@ -332,7 +368,7 @@ describe('cancelRequest', () => {
     sessionsLib.startWrap = () => ({ ok: true, runId: 'run-2', sessionId: session.id });
     try {
       const r = await gw.createPreflightRequest({ projectName: project.name, initiator: COORDINATOR });
-      gw.submitDecision({ requestId: r.request.requestId, principal: 'project:9', decision: { result: 'ready' } });
+      gw.submitDecision({ requestId: r.request.requestId, principal: 'project:9', decision: decisionFor(r) });
       await gw.executeReadyRequest(r.request.requestId);
       const c = gw.cancelRequest(r.request.requestId, 'too late');
       assert.equal(c.ok, false);

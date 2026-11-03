@@ -295,6 +295,22 @@ describe('session-lifecycle caller-identity enforcement (#2129)', () => {
       }
     });
 
+    it('a delegated coordinator may NEVER kill a member lane it does not own, even with lifecycle authority (PRR-B I-Gate Round 1 Finding 1)', async () => {
+      const pmBound = bindProject(projectA);
+      const targetBound = bindProject(projectB);
+      const assignmentId = await grantLifecycleAuthority(projectB, [`project:${projectA.id}`]);
+      try {
+        const res = await request(server, 'DELETE', '/api/sessions/authz-b', {}, pmBound.headers);
+        assert.equal(res.status, 403, JSON.stringify(res.body));
+        assert.equal(res.body.code, 'SESSION_LIFECYCLE_FORBIDDEN');
+        assert.equal(store.sessions.get(targetBound.sessionId).status, 'active', 'the target session was never touched');
+      } finally {
+        store.sessions.kill(pmBound.sessionId, 'test cleanup');
+        store.sessions.kill(targetBound.sessionId, 'test cleanup');
+        await closeAssignment(assignmentId);
+      }
+    });
+
     it('a delegated coordinator may wrap a member lane it does not own (never SESSION_LIFECYCLE_FORBIDDEN)', async () => {
       const pmBound = bindProject(projectA);
       const targetBound = bindProject(projectB);

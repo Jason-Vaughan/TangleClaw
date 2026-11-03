@@ -54,6 +54,22 @@ function operatorRequest(server, method, urlPath, body) {
   return request(server, method, urlPath, body, operatorHeaders(server));
 }
 
+/**
+ * A well-formed decision bound to the exact request/version/digest it was
+ * read from (PRR-B I-Gate Round 1 Finding 3) -- `requestBody` is a governed-wrap
+ * request as the HTTP API returns it (camelCase `requestId`/`optionSchemaVersion`/
+ * `preflightDigest`); `extra` supplies `result` and whatever else that result needs.
+ * @param {object} requestBody
+ * @param {object} [extra]
+ * @returns {object}
+ */
+function decisionFor(requestBody, extra = { result: 'ready' }) {
+  return {
+    requestId: requestBody.requestId, optionSchemaVersion: requestBody.optionSchemaVersion,
+    preflightDigest: requestBody.preflightDigest, ...extra
+  };
+}
+
 describe('governed-wrap HTTP surface (#2072 Slice 1)', () => {
   let tmpDir;
   let server;
@@ -152,7 +168,7 @@ describe('governed-wrap HTTP surface (#2072 Slice 1)', () => {
     try {
       const created = await request(server, 'POST', '/api/sessions/gwrap-target/governed-wrap', {}, pmBound.headers);
       const decided = await request(server, 'POST', `/api/sessions/gwrap-target/governed-wrap/${created.body.request.requestId}/decision`,
-        { decision: { result: 'ready', options: { skipTests: true } } }, pmBound.headers);
+        { decision: decisionFor(created.body.request, { result: 'ready', options: { skipTests: true } }) }, pmBound.headers);
       assert.equal(decided.status, 200, JSON.stringify(decided.body));
       assert.equal(decided.body.request.state, 'executing');
       assert.equal(decided.body.request.runId, 'run-1');
@@ -168,7 +184,7 @@ describe('governed-wrap HTTP surface (#2072 Slice 1)', () => {
     try {
       const created = await request(server, 'POST', '/api/sessions/gwrap-target/governed-wrap', {}, pmBound.headers);
       const decided = await request(server, 'POST', `/api/sessions/gwrap-target/governed-wrap/${created.body.request.requestId}/decision`,
-        { decision: { result: 'needs-operator', question: 'Skip the test suite for this wrap?' } }, pmBound.headers);
+        { decision: decisionFor(created.body.request, { result: 'needs-operator', question: 'Skip the test suite for this wrap?' }) }, pmBound.headers);
       assert.equal(decided.status, 200);
       assert.equal(decided.body.request.state, 'needs_operator');
       assert.equal(called, false);
@@ -199,9 +215,9 @@ describe('governed-wrap HTTP surface (#2072 Slice 1)', () => {
     try {
       const created = await operatorRequest(server, 'POST', '/api/sessions/gwrap-target/governed-wrap', {});
       assert.equal(created.status, 201, JSON.stringify(created.body));
-      assert.equal(created.body.request.initiator.kind, 'coordinator');
+      assert.equal(created.body.request.initiator.kind, 'operator');
       const decided = await operatorRequest(server, 'POST', `/api/sessions/gwrap-target/governed-wrap/${created.body.request.requestId}/decision`,
-        { decision: { result: 'ready' } });
+        { decision: decisionFor(created.body.request) });
       assert.equal(decided.status, 200, JSON.stringify(decided.body));
       assert.equal(decided.body.request.state, 'executing');
     } finally {
@@ -212,5 +228,42 @@ describe('governed-wrap HTTP surface (#2072 Slice 1)', () => {
   it('cancelling an unknown request answers 404', async () => {
     const res = await request(server, 'POST', '/api/sessions/gwrap-target/governed-wrap/gwr_doesnotexist/cancel', {}, pmBound.headers);
     assert.equal(res.status, 404);
+  });
+
+  it('the request\'s own target project may never decide its own request -- #2072 reserves that to Master or a verified delegate (PRR-B I-Gate Round 1 Finding 3)', async () => {
+    const created = await request(server, 'POST', '/api/sessions/gwrap-target/governed-wrap', {}, targetBound.headers);
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const decided = await request(server, 'POST', `/api/sessions/gwrap-target/governed-wrap/${created.body.request.requestId}/decision`,
+      { decision: decisionFor(created.body.request) }, targetBound.headers);
+    assert.equal(decided.status, 403, JSON.stringify(decided.body));
+    assert.equal(decided.body.code, 'SESSION_LIFECYCLE_FORBIDDEN');
+  });
+
+  it('a caller with delegated authority over one project may never decide or cancel a DIFFERENT project\'s request through that authorized :project URL (A-Gate Round 1 Blocking 1)', async () => {
+    // pm is legitimately delegated over "gwrap-target" (this suite's own
+    // beforeEach grant) -- but a request on an UNRELATED third project
+    // must never be reachable through that URL by naming its id.
+    const victim = store.projects.create({ name: 'gwrap-victim', path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-gwrap-victim-')), engine: 'claude' });
+    const victimBound = bindProject(victim);
+    try {
+      const created = await request(server, 'POST', '/api/sessions/gwrap-victim/governed-wrap', {}, victimBound.headers);
+      assert.equal(created.status, 201, JSON.stringify(created.body));
+      const victimRequestId = created.body.request.requestId;
+
+      const decided = await request(server, 'POST', `/api/sessions/gwrap-target/governed-wrap/${victimRequestId}/decision`,
+        { decision: decisionFor(created.body.request) }, pmBound.headers);
+      assert.equal(decided.status, 404, JSON.stringify(decided.body));
+      assert.equal(decided.body.code, 'NOT_FOUND');
+
+      const cancel = await request(server, 'POST', `/api/sessions/gwrap-target/governed-wrap/${victimRequestId}/cancel`, {}, pmBound.headers);
+      assert.equal(cancel.status, 404, JSON.stringify(cancel.body));
+      assert.equal(cancel.body.code, 'NOT_FOUND');
+
+      const stillOpen = await request(server, 'GET', '/api/sessions/gwrap-victim/governed-wrap');
+      assert.equal(stillOpen.status, 200);
+      assert.equal(stillOpen.body.request.state, 'awaiting_decision');
+    } finally {
+      store.sessions.kill(victimBound.sessionId, 'test cleanup');
+    }
   });
 });

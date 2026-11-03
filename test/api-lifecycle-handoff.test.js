@@ -22,6 +22,7 @@ setLevel('error');
 
 const store = require('../lib/store');
 const sessionsLib = require('../lib/sessions');
+const wrapRunRegistry = require('../lib/wrap-run-registry');
 const { createServer } = require('../server');
 const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
 
@@ -88,6 +89,7 @@ describe('lifecycle-handoff HTTP surface (#2073 Slice 1)', () => {
       "UPDATE lifecycle_handoffs SET state = 'cancelled' WHERE project_id = ? "
       + "AND state IN ('checkpointed','wrap_initiated','terminal_confirmed','replacement_launched','startup_ready')"
     ).run(project.id);
+    wrapRunRegistry._resetForTests();
     if (bound) store.sessions.kill(bound.sessionId, 'test cleanup');
   });
 
@@ -144,6 +146,7 @@ describe('lifecycle-handoff HTTP surface (#2073 Slice 1)', () => {
       assert.equal(created.status, 201, JSON.stringify(created.body));
       const handoffId = created.body.handoff.handoffId;
 
+      wrapRunRegistry.begin(project.name, bound.sessionId);
       const step1 = await request(server, 'POST', `/api/sessions/lho-project/lifecycle-handoff/${handoffId}/wrap-initiated`, {}, pmBound.headers);
       assert.equal(step1.status, 200, JSON.stringify(step1.body));
       assert.equal(step1.body.handoff.state, 'wrap_initiated');
@@ -160,6 +163,9 @@ describe('lifecycle-handoff HTTP surface (#2073 Slice 1)', () => {
         applicability: { applicable: false, reason: 'test' }, rendered: null, rules: []
       });
       replacement = store.sessions.start({ projectId: project.id, engineId: 'claude', launchSequence: snapshot });
+      // Steps 6-7 below are the REPLACEMENT's own to attest -- never the
+      // delegate's -- so they ride on the replacement's own launch binding.
+      const replacementHeaders = { 'x-tangleclaw-project-id': String(project.id), 'x-tangleclaw-launch-id': replacementLaunchId };
 
       const step3 = await request(server, 'POST', `/api/sessions/lho-project/lifecycle-handoff/${handoffId}/launch-replacement`, {}, pmBound.headers);
       assert.equal(step3.status, 200, JSON.stringify(step3.body));
@@ -168,14 +174,13 @@ describe('lifecycle-handoff HTTP surface (#2073 Slice 1)', () => {
 
       const seq = store.launchSequences.getBySession(replacement.id);
       store.launchSequences.markReady(seq.id, seq.revision, { ok: true }, 'digest');
-      const digest = step3.body.handoff.checkpointDigest;
 
       const step4 = await request(server, 'POST', `/api/sessions/lho-project/lifecycle-handoff/${handoffId}/reconcile-startup`,
-        { readyDigest: digest }, pmBound.headers);
+        {}, replacementHeaders);
       assert.equal(step4.status, 200, JSON.stringify(step4.body));
       assert.equal(step4.body.handoff.state, 'startup_ready');
 
-      const step5 = await request(server, 'POST', `/api/sessions/lho-project/lifecycle-handoff/${handoffId}/takeover`, {}, pmBound.headers);
+      const step5 = await request(server, 'POST', `/api/sessions/lho-project/lifecycle-handoff/${handoffId}/takeover`, {}, replacementHeaders);
       assert.equal(step5.status, 200, JSON.stringify(step5.body));
       assert.equal(step5.body.handoff.state, 'takeover_complete');
 
@@ -210,5 +215,36 @@ describe('lifecycle-handoff HTTP surface (#2073 Slice 1)', () => {
     const cancelled = await request(server, 'POST', `/api/sessions/lho-project/lifecycle-handoff/${handoffId}/cancel`, { reason: 'test' }, bound.headers);
     assert.equal(cancelled.status, 200, JSON.stringify(cancelled.body));
     assert.equal(cancelled.body.handoff.state, 'cancelled');
+  });
+
+  it('a project session may never drive or cancel a DIFFERENT project\'s handoff through its own :project URL (A-Gate Round 1 Blocking 1)', async () => {
+    const other = store.projects.create({ name: 'lho-other-victim', path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-lho-victim-')), engine: 'claude' });
+    const otherBound = bindProject(other);
+    bound = bindProject(project);
+    try {
+      const victimHandoff = await request(server, 'POST', '/api/sessions/lho-other-victim/lifecycle-handoff',
+        { sourceSessionId: otherBound.sessionId, transitionType: 'wrap', checkpoint: { note: 'victim' } }, otherBound.headers);
+      assert.equal(victimHandoff.status, 201, JSON.stringify(victimHandoff.body));
+      const victimHandoffId = victimHandoff.body.handoff.handoffId;
+
+      // bound's own project ("lho-project") is a legitimate URL for bound to
+      // act through -- but the handoffId named belongs to "lho-other-victim".
+      const wrapInitiated = await request(server, 'POST',
+        `/api/sessions/lho-project/lifecycle-handoff/${victimHandoffId}/wrap-initiated`, {}, bound.headers);
+      assert.equal(wrapInitiated.status, 404, JSON.stringify(wrapInitiated.body));
+      assert.equal(wrapInitiated.body.code, 'NOT_FOUND');
+
+      const cancel = await request(server, 'POST',
+        `/api/sessions/lho-project/lifecycle-handoff/${victimHandoffId}/cancel`, {}, bound.headers);
+      assert.equal(cancel.status, 404, JSON.stringify(cancel.body));
+      assert.equal(cancel.body.code, 'NOT_FOUND');
+
+      // The victim's handoff is untouched.
+      const stillOpen = await request(server, 'GET', '/api/sessions/lho-other-victim/lifecycle-handoff');
+      assert.equal(stillOpen.status, 200);
+      assert.equal(stillOpen.body.handoff.state, 'checkpointed');
+    } finally {
+      store.sessions.kill(otherBound.sessionId, 'test cleanup');
+    }
   });
 });

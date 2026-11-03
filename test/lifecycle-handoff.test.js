@@ -21,6 +21,7 @@ setLevel('error');
 const store = require('../lib/store');
 const launchSequence = require('../lib/launch-sequence');
 const sessionsLib = require('../lib/sessions');
+const wrapRunRegistry = require('../lib/wrap-run-registry');
 const lh = require('../lib/lifecycle-handoff');
 
 let tmpDir = null;
@@ -46,6 +47,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  wrapRunRegistry._resetForTests();
   store.close();
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
@@ -58,9 +60,10 @@ function create(overrides = {}) {
   });
 }
 
-/** Drive a fresh handoff to TERMINAL_CONFIRMED (wraps the source session for real). */
+/** Drive a fresh handoff to TERMINAL_CONFIRMED (a REAL wrap run + wraps the source session). */
 function toTerminalConfirmed(overrides = {}) {
   const created = create(overrides);
+  wrapRunRegistry.begin(project.name, session.id);
   lh.recordWrapInitiated(created.handoff.handoffId);
   store.sessions.wrap(session.id, 'test: wrap summary');
   lh.recordTerminalConfirmed(created.handoff.handoffId);
@@ -141,13 +144,31 @@ describe('the state machine: only the documented forward edges are allowed', () 
     assert.equal(lh.recordWrapInitiated('lho_doesnotexist').code, 'NOT_FOUND');
     assert.equal(lh.recordTerminalConfirmed('lho_doesnotexist').code, 'NOT_FOUND');
     assert.equal(lh.launchReplacement('lho_doesnotexist').code, 'NOT_FOUND');
-    assert.equal(lh.reconcileStartup('lho_doesnotexist', { readyDigest: 'x' }).code, 'NOT_FOUND');
-    assert.equal(lh.recordTakeover('lho_doesnotexist').code, 'NOT_FOUND');
+    assert.equal(lh.reconcileStartup('lho_doesnotexist', { kind: 'operator' }).code, 'NOT_FOUND');
+    assert.equal(lh.recordTakeover('lho_doesnotexist', { kind: 'operator' }).code, 'NOT_FOUND');
+  });
+
+  it('recordWrapInitiated refuses without real evidence of a running wrap', () => {
+    const created = create();
+    const r = lh.recordWrapInitiated(created.handoff.handoffId);
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'LIFECYCLE_HANDOFF_NOT_INITIATED');
   });
 
   it('recordTerminalConfirmed refuses while the source session is still active', () => {
     const created = create();
+    wrapRunRegistry.begin(project.name, session.id);
     lh.recordWrapInitiated(created.handoff.handoffId);
+    const r = lh.recordTerminalConfirmed(created.handoff.handoffId);
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'LIFECYCLE_HANDOFF_NOT_TERMINAL');
+  });
+
+  it('recordTerminalConfirmed refuses a killed or crashed source -- only "wrapped" counts', () => {
+    const created = create();
+    wrapRunRegistry.begin(project.name, session.id);
+    lh.recordWrapInitiated(created.handoff.handoffId);
+    store.sessions.kill(session.id, 'test: simulated kill');
     const r = lh.recordTerminalConfirmed(created.handoff.handoffId);
     assert.equal(r.ok, false);
     assert.equal(r.code, 'LIFECYCLE_HANDOFF_NOT_TERMINAL');
@@ -155,11 +176,19 @@ describe('the state machine: only the documented forward edges are allowed', () 
 
   it('recordTerminalConfirmed succeeds once the source session is genuinely terminal (wrapped)', () => {
     const created = create();
+    wrapRunRegistry.begin(project.name, session.id);
     lh.recordWrapInitiated(created.handoff.handoffId);
     store.sessions.wrap(session.id, 'test: wrap summary');
     const r = lh.recordTerminalConfirmed(created.handoff.handoffId);
     assert.equal(r.ok, true);
     assert.equal(r.handoff.state, lh.STATES.TERMINAL_CONFIRMED);
+  });
+
+  it('recordWrapInitiated succeeds for "finalize" when a real session.finalized activity record exists', () => {
+    const created = create({ transitionType: 'finalize' });
+    store.activity.log({ projectId: project.id, sessionId: session.id, eventType: 'session.finalized', detail: {} });
+    const r = lh.recordWrapInitiated(created.handoff.handoffId);
+    assert.equal(r.ok, true);
   });
 
   it('one-generation rule: a HOLD landing after checkpointing blocks every later step with GENERATION_MOVED', () => {
@@ -222,6 +251,30 @@ describe('launchReplacement', () => {
     assert.equal(r.ok, false);
     assert.equal(r.code, 'LIFECYCLE_HANDOFF_INVALID_TRANSITION');
   });
+
+  it('restart-safety: a retry adopts an already-active session rather than launching a second one (PRR-B I-Gate Round 1 Finding 4)', () => {
+    const stub = stubLaunch();
+    try {
+      const handoffId = toTerminalConfirmed();
+      // Simulate the crash window: a real successor is already active for
+      // this project (as if an earlier launchSession call succeeded but the
+      // process crashed before this function's own DB write landed).
+      const launchId = launchSequence.mintLaunchId();
+      const snapshot = launchSequence.buildSnapshot({
+        launchId, project, engineProfile: store.engines.get('claude'),
+        applicability: { applicable: false, reason: 'test binding' }, rendered: null, rules: []
+      });
+      const alreadyLaunched = store.sessions.start({ projectId: project.id, engineId: 'claude', launchSequence: snapshot });
+
+      const r = lh.launchReplacement(handoffId);
+      assert.equal(r.ok, true);
+      assert.equal(r.handoff.replacementSessionId, alreadyLaunched.id, 'adopted the already-active session');
+      assert.equal(r.launched.adopted, true);
+      assert.equal(stub.calls.length, 0, 'launchSession is never called again');
+    } finally {
+      stub.restore();
+    }
+  });
 });
 
 describe('reconcileStartup', () => {
@@ -248,14 +301,15 @@ describe('reconcileStartup', () => {
     try {
       const handoffId = toTerminalConfirmed();
       lh.launchReplacement(handoffId);
-      const digest = lh.getHandoff(handoffId).checkpointDigest;
-      const r1 = lh.reconcileStartup(handoffId, { readyDigest: digest });
+      const replacementLaunchId = store.launchSequences.getBySession(replacement.id).launchId;
+      const caller = { kind: 'project', sessionId: replacement.id, launchId: replacementLaunchId };
+      const r1 = lh.reconcileStartup(handoffId, caller);
       assert.equal(r1.ok, false);
       assert.equal(r1.code, 'LIFECYCLE_HANDOFF_STARTUP_NOT_READY');
 
       const seq = store.launchSequences.getBySession(replacement.id);
       store.launchSequences.markReady(seq.id, seq.revision, { ok: true }, 'ready-digest-x');
-      const r2 = lh.reconcileStartup(handoffId, { readyDigest: digest });
+      const r2 = lh.reconcileStartup(handoffId, caller);
       assert.equal(r2.ok, true);
       assert.equal(r2.handoff.state, lh.STATES.STARTUP_READY);
     } finally {
@@ -263,7 +317,7 @@ describe('reconcileStartup', () => {
     }
   });
 
-  it('a digest mismatch is a real failure (recordBlocker), not silently accepted', () => {
+  it('refuses a caller that is not the replacement session -- a delegate cannot forge reconciliation (PRR-B I-Gate Round 1 Finding 4)', () => {
     const replacement = launchedReplacement();
     const restore = stubLaunch(replacement.id);
     try {
@@ -271,25 +325,40 @@ describe('reconcileStartup', () => {
       lh.launchReplacement(handoffId);
       const seq = store.launchSequences.getBySession(replacement.id);
       store.launchSequences.markReady(seq.id, seq.revision, { ok: true }, 'ready-digest-x');
-      const r = lh.reconcileStartup(handoffId, { readyDigest: 'not-the-real-digest' });
-      assert.equal(r.ok, true, 'recordBlocker itself succeeds at recording the failure');
-      assert.equal(r.handoff.state, lh.STATES.FAILED);
-      assert.equal(r.handoff.blockerCode, lh.BLOCKER_CODES.CHECKPOINT_DIGEST_MISMATCH);
-      assert.deepEqual(r.handoff.checkpoint, CHECKPOINT, 'the checkpoint is never cleared on failure');
+      // The delegate (a project caller, but NOT the replacement's own session/launch).
+      const r = lh.reconcileStartup(handoffId, { kind: 'project', sessionId: session.id, launchId: 'wrong-launch-id' });
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'LIFECYCLE_HANDOFF_NOT_REPLACEMENT');
     } finally {
       restore();
     }
   });
 
-  it('refuses a missing readyDigest', () => {
+  it('the operator may reconcile on the replacement\'s behalf', () => {
     const replacement = launchedReplacement();
     const restore = stubLaunch(replacement.id);
     try {
       const handoffId = toTerminalConfirmed();
       lh.launchReplacement(handoffId);
-      const r = lh.reconcileStartup(handoffId, {});
+      const seq = store.launchSequences.getBySession(replacement.id);
+      store.launchSequences.markReady(seq.id, seq.revision, { ok: true }, 'ready-digest-x');
+      const r = lh.reconcileStartup(handoffId, { kind: 'operator' });
+      assert.equal(r.ok, true);
+      assert.equal(r.handoff.state, lh.STATES.STARTUP_READY);
+    } finally {
+      restore();
+    }
+  });
+
+  it('refuses a null/missing caller', () => {
+    const replacement = launchedReplacement();
+    const restore = stubLaunch(replacement.id);
+    try {
+      const handoffId = toTerminalConfirmed();
+      lh.launchReplacement(handoffId);
+      const r = lh.reconcileStartup(handoffId, null);
       assert.equal(r.ok, false);
-      assert.equal(r.code, 'LIFECYCLE_HANDOFF_INVALID');
+      assert.equal(r.code, 'LIFECYCLE_HANDOFF_NOT_REPLACEMENT');
     } finally {
       restore();
     }
@@ -312,11 +381,12 @@ describe('recordTakeover', () => {
     try {
       const handoffId = toTerminalConfirmed();
       lh.launchReplacement(handoffId);
-      const digest = lh.getHandoff(handoffId).checkpointDigest;
+      const replacementLaunchId = store.launchSequences.getBySession(replacement.id).launchId;
+      const caller = { kind: 'project', sessionId: replacement.id, launchId: replacementLaunchId };
       const seq = store.launchSequences.getBySession(replacement.id);
       store.launchSequences.markReady(seq.id, seq.revision, { ok: true }, 'ready-digest-x');
-      lh.reconcileStartup(handoffId, { readyDigest: digest });
-      const r = lh.recordTakeover(handoffId);
+      lh.reconcileStartup(handoffId, caller);
+      const r = lh.recordTakeover(handoffId, caller);
       assert.equal(r.ok, true);
       assert.equal(r.handoff.state, lh.STATES.TAKEOVER_COMPLETE);
       assert.equal(lh.getOpenForProject(project.id), null, 'a terminal handoff is no longer open');
@@ -327,9 +397,34 @@ describe('recordTakeover', () => {
 
   it('refuses before STARTUP_READY', () => {
     const handoffId = toTerminalConfirmed();
-    const r = lh.recordTakeover(handoffId);
+    const r = lh.recordTakeover(handoffId, { kind: 'operator' });
     assert.equal(r.ok, false);
     assert.equal(r.code, 'LIFECYCLE_HANDOFF_INVALID_TRANSITION');
+  });
+
+  it('refuses a caller that is not the replacement session, even once STARTUP_READY', () => {
+    const other = store.projects.create({ name: 'lho-takeover-2', path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-lho-tk2-')), engine: 'claude' });
+    const launchId = launchSequence.mintLaunchId();
+    const snapshot = launchSequence.buildSnapshot({
+      launchId, project: other, engineProfile: store.engines.get('claude'),
+      applicability: { applicable: false, reason: 'test binding' }, rendered: null, rules: []
+    });
+    const replacement = store.sessions.start({ projectId: other.id, engineId: 'claude', launchSequence: snapshot });
+    const real = sessionsLib.launchSession;
+    sessionsLib.launchSession = () => ({ session: { id: replacement.id }, primePrompt: null, ttydUrl: 'http://x', error: null });
+    try {
+      const handoffId = toTerminalConfirmed();
+      lh.launchReplacement(handoffId);
+      const replacementLaunchId = store.launchSequences.getBySession(replacement.id).launchId;
+      const seq = store.launchSequences.getBySession(replacement.id);
+      store.launchSequences.markReady(seq.id, seq.revision, { ok: true }, 'ready-digest-x');
+      lh.reconcileStartup(handoffId, { kind: 'project', sessionId: replacement.id, launchId: replacementLaunchId });
+      const r = lh.recordTakeover(handoffId, { kind: 'project', sessionId: session.id, launchId: 'wrong' });
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'LIFECYCLE_HANDOFF_NOT_REPLACEMENT');
+    } finally {
+      sessionsLib.launchSession = real;
+    }
   });
 });
 
