@@ -41,6 +41,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-03 — Car 57-B: session stop provenance and the explicit recovery wake (#2249, #2250)
+
+<!-- prawduct: type=feature | scope=2249-2250-stop-provenance-and-wake -->
+
+- **Stop provenance (#2249):** `sessions` gains `stopped_by`/`stop_reason` (migration v76→v77). `stopped_by` is the server's own fact about how a session's terminal status was reached — `api` (the generic kill route, and any other route whose own job cascades into a kill, e.g. an OpenClaw tunnel teardown), `model-switch` (the governed engine/model switch), `wrap`, or `crash` — never inferred from caller-supplied text. `stop_reason` is that caller-supplied text, shown as-is and never verified. Both are threaded through `store.sessions.kill()`/`wrap()`/`markCrashed()` and every real caller, and surfaced in `GET /api/launch/recovery-held`'s `priorSession` and the fleet recovery panel. A session that ended before this migration reads both as `null` — not recorded, never recorded-as-empty.
+- **Explicit operator wake (#2250, Architect Ruling A2250):** `POST /api/launch/recovery-wake-batch` (`lib/launch-recovery-wake.js`, routed beside `recovery-clear-batch`) lets an operator explicitly re-nudge several launches past their cleared recovery, in one request — its own write, apart from a clear. Same operator proof and request shape as the batch clear; the full per-item pre-send gate order (not-found/archived/still-blocked/stale/already-ready/session-ended/native-startup/no-pane/already-woken/unprofiled-engine); then the shared pane-busy safeguard `lib/launch-unready.js` already uses, checked once (`ticksRequired: 1`) rather than over a multi-tick streak, never consuming the one-wake-per-revision slot on a busy or failed send. The response reports `send`, `stepAcknowledgement` and `readyAttestation` as three separate facts, never merged into one verdict. Backend-only by PM/Architect agreement; a fleet-dashboard UI trigger is Leg 4/v5.60.0 scope, not this car's.
+- **Pre-merge fix:** a full-suite run (Testament pool, 25,247 tests) surfaced three pre-existing tests whose literal assumptions #2249's new columns broke, outside this car's original envelope — fixed and verified against the real production lines, not just read in isolation: `test/startup-dialog.test.js`'s v56/v57 downgrade fixture assumed `launch_blocker` was always the last column in `sessions`; `test/api-medusa.test.js` hardcoded the exact source text around `lib/routes/openclaw.js`'s kill call, which now carries a third argument; `test/store.test.js` pinned the literal `schema._bind({...})` call in `lib/store.js`, which now also injects `SESSION_STOP_SOURCES`.
+
 ## 2026-11-02 — v5.56.0 W2-REC: reconcile Switchboard delivery guarantees
 
 <!-- prawduct: type=internal | scope=v5560-w2-rec -->
