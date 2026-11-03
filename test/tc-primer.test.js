@@ -12,7 +12,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { VERB_ROSTER } = require('../lib/tc-verbs');
+const { VERB_ROSTER, BRIDGE_SUBVERBS } = require('../lib/tc-verbs');
 const {
   ROLE_VERB_IDS, START_NEXT_VS_REVIEW_NOTE, SANDBOX_UNREACHABLE_NOTE, buildOperatingPrimer,
   SUBVERB_MANIFEST, subverbsFor, subverbManifestParity
@@ -67,6 +67,25 @@ describe('SUBVERB_MANIFEST — the structured command/subcommand schema (Archite
     const parity = subverbManifestParity();
     assert.deepEqual(parity.missing, [], `VERB_ROSTER verb(s) with no SUBVERB_MANIFEST entry: ${parity.missing.join(', ')}`);
     assert.deepEqual(parity.stale, [], `SUBVERB_MANIFEST entry for a verb VERB_ROSTER no longer has: ${parity.stale.join(', ')}`);
+  });
+
+  it('bridge: two-way parity against the real BRIDGE_SUBVERBS implementation, not just "bridge has a manifest entry" (PRR-B I-Gate Round 2)', () => {
+    // The top-level check above passed even while three of bridge's
+    // nickname writes were folded into one 'nickname' record and
+    // 'circuit ack' was recorded as 'circuit' -- both satisfied "bridge is
+    // a VERB_ROSTER key with a SUBVERB_MANIFEST entry" without giving every
+    // IMPLEMENTED subverb its own record. This checks the subverb grain
+    // directly against the implementation's own ground truth.
+    const parity = subverbManifestParity();
+    assert.deepEqual(parity.bridgeSubverbsMissing, [],
+      `BRIDGE_SUBVERBS implements these with no SUBVERB_MANIFEST.bridge record: ${parity.bridgeSubverbsMissing.join(', ')}`);
+    assert.deepEqual(parity.bridgeSubverbsStale, [],
+      `SUBVERB_MANIFEST.bridge records an id BRIDGE_SUBVERBS does not implement: ${parity.bridgeSubverbsStale.join(', ')}`);
+    // Pinned directly against the roster's real export too, not only
+    // through the parity helper -- so a change to subverbManifestParity's
+    // own logic cannot silently stop checking this.
+    const manifestBridgeIds = subverbsFor('bridge').map((s) => s.id);
+    assert.deepEqual([...manifestBridgeIds].sort(), [...BRIDGE_SUBVERBS].sort());
   });
 
   it('every record has all five required fields, non-empty', () => {
@@ -149,6 +168,26 @@ describe('tc help --json', () => {
   it('refuses a malformed call without touching the network', () => {
     const r = spawnSync(process.execPath, [TC_BIN, 'help', '--not-json'], { env: {}, encoding: 'utf8' });
     assert.equal(r.status, 1);
+  });
+});
+
+describe('tc --help --json / -h --json -- the same manifest form, named explicitly by Architect Ruling A2070 (PRR-B I-Gate Round 2)', () => {
+  for (const flag of ['--help', '-h']) {
+    it(`tc ${flag} --json answers the exact same JSON tc help --json does, with no environment`, () => {
+      const viaHelp = spawnSync(process.execPath, [TC_BIN, 'help', '--json'], { env: {}, encoding: 'utf8' });
+      const viaFlag = spawnSync(process.execPath, [TC_BIN, flag, '--json'], { env: {}, encoding: 'utf8' });
+      assert.equal(viaFlag.status, 0, `tc ${flag} --json exited ${viaFlag.status}: ${viaFlag.stderr}`);
+      assert.equal(viaFlag.stdout, viaHelp.stdout, `tc ${flag} --json must answer identically to tc help --json`);
+      // Parses as JSON, not the prose tc --help alone prints.
+      assert.doesNotThrow(() => JSON.parse(viaFlag.stdout));
+    });
+  }
+
+  it('bare tc --help / -h (no --json) still answers the prose roster, unchanged', () => {
+    const r = spawnSync(process.execPath, [TC_BIN, '--help'], { env: {}, encoding: 'utf8' });
+    assert.equal(r.status, 0);
+    assert.throws(() => JSON.parse(r.stdout), 'the prose roster is not valid JSON');
+    assert.match(r.stdout, /^usage: tc <verb>/);
   });
 });
 

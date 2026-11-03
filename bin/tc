@@ -32,12 +32,20 @@
  */
 
 const path = require('node:path');
-const { VERB_ROSTER, renderUsage, renderFamilyHelp, receiptVerbLabel, renderBodyTooLarge, renderControlBanner, bridgeCredentialHeader, readPaneEnvironment, judgePaneIdentity, readPaneStartCommand, renderPaneMismatch, requestTimeoutMs } = require(path.join(__dirname, '..', 'lib', 'tc-verbs.js'));
+const { VERB_ROSTER, renderUsage, renderFamilyHelp, renderHelpManifest, receiptVerbLabel, renderBodyTooLarge, renderControlBanner, bridgeCredentialHeader, readPaneEnvironment, judgePaneIdentity, readPaneStartCommand, renderPaneMismatch, requestTimeoutMs } = require(path.join(__dirname, '..', 'lib', 'tc-verbs.js'));
 
 async function main() {
   const verb = process.argv[2];
   const argv = process.argv.slice(3);
   if (!verb || verb === '--help' || verb === '-h') {
+    // PRR-B I-Gate Round 2 on PR #2841: Architect Ruling A2070 names BOTH
+    // `tc help --json` and `tc --help --json` as machine-readable manifest
+    // forms -- route the latter to the exact same renderer `tc help --json`
+    // uses, rather than the prose roster `tc --help` alone answers with.
+    if (verb && argv[0] === '--json') {
+      process.stdout.write(renderHelpManifest());
+      process.exit(0);
+    }
     // Requested help is an answer (stdout, 0); a missing verb is a usage
     // error (stderr, 1).
     (verb ? process.stdout : process.stderr).write(renderUsage());
