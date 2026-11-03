@@ -72,7 +72,7 @@ describe('fleet-workload-view: classifySessionState (#349)', () => {
       paneAlive: true, workloadState: 'complete', owedMessageCount: 2, lastActivityAt: before(60 * MINUTE), now: NOW
     });
     assert.equal(r.result.state, 'wedged');
-    assert.match(r.result.reasons[0], /owes 2 switchboard message/);
+    assert.match(r.result.reasons[0], /has 2 owed\/unread switchboard message/);
   });
 
   it('owed messages still fresh are not wedged', () => {
@@ -93,6 +93,64 @@ describe('fleet-workload-view: classifySessionState (#349)', () => {
       staleThresholds: { workingMs: 5 * MINUTE }
     });
     assert.equal(r.result.state, 'wedged');
+  });
+
+  it('a missing lastActivityAt does NOT instantly wedge a working session -- it is uncertainty, not staleness (PRR-A R1 #1)', () => {
+    const r = fwv.classifySessionState({ paneAlive: true, workloadState: 'working', owedMessageCount: 0, now: NOW });
+    assert.notEqual(r.result.state, 'wedged');
+  });
+
+  it('an unparseable lastActivityAt is treated the same as a missing one, not Infinity', () => {
+    const r = fwv.classifySessionState({ paneAlive: true, workloadState: 'working', lastActivityAt: 'not-a-date', owedMessageCount: 0, now: NOW });
+    assert.notEqual(r.result.state, 'wedged');
+  });
+
+  it('falls back to updatedAt when lastActivityAt is missing, and still wedges if THAT is stale', () => {
+    const r = fwv.classifySessionState({ paneAlive: true, workloadState: 'working', updatedAt: before(60 * MINUTE), owedMessageCount: 0, now: NOW });
+    assert.equal(r.result.state, 'wedged');
+  });
+
+  it('falls back to updatedAt when lastActivityAt is missing, and stays active if THAT is fresh', () => {
+    const r = fwv.classifySessionState({ paneAlive: true, workloadState: 'working', updatedAt: before(5 * MINUTE), owedMessageCount: 0, now: NOW });
+    assert.equal(r.result.state, 'active');
+  });
+
+  it('a present lastActivityAt takes priority over updatedAt when both are given', () => {
+    const r = fwv.classifySessionState({
+      paneAlive: true, workloadState: 'working', lastActivityAt: before(5 * MINUTE), updatedAt: before(60 * MINUTE),
+      owedMessageCount: 0, now: NOW
+    });
+    assert.equal(r.result.state, 'active');
+  });
+
+  it('unread switchboard debt refuses an idle classification the same way owed debt does (PRR-A R1 #2)', () => {
+    const r = fwv.classifySessionState({ paneAlive: true, workloadState: 'complete', unreadMessageCount: 2, now: NOW });
+    assert.notEqual(r.result.state, 'idle');
+  });
+
+  it('stale unread debt with no recent activity wedges, even if workloadState is complete', () => {
+    const r = fwv.classifySessionState({
+      paneAlive: true, workloadState: 'complete', unreadMessageCount: 2, lastActivityAt: before(60 * MINUTE), now: NOW
+    });
+    assert.equal(r.result.state, 'wedged');
+  });
+
+  it('a session with no workload receipt but unread debt is not classified active', () => {
+    const r = fwv.classifySessionState({ paneAlive: true, unreadMessageCount: 1, owedMessageCount: 0, now: NOW });
+    assert.notEqual(r.result.reasons[0], 'no workload receipt yet, pane alive, nothing owed or unread');
+  });
+
+  it('owed and unread debt combine into one figure for the staleness check', () => {
+    const r = fwv.classifySessionState({
+      paneAlive: true, workloadState: 'complete', owedMessageCount: 1, unreadMessageCount: 1, lastActivityAt: before(60 * MINUTE), now: NOW
+    });
+    assert.equal(r.result.state, 'wedged');
+    assert.match(r.result.reasons[0], /has 2 owed\/unread/);
+  });
+
+  it('zero unread and zero owed with workload complete is still idle, unaffected by the new field', () => {
+    const r = fwv.classifySessionState({ paneAlive: true, workloadState: 'complete', owedMessageCount: 0, unreadMessageCount: 0, now: NOW });
+    assert.equal(r.result.state, 'idle');
   });
 });
 
@@ -140,6 +198,20 @@ describe('fleet-workload-view: buildFleetWorkloadView (#1923)', () => {
       { sessionId: 's1', project: 'p1', workloadState: 'complete', owedMessageCount: 0 }
     ], { now: NOW });
     assert.equal(r.view.sessions[0].passiveState, 'idle');
+  });
+
+  it('passes unreadMessageCount through so a complete session with unread debt is not idle (PRR-A R1 #2)', () => {
+    const r = fwv.buildFleetWorkloadView([
+      { sessionId: 's1', project: 'p1', workloadState: 'complete', owedMessageCount: 0, unreadMessageCount: 2, paneAlive: true }
+    ], { now: NOW });
+    assert.notEqual(r.view.sessions[0].passiveState, 'idle');
+  });
+
+  it('passes updatedAt through as the lastActivityAt fallback for a fresh "working" session', () => {
+    const r = fwv.buildFleetWorkloadView([
+      { sessionId: 's1', project: 'p1', workloadState: 'working', owedMessageCount: 0, updatedAt: NOW, paneAlive: true }
+    ], { now: NOW });
+    assert.equal(r.view.sessions[0].passiveState, 'active');
   });
 
   it('propagates a classification failure (e.g. a bad workloadState) as the whole call\'s refusal', () => {
