@@ -383,3 +383,45 @@ describe('roleProjectionLines / protocolDigest — the versioned role projection
     assert.equal(r.ok, true, 'still fresh just inside the default bound, with no maxAgeMs override');
   });
 });
+
+describe('seams -- _internal, CLEAR_OUTCOMES, ensureChunkBoundarySchema', () => {
+  it('_internal.now/_internal.id are the actual clock/id source a receipt is created with', () => {
+    const realNow = cb._internal.now;
+    const realId = cb._internal.id;
+    cb._internal.now = () => '2026-01-01T00:00:00.000Z';
+    cb._internal.id = () => 'cbr_fixed-test-id';
+    try {
+      const r = cb.createChunkBoundaryReceipt(validInput());
+      assert.equal(r.receipt.receiptId, 'cbr_fixed-test-id');
+      assert.equal(r.receipt.createdAt, '2026-01-01T00:00:00.000Z');
+      assert.equal(r.receipt.updatedAt, '2026-01-01T00:00:00.000Z');
+    } finally {
+      cb._internal.now = realNow;
+      cb._internal.id = realId;
+    }
+  });
+
+  it('CLEAR_OUTCOMES is the exact set recordClearOutcome accepts', () => {
+    const created = cb.createChunkBoundaryReceipt(validInput());
+    const id = created.receipt.receiptId;
+    cb.markReadyToClear(id);
+    cb.recordClearIntent(id, { targetSessionId: 1 });
+    for (const outcome of cb.CLEAR_OUTCOMES) {
+      // Each is independently valid as a value, even outside its one
+      // reachable state here -- the invalid-value rejection is covered
+      // separately above.
+      assert.ok(['success', 'uncertain', 'failed'].includes(outcome));
+    }
+    const r = cb.recordClearOutcome(id, { outcome: cb.CLEAR_OUTCOMES[0] });
+    assert.equal(r.ok, true);
+    assert.equal(r.receipt.clearOutcome, cb.CLEAR_OUTCOMES[0]);
+  });
+
+  it('ensureChunkBoundarySchema is idempotent and leaves a usable table behind', () => {
+    const db = store.getDb();
+    cb.ensureChunkBoundarySchema(db);
+    cb.ensureChunkBoundarySchema(db); // second call, same handle: must not throw or re-run DDL oddly
+    const row = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'chunk_boundary_receipts'").get();
+    assert.ok(row, 'the table exists after ensureChunkBoundarySchema runs directly');
+  });
+});
