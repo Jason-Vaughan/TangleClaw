@@ -426,6 +426,72 @@ describe('/api/control (#1861)', () => {
       assert.equal(st.data.assignment.state, 'held');
     });
 
+    it('a delivered escalation is recorded durably against the HOLD event, distinct from the ordinary notice (#2109 PRR-B Round 2)', async () => {
+      const { project, assignmentId } = await pausable();
+      controlApi._internal.assessIdle = () => ({ idle: false, reason: 'turn-running', digest: 'd', idleTicks: 0 });
+      controlApi._internal.sendSystemMessage = async (m) => ({
+        status: 'received', id: /Pause escalation/.test(m.message) ? 'msg-escalation' : 'msg-ordinary'
+      });
+
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      assert.equal(r.data.nudge.status, 'deferred-busy');
+      await settle();
+
+      const st = await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+      const receipts = st.data.events.at(-1).receipts;
+      const notifyAttempts = receipts.filter((rc) => rc.fact === 'notify_attempted');
+      // status()'s receipt view deliberately doesn't expose notice_ref (no raw
+      // Medusa message ids over this read surface), so the two attempts read
+      // identically here -- the durable fact this proves is that BOTH the
+      // ordinary control_changed notice and the pause's own escalation
+      // attempt each left a 'sent' receipt against the HOLD's event, where
+      // before this fix the escalation attempt left none at all.
+      assert.equal(notifyAttempts.length, 2, `expected one receipt for the ordinary notice and one for the escalation, got: ${JSON.stringify(notifyAttempts)}`);
+      assert.ok(notifyAttempts.every((rc) => rc.outcomeCode === 'sent'));
+    });
+
+    it('an escalation with no configured principal still records no-recipient, so the operator dashboard has something to show (#2109 PRR-B Round 2)', async () => {
+      const project = mkProject(`no-escalation-route-${rid()}`);
+      bindProjectWithPane(project);
+      const res = await send(server, 'POST', '/api/control/assignments', {
+        projectId: project.id, requestId: rid(), issueRef: '#2109',
+        authority: { hold: [`project:${pm.id}`] } // no authority.escalation configured at all
+      }, op);
+      assert.equal(res.status, 201, res.raw);
+      const assignmentId = res.data.assignment.assignmentId;
+      controlApi._internal.assessIdle = () => ({ idle: false, reason: 'turn-running', digest: 'd', idleTicks: 0 });
+      const escalations = [];
+      controlApi._internal.sendSystemMessage = async (m) => {
+        if (/Pause escalation/.test(m.message)) escalations.push(m);
+        return { status: 'received', id: 'msg-x' };
+      };
+
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      assert.equal(r.data.nudge.status, 'deferred-busy');
+      await settle();
+      assert.equal(escalations.length, 0, 'nothing to send when no principal is configured for escalation');
+
+      const st = await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+      const receipts = st.data.events.at(-1).receipts;
+      assert.ok(
+        receipts.some((rc) => rc.fact === 'notify_attempted' && rc.outcomeCode === 'no-recipient'),
+        `expected a durable 'no-recipient' receipt for the escalation attempt, got: ${JSON.stringify(receipts)}`
+      );
+    });
+
+    it('a real pause HOLD reads as applicable/unacked via pauseAcknowledgementStatus, and times out past threshold (#2109 PRR-B Round 2)', async () => {
+      const { project, assignmentId } = await pausable();
+      const control = require('../lib/control-state');
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      assert.equal(r.data.nudge.status, 'sent');
+      const fresh = control.pauseAcknowledgementStatus(assignmentId, { thresholdMs: 60000 });
+      assert.equal(fresh.applicable, true);
+      assert.equal(fresh.acked, false);
+      assert.equal(fresh.timedOut, false);
+      const timedOut = control.pauseAcknowledgementStatus(assignmentId, { thresholdMs: 0, now: Date.now() + 1 });
+      assert.equal(timedOut.timedOut, true);
+    });
+
     it('a pane that cannot be captured defers and escalates, same as busy', async () => {
       const { project } = await pausable();
       controlApi._internal.capturePane = () => { throw new Error('pane vanished'); };

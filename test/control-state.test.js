@@ -391,6 +391,66 @@ describe('control-state (#1861)', () => {
     });
   });
 
+  describe('pauseAcknowledgementStatus (#2109 PRR-B Round 2)', () => {
+    it('is not applicable to an ordinary (non-pause) HOLD, even past the threshold', () => {
+      const a = assign().assignment;
+      control.hold({ assignmentId: a.assignmentId, requestId: rid(), reasonCode: 'boundary' }, PM);
+      const status = control.pauseAcknowledgementStatus(a.assignmentId, { thresholdMs: 0, now: Date.now() + 1 });
+      assert.deepEqual(status, { applicable: false, acked: false, ageMs: null, timedOut: false });
+    });
+
+    it('is not applicable once the assignment is active again (never held, or released)', () => {
+      const a = assign().assignment;
+      const status = control.pauseAcknowledgementStatus(a.assignmentId);
+      assert.equal(status.applicable, false);
+    });
+
+    it('a fresh peer-pause HOLD is applicable, unacked, and not yet timed out', () => {
+      const a = assign().assignment;
+      const h = control.hold({ assignmentId: a.assignmentId, requestId: rid(), reasonCode: 'peer-pause-request' }, PM);
+      const status = control.pauseAcknowledgementStatus(a.assignmentId, { now: Date.parse(`${h.event.createdAt.replace(' ', 'T')}Z`) + 1000 });
+      assert.equal(status.applicable, true);
+      assert.equal(status.acked, false);
+      assert.equal(status.timedOut, false);
+      assert.ok(status.ageMs >= 1000 && status.ageMs < 5000, `unexpected ageMs: ${status.ageMs}`);
+    });
+
+    it('times out once unacked past the threshold', () => {
+      const a = assign().assignment;
+      const h = control.hold({ assignmentId: a.assignmentId, requestId: rid(), reasonCode: 'peer-pause-request' }, PM);
+      const createdMs = Date.parse(`${h.event.createdAt.replace(' ', 'T')}Z`);
+      const status = control.pauseAcknowledgementStatus(a.assignmentId, { thresholdMs: 1000, now: createdMs + 5000 });
+      assert.equal(status.applicable, true);
+      assert.equal(status.acked, false);
+      assert.equal(status.timedOut, true);
+    });
+
+    it('an acknowledged pause never reads as timed out, no matter the age', () => {
+      const a = assign().assignment;
+      const h = control.hold({ assignmentId: a.assignmentId, requestId: rid(), reasonCode: 'peer-pause-request' }, PM);
+      control.ack({ assignmentId: a.assignmentId, stateGeneration: h.event.stateGeneration }, targetActor);
+      const createdMs = Date.parse(`${h.event.createdAt.replace(' ', 'T')}Z`);
+      const status = control.pauseAcknowledgementStatus(a.assignmentId, { thresholdMs: 1000, now: createdMs + 1000000 });
+      assert.equal(status.acked, true);
+      assert.equal(status.timedOut, false);
+    });
+
+    it('status() surfaces it as assignment.pauseTimeout, null for a non-pause HOLD', () => {
+      const a = assign().assignment;
+      control.hold({ assignmentId: a.assignmentId, requestId: rid(), reasonCode: 'boundary' }, PM);
+      assert.equal(control.status(a.assignmentId).assignment.pauseTimeout, null);
+    });
+
+    it('status() surfaces a fresh pause HOLD\'s timeout status, un-timed-out', () => {
+      const a = assign().assignment;
+      control.hold({ assignmentId: a.assignmentId, requestId: rid(), reasonCode: 'peer-pause-request' }, PM);
+      const pt = control.status(a.assignmentId).assignment.pauseTimeout;
+      assert.ok(pt, 'expected a pauseTimeout object');
+      assert.equal(pt.acked, false);
+      assert.equal(pt.timedOut, false);
+    });
+  });
+
   describe('restart', () => {
     it('state, generation and active holds survive closing and reopening the store', () => {
       const a = assign().assignment;

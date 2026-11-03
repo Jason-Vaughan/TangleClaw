@@ -151,6 +151,7 @@ POST /api/control/assignments                    {projectId, requestId, issueRef
 GET  /api/control/assignments                    every open assignment (operator only)
 GET  /api/control/assignments/:id                full status: assignment, holds, events with receipts
 POST /api/control/assignments/:id/hold           {requestId, reasonCode, expectedGeneration?}
+POST /api/control/pause                          {project, requestId, expectedGeneration?}        peer safe-boundary pause (#2109)
 POST /api/control/assignments/:id/release        {holdIds, expectedGeneration, requestId, reasonCode}
 POST /api/control/assignments/:id/stop           {requestId, reasonCode}
 POST /api/control/assignments/:id/close          {requestId, reasonCode}
@@ -192,6 +193,15 @@ tc control pause <project>                           peer safe-boundary pause (#
 tc control release <assignment-id> <generation> <reason> <hold-id…>
 tc control stop <assignment-id> <reason>
 ```
+
+A pause's own direct pane nudge and its undelivered-nudge escalation (#1839's route, to whoever
+`authority.escalation.blocking` names) are each recorded as a `notify_attempted` receipt against the
+HOLD's event — the same durable shape every other control notice gets, so a failed or unreachable
+escalation leaves a record even when nobody receives a message (#2109 PRR-B Round 2). `GET
+/api/control/assignments/:id` and `/mine` carry the current HOLD's acknowledgement state as
+`assignment.pauseTimeout` (`null` unless the current HOLD is a peer pause): `{acked, ageMs,
+timedOut}`, the last computed against a 15-minute default — a read-only diagnostic a dashboard or a
+future sweep can act on, not an automatic re-escalation trigger.
 
 Every other `tc` verb prints a one-line `HELD (gen N, k holds)` notice while your lane is held.
 This is visibility, not enforcement. A launch into a held lane says so in its launch context
