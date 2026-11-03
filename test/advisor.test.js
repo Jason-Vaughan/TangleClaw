@@ -15,8 +15,41 @@ const { setLevel } = require('../lib/logger');
 
 setLevel('error');
 
+const http = require('node:http');
 const store = require('../lib/store');
 const advisor = require('../lib/advisor');
+const { createServer } = require('../server');
+const { operatorHeaders } = require('./_shared-docs-callers');
+
+/**
+ * One JSON request against a listening test server.
+ * @param {import('node:http').Server} server
+ * @param {string} method
+ * @param {string} urlPath
+ * @param {object|null} body
+ * @param {Record<string, string>} [headers]
+ * @returns {Promise<{status: number, data: object|null}>}
+ */
+function send(server, method, urlPath, body, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const payload = body ? JSON.stringify(body) : '';
+    const r = http.request({
+      hostname: '127.0.0.1', port: server.address().port, path: urlPath, method,
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), ...headers }
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        let data;
+        try { data = JSON.parse(raw); } catch { data = null; }
+        resolve({ status: res.statusCode, data });
+      });
+    });
+    r.on('error', reject);
+    r.end(payload);
+  });
+}
 
 /**
  * A tmux-shaped stub, same probe/create/kill/readSessionEnv shape
@@ -345,6 +378,140 @@ describe('Advisor (#2819)', () => {
       } finally {
         sessionsLib._buildLaunchCommand = original;
       }
+    });
+  });
+
+  describe('role-boundary enforcement: _requireSessionLifecycleCaller (#2819, Charter A496 section 3)', () => {
+    const callers = require('../lib/routes/_callers');
+
+    /** A minimal res that captures what errorResponse/jsonResponse write. */
+    function fakeRes() {
+      const res = { statusCode: null, headers: null, body: null };
+      res.writeHead = (status, headers) => { res.statusCode = status; res.headers = headers; };
+      res.end = (body) => { res.body = body ? JSON.parse(body) : null; };
+      return res;
+    }
+
+    it('refuses the Advisor outright, before anything else is resolved', () => {
+      const original = advisor.isAdvisorRequest;
+      advisor.isAdvisorRequest = () => true;
+      try {
+        const res = fakeRes();
+        const result = callers._requireSessionLifecycleCaller({ headers: {} }, res, { action: 'launch' });
+        assert.equal(result, null, 'refused: no caller is returned');
+        assert.equal(res.statusCode, 403);
+        assert.equal(res.body.code, 'ADVISOR_SCOPE_VIOLATION');
+      } finally {
+        advisor.isAdvisorRequest = original;
+      }
+    });
+
+    it('does not refuse a caller isAdvisorRequest says is not the Advisor (falls through to the real access resolution)', () => {
+      const original = advisor.isAdvisorRequest;
+      advisor.isAdvisorRequest = () => false;
+      try {
+        const res = fakeRes();
+        // No operator/master/project binding on this bare request either, so
+        // it still ends refused -- but through the UNBOUND/launch-binding
+        // path, never ADVISOR_SCOPE_VIOLATION, which is the one thing this
+        // test is actually checking.
+        callers._requireSessionLifecycleCaller({ headers: {} }, res, { action: 'launch' });
+        assert.notEqual(res.body && res.body.code, 'ADVISOR_SCOPE_VIOLATION');
+      } finally {
+        advisor.isAdvisorRequest = original;
+      }
+    });
+  });
+
+  describe('HTTP: the /api/advisor/* routes and the dispatch-floor refusal (#2819)', () => {
+    // Reuses the outer describe's own store (its before()/after() already
+    // span this block) -- a second store._setBasePath/init here would
+    // re-point the shared store mid-file, same hazard as leaking config.advisor
+    // across describes (see the top-level beforeEach above).
+    let server;
+    let op;
+
+    before(async () => {
+      server = createServer();
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      op = operatorHeaders(server);
+    });
+
+    after(async () => {
+      await new Promise((resolve) => server.close(resolve));
+    });
+
+    it('GET /api/advisor/status needs no auth, same as GET /api/master/status', async () => {
+      const r = await send(server, 'GET', '/api/advisor/status', null);
+      assert.equal(r.status, 200);
+      assert.equal(r.data.tmuxSession, advisor.ADVISOR_TMUX_SESSION);
+    });
+
+    it('GET /api/advisor/settings is readable with no auth', async () => {
+      const r = await send(server, 'GET', '/api/advisor/settings', null);
+      assert.equal(r.status, 200);
+      assert.deepEqual(r.data, { engine: null, model: null, autoStart: false });
+    });
+
+    it('POST /api/advisor/settings is operator-only', async () => {
+      const refused = await send(server, 'POST', '/api/advisor/settings', { engine: 'claude' });
+      assert.equal(refused.status, 403);
+      const ok = await send(server, 'POST', '/api/advisor/settings', { engine: 'claude', model: null, autoStart: true }, op);
+      assert.equal(ok.status, 200);
+      assert.deepEqual(ok.data, { engine: 'claude', model: null, autoStart: true });
+    });
+
+    it('POST /api/advisor/settings rejects a malformed body before anything is saved', async () => {
+      const r = await send(server, 'POST', '/api/advisor/settings', { autoStart: 'yes' }, op);
+      assert.equal(r.status, 400);
+      assert.equal(r.data.code, 'BAD_REQUEST');
+    });
+
+    it('POST /api/advisor/launch and /kill are operator-only', async () => {
+      assert.equal((await send(server, 'POST', '/api/advisor/launch', null)).status, 403);
+      assert.equal((await send(server, 'POST', '/api/advisor/kill', null)).status, 403);
+    });
+
+    it('POST /api/advisor/kill is idempotent success as the operator, with no Advisor running', async () => {
+      const r = await send(server, 'POST', '/api/advisor/kill', null, op);
+      assert.equal(r.status, 200);
+      assert.equal(r.data.killed, false);
+      assert.equal(r.data.wasRunning, false);
+    });
+
+    it('the dispatch floor refuses a verified Advisor-role request against an ordinary route outside /api/advisor/*', async () => {
+      const original = advisor.isAdvisorRequest;
+      advisor.isAdvisorRequest = (req) => req.headers['x-tangleclaw-role'] === 'advisor';
+      try {
+        const r = await send(server, 'GET', '/api/master/status', null, { 'x-tangleclaw-role': 'advisor', 'x-tangleclaw-launch-id': 'x' });
+        assert.equal(r.status, 403);
+        assert.equal(r.data.code, 'ADVISOR_SCOPE_VIOLATION');
+      } finally {
+        advisor.isAdvisorRequest = original;
+      }
+    });
+
+    it('the dispatch floor does NOT refuse the Advisor calling its own API', async () => {
+      const original = advisor.isAdvisorRequest;
+      advisor.isAdvisorRequest = (req) => req.headers['x-tangleclaw-role'] === 'advisor';
+      try {
+        const r = await send(server, 'GET', '/api/advisor/status', null, { 'x-tangleclaw-role': 'advisor', 'x-tangleclaw-launch-id': 'x' });
+        assert.equal(r.status, 200);
+      } finally {
+        advisor.isAdvisorRequest = original;
+      }
+    });
+
+    it('an unverified role claim (no matching live launch) is refused by the ordinary binding floor already in place, independent of this car\'s own check', async () => {
+      // isAdvisorRequest is NOT stubbed here -- a bare role+launch-id header
+      // with no live Advisor session behind it fails isAdvisorRequest's own
+      // verification, so this exercises the PRE-EXISTING generic
+      // launch-binding floor (lib/launch-binding-guard.js), not this car's
+      // ADVISOR_SCOPE_VIOLATION check -- confirming the two layers compose
+      // rather than one silently relying on the other.
+      const r = await send(server, 'POST', '/api/master/kill', null, { 'x-tangleclaw-role': 'advisor', 'x-tangleclaw-launch-id': 'not-live' });
+      assert.notEqual(r.status, 200);
+      assert.notEqual(r.data && r.data.code, 'ADVISOR_SCOPE_VIOLATION');
     });
   });
 });
