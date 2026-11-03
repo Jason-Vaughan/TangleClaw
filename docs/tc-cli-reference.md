@@ -54,6 +54,7 @@ The important distinction is: **new or unattested launch = `tc start next`; alre
 
 | Command | What it does |
 | --- | --- |
+| `tc help --json` | Prints the whole verb roster as a stable, machine-readable manifest (id, usage, summary per verb) -- for an agent to retrieve rather than parse the prose `tc --help` prints. |
 | `tc whoami` | Shows this pane's resolved project/session identity, TangleClaw location and available capabilities. |
 | `tc capabilities` | Lists enabled and disabled capabilities and the reason for each state. |
 | `tc sessions` | Lists every live TangleClaw session visible across projects, with its composed workload state. |
@@ -80,6 +81,7 @@ The important distinction is: **new or unattested launch = `tc start next`; alre
 | `tc message sent` | Lists open exchanges initiated by this session. |
 | `tc message owed` | Lists this session's outstanding replies first, then messages it has not handled. |
 | `tc message close <exchange-id>` | Closes an exchange initiated by this session after its reply has arrived. |
+| `tc message retract [--reason <text>] [--replacement <id>] <message-id>` | Retracts a message this session sent, while it is still unread. |
 
 `--priority` is `normal` or `blocking`. Use exact workspace IDs, not a display name. Reply with `--in-reply-to <message-id>` before acknowledging a message that requires an answer. The initiator owns closing a reply-required exchange.
 
@@ -131,6 +133,7 @@ The state is `waiting`, `ready`, `failed` or `unknown`, derived from what the se
 | Command | What it does |
 | --- | --- |
 | `tc candidate submit --kind <milestone\|operator-action-required> --receipt workload:<seq> --text "<text>"` | Offers a milestone or operator action to the Project Master, backed by this session's workload receipt. It posts nothing to the operator by itself. |
+| `tc candidate status [<id>]` | Reads what became of a submitted candidate. |
 
 Get `<seq>` from `tc workload show`. Repeat `--receipt workload:<seq>` to cite more of this session's receipts. `--text-file <file>` can replace `--text`; `--request-id <id>` makes an uncertain submission safe to retry. The Project Master reviews, merges, rejects or approves the candidate.
 
@@ -268,7 +271,7 @@ Only exit `0` means safe. Exit `3` means preserve; exit `4` means unknown. Neith
 | --- | --- |
 | `0` | The command answered successfully; for safety checks, confirm that the documented verdict also grants the intended action. |
 | `1` | Usage error (no verb, an unknown verb, a malformed command) or a missing session environment, such as `TANGLECLAW_API` not set. |
-| `2` | API unreachable from this execution context, API refusal/error, or action failure. This alone does not prove the TangleClaw server is down. `tc` also exits 2, sending nothing, when this shell's launch identity differs from the one recorded for the pane it runs in. |
+| `2` | API unreachable from this execution context, API refusal/error, or action failure. `tc` carries this as `API_UNREACHABLE_FROM_CONTEXT`: it is not proof the TangleClaw server is down -- a managed sandbox (a cloud agent's own, for one) can block localhost even while the host service is healthy. Before reporting an outage, have a host-context check made (the launchd state of `com.tangleclaw.server`, or a listening socket on the port) by the operator or the Project Master; until then, say the API was unreachable from here, and stop. `tc` also exits 2, sending nothing, when this shell's launch identity differs from the one recorded for the pane it runs in. |
 | `3` | Command-specific refusal/preserve result, notably `tc finalize` refusal/incomplete or `tc branch check` preserve. |
 | `4` | `tc branch check` could not prove safety. |
 

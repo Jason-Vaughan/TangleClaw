@@ -18,6 +18,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { VERB_ROSTER } = require('../lib/tc-verbs');
+const { IMPLEMENTATION_SUBVERBS } = require('../lib/operating-primer');
 
 const ROOT = path.join(__dirname, '..');
 const TC_BIN = path.join(ROOT, 'bin', 'tc');
@@ -75,4 +76,37 @@ describe('docs/tc-cli-reference.md names every verb tc --help lists (#2299)', ()
     const without = PAGE.replace(/^\| `tc learnings`.*\n/gm, '');
     assert.equal(pageRowVerbs(without).has('learnings'), false);
   });
+});
+
+/**
+ * Whether the page gives one specific subverb its own table row: a row
+ * whose command cell starts with the exact `tc <verb> <subverbId>` prefix
+ * (a space or closing backtick immediately after, so `tc bridge nickname`
+ * does not satisfy `tc bridge nickname set`'s own, more specific check).
+ * @param {string} page
+ * @param {string} verb
+ * @param {string} subverbId - May itself contain a space (e.g. `nickname set`).
+ * @returns {boolean}
+ */
+function pageHasSubverbRow(page, verb, subverbId) {
+  const escaped = `tc ${verb} ${subverbId}`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^\\| \`${escaped}[ \`]`, 'm').test(page);
+}
+
+describe('docs/tc-cli-reference.md names every IMPLEMENTED subverb too, not just the top-level verb (Architect Ruling A2070, PRR-B I-Gate Round 4 on PR #2841)', () => {
+  // The top-level check above passed while the page had no row at all for
+  // `tc message retract` or `tc candidate status`, because it only ever
+  // asked "does this VERB have a row" -- never "does this SUBVERB". Checked
+  // against lib/tc-verbs.js's own `*_SUBVERBS` ground truth (the same
+  // source lib/operating-primer.js#subverbManifestParity checks
+  // SUBVERB_MANIFEST against), not the manifest, so a manifest that already
+  // agrees with itself cannot mask a gap in the page.
+  for (const [verb, subverbIds] of Object.entries(IMPLEMENTATION_SUBVERBS)) {
+    for (const subverbId of subverbIds) {
+      it(`has a table row for tc ${verb} ${subverbId}`, () => {
+        assert.ok(pageHasSubverbRow(PAGE, verb, subverbId),
+          `docs/tc-cli-reference.md has no row starting \`tc ${verb} ${subverbId}\`; describe the subverb there`);
+      });
+    }
+  }
 });
