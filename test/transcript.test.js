@@ -193,6 +193,32 @@ describe('transcript (CC-4b #376, Codex #2074)', () => {
       assert.equal(transcript.resolve('codex', projectPath, { engineId: 'codex' }), file);
     });
 
+    it('bounds the upper end too: a sole rollout that started after the session ended does not match (I-Gate Round 1)', () => {
+      // A lower-bound-only check would never catch this — a LATER rollout is
+      // never "too old". Without session.endedAt, "now" stands in for it, so
+      // a rollout dated in the future relative to the live clock must also
+      // not match a currently-live wrap's session.
+      const future = new Date(Date.parse(START) + 2 * transcript._internal.codexWindowMs).toISOString();
+      writeCodexRollout({ uuid: 'future-only', cwd: projectPath, startedAt: future });
+      assert.equal(transcript.resolve('codex', projectPath, { engineId: 'codex', startedAt: START, endedAt: START }), null);
+    });
+
+    it('backfilling an old [startedAt, endedAt] session does not pick up a newer rollout created after endedAt (I-Gate Round 1)', () => {
+      const endedAt = new Date(Date.parse(START) + 5 * 60 * 1000).toISOString();
+      const after = new Date(Date.parse(endedAt) + 2 * transcript._internal.codexWindowMs).toISOString();
+      const correct = writeCodexRollout({ uuid: 'during-session', cwd: projectPath, startedAt: START });
+      writeCodexRollout({ uuid: 'after-session-ended', cwd: projectPath, startedAt: after });
+      // Two same-cwd candidates would normally be ambiguous and refuse — the
+      // point here is that the upper bound excludes the later one BEFORE
+      // ambiguity is even considered, leaving exactly one (correct) match.
+      assert.equal(transcript.resolve('codex', projectPath, { engineId: 'codex', startedAt: START, endedAt }), correct);
+    });
+
+    it('fails closed on an invalid native timestamp — never treated as "no filter applies" (I-Gate Round 1)', () => {
+      writeCodexRollout({ uuid: 'bad-timestamp', cwd: projectPath, startedAt: 'not-a-real-timestamp' });
+      assert.equal(transcript.resolve('codex', projectPath, { engineId: 'codex', startedAt: START }), null);
+    });
+
     it('honest skip on a rollout whose first line is not valid session_meta JSON', () => {
       const dir = path.join(codexHome, 'sessions', '2026/06/01');
       fs.mkdirSync(dir, { recursive: true });
