@@ -97,6 +97,50 @@ describe('fleet-provisioning: input validation', () => {
     assert.equal(r.ok, true);
     assert.equal(r.result.laneQueue.path, path.join(sharedDir, 'LANE_QUEUE.md'));
   });
+
+  it('refuses a dangling symlink at the lane-queue path rather than writing through it outside sharedDir (PRR-B I-Gate Round 2 on PR #2869)', () => {
+    const a = makeProject('Lane-A');
+    const sharedDir = path.join(tmpDir, 'shared-dangling-symlink');
+    fs.mkdirSync(sharedDir, { recursive: true });
+    const laneQueuePath = path.join(sharedDir, 'LANE_QUEUE.md');
+    const outsideTarget = path.join(tmpDir, 'outside.md');
+    fs.symlinkSync(outsideTarget, laneQueuePath);
+
+    const r = fp.provisionFleetResources({ groupName: 'Fleet DanglingSymlink', sharedDir, memberProjectIds: [a.id] });
+
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'FLEET_PROVISIONING_UNSAFE_PATH');
+    assert.ok(!fs.existsSync(outsideTarget), 'the scaffold must never be written through the dangling symlink to outside sharedDir');
+  });
+
+  it('refuses a live symlink at the lane-queue path, even when its target is readable and inside sharedDir', () => {
+    const a = makeProject('Lane-A');
+    const sharedDir = path.join(tmpDir, 'shared-live-symlink');
+    fs.mkdirSync(sharedDir, { recursive: true });
+    const realFile = path.join(sharedDir, 'real.md');
+    fs.writeFileSync(realFile, '# real');
+    const laneQueuePath = path.join(sharedDir, 'LANE_QUEUE.md');
+    fs.symlinkSync(realFile, laneQueuePath);
+
+    const r = fp.provisionFleetResources({ groupName: 'Fleet LiveSymlink', sharedDir, memberProjectIds: [a.id] });
+
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'FLEET_PROVISIONING_UNSAFE_PATH');
+  });
+
+  it('a plain pre-existing regular file at the lane-queue path is still left untouched, not refused', () => {
+    const a = makeProject('Lane-A');
+    const sharedDir = path.join(tmpDir, 'shared-preexisting-file');
+    fs.mkdirSync(sharedDir, { recursive: true });
+    const laneQueuePath = path.join(sharedDir, 'LANE_QUEUE.md');
+    fs.writeFileSync(laneQueuePath, '# already here');
+
+    const r = fp.provisionFleetResources({ groupName: 'Fleet PreexistingFile', sharedDir, memberProjectIds: [a.id] });
+
+    assert.equal(r.ok, true);
+    assert.equal(r.result.laneQueue.scaffolded, false);
+    assert.equal(fs.readFileSync(laneQueuePath, 'utf8'), '# already here');
+  });
 });
 
 describe('fleet-provisioning: provisionFleetResources (#2825)', () => {
