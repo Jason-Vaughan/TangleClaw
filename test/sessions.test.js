@@ -1307,8 +1307,12 @@ describe('sessions', () => {
         // must accommodate. 3000, was 2400: the #796 "Rule sources in force"
         // directive joined the floor — ~500 chars that never yield. 3100, was
         // 3000: the no-rules source line says what was true at launch and where
-        // a later rules block would be (#2317), 83 more chars that never yield.)
-        const TIGHT_BUDGET = 3100;
+        // a later rules block would be (#2317), 83 more chars that never yield.
+        // 3310, was 3100: the #1889 chunk-boundary role projection joined every
+        // prime, same tier as Active Learnings — even fully yielded, its own
+        // pointer is ~200 more chars that are always present by the time this
+        // scenario checks whether Active Learnings yielded.)
+        const TIGHT_BUDGET = 3310;
         const tight = {
           ...base,
           capabilities: { ...base.capabilities, startupInjection: { maxChars: TIGHT_BUDGET } }
@@ -1358,20 +1362,22 @@ describe('sessions', () => {
         store.projectConfig.save(advPath, { engine: 'claude', silentPrime: true });
         const advProject = store.projects.getByName('advisory-test');
 
-        const bare = sessions.generatePrimePrompt(advProject, base);
         // The advisory measures the CORE — the render with every yieldable
-        // section replaced by its pointer. Since #1122 the bare prime carries
-        // the ecosystem primer as yieldable bulk, so `bare` no longer
-        // approximates the core; probe it instead: a budget one char under
-        // bare forces exactly the yield the advisory's own measurement uses.
-        const probe = {
-          ...base,
-          capabilities: {
-            ...base.capabilities,
-            startupInjection: { maxChars: bare.length - 1 }
-          }
-        };
-        const coreLen = sessions.generatePrimePrompt(advProject, probe).length;
+        // section replaced by its pointer. A budget one char under `bare`
+        // (the prior probe here) only forces enough yielding to clear that
+        // one character, not every yieldable section — correct once there was
+        // exactly one (#1122's ecosystem primer) but not once a second
+        // (#1889's chunk-boundary projection) joined it. Same two-step
+        // derivation `the Medusa contract yields before this project's own
+        // bulk does` already uses: an impossible budget (1) forces
+        // everything down to its pointer and then APPENDS the overflow
+        // report (so its own length overshoots the true floor); a second
+        // render AT exactly that length has no overflow to report, which
+        // converges on the floor itself.
+        const budgeted = (maxChars) => sessions.generatePrimePrompt(
+          advProject, { ...base, capabilities: { ...base.capabilities, startupInjection: { maxChars } } }
+        );
+        const coreLen = budgeted(budgeted(1).length).length;
         // A budget the directives fit inside, but only just. The whole value of
         // this signal is that it arrives while there is still room to act — a
         // warning that fires once content is already gone arrives too late.
