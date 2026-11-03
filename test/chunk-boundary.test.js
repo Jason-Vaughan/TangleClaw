@@ -228,6 +228,34 @@ describe('the clear-boundary state machine — PREPARE_CLEAR -> READY_TO_CLEAR -
     assert.equal(r.code, 'CHUNK_BOUNDARY_OUTCOME_INVALID');
   });
 
+  it('recordClearOutcome refuses to overwrite an already-recorded outcome with a DIFFERENT one, without a fresh clear-intent (PRR-A I-Gate Round 2)', () => {
+    const created = cb.createChunkBoundaryReceipt(validInput());
+    const id = created.receipt.receiptId;
+    cb.markReadyToClear(id);
+    cb.recordClearIntent(id, { targetSessionId: 1 });
+    cb.recordClearOutcome(id, { outcome: 'uncertain' });
+
+    // Recording 'success' for the SAME attempt, with no fresh
+    // recordClearIntent in between, must be refused -- otherwise
+    // acknowledgeReadyAfterClear would admit a dispatch on an attempt that
+    // never actually succeeded.
+    const overwrite = cb.recordClearOutcome(id, { outcome: 'success' });
+    assert.equal(overwrite.ok, false);
+    assert.equal(overwrite.code, 'CHUNK_BOUNDARY_OUTCOME_ALREADY_RECORDED');
+    assert.equal(cb.getChunkBoundaryReceipt(id).clearOutcome, 'uncertain', 'the original outcome is unchanged');
+
+    // The exact same outcome recorded again is a harmless replay, not an
+    // overwrite.
+    const replay = cb.recordClearOutcome(id, { outcome: 'uncertain' });
+    assert.equal(replay.ok, true);
+
+    // A fresh clear-intent clears the way for a genuinely new outcome.
+    cb.recordClearIntent(id, { targetSessionId: 1 });
+    const fresh = cb.recordClearOutcome(id, { outcome: 'success' });
+    assert.equal(fresh.ok, true);
+    assert.equal(fresh.receipt.clearOutcome, 'success');
+  });
+
   it('recordClearOutcome refuses outside clear_intent_sent', () => {
     const created = cb.createChunkBoundaryReceipt(validInput());
     const r = cb.recordClearOutcome(created.receipt.receiptId, { outcome: 'success' });
@@ -269,6 +297,42 @@ describe('supersedeChunkBoundaryReceipt — the non-answer closure', () => {
     const r = cb.supersedeChunkBoundaryReceipt(created.receipt.receiptId, { reason: '' });
     assert.equal(r.ok, false);
     assert.equal(r.code, 'CHUNK_BOUNDARY_REASON_REQUIRED');
+  });
+
+  it('once superseded, a REPLACEMENT receipt for the same (project, assignment, chunk) can be created -- it is not permanently blocked (PRR-A I-Gate Round 2)', () => {
+    const first = cb.createChunkBoundaryReceipt(validInput({ commitSha: 'a'.repeat(40) }));
+    cb.supersedeChunkBoundaryReceipt(first.receipt.receiptId, { reason: 'duplicate dispatch, re-planned' });
+
+    // A genuine re-attempt: same project/assignment/chunk, a different
+    // (corrected) commit.
+    const second = cb.createChunkBoundaryReceipt(validInput({ commitSha: 'b'.repeat(40) }));
+    assert.equal(second.ok, true);
+    assert.notEqual(second.receipt.receiptId, first.receipt.receiptId, 'a genuinely new row, not a replay of the dead one');
+    assert.equal(second.receipt.commitSha, 'b'.repeat(40));
+
+    // getReceiptForChunk resolves to the LIVE row, not the superseded one.
+    const resolved = cb.getReceiptForChunk(project.id, 'asg-1', 1);
+    assert.equal(resolved.receiptId, second.receipt.receiptId);
+    assert.equal(resolved.supersededAt, null);
+
+    // The next dispatch is no longer permanently HELD once the replacement
+    // reaches ready_after_clear.
+    cb.markReadyToClear(second.receipt.receiptId);
+    cb.recordClearIntent(second.receipt.receiptId, { targetSessionId: 1 });
+    cb.recordClearOutcome(second.receipt.receiptId, { outcome: 'success' });
+    cb.acknowledgeReadyAfterClear(second.receipt.receiptId);
+    const admit = cb.validateNextChunkDispatch({
+      projectId: project.id, train: 'v5.58.0', lane: 'TC-Lane-D', builder: 'TC-Lane-D', assignmentId: 'asg-1', nextChunkNumber: 2
+    });
+    assert.equal(admit.ok, true);
+    assert.equal(admit.receipt.receiptId, second.receipt.receiptId);
+  });
+
+  it('creating again while a LIVE receipt still exists for the same triple still replays into it, not a new row', () => {
+    const first = cb.createChunkBoundaryReceipt(validInput());
+    const second = cb.createChunkBoundaryReceipt(validInput());
+    assert.equal(second.replay, true);
+    assert.equal(second.receipt.receiptId, first.receipt.receiptId);
   });
 });
 
