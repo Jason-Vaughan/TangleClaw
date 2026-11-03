@@ -160,8 +160,10 @@ describe('store: operator bridge schema (v52 to v54, #2031)', () => {
     // is too: it admits `gateway-down` and `gateway-recovered`. v64 is too:
     // `bridge_routes` and `bridge_outbound` gain `surface_kind` (#2433). v65
     // is too: `bridge_config_circuit` gains `surface_kind` so an episode
-    // opens per surface, not globally (#2433).
-    assert.equal(bridgeSchema.BRIDGE_SCHEMA_VERSION, 65);
+    // opens per surface, not globally (#2433). v66 is too: `bridge_routes`
+    // admits the `advisory-channel` surface, with its own CHECK and the
+    // `bridge_questions`/`bridge_launches` trigger guards (#2817-A).
+    assert.equal(bridgeSchema.BRIDGE_SCHEMA_VERSION, 66);
     assert.ok(store.CURRENT_SCHEMA_VERSION >= bridgeSchema.BRIDGE_SCHEMA_VERSION);
     assert.deepEqual(bridgeSchema.bridgeSchemaProblems(store.getDb()), []);
     const have = bridgeObjects();
@@ -1093,7 +1095,12 @@ describe('store: a second pinned ingress surface, surface_kind (v64, #2433)', ()
     if (populate) populate();
     const beforeQueue = queueSnapshot(db);
     const strip = (sql) => sql.replace(/\s*surface_kind\s+TEXT\s+NOT NULL DEFAULT 'guild-channel' CHECK \(surface_kind IN \([^)]*\)\),\n/, '\n');
-    const routesWas = strip(db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'bridge_routes'").get().sql);
+    // #2817-A added its own standalone CHECK naming surface_kind (barring an
+    // advisory-channel route from a project destination) well after the
+    // column itself -- strip it too, so a v63 rewind is free of every
+    // surface_kind mention, not only the column definition v64 introduced.
+    const stripAdvisoryCheck = (sql) => sql.replace(/,\n(\s*--[^\n]*\n)*\s*CHECK \(surface_kind <> 'advisory-channel'[^\n]*\)\n/, '\n');
+    const routesWas = stripAdvisoryCheck(strip(db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'bridge_routes'").get().sql));
     const outboundWas = strip(db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'bridge_outbound'").get().sql);
     assert.ok(!/surface_kind/.test(routesWas) && !/surface_kind/.test(outboundWas), 'the v63 tables know nothing of the surface column');
     db.exec('BEGIN');
@@ -1166,7 +1173,7 @@ describe('store: a second pinned ingress surface, surface_kind (v64, #2433)', ()
     freshStore('v64-fresh');
     const db = store.getDb();
     assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION);
-    assert.deepEqual([...bridgeSchema.SURFACE_KINDS], ['guild-channel', 'bot-dm']);
+    assert.deepEqual([...bridgeSchema.SURFACE_KINDS], ['guild-channel', 'bot-dm', 'advisory-channel']);
     assert.throws(() => db.prepare(
       'INSERT INTO bridge_routes (route_id, external_id, author_id, space_id, channel_id, surface_kind, body_digest, state, created_at, updated_at) '
       + "VALUES ('rx', 'ext-x', 'a', 's', 'c', 'carrier-pigeon', ?, 'accepted', 'x', 'x')"
@@ -1270,6 +1277,98 @@ describe('store: the configuration circuit opens per surface, not globally (v65,
     assert.equal(db.prepare("SELECT COUNT(*) AS n FROM bridge_config_circuit WHERE closed_at IS NULL").get().n, 2, 'both stay open at once');
     assert.equal(bridgeStore.circuit.open('guild-channel').outboundId, 1);
     assert.equal(bridgeStore.circuit.open('bot-dm').outboundId, 3);
+  });
+});
+
+describe('store: a third pinned ingress surface, advisory-channel (v66, #2817-A)', () => {
+  afterEach(() => {
+    store.close();
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+    tmpDir = null;
+  });
+
+  /**
+   * Turn the open store into one as schema v65 left it: `bridge_routes`
+   * without its advisory-destination CHECK and the two advisory-channel
+   * triggers absent, with `advisory-channel` itself not yet a legal
+   * `surface_kind` value (the column, CHECK-restricted to `guild-channel`/
+   * `bot-dm`, already existed from v64 -- only the NEW standalone CHECK and
+   * the two triggers are v66's own addition). Every row, id and index as it
+   * was. The stamp is 65.
+   * @param {() => void} [populate] - Fill the store first, through its own writers.
+   * @returns {void}
+   */
+  function rewindToV65(populate) {
+    const db = store.getDb();
+    if (populate) populate();
+    const strip = (sql) => sql
+      .replace(/\s*surface_kind\s+TEXT\s+NOT NULL DEFAULT 'guild-channel' CHECK \(surface_kind IN \([^)]*\)\),\n/,
+        "\n      surface_kind             TEXT    NOT NULL DEFAULT 'guild-channel' CHECK (surface_kind IN ('guild-channel', 'bot-dm')),\n")
+      .replace(/,\n(\s*--[^\n]*\n)*\s*CHECK \(surface_kind <> 'advisory-channel'[^\n]*\)\n/, '\n');
+    const routesWas = strip(db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'bridge_routes'").get().sql);
+    assert.ok(!/advisory-channel/.test(routesWas), 'the v65 table knows nothing of the advisory-channel surface');
+    db.exec('BEGIN');
+    for (const object of bridgeSchema.BRIDGE_SCHEMA_OBJECTS.filter((o) => o.type === 'trigger')) db.exec(`DROP TRIGGER IF EXISTS ${object.name}`);
+    db.exec('ALTER TABLE bridge_routes RENAME TO bridge_routes_v66');
+    db.exec(routesWas.replace('CREATE TABLE IF NOT EXISTS bridge_routes', 'CREATE TABLE bridge_routes'));
+    const routeCols = db.prepare('PRAGMA table_info(bridge_routes)').all().map((c) => c.name);
+    db.exec(`INSERT INTO bridge_routes (${routeCols.join(', ')}) SELECT ${routeCols.join(', ')} FROM bridge_routes_v66`);
+    db.exec('DROP TABLE bridge_routes_v66');
+    // bridgeIndexDdl() carries every trigger's DDL too (not just indexes), so
+    // this recreates the two new v66 triggers along with the rest -- fine:
+    // both are `since: 66`, so bridgeSchemaProblems(db, null, 65) is blind to
+    // their presence or absence either way (mirrors rewindToV63/rewindToV64,
+    // which recreate the full trigger set the same way).
+    db.exec(bridgeSchema.bridgeIndexDdl());
+    // schema_version tracks the STORE's own global counter, not
+    // BRIDGE_SCHEMA_VERSION -- the two diverged once non-bridge migrations
+    // landed between the bridge's last bump and this one, so the stamp here
+    // is "every global migration through the one before mine", not "65".
+    const priorGlobalVersion = store.CURRENT_SCHEMA_VERSION - 1;
+    db.exec(`DELETE FROM schema_version WHERE version >= ${store.CURRENT_SCHEMA_VERSION}`);
+    db.exec(`INSERT INTO schema_version (version) VALUES (${priorGlobalVersion})`);
+    db.exec('COMMIT');
+    assert.deepEqual(bridgeSchema.bridgeSchemaProblems(db, null, 65), [], 'a sound v65 store');
+    assert.ok(bridgeSchema.bridgeSchemaProblems(db).length > 0, 'and not yet a v66 one');
+    assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, priorGlobalVersion);
+    store.close();
+  }
+
+  it('upgrades a v65 store: bridge_routes gains the advisory-destination CHECK and the two advisory triggers, every row carried over', () => {
+    freshStore('v65-upgrade');
+    const fresh = bridgeObjects();
+    const at = '2026-11-03T00:00:00.000Z';
+    rewindToV65(() => {
+      store.getDb().prepare(
+        "INSERT INTO bridge_routes (route_id, external_id, author_id, space_id, channel_id, body_digest, state, created_at, updated_at) VALUES ('r1', 'ext-r1', 'a', 's', 'c', ?, 'accepted', ?, ?)"
+      ).run('a'.repeat(64), at, at);
+    });
+    reopen();
+    const db = store.getDb();
+    assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v, store.CURRENT_SCHEMA_VERSION);
+    assert.deepEqual([...bridgeObjects()], [...fresh], 'the upgraded store has exactly the shape of a fresh one');
+    assert.equal(db.prepare("SELECT surface_kind FROM bridge_routes WHERE route_id = 'r1'").get().surface_kind, 'guild-channel');
+    assert.throws(() => db.prepare(
+      "INSERT INTO bridge_routes (route_id, external_id, author_id, space_id, channel_id, body_digest, surface_kind, state, resolved_by, destination_kind, destination_project_id, created_at, updated_at) "
+      + "VALUES ('r2', 'ext-r2', 'a', 's', 'c', ?, 'advisory-channel', 'accepted', 'default', 'project', 9, ?, ?)"
+    ).run('b'.repeat(64), at, at), /CHECK/, 'the upgraded store enforces the new constraint immediately');
+  });
+
+  it('booting a v66 store again rebuilds nothing', () => {
+    freshStore('v66-again');
+    rewindToV65();
+    reopen();
+    assert.deepEqual(bridgeSchema.upgradeBridgeTables(store.getDb(), 66), [], 'a store already in the v66 shape has nothing to rebuild');
+  });
+
+  it('refuses a v65 store that is not sound, before touching it', () => {
+    freshStore('v65-unsound');
+    rewindToV65();
+    const raw = new DatabaseSync(path.join(tmpDir, 'tangleclaw.db'));
+    raw.exec('DROP INDEX idx_bridge_outbound_status');
+    raw.close();
+    store._setBasePath(tmpDir);
+    assert.throws(() => store.init(), /not a sound v65 store.*idx_bridge_outbound_status/);
   });
 });
 
@@ -1590,6 +1689,43 @@ describe('store: operator bridge constraints (#2031)', () => {
       db.prepare("INSERT INTO bridge_project_optouts (project_id, set_by, set_at) VALUES (7, 'operator', ?)").run(at);
       refuses(() => db.prepare("INSERT INTO bridge_project_optouts (project_id, set_by, set_at) VALUES (8, 'master', ?)").run(at), /CHECK/, 'the Master cannot opt a project out');
       refuses(() => db.prepare("INSERT INTO bridge_project_optouts (project_id, set_by, set_at) VALUES (7, 'operator', ?)").run(at), /UNIQUE|PRIMARY/);
+    });
+
+    it('an advisory-channel route carries no routing, question or launch authority at the database layer (#2817-A)', () => {
+      freshStore('advisory-authority');
+      const db = store.getDb();
+      /** An advisory-channel route, with the given destination fields. */
+      const advisoryRoute = (id, destination = {}) => db.prepare(
+        'INSERT INTO bridge_routes (route_id, external_id, author_id, space_id, channel_id, body_digest, surface_kind, state, '
+        + 'resolved_by, destination_kind, destination_project_id, resolved_generation, created_at, updated_at) '
+        + "VALUES (?, ?, 'peer', 's', 'advisory-chan', ?, 'advisory-channel', 'accepted', ?, ?, ?, ?, ?, ?)"
+      ).run(id, `ext-${id}`, digest, destination.resolvedBy || null, destination.kind || null,
+        destination.projectId || null, destination.generation || null, at, at);
+
+      // The database itself refuses an advisory route destined to a project --
+      // never reachable through application code's own validation alone.
+      refuses(() => advisoryRoute('adv-bad', { resolvedBy: 'default', kind: 'project', projectId: 7 }), /CHECK/,
+        'an advisory route can never be destined to a project');
+      // Unresolved (no destination yet) and resolved-to-master both succeed:
+      // the only destination an advisory route may ever carry.
+      advisoryRoute('adv-unresolved');
+      advisoryRoute('adv-master', { resolvedBy: 'default', kind: 'master' });
+
+      // Neither a clarifying/launch question nor a launch consent can ever be
+      // opened on an advisory route, by a dedicated trigger distinct from
+      // "the route is simply missing". bridge_questions_no_advisory_route
+      // already makes an advisory route impossible to name as the HELD
+      // route a launch question is asked on, which structurally makes
+      // bridge_launches_no_advisory_route's own route_id half unreachable
+      // in practice -- its consent_route_id half is what a real caller can
+      // still reach, since a consent reply names whatever route answered,
+      // never one the launch question itself was asked on.
+      refuses(() => ask('q-adv', 'adv-unresolved'), /advisory route cannot open question/);
+      route('held-ok');
+      ask('q-ok', 'held-ok', { purpose: 'launch', target: 7 });
+      settle('q-ok', 'adopted', 'adv-unresolved', 'launch');
+      refuses(() => launch('held-ok', 'q-ok', 'adv-unresolved'), /advisory route carries no launch authority/,
+        'an advisory route as the consent reply voids the launch');
     });
   });
 
