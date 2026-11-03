@@ -18,6 +18,7 @@ setLevel('error');
 
 const wrc = require('../lib/workspace-rename-check');
 const transcript = require('../lib/transcript');
+const { shellWord } = require('../lib/shell-word');
 
 let tmp;
 let claudeHome;
@@ -138,6 +139,20 @@ describe('inspectWorkspaceRenameImpact', () => {
     assert.equal(impact.hasOrphanRisk, false);
     assert.deepEqual(impact.migrationSteps, []);
   });
+
+  it('shell-escapes a path containing quotes, dollar signs, and shell metacharacters (I-Gate R1)', () => {
+    // All legal in a macOS directory name. A naive `"${path}"` wrap would
+    // place `; echo injected; #` outside quotes and execute it.
+    const dangerous = path.join(tmp, '"; echo injected; #$(whoami)`id`\'x');
+    const newPath = path.join(tmp, 'safe-new-name');
+    writeClaudeTranscript(dangerous);
+    const impact = wrc.inspectWorkspaceRenameImpact(dangerous, newPath, { claudeHome, codexHome });
+    const step = impact.migrationSteps[0];
+    const expectedTarget = path.join(claudeHome, 'projects', transcript._encodeDir(newPath));
+    const expectedSource = path.join(claudeHome, 'projects', transcript._encodeDir(dangerous));
+    assert.equal(step, `mv ${shellWord(expectedSource)} ${shellWord(expectedTarget)}`,
+      'uses this repo\'s one shell-quoting primitive, not a hand-rolled escape');
+  });
 });
 
 describe('renameWarningFor', () => {
@@ -154,6 +169,46 @@ describe('renameWarningFor', () => {
     assert.match(warning, /WARNING/);
     assert.match(warning, /claude/);
     assert.match(warning, new RegExp(oldPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  });
+});
+
+describe('decideWorkspaceRename', () => {
+  it('allows a rename outright when there is no orphan risk', () => {
+    const impact = { hasOrphanRisk: false, affectedEngines: [], migrationSteps: [] };
+    assert.deepEqual(wrc.decideWorkspaceRename('/a', '/b', impact), { allowed: true, requiresConfirmation: false, warning: null });
+  });
+
+  it('refuses an at-risk rename without explicit confirmation (A1370 addendum §1.3)', () => {
+    const oldPath = path.join(tmp, 'old-name');
+    const newPath = path.join(tmp, 'new-name');
+    writeClaudeTranscript(oldPath);
+    const impact = wrc.inspectWorkspaceRenameImpact(oldPath, newPath, { claudeHome, codexHome });
+    const decision = wrc.decideWorkspaceRename(oldPath, newPath, impact);
+    assert.equal(decision.allowed, false);
+    assert.equal(decision.requiresConfirmation, true);
+    assert.match(decision.warning, /WARNING/);
+  });
+
+  it('never defaults confirmation to true implicitly -- only an explicit confirmOrphanRisk: true passes', () => {
+    const oldPath = path.join(tmp, 'old-name');
+    const newPath = path.join(tmp, 'new-name');
+    writeClaudeTranscript(oldPath);
+    const impact = wrc.inspectWorkspaceRenameImpact(oldPath, newPath, { claudeHome, codexHome });
+    for (const bad of [undefined, null, false, 'true', 1]) {
+      assert.equal(wrc.decideWorkspaceRename(oldPath, newPath, impact, { confirmOrphanRisk: bad }).allowed, false,
+        `confirmOrphanRisk: ${JSON.stringify(bad)} must not pass as confirmation`);
+    }
+  });
+
+  it('allows an at-risk rename once explicitly confirmed, and still returns the warning for the caller to log', () => {
+    const oldPath = path.join(tmp, 'old-name');
+    const newPath = path.join(tmp, 'new-name');
+    writeClaudeTranscript(oldPath);
+    const impact = wrc.inspectWorkspaceRenameImpact(oldPath, newPath, { claudeHome, codexHome });
+    const decision = wrc.decideWorkspaceRename(oldPath, newPath, impact, { confirmOrphanRisk: true });
+    assert.equal(decision.allowed, true);
+    assert.equal(decision.requiresConfirmation, true);
+    assert.match(decision.warning, /WARNING/);
   });
 });
 
@@ -207,6 +262,53 @@ describe('findOrphanedSibling', () => {
     assert.equal(found.hasOrphanedSibling, false);
     assert.equal(found.sibling, null);
     assert.deepEqual(found.candidates.slice().sort(), [a, b].sort());
+  });
+
+  // A1370 addendum: the caller's own known rename history, checked directly
+  // -- never guessed at by listing a directory -- so it works even when the
+  // previous path has a DIFFERENT parent entirely (a cross-volume move).
+  it('finds an explicitly-named previous path with orphaned state, even outside the same parent', () => {
+    const elsewhere = path.join(tmp, 'elsewhere-entirely', 'old-name');
+    fs.mkdirSync(elsewhere, { recursive: true });
+    const ws = path.join(tmp, 'projects', 'new-name');
+    fs.mkdirSync(ws, { recursive: true });
+    writeClaudeTranscript(elsewhere);
+    const found = wrc.findOrphanedSibling(ws, [], { claudeHome, codexHome, previousWorkspacePaths: [elsewhere] });
+    assert.equal(found.hasOrphanedSibling, true);
+    assert.equal(found.sibling, elsewhere);
+    assert.deepEqual(found.impact.affectedEngines, ['claude']);
+  });
+
+  it('ignores a previousWorkspacePaths entry with no orphaned state', () => {
+    const ws = path.join(tmp, 'ws');
+    const noState = path.join(tmp, 'never-had-state');
+    const found = wrc.findOrphanedSibling(ws, [], { claudeHome, codexHome, previousWorkspacePaths: [noState] });
+    assert.equal(found.hasOrphanedSibling, false);
+    assert.deepEqual(found.candidates, []);
+  });
+
+  it('is ambiguous (fails closed) when a previousWorkspacePaths entry AND a same-parent sibling both have state', () => {
+    const parent = path.join(tmp, 'projects');
+    fs.mkdirSync(parent, { recursive: true });
+    const sibling = path.join(parent, 'sibling-with-state');
+    const ws = path.join(parent, 'new-name');
+    fs.mkdirSync(sibling);
+    fs.mkdirSync(ws);
+    writeClaudeTranscript(sibling);
+    const elsewhere = path.join(tmp, 'elsewhere', 'old-name');
+    fs.mkdirSync(elsewhere, { recursive: true });
+    writeClaudeTranscript(elsewhere);
+    const found = wrc.findOrphanedSibling(ws, [], { claudeHome, codexHome, previousWorkspacePaths: [elsewhere] });
+    assert.equal(found.hasOrphanedSibling, false);
+    assert.deepEqual(found.candidates.slice().sort(), [elsewhere, sibling].sort());
+  });
+
+  it('never reports the workspace\'s own current path back to itself via previousWorkspacePaths', () => {
+    const ws = path.join(tmp, 'ws');
+    fs.mkdirSync(ws, { recursive: true });
+    const found = wrc.findOrphanedSibling(ws, [], { claudeHome, codexHome, previousWorkspacePaths: [ws] });
+    assert.equal(found.hasOrphanedSibling, false);
+    assert.deepEqual(found.candidates, []);
   });
 });
 

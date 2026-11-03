@@ -138,7 +138,10 @@ describe('wrap-step project-map (PIDX slice 3, #360, #356)', () => {
       enableToggle();
       const wrapped = '- `lib/` — the core library: routing at the top level, one subpackage per\n'
         + '  surface, and the backend drivers under `adapters/`.';
-      fs.writeFileSync(path.join(projectPath, MAP), `# Project Map\n\n## Structure\n\n${wrapped}\n\n## Shared directories / doc groups\n\n<!-- This project is not a member of any shared-doc group. -->\n`);
+      // The shared section's own current (fixed, #1705) sentence -- not the
+      // retired "not a member" placeholder, which this wrap step would now
+      // treat as drift to correct, same as any other stale content.
+      fs.writeFileSync(path.join(projectPath, MAP), `# Project Map\n\n## Structure\n\n${wrapped}\n\n## Shared directories / doc groups\n\n${projects._buildSharedDirsSection([])}\n`);
       const staged = {};
       const r = await projectMap.run({ project, staged });
       assert.equal(r.status, 'skipped');

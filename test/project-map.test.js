@@ -190,9 +190,9 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
       { name: 'Tangle-Shared', sharedDir: path.join(os.homedir(), 'Documents/Projects/Shared'), docs: [] }
     ];
 
-    it('renders a "not a member" note for no groups', () => {
-      assert.match(projects._buildSharedDirsSection([]), /not a member of any shared-doc group/);
-      assert.match(projects._buildSharedDirsSection(undefined), /not a member/);
+    it('renders the fixed machine-local-state pointer for no groups, same as any other count', () => {
+      assert.match(projects._buildSharedDirsSection([]), /machine-local state/);
+      assert.match(projects._buildSharedDirsSection(undefined), /machine-local state/);
     });
 
     it('publishes NO group name, doc name, path, or count (#1705) — only a fixed pointer', () => {
@@ -206,7 +206,12 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
       assert.match(md, /machine-local/);
     });
 
-    it('renders the identical fixed sentence regardless of how many groups there are (#1705)', () => {
+    it('renders the identical fixed sentence for zero membership and for any nonzero count (#1705 I-Gate R1)', () => {
+      // The PRR-A finding this regression guards: a membership-GATED choice
+      // between two fixed sentences still varies with this checkout's own
+      // local membership, exactly the defect #1705 removed the count for.
+      assert.equal(projects._buildSharedDirsSection([]), projects._buildSharedDirsSection(IDENTIFYING));
+      assert.equal(projects._buildSharedDirsSection(undefined), projects._buildSharedDirsSection([IDENTIFYING[0]]));
       assert.equal(projects._buildSharedDirsSection(IDENTIFYING), projects._buildSharedDirsSection([IDENTIFYING[0]]));
     });
   });
