@@ -189,6 +189,39 @@ describe('listWatchedMessages / pruneExpiredWatchedMessages', () => {
     assert.equal(deleted, 1);
     assert.deepEqual(bc.listWatchedMessages().map((m) => m.messageId), ['m2']);
   });
+
+  it('never serves an expired message, even with no explicit prune call (PRR-A I-Gate Round 1 Finding 2)', () => {
+    bc.registerChannel(validChannel());
+    const real = bc._internal.now;
+    try {
+      bc._internal.now = () => '2026-01-01T00:00:00.000Z';
+      bc.recordWatchedMessage({ messageId: 'm1', channelId: 'ch1', authorLabel: 'x', sourceLabel: 'discord', retentionMs: 1000 });
+      bc._internal.now = () => '2026-01-01T00:00:03.000Z';
+      // No pruneExpiredWatchedMessages() call anywhere in this test -- the
+      // read itself must exclude the expired row.
+      assert.deepEqual(bc.listWatchedMessages(), []);
+      assert.deepEqual(bc.listWatchedMessages({ channelId: 'ch1' }), []);
+    } finally {
+      bc._internal.now = real;
+    }
+  });
+
+  it('recordWatchedMessage itself sweeps expired rows, as a defined pruning boundary (PRR-A I-Gate Round 1 Finding 2)', () => {
+    bc.registerChannel(validChannel());
+    const real = bc._internal.now;
+    try {
+      bc._internal.now = () => '2026-01-01T00:00:00.000Z';
+      bc.recordWatchedMessage({ messageId: 'm1', channelId: 'ch1', authorLabel: 'x', sourceLabel: 'discord', retentionMs: 1000 });
+      bc._internal.now = () => '2026-01-01T00:00:03.000Z';
+      bc.recordWatchedMessage({ messageId: 'm2', channelId: 'ch1', authorLabel: 'x', sourceLabel: 'discord' });
+      // m1 is gone from storage entirely (not merely filtered on read) --
+      // the second write is the boundary that swept it.
+      const raw = store.getDb().prepare('SELECT message_id FROM bridge_watched_messages').all().map((r) => r.message_id);
+      assert.deepEqual(raw, ['m2']);
+    } finally {
+      bc._internal.now = real;
+    }
+  });
 });
 
 describe('createPublicationGrant', () => {
@@ -239,6 +272,70 @@ describe('createPublicationGrant', () => {
     const r = bc.createPublicationGrant(grantInput({ textSha256: 'b'.repeat(64) }));
     assert.equal(r.ok, false);
     assert.equal(r.code, 'BRIDGE_GRANT_IDEMPOTENCY_CONFLICT');
+  });
+});
+
+describe('checkPublicationGrant — read-only preflight, before a helper posts (PRR-A I-Gate Round 1 Finding 1)', () => {
+  function grantInput(overrides = {}) {
+    return {
+      destinationChannelId: 'ch1', textSha256: 'a'.repeat(64), operatorRouteId: 'route-1', idempotencyKey: 'idem-1', ...overrides
+    };
+  }
+
+  beforeEach(() => {
+    bc.registerChannel(validChannel({ sendAllowed: true }));
+    bc.createPublicationGrant(grantInput());
+  });
+
+  it('succeeds for a pending, unexpired grant on a sendAllowed channel, and mutates nothing', () => {
+    const r = bc.checkPublicationGrant(grantInput());
+    assert.equal(r.ok, true);
+    assert.equal(r.grant.state, 'pending');
+    assert.equal(r.grant.outcome, null);
+    // Still pending after the preflight -- a check is not a consume.
+    assert.equal(bc.checkPublicationGrant(grantInput()).grant.state, 'pending');
+  });
+
+  it('refuses an unknown idempotencyKey', () => {
+    assert.equal(bc.checkPublicationGrant(grantInput({ idempotencyKey: 'no-such' })).code, 'NOT_FOUND');
+  });
+
+  it('refuses a presented post that does not match the grant exactly', () => {
+    assert.equal(bc.checkPublicationGrant(grantInput({ textSha256: 'b'.repeat(64) })).code, 'BRIDGE_GRANT_MISMATCH');
+  });
+
+  it('refuses a grant already consumed with a confirmed outcome', () => {
+    bc.validateAndConsumePublicationGrant({ ...grantInput(), outcome: 'posted' });
+    const r = bc.checkPublicationGrant(grantInput());
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'BRIDGE_GRANT_ALREADY_CONSUMED');
+    assert.equal(r.outcome, 'posted');
+  });
+
+  it('refuses an expired, never-attempted grant', () => {
+    const real = bc._internal.now;
+    try {
+      bc.createPublicationGrant({ ...grantInput({ idempotencyKey: 'idem-2' }), ttlMs: 1000 });
+      bc._internal.now = () => new Date(Date.now() + 2000).toISOString();
+      assert.equal(bc.checkPublicationGrant(grantInput({ idempotencyKey: 'idem-2' })).code, 'BRIDGE_GRANT_EXPIRED');
+    } finally {
+      bc._internal.now = real;
+    }
+  });
+
+  it('refuses a pending grant once the channel\'s sendAllowed is revoked AFTER the grant was created', () => {
+    assert.equal(bc.checkPublicationGrant(grantInput()).ok, true, 'sanity: granted while sendAllowed');
+    bc.updateChannel('ch1', { sendAllowed: false });
+    const r = bc.checkPublicationGrant(grantInput());
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'BRIDGE_CHANNEL_SEND_NOT_ALLOWED');
+  });
+
+  it('a grant revoked by sendAllowed still consumes normally once re-allowed -- the preflight is the gate, not a frozen snapshot', () => {
+    bc.updateChannel('ch1', { sendAllowed: false });
+    assert.equal(bc.checkPublicationGrant(grantInput()).ok, false);
+    bc.updateChannel('ch1', { sendAllowed: true });
+    assert.equal(bc.checkPublicationGrant(grantInput()).ok, true);
   });
 });
 
