@@ -219,84 +219,70 @@ describe('API — every gated route answers the epoch gate (#2032)', () => {
     });
   }
 
-  // The routes the gate is wired into, and which project each one judges:
-  // the URL's project for the Medusa and wrap routes, the caller's for the rest.
-  const ROUTES = [
-    ['POST', '/api/sessions/gate-coordinator/medusa/send', { to: 'x', message: 'go' }],
-    ['POST', '/api/sessions/gate-coordinator/medusa/read', { ids: ['m-1'] }],
-    ['POST', '/api/sessions/gate-coordinator/medusa/exchanges/mx_1/close', {}],
-    ['POST', '/api/sessions/gate-coordinator/medusa/loop', { target: 'x', task: 't' }],
-    ['POST', '/api/sessions/gate-coordinator/medusa/loops/l1/continue', { message: 'more' }],
-    ['POST', '/api/sessions/gate-coordinator/medusa/loops/l1/force-done', {}],
-    ['POST', '/api/sessions/gate-coordinator/medusa/loops/l1/closeout', {}],
-    ['POST', '/api/sessions/gate-coordinator/medusa/toggle', { enabled: false }],
-    ['POST', '/api/tc/workload', { schema: 'tc.workload/1', state: 'working', clearance: 'do-not-clear', summary: 'x' }],
-    ['POST', '/api/session-rules', { projectId: 1, content: 'x' }],
-    ['PUT', '/api/session-rules/1', { content: 'x' }],
-    ['DELETE', '/api/session-rules/1', null],
-    ['POST', '/api/session-rules/promote', { id: 1 }],
-    ['PUT', '/api/session-rules/1/status', { status: 'retired' }],
-    ['POST', '/api/session-rules/1/restore', {}],
-    ['POST', '/api/control/assignments', { projectId: 2 }],
-    ['POST', '/api/control/assignments/a1/hold', {}],
-    ['POST', '/api/control/assignments/a1/release', {}],
-    ['POST', '/api/control/assignments/a1/stop', {}],
-    ['POST', '/api/control/assignments/a1/close', {}],
-    ['POST', '/api/control/assignments/a1/ack', {}],
-    ['POST', '/api/control/assignments/a1/exchange-closed', {}],
-    ['POST', '/api/sessions/gate-coordinator/wrap', {}],
-    ['POST', '/api/sessions/gate-coordinator/wrap/complete', {}],
-    ['POST', '/api/sessions/gate-coordinator/wrap/handback', {}]
-  ];
-
   const coordinatorHeaders = () => ({
     'x-tangleclaw-cli': 'tc', 'x-tangleclaw-verb': 'test',
     'x-tangleclaw-project-id': String(project.id), 'x-tangleclaw-launch-id': LAUNCH, 'x-tangleclaw-engine-thread': 'old-thread'
   });
 
-  for (const [method, url, body] of ROUTES) {
-    it(`${method} ${url} is fenced for the rotating coordinator's own launch`, async () => {
-      const { status, data } = await req(url, method, body, coordinatorHeaders());
-      assert.equal(status, 409, JSON.stringify(data));
-      assert.equal(data.code, 'COORDINATOR_FENCED');
-    });
-  }
+  // The ONE declared list the gate's routes come from: `options.gatedAction`
+  // at registration (server.js / lib/routes/*.js), never a second, hand- or
+  // regex-maintained copy here (#2034 item 5 — "the server should expose one
+  // list that the test reads"). A newly gated route is caught automatically:
+  // give it a `gatedAction` at registration and it appears here with no edit
+  // to this file. `_routePatterns()` lists EVERY mount a route is registered
+  // under, so the Medusa family appears once per mount (project, master).
+  const GATED = require('../server')._routePatterns().filter((r) => r.options && r.options.gatedAction);
 
-  // Every mutating route in the families the gate covers, as REGISTERED — so
-  // a route added later is covered by existing, not by someone remembering to
-  // extend a list. A route here that the gate should not judge must be named
-  // below with its reason.
-  const GATE_EXEMPT = {
-    'POST /api/session-rules/conflicts': 'a read: it checks text for conflicts and writes nothing',
-    'POST /api/sessions/:project': 'launching a session: during a relaunch rotation an unclaimed launch stays fenced by the gate itself; only the claim binds',
-    'DELETE /api/sessions/:project': 'ending a session is how a relaunch rotation begins; it dispatches nothing',
-    'POST /api/sessions/:project/launch/recovery-clear': 'the operator clears a launch-recovery requirement; no coordinator authority is exercised',
-    'POST /api/sessions/:project/launch/reconciliation': 'a read, sent as a POST only so the operator proof applies whole: it writes nothing, and it serves a signed-in operator only',
-    'POST /api/sessions/:project/wrap/cancel': 'stops a wrap before its commit step; it publishes and finalizes nothing'
-  };
-  const FAMILIES = [/^\/api\/sessions\/:project\/medusa\//, /^\/api\/control\/assignments/, /^\/api\/session-rules/,
-    /^\/api\/sessions\/:project(\/|$)/, /^\/api\/tc\/workload$/];
-  const registered = require('../server')._routePatterns()
-    .filter((r) => r.method !== 'GET' && FAMILIES.some((f) => f.test(r.pattern)))
-    .filter((r) => !GATE_EXEMPT[`${r.method} ${r.pattern}`]);
+  // The master Medusa mount (`registerMedusaRoutes('/api/master/medusa', ...)`)
+  // resolves its target through `resolveMasterMedusaTarget`, which requires a
+  // LIVE Project Master (real tmux liveness) before it ever reaches the gate —
+  // this file's fixture has no such session, so every one of these answers
+  // "Project Master not running" before the gate is asked anything, never
+  // COORDINATOR_FENCED. Named here, not silently dropped: they are still
+  // required to declare `gatedAction` (asserted below), just not HTTP-exercised
+  // by this fixture. Faking Master liveness to close this gap is tracked
+  // separately rather than folded into a gated-route-list cleanup.
+  const HTTP_UNTESTABLE_HERE = (r) => r.pattern.startsWith('/api/master/');
+  const testable = GATED.filter((r) => !HTTP_UNTESTABLE_HERE(r));
 
-  it('every exemption names a route that is registered, so a stale exemption cannot hide a new one', () => {
-    const all = require('../server')._routePatterns().map((r) => `${r.method} ${r.pattern}`);
-    for (const key of Object.keys(GATE_EXEMPT)) assert.ok(all.includes(key), key);
-  });
+  /**
+   * A generic body that satisfies every gated route's shape well enough to
+   * reach its gate check (proven across the whole set below) — the gate runs
+   * before body validation on every one of these handlers.
+   * @param {string} method - HTTP method.
+   * @returns {object|null}
+   */
+  const genericBody = (method) => (method === 'DELETE' ? null
+    : { to: 'x', message: 'go', target: 'x', task: 't', command: 'go', ids: ['m-1'], projectId: 1, content: 'x', id: 1,
+      status: 'retired', schema: 'tc.workload/1', state: 'working', clearance: 'do-not-clear', summary: 'x', enabled: false });
 
-  it('the enumeration finds the gated families (guards against an empty sweep)', () => {
-    assert.ok(registered.length >= ROUTES.length, `${registered.length} registered`);
-    for (const r of ['/api/sessions/:project/medusa/loop', '/api/sessions/:project/medusa/loops/:loopId/continue', '/api/sessions/:project/medusa/toggle',
-      '/api/sessions/:project/command', '/api/sessions/:project/startup-prompt/fire']) {
-      assert.ok(registered.some((x) => x.pattern === r), r);
+  /**
+   * The URL a gated route's pattern maps to for the `gate-coordinator` or
+   * `gate-other` fixture project, with every other `:param` placeholder-filled.
+   * @param {string} pattern - Registered route pattern.
+   * @param {string} projectName - Fixture project name.
+   * @returns {string}
+   */
+  const urlFor = (pattern, projectName) => pattern.replace(':project', projectName).replace(/:[A-Za-z]+/g, 'x1');
+
+  it('declares at least the known gated route families (guards against an empty sweep)', () => {
+    for (const r of ['/api/sessions/:project/medusa/loop', '/api/sessions/:project/medusa/loops/:loopId/continue',
+      '/api/sessions/:project/medusa/toggle', '/api/sessions/:project/command', '/api/sessions/:project/startup-prompt/fire',
+      '/api/session-rules', '/api/control/assignments', '/api/tc/workload', '/api/sessions/:project/wrap']) {
+      assert.ok(GATED.some((x) => x.pattern === r), r);
     }
   });
 
-  for (const r of registered) {
-    it(`registered ${r.method} ${r.pattern} is fenced for the rotating coordinator`, async () => {
-      const url = r.pattern.replace(':project', 'gate-coordinator').replace(/:[A-Za-z]+/g, 'x1');
-      const { status, data } = await req(url, r.method, r.method === 'DELETE' ? null : { to: 'x', message: 'go', target: 'x', task: 't', command: 'go' }, coordinatorHeaders());
+  it('the master Medusa mount is still declared gated, even though this fixture cannot HTTP-exercise it', () => {
+    const masterGated = GATED.filter(HTTP_UNTESTABLE_HERE);
+    assert.ok(masterGated.length >= 9, `expected every master-mount Medusa route gated too, found ${masterGated.length}`);
+    assert.ok(masterGated.some((r) => r.pattern === '/api/master/medusa/send'));
+  });
+
+  for (const r of testable) {
+    it(`${r.method} ${r.pattern} is fenced for the rotating coordinator's own launch (gatedAction: ${r.options.gatedAction})`, async () => {
+      const url = urlFor(r.pattern, 'gate-coordinator');
+      const { status, data } = await req(url, r.method, genericBody(r.method), coordinatorHeaders());
       assert.equal(status, 409, `${r.method} ${url}: ${JSON.stringify(data)}`);
       assert.equal(data.code, 'COORDINATOR_FENCED');
     });
@@ -309,12 +295,28 @@ describe('API — every gated route answers the epoch gate (#2032)', () => {
     assert.equal(data.code, 'COORDINATOR_FENCED');
   });
 
+  // This test is specifically about routes the gate judges by the CALLER's
+  // project (`_callerProjectId(req)` — session-rule-write, workload-set,
+  // control-mutate/-ack), not the URL's: a URL-keyed route (medusa-*, wrap,
+  // session-command) still names `gate-coordinator` in its path regardless of
+  // who calls it, so "a different caller" proves nothing new for those, and
+  // (discovered the hard way) letting one fall through past a gate that
+  // never fires for a fixture project with no real tmux pane behind it hits
+  // real exec/tmux calls this test tier forbids. Those families are exercised
+  // fully by the "fenced for ITS OWN launch" loop above (where the gate
+  // always fires first) and, for `wrap`'s cross-project branch specifically,
+  // by the dedicated finalize test just above this one.
+  const CALLER_KEYED_ACTIONS = new Set(['session-rule-write', 'workload-set', 'control-mutate', 'control-ack']);
+  const callerKeyed = testable.filter((r) => CALLER_KEYED_ACTIONS.has(r.options.gatedAction));
+
   it('the caller-keyed routes judge the caller: another project\'s launch is not fenced by this rotation', async () => {
     const headers = { 'x-tangleclaw-cli': 'tc', 'x-tangleclaw-verb': 'test',
       'x-tangleclaw-project-id': String(other.id), 'x-tangleclaw-launch-id': OTHER_LAUNCH };
-    for (const [method, url, body] of ROUTES.filter(([, u]) => !u.includes('gate-coordinator'))) {
-      const { data } = await req(url, method, body, headers);
-      assert.notEqual(data && data.code, 'COORDINATOR_FENCED', `${method} ${url}`);
+    assert.ok(callerKeyed.length >= 13, `expected the full caller-keyed family, found ${callerKeyed.length}`);
+    for (const r of callerKeyed) {
+      const url = urlFor(r.pattern, 'gate-coordinator');
+      const { data } = await req(url, r.method, genericBody(r.method), headers);
+      assert.notEqual(data && data.code, 'COORDINATOR_FENCED', `${r.method} ${url}`);
     }
   });
 });
