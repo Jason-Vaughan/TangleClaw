@@ -492,6 +492,47 @@ describe('/api/control (#1861)', () => {
       assert.equal(timedOut.timedOut, true);
     });
 
+    it('a status read escalates a timed-out pause exactly once (#2109 PRR-B Round 3)', async () => {
+      const { project, assignmentId } = await pausable();
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      const holdEventId = r.data.event.eventId;
+      await settle();
+      // control_events/control_receipts are both append-only (triggers refuse
+      // UPDATE/DELETE), so this moves the READER's clock forward instead of
+      // backdating the row -- controlApi._internal.now is the seam that buys.
+      controlApi._internal.now = () => Date.now() + 20 * 60 * 1000;
+
+      const escalations = [];
+      controlApi._internal.sendSystemMessage = async (m) => { escalations.push(m); return { status: 'received', id: 'msg-timeout' }; };
+
+      await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+      await settle();
+      assert.equal(escalations.filter((m) => /Pause timeout/.test(m.message)).length, 1);
+
+      // A second read must not re-escalate the same still-overdue HOLD.
+      await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+      await settle();
+      assert.equal(escalations.filter((m) => /Pause timeout/.test(m.message)).length, 1, 'the timeout escalation is not repeated on a later read');
+
+      const st = await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+      const receipts = st.data.events.find((e) => e.eventId === holdEventId).receipts;
+      assert.ok(receipts.some((rc) => rc.fact === 'observed' && rc.outcomeCode === 'pause-timeout'));
+    });
+
+    it('/api/control/mine also escalates a timed-out pause it reads, from the target\'s own side (#2109 PRR-B Round 3)', async () => {
+      const { project, binding } = await pausable();
+      await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      await settle();
+      controlApi._internal.now = () => Date.now() + 20 * 60 * 1000;
+
+      const escalations = [];
+      controlApi._internal.sendSystemMessage = async (m) => { escalations.push(m); return { status: 'received', id: 'msg-timeout' }; };
+
+      await send(server, 'GET', '/api/control/mine', null, binding.headers);
+      await settle();
+      assert.equal(escalations.filter((m) => /Pause timeout/.test(m.message)).length, 1);
+    });
+
     it('a pane that cannot be captured defers and escalates, same as busy', async () => {
       const { project } = await pausable();
       controlApi._internal.capturePane = () => { throw new Error('pane vanished'); };

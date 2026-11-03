@@ -451,6 +451,65 @@ describe('control-state (#1861)', () => {
     });
   });
 
+  describe('overlapping holds and timeout observation (#2109 PRR-B Round 3)', () => {
+    it('a later ordinary HOLD stacked on top does not hide an active, unacknowledged pause underneath', () => {
+      const a = assign().assignment;
+      const pause = control.hold({ assignmentId: a.assignmentId, requestId: rid(), reasonCode: 'peer-pause-request' }, PM);
+      // A second, unrelated hold from a different authority -- the pause
+      // stays active (cumulative holds), but is no longer latestStateEvent.
+      control.hold({ assignmentId: a.assignmentId, requestId: rid(), reasonCode: 'awaiting-ruling' }, ARCHITECT);
+      assert.equal(control.status(a.assignmentId).assignment.activeHoldIds.length, 2);
+      const createdMs = Date.parse(`${pause.event.createdAt.replace(' ', 'T')}Z`);
+      const status = control.pauseAcknowledgementStatus(a.assignmentId, { thresholdMs: 1000, now: createdMs + 5000 });
+      assert.equal(status.applicable, true, 'the stacked ordinary hold must not hide the still-active pause');
+      assert.equal(status.acked, false);
+      assert.equal(status.timedOut, true);
+    });
+
+    it('acking the pause before a second hold stacks on top is still read back correctly afterward', () => {
+      const a = assign().assignment;
+      const pause = control.hold({ assignmentId: a.assignmentId, requestId: rid(), reasonCode: 'peer-pause-request' }, PM);
+      control.ack({ assignmentId: a.assignmentId, stateGeneration: pause.event.stateGeneration }, targetActor);
+      control.hold({ assignmentId: a.assignmentId, requestId: rid(), reasonCode: 'awaiting-ruling' }, ARCHITECT);
+      const status = control.pauseAcknowledgementStatus(a.assignmentId, { thresholdMs: 0, now: Date.now() + 1000000 });
+      assert.equal(status.acked, true);
+      assert.equal(status.timedOut, false);
+    });
+
+    it('observePauseTimeouts records nothing before the threshold, and exactly once per HOLD past it', () => {
+      const a = assign().assignment;
+      const h = control.hold({ assignmentId: a.assignmentId, requestId: rid(), reasonCode: 'peer-pause-request' }, PM);
+      const createdMs = Date.parse(`${h.event.createdAt.replace(' ', 'T')}Z`);
+      assert.deepEqual(control.observePauseTimeouts(a.assignmentId, { thresholdMs: 1000, now: createdMs + 500 }), []);
+      const first = control.observePauseTimeouts(a.assignmentId, { thresholdMs: 1000, now: createdMs + 5000 });
+      assert.equal(first.length, 1);
+      assert.equal(first[0].eventId, h.event.eventId);
+      // Idempotent: the same still-overdue HOLD is not re-observed on a second call.
+      assert.deepEqual(control.observePauseTimeouts(a.assignmentId, { thresholdMs: 1000, now: createdMs + 9000 }), []);
+    });
+
+    it('an unrelated status-read observation on the same event does not mask a real timeout observation', () => {
+      const a = assign().assignment;
+      const h = control.hold({ assignmentId: a.assignmentId, requestId: rid(), reasonCode: 'peer-pause-request' }, PM);
+      // The target reading its own paused status writes an UNRELATED
+      // 'observed'/'status-read' receipt against this same event -- the
+      // exact read a pause nudge tells its target to make.
+      control.observe(a.assignmentId, 'status-read', targetActor.principal);
+      const createdMs = Date.parse(`${h.event.createdAt.replace(' ', 'T')}Z`);
+      const observed = control.observePauseTimeouts(a.assignmentId, { thresholdMs: 1000, now: createdMs + 5000 });
+      assert.equal(observed.length, 1, 'the status-read receipt must not be mistaken for an already-recorded timeout observation');
+    });
+
+    it('does not re-escalate a HOLD that has already been acknowledged, even if observed before the ack', () => {
+      const a = assign().assignment;
+      const h = control.hold({ assignmentId: a.assignmentId, requestId: rid(), reasonCode: 'peer-pause-request' }, PM);
+      const createdMs = Date.parse(`${h.event.createdAt.replace(' ', 'T')}Z`);
+      control.observePauseTimeouts(a.assignmentId, { thresholdMs: 1000, now: createdMs + 5000 });
+      control.ack({ assignmentId: a.assignmentId, stateGeneration: h.event.stateGeneration }, targetActor);
+      assert.deepEqual(control.observePauseTimeouts(a.assignmentId, { thresholdMs: 1000, now: createdMs + 9000 }), []);
+    });
+  });
+
   describe('restart', () => {
     it('state, generation and active holds survive closing and reopening the store', () => {
       const a = assign().assignment;

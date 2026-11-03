@@ -200,8 +200,16 @@ HOLD's event — the same durable shape every other control notice gets, so a fa
 escalation leaves a record even when nobody receives a message (#2109 PRR-B Round 2). `GET
 /api/control/assignments/:id` and `/mine` carry the current HOLD's acknowledgement state as
 `assignment.pauseTimeout` (`null` unless the current HOLD is a peer pause): `{acked, ageMs,
-timedOut}`, the last computed against a 15-minute default — a read-only diagnostic a dashboard or a
-future sweep can act on, not an automatic re-escalation trigger.
+timedOut}`, the last computed against a 15-minute default — and evaluated across every ACTIVE hold
+on the assignment, not just the latest one, so an ordinary HOLD stacked on top of an unacknowledged
+pause never hides it (#2109 PRR-B Round 3).
+
+An unacknowledged pause also escalates automatically, not just readably (#2109 PRR-B Round 3): any
+status read of a HELD assignment (`GET /api/control/assignments/:id`, `/mine`, or the operator's
+`GET /api/control/assignments` list) durably observes a timed-out, unescalated peer-pause HOLD
+exactly once and sends the same escalation route a `[Pause timeout]` notice. There is no new
+background scheduler for this — status reads are frequent enough (every `tc control status`, every
+dashboard poll) to serve as the tick; a read that finds nothing new to escalate pays no extra write.
 
 Every other `tc` verb prints a one-line `HELD (gen N, k holds)` notice while your lane is held.
 This is visibility, not enforcement. A launch into a held lane says so in its launch context
