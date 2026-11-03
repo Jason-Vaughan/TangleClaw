@@ -278,6 +278,7 @@
   ],
   "medium": [
     "test/admin-credential.test.js",
+    "test/advisor.test.js",
     "test/api-coordinator-rotation.test.js",
     "test/api-ingress-door.test.js",
     "test/api-update-apply.test.js",
