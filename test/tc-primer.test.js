@@ -12,10 +12,10 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { VERB_ROSTER, BRIDGE_SUBVERBS } = require('../lib/tc-verbs');
+const { VERB_ROSTER } = require('../lib/tc-verbs');
 const {
   ROLE_VERB_IDS, START_NEXT_VS_REVIEW_NOTE, SANDBOX_UNREACHABLE_NOTE, buildOperatingPrimer,
-  SUBVERB_MANIFEST, subverbsFor, subverbManifestParity
+  SUBVERB_MANIFEST, IMPLEMENTATION_SUBVERBS, subverbsFor, subverbManifestParity
 } = require('../lib/operating-primer');
 
 const ROOT = path.join(__dirname, '..');
@@ -69,23 +69,25 @@ describe('SUBVERB_MANIFEST — the structured command/subcommand schema (Archite
     assert.deepEqual(parity.stale, [], `SUBVERB_MANIFEST entry for a verb VERB_ROSTER no longer has: ${parity.stale.join(', ')}`);
   });
 
-  it('bridge: two-way parity against the real BRIDGE_SUBVERBS implementation, not just "bridge has a manifest entry" (PRR-B I-Gate Round 2)', () => {
+  it('two-way subverb parity against every REAL *_SUBVERBS implementation, not just "this verb has a manifest entry" (PRR-B I-Gate Round 2/4)', () => {
     // The top-level check above passed even while three of bridge's
     // nickname writes were folded into one 'nickname' record and
     // 'circuit ack' was recorded as 'circuit' -- both satisfied "bridge is
     // a VERB_ROSTER key with a SUBVERB_MANIFEST entry" without giving every
-    // IMPLEMENTED subverb its own record. This checks the subverb grain
-    // directly against the implementation's own ground truth.
+    // IMPLEMENTED subverb its own record. Checked across EVERY verb whose
+    // implementation exposes a real ground-truth subverb list
+    // (IMPLEMENTATION_SUBVERBS), not only bridge -- Round 4 found the first
+    // check stopped at bridge, leaving the other 11 arrays uncovered.
     const parity = subverbManifestParity();
-    assert.deepEqual(parity.bridgeSubverbsMissing, [],
-      `BRIDGE_SUBVERBS implements these with no SUBVERB_MANIFEST.bridge record: ${parity.bridgeSubverbsMissing.join(', ')}`);
-    assert.deepEqual(parity.bridgeSubverbsStale, [],
-      `SUBVERB_MANIFEST.bridge records an id BRIDGE_SUBVERBS does not implement: ${parity.bridgeSubverbsStale.join(', ')}`);
-    // Pinned directly against the roster's real export too, not only
-    // through the parity helper -- so a change to subverbManifestParity's
-    // own logic cannot silently stop checking this.
-    const manifestBridgeIds = subverbsFor('bridge').map((s) => s.id);
-    assert.deepEqual([...manifestBridgeIds].sort(), [...BRIDGE_SUBVERBS].sort());
+    assert.deepEqual(parity.subverbMismatches, {},
+      `subverb mismatch(es) against the real implementation: ${JSON.stringify(parity.subverbMismatches)}`);
+  });
+
+  it('pins every IMPLEMENTATION_SUBVERBS entry against the manifest directly, not only through the parity helper', () => {
+    for (const [verbId, implementedIds] of Object.entries(IMPLEMENTATION_SUBVERBS)) {
+      const manifestIds = subverbsFor(verbId).map((s) => s.id);
+      assert.deepEqual([...manifestIds].sort(), [...implementedIds].sort(), `"${verbId}"`);
+    }
   });
 
   it('every record has all five required fields, non-empty', () => {

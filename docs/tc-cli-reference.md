@@ -81,6 +81,7 @@ The important distinction is: **new or unattested launch = `tc start next`; alre
 | `tc message sent` | Lists open exchanges initiated by this session. |
 | `tc message owed` | Lists this session's outstanding replies first, then messages it has not handled. |
 | `tc message close <exchange-id>` | Closes an exchange initiated by this session after its reply has arrived. |
+| `tc message retract [--reason <text>] [--replacement <id>] <message-id>` | Retracts a message this session sent, while it is still unread. |
 
 `--priority` is `normal` or `blocking`. Use exact workspace IDs, not a display name. Reply with `--in-reply-to <message-id>` before acknowledging a message that requires an answer. The initiator owns closing a reply-required exchange.
 
@@ -132,6 +133,7 @@ The state is `waiting`, `ready`, `failed` or `unknown`, derived from what the se
 | Command | What it does |
 | --- | --- |
 | `tc candidate submit --kind <milestone\|operator-action-required> --receipt workload:<seq> --text "<text>"` | Offers a milestone or operator action to the Project Master, backed by this session's workload receipt. It posts nothing to the operator by itself. |
+| `tc candidate status [<id>]` | Reads what became of a submitted candidate. |
 
 Get `<seq>` from `tc workload show`. Repeat `--receipt workload:<seq>` to cite more of this session's receipts. `--text-file <file>` can replace `--text`; `--request-id <id>` makes an uncertain submission safe to retry. The Project Master reviews, merges, rejects or approves the candidate.
 
