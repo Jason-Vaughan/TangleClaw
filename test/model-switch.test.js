@@ -341,6 +341,24 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.match(result.error, /ENGINE_PROFILE_INVALID/);
   });
 
+  it('cross-provider: the real default killSession records stoppedBy \'model-switch\' on the session row (#2249)', async () => {
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const result = await modelSwitch.switchSessionModel(project.name, { engine: 'fake', model: 'claude-sonnet-5' }, {
+      ...target(),
+      checkBoundary: () => ({ atBoundary: true, blockers: [], details: {} }),
+      triggerWrap: () => ({ ok: true, lifecycleCompleted: true, sessionId: session.id }),
+      // killSession NOT overridden: this exercises the real default closure
+      // (lib/model-switch.js's `refreshSession`), which must tag the kill
+      // with SESSION_STOP_SOURCES.MODEL_SWITCH — never the route's default.
+      launchSession: () => ({ error: null })
+    });
+    assert.equal(result.ok, true);
+    const row = store.sessions.get(session.id);
+    assert.equal(row.status, 'killed');
+    assert.equal(row.stoppedBy, 'model-switch');
+    assert.match(row.stopReason, /governed model switch/);
+  });
+
   it('cross-provider: writes a continuity handoff naming the active plan before killing', async () => {
     const plansDir = path.join(projectPath, '.tangleclaw', 'plans');
     fs.mkdirSync(plansDir, { recursive: true });
@@ -900,6 +918,29 @@ describe('lib/model-switch — switchSessionModel', () => {
     assert.equal(result.ok, true);
     assert.equal(result.wipBranch, null);
     assert.equal(result.handoff.snapshot.committed, false);
+  });
+
+  it('outage-takeover: the real default killSession records stoppedBy \'model-switch\' and the caller\'s reason (#2249)', async () => {
+    initRepo(projectPath, ['-q']);
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: projectPath });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: projectPath });
+    fs.writeFileSync(path.join(projectPath, 'committed.txt'), 'a\n');
+    execFileSync('git', ['add', '-A'], { cwd: projectPath });
+    execFileSync('git', ['commit', '-q', '-m', 'initial'], { cwd: projectPath });
+
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'x', primePrompt: null });
+    const result = await modelSwitch.switchSessionModel(project.name, {
+      engine: 'fake', model: 'claude-sonnet-5', mode: 'outage-takeover', reason: 'test outage reason'
+      // killSession NOT overridden: this exercises the real default closure,
+      // which must tag the kill with SESSION_STOP_SOURCES.MODEL_SWITCH even
+      // though the caller supplied its own `reason` text.
+    }, { ...target(), launchSuccessor: () => ({ error: null }) });
+
+    assert.equal(result.ok, true);
+    const row = store.sessions.get(session.id);
+    assert.equal(row.status, 'killed');
+    assert.equal(row.stoppedBy, 'model-switch');
+    assert.equal(row.stopReason, 'test outage reason');
   });
 
   it('outage-takeover: refuses, and does not touch the project config, when terminating the session fails', async () => {

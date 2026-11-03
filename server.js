@@ -3490,7 +3490,7 @@ route('POST', '/api/session-rules', (req, res, _params, body) => {
     }
     throw err;
   }
-}, { maxBodySize: 256 * 1024, signedInOperator: { action: 'add a session rule as the operator' } });
+}, { maxBodySize: 256 * 1024, signedInOperator: { action: 'add a session rule as the operator' }, gatedAction: 'session-rule-write' });
 
 /**
  * Eyes-open gate for the Project Master's baseline Hard rules: weakening a
@@ -3564,7 +3564,7 @@ route('PUT', '/api/session-rules/:id', (req, res, params, body) => {
     }
     throw err;
   }
-}, { maxBodySize: 256 * 1024, signedInOperator: { action: 'change a session rule' } });
+}, { maxBodySize: 256 * 1024, signedInOperator: { action: 'change a session rule' }, gatedAction: 'session-rule-write' });
 
 // DELETE /api/session-rules/:id — ?confirm=true required for shipped Master
 // baseline rules (see refuseUnconfirmedBaselineEdit)
@@ -3595,7 +3595,7 @@ route('DELETE', '/api/session-rules/:id', (req, res, params) => {
     }
     throw err;
   }
-}, { signedInOperator: { action: 'remove a session rule' } });
+}, { signedInOperator: { action: 'remove a session rule' }, gatedAction: 'session-rule-write' });
 
 // ── Session Rules self-improvement (D1b) ──
 // Versioning + rollback, learnings→rule promotion, and the non-authoritative
@@ -3646,7 +3646,7 @@ route('POST', '/api/session-rules/promote', (req, res, _params, body) => {
     if (err.code === 'INVALID_PROJECT_ID') return errorResponse(res, 400, err.message, 'INVALID_PROJECT_ID');
     throw err;
   }
-}, { maxBodySize: 256 * 1024, signedInOperator: { action: 'promote a session rule' } });
+}, { maxBodySize: 256 * 1024, signedInOperator: { action: 'promote a session rule' }, gatedAction: 'session-rule-write' });
 
 // PUT /api/session-rules/:id/status — the rule lifecycle's one door (#569,
 // #1696, #1709). Approve ('active') or decline ('rejected') a proposal;
@@ -3745,7 +3745,7 @@ route('PUT', '/api/session-rules/:id/status', (req, res, params, body) => {
     }
     throw err;
   }
-}, { maxBodySize: 256 * 1024, signedInOperator: { action: 'change a session rule\'s status' } });
+}, { maxBodySize: 256 * 1024, signedInOperator: { action: 'change a session rule\'s status' }, gatedAction: 'session-rule-write' });
 
 // ── Learnings (#569) ──
 // Until now there were no learnings routes at all, so the tier a learning sits
@@ -3864,7 +3864,7 @@ route('POST', '/api/session-rules/:id/restore', (req, res, params, body) => {
     }
     throw err;
   }
-}, { signedInOperator: { action: 'restore a session rule' } });
+}, { signedInOperator: { action: 'restore a session rule' }, gatedAction: 'session-rule-write' });
 
 // GET /api/system
 route('GET', '/api/system', (_req, res) => {
@@ -5537,7 +5537,7 @@ function registerMedusaRoutes(prefix, resolve) {
     // read as "we looked and found nothing" for a path that never looked.
     const status = medusa.getStatus(target.sessionId);
     jsonResponse(res, 200, bridge ? { ...status, bridge } : status);
-  });
+  }, { gatedAction: 'medusa-listener' });
 
   // GET <prefix>/messages — the received inbox (MED-2K9P Chunk 02). It never
   // marks mail handled or clears unread. For any other reader it records a
@@ -5619,7 +5619,7 @@ function registerMedusaRoutes(prefix, resolve) {
       if (readerProjectId) controlApi.noticesHandled(ids, readerProjectId);
     }
     jsonResponse(res, 200, medusa.getStatus(sessionId));
-  });
+  }, { gatedAction: 'medusa-ack' });
 
   // GET <prefix>/deliveries — what became of every nudge for this participant's
   // inbox (#792). The route exists so "was this session ever told about its
@@ -5719,7 +5719,7 @@ function registerMedusaRoutes(prefix, resolve) {
       sessionId: r.target.sessionId, senderProjectId, caller: exchangeCaller(req, senderProjectId), body
     });
     jsonResponse(res, out.status, out.body);
-  }, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES });
+  }, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES, gatedAction: 'medusa-send' });
 
   // GET <prefix>/exchanges — this participant's Medusa exchanges (#1839):
   // `?direction=sent` (default) or `received`, `?open=1` for unfinished only.
@@ -5778,7 +5778,7 @@ function registerMedusaRoutes(prefix, resolve) {
     } catch (err) {
       exchangeRefusal(res, err);
     }
-  });
+  }, { gatedAction: 'exchange-close' });
 
   // POST <prefix>/messages/:hubId/retract — the sender retracts a message
   // nobody has read yet (#1873). Only a verified launch of the sending
@@ -5822,7 +5822,7 @@ function registerMedusaRoutes(prefix, resolve) {
       }
     }
     jsonResponse(res, 200, { exchange: medusaExchanges.view(retracted) });
-  });
+  }, { gatedAction: 'medusa-retract' });
 
   // POST <prefix>/loop — open a Medusa loop to a target workspace (MED-2K9P v2
   // T3, the setup modal's launch). Body `{ target, task, doneCriteria, mode,
@@ -5851,7 +5851,7 @@ function registerMedusaRoutes(prefix, resolve) {
     } catch (err) {
       errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_LOOP_FAILED');
     }
-  }, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES });
+  }, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES, gatedAction: 'medusa-loop' });
 
   // POST <prefix>/loops/:loopId/force-done — the human kill-switch on a loop
   // this participant initiated (MED-2K9P v2 T4). Rides the Bridge's
@@ -5872,7 +5872,7 @@ function registerMedusaRoutes(prefix, resolve) {
     } catch (err) {
       errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_FORCE_DONE_FAILED');
     }
-  });
+  }, { gatedAction: 'medusa-loop' });
 
   // POST <prefix>/loops/:loopId/continue — send an initiator FEEDBACK round to
   // continue a supervised loop this participant initiated (TC#561 — the
@@ -5891,7 +5891,7 @@ function registerMedusaRoutes(prefix, resolve) {
     } catch (err) {
       errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_CONTINUE_FAILED');
     }
-  }, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES });
+  }, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES, gatedAction: 'medusa-loop' });
 
   // POST <prefix>/loops/:loopId/closeout — the SATISFIED closeout of a loop
   // this participant initiated (TC#561 — the CLOSEOUT half of the control
@@ -5910,7 +5910,7 @@ function registerMedusaRoutes(prefix, resolve) {
     } catch (err) {
       errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_CLOSEOUT_FAILED');
     }
-  });
+  }, { gatedAction: 'medusa-loop' });
 }
 
 registerMedusaRoutes('/api/sessions/:project/medusa', resolveProjectMedusaTarget);
@@ -5993,7 +5993,7 @@ function controlRoute(method, pattern, fn, gatedAction = null, options) {
     }
     jsonResponse(res, out.status, out.body);
     if (out.notify) controlApi.notify(out.notify);
-  }, options);
+  }, gatedAction ? { ...options, gatedAction } : options);
 }
 
 controlRoute('GET', '/api/control/assignments', (req) => controlApi.listOpen(req));
@@ -6010,6 +6010,10 @@ controlRoute('POST', '/api/control/assignments/:id/ack', (req, params, body) => 
 controlRoute('POST', '/api/control/assignments/:id/exchange-closed', (req, params, body) => controlApi.closeExchange(req, params, body), 'control-mutate');
 controlRoute('GET', '/api/control/mine', (req) => controlApi.mine(req));
 controlRoute('GET', '/api/control/check', (req) => controlApi.check(parseQuery(reqUrl(req).search)));
+
+// Durable interactive decision requests (#2037): the handlers and schema live
+// in lib/decision-routing.js, which owns its own storage; nothing here is shared.
+require('./lib/decision-routing').register();
 
 // ── Merge queue (#2322): make a queue, submit, read, withdraw, advance, record the Operator gate, clear a halt ──
 //

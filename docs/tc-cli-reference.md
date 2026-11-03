@@ -18,7 +18,7 @@ tc --help
 
 ## Command families at a glance
 
-This page lists every top-level verb `tc --help` shows, including the restricted ones. The tables below say what each command does. `queue`, `check`, `usage` and `model` are left out of the verb list a launched session is primed with, and so is `candidate` unless the operator has the bridge on and has told every session about candidates; `tc --help` lists all of them either way.
+This page lists every top-level verb `tc --help` shows, including the restricted ones. The tables below say what each command does. `queue`, `check`, `usage`, `model` and `decision` are left out of the verb list a launched session is primed with, and so is `candidate` unless the operator has the bridge on and has told every session about candidates; `tc --help` lists all of them either way.
 
 | Family | Purpose |
 | --- | --- |
@@ -28,6 +28,7 @@ This page lists every top-level verb `tc --help` shows, including the restricted
 | `control` | Inspect or, with authority, change durable HOLD/STOP state. |
 | `start` | Read and attest launch context; re-read it after a clear. |
 | `workload` | Report this session's work and clearance state. |
+| `decision` | Record, read and answer a durable interactive decision this lane is blocked on. |
 | `rotation`, `finalize` | Govern coordinator context rotation and session retirement. |
 | `branch` | Check whether a branch can be retired safely. |
 | `queue`, `check` | Use the merge queue, and watch a named check on an exact commit. |
@@ -216,6 +217,15 @@ Optional `workload set` metadata:
 --branch <name>
 --head <sha>
 ```
+
+## Durable interactive decisions
+
+| Command | What it does |
+| --- | --- |
+| `tc decision ask --prompt "<text>" --choice <c> [--choice <c> ...] --gate <gate> --authority <human\|architect\|pm\|role-based\|autonomous-within-lease> --ttl <ms>` | Records a durable decision this lane is blocked on, bound to a prompt digest. `--recommendation`, `--head` and `--reversible` are optional; `--request-id` makes a retry idempotent. |
+| `tc decision list [--state waiting_decision\|answered\|expired\|superseded]` | Lists this session's decision requests, newest first. |
+| `tc decision show <decision-id>` | Shows one decision request, its choices, prompt digest and (once answered) its answer and rationale. |
+| `tc decision answer <decision-id> --answer "<text>" --digest <prompt-digest>` | Answers a decision bound to its exact prompt digest. The Operator alone may answer, for every authority class including `autonomous-within-lease` — no self-answer path exists today. `--rationale` records why, for the audit trail. |
 
 ## Managed coordinator rotation
 
