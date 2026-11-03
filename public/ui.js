@@ -7440,6 +7440,8 @@ function toggleFleetRecovery() {
 // parse time rather than fail visibly. `let` plus the guard in each reader
 // makes the ordering a non-issue instead of a rule someone has to remember.
 let masterBar = null;
+/** Same declare-above-first-reader reasoning as `masterBar` (#2819). */
+let advisorBar = null;
 
 function setMasterStatus(status, text, showRetry) {
   // The header BUTTON's dot stays here — it sits outside the panel and has no
@@ -7515,6 +7517,98 @@ function attachMasterFrame() {
   window.tcWireTerminalFrame(window, frame,
     () => (state.config && state.config.theme) || 'dark');
   frame.src = '/terminal/?arg=tangleclaw-master';
+}
+
+// ── Advisor (Morpheus) panel (#2819) ──
+// Mirrors the Master panel's launch-on-first-open lifecycle one section up,
+// trimmed to what the Advisor actually has: no access level, so no
+// `loadAccess`/`setAccess` call anywhere below.
+
+/**
+ * Paint the Advisor status dot (header button) and the bar's status line.
+ * @param {string} status - 'live' | 'pending' | 'down' | '' (unknown/neutral)
+ * @param {string} [text] - Status line shown in the panel row
+ */
+function setAdvisorStatus(status, text) {
+  const dot = document.getElementById('advisorDot');
+  if (dot) {
+    dot.classList.remove('live', 'pending', 'down');
+    if (status) dot.classList.add(status);
+  }
+  if (advisorBar) advisorBar.setStatus(status, text);
+}
+
+/**
+ * Toggle the Advisor panel open/closed. Opening triggers the
+ * ensure-then-attach flow (launch on first open, then persist).
+ */
+function toggleAdvisor() {
+  state.advisorOpen = !state.advisorOpen;
+  const panel = document.getElementById('advisorPanel');
+  const toggle = document.getElementById('advisorToggle');
+  panel.classList.toggle('open', state.advisorOpen);
+  toggle.classList.toggle('active', state.advisorOpen);
+  toggle.setAttribute('aria-expanded', state.advisorOpen);
+  if (state.advisorOpen) ensureAdvisorAttached();
+}
+
+/**
+ * Ensure the Advisor session exists, then attach the terminal iframe.
+ * Re-entrant-guarded; safe to re-run on every panel open, same reasoning as
+ * `ensureMasterAttached`.
+ * @returns {Promise<void>}
+ */
+async function ensureAdvisorAttached() {
+  if (state.advisorEnsuring) return;
+  state.advisorEnsuring = true;
+  setAdvisorStatus('pending', 'Starting Advisor session…');
+  const result = await api('/api/advisor/launch', { method: 'POST' });
+  state.advisorEnsuring = false;
+  if (!result) {
+    const unknown = api.lastErrorCode === 'ADVISOR_LIVENESS_UNKNOWN';
+    setAdvisorStatus(unknown ? '' : 'down', api.lastError || 'Failed to start the Advisor session');
+    return;
+  }
+  setAdvisorStatus('live', result.created ? 'Advisor session started' : 'Advisor session live');
+  if (advisorBar) advisorBar.loadModel(result.engine || null);
+  attachAdvisorFrame();
+}
+
+/**
+ * Point the Advisor iframe at the ttyd attach URL (once per page load).
+ * Same shared readiness-retry pipeline every terminal surface gets.
+ */
+function attachAdvisorFrame() {
+  const frame = document.getElementById('advisorFrame');
+  if (frame.dataset.attached === 'true') return;
+  frame.dataset.attached = 'true';
+  window.tcWireTerminalFrame(window, frame,
+    () => (state.config && state.config.theme) || 'dark');
+  // Hardcoded the same way `attachMasterFrame` hardcodes 'tangleclaw-master':
+  // the reserved tmux session name is a stable constant
+  // (`lib/advisor.js`'s `ADVISOR_TMUX_SESSION`), not a per-install value.
+  frame.src = '/terminal/?arg=tangleclaw-advisor';
+}
+
+/**
+ * One-shot status probe at page load so the header dot reflects whether the
+ * Advisor session is already live before the panel is ever opened — same
+ * reasoning as `refreshMasterDot`, without the access/Medusa painting the
+ * Advisor has none of.
+ * @returns {Promise<void>}
+ */
+async function refreshAdvisorDot() {
+  const status = await api('/api/advisor/status');
+  if (!status) return;
+  if (advisorBar) advisorBar.loadModel((status.settings && status.settings.engine) || null);
+  if (status.exists) {
+    setAdvisorStatus('live');
+    return;
+  }
+  if (status.exists === null) {
+    const read = window.tcAdvisorRead(status);
+    setAdvisorStatus('', [read.why, read.remedy].filter(Boolean).join(' '));
+  }
 }
 
 /**
@@ -7652,15 +7746,29 @@ masterBar = window.tcCreateMasterControlBar({
 });
 masterBar.mount();
 
+// The Advisor control bar (#2819). Same component the session drawer mounts.
+advisorBar = window.tcCreateAdvisorControlBar({
+  doc: document,
+  rootId: 'advisorPanelBar',
+  prefix: 'advisorPanel',
+  api,
+  apiMutate,
+  esc,
+  onLaunch: ensureAdvisorAttached
+});
+advisorBar.mount();
+
 // ── Event Bindings ──
 
 const $ = (id) => document.getElementById(id);
 $('masterToggle').addEventListener('click', toggleMaster);
+$('advisorToggle').addEventListener('click', toggleAdvisor);
 // The component owns the modal end to end: this injects the markup (index.html
 // no longer carries it) and binds Close, Save and the Hard-rules delegation.
 // Only the gear above stays the dashboard's, because the affordance is.
 masterSettings.mount();
 refreshMasterDot();
+refreshAdvisorDot();
 $('portsToggle').addEventListener('click', togglePorts);
 $('usageToggle').addEventListener('click', toggleUsage);
 $('openclawToggle').addEventListener('click', toggleOpenclaw);

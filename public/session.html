@@ -157,6 +157,18 @@
       <button class="banner-btn" id="masterBtn" aria-label="Open Project Master" aria-expanded="false"
               aria-controls="masterDrawer"
               title="Project Master — the global assistant above all projects; what it may write is the access level on its control bar">&#129504;</button>
+      <!-- #2819: the same minimal "round rimless sunglasses" glyph as the
+           dashboard's Advisor button — see index.html's comment beside it. -->
+      <button class="banner-btn" id="advisorBtn" aria-label="Open Advisor" aria-expanded="false"
+              aria-controls="advisorDrawer"
+              title="Advisor (Morpheus) — a second global role, always zero-privilege: tool-stripped at launch, its own filesystem sandbox, never session launch/kill/wrap or any route outside its own API (#2819)">
+        <svg class="advisor-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="7" cy="12" r="5" fill="currentColor"/>
+          <circle cx="17" cy="12" r="5" fill="currentColor"/>
+          <path d="M12 12h0" stroke="currentColor" stroke-width="2"/>
+          <path d="M2 11c0-1 1-2 2-2M22 11c0-1-1-2-2-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </button>
       <!-- U+FE0F asks for the emoji gear: the bare U+2699 is a text glyph and
            drew far smaller than the emoji brain beside it (#1476). -->
       <button class="banner-btn" id="settingsBtn" aria-label="Session settings">&#9881;&#65039;</button>
@@ -302,6 +314,27 @@
     <div class="master-status-row" id="masterDrawerBar"></div>
     <div class="master-drawer-frame-wrap">
       <iframe id="masterDrawerFrame" class="master-drawer-frame" title="Project Master terminal"></iframe>
+    </div>
+  </aside>
+
+  <!-- Advisor (Morpheus) Drawer — #2819. Reach the global, always
+       zero-privilege Advisor role without leaving the session. Reuses
+       Master's drawer/frame CSS classes (generic layout) rather than
+       duplicating them; only the ids differ. The iframe src is set by
+       session.js ONLY after POST /api/advisor/launch succeeds. -->
+  <div class="drawer-backdrop" id="advisorBackdrop"></div>
+  <aside class="master-drawer" id="advisorDrawer" role="dialog" aria-label="Advisor" aria-modal="true">
+    <div class="drawer-handle" aria-hidden="true"></div>
+    <div class="master-drawer-header">
+      <span class="master-drawer-title">Advisor</span>
+      <button class="banner-btn" id="advisorCloseBtn" aria-label="Close Advisor">&times;</button>
+    </div>
+    <!-- The Advisor control bar (#2819) renders here, from the same
+         component the dashboard panel uses — single-sourced in
+         `tcCreateAdvisorControlBar` so a change reaches both surfaces. -->
+    <div class="master-status-row" id="advisorDrawerBar"></div>
+    <div class="master-drawer-frame-wrap">
+      <iframe id="advisorDrawerFrame" class="master-drawer-frame" title="Advisor terminal"></iframe>
     </div>
   </aside>
 

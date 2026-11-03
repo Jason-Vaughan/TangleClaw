@@ -96,6 +96,9 @@ let masterSettings = null;
 // from well above its mount site.
 let masterBar = null;
 
+// The Advisor control bar (#2819) — same reasoning as `masterBar` above.
+let advisorBar = null;
+
 // Serializes the update-and-restart against itself. The dashboard shares this
 // latch with its #235 stale-server restart button; this page has no such
 // button, so the beacon is its only holder.
@@ -3199,6 +3202,74 @@ function attachMasterDrawerFrame() {
   window.tcWireTerminalFrame(window, frame,
     () => (sessionState.config && sessionState.config.theme) || 'dark');
   frame.src = '/terminal/?arg=tangleclaw-master';
+}
+
+// ── Advisor (Morpheus) Drawer (#2819) ──
+// Mirrors the Master drawer one section up, trimmed to what the Advisor
+// actually has: no access level, so no `loadAccess` call anywhere below.
+
+/**
+ * Paint the Advisor drawer's status line via the bar.
+ * @param {string} status - 'live' | 'pending' | 'down' | '' (unknown/neutral)
+ * @param {string} [text] - Status line
+ */
+function setAdvisorDrawerStatus(status, text) {
+  if (advisorBar) advisorBar.setStatus(status, text);
+}
+
+/**
+ * Open the Advisor drawer and run the ensure-then-attach flow.
+ */
+function openAdvisorDrawer() {
+  sessionState.advisorOpen = true;
+  document.getElementById('advisorBackdrop').classList.add('open');
+  document.getElementById('advisorDrawer').classList.add('open');
+  document.getElementById('advisorBtn').setAttribute('aria-expanded', 'true');
+  ensureAdvisorDrawerAttached();
+}
+
+/**
+ * Close the Advisor drawer. The Advisor session persists — closing only
+ * hides the surface.
+ */
+function closeAdvisorDrawer() {
+  sessionState.advisorOpen = false;
+  document.getElementById('advisorBackdrop').classList.remove('open');
+  document.getElementById('advisorDrawer').classList.remove('open');
+  document.getElementById('advisorBtn').setAttribute('aria-expanded', 'false');
+}
+
+/**
+ * Ensure the Advisor session exists, then attach the terminal iframe.
+ * Re-entrant-guarded, same reasoning as `ensureMasterDrawerAttached`.
+ * @returns {Promise<void>}
+ */
+async function ensureAdvisorDrawerAttached() {
+  if (sessionState.advisorEnsuring) return;
+  sessionState.advisorEnsuring = true;
+  setAdvisorDrawerStatus('pending', 'Starting Advisor session…');
+  const result = await api('/api/advisor/launch', { method: 'POST' });
+  sessionState.advisorEnsuring = false;
+  if (!result) {
+    const unknown = api.lastErrorCode === 'ADVISOR_LIVENESS_UNKNOWN';
+    setAdvisorDrawerStatus(unknown ? '' : 'down', api.lastError || 'Failed to start the Advisor session');
+    return;
+  }
+  setAdvisorDrawerStatus('live', result.created ? 'Advisor session started' : 'Advisor session live');
+  if (advisorBar) advisorBar.loadModel(result.engine || null);
+  attachAdvisorDrawerFrame();
+}
+
+/**
+ * Point the Advisor drawer iframe at the ttyd attach URL (once per page load).
+ */
+function attachAdvisorDrawerFrame() {
+  const frame = document.getElementById('advisorDrawerFrame');
+  if (frame.dataset.attached === 'true') return;
+  frame.dataset.attached = 'true';
+  window.tcWireTerminalFrame(window, frame,
+    () => (sessionState.config && sessionState.config.theme) || 'dark');
+  frame.src = '/terminal/?arg=tangleclaw-advisor';
 }
 
 // ── Terminal Setup ──
@@ -7903,6 +7974,21 @@ function bindEvents() {
     onOpenSettings: () => { masterBar.setError(''); masterSettings.open(); }
   });
   masterBar.mount();
+
+  // The Advisor control bar (#2819). Same component as the dashboard panel.
+  advisorBar = window.tcCreateAdvisorControlBar({
+    doc: document,
+    rootId: 'advisorDrawerBar',
+    prefix: 'advisorDrawer',
+    api,
+    apiMutate,
+    esc,
+    onLaunch: ensureAdvisorDrawerAttached
+  });
+  advisorBar.mount();
+  $('advisorBtn').addEventListener('click', openAdvisorDrawer);
+  $('advisorCloseBtn').addEventListener('click', closeAdvisorDrawer);
+  $('advisorBackdrop').addEventListener('click', closeAdvisorDrawer);
 
   // Close banner popovers on outside click; see `onBannerOutsideClick`.
   bindPillDetails();
