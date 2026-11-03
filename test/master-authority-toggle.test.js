@@ -96,6 +96,76 @@ describe('syncMedusaToggleSettings', () => {
   });
 });
 
+// I-Gate Round 1 (#5757326704) + A1677 Completion Addendum (#6611205452):
+// the richer object-input contract, alongside the original flat one above.
+describe('resolveMedusaToggleState -- addendum contract (object input)', () => {
+  it('reproduces the review\'s exact repro: persisted false/false, a live session override, and an unsaved draft', () => {
+    const r = mts.resolveMedusaToggleState({
+      persistedConfig: { medusaEnabled: false, medusaWake: false },
+      runtimeListener: { enabled: true },
+      draftForm: { medusaEnabled: true }
+    });
+    assert.equal(r.persistedEnabled, false, 'never masks persisted false as saved true');
+    assert.equal(r.sessionOverrideActive, true);
+    assert.equal(r.drifted, true);
+    assert.ok(r.driftReasons.includes('session-override-enabled'));
+    assert.ok(r.driftReasons.includes('draft-unsaved-enabled'));
+  });
+
+  it('effectiveEnabled/effectiveWake stay pinned to persisted, never to the live listener or an unsaved draft', () => {
+    const r = mts.resolveMedusaToggleState({
+      persistedConfig: { medusaEnabled: false, medusaWake: false },
+      runtimeListener: { enabled: true },
+      draftForm: { medusaEnabled: true, medusaWake: true }
+    });
+    assert.equal(r.effectiveEnabled, false);
+    assert.equal(r.effectiveWake, false);
+  });
+
+  it('a live listener running BECAUSE persisted is already true is not reported as a session override', () => {
+    const r = mts.resolveMedusaToggleState({
+      persistedConfig: { medusaEnabled: true },
+      runtimeListener: { enabled: true }
+    });
+    assert.equal(r.sessionOverrideActive, false, 'ordinary operation, not an override of anything');
+    assert.equal(r.drifted, false);
+  });
+
+  it('intentional opt-out (false/false) with no listener and no draft is reported with zero drift', () => {
+    const r = mts.resolveMedusaToggleState({ persistedConfig: { medusaEnabled: false, medusaWake: false } });
+    assert.equal(r.drifted, false);
+    assert.deepEqual(r.driftReasons, []);
+  });
+
+  it('a draft matching the persisted value is not reported as unsaved drift', () => {
+    const r = mts.resolveMedusaToggleState({
+      persistedConfig: { medusaEnabled: true, medusaWake: false },
+      draftForm: { medusaEnabled: true, medusaWake: false }
+    });
+    assert.equal(r.drifted, false);
+  });
+
+  it('an empty/missing input dispatches to the object contract, not the flat one, and never throws', () => {
+    assert.deepEqual(mts.resolveMedusaToggleState({ persistedConfig: {} }), {
+      persistedEnabled: false, persistedWake: false, effectiveEnabled: false, effectiveWake: false,
+      sessionOverrideActive: false, drifted: false, driftReasons: []
+    });
+  });
+});
+
+describe('syncMedusaToggleSettings -- addendum contract (object input)', () => {
+  it('applies a patch over a persisted config via {persistedConfig, patch}', () => {
+    const next = mts.syncMedusaToggleSettings({ persistedConfig: { medusaEnabled: false, medusaWake: true }, patch: { medusaEnabled: true } });
+    assert.deepEqual(next, { medusaEnabled: true, medusaWake: true });
+  });
+
+  it('gives the identical result as the original two-argument contract for the same inputs', () => {
+    const viaOriginal = mts.syncMedusaToggleSettings({ medusaEnabled: false }, { medusaWake: true });
+    const viaAddendum = mts.syncMedusaToggleSettings({ persistedConfig: { medusaEnabled: false }, patch: { medusaWake: true } });
+    assert.deepEqual(viaOriginal, viaAddendum);
+  });
+});
+
 describe('reconcileMasterAccessConfigPatch (#2823)', () => {
   it('stamps lifecycleGeneration/updatedAt/updatedBy for an ordinary read-only -> write patch (Done-When 1)', () => {
     const next = masterAuthority.reconcileMasterAccessConfigPatch(
@@ -168,5 +238,30 @@ describe('reconcileMasterAccessConfigPatch (#2823)', () => {
     masterAuthority.reconcileMasterAccessConfigPatch(current, patch, { actor: 'operator' });
     assert.deepEqual(current, { accessLevel: 'read-only' });
     assert.deepEqual(patch, { accessLevel: 'write' });
+  });
+
+  // I-Gate Round 1 (#5757326704) blocker: a patch-supplied lifecycleGeneration
+  // let the monotonic generation regress instead of always advancing from
+  // the trusted current record.
+  it('never lets a patch-supplied lifecycleGeneration regress the trusted current one', () => {
+    const current = { accessLevel: 'write', lifecycleGeneration: 5, lifecycleUpdatedAt: '2026-01-01T00:00:00.000Z', lifecycleUpdatedBy: 'operator' };
+    const result = masterAuthority.reconcileMasterAccessConfigPatch(current, { lifecycleGeneration: 0 }, { actor: 'operator' });
+    assert.equal(result.lifecycleGeneration, 5, 'nothing needed reconciling -- the bogus patch field is ignored outright');
+  });
+
+  it('advances from the trusted current generation, not a patch-supplied one, when a real change IS being reconciled', () => {
+    const current = { accessLevel: 'write', lifecycleGeneration: 5, lifecycleUpdatedAt: '2026-01-01T00:00:00.000Z', lifecycleUpdatedBy: 'operator' };
+    const result = masterAuthority.reconcileMasterAccessConfigPatch(
+      current, { accessLevel: 'read-only', lifecycleGeneration: 0 }, { actor: 'operator' });
+    assert.equal(result.lifecycleGeneration, 6, 'advanced from the real prior generation (5), never from the patch\'s 0');
+  });
+
+  it('never lets a patch smuggle in a forged lifecycleUpdatedBy/lifecycleUpdatedAt either', () => {
+    const current = { accessLevel: 'write', lifecycleGeneration: 5, lifecycleUpdatedAt: '2026-01-01T00:00:00.000Z', lifecycleUpdatedBy: 'operator' };
+    const result = masterAuthority.reconcileMasterAccessConfigPatch(
+      current, { accessLevel: 'read-only', lifecycleUpdatedBy: 'forged-actor', lifecycleUpdatedAt: '2020-01-01T00:00:00.000Z' },
+      { actor: 'the-real-operator' });
+    assert.equal(result.lifecycleUpdatedBy, 'the-real-operator', 'only options.actor may ever name who authorized this');
+    assert.notEqual(result.lifecycleUpdatedAt, '2020-01-01T00:00:00.000Z');
   });
 });

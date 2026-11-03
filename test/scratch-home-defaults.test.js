@@ -61,3 +61,47 @@ describe('resolveDefaultProjectsDir', () => {
     assert.ok(r.defaultProjectsDir.startsWith('/tmp/tc-scratch-xyz'));
   });
 });
+
+// I-Gate Round 1 (#5757326704) + A2604 Completion Addendum (#6611205754):
+// the richer object-input contract, alongside the original positional one.
+describe('isScratchTangleclawHome', () => {
+  it('agrees with isScratchHome for the same inputs, object-shaped', () => {
+    assert.equal(shd.isScratchTangleclawHome({ tangleclawHome: '/tmp/tc-scratch-xyz', osHomedir: REAL_HOME }), true);
+    assert.equal(shd.isScratchTangleclawHome({ tangleclawHome: path.join(REAL_HOME, '.tangleclaw'), osHomedir: REAL_HOME }), false);
+  });
+});
+
+describe('resolveDefaultProjectsDir -- addendum contract (object input)', () => {
+  it('reproduces the review\'s exact scratch-default repro: never falls back to ~/Projects', () => {
+    const r = shd.resolveDefaultProjectsDir({ tangleclawHome: '/tmp/tc-scratch-xyz', osHomedir: REAL_HOME });
+    assert.equal(r.defaultProjectsDir, '/tmp/tc-scratch-xyz/projects');
+    assert.notEqual(r.defaultProjectsDir, '~/Projects');
+  });
+
+  it('honors an explicit custom projectsDir override even under a scratch home', () => {
+    const r = shd.resolveDefaultProjectsDir({ configuredProjectsDir: '/custom/projects', tangleclawHome: '/tmp/tc-scratch-xyz', osHomedir: REAL_HOME });
+    assert.equal(r.defaultProjectsDir, '/custom/projects');
+    assert.equal(r.isScratch, true, 'still reports scratch -- the override is honored, not pretended away');
+  });
+
+  it('honors an explicit custom projectsDir override under the canonical home too', () => {
+    const r = shd.resolveDefaultProjectsDir({ configuredProjectsDir: '/custom/projects', tangleclawHome: path.join(REAL_HOME, '.tangleclaw'), osHomedir: REAL_HOME });
+    assert.equal(r.defaultProjectsDir, '/custom/projects');
+  });
+
+  it('a configuredProjectsDir that is still the stock default does not count as a custom override', () => {
+    const r = shd.resolveDefaultProjectsDir({ configuredProjectsDir: '~/Projects', tangleclawHome: '/tmp/tc-scratch-xyz', osHomedir: REAL_HOME });
+    assert.equal(r.defaultProjectsDir, '/tmp/tc-scratch-xyz/projects', 'the stock default is treated as unset, not as an operator override');
+  });
+
+  it('preserves the canonical default under the canonical home, unchanged', () => {
+    const r = shd.resolveDefaultProjectsDir({ tangleclawHome: path.join(REAL_HOME, '.tangleclaw'), osHomedir: REAL_HOME });
+    assert.equal(r.defaultProjectsDir, '~/Projects');
+  });
+
+  it('gives the identical result as the original positional contract for the same inputs', () => {
+    const viaPositional = shd.resolveDefaultProjectsDir('/tmp/tc-scratch-xyz', REAL_HOME);
+    const viaAddendum = shd.resolveDefaultProjectsDir({ tangleclawHome: '/tmp/tc-scratch-xyz', osHomedir: REAL_HOME });
+    assert.deepEqual(viaPositional, viaAddendum);
+  });
+});
