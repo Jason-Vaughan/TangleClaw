@@ -61,6 +61,17 @@ describe('tc control (#1861)', () => {
     assert.match(renderControlStatus({ assignment: null }), /No open control assignment/);
   });
 
+  it('status surfaces a timed-out pause, and a fresh one, but says nothing once acked (#2109 PRR-B Round 3)', () => {
+    const timedOut = renderControlStatus({ ...HELD, assignment: { ...HELD.assignment, pauseTimeout: { acked: false, ageMs: 20 * 60000, timedOut: true } } });
+    assert.match(timedOut, /Safe-boundary pause: unacknowledged \(20 min ago\) and TIMED OUT/);
+
+    const fresh = renderControlStatus({ ...HELD, assignment: { ...HELD.assignment, pauseTimeout: { acked: false, ageMs: 60000, timedOut: false } } });
+    assert.match(fresh, /Safe-boundary pause: unacknowledged \(1 min ago\), not yet timed out/);
+
+    const acked = renderControlStatus({ ...HELD, assignment: { ...HELD.assignment, pauseTimeout: { acked: true, ageMs: 60000, timedOut: false } } });
+    assert.doesNotMatch(acked, /Safe-boundary pause/);
+  });
+
   it('hold and release send a fresh request id and the fields the API needs', async () => {
     const h = fakeCtx(['hold', 'asg_1', 'boundary']);
     await control.run(h.ctx);
