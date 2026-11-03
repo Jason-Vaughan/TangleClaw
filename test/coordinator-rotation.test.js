@@ -1547,12 +1547,15 @@ describe('coordinator context rotation (#2032)', () => {
       channel();
       const rot = (await prepare({ mode: 'relaunch' })).body.rotation;
       endOld();
-      checkout = { ok: false, reason: 'deadline' };
+      checkout = { ok: false, reason: 'deadline', cause: 'timed out waiting for git' };
       const r = await rotation.claimRelaunch({ caller: operator, body: { rotationId: rot.rotationId } }, relaunchDeps());
       assert.equal(r.body.code, 'ROTATION_CHECKOUT_UNAVAILABLE');
+      assert.match(r.body.error, /deadline: timed out waiting for git/,
+        'the fingerprint cause (#2034 item 4) must reach this refusal too, not just prepare\'s');
       const stored = store.coordinatorRotations.get(rot.rotationId);
       assert.equal(stored.state, 'fenced');
       assert.equal(stored.sessionId, session.id, 'nothing was bound to the successor');
+      assert.match(stored.failureDetail, /deadline: timed out waiting for git/);
     });
 
     it('a successor that cannot be bound stays unclaimed, with the reason on the rotation', async () => {
@@ -1670,8 +1673,11 @@ describe('coordinator context rotation (#2032)', () => {
     it('prepare refuses an unfingerprintable checkout or an important ignored file it cannot hash', async () => {
       await serve();
       channel();
-      checkout = { ok: false, reason: 'status-unreadable' };
-      assert.equal((await prepare()).body.code, 'ROTATION_CHECKOUT_UNAVAILABLE');
+      checkout = { ok: false, reason: 'status-unreadable', cause: 'fatal: simulated git failure' };
+      const unavailable = await prepare();
+      assert.equal(unavailable.body.code, 'ROTATION_CHECKOUT_UNAVAILABLE');
+      assert.match(unavailable.body.error, /status-unreadable: fatal: simulated git failure/,
+        'the fingerprint cause (#2034 item 4) must reach the real refusal message, not just the unit-tested seam');
       checkout = { ok: true, fingerprint: { ...cleanCheckout(), importantIgnored: { '.env': 'unavailable:not-ignored' } } };
       const r = await prepare({ checkpoint: checkpoint({ branch: { head: HEAD, ref: 'main', ownedDirt: [], importantIgnored: ['.env'] } }) });
       assert.equal(r.body.code, 'ROTATION_IGNORED_FILE_UNAVAILABLE');
@@ -1697,11 +1703,11 @@ describe('coordinator context rotation (#2032)', () => {
     it('a checkout that cannot be observed at resume keeps the fence up as unavailable evidence', async () => {
       const rot = await toReconciling();
       workloadReceipt();
-      checkout = { ok: false, reason: 'diff-unreadable' };
+      checkout = { ok: false, reason: 'diff-unreadable', cause: 'fatal: simulated git failure' };
       const body = { rotationId: rot.rotationId, attemptKey: rot.attemptKey, generation: rot.generation, resumeNonce: nonce(), receipt: receipt(rot) };
       const r = await rotation.resume({ access: access(), threadId: NEXT, body }, deps());
       assert.equal(r.body.code, 'ROTATION_EVIDENCE_UNAVAILABLE');
-      assert.deepEqual(store.coordinatorRotations.get(rot.rotationId).drift.unavailable, ['checkout: diff-unreadable']);
+      assert.deepEqual(store.coordinatorRotations.get(rot.rotationId).drift.unavailable, ['checkout: diff-unreadable: fatal: simulated git failure']);
     });
   });
 
