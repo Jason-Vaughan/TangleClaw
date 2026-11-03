@@ -1509,7 +1509,7 @@ describe('Medusa teardown is wired into EVERY session-end path (MED-2K9P Chunk 0
   }
 
   it('the tunnel-kill path (lib/routes/openclaw.js) forgets the killed webui session', () => {
-    assert.match(openclawRoutesSrc, /Tunnel killed from connection panel'\);[\s\S]{0,200}medusa\.forgetSession\(/);
+    assert.match(openclawRoutesSrc, /Tunnel killed from connection panel'[\s\S]{0,200}\);[\s\S]{0,200}medusa\.forgetSession\(/);
   });
 });
 

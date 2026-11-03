@@ -837,7 +837,9 @@ describe('the schema module and the facade seam (#2248)', () => {
     assert.doesNotMatch(schemaSrc, /require\(['"]\.\.\/store(\.js)?['"]\)/, 'the schema must not require lib/store.js');
     assert.doesNotMatch(schemaSrc, /require\(['"]\.\/index(\.js)?['"]\)/, 'nor a facade under another name');
     assert.match(schemaSrc, /projectConfigApi = deps \? deps\.projectConfigApi : null/, 'projectConfigApi arrives through _bind');
-    const bind = facadeSrc.indexOf('schema._bind({ db: _db, dbFile: _dbFile, projectConfigApi, SESSION_STATUS });');
+    const bind = facadeSrc.indexOf(
+      'schema._bind({ db: _db, dbFile: _dbFile, projectConfigApi, SESSION_STATUS, SESSION_STOP_SOURCES });'
+    );
     const create = facadeSrc.indexOf('\n  _createTables();');
     assert.ok(bind !== -1, 'the facade binds the schema');
     assert.ok(create !== -1 && bind < create, 'and does so before the chain runs');
