@@ -311,6 +311,13 @@
       "paths": [
         "lib/untrusted-pr-review.js"
       ]
+    },
+    "fleet-provisioning": {
+      "label": "area:fleet-provisioning",
+      "why": "Idempotent Fleet Group, shared LANE_QUEUE doc and Merge Queue bootstrap for a newly stood-up fleet or strike team (#2825, Ruling A2825) -- a real orchestration function over store.projectGroups/store.sharedDocs and (authority permitting) the Merge Queue, unlike this wave's other pure Slice 1 libraries. Owned by no other family.",
+      "paths": [
+        "lib/fleet-provisioning.js"
+      ]
     }
   },
   "shared": {
