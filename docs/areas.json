@@ -308,6 +308,16 @@
       "paths": [
         "lib/untrusted-pr-review.js"
       ]
+    },
+    "fleet-views": {
+      "label": "area:fleet-views",
+      "why": "Fleet and dashboard view projections for the landing page and Master fleet view (#349, #1923), opt-in switchboard auto-inject gating and swarm stats (#801), a visible project-version-cache write-failure diagnostic (#1046), and recorded test-suite duration stats (#1784) -- the `v5.60.0 Fleet and dashboard views` milestone's own Car 60-C. Distinct from `sessions`' `lib/workload*.js` (asserted lane availability for dispatch) and `medusa`'s `lib/medusa*.js` (the switchboard engine itself): these are read-only projections over already-fetched facts from both, built for display rather than dispatch. Owned by no other family; Slice 2 wiring into routes/UI is a tracked follow-up.",
+      "paths": [
+        "lib/fleet-workload-view.js",
+        "lib/switchboard-swarm-stats.js",
+        "lib/version-cache-diagnostic.js",
+        "lib/test-duration-stats.js"
+      ]
     }
   },
   "shared": {
