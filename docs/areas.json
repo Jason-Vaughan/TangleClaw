@@ -325,6 +325,14 @@
         "lib/test-duration-stats.js"
       ]
     },
+    "terminal-chrome": {
+      "label": "area:terminal-chrome",
+      "why": "Deterministic per-project visual identity for terminal views (#1573) and multi-file upload queue state with auto-appending Attachment Pills (#1577) -- the `v5.60.0 Fleet and dashboard views` milestone's Car 60-D pure libraries feeding the composer/terminal chrome. Distinct from `lib/uploads*.js` (`sessions` area: the real filesystem upload path these pill states will eventually drive) and from `dashboard-ux` (`public/**`, the DOM these feed): these are pure derivation/queue logic, not I/O or rendering. Owned by no other family; Slice 2 wiring into routes/UI is a tracked follow-up.",
+      "paths": [
+        "lib/terminal-identity.js",
+        "lib/upload-pills.js"
+      ]
+    },
     "resource-leases": {
       "label": "area:resource-leases",
       "why": "Runtime-enforced Resource Module leases and safe transitions (#2014), plus delegated-authority provision/retire of resource modules (#2071) — a pure state machine, co-hosted per Architect Rulings A2014/A2071's shared file envelope. Owned by no other family; Slice 2 wiring into routes/UI is a tracked follow-up.",
