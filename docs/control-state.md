@@ -151,6 +151,7 @@ POST /api/control/assignments                    {projectId, requestId, issueRef
 GET  /api/control/assignments                    every open assignment (operator only)
 GET  /api/control/assignments/:id                full status: assignment, holds, events with receipts
 POST /api/control/assignments/:id/hold           {requestId, reasonCode, expectedGeneration?}
+POST /api/control/pause                          {project, requestId, expectedGeneration?}        peer safe-boundary pause (#2109)
 POST /api/control/assignments/:id/release        {holdIds, expectedGeneration, requestId, reasonCode}
 POST /api/control/assignments/:id/stop           {requestId, reasonCode}
 POST /api/control/assignments/:id/close          {requestId, reasonCode}
@@ -187,9 +188,28 @@ carry commands, paths, launch ids or free-text reasons.
 tc control status                                    your lane, its holds, and whether shell git is intercepted here
 tc control ack <generation>                          acknowledge the state you saw
 tc control hold <assignment-id> <reason>             with authority (or on your own lane)
+tc control pause <project>                           peer safe-boundary pause (#2109) — needs authority.hold
+                                                      (or the operator, or on your own lane, same as hold)
 tc control release <assignment-id> <generation> <reason> <hold-id…>
 tc control stop <assignment-id> <reason>
 ```
+
+A pause's own direct pane nudge and its undelivered-nudge escalation (#1839's route, to whoever
+`authority.escalation.blocking` names) are each recorded as a `notify_attempted` receipt against the
+HOLD's event — the same durable shape every other control notice gets, so a failed or unreachable
+escalation leaves a record even when nobody receives a message (#2109 PRR-B Round 2). `GET
+/api/control/assignments/:id` and `/mine` carry the current HOLD's acknowledgement state as
+`assignment.pauseTimeout` (`null` unless the current HOLD is a peer pause): `{acked, ageMs,
+timedOut}`, the last computed against a 15-minute default — and evaluated across every ACTIVE hold
+on the assignment, not just the latest one, so an ordinary HOLD stacked on top of an unacknowledged
+pause never hides it (#2109 PRR-B Round 3).
+
+An unacknowledged pause also escalates automatically, not just readably (#2109 PRR-B Round 3): any
+status read of a HELD assignment (`GET /api/control/assignments/:id`, `/mine`, or the operator's
+`GET /api/control/assignments` list) durably observes a timed-out, unescalated peer-pause HOLD
+exactly once and sends the same escalation route a `[Pause timeout]` notice. There is no new
+background scheduler for this — status reads are frequent enough (every `tc control status`, every
+dashboard poll) to serve as the tick; a read that finds nothing new to escalate pays no extra write.
 
 Every other `tc` verb prints a one-line `HELD (gen N, k holds)` notice while your lane is held.
 This is visibility, not enforcement. A launch into a held lane says so in its launch context

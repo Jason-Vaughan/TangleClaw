@@ -6,7 +6,7 @@
 // is never a principal. Accepted means stored, before any notice is attempted,
 // and a notice that fails is recorded without undoing the command.
 
-const { describe, it, before, after, afterEach } = require('node:test');
+const { describe, it, before, beforeEach, after, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const fs = require('node:fs');
@@ -71,6 +71,7 @@ describe('/api/control (#1861)', () => {
   const rid = () => { n += 1; return `api-req-${n}`; };
   const origSend = controlApi._internal.sendSystemMessage;
   const origWs = controlApi._internal.workspaceIdFor;
+  const origPaneSeams = { ...controlApi._internal };
 
   const mkProject = (name) => {
     const dir = path.join(tmpDir, name);
@@ -102,6 +103,7 @@ describe('/api/control (#1861)', () => {
   after(async () => {
     controlApi._internal.sendSystemMessage = origSend;
     controlApi._internal.workspaceIdFor = origWs;
+    Object.assign(controlApi._internal, origPaneSeams);
     await new Promise((resolve) => server.close(resolve));
     store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -314,5 +316,365 @@ describe('/api/control (#1861)', () => {
     const cap = (r.data.capabilities || []).find((c) => c.id === 'control');
     assert.ok(cap && cap.enabled, r.raw.slice(0, 300));
     assert.match(cap.detail, /cannot block shell git\/gh/);
+  });
+
+  describe('POST /api/control/pause (#2109, Architect Ruling A26/A2109)', () => {
+    /**
+     * Bind a project's launch with a real tmux session name, so the pause
+     * nudge's pane-busy check has something to read — plain `bindProject`
+     * starts a session with no pane at all, which is the 'no-pane' case on
+     * its own and cannot exercise 'sent'/'deferred-busy'.
+     * @param {object} project
+     * @returns {{launchId: string, sessionId: number, headers: object}}
+     */
+    function bindProjectWithPane(project) {
+      const b = bindProject(project);
+      store.getDb().prepare('UPDATE sessions SET tmux_session = ? WHERE id = ?').run(`tc-test-${b.sessionId}`, b.sessionId);
+      return b;
+    }
+
+    /**
+     * A target project paused by PM, escalating to the Architect, with a
+     * real pane.
+     * @returns {Promise<{project: object, assignmentId: string, binding: object}>}
+     */
+    async function pausable() {
+      const project = mkProject(`pausable-${rid()}`);
+      const binding = bindProjectWithPane(project);
+      const res = await send(server, 'POST', '/api/control/assignments', {
+        projectId: project.id, requestId: rid(), issueRef: '#2109',
+        authority: { hold: [`project:${pm.id}`], escalation: { blocking: [`project:${architect.id}`] } }
+      }, op);
+      assert.equal(res.status, 201, res.raw);
+      return { project, assignmentId: res.data.assignment.assignmentId, binding };
+    }
+
+    beforeEach(() => {
+      Object.assign(controlApi._internal, origPaneSeams, {
+        sendSystemMessage: async () => ({ status: 'received' }),
+        workspaceIdFor: () => 'ws-builder',
+        wakeProfiles: () => ({ claude: { busyMarker: 'esc to interrupt', promptRe: /^> / } }),
+        capturePane: () => ({ lines: ['> '], alternateScreen: false }),
+        cursorInfo: () => null,
+        assessIdle: () => ({ idle: true, reason: 'at-prompt', digest: 'd', idleTicks: 1 }),
+        inject: () => ({ ok: true, error: null })
+      });
+    });
+
+    afterEach(() => { Object.assign(controlApi._internal, origPaneSeams); });
+
+    it('an authorized peer pauses; the hold is distinct from an ordinary hold, and the pane nudge is sent', async () => {
+      const { project, assignmentId } = await pausable();
+      const injected = [];
+      controlApi._internal.inject = (projectName, line, options) => { injected.push({ projectName, line, options }); return { ok: true, error: null }; };
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      assert.equal(r.status, 201, r.raw);
+      assert.equal(r.data.assignment.state, 'held');
+      assert.equal(r.data.nudge.status, 'sent');
+      assert.equal(injected.length, 1);
+      assert.equal(injected[0].projectName, project.name);
+      assert.equal(injected[0].options.controlExempt, 'medusa-wake', 'without this, injectCommand\'s own controlGate would refuse to type into the lane this just HELD');
+      const st = await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+      assert.equal(st.data.events.at(-1).reasonCode, 'peer-pause-request');
+    });
+
+    it('a peer with no hold authority is refused, and nothing is paused or typed', async () => {
+      const { project } = await pausable();
+      const injected = [];
+      controlApi._internal.inject = (...args) => { injected.push(args); return { ok: true, error: null }; };
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bArch.headers);
+      assert.equal(r.status, 403);
+      assert.equal(r.data.code, 'CONTROL_UNAUTHORIZED');
+      assert.equal(injected.length, 0);
+      const st = await send(server, 'GET', '/api/control/mine', null, bT.headers);
+      assert.equal(st.data.assignment, null, 'unrelated projects are unaffected');
+    });
+
+    it('a project with no open assignment at all is 404, never a parallel pause record', async () => {
+      const ungoverned = mkProject(`ungoverned-${rid()}`);
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: ungoverned.name }, bPM.headers);
+      assert.equal(r.status, 404);
+      assert.equal(r.data.code, 'ASSIGNMENT_NOT_FOUND');
+    });
+
+    it('a mid-turn (busy) target defers the pane nudge, escalates, and still blocks the next governed mutation', async () => {
+      const { project, assignmentId } = await pausable();
+      controlApi._internal.assessIdle = () => ({ idle: false, reason: 'turn-running', digest: 'd', idleTicks: 0 });
+      const escalations = [];
+      controlApi._internal.sendSystemMessage = async (m) => { escalations.push(m); return { status: 'received' }; };
+      const injected = [];
+      controlApi._internal.inject = (...args) => { injected.push(args); return { ok: true, error: null }; };
+
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      assert.equal(r.status, 201, r.raw);
+      assert.equal(r.data.nudge.status, 'deferred-busy');
+      assert.equal(r.data.nudge.reason, 'turn-running');
+      assert.equal(injected.length, 0, 'a busy pane is never typed into');
+
+      await settle();
+      // Two system messages: the ordinary control_changed notice every hold
+      // gets, and the pause's own escalation to the Architect (in
+      // authority.escalation.blocking, not authority.hold).
+      assert.ok(escalations.some((m) => /Pause escalation/.test(m.message) && m.to === 'ws-builder'));
+
+      // The durable HOLD still blocks the next governed mutation, worktree
+      // untouched: controlGate reads the committed state synchronously, no
+      // git command runs anywhere in this path.
+      const check = controlGate.checkMutation({ surface: 'wrap-commit', subject: { kind: 'target', projectId: project.id } });
+      assert.equal(check && check.code, 'CONTROL_HELD');
+      const st = await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+      assert.equal(st.data.assignment.state, 'held');
+    });
+
+    it('a delivered escalation is recorded durably against the HOLD event, distinct from the ordinary notice (#2109 PRR-B Round 2)', async () => {
+      const { project, assignmentId } = await pausable();
+      controlApi._internal.assessIdle = () => ({ idle: false, reason: 'turn-running', digest: 'd', idleTicks: 0 });
+      controlApi._internal.sendSystemMessage = async (m) => ({
+        status: 'received', id: /Pause escalation/.test(m.message) ? 'msg-escalation' : 'msg-ordinary'
+      });
+
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      assert.equal(r.data.nudge.status, 'deferred-busy');
+      await settle();
+
+      const st = await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+      const receipts = st.data.events.at(-1).receipts;
+      const notifyAttempts = receipts.filter((rc) => rc.fact === 'notify_attempted');
+      // status()'s receipt view deliberately doesn't expose notice_ref (no raw
+      // Medusa message ids over this read surface), so the two attempts read
+      // identically here -- the durable fact this proves is that BOTH the
+      // ordinary control_changed notice and the pause's own escalation
+      // attempt each left a 'sent' receipt against the HOLD's event, where
+      // before this fix the escalation attempt left none at all.
+      assert.equal(notifyAttempts.length, 2, `expected one receipt for the ordinary notice and one for the escalation, got: ${JSON.stringify(notifyAttempts)}`);
+      assert.ok(notifyAttempts.every((rc) => rc.outcomeCode === 'sent'));
+    });
+
+    it('an escalation with no configured principal still records no-recipient, so the operator dashboard has something to show (#2109 PRR-B Round 2)', async () => {
+      const project = mkProject(`no-escalation-route-${rid()}`);
+      bindProjectWithPane(project);
+      const res = await send(server, 'POST', '/api/control/assignments', {
+        projectId: project.id, requestId: rid(), issueRef: '#2109',
+        authority: { hold: [`project:${pm.id}`] } // no authority.escalation configured at all
+      }, op);
+      assert.equal(res.status, 201, res.raw);
+      const assignmentId = res.data.assignment.assignmentId;
+      controlApi._internal.assessIdle = () => ({ idle: false, reason: 'turn-running', digest: 'd', idleTicks: 0 });
+      const escalations = [];
+      controlApi._internal.sendSystemMessage = async (m) => {
+        if (/Pause escalation/.test(m.message)) escalations.push(m);
+        return { status: 'received', id: 'msg-x' };
+      };
+
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      assert.equal(r.data.nudge.status, 'deferred-busy');
+      await settle();
+      assert.equal(escalations.length, 0, 'nothing to send when no principal is configured for escalation');
+
+      const st = await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+      const receipts = st.data.events.at(-1).receipts;
+      assert.ok(
+        receipts.some((rc) => rc.fact === 'notify_attempted' && rc.outcomeCode === 'no-recipient'),
+        `expected a durable 'no-recipient' receipt for the escalation attempt, got: ${JSON.stringify(receipts)}`
+      );
+    });
+
+    it('a real pause HOLD reads as applicable/unacked via pauseAcknowledgementStatus, and times out past threshold (#2109 PRR-B Round 2)', async () => {
+      const { project, assignmentId } = await pausable();
+      const control = require('../lib/control-state');
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      assert.equal(r.data.nudge.status, 'sent');
+      const fresh = control.pauseAcknowledgementStatus(assignmentId, { thresholdMs: 60000 });
+      assert.equal(fresh.applicable, true);
+      assert.equal(fresh.acked, false);
+      assert.equal(fresh.timedOut, false);
+      const timedOut = control.pauseAcknowledgementStatus(assignmentId, { thresholdMs: 0, now: Date.now() + 1 });
+      assert.equal(timedOut.timedOut, true);
+    });
+
+    it('a status read escalates a timed-out pause exactly once (#2109 PRR-B Round 3)', async () => {
+      const { project, assignmentId } = await pausable();
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      const holdEventId = r.data.event.eventId;
+      await settle();
+      // control_events/control_receipts are both append-only (triggers refuse
+      // UPDATE/DELETE), so this moves the READER's clock forward instead of
+      // backdating the row -- controlApi._internal.now is the seam that buys.
+      controlApi._internal.now = () => Date.now() + 20 * 60 * 1000;
+
+      const escalations = [];
+      controlApi._internal.sendSystemMessage = async (m) => { escalations.push(m); return { status: 'received', id: 'msg-timeout' }; };
+
+      await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+      await settle();
+      assert.equal(escalations.filter((m) => /Pause timeout/.test(m.message)).length, 1);
+
+      // A second read must not re-escalate the same still-overdue HOLD.
+      await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+      await settle();
+      assert.equal(escalations.filter((m) => /Pause timeout/.test(m.message)).length, 1, 'the timeout escalation is not repeated on a later read');
+
+      const st = await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+      const receipts = st.data.events.find((e) => e.eventId === holdEventId).receipts;
+      assert.ok(receipts.some((rc) => rc.fact === 'observed' && rc.outcomeCode === 'pause-timeout'));
+    });
+
+    it('a project lookup that throws costs nothing: the timeout budget is not spent, and a later read still escalates (#2109 PRR-B Round 3)', async () => {
+      // Same stub-to-throw pattern as test/awareness-observability.test.js's
+      // "a claimed-project lookup failure never breaks the answer it serves".
+      const { project, assignmentId } = await pausable();
+      const holdEventId = (await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers)).data.event.eventId;
+      await settle();
+      controlApi._internal.now = () => Date.now() + 20 * 60 * 1000;
+
+      const escalations = [];
+      controlApi._internal.sendSystemMessage = async (m) => { escalations.push(m); return { status: 'received', id: 'msg-timeout' }; };
+      const realGet = store.projects.get;
+      store.projects.get = () => { throw new Error('synthetic store failure'); };
+      try {
+        const r1 = await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+        assert.equal(r1.status, 200, 'a project-lookup failure must not break the status read it serves');
+      } finally {
+        store.projects.get = realGet;
+      }
+      await settle();
+      assert.equal(escalations.length, 0, 'nothing escalated while the project lookup was failing');
+
+      // The lookup works again on this read: the budget must not have been
+      // spent by the failed attempt above, or this would silently find
+      // nothing new to observe and never escalate at all.
+      await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+      await settle();
+      assert.equal(escalations.filter((m) => /Pause timeout/.test(m.message)).length, 1, 'the escalation must still fire once the project lookup recovers');
+
+      const st = await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+      const receipts = st.data.events.find((e) => e.eventId === holdEventId).receipts;
+      assert.ok(receipts.some((rc) => rc.fact === 'observed' && rc.outcomeCode === 'pause-timeout'));
+    });
+
+    it('/api/control/mine also escalates a timed-out pause it reads, from the target\'s own side (#2109 PRR-B Round 3)', async () => {
+      const { project, binding } = await pausable();
+      await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      await settle();
+      controlApi._internal.now = () => Date.now() + 20 * 60 * 1000;
+
+      const escalations = [];
+      controlApi._internal.sendSystemMessage = async (m) => { escalations.push(m); return { status: 'received', id: 'msg-timeout' }; };
+
+      await send(server, 'GET', '/api/control/mine', null, binding.headers);
+      await settle();
+      assert.equal(escalations.filter((m) => /Pause timeout/.test(m.message)).length, 1);
+    });
+
+    it('a pane that cannot be captured defers and escalates, same as busy', async () => {
+      const { project } = await pausable();
+      controlApi._internal.capturePane = () => { throw new Error('pane vanished'); };
+      const escalations = [];
+      controlApi._internal.sendSystemMessage = async (m) => { escalations.push(m); return { status: 'received' }; };
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      assert.equal(r.status, 201, r.raw);
+      assert.equal(r.data.nudge.status, 'pane-capture-failed');
+      await settle();
+      assert.ok(escalations.some((m) => /Pause escalation/.test(m.message)));
+    });
+
+    it('a busy pane whose own escalation notice fails to send still returns 201 with the HOLD committed', async () => {
+      // Mirrors the sibling notify() failure path above ('accepted means
+      // stored...') for _escalateUndeliveredPause's own catch: a rejecting
+      // sendSystemMessage is fire-and-forget there too (a .catch on the
+      // promise, never awaited), so it must never surface as a thrown error
+      // or an unhandled rejection, and the durable HOLD must stand regardless.
+      const { project, assignmentId } = await pausable();
+      controlApi._internal.assessIdle = () => ({ idle: false, reason: 'turn-running', digest: 'd', idleTicks: 0 });
+      controlApi._internal.sendSystemMessage = async () => { throw Object.assign(new Error('bridge down'), { code: 'BRIDGE_UNREACHABLE' }); };
+      const injected = [];
+      controlApi._internal.inject = (...args) => { injected.push(args); return { ok: true, error: null }; };
+
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      assert.equal(r.status, 201, r.raw);
+      assert.equal(r.data.nudge.status, 'deferred-busy');
+      assert.equal(injected.length, 0, 'a busy pane is never typed into');
+
+      await settle();
+      const st = await send(server, 'GET', `/api/control/assignments/${assignmentId}`, null, op);
+      assert.equal(st.data.assignment.state, 'held', 'the HOLD stands regardless of escalation delivery');
+    });
+
+    it('never calls killSession, and never on a deferred-busy pause either', async () => {
+      const { project } = await pausable();
+      const sessions = require('../lib/sessions');
+      const originalKill = sessions.killSession;
+      let killed = false;
+      sessions.killSession = (...args) => { killed = true; return originalKill(...args); };
+      try {
+        controlApi._internal.assessIdle = () => ({ idle: false, reason: 'turn-running', digest: 'd', idleTicks: 0 });
+        await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+        assert.equal(killed, false);
+      } finally {
+        sessions.killSession = originalKill;
+      }
+    });
+
+    it('a target whose session already ended reports session-ended, and does not escalate', async () => {
+      // Unlike every other non-'sent' outcome, there is nobody left running to
+      // tell anyone about reaching: the HOLD still stands on the assignment,
+      // but a session that has already ended is not "undelivered to", it
+      // simply has no pane for anything to have reached.
+      const { project, binding } = await pausable();
+      store.sessions.kill(binding.sessionId, 'test');
+      const escalations = [];
+      controlApi._internal.sendSystemMessage = async (m) => { escalations.push(m); return { status: 'received' }; };
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      assert.equal(r.status, 201, r.raw);
+      assert.equal(r.data.nudge.status, 'session-ended');
+      await settle();
+      assert.ok(!escalations.some((m) => /Pause escalation/.test(m.message)), 'nothing to escalate about a session that is not running');
+    });
+
+    it('a target with no pane (webui, or no tmux session at all) defers and escalates', async () => {
+      // Plain bindProject (unlike bindProjectWithPane) starts a session with
+      // no tmux_session at all — the 'no-pane' case on its own.
+      const project = mkProject(`no-pane-${rid()}`);
+      bindProject(project);
+      const res = await send(server, 'POST', '/api/control/assignments', {
+        projectId: project.id, requestId: rid(), issueRef: '#2109',
+        authority: { hold: [`project:${pm.id}`], escalation: { blocking: [`project:${architect.id}`] } }
+      }, op);
+      assert.equal(res.status, 201, res.raw);
+      const escalations = [];
+      controlApi._internal.sendSystemMessage = async (m) => { escalations.push(m); return { status: 'received' }; };
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      assert.equal(r.status, 201, r.raw);
+      assert.equal(r.data.nudge.status, 'no-pane');
+      await settle();
+      assert.ok(escalations.some((m) => /Pause escalation/.test(m.message) && m.message.includes(`"${project.name}"`)));
+    });
+
+    it('an engine with no probed pane signature defers and escalates', async () => {
+      const { project } = await pausable();
+      controlApi._internal.wakeProfiles = () => ({});
+      const escalations = [];
+      controlApi._internal.sendSystemMessage = async (m) => { escalations.push(m); return { status: 'received' }; };
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      assert.equal(r.status, 201, r.raw);
+      assert.equal(r.data.nudge.status, 'unprofiled-engine');
+      await settle();
+      assert.ok(escalations.some((m) => /Pause escalation/.test(m.message)));
+    });
+
+    it('is safe to send twice: the replay does not re-attempt the pane nudge', async () => {
+      const { project } = await pausable();
+      const reqId = rid();
+      const injected = [];
+      controlApi._internal.inject = (...args) => { injected.push(args); return { ok: true, error: null }; };
+      const first = await send(server, 'POST', '/api/control/pause', { requestId: reqId, project: project.name }, bPM.headers);
+      assert.equal(first.data.nudge.status, 'sent');
+      assert.equal(injected.length, 1);
+      const second = await send(server, 'POST', '/api/control/pause', { requestId: reqId, project: project.name }, bPM.headers);
+      assert.equal(second.status, 200);
+      assert.equal(second.data.replayed, true);
+      assert.equal(second.data.nudge.status, 'replayed');
+      assert.equal(injected.length, 1, 'a replay never re-attempts the pane nudge');
+    });
   });
 });
