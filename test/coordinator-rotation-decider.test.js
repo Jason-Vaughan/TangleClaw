@@ -405,6 +405,17 @@ describe('checkGovernedRefreshDue — fires a durable refresh-due alert, never a
     assert.match(result.request.prompt, /8%/);
   });
 
+  it('is due exactly at the LOW_CONTEXT_REMAINING_PCT boundary, not only strictly below it', async () => {
+    const nowMs = Date.parse(START);
+    store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
+    startDeciderSession(PM_PROJECT, { receiptState: 'complete', receiptAgeMs: MINUTE, nowMs });
+    const result = await rotation.checkGovernedRefreshDue(PM_PROJECT, refreshDeps({
+      capturePane: async () => `Context ${rotation.LOW_CONTEXT_REMAINING_PCT}% left`
+    }));
+    assert.equal(result.due, true);
+    assert.equal(result.reason, 'low-context');
+  });
+
   it('never invents a context reading from session age — an unreadable pane stays "due" only via runtime, never via a fabricated low-context reason', async () => {
     const nowMs = Date.parse(START);
     store.coordinatorRoles.grant({ roleId: 'role-1', projectId: PM_PROJECT, role: 'project-manager', note: null, now: START });
@@ -517,9 +528,10 @@ describe('refreshMonitorTick — the recurring caller both checks above need (#2
     assert.ok(outcomes.some((r) => r.reachability && r.reachability.checked === true), 'the other project was still checked');
   });
 
-  it('start/stop arm and clear the timer, idempotently', () => {
-    rotation.startRefreshMonitor({ intervalMs: 5000 });
-    rotation.startRefreshMonitor({ intervalMs: 5000 }); // second call is a no-op, not a second timer
+  it('start/stop arm and clear the timer, idempotently, defaulting to REFRESH_MONITOR_INTERVAL_MS', () => {
+    assert.ok(Number.isInteger(rotation.REFRESH_MONITOR_INTERVAL_MS) && rotation.REFRESH_MONITOR_INTERVAL_MS > 0);
+    rotation.startRefreshMonitor(); // no intervalMs given -- falls back to REFRESH_MONITOR_INTERVAL_MS
+    rotation.startRefreshMonitor(); // second call is a no-op, not a second timer
     rotation.stopRefreshMonitor();
     rotation.stopRefreshMonitor(); // stopping twice is also a no-op
   });
