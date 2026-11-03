@@ -183,3 +183,34 @@ describe('style.css: #1265 remediation verifies at >= 4.5:1 (Ruling A1265)', () 
     assert.ok(ti.contrastRatio(light['--danger'], light['--elevated-bg']) >= 4.5);
   });
 });
+
+describe('style.css: #1573 terminal identity CSS styling (Ruling A1573)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+
+  it('consumes every --project-identity-* variable deriveProjectIdentity emits, somewhere across the identity selectors', () => {
+    const identityBlock = src.slice(src.indexOf('.terminal-identity-badge {'), src.indexOf('/* ── OpenClaw Connections Panel'));
+    for (const cssVar of Object.keys(ti.deriveProjectIdentity({ projectId: 'p1' }).identity.cssVars)) {
+      assert.ok(identityBlock.includes(`var(${cssVar}`), `no identity selector references ${cssVar}`);
+    }
+  });
+
+  it('declares a chrome selector consuming --project-identity-accent', () => {
+    const chromeBlock = src.slice(src.indexOf('.terminal-identity-chrome {'), src.indexOf('.terminal-identity-sigil'));
+    assert.ok(chromeBlock.includes('var(--project-identity-accent'));
+  });
+
+  it('declares one pattern-class selector for every PATTERN_CLASSES entry', () => {
+    for (const patternClass of ti.PATTERN_CLASSES) {
+      assert.ok(src.includes(`.terminal-identity-pattern-${patternClass}`), `no selector for pattern class "${patternClass}"`);
+    }
+  });
+
+  it('every non-"none" pattern selector is a background-image/opacity layer, never a text-affecting property', () => {
+    for (const patternClass of ti.PATTERN_CLASSES.filter((p) => p !== 'none')) {
+      const start = src.indexOf(`.terminal-identity-pattern-${patternClass} {`);
+      const block = src.slice(start, src.indexOf('}', start));
+      assert.match(block, /background-image:/, `${patternClass} has no background-image`);
+      assert.ok(!/\bcolor\s*:/.test(block), `${patternClass} must not set text color -- terminal text stays fully opaque`);
+    }
+  });
+});

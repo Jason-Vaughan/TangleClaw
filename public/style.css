@@ -841,6 +841,69 @@ html[data-tc-keyboard] body {
   font-size: 9px;
 }
 
+/* ── Per-Project Terminal Visual Identity (#1573) ── */
+/* Reads the --project-identity-* custom properties lib/terminal-identity.js's
+   deriveProjectIdentity() computes (accentHex/borderHex/badgeBgHex/badgeTextHex
+   as --project-identity-accent/-border/-badge-bg/-badge-text); a project's own
+   identity container sets them inline. Wiring a live container to carry them
+   is Slice 2 (A1573), deferred -- these selectors are the bounded Slice 1
+   styling contract the ruling requires, each falling back to an existing v2
+   palette token so they render sanely even with no identity container present. */
+.terminal-identity-badge {
+  background: var(--project-identity-badge-bg, var(--card-bg));
+  color: var(--project-identity-badge-text, var(--text));
+  border: 1px solid var(--project-identity-border, var(--chrome));
+  border-radius: var(--radius-pill);
+  padding: 2px 8px;
+  font-size: 11px;
+}
+.terminal-identity-chrome {
+  border-left: 3px solid var(--project-identity-accent, var(--primary));
+}
+.terminal-identity-sigil {
+  background: var(--project-identity-accent, var(--primary));
+  color: var(--project-identity-badge-text, var(--text));
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* Pattern classes (lib/terminal-identity.js#PATTERN_CLASSES): a subtle
+   per-project background texture painted behind the terminal, never over its
+   text -- applied only to a backdrop element, so terminal text stays fully
+   opaque (#1573's own acceptance criteria). */
+.terminal-identity-pattern-dots {
+  background-image: radial-gradient(circle, var(--project-identity-accent, var(--primary)) 1px, transparent 1px);
+  background-size: 12px 12px;
+  opacity: 0.08;
+}
+.terminal-identity-pattern-stripes {
+  background-image: repeating-linear-gradient(45deg,
+    var(--project-identity-accent, var(--primary)) 0, var(--project-identity-accent, var(--primary)) 2px,
+    transparent 2px, transparent 10px);
+  opacity: 0.08;
+}
+.terminal-identity-pattern-grid {
+  background-image:
+    linear-gradient(var(--project-identity-accent, var(--primary)) 1px, transparent 1px),
+    linear-gradient(90deg, var(--project-identity-accent, var(--primary)) 1px, transparent 1px);
+  background-size: 16px 16px;
+  opacity: 0.08;
+}
+.terminal-identity-pattern-waves {
+  background-image: repeating-radial-gradient(circle at 0 0, transparent 0, var(--project-identity-accent, var(--primary)) 10px);
+  background-size: 20px 20px;
+  opacity: 0.06;
+}
+.terminal-identity-pattern-none {
+  background-image: none;
+}
+
 /* ── OpenClaw Connections Panel ── */
 .openclaw-panel {
   max-height: 0;
