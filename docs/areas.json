@@ -124,7 +124,10 @@
         "lib/rule-label.js",
         "lib/methodology-topics.js",
         "lib/store/session-rules.js",
-        "lib/rule-receipt-redelivery.js"
+        "lib/rule-receipt-redelivery.js",
+        "lib/adr-viewer.js",
+        "lib/rules-compress-preview.js",
+        "lib/team-templates.js"
       ]
     },
     "sessions": {
@@ -310,6 +313,30 @@
       "why": "The untrusted-PR review boundary (#1554): sanitizing and non-executably fencing untrusted external PR text, and checking a review session's declared capabilities against the read-only review contract ADR 0014 requires. Owned by no other family; docs/external-code-security.md is the full write-up.",
       "paths": [
         "lib/untrusted-pr-review.js"
+      ]
+    },
+    "fleet-views": {
+      "label": "area:fleet-views",
+      "why": "Fleet and dashboard view projections for the landing page and Master fleet view (#349, #1923), opt-in switchboard auto-inject gating and swarm stats (#801), a visible project-version-cache write-failure diagnostic (#1046), and recorded test-suite duration stats (#1784) -- the `v5.60.0 Fleet and dashboard views` milestone's own Car 60-C. Distinct from `sessions`' `lib/workload*.js` (asserted lane availability for dispatch) and `medusa`'s `lib/medusa*.js` (the switchboard engine itself): these are read-only projections over already-fetched facts from both, built for display rather than dispatch. Owned by no other family; Slice 2 wiring into routes/UI is a tracked follow-up.",
+      "paths": [
+        "lib/fleet-workload-view.js",
+        "lib/switchboard-swarm-stats.js",
+        "lib/version-cache-diagnostic.js",
+        "lib/test-duration-stats.js"
+      ]
+    },
+    "resource-leases": {
+      "label": "area:resource-leases",
+      "why": "Runtime-enforced Resource Module leases and safe transitions (#2014), plus delegated-authority provision/retire of resource modules (#2071) — a pure state machine, co-hosted per Architect Rulings A2014/A2071's shared file envelope. Owned by no other family; Slice 2 wiring into routes/UI is a tracked follow-up.",
+      "paths": [
+        "lib/resource-leases.js"
+      ]
+    },
+    "role-instruction-guard": {
+      "label": "area:role-instruction-guard",
+      "why": "The role-instruction mismatch classifier and confirmation gate (#2397, Ruling A2397): a pure detector deciding whether an outbound instruction looks sent to the wrong role. Owned by no other family; Slice 2 wiring into dispatch routes/composer UI is a tracked follow-up.",
+      "paths": [
+        "lib/role-instruction-guard.js"
       ]
     },
     "merge-governance": {
