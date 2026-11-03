@@ -40,22 +40,19 @@ const FLOOR = 4.5;
  * Pairs known to sit below the floor, each pinned to the ratio it measures
  * TODAY rather than merely excused.
  *
- * Both are in the v2 palette, which `public/style.css` marks "do not change" —
- * changing what `--danger` looks like product-wide is the operator's call, not
- * a side effect of the chunk that added a caveat line. Filed as #1265 rather
- * than fixed or silently dropped from `TEXT_TOKENS`: narrowing the guard to the
- * token this bundle happened to touch would leave the sheet claiming a floor it
- * does not meet.
+ * #1265 (Ruling A1265, Car 60-D) remediated all six of these pairs in
+ * `public/style.css` -- `--text-muted` and the light theme's own `--danger`
+ * override now clear the 4.5:1 floor there, so `style.css`'s entries are
+ * deleted per this file's own "Expected" contract above. `session.css` is
+ * untouched (out of A1265's authorized file envelope, which names only
+ * `public/style.css`) and still carries the original, unremediated values,
+ * so its six entries stay exactly as measured.
  *
  * Pinned to the exact ratio so the waiver cannot absorb a REGRESSION: making
  * either pair worse fails here, and making it pass means deleting its entry.
  */
 const KNOWN_BELOW_FLOOR = [];
-for (const sheet of ['style.css', 'session.css']) {
-  // Keyed by SHEET as well as theme/token/surface: the two carry identical
-  // values today, so a waiver written once would silently cover the other, and
-  // the day they diverge is the day the waiver would be answering for a colour
-  // nobody measured.
+for (const sheet of ['session.css']) {
   KNOWN_BELOW_FLOOR.push(
     { sheet, theme: ':root', token: '--text-muted', surface: '--card-bg', ratio: 4.34 },
     { sheet, theme: ':root', token: '--text-muted', surface: '--elevated-bg', ratio: 3.89 },
