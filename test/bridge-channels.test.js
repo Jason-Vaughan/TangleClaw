@@ -337,6 +337,34 @@ describe('checkPublicationGrant — read-only preflight, before a helper posts (
     bc.updateChannel('ch1', { sendAllowed: true });
     assert.equal(bc.checkPublicationGrant(grantInput()).ok, true);
   });
+
+  it('refuses a new post attempt once the grant\'s own TTL closes, even after an "unknown" outcome was recorded (PRR-A I-Gate Round 2 Finding)', () => {
+    const real = bc._internal.now;
+    try {
+      const t0 = Date.now();
+      bc._internal.now = () => new Date(t0).toISOString();
+      bc.createPublicationGrant({ ...grantInput({ idempotencyKey: 'idem-4' }), ttlMs: 1000 });
+      const unknown = bc.validateAndConsumePublicationGrant({ ...grantInput({ idempotencyKey: 'idem-4' }), outcome: 'unknown' });
+      assert.equal(unknown.ok, true);
+      assert.equal(unknown.grant.state, 'pending', 'sanity: unknown never consumes');
+
+      bc._internal.now = () => new Date(t0 + 2000).toISOString();
+      // Settling the already-recorded uncertainty is still allowed, past the TTL.
+      const settle = bc.validateAndConsumePublicationGrant({ ...grantInput({ idempotencyKey: 'idem-4' }), outcome: 'posted' });
+      assert.equal(settle.ok, true, 'resolving the recorded uncertainty is never time-boxed');
+
+      // But a FRESH grant, never settled, must not authorize a NEW post attempt past its own TTL.
+      bc._internal.now = () => new Date(t0).toISOString();
+      bc.createPublicationGrant({ ...grantInput({ idempotencyKey: 'idem-5' }), ttlMs: 1000 });
+      bc.validateAndConsumePublicationGrant({ ...grantInput({ idempotencyKey: 'idem-5' }), outcome: 'unknown' });
+      bc._internal.now = () => new Date(t0 + 2000).toISOString();
+      const preflight = bc.checkPublicationGrant(grantInput({ idempotencyKey: 'idem-5' }));
+      assert.equal(preflight.ok, false, 'an "unknown" outcome must not let pre-send authorization outlive the TTL');
+      assert.equal(preflight.code, 'BRIDGE_GRANT_EXPIRED');
+    } finally {
+      bc._internal.now = real;
+    }
+  });
 });
 
 describe('validateAndConsumePublicationGrant', () => {
