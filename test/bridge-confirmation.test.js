@@ -59,7 +59,7 @@ afterEach(() => {
 function create(overrides = {}) {
   return bridgeConfirmation.createActionConfirmation({
     operatorId: 'op-1', guildId: 'guild-1', channelId: 'chan-1', actionKind: 'merge',
-    targetRef: 'PR#123', digestSha: bridgeConfirmation.digestFor('payload'), ttlMs: 10 * MINUTE,
+    targetRef: 'PR#123', digestSha: bridgeConfirmation.digestFor('payload'), version: 1, ttlMs: 10 * MINUTE,
     ...overrides
   });
 }
@@ -74,7 +74,7 @@ function create(overrides = {}) {
 function present(nonce, overrides = {}) {
   return {
     nonce, operatorId: 'op-1', guildId: 'guild-1', channelId: 'chan-1', actionKind: 'merge',
-    targetRef: 'PR#123', digestSha: bridgeConfirmation.digestFor('payload'), ...overrides
+    targetRef: 'PR#123', digestSha: bridgeConfirmation.digestFor('payload'), version: 1, ...overrides
   };
 }
 
@@ -245,6 +245,42 @@ describe('verifyAndConsumeConfirmation (#2106, #2116)', () => {
     const r = bridgeConfirmation.verifyAndConsumeConfirmation(present(confirmation.nonce, { actionKind: 'deploy' }));
     assert.equal(r.ok, false);
     assert.equal(r.code, 'CONFIRMATION_DIGEST_MISMATCH');
+  });
+
+  it('a mismatched operatorId is rejected as CONFIRMATION_SCOPE_MISMATCH, not silently authorized (PRR-A I-Gate R1 finding 1)', () => {
+    const { confirmation } = create({ operatorId: 'op-1' });
+    const r = bridgeConfirmation.verifyAndConsumeConfirmation(present(confirmation.nonce, { operatorId: 'op-2' }));
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'CONFIRMATION_SCOPE_MISMATCH');
+  });
+
+  it('a mismatched (stale) version is rejected as CONFIRMATION_DIGEST_MISMATCH (PRR-A I-Gate R1 finding 1)', () => {
+    const { confirmation } = create({ version: 2 });
+    const r = bridgeConfirmation.verifyAndConsumeConfirmation(present(confirmation.nonce, { version: 1 }));
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'CONFIRMATION_DIGEST_MISMATCH');
+  });
+
+  it('the matching version (the default, 1) still verifies and consumes normally', () => {
+    const { confirmation } = create();
+    const r = bridgeConfirmation.verifyAndConsumeConfirmation(present(confirmation.nonce));
+    assert.equal(r.ok, true);
+  });
+
+  it('the raw nonce is never persisted -- only its SHA-256 digest -- so a direct DB read cannot recover a usable bearer token (PRR-A I-Gate R1 finding 2)', () => {
+    const { confirmation } = create();
+    const row = store.getDb().prepare('SELECT * FROM bridge_action_confirmations WHERE confirmation_id = ?').get(confirmation.confirmationId);
+    assert.equal(row.nonce, undefined, 'no "nonce" column at all');
+    assert.equal(row.nonce_hash, bridgeConfirmation.digestFor(confirmation.nonce),
+      'the stored value is the digest of the nonce, not the nonce itself');
+    assert.notEqual(row.nonce_hash, confirmation.nonce, 'the raw nonce must not appear anywhere in the row');
+  });
+
+  it('verification still works by presenting the raw nonce -- the digest lookup is transparent to a legitimate caller', () => {
+    const { confirmation } = create();
+    assert.equal(confirmation.nonce.length >= 32, true, 'createActionConfirmation still returns the raw bearer secret once');
+    const r = bridgeConfirmation.verifyAndConsumeConfirmation(present(confirmation.nonce));
+    assert.equal(r.ok, true);
   });
 
   it('a scope mismatch does not consume the confirmation -- it can still be presented correctly afterward', () => {

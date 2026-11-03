@@ -47,10 +47,12 @@ no policy for refuses closed (`BRIDGE_ACTION_TYPE_UNKNOWN`) rather than defaulti
 
 `createActionConfirmation` issues a record binding `operatorId`, `guildId`, `channelId`,
 `actionKind`, `targetRef`, `digestSha` (the exact SHA/digest of what is being acted on — opaque
-to this module; `digestFor` is a convenience SHA-256 helper, not a requirement), `version`, and an
-`expiresAt`. It returns the record once, carrying a 32-byte random `nonce` — the bearer secret.
-That nonce is never retrievable again after this call; a reader of a confirmation record by any
-other path never sees it.
+to this module; `digestFor` is a convenience SHA-256 helper, not a requirement), and `version`,
+expiring at `expiresAt`. It returns the record once, carrying a 32-byte random `nonce` — the
+bearer secret. That nonce is never retrievable again after this call; **it is never persisted at
+all** — only `digestFor(nonce)` (a SHA-256 hex digest) is written to the `nonce_hash` column
+(PRR-A I-Gate R1 finding 2, below). A reader of a confirmation record by any other path never
+sees the raw nonce, and neither does a direct read of the database file.
 
 `verifyAndConsumeConfirmation` is the one state-transition primitive. It does not itself check
 WHO is presenting the confirmation — proving that is each trust boundary's own job, the same split
@@ -59,16 +61,20 @@ documents for its own two trust boundaries. It enforces, in order:
 
 1. **No nonce presented** → `SAME_USER_CONFIRMATION_REQUIRED` — #2106's own code for a caller
    that lacks the bound confirmation entirely (an unrelated same-user process with no card).
-2. **A nonce presented but resolving to nothing** → `CONFIRMATION_INVALID`.
+2. **A nonce presented but resolving to nothing** (looked up by `digestFor(presented.nonce)`
+   against `nonce_hash`, never by the raw value) → `CONFIRMATION_INVALID`.
 3. **Already consumed** → `CONFIRMATION_REPLAYED`. A card is single-use, full stop: unlike a
    permission-request decision (where the same decision replayed is an idempotent success), a
    confirmation card authorizes something irreversible, so a second presentation is rejected every
    time — the rejection is idempotent, the authorization never is.
 4. **Expired** (lazy transition, applied and persisted on this read) → `CONFIRMATION_EXPIRED`.
-5. **Guild or channel does not match** → `CONFIRMATION_SCOPE_MISMATCH`.
-6. **Action, target or digest does not match** → `CONFIRMATION_DIGEST_MISMATCH` — this also covers
-   a mismatched `actionKind`: a card issued for one action does not authorize a different one,
-   whatever its target and digest.
+5. **Operator, guild or channel does not match** → `CONFIRMATION_SCOPE_MISMATCH` — WHO this card is
+   bound to and WHERE it was issued are both "scope" in the same sense; presenting a valid nonce
+   under a different operator is the same class of mismatch as a different guild or channel.
+6. **Action, target, digest or version does not match** → `CONFIRMATION_DIGEST_MISMATCH` — a
+   mismatched `actionKind` (a card issued for one action does not authorize a different one) and a
+   stale `version` (PRR-A I-Gate R1 finding 1) are both "this card does not authorize what is being
+   acted on now", the same class of mismatch as a wrong target or digest.
 
 A rejected mismatch (scope or digest) does **not** consume the card — a caller that mistypes a
 field and retries correctly still gets the single real use. Only a successful verify consumes it.
@@ -96,12 +102,23 @@ mechanically refused — it cannot fabricate a valid nonce (32 bytes of `crypto.
 never derivable from the action's own public fields) and cannot replay a nonce it has observed
 once already consumed.
 
+**Also explicitly in scope (PRR-A I-Gate R1 finding 2): that same process reading
+`~/.tangleclaw/tangleclaw.db` directly.** `tangleclaw.db`'s mode (`0600`) restricts other *users*,
+not this one — an unrelated same-user process can open and read the file with ordinary filesystem
+calls, no SQL injection or privilege escalation needed. If the raw nonce were stored, a plain
+`SELECT` over the file would hand that process a usable bearer token for any still-pending
+confirmation card. Storing only `nonce_hash` (a SHA-256 digest) closes this specific read path:
+the attacker can read the digest but cannot invert it back to the bearer secret
+`verifyAndConsumeConfirmation` actually checks against.
+
 Out of scope for this module (unchanged from the v5.31.0 boundary, and not widened or narrowed by
-this slice): compromise of the operator's own macOS account entirely; compromise of the database
-itself (a process with direct SQLite write access could insert a row, the same way it could
-already forge most other state this product persists); the Discord gateway's own authenticity —
-this module trusts whatever `operatorId`/`guildId`/`channelId` it is handed, and verifying those
-came from a genuine Discord message is the caller's job (Slice 2's `lib/bridge-api.js` wiring).
+this slice): compromise of the operator's own macOS account entirely; a process with direct SQLite
+**write** access (it could insert, update or delete rows outright, the same way it could already
+forge most other state this product persists — no confirmation-card mechanism defends against an
+attacker who can rewrite the database, only against one who can merely read it); the Discord
+gateway's own authenticity — this module trusts whatever `operatorId`/`guildId`/`channelId` it is
+handed, and verifying those came from a genuine Discord message is the caller's job (Slice 2's
+`lib/bridge-api.js` wiring).
 `ordinary-work` tier actions carry no new protection here at all — they rely entirely on the
 bridge's existing allowlist check (`operator-bridge.md`), unchanged by this issue.
 
