@@ -217,6 +217,12 @@ than as "nothing there":
   The fingerprint hashes the whole tracked diff against HEAD, every untracked file (directories are
   expanded) and each declared important ignored file. It never reads an ignored dependency or build
   cache.
+
+  **Paths are resolved from the repository root, not the project's own directory.** When the project
+  lives in a subdirectory of its git repository, `ownedDirt` and `importantIgnored` paths (`.env` in
+  the example above) are still read relative to the repository's top level — the same place `git
+  status`/`git check-ignore` itself reports paths from — not relative to the project directory the
+  checkpoint was written against. Declare them repo-root-relative.
 - **GitHub.** `github` lists each issue or PR the coordinator's plan depends on, or `[]` when there
   are none, up to 100 facts. At prepare the server reads each one itself through `gh`, using
   `lib/github-facts.js`. A fact it cannot read, or one the checkpoint declares wrongly, refuses the
@@ -278,7 +284,15 @@ checks are:
   (`medusaEnabled`; an unreadable config counts as enabled) or when the prepare recorded messages.
   Prepare also refuses a switchboard coordinator whose listener is down
   (`409 ROTATION_LISTENER_DOWN`). Only a coordinator that runs without the switchboard, with nothing
-  recorded, is not held for a listener;
+  recorded, is not held for a listener.
+  **In `relaunch` mode this check only ever asks the successor's own inbox**, under the fresh
+  Medusa workspace id its launch mints — never the prior session's, which is torn down (and its
+  workspace id retired) when that session ends. Hub mail queued for the prior workspace id has no
+  path to the successor's new one, so this check cannot see it: it reports "nothing unhandled" for
+  a relaunch regardless of whether the prepare-time messages were ever actually read. This is a
+  real limitation, not a hypothetical — the check is still worth having for `resume` without a
+  relaunch, where the session and workspace id never change — but a relaunch's prepare-time inbox
+  interval is not currently a reliable signal of unhandled pre-rotation mail;
 - `control.stateGeneration` is the lane's current control generation, or `null` when there is no
   assignment;
 - for a relaunch, the successor's own launch sequence has been attested READY. Until then the
@@ -337,7 +351,7 @@ binding or one that does not verify is refused earlier, with `403 LAUNCH_BINDING
 | `tc rotation resume --receipt <file>` | `POST /api/tc/rotation/resume` | Submit the receipt. `tc` fills in the rotation id, attempt key and generation from the server. |
 | — | `POST /api/tc/rotation/relaunch` `{rotationId}` | The operator's relaunch claim: launch the successor and bind exactly it. |
 | — | `GET /api/rotations` | The operator's read surface. |
-| — | `POST /api/tc/rotation/abandon` `{rotationId, reason}` | The operator ends a rotation that cannot finish. |
+| — | `POST /api/tc/rotation/abandon` `{rotationId, reason}` | The operator ends a rotation that cannot finish, or releases an `active` rotation's epoch binding (for example after the coordinator was relaunched without a governed rotation). |
 
 After a restart, the server resumes the driver for every rotation still `fenced` or `rebinding`.
 
