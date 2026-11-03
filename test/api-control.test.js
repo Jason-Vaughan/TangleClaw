@@ -453,6 +453,53 @@ describe('/api/control (#1861)', () => {
       }
     });
 
+    it('a target whose session already ended reports session-ended, and does not escalate', async () => {
+      // Unlike every other non-'sent' outcome, there is nobody left running to
+      // tell anyone about reaching: the HOLD still stands on the assignment,
+      // but a session that has already ended is not "undelivered to", it
+      // simply has no pane for anything to have reached.
+      const { project, binding } = await pausable();
+      store.sessions.kill(binding.sessionId, 'test');
+      const escalations = [];
+      controlApi._internal.sendSystemMessage = async (m) => { escalations.push(m); return { status: 'received' }; };
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      assert.equal(r.status, 201, r.raw);
+      assert.equal(r.data.nudge.status, 'session-ended');
+      await settle();
+      assert.ok(!escalations.some((m) => /Pause escalation/.test(m.message)), 'nothing to escalate about a session that is not running');
+    });
+
+    it('a target with no pane (webui, or no tmux session at all) defers and escalates', async () => {
+      // Plain bindProject (unlike bindProjectWithPane) starts a session with
+      // no tmux_session at all — the 'no-pane' case on its own.
+      const project = mkProject(`no-pane-${rid()}`);
+      bindProject(project);
+      const res = await send(server, 'POST', '/api/control/assignments', {
+        projectId: project.id, requestId: rid(), issueRef: '#2109',
+        authority: { hold: [`project:${pm.id}`], escalation: { blocking: [`project:${architect.id}`] } }
+      }, op);
+      assert.equal(res.status, 201, res.raw);
+      const escalations = [];
+      controlApi._internal.sendSystemMessage = async (m) => { escalations.push(m); return { status: 'received' }; };
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      assert.equal(r.status, 201, r.raw);
+      assert.equal(r.data.nudge.status, 'no-pane');
+      await settle();
+      assert.ok(escalations.some((m) => /Pause escalation/.test(m.message) && m.message.includes(`"${project.name}"`)));
+    });
+
+    it('an engine with no probed pane signature defers and escalates', async () => {
+      const { project } = await pausable();
+      controlApi._internal.wakeProfiles = () => ({});
+      const escalations = [];
+      controlApi._internal.sendSystemMessage = async (m) => { escalations.push(m); return { status: 'received' }; };
+      const r = await send(server, 'POST', '/api/control/pause', { requestId: rid(), project: project.name }, bPM.headers);
+      assert.equal(r.status, 201, r.raw);
+      assert.equal(r.data.nudge.status, 'unprofiled-engine');
+      await settle();
+      assert.ok(escalations.some((m) => /Pause escalation/.test(m.message)));
+    });
+
     it('is safe to send twice: the replay does not re-attempt the pane nudge', async () => {
       const { project } = await pausable();
       const reqId = rid();
