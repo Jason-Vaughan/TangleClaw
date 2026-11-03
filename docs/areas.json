@@ -311,6 +311,20 @@
       "paths": [
         "lib/untrusted-pr-review.js"
       ]
+    },
+    "resource-leases": {
+      "label": "area:resource-leases",
+      "why": "Runtime-enforced Resource Module leases and safe transitions (#2014), plus delegated-authority provision/retire of resource modules (#2071) — a pure state machine, co-hosted per Architect Rulings A2014/A2071's shared file envelope. Owned by no other family; Slice 2 wiring into routes/UI is a tracked follow-up.",
+      "paths": [
+        "lib/resource-leases.js"
+      ]
+    },
+    "role-instruction-guard": {
+      "label": "area:role-instruction-guard",
+      "why": "The role-instruction mismatch classifier and confirmation gate (#2397, Ruling A2397): a pure detector deciding whether an outbound instruction looks sent to the wrong role. Owned by no other family; Slice 2 wiring into dispatch routes/composer UI is a tracked follow-up.",
+      "paths": [
+        "lib/role-instruction-guard.js"
+      ]
     }
   },
   "shared": {
