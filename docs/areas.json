@@ -193,6 +193,7 @@
         "lib/port-scanner.js",
         "lib/pidfile.js",
         "lib/tangleclaw-home.js",
+        "lib/scratch-home-defaults.js",
         "lib/path-tokens.js"
       ]
     },
