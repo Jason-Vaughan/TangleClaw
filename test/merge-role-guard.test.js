@@ -16,6 +16,7 @@ describe('merge-role-guard: exported vocabulary', () => {
     assert.deepEqual(guard.FORBIDDEN_ROLE_CATEGORIES, ['builder', 'reviewer', 'architect', 'pm']);
     assert.equal(guard.ALLOWED_MERGE_METHOD, 'merge');
     assert.deepEqual(guard.MERGE_METHODS, ['merge', 'squash', 'rebase']);
+    assert.deepEqual(guard.SHORT_METHOD_FLAGS, { m: 'merge', s: 'squash', r: 'rebase' });
   });
 });
 
@@ -67,6 +68,26 @@ describe('merge-role-guard: detectMergeInvocation (#2601)', () => {
   it('recognizes --squash and --rebase the same way as --merge', () => {
     assert.equal(guard.detectMergeInvocation('gh pr merge 123 --squash').mergeMethod, 'squash');
     assert.equal(guard.detectMergeInvocation('gh pr merge 123 --rebase').mergeMethod, 'rebase');
+  });
+
+  it('recognizes gh pr merge\'s own documented short aliases -s/-r/-m (PRR-B I-Gate Round 1 #1 on PR #2865)', () => {
+    assert.equal(guard.detectMergeInvocation('gh pr merge 123 -s').mergeMethod, 'squash');
+    assert.equal(guard.detectMergeInvocation('gh pr merge 123 -r').mergeMethod, 'rebase');
+    assert.equal(guard.detectMergeInvocation('gh pr merge 123 -m').mergeMethod, 'merge');
+  });
+
+  it('does not mistake a long flag\'s own letters for a short alias (-s inside --squash is not a second match)', () => {
+    const r = guard.detectMergeInvocation('gh pr merge 123 --squash');
+    assert.equal(r.mergeMethod, 'squash');
+  });
+
+  it('does not mistake an unrelated short flag for a merge-method alias', () => {
+    const r = guard.detectMergeInvocation('gh pr merge 123 -d');
+    assert.equal(r.mergeMethod, null);
+  });
+
+  it('a short alias in the middle of other flags is still recognized', () => {
+    assert.equal(guard.detectMergeInvocation('gh pr merge 123 -s --match-head-commit abc').mergeMethod, 'squash');
   });
 });
 
@@ -129,6 +150,22 @@ describe('merge-role-guard: evaluateMergeRoleGuard (#2601)', () => {
   it('refuses the operator using --rebase the same way', () => {
     const r = guard.evaluateMergeRoleGuard({ commandText: 'gh pr merge 123 --rebase', isOperator: true });
     assert.equal(r.code, 'MERGE_METHOD_FORBIDDEN');
+  });
+
+  it('refuses an authorized Integrator using the short -s alias just as it would --squash (PRR-B I-Gate Round 1 #1 on PR #2865)', () => {
+    const r = guard.evaluateMergeRoleGuard({ commandText: 'gh pr merge 123 -s', role: 'integrator' });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'MERGE_METHOD_FORBIDDEN');
+  });
+
+  it('refuses the operator using the short -r alias just as it would --rebase', () => {
+    const r = guard.evaluateMergeRoleGuard({ commandText: 'gh pr merge 123 -r', isOperator: true });
+    assert.equal(r.code, 'MERGE_METHOD_FORBIDDEN');
+  });
+
+  it('allows the short -m alias, same as --merge', () => {
+    const r = guard.evaluateMergeRoleGuard({ commandText: 'gh pr merge 123 -m', role: 'integrator' });
+    assert.equal(r.ok, true);
   });
 
   it('a forbidden role using --squash is refused for the role, not the method (role checked first)', () => {

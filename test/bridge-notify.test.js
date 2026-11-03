@@ -592,8 +592,8 @@ describe('bridge notifications (#2031)', () => {
         }
       });
 
-      it('fires for each of "read", "acknowledged", "replied" and "closed"', () => {
-        for (const state of ['read', 'acknowledged', 'replied', 'closed']) {
+      it('fires for each real handling action: "acknowledged", "replied" and "closed"', () => {
+        for (const state of ['acknowledged', 'replied', 'closed']) {
           const alpha = liveSession(`Alpha-${state}`);
           const realNow = exchanges._internal.now;
           exchanges._internal.now = () => new Date(clock);
@@ -607,6 +607,25 @@ describe('bridge notifications (#2031)', () => {
           } finally {
             exchanges._internal.now = realNow;
           }
+        }
+      });
+
+      it('never fires on "read" alone -- reading the inbox is not handling the message (PRR-B I-Gate Round 1 #2 on PR #2865)', () => {
+        const alpha = liveSession('Alpha-read-only');
+        const realNow = exchanges._internal.now;
+        exchanges._internal.now = () => new Date(clock);
+        try {
+          enable();
+          const exchangeId = alertedExchange(alpha);
+          bridgeNotify.reconcile();
+          deliverOperatorNeeded(exchangeId);
+          resolveExchange(exchangeId, 'read');
+          assert.equal(bridgeNotify.reconcile().operatorResolved, 0, 'read alone must never emit a premature all-clear');
+          // A later real handling action still fires it.
+          resolveExchange(exchangeId, 'acknowledged');
+          assert.equal(bridgeNotify.reconcile().operatorResolved, 1);
+        } finally {
+          exchanges._internal.now = realNow;
         }
       });
 
