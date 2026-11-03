@@ -229,6 +229,32 @@ describe('the state machine: only the documented forward edges are allowed', () 
     assert.equal(r2.ok, true);
   });
 
+  it('survives activity_log\'s cross-project retention pruning: a real wrap begun for this handoff still satisfies it even after an unrelated project\'s later checkpoint prunes its own evidence row (PRR-B I-Gate Round 4 Finding)', () => {
+    const real = store.ACTIVITY_LOG_RETENTION;
+    store._setActivityLogRetention(1);
+    try {
+      const created = create();
+      // The real wrap path (wrap-run-registry.begin) durably pins this
+      // handoff's evidence at the moment it begins -- before anything else
+      // touches activity_log.
+      const begun = wrapRunRegistry.begin(project.name, session.id);
+      wrapRunRegistry.finish(project.name, begun.runId, { ok: true });
+
+      // An UNRELATED project's own wrap checkpoint, logged afterward,
+      // prunes activity_log's wrap.run_checkpoint rows down to the newest
+      // ONE -- which is now this other project's, not the source's.
+      const other = store.projects.create({ name: 'lho-prune-other', path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-lho-prune-')), engine: 'claude' });
+      store.activity.log({ projectId: other.id, sessionId: null, eventType: wrapRunRegistry.EVENT_CHECKPOINT, detail: { runId: 'unrelated' } });
+      const stillThere = store.activity.query({ projectId: project.id, sessionId: session.id, eventType: wrapRunRegistry.EVENT_CHECKPOINT, limit: 1 });
+      assert.equal(stillThere.length, 0, 'sanity: the source\'s own checkpoint row really was pruned');
+
+      const r = lh.recordWrapInitiated(created.handoff.handoffId);
+      assert.equal(r.ok, true, 'the durable pin, not the (now-pruned) activity_log row, satisfies the transition');
+    } finally {
+      store._setActivityLogRetention(real);
+    }
+  });
+
   it('one-generation rule: a HOLD landing after checkpointing blocks every later step with GENERATION_MOVED', () => {
     const control = require('../lib/control-state');
     control.create({ projectId: project.id, requestId: 'req-2', issueRef: '#2073', authority: { hold: ['project:9'] } },
