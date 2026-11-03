@@ -258,6 +258,7 @@ files = [
   "test/workflow-action-pins.test.js",
   "test/workflow-queue-trigger.test.js",
   "test/workload-compose.test.js",
+  "test/workspace-rename-check.test.js",
   "test/wrap-bump-level-askmode.test.js",
   "test/wrap-confirm-calls-defined.test.js",
   "test/wrap-drawer-select-a11y.test.js",

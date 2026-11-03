@@ -142,6 +142,7 @@
         "lib/ttyd-*.js",
         "lib/pty-activity.js",
         "lib/transcript.js",
+        "lib/workspace-rename-check.js",
         "lib/continuity.js",
         "lib/master-continuity.js",
         "lib/workload*.js",
