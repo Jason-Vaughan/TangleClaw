@@ -151,6 +151,61 @@ describe('team-templates: previewTeamTemplateApplication (#2395)', () => {
     assert.deepEqual(change.removed, ['old rule']);
   });
 
+  it('a carAssignments-only difference puts the seat in updatedSeats, naming carAssignments (PRR-A R1 #2)', () => {
+    const pkgWithAssignments = {
+      ...pkg,
+      roles: [
+        { roleId: 'builder-1', title: 'Builder', laneClass: 'builder', defaultRules: ['never force-push'], carAssignments: ['car-60-a'] },
+        { roleId: 'int-1', title: 'Integrator', laneClass: 'integrator' }
+      ]
+    };
+    const currentSeats = [
+      { roleId: 'builder-1', title: 'Builder', laneClass: 'builder', defaultRules: ['never force-push'], carAssignments: ['car-59-b'] },
+      { roleId: 'int-1', title: 'Integrator', laneClass: 'integrator' }
+    ];
+    const r = teamTemplates.previewTeamTemplateApplication(pkgWithAssignments, currentSeats);
+    const updated = r.preview.updatedSeats.find((u) => u.roleId === 'builder-1');
+    assert.ok(updated, 'a carAssignments-only difference must not be silently classed as unchanged');
+    assert.ok(updated.changedFields.includes('carAssignments'));
+    assert.equal(r.preview.unchangedSeats.some((s) => s.roleId === 'builder-1'), false);
+  });
+
+  it('a reviewGates-only difference puts the seat in updatedSeats, naming reviewGates (PRR-A R1 #2)', () => {
+    const pkgWithGates = {
+      ...pkg,
+      roles: [
+        { roleId: 'builder-1', title: 'Builder', laneClass: 'builder', defaultRules: ['never force-push'], reviewGates: ['int-1'] },
+        { roleId: 'int-1', title: 'Integrator', laneClass: 'integrator' }
+      ]
+    };
+    const currentSeats = [
+      { roleId: 'builder-1', title: 'Builder', laneClass: 'builder', defaultRules: ['never force-push'], reviewGates: [] },
+      { roleId: 'int-1', title: 'Integrator', laneClass: 'integrator' }
+    ];
+    const r = teamTemplates.previewTeamTemplateApplication(pkgWithGates, currentSeats);
+    const updated = r.preview.updatedSeats.find((u) => u.roleId === 'builder-1');
+    assert.ok(updated, 'a reviewGates-only difference must not be silently classed as unchanged');
+    assert.ok(updated.changedFields.includes('reviewGates'));
+    assert.equal(r.preview.unchangedSeats.some((s) => s.roleId === 'builder-1'), false);
+  });
+
+  it('identical carAssignments and reviewGates still unchangedSeats -- no false positive from the new comparison', () => {
+    const pkgWithBoth = {
+      ...pkg,
+      roles: [
+        { roleId: 'builder-1', title: 'Builder', laneClass: 'builder', defaultRules: ['never force-push'], carAssignments: ['car-60-a'], reviewGates: ['int-1'] },
+        { roleId: 'int-1', title: 'Integrator', laneClass: 'integrator' }
+      ]
+    };
+    const currentSeats = [
+      { roleId: 'builder-1', title: 'Builder', laneClass: 'builder', defaultRules: ['never force-push'], carAssignments: ['car-60-a'], reviewGates: ['int-1'] },
+      { roleId: 'int-1', title: 'Integrator', laneClass: 'integrator' }
+    ];
+    const r = teamTemplates.previewTeamTemplateApplication(pkgWithBoth, currentSeats);
+    assert.equal(r.preview.unchangedSeats.length, 2);
+    assert.equal(r.preview.updatedSeats.length, 0);
+  });
+
   it('a current seat the template says nothing about gets a warning, not a removal', () => {
     const r = teamTemplates.previewTeamTemplateApplication(pkg, [
       { roleId: 'builder-1', title: 'Builder', laneClass: 'builder', defaultRules: ['never force-push'] },

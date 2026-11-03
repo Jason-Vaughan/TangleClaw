@@ -141,6 +141,23 @@ describe('session-rules-bulk: decideSessionRuleProposal (#2016)', () => {
     });
     assert.equal(r.ok, true);
   });
+
+  it('fails closed on a proposal missing authoredBy entirely, rather than allowing it through as "no conflict found" (PRR-A R1 #1)', () => {
+    const r = srb.decideSessionRuleProposal({
+      approvalMode: 'delegated-architect', caller: architect, proposal: { id: 'p1' }, decision: 'approve'
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'RULE_APPROVAL_INVALID');
+  });
+
+  it('fails closed on a blank authoredBy the same way as a missing one', () => {
+    const r = srb.decideSessionRuleProposal({
+      approvalMode: 'delegated-architect', caller: architect, proposal: { id: 'p1', authoredBy: '   ' }, decision: 'approve'
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'RULE_APPROVAL_INVALID');
+  });
+
 });
 
 describe('session-rules-bulk: bulkDecideSessionRuleProposals (#2016)', () => {
@@ -191,6 +208,19 @@ describe('session-rules-bulk: bulkDecideSessionRuleProposals (#2016)', () => {
     });
     assert.equal(r.summary.errors.length, 2);
     assert.ok(r.summary.errors.every((e) => e.code === 'RULE_APPROVAL_UNAUTHORIZED'));
+  });
+
+  it('a batch item missing authoredBy lands in errors as RULE_APPROVAL_INVALID, not approved (PRR-A R1 #1)', () => {
+    const r = srb.bulkDecideSessionRuleProposals({
+      approvalMode: 'delegated-pm', caller: pm, decision: 'approve',
+      proposals: [
+        { id: 'ok-1', authoredBy: 'builder-1', status: 'pending' },
+        { id: 'no-author', status: 'pending' }
+      ]
+    });
+    assert.deepEqual(r.summary.approved.map((x) => x.proposalId), ['ok-1']);
+    assert.deepEqual(r.summary.errors.map((x) => x.proposalId), ['no-author']);
+    assert.equal(r.summary.errors[0].code, 'RULE_APPROVAL_INVALID');
   });
 });
 
