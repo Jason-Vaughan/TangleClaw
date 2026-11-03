@@ -6010,6 +6010,10 @@ controlRoute('POST', '/api/control/assignments/:id/exchange-closed', (req, param
 controlRoute('GET', '/api/control/mine', (req) => controlApi.mine(req));
 controlRoute('GET', '/api/control/check', (req) => controlApi.check(parseQuery(reqUrl(req).search)));
 
+// Durable interactive decision requests (#2037): the handlers and schema live
+// in lib/decision-routing.js, which owns its own storage; nothing here is shared.
+require('./lib/decision-routing').register();
+
 // ── Merge queue (#2322): make a queue, submit, read, withdraw, advance, record the Operator gate, clear a halt ──
 //
 // The handlers live in lib/merge-queue-api.js. Only an advance by the queue's owner lands anything.
