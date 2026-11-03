@@ -124,7 +124,10 @@
         "lib/rule-label.js",
         "lib/methodology-topics.js",
         "lib/store/session-rules.js",
-        "lib/rule-receipt-redelivery.js"
+        "lib/rule-receipt-redelivery.js",
+        "lib/adr-viewer.js",
+        "lib/rules-compress-preview.js",
+        "lib/team-templates.js"
       ]
     },
     "sessions": {
