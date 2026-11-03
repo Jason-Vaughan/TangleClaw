@@ -736,3 +736,67 @@
 #masterDrawer:fullscreen #masterDrawerFrame {
   height: 100%;
 }
+
+/* #2819 — the Advisor's own two surfaces, same reasoning as Master's block
+   immediately above (a separate rule set because `:fullscreen` and `#id`
+   selectors cannot be parameterized, not because the behavior differs). */
+#advisorPanel:fullscreen,
+#advisorDrawer:fullscreen {
+  max-height: none;
+  height: 100dvh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+#advisorPanel:fullscreen .master-frame-wrap,
+#advisorDrawer:fullscreen .master-drawer-frame-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+#advisorPanel:fullscreen #advisorFrame,
+#advisorDrawer:fullscreen #advisorDrawerFrame {
+  height: 100%;
+}
+
+/* #2819 — the Advisor control bar's inline settings strip (engine/model/
+   autoStart). Collapsible rather than a modal: see `tcAdvisorControlBarMarkup`
+   in api-helper.js for why. */
+.advisor-settings-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border, #333);
+}
+.advisor-settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.advisor-settings-field select,
+.advisor-settings-field input[type="text"] {
+  min-height: 30px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #333);
+  background: var(--elevated-bg, #1a1a1a);
+  color: inherit;
+  font-size: 13px;
+}
+.advisor-settings-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.advisor-settings-saved {
+  font-size: 12px;
+  color: var(--primary);
+}
+.advisor-icon { vertical-align: middle; }
