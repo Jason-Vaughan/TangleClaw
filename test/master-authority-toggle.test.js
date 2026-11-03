@@ -151,6 +151,28 @@ describe('resolveMedusaToggleState -- addendum contract (object input)', () => {
       sessionOverrideActive: false, drifted: false, driftReasons: []
     });
   });
+
+  // I-Gate Round 2 (#5757487201): the opposite mismatch direction -- an
+  // explicitly observed listener OFF while persisted says on -- was
+  // silently reported as drifted: false.
+  it('reports drift when persisted enabled=true but the listener is explicitly observed off', () => {
+    const r = mts.resolveMedusaToggleState({ persistedConfig: { medusaEnabled: true }, runtimeListener: { enabled: false } });
+    assert.equal(r.persistedEnabled, true);
+    assert.equal(r.effectiveEnabled, true, 'still pinned to persisted -- see the module\'s own invariant');
+    assert.equal(r.sessionOverrideActive, false, 'nothing is incorrectly running -- this is not an override');
+    assert.equal(r.drifted, true);
+    assert.ok(r.driftReasons.includes('listener-off-while-persisted-enabled'));
+  });
+
+  it('still reports no drift for persisted=true with the listener explicitly observed on (ordinary operation)', () => {
+    const r = mts.resolveMedusaToggleState({ persistedConfig: { medusaEnabled: true }, runtimeListener: { enabled: true } });
+    assert.equal(r.drifted, false);
+  });
+
+  it('still reports no runtime-based drift when runtimeListener is omitted entirely (never observed, not "off")', () => {
+    const r = mts.resolveMedusaToggleState({ persistedConfig: { medusaEnabled: true } });
+    assert.equal(r.drifted, false, 'unobserved must not read the same as an explicit enabled: false');
+  });
 });
 
 describe('syncMedusaToggleSettings -- addendum contract (object input)', () => {
