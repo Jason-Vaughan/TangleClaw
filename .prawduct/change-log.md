@@ -41,6 +41,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-03 — v5.57.0 release cut (Milestone #42)
+
+<!-- prawduct: type=internal | scope=v5570-release -->
+
+- Compiled the eight accepted `changelog.d/` fragments for #2034, #2037, #2074, #2109, #2249, #2250, #2351, and #2353 into `CHANGELOG.md` section `[5.57.0]`. Bumped `version.json`, updated the README clone pins and released-section lock, and consumed those fragments together for the release cut.
+
 ## 2026-11-03 — v5.57.0 W1-A: Coordinator-rotation review follow-ups (#2034)
 
 <!-- prawduct: type=feature | scope=v5570-w1a-2034 -->
