@@ -216,3 +216,139 @@ describe('bridge: what may be reached, and how it is named (#2031)', () => {
     assert.deepEqual(first.destinations.map((d) => d.name), ['Alpha']);
   });
 });
+
+describe('bridge-reach: group-scoped defaults and batch opt-out (#2117, Ruling A2117)', () => {
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-bridge-reach-2117-'));
+    store._setBasePath(tmpDir);
+    store.init();
+  });
+
+  afterEach(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  describe('defaultActivationScope', () => {
+    it('defaults to "all" with no groups', () => {
+      assert.deepEqual(reach.defaultActivationScope([]), { type: 'all' });
+    });
+
+    it('prefers a group whose name suggests the fleet, among several', () => {
+      const other = store.projectGroups.create({ name: 'Backend services' });
+      const fleet = store.projectGroups.create({ name: 'TangleClaw Fleet' });
+      const r = reach.defaultActivationScope([other, fleet]);
+      assert.deepEqual(r, { type: 'group', groupId: fleet.id, groupName: fleet.name });
+    });
+
+    it('matches "fleet" case-insensitively with no "tangleclaw" in the name', () => {
+      const group = store.projectGroups.create({ name: 'my fleet' });
+      const r = reach.defaultActivationScope([group]);
+      assert.deepEqual(r, { type: 'group', groupId: group.id, groupName: group.name });
+    });
+
+    it('defaults to the one group when exactly one exists and none looks fleet-like', () => {
+      const group = store.projectGroups.create({ name: 'Backend services' });
+      const r = reach.defaultActivationScope([group]);
+      assert.deepEqual(r, { type: 'group', groupId: group.id, groupName: group.name });
+    });
+
+    it('falls back to "all" rather than guessing among several non-fleet-like groups', () => {
+      const a = store.projectGroups.create({ name: 'Backend services' });
+      const b = store.projectGroups.create({ name: 'Frontend services' });
+      assert.deepEqual(reach.defaultActivationScope([a, b]), { type: 'all' });
+    });
+  });
+
+  describe('needsGroupNarrowingPrompt', () => {
+    it('never prompts when the current scope is already a group', () => {
+      const group = store.projectGroups.create({ name: 'TangleClaw Fleet' });
+      const r = reach.needsGroupNarrowingPrompt({ kind: 'group', groupId: group.id, groupName: group.name }, [group]);
+      assert.deepEqual(r, { shouldPrompt: false });
+    });
+
+    it('never prompts when scoped to "all" but no groups exist', () => {
+      assert.deepEqual(reach.needsGroupNarrowingPrompt({ kind: 'all' }, []), { shouldPrompt: false });
+    });
+
+    it('prompts, with a suggestion, when scoped to "all" and a group exists', () => {
+      const group = store.projectGroups.create({ name: 'TangleClaw Fleet' });
+      const r = reach.needsGroupNarrowingPrompt({ kind: 'all' }, [group]);
+      assert.equal(r.shouldPrompt, true);
+      assert.deepEqual(r.suggested, { type: 'group', groupId: group.id, groupName: group.name });
+    });
+
+    it('never prompts when the scope is unresolved -- only "all" is narrowed', () => {
+      const group = store.projectGroups.create({ name: 'TangleClaw Fleet' });
+      assert.deepEqual(reach.needsGroupNarrowingPrompt({ kind: 'unresolved', cause: 'malformed' }, [group]), { shouldPrompt: false });
+    });
+
+    it('never writes anything -- the scope the module reports is unchanged after asking', () => {
+      const group = store.projectGroups.create({ name: 'TangleClaw Fleet' });
+      scope = 'all';
+      reach._deps.masterScope = () => scope;
+      reach.needsGroupNarrowingPrompt(reach.scope(), [group]);
+      assert.deepEqual(reach.scope(), { kind: 'all' });
+    });
+  });
+
+  describe('setProjectsOutOfReachBatch', () => {
+    it('opts a batch of projects out in one call, and reports what changed', () => {
+      const a = project('Alpha');
+      const b = project('Beta');
+      const r = reach.setProjectsOutOfReachBatch([a.id, b.id], true);
+      assert.equal(r.updated, 2);
+      assert.deepEqual(r.reachableIds, []);
+      assert.deepEqual(r.outOfReachIds.sort(), [a.id, b.id].sort());
+      assert.equal(bridgeStore.optouts.has(a.id), true);
+      assert.equal(bridgeStore.optouts.has(b.id), true);
+    });
+
+    it('restores a batch back within reach, and reports what changed', () => {
+      const a = project('Alpha');
+      const b = project('Beta');
+      reach.setProjectsOutOfReachBatch([a.id, b.id], true);
+      const r = reach.setProjectsOutOfReachBatch([a.id, b.id], false);
+      assert.equal(r.updated, 2);
+      assert.deepEqual(r.outOfReachIds, []);
+      assert.deepEqual(r.reachableIds.sort(), [a.id, b.id].sort());
+    });
+
+    it('reports only what actually changed -- an already-opted-out project does not re-count', () => {
+      const a = project('Alpha');
+      reach.setProjectsOutOfReachBatch([a.id], true);
+      const r = reach.setProjectsOutOfReachBatch([a.id], true);
+      assert.equal(r.updated, 0);
+      assert.deepEqual(r.outOfReachIds, [a.id]);
+    });
+
+    it('deduplicates repeated ids in one call', () => {
+      const a = project('Alpha');
+      const r = reach.setProjectsOutOfReachBatch([a.id, a.id, a.id], true);
+      assert.equal(r.updated, 1);
+      assert.deepEqual(r.outOfReachIds, [a.id]);
+    });
+
+    it('is atomic: a mix of valid and already-settled ids still succeeds as one call', () => {
+      const a = project('Alpha');
+      const b = project('Beta');
+      reach.setProjectsOutOfReachBatch([a.id], true);
+      const r = reach.setProjectsOutOfReachBatch([a.id, b.id], true);
+      assert.equal(r.updated, 1, 'only Beta actually changed');
+      assert.deepEqual(r.outOfReachIds.sort(), [a.id, b.id].sort());
+    });
+
+    it('throws on a non-array, empty, or non-positive-integer projectIds', () => {
+      assert.throws(() => reach.setProjectsOutOfReachBatch('nope', true), TypeError);
+      assert.throws(() => reach.setProjectsOutOfReachBatch([], true), TypeError);
+      assert.throws(() => reach.setProjectsOutOfReachBatch([0], true), TypeError);
+      assert.throws(() => reach.setProjectsOutOfReachBatch([1.5], true), TypeError);
+      assert.throws(() => reach.setProjectsOutOfReachBatch([-1], true), TypeError);
+    });
+
+    it('throws on a non-boolean outOfReach', () => {
+      const a = project('Alpha');
+      assert.throws(() => reach.setProjectsOutOfReachBatch([a.id], 'yes'), TypeError);
+    });
+  });
+});
