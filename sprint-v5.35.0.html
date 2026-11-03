@@ -521,6 +521,13 @@
       </div>
 
       <div class="kpi-grid">
+        <!-- TANGLECLAW_ADE_KPI_START -->
+        <div class="kpi-card">
+          <div class="kpi-label">Autonomous Delivery Efficiency (ADE)</div>
+          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">0.05</div>
+          <div class="kpi-meta kpi-sub"><code>14 issues / (10.50h × $25.83)</code> · <code>$1.84/issue</code> · <code>$4.22/kLOC</code> · <code>~18.0M tok</code> (<code>10.1×</code> vs API)</div>
+        </div>
+        <!-- TANGLECLAW_ADE_KPI_END -->
         <div class="kpi-card">
           <div class="kpi-label">Total Automated Run Time</div>
           <div class="kpi-val">2d 01h 26m 14s</div>
@@ -670,6 +677,18 @@
 
     <!-- VELOCITY CHART -->
     <section id="velocity" class="section">
+      <!-- TANGLECLAW_ADE_BANNER_START -->
+      <div id="ade-efficiency-card" class="subcard" style="margin:18px 0;padding:18px 22px;border:1.5px solid rgba(56,189,248,0.45);background:linear-gradient(135deg,rgba(15,23,42,0.95),rgba(14,116,144,0.16));border-radius:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
+          <span style="color:#38bdf8;font-weight:700;font-size:0.82rem;letter-spacing:0.06em;">📐 AUTONOMOUS DELIVERY EFFICIENCY (ADE) · SPEED × QUALITY × OPERATING COST</span>
+          <span class="badge badge-green" style="font-size:0.78rem;">ADE = 0.05 Certified Issues / (Hr · $) · $1.84/Issue · $4.22/kLOC</span>
+        </div>
+        <div style="font-size:0.92rem;color:#e2e8f0;line-height:1.55;">
+          <strong>Formula:</strong> <code>ADE = (Accepted, Validated Work Delivered) / (Elapsed Hours × Total Operating Cost)</code> = <code>14 certified issues / (10.50h × $25.83) = <strong>0.05</strong></code> (<code>+6,120 LOC</code> delivered at <code>$4.22 / 1,000 LOC</code>).<br/>
+          <strong>Cost &amp; Token Basis (Method 3):</strong> Amortized from the <code>$500/mo</code> multi-vendor CLI subscription pool (Claude Code <code>$200</code> + Antigravity <code>$200</code> + Codex <code>$100</code> @ <code>85%</code> TangleClaw allocation + <code>$15/mo</code> local M3 Ultra compute = <code>$2.46/active fleet-hr</code>). Estimated CLI turn volume: <code>~18.0M</code> cached/uncached tokens (public frontier API shadow cost <code>~$261</code> → <strong><code>10.1×</code> subscription cost compression</strong>).
+        </div>
+      </div>
+      <!-- TANGLECLAW_ADE_BANNER_END -->
       <div class="section-header">
         <div>
           <h2 class="section-title">2. Cumulative Sprint Velocity &amp; Test Growth Across All 5 Waves (28 PRs)</h2>

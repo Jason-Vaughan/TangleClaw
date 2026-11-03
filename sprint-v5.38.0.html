@@ -486,6 +486,13 @@
       </div>
 
       <div class="kpi-grid">
+        <!-- TANGLECLAW_ADE_KPI_START -->
+        <div class="kpi-card">
+          <div class="kpi-label">Autonomous Delivery Efficiency (ADE)</div>
+          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">0.02</div>
+          <div class="kpi-meta kpi-sub"><code>10 issues / (13.35h × $32.84)</code> · <code>$3.28/issue</code> · <code>$7.27/kLOC</code> · <code>~19.6M tok</code> (<code>8.6×</code> vs API)</div>
+        </div>
+        <!-- TANGLECLAW_ADE_KPI_END -->
         <div class="kpi-card">
           <div class="kpi-label">Issues Closed Today (M#23 + Gate 0)</div>
           <div class="kpi-val">24 Closed (15 + 9)</div>
@@ -805,6 +812,18 @@
 
     <!-- SECTION 4: LONGITUDINAL & SONNET 5 VS SONNET 4.6 TELEMETRY -->
     <section id="telemetry" class="section">
+      <!-- TANGLECLAW_ADE_BANNER_START -->
+      <div id="ade-efficiency-card" class="subcard" style="margin:18px 0;padding:18px 22px;border:1.5px solid rgba(56,189,248,0.45);background:linear-gradient(135deg,rgba(15,23,42,0.95),rgba(14,116,144,0.16));border-radius:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
+          <span style="color:#38bdf8;font-weight:700;font-size:0.82rem;letter-spacing:0.06em;">📐 AUTONOMOUS DELIVERY EFFICIENCY (ADE) · SPEED × QUALITY × OPERATING COST</span>
+          <span class="badge badge-green" style="font-size:0.78rem;">ADE = 0.02 Certified Issues / (Hr · $) · $3.28/Issue · $7.27/kLOC</span>
+        </div>
+        <div style="font-size:0.92rem;color:#e2e8f0;line-height:1.55;">
+          <strong>Formula:</strong> <code>ADE = (Accepted, Validated Work Delivered) / (Elapsed Hours × Total Operating Cost)</code> = <code>10 certified issues / (13.35h × $32.84) = <strong>0.02</strong></code> (<code>+4,520 LOC</code> delivered at <code>$7.27 / 1,000 LOC</code>).<br/>
+          <strong>Cost &amp; Token Basis (Method 3):</strong> Amortized from the <code>$500/mo</code> multi-vendor CLI subscription pool (Claude Code <code>$200</code> + Antigravity <code>$200</code> + Codex <code>$100</code> @ <code>85%</code> TangleClaw allocation + <code>$15/mo</code> local M3 Ultra compute = <code>$2.46/active fleet-hr</code>). Estimated CLI turn volume: <code>~19.6M</code> cached/uncached tokens (public frontier API shadow cost <code>~$284</code> → <strong><code>8.6×</code> subscription cost compression</strong>).
+        </div>
+      </div>
+      <!-- TANGLECLAW_ADE_BANNER_END -->
       <div class="section-header">
         <div>
           <h2 class="section-title">4. Longitudinal Comparison (<code>v5.35.0 → v5.36.0 → v5.37.0 → v5.38.0</code>) &amp; <code>Claude Sonnet 5</code> Evaluation</h2>
