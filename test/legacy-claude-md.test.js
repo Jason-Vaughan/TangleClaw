@@ -120,7 +120,7 @@ describe('governed CLAUDE.md legacy duplicates (#1911)', () => {
       const analysis = engines.analyzeGovernedCarrier(text);
       assert.equal(analysis.eligible, true);
       assert.deepEqual(analysis.candidates.filter((c) => c.kind === 'section').map((c) => c.heading),
-        ['## Port Management (PortHub)', '## Shared Documents', '## Session Memory']);
+        ['## Port Management (PortHub)', '## Chunk-Boundary Protocol v1.0.0 (#1889)', '## Shared Documents', '## Session Memory']);
       assert.ok(analysis.candidates.some((c) => c.kind === 'bullet'), 'the duplicated bootstrap bullets are candidates');
 
       engines.writeEngineConfig('claude', proj, PROJ_CONFIG, profile);
