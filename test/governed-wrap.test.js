@@ -14,6 +14,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
+const { initRepo } = require('./_temp-repo');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -57,7 +58,7 @@ beforeEach(() => {
   store.init();
   const projDir = path.join(tmpDir, 'proj');
   fs.mkdirSync(projDir);
-  execFileSync('git', ['init', '-q'], { cwd: projDir });
+  initRepo(projDir);
   execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-q', '-m', 'init'], { cwd: projDir });
   project = store.projects.create({ name: 'gwrap-proj', path: projDir, engine: 'claude' });
 

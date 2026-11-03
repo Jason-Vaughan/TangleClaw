@@ -19,6 +19,7 @@ const os = require('node:os');
 const http = require('node:http');
 const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
+const { initRepo } = require('./_temp-repo');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -90,7 +91,7 @@ describe('governed-wrap HTTP surface (#2072 Slice 1)', () => {
     for (const name of ['gwrap-target', 'gwrap-pm']) {
       const dir = path.join(projectsDir, name);
       fs.mkdirSync(dir, { recursive: true });
-      execFileSync('git', ['init', '-q'], { cwd: dir });
+      initRepo(dir);
       execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-q', '-m', 'init'], { cwd: dir });
       store.projects.create({ name, path: dir, engine: 'claude' });
     }
