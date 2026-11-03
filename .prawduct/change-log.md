@@ -41,6 +41,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- Older entries live in .prawduct/change-log-archive/YYYY-MM.md, moved there verbatim by `prawduct-hook archive-change-log`. -->
 
+## 2026-11-03 — exempt POST /api/sessions/:project/decisions from the route-gating completeness test (#2037)
+
+<!-- prawduct: type=fixed | scope=gated-route-exemption-2037 -->
+
+- `#2034`'s route-completeness test (`test/api-coordinator-rotation.test.js`, merged in PR #2827) requires every mutating route in its gate-relevant families to either declare `gatedAction` or carry a `KNOWN_UNGATED` reason. `#2037`'s `POST /api/sessions/:project/decisions` route (PR #2820) had already merged by then with neither — the route IS correctly epoch-fenced (it calls `coordinatorGateRefused(req, res, project.id, 'session-command')` inline, same shape as the file's other inline-fenced entries), it just had no allowlist entry, leaving `main`'s own suite red on this test since PR #2827 landed. Added the one-line exemption; no production code changed. Found and flagged by TC-Lane-PM while pushing #2109; folded into this PR at PM's request so CI is green.
+
 ## 2026-11-03 — v5.57.0 W1-A: Coordinator-rotation review follow-ups (#2034)
 
 <!-- prawduct: type=feature | scope=v5570-w1a-2034 -->

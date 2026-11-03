@@ -346,7 +346,8 @@ describe('API — every gated route answers the epoch gate (#2032)', () => {
     'DELETE /api/sessions/:project': 'ending a session is how a relaunch rotation begins; it dispatches nothing',
     'POST /api/sessions/:project/launch/recovery-clear': 'the operator clears a launch-recovery requirement; no coordinator authority is exercised',
     'POST /api/sessions/:project/launch/reconciliation': 'a read, sent as a POST only so the operator proof applies whole: it writes nothing, and it serves a signed-in operator only',
-    'POST /api/sessions/:project/wrap/cancel': 'stops a wrap before its commit step; it publishes and finalizes nothing'
+    'POST /api/sessions/:project/wrap/cancel': 'stops a wrap before its commit step; it publishes and finalizes nothing',
+    'POST /api/sessions/:project/decisions': 'fenced inline (#2037): the handler itself calls coordinatorGateRefused(req, res, project.id, \'session-command\') before doing anything else, same shape as the other inline-fenced entries above, just not via the declarative gatedAction option'
   };
 
   it('every mutating route in the gate-relevant families either declares gatedAction or names a reason it does not', () => {
