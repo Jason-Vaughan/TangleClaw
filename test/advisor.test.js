@@ -123,6 +123,9 @@ describe('Advisor (#2819)', () => {
     const config = store.config.load();
     delete config.advisor;
     store.config.save(config);
+    // isAdvisorRequest's module-level cache (TTL 2s) would otherwise leak a
+    // cached live-launch-id answer from one test's fakeTmux into the next.
+    advisor._resetAdvisorLaunchIdCacheForTesting();
   });
 
   describe('ensureAdvisorSandbox', () => {
@@ -465,12 +468,16 @@ describe('Advisor (#2819)', () => {
     });
   });
 
-  describe('isAdvisorRequest', () => {
-    it('false with no role header at all', () => {
+  describe('isAdvisorRequest (#2819; role header is no longer load-bearing, per PM dispatch closing PRR-B R1 finding 2)', () => {
+    it('false with no headers at all', () => {
       assert.equal(advisor.isAdvisorRequest({ headers: {} }), false);
     });
 
-    it('false with the role header but the WRONG launch id (a forged claim)', () => {
+    it('false with no launch-id header, even with the role header present', () => {
+      assert.equal(advisor.isAdvisorRequest({ headers: { 'x-tangleclaw-role': 'advisor' } }), false);
+    });
+
+    it('false with the WRONG launch id (a forged claim)', () => {
       const req = { headers: { 'x-tangleclaw-role': 'advisor', 'x-tangleclaw-launch-id': 'not-the-real-one' } };
       assert.equal(advisor.isAdvisorRequest(req, { tmuxLib: fakeTmux({ alive: true, launchId: 'the-real-one' }) }), false);
     });
@@ -485,9 +492,41 @@ describe('Advisor (#2819)', () => {
       assert.equal(advisor.isAdvisorRequest(req, { tmuxLib: fakeTmux({ alive: true, launchId: 'the-real-one' }) }), true);
     });
 
-    it('false for a role claim of "master", even with a matching-shaped header', () => {
+    it('true for the matching live launch id even with NO role header at all -- the omitted-header case PRR-B R1 finding 2 named', () => {
+      const req = { headers: { 'x-tangleclaw-launch-id': 'the-real-one' } };
+      assert.equal(advisor.isAdvisorRequest(req, { tmuxLib: fakeTmux({ alive: true, launchId: 'the-real-one' }) }), true);
+    });
+
+    it('true for the matching live launch id even with a DIFFERENT role claimed -- the launch id alone is the signal', () => {
       const req = { headers: { 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': 'the-real-one' } };
-      assert.equal(advisor.isAdvisorRequest(req, { tmuxLib: fakeTmux({ alive: true, launchId: 'the-real-one' }) }), false);
+      assert.equal(advisor.isAdvisorRequest(req, { tmuxLib: fakeTmux({ alive: true, launchId: 'the-real-one' }) }), true);
+    });
+
+    describe('the live-launch-id cache (bounds a tmux probe on every /api/* request)', () => {
+      it('is bypassed entirely when a caller passes its own tmuxLib -- every test above stays deterministic', () => {
+        const calls = [];
+        const countingTmux = fakeTmux({ alive: true, launchId: 'x' });
+        const wrapped = { readSessionEnv: (...args) => { calls.push(args); return countingTmux.readSessionEnv(...args); } };
+        const req = { headers: { 'x-tangleclaw-launch-id': 'x' } };
+        advisor.isAdvisorRequest(req, { tmuxLib: wrapped });
+        advisor.isAdvisorRequest(req, { tmuxLib: wrapped });
+        assert.equal(calls.length, 2, 'an explicit tmuxLib must never be served from the cache');
+      });
+
+      it('serves a second call within the TTL from the cache, not a second tmux probe (no options -- the real production call shape)', () => {
+        let calls = 0;
+        const originalTmux = require('../lib/tmux');
+        const originalRead = originalTmux.readSessionEnv;
+        originalTmux.readSessionEnv = (...args) => { calls += 1; return { value: 'the-real-one', answered: true, cause: null }; };
+        try {
+          const req = { headers: { 'x-tangleclaw-launch-id': 'the-real-one' } };
+          assert.equal(advisor.isAdvisorRequest(req), true);
+          assert.equal(advisor.isAdvisorRequest(req), true);
+          assert.equal(calls, 1, 'the second call within the TTL must be served from the cache');
+        } finally {
+          originalTmux.readSessionEnv = originalRead;
+        }
+      });
     });
   });
 
@@ -656,15 +695,32 @@ describe('Advisor (#2819)', () => {
       }
     });
 
-    it('omitting the role header entirely is NOT read as the Advisor -- it falls through to whatever the pre-existing floor already does for an unclaimed caller (PRR-B R1 finding 2)', async () => {
-      // isAdvisorRequest is NOT stubbed: a request carrying no
-      // x-tangleclaw-role header at all must not be treated as the Advisor,
-      // and this check must not be the thing standing between it and
-      // /api/master/status -- that is the PRE-EXISTING launch-binding/
-      // open-mode floor's job, unchanged by this car. Documented reasoning
-      // for why this is the system's existing trust model, not a gap this
-      // PR introduces, lives in lib/advisor.js#isAdvisorRequest's own
-      // docstring.
+    it('the dispatch floor refuses a request isAdvisorRequest classifies by launch id ALONE, with no role header present (#2819 PM dispatch, PRR-B R1 finding 2)', async () => {
+      // Stubbed to mirror the real implementation's new contract exactly:
+      // launch id alone, role header irrelevant. End-to-end proof that the
+      // floor enforces whatever isAdvisorRequest decides, not specifically
+      // a role claim -- the real decision logic itself is unit-tested
+      // directly in the "isAdvisorRequest" describe block above.
+      const original = advisor.isAdvisorRequest;
+      advisor.isAdvisorRequest = (req) => req.headers['x-tangleclaw-launch-id'] === 'the-real-advisor-launch-id';
+      try {
+        const r = await send(server, 'GET', '/api/master/status', null, { 'x-tangleclaw-launch-id': 'the-real-advisor-launch-id' });
+        assert.equal(r.status, 403);
+        assert.equal(r.data.code, 'ADVISOR_SCOPE_VIOLATION');
+      } finally {
+        advisor.isAdvisorRequest = original;
+      }
+    });
+
+    it('a genuinely anonymous request (no headers at all, so no launch id to match) is NOT read as the Advisor -- it falls through to whatever the pre-existing floor already does for an unclaimed caller', async () => {
+      // isAdvisorRequest is NOT stubbed: a request carrying no launch-id
+      // header has nothing for the real check to match against (role alone
+      // is no longer load-bearing -- see lib/advisor.js#isAdvisorRequest's
+      // own docstring for the "launch id alone is the signal, even without
+      // the role claim" redesign), and must not be treated as the Advisor.
+      // This check must not be the thing standing between a TRULY anonymous
+      // caller and /api/master/status -- that is the PRE-EXISTING launch-
+      // binding/open-mode floor's job, unchanged by this car.
       const r = await send(server, 'GET', '/api/master/status', null, {});
       assert.notEqual(r.data && r.data.code, 'ADVISOR_SCOPE_VIOLATION');
     });
