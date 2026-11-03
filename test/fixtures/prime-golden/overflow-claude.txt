@@ -33,6 +33,9 @@ _(Ecosystem primer omitted for budget. TC API <API_ORIGIN>; numeric project id i
 ## Active Learnings
 _(6 active learnings omitted here to fit the prime size budget — they remain available through the project's learnings surface.)_
 
+## Chunk-Boundary Protocol v1.0.0 (#1889)
+_(Omitted here to fit the prime size budget — see this project's generated carrier file, or `lib/chunk-boundary.js#roleProjectionLines`, for the full text.)_
+
 ## Last Session Summary
 _(Omitted here to fit the prime size budget — it is recorded on the project's last session.)_
 

@@ -104,6 +104,7 @@
         "lib/ecosystem-primer.js",
         "lib/prime-hook-output.js",
         "lib/coordinator-rotation.js",
+        "lib/chunk-boundary.js",
         "lib/recorded-launch-command.js",
         "lib/pane-witness.js",
         "lib/provenance.js",

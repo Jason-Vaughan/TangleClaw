@@ -198,8 +198,17 @@ describe('launch step contents (car 21.2)', () => {
   });
 
   it('the pushed prime names the sequence only when the launch has one', () => {
-    const withSequence = sessions.generatePrimePrompt(project, engine, { operatorHost: 'operator.example.test', launchSequence: true });
-    const without = sessions.generatePrimePrompt(project, engine, { operatorHost: 'operator.example.test' });
+    // A generous budget override, local to this test: its own point is the
+    // bootstrap-block delta in isolation, not budget-yield behavior (that is
+    // test/sessions.test.js's own, dedicated concern). At the engine's real
+    // default (10000) this fixture's rule+learning+plan content, plus the
+    // #1889 chunk-boundary section every prime now carries, sits close
+    // enough to the edge that adding the bootstrap block alone could tip the
+    // ecosystem primer into yielding -- a second, larger delta this
+    // assertion does not mean to measure.
+    const roomyEngine = { ...engine, capabilities: { ...engine.capabilities, startupInjection: { maxChars: 20000 } } };
+    const withSequence = sessions.generatePrimePrompt(project, roomyEngine, { operatorHost: 'operator.example.test', launchSequence: true });
+    const without = sessions.generatePrimePrompt(project, roomyEngine, { operatorHost: 'operator.example.test' });
     assert.match(withSequence, /Run `tc start next` now/);
     assert.ok(!without.includes('Run `tc start next` now'));
     // The delta is exactly the bootstrap block and nothing else.

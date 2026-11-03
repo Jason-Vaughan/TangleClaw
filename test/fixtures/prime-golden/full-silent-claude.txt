@@ -46,6 +46,22 @@ This project opted into Medusa session-to-session messaging. You are a Medusa pa
 - tmux targets need an exact-match prefix.
 - The store opens SQLite at require time.
 
+## Chunk-Boundary Protocol v1.0.0 (#1889)
+
+_Digest `a3907634ea5a` -- for diagnosing which version of this text a session loaded._
+
+A Chunk is complete only once a **durable receipt** records it, not a conversational acknowledgment that can be lost or bypassed. A receipt requires, together: the exact completed commit, this project's own verification evidence, a durable plan checkpoint, reflection-gate and child-accounting completion, and -- the one piece nothing else can substitute for -- **the Builder's own acknowledgment**. A PM assertion alone, or automatic context compaction, never creates or completes one.
+
+| Lifecycle step | What it means |
+|---|---|
+| `compact` | Continuity/pressure relief inside active work. Never advances the Train. |
+| `/clear` | A planned boundary, taken only once the Chunk's receipt exists and is complete. |
+| `wrap` | Closes the Train lifecycle. Release/merge/deploy authority is separately governed. |
+
+**If you are the Project Manager:** before dispatching Chunk N+1 to a lane, its receipt for Chunk N must exist and read `ready_after_clear` -- `lib/chunk-boundary.js#validateNextChunkDispatch` is the one place that checks this honestly; do not dispatch around a HOLD it returns.
+
+**If you are the Builder:** independently refuse a Chunk N+1 dispatch that cites no valid prior-chunk receipt, even if the PM asserts the prior chunk is done -- the receipt, not the assertion, is what the next session (yours or a fresh one) can actually trust after a restart.
+
 ## Resume — the proposal that closes your initialization
 This prime is hidden context; the operator does not see it, so what the last session recorded reaches them only if you say it. Emit a short, visible resume proposal — after the launch sequence where this launch has one, otherwise as your first visible reply. You MUST NOT start the work it proposes until the operator confirms.
 
