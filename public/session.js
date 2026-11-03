@@ -7330,15 +7330,31 @@ async function restoreWrapRunOnLoad() {
     rememberFollowedWrapRun(null);
     return;
   }
-  if (status.running === true || status.runId === recallFollowedWrapRun()) {
+  if (status.running === true) {
     adoptWrapRunChoices(status.options);
     dispatchWrapRun({ type: 'follow', runId: status.runId });
-  } else if (status.interrupted === true) {
+    return;
+  }
+  if (status.interrupted === true) {
     // #1816/#2642 — a restart cut a wrap off before `finish`; nothing is live
-    // to follow, but the operator should still be told it happened. Only
-    // reached when the branch above did not already claim this run (a live
-    // run, or the one this tab was following before the reload).
+    // to follow, but the operator should still be told it happened. Checked
+    // BEFORE the remembered-run fallback below, not after (PRR-A, PR #2846
+    // Round 2): the run this tab remembers following is the SAME run the
+    // registry now reports interrupted (the tab started it, then a restart
+    // cut it off) at least as often as it is some other, genuinely-settled
+    // run — falling through to 'follow' for it attaches no live stream,
+    // repaints as 'lost' once the poll gives up, and reports a misdiagnosis
+    // ("nothing was committed") that ignores `interruptedCommitStarted`. A
+    // reload while still interrupted re-reaches this branch regardless of
+    // what is remembered, since this check runs before that fallback either
+    // way — `syncWrapRunEffects` re-remembers this run's id for its own
+    // bookkeeping once dispatched, same as it does for every other phase.
     dispatchWrapRun({ type: 'interrupted', runId: status.runId, lastStepId: status.interruptedStepId, commitStarted: status.interruptedCommitStarted });
+    return;
+  }
+  if (status.runId === recallFollowedWrapRun()) {
+    adoptWrapRunChoices(status.options);
+    dispatchWrapRun({ type: 'follow', runId: status.runId });
   }
 }
 

@@ -596,7 +596,7 @@ describe('wrap-run wiring in session.js — executed', () => {
       assert.match(h.last('openWrapDrawerNotice')[1], /safe to start a new wrap/);
     });
 
-    it('a live or remembered run takes priority over an interrupted report on the same status read', async () => {
+    it('a genuinely live run takes priority over an interrupted report on the same status read', async () => {
       h.net.status = { runId: RUN, running: true, result: null, interrupted: true, interruptedStepId: 'preflight', interruptedCommitStarted: false };
       await h.w.restoreWrapRunOnLoad();
       assert.equal(h.w.wrapRunState().phase, 'following', 'a live run is followed, not reported as interrupted');
@@ -606,6 +606,30 @@ describe('wrap-run wiring in session.js — executed', () => {
       h.net.status = { runId: null, running: false, result: null, interrupted: false };
       await h.w.restoreWrapRunOnLoad();
       assert.equal(h.w.wrapRunState().phase, 'idle');
+    });
+
+    it('a remembered run that is now reported interrupted renders interrupted, not lost (PRR-A, PR #2846 Round 2)', async () => {
+      // The tab started this run itself, so sessionStorage remembers its id --
+      // then a restart cut it off before it could settle. Before the fix,
+      // the remembered-runId branch won first, attached no live stream, and
+      // repainted as 'lost' once the poll gave up, silently dropping
+      // interruptedCommitStarted.
+      h.storage.set('tc.wrap.followedRun.demo', RUN);
+      h.net.status = {
+        runId: RUN, running: false, result: null,
+        interrupted: true, interruptedStepId: 'commit', interruptedCommitStarted: true
+      };
+      await h.w.restoreWrapRunOnLoad();
+      const s = h.w.wrapRunState();
+      assert.equal(s.phase, 'interrupted');
+      assert.equal(s.interruptedCommitStarted, true);
+      assert.equal(h.last('openWrapDrawerNotice')[0], 'A wrap was interrupted');
+
+      // A second reload (status unchanged) must reach 'interrupted' again,
+      // not fall back to 'follow' on whatever syncWrapRunEffects remembered.
+      h.w.dispatchWrapRun({ type: 'dismiss' });
+      await h.w.restoreWrapRunOnLoad();
+      assert.equal(h.w.wrapRunState().phase, 'interrupted');
     });
   });
 });
