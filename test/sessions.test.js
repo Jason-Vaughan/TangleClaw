@@ -2532,6 +2532,40 @@ describe('sessions', () => {
       assert.ok(result.error.includes('not a session of'));
       assert.equal(sent.length, 0);
     });
+
+    // #2854: a single-line serverPrefix stamp joined with '\n' turns a
+    // single-line peer `/command` injection into a two-line bracketed
+    // paste, which some engine TUIs submit on the first Enter and leave
+    // the prefix's own line stranded, unsubmitted. Joined with a single
+    // space instead, when `command` is itself single-line.
+    it('joins a single-line serverPrefix and a single-line command with a single space, not a newline', () => {
+      startSession('tc-prefix-single');
+      const result = sessions.injectCommand('inject-multi', '1', { serverPrefix: '[DIRECT INPUT from project "x", verified by TangleClaw]' });
+      assert.equal(result.ok, true);
+      assert.equal(sent[0].command, '[DIRECT INPUT from project "x", verified by TangleClaw] 1');
+      assert.ok(!sent[0].command.includes('\n'));
+    });
+
+    it('keeps the newline join when command is itself multi-line -- nothing to strand, already two lines', () => {
+      startSession('tc-prefix-multi');
+      const result = sessions.injectCommand('inject-multi', 'line one\nline two', { serverPrefix: '[DIRECT INPUT from project "x", verified by TangleClaw]' });
+      assert.equal(result.ok, true);
+      assert.equal(sent[0].command, '[DIRECT INPUT from project "x", verified by TangleClaw]\nline one\nline two');
+    });
+
+    it('sends command unprefixed when no serverPrefix is given, whatever the join rule would otherwise be', () => {
+      startSession('tc-prefix-none');
+      const result = sessions.injectCommand('inject-multi', 'ls');
+      assert.equal(result.ok, true);
+      assert.equal(sent[0].command, 'ls');
+    });
+
+    it('a serverPrefix stamp ahead of a slash command still reaches the pane unmangled -- the slash refusal is the ROUTE\'s job, not this function\'s', () => {
+      startSession('tc-prefix-slash');
+      const result = sessions.injectCommand('inject-multi', '/clear', { serverPrefix: '[DIRECT INPUT from the Project Master, verified by TangleClaw]' });
+      assert.equal(result.ok, true);
+      assert.equal(sent[0].command, '[DIRECT INPUT from the Project Master, verified by TangleClaw] /clear');
+    });
   });
 
   describe('peek', () => {

@@ -140,7 +140,7 @@ describe('bridge notifications (#2031)', () => {
       bridgeStore.settings.set('enabled', 'false');
       reports(alpha, 'working');
       reports(alpha, 'blocked');
-      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 0, workUnblocked: 0, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 0 }, 'nothing while disabled');
+      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 0, workUnblocked: 0, operatorNeeded: 0, operatorResolved: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 0 }, 'nothing while disabled');
       later(60000);
       enable();
       assert.equal(bridgeNotify.reconcile().workBlocked, 0, 'and nothing afterwards for what happened while it was off');
@@ -531,6 +531,284 @@ describe('bridge notifications (#2031)', () => {
         exchanges._internal.now = realNow;
       }
     });
+
+    /**
+     * Mark the newest ready `operator-needed` notice for this exchange delivered, as the helper
+     * does once it has actually posted it to Discord -- `_operatorResolved` requires this, same
+     * proof `_workUnblocked` requires of its own paired notice.
+     * @param {string} exchangeId
+     * @returns {void}
+     */
+    function deliverOperatorNeeded(exchangeId) {
+      store.getDb().prepare("UPDATE bridge_outbound SET state = 'delivered', delivered_at = ?, updated_at = ? WHERE idem_key = ?")
+        .run(clock, clock, `notify:operator-needed:exchange:${exchangeId}`);
+    }
+
+    /**
+     * The exchange's own projected state, moved directly -- this file tests `bridge-notify`'s
+     * reading of it, not `medusa-exchanges`' own close/ack/reply machinery.
+     * @param {string} exchangeId
+     * @param {string} state
+     * @returns {void}
+     */
+    function resolveExchange(exchangeId, state) {
+      store.getDb().prepare('UPDATE medusa_exchanges SET state = ? WHERE exchange_id = ?').run(state, exchangeId);
+    }
+
+    describe('operator-resolved closed-loop follow-up (#2853, Architect Ruling A2853)', () => {
+      it('enqueues an all-clear follow-up once a delivered operator-needed alert\'s exchange resolves to "replied"', () => {
+        const alpha = liveSession('Alpha');
+        const realNow = exchanges._internal.now;
+        exchanges._internal.now = () => new Date(clock);
+        try {
+          enable();
+          const exchangeId = alertedExchange(alpha);
+          assert.equal(bridgeNotify.reconcile().operatorNeeded, 1);
+          deliverOperatorNeeded(exchangeId);
+          resolveExchange(exchangeId, 'replied');
+          assert.equal(bridgeNotify.reconcile().operatorResolved, 1);
+          const resolved = notifications().find((x) => x.type === 'operator-needed' && x.key === `notify:operator-resolved:exchange:${exchangeId}`);
+          assert.ok(resolved, 'rides under operator-needed\'s own admitted type, per its own idem_key');
+          assert.match(resolved.text, /has been handled/);
+        } finally {
+          exchanges._internal.now = realNow;
+        }
+      });
+
+      it('is idempotent: a second reconcile() pass does not enqueue a second one', () => {
+        const alpha = liveSession('Alpha');
+        const realNow = exchanges._internal.now;
+        exchanges._internal.now = () => new Date(clock);
+        try {
+          enable();
+          const exchangeId = alertedExchange(alpha);
+          bridgeNotify.reconcile();
+          deliverOperatorNeeded(exchangeId);
+          resolveExchange(exchangeId, 'closed');
+          assert.equal(bridgeNotify.reconcile().operatorResolved, 1);
+          assert.equal(bridgeNotify.reconcile().operatorResolved, 0, 'a second pass finds it already made');
+        } finally {
+          exchanges._internal.now = realNow;
+        }
+      });
+
+      it('fires for each real handling action: "acknowledged", "replied" and "closed"', () => {
+        for (const state of ['acknowledged', 'replied', 'closed']) {
+          const alpha = liveSession(`Alpha-${state}`);
+          const realNow = exchanges._internal.now;
+          exchanges._internal.now = () => new Date(clock);
+          try {
+            enable();
+            const exchangeId = alertedExchange(alpha);
+            bridgeNotify.reconcile();
+            deliverOperatorNeeded(exchangeId);
+            resolveExchange(exchangeId, state);
+            assert.equal(bridgeNotify.reconcile().operatorResolved, 1, `state "${state}"`);
+          } finally {
+            exchanges._internal.now = realNow;
+          }
+        }
+      });
+
+      it('never fires on "read" alone -- reading the inbox is not handling the message (PRR-B I-Gate Round 1 #2 on PR #2865)', () => {
+        const alpha = liveSession('Alpha-read-only');
+        const realNow = exchanges._internal.now;
+        exchanges._internal.now = () => new Date(clock);
+        try {
+          enable();
+          const exchangeId = alertedExchange(alpha);
+          bridgeNotify.reconcile();
+          deliverOperatorNeeded(exchangeId);
+          resolveExchange(exchangeId, 'read');
+          assert.equal(bridgeNotify.reconcile().operatorResolved, 0, 'read alone must never emit a premature all-clear');
+          // A later real handling action still fires it.
+          resolveExchange(exchangeId, 'acknowledged');
+          assert.equal(bridgeNotify.reconcile().operatorResolved, 1);
+        } finally {
+          exchanges._internal.now = realNow;
+        }
+      });
+
+      it('never fires while the exchange is still unresolved', () => {
+        const alpha = liveSession('Alpha');
+        const realNow = exchanges._internal.now;
+        exchanges._internal.now = () => new Date(clock);
+        try {
+          enable();
+          const exchangeId = alertedExchange(alpha);
+          bridgeNotify.reconcile();
+          deliverOperatorNeeded(exchangeId);
+          resolveExchange(exchangeId, 'wake_accepted');
+          assert.equal(bridgeNotify.reconcile().operatorResolved, 0);
+        } finally {
+          exchanges._internal.now = realNow;
+        }
+      });
+
+      it('never fires when the original operator-needed notice was never delivered', () => {
+        const alpha = liveSession('Alpha');
+        const realNow = exchanges._internal.now;
+        exchanges._internal.now = () => new Date(clock);
+        try {
+          enable();
+          const exchangeId = alertedExchange(alpha);
+          bridgeNotify.reconcile();
+          // Not delivered: still "ready", exactly as _workUnblocked requires of its own pair.
+          resolveExchange(exchangeId, 'replied');
+          assert.equal(bridgeNotify.reconcile().operatorResolved, 0);
+        } finally {
+          exchanges._internal.now = realNow;
+        }
+      });
+    });
+  });
+
+  describe('auto-detected Fleet PM group coordinator (#2853, Architect Ruling A2853)', () => {
+    it('does not page Discord directly for a lane with NO explicit coordinatorProject, when its Project Group has a live project-manager coordinator', () => {
+      const pm = liveSession('TC-Lane-PM');
+      const alpha = liveSession('TC-Lane-A');
+      const group = store.projectGroups.create({ name: `fleet-${++n}` });
+      store.projectGroups.addMember(group.id, pm.project.id);
+      store.projectGroups.addMember(group.id, alpha.project.id);
+      store.coordinatorRoles.grant({ roleId: `role-${++n}`, projectId: pm.project.id, role: 'project-manager', note: null, now: clock });
+      enable();
+      reports(alpha, 'blocked');
+      assert.equal(bridgeNotify.reconcile().workBlocked, 0, 'the group\'s live PM coordinator absorbs this, with no per-project setting');
+      assert.deepEqual(notifications(), []);
+    });
+
+    it('pages Discord directly when the group coordinator role is architect, not project-manager', () => {
+      const architect = liveSession('TC-Lane-Arc');
+      const alpha = liveSession('TC-Lane-A');
+      const group = store.projectGroups.create({ name: `fleet-${++n}` });
+      store.projectGroups.addMember(group.id, architect.project.id);
+      store.projectGroups.addMember(group.id, alpha.project.id);
+      store.coordinatorRoles.grant({ roleId: `role-${++n}`, projectId: architect.project.id, role: 'architect', note: null, now: clock });
+      enable();
+      reports(alpha, 'blocked');
+      assert.equal(bridgeNotify.reconcile().workBlocked, 1, 'an architect role is a different authority, not a Fleet PM');
+    });
+
+    it('pages Discord directly when the group\'s coordinator-role project has no live session', () => {
+      const pm = store.projects.create({ name: 'TC-Lane-PM-offline', path: path.join(tmpDir, `p${++n}`) });
+      const alpha = liveSession('TC-Lane-A');
+      const group = store.projectGroups.create({ name: `fleet-${++n}` });
+      store.projectGroups.addMember(group.id, pm.id);
+      store.projectGroups.addMember(group.id, alpha.project.id);
+      store.coordinatorRoles.grant({ roleId: `role-${++n}`, projectId: pm.id, role: 'project-manager', note: null, now: clock });
+      enable();
+      reports(alpha, 'blocked');
+      assert.equal(bridgeNotify.reconcile().workBlocked, 1, 'a coordinator role with no live session protects nothing');
+    });
+
+    it('pages Discord directly when the lane belongs to no group at all', () => {
+      const alpha = liveSession('TC-Lane-A');
+      enable();
+      reports(alpha, 'blocked');
+      assert.equal(bridgeNotify.reconcile().workBlocked, 1);
+    });
+
+    it('an EXPLICIT coordinatorProject that fails (no live session) does NOT fall back to the group auto-detect, even when a live group PM exists', () => {
+      const pm = liveSession('TC-Lane-PM');
+      const alpha = liveSession('TC-Lane-A');
+      const group = store.projectGroups.create({ name: `fleet-${++n}` });
+      store.projectGroups.addMember(group.id, pm.project.id);
+      store.projectGroups.addMember(group.id, alpha.project.id);
+      store.coordinatorRoles.grant({ roleId: `role-${++n}`, projectId: pm.project.id, role: 'project-manager', note: null, now: clock });
+      const cfg = store.projectConfig.load(alpha.project.path);
+      cfg.workloadNudge = { coordinatorProject: 'no-such-project-anywhere' };
+      store.projectConfig.save(alpha.project.path, cfg);
+      enable();
+      reports(alpha, 'blocked');
+      assert.equal(bridgeNotify.reconcile().workBlocked, 1, 'an explicit, failed config is never silently rescued by the group fallback');
+    });
+
+    it('a group coordinator never counts itself as its own coordinator', () => {
+      const pm = liveSession('TC-Lane-PM');
+      const group = store.projectGroups.create({ name: `fleet-${++n}` });
+      store.projectGroups.addMember(group.id, pm.project.id);
+      store.coordinatorRoles.grant({ roleId: `role-${++n}`, projectId: pm.project.id, role: 'project-manager', note: null, now: clock });
+      enable();
+      reports(pm, 'blocked');
+      assert.equal(bridgeNotify.reconcile().workBlocked, 1, 'the only member with a PM role is the blocked lane itself');
+    });
+  });
+
+  describe('workload-nudge _coordinator group fallback (#2853, mirrors bridge-notify\'s own resolution)', () => {
+    const SEAMS = ['groupsForProject', 'groupMembers', 'activeCoordinatorRole', 'getProject', 'workspaceForProject', 'getProjectByName'];
+    let real;
+
+    beforeEach(() => {
+      real = {};
+      for (const seam of SEAMS) real[seam] = workloadNudge._internal[seam];
+    });
+
+    afterEach(() => {
+      Object.assign(workloadNudge._internal, real);
+    });
+
+    it('falls back to a live group project-manager coordinator when coordinatorProject is unset', () => {
+      const pmProject = { id: 1, name: 'TC-Lane-PM', path: '/pm' };
+      workloadNudge._internal.groupsForProject = () => [{ id: 'g1' }];
+      workloadNudge._internal.groupMembers = () => [1, 2];
+      workloadNudge._internal.activeCoordinatorRole = (projectId) => (projectId === 1 ? { role: 'project-manager' } : null);
+      workloadNudge._internal.getProject = (projectId) => (projectId === 1 ? pmProject : null);
+      workloadNudge._internal.workspaceForProject = (project) => (project.id === 1 ? 'ws-pm' : null);
+
+      const target = workloadNudge._coordinator(
+        { project: { id: 2, name: 'TC-Lane-A', path: '/a' }, setting: { coordinatorProject: null }, facts: [] }, { failures: 0 }
+      );
+      assert.equal(target.workspace, 'ws-pm');
+      assert.equal(target.coordinator.id, 1);
+    });
+
+    it('skips an architect coordinator role: a different authority, not a Fleet PM', () => {
+      workloadNudge._internal.groupsForProject = () => [{ id: 'g1' }];
+      workloadNudge._internal.groupMembers = () => [1];
+      workloadNudge._internal.activeCoordinatorRole = () => ({ role: 'architect' });
+      workloadNudge._internal.getProject = () => ({ id: 1, name: 'arc', path: '/arc' });
+      workloadNudge._internal.workspaceForProject = () => 'ws-arc';
+
+      const target = workloadNudge._coordinator(
+        { project: { id: 2, name: 'alpha', path: '/a' }, setting: { coordinatorProject: null }, facts: [] }, { failures: 0 }
+      );
+      assert.equal(target.code, 'no-coordinator');
+    });
+
+    it('never resolves the lane itself as its own group coordinator', () => {
+      workloadNudge._internal.groupsForProject = () => [{ id: 'g1' }];
+      workloadNudge._internal.groupMembers = () => [2];
+      workloadNudge._internal.activeCoordinatorRole = () => ({ role: 'project-manager' });
+      workloadNudge._internal.getProject = () => ({ id: 2, name: 'alpha', path: '/a' });
+      workloadNudge._internal.workspaceForProject = () => 'ws-self';
+
+      const target = workloadNudge._coordinator(
+        { project: { id: 2, name: 'alpha', path: '/a' }, setting: { coordinatorProject: null }, facts: [] }, { failures: 0 }
+      );
+      assert.equal(target.code, 'no-coordinator');
+    });
+
+    it('reports "no-coordinator" when the lane belongs to no group at all', () => {
+      workloadNudge._internal.groupsForProject = () => [];
+      const target = workloadNudge._coordinator(
+        { project: { id: 2, name: 'alpha', path: '/a' }, setting: { coordinatorProject: null }, facts: [] }, { failures: 0 }
+      );
+      assert.equal(target.code, 'no-coordinator');
+    });
+
+    it('an explicit coordinatorProject that fails never falls back to the group auto-detect, even with a live group PM available', () => {
+      workloadNudge._internal.groupsForProject = () => [{ id: 'g1' }];
+      workloadNudge._internal.groupMembers = () => [1];
+      workloadNudge._internal.activeCoordinatorRole = () => ({ role: 'project-manager' });
+      workloadNudge._internal.getProject = () => ({ id: 1, name: 'pm', path: '/pm' });
+      workloadNudge._internal.workspaceForProject = () => 'ws-pm';
+      workloadNudge._internal.getProjectByName = () => null;
+
+      const target = workloadNudge._coordinator(
+        { project: { id: 2, name: 'alpha', path: '/a' }, setting: { coordinatorProject: 'no-such-project' }, facts: [] }, { failures: 0 }
+      );
+      assert.equal(target.code, 'coordinator-unknown-project');
+    });
   });
 
   describe('fleet-idle', () => {
@@ -717,7 +995,7 @@ describe('bridge notifications (#2031)', () => {
       enable();
       reports(alpha, 'blocked');
       bridgeNotify._deps.lanes = () => { throw new Error('the lane reader failed'); };
-      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, workUnblocked: 0, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 0 });
+      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, workUnblocked: 0, operatorNeeded: 0, operatorResolved: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 0 });
     });
 
     it('reads lanes through the fleet\'s own composition: only a fresh, finished, clear lane at rest is AVAILABLE', () => {
@@ -920,7 +1198,7 @@ describe('bridge notifications (#2031)', () => {
       const realList = store.workloadNudgeFacts.listOperatorEscalations;
       store.workloadNudgeFacts.listOperatorEscalations = () => { throw new Error('database is locked'); };
       try {
-        assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, workUnblocked: 0, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 0 });
+        assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, workUnblocked: 0, operatorNeeded: 0, operatorResolved: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 0 });
       } finally {
         store.workloadNudgeFacts.listOperatorEscalations = realList;
       }
@@ -1461,7 +1739,7 @@ describe('bridge notifications (#2031)', () => {
       const alpha = liveSession('Alpha');
       reports(alpha, 'blocked');
       bridgeNotify._deps.discordReading = () => { throw new Error('the gateway could not be read'); };
-      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, workUnblocked: 0, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 0 });
+      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, workUnblocked: 0, operatorNeeded: 0, operatorResolved: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 0 });
       assert.deepEqual(notifications().map((x) => x.type), ['work-blocked']);
       // Delivered, so the suppression below is isolated to staleness, not to never having reached Discord.
       store.getDb().prepare("UPDATE bridge_outbound SET state = 'delivered', delivered_at = ?, updated_at = ? WHERE notify_type = 'work-blocked' AND state = 'ready'")
@@ -1476,7 +1754,7 @@ describe('bridge notifications (#2031)', () => {
       // between is suppressed (PR #2629 review C1) -- only the new block is announced.
       reports(alpha, 'working');
       reports(alpha, 'blocked');
-      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, workUnblocked: 0, operatorNeeded: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 1 });
+      assert.deepEqual(bridgeNotify.reconcile(), { workBlocked: 1, workUnblocked: 0, operatorNeeded: 0, operatorResolved: 0, fleetIdle: 0, laneSilent: 0, gatewayOutage: 1 });
     });
 
     it('reads the helper\'s report from the gateway itself when nothing else is supplied', () => {
@@ -1515,14 +1793,15 @@ describe('bridge notifications (#2031)', () => {
 
   it('every notification text comes from a fixed template that takes no free text', () => {
     assert.deepEqual(Object.keys(bridgeNotify.TEMPLATES).sort(),
-      ['fleet-idle', 'gateway-down', 'gateway-recovered', 'lane-silent', 'operator-needed', 'work-blocked', 'work-unblocked']);
-    // work-unblocked is the one deliberate exception (#2141, Architect Ruling A475-W1A-R1): it has
-    // its own template but is never a notify_type NOTIFICATION_TYPES admits, because _emit stores
-    // it under work-blocked's own admitted type and retention instead of adding a new one.
+      ['fleet-idle', 'gateway-down', 'gateway-recovered', 'lane-silent', 'operator-needed', 'operator-resolved', 'work-blocked', 'work-unblocked']);
+    // work-unblocked (#2141, Architect Ruling A475-W1A-R1) and operator-resolved (#2853, Architect
+    // Ruling A2853) are the two deliberate exceptions: each has its own template but is never a
+    // notify_type NOTIFICATION_TYPES admits, because _emit stores it under its paired type's own
+    // admitted type and retention instead of adding a new one.
     assert.deepEqual(
-      Object.keys(bridgeNotify.TEMPLATES).filter((t) => t !== 'work-unblocked').sort(),
+      Object.keys(bridgeNotify.TEMPLATES).filter((t) => t !== 'work-unblocked' && t !== 'operator-resolved').sort(),
       [...bridgeSchema.NOTIFICATION_TYPES].sort(),
-      'every admitted type has a template, and no other does except the one deliberate exception'
+      'every admitted type has a template, and no other does except the two deliberate exceptions'
     );
     // A project name is the only string a template shows, and it is cleaned and bounded.
     // The store refuses such a name; this is one it would never have written.

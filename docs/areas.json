@@ -356,6 +356,13 @@
       "paths": [
         "lib/role-instruction-guard.js"
       ]
+    },
+    "merge-governance": {
+      "label": "area:merge-governance",
+      "why": "The cross-engine Builder `gh pr merge` role guard (#2601, Ruling A2601): a pure classifier/evaluator deciding whether a candidate shell command is a PR-merge invocation, and whether the caller's role/lane is authorized to run it under Rule #282. Owned by no other family; wiring into a real launch-env wrapper or engine shell hook is a tracked Slice 2 follow-up.",
+      "paths": [
+        "lib/merge-role-guard.js"
+      ]
     }
   },
   "shared": {

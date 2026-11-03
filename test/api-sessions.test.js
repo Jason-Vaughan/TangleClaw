@@ -497,7 +497,10 @@ describe('api-sessions', () => {
           { command: 'ls -la', startupIntervention: true }, bound.headers);
         assert.equal(res.status, 200);
         assert.equal(primed.typed.length, 1);
-        assert.match(primed.typed[0], new RegExp(`^\\[DIRECT INPUT from project "${caller.name}" session ${bound.sessionId}, verified by TangleClaw\\]\\nls -la$`));
+        // #2854: a single-line serverPrefix joins to a single-line command with a space, not a
+        // newline -- a newline join turns a single-line peer injection into a two-line bracketed
+        // paste some engine TUIs submit on the first Enter, stranding the stamp's own line.
+        assert.match(primed.typed[0], new RegExp(`^\\[DIRECT INPUT from project "${caller.name}" session ${bound.sessionId}, verified by TangleClaw\\] ls -la$`));
         assert.equal(res.body.command, 'ls -la', 'the receipt echoes the submitted command, not the stamped text');
         assert.equal(res.body.receipt.stamped, true);
         assert.deepEqual(res.body.receipt.verifiedCaller, { kind: 'project', projectId: caller.id, sessionId: bound.sessionId });
@@ -522,7 +525,8 @@ describe('api-sessions', () => {
           { command: atLimit, startupIntervention: true }, bound.headers);
         assert.equal(res.status, 200);
         assert.equal(primed.typed.length, 1);
-        assert.equal(primed.typed[0], `[DIRECT INPUT from project "${caller.name}" session ${bound.sessionId}, verified by TangleClaw]\n${atLimit}`);
+        // #2854: single-line command, so the stamp joins with a space, not a newline.
+        assert.equal(primed.typed[0], `[DIRECT INPUT from project "${caller.name}" session ${bound.sessionId}, verified by TangleClaw] ${atLimit}`);
         assert.equal(res.body.command, atLimit);
       } finally {
         primed.cleanup();
@@ -554,7 +558,8 @@ describe('api-sessions', () => {
           { 'x-tangleclaw-role': 'master', 'x-tangleclaw-launch-id': 'master-2402b-launch' });
         assert.equal(res.status, 200);
         assert.equal(primed.typed.length, 1);
-        assert.equal(primed.typed[0], '[DIRECT INPUT from the Project Master, verified by TangleClaw]\nls -la');
+        // #2854: single-line command, so the stamp joins with a space, not a newline.
+        assert.equal(primed.typed[0], '[DIRECT INPUT from the Project Master, verified by TangleClaw] ls -la');
         assert.deepEqual(res.body.receipt.verifiedCaller, { kind: 'master' });
       } finally {
         master.liveMasterLaunchId = real;
