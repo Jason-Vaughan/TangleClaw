@@ -2302,6 +2302,24 @@
   }
 
   /**
+   * The degraded-read record for the Advisor's liveness (#2819) — same
+   * shape as {@link tcMasterRead}, a separate function rather than a
+   * generalized one because the two are only equal today by the same
+   * tmux-transport coincidence that function's own docstring already notes.
+   * @param {object|null} status - `GET /api/advisor/status`, or null if it failed.
+   * @returns {{known: boolean, why: string|null, remedy: string|null}}
+   */
+  function tcAdvisorRead(status) {
+    if (!status || status.exists !== null) return tcDegradedRead(true);
+    return tcDegradedRead(
+      false,
+      `Whether the Advisor is running could not be established — ${tcCauseText(status.cause)}.`,
+      'The tmux server is not answering. Once it responds this clears on its own; '
+        + '`tmux kill-server` clears a wedged one, ending every session on this machine.'
+    );
+  }
+
+  /**
    * Classify a repository's dirty state.
    *
    * Returns null when there is no repository at all, so a plain directory never
@@ -3281,6 +3299,7 @@
   global.tcSessionWrapElapsed = tcSessionWrapElapsed;
   global.tcSessionRead = tcSessionRead;
   global.tcMasterRead = tcMasterRead;
+  global.tcAdvisorRead = tcAdvisorRead;
   global.tcRulesUnknownHtml = tcRulesUnknownHtml;
   global.tcDegradedRead = tcDegradedRead;
   global.tcGitDirtyState = tcGitDirtyState;
@@ -4886,6 +4905,345 @@
   }
 
   /**
+   * Markup for the Advisor control bar (#2819) — deliberately small next to
+   * `tcMasterControlBarMarkup`: no access-level toggle (the Advisor has
+   * exactly one tier, always zero-privilege), no Medusa control, no upload/
+   * wrap pending states. Settings (engine/model/autoStart) render inline in a
+   * collapsible strip rather than a separate modal
+   * (`tcMasterSettingsMarkup`/`tcCreateMasterSettings` is ~600 lines of
+   * access-tier/project-scoping concepts the Advisor has none of); there is
+   * exactly one verified-read-only engine today
+   * (`lib/advisor.js`'s own `READ_ONLY_TOOL_FLAGS`), so a dedicated modal
+   * would be solving a problem this surface does not have yet.
+   * @param {string} p - Id prefix.
+   * @returns {string}
+   */
+  function tcAdvisorControlBarMarkup(p) {
+    return `
+      <span class="master-dot" id="${p}Dot" aria-hidden="true"></span>
+      <span class="master-status-text" id="${p}StatusText"></span>
+      <span class="master-bar-model" id="${p}Model" hidden></span>
+      <span class="master-bar-spacer"></span>
+      <button type="button" class="banner-btn" id="${p}FullscreenBtn" aria-pressed="false"
+              aria-label="Full screen" title="Expand the Advisor terminal to fill the screen">&#x26F6;</button>
+      <button class="banner-btn" id="${p}SettingsBtn" aria-expanded="false" aria-controls="${p}SettingsStrip"
+              aria-label="Advisor settings" title="Advisor settings">&#9881;</button>
+      <button type="button" class="banner-btn btn-launch hidden" id="${p}LaunchBtn"
+              title="Start a fresh Advisor session. Its sandbox survives; the conversation does not.">Launch</button>
+      <button type="button" class="banner-btn btn-kill" id="${p}KillBtn"
+              title="Stop the Advisor session. Its sandbox survives; the conversation does not.">Kill</button>
+      <span class="master-bar-error" id="${p}Error" role="status" hidden></span>
+      <div class="advisor-settings-strip hidden" id="${p}SettingsStrip">
+        <label class="advisor-settings-field">Engine
+          <select id="${p}EngineSelect"></select>
+        </label>
+        <label class="advisor-settings-field">Model
+          <input type="text" id="${p}ModelInput" placeholder="(engine default)" autocomplete="off">
+        </label>
+        <label class="advisor-settings-check">
+          <input type="checkbox" id="${p}AutoStart"> Auto-start with the server
+        </label>
+        <button type="button" class="btn btn-small" id="${p}SaveSettingsBtn">Save</button>
+        <span class="advisor-settings-saved hidden" id="${p}SettingsSaved" role="status">Saved</span>
+      </div>`;
+  }
+
+  /**
+   * Create an Advisor control bar bound to one surface (#2819). Mirrors
+   * {@link tcCreateMasterControlBar}'s mount/idempotency/fullscreen pattern,
+   * trimmed to what the Advisor actually has: no access tiers to toggle, no
+   * Paste/Popout (not in #2819's own acceptance), no `onRetry` split from
+   * Launch — Launch itself IS the retry action when down.
+   *
+   * @param {object} deps
+   * @param {Document} deps.doc - The page document.
+   * @param {string} deps.rootId - Id of the element to render into.
+   * @param {string} deps.prefix - Id prefix for this surface's controls.
+   * @param {Function} [deps.onLaunch] - Called when Launch is pressed.
+   * @param {Function} [deps.apiMutate] - `(path, method, body)` — required
+   *   for Kill and Save; without it those controls are inert.
+   * @param {Function} [deps.api] - `(path)` GET — required for the model
+   *   pill and the settings strip's engine list; without it both stay empty.
+   * @param {Function} [deps.esc] - HTML-escapes text for the engine options.
+   * @param {Function} [deps.confirm] - Confirmation prompt; defaults to the
+   *   window's, same reasoning as the Master bar's Kill.
+   * @param {string} [deps.frameId] - Unused directly here (no Paste), kept
+   *   for signature symmetry with the Master bar's deps shape.
+   * @param {string} [deps.surfaceId] - Id of the element Full screen expands.
+   *   Defaults to `deps.prefix` — true for both surfaces this bar mounts on
+   *   (`advisorPanel`, `advisorDrawer`), each the id of its own container.
+   * @returns {{mount: Function, setStatus: Function, setModel: Function,
+   *            setError: Function, loadModel: Function, loadSettings: Function,
+   *            killAdvisor: Function, toggleFullscreen: Function}}
+   */
+  function tcCreateAdvisorControlBar(deps) {
+    const doc = deps.doc || global.document;
+    const p = deps.prefix;
+    let bound = false;
+    let busy = false;
+
+    const el = (suffix) => doc.getElementById(p + suffix);
+
+    /**
+     * Render into the root, and bind once. Same idempotency rule as the
+     * Master bar's `mount`: a page may mount at load and again when
+     * something opens the surface, and a second render would orphan the
+     * first's listeners.
+     * @returns {boolean} True when the bar is present after this call.
+     */
+    function mount() {
+      const root = doc.getElementById(deps.rootId);
+      if (!root) return false;
+      if (!el('SettingsBtn')) root.innerHTML = tcAdvisorControlBarMarkup(p);
+      if (bound) return true;
+      bound = true;
+      const kill = el('KillBtn');
+      if (kill) kill.addEventListener('click', killAdvisor);
+      const launch = el('LaunchBtn');
+      if (launch && deps.onLaunch) launch.addEventListener('click', deps.onLaunch);
+      const settingsBtn = el('SettingsBtn');
+      if (settingsBtn) settingsBtn.addEventListener('click', toggleSettingsStrip);
+      const save = el('SaveSettingsBtn');
+      if (save) save.addEventListener('click', saveSettings);
+      const fullscreenBtn = el('FullscreenBtn');
+      if (fullscreenBtn) {
+        if (!surfaceEl() || !surfaceEl().requestFullscreen) fullscreenBtn.hidden = true;
+        else fullscreenBtn.addEventListener('click', toggleFullscreen);
+      }
+      if (doc && typeof doc.addEventListener === 'function') {
+        doc.addEventListener('fullscreenchange', syncFullscreenButton);
+      }
+      setStatus('', 'Advisor · checking…', false);
+      setError('');
+      setModel(null, null);
+      // Established in code rather than left to the markup's own `hidden`
+      // class, same rule the rest of `mount()` follows: one source for the
+      // resting state instead of a string in the template and a second in
+      // the first paint.
+      const strip = el('SettingsStrip');
+      if (strip) strip.classList.add('hidden');
+      if (settingsBtn) settingsBtn.setAttribute('aria-expanded', 'false');
+      return true;
+    }
+
+    /**
+     * Paint the status dot, its text, and the Launch/Kill visibility.
+     * @param {string} status - 'live' | 'pending' | 'down' | '' (unknown).
+     * @param {string} [text] - Status line.
+     * @returns {void}
+     */
+    function setStatus(status, text) {
+      const dot = el('Dot');
+      if (dot) {
+        dot.classList.remove('live', 'pending', 'down');
+        if (status) dot.classList.add(status);
+      }
+      const t = el('StatusText');
+      if (t && text !== undefined) t.textContent = text;
+      const kill = el('KillBtn');
+      const launch = el('LaunchBtn');
+      if (kill && launch) {
+        if (status === 'down') {
+          kill.classList.add('hidden');
+          launch.classList.remove('hidden');
+        } else if (status === 'live' || status === '') {
+          kill.classList.remove('hidden');
+          launch.classList.add('hidden');
+        }
+      }
+    }
+
+    /**
+     * Paint the model pill from a `/api/models/status` entry — same
+     * component, same contract as {@link tcCreateMasterControlBar}'s
+     * `setModel`.
+     * @param {{status?: string, message?: string, error?: string}|null} st
+     * @param {string} [label] - Model name to show.
+     * @returns {void}
+     */
+    function setModel(st, label) {
+      const pill = el('Model');
+      if (!pill) return;
+      if (!label) { pill.hidden = true; return; }
+      pill.hidden = false;
+      pill.className = pill.className.replace(/\bengine-pill-\S+/g, '').trim();
+      const state = (st && st.status) || 'unknown';
+      if (state !== 'operational') pill.classList.add('engine-pill-' + state);
+      pill.textContent = label;
+      const d = doc.createElement('span');
+      d.className = 'engine-status-dot engine-status-' + state;
+      pill.prepend(d);
+      pill.title = (st && st.error) ? `Status unknown: ${st.error}`
+        : ((st && st.message) || state).replace(/_/g, ' ');
+    }
+
+    /**
+     * Show or clear a failure the operator would otherwise not see.
+     * @param {string} [message] - The failure; omit or pass empty to clear.
+     * @returns {void}
+     */
+    function setError(message) {
+      const box = el('Error');
+      if (!box) return;
+      box.textContent = message || '';
+      box.hidden = !message;
+    }
+
+    /**
+     * Fetch the model's health and paint the pill — mirrors the Master bar's
+     * `loadModel`, same `/api/models/status` endpoint (not Master-specific).
+     * @param {string|null} engineId - The Advisor's configured engine, or null.
+     * @returns {Promise<void>}
+     */
+    async function loadModel(engineId) {
+      if (!engineId || !deps.api) { setModel(null, null); return; }
+      const data = await deps.api('/api/models/status');
+      const st = (data && data.status && data.status[engineId]) || null;
+      setModel(st, engineId);
+    }
+
+    /**
+     * Stop the Advisor session. Confirmed, because it is destructive and
+     * GLOBAL — there is exactly one Advisor, so this stops it for every
+     * session drawer and the dashboard, not just this surface. Mirrors
+     * `killMaster`'s confirm-then-mutate-then-repaint shape.
+     * @returns {Promise<void>}
+     */
+    async function killAdvisor() {
+      if (busy || !deps.apiMutate) return;
+      busy = true;
+      const kill = el('KillBtn');
+      if (kill) kill.disabled = true;
+      try {
+        setError('');
+        const ask = deps.confirm || global.confirm;
+        if (typeof ask !== 'function') {
+          setError('The Advisor was not stopped: this page cannot show the confirmation that requires.');
+          return;
+        }
+        if (!ask('Stop the Advisor?\n\n'
+          + 'There is exactly one Advisor, so this stops it EVERYWHERE — every session drawer and '
+          + 'the dashboard.\n\n'
+          + 'Its sandbox under advisor-sandbox/ survives. The conversation it is holding does not — '
+          + 'which is what restarting it is for. Launch starts it again.')) return;
+        const result = await deps.apiMutate('/api/advisor/kill', 'POST', {});
+        if (!result) {
+          setError((deps.api && deps.api.lastError) || 'The Advisor could not be stopped.');
+          return;
+        }
+        setStatus('', result.killed ? 'Advisor stopped' : 'Advisor was not running');
+      } finally {
+        busy = false;
+        if (kill) kill.disabled = false;
+      }
+    }
+
+    /**
+     * Toggle the inline settings strip. Loads the engine list + the stored
+     * settings on each open, same "no stale state behind a reopened control"
+     * rule the Master settings modal follows, minus the modal.
+     * @returns {Promise<void>}
+     */
+    async function toggleSettingsStrip() {
+      const strip = el('SettingsStrip');
+      const btn = el('SettingsBtn');
+      if (!strip || !btn) return;
+      const opening = strip.classList.contains('hidden');
+      strip.classList.toggle('hidden', !opening);
+      btn.setAttribute('aria-expanded', String(opening));
+      if (opening) await loadSettings();
+    }
+
+    /**
+     * Populate the engine select from `GET /api/engines` (installed
+     * engines, not Advisor-specific) and the current values from
+     * `GET /api/advisor/settings`. An engine not actually verified
+     * read-only for the Advisor is still offered here — refused honestly at
+     * Launch, per `lib/advisor.js#_resolveAdvisorEngineId`'s own "honest
+     * failure, not a silent gap" design, rather than this picker trying to
+     * duplicate that server-side verification list.
+     * @returns {Promise<void>}
+     */
+    async function loadSettings() {
+      const sel = el('EngineSelect');
+      const modelInput = el('ModelInput');
+      const autoStart = el('AutoStart');
+      if (!deps.api) return;
+      const [engineData, settings] = await Promise.all([
+        deps.api('/api/engines'),
+        deps.api('/api/advisor/settings')
+      ]);
+      if (sel) {
+        const list = ((engineData && engineData.engines) || []).filter((e) => e && e.available);
+        const escFn = deps.esc || ((s) => s);
+        sel.innerHTML = '<option value="">(default)</option>'
+          + list.map((e) => `<option value="${escFn(e.id)}">${escFn(e.name || e.id)}</option>`).join('');
+      }
+      if (sel) sel.value = (settings && settings.engine) || '';
+      if (modelInput) modelInput.value = (settings && settings.model) || '';
+      if (autoStart) autoStart.checked = Boolean(settings && settings.autoStart);
+    }
+
+    /**
+     * Save the settings strip's current values via `POST /api/advisor/settings`.
+     * @returns {Promise<void>}
+     */
+    async function saveSettings() {
+      if (!deps.apiMutate) return;
+      const sel = el('EngineSelect');
+      const modelInput = el('ModelInput');
+      const autoStart = el('AutoStart');
+      const saved = el('SettingsSaved');
+      const body = {
+        engine: (sel && sel.value) || null,
+        model: (modelInput && modelInput.value.trim()) || null,
+        autoStart: Boolean(autoStart && autoStart.checked)
+      };
+      const result = await deps.apiMutate('/api/advisor/settings', 'POST', body);
+      if (!result) {
+        setError((deps.api && deps.api.lastError) || 'Could not save the Advisor settings.');
+        return;
+      }
+      setError('');
+      if (saved) {
+        saved.classList.remove('hidden');
+        global.setTimeout(() => saved.classList.add('hidden'), 2000);
+      }
+    }
+
+    /**
+     * The element Full screen expands — this bar's surface container, the
+     * same element on both the dashboard panel and the session drawer.
+     * @returns {Element|null}
+     */
+    function surfaceEl() {
+      return doc.getElementById(deps.surfaceId || p);
+    }
+
+    /** @returns {void} */
+    function toggleFullscreen() {
+      const surface = surfaceEl();
+      if (!surface) return;
+      if (doc.fullscreenElement === surface) {
+        if (doc.exitFullscreen) doc.exitFullscreen();
+      } else if (surface.requestFullscreen) {
+        surface.requestFullscreen();
+      }
+    }
+
+    /** @returns {void} */
+    function syncFullscreenButton() {
+      const btn = el('FullscreenBtn');
+      if (!btn) return;
+      const isFull = doc.fullscreenElement === surfaceEl();
+      btn.setAttribute('aria-pressed', String(isFull));
+      btn.title = isFull ? 'Exit full screen' : 'Expand the Advisor terminal to fill the screen';
+    }
+
+    return { mount, setStatus, setModel, setError, loadModel, loadSettings, killAdvisor, toggleFullscreen };
+  }
+
+  /**
    * CSS class for one startup-rule delivery outcome in the deliveries panel.
    *
    * A named function rather than a ternary inline in the panel's template so a
@@ -5672,4 +6030,6 @@
   global.tcMasterGuardDegradedLabels = TC_MASTER_GUARD_DEGRADED;
   global.tcMasterControlBarMarkup = tcMasterControlBarMarkup;
   global.tcCreateMasterControlBar = tcCreateMasterControlBar;
+  global.tcAdvisorControlBarMarkup = tcAdvisorControlBarMarkup;
+  global.tcCreateAdvisorControlBar = tcCreateAdvisorControlBar;
 })(typeof window !== 'undefined' ? window : globalThis);
