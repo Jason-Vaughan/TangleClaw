@@ -323,6 +323,35 @@ describe('the recovery wake (#2250)', () => {
       assert.equal(answer.items[0].send.attempted, true);
     });
 
+    it('reports attempted:true, sent:false when injectLine itself throws, and does not consume the wake slot', async () => {
+      const held = clearedActiveLaunch(env);
+      launchRecoveryWake._internal.inject = () => { throw new Error('tmux binary not found'); };
+      const first = await wakeAsOperator([itemFor(held)]);
+      assert.equal(first.items[0].send.outcome, launchRecoveryWake.SEND_OUTCOMES.FAILED);
+      assert.equal(first.items[0].send.attempted, true, 'injectLine was invoked, even though it threw rather than returning');
+      assert.equal(first.items[0].send.sent, false);
+      // The slot was not consumed: retrying once injection works again still sends.
+      launchRecoveryWake._internal.inject = () => ({ ok: true, error: null });
+      fixture.resetLogin();
+      const second = await wakeAsOperator([itemFor(held)]);
+      assert.equal(second.items[0].send.outcome, launchRecoveryWake.SEND_OUTCOMES.SENT);
+    });
+
+    it('a successful send stays attempted:true, sent:true even when post-send bookkeeping throws', async () => {
+      const held = clearedActiveLaunch(env);
+      launchRecoveryWake._internal.recordNudge = () => { throw new Error('store is closed'); };
+      const answer = await wakeAsOperator([itemFor(held)]);
+      assert.equal(answer.items[0].send.outcome, launchRecoveryWake.SEND_OUTCOMES.SENT,
+        'the pane was typed into; a bookkeeping failure after that must not be reported as no send');
+      assert.equal(answer.items[0].send.attempted, true);
+      assert.equal(answer.items[0].send.sent, true);
+      // And the wake slot WAS consumed — the pane write is the fact that matters, not the bookkeeping.
+      launchRecoveryWake._internal.recordNudge = (sequenceId) => store.launchSequences.recordNudge(sequenceId);
+      fixture.resetLogin();
+      const second = await wakeAsOperator([itemFor(held)]);
+      assert.equal(second.items[0].send.outcome, launchRecoveryWake.SEND_OUTCOMES.ALREADY_WOKEN);
+    });
+
     it('gives every item its own outcome, in request order, and one item does not stop the next', async () => {
       const sends = clearedActiveLaunch(env);
       const blocked = fixture.launchInRecovery(env);
