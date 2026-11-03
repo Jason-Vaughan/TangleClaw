@@ -30,6 +30,10 @@ const TC_BIN = path.join(__dirname, '..', 'bin', 'tc');
 /** A tracked file's text. */
 const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
 const ALLOWED = { authorId: 'author1', spaceId: 'space1', channelId: 'chan1' };
+/** The advisory surface's own defaults (#2817-A), unset: spread alongside DM defaults in `gateway.allowlist()`'s shape. */
+const ADVISORY_DEFAULTS = {
+  advisoryChannelId: null, advisoryAuthorIds: [], advisoryEnabled: false, advisoryRequireMention: false, advisoryMaxConsecutiveTurns: 6
+};
 
 let tmpDir;
 let server;
@@ -3870,7 +3874,7 @@ describe('bridge API: the round trip (#2031)', () => {
 
     it('a signed-in operator\'s changes are audited with who made them, and never with a secret', async () => {
       const status = await asOperator('GET', '/api/bridge/operator/status');
-      assert.deepEqual([status.status, status.body.enabled, status.body.allowlist], [200, true, { ...ALLOWED, dmChannelId: null, dmEnabled: false }]);
+      assert.deepEqual([status.status, status.body.enabled, status.body.allowlist], [200, true, { ...ALLOWED, dmChannelId: null, dmEnabled: false, ...ADVISORY_DEFAULTS }]);
       assert.deepEqual(status.body.droppedArrivals, { count: 0, recent: [] });
       assert.ok(!JSON.stringify(status.body).includes(helperToken));
 
@@ -3977,10 +3981,10 @@ describe('bridge API: the round trip (#2031)', () => {
     it('records the pinned DM channel and switch, independent of the guild allowlist', async () => {
       assert.equal((await asOperator('POST', '/api/bridge/operator/dm-allowlist', { body: { dmEnabled: true } })).status, 400, 'no channel id of its own and none on file');
       assert.equal((await asOperator('POST', '/api/bridge/operator/dm-allowlist', { body: { dmChannelId: 'not a chat id!', dmEnabled: true } })).body.code, 'BAD_ALLOWLIST', 'not a chat id');
-      assert.deepEqual((await setDmAllowlist(false)).body, { allowlist: { ...ALLOWED, dmChannelId: DM_ID, dmEnabled: false } }, 'pinned, still off');
+      assert.deepEqual((await setDmAllowlist(false)).body, { allowlist: { ...ALLOWED, dmChannelId: DM_ID, dmEnabled: false, ...ADVISORY_DEFAULTS } }, 'pinned, still off');
       assert.equal((await asOperator('POST', '/api/bridge/operator/dm-allowlist', { body: { dmEnabled: true } })).status, 200, 'enabling with none given falls back to the one already on file');
-      assert.deepEqual((await setDmAllowlist(true)).body, { allowlist: { ...ALLOWED, dmChannelId: DM_ID, dmEnabled: true } });
-      assert.deepEqual(gateway.allowlist(), { ...ALLOWED, dmChannelId: DM_ID, dmEnabled: true });
+      assert.deepEqual((await setDmAllowlist(true)).body, { allowlist: { ...ALLOWED, dmChannelId: DM_ID, dmEnabled: true, ...ADVISORY_DEFAULTS } });
+      assert.deepEqual(gateway.allowlist(), { ...ALLOWED, dmChannelId: DM_ID, dmEnabled: true, ...ADVISORY_DEFAULTS });
     });
 
     it('accepts a message on the pinned DM channel from the pinned author once the surface is on, tagged bot-dm', async () => {
