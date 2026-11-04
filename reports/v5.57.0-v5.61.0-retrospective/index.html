@@ -484,7 +484,7 @@
         <div class="brand-badge">TC</div>
         <div>
           <div style="font-size:0.94rem;">TangleClaw Five-Version Sprint Retrospective</div>
-          <div style="font-size:0.72rem;color:var(--text-dim);font-weight:500;">v5.57.0 → v5.61.0 (Charters A494–A498 · Milestones #42–#46) · 54 Chartered Issues (52 Feature + 2 Carryover / 68 Milestone Closed) · 26 PRs · Nov 3, 2026</div>
+          <div style="font-size:0.72rem;color:var(--text-dim);font-weight:500;">v5.57.0 → v5.61.0 (Charters A494–A498 · Milestones #42–#46) · 54 Unique Chartered Issues Closed (55 Chartered / 1 Deferred #2347 / 67 Milestone Items Closed) · 27 PRs · Nov 3, 2026</div>
         </div>
       </div>
       <nav class="nav-links" id="navLinks">
@@ -512,25 +512,25 @@
       <div class="hero-card">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:14px;">
           <div style="flex:1;min-width:320px;">
-            <div class="eyebrow">🏆 CHARTERS A494–A498 FIVE-VERSION RETROSPECTIVE · MILESTONES #42, #43, #44, #45 &amp; #46 (54/54 CHARTERED / 52/52 FEATURE ISSUES · 26 PRs · TOTAL RUN TIME: 12h 16m TO LIVE :3102 / 12h 20m TO CLOSEOUT)</div>
+            <div class="eyebrow">🏆 CHARTERS A494–A498 FIVE-VERSION RETROSPECTIVE · MILESTONES #42, #43, #44, #45 &amp; #46 (54 UNIQUE CHARTERED ISSUES CLOSED / 55 CHARTERED · 27 PRs · TOTAL RUN TIME: 12h 15m 26s TO FINAL MERGE / 12h 32m 09s TO LIVE :3102)</div>
             <h1 class="hero-title">v5.57.0 → v5.58.0 → v5.59.0 → v5.60.0 → v5.61.0: Five-Version Autonomous Sprint Train &amp; Multi-Version Comparison Report</h1>
           </div>
           <div class="status-pill" style="display:inline-flex;align-items:center;padding:8px 14px;border-radius:999px;background:rgba(52,211,153,0.14);border:1px solid rgba(52,211,153,0.4);color:var(--green);font-weight:700;font-size:0.82rem;white-space:nowrap;">
-            ● Total Run Time: 12h 16m (22:58 → 11:14 PST · 5 Versions · 52/52 Issues · 26/26 PRs)
+            ● Total Run Time: 12h 15m 26s to Final Merge / 12h 32m 09s to Live :3102 (5 Versions · 54 Issues · 27 PRs)
           </div>
         </div>
         <p class="hero-sub hero-subtitle">
-          Executed under a single standing Operator authorization (<strong><code>OP-GO-V5570-V5610-20261102</code></strong> at <code>22:58 PST</code> Nov 2) and Architect Gate 0 Co-Sign <strong><code>[03140778]</code></strong> (<code>Charters A494–A498</code>), the TangleClaw 10-lane fleet + Morpheus <code>🕶️ Advisor</code> autonomously shipped <strong>5 consecutive versions</strong> in a <strong>total start-to-finish wall-clock run time of <code>12h 16m</code> (<code>736m</code>, <code>22:58 PST → 11:14 PST</code>) to live <code>:3102</code> activation</strong> (<code>12h 20m</code> to final O-Gate closeout at <code>11:18 PST</code>; <code>9h 12m</code> active merge-to-deploy train from first Wave 1 merge at <code>02:02 PST</code> to <code>11:14 PST</code>) — <strong>v5.57.0</strong> (<em>"Session stops and decisions"</em>, Milestone <code>#42</code>, 8 chartered / 18 milestone issues, <code>33bcfbca</code>), <strong>v5.58.0</strong> (<em>"Wrapping up a session"</em>, Milestone <code>#43</code>, 8 chartered / 12 milestone issues, <code>1a4ac404</code>), <strong>v5.59.0</strong> (<em>"Discord and external comms"</em>, Milestone <code>#44</code>, 8 issues, <code>87d49f8d</code>), <strong>v5.60.0</strong> (<em>"Fleet and dashboard views"</em>, Milestone <code>#45</code>, 16 issues, <code>6efd74eb</code>), and <strong>v5.61.0</strong> (<em>"Shared documents and project upkeep"</em>, Milestone <code>#46</code>, 14 issues, <code>d5b3491c</code>) — closing <strong>54 of 54 chartered issues (52/52 unique feature issues and 68/68 total milestone issues; <code>0</code> open)</strong> across <strong>26 true-merged PRs</strong> (<code>+29,421 / -881</code> LOC across <code>186</code> files).
-          Through <strong><code>Guardrail 06</code> (Cross-Version Pipelining)</strong> and <strong><code>Guardrail 10</code> (100% Remote Testament <code>v0.34.0</code> Pool Execution)</strong>, per-leg wall-clock run time compressed by <strong>93.5% (15.3x acceleration)</strong> across the 5 legs: <strong><code>5h 36m</code> (<code>v5.57.0</code>, <code>22:58 → 04:34 PST</code>) → <code>4h 09m</code> (<code>v5.58.0</code>, <code>04:34 → 08:43 PST</code>; <code>1h 15m</code> active leg) → <code>1h 15m</code> (<code>v5.59.0</code>, <code>08:43 → 09:58 PST</code>) → <code>56m</code> (<code>v5.60.0</code>, <code>09:58 → 10:54 PST</code>, 16 issues!) → <code>22m</code> (<code>v5.61.0</code>, <code>10:52 → 11:14 PST</code>, 14 issues with a <code>47s</code> Wave 1 merge burst!)</strong>.
-          Post-deploy telemetry on <code>v5.61.0</code> also captured a key production observation on <strong><code>#2853</code> (<code>_operatorResolved()</code>)</strong>: first boot scanned <code>192</code> historical resolved exchanges, <code>52</code> of which <code>TC-Lane-PM</code> suppressed via <code>drop_code='historical-backfill-suppressed'</code> in <code>bridge_outbound</code>, motivating our feed-forward recommendation to bound <code>_operatorResolved(since)</code> by the reconciler window.
+          Executed under a single standing Operator authorization (<strong><code>OP-GO-V5570-V5610-20261102</code></strong> at <code>22:58 PST</code> Nov 2) and Architect Gate 0 Co-Sign <strong><code>[03140778]</code></strong> (<code>Charters A494–A498</code> at <code>22:59:00 PST</code>), the TangleClaw 8-lane active fleet (`10` provisioned with `A/C` in Leg 1) + Morpheus <code>🕶️ Advisor</code> autonomously shipped <strong>5 consecutive versions</strong> in a <strong>total start-to-finish wall-clock run time of <code>12h 15m 26s</code> (<code>22:59:00 PST → 11:14:26 PST</code>) to final Release PR merge and <code>12h 32m 09s</code> (<code>11:31:08 PST</code>) to live <code>:3102</code> activation</strong> (<code>12h 33m 33s</code> to final O-Gate closeout at <code>11:32:33 PST</code>; <code>9h 59m 29s</code> active merge window from first Wave 1 merge <code>#2822</code> at <code>01:14:57 PST</code> to <code>#2873</code> at <code>11:14:26 PST</code>) — <strong>v5.57.0</strong> (<em>"Session stops and decisions"</em>, Milestone <code>#42</code>, 8 closed issues / 1 deferred `#2347`, <code>33bcfbca</code>, tag <code>bbf84112</code>), <strong>v5.58.0</strong> (<em>"Governed wrap and handoff"</em>, Milestone <code>#43</code>, 8 closed issues, <code>1a4ac404</code>, tag <code>58daf0e2</code>), <strong>v5.59.0</strong> (<em>"Bridge authority and reach"</em>, Milestone <code>#44</code>, 8 closed issues, <code>87d49f8d</code>, tag <code>dcd752a9</code>), <strong>v5.60.0</strong> (<em>"Fleet and dashboard views"</em>, Milestone <code>#45</code>, 16 closed issues, <code>6efd74eb</code>, tag <code>4578bb07</code>), and <strong>v5.61.0</strong> (<em>"Shared documents and project upkeep"</em>, Milestone <code>#46</code>, 14 closed issues, <code>d5b3491c</code>, tag <code>5746728d</code>) — closing <strong>54 unique chartered GitHub issues (`45` pre-existing roadmap + `9` in-train created; `1` deferred `#2347`; `67` total closed milestone items including `11` milestone-attached PRs and `2` prior/duplicate items; <code>0</code> open)</strong> across <strong>27 true-merged PRs (`22` Feature PRs + `5` Release PRs)</strong> (<code>+29,431 / -878</code> net LOC across <code>173</code> files; <code>+29,580 / -1,027</code> sum of PR diffs).
+          Through <strong><code>Guardrail 06</code> (Cross-Version Pipelining)</strong> and <strong><code>Guardrail 10</code> (100% Remote Testament <code>v0.34.0</code> Pool Execution)</strong>, inter-release merge cadence compressed by <strong>14.63×</strong> across the 5 legs: <strong><code>5h 20m 51s</code> (<code>v5.57.0</code>) → <code>4h 07m 18s</code> (<code>v5.58.0</code>) → <code>1h 12m 42s</code> (<code>v5.59.0</code>) → <code>1h 12m 39s</code> (<code>v5.60.0</code>, 16 issues!) → <code>21m 56s</code> (<code>v5.61.0</code>, 14 issues with a <code>47s</code> Wave 1 merge burst; standalone first-commit-to-merge duration compressed <code>1.75×</code> from <code>4h 58m 43s</code> to <code>2h 51m 08s</code>!)</strong>.
+          Post-deploy telemetry on <code>v5.61.0</code> also captured a key production observation on <strong><code>#2853</code> (<code>_operatorResolved()</code>)</strong>: first boot enqueued <code>192</code> historical resolved exchanges (`140` drained before mitigation; <code>52</code> remaining `ready` rows suppressed by <code>TC-Lane-PM</code> via <code>drop_code='historical-backfill-suppressed'</code> in <code>bridge_outbound</code>), motivating our feed-forward recommendation to bound <code>_operatorResolved(since)</code> by the reconciler window.
         </p>
 
         <div class="meta-bar">
-          <div class="meta-pill"><span>Total Run Time (TRT):</span> <code>12h 16m</code> to Live <code>:3102</code> (<code>22:58 → 11:14 PST</code>) · <code>12h 20m</code> to Closeout (<code>9h 12m</code> Merge-to-Live)</div>
-          <div class="meta-pill"><span>Leg-by-Leg TRT Breakdown:</span> <code>5h 36m</code> (L1 <code>v5.57.0</code>) → <code>4h 09m</code> (L2 <code>v5.58.0</code>) → <code>1h 15m</code> (L3 <code>v5.59.0</code>) → <code>56m</code> (L4 <code>v5.60.0</code>) → <code>22m</code> (L5 <code>v5.61.0</code>)</div>
-          <div class="meta-pill"><span>Release Tags:</span> <code>v5.57.0 @ 33bcfbca</code> · <code>v5.58.0 @ 1a4ac404</code> · <code>v5.59.0 @ 87d49f8d</code> · <code>v5.60.0 @ 6efd74eb</code> · <code>v5.61.0 @ d5b3491c</code></div>
-          <div class="meta-pill"><span>Scope Closed:</span> <code>54/54</code> Chartered Issues (<code>52/52</code> Feature Issues · <code>68/68</code> Total Milestone Issues · <code>0</code> Open) across <code>26/26</code> True-Merged PRs</div>
-          <div class="meta-pill"><span>Post-Deploy #2853 Observation:</span> <code>192</code> historical resolved exchanges scanned on first boot; <code>52</code> suppressed via <code>historical-backfill-suppressed</code></div>
+          <div class="meta-pill"><span>Total Run Time (TRT):</span> <code>12h 15m 26s</code> to Final Merge (<code>22:59 → 11:14 PST</code>) · <code>12h 32m 09s</code> to Live <code>:3102</code> (`11:31 PST`) · <code>9h 59m 29s</code> Active Merge Window</div>
+          <div class="meta-pill"><span>Inter-Release Merge Cadence:</span> <code>5h 21m</code> (L1 <code>v5.57.0</code>) → <code>4h 07m</code> (L2 <code>v5.58.0</code>) → <code>1h 13m</code> (L3 <code>v5.59.0</code>) → <code>1h 13m</code> (L4 <code>v5.60.0</code>) → <code>22m</code> (L5 <code>v5.61.0</code>)</div>
+          <div class="meta-pill"><span>Release Tags:</span> <code>v5.57.0 @ 33bcfbca (tag bbf84112)</code> · <code>v5.58.0 @ 1a4ac404 (tag 58daf0e2)</code> · <code>v5.59.0 @ 87d49f8d (tag dcd752a9)</code> · <code>v5.60.0 @ 6efd74eb (tag 4578bb07)</code> · <code>v5.61.0 @ d5b3491c (tag 5746728d)</code></div>
+          <div class="meta-pill"><span>Scope Closed:</span> <code>54</code> Unique Chartered Issues Closed (`55` Chartered · `1` Deferred `#2347` · `67` Milestone Items Closed · <code>0</code> Open) across <code>27/27</code> True-Merged PRs (`22` Feat + `5` Rel)</div>
+          <div class="meta-pill"><span>Post-Deploy #2853 Observation:</span> <code>192</code> historical resolved exchanges enqueued on first boot; <code>52</code> remaining suppressed via <code>historical-backfill-suppressed</code></div>
           <div class="meta-pill"><span>Observer Participant Disclosure:</span> <code>TC-Lane-Obsr</code> (#1540) operated as Gate 3/4 Observer &amp; Continuity Companion across all 5 legs (Rule #283 cl. 1)</div>
         </div>
 
@@ -538,39 +538,39 @@
         <!-- TANGLECLAW_ADE_KPI_START -->
         <div class="kpi-card">
           <div class="kpi-label">Autonomous Delivery Efficiency (ADE)</div>
-          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">0.14</div>
-          <div class="kpi-meta kpi-sub"><code>52 issues / (12.27h × $30.18)</code> · <code>$0.58/issue</code> · <code>$1.18/kLOC</code> · <code>~36.0M tok</code> (<code>17.3×</code> vs API)</div>
+          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">0.15</div>
+          <div class="kpi-meta kpi-sub"><code>54 issues / (12.26h × $30.16)</code> · <code>$0.56/issue</code> · <code>$1.02/kLOC</code> · <code>~36.8M tok</code> (<code>17.7×</code> vs API)</div>
         </div>
         <!-- TANGLECLAW_ADE_KPI_END -->
           <div class="kpi-card">
             <div class="kpi-label">Total Run Time (Start → Finish)</div>
-            <div class="kpi-value green">12h 16m (736m)</div>
-            <div class="kpi-sub"><code>22:58 → 11:14 PST</code> to live <code>:3102</code> (<code>12h 20m</code> to closeout · <code>9h 12m</code> merge-to-live)</div>
+            <div class="kpi-value green">12h 15m 26s</div>
+            <div class="kpi-sub"><code>22:59 → 11:14 PST</code> to final merge · <code>12h 32m 09s</code> to live <code>:3102</code> (<code>9h 59m 29s</code> active merge window)</div>
           </div>
           <div class="kpi-card">
-            <div class="kpi-label">Leg Cadence (Start → Finish)</div>
-            <div class="kpi-value cyan">5.6h → 4.1h → 75m → 56m → 22m</div>
-            <div class="kpi-sub">15.3x wall-time acceleration (<code>-93.5%</code> per-leg duration from L1 to L5)</div>
+            <div class="kpi-label">Inter-Release Merge Cadence</div>
+            <div class="kpi-value cyan">5.35h → 4.12h → 73m → 73m → 22m</div>
+            <div class="kpi-sub">14.63× merge-cadence compression (<code>1.75×</code> shorter standalone 1st-commit-to-merge window)</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">Versions &amp; Issues Shipped</div>
-            <div class="kpi-value green">5 / 5 · 52 / 52</div>
-            <div class="kpi-sub"><code>54/54</code> chartered (<code>52</code> unique feature · <code>68/68</code> milestone issues across <code>#42–#46</code>)</div>
+            <div class="kpi-value green">5 / 5 · 54 / 55</div>
+            <div class="kpi-sub"><code>54</code> unique chartered closed (<code>1</code> deferred <code>#2347</code> · <code>67</code> milestone items closed across <code>#42–#46</code>)</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">True Merge Commits (Rule #282)</div>
-            <div class="kpi-value green">26 / 26 (100%)</div>
-            <div class="kpi-sub">21 Feature Cars + 5 Release Cuts merged via <code>gh pr merge --merge</code> (2 parents each)</div>
+            <div class="kpi-value green">27 / 27 (100%)</div>
+            <div class="kpi-sub">22 Feature Cars + 5 Release Cuts merged via <code>gh pr merge --merge</code> (2 parents each)</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">Cumulative Code Delta</div>
-            <div class="kpi-value purple">+29,421 / -881</div>
-            <div class="kpi-sub"><code>186</code> files changed on <code>main</code> (<code>v5.56.0..v5.61.0</code>) · <code>45</code> new modules &amp; <code>33</code> new test suites</div>
+            <div class="kpi-value purple">+29,431 / -878</div>
+            <div class="kpi-sub"><code>173</code> files changed on <code>main</code> (<code>1ce2dd19..d5b3491c</code>) · <code>+29,580 / -1,027</code> sum of 27 PR diffs</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">Pre-Merge PRR/Arc Catches</div>
             <div class="kpi-value cyan">28 Catches / 0 Escapes</div>
-            <div class="kpi-sub">28 pre-merge review refinements across 21 feature cars; 0 post-merge test regressions</div>
+            <div class="kpi-sub">28 pre-merge review refinements across 22 feature cars; 0 post-merge test regressions</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">Post-Deploy #2853 Backfill</div>
@@ -791,11 +791,11 @@
       <div id="ade-efficiency-card" class="subcard" style="margin:18px 0;padding:18px 22px;border:1.5px solid rgba(56,189,248,0.45);background:linear-gradient(135deg,rgba(15,23,42,0.95),rgba(14,116,144,0.16));border-radius:12px;">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
           <span style="color:#38bdf8;font-weight:700;font-size:0.82rem;letter-spacing:0.06em;">📐 AUTONOMOUS DELIVERY EFFICIENCY (ADE) · SPEED × QUALITY × OPERATING COST</span>
-          <span class="badge badge-green" style="font-size:0.78rem;">ADE = 0.14 Certified Issues / (Hr · $) · $0.58/Issue · $1.18/kLOC</span>
+          <span class="badge badge-green" style="font-size:0.78rem;">ADE = 0.15 Certified Issues / (Hr · $) · $0.56/Issue · $1.02/kLOC</span>
         </div>
         <div style="font-size:0.92rem;color:#e2e8f0;line-height:1.55;">
-          <strong>Formula:</strong> <code>ADE = (Accepted, Validated Work Delivered) / (Elapsed Hours × Total Operating Cost)</code> = <code>52 certified issues / (12.27h × $30.18) = <strong>0.14</strong></code> (<code>+25,530 LOC</code> delivered at <code>$1.18 / 1,000 LOC</code>).<br/>
-          <strong>Cost &amp; Token Basis (Method 3):</strong> Amortized from the <code>$500/mo</code> multi-vendor CLI subscription pool (Claude Code <code>$200</code> + Antigravity <code>$200</code> + Codex <code>$100</code> @ <code>85%</code> TangleClaw allocation + <code>$15/mo</code> local M3 Ultra compute = <code>$2.46/active fleet-hr</code>). Estimated CLI turn volume: <code>~36.0M</code> cached/uncached tokens (public frontier API shadow cost <code>~$522</code> → <strong><code>17.3×</code> subscription cost compression</strong>).
+          <strong>Formula:</strong> <code>ADE = (Accepted, Validated Work Delivered) / (Elapsed Hours × Total Operating Cost)</code> = <code>54 certified issues / (12.26h × $30.16) = <strong>0.15</strong></code> (<code>+29,431 LOC</code> delivered at <code>$1.02 / 1,000 LOC</code>).<br/>
+          <strong>Cost &amp; Token Basis (Method 3):</strong> Amortized from the <code>$500/mo</code> multi-vendor CLI subscription pool (Claude Code <code>$200</code> + Antigravity <code>$200</code> + Codex <code>$100</code> @ <code>85%</code> TangleClaw allocation + <code>$15/mo</code> local M3 Ultra compute = <code>$2.46/active fleet-hr</code>). Estimated CLI turn volume: <code>~36.8M</code> cached/uncached tokens (public frontier API shadow cost <code>~$534</code> → <strong><code>17.7×</code> subscription cost compression</strong>).
         </div>
       </div>
       <!-- TANGLECLAW_ADE_BANNER_END -->
@@ -878,42 +878,42 @@
                 <tr>
                   <td><strong>Leg 1 · <code>v5.57.0</code></strong></td>
                   <td><code>A494 v1.1</code> · <code>#42</code></td>
-                  <td>6 PRs (<code>#2831–#2834, #2839, #2845</code>)</td>
-                  <td><code>8 / 8</code> Chartered (<code>18</code> Milestone)</td>
-                  <td><code>33bcfbca</code> (tag <code>a1b71083</code>)</td>
-                  <td><code>5h 36m</code> — Established `Guardrail 06` pipelining into Leg 2 &amp; `Guardrail 10` remote Testament pool</td>
+                  <td>7 PRs (<code>#2822, #2820, #2827, #2829, #2839, #2833, #2845</code>)</td>
+                  <td><code>8 / 9</code> Chartered (<code>1</code> Deferred <code>#2347</code>)</td>
+                  <td><code>33bcfbca</code> (tag <code>bbf84112</code>)</td>
+                  <td><code>5h 21m</code> merge / <code>5h 36m</code> deploy — Established `Guardrail 06` pipelining into Leg 2 &amp; `Guardrail 10` remote Testament pool</td>
                 </tr>
                 <tr>
                   <td><strong>Leg 2 · <code>v5.58.0</code></strong></td>
                   <td><code>A495 v1.0</code> · <code>#43</code></td>
                   <td>5 PRs (<code>#2840, #2841, #2846, #2847, #2860</code>)</td>
-                  <td><code>8 / 8</code> Chartered (<code>12</code> Milestone)</td>
+                  <td><code>8 / 8</code> Chartered (<code>8</code> Milestone)</td>
                   <td><code>1a4ac404</code> (tag <code>58daf0e2</code>)</td>
-                  <td><code>1h 15m</code> post-L1 (`4h 09m` total) — Pre-built Cars `58-A/B` during Leg 1; staged Leg 3 Cars `59-B/C`</td>
+                  <td><code>4h 07m</code> merge / <code>4h 09m</code> deploy — Shipped `#2824` delegated PM lifecycle authority &amp; staged Leg 3 Cars</td>
                 </tr>
                 <tr>
                   <td><strong>Leg 3 · <code>v5.59.0</code></strong></td>
                   <td><code>A496 v1.0</code> · <code>#44</code></td>
                   <td>5 PRs (<code>#2850, #2849, #2848, #2859, #2867</code>)</td>
-                  <td><code>8 / 8</code> Chartered (<code>8</code> Milestone)</td>
+                  <td><code>8 / 8</code> Chartered (<code>13</code> w/ 5 PRs)</td>
                   <td><code>87d49f8d</code> (tag <code>dcd752a9</code>)</td>
-                  <td><code>1h 15m</code> (`57m` merge window) — Shipped Morpheus Advisor &amp; 3-Tier Authority while pre-certifying 3/4 `v5.60.0` cars</td>
+                  <td><code>1h 13m</code> merge / <code>1h 14m</code> deploy — Shipped Morpheus Advisor &amp; 3-Tier Authority while pre-certifying 3/4 `v5.60.0` cars</td>
                 </tr>
                 <tr>
                   <td><strong>Leg 4 · <code>v5.60.0</code></strong></td>
                   <td><code>A497 v1.0</code> · <code>#45</code></td>
                   <td>5 PRs (<code>#2855, #2851, #2857, #2861, #2872</code>)</td>
-                  <td><code>16 / 16</code> Chartered (<code>22</code> Milestone)</td>
+                  <td><code>16 / 16</code> Chartered (<code>22</code> w/ PRs)</td>
                   <td><code>6efd74eb</code> (tag <code>4578bb07</code>)</td>
-                  <td><code>56m</code> — Doubled issue scope (`16` issues); merged `#2855` &amp; `#2851` within 113s of `v5.59.0` tag; Ruling `A497-S1`</td>
+                  <td><code>1h 13m</code> merge / <code>1h 11m</code> deploy (`54m` active merge) — Doubled issue scope (`16` issues); Ruling `A497-S1`</td>
                 </tr>
                 <tr>
                   <td><strong>Leg 5 · <code>v5.61.0</code></strong></td>
                   <td><code>A498 v1.1</code> · <code>#46</code></td>
                   <td>5 PRs (<code>#2863, #2868, #2869, #2865, #2873</code>)</td>
-                  <td><code>14 / 14</code> Chartered (<code>16</code> Milestone)</td>
+                  <td><code>14 / 14</code> Chartered (<code>16</code> w/ 2 PRs)</td>
                   <td><code>d5b3491c</code> (tag <code>5746728d</code>)</td>
-                  <td><code>22m</code> — All 4 feature cars (`14` issues) merged in 47 seconds (`11:08:26 → 11:09:13 PST`)!</td>
+                  <td><code>22m</code> merge / <code>23m</code> deploy (`2h 51m` standalone) — All 4 feature cars (`14` issues) merged in 47 seconds (`11:08:26 → 11:09:13 PST`)!</td>
                 </tr>
               </tbody>
             </table>
@@ -948,16 +948,16 @@
             <tbody>
               <tr>
                 <td><strong>Leg 1 · <code>v5.57.0</code></strong><br/>“Session stops and decisions” (<code>Milestone #42</code>)</td>
-                <td><code>#2831, #2832, #2833, #2834, #2839, #2845</code><br/><code>33bcfbca9606</code></td>
-                <td><span class="issue-pill">#2482</span> <span class="issue-pill">#2658</span> <span class="issue-pill">#2661</span> <span class="issue-pill">#2662</span> <span class="issue-pill">#2663</span> <span class="issue-pill">#2705</span> <span class="issue-pill">#2736</span> <span class="issue-pill">#2737</span> (+10 Slice 2/related closures = 18)</td>
-                <td><code>lib/decision-routing.js</code> (+675 LOC), <code>lib/launch-recovery-wake.js</code> (+414 LOC), <code>lib/launch-recovery-held.js</code>, stop provenance SQLite migration, and checkout fingerprint guards</td>
+                <td><code>#2822, #2820, #2827, #2829, #2839, #2833, #2845</code><br/><code>33bcfbca218b</code> (tag <code>bbf84112</code>)</td>
+                <td><span class="issue-pill">#2034</span> <span class="issue-pill">#2037</span> <span class="issue-pill">#2074</span> <span class="issue-pill">#2109</span> <span class="issue-pill">#2249</span> <span class="issue-pill">#2250</span> <span class="issue-pill">#2351</span> <span class="issue-pill">#2353</span> (8/9 chartered; <code>#2347</code> deferred on <code>Medusa#67</code>)</td>
+                <td><code>lib/decision-routing.js</code> (+675 LOC), <code>lib/launch-recovery-wake.js</code> (+414 LOC), <code>lib/launch-recovery-held.js</code>, Codex transcript capture, safe-boundary pause, and stop provenance migration</td>
                 <td><span class="badge badge-green">OBSR-OGATE-V5570-PASS</span></td>
               </tr>
               <tr>
                 <td><strong>Leg 2 · <code>v5.58.0</code></strong><br/>“Governed wrap and handoff” (<code>Milestone #43</code>)</td>
-                <td><code>#2840, #2841, #2846, #2847, #2860</code><br/><code>1a4ac4048711</code></td>
-                <td><span class="issue-pill">#2069</span> <span class="issue-pill">#2483</span> <span class="issue-pill">#2660</span> <span class="issue-pill">#2664</span> <span class="issue-pill">#2706</span> <span class="issue-pill">#2814</span> <span class="issue-pill">#2815</span> <span class="issue-pill">#2816</span> (+4 Slice 2 closures = 12)</td>
-                <td><code>lib/governed-wrap.js</code> (+621 LOC), <code>lib/lifecycle-handoff.js</code> (+786 LOC), <code>lib/chunk-boundary.js</code> (+738 LOC), <code>lib/coordinator-rotation.js</code> (+603 LOC), and <code>lib/operating-primer.js</code> (+373 LOC)</td>
+                <td><code>#2840, #2841, #2846, #2847, #2860</code><br/><code>1a4ac4048711</code> (tag <code>58daf0e2</code>)</td>
+                <td><span class="issue-pill">#1889</span> <span class="issue-pill">#2070</span> <span class="issue-pill">#2072</span> <span class="issue-pill">#2073</span> <span class="issue-pill">#2642</span> <span class="issue-pill">#2643</span> <span class="issue-pill">#2645</span> <span class="issue-pill">#2824</span> (8/8 chartered)</td>
+                <td><code>lib/governed-wrap.js</code> (+621 LOC), <code>lib/lifecycle-handoff.js</code> (+786 LOC), <code>lib/chunk-boundary.js</code> (+738 LOC), <code>lib/routes/_callers.js</code> (<code>#2824</code> delegated PM authority), and <code>lib/operating-primer.js</code> (+373 LOC)</td>
                 <td><span class="badge badge-green">OBSR-OGATE-V5580-PASS</span></td>
               </tr>
               <tr>
@@ -1364,16 +1364,16 @@
       </div>
 
       <!-- CARD 1: Leg 1 (v5.57.0) -->
-      <div class="wave-card" data-tags="all v5570 sessions" data-search="leg 1 v5.57.0 milestone 42 a494 2831 2832 2833 2834 2839 2845 33bcfbca 2482 2658 2661 2662 2663 2705 2736 2737 decision-routing.js launch-recovery-wake.js">
+      <div class="wave-card" data-tags="all v5570 sessions" data-search="leg 1 v5.57.0 milestone 42 a494 2822 2820 2827 2829 2839 2833 2845 33bcfbca bbf84112 2034 2037 2074 2109 2249 2250 2351 2353 decision-routing.js launch-recovery-wake.js">
         <div class="wave-header">
           <div>
             <div class="wave-num">LEG 1 OF 5 · SPRINT v5.57.0 · MILESTONE #42 · CHARTER A494 v1.1</div>
-            <h3 class="wave-title"><a class="pr-link" href="../v5.57.0/">TangleClaw <code>v5.57.0</code>: “Session stops and decisions”</a> — 6 PRs (<code>#2831, #2832, #2833, #2834, #2839, #2845</code>)</h3>
-            <div class="wave-window">Release Merge <code>33bcfbca9606923c70fb1b11fd7226d1d8627285</code> (Tag <code>a1b71083</code>) · Wall Time: <code>5h 36m</code></div>
+            <h3 class="wave-title"><a class="pr-link" href="../v5.57.0/">TangleClaw <code>v5.57.0</code>: “Session stops and decisions”</a> — 7 PRs (<code>#2822, #2820, #2827, #2829, #2839, #2833, #2845</code>)</h3>
+            <div class="wave-window">Release Merge <code>33bcfbca218bc0f7c9e091a61f23afa9304c58a1</code> (Tag <code>bbf84112</code>) · Cadence: <code>5h 21m</code> Merge / <code>5h 36m</code> Deploy</div>
           </div>
           <div class="wave-meta">
-            <span class="badge badge-green">8/8 Chartered (18 Closed)</span>
-            <span class="badge badge-cyan">+8,425 / -329 LOC</span>
+            <span class="badge badge-green">8/9 Chartered Closed (1 Deferred #2347)</span>
+            <span class="badge badge-cyan">+11,187 / -770 LOC</span>
             <span class="badge badge-purple">OBSR-OGATE-V5570-PASS</span>
           </div>
         </div>
@@ -1388,11 +1388,11 @@
               </tr>
             </thead>
             <tbody>
-              <tr data-row-tags="v5570 sessions" data-row-search="2831 2832 2833 2834 2839 2845 2482 2658 2661 2662 2663 2705 2736 2737">
-                <td><code>#2831, #2832, #2833, #2834, #2839, #2845</code></td>
-                <td><span class="issue-pill">#2482</span> <span class="issue-pill">#2658</span> <span class="issue-pill">#2661</span> <span class="issue-pill">#2662</span> <span class="issue-pill">#2663</span> <span class="issue-pill">#2705</span> <span class="issue-pill">#2736</span> <span class="issue-pill">#2737</span></td>
-                <td>Stop provenance SQLite schema migration, held launch recovery, deterministic wake ordering (`lib/launch-recovery-wake.js`), and multi-tier decision routing (`lib/decision-routing.js`)</td>
-                <td><code>PR #2845 @ 33bcfbca</code> · Candidate <code>cd_e08zI8X8L_wP</code></td>
+              <tr data-row-tags="v5570 sessions" data-row-search="2822 2820 2827 2829 2839 2833 2845 2034 2037 2074 2109 2249 2250 2351 2353">
+                <td><code>#2822, #2820, #2827, #2829, #2839, #2833, #2845</code></td>
+                <td><span class="issue-pill">#2034</span> <span class="issue-pill">#2037</span> <span class="issue-pill">#2074</span> <span class="issue-pill">#2109</span> <span class="issue-pill">#2249</span> <span class="issue-pill">#2250</span> <span class="issue-pill">#2351</span> <span class="issue-pill">#2353</span></td>
+                <td>Stop provenance SQLite schema migration (`#2249`), held launch recovery (`#2250`), durable decision routing (`#2037`), coordinator-rotation follow-ups (`#2034`), Codex transcript capture (`#2074`), decider fallback (`#2351, #2353`), and safe-boundary pause (`#2109`)</td>
+                <td><code>PR #2845 @ 33bcfbca</code> · Candidate <code>cd_BAQp1lbnKUYY</code></td>
               </tr>
             </tbody>
           </table>
@@ -1400,16 +1400,16 @@
       </div>
 
       <!-- CARD 2: Leg 2 (v5.58.0) -->
-      <div class="wave-card" data-tags="all v5580 sessions" data-search="leg 2 v5.58.0 milestone 43 a495 2840 2841 2846 2847 2860 1a4ac404 2069 2483 2660 2664 2706 2814 2815 2816 governed-wrap.js lifecycle-handoff.js chunk-boundary.js coordinator-rotation.js">
+      <div class="wave-card" data-tags="all v5580 sessions" data-search="leg 2 v5.58.0 milestone 43 a495 2840 2841 2846 2847 2860 1a4ac404 58daf0e2 1889 2070 2072 2073 2642 2643 2645 2824 governed-wrap.js lifecycle-handoff.js chunk-boundary.js">
         <div class="wave-header">
           <div>
             <div class="wave-num">LEG 2 OF 5 · SPRINT v5.58.0 · MILESTONE #43 · CHARTER A495 v1.0</div>
             <h3 class="wave-title"><a class="pr-link" href="../v5.58.0/">TangleClaw <code>v5.58.0</code>: “Governed wrap and handoff”</a> — 5 PRs (<code>#2840, #2841, #2846, #2847, #2860</code>)</h3>
-            <div class="wave-window">Release Merge <code>1a4ac4048711daaf6d273f99cc3e6742a1e3b094</code> (Tag <code>58daf0e2</code>) · Wall Time: <code>1h 15m</code> Post-L1 (<code>4h 09m</code> Total)</div>
+            <div class="wave-window">Release Merge <code>1a4ac4048711daaf6d273f99cc3e6742a1e3b094</code> (Tag <code>58daf0e2</code>) · Cadence: <code>4h 07m</code> Merge / <code>4h 09m</code> Deploy</div>
           </div>
           <div class="wave-meta">
-            <span class="badge badge-green">8/8 Chartered (12 Closed)</span>
-            <span class="badge badge-cyan">+6,133 / -74 LOC</span>
+            <span class="badge badge-green">8/8 Chartered (8 Closed)</span>
+            <span class="badge badge-cyan">+4,207 / -62 LOC</span>
             <span class="badge badge-purple">OBSR-OGATE-V5580-PASS</span>
           </div>
         </div>
@@ -1424,10 +1424,10 @@
               </tr>
             </thead>
             <tbody>
-              <tr data-row-tags="v5580 sessions" data-row-search="2840 2841 2846 2847 2860 2069 2483 2660 2664 2706 2814 2815 2816">
+              <tr data-row-tags="v5580 sessions" data-row-search="2840 2841 2846 2847 2860 1889 2070 2072 2073 2642 2643 2645 2824">
                 <td><code>#2840, #2841, #2846, #2847, #2860</code></td>
-                <td><span class="issue-pill">#2069</span> <span class="issue-pill">#2483</span> <span class="issue-pill">#2660</span> <span class="issue-pill">#2664</span> <span class="issue-pill">#2706</span> <span class="issue-pill">#2814</span> <span class="issue-pill">#2815</span> <span class="issue-pill">#2816</span></td>
-                <td>Governed wrap engine (`lib/governed-wrap.js`), generation-bound lifecycle handoff (`lib/lifecycle-handoff.js`), natural chunk boundaries (`lib/chunk-boundary.js`), coordinator rotation (`lib/coordinator-rotation.js`), and `tc primer` (`lib/operating-primer.js`)</td>
+                <td><span class="issue-pill">#1889</span> <span class="issue-pill">#2070</span> <span class="issue-pill">#2072</span> <span class="issue-pill">#2073</span> <span class="issue-pill">#2642</span> <span class="issue-pill">#2643</span> <span class="issue-pill">#2645</span> <span class="issue-pill">#2824</span></td>
+                <td>Delegated Fleet PM lifecycle authority &amp; safe `/clear` (`#2824` in-train self-fix), governed wrap &amp; handoff (`#2072, #2073`), interrupted wrap status (`#2642, #2643, #2645`), chunk-boundary receipts (`#1889`), and `tc primer` (`#2070`)</td>
                 <td><code>PR #2860 @ 1a4ac404</code> · Candidate <code>cd_m8tL-0hgLiH9</code></td>
               </tr>
             </tbody>
