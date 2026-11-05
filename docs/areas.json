@@ -148,6 +148,7 @@
         "lib/ttyd-*.js",
         "lib/pty-activity.js",
         "lib/transcript.js",
+        "lib/session-history-backfill.js",
         "lib/workspace-rename-check.js",
         "lib/continuity.js",
         "lib/master-continuity.js",
