@@ -11,6 +11,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const systemd = require('../lib/linux-systemd');
+const cli = require('../scripts/linux-systemd-install.js');
 
 setLevel('error');
 
@@ -183,10 +184,25 @@ describe('install / uninstall / status', () => {
     ]);
   });
 
-  it('uninstall is a no-op success when the unit file was never installed', async () => {
-    systemd._internal.exec = async () => ({ exitCode: 0, stdout: '', stderr: '', error: null });
+  it('uninstall is a no-op success when the unit file was never installed, even when systemctl stop reports "not loaded"', async () => {
+    const file = systemd.unitFilePath(tmpDir);
+    assert.equal(fs.existsSync(file), false, 'sanity: nothing was ever installed');
+    systemd._internal.exec = async (f, args) => (args[1] === 'stop'
+      ? { exitCode: 5, stdout: '', stderr: 'Unit tangleclaw.service not loaded.', error: null }
+      : { exitCode: 0, stdout: '', stderr: '', error: null });
     const result = await systemd.uninstall({ homeDir: tmpDir });
-    assert.equal(result.ok, true);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(fs.existsSync(file), false);
+  });
+
+  it('uninstall still reports failure when stop fails for a REAL unit (file existed, something else is wrong)', async () => {
+    const file = systemd.unitFilePath(tmpDir);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, 'placeholder');
+    systemd._internal.exec = async () => ({ exitCode: 1, stdout: '', stderr: 'Failed to stop tangleclaw.service: Access denied', error: null });
+    const result = await systemd.uninstall({ homeDir: tmpDir });
+    assert.equal(result.ok, false);
+    assert.equal(fs.existsSync(file), true, 'a genuinely failed uninstall leaves the file in place');
   });
 
   it('status reports the parsed fields on success', async () => {
@@ -200,5 +216,105 @@ describe('install / uninstall / status', () => {
     const result = await systemd.status();
     assert.equal(result.available, false);
     assert.ok(result.reason);
+  });
+});
+
+describe('scripts/linux-systemd-install.js CLI (#1424, PRR-A Round 1 on PR #2899)', () => {
+  let original;
+  let tmpDir;
+  let out;
+  let origWrite;
+
+  beforeEach(() => {
+    original = systemd._internal.exec;
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tangleclaw-systemd-cli-'));
+    out = [];
+    origWrite = process.stdout.write;
+    process.stdout.write = (chunk) => { out.push(chunk); return true; };
+  });
+
+  afterEach(() => {
+    systemd._internal.exec = original;
+    process.stdout.write = origWrite;
+    try { fs.rmSync(tmpDir, { recursive: true }); } catch { /* ignore */ }
+  });
+
+  describe('parseArgs', () => {
+    it('accepts each subcommand with its defaults (repo root, process.execPath, no home-dir override)', () => {
+      const opts = cli.parseArgs(['verify']);
+      assert.equal(opts.command, 'verify');
+      assert.equal(opts.repoDir, cli.REPO_ROOT);
+      assert.equal(opts.nodeBin, process.execPath);
+      assert.equal(opts.homeDir, undefined);
+    });
+
+    it('accepts --repo-dir, --node-bin and --home-dir overrides', () => {
+      const opts = cli.parseArgs(['install', '--repo-dir', '/opt/tc', '--node-bin', '/usr/bin/node', '--home-dir', '/home/tc']);
+      assert.equal(opts.repoDir, '/opt/tc');
+      assert.equal(opts.nodeBin, '/usr/bin/node');
+      assert.equal(opts.homeDir, '/home/tc');
+    });
+
+    it('refuses an unknown subcommand, an unrecognized flag, and a flag missing its value', () => {
+      assert.throws(() => cli.parseArgs(['nope']));
+      assert.throws(() => cli.parseArgs(['verify', '--nope', 'x']));
+      assert.throws(() => cli.parseArgs(['install', '--repo-dir']));
+    });
+  });
+
+  it('verify passes for a unit file that meets its own contract', async () => {
+    const code = await cli.main(['verify', '--repo-dir', '/opt/tangleclaw', '--node-bin', '/usr/bin/node']);
+    assert.equal(code, 0, out.join(''));
+    assert.match(out.join(''), /verify passed/);
+  });
+
+  it('verify fails, with the reason on stderr, for a repoDir that is not absolute', async () => {
+    const stderrChunks = [];
+    const origErr = process.stderr.write;
+    process.stderr.write = (chunk) => { stderrChunks.push(chunk); return true; };
+    try {
+      const code = await cli.main(['verify', '--repo-dir', 'relative/path']);
+      assert.equal(code, 1);
+      assert.match(stderrChunks.join(''), /could not generate the unit file/);
+    } finally {
+      process.stderr.write = origErr;
+    }
+  });
+
+  it('install writes the unit file under --home-dir, never the real home directory', async () => {
+    systemd._internal.exec = async () => ({ exitCode: 0, stdout: '', stderr: '', error: null });
+    const code = await cli.main(['install', '--repo-dir', '/opt/tangleclaw', '--node-bin', '/usr/bin/node', '--home-dir', tmpDir]);
+    assert.equal(code, 0, out.join(''));
+    assert.equal(fs.existsSync(systemd.unitFilePath(tmpDir)), true);
+  });
+
+  it('uninstall against --home-dir is a no-op success when nothing was installed there', async () => {
+    systemd._internal.exec = async (f, args) => (args[1] === 'stop'
+      ? { exitCode: 5, stdout: '', stderr: 'Unit tangleclaw.service not loaded.', error: null }
+      : { exitCode: 0, stdout: '', stderr: '', error: null });
+    const code = await cli.main(['uninstall', '--home-dir', tmpDir]);
+    assert.equal(code, 0, out.join(''));
+    assert.match(out.join(''), /uninstall ok/);
+  });
+
+  it('status reports unavailable, with its reason, when systemctl is not installed', async () => {
+    systemd._internal.exec = async () => ({ exitCode: 1, stdout: '', stderr: '', error: null, errorCode: 'ENOENT', timedOut: false });
+    const code = await cli.main(['status']);
+    assert.equal(code, 1);
+    assert.match(out.join(''), /status unavailable/);
+  });
+
+  it('exits 4 and prints to stderr, not stdout, for an unparseable argv', async () => {
+    const stderrChunks = [];
+    const origErr = process.stderr.write;
+    process.stderr.write = (chunk) => { stderrChunks.push(chunk); return true; };
+    try {
+      const code = await cli.main(['nope']);
+      assert.equal(code, 4);
+      assert.deepEqual(out, []);
+      assert.ok(stderrChunks.join('').includes('unknown subcommand'));
+    } finally {
+      process.stderr.write = origErr;
+    }
   });
 });
