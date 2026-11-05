@@ -1,0 +1,1559 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TangleClaw v5.65.0–v5.66.0 — Two-Version Autonomous Sprint Train Retrospective</title>
+  <!-- TANGLECLAW_OG_META_START -->
+  <meta name="description" content="TangleClaw v5.65.0–v5.66.0 — Two-Version Autonomous Sprint Train Retrospective" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="TangleClaw Autonomous Sprint Reports" />
+  <meta property="og:title" content="TangleClaw v5.65.0–v5.66.0 — Two-Version Autonomous Sprint Train Retrospective" />
+  <meta property="og:description" content="TangleClaw v5.65.0–v5.66.0 — Two-Version Autonomous Sprint Train Retrospective" />
+  <meta property="og:url" content="https://jason-vaughan.github.io/TangleClaw/reports/v5.65.0-v5.66.0-retrospective/" />
+  <meta property="og:image" content="https://jason-vaughan.github.io/TangleClaw/reports/assets/og-card.png" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="TangleClaw v5.65.0–v5.66.0 — Two-Version Autonomous Sprint Train Retrospective" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="TangleClaw v5.65.0–v5.66.0 — Two-Version Autonomous Sprint Train Retrospective" />
+  <meta name="twitter:description" content="TangleClaw v5.65.0–v5.66.0 — Two-Version Autonomous Sprint Train Retrospective" />
+  <meta name="twitter:image" content="https://jason-vaughan.github.io/TangleClaw/reports/assets/og-card.png" />
+  <link rel="icon" type="image/png" href="https://jason-vaughan.github.io/TangleClaw/reports/assets/logo-icon.png" />
+  <link rel="apple-touch-icon" href="https://jason-vaughan.github.io/TangleClaw/reports/assets/apple-touch-icon.png" />
+  <!-- TANGLECLAW_OG_META_END -->
+  <style>
+    :root {
+      --bg: #070b14;
+      --bg-card: #0f172a;
+      --bg-card-alt: #131c31;
+      --border: #1e293b;
+      --border-hi: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --cyan: #38bdf8;
+      --green: #34d399;
+      --purple: #c084fc;
+      --amber: #fbbf24;
+      --rose: #fb7185;
+      --indigo: #818cf8;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(circle at 15% 0%, #0f1f3d 0%, var(--bg) 45%);
+      color: var(--text);
+      line-height: 1.55;
+    }
+    a { color: var(--cyan); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.88em;
+      background: rgba(148, 163, 184, 0.14);
+      padding: 0.12rem 0.38rem;
+      border-radius: 5px;
+      color: #e2e8f0;
+    }
+
+    /* Top Nav */
+    .topnav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(7, 11, 20, 0.88);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0.7rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      font-weight: 800;
+      font-size: 1.05rem;
+      color: var(--text);
+    }
+    .brand-dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--cyan), var(--green));
+      box-shadow: 0 0 12px var(--cyan);
+    }
+    .nav-links {
+      display: flex;
+      gap: 1.1rem;
+      flex-wrap: wrap;
+      font-size: 0.86rem;
+      font-weight: 600;
+    }
+    .nav-links a { color: var(--text-muted); transition: color 0.15s; }
+    .nav-links a:hover { color: var(--cyan); text-decoration: none; }
+
+    .container {
+      max-width: 1220px;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 4rem;
+    }
+
+    /* Hero */
+    .hero {
+      background: linear-gradient(145deg, rgba(15, 23, 42, 0.96), rgba(30, 27, 75, 0.72));
+      border: 1px solid var(--border-hi);
+      border-radius: 18px;
+      padding: 2.25rem 2rem;
+      margin-bottom: 2rem;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+    }
+    .hero-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(52, 211, 153, 0.12);
+      border: 1px solid rgba(52, 211, 153, 0.4);
+      color: var(--green);
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 0.28rem 0.75rem;
+      border-radius: 999px;
+      margin-bottom: 0.9rem;
+    }
+    .hero h1 {
+      margin: 0 0 0.65rem;
+      font-size: clamp(1.75rem, 3.2vw, 2.55rem);
+      letter-spacing: -0.02em;
+      line-height: 1.18;
+    }
+    .hero-sub {
+      margin: 0 0 1.4rem;
+      color: #cbd5e1;
+      font-size: 1.04rem;
+      max-width: 980px;
+    }
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+      margin-bottom: 1.75rem;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.55rem 1rem;
+      border-radius: 10px;
+      font-size: 0.86rem;
+      font-weight: 600;
+      border: 1px solid var(--border-hi);
+      background: var(--bg-card);
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .btn:hover {
+      border-color: var(--cyan);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      border-color: #38bdf8;
+      color: #fff;
+    }
+
+    /* KPI Grid */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(245px, 1fr));
+      gap: 1rem;
+    }
+    .kpi-card {
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.1rem 1.2rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .kpi-card::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--cyan), var(--green));
+    }
+    .kpi-label {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .kpi-val {
+      font-size: 1.65rem;
+      font-weight: 800;
+      margin: 0.25rem 0 0.2rem;
+      color: var(--text);
+      letter-spacing: -0.02em;
+    }
+    .kpi-sub {
+      font-size: 0.82rem;
+      color: #cbd5e1;
+    }
+
+    /* Sections */
+    .section {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.75rem;
+      margin-bottom: 1.75rem;
+    }
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.85rem;
+    }
+    .section-title {
+      margin: 0;
+      font-size: 1.35rem;
+      font-weight: 800;
+    }
+    .section-desc {
+      margin: 0.25rem 0 0;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .w-full { width: 100%; height: auto; display: block; }
+
+    /* Two-column & Three-column grids */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+      gap: 1.25rem;
+    }
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+    }
+
+    .subcard {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.2rem;
+    }
+    .subcard h3 {
+      margin: 0 0 0.6rem;
+      font-size: 1.02rem;
+    }
+
+    /* Stacked horizontal bars */
+    .bar-row {
+      margin-bottom: 0.95rem;
+    }
+    .bar-label-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.84rem;
+      margin-bottom: 0.3rem;
+      gap: 0.5rem;
+    }
+    .bar-track {
+      width: 100%;
+      height: 12px;
+      background: #090d16;
+      border-radius: 999px;
+      overflow: hidden;
+      display: flex;
+    }
+    .bar-fill {
+      height: 100%;
+    }
+
+    /* Badges & Pills */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.18rem 0.55rem;
+      border-radius: 999px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+    .badge-cyan, .badge-blue { background: rgba(56, 189, 248, 0.15); color: var(--cyan); border: 1px solid rgba(56, 189, 248, 0.35); }
+    .badge-green { background: rgba(52, 211, 153, 0.15); color: var(--green); border: 1px solid rgba(52, 211, 153, 0.35); }
+    .badge-purple { background: rgba(192, 132, 252, 0.15); color: var(--purple); border: 1px solid rgba(192, 132, 252, 0.35); }
+    .badge-amber { background: rgba(251, 191, 36, 0.15); color: var(--amber); border: 1px solid rgba(251, 191, 36, 0.35); }
+    .badge-rose { background: rgba(251, 113, 133, 0.15); color: var(--rose); border: 1px solid rgba(251, 113, 133, 0.35); }
+
+    .text-muted { color: var(--text-muted); font-size: 0.82rem; }
+
+    /* Filter Controls */
+    .filter-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.2rem;
+    }
+    .filter-btns {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+    .filter-btn {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border-hi);
+      color: var(--text-muted);
+      padding: 0.42rem 0.8rem;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .filter-btn:hover, .filter-btn.active {
+      background: rgba(56, 189, 248, 0.16);
+      border-color: var(--cyan);
+      color: var(--text);
+    }
+    .search-input {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border-hi);
+      color: var(--text);
+      padding: 0.48rem 0.85rem;
+      border-radius: 8px;
+      font-size: 0.84rem;
+      min-width: 250px;
+    }
+
+    /* Wave Cards */
+    .wave-card {
+      background: var(--bg-card-alt);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.15rem;
+      margin-bottom: 0.9rem;
+    }
+    .wave-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+      margin-bottom: 0.75rem;
+    }
+    .wave-num {
+      font-size: 0.74rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--cyan);
+    }
+    .wave-title {
+      margin: 0.1rem 0 0.15rem;
+      font-size: 1rem;
+    }
+    .wave-window {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+    .wave-meta {
+      display: flex;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+
+    .table-wrap { overflow-x: auto; }
+    .pr-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.84rem;
+    }
+    .pr-table th, .pr-table td {
+      padding: 0.52rem 0.65rem;
+      text-align: left;
+      border-top: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .pr-table th {
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      border-top: none;
+    }
+
+    /* Post-Mortem Lists */
+    .pm-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+    .pm-item {
+      background: rgba(7, 11, 20, 0.55);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--green);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      font-size: 0.88rem;
+    }
+    .pm-item.warn {
+      border-left-color: var(--amber);
+    }
+    .pm-item strong {
+      display: block;
+      margin-bottom: 0.25rem;
+      font-size: 0.94rem;
+    }
+
+    footer {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      padding: 2rem 1rem 1rem;
+      border-top: 1px solid var(--border);
+      margin-top: 2rem;
+    }
+  
+    .legend {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .legend-swatch {
+      width: 11px;
+      height: 11px;
+      border-radius: 3px;
+    }
+    .issue-pill {
+      display: inline-block;
+      background: rgba(129, 140, 248, 0.15);
+      border: 1px solid rgba(129, 140, 248, 0.35);
+      color: #a5b4fc;
+      padding: 0.1rem 0.45rem;
+      border-radius: 6px;
+      font-size: 0.76rem;
+      font-weight: 600;
+      margin: 0.1rem 0.15rem 0.1rem 0;
+    }
+    .pr-link { font-weight: 700; color: var(--cyan); }
+    .sha-link code {
+      background: rgba(148, 163, 184, 0.12);
+      color: #e2e8f0;
+      padding: 0.12rem 0.4rem;
+      border-radius: 5px;
+      font-size: 0.78rem;
+    }
+  </style>
+</head>
+<body>
+  <header class="topnav">
+    <div class="topnav-inner">
+      <div class="brand">
+        <div class="brand-badge">TC</div>
+        <div>
+          <div style="font-size:0.94rem;">TangleClaw Two-Version Sprint Retrospective</div>
+          <div style="font-size:0.72rem;color:var(--text-dim);font-weight:500;">v5.65.0 → v5.66.0 (Charters A502 v1.0 &amp; A503 v1.1 · Milestones #50–#51) · 18 Active Issues Delivered (16 Total Milestone Closures) · 9 PRs · Nov 4, 2026</div>
+        </div>
+      </div>
+      <nav class="nav-links" id="navLinks">
+        <a href="../" style="color:var(--accent2);font-weight:700;">← All Sprint Reports</a>
+        <a href="#overview" class="active">Overview</a>
+        <a href="#plain-english" style="color:var(--green);font-weight:700;">Plain-English</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#velocity">Velocity</a>
+        <a href="#deliverables">Deliverables</a>
+        <a href="#telemetry">Telemetry</a>
+        <a href="#postmortem">Post-Mortem</a>
+        <a href="#waves">Wave Explorer</a>
+        <a href="#next-sprint">Next Sprint</a>
+      </nav>
+      <div class="nav-actions">
+        <button class="btn" id="themeBtn" onclick="toggleTheme()" title="Toggle Light/Dark Mode">☀️ Light Mode</button>
+        <button class="btn btn-primary" onclick="window.print()">🖨️ Export PDF</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- SECTION 1: HERO & EXECUTIVE OVERVIEW -->
+    <section class="hero" id="overview">
+      <div class="hero-card">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:14px;">
+          <div style="flex:1;min-width:320px;">
+            <div class="eyebrow">🏆 CHARTERS A502 v1.0 &amp; A503 v1.1 TWO-VERSION RETROSPECTIVE · MILESTONES #50 &amp; #51 (18/18 ACTIVE ISSUES · 9/9 PRs · TOTAL RUN TIME: 3h 05m START-TO-FINISH)</div>
+            <h1 class="hero-title">v5.65.0 → v5.66.0: Two-Version Autonomous Sprint Train &amp; Multi-Version Comparison Report</h1>
+          </div>
+          <div class="status-pill" style="display:inline-flex;align-items:center;padding:8px 14px;border-radius:999px;background:rgba(52,211,153,0.14);border:1px solid rgba(52,211,153,0.4);color:var(--green);font-weight:700;font-size:0.82rem;white-space:nowrap;">
+            ● Total Run Time: 3h 05m (21:20 PST → 00:25 PST · 2 Versions · 18/18 Active Issues · 9/9 PRs)
+          </div>
+        </div>
+        <p class="hero-sub hero-subtitle">
+          Executed under standing Operator authorization (<strong><code>OP-GO-V5650-V5660-20261104</code></strong>) and Architect Gate 0 Co-Signs (<code>Charters A502 v1.0 &amp; A503 v1.1</code>, <code>[3112598c]</code>), the TangleClaw 10-lane fleet autonomously shipped <strong>2 consecutive versions</strong> in a <strong>total start-to-finish wall-clock run time of <code>3h 05m</code> (<code>185m</code>, <code>21:20 PST → 00:25 PST</code>) to live <code>:3102</code> activation</strong> (<code>00:28 PST</code> to final O-Gate closeout) — <strong>v5.65.0</strong> (<em>"Linux hosts"</em>, Milestone <code>#50</code>, 12 active issues delivered / 9 total milestone closures, <code>d97f0121</code>) and <strong>v5.66.0</strong> (<em>"Fleet visibility and release dependencies"</em>, Milestone <code>#51</code>, 6 active issues closed / 7 total milestone closures under <code>Ruling A503-R1</code>, <code>1ffeaf6e</code>) — delivering <strong>18 of 18 active chartered issues (<code>open_issues: 0</code> across <code>#50 &amp; #51</code>; <code>16</code> total milestone closures)</strong> across <strong>9 true-merged PRs</strong> (<code>+7,047 / -103</code> feature LOC).
+          Through <strong><code>Guardrail 06</code> (Cross-Version Pipelining)</strong>, <strong><code>Ruling A503-R1</code> (Hot-Entrypoint Deferral Rule)</strong>, and <strong><code>Guardrail 10</code> (100% Remote Testament <code>v0.34.0</code> Pool Execution)</strong>, all 3 feature cars of <code>v5.66.0</code> were pipelined and Dual-Gate certified during Leg 1, compressing per-leg wall-clock time from <strong><code>2h 41m</code> (<code>v5.65.0</code>, <code>21:20 PST → 00:01 PST</code>) → <code>24m</code> (<code>v5.66.0</code>, <code>00:01 PST → 00:25 PST</code>)</strong>.
+        </p>
+
+        <div class="meta-bar">
+          <div class="meta-pill"><span>Total Run Time (TRT):</span> <code>3h 05m</code> Start-to-Finish (<code>21:20 PST → 00:25 PST</code>) · <code>00:28 PST</code> to Closeout</div>
+          <div class="meta-pill"><span>Leg-by-Leg TRT Breakdown:</span> <code>2h 41m</code> (L1 <code>v5.65.0</code>) → <code>24m</code> (L2 <code>v5.66.0</code>)</div>
+          <div class="meta-pill"><span>Release Tags:</span> <code>v5.65.0 @ d97f0121</code> · <code>v5.66.0 @ 1ffeaf6e</code></div>
+          <div class="meta-pill"><span>Scope Closed:</span> <code>18/18</code> Active Chartered Issues (<code>16</code> Total Milestone Closures; <code>0</code> Open across <code>#50–#51</code>) across <code>9/9</code> True-Merged PRs</div>
+          <div class="meta-pill"><span>Observer Participant Disclosure:</span> <code>TC-Lane-Obsr</code> (#1540) operated as Gate 3/4 Observer &amp; Continuity Companion across both legs (Rule #283 cl. 1)</div>
+        </div>
+
+        <div class="kpi-grid">
+        <!-- TANGLECLAW_ADE_KPI_START -->
+        <div class="kpi-card">
+          <div class="kpi-label">Autonomous Delivery Efficiency (ADE)</div>
+          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">0.17</div>
+          <div class="kpi-meta kpi-sub"><code>4 issues / (3.08h × $7.58)</code> · <code>$1.90/issue</code> · <code>$4.21/kLOC</code> · <code>~5.2M tok</code> (<code>9.9×</code> vs API)</div>
+        </div>
+        <!-- TANGLECLAW_ADE_KPI_END -->
+          <div class="kpi-card">
+            <div class="kpi-label">Total Run Time (Start → Finish)</div>
+            <div class="kpi-value green">3h 05m (185m)</div>
+            <div class="kpi-sub"><code>21:20 PST → 00:25 PST</code> across both legs (<code>00:28 PST</code> to final O-Gate closeout)</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Leg Cadence (Start → Finish)</div>
+            <div class="kpi-value cyan">2h 41m → 24m</div>
+            <div class="kpi-sub">Per-leg wall-time compression from Leg 1 to Leg 2 via Guardrail 06 pipelining</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Versions &amp; Issues Shipped</div>
+            <div class="kpi-value green">2 / 2 · 18 / 18</div>
+            <div class="kpi-sub"><code>18/18</code> active chartered issues delivered (<code>16</code> total milestone closures; <code>0</code> open across <code>#50–#51</code>)</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">True Merge Commits (Rule #282)</div>
+            <div class="kpi-value green">9 / 9 (100%)</div>
+            <div class="kpi-sub">7 Feature Cars + 2 Release Cuts merged via <code>gh pr merge --merge</code> (2 parents each)</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Cumulative Feature Code Delta</div>
+            <div class="kpi-value purple">+7,047 / -103</div>
+            <div class="kpi-sub">7 feature cars across Linux systemd, Control API, CLI/server/store &amp; UI/decision wiring</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Pre-Merge Dual-Gate Audit</div>
+            <div class="kpi-value cyan">100% Certified / 0 Reg</div>
+            <div class="kpi-sub">100% exact-SHA PRR (`I-Gate`) + Architect (`A-Gate`) certification; 0 post-merge defects</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Milestone #54 (A185 &amp; A503-R1)</div>
+            <div class="kpi-value amber">8 Tracked in v5.67.0</div>
+            <div class="kpi-sub"><code>#1564, #2347, #2258</code> (external) + <code>#2881, #2884, #2885, #2886, #2888</code> (hot-entrypoint wave)</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Rule #283 &amp; Report Archive</div>
+            <div class="kpi-value green">32 / 32 PASS</div>
+            <div class="kpi-sub"><code>16/16</code> Rule #283 dimensions across both legs · <code>40/40</code> reports pass validator (<code>0 FAIL</code>)</div>
+          </div>
+        </div>
+
+        <!-- PLAIN-ENGLISH SUMMARY FOR NON-TECHNICAL READERS (MANDATORY v5.47.0+ CONTRACT) -->
+        <div id="plain-english" style="margin-top:22px;padding:22px 24px;border-radius:14px;background:linear-gradient(135deg,rgba(52,211,153,0.10),rgba(56,189,248,0.08));border:1px solid rgba(52,211,153,0.35);">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+            <span class="badge badge-green" style="font-size:0.76rem;padding:4px 10px;">📖 PLAIN-ENGLISH SUMMARY · TWO VERSIONS SHIPPED BACK-TO-BACK IN 3h 05m TOTAL WALL-CLOCK TIME (2h 41m → 24m)</span>
+            <span class="badge badge-cyan" style="font-size:0.76rem;padding:4px 10px;">Start 21:20 PST (Nov 4) → Finish 00:25 PST (:3102 Live) / 00:28 PST (Closeout)</span>
+          </div>
+          <h3 style="margin:0 0 12px;font-size:1.15rem;color:var(--text);">What the 2-Version Sprint Train Delivered — and Start-to-Finish Wall-Clock Run Time Breakdown</h3>
+          <div class="grid-2" style="gap:18px;">
+            <div style="background:rgba(10,15,29,0.65);border:1px solid var(--border);border-radius:10px;padding:15px 17px;">
+              <h4 style="margin:0 0 8px;color:var(--accent2);font-size:0.98rem;">🛠️ What Shipped Across v5.65.0 → v5.66.0 (18 Active Chartered Issues Delivered Across 9 PRs)</h4>
+              <ul style="margin:0;padding-left:18px;font-size:0.88rem;line-height:1.55;color:var(--text-muted);">
+                <li><strong>Leg 1 — <code>v5.65.0: Linux hosts</code> (<code>Milestone #50</code> · 12 Active Issues Delivered / 9 Total Milestone Closures · <code>d97f0121</code>):</strong> Native Linux / <code>systemd --user</code> &amp; system unit generator/installer and cross-project version dependency registry + release notifications (<code>PR #2899</code>, <code>#1424, #777</code>); Control-API hold route <code>peer-pause-request</code> guard and Slice 2 <code>merge-role-guard</code> launch PATH hooks + <code>AskUserQuestion</code> auto-handling (<code>PR #2900</code>, <code>#2832, #2866</code>); live CLI/server mounting for <code>product-manual</code>, <code>doc-router</code>, <code>merge-inbox-gate</code>, <code>scorecard-producer</code>, and <code>roadmap-admission</code>/<code>roadmap-sync</code> (<code>PR #2902</code>, <code>#2887, #2878, #2883, #2877</code>); and <code>lib/projects.js</code> async I/O migration + <code>workspace-rename-check</code>, store Medusa/master-authority repair, <code>sharedDir</code> MagicDNS serving, and deterministic <code>(created_at DESC, id DESC)</code> prune tie-breaker (<code>PR #2901</code>, <code>#2864, #2871, #2870, #2834</code>).</li>
+                <li><strong>Leg 2 — <code>v5.66.0: Fleet visibility and release dependencies</code> (<code>Milestone #51</code> · 6 Active Issues Closed / 7 Total Milestone Closures · <code>1ffeaf6e</code>):</strong> Under <code>Ruling A503-R1</code> (Hot-Entrypoint Deferral Rule), shipped host GUI / macOS TCC modal dialog detector + terminal visual identity Slice 2 (<code>PR #2903</code>, <code>#1112, #2862</code>); interactive decision routing Slice 2 with native prompt detection &amp; <code>WAITING_DECISION</code> state (<code>PR #2905</code>, <code>#2828</code>); and fleet workload/swarm/version-cache/test-duration UI, ADR viewer + rule approvals + team templates, and resource leases + role-instruction guard (<code>PR #2904</code>, <code>#2858, #2852, #2856</code>).</li>
+              </ul>
+            </div>
+            <div style="background:rgba(10,15,29,0.65);border:1px solid var(--border);border-radius:10px;padding:15px 17px;">
+              <h4 style="margin:0 0 8px;color:var(--green);font-size:0.98rem;">⏱️ Total Run Time: 3h 05m Start-to-Finish (2h 41m → 24m)</h4>
+              <p style="margin:0;font-size:0.88rem;line-height:1.58;color:var(--text-muted);">
+                From Operator Go (<code>21:20 PST</code> Nov 4) to <code>v5.66.0</code> live on <code>:3102</code> (<code>00:25 PST</code>), total elapsed wall-clock time was <strong><code>3h 05m</code> (<code>185m</code>)</strong> (<code>00:28 PST</code> to final O-Gate closeout):<br/>
+                • <strong>Leg 1 (<code>v5.65.0 · Milestone #50</code>):</strong> <code>21:20 PST → 00:01 PST</code> = <strong><code>2h 41m</code></strong> to live <code>:3102</code> across 5 PRs (<code>#2899, #2900, #2902, #2901, #2906</code>) while simultaneously pipelining and Dual-Gate certifying all 3 <code>v5.66.0</code> feature cars.<br/>
+                • <strong>Leg 2 (<code>v5.66.0 · Milestone #51</code>):</strong> <code>00:01 PST → 00:25 PST</code> = <strong><code>24m</code></strong> from <code>v5.65.0</code> live deploy to <code>v5.66.0</code> live on <code>:3102</code> across 4 PRs (<code>#2903, #2905, #2904, #2907</code>).
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 2: MULTI-AGENT ARCHITECTURE & 2-VERSION PIPELINE TOPOLOGY -->
+    <section class="section" id="architecture">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title"><span class="num">01</span> 10-Lane Multi-Agent Topology &amp; 2-Version Cross-Sprint Pipeline Architecture</h2>
+          <p class="section-desc">How the 10-lane fleet executed 2 consecutive release cycles (`Charters A502 v1.0 & A503 v1.1`) with cross-version pipelining (`Guardrail 06`), `Ruling A503-R1`, and 100% remote Testament `0.34.0` pool execution (`Guardrail 10`).</p>
+        </div>
+        <span class="badge badge-blue">10 Active Lanes · 2 Co-Signed Charters (A502–A503) · 9 True-Merged PRs</span>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3>10-Lane Fleet Cumulative Contributions Across <code>v5.65.0 → v5.66.0</code></h3>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th>Lane / Session</th>
+                  <th>Workspace &amp; Engine</th>
+                  <th>Role &amp; Governance</th>
+                  <th>Cumulative 2-Version Train Output (<code>v5.65.0 → v5.66.0</code>)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>TC-Lane-PM</code> (<code>#1541</code>)</td>
+                  <td><code>tc-lane-pm-9d85f3aa</code> (<code>antigravity</code>)</td>
+                  <td>Coordinator (<code>Rule #285 v3</code>)</td>
+                  <td>Authored Charters <code>A502 v1.0 &amp; A503 v1.1</code>, orchestrated 7 feature cars + 2 release cuts, enforced `Guardrail 06` cross-version pipelining</td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-Arc</code> (<code>#1538</code>)</td>
+                  <td><code>tc-lane-arc-4041e89e</code> (<code>claude</code>)</td>
+                  <td>Architect (<code>A-Gate / R-Gate</code>)</td>
+                  <td>Co-signed Charters <code>A502–A503</code> (`[3112598c]`), issued Rulings `A502-W1B..D-R3` &amp; `A503-R1`, and certified `A-Gate` across all 9 PRs</td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-A</code></td>
+                  <td><code>tc-lane-a-89f72bd9</code> (<code>bypass</code>)</td>
+                  <td>Builder A (<code>Rule #271</code>)</td>
+                  <td>Built and converged `Car 65-A` (`PR #2899`: `#1424, #777`) and `Car 66-A` (`PR #2903`: `#1112, #2862`) (`4` active issues closed)</td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-B</code></td>
+                  <td><code>tc-lane-b-a7cbe692</code> (<code>bypass</code>)</td>
+                  <td>Builder B (<code>Rule #271</code>)</td>
+                  <td>Built and converged `Car 65-B` (`PR #2900`: `#2832, #2866`) and `Car 66-B` (`PR #2905`: `#2828`) (`3` active issues delivered)</td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-C</code></td>
+                  <td><code>tc-lane-c-75e6ef60</code> (<code>bypass</code>)</td>
+                  <td>Builder C (<code>Rule #271</code>)</td>
+                  <td>Built and converged `Car 65-C` (`PR #2902`: `#2887, #2878, #2883, #2877`) and `Car 66-C` (`PR #2904`: `#2858, #2852, #2856`) (`7` active issues delivered)</td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-D</code></td>
+                  <td><code>tc-lane-d-c2ba6715</code> (<code>bypass</code>)</td>
+                  <td>Builder D (<code>Rule #271</code>)</td>
+                  <td>Built and converged `Car 65-D` (`PR #2901`: `#2864, #2871, #2870, #2834`) (`4` active issues closed)</td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-PRR-A</code></td>
+                  <td><code>tc-lane-prr-a-14aa53c4</code> (<code>codex medium</code>)</td>
+                  <td>PR Reviewer A (<code>I-Gate</code>)</td>
+                  <td>Executed exact-SHA `I-Gate` reviews across `Car 65-A` (`#2899`), `Car 65-C` (`#2902`), `W1-REL v5.65.0` (`#2906`), `Car 66-A` (`#2903`), `Car 66-C` (`#2904`), and `W2-REL v5.66.0` (`#2907`)</td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-PRR-B</code></td>
+                  <td><code>tc-lane-prr-b-d921b819</code> (<code>codex medium</code>)</td>
+                  <td>PR Reviewer B (<code>I-Gate</code>)</td>
+                  <td>Executed exact-SHA `I-Gate` reviews across `Car 65-B` (`#2900`), `Car 65-D` (`#2901`), and `Car 66-B` (`#2905`)</td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-INT</code></td>
+                  <td><code>tc-lane-int-08674b81</code> (<code>codex medium</code>)</td>
+                  <td>Integrator (<code>B-Gate / Release</code>)</td>
+                  <td>Serialized all 9 `--no-ff` true merges onto `main`, cut 2 release PRs (`#2906, #2907`), and executed 2 guarded `:3102` updates</td>
+                </tr>
+                <tr>
+                  <td><code>TC-Lane-Obsr</code> (<code>#1540</code>)</td>
+                  <td><code>tc-lane-obsr-c75f42dd</code> (<code>antigravity</code>)</td>
+                  <td>Observer &amp; Companion (<code>O-Gate</code>)</td>
+                  <td>Audited 32/32 `Rule #283` dimensions across both legs, authored 3 canonical HTML reports (`v5.65.0`, `v5.66.0`, Retro), and validated all 40 reports (`0 FAIL`)</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>SVG Diagram 1 — Two-Version Autonomous Sprint Train Architecture &amp; Cross-Version Pipeline (<code>v5.65.0 → v5.66.0</code>)</h3>
+          <div class="svg-wrap" style="background:rgba(7,11,20,0.7);border:1px solid var(--border);border-radius:12px;padding:12px;">
+            <svg viewBox="0 0 760 360" width="100%" height="auto" role="img" aria-label="Two-Version Autonomous Sprint Train Architecture">
+              <defs>
+                <linearGradient id="retro65Left" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#0284c7" stop-opacity="0.35"/>
+                  <stop offset="100%" stop-color="#1e293b" stop-opacity="0.9"/>
+                </linearGradient>
+                <linearGradient id="retro65Center" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#8b5cf6" stop-opacity="0.35"/>
+                  <stop offset="100%" stop-color="#1e293b" stop-opacity="0.9"/>
+                </linearGradient>
+                <linearGradient id="retro65Right" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#10b981" stop-opacity="0.3"/>
+                  <stop offset="100%" stop-color="#0f172a" stop-opacity="0.95"/>
+                </linearGradient>
+              </defs>
+              <!-- Left Box: Leg 1 (v5.65.0) -->
+              <rect x="16" y="28" width="224" height="304" rx="12" fill="url(#retro65Left)" stroke="#38bdf8" stroke-width="1.5"/>
+              <text x="30" y="54" fill="#38bdf8" font-size="12" font-weight="700">LEG 1: LINUX HOSTS</text>
+              <text x="30" y="72" fill="#cbd5e1" font-size="10">v5.65.0 (Milestone #50 · d97f0121)</text>
+              <rect x="28" y="86" width="200" height="228" rx="8" fill="#0f172a" stroke="#334155"/>
+              <text x="38" y="108" fill="#e2e8f0" font-size="10" font-weight="600">5 PRs (4 Cars + Release #2906)</text>
+              <text x="38" y="128" fill="#94a3b8" font-size="9">12 Active Issues (9 Milestone #50 Closures)</text>
+              <text x="38" y="148" fill="#34d399" font-size="9">• Linux systemd &amp; version deps (#2899)</text>
+              <text x="38" y="168" fill="#38bdf8" font-size="9">• Hold guard &amp; launch hooks (#2900)</text>
+              <text x="38" y="188" fill="#c084fc" font-size="9">• CLI/server &amp; store wiring (#2902, #2901)</text>
+              <text x="38" y="208" fill="#fbbf24" font-size="9">• Pipelined all 3 Leg 2 Cars (G06)!</text>
+              <text x="38" y="232" fill="#34d399" font-size="10" font-weight="700">Wall Time: 2h 41m (21:20 PST → 00:01 PST)</text>
+
+              <!-- Center Box: Leg 2 (v5.66.0) -->
+              <rect x="272" y="28" width="216" height="304" rx="12" fill="url(#retro65Center)" stroke="#a855f7" stroke-width="1.5"/>
+              <text x="286" y="54" fill="#c084fc" font-size="12" font-weight="700">LEG 2: FLEET VISIBILITY</text>
+              <text x="286" y="72" fill="#cbd5e1" font-size="10">v5.66.0 (Milestone #51 · 1ffeaf6e)</text>
+              <rect x="284" y="86" width="192" height="228" rx="8" fill="#0f172a" stroke="#a855f7"/>
+              <text x="294" y="108" fill="#e2e8f0" font-size="10" font-weight="600">4 PRs (3 Cars + Release #2907)</text>
+              <text x="294" y="128" fill="#94a3b8" font-size="9">6 Active Issues (7 Milestone #51 Closures)</text>
+              <text x="294" y="148" fill="#34d399" font-size="9">• Host TCC detector &amp; chrome (#2903)</text>
+              <text x="294" y="168" fill="#38bdf8" font-size="9">• Decision routing Slice 2 (#2905)</text>
+              <text x="294" y="188" fill="#c084fc" font-size="9">• Fleet workload &amp; rules UI (#2904)</text>
+              <text x="294" y="208" fill="#fbbf24" font-size="9">• Ruling A503-R1 Hot-Entrypoint Rule</text>
+              <text x="294" y="232" fill="#34d399" font-size="10" font-weight="700">Wall Time: 24m (00:01 PST → 00:25 PST)</text>
+
+              <!-- Right Box: Train Rollup & Milestone #54 Hygiene -->
+              <rect x="520" y="28" width="224" height="304" rx="12" fill="url(#retro65Right)" stroke="#10b981" stroke-width="1.4"/>
+              <text x="534" y="54" fill="#34d399" font-size="12" font-weight="700">TRAIN ROLLUP &amp; A185</text>
+              <text x="534" y="72" fill="#cbd5e1" font-size="10">18 Active Delivered (16 Closures) · 9 PRs</text>
+              <rect x="532" y="86" width="200" height="228" rx="8" fill="#0f172a" stroke="#10b981"/>
+              <text x="542" y="108" fill="#34d399" font-size="10" font-weight="600">Zero-Conflict Multi-Car Convergence</text>
+              <text x="542" y="128" fill="#94a3b8" font-size="9">+7,047 / -103 Feature LOC · 0 Regressions</text>
+              <text x="542" y="148" fill="#e2e8f0" font-size="9">• Milestones #50 &amp; #51 at open_issues: 0</text>
+              <text x="542" y="168" fill="#38bdf8" font-size="9">• #1564, #2347, #2258 → Milestone #54</text>
+              <text x="542" y="188" fill="#c084fc" font-size="9">• #2881, #2884..#2888 → Milestone #54</text>
+              <text x="542" y="208" fill="#fbbf24" font-size="9">• 100% True Merges (Rule #282)</text>
+              <text x="542" y="232" fill="#34d399" font-size="10" font-weight="700">Total Run Time: 3h 05m (185m)</text>
+
+              <!-- Arrows -->
+              <line x1="240" y1="165" x2="272" y2="165" stroke="#38bdf8" stroke-width="2"/>
+              <line x1="488" y1="165" x2="520" y2="165" stroke="#34d399" stroke-width="2"/>
+            </svg>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 3: WAVE-BY-WAVE VELOCITY & TIMELINE -->
+    <section class="section" id="velocity">
+      <!-- TANGLECLAW_ADE_BANNER_START -->
+      <div id="ade-efficiency-card" class="subcard" style="margin:18px 0;padding:18px 22px;border:1.5px solid rgba(56,189,248,0.45);background:linear-gradient(135deg,rgba(15,23,42,0.95),rgba(14,116,144,0.16));border-radius:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
+          <span style="color:#38bdf8;font-weight:700;font-size:0.82rem;letter-spacing:0.06em;">📐 AUTONOMOUS DELIVERY EFFICIENCY (ADE) · SPEED × QUALITY × OPERATING COST</span>
+          <span class="badge badge-green" style="font-size:0.78rem;">ADE = 0.17 Certified Issues / (Hr · $) · $1.90/Issue · $4.21/kLOC</span>
+        </div>
+        <div style="font-size:0.92rem;color:#e2e8f0;line-height:1.55;">
+          <strong>Formula:</strong> <code>ADE = (Accepted, Validated Work Delivered) / (Elapsed Hours × Total Operating Cost)</code> = <code>4 certified issues / (3.08h × $7.58) = <strong>0.17</strong></code> (<code>+1,800 LOC</code> delivered at <code>$4.21 / 1,000 LOC</code>).<br/>
+          <strong>Cost &amp; Token Basis (Method 3):</strong> Amortized from the <code>$500/mo</code> multi-vendor CLI subscription pool (Claude Code <code>$200</code> + Antigravity <code>$200</code> + Codex <code>$100</code> @ <code>85%</code> TangleClaw allocation + <code>$15/mo</code> local M3 Ultra compute = <code>$2.46/active fleet-hr</code>). Estimated CLI turn volume: <code>~5.2M</code> cached/uncached tokens (public frontier API shadow cost <code>~$75</code> → <strong><code>9.9×</code> subscription cost compression</strong>).
+        </div>
+      </div>
+      <!-- TANGLECLAW_ADE_BANNER_END -->
+      <div class="section-header">
+        <div>
+          <h2 class="section-title"><span class="num">02</span> Two-Version Velocity Compression &amp; Execution Timeline</h2>
+          <p class="section-desc">Empirical progression across both legs (`21:20 PST` → `00:25 PST`, Nov 4–5, 2026) showing how `Guardrail 06` cross-version pipelining compressed release cycle time from `2h 41m` to `24m`.</p>
+        </div>
+        <span class="badge badge-green">9 PRs True-Merged · 18 Active Issues Delivered · 2h 41m → 24m</span>
+      </div>
+
+      <!-- MANDATORY ADE CARD -->
+      <div class="card" id="ade-efficiency-card" style="margin-bottom:18px;border-left:4px solid var(--green);">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
+          <h3 style="margin:0;color:var(--green);">Autonomous Delivery Efficiency (ADE) — Two-Version Train Rollup (<code>v5.65.0 → v5.66.0</code>)</h3>
+          <span class="badge badge-green">ADE = 3.12 Issues / (Hour × $) Across 2 Versions (+7,047 / -103 Feature LOC)</span>
+        </div>
+        <p style="margin:0;font-size:0.88rem;color:var(--text-muted);line-height:1.55;">
+          <strong>Formula:</strong> <code>ADE = (Accepted, Validated Work Delivered) / (Elapsed Hours × Total Operating Cost)</code> = <code>18 certified issues / (2.92h × $1.98) = <strong>3.12</strong></code> across the full 2-version train (<code>+7,047 / -103</code> feature LOC across <code>9</code> true-merged PRs, with <code>0</code> post-merge defects).
+        </p>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3>SVG Diagram 2 — Two-Version Sprint Train Wall-Time Compression Curve (<code>v5.65.0 → v5.66.0</code>)</h3>
+          <div class="svg-wrap" style="background:rgba(7,11,20,0.7);border:1px solid var(--border);border-radius:12px;padding:12px;">
+            <svg viewBox="0 0 760 280" width="100%" height="auto" role="img" aria-label="Two-Version Sprint Train Velocity Compression Chart">
+              <line x1="150" y1="28" x2="150" y2="230" stroke="#334155" stroke-width="1"/>
+              <line x1="530" y1="28" x2="530" y2="230" stroke="#334155" stroke-width="1" stroke-dasharray="3 3"/>
+              <line x1="725" y1="28" x2="725" y2="230" stroke="#334155" stroke-width="1"/>
+
+              <text x="128" y="20" fill="#94a3b8" font-size="10">21:20 PST</text>
+              <text x="508" y="20" fill="#94a3b8" font-size="10">00:01 PST</text>
+              <text x="680" y="20" fill="#34d399" font-size="10" font-weight="700">00:25 PST</text>
+
+              <!-- Leg 1 -->
+              <text x="14" y="78" fill="#38bdf8" font-size="11" font-weight="600">Leg 1: v5.65.0</text>
+              <text x="14" y="92" fill="#94a3b8" font-size="9">5 PRs · 12 Active Issues</text>
+              <rect x="152" y="62" width="378" height="36" rx="6" fill="#0284c7" fill-opacity="0.38" stroke="#38bdf8"/>
+              <text x="164" y="84" fill="#e2e8f0" font-size="9.5">2h 41m (d97f0121 · +3 Pipelined Leg 2 Cars)</text>
+
+              <!-- Leg 2 -->
+              <text x="14" y="158" fill="#34d399" font-size="11" font-weight="700">Leg 2: v5.66.0</text>
+              <text x="14" y="172" fill="#94a3b8" font-size="9">4 PRs · 6 Active Issues</text>
+              <rect x="530" y="142" width="195" height="36" rx="6" fill="#10b981" fill-opacity="0.48" stroke="#34d399" stroke-width="1.8"/>
+              <text x="542" y="164" fill="#d1fae5" font-size="9.5" font-weight="700">24m (1ffeaf6e)</text>
+              <text x="220" y="254" fill="#34d399" font-size="10" font-weight="600">Total Run Time: 3h 05m (2h 41m → 24m) via Guardrail 06 Cross-Version Pipelining</text>
+            </svg>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Two-Version Release Progression Summary (<code>v5.65.0 → v5.66.0</code>)</h3>
+          <div class="table-wrap">
+            <table class="pr-table">
+              <thead>
+                <tr>
+                  <th>Leg / Version</th>
+                  <th>Charter &amp; Milestone</th>
+                  <th>Sprint PRs</th>
+                  <th>Issues Closed</th>
+                  <th>Release Merge &amp; Tag SHA</th>
+                  <th>Leg Duration &amp; Key Innovation</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Leg 1 · <code>v5.65.0</code></strong></td>
+                  <td><code>A502 v1.0</code> · <code>#50</code></td>
+                  <td>5 PRs (<code>4 Cars + #2906</code>)</td>
+                  <td><code>12 / 12</code> Active (<code>9</code> Milestone #50 Closures · <code>0</code> Open)</td>
+                  <td><code>d97f0121</code> (tag <code>eedbbbea</code>)</td>
+                  <td><code>2h 41m</code> — Shipped Native Linux/systemd, Version Deps, Control Hold/Prune fixes &amp; CLI/Server/Store wiring</td>
+                </tr>
+                <tr>
+                  <td><strong>Leg 2 · <code>v5.66.0</code></strong></td>
+                  <td><code>A503 v1.1</code> · <code>#51</code></td>
+                  <td>4 PRs (<code>3 Cars + #2907</code>)</td>
+                  <td><code>6 / 6</code> Active (<code>7</code> Milestone #51 Closures · <code>0</code> Open)</td>
+                  <td><code>1ffeaf6e</code> (tag <code>87e54581</code>)</td>
+                  <td><code>24m</code> — Shipped Host TCC Detector, Terminal Identity Slice 2, Decision Routing Slice 2 &amp; Fleet/Governance UI</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 4: DELIVERABLES & CODE-PATH MATRIX -->
+    <section class="section" id="deliverables">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title"><span class="num">03</span> Two-Version Architectural Deliverables Matrix (Milestones #50–#51)</h2>
+          <p class="section-desc">Complete rollup of the 7 feature cars and 2 release cuts (`9` PRs, `+7,047 / -103` feature LOC) delivered across `v5.65.0 → v5.66.0`.</p>
+        </div>
+        <span class="badge badge-purple">18 Active Chartered Issues Delivered (16 Total Milestone Closures · 0 Open Across #50–#51)</span>
+      </div>
+
+      <div class="card" style="margin-bottom:18px;">
+        <h3>Complete Two-Version Deliverable Rollup by Release Leg (<code>v5.65.0 → v5.66.0</code>)</h3>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>Release Leg &amp; Theme</th>
+                <th>Release PR &amp; Merge SHA</th>
+                <th>Chartered Issues Delivered</th>
+                <th>Key Production Modules &amp; Architectural Capabilities Shipped</th>
+                <th>Verification &amp; O-Gate Receipt</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Leg 1 · <code>v5.65.0</code></strong><br/>“Linux hosts” (<code>Milestone #50</code>)</td>
+                <td><code>PR #2906</code><br/><code>d97f012190f6</code></td>
+                <td><span class="issue-pill">#1424</span> <span class="issue-pill">#777</span> <span class="issue-pill">#2832</span> <span class="issue-pill">#2834</span> <span class="issue-pill">#2866</span> <span class="issue-pill">#2887</span> <span class="issue-pill">#2878</span> <span class="issue-pill">#2883</span> <span class="issue-pill">#2877</span> <span class="issue-pill">#2864</span> <span class="issue-pill">#2871</span> <span class="issue-pill">#2870</span> (12 Active / 9 Milestone #50 Closures)</td>
+                <td><code>lib/linux-systemd.js</code>, <code>scripts/linux-systemd-install.js</code>, <code>lib/project-version-deps.js</code>, <code>lib/control-api.js</code>, <code>lib/control-state.js</code>, <code>lib/merge-role-guard.js</code> launch hooks, CLI/server mounting for <code>product-manual</code>, <code>doc-router</code>, <code>merge-inbox-gate</code>, <code>scorecard-producer</code> &amp; <code>roadmap-admission</code>, and <code>lib/projects.js</code> async I/O + <code>lib/store.js</code> authority/Medusa repair + <code>sharedDir</code> MagicDNS serving</td>
+                <td><span class="badge badge-green">OBSR-OGATE-V5650-PASS</span></td>
+              </tr>
+              <tr>
+                <td><strong>Leg 2 · <code>v5.66.0</code></strong><br/>“Fleet visibility and release dependencies” (<code>Milestone #51</code>)</td>
+                <td><code>PR #2907</code><br/><code>1ffeaf6e3660</code></td>
+                <td><span class="issue-pill">#1112</span> <span class="issue-pill">#2862</span> <span class="issue-pill">#2828</span> <span class="issue-pill">#2858</span> <span class="issue-pill">#2852</span> <span class="issue-pill">#2856</span> (6 Active / 7 Milestone #51 Closures incl. <span class="issue-pill">#2880</span>)</td>
+                <td><code>lib/host-gui-dialog-detector.js</code> (macOS TCC modal detector), <code>lib/terminal-identity.js</code> &amp; <code>public/terminal-identity-view.js</code> (terminal visual identity Slice 2), <code>lib/decision-routing.js</code> &amp; <code>public/decision-routing-ui.js</code> (interactive decision routing Slice 2 + <code>WAITING_DECISION</code>), <code>public/fleet-workload-view.js</code>, <code>public/adr-viewer.js</code>, and <code>public/resource-leases-ui.js</code></td>
+                <td><span class="badge badge-green">OBSR-OGATE-V5660-PASS</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 5: TESTAMENT POOL & SUITE RELIABILITY TELEMETRY -->
+    <section class="section" id="telemetry">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title"><span class="num">04</span> Longitudinal Multi-Sprint Comparison (<code>v5.62.0 → v5.66.0</code>)</h2>
+          <p class="section-desc">Side-by-side empirical comparison across both legs of `OP-GO-V5650-V5660-20261104` against the preceding 3-version train (`v5.62.0–v5.64.0`).</p>
+        </div>
+        <span class="badge badge-green">3h 05m Total Run Time · 0 Post-Merge Test Regressions · 100% True Merges</span>
+      </div>
+
+      <div class="card" style="margin-bottom:18px;">
+        <h3>Longitudinal Sprint Comparison Table Across Five Consecutive Releases (<code>v5.62.0 → v5.63.0 → v5.64.0 → v5.65.0 → v5.66.0</code>)</h3>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>Metric</th>
+                <th><code>v5.62.0</code> (A499)</th>
+                <th><code>v5.63.0</code> (A500)</th>
+                <th><code>v5.64.0</code> (A501)</th>
+                <th><code>v5.65.0</code> (Leg 1 · A502)</th>
+                <th><code>v5.66.0</code> (Leg 2 · A503 v1.1)</th>
+                <th>Train-Wide Synthesis (<code>v5.65.0–v5.66.0</code>)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Total Sprint Wall Time (Start → Finish)</strong></td>
+                <td><code>2h 30m</code> (7 Issues)</td>
+                <td><code>26m</code> (8 Issues)</td>
+                <td><code>29m</code> (7 Issues)</td>
+                <td><code>2h 41m</code> (12 Active Issues + L2 Pipelined)</td>
+                <td><strong><code>24m</code> (6 Active Issues · Pipelined!)</strong></td>
+                <td><span class="badge badge-green">Total Run Time 3h 05m (2h 41m → 24m) across 18 active issues</span></td>
+              </tr>
+              <tr>
+                <td><strong>Builder Active Build Time (Dispatch → PR)</strong></td>
+                <td><code>21.0m</code> median</td>
+                <td><code>19.5m</code> median</td>
+                <td><code>18.0m</code> median</td>
+                <td><code>19.0m</code> median (4 Cars)</td>
+                <td><strong><code>18.0m</code> Median Across 3 Cars</strong></td>
+                <td><span class="badge badge-green">All 7 feature cars built cleanly in isolated Builder worktrees</span></td>
+              </tr>
+              <tr>
+                <td><strong>PR Open-to-Merge &amp; Ancestor Sync Latency</strong></td>
+                <td><code>100%</code> True Merge</td>
+                <td><code>100%</code> True Merge</td>
+                <td><code>100%</code> True Merge</td>
+                <td><code>100%</code> True Merge (5 PRs)</td>
+                <td><strong><code>100%</code> True Merge (9/9 Train PRs)</strong></td>
+                <td><span class="badge badge-green">100% 2-parent true merges (`Rule #282`) across all 9 train PRs</span></td>
+              </tr>
+              <tr>
+                <td><strong>Commits / PR &amp; Token Efficiency (<code>Guardrail 06</code>)</strong></td>
+                <td><code>5</code> cars staged</td>
+                <td><code>4/4</code> L3 Certified</td>
+                <td><code>100%</code> Pre-Certified</td>
+                <td><code>3</code> Leg 2 Cars Pipelined</td>
+                <td><strong><code>100%</code> 2-Version Train Complete</strong></td>
+                <td><span class="badge badge-green">Cross-version pipelining eliminated idle Builder/PRR time between legs</span></td>
+              </tr>
+              <tr>
+                <td><strong>Test Suite &amp; Testament Pool Execution (<code>Guardrail 10</code>)</strong></td>
+                <td>Pool <code>v0.34.0</code> (<code>100%</code>)</td>
+                <td>Pool <code>v0.34.0</code> (<code>100%</code>)</td>
+                <td>Pool <code>v0.34.0</code> (<code>100%</code>)</td>
+                <td>Pool <code>v0.34.0</code> (<code>100%</code>)</td>
+                <td><strong><code>100%</code> Remote Pool &amp; CI Green</strong></td>
+                <td><span class="badge badge-cyan">Zero local multi-file node --test runs on Mac Studio host</span></td>
+              </tr>
+              <tr>
+                <td><strong>Pre-Merge Gate Catches / Post-Merge Regressions</strong></td>
+                <td><code>6</code> / <code>0</code> reg</td>
+                <td><code>9</code> / <code>0</code> reg</td>
+                <td><code>7</code> / <code>0</code> reg</td>
+                <td><code>100%</code> Dual-Gate / <code>0</code> reg</td>
+                <td><strong><code>100%</code> Dual-Gate Certified / <code>0</code> Reg</strong></td>
+                <td><span class="badge badge-green">Zero post-merge regressions across all 9 true-merged PRs</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="grid-2" style="margin-bottom:18px;">
+        <div class="card">
+          <h3>Two-Version Train Completion &amp; Guardrail Telemetry Bars</h3>
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong><code>Leg 1 (v5.65.0 · Milestone #50 @ d97f0121)</code> — Linux Hosts, Version Deps &amp; CLI/Server/Store Wiring (5 PRs)</strong></span>
+              <span><strong>12/12 Active Issues Delivered (9 Milestone #50 Closures · open_issues: 0)</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill green" style="width:100%;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong><code>Leg 2 (v5.66.0 · Milestone #51 @ 1ffeaf6e)</code> — Fleet Visibility, Decision Routing &amp; TCC Detector (4 PRs)</strong></span>
+              <span><strong>6/6 Active Issues Closed (7 Milestone #51 Closures · open_issues: 0)</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill green" style="width:100%;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong><code>Rule #282 True-Merge Compliance Across All 9 Train Pull Requests</code></strong></span>
+              <span><strong>9 / 9 True Merges (100% 2-Parent Ancestry)</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill purple" style="width:100%;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong><code>Ruling A503-R1 Hot-Entrypoint Deferral Rule (Zero Multi-Car Singleton Contention)</code></strong></span>
+              <span><strong>100% Enforced (0 Source-Code Merge Conflicts)</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill cyan" style="width:100%;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong><code>Pre-Merge Dual-Gate (I-Gate + A-Gate) Certification Across All 7 Feature Cars</code></strong></span>
+              <span><strong>7 / 7 Feature Cars Certified (0 Escaped Regressions)</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill green" style="width:100%;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong><code>Milestone #54 (v5.67.0) External/Hardware &amp; Hot-Entrypoint Queue Under A185 &amp; A503-R1</code></strong></span>
+              <span><strong>100% Tracked &amp; Audited (0 Untriaged Blockers)</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill amber" style="width:100%;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong><code>Remote Testament v0.34.0 Pool &amp; GitHub Actions CI Compliance (Guardrail 10)</code></strong></span>
+              <span><strong>100% Remote Execution (0 Local Host Contention)</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill green" style="width:100%;"></div></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label-row">
+              <span><strong><code>Canonical Sprint Report Validator (validate-sprint-report.py --all Across 40 Reports)</code></strong></span>
+              <span><strong>40 / 40 PASS (0 FAIL)</strong></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill green" style="width:100%;"></div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>SVG Diagram 3 — Two-Version Linux Host, Runtime Wiring &amp; Fleet Visibility Convergence</h3>
+          <div class="svg-wrap" style="background:rgba(7,11,20,0.7);border:1px solid var(--border);border-radius:12px;padding:12px;">
+            <svg viewBox="0 0 760 310" width="100%" height="auto" role="img" aria-label="Two-Version Linux Host, Runtime Wiring and Fleet Visibility Convergence">
+              <text x="20" y="28" fill="#e2e8f0" font-size="13" font-weight="700">How v5.65.0 → v5.66.0 Shipped Linux Support, Slice 2/3 Wiring &amp; Fleet Visibility</text>
+
+              <text x="20" y="62" fill="#38bdf8" font-size="11" font-weight="700">1. Leg 1 (v5.65.0 · Milestone #50): Linux / systemd, Version Deps, Control Hold/Prune &amp; CLI/Server/Store Wiring</text>
+              <rect x="20" y="72" width="714" height="58" rx="6" fill="#0284c7" fill-opacity="0.22" stroke="#38bdf8" stroke-width="1.5"/>
+              <text x="32" y="92" fill="#e0f2fe" font-size="10" font-weight="600">• Shipped Linux systemd unit generator/installer (#1424), version dependency registry (#777), and hold/prune fixes (#2832, #2834)</text>
+              <text x="32" y="108" fill="#bae6fd" font-size="10">• Wired merge-role-guard (#2866), manual/doc-router (#2887), merge-inbox-gate (#2878), scorecard (#2883), roadmap (#2877),</text>
+              <text x="32" y="122" fill="#bae6fd" font-size="10">  projects async I/O (#2864), store Medusa/master-authority repair (#2871), and shared-docs MagicDNS serving (#2870)</text>
+
+              <text x="20" y="158" fill="#34d399" font-size="11" font-weight="700">2. Leg 2 (v5.66.0 · Milestone #51): Host TCC Detector, Terminal Identity, Decision Routing Slice 2 &amp; Fleet UI</text>
+              <rect x="20" y="168" width="714" height="58" rx="8" fill="#10b981" fill-opacity="0.22" stroke="#34d399" stroke-width="1.6"/>
+              <text x="32" y="188" fill="#d1fae5" font-size="10" font-weight="600">• Shipped host GUI / macOS TCC modal dialog detector (#1112) and terminal visual identity Slice 2 (#2862) in PR #2903</text>
+              <text x="32" y="204" fill="#a7f3d0" font-size="10">• Shipped interactive decision routing Slice 2 (WAITING_DECISION, #2828) in PR #2905 and fleet workload/ADR/rules/resource-lease</text>
+              <text x="32" y="218" fill="#a7f3d0" font-size="10">  dashboard modules (#2858, #2852, #2856) in PR #2904 under Ruling A503-R1</text>
+
+              <rect x="20" y="242" width="714" height="52" rx="8" fill="#0f172a" stroke="#c084fc"/>
+              <text x="32" y="262" fill="#c084fc" font-size="10.5" font-weight="700">3. Milestone #54 (v5.67.0) External &amp; Dedicated Hot-Entrypoint Queue Under A185 &amp; A503-R1:</text>
+              <text x="32" y="280" fill="#cbd5e1" font-size="10">• External: #1564 (Linux HW VRF), #2347 (Medusa#67), #2258 (Vercel) · Hot-Entrypoint Wave: #2881, #2884, #2885, #2886, #2888</text>
+            </svg>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 6: POST-MORTEM, RULE #283 16-POINT AUDIT & 4 MAINTENANCE GATES -->
+    <section class="section" id="postmortem">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title"><span class="num">05</span> Two-Version Retrospective Post-Mortem, 16-Point Audit &amp; 4 Gates</h2>
+          <p class="section-desc">Synthesized architectural and operational lessons across both legs (`v5.65.0 → v5.66.0`).</p>
+        </div>
+        <span class="badge badge-green">32 / 32 Cumulative Rule #283 Checks PASS · 8 / 8 Maintenance Gates Green</span>
+      </div>
+
+      <div class="grid-2" style="margin-bottom:18px;">
+        <div class="card">
+          <h3 style="color:var(--green);">What Worked Exceptionally Well Across the Two-Version Train</h3>
+          <div class="pm-list">
+            <div class="pm-item">
+              <h4>1. High-Density Disjoint Car Partitioning &amp; `Ruling A503-R1` Delivered 18 Active Issues Across 7 Feature Cars With Zero Source Conflicts</h4>
+              <p>
+                By partitioning `v5.65.0` and `v5.66.0` cars across strictly disjoint domain modules and enacting `Ruling A503-R1` (Hot-Entrypoint Deferral Rule), all 7 feature cars (`#2899, #2900, #2902, #2901, #2903, #2905, #2904`) merged cleanly without a single source-code conflict.
+              </p>
+            </div>
+            <div class="pm-item">
+              <h4>2. Gate 0 `A185` Milestone Hygiene Prevented External/Hardware Blockers from Stalling Autonomous Execution</h4>
+              <p>
+                Proactively re-homing `#1564` (physical Linux host VRF), `#2347` (external `Jason-Vaughan/Medusa#67` repo dependency), and `#2258` (Operator Vercel project setting cutover) to `Milestone #54` (`v5.67.0`) at Gate 0 ensured both `Milestone #50` and `Milestone #51` closed at `open_issues: 0`.
+              </p>
+            </div>
+            <div class="pm-item">
+              <h4>3. Multi-Round Exact-SHA Dual-Gate Audits Caught Subtle Contract Gaps Pre-Merge</h4>
+              <p>
+                PRR (`I-Gate`) and Architect (`A-Gate`) exact-SHA reviews caught and resolved the `ask_question` array option normalization in `#2905` (`fbbbde88`), the `tc-lane-*` hostname prefix match in `#2903` (`fe55c1b5`), and the `workspace-rename-check` migration guard in `#2901` (`f322e8ec`) before merge.
+              </p>
+            </div>
+            <div class="pm-item">
+              <h4>4. Pre-Staged Report Generators (`gen_v5650.py`, `gen_v5660.py`, `gen_v5650_v5660_retro.py`)</h4>
+              <p>
+                Pre-staging and dry-run validating (`0 FAIL`) all three canonical HTML report generators during Wave 1 reduced Gate 4 (`O-Gate`) publication after `:3102` deploy to under two minutes.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 style="color:var(--amber);">What Didn't Work &amp; Concrete Guardrail Fixes Enacted Across v5.65.0 → v5.66.0</h3>
+          <div class="pm-list">
+            <div class="pm-item warn">
+              <h4>1. High Fan-In on Shared Entrypoint Files (`server.js`, `bin/tc.js`, `public/index.html`, `public/session.html`)</h4>
+              <p>
+                Attempting to mount multiple Slice 2/3 modules into shared singleton entrypoints (`server.js`, `bin/tc.js`, `public/index.html`) across parallel cars risked rebase cascades. <strong>Fix / Guardrail (`Ruling A503-R1`):</strong> Defer shared singleton entrypoint wiring to a dedicated single-owner hot-entrypoint wave (`Milestone #54` / `v5.67.0`).
+              </p>
+            </div>
+            <div class="pm-item warn">
+              <h4>2. SQLite Timestamp Tie-Breaking in Retention Queries (`#2834`)</h4>
+              <p>
+                Retention pruning queries that ordered solely by `created_at DESC` could evict the wrong row when two records shared the same timestamp. <strong>Fix / Guardrail:</strong> Always include a secondary monotonic key (`ORDER BY created_at DESC, id DESC`) in SQLite retention and pagination queries.
+              </p>
+            </div>
+            <div class="pm-item warn">
+              <h4>3. Bypassing Escalation Flows via Generic Hold Endpoints (`#2832`)</h4>
+              <p>
+                Callers passing `reason: 'peer-pause-request'` to the generic hold route bypassed `/pause`'s nudge+escalation policy. <strong>Fix / Guardrail:</strong> Explicitly reject reserved pause reasons on generic hold endpoints and enforce dedicated route handlers.
+              </p>
+            </div>
+            <div class="pm-item warn">
+              <h4>4. Duplicate `● Latest Release` Badge in `sprint-reports/index.html` Failing Hub Validation</h4>
+              <p>
+                Adding a new release card to `sprint-reports/index.html` without demoting the prior release card's badge from `● Latest Release` to `Sprint Release` causes `validate-sprint-report.py --all` to fail. <strong>Fix / Guardrail:</strong> Always demote the previous top release card's badge when inserting a new release card.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 4 END-OF-SPRINT MAINTENANCE GATES -->
+      <div class="card" style="margin-bottom:18px;">
+        <h3>4-Gate Release &amp; End-of-Sprint Verification Matrix Across Both Legs (<code>8 / 8 Gates Green</code>)</h3>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>Gate</th>
+                <th>Owner Lane(s)</th>
+                <th>Canonical Target Artifact(s) Across Legs 1–2</th>
+                <th>Cumulative Verification Evidence &amp; Receipts</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Gate 1 — I-Gate (PRR Code &amp; Contract Review)</strong></td>
+                <td><code>TC-Lane-PRR-A</code> + <code>TC-Lane-PRR-B</code></td>
+                <td>7 Feature PRs + 2 Release PRs (<code>9</code> Total PRs)</td>
+                <td>100% exact-head PRR `ACCEPT` verdicts across all 9 PRs; all findings resolved and regression-tested in-branch</td>
+                <td><span class="badge badge-green">PASS (9/9 PRs)</span></td>
+              </tr>
+              <tr>
+                <td><strong>Gate 2 — B-Gate (Integrator CI &amp; True-Merge Gate)</strong></td>
+                <td><code>TC-Lane-INT</code></td>
+                <td><code>origin/main</code> across <code>0c06132b → d97f0121 → 1ffeaf6e</code></td>
+                <td>All 9 PRs merged via `gh pr merge --merge` (`Rule #282`, 2 parents each) with 100% green Testament `0.34.0` + GitHub Actions CI</td>
+                <td><span class="badge badge-green">PASS (9/9 True Merges)</span></td>
+              </tr>
+              <tr>
+                <td><strong>Gate 3 — A-Gate / R-Gate, Tags &amp; Live :3102 Deploys</strong></td>
+                <td><code>TC-Lane-Arc</code> + <code>TC-Lane-INT</code></td>
+                <td>Charters `A502–A503`, Tags `v5.65.0–v5.66.0`, Live `:3102`</td>
+                <td>Both annotated tags published via GitHub Actions Release workflows; both guarded `:3102` updates verified with SQLite backups (`quick_check: ok`)</td>
+                <td><span class="badge badge-green">PASS (2/2 Live Deploys)</span></td>
+              </tr>
+              <tr>
+                <td><strong>Gate 4 — O-Gate (Observer Audit &amp; Canonical HTML Reports)</strong></td>
+                <td><code>TC-Lane-Obsr</code> + <code>TC-Lane-PM</code></td>
+                <td><code>v5.65.0–v5.66.0/index.html</code>, <code>v5.65.0-v5.66.0-retrospective/index.html</code>, <code>sprint-reports/index.html</code></td>
+                <td>Milestones `#50–#51` verified at `open_issues: 0`; all 40 sprint reports + hub validated via `validate-sprint-report.py --all` (`0 FAIL`) and published to `gh-pages`</td>
+                <td><span class="badge badge-green">PASS (40/40 Reports)</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- RULE #283 16-POINT GOVERNANCE AUDIT TABLE -->
+      <div class="card">
+        <h3>Rule #283 16-Point Governance &amp; Process Audit Rollup (<code>v5.65.0 → v5.66.0</code>)</h3>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Audit Dimension (Rule #283 cl. 3)</th>
+                <th>Measured Empirical Evidence Across Both Versions</th>
+                <th>Target</th>
+                <th>Verdict</th>
+                <th>Institutionalized Guardrail for Future Sprint Trains</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>1</td><td><strong>Operator Interventions &amp; Causes</strong></td><td><code>0</code> unplanned Operator interventions across 3h 05m and 2 versions under `OP-GO-V5650-V5660-20261104`</td><td>0 interventions</td><td><span class="badge badge-green">PASS (2/2)</span></td><td>Continue multi-version standing authorizations with pre-co-signed charters</td></tr>
+              <tr><td>2</td><td><strong>Dispatch-to-Merge Timing</strong></td><td>Per-leg wall time compressed from `2h 41m` (L1) to `24m` (L2) via `Guardrail 06` pipelining</td><td>Bounded waves</td><td><span class="badge badge-green">PASS (2/2)</span></td><td>Retain `Guardrail 06` cross-version pipelining across all multi-leg trains</td></tr>
+              <tr><td>3</td><td><strong>Active vs Allowed Builders &amp; Parallelism</strong></td><td>All 4 Builder lanes (`A, B, C, D`) utilized in parallel across Legs 1–2 (`7` feature cars delivered)</td><td>100% utilization</td><td><span class="badge badge-green">PASS (2/2)</span></td><td>Dispatch next-leg cars to Builders immediately upon Dual-Gate PASS</td></tr>
+              <tr><td>4</td><td><strong>Forced Re-Syncs / Rebases When <code>main</code> Moves</strong></td><td>Zero destructive rebases; shared registry files (`docs/areas.json`, `test/tiers.json`) synced cleanly via fast ancestor merges</td><td>0 conflicts</td><td><span class="badge badge-green">PASS (2/2)</span></td><td>Keep `docs/areas.json` and `test/tiers.json` sorted alphabetically</td></tr>
+              <tr><td>5</td><td><strong>Open PR Age Since Current <code>main</code></strong></td><td>All 9 PRs merged cleanly within their chartered release legs; `0` stale or orphaned PRs</td><td>0 stale PRs</td><td><span class="badge badge-green">PASS (2/2)</span></td><td>Hold next-version merges until preceding version tag lands (`Guardrail 06`)</td></tr>
+              <tr><td>6</td><td><strong>CI Red After Ready (<code>#2595</code> Pre-Push Hook)</strong></td><td><code>100%</code> exact-head GitHub Actions `Tests` green at merge across all 9 PRs</td><td>0 red at merge</td><td><span class="badge badge-green">PASS (2/2)</span></td><td>Retain Stage 1 + Remote Testament 0.34.0 pre-push verification</td></tr>
+              <tr><td>7</td><td><strong>PRR Review Rounds &amp; Findings by Severity</strong></td><td><code>100%</code> exact-SHA Dual-Gate review across all 7 feature cars + 2 release PRs; `0` escaped test regressions</td><td>0 escaped defects</td><td><span class="badge badge-green">PASS (2/2)</span></td><td>Preserve dual-PRR (`PRR-A` + `PRR-B`) exact-SHA review discipline</td></tr>
+              <tr><td>8</td><td><strong>Post-Merge Defects on <code>main</code></strong></td><td><code>0</code> post-merge defects or test regressions across `0c06132b → d97f0121 → 1ffeaf6e`</td><td>0 regressions</td><td><span class="badge badge-green">PASS (2/2)</span></td><td>Maintain strict exact-SHA Dual-Gate (`I-Gate` + `A-Gate`) before merge</td></tr>
+              <tr><td>9</td><td><strong>Clears, Retries &amp; Stalls</strong></td><td><code>0</code> unrecovered session stalls; pre-staged report generators preserved 100% state across automatic context compactions</td><td>0 untracked stalls</td><td><span class="badge badge-green">PASS (2/2)</span></td><td>Pre-stage parameterized report generators during Wave 1</td></tr>
+              <tr><td>10</td><td><strong>Wrong Triage / Scope Fields</strong></td><td>Milestones `#50–#51` closed at `open_issues: 0` (`18/18` active issues delivered; `8` items tracked in `#54` under `A185` &amp; `A503-R1`)</td><td>0 premise drift</td><td><span class="badge badge-green">PASS (2/2)</span></td><td>Re-home hardware/external blockers and hot-entrypoint waves under `A185` &amp; `A503-R1`</td></tr>
+              <tr><td>11</td><td><strong>Rule Breaches &amp; Governance Discipline</strong></td><td><code>0</code> rule breaches; `#2866` merge-role-guard PATH hooks, `#2878` merge-inbox-gate, and `#2856` role-instruction guard delivered</td><td>0 breaches</td><td><span class="badge badge-green">PASS (2/2)</span></td><td>Enforce `Rule #282` (`--merge`) and exact-SHA Dual-Gate across all PRs</td></tr>
+              <tr><td>12</td><td><strong>Unlabelled PRs, Dirty Clones &amp; Worktrees</strong></td><td>All 9 feature/release branches retired cleanly; all fleet worktrees synced to `origin/main`</td><td>0 orphan clones</td><td><span class="badge badge-green">PASS (2/2)</span></td><td>Transition all lanes to `complete / safe-to-clear` at train closeout</td></tr>
+              <tr><td>13</td><td><strong>Release-Status Lag &amp; Finish-Line Honesty</strong></td><td>Both versions tagged, GitHub-released, and verified live on `:3102` before O-Gate certification</td><td>100% honesty</td><td><span class="badge badge-green">PASS (2/2)</span></td><td>Verify tag and live `:3102` readback before closing Gate 3/4</td></tr>
+              <tr><td>14</td><td><strong>Conflict Resolution Time</strong></td><td><code>0</code> source-code merge conflicts across 7 feature cars</td><td>&lt; 5m sync time</td><td><span class="badge badge-green">PASS (2/2)</span></td><td>Partition wave cars strictly by disjoint module boundaries (`Ruling A503-R1`)</td></tr>
+              <tr><td>15</td><td><strong>Wakes, Tokens &amp; Turns by Role &amp; Model</strong></td><td>REST `gh api` + local `git` inspection eliminated GraphQL rate-limit stalls; 100% reply-before-ack Switchboard hygiene</td><td>0 API lockouts</td><td><span class="badge badge-green">PASS (2/2)</span></td><td>Never use `gh pr view` when GraphQL quota is contended; use REST `gh api`</td></tr>
+              <tr><td>16</td><td><strong>4 End-of-Sprint Maintenance Gates</strong></td><td>All 8 Maintenance Gates (`4` gates × `2` legs) + Retrospective validation green (`40/40` reports `0 FAIL`)</td><td>8 / 8 Gates green</td><td><span class="badge badge-green">PASS (2/2)</span></td><td>Run `validate-sprint-report.py --all` + `publish-public-roadmap.sh` at every leg</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 7: INTERACTIVE WAVE & PR EXPLORER -->
+    <section class="section" id="waves">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title"><span class="num">06</span> Interactive Two-Version Release &amp; PR Explorer (9 PRs · Milestones #50–#51)</h2>
+          <p class="section-desc">Filter by release leg or architectural domain, or search across all 9 PRs, 18 active delivered issues, commit SHAs, and Milestone #54 deferrals.</p>
+        </div>
+        <span class="badge badge-cyan">4 Interactive Cards · 10 Filter Tags · Instant Search Across All 9 PRs</span>
+      </div>
+
+      <div class="card" style="margin-bottom:18px;">
+        <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;">
+          <div style="display:flex;flex-wrap:wrap;gap:6px;">
+            <button class="filter-btn active" data-filter="all" onclick="filterWaves('all', this)">All 2 Versions (9 PRs)</button>
+            <button class="filter-btn" data-filter="v5650" onclick="filterWaves('v5650', this)">Leg 1: v5.65.0 (5 PRs)</button>
+            <button class="filter-btn" data-filter="v5660" onclick="filterWaves('v5660', this)">Leg 2: v5.66.0 (4 PRs)</button>
+            <button class="filter-btn" data-filter="linux" onclick="filterWaves('linux', this)">Linux &amp; Version Deps (#1424, #777)</button>
+            <button class="filter-btn" data-filter="control" onclick="filterWaves('control', this)">Control &amp; Guard (#2832, #2834, #2866)</button>
+            <button class="filter-btn" data-filter="cli" onclick="filterWaves('cli', this)">CLI, Server &amp; Store (#50)</button>
+            <button class="filter-btn" data-filter="tcc" onclick="filterWaves('tcc', this)">TCC Detector &amp; Chrome (#1112, #2862)</button>
+            <button class="filter-btn" data-filter="decision" onclick="filterWaves('decision', this)">Decision Routing Slice 2 (#2828)</button>
+            <button class="filter-btn" data-filter="fleet" onclick="filterWaves('fleet', this)">Fleet &amp; Rules UI (#2858, #2852, #2856)</button>
+            <button class="filter-btn" data-filter="ruling" onclick="filterWaves('ruling', this)">Milestone #54 &amp; Ruling A503-R1</button>
+          </div>
+          <input id="waveSearch" type="search" placeholder="Search version, PR #, SHA, issue #, module, or ruling..." oninput="searchWaves()" style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-alt);color:var(--text);min-width:240px;font-size:0.84rem;" />
+        </div>
+      </div>
+
+      <!-- CARD 1: Leg 1 Cars 65-A & 65-B -->
+      <div class="wave-card" data-tags="all v5650 linux control" data-search="leg 1 v5.65.0 milestone 50 a502 car 65-a car 65-b 2899 2900 a84280df 23da9c23 1424 777 2832 2866 linux-systemd.js project-version-deps.js control-api.js merge-role-guard.js">
+        <div class="wave-header">
+          <div>
+            <div class="wave-num">LEG 1 OF 2 (PART A) · SPRINT v5.65.0 · CARS 65-A (PR #2899) &amp; 65-B (PR #2900) · MILESTONE #50</div>
+            <h3 class="wave-title"><a class="pr-link" href="../v5.65.0/">TangleClaw <code>v5.65.0</code> Cars 65-A &amp; 65-B</a> — Native Linux / <code>systemd</code> Support, Cross-Project Version Dependencies &amp; Control-API Hold/Guard Hardening</h3>
+            <div class="wave-window">4 Chartered Issues Delivered (<code>#1424, #777, #2832, #2866</code>) · Merge Commits <code>a84280df</code> &amp; <code>23da9c23</code></div>
+          </div>
+          <div class="wave-meta">
+            <span class="badge badge-green">4/4 Issues Delivered</span>
+            <span class="badge badge-cyan">PRs #2899 &amp; #2900</span>
+            <span class="badge badge-purple">I-Gate + A-Gate PASS</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>Cars</th>
+                <th>Issues Delivered</th>
+                <th>Key Engineering Deliverables</th>
+                <th>Verification Receipt</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-row-tags="v5650 linux control" data-row-search="2899 2900 1424 777 2832 2866 linux-systemd.js project-version-deps.js control-api.js merge-role-guard.js">
+                <td><code>Car 65-A (PR #2899 @ a84280df) &amp; Car 65-B (PR #2900 @ 23da9c23)</code></td>
+                <td><span class="issue-pill">#1424</span> <span class="issue-pill">#777</span> <span class="issue-pill">#2832</span> <span class="issue-pill">#2866</span></td>
+                <td>Native Linux <code>systemd --user</code> / system unit generator &amp; installer (`lib/linux-systemd.js`), cross-project semver dependency registry (`lib/project-version-deps.js`), generic hold route `peer-pause-request` guard (`#2832`), and `merge-role-guard` launch PATH hooks + `AskUserQuestion` auto-handling (`#2866`)</td>
+                <td><code>test/linux-systemd.test.js</code> · <code>test/control-hold-prune.test.js</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- CARD 2: Leg 1 Cars 65-C & 65-D + W1-REL v5.65.0 -->
+      <div class="wave-card" data-tags="all v5650 cli control" data-search="leg 1 v5.65.0 milestone 50 a502 car 65-c car 65-d 2902 2901 a527abeb ffb1622f 2906 d97f0121 2887 2878 2883 2877 2864 2871 2870 2834 product-manual.js doc-router.js merge-inbox-gate.js scorecard-producer.js projects-async-io.js store.js shared-docs-http.js">
+        <div class="wave-header">
+          <div>
+            <div class="wave-num">LEG 1 OF 2 (PART B) · SPRINT v5.65.0 · CARS 65-C (PR #2902), 65-D (PR #2901) &amp; RELEASE PR #2906</div>
+            <h3 class="wave-title"><a class="pr-link" href="../v5.65.0/">TangleClaw <code>v5.65.0</code> Cars 65-C, 65-D &amp; Release Cut</a> — CLI/Server Wiring, Projects Async I/O, Store Repair, Prune Tie-Breaker &amp; Shared-Docs Serving</h3>
+            <div class="wave-window">Release Merge <code>d97f012190f6aaeb34ccf10bc9c858f35f2970f7</code> (Tag <code>eedbbbea</code>) · Wall Time: <code>2h 41m</code></div>
+          </div>
+          <div class="wave-meta">
+            <span class="badge badge-green">8/8 Issues Delivered (12/12 Leg 1)</span>
+            <span class="badge badge-cyan">Tag v5.65.0</span>
+            <span class="badge badge-purple">OBSR-OGATE-V5650-PASS</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>Cars &amp; Release</th>
+                <th>Issues Delivered</th>
+                <th>Key Engineering Deliverables</th>
+                <th>Verification Receipt</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-row-tags="v5650 cli control" data-row-search="2902 2901 2887 2878 2883 2877 2864 2871 2870 2834 2906 d97f0121">
+                <td><code>Car 65-C (#2902 @ a527abeb), Car 65-D (#2901 @ ffb1622f) &amp; PR #2906 (@ d97f0121)</code></td>
+                <td><span class="issue-pill">#2887</span> <span class="issue-pill">#2878</span> <span class="issue-pill">#2883</span> <span class="issue-pill">#2877</span> <span class="issue-pill">#2864</span> <span class="issue-pill">#2871</span> <span class="issue-pill">#2870</span> <span class="issue-pill">#2834</span></td>
+                <td>CLI/server wiring for `product-manual` &amp; `doc-router` (`#2887`), `merge-inbox-gate` (`#2878`), scheduled `scorecard-producer` (`#2883`), and `roadmap-admission`/`roadmap-sync` (`#2877`), plus `lib/projects.js` async I/O migration (`#2864`), `lib/store.js` Medusa/master-authority repair (`#2871`), `sharedDir` MagicDNS serving (`#2870`), and deterministic `(created_at DESC, id DESC)` prune tie-breaker (`#2834`)</td>
+                <td><code>PR #2906 @ d97f0121</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- CARD 3: Leg 2 Cars 66-A & 66-B -->
+      <div class="wave-card" data-tags="all v5660 tcc decision" data-search="leg 2 v5.66.0 milestone 51 a503 car 66-a car 66-b 2903 2905 fe55c1b5 fbbbde88 005ca462 ef59e736 1112 2862 2828 host-gui-dialog-detector.js terminal-identity.js decision-routing.js">
+        <div class="wave-header">
+          <div>
+            <div class="wave-num">FINAL LEG 2 OF 2 (PART A) · SPRINT v5.66.0 · CARS 66-A (PR #2903) &amp; 66-B (PR #2905) · MILESTONE #51</div>
+            <h3 class="wave-title"><a class="pr-link" href="../v5.66.0/">TangleClaw <code>v5.66.0</code> Cars 66-A &amp; 66-B</a> — Host GUI / macOS TCC Modal Detector, Terminal Visual Identity Slice 2 &amp; Interactive Decision Routing Slice 2</h3>
+            <div class="wave-window">3 Chartered Issues Closed (<code>#1112, #2862, #2828</code>) · Merge Commits <code>005ca462</code> &amp; <code>ef59e736</code></div>
+          </div>
+          <div class="wave-meta">
+            <span class="badge badge-green">3/3 Issues Closed</span>
+            <span class="badge badge-cyan">PRs #2903 &amp; #2905</span>
+            <span class="badge badge-purple">I-Gate + A-Gate PASS</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>Cars</th>
+                <th>Issues Closed</th>
+                <th>Key Engineering Deliverables</th>
+                <th>Verification Receipt</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-row-tags="v5660 tcc decision" data-row-search="2903 2905 005ca462 ef59e736 1112 2862 2828 host-gui-dialog-detector.js terminal-identity.js decision-routing.js">
+                <td><code>Car 66-A (PR #2903 @ 005ca462) &amp; Car 66-B (PR #2905 @ ef59e736)</code></td>
+                <td><span class="issue-pill">#1112</span> <span class="issue-pill">#2862</span> <span class="issue-pill">#2828</span></td>
+                <td>Ships `lib/host-gui-dialog-detector.js` &amp; `public/host-gui-dialog-banner.js` for macOS TCC / SecurityAgent / UserNotificationCenter modal detection (`#1112`), `lib/terminal-identity.js` &amp; `public/terminal-identity-view.js` for terminal visual identity Slice 2 (`#2862`), and `lib/decision-routing.js` &amp; `public/decision-routing-ui.js` for interactive decision routing Slice 2 with `WAITING_DECISION` state (`#2828`)</td>
+                <td><code>test/host-gui-dialog-detector.test.js</code> · <code>test/decision-routing-slice2.test.js</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- CARD 4: Leg 2 Car 66-C + W2-REL v5.66.0 & Milestone #54 Ledger -->
+      <div class="wave-card" data-tags="all v5660 fleet ruling" data-search="leg 2 v5.66.0 milestone 51 a503 car 66-c 2904 ffebec79 be4b194f 2907 1ffeaf6e 2858 2852 2856 2880 1564 2347 2258 2881 2884 2885 2886 2888 a503-r1 fleet-workload-view.js adr-viewer.js resource-leases.js">
+        <div class="wave-header">
+          <div>
+            <div class="wave-num">FINAL LEG 2 OF 2 (PART B) · SPRINT v5.66.0 · CAR 66-C (PR #2904), RELEASE PR #2907 &amp; MILESTONE #54 LEDGER</div>
+            <h3 class="wave-title"><a class="pr-link" href="../v5.66.0/">TangleClaw <code>v5.66.0</code> Car 66-C, Release Cut &amp; Ruling A503-R1</a> — Fleet/Governance UI, Resource Leases &amp; Milestone #54 Queue</h3>
+            <div class="wave-window">Release Merge <code>1ffeaf6e36608a99ad3e1afde4610eba8771bc63</code> (Tag <code>87e54581</code>) · Wall Time: <code>24m</code></div>
+          </div>
+          <div class="wave-meta">
+            <span class="badge badge-green">3/3 Issues Closed (6/6 Active · 7 Total in #51)</span>
+            <span class="badge badge-cyan">Tag v5.66.0</span>
+            <span class="badge badge-purple">OBSR-OGATE-V5660-PASS</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="pr-table">
+            <thead>
+              <tr>
+                <th>Car &amp; Release</th>
+                <th>Issues Closed</th>
+                <th>Key Engineering Deliverables &amp; Milestone #54 (`A185` &amp; `A503-R1`) Deferral Queue</th>
+                <th>Verification Receipt</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-row-tags="v5660 fleet ruling" data-row-search="2904 be4b194f 2858 2852 2856 2880 2907 1ffeaf6e 1564 2347 2258 2881 2884 2885 2886 2888 a503-r1">
+                <td><code>Car 66-C (PR #2904 @ be4b194f) &amp; PR #2907 (@ 1ffeaf6e)</code></td>
+                <td><span class="issue-pill">#2858</span> <span class="issue-pill">#2852</span> <span class="issue-pill">#2856</span></td>
+                <td>Ships fleet workload/idle/wedged view, switchboard swarm stats, version-cache banner &amp; test-duration stats (`#2858`), ADR viewer, rule approvals &amp; team templates (`#2852`), and resource leases &amp; role-instruction guard (`#2856`); tracks external blockers `#1564, #2347, #2258` and hot-entrypoint Slice 3 wave `#2881, #2884, #2885, #2886, #2888` in `Milestone #54` (`v5.67.0`) under `A185` &amp; `Ruling A503-R1`</td>
+                <td><code>PR #2907 @ 1ffeaf6e</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 8: NEXT SPRINT GUARDRAILS & PRIORITIES -->
+    <section class="section" id="next-sprint">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title"><span class="num">07</span> Institutionalized Guardrails &amp; Post-Train Engineering Roadmap (<code>v5.67.0 · Milestone #54</code>)</h2>
+          <p class="section-desc">6 concrete architectural and governance feed-forward actions derived from the Two-Version Autonomous Sprint Train (`v5.65.0 → v5.66.0`).</p>
+        </div>
+        <span class="badge badge-green">2/2 Versions Shipped · Ready for Next Multi-Version Authorization</span>
+      </div>
+
+      <div class="grid-3">
+        <div class="subcard">
+          <span class="pillar-num">FEED-FORWARD 01 · DEDICATED HOT-ENTRYPOINT MOUNT WAVE IN MILESTONE #54 (A503-R1)</span>
+          <h4>Mount Remaining Slice 3 Entrypoints (`#2881, #2884, #2885, #2886, #2888`) via Single-Owner Cars</h4>
+          <p>
+            Execute the consolidated hot-entrypoint mount wave in `Milestone #54` (`v5.67.0`) with at most one Builder car touching `server.js`, `bin/tc.js`, `public/index.html`, or `public/session.html` per wave.
+          </p>
+        </div>
+
+        <div class="subcard">
+          <span class="pillar-num">FEED-FORWARD 02 · PHYSICAL LINUX / SYSTEMD HOST VERIFICATION (#1564 · v5.67.0)</span>
+          <h4>Execute Hardware Verification of `lib/linux-systemd.js` on a Live Linux Host</h4>
+          <p>
+            Run `scripts/linux-systemd-install.js` (`#1424`) on a physical Linux host (`Milestone #54` `#1564`) to validate `systemd --user`, `loginctl enable-linger`, and `journalctl` status readback end-to-end.
+          </p>
+        </div>
+
+        <div class="subcard">
+          <span class="pillar-num">FEED-FORWARD 03 · UNBLOCK #2347 &amp; #2258 EXTERNAL DEPENDENCIES (v5.67.0)</span>
+          <h4>Resume Check-Watch Single-Wake (`#2347`) &amp; Vercel Cutover (`#2258`)</h4>
+          <p>
+            Once upstream `Jason-Vaughan/Medusa#67` ships idempotent send receipts (`#2347`) and the Operator completes the Vercel dashboard `Ignored Build Step` cutover (`#2258`), close both items in `Milestone #54`.
+          </p>
+        </div>
+
+        <div class="subcard">
+          <span class="pillar-num">FEED-FORWARD 04 · INSTITUTIONALIZE HIGH-FAN-IN ENTRYPOINT PARTITIONING</span>
+          <h4>Assign `server.js`, `bin/tc.js`, `public/index.html`, and `public/ui.js` to at Most One Car Per Wave</h4>
+          <p>
+            Preserve the zero-conflict merge velocity achieved across `v5.65.0–v5.66.0` by ensuring high-fan-in entrypoint files are owned by at most one Builder car in any parallel wave.
+          </p>
+        </div>
+
+        <div class="subcard">
+          <span class="pillar-num">FEED-FORWARD 05 · MAINTAIN 100% REMOTE TESTAMENT 0.34.0 POOL &amp; REST GH API DISCIPLINE</span>
+          <h4>Zero Host CPU Contention &amp; Zero GraphQL Rate-Limit Lockouts</h4>
+          <p>
+            Continue running all multi-file `node --test` suites exclusively on the remote Testament `0.34.0` pool (`200.82.97.81`) and GitHub Actions CI (`Guardrail 10`), and use REST `gh api` + single-quoted Markdown bodies (`-f body='...'`).
+          </p>
+        </div>
+
+        <div class="subcard">
+          <span class="pillar-num">FEED-FORWARD 06 · PRE-STAGE PARAMETERIZED SPRINT REPORT GENERATORS DURING WAVE 1</span>
+          <h4>Sub-2-Minute Gate 4 (`O-Gate`) Certification After Every Live `:3102` Deploy</h4>
+          <p>
+            Maintain the `gen_vXXXX.py` pattern across all future sprint trains: pre-stage and validate (`0 FAIL`) both per-version and retrospective HTML generators during Wave 1 so Gate 4 publishes in seconds.
+          </p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+        <div>
+          <strong>TangleClaw Two-Version Autonomous Sprint Train Retrospective (<code>v5.65.0 → v5.66.0</code>)</strong> · Generated by <code>TC-Lane-Obsr</code> (#1540) &amp; <code>TC-Lane-PM</code> (#1541) (Rule #283)
+        </div>
+        <div>
+          Standing Auth <code>OP-GO-V5650-V5660-20261104</code> · Charters <code>A502 v1.0 &amp; A503 v1.1</code> · 9 PRs · 18 Active Issues Delivered (16 Milestone Closures) · <a href="../" style="color:var(--accent2);">All Sprint Reports</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    (function () {
+      const buttons = document.querySelectorAll('.filter-btn');
+      const search = document.getElementById('waveSearch');
+      const cards = document.querySelectorAll('.wave-card');
+      let currentFilter = 'all';
+
+      function applyFilters() {
+        const q = (search && search.value ? search.value : '').trim().toLowerCase();
+        cards.forEach(function (card) {
+          const cardTags = (card.getAttribute('data-tags') || '').split(/\s+/);
+          const cardSearch = (card.getAttribute('data-search') || '') + ' ' + card.innerText.toLowerCase();
+          const rows = card.querySelectorAll('tbody tr[data-row-tags]');
+          if (rows.length > 0) {
+            let visibleRows = 0;
+            rows.forEach(function (row) {
+              const rTags = (row.getAttribute('data-row-tags') || '').split(/\s+/);
+              const rText = ((row.getAttribute('data-row-search') || '') + ' ' + row.innerText).toLowerCase();
+              const matchTag = currentFilter === 'all' || rTags.indexOf(currentFilter) !== -1 || cardTags.indexOf(currentFilter) !== -1 && currentFilter.indexOf('wave-') === 0;
+              const matchSearch = !q || rText.indexOf(q) !== -1;
+              if (matchTag && matchSearch) {
+                row.style.display = '';
+                visibleRows++;
+              } else {
+                row.style.display = 'none';
+              }
+            });
+            card.style.display = visibleRows > 0 ? '' : 'none';
+          } else {
+            const matchTag = currentFilter === 'all' || cardTags.indexOf(currentFilter) !== -1;
+            const matchSearch = !q || cardSearch.indexOf(q) !== -1;
+            card.style.display = (matchTag && matchSearch) ? '' : 'none';
+          }
+        });
+      }
+
+      buttons.forEach(function (btn) {
+        btn.removeAttribute('onclick');
+        btn.addEventListener('click', function () {
+          buttons.forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          currentFilter = btn.getAttribute('data-filter') || 'all';
+          applyFilters();
+        });
+      });
+
+      if (search) {
+        search.removeAttribute('oninput');
+        search.addEventListener('input', applyFilters);
+      }
+
+      window.filterWaves = function (tag, btn) {
+        buttons.forEach(function (b) { b.classList.remove('active'); });
+        if (btn) btn.classList.add('active');
+        currentFilter = tag || 'all';
+        applyFilters();
+      };
+      window.searchWaves = function () { applyFilters(); };
+    })();
+  </script>
+</body>
+</html>
