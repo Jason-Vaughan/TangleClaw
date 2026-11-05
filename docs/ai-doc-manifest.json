@@ -1,0 +1,113 @@
+{
+  "schema": "tc.ai-doc-manifest/v1",
+  "topics": [
+    {
+      "id": "tc-command-reference",
+      "path": "docs/tc-cli-reference.md",
+      "anchor": "tc-command-reference",
+      "roles": ["worker", "reviewer", "coordinator", "master"],
+      "commands": ["tc"],
+      "audience": ["human", "nhe"],
+      "lifecycleState": "current"
+    },
+    {
+      "id": "launch-commands",
+      "path": "docs/tc-cli-reference.md",
+      "anchor": "the-launch-commands-most-people-need",
+      "roles": ["worker", "reviewer", "coordinator", "master"],
+      "commands": ["tc start"],
+      "audience": ["human", "nhe"],
+      "lifecycleState": "current"
+    },
+    {
+      "id": "switchboard-messaging",
+      "path": "docs/tc-cli-reference.md",
+      "anchor": "switchboard-messaging",
+      "roles": ["worker", "reviewer", "coordinator", "master"],
+      "commands": ["tc message"],
+      "audience": ["human", "nhe"],
+      "lifecycleState": "current"
+    },
+    {
+      "id": "workload-receipts",
+      "path": "docs/tc-cli-reference.md",
+      "anchor": "workload-receipts",
+      "roles": ["worker", "reviewer", "coordinator", "master"],
+      "commands": ["tc workload"],
+      "audience": ["human", "nhe"],
+      "lifecycleState": "current"
+    },
+    {
+      "id": "branch-safety",
+      "path": "docs/tc-cli-reference.md",
+      "anchor": "branch-safety",
+      "roles": ["worker", "coordinator"],
+      "commands": ["tc branch"],
+      "audience": ["human", "nhe"],
+      "lifecycleState": "current"
+    },
+    {
+      "id": "durable-interactive-decisions",
+      "path": "docs/tc-cli-reference.md",
+      "anchor": "durable-interactive-decisions",
+      "roles": ["worker", "reviewer", "coordinator", "master"],
+      "commands": ["tc decision"],
+      "audience": ["human", "nhe"],
+      "lifecycleState": "current"
+    },
+    {
+      "id": "managed-coordinator-rotation",
+      "path": "docs/tc-cli-reference.md",
+      "anchor": "managed-coordinator-rotation",
+      "roles": ["coordinator", "master"],
+      "commands": ["tc rotation"],
+      "audience": ["human", "nhe"],
+      "lifecycleState": "current"
+    },
+    {
+      "id": "engine-guide",
+      "path": "docs/engine-guide.md",
+      "anchor": "engine-guide",
+      "roles": ["worker", "reviewer", "coordinator", "master"],
+      "commands": [],
+      "audience": ["human", "nhe"],
+      "lifecycleState": "current"
+    },
+    {
+      "id": "creating-a-custom-engine-profile",
+      "path": "docs/engine-guide.md",
+      "anchor": "creating-a-custom-engine-profile",
+      "roles": ["master"],
+      "commands": [],
+      "audience": ["human", "nhe"],
+      "lifecycleState": "current"
+    },
+    {
+      "id": "configuration-reference",
+      "path": "docs/configuration-reference.md",
+      "anchor": "configuration-reference",
+      "roles": ["master"],
+      "commands": [],
+      "audience": ["human", "nhe"],
+      "lifecycleState": "current"
+    },
+    {
+      "id": "global-configuration",
+      "path": "docs/configuration-reference.md",
+      "anchor": "global-configuration-configjson",
+      "roles": ["master"],
+      "commands": [],
+      "audience": ["human", "nhe"],
+      "lifecycleState": "current"
+    },
+    {
+      "id": "user-guide",
+      "path": "docs/user-guide.md",
+      "anchor": "tangleclaw-user-guide",
+      "roles": ["worker", "reviewer", "coordinator", "master"],
+      "commands": [],
+      "audience": ["human", "nhe"],
+      "lifecycleState": "current"
+    }
+  ]
+}

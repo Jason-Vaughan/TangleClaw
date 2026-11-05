@@ -378,6 +378,14 @@
         "lib/roadmap-admission.js",
         "lib/roadmap-sync.js"
       ]
+    },
+    "docs-manual": {
+      "label": "area:docs-manual",
+      "why": "The indexable, dual-audience (human/NHE) product manual and the repo-wide AI documentation router (#811, #2835, Slice 2 of #2070) — parity-checkable manifests over the narrative docs. Owned by no other family. Named explicitly, not by glob, learning from the `roadmap` area's own collision.",
+      "paths": [
+        "lib/product-manual.js",
+        "lib/doc-router.js"
+      ]
     }
   },
   "shared": {

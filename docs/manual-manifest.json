@@ -1,0 +1,93 @@
+{
+  "schema": "tc.manual-manifest/v1",
+  "pages": [
+    {
+      "id": "user-guide",
+      "path": "docs/user-guide.md",
+      "title": "TangleClaw User Guide",
+      "audience": ["human", "nhe"],
+      "surfaces": ["public/**"],
+      "sectionDepth": 2,
+      "sections": [
+        { "anchor": "tangleclaw-user-guide", "heading": "TangleClaw User Guide" },
+        { "anchor": "getting-started", "heading": "Getting Started", "summary": "Installing, logging in, and first run." },
+        { "anchor": "the-landing-page", "heading": "The Landing Page", "summary": "The dashboard: health panel, banners, project cards." },
+        { "anchor": "sessions", "heading": "Sessions", "summary": "Launching and working in a session: the wrapper, terminal, command bar." },
+        { "anchor": "project-groups-and-shared-documents", "heading": "Project Groups and Shared Documents" },
+        { "anchor": "discord-operator-bridge", "heading": "Discord operator bridge" },
+        { "anchor": "mobile-tips", "heading": "Mobile Tips" },
+        { "anchor": "troubleshooting", "heading": "Troubleshooting" }
+      ]
+    },
+    {
+      "id": "configuration-reference",
+      "path": "docs/configuration-reference.md",
+      "title": "Configuration Reference",
+      "audience": ["human", "nhe"],
+      "surfaces": ["lib/routes/config.js", "lib/projects.js", "lib/project-*.js", "lib/engines.js"],
+      "sectionDepth": 2,
+      "sections": [
+        { "anchor": "configuration-reference", "heading": "Configuration Reference" },
+        { "anchor": "file-locations", "heading": "File Locations" },
+        { "anchor": "global-configuration-configjson", "heading": "Global Configuration (`config.json`)" },
+        { "anchor": "global-rules-dataglobal-rulesmd", "heading": "Global Rules (`data/global-rules.md`)" },
+        { "anchor": "per-project-configuration-projectjson", "heading": "Per-Project Configuration (`project.json`)" },
+        { "anchor": "project-groups", "heading": "Project Groups" },
+        { "anchor": "engine-profile-json-schema", "heading": "Engine Profile JSON Schema" },
+        { "anchor": "sqlite-database", "heading": "SQLite Database" },
+        { "anchor": "api-overview", "heading": "API Overview", "summary": "The HTTP API's route families, grouped by area." }
+      ]
+    },
+    {
+      "id": "engine-guide",
+      "path": "docs/engine-guide.md",
+      "title": "Engine Guide",
+      "audience": ["human", "nhe"],
+      "surfaces": ["lib/engines.js", "lib/engine-*.js", "lib/engines/*.js"],
+      "sectionDepth": 2,
+      "sections": [
+        { "anchor": "engine-guide", "heading": "Engine Guide" },
+        { "anchor": "how-engines-work", "heading": "How Engines Work" },
+        { "anchor": "built-in-engines", "heading": "Built-in Engines", "summary": "Claude Code, Codex, Aider, Antigravity, OpenClaw." },
+        { "anchor": "engine-detection", "heading": "Engine Detection" },
+        { "anchor": "creating-a-custom-engine-profile", "heading": "Creating a Custom Engine Profile", "summary": "The engine profile JSON fields, detection strategies, capabilities, launch sequences." },
+        { "anchor": "config-file-generation", "heading": "Config File Generation" },
+        { "anchor": "parity-checklist-for-new-engines", "heading": "Parity Checklist for New Engines" },
+        { "anchor": "switching-engines", "heading": "Switching Engines" },
+        { "anchor": "model-status-monitoring", "heading": "Model Status Monitoring" },
+        { "anchor": "model-selection-models", "heading": "Model selection (`models`)" },
+        { "anchor": "engine-api-error-detection-errorpatterns", "heading": "Engine API error detection (`errorPatterns`)" }
+      ]
+    },
+    {
+      "id": "tc-cli-reference",
+      "path": "docs/tc-cli-reference.md",
+      "title": "`tc` Command Reference",
+      "audience": ["human", "nhe"],
+      "surfaces": ["lib/tc-verbs.js", "bin/tc"],
+      "sectionDepth": 2,
+      "sections": [
+        { "anchor": "tc-command-reference", "heading": "`tc` Command Reference" },
+        { "anchor": "fast-help", "heading": "Fast help" },
+        { "anchor": "command-families-at-a-glance", "heading": "Command families at a glance" },
+        { "anchor": "the-launch-commands-most-people-need", "heading": "The launch commands most people need" },
+        { "anchor": "identity-and-discovery", "heading": "Identity and discovery" },
+        { "anchor": "switchboard-messaging", "heading": "Switchboard messaging" },
+        { "anchor": "shared-documents", "heading": "Shared documents" },
+        { "anchor": "merge-queue", "heading": "Merge queue" },
+        { "anchor": "check-watches", "heading": "Check watches" },
+        { "anchor": "operator-notification-candidates", "heading": "Operator notification candidates" },
+        { "anchor": "operator-bridge-project-master-only", "heading": "Operator bridge (Project Master only)" },
+        { "anchor": "durable-control-state", "heading": "Durable control state" },
+        { "anchor": "launch-onboarding-and-re-entry", "heading": "Launch onboarding and re-entry" },
+        { "anchor": "workload-receipts", "heading": "Workload receipts" },
+        { "anchor": "durable-interactive-decisions", "heading": "Durable interactive decisions" },
+        { "anchor": "managed-coordinator-rotation", "heading": "Managed coordinator rotation" },
+        { "anchor": "session-retirement", "heading": "Session retirement" },
+        { "anchor": "branch-safety", "heading": "Branch safety" },
+        { "anchor": "exit-codes-and-failure-posture", "heading": "Exit codes and failure posture" },
+        { "anchor": "keeping-this-page-true", "heading": "Keeping this page true" }
+      ]
+    }
+  ]
+}
