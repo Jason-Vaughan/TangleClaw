@@ -230,7 +230,7 @@ describe('validateTrainDispatchAdmission', () => {
     const r = admission.validateTrainDispatchAdmission(
       manifest, candidate, { decision: admission.DECISIONS.APPROVED }, { issues: {} }, { now: 2000 }
     );
-    assert.deepEqual(r, { admitted: false, reason: 'conflict-snapshot-missing', detail: 'currentFacts carries no fresh conflict snapshot for this train — required on every dispatch, not only one the manifest recorded conflicts for, since a newly-opened conflict can appear on a train that had none' });
+    assert.deepEqual(r, { admitted: false, reason: 'conflict-snapshot-missing', detail: 'currentFacts carries no fresh conflict snapshot (an explicit array) for this train — required on every dispatch, not only one the manifest recorded conflicts for, since a newly-opened conflict can appear on a train that had none' });
   });
 
   it('refuses dispatch when the manifest recorded NO conflicts but currentFacts still carries no fresh snapshot (I-Gate Round 2 Finding 2)', () => {
@@ -242,6 +242,27 @@ describe('validateTrainDispatchAdmission', () => {
     );
     assert.equal(r.admitted, false, 'a train with zero recorded conflicts can still have a NEW one by dispatch time — omission is never read as "none"');
     assert.equal(r.reason, 'conflict-snapshot-missing');
+  });
+
+  for (const invalid of [null, false, true, 'oops', 42, {}]) {
+    it(`refuses an invalid (non-array) conflict snapshot value rather than reading it as empty (I-Gate Round 3 Finding, value: ${JSON.stringify(invalid)})`, () => {
+      const candidate = { trainId: 'train:9', issues: ['#1'] };
+      const manifest = admission.buildTrainAdmissionManifest(candidate, { issues: { '#1': { state: 'open' } } }, { now: 1000 });
+      const r = admission.validateTrainDispatchAdmission(
+        manifest, candidate, undefined, { issues: { '#1': { state: 'open' } }, conflicts: { 'train:9': invalid } }, { now: 2000 }
+      );
+      assert.equal(r.admitted, false, `a ${typeof invalid} conflicts value must never be treated as "checked, none found"`);
+      assert.equal(r.reason, 'conflict-snapshot-missing');
+    });
+  }
+
+  it('admits once the conflict snapshot is an explicit empty array, distinct from an invalid value', () => {
+    const candidate = { trainId: 'train:9', issues: ['#1'] };
+    const manifest = admission.buildTrainAdmissionManifest(candidate, { issues: { '#1': { state: 'open' } } }, { now: 1000 });
+    const r = admission.validateTrainDispatchAdmission(
+      manifest, candidate, undefined, { issues: { '#1': { state: 'open' } }, conflicts: { 'train:9': [] } }, { now: 2000 }
+    );
+    assert.deepEqual(r, { admitted: true, decision: admission.DECISIONS.APPROVED });
   });
 
   it('refuses a new conflict the manifest never saw, given a fresh conflict snapshot', () => {
