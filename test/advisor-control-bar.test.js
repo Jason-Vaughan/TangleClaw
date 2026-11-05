@@ -234,6 +234,27 @@ describe('#2819 the bar behaves', () => {
       assert.equal(gear.getAttribute('aria-expanded'), 'false');
     });
 
+    it('openSettingsStrip expands a closed strip and loads it, the same as the gear (#2874)', async () => {
+      const { doc, bar } = mounted('advisorPanel', { api: async () => ({ engines: [] }) });
+      bar.mount();
+      const strip = doc.getElementById('advisorPanelSettingsStrip');
+      assert.equal(strip.classList.contains('hidden'), true, 'closed at rest');
+      await bar.openSettingsStrip();
+      assert.equal(strip.classList.contains('hidden'), false);
+      assert.equal(doc.getElementById('advisorPanelSettingsBtn').getAttribute('aria-expanded'), 'true');
+    });
+
+    it('openSettingsStrip leaves an already-open strip open -- the Master-modal cross-link must not '
+      + 'collapse a strip the operator already had open (#2874)', async () => {
+      const { doc, bar } = mounted('advisorPanel', { api: async () => ({ engines: [] }) });
+      bar.mount();
+      const strip = doc.getElementById('advisorPanelSettingsStrip');
+      doc.getElementById('advisorPanelSettingsBtn').dispatch('click');
+      assert.equal(strip.classList.contains('hidden'), false, 'opened via the gear first');
+      await bar.openSettingsStrip();
+      assert.equal(strip.classList.contains('hidden'), false, 'still open, not toggled closed');
+    });
+
     it('Save posts the strip\'s current values to /api/advisor/settings, then the Discord '
       + 'advisory fields to /api/bridge/operator/advisory-allowlist (#2874)', async () => {
       const calls = [];
