@@ -359,9 +359,10 @@
     },
     "merge-governance": {
       "label": "area:merge-governance",
-      "why": "The cross-engine Builder `gh pr merge` role guard (#2601, Ruling A2601): a pure classifier/evaluator deciding whether a candidate shell command is a PR-merge invocation, and whether the caller's role/lane is authorized to run it under Rule #282. Owned by no other family; wiring into a real launch-env wrapper or engine shell hook is a tracked Slice 2 follow-up.",
+      "why": "Who may merge and whether a merge may proceed. The cross-engine Builder `gh pr merge` role guard (#2601, Ruling A2601): a pure classifier/evaluator deciding whether a candidate shell command is a PR-merge invocation, and whether the caller's role/lane is authorized to run it under Rule #282. The durable action-scoped merge constraint / hold engine (#1717 Slice 1, Ruling A500-W1B-R1): persists holds against a stable repo+PR/branch/issue identity, independent of any session's Medusa inbox, and gates merge/auto-merge/release/restart on them. Owned by no other family; wiring either into a real launch-env wrapper, engine shell hook, live route, or GitHub status check is a tracked Slice 2 follow-up (#2878).",
       "paths": [
-        "lib/merge-role-guard.js"
+        "lib/merge-role-guard.js",
+        "lib/merge-inbox-gate.js"
       ]
     }
   },

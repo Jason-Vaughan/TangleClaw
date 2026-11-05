@@ -69,11 +69,19 @@ function initRepo(dir, extraArgs = [], execOpts = {}) {
 }
 
 /**
- * Run `git clone` with template inheritance disabled.
+ * Run `git clone` with template inheritance disabled and no local hardlinks.
  *
  * A clone initialises its `.git` the same way `init` does, template copy
  * included (`lib/git-template.js` relies on exactly that), so a bare clone in
  * a test reads the machine's template too.
+ *
+ * `--no-local` forces a real copy of the source's objects instead of git's
+ * default optimisation of hardlinking them when `src` and `dest` share a
+ * filesystem. The hardlink path raced a concurrent writer under the same temp
+ * root on CI (`fatal: hardlink different from source at
+ * '.../.git/objects/pack/tmp_idx_...'`, #2362) even though nothing in the
+ * clone being tested wrote there; `--no-local` has no such race because it
+ * never links to the source's files at all.
  *
  * @param {string} src - Repository to clone (path or URL)
  * @param {string} dest - Destination path, relative to `execOpts.cwd` when given
@@ -83,7 +91,7 @@ function initRepo(dir, extraArgs = [], execOpts = {}) {
  * @returns {string} `dest`, for chaining.
  */
 function cloneRepo(src, dest, extraArgs = [], execOpts = {}) {
-  execFileSync('git', ['clone', '--template=', '-q', ...extraArgs, src, dest], {
+  execFileSync('git', ['clone', '--template=', '--no-local', '-q', ...extraArgs, src, dest], {
     stdio: ['pipe', 'pipe', 'pipe'],
     ...execOpts
   });
