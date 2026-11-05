@@ -4,6 +4,47 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.64.0] - 2026-11-04
+
+### Added
+- Added a per-OS remote CA-trust install planner (`lib/remote-ca-installer.js`)
+  for the cross-session assistant: it can stage the root CA itself, but
+  always hands the privileged trust command to a human — never a silent
+  privilege escalation (#400).
+- Added a docs/screenshot parity signal (`lib/docs-parity-gate.js`,
+  `scripts/docs-parity-gate.js`): a non-blocking, dismissible-with-reason
+  notice when a route or UI change ships with no `README.md`/`docs/`
+  touch, gated the way CHANGELOG parity is (#533).
+- An indexable, dual-audience product manual (`lib/product-manual.js`,
+  `docs/manual-manifest.json`): a human gets a table of contents, an NHE
+  (AI agent) retrieves one stable `page#anchor` fragment at a time.
+  Declared sections are checked against each doc's real headings and a
+  page's declared surfaces against changed paths, so parity is checkable
+  rather than a vibe (#811).
+- A repo-wide AI documentation router (`lib/doc-router.js`,
+  `docs/ai-doc-manifest.json`), Slice 2 of #2070: topics mapped to roles,
+  commands/features, a canonical path and anchor, audience, and lifecycle
+  state, with explicit version-pinned resolution and a stated fallback
+  when no pinned entry matches (#2835).
+
+### Internal
+- Added chunk-boundary HTTP controller handlers (`lib/chunk-boundary-http.js`)
+  and the dashboard status surface view model (`lib/chunk-boundary-ui.js`),
+  wiring `lib/chunk-boundary.js`'s receipt state and `validateNextChunkDispatch`
+  admission gate into route-ready handlers. Not yet mounted onto a live route
+  or the dashboard page (#2836).
+- Added the lifecycle handoff background daemon (`lib/lifecycle-handoff-daemon.js`):
+  a tick loop that drives `lib/lifecycle-handoff.js`'s checkpoint-initiated,
+  settled-end-confirmed, and single-replacement-launch steps automatically,
+  plus route/CLI adapters for the two reconciliation steps that still require
+  the replacement session's own proof. Not yet wired into a live route or
+  started by any process (#2838).
+- Added `lib/primer-launch-wiring.js`: deterministic session-role resolution
+  (worker/reviewer/coordinator/master) and the caller that finally wires
+  `lib/operating-primer.js#buildOperatingPrimer` (previously called only by
+  its own test), plus a lease-companion attachment helper. Not yet called
+  from the real launch/prime path (#2844).
+
 ## [5.63.0] - 2026-11-04
 
 ### Added
