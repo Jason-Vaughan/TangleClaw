@@ -83,11 +83,12 @@ describe('validateTrainCandidate', () => {
 });
 
 describe('buildTrainAdmissionManifest', () => {
-  it('snapshots issue states, prereqs, conflicts and the roadmap revision', () => {
+  it('snapshots issue states, prereqs, orderAfter, conflicts and the roadmap revision', () => {
     const candidate = {
       trainId: 'train:4',
       issues: ['#777'],
       prereqs: ['#721'],
+      orderAfter: ['train:3'],
       conflicts: ['PR#500'],
       sourceRevision: 'rev-abc'
     };
@@ -96,6 +97,7 @@ describe('buildTrainAdmissionManifest', () => {
     assert.equal(m.trainId, 'train:4');
     assert.deepEqual(m.issueStates, { '#777': 'open' });
     assert.deepEqual(m.hardPrereqs, ['#721']);
+    assert.deepEqual(m.orderAfter, ['train:3']);
     assert.deepEqual(m.conflicts, ['PR#500']);
     assert.equal(m.roadmapRevision, 'rev-abc');
     assert.equal(m.classification, admission.CLASSIFICATIONS.CONDITIONAL);
@@ -120,20 +122,20 @@ describe('validateTrainDispatchAdmission', () => {
     return admission.buildTrainAdmissionManifest(conditionalCandidate, { issues: {} }, { now: 1000 });
   }
 
-  it('admits an executable train with no receipt at all — no Architect pause needed', () => {
-    const r = admission.validateTrainDispatchAdmission(executableManifest(), executableCandidate, undefined, { issues: {} }, { now: 2000 });
+  it('admits an executable train with no receipt at all, given a fresh (empty) conflict snapshot — no Architect pause needed', () => {
+    const r = admission.validateTrainDispatchAdmission(executableManifest(), executableCandidate, undefined, { issues: {}, conflicts: { 'train:5': [] } }, { now: 2000 });
     assert.deepEqual(r, { admitted: true, decision: admission.DECISIONS.APPROVED });
   });
 
   it('refuses a conditionally-executable train with no receipt', () => {
-    const r = admission.validateTrainDispatchAdmission(conditionalManifest(), conditionalCandidate, undefined, { issues: {} }, { now: 2000 });
+    const r = admission.validateTrainDispatchAdmission(conditionalManifest(), conditionalCandidate, undefined, { issues: {}, conflicts: { 'train:6': [] } }, { now: 2000 });
     assert.equal(r.admitted, false);
     assert.equal(r.reason, 'architect-review-required');
   });
 
   it('admits a conditionally-executable train on an APPROVED receipt', () => {
     const r = admission.validateTrainDispatchAdmission(
-      conditionalManifest(), conditionalCandidate, { decision: admission.DECISIONS.APPROVED }, { issues: {} }, { now: 2000 }
+      conditionalManifest(), conditionalCandidate, { decision: admission.DECISIONS.APPROVED }, { issues: {}, conflicts: { 'train:6': [] } }, { now: 2000 }
     );
     assert.deepEqual(r, { admitted: true, decision: admission.DECISIONS.APPROVED });
   });
@@ -143,7 +145,7 @@ describe('validateTrainDispatchAdmission', () => {
       conditionalManifest(),
       conditionalCandidate,
       { decision: admission.DECISIONS.MODIFY, admittedSubset: ['#20'], sequence: 1 },
-      { issues: {} },
+      { issues: {}, conflicts: { 'train:6': [] } },
       { now: 2000 }
     );
     assert.deepEqual(r, { admitted: true, decision: admission.DECISIONS.MODIFY, admittedSubset: ['#20'], sequence: 1 });
@@ -151,7 +153,7 @@ describe('validateTrainDispatchAdmission', () => {
 
   it('refuses outright on a REJECTED receipt, naming the blocking dependency', () => {
     const r = admission.validateTrainDispatchAdmission(
-      conditionalManifest(), conditionalCandidate, { decision: admission.DECISIONS.REJECTED, blockingDependency: '#999' }, { issues: {} }, { now: 2000 }
+      conditionalManifest(), conditionalCandidate, { decision: admission.DECISIONS.REJECTED, blockingDependency: '#999' }, { issues: {}, conflicts: { 'train:6': [] } }, { now: 2000 }
     );
     assert.deepEqual(r, { admitted: false, reason: 'rejected', detail: '#999' });
   });
@@ -163,12 +165,28 @@ describe('validateTrainDispatchAdmission', () => {
     assert.equal(r.reason, 'candidate-diverged-from-manifest');
   });
 
+  it('refuses a candidate whose orderAfter diverges from the manifest, even with the same issues', () => {
+    const orderedCandidate = { trainId: 'train:5', issues: ['#10'], orderAfter: ['train:a'] };
+    const manifest = admission.buildTrainAdmissionManifest(orderedCandidate, { issues: {} }, { now: 1000 });
+    const changedOrderCandidate = { trainId: 'train:5', issues: ['#10'], orderAfter: ['train:b'] };
+    const r = admission.validateTrainDispatchAdmission(manifest, changedOrderCandidate, undefined, { issues: {} }, { now: 2000 });
+    assert.equal(r.admitted, false);
+    assert.equal(r.reason, 'candidate-diverged-from-manifest');
+  });
+
+  it('admits unchanged when the candidate\'s orderAfter still matches the manifest', () => {
+    const orderedCandidate = { trainId: 'train:5', issues: ['#10'], orderAfter: ['train:a'] };
+    const manifest = admission.buildTrainAdmissionManifest(orderedCandidate, { issues: {} }, { now: 1000 });
+    const r = admission.validateTrainDispatchAdmission(manifest, orderedCandidate, undefined, { issues: {}, conflicts: { 'train:5': [] } }, { now: 2000 });
+    assert.deepEqual(r, { admitted: true, decision: admission.DECISIONS.APPROVED });
+  });
+
   it('refuses a MODIFY receipt whose admittedSubset names an issue the manifest never saw', () => {
     const r = admission.validateTrainDispatchAdmission(
       conditionalManifest(),
       conditionalCandidate,
       { decision: admission.DECISIONS.MODIFY, admittedSubset: ['#20', '#999'] },
-      { issues: {} },
+      { issues: {}, conflicts: { 'train:6': [] } },
       { now: 2000 }
     );
     assert.deepEqual(r, { admitted: false, reason: 'modify-subset-invalid', detail: ['#999'] });
@@ -181,7 +199,7 @@ describe('validateTrainDispatchAdmission', () => {
       manifest,
       biggerCandidate,
       { decision: admission.DECISIONS.MODIFY, admittedSubset: ['#20'] },
-      { issues: {} },
+      { issues: {}, conflicts: { 'train:6': [] } },
       { now: 2000 }
     );
     assert.deepEqual(r, { admitted: false, reason: 'modify-subset-exceeded', detail: ['#21'] });
@@ -212,7 +230,18 @@ describe('validateTrainDispatchAdmission', () => {
     const r = admission.validateTrainDispatchAdmission(
       manifest, candidate, { decision: admission.DECISIONS.APPROVED }, { issues: {} }, { now: 2000 }
     );
-    assert.deepEqual(r, { admitted: false, reason: 'conflict-snapshot-missing', detail: 'the manifest recorded conflicts but currentFacts carries no fresh conflict snapshot for this train' });
+    assert.deepEqual(r, { admitted: false, reason: 'conflict-snapshot-missing', detail: 'currentFacts carries no fresh conflict snapshot for this train — required on every dispatch, not only one the manifest recorded conflicts for, since a newly-opened conflict can appear on a train that had none' });
+  });
+
+  it('refuses dispatch when the manifest recorded NO conflicts but currentFacts still carries no fresh snapshot (I-Gate Round 2 Finding 2)', () => {
+    const candidate = { trainId: 'train:9', issues: ['#30'] };
+    const manifest = admission.buildTrainAdmissionManifest(candidate, { issues: {} }, { now: 1000 });
+    assert.deepEqual(manifest.conflicts, []);
+    const r = admission.validateTrainDispatchAdmission(
+      manifest, candidate, undefined, { issues: {} }, { now: 2000 }
+    );
+    assert.equal(r.admitted, false, 'a train with zero recorded conflicts can still have a NEW one by dispatch time — omission is never read as "none"');
+    assert.equal(r.reason, 'conflict-snapshot-missing');
   });
 
   it('refuses a new conflict the manifest never saw, given a fresh conflict snapshot', () => {
@@ -243,7 +272,7 @@ describe('validateTrainDispatchAdmission', () => {
 
   it('refuses stale evidence past the TTL', () => {
     const r = admission.validateTrainDispatchAdmission(
-      executableManifest(), executableCandidate, undefined, { issues: {} }, { now: 1000 + admission.DEFAULT_EVIDENCE_TTL_MS + 1 }
+      executableManifest(), executableCandidate, undefined, { issues: {}, conflicts: { 'train:5': [] } }, { now: 1000 + admission.DEFAULT_EVIDENCE_TTL_MS + 1 }
     );
     assert.equal(r.admitted, false);
     assert.equal(r.reason, 'evidence-expired');
@@ -253,7 +282,7 @@ describe('validateTrainDispatchAdmission', () => {
     const candidate = { trainId: 'train:5', issues: ['#10'], sourceRevision: 'rev-1' };
     const manifest = admission.buildTrainAdmissionManifest(candidate, { issues: {} }, { now: 1000 });
     const r = admission.validateTrainDispatchAdmission(
-      manifest, candidate, undefined, { issues: {}, roadmapRevision: 'rev-2' }, { now: 1100 }
+      manifest, candidate, undefined, { issues: {}, conflicts: { 'train:5': [] }, roadmapRevision: 'rev-2' }, { now: 1100 }
     );
     assert.deepEqual(r, { admitted: false, reason: 'evidence-expired', detail: 'the roadmap revision has moved since this manifest was built' });
   });
@@ -262,7 +291,7 @@ describe('validateTrainDispatchAdmission', () => {
     const candidate = { trainId: 'train:7', issues: ['#21'], operatorVerification: { required: true, reason: 'live DNS cutover' } };
     const manifest = admission.buildTrainAdmissionManifest(candidate, { issues: {} }, { now: 1000 });
     const r = admission.validateTrainDispatchAdmission(
-      manifest, candidate, { decision: admission.DECISIONS.APPROVED, unattendedSafe: true }, { issues: {} }, { now: 1100 }
+      manifest, candidate, { decision: admission.DECISIONS.APPROVED, unattendedSafe: true }, { issues: {}, conflicts: { 'train:7': [] } }, { now: 1100 }
     );
     assert.deepEqual(r, { admitted: false, reason: 'operator-verification-misrepresented', detail: 'live DNS cutover' });
   });

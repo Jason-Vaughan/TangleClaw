@@ -171,6 +171,8 @@ describe('fetchIssueSummaries', () => {
     assert.equal(list.calls.length, 1, 'one list call covers every issue, not N per-issue calls');
     assert.equal(list.calls[0].args[1], 'repos/{owner}/{repo}/issues');
     assert.ok(list.calls[0].args.includes('--paginate'));
+    const methodIdx = list.calls[0].args.indexOf('--method');
+    assert.ok(methodIdx !== -1 && list.calls[0].args[methodIdx + 1] === 'GET', '-f fields flip gh api\'s default method to POST unless --method GET is explicit');
     assert.deepEqual(r.summaries.sort((a, b) => Number(a.id) - Number(b.id)), [
       { id: '1', updatedAt: '2026-01-01T00:00:00Z', closed: false },
       { id: '2', updatedAt: '2026-02-02T00:00:00Z', closed: true }
