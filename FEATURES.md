@@ -17,6 +17,13 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v5.66.0 — Fleet visibility and session decisions
+
+- **Probe blocking host dialogs** (#1112) — `lib/host-gui-dialog-probe.js` detects macOS permission, Gatekeeper, and crash dialogs and correlates them with stalled sessions. Live stall-surface wiring remains tracked in Milestone #54.
+- **Prepare terminal identity and upload controls** (#2862) — `public/terminal-identity-ui.js` and `public/upload-pills-ui.js` provide tested standalone controllers; `public/session.css` meets the contrast floor. Mounting the controllers in live panels remains tracked in Milestone #54.
+- **Prepare fleet and Settings route controllers** (#2858, #2852, #2856) — `lib/fleet-visibility-routes.js`, `lib/settings-rules-routes.js`, and `lib/resource-lease-routes.js` compose existing workload, version-cache, rules, and lease helpers for future routes. Live mounting remains tracked in Milestone #54.
+- **Route interactive session decisions** (#2828) — `lib/interactive-decision-routing.js` detects prompts, composes waiting and resume transitions, fans out notices, and evaluates escalation. Live route and dashboard mounting remains tracked in Milestone #54.
+
 ## v5.65.0 — Linux hosts and operator wiring
 
 - **Manage a Linux user service** (#1424) — `lib/linux-systemd.js` generates a `systemd` user unit and manages install, uninstall, and status; `scripts/linux-systemd-install.js` exposes the installer. Physical hardware verification remains tracked in #1564.

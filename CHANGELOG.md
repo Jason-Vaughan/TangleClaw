@@ -4,6 +4,62 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.66.0] - 2026-11-05
+
+### Added
+- A new `lib/host-gui-dialog-probe.js` detects a blocking host-level GUI
+  dialog (a macOS TCC permission prompt, Gatekeeper warning, crash reporter)
+  and correlates it with sessions that look stalled -- the eight-day-blind-spot
+  class of incident #1112 recorded, where a native modal drawn outside tmux
+  was invisible to every TangleClaw surface. Safe/inert off macOS and when no
+  dialog process is running; real wiring into a live session-stall surface is
+  tracked for `Milestone #54` (#1112).
+- A new `lib/settings-rules-routes.js` exposes composed route/controller
+  handlers (`getProjectAdrRulesView`, `getShareableRulesMarkdown`,
+  `previewRulesCompression`, `decideRuleProposal`,
+  `bulkDecideRuleProposals`, `editSessionRuleInPlace`,
+  `validateAndPreviewTeamTemplate`) over `lib/adr-viewer.js`,
+  `lib/rules-compress-preview.js`, `lib/session-rules-bulk.js`, and
+  `lib/team-templates.js`, ready for a future Settings UI route; mounting
+  one is tracked for `Milestone #54` (#2852).
+- A new `lib/resource-lease-routes.js` exposes composed route/controller
+  handlers (`handleAcquireLease`, `handleTransitionLease`,
+  `handleForceReclaimLease`, `handleDelegationGrant`,
+  `handleResourceModuleProvision`, `evaluateOutboundRoleInstruction`) over
+  `lib/resource-leases.js` and `lib/role-instruction-guard.js`, ready for a
+  future resource module / delegation UI route; mounting one is tracked
+  for `Milestone #54` (#2856).
+- `lib/fleet-workload-view.js`'s passive session-state classification is now
+  wired into `lib/workload-fleet.js` (a new `buildFleetView`) and
+  `lib/version-cache-diagnostic.js`'s persistent-write-failure tracking is
+  now wired into `lib/project-version-files.js`'s real cache writer (a new
+  `getVersionCacheDiagnostic`). A new `lib/fleet-visibility-routes.js`
+  exposes the composed controller functions (`getFleetWorkloadView`,
+  `getSwitchboardSwarmStats`, `getVersionCacheDiagnostics`,
+  `getProjectTestDurationStats`) a future fleet-visibility route will call;
+  mounting one is tracked for `Milestone #54` (#2858).
+- `public/session.css` now clears the 4.5:1 WCAG AA contrast floor
+  (`--text-muted` and a light-theme `--danger` override), the same remediation
+  `public/style.css` shipped under #1265 -- both stylesheets' palettes now
+  agree. New standalone UI controllers `public/terminal-identity-ui.js`
+  (Project Settings visual-identity form state, validation and live preview,
+  wrapping `lib/terminal-identity.js`) and `public/upload-pills-ui.js`
+  (composer attachment-pill queue state, drag-and-drop and file-picker
+  wiring, wrapping `lib/upload-pills.js`) are complete and tested; mounting
+  either inside the real composer/Project Settings panel is tracked for
+  `Milestone #54` (#2862, Slice 2 of #1265/#1573/#1577).
+
+### Internal
+- Added `lib/interactive-decision-routing.js`, composing
+  `lib/decision-routing.js`: structured prompt detection for an interactive
+  session decision (`AskUserQuestion`, numbered choice menus, confirmation
+  prompts), a `WAITING_DECISION` session-transition + answer-and-resume
+  composition pair, a Dashboard/Medusa/Discord routing fan-out, a
+  deterministic timed SLA escalation evaluator, and the pure decision
+  function behind lease-bound autonomy. Not yet mounted onto `server.js` or
+  any dashboard page — that is `Milestone #54` (`v5.67.0`) (#2828).
+
+
 ## [5.65.0] - 2026-11-04
 
 ### Added
