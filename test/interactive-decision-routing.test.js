@@ -58,10 +58,28 @@ describe('detectInteractiveDecisionPrompt', () => {
     assert.deepEqual(result.choices, ['Option A', 'Option B']);
   });
 
-  it('finds the longest choice run even with a footer line after it, not only a trailing run', () => {
-    const lines = [' Pick one:', ' ❯ 1. Option A', '   2. Option B', ' Esc to cancel', ' unrelated trailer'];
+  it('finds the longest choice run even with a benign footer line after it, not only a trailing run', () => {
+    const lines = [' Pick one:', ' ❯ 1. Option A', '   2. Option B', ' Esc to cancel'];
     const result = detectInteractiveDecisionPrompt(lines);
     assert.deepEqual(result.choices, ['Option A', 'Option B']);
+  });
+
+  it("I-Gate Round 1 regression (#2905): a choice run followed by real, non-footer output after the footer is stale, not live", () => {
+    // The footer line alone (" Esc to cancel") is benign; " unrelated trailer"
+    // after it is real content showing the session moved on, so the whole
+    // menu must now read as answered, not a live decision.
+    const lines = [' Pick one:', ' ❯ 1. Option A', '   2. Option B', ' Esc to cancel', ' unrelated trailer'];
+    assert.equal(detectInteractiveDecisionPrompt(lines), null);
+  });
+
+  it("I-Gate Round 1 regression (#2905): PRR-B's own exact repro -- a resolved numbered menu followed by completion output and a shell prompt is never a live decision", () => {
+    const lines = ['Choose deployment:', '1. Stage', '2. Production', 'Selection: Stage', 'Deploy finished successfully', '$ '];
+    assert.equal(detectInteractiveDecisionPrompt(lines), null);
+  });
+
+  it('a stale inline (y/n) confirmation followed by real output is rejected, not returned as live', () => {
+    const lines = ['Continue? (y/n)', 'yes', 'Deploy finished successfully', '$ '];
+    assert.equal(detectInteractiveDecisionPrompt(lines), null);
   });
 
   it('falls back to a bare inline (y/n) confirmation when there is no numbered menu', () => {
@@ -328,58 +346,59 @@ describe('evaluateAutonomousWithinLease', () => {
   };
   const activeLease = { state: 'active', expiresAtMs: Date.now() + 60000, scopeGate: 'release-cut', projectId: 7, grantedToRole: 'architect' };
   const architectCaller = { role: 'architect' };
+  const verifiedReleaseCut = { serverVerifiedGate: 'release-cut' };
 
-  it('allows when the lease genuinely covers this decision for this caller', () => {
-    assert.deepEqual(evaluateAutonomousWithinLease(decision, activeLease, architectCaller), { allowed: true, reason: null });
+  it('allows when the lease genuinely covers this decision for this caller, with a server-verified gate binding', () => {
+    assert.deepEqual(evaluateAutonomousWithinLease(decision, activeLease, architectCaller, verifiedReleaseCut), { allowed: true, reason: null });
   });
 
   it('refuses a decision whose requiredAuthority is not autonomous-within-lease at all', () => {
-    const result = evaluateAutonomousWithinLease({ ...decision, requiredAuthority: 'human' }, activeLease, architectCaller);
+    const result = evaluateAutonomousWithinLease({ ...decision, requiredAuthority: 'human' }, activeLease, architectCaller, verifiedReleaseCut);
     assert.deepEqual(result, { allowed: false, reason: 'DECISION_NOT_LEASE_SCOPED' });
   });
 
   it('refuses a decision that is no longer WAITING_DECISION', () => {
-    const result = evaluateAutonomousWithinLease({ ...decision, state: decisionRouting.STATES.ANSWERED }, activeLease, architectCaller);
+    const result = evaluateAutonomousWithinLease({ ...decision, state: decisionRouting.STATES.ANSWERED }, activeLease, architectCaller, verifiedReleaseCut);
     assert.deepEqual(result, { allowed: false, reason: 'DECISION_NOT_WAITING' });
   });
 
   it('refuses with no lease at all', () => {
-    assert.deepEqual(evaluateAutonomousWithinLease(decision, null, architectCaller), { allowed: false, reason: 'LEASE_MISSING' });
+    assert.deepEqual(evaluateAutonomousWithinLease(decision, null, architectCaller, verifiedReleaseCut), { allowed: false, reason: 'LEASE_MISSING' });
   });
 
   it('refuses a lease that is not active', () => {
-    const result = evaluateAutonomousWithinLease(decision, { ...activeLease, state: 'draining' }, architectCaller);
+    const result = evaluateAutonomousWithinLease(decision, { ...activeLease, state: 'draining' }, architectCaller, verifiedReleaseCut);
     assert.deepEqual(result, { allowed: false, reason: 'LEASE_NOT_ACTIVE' });
   });
 
   it('refuses an expired lease', () => {
-    const result = evaluateAutonomousWithinLease(decision, { ...activeLease, expiresAtMs: Date.now() - 1 }, architectCaller);
+    const result = evaluateAutonomousWithinLease(decision, { ...activeLease, expiresAtMs: Date.now() - 1 }, architectCaller, verifiedReleaseCut);
     assert.deepEqual(result, { allowed: false, reason: 'LEASE_EXPIRED' });
   });
 
   it('refuses a lease scoped to a different project', () => {
-    const result = evaluateAutonomousWithinLease(decision, { ...activeLease, projectId: 999 }, architectCaller);
+    const result = evaluateAutonomousWithinLease(decision, { ...activeLease, projectId: 999 }, architectCaller, verifiedReleaseCut);
     assert.deepEqual(result, { allowed: false, reason: 'LEASE_PROJECT_MISMATCH' });
   });
 
-  it('refuses a lease scoped to a different gate than this decision names', () => {
-    const result = evaluateAutonomousWithinLease(decision, { ...activeLease, scopeGate: 'some-other-gate' }, architectCaller);
+  it('refuses a lease scoped to a different gate than the server-verified binding names', () => {
+    const result = evaluateAutonomousWithinLease(decision, { ...activeLease, scopeGate: 'some-other-gate' }, architectCaller, verifiedReleaseCut);
     assert.deepEqual(result, { allowed: false, reason: 'LEASE_SCOPE_MISMATCH' });
   });
 
   it('refuses a caller whose role is not architect or pm, even holding an otherwise-valid lease', () => {
-    const result = evaluateAutonomousWithinLease(decision, activeLease, { role: 'human' });
+    const result = evaluateAutonomousWithinLease(decision, activeLease, { role: 'human' }, verifiedReleaseCut);
     assert.deepEqual(result, { allowed: false, reason: 'CALLER_NOT_AUTHORIZED_CLASS' });
   });
 
   it('refuses when the caller\'s role does not match who the lease was granted to', () => {
-    const result = evaluateAutonomousWithinLease(decision, activeLease, { role: 'pm' });
+    const result = evaluateAutonomousWithinLease(decision, activeLease, { role: 'pm' }, verifiedReleaseCut);
     assert.deepEqual(result, { allowed: false, reason: 'LEASE_ROLE_MISMATCH' });
   });
 
   it('allows a pm caller holding a lease granted to pm', () => {
     const pmLease = { ...activeLease, grantedToRole: 'pm' };
-    assert.deepEqual(evaluateAutonomousWithinLease(decision, pmLease, { role: 'pm' }), { allowed: true, reason: null });
+    assert.deepEqual(evaluateAutonomousWithinLease(decision, pmLease, { role: 'pm' }, verifiedReleaseCut), { allowed: true, reason: null });
   });
 
   it('a caller-supplied decision.gate/reversible claim alone, with no matching lease, is never sufficient', () => {
@@ -388,7 +407,34 @@ describe('evaluateAutonomousWithinLease', () => {
     // OWN scopeGate must independently match -- a mismatched or absent lease
     // still refuses regardless of what the decision claims about itself.
     const claimedReversible = { ...decision, reversible: true, gate: 'anything-i-claim' };
-    const result = evaluateAutonomousWithinLease(claimedReversible, null, architectCaller);
+    const result = evaluateAutonomousWithinLease(claimedReversible, null, architectCaller, verifiedReleaseCut);
     assert.deepEqual(result, { allowed: false, reason: 'LEASE_MISSING' });
+  });
+
+  it('I-Gate Round 1 regression (#2905): session-supplied decision.gate matching the lease is NEVER sufficient on its own', () => {
+    // PRR-B's own exact repro: an active architect lease scoped to
+    // "release-cut", and a waiting_decision whose SESSION-SUPPLIED gate also
+    // reads "release-cut" -- but the prompt it actually describes is
+    // completely unrelated and dangerous. Without an independent
+    // server-verified binding, this must fail closed.
+    const forgedDecision = {
+      decisionId: 'dec_forged', requiredAuthority: 'autonomous-within-lease', state: decisionRouting.STATES.WAITING_DECISION,
+      gate: 'release-cut', projectId: 7, prompt: 'Delete production data?'
+    };
+    const result = evaluateAutonomousWithinLease(forgedDecision, activeLease, architectCaller);
+    assert.deepEqual(result, { allowed: false, reason: 'SERVER_VERIFIED_GATE_MISSING' });
+  });
+
+  it('refuses when verification is given but carries no serverVerifiedGate', () => {
+    const result = evaluateAutonomousWithinLease(decision, activeLease, architectCaller, {});
+    assert.deepEqual(result, { allowed: false, reason: 'SERVER_VERIFIED_GATE_MISSING' });
+  });
+
+  it('refuses when the server-verified gate itself does not match the lease, even though decision.gate does', () => {
+    // decision.gate === activeLease.scopeGate === 'release-cut', but the
+    // INDEPENDENTLY verified binding names a different action entirely --
+    // the verified binding must win, never the session-supplied label.
+    const result = evaluateAutonomousWithinLease(decision, activeLease, architectCaller, { serverVerifiedGate: 'delete-production-data' });
+    assert.deepEqual(result, { allowed: false, reason: 'LEASE_SCOPE_MISMATCH' });
   });
 });
