@@ -17,6 +17,13 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v5.63.0 — Certification and evidence
+
+- **Hold merges for unresolved rulings** (#1717 Slice 1) — `lib/merge-inbox-gate.js` records action-scoped holds that survive beyond a session inbox and block merge, auto-merge, release, or restart until resolved.
+- **Produce the plan scorecard** (#1949, #2144) — `lib/scorecard-producer.js#produceScorecardDocument` derives Project Health and Recent Progress figures from GitHub issue, PR, and milestone activity, and `scripts/scorecard-produce.js` writes the local cache.
+- **Confirm bridge actions and manage reach** (#2842, #2843) — bridge routes handle tiered action confirmation, operator step-up, reach policy, notification settings, and watched channels. `public/bridge-step-up.js` and `public/bridge-settings-ui.js` contain standalone UI modules pending page mounting.
+- **Prepare history and wrap progress surfaces** (#2830, #2837) — `lib/session-history-backfill.js#ensureSessionTranscript` reports capture provenance, while `lib/governed-wrap.js#createWrapProgressStream` formats progress for a future live route.
+
 ## v5.62.0 — Roadmap board and Advisor settings
 
 - **Admit roadmap trains from current evidence** (#1894) — `lib/roadmap-admission.js#buildTrainAdmissionManifest` records dependency and operator-verification facts, and `lib/roadmap-admission.js#validateTrainDispatchAdmission` checks them again before dispatch.

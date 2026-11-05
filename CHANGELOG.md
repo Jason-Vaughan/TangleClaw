@@ -4,6 +4,56 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.63.0] - 2026-11-04
+
+### Added
+- Added a durable, action-scoped merge constraint engine
+  (`lib/merge-inbox-gate.js`): a ruling in flight can now be recorded as a
+  hold that blocks merge/auto-merge/release/restart until it's
+  acknowledged, superseded or scoped-overridden, independent of any
+  session's Medusa inbox (#1717 Slice 1).
+- The plan pages' Project Health and Recent Progress cards show real figures:
+  a producer (`node scripts/scorecard-produce.js`) now computes and writes
+  the local scorecard cache from GitHub issue, pull request and milestone
+  activity, where previously nothing wrote it and both cards said no
+  scorecard had been published (#1949, #2144).
+- The scorecard producer (`lib/scorecard-producer.js`) computes every
+  figure the cache carries, including each trend and net change, from
+  GitHub Search and REST API counts bucketed by Pacific calendar day;
+  `carsCompleted` is always `0` until a real source for it is decided
+  (#2144).
+- Tiered bridge action authority (#2106, #2116) is now wired live: new
+  `POST /api/bridge/helper/action-confirmation/{classify,create,verify}` and
+  `GET/POST /api/bridge/operator/step-up/{pending,:confirmationId/approve,:confirmationId/deny}`
+  routes, a compact Discord confirmation-card renderer and an anchored-grammar
+  reply parser, and a standalone dashboard step-up approval module
+  (`public/bridge-step-up.js`, not yet mounted into a page) (#2842).
+- Batch bridge-reach opt-out, the one-time group-narrowing prompt, layered
+  notification policy, and multi-channel/forum watch inventory (#2117, #2119,
+  #2394) are now wired live: new operator routes for reach batching, the
+  narrowing prompt and its dismissal, global/per-project notification policy,
+  watched-channel registration and watched-message reads, plus a helper route
+  for recording what the bridge observes in a watched channel and the scoped
+  publication-grant create/check/consume routes. A standalone dashboard
+  settings module (`public/bridge-settings-ui.js`, not yet mounted into a
+  page) covers all of it (#2843).
+
+### Fixed
+- Fixed an intermittent CI failure in `release-certification-verify` tests
+  (`fatal: hardlink different from source`) by cloning test repositories
+  with `--no-local`, which never hardlinks to the source (#2362).
+
+### Internal
+- Added `lib/session-history-backfill.js` and the Session History badge
+  helper `public/session-history-ui.js`, wiring `backfillTranscript` into a
+  caller that reports whether a session's transcript was captured live or
+  filled in afterwards from the harness's native log. Not yet wired into the
+  live Session History route or drawer render (#2830).
+- Added governed-wrap progress-stage helpers (`lib/governed-wrap.js`'s
+  `formatWrapProgressEvent`/`createWrapProgressStream`) and the Dashboard
+  Wrap-button/preflight-modal/progress-bar UI (`public/governed-wrap-ui.js`).
+  Not yet wired to a live HTTP route or the real dashboard page (#2837).
+
 ## [5.62.0] - 2026-11-04
 
 ### Added
