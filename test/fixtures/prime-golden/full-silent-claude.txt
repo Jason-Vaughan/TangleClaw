@@ -46,6 +46,9 @@ This project opted into Medusa session-to-session messaging. You are a Medusa pa
 - tmux targets need an exact-match prefix.
 - The store opens SQLite at require time.
 
+# TangleClaw operating primer -- worker
+_(Omitted here to fit the prime size budget — your role is **worker**; behave accordingly per TangleClaw's standing fleet conventions.)_
+
 ## Chunk-Boundary Protocol v1.0.0 (#1889)
 
 _Digest `a3907634ea5a` -- for diagnosing which version of this text a session loaded._

@@ -616,5 +616,9 @@
   <script src="/wrap-run-controller.js"></script>
   <script src="/session-relaunch.js"></script>
   <script src="/session.js"></script>
+  <!-- Loaded after session.js: each depends on its global esc (#2881/#2888). -->
+  <script src="/session-history-ui.js"></script>
+  <script src="/governed-wrap-ui.js"></script>
+  <script src="/chunk-boundary-ui.js"></script>
 </body>
 </html>

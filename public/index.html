@@ -855,7 +855,11 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
   <!-- Loaded before ui.js: renderCardDetail calls renderNextMarkdown at render time. -->
   <script src="/next-markdown.js"></script>
   <script src="/ui.js"></script>
+  <!-- Loaded before history-drawer.js: it calls transcriptSourceBadge (#2881). -->
+  <script src="/session-history-ui.js"></script>
   <script src="/history-drawer.js"></script>
+  <script src="/governed-wrap-ui.js"></script>
+  <script src="/chunk-boundary-ui.js"></script>
   <script src="/setup.js"></script>
 </body>
 </html>

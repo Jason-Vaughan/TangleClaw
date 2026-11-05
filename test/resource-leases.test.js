@@ -374,3 +374,95 @@ describe('resource-leases: retireResourceModule (#2071)', () => {
     assert.equal(r.code, 'RESOURCE_LEASE_INVALID');
   });
 });
+
+// #2888 (#2070 Slice 3): acquireLeaseWithPrimer composes the still-pure
+// acquireLease with lib/primer-launch-wiring.js#attachOperatingPrimerToLease,
+// the one function in this file that is deliberately NOT pure (it reads
+// store/process.env through primer-launch-wiring.js).
+describe('resource-leases: acquireLeaseWithPrimer (#2888)', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const os = require('node:os');
+  const store = require('../lib/store');
+
+  let tmpDir;
+  let project;
+
+  function withStore(fn) {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-resource-leases-primer-'));
+    store._setBasePath(tmpDir);
+    store.init();
+    const dir = path.join(tmpDir, 'proj');
+    fs.mkdirSync(dir);
+    project = store.projects.create({ name: 'rl-primer-proj', path: dir, engine: 'claude' });
+    try {
+      fn();
+    } finally {
+      store.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }
+
+  it('a refused acquireLease never reaches primer resolution -- the refusal passes through unchanged', () => {
+    withStore(() => {
+      const r = rl.acquireLeaseWithPrimer({}, { projectId: project.id });
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'RESOURCE_LEASE_INVALID');
+      assert.equal(r.operatingPrimer, undefined);
+    });
+  });
+
+  it('a successful lease carries operatingPrimerRole/operatingPrimer, defaulting to worker with no coordinator_roles row', () => {
+    withStore(() => {
+      const r = rl.acquireLeaseWithPrimer(
+        { resourceId: 'r1', holderSessionId: 's1', holderProjectId: 'p1', mode: 'exclusive', ttlMs: 10 * MINUTE, existingLeases: [], now: NOW },
+        { projectId: project.id }
+      );
+      assert.equal(r.ok, true);
+      assert.equal(r.lease.operatingPrimerRole, 'worker');
+      assert.ok(r.lease.operatingPrimer.includes('worker'));
+      // acquireLease's own fields are untouched by the composition.
+      assert.equal(r.lease.resourceId, 'r1');
+      assert.equal(r.lease.state, 'active');
+    });
+  });
+
+  it('resolves the real coordinator role from this project\'s own coordinator_roles row', () => {
+    withStore(() => {
+      store.coordinatorRoles.grant({ roleId: 'role-1', projectId: project.id, role: 'architect', note: null, now: NOW });
+      const r = rl.acquireLeaseWithPrimer(
+        { resourceId: 'r1', holderSessionId: 's1', holderProjectId: 'p1', mode: 'exclusive', ttlMs: 10 * MINUTE, existingLeases: [], now: NOW },
+        { projectId: project.id }
+      );
+      assert.equal(r.ok, true);
+      assert.equal(r.lease.operatingPrimerRole, 'coordinator');
+    });
+  });
+
+  it('never derives projectId from holderProjectId -- an opaque holder id is not a real numeric project id', () => {
+    withStore(() => {
+      store.coordinatorRoles.grant({ roleId: 'role-1', projectId: project.id, role: 'architect', note: null, now: NOW });
+      // holderProjectId happens to equal this project's own real numeric id,
+      // as a string -- still must NOT resolve through coordinator_roles
+      // unless primerInput.projectId is given explicitly.
+      const r = rl.acquireLeaseWithPrimer({
+        resourceId: 'r1', holderSessionId: 's1', holderProjectId: String(project.id), mode: 'exclusive',
+        ttlMs: 10 * MINUTE, existingLeases: [], now: NOW
+      });
+      assert.equal(r.ok, true);
+      assert.equal(r.lease.operatingPrimerRole, 'worker', 'no primerInput at all -- defaults to worker, never peeks at holderProjectId');
+    });
+  });
+
+  it('an explicit roleHint wins over coordinator_roles, same precedence resolveSessionRole itself documents', () => {
+    withStore(() => {
+      store.coordinatorRoles.grant({ roleId: 'role-1', projectId: project.id, role: 'architect', note: null, now: NOW });
+      const r = rl.acquireLeaseWithPrimer(
+        { resourceId: 'r1', holderSessionId: 's1', holderProjectId: 'p1', mode: 'exclusive', ttlMs: 10 * MINUTE, existingLeases: [], now: NOW },
+        { projectId: project.id, roleHint: 'reviewer' }
+      );
+      assert.equal(r.ok, true);
+      assert.equal(r.lease.operatingPrimerRole, 'reviewer');
+    });
+  });
+});

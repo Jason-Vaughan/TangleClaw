@@ -207,9 +207,22 @@ async function openHistorySession(sid) {
   if (!t) {
     transcriptHtml = '<div class="form-hint">No transcript captured for this session.</div>';
   } else {
+    // #2881 (#2074 Slice 3): the native-log/live-capture provenance badge
+    // (`public/session-history-ui.js#transcriptSourceBadge`, loaded as its
+    // own script tag alongside this one). That function reads `.engine`;
+    // the server's own field is `.harness` (the OLD response shape's name,
+    // kept for compat) -- mapped at this one call site rather than renamed
+    // on either side. Guarded like every other optional cross-file call in
+    // this codebase (operator-bridge-panel.js, fleet-recovery-panel.js): a
+    // worker that has not yet learned session-history-ui.js degrades to no
+    // badge, never a ReferenceError that would break this whole detail view.
+    const sourceBadge = typeof transcriptSourceBadge === 'function'
+      ? transcriptSourceBadge({ captured: t.captured, source: t.source, engine: t.harness, capturedAt: t.capturedAt })
+      : '';
     const secret = t.secretsFlagged
       ? `<div class="form-hint" style="color:var(--danger)">&#9888; This transcript was flagged for possible secrets (${esc((t.secretTypes || []).join(', ') || 'pattern types only')}). Values are never stored.</div>` : '';
     transcriptHtml = `
+      ${sourceBadge}
       ${secret}
       <div class="card-row" style="margin-top:6px">
         <input type="text" class="form-input" id="historyTranscriptQuery"

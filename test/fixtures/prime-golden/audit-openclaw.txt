@@ -36,6 +36,27 @@ Operating basics for any session in this ecosystem — standing context, not a t
 - **Medusa switchboard:** TangleClaw runs session-to-session agent messaging. A `## Medusa Switchboard` section elsewhere in this prime means you participate — it carries your workspace id and endpoints (use those; never register your own listener). No such section: not opted in; the operator can enable it in settings.
 - **Ports go through PortHub.** Never pick a listen port ad hoc — request or look up assignments via the TangleClaw API (<API_ORIGIN>) so projects cannot collide.
 
+# TangleClaw operating primer -- worker
+
+New or unattested launch: `tc start next`. Already-attested session after `/clear` or compaction: `tc start review`.
+
+An API-unreachable result (exit 2, `API_UNREACHABLE_FROM_CONTEXT`) is not proof the TangleClaw server is down -- a managed sandbox can block localhost even while the host service is healthy. Say so and stop; do not report an outage from this alone.
+
+## Verbs
+
+- `tc help --json` -- the whole verb roster as a stable, machine-readable manifest -- id, usage and summary per verb, for an agent to retrieve rather than parse prose
+- `tc whoami` -- who am I, where is TangleClaw, and what can I do through it
+- `tc capabilities` -- the capability roster alone — enabled and disabled, each with its reason
+- `tc start next [--ack <step>:<revision>:<digest>] [--page <n>] | tc start ready --verdict <v> --first-action <text> | tc start status | tc start review [--step <n|id>] [--page <n>]` -- this session's launch sequence: pull each step of your context, acknowledge it, and attest it READY; after /clear or compaction, re-read it read-only with review
+- `tc message send [--priority …] <workspace-id> <text…> | read | ack <id…> | status <workspace-id> | close <exchange-id> | sent | owed | retract [--reason …] [--replacement <id>] <message-id>` -- switchboard messaging: send to a peer, read your inbox, mark handled, see why a peer has not picked up, close an exchange you started, list the replies you still owe, retract an unread message
+- `tc workload set <state> --clearance <c> --summary "<line>" [--wait <kind>] [--issue n]... [--pr n]... | tc workload show` -- assert what this lane is doing and whether it is safe to clear, so coordinators can read fleet capacity
+- `tc control status | ack <generation> | hold <assignment-id> <reason> | release <assignment-id> <generation> <reason> <hold-id…> | stop <assignment-id> <reason>` -- durable HOLD/STOP control: see whether your lane is held, acknowledge it, or (with authority) hold, release or stop another lane
+- `tc branch check <name> [--json] [--repo <path>]` -- whether a local branch can be deleted or reset without losing work (exit 0 only for safe)
+- `tc finalize --reason "<why>" [--session <id>] [--project <name> --session <id>]` -- retire a finished session headlessly once its receipt reads complete + safe-to-clear, it is drained, and it has no work of its own (exit 3: refused, or incomplete and repeat to finish)
+
+Full reference: `docs/tc-cli-reference.md`. Machine-readable manifest: `tc help --json`.
+
+
 ## Chunk-Boundary Protocol v1.0.0 (#1889)
 
 _Digest `a3907634ea5a` -- for diagnosing which version of this text a session loaded._

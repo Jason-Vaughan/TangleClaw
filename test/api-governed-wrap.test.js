@@ -56,6 +56,82 @@ function operatorRequest(server, method, urlPath, body) {
 }
 
 /**
+ * Parse one SSE block into `{id, event, data}` -- same convention as
+ * `test/api-wrap-stream.test.js#parseFrame`.
+ * @param {string} block
+ * @returns {{id: number, event: string, data: object}}
+ */
+function parseFrame(block) {
+  const frame = {};
+  for (const line of block.split('\n')) {
+    const colon = line.indexOf(':');
+    const field = line.slice(0, colon);
+    const value = line.slice(colon + 1).replace(/^ /, '');
+    if (field === 'id') frame.id = Number(value);
+    else if (field === 'event') frame.event = value;
+    else if (field === 'data') frame.data = JSON.parse(value);
+  }
+  return frame;
+}
+
+/** Every stream request this suite opens, closed in `after` so a leaked SSE socket cannot hang the runner (same reasoning as `test/api-wrap-stream.test.js`). */
+const openStreamRequests = new Set();
+
+/** Destroy every stream request still open. Safe to call repeatedly. */
+function closeOpenStreams() {
+  for (const req of openStreamRequests) {
+    try { req.destroy(); } catch { /* already gone */ }
+  }
+  openStreamRequests.clear();
+}
+
+/**
+ * Open an SSE stream and expose its frames as they arrive. Resolves once
+ * headers land, before any frame -- same convention as
+ * `test/api-wrap-stream.test.js#openStream`.
+ * @param {http.Server} server
+ * @param {string} urlPath
+ * @returns {Promise<{status: number, headers: object, frames: object[], ended: boolean, until: (pred: Function, what?: string) => Promise<void>}>}
+ */
+function openStream(server, urlPath) {
+  return new Promise((resolve, reject) => {
+    const addr = server.address();
+    const req = http.request({ hostname: '127.0.0.1', port: addr.port, path: urlPath, method: 'GET' }, (res) => {
+      const stream = { status: res.statusCode, headers: res.headers, frames: [], ended: false, waiters: [] };
+      const notify = () => { stream.waiters = stream.waiters.filter((w) => !w()); };
+      stream.until = (pred, what = 'a condition') => new Promise((done, fail) => {
+        const check = () => { if (pred(stream)) { clearTimeout(timer); done(); return true; } return false; };
+        const timer = setTimeout(() => fail(new Error(
+          `stream never reached ${what} within 10000ms -- ${stream.frames.length} frame(s): `
+          + `[${stream.frames.map((f) => f.event).join(', ')}], ended=${stream.ended}`
+        )), 10_000);
+        if (timer.unref) timer.unref();
+        if (!check()) stream.waiters.push(check);
+      });
+      let buffer = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        buffer += chunk;
+        let idx;
+        while ((idx = buffer.indexOf('\n\n')) !== -1) {
+          const block = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          if (block.startsWith(':')) continue;
+          stream.frames.push(parseFrame(block));
+        }
+        notify();
+      });
+      res.on('end', () => { stream.ended = true; notify(); });
+      resolve(stream);
+    });
+    req.on('error', reject);
+    openStreamRequests.add(req);
+    req.on('close', () => openStreamRequests.delete(req));
+    req.end();
+  });
+}
+
+/**
  * A well-formed decision bound to the exact request/version/digest it was
  * read from (PRR-B I-Gate Round 1 Finding 3) -- `requestBody` is a governed-wrap
  * request as the HTTP API returns it (camelCase `requestId`/`optionSchemaVersion`/
@@ -103,6 +179,7 @@ describe('governed-wrap HTTP surface (#2072 Slice 1)', () => {
   });
 
   after(async () => {
+    closeOpenStreams();
     await new Promise((resolve) => server.close(resolve));
     store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -266,5 +343,53 @@ describe('governed-wrap HTTP surface (#2072 Slice 1)', () => {
     } finally {
       store.sessions.kill(victimBound.sessionId, 'test cleanup');
     }
+  });
+
+  describe('GET /api/sessions/:project/governed-wrap/:requestId/stream (#2881)', () => {
+    afterEach(() => closeOpenStreams());
+
+    it('streams one "preflight" frame for a request still awaiting a decision, and stays open', async () => {
+      const created = await request(server, 'POST', '/api/sessions/gwrap-target/governed-wrap', {}, pmBound.headers);
+      assert.equal(created.status, 201, JSON.stringify(created.body));
+      const stream = await openStream(server, `/api/sessions/gwrap-target/governed-wrap/${created.body.request.requestId}/stream`);
+      assert.equal(stream.status, 200);
+      assert.equal(stream.headers['content-type'], 'text/event-stream; charset=utf-8');
+      await stream.until((s) => s.frames.length >= 1, 'the initial frame');
+      assert.equal(stream.frames[0].event, 'preflight');
+      assert.equal(stream.frames[0].id, 1);
+      // Not executing, so createWrapProgressStream itself never calls onEnd --
+      // the connection stays open until the client (this test) disconnects.
+      assert.equal(stream.ended, false);
+    });
+
+    it('streams the terminal "failed" frame and ends the response for a cancelled request', async () => {
+      const created = await request(server, 'POST', '/api/sessions/gwrap-target/governed-wrap', {}, pmBound.headers);
+      await request(server, 'POST', `/api/sessions/gwrap-target/governed-wrap/${created.body.request.requestId}/cancel`, {}, pmBound.headers);
+      const stream = await openStream(server, `/api/sessions/gwrap-target/governed-wrap/${created.body.request.requestId}/stream`);
+      assert.equal(stream.status, 200);
+      await stream.until((s) => s.ended, 'the response ending');
+      assert.equal(stream.frames.length, 1);
+      assert.equal(stream.frames[0].event, 'failed');
+    });
+
+    it('answers 404 (not an SSE response) for an unknown request id', async () => {
+      const res = await request(server, 'GET', '/api/sessions/gwrap-target/governed-wrap/gwr_doesnotexist/stream');
+      assert.equal(res.status, 404);
+      assert.equal(res.body.code, 'NOT_FOUND');
+    });
+
+    it('a caller with delegated authority over one project may never stream a DIFFERENT project\'s request through that authorized :project URL', async () => {
+      const victim = store.projects.create({ name: 'gwrap-stream-victim', path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-gwrap-stream-victim-')), engine: 'claude' });
+      const victimBound = bindProject(victim);
+      try {
+        const created = await request(server, 'POST', '/api/sessions/gwrap-stream-victim/governed-wrap', {}, victimBound.headers);
+        assert.equal(created.status, 201, JSON.stringify(created.body));
+        const res = await request(server, 'GET', `/api/sessions/gwrap-target/governed-wrap/${created.body.request.requestId}/stream`);
+        assert.equal(res.status, 404, JSON.stringify(res.body));
+        assert.equal(res.body.code, 'NOT_FOUND');
+      } finally {
+        store.sessions.kill(victimBound.sessionId, 'test cleanup');
+      }
+    });
   });
 });

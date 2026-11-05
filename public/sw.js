@@ -64,6 +64,19 @@ const STATIC_ASSETS = [
   // an offline network-first miss would serve a 503 in its place — and
   // network-first below, in lockstep with session.js.
   '/session-relaunch.js',
+  // session-history-ui.js, governed-wrap-ui.js and chunk-boundary-ui.js
+  // (#2881/#2888) are mounted as plain `<script src>` tags
+  // on index.html and session.html for the first time here. session-history-
+  // ui.js is actually called (guarded) from history-drawer.js's
+  // openHistorySession; the other two are not yet called by anything (their
+  // own functions are "ready before anything calls it", same as this file's
+  // other pre-emptive entries), but all three are dual-listed the same way
+  // history-drawer.js/next-markdown.js are: precached here for offline
+  // coherence of '/' and session.html, network-first below so neither page
+  // serves a stale copy behind an active worker.
+  '/session-history-ui.js',
+  '/governed-wrap-ui.js',
+  '/chunk-boundary-ui.js',
   '/manifest.json'
 ];
 
@@ -211,7 +224,17 @@ const NETWORK_FIRST_PATHS = new Set([
   // as remote-ca-assist.js above, for the same reason: never touch the
   // shared CACHE_NAME counter every other in-flight PR could also be bumping.
   '/terminal-identity-ui.js',
-  '/upload-pills-ui.js'
+  '/upload-pills-ui.js',
+  // session-history-ui.js, governed-wrap-ui.js and chunk-boundary-ui.js --
+  // see the matching comment in STATIC_ASSETS above. session-history-ui.js
+  // is the sharper case of the three: history-drawer.js (already network-
+  // first) calls its transcriptSourceBadge, guarded against the function
+  // being undefined, but a worker that fetched this precache entry once and
+  // never reaches the network again would otherwise keep serving a pre-
+  // #2881 copy forever.
+  '/session-history-ui.js',
+  '/governed-wrap-ui.js',
+  '/chunk-boundary-ui.js'
 ]);
 
 self.addEventListener('install', (event) => {
