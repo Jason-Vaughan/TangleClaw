@@ -1284,6 +1284,86 @@ describe('merge queue advance: an unhandled message in the owner\'s inbox refuse
   });
 });
 
+describe('merge queue advance: a merge-gate hold blocks the landing (#2878 Architect Ruling A504-W1A-R3 BLOCKING 2)', () => {
+  it('ctx.mergeGateEvaluate answering allowed:false refuses MERGE_GATE_HOLD_ACTIVE and changes nothing', async () => {
+    const entry = await testing();
+    const candidate = queues.getEntry(entry.entryId).candidate;
+    const before = eventCount();
+    const gh = fakeGithub();
+    const ctx = {
+      actor: OWNER, guard: () => {}, github: gh.github, inboxCheck: inboxReads(),
+      mergeGateEvaluate: () => ({
+        allowed: false, status: 'hold-active', holds: [{ holdId: 'hold-1' }],
+        message: '1 active hold(s) block "merge".'
+      })
+    };
+    let caught = null;
+    try {
+      await advance(queues.getQueue(queueId), ctx);
+    } catch (err) { // prawduct:allow prawduct/broad-except -- the test asserts on whatever was thrown, on the next lines
+      caught = err;
+    }
+    assert.ok(caught instanceof AdvanceRefusal, String(caught && caught.stack));
+    assert.equal(caught.code, ADVANCE_REFUSALS.MERGE_GATE_HOLD_ACTIVE);
+    assert.equal(caught.details.entryId, entry.entryId);
+    assert.deepEqual(caught.details.holds, [{ holdId: 'hold-1' }]);
+    assert.match(caught.message, /1 active hold/);
+    assert.match(caught.message, /Nothing was changed/);
+
+    const after = queues.getEntry(entry.entryId);
+    assert.equal(after.state, 'testing');
+    assert.deepEqual(after.candidate, candidate);
+    assert.equal(eventCount(), before, 'no event is appended');
+    assert.deepEqual(gh.names().filter((n) => WRITES.includes(n)), [], 'no merge request and no branch deletion');
+  });
+
+  it('a gate-evaluation error (e.g. a corrupt store) fails closed exactly like an active hold', async () => {
+    const entry = await testing();
+    const before = eventCount();
+    const gh = fakeGithub();
+    const refused = await (async () => {
+      let caught = null;
+      try {
+        await advance(queues.getQueue(queueId), {
+          actor: OWNER, guard: () => {}, github: gh.github, inboxCheck: inboxReads(),
+          mergeGateEvaluate: () => ({ ok: false, code: 'CORRUPT_STORE', message: 'the hold store is not valid JSON' })
+        });
+      } catch (err) { caught = err; } // prawduct:allow prawduct/broad-except -- asserted below
+      return caught;
+    })();
+    assert.ok(refused instanceof AdvanceRefusal, String(refused && refused.stack));
+    assert.equal(refused.code, ADVANCE_REFUSALS.MERGE_GATE_HOLD_ACTIVE);
+    assert.match(refused.message, /the hold store is not valid JSON/);
+    assert.equal(eventCount(), before, 'no event is appended');
+    assert.equal(queues.getEntry(entry.entryId).state, 'testing');
+  });
+
+  it('is asked with {repo, pr} before the merge request, and an allowed:true answer lets the landing proceed', async () => {
+    const entry = await testing();
+    let seenIdentity = null;
+    const gh = fakeGithub();
+    const order = [];
+    for (const name of Object.keys(gh.github)) {
+      const call = gh.github[name];
+      gh.github[name] = (...args) => { order.push(name); return call(...args); };
+    }
+    const landed = await advance(queues.getQueue(queueId), {
+      actor: OWNER, guard: () => { order.push('guard'); }, github: gh.github, inboxCheck: inboxReads(),
+      mergeGateEvaluate: (identity) => { seenIdentity = identity; order.push('mergeGateEvaluate'); return { allowed: true }; }
+    });
+    assert.equal(landed.step, STEPS.LANDED);
+    assert.deepEqual(seenIdentity, { repo: REPO, pr: entry.prNumber });
+    const merge = order.indexOf('mergePull');
+    assert.ok(order.indexOf('mergeGateEvaluate') >= 0 && order.indexOf('mergeGateEvaluate') < merge, order.join(' '));
+  });
+
+  it('with no mergeGateEvaluate given at all, the landing proceeds exactly as before (#2878 is additive)', async () => {
+    await testing();
+    const landed = await step(fakeGithub());
+    assert.equal(landed.step, STEPS.LANDED);
+  });
+});
+
 describe('merge queue advance: an entry stuck in landing, and the cleanup a settlement leaves (#2364)', () => {
   /**
    * An entry in landing whose candidate is recorded on `ref`, made by the

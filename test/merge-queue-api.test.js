@@ -1337,6 +1337,86 @@ describe('/api/merge-queue (#2322)', () => {
     });
   });
 
+  describe('a merge-gate hold blocks landing, through the SAME shared file the session routes use (#2878 Architect Ruling A504-W1A-R3 BLOCKING 2)', () => {
+    const mergeGate = require('../lib/merge-inbox-gate');
+
+    /** The shared hold ledger this suite's own `advance()` calls read -- identically to `lib/merge-queue-api.js#_mergeGateFile`. */
+    const mergeGateFile = () => path.join(store._getBasePath(), 'merge-inbox-gate-holds.json');
+
+    beforeEach(() => {
+      emptyQueue();
+      githubForAdvance();
+    });
+
+    /**
+     * Submit an entry and advance it once, to testing with its candidate.
+     * @returns {Promise<object>} The entry
+     */
+    const atTesting = async () => {
+      const entry = await submitted();
+      const assembled = await advanceAs();
+      assert.equal(assembled.data.step, 'assembled', JSON.stringify(assembled.data));
+      gh.calls.length = 0;
+      return entry;
+    };
+
+    it('a hold issued directly against the shared ledger blocks the landing, with no mergePull call', async () => {
+      const entry = await atTesting();
+      const issued = mergeGate.issueHold(mergeGateFile(), {
+        repo: REPO, pr: entry.prNumber, reason: 'reviewing', issuedBy: 'TC-Lane-PRR-A'
+      });
+      assert.equal(issued.ok, true, JSON.stringify(issued));
+      const events = queueStore.listEvents(queueId).length;
+
+      const res = await advanceAs();
+      assert.equal(res.status, 409, JSON.stringify(res.data));
+      assert.equal(res.data.code, 'MERGE_GATE_HOLD_ACTIVE');
+      assert.match(res.data.error, /a merge-gate hold blocks it/);
+
+      assert.equal(queueStore.getEntry(entry.entryId).state, 'testing');
+      assert.equal(queueStore.listEvents(queueId).length, events, 'no event is appended');
+      assert.deepEqual(githubWrites(), [], 'no merge request and no branch deletion');
+    });
+
+    it('a hold scoped to a DIFFERENT pull request does not block this one', async () => {
+      const entry = await atTesting();
+      const issued = mergeGate.issueHold(mergeGateFile(), {
+        repo: REPO, pr: entry.prNumber + 1000, reason: 'a different PR entirely', issuedBy: 'TC-Lane-PRR-A'
+      });
+      assert.equal(issued.ok, true, JSON.stringify(issued));
+      const landed = await advanceAs();
+      assert.equal(landed.data.step, 'landed', JSON.stringify(landed.data));
+    });
+
+    it('once the hold is acknowledged, the next advance lands', async () => {
+      const entry = await atTesting();
+      const issued = mergeGate.issueHold(mergeGateFile(), {
+        repo: REPO, pr: entry.prNumber, reason: 'reviewing', issuedBy: 'TC-Lane-PRR-A'
+      });
+      assert.equal((await advanceAs()).data.code, 'MERGE_GATE_HOLD_ACTIVE');
+
+      const acked = mergeGate.acknowledgeHold(mergeGateFile(), issued.hold.holdId, { by: 'TC-Lane-PRR-A' });
+      assert.equal(acked.ok, true, JSON.stringify(acked));
+
+      const landed = await advanceAs();
+      assert.equal(landed.data.step, 'landed', JSON.stringify(landed.data));
+      assert.equal(queueStore.getEntry(entry.entryId).state, 'landed');
+      assert.equal(gh.calls.filter((c) => c[0] === 'mergePull').length, 1);
+    });
+
+    it('a hold issued through the real /api/sessions/:project/merge-gate route blocks this exact same advance (the ledger really is shared, not just same-shaped)', async () => {
+      const entry = await atTesting();
+      const held = await sendAs(server, 'POST', `/api/sessions/${encodeURIComponent(owner.name)}/merge-gate/holds`, {
+        repo: REPO, pr: entry.prNumber, reason: 'reviewing via the real HTTP route', issuedBy: 'TC-Lane-PRR-A'
+      }, bOwner.headers);
+      assert.equal(held.status, 200, JSON.stringify(held.data));
+
+      const res = await advanceAs();
+      assert.equal(res.data.code, 'MERGE_GATE_HOLD_ACTIVE', JSON.stringify(res.data));
+      assert.deepEqual(githubWrites(), []);
+    });
+  });
+
   describe('the owner\'s coordinator rotation fences submit, withdraw and advance', () => {
     const PRIOR = 'thread-before-the-rotation';
     const NEXT = 'thread-the-rotation-bound';

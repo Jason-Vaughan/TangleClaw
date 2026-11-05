@@ -92,16 +92,38 @@ async function runSync(argv) {
     process.stderr.write(`roadmap-sync-check sync: issue list unavailable -- ${live.reason}\n`);
     return 2;
   }
+  // Not the real roadmap HTML (see module docstring) -- a stable,
+  // content-addressed proxy so `shouldPublishRoadmap` compares something
+  // that actually changes when the issue set does, and nothing else. The
+  // "nothing happened" baseline is a fixed constant, not read from
+  // `prevState`: `computeChangedSince`'s own three arrays are already
+  // relative-to-last-snapshot diffs, so "this run found nothing new" is
+  // exactly "all three are empty", independent of what any PRIOR run
+  // found (I-Gate R1 BLOCKING 1, #issuecomment on PR #2908: the original
+  // version called `changed.map(...)` -- computeChangedSince returns
+  // `{changedIssueIds, newlyLinkedPrIssueIds, skippableClosedIssueIds}`,
+  // not an array, so every real sync call threw TypeError).
+  const EMPTY_DIFF_PROXY = JSON.stringify({ changed: [], newlyLinked: [], skippableClosed: [] });
   const result = await wiring.roadmapRunSyncCycle({
     file: flags['--state'],
     liveSummaries: live.summaries,
     renderRoadmap: (prevState, changed, now) => {
-      // Not the real roadmap HTML (see module docstring) -- a stable,
-      // content-addressed proxy so `shouldPublishRoadmap` compares something
-      // that actually changes when the issue set does, and nothing else.
-      const nextHtml = JSON.stringify(changed.map((c) => c.id).sort());
-      const prevHtml = JSON.stringify(Object.keys((prevState && prevState.issues) || {}).sort());
-      return { prevHtml, nextHtml, nextState: { ...prevState, lastRunAt: new Date(now).toISOString() } };
+      const nextHtml = JSON.stringify({
+        changed: [...changed.changedIssueIds].sort(),
+        newlyLinked: [...changed.newlyLinkedPrIssueIds].sort(),
+        skippableClosed: [...changed.skippableClosedIssueIds].sort()
+      });
+      // Persist what was actually fetched this run, so the NEXT run's own
+      // computeChangedSince has real prior state to diff against instead
+      // of treating every issue as newly changed every time (the second
+      // half of BLOCKING 1: the original version never wrote `issues` into
+      // `nextState` at all).
+      const issues = { ...((prevState && prevState.issues) || {}) };
+      for (const s of live.summaries) {
+        issues[s.id] = { updatedAt: s.updatedAt, closed: s.closed };
+      }
+      const nextState = { ...prevState, issues, lastRunAt: new Date(now).toISOString() };
+      return { prevHtml: EMPTY_DIFF_PROXY, nextHtml, nextState };
     }
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);

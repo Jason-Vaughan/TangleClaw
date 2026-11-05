@@ -49,6 +49,15 @@ function _ghAvailable() {
   }
 }
 
+/** Same convention as {@link _ghAvailable}, for the curl wrapper's own real-binary pass-through test. */
+function _curlAvailable() {
+  try {
+    return Boolean(require('node:child_process').execFileSync('which', ['curl'], { encoding: 'utf8', timeout: 5000 }).trim());
+  } catch {
+    return false;
+  }
+}
+
 describe('#2866: lib/merge-role-guard.js#createRoleGuardWrapperScripts + recordBlockedAttempt', () => {
   let tmpDir;
 
@@ -154,6 +163,53 @@ describe('#2866: lib/merge-role-guard.js#createRoleGuardWrapperScripts + recordB
     const impossible = path.join(file, 'cannot-have-children-under-a-file');
     assert.equal(mergeRoleGuard.recordBlockedAttempt(impossible, { commandText: 'x', code: 'Y', message: 'z' }), false);
   });
+
+  // I-Gate R1 BLOCKING 4: the raw REST merge shape (`curl -X PUT
+  // .../pulls/<n>/merge`) detectMergeInvocation already recognizes needs
+  // its own PATH interception, not just `gh pr merge`/`gh api`.
+  it('also writes a syntactically valid, executable curl wrapper script, requiring the exact guard module', () => {
+    const r = mergeRoleGuard.createRoleGuardWrapperScripts(tmpDir);
+    assert.equal(r.curlFile, path.join(tmpDir, 'curl'));
+    assert.ok(fs.existsSync(r.curlFile));
+    const mode = fs.statSync(r.curlFile).mode & 0o777;
+    assert.equal(mode, 0o755);
+    assert.doesNotThrow(() => new (require('node:vm').Script)(fs.readFileSync(r.curlFile, 'utf8')));
+    const content = fs.readFileSync(r.curlFile, 'utf8');
+    assert.ok(content.includes(JSON.stringify(require.resolve('../lib/merge-role-guard.js'))));
+  });
+
+  it('curl wrapper runs correctly end-to-end: passes a non-merge call through to the real curl', (t) => {
+    if (!_curlAvailable()) {
+      t.skip('curl not installed on this host');
+      return;
+    }
+    mergeRoleGuard.createRoleGuardWrapperScripts(tmpDir);
+    const { execFileSync } = require('node:child_process');
+    const out = execFileSync(
+      process.execPath, [path.join(tmpDir, 'curl'), '--version'],
+      { encoding: 'utf8', env: { ...process.env, PATH: `${tmpDir}:${process.env.PATH}` } }
+    );
+    assert.match(out, /curl/i);
+  });
+
+  it('curl wrapper runs correctly end-to-end: refuses a raw REST PUT merge when no tmux session can be resolved (fails closed)', () => {
+    mergeRoleGuard.createRoleGuardWrapperScripts(tmpDir);
+    const { execFileSync } = require('node:child_process');
+    const env = { ...process.env, PATH: `${tmpDir}:${process.env.PATH}` };
+    delete env.TMUX; // outside any tmux pane -- lane is unresolvable
+    assert.throws(
+      () => execFileSync(
+        process.execPath,
+        [path.join(tmpDir, 'curl'), '-X', 'PUT', 'https://api.github.com/repos/org/repo/pulls/42/merge'],
+        { encoding: 'utf8', env }
+      ),
+      (err) => {
+        assert.equal(err.status, 1);
+        assert.match(err.stderr, /MERGE_ROLE_FORBIDDEN/);
+        return true;
+      }
+    );
+  });
 });
 
 describe('#2866: lib/sessions.js wiring — the gh wrapper reaches every launched pane\'s PATH', () => {
@@ -222,6 +278,49 @@ describe('#2877: tc roadmap verb (lib/tc-verbs.js)', () => {
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  // I-Gate R1 BLOCKING 1 (PR #2908): the original renderRoadmap called
+  // `changed.map(...)`, but computeChangedSince returns
+  // `{changedIssueIds, newlyLinkedPrIssueIds, skippableClosedIssueIds}`, not
+  // an array -- every real `tc roadmap sync` call threw TypeError. This
+  // drives the REAL script end-to-end (as a subprocess, via the verb, same
+  // as a real caller would) against a fake `gh` on PATH, so no real
+  // network/timeout risk, across an initial run and an unchanged second run.
+  it('sync: an initial run publishes, an unchanged second run does not, and state persists across the two (I-Gate R1 BLOCKING 1)', async (t) => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-car67a-roadmap-sync-'));
+    const fakeGhDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-car67a-fake-gh-'));
+    t.after(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      fs.rmSync(fakeGhDir, { recursive: true, force: true });
+    });
+    // A minimal fake `gh` answering exactly the one real `gh api` shape
+    // lib/roadmap-sync.js#fetchIssueSummaries invokes: one issue, fixed
+    // updatedAt, never changing across calls.
+    fs.writeFileSync(path.join(fakeGhDir, 'gh'), [
+      '#!/usr/bin/env node',
+      "if (process.argv[2] === 'api') {",
+      "  process.stdout.write(JSON.stringify({number: 1, updatedAt: '2026-01-01T00:00:00Z', state: 'open', pull_request: false}) + '\\n');",
+      '  process.exit(0);',
+      '}',
+      'process.exit(1);'
+    ].join('\n'), { mode: 0o755 });
+
+    const stateFile = path.join(tmpDir, 'state.json');
+    const exec = (cmd, args) => require('node:child_process').execFileSync(cmd, args, {
+      encoding: 'utf8', env: { ...process.env, PATH: `${fakeGhDir}:${process.env.PATH}` }
+    });
+
+    const r1 = await roadmapVerb.run({ argv: ['sync', '--state', stateFile, '--issues', '1', '--repo', tmpDir], execFile: exec });
+    assert.equal(r1.code, 0, r1.stderr);
+    const result1 = JSON.parse(r1.stdout);
+    assert.equal(result1.published, true, 'first run (no prior state) must publish');
+
+    const r2 = await roadmapVerb.run({ argv: ['sync', '--state', stateFile, '--issues', '1', '--repo', tmpDir], execFile: exec });
+    assert.equal(r2.code, 0, r2.stderr);
+    const result2 = JSON.parse(r2.stdout);
+    assert.equal(result2.published, false, 'second run, nothing changed on GitHub, must NOT publish');
+    assert.equal(result2.state.issues['1'].updatedAt, '2026-01-01T00:00:00Z', 'the fetched issue summary was actually persisted into state');
   });
 
   it('admission: a hard-open prerequisite blocks, surfaced through the verb unchanged from the script', async () => {
@@ -457,5 +556,101 @@ describe('#2878: /api/sessions/:project/merge-gate/* routes (lib/routes/sessions
       repo: 'org/repo', pr: '505', reason: 'cross-lane hold', issuedBy: 'other-lane'
     }, otherBinding.headers);
     assert.equal(r.status, 200);
+  });
+
+  // I-Gate R1 BLOCKING 3: a non-operator caller's `issuedBy`/`by` claim is
+  // never trusted verbatim, and only the issuer (or an operator/master, or an
+  // architect/pm/integrator lane for override) may ack/override a hold.
+  describe('hold authority separation (I-Gate R1 BLOCKING 3)', () => {
+    let reviewerProject;
+    let reviewerBinding;
+    let builderProject;
+    let builderBinding;
+    let integratorProject;
+    let integratorBinding;
+
+    before(() => {
+      const reviewerDir = path.join(tmpDir, 'reviewer-proj-dir');
+      fs.mkdirSync(reviewerDir, { recursive: true });
+      reviewerProject = store.projects.create({ name: 'TC-Lane-PRR-A', path: reviewerDir, engine: 'claude' });
+      reviewerBinding = bindProject(reviewerProject);
+
+      const builderDir = path.join(tmpDir, 'builder-proj-dir');
+      fs.mkdirSync(builderDir, { recursive: true });
+      builderProject = store.projects.create({ name: 'TC-Lane-C', path: builderDir, engine: 'claude' });
+      builderBinding = bindProject(builderProject);
+
+      const integratorDir = path.join(tmpDir, 'integrator-proj-dir');
+      fs.mkdirSync(integratorDir, { recursive: true });
+      integratorProject = store.projects.create({ name: 'TC-Lane-INT', path: integratorDir, engine: 'claude' });
+      integratorBinding = bindProject(integratorProject);
+    });
+
+    it('records issuedBy from the issuing project\'s own verified identity, never the body claim', async () => {
+      const r = await sendAs(server, 'POST', `${base()}/holds`, {
+        repo: 'org/auth-repo', pr: '601', reason: 'authority test', issuedBy: 'someone-else-entirely'
+      }, reviewerBinding.headers);
+      assert.equal(r.status, 200);
+      assert.equal(r.data.hold.issuedBy, 'TC-Lane-PRR-A');
+    });
+
+    it('a different (builder) lane may not acknowledge a reviewer\'s hold', async () => {
+      const issued = await sendAs(server, 'POST', `${base()}/holds`, {
+        repo: 'org/auth-repo', pr: '602', reason: 'ack authority test'
+      }, reviewerBinding.headers);
+      const holdId = issued.data.hold.holdId;
+
+      const r = await sendAs(server, 'POST', `${base()}/holds/${holdId}/ack`, {
+        by: 'claiming-to-be-the-issuer'
+      }, builderBinding.headers);
+      assert.equal(r.status, 403);
+
+      const stillActive = await sendAs(server, 'GET', `${base()}/holds/${holdId}`, undefined, writeHeaders);
+      assert.equal(stillActive.data.hold.status, 'active');
+    });
+
+    it('a different (builder) lane may not override a reviewer\'s hold', async () => {
+      const issued = await sendAs(server, 'POST', `${base()}/holds`, {
+        repo: 'org/auth-repo', pr: '603', reason: 'override authority test'
+      }, reviewerBinding.headers);
+      const holdId = issued.data.hold.holdId;
+
+      const r = await sendAs(server, 'POST', `${base()}/holds/${holdId}/override`, {
+        reason: 'i say so', action: 'merge'
+      }, builderBinding.headers);
+      assert.equal(r.status, 403);
+    });
+
+    it('the issuing lane may acknowledge its own hold, with `by` derived from its verified identity', async () => {
+      const issued = await sendAs(server, 'POST', `${base()}/holds`, {
+        repo: 'org/auth-repo', pr: '604', reason: 'self-ack test'
+      }, reviewerBinding.headers);
+      const holdId = issued.data.hold.holdId;
+
+      const r = await sendAs(server, 'POST', `${base()}/holds/${holdId}/ack`, {
+        by: 'ignored-body-claim'
+      }, reviewerBinding.headers);
+      assert.equal(r.status, 200);
+      assert.equal(r.data.hold.resolution.by, 'TC-Lane-PRR-A');
+    });
+
+    it('an integrator lane may override a reviewer\'s hold despite not being the issuer', async () => {
+      const issued = await sendAs(server, 'POST', `${base()}/holds`, {
+        repo: 'org/auth-repo', pr: '605', reason: 'integrator override test'
+      }, reviewerBinding.headers);
+      const holdId = issued.data.hold.holdId;
+
+      const r = await sendAs(server, 'POST', `${base()}/holds/${holdId}/override`, {
+        reason: 'integrator authority', action: 'merge'
+      }, integratorBinding.headers);
+      assert.equal(r.status, 200);
+      assert.equal(r.data.hold.overrides.at(-1).by, 'TC-Lane-INT');
+    });
+
+    it('an unknown hold id 404s before any authority check runs', async () => {
+      const r = await sendAs(server, 'POST', `${base()}/holds/does-not-exist/ack`, { by: 'whoever' }, builderBinding.headers);
+      assert.equal(r.status, 404);
+      assert.equal(r.data.code, 'HOLD_NOT_FOUND');
+    });
   });
 });
