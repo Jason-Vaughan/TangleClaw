@@ -286,12 +286,28 @@ describe('validateAiDocManifest', () => {
     assert.throws(() => router.validateAiDocManifest(d), router.DocRouterError);
   });
 
-  it('allows the same id twice with distinct version ranges', () => {
+  it('allows the same id twice with distinct, non-overlapping version ranges', () => {
     const d = minimalDoc();
     d.topics[0].lifecycleState = 'deprecated';
     d.topics[0].validUntil = '5.0.0';
     d.topics.push({ id: 't1', path: 'docs/d2.md', anchor: 'b', audience: ['human'], lifecycleState: 'current', validFrom: '5.0.1' });
     assert.doesNotThrow(() => router.validateAiDocManifest(d));
+  });
+
+  it('refuses overlapping version ranges for the same id, even with different bounds (I-Gate Round 1 Finding 1)', () => {
+    // Reproduces the review's exact case: deprecated valid until 5.10.0, current valid from 5.5.0 — 5.5.0..5.10.0 is claimed by both.
+    const d = minimalDoc();
+    d.topics[0].lifecycleState = 'deprecated';
+    d.topics[0].validUntil = '5.10.0';
+    d.topics.push({ id: 't1', path: 'docs/d2.md', anchor: 'b', audience: ['human'], lifecycleState: 'current', validFrom: '5.5.0' });
+    assert.throws(() => router.validateAiDocManifest(d), router.DocRouterError);
+  });
+
+  it('refuses an overlap even when neither range has a bound on the overlapping side', () => {
+    const d = minimalDoc();
+    d.topics[0].lifecycleState = 'deprecated'; // no validFrom/validUntil at all — unbounded both ways
+    d.topics.push({ id: 't1', path: 'docs/d2.md', anchor: 'b', audience: ['human'], lifecycleState: 'current', validFrom: '9.0.0' });
+    assert.throws(() => router.validateAiDocManifest(d), router.DocRouterError);
   });
 
   it('refuses more than one "current" entry for the same id', () => {
@@ -391,6 +407,19 @@ describe('resolveByRole / resolveByCommand', () => {
 
   it('resolveByCommand finds nothing for an unknown command', () => {
     assert.deepEqual(router.resolveByCommand(doc, 'tc bogus'), []);
+  });
+
+  it('a role/command the current entry dropped is NOT served by the deprecated entry that still has it (I-Gate Round 1 Finding 2)', () => {
+    const migratedDoc = {
+      schema: router.SCHEMA,
+      topics: [
+        { id: 't3', path: 'old.md', anchor: 'a', roles: ['worker'], commands: ['tc old'], audience: ['human'], lifecycleState: 'deprecated' },
+        { id: 't3', path: 'new.md', anchor: 'a', roles: ['master'], commands: ['tc new'], audience: ['human'], lifecycleState: 'current' }
+      ]
+    };
+    assert.deepEqual(router.resolveByRole(migratedDoc, 'worker'), [], 'the current replacement no longer serves "worker" — the deprecated path must not leak through');
+    assert.deepEqual(router.resolveByCommand(migratedDoc, 'tc old'), [], 'same for the dropped command');
+    assert.deepEqual(router.resolveByRole(migratedDoc, 'master').map((t) => t.path), ['new.md']);
   });
 });
 
