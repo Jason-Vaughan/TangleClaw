@@ -209,7 +209,7 @@
     },
     "projects": {
       "label": "area:projects",
-      "why": "Project records, config, paths and versions, generated files, git hooks and templates, plan docs and actions.",
+      "why": "Project records, config, paths and versions, generated files, git hooks and templates, plan docs and actions, and the cross-project version dependency registry (#777).",
       "paths": [
         "lib/projects.js",
         "lib/projects-async-io.js",
@@ -388,6 +388,13 @@
       "paths": [
         "lib/product-manual.js",
         "lib/doc-router.js"
+      ]
+    },
+    "linux-systemd": {
+      "label": "area:linux-systemd",
+      "why": "The Linux half of background service management (#1424): a systemd user-unit generator, install/uninstall/status orchestration over systemctl --user / loginctl, and the restart-button contract verifier. The macOS half (launchd plists) stays in scripts/ingress-cutover.js and is not reassigned here. Owned by no other family.",
+      "paths": [
+        "lib/linux-systemd.js"
       ]
     }
   },
