@@ -4,6 +4,108 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.65.0] - 2026-11-04
+
+### Added
+- A cross-project version dependency registry (`lib/project-version-deps.js`):
+  declared edges between managed projects, satisfied/outdated/breaking
+  evaluation against actual current versions, and release-notification
+  payload data for affected dependents. Read-only logic — nothing here
+  sends a notification or modifies a dependent's checkout (#777).
+- A `systemd` user-unit generator and install/uninstall/status orchestrator
+  for Linux hosts (`lib/linux-systemd.js`), the Linux half of background
+  service management alongside the existing macOS `launchd` plists. The
+  generated unit execs `node server.js` directly (never a shell or `npm`
+  wrapper) and sets `KillMode=process`, so a restart never also stops the
+  `tmux` server itself started. Physical Linux hardware verification is
+  tracked separately in #1564 (#1424).
+- `tc docs manual list|show <ref>` and `tc docs router topic|role|command` read
+  the product manual and AI-doc-router manifests from a local file and print
+  the resolved page, section or topic — the `lib/product-manual.js` /
+  `lib/doc-router.js` library wired into the `tc` CLI itself, through a new
+  `lib/tc-docs-scorecard-merge-wiring.js` adapter (#2887, Slice 3 of #811/#2835).
+
+### Changed
+- The workload nudge monitor now reports a mid-session Claude Code
+  `AskUserQuestion` menu as its own verdict, distinct from a generic engine
+  startup dialog, so an escalation names what the pane actually needs: a
+  human to answer it directly (part of #2866; the `gh pr merge` role-guard
+  wiring and the full API-command bypass remain open).
+
+### Fixed
+- Fixed the generic `POST /api/control/assignments/:id/hold` route accepting
+  `reasonCode: 'peer-pause-request'`, which placed a HOLD indistinguishable
+  from a real peer safe-boundary pause while silently skipping the dedicated
+  `/pause` route's pane nudge and escalation (#2832).
+- Fixed `_pruneCoordinatorRoles`'/`_pruneCoordinatorRotations`' retention
+  sweep in `lib/store.js`: a `created_at` tie (two grants in the same
+  millisecond, ~48% of the time) broke the tie on the random `role_id`
+  instead of insertion order, so the sweep could evict the row that should
+  have been kept. Tie-broken on SQLite's own implicit `rowid` instead — a
+  true, free monotonic insertion-order column, no migration needed (#2834).
+- Fixed `lib/store.js#init()`: a brand-new install under a scratch
+  `TANGLECLAW_HOME` still scaffolded new projects into the operator's real,
+  shared `~/Projects` on its actual first boot, because `init()` always
+  wrote `config.json` from the unscoped default before `config.load()`'s
+  own scratch-aware fallback ever had a chance to run. `init()` now seeds a
+  freshly-created `config.json` with the scratch-aware default directly.
+  Canonical (non-scratch) installs are unaffected (#2871, I-Gate PRR-B
+  Round 1).
+
+### Internal
+- Migrated `lib/projects.js`'s safely-convertible synchronous filesystem
+  call sites (`attachProject`, `detectExistingProjects`) to
+  `lib/projects-async-io.js`'s bounded async readers, and wired
+  `lib/workspace-rename-check.js`'s `decideWorkspaceRename` into the rename
+  validator and `findOrphanedSibling`/`orphanedSiblingWarningFor` into a new
+  `lib/session-briefing.js`. The remaining call sites
+  (`createProject`, `syncAllProjects`, `scanForOrphanHooks`,
+  `repairOrphanHooks`, `deleteProject`, `scanForStrandedConfigs`) stay
+  synchronous: each is called without `await` from `server.js`, outside
+  this car's envelope, and converting them in place would silently break
+  those routes (#2864).
+- Per Architect Ruling A502-W1D-R2: added `createProjectAsync`,
+  `syncAllProjectsAsync`, `scanForOrphanHooksAsync`, `repairOrphanHooksAsync`,
+  `deleteProjectAsync`, and `scanForStrandedConfigsAsync` as new, separately
+  exported companion functions reimplementing the same six contracts against
+  `lib/projects-async-io.js` + `fs.promises`. The synchronous originals and
+  `server.js` are unchanged; the companions exist for a future caller that is
+  itself async (#2864).
+- `lib/fleet-provisioning.js#provisionFleetResources` now returns the
+  provisioned `LANE_QUEUE.md` doc's id, an optional shareable MagicDNS URL
+  (`lib/shared-docs-http.js#buildSharedDocMagicDnsUrl`, when the caller
+  supplies an origin), and a live health check
+  (`lib/shared-docs.js#inspectSharedDocRegistrations`) confirming the doc
+  is actually resolvable right after provisioning (#2870).
+- Wired `lib/medusa-toggle-sync.js` into `lib/projects.js` (live-listener
+  drift reporting on read, validated persistence on write),
+  `lib/scratch-home-defaults.js` into `lib/store.js`'s `config.load()`
+  no-file fallback (see the separate `.fixed` fragment for why this alone
+  did not yet reach a normal first boot), and
+  `lib/master-authority.js#reconcileMasterAccessConfigPatch` behind a new
+  `applyMasterAccessConfigPatch` adapter. None are mounted onto a live
+  route yet (#2871).
+- `lib/tc-docs-scorecard-merge-wiring.js` adds the `#2877` adapter layer over
+  `lib/roadmap-admission.js` and `lib/roadmap-sync.js`: a composed pre-dispatch
+  train admission check (classify, build or reuse the manifest, validate the
+  dispatch against fresh facts) and a composed incremental roadmap-sync cycle
+  (diff, render, publish-gate, persist) — the two sequences `#1894`/`#2259`
+  ask the roadmap-board generator and PM train dispatch workflow to run.
+- `lib/tc-docs-scorecard-merge-wiring.js` adds the `#2878` adapter layer over
+  `lib/merge-inbox-gate.js`: stable hold issue/acknowledge/override/list/evaluate
+  call shapes, plus an opt-in, inert-by-default GitHub required-status-check
+  publisher with an injectable `exec` seam. Not yet reachable from a live `tc`
+  verb or route (Ruling A502-W1C-R2 defers that entrypoint mounting to
+  Milestone #54); this lands the library side ready for it.
+- `lib/tc-docs-scorecard-merge-wiring.js` adds the `#2883` adapter layer over
+  `lib/scorecard-producer.js`: an opt-in, inert-by-default scheduled cache
+  refresh and an optional `origin/metrics` branch publication hook, both with
+  injectable seams (timer, produce/write, git `exec`) so neither ever starts a
+  real background timer or touches a real repository under test. Not yet
+  reachable from a live scheduler (Ruling A502-W1C-R2 defers `server.js`
+  mounting to Milestone #54); this lands the library side ready for it.
+
+
 ## [5.64.0] - 2026-11-04
 
 ### Added

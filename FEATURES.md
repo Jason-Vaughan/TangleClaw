@@ -17,6 +17,15 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v5.65.0 — Linux hosts and operator wiring
+
+- **Manage a Linux user service** (#1424) — `lib/linux-systemd.js` generates a `systemd` user unit and manages install, uninstall, and status; `scripts/linux-systemd-install.js` exposes the installer. Physical hardware verification remains tracked in #1564.
+- **Evaluate project version dependencies** (#777) — `lib/project-version-deps.js` records declared edges and classifies dependent projects against actual versions. This read-only module does not notify or update dependents.
+- **Read the manual and AI docs from `tc`** (#2887) — `lib/tc-verbs.js` and `lib/tc-docs-scorecard-merge-wiring.js` expose manual list/show and router topic/role/command lookups from local manifests.
+- **Tighten control and first-boot behavior** (#2832, #2834, #2871) — `lib/control-api.js` rejects peer-pause requests through the generic hold route, `lib/store.js` keeps coordinator grants in insertion order when timestamps tie, and scratch installs seed a scratch-aware projects directory on first boot.
+- **Prepare fleet and roadmap adapters** (#2864, #2870, #2877, #2878, #2883) — `lib/projects.js`, `lib/fleet-provisioning.js`, and `lib/tc-docs-scorecard-merge-wiring.js` add bounded async companions, shared-doc provisioning results, and library adapters. The deferred merge-gate and scorecard entrypoints are not mounted on live routes or schedulers.
+- **Distinguish mid-session questions** (#2866) — `lib/workload-nudge.js` reports Claude Code `AskUserQuestion` menus separately from startup dialogs; the remaining merge guard and answer delivery work stays open.
+
 ## v5.64.0 — Docs and runbooks
 
 - **Plan remote CA trust installation** (#400) — `lib/remote-ca-installer.js` prepares a bounded, reviewable install plan for remote certificate authorities.
