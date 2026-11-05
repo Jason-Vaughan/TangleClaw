@@ -98,6 +98,7 @@ files = [
   "test/host-migration-guide.test.js",
   "test/ingress-door.test.js",
   "test/inline-handler-args.test.js",
+  "test/interactive-decision-routing.test.js",
   "test/isolation-override-banner.test.js",
   "test/landing-unreachable-state.test.js",
   "test/landing-wake-hold-badge.test.js",
