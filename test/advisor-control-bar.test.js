@@ -325,6 +325,52 @@ describe('#2819 the bar behaves', () => {
       assert.equal(doc.getElementById('advisorPanelResetLoopPauseBtn').classList.contains('hidden'), true,
         'Reset hides itself once the repaint sees the pause is gone');
     });
+
+    it('surfaces a failure from the advisory-allowlist write, even though the engine/model write succeeded (#2874)', async () => {
+      const calls = [];
+      const apiMutate = async (p, m, b) => {
+        calls.push([p, m, b]);
+        if (p === '/api/bridge/operator/advisory-allowlist') return null;
+        return { engine: null, model: null, autoStart: false };
+      };
+      const api = Object.assign(async () => ({ engines: [] }), { lastError: 'advisory write refused' });
+      const { doc, bar } = mounted('advisorPanel', { api, apiMutate });
+      bar.mount();
+      await bar.loadSettings();
+      doc.getElementById('advisorPanelSaveSettingsBtn').dispatch('click');
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+      assert.equal(calls.length, 2, 'both writes are attempted even though the second fails');
+      assert.equal(calls[0][0], '/api/advisor/settings');
+      assert.equal(calls[1][0], '/api/bridge/operator/advisory-allowlist');
+      // The error staying exactly this message (not cleared to '') proves
+      // saveSettings() returned before reaching its post-save `setError('')` —
+      // the same line that reveals "Saved" — without needing to assert on
+      // that span's `hidden` class, which the mini-dom harness's deliberately
+      // non-parsing innerHTML never derives from markup (only from code).
+      assert.equal(doc.getElementById('advisorPanelError').textContent, 'advisory write refused');
+      assert.equal(doc.getElementById('advisorPanelError').hidden, false);
+    });
+
+    it('Reset loop pause surfaces a failure instead of silently repainting (#2874)', async () => {
+      const calls = [];
+      const api = Object.assign(
+        async (path) => (path === '/api/bridge/operator/status'
+          ? { allowlist: { advisoryEnabled: true, advisoryChannelId: 'c', advisoryAuthorIds: [], advisoryRequireMention: true, advisoryMaxConsecutiveTurns: 6 }, advisoryLoopPaused: true }
+          : { engines: [] }),
+        { lastError: 'reset refused' }
+      );
+      const apiMutate = async (p, m, b) => { calls.push([p, m, b]); return null; };
+      const { doc, bar } = mounted('advisorPanel', { api, apiMutate });
+      bar.mount();
+      await bar.loadSettings();
+      assert.equal(doc.getElementById('advisorPanelResetLoopPauseBtn').classList.contains('hidden'), false);
+      doc.getElementById('advisorPanelResetLoopPauseBtn').dispatch('click');
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+      assert.equal(calls.length, 1, 'the reset was attempted');
+      assert.equal(doc.getElementById('advisorPanelError').textContent, 'reset refused');
+      assert.equal(doc.getElementById('advisorPanelResetLoopPauseBtn').classList.contains('hidden'), false,
+        'still shown -- a failed reset must not claim the pause is cleared');
+    });
   });
 });
 
