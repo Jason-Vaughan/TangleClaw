@@ -178,6 +178,7 @@
     "test/rule-label-drift.test.js",
     "test/rule-label.test.js",
     "test/scorecard-cache.test.js",
+    "test/scorecard-producer.test.js",
     "test/scratch-home-defaults.test.js",
     "test/secret-scan.test.js",
     "test/select-mode-mouse.test.js",

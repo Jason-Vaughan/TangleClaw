@@ -27,12 +27,13 @@
     },
     "audit": {
       "label": "area:audit",
-      "why": "Eval audit mode (ingest, scoring, incidents, retention) and OpenClaw process visibility.",
+      "why": "Eval audit mode (ingest, scoring, incidents, retention), OpenClaw process visibility, and the local project scorecard cache plus its producer (#1949, #2144).",
       "paths": [
         "lib/routes/audit.js",
         "lib/eval-audit.js",
         "lib/sidecar.js",
-        "lib/scorecard-cache.js"
+        "lib/scorecard-cache.js",
+        "lib/scorecard-producer.js"
       ]
     },
     "wrap": {
