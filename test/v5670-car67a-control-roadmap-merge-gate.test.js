@@ -323,6 +323,53 @@ describe('#2877: tc roadmap verb (lib/tc-verbs.js)', () => {
     assert.equal(result2.state.issues['1'].updatedAt, '2026-01-01T00:00:00Z', 'the fetched issue summary was actually persisted into state');
   });
 
+  // I-Gate R2 (PR #2908): `computeChangedSince`'s `skippableClosedIssueIds`
+  // names issues that were ALREADY closed in prior state -- it is non-empty
+  // on every run once any closed issue exists there, regardless of whether
+  // anything changed THIS run. Including it in the publish-decision proxy
+  // made a closed issue publish forever. This drives two real sync runs of
+  // the SAME unchanged closed issue and proves run 2 does not publish.
+  it('sync: an unchanged CLOSED issue does not publish on the second run (I-Gate R2)', async (t) => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-car67a-roadmap-closed-'));
+    const fakeGhDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-car67a-fake-gh-closed-'));
+    t.after(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      fs.rmSync(fakeGhDir, { recursive: true, force: true });
+    });
+    fs.writeFileSync(path.join(fakeGhDir, 'gh'), [
+      '#!/usr/bin/env node',
+      "if (process.argv[2] === 'api') {",
+      "  process.stdout.write(JSON.stringify({number: 1, updatedAt: '2026-01-01T00:00:00Z', state: 'closed', pull_request: false}) + '\\n');",
+      '  process.exit(0);',
+      '}',
+      'process.exit(1);'
+    ].join('\n'), { mode: 0o755 });
+
+    const stateFile = path.join(tmpDir, 'state.json');
+    const exec = (cmd, args) => require('node:child_process').execFileSync(cmd, args, {
+      encoding: 'utf8', env: { ...process.env, PATH: `${fakeGhDir}:${process.env.PATH}` }
+    });
+
+    const r1 = await roadmapVerb.run({ argv: ['sync', '--state', stateFile, '--issues', '1', '--repo', tmpDir], execFile: exec });
+    assert.equal(r1.code, 0, r1.stderr);
+    const result1 = JSON.parse(r1.stdout);
+    assert.equal(result1.published, true, 'first run (no prior state) must publish');
+    assert.equal(result1.state.issues['1'].closed, true);
+
+    const r2 = await roadmapVerb.run({ argv: ['sync', '--state', stateFile, '--issues', '1', '--repo', tmpDir], execFile: exec });
+    assert.equal(r2.code, 0, r2.stderr);
+    const result2 = JSON.parse(r2.stdout);
+    // Before the fix: skippableClosedIssueIds named issue '1' on this second
+    // run (closed in prior state), which the publish proxy included, so this
+    // read `published: true` forever -- the exact bug I-Gate R2 reported.
+    assert.equal(result2.published, false, 'second run of the SAME unchanged closed issue must NOT publish');
+    assert.deepEqual(result2.changed.changedIssueIds, [], 'nothing actually changed');
+    assert.deepEqual(result2.changed.skippableClosedIssueIds, ['1'], 'the issue is still reported skippable -- that signal is real, just excluded from the publish decision');
+
+    const r3 = await roadmapVerb.run({ argv: ['sync', '--state', stateFile, '--issues', '1', '--repo', tmpDir], execFile: exec });
+    assert.equal(JSON.parse(r3.stdout).published, false, 'a third run is just as unchanged');
+  });
+
   it('admission: a hard-open prerequisite blocks, surfaced through the verb unchanged from the script', async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-car67a-roadmap-'));
     try {

@@ -136,8 +136,8 @@ function gh(...answers) {
  */
 function pull(fields = {}) {
   return {
-    number: 7, state: 'open', merged: false, draft: false, mergeable: true, base_ref: 'main', head_sha: HEAD, changed_files: 2,
-    merge_commit_sha: null, ...fields
+    number: 7, state: 'open', merged: false, draft: false, mergeable: true, base_ref: 'main', head_ref: 'feature/thing',
+    head_sha: HEAD, changed_files: 2, merge_commit_sha: null, ...fields
   };
 }
 
@@ -169,7 +169,7 @@ describe('merge-queue-github — reading a pull request', () => {
     gh(fx);
     assert.deepEqual(await gq.readPull(REPO, 2331), {
       status: 'read', number: 2331, state: 'closed', merged: true, draft: false, mergeable: null,
-      baseRef: 'main', headSha: HEAD, changedFiles: 5, mergeCommitSha: '29354a4674cc207ca89205dadaab40aaf845dffc'
+      baseRef: 'main', headRef: null, headSha: HEAD, changedFiles: 5, mergeCommitSha: '29354a4674cc207ca89205dadaab40aaf845dffc'
     });
     assert.deepEqual(calls[0].args, fx.args);
     assert.equal(calls[0].timeoutMs, gq.READ_TIMEOUT_MS);
@@ -217,9 +217,17 @@ describe('merge-queue-github — reading a pull request', () => {
     assert.deepEqual(await gq.readPull(REPO, 999999), { status: 'unavailable', reason: 'GitHub answered HTTP 404: Not Found' });
   });
 
+  it('answers the head branch name, and null for a recorded answer from before this field existed (#2878 I-Gate R2)', async () => {
+    gh(ok(pull({ head_ref: 'feature/branch-scoped-hold' })));
+    assert.equal((await gq.readPull(REPO, 7)).headRef, 'feature/branch-scoped-hold');
+
+    gh(recorded('pull-merged'));
+    assert.equal((await gq.readPull(REPO, 2331)).headRef, null, 'a recording made before head_ref was projected has none');
+  });
+
   it('answers unavailable when the answer is of another pull request or is missing a part', async () => {
     for (const fields of [{ number: 8 }, { state: 'merged' }, { merged: null }, { draft: undefined }, { mergeable: 'yes' },
-      { base_ref: null }, { head_sha: 'abc' }, { changed_files: -1 }, { changed_files: null },
+      { base_ref: null }, { head_ref: '' }, { head_ref: 7 }, { head_sha: 'abc' }, { changed_files: -1 }, { changed_files: null },
       { merge_commit_sha: 'abc' }, { merge_commit_sha: 7 }, { merge_commit_sha: undefined }, { merge_commit_sha: TIP.toUpperCase() },
       { state: 'open', merged: true, merge_commit_sha: TIP }]) {
       gh(ok(pull(fields)));

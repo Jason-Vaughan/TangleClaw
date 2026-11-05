@@ -96,28 +96,49 @@ async function runSync(argv) {
   // content-addressed proxy so `shouldPublishRoadmap` compares something
   // that actually changes when the issue set does, and nothing else. The
   // "nothing happened" baseline is a fixed constant, not read from
-  // `prevState`: `computeChangedSince`'s own three arrays are already
-  // relative-to-last-snapshot diffs, so "this run found nothing new" is
-  // exactly "all three are empty", independent of what any PRIOR run
-  // found (I-Gate R1 BLOCKING 1, #issuecomment on PR #2908: the original
-  // version called `changed.map(...)` -- computeChangedSince returns
-  // `{changedIssueIds, newlyLinkedPrIssueIds, skippableClosedIssueIds}`,
-  // not an array, so every real sync call threw TypeError).
-  const EMPTY_DIFF_PROXY = JSON.stringify({ changed: [], newlyLinked: [], skippableClosed: [] });
+  // `prevState`: `computeChangedSince`'s own two CHANGE arrays
+  // (`changedIssueIds`, `newlyLinkedPrIssueIds`) are already relative-to-
+  // last-snapshot diffs, so "this run found nothing new" is exactly "both
+  // are empty" (I-Gate R1 BLOCKING 1, #issuecomment on PR #2908: the
+  // original version called `changed.map(...)` -- computeChangedSince
+  // returns `{changedIssueIds, newlyLinkedPrIssueIds,
+  // skippableClosedIssueIds}`, not an array, so every real sync call threw
+  // TypeError).
+  //
+  // `skippableClosedIssueIds` is deliberately EXCLUDED from this proxy
+  // (I-Gate R2: including it made every run with any closed issue in
+  // `prevState` publish forever, since that third array is a function of
+  // PRIOR state, not of what changed THIS run -- once an issue is closed
+  // once, `computeChangedSince` keeps naming it "skippable" on every later
+  // run, which is correct for what it signals but wrong to treat as a
+  // change). It is still a real part of the sync's own answer (useful to
+  // whatever external caller reads `result.changed.skippableClosedIssueIds`
+  // to decide what to skip re-fetching next time), so `wiring.
+  // roadmapRunSyncCycle`'s result still carries it unfiltered -- only the
+  // publish-decision proxy below omits it.
+  const EMPTY_DIFF_PROXY = JSON.stringify({ changed: [], newlyLinked: [] });
   const result = await wiring.roadmapRunSyncCycle({
     file: flags['--state'],
     liveSummaries: live.summaries,
     renderRoadmap: (prevState, changed, now) => {
       const nextHtml = JSON.stringify({
         changed: [...changed.changedIssueIds].sort(),
-        newlyLinked: [...changed.newlyLinkedPrIssueIds].sort(),
-        skippableClosed: [...changed.skippableClosedIssueIds].sort()
+        newlyLinked: [...changed.newlyLinkedPrIssueIds].sort()
       });
       // Persist what was actually fetched this run, so the NEXT run's own
       // computeChangedSince has real prior state to diff against instead
       // of treating every issue as newly changed every time (the second
       // half of BLOCKING 1: the original version never wrote `issues` into
       // `nextState` at all).
+      //
+      // No `linkedPrs`/`linkedPrIds` field is recorded here: this script
+      // deliberately does not call `fetchLinkedPrIds` (scope-limited since
+      // Round 1 -- it is the issue's own "not tested" mechanism). That
+      // means `_allLinkedPrsSettled` always reads an absent `linkedPrs` as
+      // vacuously settled for a closed issue, which is this script's known,
+      // explicit limitation on `skippableClosedIssueIds`'s accuracy, not a
+      // bug this fix claims to resolve -- it no longer affects `published`
+      // either way, since that signal is excluded from the proxy above.
       const issues = { ...((prevState && prevState.issues) || {}) };
       for (const s of live.summaries) {
         issues[s.id] = { updatedAt: s.updatedAt, closed: s.closed };

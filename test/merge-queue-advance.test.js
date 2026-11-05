@@ -41,6 +41,8 @@ const TREE = sha('d');
 const LANDED = sha('e');
 const MOVED = sha('f');
 const OTHER_TREE = sha('9');
+/** The pull request's head branch name, as `readPull` answers it (#2878 I-Gate R2). */
+const HEAD_BRANCH = 'feature/the-submitted-head';
 
 /** The calls that change something on GitHub. */
 const WRITES = ['createCandidate', 'discardCandidate', 'mergePull'];
@@ -73,8 +75,8 @@ const TIMED_OUT = { status: 'unavailable', reason: 'gh api timed out after 10000
 function fakeGithub(over = {}) {
   const answers = {
     readPull: (repo, number) => ({
-      status: 'read', number, state: 'open', merged: false, draft: false, mergeable: true, baseRef: 'main', headSha: HEAD, changedFiles: 2,
-      mergeCommitSha: null
+      status: 'read', number, state: 'open', merged: false, draft: false, mergeable: true, baseRef: 'main', headRef: HEAD_BRANCH,
+      headSha: HEAD, changedFiles: 2, mergeCommitSha: null
     }),
     readRefTip: { status: 'read', sha: BASE },
     readBranchCheck: (repo, branch) => concluded('success', branch === 'main' ? '500' : '501'),
@@ -1338,7 +1340,7 @@ describe('merge queue advance: a merge-gate hold blocks the landing (#2878 Archi
     assert.equal(queues.getEntry(entry.entryId).state, 'testing');
   });
 
-  it('is asked with {repo, pr} before the merge request, and an allowed:true answer lets the landing proceed', async () => {
+  it('is asked with {repo, pr, branch} before the merge request, and an allowed:true answer lets the landing proceed', async () => {
     const entry = await testing();
     let seenIdentity = null;
     const gh = fakeGithub();
@@ -1352,9 +1354,49 @@ describe('merge queue advance: a merge-gate hold blocks the landing (#2878 Archi
       mergeGateEvaluate: (identity) => { seenIdentity = identity; order.push('mergeGateEvaluate'); return { allowed: true }; }
     });
     assert.equal(landed.step, STEPS.LANDED);
-    assert.deepEqual(seenIdentity, { repo: REPO, pr: entry.prNumber });
+    assert.deepEqual(seenIdentity, { repo: REPO, pr: entry.prNumber, branch: HEAD_BRANCH });
     const merge = order.indexOf('mergePull');
     assert.ok(order.indexOf('mergeGateEvaluate') >= 0 && order.indexOf('mergeGateEvaluate') < merge, order.join(' '));
+  });
+
+  it('a branch-only hold ({repo, branch}, no pr) also refuses the landing (#2878 I-Gate R2)', async () => {
+    const entry = await testing();
+    const gh = fakeGithub();
+    let seenIdentity = null;
+    const ctx = {
+      actor: OWNER, guard: () => {}, github: gh.github, inboxCheck: inboxReads(),
+      mergeGateEvaluate: (identity) => {
+        seenIdentity = identity;
+        return identity.branch === HEAD_BRANCH
+          ? { allowed: false, status: 'hold-active', holds: [{ holdId: 'branch-hold' }], message: '1 active hold(s) block "merge".' }
+          : { allowed: true };
+      }
+    };
+    let caught = null;
+    try {
+      await advance(queues.getQueue(queueId), ctx);
+    } catch (err) { caught = err; } // prawduct:allow prawduct/broad-except -- asserted below
+    assert.ok(caught instanceof AdvanceRefusal, String(caught && caught.stack));
+    assert.equal(caught.code, ADVANCE_REFUSALS.MERGE_GATE_HOLD_ACTIVE);
+    assert.equal(seenIdentity.branch, HEAD_BRANCH, 'the PR\'s real head branch was resolved and offered to the gate');
+    assert.equal(queues.getEntry(entry.entryId).state, 'testing');
+  });
+
+  it('a pull request read with no head branch name (an old recording, headRef: null) still asks the gate -- branch simply absent', async () => {
+    await testing();
+    const gh = fakeGithub({
+      readPull: (repo, number) => ({
+        status: 'read', number, state: 'open', merged: false, draft: false, mergeable: true, baseRef: 'main',
+        headRef: null, headSha: HEAD, changedFiles: 2, mergeCommitSha: null
+      })
+    });
+    let seenIdentity = null;
+    const landed = await advance(queues.getQueue(queueId), {
+      actor: OWNER, guard: () => {}, github: gh.github, inboxCheck: inboxReads(),
+      mergeGateEvaluate: (identity) => { seenIdentity = identity; return { allowed: true }; }
+    });
+    assert.equal(landed.step, STEPS.LANDED);
+    assert.equal(seenIdentity.branch, null);
   });
 
   it('with no mergeGateEvaluate given at all, the landing proceeds exactly as before (#2878 is additive)', async () => {

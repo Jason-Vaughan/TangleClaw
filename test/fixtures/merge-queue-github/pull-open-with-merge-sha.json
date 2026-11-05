@@ -5,7 +5,7 @@
     "-i",
     "repos/Jason-Vaughan/TangleClaw/pulls/2360",
     "--jq",
-    "{number: .number, state: .state, merged: .merged, draft: .draft, mergeable: .mergeable, base_ref: .base.ref, head_sha: .head.sha, changed_files: .changed_files, merge_commit_sha: .merge_commit_sha}"
+    "{number: .number, state: .state, merged: .merged, draft: .draft, mergeable: .mergeable, base_ref: .base.ref, head_ref: .head.ref, head_sha: .head.sha, changed_files: .changed_files, merge_commit_sha: .merge_commit_sha}"
   ],
   "exitCode": 0,
   "statusLine": "HTTP/2.0 200 OK",
