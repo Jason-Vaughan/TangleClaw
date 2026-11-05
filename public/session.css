@@ -16,7 +16,11 @@
   --danger: #EF5350;
   --danger-dark: #C62828;
   --text: #E8E8E8;
-  --text-muted: #777;
+  /* #2862 (A503-R1), same remediation public/style.css already shipped under
+     #1265: #777 measured 4.34:1 on --card-bg and 3.89:1 on --elevated-bg, both
+     below the 4.5:1 floor nonfunctional-requirements.md binds. #848484 clears
+     both (5.20:1, 4.65:1) while staying visibly "muted" against --text. */
+  --text-muted: #848484;
   --root-accent: #4a9eff;
   --amber: #FFA726;
   --engine-claude: #8BC34A;
@@ -50,7 +54,16 @@
   --card-bg: #FFFFFF;
   --elevated-bg: #E0E0E0;
   --text: #1A1A1A;
-  --text-muted: #666;
+  /* #2862 (A503-R1): #666 measured 4.35:1 on --elevated-bg, below the 4.5:1
+     floor. #5f5f5f clears it (4.84:1) and still clears --card-bg/--bg
+     (6.39:1, 5.86:1). */
+  --text-muted: #5f5f5f;
+  /* #2862 (A503-R1): the inherited :root --danger (#EF5350) measured 3.20:1
+     on --bg, 3.49:1 on --card-bg and 2.64:1 on --elevated-bg -- all below the
+     4.5:1 floor on this theme's lighter surfaces. A darker red clears every
+     one (7.22:1, 7.87:1, 5.97:1) while still reading unambiguously as
+     "danger". */
+  --danger: #8f3230;
 }
 
 /* ── High Contrast Theme ── */
