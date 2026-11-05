@@ -157,17 +157,17 @@ describe('fetchScorecardFacts / produceScorecardDocument', () => {
     // windowDays:2 ending 2026-03-10 → current [03-09, 03-10], baseline [03-07, 03-08].
     const staleBoundary = producer.pacificDateString(now - producer.STALE_BACKLOG_DAYS * 24 * 60 * 60 * 1000);
     const counts = {
-      [`repo:${slug}+is:issue+created:2026-03-10`]: 1,
-      [`repo:${slug}+is:issue+closed:2026-03-10`]: 2,
-      [`repo:${slug}+is:pr+merged:2026-03-10`]: 3,
-      [`repo:${slug}+is:issue+created:2026-03-09`]: 2,
-      [`repo:${slug}+is:issue+closed:2026-03-09`]: 1,
-      [`repo:${slug}+is:pr+merged:2026-03-09`]: 1,
-      [`repo:${slug}+is:issue+created:2026-03-07..2026-03-08`]: 5,
-      [`repo:${slug}+is:issue+closed:2026-03-07..2026-03-08`]: 4,
-      [`repo:${slug}+is:pr+merged:2026-03-07..2026-03-08`]: 6,
-      [`repo:${slug}+is:issue+is:open`]: 41,
-      [`repo:${slug}+is:issue+is:open+updated:<${staleBoundary}`]: 9
+      [`repo:${slug} is:issue created:2026-03-10`]: 1,
+      [`repo:${slug} is:issue closed:2026-03-10`]: 2,
+      [`repo:${slug} is:pr merged:2026-03-10`]: 3,
+      [`repo:${slug} is:issue created:2026-03-09`]: 2,
+      [`repo:${slug} is:issue closed:2026-03-09`]: 1,
+      [`repo:${slug} is:pr merged:2026-03-09`]: 1,
+      [`repo:${slug} is:issue created:2026-03-07..2026-03-08`]: 5,
+      [`repo:${slug} is:issue closed:2026-03-07..2026-03-08`]: 4,
+      [`repo:${slug} is:pr merged:2026-03-07..2026-03-08`]: 6,
+      [`repo:${slug} is:issue is:open`]: 41,
+      [`repo:${slug} is:issue is:open updated:<${staleBoundary}`]: 9
     };
     // 03-09 closes within the current window; 03-01 falls outside both windows entirely.
     const gh = fakeGh({
@@ -200,6 +200,21 @@ describe('fetchScorecardFacts / produceScorecardDocument', () => {
       { date: '2026-03-09', delivery: { issuesClosed: 1, prsMerged: 1, carsCompleted: 0, trainsCompleted: 1 }, intake: { issuesOpened: 2 }, openBacklogNet: 1 }
     ]);
     assert.deepEqual(dev.today, dev.days[0]);
+
+    // I-Gate Round 1 Finding 1: `gh api` URL-encodes a literal `+` in a `-f` field
+    // value, so GitHub Search receives a plus character rather than a qualifier
+    // separator and refuses with HTTP 422. Assert the actual argv, independent of
+    // the counts lookup above — a fixture whose keys also used `+` would pass
+    // this test while the real `gh` call still failed, which is exactly how this
+    // bug shipped the first time.
+    const searchCalls = gh.calls.filter((args) => args[1] === 'search/issues');
+    assert.ok(searchCalls.length > 0, 'expected at least one search/issues call');
+    for (const args of searchCalls) {
+      const q = args[args.indexOf('-f') + 1];
+      assert.ok(q.startsWith('q='), `expected a q= field, got ${q}`);
+      assert.ok(!q.includes('+'), `search query must join qualifiers with spaces, not '+' (gh URL-encodes a literal + and GitHub Search 422s on it): ${q}`);
+      assert.ok(/ is:| created:| closed:| merged:| updated:/.test(q), `expected space-separated qualifiers: ${q}`);
+    }
   });
 
   it('fetchScorecardFacts returns the raw facts produceScorecardDocument builds the document from', async () => {
@@ -207,17 +222,17 @@ describe('fetchScorecardFacts / produceScorecardDocument', () => {
     const now = Date.parse('2026-03-10T12:00:00-08:00');
     const staleBoundary = producer.pacificDateString(now - producer.STALE_BACKLOG_DAYS * 24 * 60 * 60 * 1000);
     const counts = {
-      [`repo:${slug}+is:issue+created:2026-03-10`]: 0,
-      [`repo:${slug}+is:issue+closed:2026-03-10`]: 0,
-      [`repo:${slug}+is:pr+merged:2026-03-10`]: 0,
-      [`repo:${slug}+is:issue+created:2026-03-09`]: 0,
-      [`repo:${slug}+is:issue+closed:2026-03-09`]: 0,
-      [`repo:${slug}+is:pr+merged:2026-03-09`]: 0,
-      [`repo:${slug}+is:issue+created:2026-03-07..2026-03-08`]: 0,
-      [`repo:${slug}+is:issue+closed:2026-03-07..2026-03-08`]: 0,
-      [`repo:${slug}+is:pr+merged:2026-03-07..2026-03-08`]: 0,
-      [`repo:${slug}+is:issue+is:open`]: 5,
-      [`repo:${slug}+is:issue+is:open+updated:<${staleBoundary}`]: 1
+      [`repo:${slug} is:issue created:2026-03-10`]: 0,
+      [`repo:${slug} is:issue closed:2026-03-10`]: 0,
+      [`repo:${slug} is:pr merged:2026-03-10`]: 0,
+      [`repo:${slug} is:issue created:2026-03-09`]: 0,
+      [`repo:${slug} is:issue closed:2026-03-09`]: 0,
+      [`repo:${slug} is:pr merged:2026-03-09`]: 0,
+      [`repo:${slug} is:issue created:2026-03-07..2026-03-08`]: 0,
+      [`repo:${slug} is:issue closed:2026-03-07..2026-03-08`]: 0,
+      [`repo:${slug} is:pr merged:2026-03-07..2026-03-08`]: 0,
+      [`repo:${slug} is:issue is:open`]: 5,
+      [`repo:${slug} is:issue is:open updated:<${staleBoundary}`]: 1
     };
     const gh = fakeGh({ slug, counts, milestoneLines: [] });
     producer._internal.exec = gh.exec;
