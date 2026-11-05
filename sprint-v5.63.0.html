@@ -532,8 +532,8 @@
         <!-- TANGLECLAW_ADE_KPI_START -->
         <div class="kpi-card">
           <div class="kpi-label">Autonomous Delivery Efficiency (ADE)</div>
-          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">17.55</div>
-          <div class="kpi-meta kpi-sub"><code>8 issues / (0.43h × $1.06)</code> · <code>$0.13/issue</code> · <code>$0.53/kLOC</code> · <code>~3.9M tok</code> (<code>53.8×</code> vs API)</div>
+          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">3.60</div>
+          <div class="kpi-meta kpi-sub"><code>8 issues / (0.95h × $2.34)</code> · <code>$0.29/issue</code> · <code>$1.18/kLOC</code> · <code>~4.5M tok</code> (<code>27.8×</code> vs API)</div>
         </div>
         <!-- TANGLECLAW_ADE_KPI_END -->
           <div class="kpi-card">
@@ -548,8 +548,8 @@
           </div>
           <div class="kpi-card">
             <div class="kpi-label">Total Run Time (Start → Finish)</div>
-            <div class="kpi-value green">26m Leg 2 (4 Pre-Certified Cars + Release)</div>
-            <div class="kpi-sub">18:26:21 PST → 18:52:47 PST (Nov 4) · Leg 2 of 3-Version Train (Charter A500 v1.0)</div>
+            <div class="kpi-value green">57m Leg 2 (26m to Merge + Release CI & Live :3102)</div>
+            <div class="kpi-sub">18:26:21 PST → 19:23:34 PST (Nov 4) · Leg 2 of 3-Version Train (Charter A500 v1.0)</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">True Merge Commits (Rule #282)</div>
@@ -785,11 +785,11 @@
       <div id="ade-efficiency-card" class="subcard" style="margin:18px 0;padding:18px 22px;border:1.5px solid rgba(56,189,248,0.45);background:linear-gradient(135deg,rgba(15,23,42,0.95),rgba(14,116,144,0.16));border-radius:12px;">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
           <span style="color:#38bdf8;font-weight:700;font-size:0.82rem;letter-spacing:0.06em;">📐 AUTONOMOUS DELIVERY EFFICIENCY (ADE) · SPEED × QUALITY × OPERATING COST</span>
-          <span class="badge badge-green" style="font-size:0.78rem;">ADE = 17.55 Certified Issues / (Hr · $) · $0.13/Issue · $0.53/kLOC</span>
+          <span class="badge badge-green" style="font-size:0.78rem;">ADE = 3.60 Certified Issues / (Hr · $) · $0.29/Issue · $1.18/kLOC</span>
         </div>
         <div style="font-size:0.92rem;color:#e2e8f0;line-height:1.55;">
-          <strong>Formula:</strong> <code>ADE = (Accepted, Validated Work Delivered) / (Elapsed Hours × Total Operating Cost)</code> = <code>8 certified issues / (0.43h × $1.06) = <strong>17.55</strong></code> (<code>+1,991 LOC</code> delivered at <code>$0.53 / 1,000 LOC</code>).<br/>
-          <strong>Cost &amp; Token Basis (Method 3):</strong> Amortized from the <code>$500/mo</code> multi-vendor CLI subscription pool (Claude Code <code>$200</code> + Antigravity <code>$200</code> + Codex <code>$100</code> @ <code>85%</code> TangleClaw allocation + <code>$15/mo</code> local M3 Ultra compute = <code>$2.46/active fleet-hr</code>). Estimated CLI turn volume: <code>~3.9M</code> cached/uncached tokens (public frontier API shadow cost <code>~$57</code> → <strong><code>53.8×</code> subscription cost compression</strong>).
+          <strong>Formula:</strong> <code>ADE = (Accepted, Validated Work Delivered) / (Elapsed Hours × Total Operating Cost)</code> = <code>8 certified issues / (0.95h × $2.34) = <strong>3.60</strong></code> (<code>+1,991 LOC</code> delivered at <code>$1.18 / 1,000 LOC</code>).<br/>
+          <strong>Cost &amp; Token Basis (Method 3):</strong> Amortized from the <code>$500/mo</code> multi-vendor CLI subscription pool (Claude Code <code>$200</code> + Antigravity <code>$200</code> + Codex <code>$100</code> @ <code>85%</code> TangleClaw allocation + <code>$15/mo</code> local M3 Ultra compute = <code>$2.46/active fleet-hr</code>). Estimated CLI turn volume: <code>~4.5M</code> cached/uncached tokens (public frontier API shadow cost <code>~$65</code> → <strong><code>27.8×</code> subscription cost compression</strong>).
         </div>
       </div>
       <!-- TANGLECLAW_ADE_BANNER_END -->
@@ -1015,7 +1015,7 @@
                 <td><code>56m</code></td>
                 <td><code>22m</code></td>
                 <td><code>2h 15m</code> (Leg 1)</td>
-                <td><strong><code>26m Leg 2 (4 Pre-Certified Cars + Release)</code> (8 Chartered Issues!)</strong></td>
+                <td><strong><code>57m Leg 2 (26m to Merge + Release CI & Live :3102)</code> (8 Chartered Issues!)</strong></td>
                 <td><span class="badge badge-green">Guardrail 06 pipelining compressed Leg 2 wall time by 81% vs Leg 1</span></td>
               </tr>
               <tr>
@@ -1310,7 +1310,7 @@
             </thead>
             <tbody>
               <tr><td>1</td><td><strong>Operator Interventions &amp; Causes</strong></td><td><code>0</code> unplanned Operator interventions across Legs 1 &amp; 2 (`v5.62.0–v5.63.0`) under `OP-GO-V5620-V5640-20261104`</td><td>0 interventions</td><td><span class="badge badge-green">PASS</span></td><td>Maintain autonomous train execution through `v5.64.0` and the 3-version retrospective</td></tr>
-              <tr><td>2</td><td><strong>Dispatch-to-Merge Timing</strong></td><td>Leg 2 completed in `26m Leg 2 (4 Pre-Certified Cars + Release)` because all 4 feature cars (`#2889, #2882, #2896, #2879`) were pre-built during Leg 1</td><td>Bounded waves</td><td><span class="badge badge-green">PASS</span></td><td>Merge all 4 pre-certified `v5.64.0` cars (`#2893, #2890, #2895, #2891`) immediately after `v5.63.0` tag</td></tr>
+              <tr><td>2</td><td><strong>Dispatch-to-Merge Timing</strong></td><td>Leg 2 completed in `57m Leg 2 (26m to Merge + Release CI & Live :3102)` because all 4 feature cars (`#2889, #2882, #2896, #2879`) were pre-built during Leg 1</td><td>Bounded waves</td><td><span class="badge badge-green">PASS</span></td><td>Merge all 4 pre-certified `v5.64.0` cars (`#2893, #2890, #2895, #2891`) immediately after `v5.63.0` tag</td></tr>
               <tr><td>3</td><td><strong>Active vs Allowed Builders &amp; Parallelism</strong></td><td>100% 4-lane Builder utilization (`TC-Lane-A..D` each delivered 1 car in `v5.63.0` and pre-built `v5.64.0`)</td><td>100% utilization</td><td><span class="badge badge-green">PASS</span></td><td>Retain balanced 1-car-per-builder wave partitioning</td></tr>
               <tr><td>4</td><td><strong>Forced Re-Syncs / Rebases When <code>main</code> Moves</strong></td><td>Clean ancestor merges across `#2889, #2882, #2896, #2879`; `0` destructive rebases</td><td>0 conflicts</td><td><span class="badge badge-green">PASS</span></td><td>Sync `origin/main` cleanly into `#2893, #2890, #2895, #2891` before merge</td></tr>
               <tr><td>5</td><td><strong>Open PR Age Since Current <code>main</code></strong></td><td>All 4 `v5.63.0` feature cars merged cleanly in Wave 1; open PRs `#2893, #2890, #2895, #2891` are pre-certified `v5.64.0` cars</td><td>0 stale PRs</td><td><span class="badge badge-green">PASS</span></td><td>Hold `v5.64.0` merges until `v5.63.0` tag lands (`Guardrail 06`)</td></tr>
