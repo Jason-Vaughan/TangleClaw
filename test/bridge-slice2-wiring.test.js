@@ -353,6 +353,67 @@ describe('lib/bridge-api.js routes, called directly via bridgeApi.handle (#2842/
       assert.equal(denied.status, 200);
       assert.equal(denied.body.confirmation.state, 'consumed');
     });
+
+    it('SECURITY REGRESSION (I-Gate Round 1 Finding 1, PR #2896): a step-up action cannot be verified over '
+      + 'Discord without dashboard approval, even though issuance (create) stays possible', async () => {
+      const created = await asHelper('POST', '/api/bridge/helper/action-confirmation/create', {
+        body: { actionKind: 'rule-change', targetRef: 'rule#9', digestSha: 'f'.repeat(64), version: 1 }
+      });
+      assert.equal(created.status, 201, 'issuance stays possible -- the dashboard needs a pending row to approve');
+      const bypassAttempt = await asHelper('POST', '/api/bridge/helper/action-confirmation/verify', {
+        body: { nonce: created.body.confirmation.nonce, actionKind: 'rule-change', targetRef: 'rule#9', digestSha: 'f'.repeat(64), version: 1 }
+      });
+      assert.deepEqual([bypassAttempt.status, bypassAttempt.body.code], [403, 'STEP_UP_REQUIRED'],
+        'the exact bypass the finding reproduced: create -> immediately verify with the returned nonce, no dashboard approval');
+      // The confirmation must still be pending and approvable afterwards --
+      // refusing verify must not have consumed or corrupted it.
+      const pending = await asOperator('GET', '/api/bridge/operator/step-up/pending');
+      assert.equal(pending.body.pending.length, 1);
+      const approved = await asOperator('POST', '/api/bridge/operator/step-up/:confirmationId/approve', {
+        params: { confirmationId: created.body.confirmation.confirmationId },
+        body: { actionKind: 'rule-change', targetRef: 'rule#9', digestSha: 'f'.repeat(64), version: 1 }
+      });
+      assert.equal(approved.status, 200, 'dashboard approval remains the live path for the same confirmation');
+    });
+
+    it('classify ignores a client-supplied stepUpOptIns body field -- only the durable operator record counts '
+      + '(I-Gate Round 1 Finding 1, PR #2896)', async () => {
+      const spoofed = await asHelper('POST', '/api/bridge/helper/action-confirmation/classify', {
+        body: { actionType: 'rule-change', stepUpOptIns: ['rule-change'] }
+      });
+      assert.equal(spoofed.body.tier, 'step-up', 'a client-claimed opt-in must not downgrade the tier');
+    });
+
+    it('a durable operator opt-in (set via the operator route) allows the SAME action to verify over Discord', async () => {
+      const optIn = await asOperator('POST', '/api/bridge/operator/step-up/opt-ins', { body: { actionKinds: ['rule-change'] } });
+      assert.equal(optIn.status, 200);
+      assert.equal(optIn.body.stepUpOptIns.includes('rule-change'), true);
+
+      const created = await asHelper('POST', '/api/bridge/helper/action-confirmation/create', {
+        body: { actionKind: 'rule-change', targetRef: 'rule#10', digestSha: 'a1'.repeat(32), version: 1 }
+      });
+      const verified = await asHelper('POST', '/api/bridge/helper/action-confirmation/verify', {
+        body: { nonce: created.body.confirmation.nonce, actionKind: 'rule-change', targetRef: 'rule#10', digestSha: 'a1'.repeat(32), version: 1 }
+      });
+      assert.equal(verified.status, 200, 'an operator-opted-in step-up category verifies over Discord like confirmation-card tier');
+    });
+
+    it('revoking the opt-in (clearing it via the operator route) stops the NEXT verify, re-checked fresh', async () => {
+      await asOperator('POST', '/api/bridge/operator/step-up/opt-ins', { body: { actionKinds: ['rule-change'] } });
+      const created = await asHelper('POST', '/api/bridge/helper/action-confirmation/create', {
+        body: { actionKind: 'rule-change', targetRef: 'rule#11', digestSha: 'b2'.repeat(32), version: 1 }
+      });
+      await asOperator('POST', '/api/bridge/operator/step-up/opt-ins', { body: { actionKinds: [] } }); // revoked before verify
+      const verified = await asHelper('POST', '/api/bridge/helper/action-confirmation/verify', {
+        body: { nonce: created.body.confirmation.nonce, actionKind: 'rule-change', targetRef: 'rule#11', digestSha: 'b2'.repeat(32), version: 1 }
+      });
+      assert.deepEqual([verified.status, verified.body.code], [403, 'STEP_UP_REQUIRED']);
+    });
+
+    it('opt-ins are filtered to real STEP_UP_ACTIONS members -- an unrelated string is dropped, not stored', async () => {
+      const result = await asOperator('POST', '/api/bridge/operator/step-up/opt-ins', { body: { actionKinds: ['rule-change', 'merge', 'not-a-real-action'] } });
+      assert.deepEqual(result.body.stepUpOptIns.slice().sort(), ['rule-change']);
+    });
   });
 
   describe('#2843: reach batch, narrowing prompt, notification policy, channels, publication grant', () => {
