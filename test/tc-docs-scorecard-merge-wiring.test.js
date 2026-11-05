@@ -17,9 +17,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+const { execFileSync } = require('node:child_process');
+
 const wiring = require('../lib/tc-docs-scorecard-merge-wiring');
 const mergeGate = require('../lib/merge-inbox-gate');
 const roadmapSync = require('../lib/roadmap-sync');
+const { initRepo } = require('./_temp-repo');
 
 let dir;
 
@@ -391,6 +394,66 @@ describe('publishScorecardToMetricsBranch (#2883)', () => {
   });
 });
 
+describe('publishScorecardToMetricsBranch -- real git integration regression (I-Gate Round 1, #2902)', () => {
+  // Real git, real index: PRR-A reproduced that the production exec seam
+  // (_internal.defaultGitExec) dropped the per-call GIT_INDEX_FILE override,
+  // so `read-tree`/`update-index`/`write-tree` mutated the caller's REAL
+  // index instead of a throwaway one. These tests use no mock exec at all --
+  // only the real default -- and assert the real repository's `.git/index`
+  // is byte-for-byte unchanged, on both a successful publish and a failed one.
+  let repo;
+  let origin;
+
+  beforeEach(() => {
+    repo = initRepo(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-metrics-repo-')), ['-b', 'main']);
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo });
+    fs.writeFileSync(path.join(repo, 'README.md'), 'hello\n');
+    execFileSync('git', ['add', 'README.md'], { cwd: repo });
+    execFileSync('git', ['commit', '-q', '-m', 'initial'], { cwd: repo });
+  });
+
+  afterEach(() => {
+    fs.rmSync(repo, { recursive: true, force: true });
+    if (origin) fs.rmSync(origin, { recursive: true, force: true });
+    origin = undefined;
+  });
+
+  /** @returns {Buffer} The real `.git/index` file's current bytes. */
+  function readRealIndex() {
+    return fs.readFileSync(path.join(repo, '.git', 'index'));
+  }
+
+  it('leaves the real index byte-for-byte unchanged on a successful publish', async () => {
+    origin = initRepo(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-metrics-origin-')), ['--bare']);
+    execFileSync('git', ['remote', 'add', 'origin', origin], { cwd: repo });
+    const before = readRealIndex();
+
+    const result = await wiring.publishScorecardToMetricsBranch({
+      repoDir: repo, document: { schema: 'tc.scorecard/v1', generatedAt: 1 },
+      enabled: true, exec: wiring._internal.defaultGitExec
+    });
+
+    assert.equal(result.published, true);
+    assert.deepEqual(readRealIndex(), before);
+    assert.equal(execFileSync('git', ['status', '--short'], { cwd: repo }).toString(), '');
+  });
+
+  it('leaves the real index byte-for-byte unchanged when push fails (no such remote)', async () => {
+    const before = readRealIndex();
+
+    const result = await wiring.publishScorecardToMetricsBranch({
+      repoDir: repo, document: { schema: 'tc.scorecard/v1', generatedAt: 1 },
+      enabled: true, exec: wiring._internal.defaultGitExec
+    });
+
+    assert.equal(result.published, false);
+    assert.equal(result.reason, 'push-failed');
+    assert.deepEqual(readRealIndex(), before);
+    assert.equal(execFileSync('git', ['status', '--short'], { cwd: repo }).toString(), '');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // #2877 -- roadmap
 // ---------------------------------------------------------------------------
@@ -489,12 +552,19 @@ describe('tc docs manual / tc docs router verb wiring (#2887)', () => {
   const { VERB_ROSTER } = require('../lib/tc-verbs');
   const docsVerb = VERB_ROSTER.find((v) => v.id === 'docs');
 
+  /**
+   * Write an isolated fixture manifest and return its path, for tests that
+   * exercise behavior through an explicit `--file` rather than the
+   * installed default (see the next describe block for the default's own
+   * coverage).
+   */
   function writeManualManifest(targetDir) {
-    fs.mkdirSync(path.join(targetDir, 'docs'), { recursive: true });
-    fs.writeFileSync(path.join(targetDir, 'docs', 'manual-manifest.json'), JSON.stringify({
+    const file = path.join(targetDir, 'manual-manifest.json');
+    fs.writeFileSync(file, JSON.stringify({
       schema: 'tc.manual-manifest/v1',
       pages: [{ id: 'p1', path: 'docs/p1.md', title: 'P1', audience: ['human'], surfaces: ['docs/p1.md'], sections: [] }]
     }));
+    return file;
   }
 
   it('is registered on the existing docs verb, not a new top-level verb', () => {
@@ -503,25 +573,24 @@ describe('tc docs manual / tc docs router verb wiring (#2887)', () => {
     assert.match(docsVerb.usage, /router topic/);
   });
 
-  it('tc docs manual list reads the default manifest relative to ctx.cwd', async () => {
-    writeManualManifest(dir);
-    const result = await docsVerb.run({ argv: ['manual', 'list'], cwd: dir });
+  it('tc docs manual list --file <path> reads that manifest, not the installed default', async () => {
+    const custom = writeManualManifest(dir);
+    const result = await docsVerb.run({ argv: ['manual', 'list', '--file', custom], cwd: dir });
     assert.equal(result.code, 0);
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed[0].id, 'p1');
   });
 
-  it('tc docs manual list --file <path> overrides the default location', async () => {
-    const custom = path.join(dir, 'custom-manifest.json');
-    fs.writeFileSync(custom, JSON.stringify({ schema: 'tc.manual-manifest/v1', pages: [] }));
-    const result = await docsVerb.run({ argv: ['manual', 'list', '--file', custom], cwd: dir });
+  it('tc docs manual list --file <path> resolves a relative path against ctx.cwd', async () => {
+    writeManualManifest(dir);
+    const result = await docsVerb.run({ argv: ['manual', 'list', '--file', 'manual-manifest.json'], cwd: dir });
     assert.equal(result.code, 0);
-    assert.deepEqual(JSON.parse(result.stdout), []);
+    assert.equal(JSON.parse(result.stdout)[0].id, 'p1');
   });
 
-  it('tc docs manual show <ref> exits 2 for a reference that is not found', async () => {
-    writeManualManifest(dir);
-    const result = await docsVerb.run({ argv: ['manual', 'show', 'no-such-page'], cwd: dir });
+  it('tc docs manual show <ref> --file <path> exits 2 for a reference that is not found', async () => {
+    const custom = writeManualManifest(dir);
+    const result = await docsVerb.run({ argv: ['manual', 'show', 'no-such-page', '--file', custom], cwd: dir });
     assert.equal(result.code, 2);
   });
 
@@ -531,15 +600,15 @@ describe('tc docs manual / tc docs router verb wiring (#2887)', () => {
     assert.match(result.stderr, /docs manual needs/);
   });
 
-  it('tc docs manual exits 2 with the library error for a missing manifest file', async () => {
-    const result = await docsVerb.run({ argv: ['manual', 'list'], cwd: dir });
+  it('tc docs manual --file <nonexistent> exits 2 with the library error', async () => {
+    const result = await docsVerb.run({ argv: ['manual', 'list', '--file', path.join(dir, 'missing.json')], cwd: dir });
     assert.equal(result.code, 2);
   });
 
-  it('tc docs router role <role> exits 0 with an empty match rather than erroring', async () => {
-    fs.mkdirSync(path.join(dir, 'docs'), { recursive: true });
-    fs.writeFileSync(path.join(dir, 'docs', 'ai-doc-manifest.json'), JSON.stringify({ schema: 'tc.ai-doc-manifest/v1', topics: [] }));
-    const result = await docsVerb.run({ argv: ['router', 'role', 'builder'], cwd: dir });
+  it('tc docs router role <role> --file <path> exits 0 with an empty match rather than erroring', async () => {
+    const custom = path.join(dir, 'ai-doc-manifest.json');
+    fs.writeFileSync(custom, JSON.stringify({ schema: 'tc.ai-doc-manifest/v1', topics: [] }));
+    const result = await docsVerb.run({ argv: ['router', 'role', 'builder', '--file', custom], cwd: dir });
     assert.equal(result.code, 0);
     assert.deepEqual(JSON.parse(result.stdout), { found: true, entries: [] });
   });
@@ -554,5 +623,37 @@ describe('tc docs manual / tc docs router verb wiring (#2887)', () => {
     const result = await docsVerb.run({ argv: ['bogus-form'], cwd: dir, getJson: async () => ({ docs: [] }) });
     assert.equal(result.code, 1);
     assert.match(result.stderr, /unknown docs form/);
+  });
+});
+
+describe('tc docs manual / tc docs router installed-default resolution (I-Gate Round 1, #2902)', () => {
+  const { VERB_ROSTER, DEFAULT_MANUAL_MANIFEST, DEFAULT_AI_DOC_MANIFEST } = require('../lib/tc-verbs');
+  const docsVerb = VERB_ROSTER.find((v) => v.id === 'docs');
+
+  it('DEFAULT_MANUAL_MANIFEST / DEFAULT_AI_DOC_MANIFEST are absolute, installed-product paths', () => {
+    assert.ok(path.isAbsolute(DEFAULT_MANUAL_MANIFEST));
+    assert.ok(path.isAbsolute(DEFAULT_AI_DOC_MANIFEST));
+    assert.ok(fs.existsSync(DEFAULT_MANUAL_MANIFEST), 'the installed product manifest must actually exist at the default path');
+    assert.ok(fs.existsSync(DEFAULT_AI_DOC_MANIFEST), 'the installed AI-doc manifest must actually exist at the default path');
+  });
+
+  it('tc docs manual list resolves the installed manifest even when the pane cwd is an unrelated, empty directory', async () => {
+    // The exact I-Gate Round 1 repro shape: a pane running `tc` from some other
+    // project (here: a fresh temp directory with no docs/ subdirectory at all)
+    // must still see the real, installed product manual -- not a path resolved
+    // against that unrelated cwd.
+    assert.equal(fs.existsSync(path.join(dir, 'docs')), false);
+    const result = await docsVerb.run({ argv: ['manual', 'list'], cwd: dir });
+    assert.equal(result.code, 0);
+    const pages = JSON.parse(result.stdout);
+    assert.ok(pages.length > 0);
+  });
+
+  it('tc docs router role builder resolves the installed manifest from an unrelated cwd', async () => {
+    const result = await docsVerb.run({ argv: ['router', 'role', 'builder'], cwd: dir });
+    assert.equal(result.code, 0);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.found, true);
+    assert.ok(Array.isArray(parsed.entries));
   });
 });
