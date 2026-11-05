@@ -370,6 +370,104 @@ describe('#2877: tc roadmap verb (lib/tc-verbs.js)', () => {
     assert.equal(JSON.parse(r3.stdout).published, false, 'a third run is just as unchanged');
   });
 
+  // Architect Ruling A504-W1A-R4, I-Gate R2 Blocker 2's second half:
+  // linkedPrIds/linkedPrs must not be silently dropped on a run that
+  // persists `nextState.issues`. This script itself never populates either
+  // field (fetchLinkedPrIds stays out of scope), so the only way to prove
+  // "not dropped" is to seed state that already has them -- as a future
+  // caller that DOES populate them would leave behind -- and show a sync
+  // run preserves rather than wipes it.
+  it('sync: linkedPrIds/linkedPrs already in prior state are carried forward, not dropped (I-Gate R2 Blocker 2 / Ruling A504-W1A-R4)', async (t) => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-car67a-roadmap-linked-'));
+    const fakeGhDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-car67a-fake-gh-linked-'));
+    t.after(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      fs.rmSync(fakeGhDir, { recursive: true, force: true });
+    });
+    fs.writeFileSync(path.join(fakeGhDir, 'gh'), [
+      '#!/usr/bin/env node',
+      "if (process.argv[2] === 'api') {",
+      "  process.stdout.write(JSON.stringify({number: 1, updatedAt: '2026-01-01T00:00:00Z', state: 'closed', pull_request: false}) + '\\n');",
+      '  process.exit(0);',
+      '}',
+      'process.exit(1);'
+    ].join('\n'), { mode: 0o755 });
+
+    const stateFile = path.join(tmpDir, 'state.json');
+    // Seed prior state as a future `fetchLinkedPrIds`-aware caller (or a
+    // manual backfill) would leave it -- this script's own sync runs never
+    // write a populated linkedPrIds/linkedPrs today.
+    fs.writeFileSync(stateFile, JSON.stringify({
+      schema: 'tc.roadmap-sync-state/v1', lastRunAt: null, lastFullResyncAt: null,
+      issues: {
+        1: {
+          updatedAt: '2026-01-01T00:00:00Z', closed: true,
+          linkedPrIds: ['501'], linkedPrs: [{ id: '501', state: 'merged' }]
+        }
+      }
+    }));
+
+    const exec = (cmd, args) => require('node:child_process').execFileSync(cmd, args, {
+      encoding: 'utf8', env: { ...process.env, PATH: `${fakeGhDir}:${process.env.PATH}` }
+    });
+    const r = await roadmapVerb.run({ argv: ['sync', '--state', stateFile, '--issues', '1', '--repo', tmpDir], execFile: exec });
+    assert.equal(r.code, 0, r.stderr);
+    const result = JSON.parse(r.stdout);
+    assert.equal(result.published, false, 'the issue is unchanged and already closed -- nothing to publish');
+    assert.deepEqual(result.state.issues['1'].linkedPrIds, ['501'], 'linkedPrIds survives the run, not reset to []');
+    assert.deepEqual(result.state.issues['1'].linkedPrs, [{ id: '501', state: 'merged' }], 'linkedPrs survives the run, not reset to []');
+  });
+
+  // The exact reproduction from I-Gate R3 (#pullrequestreview-5792619192):
+  // a closed issue whose linked PR is still OPEN must never be reported
+  // skippable. The bug was specifically a TWO-RUN corruption: run 1 (before
+  // this fix) erased `linkedPrs` when persisting `nextState.issues`, so run
+  // 2's `computeChangedSince` -- which reads `prevState` fresh off disk --
+  // saw no `linkedPrs` at all and, by `_allLinkedPrsSettled`'s vacuous-true
+  // default, wrongly called the issue skippable despite its PR being open.
+  it('sync: a closed issue with an OPEN linked PR is never skippable, across two runs (I-Gate R3 exact repro, Ruling A504-W1A-R4 Item 2)', async (t) => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-car67a-roadmap-open-link-'));
+    const fakeGhDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-car67a-fake-gh-open-link-'));
+    t.after(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      fs.rmSync(fakeGhDir, { recursive: true, force: true });
+    });
+    fs.writeFileSync(path.join(fakeGhDir, 'gh'), [
+      '#!/usr/bin/env node',
+      "if (process.argv[2] === 'api') {",
+      "  process.stdout.write(JSON.stringify({number: 1, updatedAt: '2026-01-01T00:00:00Z', state: 'closed', pull_request: false}) + '\\n');",
+      '  process.exit(0);',
+      '}',
+      'process.exit(1);'
+    ].join('\n'), { mode: 0o755 });
+
+    const stateFile = path.join(tmpDir, 'state.json');
+    fs.writeFileSync(stateFile, JSON.stringify({
+      schema: 'tc.roadmap-sync-state/v1', lastRunAt: null, lastFullResyncAt: null,
+      issues: { 1: { updatedAt: '2026-01-01T00:00:00Z', closed: true, linkedPrIds: ['42'], linkedPrs: [{ state: 'open' }] } }
+    }));
+
+    const exec = (cmd, args) => require('node:child_process').execFileSync(cmd, args, {
+      encoding: 'utf8', env: { ...process.env, PATH: `${fakeGhDir}:${process.env.PATH}` }
+    });
+
+    const r1 = await roadmapVerb.run({ argv: ['sync', '--state', stateFile, '--issues', '1', '--repo', tmpDir], execFile: exec });
+    assert.equal(r1.code, 0, r1.stderr);
+    const result1 = JSON.parse(r1.stdout);
+    assert.deepEqual(result1.state.issues['1'].linkedPrIds, ['42'], 'run 1 must not erase linkedPrIds while persisting');
+    assert.deepEqual(result1.state.issues['1'].linkedPrs, [{ state: 'open' }], 'run 1 must not erase linkedPrs while persisting');
+
+    const r2 = await roadmapVerb.run({ argv: ['sync', '--state', stateFile, '--issues', '1', '--repo', tmpDir], execFile: exec });
+    assert.equal(r2.code, 0, r2.stderr);
+    const result2 = JSON.parse(r2.stdout);
+    // The bug's actual symptom: run 2 reads run 1's PERSISTED state fresh.
+    // Before this fix, run 1 had already wiped linkedPrs, so this read
+    // skippableClosedIssueIds: ['1'] despite the PR being open.
+    assert.deepEqual(result2.changed.skippableClosedIssueIds, [], 'the issue\'s linked PR is still open -- it must never be reported skippable');
+    assert.deepEqual(result2.state.issues['1'].linkedPrs, [{ state: 'open' }], 'linkedPrs is still intact after a second run');
+    assert.equal(result2.published, false);
+  });
+
   it('admission: a hard-open prerequisite blocks, surfaced through the verb unchanged from the script', async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-car67a-roadmap-'));
     try {

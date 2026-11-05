@@ -131,17 +131,27 @@ async function runSync(argv) {
       // half of BLOCKING 1: the original version never wrote `issues` into
       // `nextState` at all).
       //
-      // No `linkedPrs`/`linkedPrIds` field is recorded here: this script
-      // deliberately does not call `fetchLinkedPrIds` (scope-limited since
-      // Round 1 -- it is the issue's own "not tested" mechanism). That
-      // means `_allLinkedPrsSettled` always reads an absent `linkedPrs` as
-      // vacuously settled for a closed issue, which is this script's known,
-      // explicit limitation on `skippableClosedIssueIds`'s accuracy, not a
-      // bug this fix claims to resolve -- it no longer affects `published`
-      // either way, since that signal is excluded from the proxy above.
-      const issues = { ...((prevState && prevState.issues) || {}) };
+      // `linkedPrIds`/`linkedPrs` are carried forward from whatever prior
+      // state already had, never dropped (Architect Ruling A504-W1A-R4,
+      // I-Gate R2 Blocker 2's second half): this script itself still does
+      // not call `fetchLinkedPrIds` (scope-limited since Round 1 -- it is
+      // the issue's own "not tested" mechanism), so `s.linkedPrIds`/
+      // `s.linkedPrs` are always absent on `live.summaries` today and this
+      // is a no-op in practice -- but a future caller that DOES populate
+      // either on `live.summaries` (or writes them into `prevState`
+      // directly) has its data preserved across this run rather than
+      // silently overwritten with nothing. `_allLinkedPrsSettled` reads
+      // `.linkedPrs` specifically (an array of `{state}`, not bare ids);
+      // defaulting to `[]` here matches its own `|| []` and stays
+      // vacuously "settled" until something actually populates it.
+      const prevIssues = (prevState && prevState.issues) || {};
+      const issues = { ...prevIssues };
       for (const s of live.summaries) {
-        issues[s.id] = { updatedAt: s.updatedAt, closed: s.closed };
+        issues[s.id] = {
+          updatedAt: s.updatedAt, closed: s.closed,
+          linkedPrIds: s.linkedPrIds || (prevIssues[s.id] && prevIssues[s.id].linkedPrIds) || [],
+          linkedPrs: s.linkedPrs || (prevIssues[s.id] && prevIssues[s.id].linkedPrs) || []
+        };
       }
       const nextState = { ...prevState, issues, lastRunAt: new Date(now).toISOString() };
       return { prevHtml: EMPTY_DIFF_PROXY, nextHtml, nextState };
