@@ -253,8 +253,9 @@
       <span>TangleClaw Autonomous Sprint Reports</span>
     </div>
     <div class="nav-links">
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.65.0/">v5.65.0 (Latest)</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.62.0-v5.64.0-retrospective/">v5.62.0–v5.64.0 Retro</a>
-      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.64.0/">v5.64.0 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.64.0/">v5.64.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.63.0/">v5.63.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.62.0/">v5.62.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.61.0/">v5.61.0</a>
@@ -305,13 +306,13 @@
       <div class="kpi-grid">
         <div class="kpi-card">
           <div class="kpi-label">Published Sprint Reports</div>
-          <div class="kpi-val">34 Releases</div>
-          <div class="kpi-sub"><code>v5.34.0</code>–<code>v5.64.0</code> + <code>v5.62.0–v5.64.0</code>, <code>v5.57.0–v5.61.0</code> &amp; <code>v5.54.0–v5.56.0</code> Retrospectives</div>
+          <div class="kpi-val">35 Releases</div>
+          <div class="kpi-sub"><code>v5.34.0</code>–<code>v5.65.0</code> + <code>v5.62.0–v5.64.0</code>, <code>v5.57.0–v5.61.0</code> &amp; <code>v5.54.0–v5.56.0</code> Retrospectives</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Cumulative Sprint PRs</div>
-          <div class="kpi-val">323 PRs Merged</div>
-          <div class="kpi-sub"><strong>126 waves</strong> across thirty-seven reports · <code>v5.62.0–v5.64.0</code> 3-Version Train delivered 14 PRs &amp; 22 issues in 3h 56m</div>
+          <div class="kpi-val">328 PRs Merged</div>
+          <div class="kpi-sub"><strong>128 waves</strong> across thirty-eight reports · <code>v5.65.0</code> Leg 1 delivered 5 PRs &amp; 12 active issues</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Testament v0.34.0 Pool</div>
@@ -320,13 +321,38 @@
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Latest Release Report</div>
-          <div class="kpi-val" style="color:var(--green);">v5.64.0</div>
-          <div class="kpi-sub">Tag <code>v5.64.0 @ 0c06132b</code> · Milestone <code>#49</code> (<code>7/7</code> Issues)</div>
+          <div class="kpi-val" style="color:var(--green);">v5.65.0</div>
+          <div class="kpi-sub">Tag <code>v5.65.0 @ d97f0121</code> · Milestone <code>#50</code> (<code>0</code> Open)</div>
         </div>
       </div>
     </section>
 
     <div class="report-list">
+      <!-- v5.65.0 Card -->
+      <article class="report-card">
+        <div class="report-header">
+          <div>
+            <span class="badge badge-green">● Latest Release · Nov 4, 2026</span>
+            <h2 class="report-title"><a href="./v5.65.0/">TangleClaw <code>v5.65.0</code>: “Linux hosts”</a></h2>
+          </div>
+          <span class="badge badge-cyan">Tag v5.65.0 @ d97f0121 · 5/5 True Merges &amp; Testament v0.34.0 Verified</span>
+        </div>
+        <p style="color:#cbd5e1; margin:0;">
+          Two coordinated waves delivered <strong>5 Sprint PRs (#2899, #2900, #2902, #2901, #2906)</strong> under Charter <code>A502 v1.0</code> (<code>OP-GO-V5650-V5660-20261104</code>) as Leg 1 of the Two-Version Autonomous Sprint Train (<code>v5.65.0 → v5.66.0</code>), closing all <strong>12 active chartered Milestone #50 issues (<code>open_issues: 0, closed_issues: 9</code>)</strong> with <strong><code>+4,168 / -75</code> feature LOC across 44 file touches</strong>. Shipped native Linux / <code>systemd --user</code> unit generation &amp; installer and cross-project version dependency registry (<code>#1424, #777</code>, <code>PR #2899 @ a84280df</code>), generic hold route <code>peer-pause-request</code> guard and Slice 2 <code>merge-role-guard</code> launch PATH hooks + <code>AskUserQuestion</code> auto-handling (<code>#2832, #2866</code>, <code>PR #2900 @ 23da9c23</code>), live CLI/server adapter wiring for <code>product-manual</code>, <code>doc-router</code>, <code>merge-inbox-gate</code>, <code>scorecard-producer</code> &amp; <code>roadmap-admission</code>/<code>roadmap-sync</code> (<code>#2887, #2878, #2883, #2877</code>, <code>PR #2902 @ a527abeb</code>), and <code>lib/projects.js</code> async I/O migration, <code>coordinator_roles</code> retention prune tie-breaker, store Medusa/master-authority repair &amp; <code>sharedDir</code> MagicDNS serving (<code>#2864, #2871, #2870, #2834</code>, <code>PR #2901 @ ffb1622f</code>).
+        </p>
+        <div class="meta-pills">
+          <span class="badge badge-green">⏱️ Total Run Time: 1h 52m Leg 1 (21:55 → 23:47 PST · 4 Feature Cars + Release Cut)</span>
+          <span class="badge badge-cyan">5/5 True Merges (#2899, #2900, #2902, #2901, #2906)</span>
+          <span class="badge badge-purple">Milestone #50: 0 Open, 9 Closed</span>
+          <span class="badge badge-amber">+4,168 / -75 Feature LOC across 44 file touches</span>
+          <span class="badge badge-green">0 Post-Merge Defects</span>
+        </div>
+        <div class="card-footer">
+          <div class="url-box">https://jason-vaughan.github.io/TangleClaw/reports/v5.65.0/</div>
+          <a class="cta-btn" href="./v5.65.0/">Open Interactive Report →</a>
+        </div>
+      </article>
+
       <!-- v5.62.0-v5.64.0 Retrospective Card -->
       <article class="report-card" style="border-color: rgba(52, 211, 153, 0.55); background: linear-gradient(135deg, rgba(16, 185, 129, 0.10), rgba(15, 23, 42, 0.92));">
         <div class="report-header">
@@ -356,7 +382,7 @@
       <article class="report-card">
         <div class="report-header">
           <div>
-            <span class="badge badge-green">● Latest Release · Nov 4, 2026</span>
+            <span class="badge badge-purple">Sprint Release · Nov 4, 2026</span>
             <h2 class="report-title"><a href="./v5.64.0/">TangleClaw <code>v5.64.0</code>: “Docs and runbooks”</a></h2>
           </div>
           <span class="badge badge-cyan">Tag v5.64.0 @ 0c06132b · 5/5 True Merges &amp; Testament v0.34.0 Verified</span>
