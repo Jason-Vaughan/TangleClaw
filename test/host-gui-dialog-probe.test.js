@@ -69,7 +69,7 @@ describe('probeHostGuiDialogs: a dialog agent running', () => {
       platform: 'darwin', execFile, stalledSessions: [{ pid: 75078, elapsedSeconds: 691141, label: 'PrawductSteward' }]
     });
     assert.equal(result.blocked, true);
-    assert.deepEqual(result.dialogs, [{ pid: 12345, name: 'SecurityAgent', elapsedSeconds: 8 * 86400 + 19 * 60 + 1 }]);
+    assert.deepEqual(result.dialogs, [{ pid: 12345, name: 'SecurityAgent', elapsedSeconds: 8 * 86400 + 19 * 60 + 1, reliable: true }]);
     assert.deepEqual(result.stalledSessions, [{ pid: 75078, elapsedSeconds: 691141, label: 'PrawductSteward' }]);
     assert.match(result.summary, /SecurityAgent/);
     assert.match(result.summary, /1 session\(s\) look stalled/);
@@ -84,13 +84,38 @@ describe('probeHostGuiDialogs: a dialog agent running', () => {
     assert.match(result.summary, /no stalled sessions reported/);
   });
 
-  it('recognizes every named dialog-class process', async () => {
+  it('recognizes every named dialog-class process, marking reliable vs. not', async () => {
     for (const name of probe.DIALOG_PROCESS_NAMES) {
       const execFile = mock.fn(async () => ({ stdout: psOutputWith(`42 ${name} 00:01:00`) }));
       const result = await probe.probeHostGuiDialogs({ platform: 'darwin', execFile, stalledSessions: [{ pid: 1 }] });
       assert.equal(result.dialogs.length, 1, `expected ${name} to be recognized`);
       assert.equal(result.dialogs[0].name, name);
+      assert.equal(result.dialogs[0].reliable, probe.RELIABLE_DIALOG_PROCESS_NAMES.includes(name));
     }
+  });
+
+  it("I-Gate Round 1 regression (#2903): ordinary SystemUIServer presence alone never reads blocked, even with a stalled session", async () => {
+    const execFile = mock.fn(async () => ({ stdout: psOutputWith('99 SystemUIServer 1-00:00:00') }));
+    const result = await probe.probeHostGuiDialogs({
+      platform: 'darwin', execFile, stalledSessions: [{ pid: 75078, label: 'some-stalled-session' }]
+    });
+    assert.equal(result.blocked, false);
+    assert.equal(result.dialogs.length, 1);
+    assert.equal(result.dialogs[0].name, 'SystemUIServer');
+    assert.equal(result.dialogs[0].reliable, false);
+    assert.deepEqual(result.stalledSessions, []);
+    assert.match(result.summary, /uncertain/);
+    assert.doesNotMatch(result.summary, /likely cause/);
+  });
+
+  it('a reliable dialog alongside SystemUIServer still reads blocked, counting only the reliable one in the summary', async () => {
+    const execFile = mock.fn(async () => ({
+      stdout: psOutputWith('1 SecurityAgent 00:00:05') + '    2 SystemUIServer      1-00:00:00\n'
+    }));
+    const result = await probe.probeHostGuiDialogs({ platform: 'darwin', execFile, stalledSessions: [{ pid: 1 }] });
+    assert.equal(result.blocked, true);
+    assert.equal(result.dialogs.length, 2);
+    assert.match(result.summary, /1 host GUI dialog process\(es\) running \(SecurityAgent\)/);
   });
 
   it('reports multiple simultaneous dialog agents', async () => {
@@ -122,10 +147,15 @@ describe('probeHostGuiDialogs: default execFile seam', () => {
   });
 });
 
-describe('DIALOG_PROCESS_NAMES', () => {
+describe('DIALOG_PROCESS_NAMES / RELIABLE_DIALOG_PROCESS_NAMES', () => {
   it('names exactly the five system agents #1112 enumerates', () => {
     assert.deepEqual(probe.DIALOG_PROCESS_NAMES, [
       'SecurityAgent', 'UserNotificationCenter', 'CoreServicesUIAgent', 'CrashReporter', 'SystemUIServer'
     ]);
+  });
+
+  it('RELIABLE_DIALOG_PROCESS_NAMES is every name except SystemUIServer', () => {
+    assert.deepEqual(probe.RELIABLE_DIALOG_PROCESS_NAMES, ['SecurityAgent', 'UserNotificationCenter', 'CoreServicesUIAgent', 'CrashReporter']);
+    assert.equal(probe.RELIABLE_DIALOG_PROCESS_NAMES.includes('SystemUIServer'), false);
   });
 });
