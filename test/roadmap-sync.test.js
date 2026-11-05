@@ -147,26 +147,59 @@ describe('fetchIssueSummaries', () => {
   beforeEach(() => { original = roadmapSync._internal.exec; });
   afterEach(() => { roadmapSync._internal.exec = original; });
 
-  it('reads updatedAt/closed for each issue', async () => {
-    const seen = [];
-    roadmapSync._internal.exec = async (file, args, opts) => {
-      seen.push(args);
-      assert.equal(file, 'gh');
-      assert.ok(opts && opts.cwd);
-      const n = Number(args[1].match(/issues\/(\d+)$/)[1]);
-      const answers = { 1: { updatedAt: '2026-01-01T00:00:00Z', state: 'open' }, 2: { updatedAt: '2026-02-02T00:00:00Z', state: 'closed' } };
-      return { exitCode: 0, stdout: JSON.stringify(answers[n]), stderr: '', error: null };
+  /**
+   * A fake `gh api repos/{owner}/{repo}/issues --paginate ...`, returning
+   * one JSON line per item (what `--jq` on an array actually emits).
+   */
+  function fakeIssuesList(items) {
+    const calls = [];
+    const exec = async (file, args, opts) => {
+      calls.push({ file, args, opts });
+      return { exitCode: 0, stdout: items.map((it) => JSON.stringify(it)).join('\n'), stderr: '', error: null };
     };
+    return { exec, calls };
+  }
+
+  it('reads updatedAt/closed for every wanted issue with ONE call, not one per issue', async () => {
+    const list = fakeIssuesList([
+      { number: 1, updatedAt: '2026-01-01T00:00:00Z', state: 'open' },
+      { number: 2, updatedAt: '2026-02-02T00:00:00Z', state: 'closed' }
+    ]);
+    roadmapSync._internal.exec = list.exec;
     const r = await roadmapSync.fetchIssueSummaries('/repo', [1, 2]);
     assert.equal(r.available, true);
-    assert.deepEqual(r.summaries.sort((a, b) => a.id - b.id), [
+    assert.equal(list.calls.length, 1, 'one list call covers every issue, not N per-issue calls');
+    assert.equal(list.calls[0].args[1], 'repos/{owner}/{repo}/issues');
+    assert.ok(list.calls[0].args.includes('--paginate'));
+    assert.deepEqual(r.summaries.sort((a, b) => Number(a.id) - Number(b.id)), [
       { id: '1', updatedAt: '2026-01-01T00:00:00Z', closed: false },
       { id: '2', updatedAt: '2026-02-02T00:00:00Z', closed: true }
     ]);
   });
 
-  it('a 404 is treated as a plain missing summary, not an unavailable batch', async () => {
-    roadmapSync._internal.exec = async () => ({ exitCode: 1, stdout: '', stderr: 'gh: Not Found (HTTP 404)\n', error: null });
+  it('excludes a pull-request-shaped item from the list — the issues endpoint also returns PRs', async () => {
+    const list = fakeIssuesList([
+      { number: 1, updatedAt: '2026-01-01T00:00:00Z', state: 'open' },
+      { number: 999, updatedAt: '2026-03-03T00:00:00Z', state: 'open', pull_request: {} }
+    ]);
+    roadmapSync._internal.exec = list.exec;
+    const r = await roadmapSync.fetchIssueSummaries('/repo', [1, 999]);
+    assert.deepEqual(r.summaries.sort((a, b) => Number(a.id) - Number(b.id)), [
+      { id: '1', updatedAt: '2026-01-01T00:00:00Z', closed: false },
+      { id: '999', updatedAt: null, closed: false }
+    ], '#999 is a PR, excluded from the issues map, so it reads as a plain not-found rather than its PR data leaking through');
+  });
+
+  it('passes `since` as a filter and omits an issue GitHub did not return, rather than guessing it unchanged', async () => {
+    const list = fakeIssuesList([{ number: 2, updatedAt: '2026-02-02T00:00:00Z', state: 'closed' }]);
+    roadmapSync._internal.exec = list.exec;
+    const r = await roadmapSync.fetchIssueSummaries('/repo', [1, 2], { since: '2026-02-01T00:00:00Z' });
+    assert.ok(list.calls[0].args.includes('since=2026-02-01T00:00:00Z'), 'since is passed through as a filter');
+    assert.deepEqual(r.summaries, [{ id: '2', updatedAt: '2026-02-02T00:00:00Z', closed: true }], '#1 is simply absent, not a fabricated unchanged/null entry');
+  });
+
+  it('without `since`, a wanted issue GitHub did not return is a plain missing summary (full-resync mode)', async () => {
+    roadmapSync._internal.exec = fakeIssuesList([]).exec;
     const r = await roadmapSync.fetchIssueSummaries('/repo', [1]);
     assert.deepEqual(r, { available: true, summaries: [{ id: '1', updatedAt: null, closed: false }] });
   });
@@ -177,14 +210,16 @@ describe('fetchIssueSummaries', () => {
     assert.deepEqual(r, { available: false, reason: 'gh is not installed' });
   });
 
-  it('ignores duplicates and non-positive-integers', async () => {
-    const calls = [];
-    roadmapSync._internal.exec = async (file, args) => {
-      calls.push(args[1].match(/issues\/(\d+)$/)[1]);
-      return { exitCode: 0, stdout: JSON.stringify({ updatedAt: 'x', state: 'open' }), stderr: '', error: null };
-    };
-    await roadmapSync.fetchIssueSummaries('/repo', [5, '5', 0, -3, 'abc']);
-    assert.deepEqual(calls, ['5']);
+  it('ignores duplicates and non-positive-integers, and makes no call at all when nothing is wanted', async () => {
+    const list = fakeIssuesList([{ number: 5, updatedAt: 'x', state: 'open' }]);
+    roadmapSync._internal.exec = list.exec;
+    const r = await roadmapSync.fetchIssueSummaries('/repo', [5, '5', 0, -3, 'abc']);
+    assert.equal(list.calls.length, 1);
+    assert.deepEqual(r.summaries, [{ id: '5', updatedAt: 'x', closed: false }]);
+
+    const r2 = await roadmapSync.fetchIssueSummaries('/repo', []);
+    assert.equal(list.calls.length, 1, 'no numbers wanted means no gh call at all');
+    assert.deepEqual(r2, { available: true, summaries: [] });
   });
 });
 
