@@ -106,6 +106,8 @@
         "lib/prime-hook-output.js",
         "lib/coordinator-rotation.js",
         "lib/chunk-boundary.js",
+        "lib/chunk-boundary-http.js",
+        "lib/chunk-boundary-ui.js",
         "lib/recorded-launch-command.js",
         "lib/pane-witness.js",
         "lib/provenance.js",
@@ -284,6 +286,7 @@
       "paths": [
         "lib/tc-verbs.js",
         "lib/operating-primer.js",
+        "lib/primer-launch-wiring.js",
         "lib/routes/tc.js"
       ]
     },
