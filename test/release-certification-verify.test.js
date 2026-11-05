@@ -508,6 +508,53 @@ describe('verifyHistory: a real metrics branch', () => {
   });
 });
 
+describe('cloneRepo avoids the local-clone hardlink race (#2362)', () => {
+  it('shares no object file\'s inode with the source, even cloning on one filesystem', () => {
+    const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-rc-clone-nolocal-')));
+    try {
+      const remote = path.join(tmp, 'remote.git');
+      fs.mkdirSync(remote);
+      initRepo(remote, ['--bare']);
+      const seed = path.join(tmp, 'seed');
+      cloneRepo(remote, seed);
+      const g = (dir, ...args) => execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'user.name=x', '-c', 'user.email=x@example.invalid', ...args], { cwd: dir, stdio: 'pipe' });
+      fs.writeFileSync(path.join(seed, 'f.txt'), 'x');
+      g(seed, 'add', '-A');
+      g(seed, 'commit', '-q', '-m', 'seed');
+      g(seed, 'push', '-q', 'origin', 'HEAD:refs/heads/main');
+      // A loose object a bare `git clone` could hardlink from; gc packs it so a tamper()-style
+      // clone of a real metrics branch (which always has history) exercises the same path.
+      g(remote, 'gc', '-q');
+
+      const dest = path.join(tmp, 'dest');
+      cloneRepo(remote, dest, ['-b', 'main']);
+
+      /**
+       * Every regular file's inode under `dir`, keyed by its path.
+       * @param {string} dir - Directory to scan, recursively.
+       * @returns {Map<string, number>}
+       */
+      const inodesUnder = (dir) => {
+        const found = new Map();
+        for (const rel of fs.readdirSync(dir, { recursive: true })) {
+          const full = path.join(dir, rel);
+          const st = fs.lstatSync(full);
+          if (st.isFile()) found.set(full, st.ino);
+        }
+        return found;
+      };
+
+      const sourceInodes = new Set(inodesUnder(path.join(remote, 'objects')).values());
+      assert.ok(sourceInodes.size > 0, 'the source repository has at least one object file to compare against');
+      for (const [file, ino] of inodesUnder(path.join(dest, '.git', 'objects'))) {
+        assert.ok(!sourceInodes.has(ino), `${file} shares an inode with the source repository — --no-local did not take effect`);
+      }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('carried in from earlier reviews', () => {
   it('creates the publishing clone with no git hooks', async () => {
     const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-rc-hooks-')));
