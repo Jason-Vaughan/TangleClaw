@@ -17,6 +17,12 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v5.62.0 — Roadmap board and Advisor settings
+
+- **Admit roadmap trains from current evidence** (#1894) — `lib/roadmap-admission.js#buildTrainAdmissionManifest` records dependency and operator-verification facts, and `lib/roadmap-admission.js#validateTrainDispatchAdmission` checks them again before dispatch.
+- **Keep roadmap state current** (#2259) — `lib/roadmap-sync.js#computeChangedSince` and `lib/roadmap-sync.js#shouldPublishRoadmap` support incremental issue reads and publish decisions. Roadmap train cards link their milestones and explain car states in the issue table (`lib/plan-train-card.js`).
+- **Configure the Advisor in its own control bar** (#2874) — `public/api-helper.js#tcAdvisorControlBarMarkup` exposes Discord advisory-channel settings and Reset Loop Pause; the Master Settings modal links to that strip.
+
 ## v5.56.0 — Switchboard delivery guarantees
 
 - **Reconnect a silent Medusa Bridge** (#1364) — the listener bounds the heartbeat/ack exchange and reconnects when an open socket stops acknowledging heartbeats. `lib/medusa-listener.js#MedusaListener`. Tests: `test/medusa-listener.test.js`.
