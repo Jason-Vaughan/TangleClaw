@@ -17,6 +17,14 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v5.64.0 — Docs and runbooks
+
+- **Plan remote CA trust installation** (#400) — `lib/remote-ca-installer.js` prepares a bounded, reviewable install plan for remote certificate authorities.
+- **Check docs and screenshot parity** (#533) — `lib/docs-parity-gate.js` and `scripts/docs-parity-gate.js` report documentation drift against the shipped interface.
+- **Publish an indexable product manual** (#811) — `lib/product-manual.js` and `docs/manual-manifest.json` describe the manual's navigable source set.
+- **Route AI documentation from a manifest** (#2835) — `lib/doc-router.js` and `docs/ai-doc-manifest.json` map documented topics to source material.
+- **Prepare lifecycle and chunk-boundary surfaces** (#2836, #2838, #2844) — `lib/chunk-boundary-http.js`, `lib/chunk-boundary-ui.js`, `lib/lifecycle-handoff-daemon.js`, and `lib/primer-launch-wiring.js` provide internal controller, UI, handoff, and primer helpers. These are not yet mounted on live routes or launch paths.
+
 ## v5.63.0 — Certification and evidence
 
 - **Hold merges for unresolved rulings** (#1717 Slice 1) — `lib/merge-inbox-gate.js` records action-scoped holds that survive beyond a session inbox and block merge, auto-merge, release, or restart until resolved.
