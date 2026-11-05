@@ -372,6 +372,32 @@ describe('#2819 the bar behaves', () => {
       assert.equal(doc.getElementById('advisorPanelError').hidden, false);
     });
 
+    it('a failed bridge-status read paints nothing and refuses the advisory write on Save, without blocking '
+      + 'the engine/model save (#2874 PRR-A I-Gate Round 1, review 5778600281)', async () => {
+      const calls = [];
+      const api = async (path) => {
+        if (path === '/api/bridge/operator/status') return null; // the failed read under test
+        if (path === '/api/engines') return { engines: [] };
+        if (path === '/api/advisor/settings') return { engine: 'claude', model: 'opus', autoStart: true };
+        return null;
+      };
+      const apiMutate = async (p, m, b) => { calls.push([p, m, b]); return { engine: 'claude', model: 'opus', autoStart: true }; };
+      const { doc, bar } = mounted('advisorPanel', { api, apiMutate });
+      bar.mount();
+      await bar.loadSettings();
+      // Nothing was painted from the failed read: the mention checkbox stays
+      // at whatever mount() left it, never forced to the default-true a
+      // successful-but-empty load would paint -- proof paintAdvisorySettings
+      // returned before touching any advisory field.
+      assert.equal(doc.getElementById('advisorPanelAdvisoryRequireMention').checked, false);
+      doc.getElementById('advisorPanelSaveSettingsBtn').dispatch('click');
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+      assert.equal(calls.length, 1, 'only the engine/model write runs -- no advisory write at all');
+      assert.equal(calls[0][0], '/api/advisor/settings');
+      assert.equal(doc.getElementById('advisorPanelError').textContent,
+        'Could not save the Discord advisory settings: the last status read failed, so nothing shown here is safe to re-send.');
+    });
+
     it('Reset loop pause surfaces a failure instead of silently repainting (#2874)', async () => {
       const calls = [];
       const api = Object.assign(

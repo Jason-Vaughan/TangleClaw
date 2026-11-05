@@ -5010,6 +5010,12 @@
     const p = deps.prefix;
     let bound = false;
     let busy = false;
+    // Whether the LAST `GET /api/bridge/operator/status` actually succeeded
+    // (#2874 PRR-A I-Gate Round 1): a failed read must not let Save re-send
+    // the strip's now-defaulted advisory fields as if they were a real
+    // configuration change -- that would disable a live advisory channel on
+    // a transient read failure, with no operator edit behind it at all.
+    let advisoryLoaded = false;
 
     const el = (suffix) => doc.getElementById(p + suffix);
 
@@ -5239,6 +5245,14 @@
      * @returns {void}
      */
     function paintAdvisorySettings(bridgeStatus) {
+      advisoryLoaded = Boolean(bridgeStatus);
+      // A failed read paints NOTHING -- leaving the fields exactly as they
+      // were (stale from an earlier successful load, or empty at first
+      // mount) is safer than painting disabled/empty defaults that
+      // `saveAdvisorySettings` could then send as a real configuration
+      // change. `advisoryLoaded` is what actually gates that send; this
+      // early return just keeps the strip from lying about what is stored.
+      if (!bridgeStatus) return;
       const enabled = el('AdvisoryEnabled');
       const channelId = el('AdvisoryChannelId');
       const authorIds = el('AdvisoryAuthorIds');
@@ -5295,8 +5309,17 @@
      * {@link saveSettings} so {@link resetLoopPause} can repaint the
      * strip's Reset button from the same response shape without
      * re-sending the engine/model fields.
-     * @returns {Promise<boolean>} True on success; false leaves `setError`
-     *   already called with the failure.
+     *
+     * Refuses to send when the last `GET /api/bridge/operator/status` read
+     * failed (PRR-A I-Gate Round 1, #2892): the strip's fields are then
+     * whatever they were before that failed read (per
+     * {@link paintAdvisorySettings}'s own refusal to paint on failure),
+     * never a trustworthy snapshot of what is actually stored, and sending
+     * them anyway is how a transient status-read failure would silently
+     * disable a live advisory channel with no operator edit behind it.
+     * @returns {Promise<boolean>} True on success, or when there is
+     *   nothing to send; false leaves `setError` already called with the
+     *   failure.
      */
     async function saveAdvisorySettings() {
       const enabled = el('AdvisoryEnabled');
@@ -5305,6 +5328,10 @@
       const requireMention = el('AdvisoryRequireMention');
       const maxTurns = el('AdvisoryMaxTurns');
       if (!enabled && !channelId && !authorIds && !requireMention && !maxTurns) return true;
+      if (!advisoryLoaded) {
+        setError('Could not save the Discord advisory settings: the last status read failed, so nothing shown here is safe to re-send.');
+        return false;
+      }
       const body = {
         advisoryEnabled: Boolean(enabled && enabled.checked),
         advisoryChannelId: (channelId && channelId.value.trim()) || null,
