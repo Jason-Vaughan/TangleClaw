@@ -532,8 +532,8 @@
         <!-- TANGLECLAW_ADE_KPI_START -->
         <div class="kpi-card">
           <div class="kpi-label">Autonomous Delivery Efficiency (ADE)</div>
-          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">0.23</div>
-          <div class="kpi-meta kpi-sub"><code>2 issues / (1.87h × $4.60)</code> · <code>$2.30/issue</code> · <code>$5.11/kLOC</code> · <code>~3.0M tok</code> (<code>9.6×</code> vs API)</div>
+          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">0.18</div>
+          <div class="kpi-meta kpi-sub"><code>2 issues / (2.10h × $5.17)</code> · <code>$2.58/issue</code> · <code>$5.74/kLOC</code> · <code>~3.3M tok</code> (<code>9.3×</code> vs API)</div>
         </div>
         <!-- TANGLECLAW_ADE_KPI_END -->
           <div class="kpi-card">
@@ -548,8 +548,8 @@
           </div>
           <div class="kpi-card">
             <div class="kpi-label">Total Run Time (Start → Finish)</div>
-            <div class="kpi-value green">1h 52m Leg 1 (Start → Release Merge & Live :3102)</div>
-            <div class="kpi-sub">21:55 PST → 23:47 PST (Nov 4) · Leg 1 of 2-Version Train (Charter A502 v1.0 · Milestone #50)</div>
+            <div class="kpi-value green">2h 06m Leg 1 (Start → Live :3102 Activation)</div>
+            <div class="kpi-sub">21:55 PST → 00:01 PST (Nov 4–5) · Leg 1 of 2-Version Train (Charter A502 v1.0 · Milestone #50)</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">True Merge Commits (Rule #282)</div>
@@ -787,11 +787,11 @@
       <div id="ade-efficiency-card" class="subcard" style="margin:18px 0;padding:18px 22px;border:1.5px solid rgba(56,189,248,0.45);background:linear-gradient(135deg,rgba(15,23,42,0.95),rgba(14,116,144,0.16));border-radius:12px;">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
           <span style="color:#38bdf8;font-weight:700;font-size:0.82rem;letter-spacing:0.06em;">📐 AUTONOMOUS DELIVERY EFFICIENCY (ADE) · SPEED × QUALITY × OPERATING COST</span>
-          <span class="badge badge-green" style="font-size:0.78rem;">ADE = 0.23 Certified Issues / (Hr · $) · $2.30/Issue · $5.11/kLOC</span>
+          <span class="badge badge-green" style="font-size:0.78rem;">ADE = 0.18 Certified Issues / (Hr · $) · $2.58/Issue · $5.74/kLOC</span>
         </div>
         <div style="font-size:0.92rem;color:#e2e8f0;line-height:1.55;">
-          <strong>Formula:</strong> <code>ADE = (Accepted, Validated Work Delivered) / (Elapsed Hours × Total Operating Cost)</code> = <code>2 certified issues / (1.87h × $4.60) = <strong>0.23</strong></code> (<code>+900 LOC</code> delivered at <code>$5.11 / 1,000 LOC</code>).<br/>
-          <strong>Cost &amp; Token Basis (Method 3):</strong> Amortized from the <code>$500/mo</code> multi-vendor CLI subscription pool (Claude Code <code>$200</code> + Antigravity <code>$200</code> + Codex <code>$100</code> @ <code>85%</code> TangleClaw allocation + <code>$15/mo</code> local M3 Ultra compute = <code>$2.46/active fleet-hr</code>). Estimated CLI turn volume: <code>~3.0M</code> cached/uncached tokens (public frontier API shadow cost <code>~$44</code> → <strong><code>9.6×</code> subscription cost compression</strong>).
+          <strong>Formula:</strong> <code>ADE = (Accepted, Validated Work Delivered) / (Elapsed Hours × Total Operating Cost)</code> = <code>2 certified issues / (2.10h × $5.17) = <strong>0.18</strong></code> (<code>+900 LOC</code> delivered at <code>$5.74 / 1,000 LOC</code>).<br/>
+          <strong>Cost &amp; Token Basis (Method 3):</strong> Amortized from the <code>$500/mo</code> multi-vendor CLI subscription pool (Claude Code <code>$200</code> + Antigravity <code>$200</code> + Codex <code>$100</code> @ <code>85%</code> TangleClaw allocation + <code>$15/mo</code> local M3 Ultra compute = <code>$2.46/active fleet-hr</code>). Estimated CLI turn volume: <code>~3.3M</code> cached/uncached tokens (public frontier API shadow cost <code>~$48</code> → <strong><code>9.3×</code> subscription cost compression</strong>).
         </div>
       </div>
       <!-- TANGLECLAW_ADE_BANNER_END -->
@@ -1017,7 +1017,7 @@
                 <td><code>2h 30m</code></td>
                 <td><code>26m</code></td>
                 <td><code>29m</code></td>
-                <td><strong><code>1h 52m Leg 1 (Start → Release Merge & Live :3102)</code> (12 Active Issues + Leg 2 Pipelined)</strong></td>
+                <td><strong><code>2h 06m Leg 1 (Start → Live :3102 Activation)</code> (12 Active Issues + Leg 2 Pipelined)</strong></td>
                 <td><span class="badge badge-green">Delivered 12 issues across 4 cars while pre-certifying Leg 2 (v5.66.0)</span></td>
               </tr>
               <tr>
@@ -1278,7 +1278,7 @@
                 <td><strong>Gate 3 — A-Gate / R-Gate, Tag &amp; Live :3102 Deploy</strong></td>
                 <td><code>TC-Lane-Arc</code> + <code>TC-Lane-INT</code></td>
                 <td>Charter <code>A502 v1.0</code>, Tag <code>v5.65.0 @ d97f0121</code>, Live <code>:3102</code></td>
-                <td>Architect co-signed Gate 0 (<code>[3112598c]</code>) and certified <code>A-Gate PASS</code> across all 5 PRs; tag <code>v5.65.0</code> published &amp; live <code>:3102</code> updated (backup <code>d97f012190f6aaeb...</code>)</td>
+                <td>Architect co-signed Gate 0 (<code>[3112598c]</code>) and certified <code>A-Gate PASS</code> across all 5 PRs; tag <code>v5.65.0</code> published &amp; live <code>:3102</code> updated (backup <code>4c667d43bf4a67c4...</code>)</td>
                 <td><span class="badge badge-green">PASS (Verified)</span></td>
               </tr>
               <tr>
@@ -1310,7 +1310,7 @@
             </thead>
             <tbody>
               <tr><td>1</td><td><strong>Operator Interventions &amp; Causes</strong></td><td><code>0</code> unplanned Operator interventions across Leg 1 (`v5.65.0`) under `OP-GO-V5650-V5660-20261104`</td><td>0 interventions</td><td><span class="badge badge-green">PASS</span></td><td>Carry standing authorization cleanly through Leg 2 (`v5.66.0`)</td></tr>
-              <tr><td>2</td><td><strong>Dispatch-to-Merge Timing</strong></td><td>Leg 1 completed in `1h 52m Leg 1 (Start → Release Merge & Live :3102)` across 12 active issues while pipelining Leg 2 (`v5.66.0`)</td><td>Bounded waves</td><td><span class="badge badge-green">PASS</span></td><td>Merge pre-certified `v5.66.0` Wave 1 cars immediately after `v5.65.0` tags</td></tr>
+              <tr><td>2</td><td><strong>Dispatch-to-Merge Timing</strong></td><td>Leg 1 completed in `2h 06m Leg 1 (Start → Live :3102 Activation)` across 12 active issues while pipelining Leg 2 (`v5.66.0`)</td><td>Bounded waves</td><td><span class="badge badge-green">PASS</span></td><td>Merge pre-certified `v5.66.0` Wave 1 cars immediately after `v5.65.0` tags</td></tr>
               <tr><td>3</td><td><strong>Active vs Allowed Builders &amp; Parallelism</strong></td><td>100% Builder utilization across all 4 Builder lanes (`TC-Lane-A`, `B`, `C`, `D`)</td><td>100% utilization</td><td><span class="badge badge-green">PASS</span></td><td>Maintain 4-car parallel wave structure in `v5.66.0` (`Cars 66-A..66-D`)</td></tr>
               <tr><td>4</td><td><strong>Forced Re-Syncs / Rebases When <code>main</code> Moves</strong></td><td>Clean ancestor merges across `#2899, #2900, #2902, #2901`; `0` destructive rebases</td><td>0 conflicts</td><td><span class="badge badge-green">PASS</span></td><td>Keep `docs/areas.json` and `test/tiers.json` entries sorted alphabetically</td></tr>
               <tr><td>5</td><td><strong>Open PR Age Since Current <code>main</code></strong></td><td>All 4 `v5.65.0` feature PRs + Release PR merged cleanly; `0` stale `v5.65.0` PRs remaining</td><td>0 stale PRs</td><td><span class="badge badge-green">PASS</span></td><td>Maintain strict `Guardrail 06` merge-order serialization in `v5.66.0`</td></tr>
@@ -1526,9 +1526,9 @@
               </tr>
             </thead>
             <tbody>
-              <tr data-row-tags="wave-2" data-row-search="pr 2906 d97f0121 tag v5.65.0 changelog.md version.json d97f012190f6aaeb">
+              <tr data-row-tags="wave-2" data-row-search="pr 2906 d97f0121 tag v5.65.0 changelog.md version.json 4c667d43bf4a67c4">
                 <td><strong>v5.65.0 Release Cut, Tag &amp; Guarded Live :3102 Update (Complete)</strong></td>
-                <td>Drained all 12 <code>changelog.d/*.md</code> fragments into <code>CHANGELOG.md [5.65.0]</code>; updated <code>version.json</code> (<code>5.65.0</code>), <code>README.md</code>, <code>.prawduct/change-log.md</code>, and <code>changelog-released-sections.lock.json</code>; merged via <code>PR #2906 @ d97f0121</code>, published annotated tag <code>v5.65.0</code> via GitHub Actions <code>Release #41989668280</code>, and completed guarded live update on <code>:3102</code> (SQLite backup <code>SHA-256: d97f012190f6aaeb34ccf10bc9c858f35f2970f7a84280dfb8c7d213d6a16054</code>)</td>
+                <td>Drained all 12 <code>changelog.d/*.md</code> fragments into <code>CHANGELOG.md [5.65.0]</code>; updated <code>version.json</code> (<code>5.65.0</code>), <code>README.md</code>, <code>.prawduct/change-log.md</code>, and <code>changelog-released-sections.lock.json</code>; merged via <code>PR #2906 @ d97f0121</code>, published annotated tag <code>v5.65.0</code> via GitHub Actions <code>Release #41989668280</code>, and completed guarded live update on <code>:3102</code> (SQLite backup <code>SHA-256: 4c667d43bf4a67c4a70b769665969d24bb046bd6408beccb687f2ab845506293</code>)</td>
               </tr>
               <tr data-row-tags="wave-2" data-row-search="v5.66.0 milestone 51 charter a503 leg 2 transition">
                 <td><strong>Immediate Transition to Leg 2 (<code>v5.66.0 · Milestone #51 · Charter A503 v1.0</code>)</strong></td>
