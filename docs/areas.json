@@ -286,9 +286,10 @@
     },
     "tc": {
       "label": "area:tc",
-      "why": "The `tc` command line.",
+      "why": "The `tc` command line. `lib/tc-docs-scorecard-merge-wiring.js` (#2887, #2878, #2883, #2877, Ruling A502-W1C-R2) is this area's library/verb adapter surface: it composes `docs-manual`'s, `merge-governance`'s, `audit`'s (scorecard) and `roadmap`'s own self-contained libraries into the call shapes a `tc` verb (or a future route) needs, without those libraries themselves living here.",
       "paths": [
         "lib/tc-verbs.js",
+        "lib/tc-docs-scorecard-merge-wiring.js",
         "lib/operating-primer.js",
         "lib/primer-launch-wiring.js",
         "lib/routes/tc.js"

@@ -231,6 +231,7 @@
     "test/tailscale-ingress.test.js",
     "test/tc-check-verb.test.js",
     "test/tc-control.test.js",
+    "test/tc-docs-scorecard-merge-wiring.test.js",
     "test/tc-finalize-verb.test.js",
     "test/tc-queue-verb.test.js",
     "test/tc-workload-verb.test.js",
