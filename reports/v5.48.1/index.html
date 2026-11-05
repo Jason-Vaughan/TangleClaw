@@ -533,8 +533,8 @@
         <!-- TANGLECLAW_ADE_KPI_START -->
         <div class="kpi-card">
           <div class="kpi-label">Autonomous Delivery Efficiency (ADE)</div>
-          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">0.16</div>
-          <div class="kpi-meta kpi-sub"><code>8 issues / (4.48h × $11.02)</code> · <code>$1.38/issue</code> · <code>$3.22/kLOC</code> · <code>~8.5M tok</code> (<code>11.2×</code> vs API)</div>
+          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">1.79/hr · ADE 0.16</div>
+          <div class="kpi-meta kpi-sub">Throughput: <code>1.79 closed/hr</code> (<code>T_eng=4.48h</code>) · Allocated: <code>$1.38/issue</code> (<code>$11.02</code> pool · <code>$3.22/kLOC</code>) · Legacy ADE_v1: <code>0.16</code></div>
         </div>
         <!-- TANGLECLAW_ADE_KPI_END -->
           <div class="kpi-card">
@@ -782,12 +782,13 @@
       <!-- TANGLECLAW_ADE_BANNER_START -->
       <div id="ade-efficiency-card" class="subcard" style="margin:18px 0;padding:18px 22px;border:1.5px solid rgba(56,189,248,0.45);background:linear-gradient(135deg,rgba(15,23,42,0.95),rgba(14,116,144,0.16));border-radius:12px;">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
-          <span style="color:#38bdf8;font-weight:700;font-size:0.82rem;letter-spacing:0.06em;">📐 AUTONOMOUS DELIVERY EFFICIENCY (ADE) · SPEED × QUALITY × OPERATING COST</span>
-          <span class="badge badge-green" style="font-size:0.78rem;">ADE = 0.16 Certified Issues / (Hr · $) · $1.38/Issue · $3.22/kLOC</span>
+          <span style="color:#38bdf8;font-weight:700;font-size:0.82rem;letter-spacing:0.06em;">📐 AUTONOMOUS DELIVERY EFFICIENCY (ADE) · ORTHOGONAL THROUGHPUT, ALLOCATED COST &amp; LEGACY ADE_v1</span>
+          <span class="badge badge-green" style="font-size:0.78rem;">Throughput = 1.79 Issues/Hr · Allocated = $1.38/Issue ($3.22/kLOC) · Legacy ADE_v1 = 0.16</span>
         </div>
-        <div style="font-size:0.92rem;color:#e2e8f0;line-height:1.55;">
-          <strong>Formula:</strong> <code>ADE = (Accepted, Validated Work Delivered) / (Elapsed Hours × Total Operating Cost)</code> = <code>8 certified issues / (4.48h × $11.02) = <strong>0.16</strong></code> (<code>+3,420 LOC</code> delivered at <code>$3.22 / 1,000 LOC</code>).<br/>
-          <strong>Cost &amp; Token Basis (Method 3):</strong> Amortized from the <code>$500/mo</code> multi-vendor CLI subscription pool (Claude Code <code>$200</code> + Antigravity <code>$200</code> + Codex <code>$100</code> @ <code>85%</code> TangleClaw allocation + <code>$15/mo</code> local M3 Ultra compute = <code>$2.46/active fleet-hr</code>). Estimated CLI turn volume: <code>~8.5M</code> cached/uncached tokens (public frontier API shadow cost <code>~$123</code> → <strong><code>11.2×</code> subscription cost compression</strong>).
+        <div style="font-size:0.90rem;color:#e2e8f0;line-height:1.56;">
+          <strong>1. Orthogonal Efficiency Metrics (Primary Standard):</strong> <strong>Throughput</strong> = <code>W_closed / T_eng = 8 / 4.48h = <strong>1.79 closed issues/hr</strong></code> · <strong>Unit Allocated Cost</strong> = <code>C_alloc / W_closed = $11.02 / 8 = <strong>$1.38/closed issue</strong></code> (<code>$3.22/kLOC</code> across <code>+3,420</code> insertions) · <strong>Quality</strong> = <code>100% True Merges, 0 Post-Merge Defects</code>.<br/>
+          <strong>2. Disclosed Legacy Composite Index (<code>ADE_v1</code>):</strong> <code>ADE_v1 = W_closed / (T_eng × C_alloc) = 8 / (4.48h × $11.02) = <strong>0.16</strong></code>. <em>Dimensional Note:</em> Because <code>C_alloc = $2.46/hr × T_eng</code>, <code>ADE_v1 = W / (2.46 × T_eng²)</code> scales as <code>1/T²</code> (units: <code>issues · hr⁻² · $⁻¹</code>); therefore <code>ADE_v1</code> is always evaluated on the full engineering window (<code>T_eng = 4.48h</code>, never a pipelined merge tail) alongside scale-invariant Throughput (<code>1.79 issues/hr</code>).<br/>
+          <strong>3. 3-Tier Operating Cost Basis:</strong> <strong>Tier 1 (Measured Marginal Cash):</strong> <code>$0.00</code> per-run API fee + <code>~$0.11</code> M3 Ultra wall power · <strong>Tier 2 (Allocated Subscription Pool):</strong> <code>$11.02</code> pro-rata allocation (<code>$440/mo ÷ 178.8 active hrs = $2.46/hr × 4.48h</code>; calendar-hour reference <code>$2.74</code> @ <code>$0.611/hr</code>) · <strong>Tier 3 (Hypothetical API Shadow Estimate):</strong> <code>~$123</code> (unmetered estimate across <code>~8.5M</code> tokens → <code>11.2×</code> subscription compression).
         </div>
       </div>
       <!-- TANGLECLAW_ADE_BANNER_END -->
