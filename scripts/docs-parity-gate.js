@@ -14,7 +14,7 @@
  *        node scripts/docs-parity-gate.js --files <path> --body-file <path>
  *   --pr <number>        read the PR's changed files via
  *                         `gh api repos/{owner}/{repo}/pulls/<number>/files
- *                         --paginate`, and the body via
+ *                         --paginate --slurp`, and the body via
  *                         `gh api repos/{owner}/{repo}/pulls/<number>`
  *   --files <path>        test seam: a JSON file holding an array of changed paths
  *   --body-file <path>    test seam: a file holding the PR body text
@@ -24,7 +24,10 @@
 
 const fs = require('node:fs');
 
-const { execFileArgs, describeFailure } = require('../lib/exec');
+// Referenced as `exec.execFileArgs`/`exec.describeFailure` throughout, not destructured:
+// a destructured local is bound at require time and a test's `mock.method(exec, 'execFileArgs', ...)`
+// (I-Gate Round 1, #2890) would then replace a property this file never reads again.
+const exec = require('../lib/exec');
 const { evaluate } = require('../lib/docs-parity-gate');
 
 /** A failure that could not be judged at all — distinct from any verdict. */
@@ -37,8 +40,8 @@ class Unreadable extends Error {}
  * @throws {Unreadable} When `gh` fails or answers with something unparseable.
  */
 async function _ghApi(apiArgs) {
-  const r = await execFileArgs('gh', ['api', ...apiArgs], { timeoutMs: 15000, maxBufferBytes: 8 * 1024 * 1024 });
-  if (r.exitCode !== 0) throw new Unreadable(describeFailure(r, `gh api ${apiArgs[0]}`));
+  const r = await exec.execFileArgs('gh', ['api', ...apiArgs], { timeoutMs: 15000, maxBufferBytes: 8 * 1024 * 1024 });
+  if (r.exitCode !== 0) throw new Unreadable(exec.describeFailure(r, `gh api ${apiArgs[0]}`));
   try {
     return JSON.parse(r.stdout);
   } catch (err) {
@@ -48,16 +51,28 @@ async function _ghApi(apiArgs) {
 
 /**
  * Read the PR's changed files and body through `gh api`.
+ *
+ * The files call passes `--slurp` alongside `--paginate`: without it, `gh
+ * api --paginate` concatenates each page's raw JSON text, and two or more
+ * pages of an array-returning endpoint produce `[...][...]` — not one JSON
+ * document, so a single `JSON.parse` throws (I-Gate Round 1, #2890,
+ * reproduced by feeding two page arrays through the `execFileArgs` seam).
+ * `--slurp` instead wraps every page — one page included — in an outer
+ * array, so the result is always an array of page-arrays; `.flat()` is
+ * what turns that into one list of changed files.
+ *
  * @param {string} prNumber - Pull request number.
  * @returns {Promise<{files: string[], body: string}>}
  * @throws {Unreadable} When `gh` fails or answers with something unparseable.
  */
 async function readFromGh(prNumber) {
-  const filesJson = await _ghApi([`repos/{owner}/{repo}/pulls/${prNumber}/files`, '--paginate']);
-  const files = Array.isArray(filesJson)
-    ? filesJson.filter((f) => f && typeof f.filename === 'string').map((f) => f.filename)
-    : null;
-  if (files === null) throw new Unreadable('gh\'s answer carried no readable files list');
+  const pages = await _ghApi([`repos/{owner}/{repo}/pulls/${prNumber}/files`, '--paginate', '--slurp']);
+  if (!Array.isArray(pages) || !pages.every(Array.isArray)) {
+    throw new Unreadable('gh\'s answer carried no readable, slurped pages of files');
+  }
+  const files = pages.flat()
+    .filter((f) => f && typeof f.filename === 'string')
+    .map((f) => f.filename);
 
   const pr = await _ghApi([`repos/{owner}/{repo}/pulls/${prNumber}`]);
   if (pr.body !== null && typeof pr.body !== 'string') throw new Unreadable('gh\'s answer carried no readable `body`');

@@ -10,7 +10,7 @@
  * the signal is non-blocking by design (#533's own acceptance criterion).
  */
 
-const { describe, it } = require('node:test');
+const { describe, it, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -19,6 +19,7 @@ const { spawnSync } = require('node:child_process');
 
 const gate = require('../lib/docs-parity-gate');
 const cli = require('../scripts/docs-parity-gate.js');
+const exec = require('../lib/exec');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'docs-parity-gate.js');
 
@@ -28,10 +29,14 @@ describe('the declared constants match what isUserFacingPath/isDocsPath/userFaci
     for (const prefix of gate.USER_FACING_PREFIXES) assert.equal(gate.isUserFacingPath(`${prefix}anything.js`), true, prefix);
   });
 
-  it('names the prefixes and files isDocsPath checks', () => {
+  it('names the prefixes, suffix and files isDocsPath checks', () => {
     assert.deepEqual([...gate.DOCS_PREFIXES], ['docs/']);
+    assert.equal(gate.DOCS_SUFFIX, '.md');
     assert.deepEqual([...gate.DOCS_FILES], ['README.md']);
-    for (const prefix of gate.DOCS_PREFIXES) assert.equal(gate.isDocsPath(`${prefix}anything.md`), true, prefix);
+    for (const prefix of gate.DOCS_PREFIXES) {
+      assert.equal(gate.isDocsPath(`${prefix}anything${gate.DOCS_SUFFIX}`), true, prefix);
+      assert.equal(gate.isDocsPath(`${prefix}anything.json`), false, `${prefix}anything.json`);
+    }
     for (const file of gate.DOCS_FILES) assert.equal(gate.isDocsPath(file), true, file);
   });
 
@@ -57,12 +62,24 @@ describe('isUserFacingPath / isDocsPath / userFacingFragmentType', () => {
     assert.equal(gate.isUserFacingPath('scripts/soak.js'), false);
   });
 
-  it('treats README.md and docs/** as docs, nothing else', () => {
+  it('treats README.md and markdown under docs/** as docs, nothing else', () => {
     assert.equal(gate.isDocsPath('README.md'), true);
     assert.equal(gate.isDocsPath('docs/user-guide.md'), true);
     assert.equal(gate.isDocsPath('docs/sub/dir/page.md'), true);
     assert.equal(gate.isDocsPath('readme.md'), false, 'case-sensitive, like git itself');
     assert.equal(gate.isDocsPath('lib/docs-parity-gate.js'), false);
+  });
+
+  it('does not treat docs/areas.json — registry metadata, not documentation — as a docs touch (I-Gate Round 1, #2890)', () => {
+    assert.equal(gate.isDocsPath('docs/areas.json'), false);
+    assert.equal(gate.isDocsPath('docs/anything.json'), false);
+    assert.equal(gate.isDocsPath('docs/anything.toml'), false);
+  });
+
+  it('a user-facing change touching only docs/areas.json still signals: the registry edit is not a docs touch', () => {
+    const v = gate.evaluate(['public/setup.js', 'docs/areas.json'], '');
+    assert.equal(v.signal, true);
+    assert.deepEqual(v.docsFiles, []);
   });
 
   it('reads a changelog fragment\'s type only when the name parses and the type is user-visible', () => {
@@ -165,6 +182,70 @@ describe('checkScreenshotStaleness', () => {
     const r = gate.checkScreenshotStaleness({ screenshotsAsOf: 'not a date', lastUiShipAt: '2026-07-10T00:00:00Z' });
     assert.equal(r.stale, false);
     assert.match(r.reason, /not a readable timestamp/);
+  });
+});
+
+describe('readFromGh — paginated file lists (I-Gate Round 1, #2890)', () => {
+  /**
+   * One `gh api ... --paginate` "page": a JSON array of file-change objects.
+   * @param {string[]} filenames - Filenames for this page.
+   * @returns {object[]}
+   */
+  function page(filenames) {
+    return filenames.map((filename) => ({ filename, status: 'modified' }));
+  }
+
+  it('flattens two slurped pages into one file list, and passes --slurp alongside --paginate', async () => {
+    const calls = [];
+    const execMock = mock.method(exec, 'execFileArgs', async (file, args) => {
+      calls.push(args);
+      if (args.some((a) => a.includes('pulls/42/files'))) {
+        return { exitCode: 0, stdout: JSON.stringify([page(['a.js', 'b.js']), page(['c.js'])]), stderr: '' };
+      }
+      return { exitCode: 0, stdout: JSON.stringify({ body: 'a body' }), stderr: '' };
+    });
+    try {
+      const result = await cli.readFromGh('42');
+      assert.deepEqual(result.files, ['a.js', 'b.js', 'c.js']);
+      assert.equal(result.body, 'a body');
+      const filesCall = calls.find((a) => a.some((x) => x.includes('pulls/42/files')));
+      assert.ok(filesCall.includes('--paginate'), filesCall.join(' '));
+      assert.ok(filesCall.includes('--slurp'), filesCall.join(' '));
+    } finally {
+      execMock.mock.restore();
+    }
+  });
+
+  it('flattens a single slurped page the same way (gh wraps every page, one included)', async () => {
+    const execMock = mock.method(exec, 'execFileArgs', async (file, args) => {
+      if (args.some((a) => a.includes('pulls/7/files'))) {
+        return { exitCode: 0, stdout: JSON.stringify([page(['only.js'])]), stderr: '' };
+      }
+      return { exitCode: 0, stdout: JSON.stringify({ body: null }), stderr: '' };
+    });
+    try {
+      const result = await cli.readFromGh('7');
+      assert.deepEqual(result.files, ['only.js']);
+      assert.equal(result.body, '');
+    } finally {
+      execMock.mock.restore();
+    }
+  });
+
+  it('throws Unreadable, not a raw JSON.parse error, when gh does not answer with slurped page arrays', async () => {
+    const execMock = mock.method(exec, 'execFileArgs', async () => ({ exitCode: 0, stdout: JSON.stringify({ not: 'an array of pages' }), stderr: '' }));
+    try {
+      await assert.rejects(() => cli.readFromGh('1'), cli.Unreadable);
+    } finally {
+      execMock.mock.restore();
+    }
+  });
+
+  it('throws Unreadable on the pre-fix failure mode too: concatenated raw JSON from a bare --paginate would not even parse', async () => {
+    // Guards against silently reverting to the unslurped call: two raw concatenated arrays
+    // are not one JSON document, so a naive JSON.parse must fail — this is the exact shape
+    // the Round 1 finding reproduced.
+    assert.throws(() => JSON.parse(`${JSON.stringify(page(['a.js']))}${JSON.stringify(page(['b.js']))}`));
   });
 });
 
