@@ -129,6 +129,7 @@ files = [
   "test/medusa-control.test.js",
   "test/medusa-escalation-watchdog.test.js",
   "test/medusa-listener.test.js",
+  "test/merge-inbox-gate.test.js",
   "test/merge-queue-github.test.js",
   "test/merge-queue-release-guard.test.js",
   "test/merge-queue-slot.test.js",
