@@ -200,6 +200,32 @@ describe('createWrapProgressStream', () => {
       assert.ok(stream.replay.some((f) => f.stage === gw.PROGRESS_STAGES.COMPLETED));
     });
 
+    it('reports "failed", never "completed", for a stale/wedged run whose outcome is unknown (I-Gate R1 Finding 2)', async () => {
+      // `wrap-run-registry.js#subscribe` synthesizes a `run-done` with
+      // `result: null` for a run older than STALE_RUN_MS that never settled
+      // -- its own doc: "the outcome is precisely what nobody knows". The
+      // ORIGINAL `_stageForRunEvent` defaulted anything short of
+      // `result.ok === false` to `completed`, so `result: null` read as a
+      // successful finish. Same clock-override shape test/api-wrap-stream.
+      // test.js uses to produce the same synthetic event.
+      const request = await readyAndExecuting();
+      const realNow = wrapRunRegistry._internal.now;
+      try {
+        const fakeNow = realNow() + wrapRunRegistry.STALE_RUN_MS + 1000;
+        wrapRunRegistry._internal.now = () => fakeNow;
+        const stream = gw.createWrapProgressStream(request.requestId, { onEvent: () => {}, onEnd: () => {} });
+        assert.equal(stream.ok, true);
+        assert.equal(stream.finished, true);
+        const terminal = stream.replay[stream.replay.length - 1];
+        assert.equal(terminal.stage, gw.PROGRESS_STAGES.FAILED);
+        assert.notEqual(terminal.stage, gw.PROGRESS_STAGES.COMPLETED);
+        // The stale detail rides along, distinguishing this from a genuine failure.
+        assert.equal(terminal.detail.stale, true);
+      } finally {
+        wrapRunRegistry._internal.now = realNow;
+      }
+    });
+
     it('unsubscribe stops further live frames from reaching the listener', async () => {
       const request = await readyAndExecuting();
       const events = [];

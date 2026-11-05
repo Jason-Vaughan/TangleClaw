@@ -19,18 +19,36 @@ const { loadEsc, liftDeclaration } = require('./helpers/lift');
 
 let tmpDir = null;
 let projectPath = null;
+let claudeHome = null;
+let realClaudeHome = null;
 const SID = 'sess-1';
 const PROJECT = { path: null, name: 'bf-proj' };
 const SESSION = { engineId: 'claude-code', startedAt: '2026-11-01T00:00:00.000Z' };
 
+/** Write a resolvable `.claude` transcript for `projectPath`, so a real (unmocked) `backfillTranscript` has something to find. */
+function writeRealClaudeTranscript(uuid) {
+  const enc = transcript._encodeDir(projectPath);
+  const dir = path.join(claudeHome, 'projects', enc);
+  fs.mkdirSync(dir, { recursive: true });
+  const lines = [
+    JSON.stringify({ type: 'summary', mode: 'x', sessionId: uuid }),
+    JSON.stringify({ type: 'message', role: 'user', cwd: projectPath, content: 'hello' })
+  ];
+  fs.writeFileSync(path.join(dir, `${uuid}.jsonl`), lines.join('\n') + '\n');
+}
+
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-session-history-backfill-'));
   projectPath = path.join(tmpDir, 'proj');
+  claudeHome = path.join(tmpDir, 'claude-home');
   fs.mkdirSync(projectPath, { recursive: true });
   PROJECT.path = projectPath;
+  realClaudeHome = transcript._internal.claudeHome;
+  transcript._internal.claudeHome = () => claudeHome;
 });
 
 afterEach(() => {
+  transcript._internal.claudeHome = realClaudeHome;
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -40,7 +58,7 @@ describe('ensureSessionTranscript', () => {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'transcript.meta.json'), JSON.stringify({
       harness: 'claude', capturedAt: '2026-11-01T00:05:00.000Z', bytes: 42, lineCount: 3,
-      secretsFlagged: false, secretTypes: [], scanSkipped: false
+      secretsFlagged: false, secretTypes: [], scanSkipped: false, capturedVia: 'snapshot'
     }));
 
     const real = transcript.backfillTranscript;
@@ -110,6 +128,52 @@ describe('ensureSessionTranscript', () => {
     } finally {
       transcript.backfillTranscript = real;
     }
+  });
+
+  it('reports source:null (honest unknown) for meta written before capturedVia existed', async () => {
+    const dir = continuity.sessionDir(projectPath, SID);
+    fs.mkdirSync(dir, { recursive: true });
+    // No capturedVia field at all -- what every meta.json written before
+    // this fix looks like.
+    fs.writeFileSync(path.join(dir, 'transcript.meta.json'), JSON.stringify({
+      harness: 'claude', capturedAt: '2026-11-01T00:05:00.000Z', bytes: 1, lineCount: 1,
+      secretsFlagged: false, secretTypes: [], scanSkipped: false
+    }));
+    const result = await backfill.ensureSessionTranscript(PROJECT, SESSION, SID);
+    assert.equal(result.captured, true);
+    assert.equal(result.source, null);
+  });
+
+  it('a repeat read after a REAL backfill still reports native-log-backfill, never flipping to live-pane-capture (I-Gate R1 Finding 1)', async () => {
+    // No mocking of transcript.backfillTranscript here: the whole point of
+    // the finding is that `_capture`'s own meta.json, read back a second
+    // time through `continuity.readTranscriptMeta`, must still say how the
+    // FIRST capture happened. The reviewer's own repro was exactly this:
+    // two calls against a newly backfilled session.
+    writeRealClaudeTranscript('bf-repeat-1');
+
+    const first = await backfill.ensureSessionTranscript(PROJECT, SESSION, SID);
+    assert.equal(first.captured, true);
+    assert.equal(first.source, 'native-log-backfill');
+
+    const second = await backfill.ensureSessionTranscript(PROJECT, SESSION, SID);
+    assert.equal(second.captured, true);
+    assert.equal(second.source, 'native-log-backfill', 'must not have flipped to live-pane-capture on the repeat read');
+
+    const third = await backfill.ensureSessionTranscript(PROJECT, SESSION, SID);
+    assert.equal(third.source, 'native-log-backfill');
+  });
+
+  it('a session captured live (snapshot) at wrap time reports live-pane-capture on every read', async () => {
+    writeRealClaudeTranscript('bf-live-1');
+    const session = { engineId: 'claude-code', startedAt: SESSION.startedAt };
+    const snapped = await transcript.snapshot(PROJECT, session, SID);
+    assert.equal(snapped.captured, true);
+
+    const first = await backfill.ensureSessionTranscript(PROJECT, session, SID);
+    assert.equal(first.source, 'live-pane-capture');
+    const second = await backfill.ensureSessionTranscript(PROJECT, session, SID);
+    assert.equal(second.source, 'live-pane-capture');
   });
 });
 
