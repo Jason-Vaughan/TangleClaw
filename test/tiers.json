@@ -350,6 +350,7 @@
     "test/engine-tabs.test.js",
     "test/eval-audit.test.js",
     "test/fleet-provisioning.test.js",
+    "test/fleet-settings-resource-routes.test.js",
     "test/frontend-csrf.test.js",
     "test/handoff-epoch.test.js",
     "test/handoff-repairs.test.js",
