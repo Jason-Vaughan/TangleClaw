@@ -194,6 +194,37 @@ describe('#2888: /api/sessions/:project/chunk-boundary/* routes (lib/routes/sess
     assert.equal(stillPrepareClear.data.receipt.state, 'prepare_clear', 'the cross-project attempt changed nothing');
   });
 
+  it('a project launch bound to a DIFFERENT project may not write to THIS project\'s own :project URL by naming it directly (I-Gate R1)', async () => {
+    // The exact shape the reviewer reproduced: the attacker names the
+    // VICTIM's own URL directly (not its own, as the sibling test above
+    // does with a victim receipt id) -- the URL target and the caller's
+    // verified project must match, or the create route alone would let any
+    // bound launch assert builderAcknowledged:true onto another project's
+    // durable chunk-boundary evidence.
+    const otherDir = fs.mkdtempSync(path.join(tmpDir, 'attacker-proj-dir-'));
+    const attackerProject = store.projects.create({ name: 'chunk-boundary-attacker-project', path: otherDir, engine: 'claude' });
+    const attackerBinding = bindProject(attackerProject);
+
+    const forgedCreate = await sendAs(server, 'POST', `${base()}`, body({ assignmentId: 'asg-forged-create' }), attackerBinding.headers);
+    assert.equal(forgedCreate.status, 403, JSON.stringify(forgedCreate.data));
+    assert.equal(forgedCreate.data.code, 'FORBIDDEN');
+
+    const byChunk = await sendAs(server, 'GET', `${base()}?assignmentId=asg-forged-create&chunkNumber=1`, undefined, writeHeaders);
+    assert.equal(byChunk.data.receipt, null, 'the forged create never happened -- no receipt exists under this project for that chunk');
+
+    // And at least one transition on an EXISTING, legitimately-created
+    // receipt of THIS project, attempted through this project's own URL by
+    // the same foreign binding.
+    const legit = await sendAs(server, 'POST', `${base()}`, body({ assignmentId: 'asg-forged-transition' }), binding.headers);
+    const receiptId = legit.data.receipt.receiptId;
+    const forgedTransition = await sendAs(server, 'POST', `${base()}/${receiptId}/ready-to-clear`, {}, attackerBinding.headers);
+    assert.equal(forgedTransition.status, 403, JSON.stringify(forgedTransition.data));
+    assert.equal(forgedTransition.data.code, 'FORBIDDEN');
+
+    const stillPrepareClear = await sendAs(server, 'GET', `${base()}/${receiptId}`, undefined, writeHeaders);
+    assert.equal(stillPrepareClear.data.receipt.state, 'prepare_clear', 'the forged transition attempt changed nothing');
+  });
+
   it('answers 404 for an unknown receipt id on every mutation route, before any transition check', async () => {
     for (const path of ['ready-to-clear', 'clear-intent', 'clear-outcome', 'ready-after-clear', 'supersede']) {
       const r = await sendAs(server, 'POST', `${base()}/does-not-exist/${path}`, {}, binding.headers);
