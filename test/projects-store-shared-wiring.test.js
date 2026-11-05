@@ -1,7 +1,8 @@
 'use strict';
 
 // Car 65-D (v5.65.0 Wave 1, Charter A502 v1.0): the wiring added by #2864,
-// #2871, and #2870. Each underlying module (lib/workspace-rename-check.js,
+// #2871, #2870, and the #2834 fix (routed in from Car 65-B under the
+// Charter A502 v1.0 amendment). Each underlying module (lib/workspace-rename-check.js,
 // lib/medusa-toggle-sync.js, lib/scratch-home-defaults.js,
 // lib/master-authority.js, lib/shared-docs.js, lib/shared-docs-http.js,
 // lib/fleet-provisioning.js) already has its own test file proving its own
@@ -31,6 +32,7 @@ const projects = require('../lib/projects');
 const launchSequence = require('../lib/launch-sequence');
 const sessionBriefing = require('../lib/session-briefing');
 const masterAuthority = require('../lib/master-authority');
+const coordinatorRotation = require('../lib/coordinator-rotation');
 
 let tmpDir;
 
@@ -57,6 +59,39 @@ function makeProjectAndSession(name) {
   const session = store.sessions.start({ projectId: project.id, engineId: 'claude', launchSequence: snapshot });
   return { project, session };
 }
+
+describe('#2834: coordinator_roles/coordinator_rotations retention prune tie-break', () => {
+  it('never evicts the row that should be kept when created_at ties exactly (deterministic repro via a fixed clock)', () => {
+    // The issue's own repro raced the real wall clock (three grants issued
+    // back-to-back land in the same millisecond ~48% of the time, measured)
+    // and was first written here as that race, run 50x. That version FAILED
+    // on the real Testament pool (a differently-scheduled/slower container:
+    // 0 ties in 50 runs) despite passing locally every time -- a race is
+    // exactly the kind of thing "ran it once, looked fine" cannot rule out
+    // across machines. Pinning `now` through grantRole's own `deps` seam
+    // forces the exact tie the issue describes on every machine, so this
+    // proves the SAME `rowid DESC` tie-break mechanism without gambling on
+    // real timing.
+    for (let i = 0; i < 10; i++) {
+      const projDir = fs.mkdtempSync(path.join(tmpDir, `tie-${i}-`));
+      const project = store.projects.create({ name: `tie-${i}`, path: projDir, engine: 'codex' });
+      store.coordinatorRoles._setRetention({ historical: 1 });
+      const fixedNow = new Date(2026, 0, 1, 0, 0, 0, i).toISOString();
+      const grant = () => coordinatorRotation.grantRole(
+        { caller: { kind: 'operator' }, body: { projectId: project.id, role: 'architect' } },
+        { now: () => fixedNow }
+      ).body.role;
+      const first = grant();
+      const second = grant();
+      grant();
+      assert.equal(first.createdAt, second.createdAt, 'the fixture itself must produce a real tie, or the test proves nothing');
+      assert.equal(store.coordinatorRoles.get(first.roleId), null,
+        `iteration ${i}: the earlier-inserted tied row must be pruned`);
+      assert.ok(store.coordinatorRoles.get(second.roleId),
+        `iteration ${i}: the later-inserted row, tied on created_at, must be kept (rowid DESC tie-break)`);
+    }
+  });
+});
 
 describe('#2864: decideWorkspaceRename wired into the rename validator', () => {
   it('refuses a rename that would orphan Claude engine state, without explicit confirmation', async () => {
@@ -267,5 +302,191 @@ describe('#2870: lib/fleet-provisioning.js wires buildSharedDocMagicDnsUrl + ins
     assert.equal(second.result.laneQueue.docId, first.result.laneQueue.docId);
     assert.equal(second.result.laneQueue.shareableUrl, first.result.laneQueue.shareableUrl);
     assert.equal(second.result.laneQueue.health.resolved, true);
+  });
+});
+
+describe('#2864 Async companions (A502-W1D-R2): createProjectAsync/syncAllProjectsAsync/' +
+  'scanForOrphanHooksAsync/repairOrphanHooksAsync/deleteProjectAsync/scanForStrandedConfigsAsync', () => {
+  // Each twin reimplements its sync original's exact contract against
+  // `lib/projects-async-io.js` + `fs.promises` instead of `fs`; these tests
+  // prove the async body matches, not re-derive the business logic its sync
+  // counterpart already has full coverage for (test/orphan-hooks.test.js,
+  // test/stranded-configs.test.js, test/projects.test.js).
+  let projectsDir;
+
+  beforeEach(() => {
+    projectsDir = path.join(tmpDir, 'async-projects');
+    fs.mkdirSync(projectsDir, { recursive: true });
+    const cfg = store.config.load();
+    cfg.projectsDir = projectsDir;
+    store.config.save(cfg);
+  });
+
+  function registerProject(rel) {
+    const projectPath = path.join(projectsDir, rel);
+    fs.mkdirSync(projectPath, { recursive: true });
+    const name = rel.replace(/[/\\]/g, '-');
+    store.projects.create({ name, path: projectPath, engine: 'claude', tags: [], ports: {} });
+    return projectPath;
+  }
+
+  function writeSettings(projectPath, hooks, extraKeys = {}) {
+    const settingsDir = path.join(projectPath, '.claude');
+    fs.mkdirSync(settingsDir, { recursive: true });
+    const settings = { ...extraKeys };
+    if (hooks !== null) settings.hooks = hooks;
+    fs.writeFileSync(path.join(settingsDir, 'settings.json'), JSON.stringify(settings, null, 2));
+  }
+
+  function readSettings(projectPath) {
+    return JSON.parse(fs.readFileSync(path.join(projectPath, '.claude', 'settings.json'), 'utf8'));
+  }
+
+  function orphanStopEntry(scriptPath = 'tools/product-hook') {
+    return {
+      matcher: '',
+      hooks: [{
+        type: 'command',
+        command: `python3 "$CLAUDE_PROJECT_DIR/${scriptPath}" stop`,
+        statusMessage: 'Checking governance gates...'
+      }]
+    };
+  }
+
+  describe('createProjectAsync', () => {
+    it('creates a project identically to the sync original: directory, CHANGELOG.md, memory seed, DB row', async () => {
+      const { project, errors } = await projects.createProjectAsync({ name: 'async-create-1', gitInit: false });
+      assert.deepStrictEqual(errors, []);
+      assert.ok(project);
+      assert.equal(project.name, 'async-create-1');
+      const projectPath = path.join(projectsDir, 'async-create-1');
+      assert.ok(fs.existsSync(path.join(projectPath, 'CHANGELOG.md')));
+      assert.ok(fs.existsSync(path.join(projectPath, '.tangleclaw', 'memories', 'MEMORY.md')));
+      assert.ok(store.projects.getByName('async-create-1'));
+    });
+
+    it('refuses a duplicate name, case-insensitively, same as the sync original', async () => {
+      await projects.createProjectAsync({ name: 'dupe-async', gitInit: false });
+      const { project, errors } = await projects.createProjectAsync({ name: 'Dupe-Async', gitInit: false });
+      assert.equal(project, null);
+      assert.ok(errors[0].includes('already exists'));
+    });
+
+    it('refuses when the target directory already exists on disk', async () => {
+      fs.mkdirSync(path.join(projectsDir, 'existing-dir-async'));
+      const { project, errors } = await projects.createProjectAsync({ name: 'existing-dir-async' });
+      assert.equal(project, null);
+      assert.ok(errors[0].includes('already exists in'));
+    });
+  });
+
+  describe('syncAllProjectsAsync', () => {
+    it('creates the missing session-memory directory and seed file, same as the sync original', async () => {
+      const projectPath = registerProject('sync-async-1');
+      const memoriesDir = path.join(projectPath, '.tangleclaw', 'memories');
+      assert.ok(!fs.existsSync(memoriesDir));
+
+      const result = await projects.syncAllProjectsAsync();
+      assert.equal(result.synced, 1);
+      assert.deepStrictEqual(result.errors, []);
+      assert.ok(fs.existsSync(path.join(memoriesDir, 'MEMORY.md')));
+    });
+
+    it('skips a project whose directory no longer exists on disk, without erroring', async () => {
+      registerProject('sync-async-gone');
+      fs.rmSync(path.join(projectsDir, 'sync-async-gone'), { recursive: true, force: true });
+
+      const result = await projects.syncAllProjectsAsync();
+      assert.equal(result.synced, 0);
+      assert.deepStrictEqual(result.errors, []);
+    });
+  });
+
+  describe('deleteProjectAsync', () => {
+    it('removes the project row and, with deleteFiles, the directory from disk', async () => {
+      const projectPath = registerProject('delete-async-1');
+      const result = await projects.deleteProjectAsync('delete-async-1', { deleteFiles: true });
+      assert.equal(result.success, true);
+      assert.equal(result.filesDeleted, true);
+      assert.ok(!fs.existsSync(projectPath));
+      assert.equal(store.projects.getByName('delete-async-1'), null);
+    });
+
+    it('with deleteFiles:false, removes the DB row but preserves the directory', async () => {
+      const projectPath = registerProject('delete-async-keep');
+      const result = await projects.deleteProjectAsync('delete-async-keep', { deleteFiles: false });
+      assert.equal(result.success, true);
+      assert.equal(result.filesDeleted, false);
+      assert.ok(fs.existsSync(projectPath));
+    });
+
+    it('reports an error for an unknown project name', async () => {
+      const result = await projects.deleteProjectAsync('does-not-exist-async');
+      assert.equal(result.success, false);
+      assert.ok(result.errors[0].includes('not found'));
+    });
+  });
+
+  describe('scanForOrphanHooksAsync + repairOrphanHooksAsync', () => {
+    it('flags the same orphan a sync scan would, and repair removes it', async () => {
+      const p = registerProject('orphan-async-1');
+      writeSettings(p, { Stop: [orphanStopEntry()] });
+
+      const scanResult = await projects.scanForOrphanHooksAsync();
+      assert.equal(scanResult.scanned, 1);
+      assert.equal(scanResult.projectsWithOrphans.length, 1);
+      assert.equal(scanResult.projectsWithOrphans[0].name, 'orphan-async-1');
+
+      const repairResult = await projects.repairOrphanHooksAsync();
+      assert.equal(repairResult.repaired.length, 1);
+      const after = readSettings(p);
+      assert.equal(after.hooks, undefined, 'the only entry was orphan, so the hooks block is removed entirely');
+    });
+
+    it('does not flag a hook whose referenced path exists', async () => {
+      const p = registerProject('orphan-async-ok');
+      fs.mkdirSync(path.join(p, 'tools'));
+      fs.writeFileSync(path.join(p, 'tools', 'product-hook'), '#!/bin/sh\n');
+      writeSettings(p, { Stop: [orphanStopEntry()] });
+
+      const scanResult = await projects.scanForOrphanHooksAsync();
+      assert.deepStrictEqual(scanResult.projectsWithOrphans, []);
+    });
+
+    it('single-target repair via projectName, same as the sync original', async () => {
+      const alpha = registerProject('orphan-async-alpha');
+      const beta = registerProject('orphan-async-beta');
+      writeSettings(alpha, { Stop: [orphanStopEntry()] });
+      writeSettings(beta, { Stop: [orphanStopEntry()] });
+
+      const result = await projects.repairOrphanHooksAsync('orphan-async-alpha');
+      assert.equal(result.repaired.length, 1);
+      assert.equal(result.repaired[0].name, 'orphan-async-alpha');
+      const betaAfter = readSettings(beta);
+      assert.ok(betaAfter.hooks.Stop, 'beta was not targeted, so its orphan entry must survive untouched');
+    });
+  });
+
+  describe('scanForStrandedConfigsAsync', () => {
+    it('reports a stranded ancestor CLAUDE.md above a registered nested project, same as the sync original', async () => {
+      registerProject('TiLT-v2-async/tilt-v2');
+      fs.writeFileSync(path.join(projectsDir, 'TiLT-v2-async', 'CLAUDE.md'), '## stale\n');
+
+      const result = await projects.scanForStrandedConfigsAsync();
+      assert.equal(result.scanned, 1);
+      assert.equal(result.stranded.length, 1);
+      assert.equal(result.stranded[0].dir, path.join(projectsDir, 'TiLT-v2-async'));
+      assert.deepStrictEqual(result.stranded[0].files, ['CLAUDE.md']);
+      assert.deepStrictEqual(result.errors, []);
+    });
+
+    it('does not report a parent that is itself a registered project', async () => {
+      registerProject('mono-async');
+      registerProject('mono-async/app');
+      fs.writeFileSync(path.join(projectsDir, 'mono-async', 'CLAUDE.md'), '# registered parent\n');
+
+      const result = await projects.scanForStrandedConfigsAsync();
+      assert.deepStrictEqual(result.stranded, []);
+    });
   });
 });
