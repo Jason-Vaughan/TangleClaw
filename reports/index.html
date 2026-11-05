@@ -253,7 +253,8 @@
       <span>TangleClaw Autonomous Sprint Reports</span>
     </div>
     <div class="nav-links">
-      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.62.0/">v5.62.0 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.63.0/">v5.63.0 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.62.0/">v5.62.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.61.0/">v5.61.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.57.0-v5.61.0-retrospective/">v5.57.0–v5.61.0 Retro</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.60.0/">v5.60.0</a>
@@ -302,13 +303,13 @@
       <div class="kpi-grid">
         <div class="kpi-card">
           <div class="kpi-label">Published Sprint Reports</div>
-          <div class="kpi-val">32 Releases</div>
-          <div class="kpi-sub"><code>v5.34.0</code>–<code>v5.62.0</code> + <code>v5.57.0–v5.61.0</code> &amp; <code>v5.54.0–v5.56.0</code> Retrospectives</div>
+          <div class="kpi-val">33 Releases</div>
+          <div class="kpi-sub"><code>v5.34.0</code>–<code>v5.63.0</code> + <code>v5.57.0–v5.61.0</code> &amp; <code>v5.54.0–v5.56.0</code> Retrospectives</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Cumulative Sprint PRs</div>
-          <div class="kpi-val">313 PRs Merged</div>
-          <div class="kpi-sub"><strong>122 waves</strong> across thirty-four reports · <code>v5.62.0</code> (Leg 1 of 3) delivered 4 PRs &amp; 7 issues + 5 pipelined cars</div>
+          <div class="kpi-val">318 PRs Merged</div>
+          <div class="kpi-sub"><strong>124 waves</strong> across thirty-five reports · <code>v5.63.0</code> (Leg 2 of 3) delivered 5 PRs &amp; 8 issues + all 4 <code>v5.64.0</code> cars certified</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Testament v0.34.0 Pool</div>
@@ -317,18 +318,43 @@
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Latest Release Report</div>
-          <div class="kpi-val" style="color:var(--green);">v5.62.0</div>
-          <div class="kpi-sub">Tag <code>v5.62.0 @ ab770213</code> · Milestone <code>#47</code> (<code>7/7</code> Active Issues)</div>
+          <div class="kpi-val" style="color:var(--green);">v5.63.0</div>
+          <div class="kpi-sub">Tag <code>v5.63.0 @ 5945f099</code> · Milestone <code>#48</code> (<code>8/8</code> Issues)</div>
         </div>
       </div>
     </section>
 
     <div class="report-list">
-      <!-- v5.62.0 Card -->
+      <!-- v5.63.0 Card -->
       <article class="report-card">
         <div class="report-header">
           <div>
             <span class="badge badge-green">● Latest Release · Nov 4, 2026</span>
+            <h2 class="report-title"><a href="./v5.63.0/">TangleClaw <code>v5.63.0</code>: “Certification and evidence”</a></h2>
+          </div>
+          <span class="badge badge-cyan">Tag v5.63.0 @ 5945f099 · 5/5 True Merges &amp; Testament v0.34.0 Verified</span>
+        </div>
+        <p style="color:#cbd5e1; margin:0;">
+          Two coordinated waves delivered <strong>5 Sprint PRs (#2889, #2882, #2896, #2879, #2897)</strong> under Charter <code>A500 v1.0</code> (<code>OP-GO-V5620-V5640-20261104</code>) as Leg 2 of the Three-Version Autonomous Sprint Train (<code>v5.62.0 → v5.63.0 → v5.64.0</code>), closing all <strong>8 chartered Milestone #48 issues (#1949, #2144, #1717, #2362, #2842, #2843, #2830, #2837; <code>open_issues: 0</code>)</strong> with <strong><code>+5,217 / -67</code> LOC</strong> (<code>+5,150 / -22</code> feature LOC). Shipped the automated release certification scorecard &amp; JSON/Markdown evidence bundle producer (<code>#1949, #2144</code>, <code>PR #2889 @ 5eb49167</code>), pre-merge Switchboard inbox gate and <code>rc-verify.sh</code> git worktree path resolution (<code>#1717, #2362</code>, <code>PR #2882 @ 50645126</code>), Slice 2 end-to-end server/UI wiring for tiered Discord confirmation cards, step-up approval, batch bridge reach, and forum-watch polling (<code>#2842, #2843</code>, <code>PR #2896 @ 3f73a462</code>), and Slice 2 end-to-end server/UI wiring for Session History transcript backfill and governed wrap progress (<code>#2830, #2837</code>, <code>PR #2879 @ 3386e184</code>), while completing 100% Dual-Gate Certification of all 4 Leg 3 (<code>v5.64.0</code>) feature cars (<code>#2893, #2890, #2895, #2891</code>).
+        </p>
+        <div class="meta-pills">
+          <span class="badge badge-green">⏱️ Total Run Time: 26m Leg 2 (18:26 → 18:52 PST · 4/4 v5.64.0 Cars Certified)</span>
+          <span class="badge badge-cyan">5/5 True Merges (#2889, #2882, #2896, #2879, #2897)</span>
+          <span class="badge badge-purple">8/8 Chartered Issues Closed (0 Open)</span>
+          <span class="badge badge-amber">+5,217 / -67 LOC across 57 file touches</span>
+          <span class="badge badge-green">0 Post-Merge Defects</span>
+        </div>
+        <div class="card-footer">
+          <div class="url-box">https://jason-vaughan.github.io/TangleClaw/reports/v5.63.0/</div>
+          <a class="cta-btn" href="./v5.63.0/">Open Interactive Report →</a>
+        </div>
+      </article>
+
+      <!-- v5.62.0 Card -->
+      <article class="report-card">
+        <div class="report-header">
+          <div>
+            <span class="badge badge-purple">Sprint Release · Nov 4, 2026</span>
             <h2 class="report-title"><a href="./v5.62.0/">TangleClaw <code>v5.62.0</code>: “Roadmap board”</a></h2>
           </div>
           <span class="badge badge-cyan">Tag v5.62.0 @ ab770213 · 4/4 True Merges &amp; Testament v0.34.0 Verified</span>
