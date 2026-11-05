@@ -336,6 +336,8 @@
     "test/clawbridge.test.js",
     "test/codex-preflight.test.js",
     "test/codex-readiness-timeout-paste.test.js",
+    "test/control-hold-prune.test.js",
+    "test/control-hooks-wiring.test.js",
     "test/control-state.test.js",
     "test/coordinator-rotation-decider.test.js",
     "test/coordinator-rotation.test.js",
