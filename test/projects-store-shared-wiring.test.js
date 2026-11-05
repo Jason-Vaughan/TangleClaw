@@ -23,6 +23,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -242,6 +243,41 @@ describe('#2871: lib/scratch-home-defaults.js wired into store.config.load()\'s 
     fs.rmSync(path.join(tmpDir, 'tangleclaw', 'config.json'), { force: true });
     const config = store.config.load();
     assert.equal(config.projectsDir, '~/Projects');
+  });
+
+  // #2871 I-Gate PRR-B Round 1 (#issuecomment-6651783501): the test above
+  // exercises config.load()'s "file missing" branch directly, by deleting
+  // config.json AFTER store.init() already ran -- a branch normal boot never
+  // takes, since init() always creates config.json first. A real scratch
+  // first boot never hit the scratch-aware default at all and silently kept
+  // scaffolding into the operator's real ~/Projects. Run in a fresh
+  // subprocess (this file is already `large` tier) so the real, completely
+  // unmodified init() -> config.load() sequence runs with its own process
+  // env and its own first require of lib/store.js -- no shared singleton
+  // state from this file's own beforeEach to contaminate or be contaminated by.
+  it('a SCRATCH TANGLECLAW_HOME reaches the scratch-aware default through the real, unmodified init() -> config.load() flow', () => {
+    const scratchHome = fs.mkdtempSync(path.join(tmpDir, 'scratch-boot-'));
+    const script = `
+      process.env.TANGLECLAW_HOME = ${JSON.stringify(scratchHome)};
+      const path = require('node:path');
+      // init()'s own log.info('Created default config', ...) writes to
+      // stdout at this level (lib/logger.js: only error-and-above goes to
+      // stderr) -- would otherwise land right before this script's own JSON
+      // and break the parse below.
+      require(${JSON.stringify(path.join(__dirname, '..', 'lib', 'logger.js'))}).setLevel('error');
+      const store = require(${JSON.stringify(path.join(__dirname, '..', 'lib', 'store.js'))});
+      store._setBasePath(path.join(${JSON.stringify(scratchHome)}, 'tangleclaw'));
+      store.init();
+      const config = store.config.load();
+      process.stdout.write(JSON.stringify({ projectsDir: config.projectsDir }));
+    `;
+    const out = execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' });
+    const { projectsDir } = JSON.parse(out);
+    assert.ok(
+      projectsDir.startsWith(scratchHome),
+      `expected a scratch-scoped projectsDir under ${scratchHome}, got "${projectsDir}" -- ` +
+        'the real first-boot flow fell back to the operator\'s real home default'
+    );
   });
 });
 
