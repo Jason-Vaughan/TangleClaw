@@ -191,7 +191,13 @@ const NETWORK_FIRST_PATHS = new Set([
   // Network-first rather than a CACHE_NAME bump, which tears down and
   // reinstalls the worker for every browser and behind the basic_auth gate is
   // what produced the repeating credential prompt in #710.
-  '/reconnect-policy.js'
+  '/reconnect-policy.js',
+  // remote-ca-assist.js (#400) is not loaded by any page yet — the Setup
+  // Wizard wiring is a tracked follow-up (#2886) — so cache-bump-guard's
+  // "changed and not network-first" finding is pre-emptive. Network-first
+  // rather than a CACHE_NAME bump: it never touches the shared counter every
+  // other in-flight PR could also be bumping.
+  '/remote-ca-assist.js'
 ]);
 
 self.addEventListener('install', (event) => {
