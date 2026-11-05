@@ -64,18 +64,19 @@
               title="Project Master — the global assistant above all projects; what it may write is the access level on its control bar">
         &#129504; Master <span class="master-dot" id="masterDot" aria-hidden="true"></span>
       </button>
-      <!-- #2819: a minimal inline "round rimless sunglasses" glyph (two solid
-           lens circles on a bridge, no rim stroke, short temple ticks for
-           legibility at 16px) rather than a literal bald-dome illustration —
-           the recognizable Morpheus silhouette reduces to the glasses at
-           banner-button size. -->
+      <!-- #2874: the round rimless pince-nez lenses (solid circles, bridge,
+           nose mark) plus a bald-dome head arc and a jaw/collar arc beneath —
+           the plain two-circle glyph (#2819) read as generic at banner-button
+           size with no head context around it. -->
       <button class="dash-action" id="advisorToggle" aria-expanded="false" aria-controls="advisorPanel"
               title="Advisor (Morpheus) — a second global role, always zero-privilege: tool-stripped at launch, its own filesystem sandbox, never session launch/kill/wrap or any route outside its own API (#2819)">
         <svg class="advisor-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <circle cx="7" cy="12" r="5" fill="currentColor"/>
-          <circle cx="17" cy="12" r="5" fill="currentColor"/>
-          <path d="M12 12h0" stroke="currentColor" stroke-width="2"/>
-          <path d="M2 11c0-1 1-2 2-2M22 11c0-1-1-2-2-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M4.5 14.5C4.5 8 7.6 3 12 3c4.4 0 7.5 5 7.5 11.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M4.5 14.5c0 3.6 3 5.5 7.5 5.5s7.5-1.9 7.5-5.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <circle cx="8.3" cy="13.2" r="3" fill="currentColor"/>
+          <circle cx="15.7" cy="13.2" r="3" fill="currentColor"/>
+          <path d="M11.3 13.2h1.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+          <path d="M12 13.8v2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
         </svg>
         Advisor <span class="master-dot" id="advisorDot" aria-hidden="true"></span>
       </button>

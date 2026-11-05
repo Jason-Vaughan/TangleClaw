@@ -234,7 +234,29 @@ describe('#2819 the bar behaves', () => {
       assert.equal(gear.getAttribute('aria-expanded'), 'false');
     });
 
-    it('Save posts the strip\'s current values to /api/advisor/settings', async () => {
+    it('openSettingsStrip expands a closed strip and loads it, the same as the gear (#2874)', async () => {
+      const { doc, bar } = mounted('advisorPanel', { api: async () => ({ engines: [] }) });
+      bar.mount();
+      const strip = doc.getElementById('advisorPanelSettingsStrip');
+      assert.equal(strip.classList.contains('hidden'), true, 'closed at rest');
+      await bar.openSettingsStrip();
+      assert.equal(strip.classList.contains('hidden'), false);
+      assert.equal(doc.getElementById('advisorPanelSettingsBtn').getAttribute('aria-expanded'), 'true');
+    });
+
+    it('openSettingsStrip leaves an already-open strip open -- the Master-modal cross-link must not '
+      + 'collapse a strip the operator already had open (#2874)', async () => {
+      const { doc, bar } = mounted('advisorPanel', { api: async () => ({ engines: [] }) });
+      bar.mount();
+      const strip = doc.getElementById('advisorPanelSettingsStrip');
+      doc.getElementById('advisorPanelSettingsBtn').dispatch('click');
+      assert.equal(strip.classList.contains('hidden'), false, 'opened via the gear first');
+      await bar.openSettingsStrip();
+      assert.equal(strip.classList.contains('hidden'), false, 'still open, not toggled closed');
+    });
+
+    it('Save posts the strip\'s current values to /api/advisor/settings, then the Discord '
+      + 'advisory fields to /api/bridge/operator/advisory-allowlist (#2874)', async () => {
       const calls = [];
       const { doc, bar } = mounted('advisorPanel', {
         api: async () => ({ engines: [] }),
@@ -244,13 +266,157 @@ describe('#2819 the bar behaves', () => {
       await bar.loadSettings();
       doc.getElementById('advisorPanelModelInput').value = 'opus-5';
       doc.getElementById('advisorPanelAutoStart').checked = true;
+      doc.getElementById('advisorPanelAdvisoryEnabled').checked = true;
+      doc.getElementById('advisorPanelAdvisoryChannelId').value = ' chan-1 ';
+      doc.getElementById('advisorPanelAdvisoryAuthorIds').value = 'a1, a2 ,a2';
+      doc.getElementById('advisorPanelAdvisoryRequireMention').checked = true;
+      doc.getElementById('advisorPanelAdvisoryMaxTurns').value = '3';
       doc.getElementById('advisorPanelSaveSettingsBtn').dispatch('click');
       await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
-      assert.equal(calls.length, 1);
+      assert.equal(calls.length, 2);
       assert.equal(calls[0][0], '/api/advisor/settings');
       assert.equal(calls[0][1], 'POST');
       assert.equal(calls[0][2].model, 'opus-5');
       assert.equal(calls[0][2].autoStart, true);
+      assert.equal(calls[1][0], '/api/bridge/operator/advisory-allowlist');
+      assert.equal(calls[1][1], 'POST');
+      // Field-by-field, not a whole-object deepEqual: `body` is built inside
+      // api-helper.js's own vm sandbox (a separate realm from this file), and
+      // node:assert's deepEqual can misreport cross-realm plain objects as
+      // unequal despite identical content (`assert.equal` on each field, the
+      // rest of this suite's own established pattern, is realm-agnostic).
+      assert.equal(calls[1][2].advisoryEnabled, true);
+      assert.equal(calls[1][2].advisoryChannelId, 'chan-1');
+      assert.equal(calls[1][2].advisoryAuthorIds.join(','), 'a1,a2,a2');
+      assert.equal(calls[1][2].advisoryRequireMention, true);
+      assert.equal(calls[1][2].advisoryMaxConsecutiveTurns, 3);
+    });
+
+    it('loadSettings paints the Discord advisory fields from /api/bridge/operator/status, '
+      + 'and shows Reset loop pause only while actually paused (#2874)', async () => {
+      const responses = {
+        '/api/engines': { engines: [] },
+        '/api/advisor/settings': { engine: null, model: null, autoStart: false },
+        '/api/bridge/operator/status': {
+          allowlist: {
+            advisoryEnabled: true, advisoryChannelId: 'chan-9', advisoryAuthorIds: ['p1', 'p2'],
+            advisoryRequireMention: false, advisoryMaxConsecutiveTurns: 4
+          },
+          advisoryLoopPaused: true
+        }
+      };
+      const { doc, bar } = mounted('advisorPanel', { api: async (path) => responses[path] });
+      bar.mount();
+      await bar.loadSettings();
+      assert.equal(doc.getElementById('advisorPanelAdvisoryEnabled').checked, true);
+      assert.equal(doc.getElementById('advisorPanelAdvisoryChannelId').value, 'chan-9');
+      assert.equal(doc.getElementById('advisorPanelAdvisoryAuthorIds').value, 'p1,p2');
+      assert.equal(doc.getElementById('advisorPanelAdvisoryRequireMention').checked, false);
+      assert.equal(doc.getElementById('advisorPanelAdvisoryMaxTurns').value, '4');
+      assert.equal(doc.getElementById('advisorPanelResetLoopPauseBtn').classList.contains('hidden'), false,
+        'Reset shown while paused');
+
+      responses['/api/bridge/operator/status'].advisoryLoopPaused = false;
+      await bar.loadSettings();
+      assert.equal(doc.getElementById('advisorPanelResetLoopPauseBtn').classList.contains('hidden'), true,
+        'Reset hidden once no longer paused');
+    });
+
+    it('Reset loop pause posts /api/bridge/operator/advisory-loop-reset and repaints the strip (#2874)', async () => {
+      const calls = [];
+      let paused = true;
+      const { doc, bar } = mounted('advisorPanel', {
+        api: async (path) => (path === '/api/bridge/operator/status'
+          ? { allowlist: { advisoryEnabled: true, advisoryChannelId: 'c', advisoryAuthorIds: [], advisoryRequireMention: true, advisoryMaxConsecutiveTurns: 6 }, advisoryLoopPaused: paused }
+          : { engines: [] }),
+        apiMutate: async (p, m, b) => {
+          calls.push([p, m, b]);
+          paused = false;
+          return { ok: true };
+        }
+      });
+      bar.mount();
+      await bar.loadSettings();
+      assert.equal(doc.getElementById('advisorPanelResetLoopPauseBtn').classList.contains('hidden'), false);
+      doc.getElementById('advisorPanelResetLoopPauseBtn').dispatch('click');
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+      assert.equal(calls[0][0], '/api/bridge/operator/advisory-loop-reset');
+      assert.equal(calls[0][1], 'POST');
+      assert.equal(Object.keys(calls[0][2]).length, 0, 'the reset route takes no body');
+      assert.equal(doc.getElementById('advisorPanelResetLoopPauseBtn').classList.contains('hidden'), true,
+        'Reset hides itself once the repaint sees the pause is gone');
+    });
+
+    it('surfaces a failure from the advisory-allowlist write, even though the engine/model write succeeded (#2874)', async () => {
+      const calls = [];
+      const apiMutate = async (p, m, b) => {
+        calls.push([p, m, b]);
+        if (p === '/api/bridge/operator/advisory-allowlist') return null;
+        return { engine: null, model: null, autoStart: false };
+      };
+      const api = Object.assign(async () => ({ engines: [] }), { lastError: 'advisory write refused' });
+      const { doc, bar } = mounted('advisorPanel', { api, apiMutate });
+      bar.mount();
+      await bar.loadSettings();
+      doc.getElementById('advisorPanelSaveSettingsBtn').dispatch('click');
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+      assert.equal(calls.length, 2, 'both writes are attempted even though the second fails');
+      assert.equal(calls[0][0], '/api/advisor/settings');
+      assert.equal(calls[1][0], '/api/bridge/operator/advisory-allowlist');
+      // The error staying exactly this message (not cleared to '') proves
+      // saveSettings() returned before reaching its post-save `setError('')` —
+      // the same line that reveals "Saved" — without needing to assert on
+      // that span's `hidden` class, which the mini-dom harness's deliberately
+      // non-parsing innerHTML never derives from markup (only from code).
+      assert.equal(doc.getElementById('advisorPanelError').textContent, 'advisory write refused');
+      assert.equal(doc.getElementById('advisorPanelError').hidden, false);
+    });
+
+    it('a failed bridge-status read paints nothing and refuses the advisory write on Save, without blocking '
+      + 'the engine/model save (#2874 PRR-A I-Gate Round 1, review 5778600281)', async () => {
+      const calls = [];
+      const api = async (path) => {
+        if (path === '/api/bridge/operator/status') return null; // the failed read under test
+        if (path === '/api/engines') return { engines: [] };
+        if (path === '/api/advisor/settings') return { engine: 'claude', model: 'opus', autoStart: true };
+        return null;
+      };
+      const apiMutate = async (p, m, b) => { calls.push([p, m, b]); return { engine: 'claude', model: 'opus', autoStart: true }; };
+      const { doc, bar } = mounted('advisorPanel', { api, apiMutate });
+      bar.mount();
+      await bar.loadSettings();
+      // Nothing was painted from the failed read: the mention checkbox stays
+      // at whatever mount() left it, never forced to the default-true a
+      // successful-but-empty load would paint -- proof paintAdvisorySettings
+      // returned before touching any advisory field.
+      assert.equal(doc.getElementById('advisorPanelAdvisoryRequireMention').checked, false);
+      doc.getElementById('advisorPanelSaveSettingsBtn').dispatch('click');
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+      assert.equal(calls.length, 1, 'only the engine/model write runs -- no advisory write at all');
+      assert.equal(calls[0][0], '/api/advisor/settings');
+      assert.equal(doc.getElementById('advisorPanelError').textContent,
+        'Could not save the Discord advisory settings: the last status read failed, so nothing shown here is safe to re-send.');
+    });
+
+    it('Reset loop pause surfaces a failure instead of silently repainting (#2874)', async () => {
+      const calls = [];
+      const api = Object.assign(
+        async (path) => (path === '/api/bridge/operator/status'
+          ? { allowlist: { advisoryEnabled: true, advisoryChannelId: 'c', advisoryAuthorIds: [], advisoryRequireMention: true, advisoryMaxConsecutiveTurns: 6 }, advisoryLoopPaused: true }
+          : { engines: [] }),
+        { lastError: 'reset refused' }
+      );
+      const apiMutate = async (p, m, b) => { calls.push([p, m, b]); return null; };
+      const { doc, bar } = mounted('advisorPanel', { api, apiMutate });
+      bar.mount();
+      await bar.loadSettings();
+      assert.equal(doc.getElementById('advisorPanelResetLoopPauseBtn').classList.contains('hidden'), false);
+      doc.getElementById('advisorPanelResetLoopPauseBtn').dispatch('click');
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+      assert.equal(calls.length, 1, 'the reset was attempted');
+      assert.equal(doc.getElementById('advisorPanelError').textContent, 'reset refused');
+      assert.equal(doc.getElementById('advisorPanelResetLoopPauseBtn').classList.contains('hidden'), false,
+        'still shown -- a failed reset must not claim the pause is cleared');
     });
   });
 });

@@ -2663,6 +2663,10 @@
    *   lives instead of the modal silently no-oping.
    * @param {Document} [deps.document] - Owning document (defaults to global).
    * @param {Function} [deps.confirm] - Confirmation prompt, injectable for tests.
+   * @param {Function} [deps.onOpenAdvisorSettings] - Called when the "Advisor
+   *   (Morpheus) & Discord advisory settings" link is pressed (#2874); the
+   *   host page closes this modal and opens the Advisor's own settings strip
+   *   rather than this component rendering a second copy of those fields.
    * @returns {{mount: Function, open: Function, close: Function, save: Function, renderBody: Function}}
    */
   function tcCreateMasterSettings(deps) {
@@ -2922,6 +2926,10 @@
         : ''}
     </div>
     <div class="form-group">
+      <button type="button" class="btn btn-small" data-action="open-advisor-settings">Advisor (Morpheus) &amp; Discord advisory settings &rarr;</button>
+      <div class="form-hint">Engine/model, auto-start, and the #ai-to-ai-chatroom advisory channel fields live in the Advisor bar's own settings strip, not here.</div>
+    </div>
+    <div class="form-group">
       <div class="form-label">Access level</div>
       <div class="master-access-grid">${accessRadios}</div>
     </div>
@@ -3168,6 +3176,9 @@
       // another engine, sent back, as a choice that will not run, and say so on
       // a save about something else.
       else if (action === 'master-launch-mode' && e.type === 'change') target.dataset.send = '1';
+      // #2874 — opens the Advisor's own settings strip; a no-op where the
+      // host page wires nothing (an older page, or a test's bare deps).
+      else if (action === 'open-advisor-settings' && e.type === 'click' && deps.onOpenAdvisorSettings) deps.onOpenAdvisorSettings();
     }
 
     /** Persist the settings form via PATCH /api/config { master }. */
@@ -4905,16 +4916,16 @@
   }
 
   /**
-   * Markup for the Advisor control bar (#2819) — deliberately small next to
-   * `tcMasterControlBarMarkup`: no access-level toggle (the Advisor has
-   * exactly one tier, always zero-privilege), no Medusa control, no upload/
-   * wrap pending states. Settings (engine/model/autoStart) render inline in a
-   * collapsible strip rather than a separate modal
-   * (`tcMasterSettingsMarkup`/`tcCreateMasterSettings` is ~600 lines of
-   * access-tier/project-scoping concepts the Advisor has none of); there is
-   * exactly one verified-read-only engine today
-   * (`lib/advisor.js`'s own `READ_ONLY_TOOL_FLAGS`), so a dedicated modal
-   * would be solving a problem this surface does not have yet.
+   * Markup for the Advisor control bar (#2819, expanded #2874) — deliberately
+   * small next to `tcMasterControlBarMarkup`: no access-level toggle (the
+   * Advisor has exactly one tier, always zero-privilege), no Medusa control,
+   * no upload/wrap pending states. Settings render inline in a collapsible
+   * strip rather than a separate modal (`tcMasterSettingsMarkup`/
+   * `tcCreateMasterSettings` is ~600 lines of access-tier/project-scoping
+   * concepts the Advisor has none of) — the strip grew to cover the Discord
+   * advisory-channel fields (#2817-A) too rather than spinning up a second
+   * settings surface for them; `tcCreateMasterSettings`' own modal links here
+   * instead of duplicating the fields.
    * @param {string} p - Id prefix.
    * @returns {string}
    */
@@ -4943,6 +4954,24 @@
         <label class="advisor-settings-check">
           <input type="checkbox" id="${p}AutoStart"> Auto-start with the server
         </label>
+        <div class="advisor-settings-divider" role="separator" aria-label="Discord advisory channel settings"></div>
+        <label class="advisor-settings-check">
+          <input type="checkbox" id="${p}AdvisoryEnabled"> Advisory enabled (#ai-to-ai-chatroom)
+        </label>
+        <label class="advisor-settings-field">Advisory channel ID
+          <input type="text" id="${p}AdvisoryChannelId" placeholder="Discord channel snowflake" autocomplete="off">
+        </label>
+        <label class="advisor-settings-field">Allowlisted peer/bot author IDs
+          <input type="text" id="${p}AdvisoryAuthorIds" placeholder="comma-separated snowflakes" autocomplete="off">
+        </label>
+        <label class="advisor-settings-check">
+          <input type="checkbox" id="${p}AdvisoryRequireMention"> Require @mention / reply
+        </label>
+        <label class="advisor-settings-field">Max consecutive AI turns
+          <input type="number" id="${p}AdvisoryMaxTurns" min="0" step="1" placeholder="6">
+        </label>
+        <button type="button" class="btn btn-small hidden" id="${p}ResetLoopPauseBtn"
+                title="Clear the advisory anti-loop pause without posting in the advisory channel">Reset loop pause</button>
         <button type="button" class="btn btn-small" id="${p}SaveSettingsBtn">Save</button>
         <span class="advisor-settings-saved hidden" id="${p}SettingsSaved" role="status">Saved</span>
       </div>`;
@@ -4974,13 +5003,19 @@
    *   (`advisorPanel`, `advisorDrawer`), each the id of its own container.
    * @returns {{mount: Function, setStatus: Function, setModel: Function,
    *            setError: Function, loadModel: Function, loadSettings: Function,
-   *            killAdvisor: Function, toggleFullscreen: Function}}
+   *            openSettingsStrip: Function, killAdvisor: Function, toggleFullscreen: Function}}
    */
   function tcCreateAdvisorControlBar(deps) {
     const doc = deps.doc || global.document;
     const p = deps.prefix;
     let bound = false;
     let busy = false;
+    // Whether the LAST `GET /api/bridge/operator/status` actually succeeded
+    // (#2874 PRR-A I-Gate Round 1): a failed read must not let Save re-send
+    // the strip's now-defaulted advisory fields as if they were a real
+    // configuration change -- that would disable a live advisory channel on
+    // a transient read failure, with no operator edit behind it at all.
+    let advisoryLoaded = false;
 
     const el = (suffix) => doc.getElementById(p + suffix);
 
@@ -5005,6 +5040,8 @@
       if (settingsBtn) settingsBtn.addEventListener('click', toggleSettingsStrip);
       const save = el('SaveSettingsBtn');
       if (save) save.addEventListener('click', saveSettings);
+      const resetLoop = el('ResetLoopPauseBtn');
+      if (resetLoop) resetLoop.addEventListener('click', resetLoopPause);
       const fullscreenBtn = el('FullscreenBtn');
       if (fullscreenBtn) {
         if (!surfaceEl() || !surfaceEl().requestFullscreen) fullscreenBtn.hidden = true;
@@ -5155,6 +5192,17 @@
     }
 
     /**
+     * Expand the strip if it is not already open, loading it the same way
+     * the gear does (#2874) — for the Master Settings modal's cross-link,
+     * which must not re-collapse a strip the operator already had open.
+     * @returns {Promise<void>}
+     */
+    async function openSettingsStrip() {
+      const strip = el('SettingsStrip');
+      if (strip && strip.classList.contains('hidden')) await toggleSettingsStrip();
+    }
+
+    /**
      * Populate the engine select from `GET /api/engines` (installed
      * engines, not Advisor-specific) and the current values from
      * `GET /api/advisor/settings`. An engine not actually verified
@@ -5169,9 +5217,10 @@
       const modelInput = el('ModelInput');
       const autoStart = el('AutoStart');
       if (!deps.api) return;
-      const [engineData, settings] = await Promise.all([
+      const [engineData, settings, bridgeStatus] = await Promise.all([
         deps.api('/api/engines'),
-        deps.api('/api/advisor/settings')
+        deps.api('/api/advisor/settings'),
+        deps.api('/api/bridge/operator/status')
       ]);
       if (sel) {
         const list = ((engineData && engineData.engines) || []).filter((e) => e && e.available);
@@ -5182,10 +5231,51 @@
       if (sel) sel.value = (settings && settings.engine) || '';
       if (modelInput) modelInput.value = (settings && settings.model) || '';
       if (autoStart) autoStart.checked = Boolean(settings && settings.autoStart);
+      paintAdvisorySettings(bridgeStatus);
     }
 
     /**
-     * Save the settings strip's current values via `POST /api/advisor/settings`.
+     * Paint the Discord advisory-channel fields (#2874) from
+     * `GET /api/bridge/operator/status`'s `allowlist` plus its
+     * `advisoryLoopPaused` reading. Called on every strip open, same "no
+     * stale state behind a reopened control" rule {@link loadSettings}
+     * already follows for the engine/model fields.
+     * @param {{allowlist: (object|null), advisoryLoopPaused: boolean}|null} bridgeStatus
+     *   - `GET /api/bridge/operator/status`'s response body, or null on failure.
+     * @returns {void}
+     */
+    function paintAdvisorySettings(bridgeStatus) {
+      advisoryLoaded = Boolean(bridgeStatus);
+      // A failed read paints NOTHING -- leaving the fields exactly as they
+      // were (stale from an earlier successful load, or empty at first
+      // mount) is safer than painting disabled/empty defaults that
+      // `saveAdvisorySettings` could then send as a real configuration
+      // change. `advisoryLoaded` is what actually gates that send; this
+      // early return just keeps the strip from lying about what is stored.
+      if (!bridgeStatus) return;
+      const enabled = el('AdvisoryEnabled');
+      const channelId = el('AdvisoryChannelId');
+      const authorIds = el('AdvisoryAuthorIds');
+      const requireMention = el('AdvisoryRequireMention');
+      const maxTurns = el('AdvisoryMaxTurns');
+      const resetBtn = el('ResetLoopPauseBtn');
+      const allow = bridgeStatus && bridgeStatus.allowlist;
+      if (enabled) enabled.checked = Boolean(allow && allow.advisoryEnabled);
+      if (channelId) channelId.value = (allow && allow.advisoryChannelId) || '';
+      if (authorIds) authorIds.value = ((allow && allow.advisoryAuthorIds) || []).join(',');
+      if (requireMention) requireMention.checked = allow ? Boolean(allow.advisoryRequireMention) : true;
+      if (maxTurns) maxTurns.value = String((allow && Number.isInteger(allow.advisoryMaxConsecutiveTurns)) ? allow.advisoryMaxConsecutiveTurns : 6);
+      if (resetBtn) resetBtn.classList.toggle('hidden', !(bridgeStatus && bridgeStatus.advisoryLoopPaused));
+    }
+
+    /**
+     * Save the settings strip's current values: `POST /api/advisor/settings`
+     * for engine/model/autoStart, and `POST /api/bridge/operator/advisory-allowlist`
+     * (#2874) for the Discord advisory-channel fields, as one Save action.
+     * The advisory write is sent even when the fields are unchanged from
+     * what they loaded with — the same "re-send everything shown" rule the
+     * engine/model save already follows, and that route treats an
+     * unchanged write as a harmless no-op.
      * @returns {Promise<void>}
      */
     async function saveSettings() {
@@ -5204,11 +5294,74 @@
         setError((deps.api && deps.api.lastError) || 'Could not save the Advisor settings.');
         return;
       }
+      const advisoryResult = await saveAdvisorySettings();
+      if (!advisoryResult) return;
       setError('');
       if (saved) {
         saved.classList.remove('hidden');
         global.setTimeout(() => saved.classList.add('hidden'), 2000);
       }
+    }
+
+    /**
+     * Save the Discord advisory-channel fields via
+     * `POST /api/bridge/operator/advisory-allowlist` (#2874). Split out of
+     * {@link saveSettings} so {@link resetLoopPause} can repaint the
+     * strip's Reset button from the same response shape without
+     * re-sending the engine/model fields.
+     *
+     * Refuses to send when the last `GET /api/bridge/operator/status` read
+     * failed (PRR-A I-Gate Round 1, #2892): the strip's fields are then
+     * whatever they were before that failed read (per
+     * {@link paintAdvisorySettings}'s own refusal to paint on failure),
+     * never a trustworthy snapshot of what is actually stored, and sending
+     * them anyway is how a transient status-read failure would silently
+     * disable a live advisory channel with no operator edit behind it.
+     * @returns {Promise<boolean>} True on success, or when there is
+     *   nothing to send; false leaves `setError` already called with the
+     *   failure.
+     */
+    async function saveAdvisorySettings() {
+      const enabled = el('AdvisoryEnabled');
+      const channelId = el('AdvisoryChannelId');
+      const authorIds = el('AdvisoryAuthorIds');
+      const requireMention = el('AdvisoryRequireMention');
+      const maxTurns = el('AdvisoryMaxTurns');
+      if (!enabled && !channelId && !authorIds && !requireMention && !maxTurns) return true;
+      if (!advisoryLoaded) {
+        setError('Could not save the Discord advisory settings: the last status read failed, so nothing shown here is safe to re-send.');
+        return false;
+      }
+      const body = {
+        advisoryEnabled: Boolean(enabled && enabled.checked),
+        advisoryChannelId: (channelId && channelId.value.trim()) || null,
+        advisoryAuthorIds: ((authorIds && authorIds.value) || '').split(',').map((s) => s.trim()).filter(Boolean),
+        advisoryRequireMention: Boolean(requireMention && requireMention.checked),
+        advisoryMaxConsecutiveTurns: (maxTurns && maxTurns.value !== '') ? Number(maxTurns.value) : 6
+      };
+      const result = await deps.apiMutate('/api/bridge/operator/advisory-allowlist', 'POST', body);
+      if (!result) {
+        setError((deps.api && deps.api.lastError) || 'Could not save the Discord advisory settings.');
+        return false;
+      }
+      return true;
+    }
+
+    /**
+     * Clear the advisory anti-loop pause via
+     * `POST /api/bridge/operator/advisory-loop-reset` (#2874) and repaint
+     * the strip so the Reset button hides once the pause is actually gone.
+     * @returns {Promise<void>}
+     */
+    async function resetLoopPause() {
+      if (!deps.apiMutate) return;
+      const result = await deps.apiMutate('/api/bridge/operator/advisory-loop-reset', 'POST', {});
+      if (!result) {
+        setError((deps.api && deps.api.lastError) || 'Could not reset the advisory loop pause.');
+        return;
+      }
+      setError('');
+      if (deps.api) paintAdvisorySettings(await deps.api('/api/bridge/operator/status'));
     }
 
     /**
@@ -5240,7 +5393,7 @@
       btn.title = isFull ? 'Exit full screen' : 'Expand the Advisor terminal to fill the screen';
     }
 
-    return { mount, setStatus, setModel, setError, loadModel, loadSettings, killAdvisor, toggleFullscreen };
+    return { mount, setStatus, setModel, setError, loadModel, loadSettings, openSettingsStrip, killAdvisor, toggleFullscreen };
   }
 
   /**

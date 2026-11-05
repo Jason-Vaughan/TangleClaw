@@ -760,7 +760,8 @@
 }
 
 /* #2819 — the Advisor control bar's inline settings strip (engine/model/
-   autoStart). Collapsible rather than a modal: see `tcAdvisorControlBarMarkup`
+   autoStart), expanded #2874 to also cover the Discord advisory-channel
+   fields. Collapsible rather than a modal: see `tcAdvisorControlBarMarkup`
    in api-helper.js for why. */
 .advisor-settings-strip {
   display: flex;
@@ -780,7 +781,8 @@
   color: var(--text-muted);
 }
 .advisor-settings-field select,
-.advisor-settings-field input[type="text"] {
+.advisor-settings-field input[type="text"],
+.advisor-settings-field input[type="number"] {
   min-height: 30px;
   padding: 4px 8px;
   border-radius: 6px;
@@ -788,6 +790,9 @@
   background: var(--elevated-bg, #1a1a1a);
   color: inherit;
   font-size: 13px;
+}
+.advisor-settings-field input[type="number"] {
+  width: 70px;
 }
 .advisor-settings-check {
   display: flex;
@@ -798,5 +803,13 @@
 .advisor-settings-saved {
   font-size: 12px;
   color: var(--primary);
+}
+/* #2874 — separates engine/model/autoStart from the Discord advisory fields
+   below it within the one strip, without a second collapsible section. */
+.advisor-settings-divider {
+  width: 100%;
+  height: 1px;
+  background: var(--border, #333);
+  margin: 2px 0;
 }
 .advisor-icon { vertical-align: middle; }
