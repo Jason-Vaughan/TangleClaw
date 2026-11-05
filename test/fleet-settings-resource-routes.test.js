@@ -135,7 +135,21 @@ describe('workload-fleet.js buildFleetView (#2858)', () => {
       applicability: { applicable: false, reason: 'test' }, rendered: null, rules: []
     });
     const session = store.sessions.start({ projectId: project.id, engineId: 'claude', launchSequence: snapshot });
-    return { project, session };
+    return { project, session, launchId };
+  }
+
+  /**
+   * Insert a workload receipt directly (no HTTP), for a lane that needs one
+   * to exercise {@link module:lib/workload-fleet.buildFleetView}'s mapping
+   * of a REAL receipt.
+   */
+  function appendReceipt({ project, session, launchId }, { state, clearance, summary, receivedAt }) {
+    store.workloadReceipts.append({
+      project_id: project.id, session_id: session.id, launch_id: launchId, assignment_id: null,
+      state, clearance, summary, wait_kind: null, wait_detail: null,
+      refs_json: JSON.stringify({ issues: [], prs: [], tasks: [] }),
+      branch: null, head_sha: null, source: 'tc-cli', received_at: receivedAt
+    }, { minIntervalMs: 0, nowMs: Date.parse(receivedAt) });
   }
 
   it('maps a receipt-less active session into an "active" lane, grouped by project', () => {
@@ -162,6 +176,53 @@ describe('workload-fleet.js buildFleetView (#2858)', () => {
     );
     assert.equal(result.ok, true);
     assert.equal(result.view.sessions[0].passiveState, 'offline');
+  });
+
+  it('I-Gate Round 1 regression (#2904): a stale "working" receipt reads wedged, not masked by a fresh observer poll', () => {
+    const fixture = startSession('fleet-stale-working');
+    appendReceipt(fixture, { state: 'working', clearance: 'do-not-clear', summary: 'still going', receivedAt: '2026-11-04T23:00:00.000Z' });
+    // The observer's own `observedAt` is a FRESH poll timestamp, taken at the
+    // exact moment this test runs its assertion -- the real-world shape of
+    // the bug: routine polling keeps observedAt fresh regardless of whether
+    // the session has actually done anything since the receipt.
+    const freshObserver = { get: () => ({ activity: 'unknown', reason: 'test', observedAt: '2026-11-05T00:00:00.000Z', ageSeconds: 0, provenance: 'engine-observed' }) };
+    const workloadFleet = require('../lib/workload-fleet');
+    const result = workloadFleet.buildFleetView(
+      [{ id: fixture.session.id, projectId: fixture.project.id, projectName: fixture.project.name, status: store.SESSION_STATUS.ACTIVE }],
+      { observer: freshObserver, now: '2026-11-05T00:00:00.000Z' }
+    );
+    assert.equal(result.ok, true);
+    // One hour old, past the 30-minute working threshold -- must read wedged.
+    assert.equal(result.view.sessions[0].passiveState, 'wedged');
+  });
+
+  it('I-Gate Round 1 regression (#2904): a complete session with real switchboard debt is never read as idle', () => {
+    const fixture = startSession('fleet-debt');
+    appendReceipt(fixture, { state: 'complete', clearance: 'safe-to-clear', summary: 'done', receivedAt: '2026-11-05T00:00:00.000Z' });
+    const workloadFleet = require('../lib/workload-fleet');
+
+    const withoutDebt = workloadFleet.buildFleetView(
+      [{ id: fixture.session.id, projectId: fixture.project.id, projectName: fixture.project.name, status: store.SESSION_STATUS.ACTIVE }],
+      { observer, now: '2026-11-05T00:00:00.000Z' }
+    );
+    assert.equal(withoutDebt.view.sessions[0].passiveState, 'idle', 'no debt, no staleness: idle is correct here');
+
+    const withDebt = workloadFleet.buildFleetView(
+      [{ id: fixture.session.id, projectId: fixture.project.id, projectName: fixture.project.name, status: store.SESSION_STATUS.ACTIVE, unreadMessageCount: 1 }],
+      { observer, now: '2026-11-05T00:00:00.000Z' }
+    );
+    assert.notEqual(withDebt.view.sessions[0].passiveState, 'idle', 'real unread debt must never be silently dropped into an idle verdict');
+  });
+
+  it('I-Gate Round 1 regression (#2904): stale debt on a complete session reads wedged -- PRR-A\'s own exact repro', () => {
+    const fixture = startSession('fleet-stale-debt');
+    appendReceipt(fixture, { state: 'complete', clearance: 'safe-to-clear', summary: 'done', receivedAt: '2026-11-04T23:00:00.000Z' });
+    const workloadFleet = require('../lib/workload-fleet');
+    const result = workloadFleet.buildFleetView(
+      [{ id: fixture.session.id, projectId: fixture.project.id, projectName: fixture.project.name, status: store.SESSION_STATUS.ACTIVE, unreadMessageCount: 1 }],
+      { observer, now: '2026-11-05T00:00:00.000Z' }
+    );
+    assert.equal(result.view.sessions[0].passiveState, 'wedged');
   });
 });
 
