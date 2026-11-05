@@ -234,6 +234,25 @@ describe('createWrapProgressStream', () => {
       wrapRunRegistry.finish(project.name, request.runId, { ok: true });
       assert.equal(events.length, 0);
     });
+
+    it('reports an explicit "failed" terminal, never a bare "pipeline-running", for a run the registry lost (I-Gate R2)', async () => {
+      // The reviewer's own repro: a real executing request, the in-process
+      // registry reset underneath it (the restart case), then the stream
+      // reopened. Before this fix, `sessions.subscribeWrapRun` returning
+      // `{ok:false}` left the replay at `[initial]` -- the "pipeline-running"
+      // frame pushed before the subscribe attempt -- with `finished: true`
+      // and no terminal stage at all, so a progress bar would sit at its
+      // "running" percent forever even though the stream had closed.
+      const request = await readyAndExecuting();
+      wrapRunRegistry._resetForTests(); // simulates the server restarting: the run is gone from the in-process registry
+      const stream = gw.createWrapProgressStream(request.requestId, { onEvent: () => {}, onEnd: () => {} });
+      assert.equal(stream.ok, true);
+      assert.equal(stream.finished, true);
+      const terminal = stream.replay[stream.replay.length - 1];
+      assert.equal(terminal.stage, gw.PROGRESS_STAGES.FAILED);
+      assert.notEqual(terminal.stage, gw.PROGRESS_STAGES.PIPELINE_RUNNING);
+      assert.equal(terminal.detail.reason, 'run-not-in-registry');
+    });
   });
 });
 
