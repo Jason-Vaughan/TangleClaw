@@ -408,6 +408,66 @@ describe('durability and the store file itself', () => {
     assert.equal(gate.getHold(file, 'anything'), null);
   });
 
+  describe('the gate fails closed on a corrupt store, never reads it as "no holds" (#2882 I-Gate R1)', () => {
+    /**
+     * Issue a real hold that blocks merge on PR 42, then replace the store
+     * file with something `_readStoreStrict` refuses, reproducing the
+     * I-Gate finding's exact repro.
+     * @returns {void}
+     */
+    function corruptAfterAnActiveHold() {
+      hold({ pr: 42, reason: 'blocks merge on 42' });
+      assert.equal(gate.checkActionGate({ file, action: 'merge', identity: { repo: REPO, pr: 42 } }).allowed, false,
+        'sanity check: the hold really does block before the store is corrupted');
+      fs.writeFileSync(file, 'not json at all');
+    }
+
+    it('checkActionGate refuses (ok:false) rather than allowing merge, auto-merge, release or restart', () => {
+      corruptAfterAnActiveHold();
+      for (const action of gate.HARD_GATE_ACTIONS) {
+        const result = gate.checkActionGate({ file, action, identity: { repo: REPO, pr: 42 } });
+        assert.equal(result.ok, false, action);
+        assert.equal(result.code, 'CORRUPT_STORE');
+        assert.equal(result.allowed, undefined, `${action}: a refusal must not also carry an allowed:true/false a careless caller could read past the ok check`);
+      }
+    });
+
+    it('checkActionGate refuses commit too: a damaged authority record must not read as a quiet non-blocking advisory', () => {
+      corruptAfterAnActiveHold();
+      const result = gate.checkActionGate({ file, action: 'commit', identity: { repo: REPO, pr: 42 } });
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'CORRUPT_STORE');
+    });
+
+    it('buildStatusCheckPayload and autoMergeAllowed never report success on a corrupt store', () => {
+      corruptAfterAnActiveHold();
+      const payload = gate.buildStatusCheckPayload({ file, identity: { repo: REPO, pr: 42 } });
+      assert.equal(payload.ok, false);
+      assert.equal(payload.state, undefined, 'no state field at all, so nothing can mistake this refusal for a reported success or failure');
+      assert.equal(gate.autoMergeAllowed({ file, identity: { repo: REPO, pr: 42 } }), false);
+    });
+
+    it('evaluateMergeGate refuses too, for both merge and auto-merge', () => {
+      corruptAfterAnActiveHold();
+      assert.equal(gate.evaluateMergeGate({ file, identity: { repo: REPO, pr: 42 } }).ok, false);
+      assert.equal(gate.evaluateMergeGate({ file, identity: { repo: REPO, pr: 42 }, autoMerge: true }).ok, false);
+    });
+
+    it('the lenient display accessors are deliberately unchanged: listHolds/getHold/matchingHolds still read a corrupt store as empty', () => {
+      corruptAfterAnActiveHold();
+      assert.deepEqual(gate.listHolds(file), []);
+      assert.deepEqual(gate.matchingHolds(file, { repo: REPO, pr: 42 }), []);
+      assert.equal(gate.getHold(file, 'hold_anything'), null);
+    });
+
+    it('recovers the instant the store is repaired: no corruption is sticky once the file reads clean again', () => {
+      corruptAfterAnActiveHold();
+      fs.writeFileSync(file, '{}');
+      assert.equal(gate.checkActionGate({ file, action: 'merge', identity: { repo: REPO, pr: 42 } }).allowed, true);
+      assert.equal(gate.autoMergeAllowed({ file, identity: { repo: REPO, pr: 42 } }), true);
+    });
+  });
+
   it('reads as empty, and every write succeeds, when the file does not exist yet', () => {
     assert.deepEqual(gate.listHolds(file), []);
     assert.equal(gate.issueHold(file, { repo: REPO, pr: 1, reason: 'x', issuedBy: 'y' }).ok, true);
