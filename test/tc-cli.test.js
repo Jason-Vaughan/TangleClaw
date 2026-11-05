@@ -587,9 +587,16 @@ describe('launch env injection — the pane gets tc on PATH (ambient-awareness C
       const result = sessions.launchSession('floor-proj');
       assert.equal(result.error, null);
       const binDir = path.join(__dirname, '..', 'bin');
-      assert.ok(capturedCommand.startsWith(`export PATH="${binDir}:$PATH"; `),
-        'the command body opens by re-prepending tc\'s bin dir');
-      assert.ok(capturedCommand.length > `export PATH="${binDir}:$PATH"; `.length,
+      // #2866: the merge-role-guard `gh` wrapper dir rides the SAME
+      // rc-survives-because-it's-in-the-command-body fix #1140 made for
+      // bin/ -- one combined floor (lib/sessions.js#_withMergeGuardFloor),
+      // never two stacked `export PATH=...; ` prefixes (that shape is
+      // deliberately NOT what lib/recorded-launch-command.js#_withoutPathFloor
+      // strips -- see that module's own #2228 regression coverage).
+      const guardDir = path.join(store._getBasePath(), 'merge-role-guard-wrapper');
+      assert.ok(capturedCommand.startsWith(`export PATH="${binDir}:${guardDir}:$PATH"; `),
+        'the command body opens by re-prepending tc\'s bin dir and the merge-role-guard wrapper dir');
+      assert.ok(capturedCommand.length > `export PATH="${binDir}:${guardDir}:$PATH"; `.length,
         'the engine launch command follows the export — the wrapper never swallows it');
       store.sessions.kill(result.session.id, 'test cleanup');
     } finally {
