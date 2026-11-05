@@ -89,7 +89,8 @@
         "lib/merge-authority.js",
         "lib/check-watch*.js",
         "lib/permission-requests.js",
-        "lib/decision-routing.js"
+        "lib/decision-routing.js",
+        "lib/interactive-decision-routing.js"
       ]
     },
     "launch": {
