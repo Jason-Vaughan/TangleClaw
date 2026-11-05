@@ -296,12 +296,13 @@
     },
     "tooling": {
       "label": "area:tooling",
-      "why": "Repository scripts, release certification and soak harnesses.",
+      "why": "Repository scripts, release certification, soak harnesses and the Vercel build guard.",
       "paths": [
         "scripts/**",
         "lib/release-certification/**",
         "lib/soak/**",
-        "lib/test-results.js"
+        "lib/test-results.js",
+        "lib/roadmap-vercel-guard.js"
       ]
     },
     "config": {

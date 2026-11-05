@@ -681,6 +681,7 @@
     "test/repo-governance-reference.test.js",
     "test/reset-admin.test.js",
     "test/resume-publication-binding.test.js",
+    "test/roadmap-vercel-guard.test.js",
     "test/rotation-live-check.test.js",
     "test/rule-delivery-receipt.test.js",
     "test/rule-id-display.test.js",
