@@ -782,6 +782,7 @@
     "test/update-checker.test.js",
     "test/update-release-link.test.js",
     "test/usage-windows.test.js",
+    "test/v5670-car67a-control-roadmap-merge-gate.test.js",
     "test/version-bump-pyproject.test.js",
     "test/version-visibility.test.js",
     "test/with-scratch-server.test.js",

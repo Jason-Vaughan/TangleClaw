@@ -41,6 +41,8 @@ async function sendAs(...args) {
 
 const REPO = 'Jason-Vaughan/TangleClaw';
 const HEAD = 'a'.repeat(40);
+/** The pull request's head branch name, as `readPull` answers it (#2878 I-Gate R2). */
+const HEAD_BRANCH = 'feature/the-submitted-head';
 const OTHER_HEAD = 'b'.repeat(40);
 const BASE_SHA = 'c'.repeat(40);
 const CANDIDATE_SHA = 'd'.repeat(40);
@@ -237,7 +239,10 @@ describe('/api/merge-queue (#2322)', () => {
     gh = { calls: [], pull: {}, check: {}, files: {}, discard: { status: 'discarded', candidate: 'deleted', stage: 'not-found' } };
     api._internal.readPull = async (repo, number) => {
       gh.calls.push(['readPull', repo, number]);
-      return { status: 'read', number, state: 'open', merged: false, draft: false, mergeable: true, baseRef: 'main', headSha: HEAD, changedFiles: 1, ...gh.pull };
+      return {
+        status: 'read', number, state: 'open', merged: false, draft: false, mergeable: true, baseRef: 'main',
+        headRef: HEAD_BRANCH, headSha: HEAD, changedFiles: 1, ...gh.pull
+      };
     };
     api._internal.readCheck = async (repo, sha, name) => {
       gh.calls.push(['readCheck', repo, sha, name]);
@@ -1334,6 +1339,122 @@ describe('/api/merge-queue (#2322)', () => {
       const actor = { kind: 'project', projectId: rotating.id, launchId: first.launchId };
       assert.equal(queueStore.withdrawEntry(queued.data.entry.entryId, { reason: 'clearing the queue for a test', actor }).ok, true);
       assert.equal(queueStore.retireQueue(ownQueue, { actor: { kind: 'operator', operatorProof: 'ambient-open' } }).ok, true);
+    });
+  });
+
+  describe('a merge-gate hold blocks landing, through the SAME shared file the session routes use (#2878 Architect Ruling A504-W1A-R3 BLOCKING 2)', () => {
+    const mergeGate = require('../lib/merge-inbox-gate');
+
+    /** The shared hold ledger this suite's own `advance()` calls read -- identically to `lib/merge-queue-api.js#_mergeGateFile`. */
+    const mergeGateFile = () => path.join(store._getBasePath(), 'merge-inbox-gate-holds.json');
+
+    beforeEach(() => {
+      emptyQueue();
+      githubForAdvance();
+      // Holds persist in the shared, server-wide ledger across the whole
+      // describe block (one tmpDir/store base path for all its tests) --
+      // clear it so an earlier test's hold (especially a branch-scoped one,
+      // which matches every entry here since they all share HEAD_BRANCH)
+      // cannot leak into the next test.
+      fs.rmSync(mergeGateFile(), { force: true });
+    });
+
+    afterEach(() => {
+      // Same reason as the beforeEach above, the other direction: this
+      // block's last test must not leave an active hold for whichever
+      // describe block runs after it in this file.
+      fs.rmSync(mergeGateFile(), { force: true });
+    });
+
+    /**
+     * Submit an entry and advance it once, to testing with its candidate.
+     * @returns {Promise<object>} The entry
+     */
+    const atTesting = async () => {
+      const entry = await submitted();
+      const assembled = await advanceAs();
+      assert.equal(assembled.data.step, 'assembled', JSON.stringify(assembled.data));
+      gh.calls.length = 0;
+      return entry;
+    };
+
+    it('a hold issued directly against the shared ledger blocks the landing, with no mergePull call', async () => {
+      const entry = await atTesting();
+      const issued = mergeGate.issueHold(mergeGateFile(), {
+        repo: REPO, pr: entry.prNumber, reason: 'reviewing', issuedBy: 'TC-Lane-PRR-A'
+      });
+      assert.equal(issued.ok, true, JSON.stringify(issued));
+      const events = queueStore.listEvents(queueId).length;
+
+      const res = await advanceAs();
+      assert.equal(res.status, 409, JSON.stringify(res.data));
+      assert.equal(res.data.code, 'MERGE_GATE_HOLD_ACTIVE');
+      assert.match(res.data.error, /a merge-gate hold blocks it/);
+
+      assert.equal(queueStore.getEntry(entry.entryId).state, 'testing');
+      assert.equal(queueStore.listEvents(queueId).length, events, 'no event is appended');
+      assert.deepEqual(githubWrites(), [], 'no merge request and no branch deletion');
+    });
+
+    it('a hold scoped to a DIFFERENT pull request does not block this one', async () => {
+      const entry = await atTesting();
+      const issued = mergeGate.issueHold(mergeGateFile(), {
+        repo: REPO, pr: entry.prNumber + 1000, reason: 'a different PR entirely', issuedBy: 'TC-Lane-PRR-A'
+      });
+      assert.equal(issued.ok, true, JSON.stringify(issued));
+      const landed = await advanceAs();
+      assert.equal(landed.data.step, 'landed', JSON.stringify(landed.data));
+    });
+
+    it('once the hold is acknowledged, the next advance lands', async () => {
+      const entry = await atTesting();
+      const issued = mergeGate.issueHold(mergeGateFile(), {
+        repo: REPO, pr: entry.prNumber, reason: 'reviewing', issuedBy: 'TC-Lane-PRR-A'
+      });
+      assert.equal((await advanceAs()).data.code, 'MERGE_GATE_HOLD_ACTIVE');
+
+      const acked = mergeGate.acknowledgeHold(mergeGateFile(), issued.hold.holdId, { by: 'TC-Lane-PRR-A' });
+      assert.equal(acked.ok, true, JSON.stringify(acked));
+
+      const landed = await advanceAs();
+      assert.equal(landed.data.step, 'landed', JSON.stringify(landed.data));
+      assert.equal(queueStore.getEntry(entry.entryId).state, 'landed');
+      assert.equal(gh.calls.filter((c) => c[0] === 'mergePull').length, 1);
+    });
+
+    it('a hold issued through the real /api/sessions/:project/merge-gate route blocks this exact same advance (the ledger really is shared, not just same-shaped)', async () => {
+      const entry = await atTesting();
+      const held = await sendAs(server, 'POST', `/api/sessions/${encodeURIComponent(owner.name)}/merge-gate/holds`, {
+        repo: REPO, pr: entry.prNumber, reason: 'reviewing via the real HTTP route', issuedBy: 'TC-Lane-PRR-A'
+      }, bOwner.headers);
+      assert.equal(held.status, 200, JSON.stringify(held.data));
+
+      const res = await advanceAs();
+      assert.equal(res.data.code, 'MERGE_GATE_HOLD_ACTIVE', JSON.stringify(res.data));
+      assert.deepEqual(githubWrites(), []);
+    });
+
+    it('a hold issued with ONLY a branch (no pr) still blocks the landing, via the PR\'s real head branch read fresh from GitHub (#2878 I-Gate R2)', async () => {
+      await atTesting();
+      const issued = mergeGate.issueHold(mergeGateFile(), {
+        repo: REPO, branch: HEAD_BRANCH, reason: 'branch-scoped hold, no PR number given', issuedBy: 'TC-Lane-PRR-A'
+      });
+      assert.equal(issued.ok, true, JSON.stringify(issued));
+
+      const res = await advanceAs();
+      assert.equal(res.status, 409, JSON.stringify(res.data));
+      assert.equal(res.data.code, 'MERGE_GATE_HOLD_ACTIVE');
+      assert.deepEqual(githubWrites(), [], 'no merge request and no branch deletion');
+    });
+
+    it('a branch-only hold on a DIFFERENT branch does not block this PR\'s own head branch', async () => {
+      await atTesting();
+      const issued = mergeGate.issueHold(mergeGateFile(), {
+        repo: REPO, branch: 'some/other-branch-entirely', reason: 'unrelated', issuedBy: 'TC-Lane-PRR-A'
+      });
+      assert.equal(issued.ok, true, JSON.stringify(issued));
+      const landed = await advanceAs();
+      assert.equal(landed.data.step, 'landed', JSON.stringify(landed.data));
     });
   });
 

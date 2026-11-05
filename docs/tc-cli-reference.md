@@ -18,7 +18,7 @@ tc --help
 
 ## Command families at a glance
 
-This page lists every top-level verb `tc --help` shows, including the restricted ones. The tables below say what each command does. `queue`, `check`, `usage`, `model` and `decision` are left out of the verb list a launched session is primed with, and so is `candidate` unless the operator has the bridge on and has told every session about candidates; `tc --help` lists all of them either way.
+This page lists every top-level verb `tc --help` shows, including the restricted ones. The tables below say what each command does. `queue`, `check`, `usage`, `model`, `decision`, `merge-gate` and `roadmap` are left out of the verb list a launched session is primed with, and so is `candidate` unless the operator has the bridge on and has told every session about candidates; `tc --help` lists all of them either way.
 
 | Family | Purpose |
 | --- | --- |
@@ -32,6 +32,8 @@ This page lists every top-level verb `tc --help` shows, including the restricted
 | `rotation`, `finalize` | Govern coordinator context rotation and session retirement. |
 | `branch` | Check whether a branch can be retired safely. |
 | `queue`, `check` | Use the merge queue, and watch a named check on an exact commit. |
+| `merge-gate` | Issue, acknowledge, override, list and evaluate durable merge holds, and publish the GitHub status-check projection. |
+| `roadmap` | Local train-admission and incremental roadmap-sync checks, for PM dispatch preflight and the external roadmap-board generator. |
 | `candidate` | Submit a verified notice candidate to the Project Master. |
 | `bridge` | Let the authorized Project Master route operator messages and decide notice candidates. |
 | `ports`, `docs`, `rules`, `learnings` | Discover leases and project context. |
@@ -127,6 +129,29 @@ Background: [check watches](check-watch.md).
 | `tc check cancel <watch>` | Cancels a watch of this project. |
 
 The state is `waiting`, `ready`, `failed` or `unknown`, derived from what the server has recorded each time it is read. A refusal exits 2 with the server's code and words; a malformed command exits 1 before any request.
+
+## Merge gate
+
+A durable, action-scoped merge constraint record (#1717): a **hold** against `{repo, pr|branch|issue}` that blocks `merge`/`auto-merge` until acknowledged, superseded, or scoped-overridden for one named action. Goes through the live server (`/api/sessions/<project>/merge-gate/*`), so authority travels across every lane and machine that can reach it, not only the one whose file stores it.
+
+| Command | What it does |
+| --- | --- |
+| `tc merge-gate hold <project> --repo <owner/name> --reason <text> --issued-by <who> [--pr <n>] [--branch <name>] [--issue <n>] [--supersedes <hold-id>]` | Issues a hold against an action identity. |
+| `tc merge-gate ack <project> <hold-id> --by <who> [--note <text>]` | Acknowledges an active hold, clearing it for every action. |
+| `tc merge-gate override <project> <hold-id> --by <who> --reason <text> --action <merge\|auto-merge\|release\|restart\|commit>` | Releases a hold for one named action only; it stays active for every other action. |
+| `tc merge-gate list <project> [--repo <owner/name>] [--active-only true]` | Lists holds, newest first. |
+| `tc merge-gate show <project> <hold-id>` | Shows one hold. |
+| `tc merge-gate evaluate <project> --repo <owner/name> [--pr <n>] [--branch <name>] [--issue <n>] [--auto-merge true]` | Evaluates whether `merge` (or `auto-merge`) may proceed against an identity; exits 2 when blocked. |
+| `tc merge-gate publish-status <project> --repo <owner/name> --sha <sha> [--pr <n>] [--branch <name>] [--issue <n>] [--enabled true]` | Publishes the hold state as a GitHub commit status check. Inert (`published: false, reason: 'disabled'`) unless `--enabled true`. |
+
+## Roadmap
+
+Local train-admission and incremental sync checks (#1894, #2259) against `lib/roadmap-admission.js`/`lib/roadmap-sync.js`, for the PM train-dispatch preflight and the external roadmap-board generator. Runs entirely in this pane's own process — never an HTTP call — the same reason `tc branch` is local rather than server-side.
+
+| Command | What it does |
+| --- | --- |
+| `tc roadmap admission --candidate <file> --facts <file> [--receipt <file>] [--manifest <file>]` | Classifies a train candidate (JSON files) and validates its dispatch against the given facts; prints `{classification, reasons, manifest, admission}`. Exits 2 on a `RoadmapAdmissionError` refusal. |
+| `tc roadmap sync --state <file> --issues <n,n,...> [--repo <path>] [--since <iso>]` | Fetches live issue summaries and runs one incremental sync cycle against the state file; prints `{published, changed, state}`. Does not render real roadmap HTML — `published` here means "the changed-issue set differs from the prior run." |
 
 ## Operator notification candidates
 

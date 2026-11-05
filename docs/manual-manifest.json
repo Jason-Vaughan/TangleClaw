@@ -76,6 +76,8 @@
         { "anchor": "shared-documents", "heading": "Shared documents" },
         { "anchor": "merge-queue", "heading": "Merge queue" },
         { "anchor": "check-watches", "heading": "Check watches" },
+        { "anchor": "merge-gate", "heading": "Merge gate" },
+        { "anchor": "roadmap", "heading": "Roadmap" },
         { "anchor": "operator-notification-candidates", "heading": "Operator notification candidates" },
         { "anchor": "operator-bridge-project-master-only", "heading": "Operator bridge (Project Master only)" },
         { "anchor": "durable-control-state", "heading": "Durable control state" },

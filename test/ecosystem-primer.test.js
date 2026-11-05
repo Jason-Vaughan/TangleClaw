@@ -150,10 +150,14 @@ describe('lib/ecosystem-primer (#1122)', () => {
       assert.ok(verbsFor('pane', { switches: ['bridge-candidates'] }).some((v) => v.id === 'candidate'));
       // What is left unprimed with the switch on has no switch at all:
       // `queue` belongs to one project's group, and none of it, `check`,
-      // `decision`, `usage`, `model` or `help` (#2599/#2598/#2037/#2070 —
-      // kept out of the budget-constrained primed list every pane carries)
-      // is in the list every pane carries.
-      assert.deepEqual(verbsFor('unprimed', { switches: ['bridge-candidates'] }).map((v) => v.id), ['help', 'queue', 'check', 'decision', 'usage', 'model']);
+      // `decision`, `merge-gate`, `roadmap`, `usage`, `model` or `help`
+      // (#2599/#2598/#2037/#2070/#2878/#2877 — kept out of the
+      // budget-constrained primed list every pane carries) is in the list
+      // every pane carries.
+      assert.deepEqual(
+        verbsFor('unprimed', { switches: ['bridge-candidates'] }).map((v) => v.id),
+        ['help', 'queue', 'check', 'decision', 'merge-gate', 'roadmap', 'usage', 'model']
+      );
       assert.ok(!verbsFor('pane', { switches: ['bridge-candidates'] }).some((v) => v.id === 'queue'));
       // The line itself follows only the switches it is handed. With none it
       // is the same whatever this install's switch says, which is what every
