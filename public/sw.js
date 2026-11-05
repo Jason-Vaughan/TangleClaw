@@ -178,6 +178,13 @@ const NETWORK_FIRST_PATHS = new Set([
   // off (#2031). A stale copy behind an active worker is the wrong thing to be
   // holding when the operator needs the kill switch.
   '/operator-bridge-panel.js',
+  // bridge-step-up.js and bridge-settings-ui.js (#2842, #2843) are new, not
+  // yet mounted into any page -- same reasoning as every other bridge
+  // control surface here: a stale copy of an authorization-approval or
+  // settings module behind an active worker is the wrong thing to be
+  // holding once a future car mounts either one.
+  '/bridge-step-up.js',
+  '/bridge-settings-ui.js',
   // fleet-recovery-panel.js sends an operator's clear of several launches
   // (#2049). A stale copy behind an active worker could word an outcome the
   // server has since changed, so it is fetched network-first.

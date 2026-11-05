@@ -321,6 +321,7 @@
     "test/bridge-reach.test.js",
     "test/bridge-reply-correlation.test.js",
     "test/bridge-retention.test.js",
+    "test/bridge-slice2-wiring.test.js",
     "test/bridge-store.test.js",
     "test/check-watch-monitor.test.js",
     "test/check-watch-store.test.js",
