@@ -164,6 +164,23 @@ describe('Master settings surface — frontend', () => {
       assert.match(sessionJs, /masterSettings\.mount\(\)/);
     });
 
+    it('links out to the Advisor\'s own settings strip rather than duplicating the Discord advisory fields (#2874)', () => {
+      const sessionJs = fs.readFileSync(
+        path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
+      assert.match(masterSection, /data-action="open-advisor-settings"/);
+      assert.match(masterSection,
+        /action === 'open-advisor-settings' && e\.type === 'click' && deps\.onOpenAdvisorSettings\) deps\.onOpenAdvisorSettings\(\)/);
+      // Neither page re-declares the Discord advisory fields inside the
+      // Master modal's own section — they stay the Advisor strip's alone.
+      assert.doesNotMatch(masterSection, /advisoryChannelId|advisoryAuthorIds|advisoryMaxConsecutiveTurns/);
+      assert.match(js, /onOpenAdvisorSettings: openAdvisorSettingsFromMaster/,
+        'the dashboard wires the cross-link');
+      assert.match(sessionJs, /onOpenAdvisorSettings: openAdvisorSettingsFromMaster/,
+        'the session page wires the cross-link');
+      assert.match(js, /async function openAdvisorSettingsFromMaster\(\)/);
+      assert.match(sessionJs, /async function openAdvisorSettingsFromMaster\(\)/);
+    });
+
     it('the transient rules-status line has one implementation, not two', () => {
       // The Project Rules surface and the Master modal show the same affordance.
       // When the modal moved into the component it needed the helper too, and

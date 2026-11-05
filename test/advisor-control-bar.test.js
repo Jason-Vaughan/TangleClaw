@@ -234,7 +234,8 @@ describe('#2819 the bar behaves', () => {
       assert.equal(gear.getAttribute('aria-expanded'), 'false');
     });
 
-    it('Save posts the strip\'s current values to /api/advisor/settings', async () => {
+    it('Save posts the strip\'s current values to /api/advisor/settings, then the Discord '
+      + 'advisory fields to /api/bridge/operator/advisory-allowlist (#2874)', async () => {
       const calls = [];
       const { doc, bar } = mounted('advisorPanel', {
         api: async () => ({ engines: [] }),
@@ -244,13 +245,85 @@ describe('#2819 the bar behaves', () => {
       await bar.loadSettings();
       doc.getElementById('advisorPanelModelInput').value = 'opus-5';
       doc.getElementById('advisorPanelAutoStart').checked = true;
+      doc.getElementById('advisorPanelAdvisoryEnabled').checked = true;
+      doc.getElementById('advisorPanelAdvisoryChannelId').value = ' chan-1 ';
+      doc.getElementById('advisorPanelAdvisoryAuthorIds').value = 'a1, a2 ,a2';
+      doc.getElementById('advisorPanelAdvisoryRequireMention').checked = true;
+      doc.getElementById('advisorPanelAdvisoryMaxTurns').value = '3';
       doc.getElementById('advisorPanelSaveSettingsBtn').dispatch('click');
       await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
-      assert.equal(calls.length, 1);
+      assert.equal(calls.length, 2);
       assert.equal(calls[0][0], '/api/advisor/settings');
       assert.equal(calls[0][1], 'POST');
       assert.equal(calls[0][2].model, 'opus-5');
       assert.equal(calls[0][2].autoStart, true);
+      assert.equal(calls[1][0], '/api/bridge/operator/advisory-allowlist');
+      assert.equal(calls[1][1], 'POST');
+      // Field-by-field, not a whole-object deepEqual: `body` is built inside
+      // api-helper.js's own vm sandbox (a separate realm from this file), and
+      // node:assert's deepEqual can misreport cross-realm plain objects as
+      // unequal despite identical content (`assert.equal` on each field, the
+      // rest of this suite's own established pattern, is realm-agnostic).
+      assert.equal(calls[1][2].advisoryEnabled, true);
+      assert.equal(calls[1][2].advisoryChannelId, 'chan-1');
+      assert.equal(calls[1][2].advisoryAuthorIds.join(','), 'a1,a2,a2');
+      assert.equal(calls[1][2].advisoryRequireMention, true);
+      assert.equal(calls[1][2].advisoryMaxConsecutiveTurns, 3);
+    });
+
+    it('loadSettings paints the Discord advisory fields from /api/bridge/operator/status, '
+      + 'and shows Reset loop pause only while actually paused (#2874)', async () => {
+      const responses = {
+        '/api/engines': { engines: [] },
+        '/api/advisor/settings': { engine: null, model: null, autoStart: false },
+        '/api/bridge/operator/status': {
+          allowlist: {
+            advisoryEnabled: true, advisoryChannelId: 'chan-9', advisoryAuthorIds: ['p1', 'p2'],
+            advisoryRequireMention: false, advisoryMaxConsecutiveTurns: 4
+          },
+          advisoryLoopPaused: true
+        }
+      };
+      const { doc, bar } = mounted('advisorPanel', { api: async (path) => responses[path] });
+      bar.mount();
+      await bar.loadSettings();
+      assert.equal(doc.getElementById('advisorPanelAdvisoryEnabled').checked, true);
+      assert.equal(doc.getElementById('advisorPanelAdvisoryChannelId').value, 'chan-9');
+      assert.equal(doc.getElementById('advisorPanelAdvisoryAuthorIds').value, 'p1,p2');
+      assert.equal(doc.getElementById('advisorPanelAdvisoryRequireMention').checked, false);
+      assert.equal(doc.getElementById('advisorPanelAdvisoryMaxTurns').value, '4');
+      assert.equal(doc.getElementById('advisorPanelResetLoopPauseBtn').classList.contains('hidden'), false,
+        'Reset shown while paused');
+
+      responses['/api/bridge/operator/status'].advisoryLoopPaused = false;
+      await bar.loadSettings();
+      assert.equal(doc.getElementById('advisorPanelResetLoopPauseBtn').classList.contains('hidden'), true,
+        'Reset hidden once no longer paused');
+    });
+
+    it('Reset loop pause posts /api/bridge/operator/advisory-loop-reset and repaints the strip (#2874)', async () => {
+      const calls = [];
+      let paused = true;
+      const { doc, bar } = mounted('advisorPanel', {
+        api: async (path) => (path === '/api/bridge/operator/status'
+          ? { allowlist: { advisoryEnabled: true, advisoryChannelId: 'c', advisoryAuthorIds: [], advisoryRequireMention: true, advisoryMaxConsecutiveTurns: 6 }, advisoryLoopPaused: paused }
+          : { engines: [] }),
+        apiMutate: async (p, m, b) => {
+          calls.push([p, m, b]);
+          paused = false;
+          return { ok: true };
+        }
+      });
+      bar.mount();
+      await bar.loadSettings();
+      assert.equal(doc.getElementById('advisorPanelResetLoopPauseBtn').classList.contains('hidden'), false);
+      doc.getElementById('advisorPanelResetLoopPauseBtn').dispatch('click');
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+      assert.equal(calls[0][0], '/api/bridge/operator/advisory-loop-reset');
+      assert.equal(calls[0][1], 'POST');
+      assert.equal(Object.keys(calls[0][2]).length, 0, 'the reset route takes no body');
+      assert.equal(doc.getElementById('advisorPanelResetLoopPauseBtn').classList.contains('hidden'), true,
+        'Reset hides itself once the repaint sees the pause is gone');
     });
   });
 });

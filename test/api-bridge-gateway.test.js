@@ -4224,6 +4224,44 @@ describe('bridge API: the round trip (#2031)', () => {
       assert.equal((await advisorySays(PEER_HUMAN_ID, 'turn after reset')).status, 202, 'the streak reset after the operator\'s own message');
     });
 
+    it('reports advisoryLoopPaused/advisoryStreak on operator/status, and advisory-loop-reset clears the pause '
+      + 'without an operator message -- but does not disable the cap for turns arriving after the reset', async () => {
+      await setAdvisoryAllowlist(true, { advisoryMaxConsecutiveTurns: 2 });
+      assert.equal((await advisorySays(ALLOWED.authorId, 'baseline reset')).status, 202);
+
+      const beforeAnyTurns = await asOperator('GET', '/api/bridge/operator/status');
+      assert.deepEqual([beforeAnyTurns.body.advisoryLoopPaused, beforeAnyTurns.body.advisoryStreak], [false, 0]);
+
+      await advisorySays(PEER_HUMAN_ID, 'turn 1');
+      await advisorySays(PEER_HUMAN_ID, 'turn 2');
+      const paused = await advisorySays(PEER_HUMAN_ID, 'turn 3');
+      assert.deepEqual([paused.status, paused.body.code], [429, 'ADVISORY_LOOP_PAUSED']);
+
+      const whilePaused = await asOperator('GET', '/api/bridge/operator/status');
+      assert.deepEqual([whilePaused.body.advisoryLoopPaused, whilePaused.body.advisoryStreak], [true, 2]);
+
+      const reset = await asOperator('POST', '/api/bridge/operator/advisory-loop-reset');
+      assert.equal(reset.status, 200, JSON.stringify(reset.body));
+
+      const afterReset = await asOperator('GET', '/api/bridge/operator/status');
+      assert.deepEqual([afterReset.body.advisoryLoopPaused, afterReset.body.advisoryStreak], [false, 0]);
+      assert.equal((await advisorySays(PEER_HUMAN_ID, 'turn after button reset')).status, 202,
+        'the loop resumes with no operator message in the advisory channel');
+
+      // The cap is not disabled by the reset -- fresh turns past it pause again.
+      assert.equal((await advisorySays(PEER_HUMAN_ID, 'turn 2 after reset')).status, 202);
+      const pausedAgain = await advisorySays(PEER_HUMAN_ID, 'turn 3 after reset');
+      assert.deepEqual([pausedAgain.status, pausedAgain.body.code], [429, 'ADVISORY_LOOP_PAUSED']);
+    });
+
+    it('advisory-loop-reset is a harmless no-op when the surface is not currently paused', async () => {
+      await setAdvisoryAllowlist(true, { advisoryMaxConsecutiveTurns: 2 });
+      assert.equal((await advisorySays(ALLOWED.authorId, 'baseline reset')).status, 202);
+      const reset = await asOperator('POST', '/api/bridge/operator/advisory-loop-reset');
+      assert.equal(reset.status, 200, JSON.stringify(reset.body));
+      assert.equal((await advisorySays(PEER_HUMAN_ID, 'still fine')).status, 202);
+    });
+
     it('requires a mention or reply from a peer when advisoryRequireMention is set, but never from the operator', async () => {
       await setAdvisoryAllowlist(true, { advisoryRequireMention: true });
       const noMention = await advisorySays(PEER_HUMAN_ID, 'just talking');
