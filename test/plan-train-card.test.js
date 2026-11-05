@@ -48,7 +48,8 @@ function render(body, fence = '```') {
 }
 
 /**
- * A pattern for the markup of a car: a disclosure whose summary is the pill,
+ * A pattern for the markup of a car: a disclosure, hidden from assistive
+ * technology and out of the Tab order (#2185), whose summary is the pill,
  * showing the number and the state in words, and whose content is the
  * detail, as far as the state's words. What follows is that state's meaning.
  * @param {number} issue - Issue number.
@@ -64,7 +65,7 @@ function car(issue, state, words, title) {
    * @returns {string}
    */
   const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`<details class="car-slot"><summary class="train-car ${state}">#${issue} <span class="car-state">${words}</span></summary>`
+  return new RegExp(`<details class="car-slot" aria-hidden="true"><summary class="train-car ${state}" tabindex="-1">#${issue} <span class="car-state">${words}</span></summary>`
     + `<span class="car-info"><span class="car-info-head">#${issue}${title ? ` ${esc(title)}` : ''}</span>`
     + `<span class="car-info-line"><span class="car-info-state">${words}</span>: `);
 }
@@ -89,18 +90,18 @@ describe('plan train cards (#1930)', () => {
     const html = render(train());
 
     it('renders a card of two rows: the engine and the cars, then a collapsible whose summary is the name, the count and the badge', () => {
-      assert.match(html, /^<div class="train-card"><div class="train-cars"><span class="train-engine" aria-hidden="true">🚂<\/span><span class="train-joint" aria-hidden="true">—<\/span><details class="car-slot"><summary class="train-car open">#411 <span class="car-state">open<\/span><\/summary>/);
+      assert.match(html, /^<div class="train-card"><div class="train-cars"><a class="plan-train-engine-link" href="https:\/\/github\.com\/Jason-Vaughan\/TangleClaw\/milestone\/5" aria-label="Train 1 milestone on GitHub">🚂<\/a><span class="train-joint" aria-hidden="true">—<\/span><details class="car-slot" aria-hidden="true"><summary class="train-car open" tabindex="-1">#411 <span class="car-state">open<\/span><\/summary>/);
       assert.match(html, car(411, 'open', 'open', 'Stale service worker'));
       assert.match(html, car(1234, 'closed', 'closed', 'Done thing'));
-      assert.match(html, /<\/span><\/span><\/details><span class="train-joint" aria-hidden="true">—<\/span><details class="car-slot"><summary class="train-car closed">#1234 <span class="car-state">closed<\/span><\/summary><span class="car-info"><span class="car-info-head">#1234 Done thing</);
+      assert.match(html, /<\/span><\/span><\/details><span class="train-joint" aria-hidden="true">—<\/span><details class="car-slot" aria-hidden="true"><summary class="train-car closed" tabindex="-1">#1234 <span class="car-state">closed<\/span><\/summary><span class="car-info"><span class="car-info-head">#1234 Done thing</);
       assert.match(html, /<\/span><\/span><\/details><\/div><details class="train-detail"><summary class="train-summary"><span class="train-name">Train 1: First Install, Completed<\/span><span class="train-count">\(1\/2\)<\/span><span class="train-badge">verified<\/span><\/summary><div class="train-body">/);
     });
 
     it('expands to the thesis, the open/closed line with the milestone link, the issue table and the sequencing note', () => {
       assert.match(html, /<p><em>The rest of the <strong>first<\/strong> hour\.<\/em><\/p>/);
       assert.match(html, /<p><strong>1 open · 1 closed<\/strong> · <a href="https:\/\/github\.com\/Jason-Vaughan\/TangleClaw\/milestone\/5">milestone<\/a><\/p>/);
-      assert.match(html, /<td class="train-issue"><a href="https:\/\/github\.com\/Jason-Vaughan\/TangleClaw\/issues\/411">#411<\/a><\/td><td>bug<\/td><td class="train-state">open<\/td><td>Stale service worker<\/td>/);
-      assert.match(html, /<td class="train-issue"><a [^>]*>#1234<\/a><\/td><td>enhancement<\/td><td class="train-state">✅ closed<\/td><td>Done thing<\/td>/);
+      assert.match(html, /<td class="train-issue"><a href="https:\/\/github\.com\/Jason-Vaughan\/TangleClaw\/issues\/411">#411<\/a><\/td><td>bug<\/td><td class="train-state">open<\/td><td>not started<\/td><td>—<\/td><td>Stale service worker<\/td>/);
+      assert.match(html, /<td class="train-issue"><a [^>]*>#1234<\/a><\/td><td>enhancement<\/td><td class="train-state">✅ closed<\/td><td>issue closed — not proof the code is written, ready or shipped<\/td><td>—<\/td><td>Done thing<\/td>/);
       // Green means done: a closed issue's title is not struck through.
       assert.doesNotMatch(html, /<del>/);
       assert.match(html, /<p><strong>Sequencing\.<\/strong> Do <code>A<\/code> first\.<\/p><\/div><\/details><\/div>$/);
@@ -116,9 +117,9 @@ describe('plan train cards (#1930)', () => {
 
     it('renders a train with no cars as an engine alone and a placeholder row', () => {
       const empty = render(train({ cars: [] }));
-      assert.match(empty, /<div class="train-cars"><span class="train-engine" aria-hidden="true">🚂<\/span><\/div><details class="train-detail"><summary class="train-summary"><span class="train-name">/);
+      assert.match(empty, /<div class="train-cars"><a class="plan-train-engine-link" href="[^"]+" aria-label="Train 1 milestone on GitHub">🚂<\/a><\/div><details class="train-detail"><summary class="train-summary"><span class="train-name">/);
       assert.match(empty, /\(0\/0\)/);
-      assert.match(empty, /No issues assigned\./);
+      assert.match(empty, /<tr><td>—<\/td><td>—<\/td><td>—<\/td><td>—<\/td><td>—<\/td><td>No issues assigned\.<\/td><\/tr>/);
     });
 
     it('accepts a tilde fence as well as a backtick fence', () => {
@@ -167,7 +168,7 @@ describe('plan train cards (#1930)', () => {
     }
 
     it('renders a car with no href as plain text in the table', () => {
-      assert.match(render(train({ cars: [{ issue: 7, closed: false }] })), /<td class="train-issue">#7<\/td><td>—<\/td><td class="train-state">open<\/td><td><\/td>/);
+      assert.match(render(train({ cars: [{ issue: 7, closed: false }] })), /<td class="train-issue">#7<\/td><td>—<\/td><td class="train-state">open<\/td><td>not started<\/td><td>—<\/td><td><\/td>/);
     });
   });
 
@@ -521,7 +522,7 @@ describe('ID-less Topic Buckets (#2006)', () => {
     assert.match(html, /^<div class="train-card">/);
     assert.match(html, /<details class="train-detail">/);
     assert.match(html, /<summary class="train-summary"/);
-    assert.match(html, /<summary class="train-car open">#192 <span class="car-state">open<\/span><\/summary>/);
+    assert.match(html, /<summary class="train-car open" tabindex="-1">#192 <span class="car-state">open<\/span><\/summary>/);
   });
 
   it('names it exactly "Topic Bucket: <title>", with no train number', () => {
@@ -591,7 +592,7 @@ describe('in-review and dropped cars, and the owning lane (#2165)', () => {
       cars: trainCard.CAR_STATES.map((state, i) => ({ issue: i + 1, closed: trainCard.CLOSED_CAR_STATES.includes(state), state }))
     }));
     trainCard.CAR_STATES.forEach((state, i) => {
-      const pill = html.match(new RegExp(`<summary class="train-car ${state}">#${i + 1} <span class="car-state">[a-z ]+</span></summary>`
+      const pill = html.match(new RegExp(`<summary class="train-car ${state}" tabindex="-1">#${i + 1} <span class="car-state">[a-z ]+</span></summary>`
         + `<span class="car-info"><span class="car-info-head">#${i + 1}</span><span class="car-info-line"><span class="car-info-state">([a-z ]+)</span>: `));
       assert.ok(pill, `${state} has a labelled pill`);
       assert.match(html, new RegExp(`<td class="train-state">[^<]*${pill[1]}</td>`), `${state} is named in the table`);
@@ -1108,7 +1109,7 @@ describe('the car-state legend (#2165)', () => {
       for (const state of trainCard.CAR_STATES) {
         const closed = trainCard.CLOSED_CAR_STATES.includes(state);
         const html = render(train({ cars: [{ issue: 7, closed, state }] }));
-        const pill = html.match(new RegExp(`<summary class="train-car ${state}">#7 <span class="car-state">[a-z ]+</span></summary>`
+        const pill = html.match(new RegExp(`<summary class="train-car ${state}" tabindex="-1">#7 <span class="car-state">[a-z ]+</span></summary>`
           + `<span class="car-info"><span class="car-info-head">#7</span><span class="car-info-line"><span class="car-info-state">([a-z ]+)</span>: `));
         assert.ok(pill, `${state} renders as a pill`);
         assert.match(html, new RegExp(`<td class="train-state">[^<]*${pill[1]}</td>`), `${state} is named in the table`);
@@ -1232,7 +1233,7 @@ describe('a car\'s detail (#2165)', () => {
    * @returns {string} The detail's inner HTML.
    */
   function infoOf(html, issue) {
-    const m = html.match(new RegExp(`<summary class="train-car [a-z-]+">#${issue} <span class="car-state">[a-z ]+</span></summary><span class="car-info">(.*?)</span></details>`));
+    const m = html.match(new RegExp(`<summary class="train-car [a-z-]+" tabindex="-1">#${issue} <span class="car-state">[a-z ]+</span></summary><span class="car-info">(.*?)</span></details>`));
     assert.ok(m, `#${issue} has a detail`);
     return m[1];
   }
@@ -1315,28 +1316,28 @@ describe('a car\'s detail (#2165)', () => {
   describe('reaching it', () => {
     const html = render(train());
 
-    it('makes every car a keyboard stop by being a summary, which the browser focuses and toggles itself', () => {
-      assert.equal(html.match(/<details class="car-slot"><summary class="train-car (?:open|closed)">#\d+ <span class="car-state">(?:open|closed)<\/span><\/summary>/g).length, 2);
-      // A summary needs no tabindex, and a positive or negative one would take it out of the natural order.
-      assert.doesNotMatch(html, /tabindex/);
+    it('takes every car out of the Tab order, so crossing the page by keyboard costs nothing per car (#2185)', () => {
+      assert.equal(html.match(/<details class="car-slot" aria-hidden="true"><summary class="train-car (?:open|closed)" tabindex="-1">#\d+ <span class="car-state">(?:open|closed)<\/span><\/summary>/g).length, 2);
+      assert.equal(html.match(/tabindex="-1"/g).length, 2, 'exactly the two car summaries carry it');
+      assert.doesNotMatch(html, /tabindex="(?!-1")/, 'nothing else on the page carries a different tabindex');
     });
 
     it('starts every car closed, and groups none of them, so opening one never closes another', () => {
       assert.doesNotMatch(html, /<details class="car-slot"[^>]*\s(open|name)\b/);
-      assert.equal(html.match(/<details class="car-slot">/g).length, 2);
+      assert.equal(html.match(/<details class="car-slot"/g).length, 2);
     });
 
     it('carries no title attribute on a car, so a browser tooltip never doubles the detail', () => {
       assert.doesNotMatch(html, /<summary class="train-car [a-z-]+"[^>]*\stitle=/);
     });
 
-    it('leaves a car to the browser\'s own disclosure semantics: nothing hides the detail from assistive technology or reads it early', () => {
-      const cars = html.match(/<details class="car-slot">.*?<\/details>/g);
+    it('hides every car\'s disclosure from assistive technology, so a screen reader meets the train\'s name before any car\'s popover (#2185)', () => {
+      const cars = html.match(/<details class="car-slot".*?<\/details>/g);
       assert.equal(cars.length, 2);
       for (const one of cars) {
-        // An opened detail must be readable, and a closed one must not be announced before it is opened.
-        assert.doesNotMatch(one, /aria-|role=|\sid=|\shidden|tabindex/);
-        assert.match(one, /^<details class="car-slot"><summary class="train-car [a-z-]+">#\d+ <span class="car-state">[a-z ]+<\/span><\/summary><span class="car-info"><span class="car-info-head">#\d+/);
+        assert.match(one, /^<details class="car-slot" aria-hidden="true">/, 'the whole disclosure is hidden from the accessibility tree');
+        assert.doesNotMatch(one, /role=|\sid=|\shidden\b/);
+        assert.match(one, /^<details class="car-slot" aria-hidden="true"><summary class="train-car [a-z-]+" tabindex="-1">#\d+ <span class="car-state">[a-z ]+<\/span><\/summary><span class="car-info"><span class="car-info-head">#\d+/);
       }
     });
 
@@ -1356,7 +1357,7 @@ describe('a car\'s detail (#2165)', () => {
       const rel = (version) => ({ version, trains: [train({ kind: 'train' }), { kind: 'bucket', title: 'B', cars: [{ issue: 411, closed: false }] }] });
       const quoted = block('tc-train', train({ train: 3 })).split('\n').map((l) => `> ${l}`).join('\n');
       const page = planDocs.renderPlanBody(['# Cars', block('tc-train', train()), block('tc-release', rel('5.32.0')), quoted, block('tc-release', rel('5.33.0'))].join('\n\n'));
-      assert.equal(page.match(/<details class="car-slot">/g).length, 10);
+      assert.equal(page.match(/<details class="car-slot" aria-hidden="true">/g).length, 10);
       assert.deepEqual([...page.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]), ['cars']);
     });
 
@@ -1369,9 +1370,11 @@ describe('a car\'s detail (#2165)', () => {
        */
       const read = (part) => part.replace(/<span class="car-info".*?<\/span><\/span>/g, '')
         .replace(/<span[^>]*aria-hidden="true"[^>]*>[^<]*<\/span>/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-      const at = html.indexOf('<details class="train-detail">');
-      assert.equal(read(html.slice(html.indexOf('<div class="train-cars">'), at)), '#411 open #1234 closed');
-      assert.equal(read(html.slice(at, html.indexOf('</summary>', at))), 'Train 1: First Install, Completed (1/2) verified');
+      // No href here: the engine-as-link case (#2208) is its own describe block, below.
+      const plain = render(train({ href: undefined }));
+      const at = plain.indexOf('<details class="train-detail">');
+      assert.equal(read(plain.slice(plain.indexOf('<div class="train-cars">'), at)), '#411 open #1234 closed');
+      assert.equal(read(plain.slice(at, plain.indexOf('</summary>', at))), 'Train 1: First Install, Completed (1/2) verified');
     });
 
     it('keeps the cars out of the collapsible, so pressing one cannot open or close the train and they show when it is closed', () => {
@@ -1438,7 +1441,7 @@ describe('a car\'s detail (#2165)', () => {
     const html = render(train({
       cars: trainCard.CAR_STATES.map((state, i) => ({ issue: 100 + i, closed: trainCard.CLOSED_CAR_STATES.includes(state), state }))
     }));
-    const summaries = [...html.matchAll(/<details class="car-slot"><summary class="train-car ([a-z-]+)">(.*?)<\/summary>/g)];
+    const summaries = [...html.matchAll(/<details class="car-slot" aria-hidden="true"><summary class="train-car ([a-z-]+)" tabindex="-1">(.*?)<\/summary>/g)];
 
     it('shows every one of the six states as a visible word beside the car\'s number, on the closed car', () => {
       assert.equal(summaries.length, 6);
@@ -1449,12 +1452,15 @@ describe('a car\'s detail (#2165)', () => {
       assert.equal(new Set(summaries.map((m) => m[2].replace(/#\d+ /, ''))).size, 6, 'no two states share a word');
     });
 
-    it('gives the summary that same text as its name: the number and the state word, nothing hidden and nothing added', () => {
+    it('gives the summary that same visible text as its accessible content, and hides the whole disclosure from assistive technology (#2185)', () => {
       summaries.forEach(([, state, inner], i) => {
         assert.equal(inner.replace(/<[^>]+>/g, ''), `#${100 + i} ${WORDS[state]}`);
-        assert.doesNotMatch(inner, /aria-|hidden|title=/);
+        assert.doesNotMatch(inner, /aria-|hidden|title=/, 'the visible text itself carries nothing extra');
       });
-      assert.doesNotMatch(html, /<summary class="train-car [a-z-]+"[^>]*\s(aria-|role=|title=|tabindex)/);
+      // Every car's whole disclosure, and only the disclosure's own summary, carries these.
+      assert.equal(html.match(/<details class="car-slot" aria-hidden="true">/g).length, 6);
+      assert.equal(html.match(/<summary class="train-car [a-z-]+" tabindex="-1">/g).length, 6);
+      assert.doesNotMatch(html, /<summary class="train-car [a-z-]+"[^>]*\s(aria-|role=|title=)/);
     });
 
     // The word has no rule of its own, so the rules that can hide it are the ones on the boxes it sits in:
@@ -1538,8 +1544,8 @@ describe('a car\'s detail (#2165)', () => {
   describe('opening it', () => {
     it('makes each car a disclosure: the pill is its summary and the detail its only content, before the joint to the next', () => {
       const row = render(train()).match(/<div class="train-cars">(.*?)<\/div><details class="train-detail">/)[1];
-      const order = [...row.matchAll(/<(?:span|details|summary) class="(train-engine|train-joint|car-slot|train-car|car-info)[ "]/g)].map((m) => m[1]);
-      assert.deepEqual(order, ['train-engine', 'train-joint', 'car-slot', 'train-car', 'car-info', 'train-joint', 'car-slot', 'train-car', 'car-info']);
+      const order = [...row.matchAll(/<(?:a|span|details|summary) class="(plan-train-engine-link|train-engine|train-joint|car-slot|train-car|car-info)[ "]/g)].map((m) => m[1]);
+      assert.deepEqual(order, ['plan-train-engine-link', 'train-joint', 'car-slot', 'train-car', 'car-info', 'train-joint', 'car-slot', 'train-car', 'car-info']);
       assert.equal(row.match(/<\/span><\/details>/g).length, 2);
     });
 
@@ -1605,5 +1611,109 @@ describe('a car\'s detail (#2165)', () => {
       assert.match(detail, /(^|;)color:var\(--fg\)(;|$)/);
       assert.match(detail, /(^|;)background:var\(--code-bg\)(;|$)/);
     });
+  });
+});
+
+describe('the issue table carries each car\'s meaning and reason (#2185)', () => {
+  it('adds Meaning and Reason columns between State and Title, so expanding the card reaches every car\'s full detail in one stop', () => {
+    const html = render(train({
+      cars: [
+        { issue: 1, closed: false, state: 'blocked', reason: 'Conflicts with main', title: 'A' },
+        { issue: 2, closed: true, title: 'B' }
+      ]
+    }));
+    assert.match(html, /<th>Issue<\/th><th>Type<\/th><th>State<\/th><th>Meaning<\/th><th>Reason<\/th><th>Title<\/th>/);
+    assert.match(html,
+      /<td class="train-state">⛔ blocked<\/td><td>needs attention: merge conflicts, a failed check, or labelled blocked<\/td><td>Conflicts with main<\/td><td>A<\/td>/);
+    assert.match(html, /<td class="train-state">✅ closed<\/td><td>issue closed — not proof the code is written, ready or shipped<\/td><td>—<\/td><td>B<\/td>/);
+  });
+
+  it('writes an em dash for Reason when the car has none, or one that is only spaces', () => {
+    assert.match(render(train({ cars: [{ issue: 1, closed: false }] })), /<td class="train-state">open<\/td><td>not started<\/td><td>—<\/td>/);
+    assert.match(render(train({ cars: [{ issue: 1, closed: false, reason: '   ' }] })), /<td class="train-state">open<\/td><td>not started<\/td><td>—<\/td>/);
+  });
+
+  it('escapes the reason in the table, the same as in each car\'s own popover', () => {
+    const html = render(train({ cars: [{ issue: 1, closed: false, reason: '<script>alert(1)</script>' }] }));
+    assert.doesNotMatch(html, /<script/);
+    assert.match(html, /<td>&lt;script&gt;alert\(1\)&lt;\/script&gt;<\/td><td>/);
+  });
+
+  it('gives every row the same Meaning text the legend and each car\'s own popover give that state', () => {
+    const legend = trainCard.renderLegend();
+    for (const state of trainCard.CAR_STATES) {
+      const closed = trainCard.CLOSED_CAR_STATES.includes(state);
+      const html = render(train({ cars: [{ issue: 1, closed, state }] }));
+      const meaning = trainCard.CAR_STATE_MEANING[state];
+      assert.ok(html.includes(`<td>${meaning.replace(/&/g, '&amp;')}</td>`), `${state}'s table row carries its legend meaning`);
+      assert.ok(legend.includes(meaning.replace(/&/g, '&amp;')), `${state}'s meaning also appears in the legend`);
+    }
+  });
+
+  it('keeps the placeholder row for an empty train at six cells, one em dash each but the message', () => {
+    assert.match(render(train({ cars: [] })), /<tr><td>—<\/td><td>—<\/td><td>—<\/td><td>—<\/td><td>—<\/td><td>No issues assigned\.<\/td><\/tr>/);
+  });
+
+  it('carries meaning and reason inside a release panel\'s workstream tables too', () => {
+    const html = planDocs.renderPlanBody(`\`\`\`tc-release\n${JSON.stringify({
+      version: '5.32.0',
+      trains: [{ kind: 'bucket', title: 'B', cars: [{ issue: 1, closed: false, state: 'blocked', reason: 'Waiting on CI' }] }]
+    })}\n\`\`\``);
+    assert.match(html, /<td class="train-state">⛔ blocked<\/td><td>needs attention: merge conflicts, a failed check, or labelled blocked<\/td><td>Waiting on CI<\/td>/);
+  });
+});
+
+describe('the train engine links to its milestone (#2208)', () => {
+  it('renders the engine as a link when the train has an href, outside the summary, naming the train in words', () => {
+    const html = render(train({ train: 31 }));
+    assert.match(html,
+      /^<div class="train-card"><div class="train-cars"><a class="plan-train-engine-link" href="https:\/\/github\.com\/Jason-Vaughan\/TangleClaw\/milestone\/5" aria-label="Train 31 milestone on GitHub">🚂<\/a>/);
+    // It sits before the train's own <details>, so it is not a control nested inside its <summary>.
+    assert.ok(html.indexOf('plan-train-engine-link') < html.indexOf('<details class="train-detail">'));
+  });
+
+  it('keeps the plain, decorative icon when the train has no href', () => {
+    const html = render(train({ href: undefined }));
+    assert.match(html, /^<div class="train-card"><div class="train-cars"><span class="train-engine" aria-hidden="true">🚂<\/span>/);
+    assert.doesNotMatch(html, /plan-train-engine-link/);
+  });
+
+  it('names a Topic Bucket by its label alone, with no number, when it has an href but no train identity', () => {
+    const html = render({ kind: 'bucket', title: 'Install safety', href: `${REPO}/milestone/9`, cars: [] });
+    assert.match(html, /aria-label="Topic Bucket milestone on GitHub"/);
+  });
+
+  it('never prints an identity equal to the title twice in the spoken name', () => {
+    const html = render({ kind: 'pilot', train: 'B2', title: 'B2', href: `${REPO}/milestone/2`, cars: [] });
+    assert.match(html, /aria-label="Pilot milestone on GitHub"/);
+  });
+
+  it('escapes a quote inside the href so it cannot leave the attribute, same as the milestone link in the body', () => {
+    const html = render(train({ href: 'https://example.com/a"onmouseover="alert(1)' }));
+    assert.match(html, /<a class="plan-train-engine-link" href="https:\/\/example\.com\/a&quot;onmouseover=&quot;alert\(1\)" aria-label="Train 1 milestone on GitHub">/);
+  });
+
+  it('adds no extra tabindex: the anchor is a native link, focusable in the normal order like any other', () => {
+    const html = render(train());
+    assert.doesNotMatch(html, /<a class="plan-train-engine-link"[^>]*tabindex/);
+  });
+
+  it('carries its own style rule, unreached by any colour-scheme block', () => {
+    const page = planDocs.renderPlanPage({
+      project: { id: 1, name: 'p' }, file: 'x.md', relative: 'x.md', modifiedAt: '2026-09-27T00:00:00.000Z', markdown: '', timeZone: 'UTC'
+    });
+    assert.match(page, /a\.plan-train-engine-link\{text-decoration:none\}/);
+    assert.match(page, /a\.plan-train-engine-link:focus-visible\{outline:2px solid var\(--link\);outline-offset:2px\}/);
+    for (const block of page.match(/@media \(prefers-color-scheme:dark\)\{.*\}/g) || []) {
+      assert.doesNotMatch(block, /plan-train-engine-link/);
+    }
+  });
+
+  it('links each workstream\'s own href inside a release panel, same as a standalone train block', () => {
+    const html = planDocs.renderPlanBody(`\`\`\`tc-release\n${JSON.stringify({
+      version: '5.32.0',
+      trains: [{ kind: 'train', train: 7, title: 'T', href: `${REPO}/milestone/7`, cars: [] }]
+    })}\n\`\`\``);
+    assert.match(html, /<a class="plan-train-engine-link" href="https:\/\/github\.com\/Jason-Vaughan\/TangleClaw\/milestone\/7" aria-label="Train 7 milestone on GitHub">/);
   });
 });
