@@ -7553,6 +7553,18 @@ function toggleAdvisor() {
 }
 
 /**
+ * Open the Advisor panel with its settings strip expanded, from the Master
+ * Settings modal's cross-link (#2874) — the Discord advisory fields live in
+ * the Advisor bar's one strip, not duplicated inside the Master modal.
+ * @returns {Promise<void>}
+ */
+async function openAdvisorSettingsFromMaster() {
+  if (masterSettings) masterSettings.close();
+  if (!state.advisorOpen) toggleAdvisor();
+  if (advisorBar) await advisorBar.openSettingsStrip();
+}
+
+/**
  * Ensure the Advisor session exists, then attach the terminal iframe.
  * Re-entrant-guarded; safe to re-run on every panel open, same reasoning as
  * `ensureMasterAttached`.
@@ -7692,7 +7704,10 @@ const masterSettings = window.tcCreateMasterSettings({
   // The gear and the bar are two controls for one setting, and on this
   // surface the gear sits INSIDE the bar. A save here must move the toggle,
   // or the operator watches it keep saying the old level.
-  onSaved: () => { if (masterBar) masterBar.loadAccess(); }
+  onSaved: () => { if (masterBar) masterBar.loadAccess(); },
+  // #2874 — the Master Settings modal links out to the Advisor's own strip
+  // rather than duplicating the Discord advisory fields inside this modal.
+  onOpenAdvisorSettings: openAdvisorSettingsFromMaster
 });
 
 // The settings-warnings banner (#1148, #758), from the same builder the session

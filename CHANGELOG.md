@@ -4,6 +4,42 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.62.0] - 2026-11-04
+
+### Added
+- Roadmap train dependency admission (`lib/roadmap-admission.js`): structured
+  hard prerequisites, reserved-gate and operator-verification boundaries, and
+  a durable Train Admission Manifest that dispatch-time validation re-checks
+  against fresh facts rather than trusting a stale snapshot — a reopened
+  prerequisite or a new conflict invalidates a prior admission deterministically
+  (#1894).
+- Roadmap train cards: the 🚂 engine links to the train's GitHub milestone
+  when the block names one, named for screen readers (#2208).
+- The Advisor (Morpheus) toggle icon now renders a recognizable head-and-glasses
+  silhouette instead of two plain circles, and the Advisor bar's settings strip
+  gains the Discord advisory-channel fields (enabled, channel ID, allowlisted
+  author IDs, require-mention, max consecutive AI turns) plus a Reset Loop Pause
+  action that clears the anti-loop pause without posting in the advisory channel.
+  The Master Settings modal links out to the same strip rather than duplicating
+  it (#2874).
+
+### Changed
+- Roadmap train cards: a car's own popover no longer takes a Tab stop or
+  reaches assistive technology; opening the card now shows every car's state
+  meaning and reason in its issue table instead (#2185).
+
+### Internal
+- Added the repository-side candidate for a Vercel "Ignored Build Step"
+  guard (`lib/roadmap-vercel-guard.js`, `scripts/vercel-ignore-gh-pages.sh`);
+  the Operator's Vercel dashboard branch exclusion and roadmap hosting
+  cutover are still pending (part of #2258).
+- Incremental roadmap-sync logic (`lib/roadmap-sync.js`): a diff that asks
+  GitHub only about changed issues, a publish gate that looks at the
+  rendered roadmap's own content rather than its status file, and per-run
+  GraphQL budget telemetry — library logic for the separate roadmap-sync job
+  to adopt, aimed at the measured ~770-point-per-refresh budget regression
+  (#2259).
+
 ## [5.61.0] - 2026-11-03
 
 ### Added

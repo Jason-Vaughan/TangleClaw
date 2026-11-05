@@ -3240,6 +3240,18 @@ function closeAdvisorDrawer() {
 }
 
 /**
+ * Open the Advisor drawer with its settings strip expanded, from the Master
+ * Settings modal's cross-link (#2874) — same reasoning as the dashboard's
+ * `openAdvisorSettingsFromMaster`, this surface's own Master modal instance.
+ * @returns {Promise<void>}
+ */
+async function openAdvisorSettingsFromMaster() {
+  if (masterSettings) masterSettings.close();
+  if (!sessionState.advisorOpen) openAdvisorDrawer();
+  if (advisorBar) await advisorBar.openSettingsStrip();
+}
+
+/**
  * Ensure the Advisor session exists, then attach the terminal iframe.
  * Re-entrant-guarded, same reasoning as `ensureMasterDrawerAttached`.
  * @returns {Promise<void>}
@@ -7988,7 +8000,9 @@ function bindEvents() {
     // The gear and the bar are two controls for one setting, and on this
     // surface the gear sits INSIDE the bar. A save here must move the toggle,
     // or the operator watches it keep saying the old level.
-    onSaved: () => { if (masterBar) masterBar.loadAccess(); }
+    onSaved: () => { if (masterBar) masterBar.loadAccess(); },
+    // #2874 — same cross-link as the dashboard's Master Settings modal.
+    onOpenAdvisorSettings: openAdvisorSettingsFromMaster
   });
   masterSettings.mount();
 
