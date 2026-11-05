@@ -514,16 +514,16 @@
         <h1 class="hero-title">TangleClaw <code>v5.66.0</code>: “Fleet visibility and release dependencies”</h1>
         <p class="hero-sub">
           Executed across <strong>2 coordinated waves</strong> on base <code>d97f0121</code> (<code>tag: v5.65.0</code>) as <strong>Final Leg 2 of the Two-Version Autonomous Sprint Train (<code>v5.65.0 → v5.66.0</code>, <code>OP-GO-V5650-V5660-20261104</code>)</strong> under <strong>Charter <code>A503 v1.1</code></strong> and <strong>Architect Ruling <code>A503-R1</code></strong>.
-          Shipped <strong>4 Sprint PRs (#2903, #2905, #2904, #2907)</strong> via 100% true merge commits (<code>Rule #282</code>, 2 parents each), closing all <strong>6 active chartered Milestone #51 issues (#1112, #2862, #2828, #2858, #2852, #2856; plus previously closed #2880 = 7 total milestone closures; <code>open_issues: 0</code>)</strong> with <strong>0 post-merge defects on <code>main</code></strong> and <strong><code>+2,879 / -28</code> net feature lines of code across 31 file touches</strong>.
+          Shipped <strong>4 Sprint PRs (#2903, #2905, #2904, #2907)</strong> via 100% true merge commits (<code>Rule #282</code>, 2 parents each), closing all <strong>6 active chartered Milestone #51 issues (#1112, #2862, #2828, #2858, #2852, #2856; plus previously closed #2880 = 7 total milestone closures; <code>open_issues: 0</code>)</strong> with <strong>0 post-merge defects on <code>main</code></strong> and <strong><code>+2,911 / -31 net (26 files; +2,879 / -28 feat PRs)</code> net feature lines of code across 31 file touches</strong>.
           Because all 3 feature cars were 100% Dual-Gate Certified during Leg 1 under <code>Guardrail 06</code>, Wave 1 merged back-to-back onto <code>main</code>: <code>Car 66-A PR #2903</code> (<code>#1112 + #2862</code> host GUI / macOS TCC modal dialog probe <code>lib/host-gui-dialog-probe.js</code> + Terminal Chrome Slice 2 WCAG AA contrast remediations in <code>public/session.css</code>, <code>public/terminal-identity-ui.js</code> &amp; <code>public/upload-pills-ui.js</code>; merged at <code>005ca462</code>), <code>Car 66-B PR #2905</code> (<code>#2828</code> interactive decision routing Slice 2 <code>lib/interactive-decision-routing.js</code> with native prompt detection, <code>WAITING_DECISION</code> state, Discord/Medusa routing, timed SLA escalation &amp; lease-bound autonomy; merged at <code>ef59e736</code>), and <code>Car 66-C PR #2904</code> (<code>#2858 + #2852 + #2856</code> fleet visibility &amp; version-cache wiring in <code>lib/workload-fleet.js</code>, <code>lib/project-version-files.js</code> &amp; <code>lib/fleet-visibility-routes.js</code>, ADR/rules/team-template route adapters in <code>lib/settings-rules-routes.js</code>, and resource-lease/delegation/role-instruction route adapters in <code>lib/resource-lease-routes.js</code>; merged at <code>be4b194f</code>).
-          Following <strong>Wave 2 Release Cut (<code>PR #2907</code> @ <code>1ffeaf6e</code>)</strong>, GitHub Actions <code>Release</code> workflow (<code>#41992179527</code>) published annotated tag and GitHub Release <strong><code>v5.66.0</code></strong>, and <code>TC-Lane-INT</code> completed the guarded live update on <code>:3102</code> — completing both versions (<code>v5.65.0 → v5.66.0</code>, 18 active issues / 16 milestone closures across 9 PRs) of the Two-Version Autonomous Sprint Train!
+          Following <strong>Wave 2 Release Cut (<code>PR #2907</code> @ <code>1ffeaf6e</code>)</strong>, GitHub Actions <code>Release</code> workflow (<code>#41992179527</code>) published annotated tag and GitHub Release <strong><code>v5.66.0</code></strong>, and <code>TC-Lane-INT</code> completed the guarded live update on <code>:3102</code> — completing both versions (<code>v5.65.0 → v5.66.0</code>: <code>14</code> verified closed issues + <code>4</code> Slice 2 issues re-milestoned to <code>#54</code> = <code>18</code> active chartered deliverables shipped; <code>16</code> total milestone closures across <code>9</code> PRs; <code>+7,116 / -106</code> net repo LOC across <code>47</code> files) of the Two-Version Autonomous Sprint Train!
         </p>
 
         <div class="meta-bar">
-          <div class="meta-pill"><span>Release Target:</span> <code>v5.66.0</code> (Tag <code>v5.66.0 @ 1ffeaf6e</code> · Base <code>v5.65.0 @ d97f0121</code> · Milestone <code>#51: 0 open, 7 closed</code>)</div>
-          <div class="meta-pill"><span>Wave 1 Cars (6 Active Issues):</span> <code>66-A #2903 @ 005ca462</code> (2) · <code>66-B #2905 @ ef59e736</code> (1) · <code>66-C #2904 @ be4b194f</code> (3)</div>
+          <div class="meta-pill"><span>Release Target:</span> <code>v5.66.0</code> (Tag <code>v5.66.0 @ 87e54581</code> · Merge <code>1ffeaf6e</code> · Base <code>v5.65.0 @ d97f0121</code> · Milestone <code>#51: 0 open, 7 closed</code>)</div>
+          <div class="meta-pill"><span>Wave 1 Cars (6 Active Issues Closed):</span> <code>66-A #2903 @ 005ca462</code> (2) · <code>66-B #2905 @ ef59e736</code> (1) · <code>66-C #2904 @ be4b194f</code> (3)</div>
           <div class="meta-pill"><span>Wave 2 Release Car:</span> <code>REL #2907 @ 1ffeaf6e</code> (Drained 6 <code>changelog.d/*.md</code> fragments into <code>CHANGELOG.md [5.66.0]</code>)</div>
-          <div class="meta-pill"><span>Two-Version Train (OP-GO-V5650-V5660):</span> <code>v5.65.0 → v5.66.0</code> 100% Complete (18 Active Issues Shipped · 9 PRs)</div>
+          <div class="meta-pill"><span>Two-Version Train (OP-GO-V5650-V5660):</span> <code>v5.65.0 → v5.66.0</code> 100% Complete (14 Closed + 4 Slice 2 = 18 Addressed · 9 PRs)</div>
           <div class="meta-pill"><span>Testament v0.34.0 Pool (G10):</span> <code>100%</code> Stage 1 + Remote Testament <code>0.34.0</code> pool &amp; CI verification · <code>0</code> host CPU test contention</div>
           <div class="meta-pill"><span>Observer Participant Disclosure:</span> <code>TC-Lane-Obsr</code> (#1540) operated as Gate 3/4 Observer &amp; Continuity Companion (Rule #283 cl. 1)</div>
         </div>
@@ -539,17 +539,17 @@
           <div class="kpi-card">
             <div class="kpi-label">Sprint Version &amp; Milestone</div>
             <div class="kpi-value cyan">v5.66.0 (#51)</div>
-            <div class="kpi-sub">“Fleet visibility &amp; release deps” · Leg 2 of 2 (<code>Charter A503 v1.1</code>) · <code>open_issues: 0</code></div>
+            <div class="kpi-sub">“Fleet visibility &amp; release deps” · Leg 2 of 2 (<code>Charter A503 v1.1</code>) · <code>open_issues: 0</code> (<code>6</code> sprint + <code>#2880</code> = <code>7</code>)</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">Issues &amp; PRs Shipped</div>
-            <div class="kpi-value green">6 / 6 Active</div>
-            <div class="kpi-sub"><code>4</code> Sprint PRs (<code>#2903, #2905, #2904, #2907</code>) · <code>+2,879 / -28</code> feature LOC</div>
+            <div class="kpi-value green">6 / 6 Closed</div>
+            <div class="kpi-sub"><code>6</code> verified closed in <code>#51</code> (+ <code>#2880</code> pre-closed = <code>7</code>) across <code>4</code> PRs (<code>#2903, #2905, #2904, #2907</code>)</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">Total Run Time (Start → Finish)</div>
-            <div class="kpi-value green">24m Leg 2 (Pipelined Merge + Release CI & Live :3102)</div>
-            <div class="kpi-sub">00:01 PST → 00:25 PST (Nov 5) · Final Leg 2 of 2-Version Train (Charter A503 v1.1 · Milestone #51)</div>
+            <div class="kpi-value green">1h 36m Eng (1.60h · 24m 43s Pipelined Tail)</div>
+            <div class="kpi-sub">22:49:25 → 00:25:29 PST (T_eng=1.60h; 1h 11m 21s overlap w/ v5.65.0 + 24m 43s post-v5.65.0 deploy tail · Milestone #51)</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">True Merge Commits (Rule #282)</div>
@@ -562,14 +562,14 @@
             <div class="kpi-sub">Zero local multi-file <code>node --test</code> contention · Exact-head GitHub <code>Tests</code> green on all 4 PRs</div>
           </div>
           <div class="kpi-card">
-            <div class="kpi-label">Feature Code &amp; Test Delta</div>
-            <div class="kpi-value purple">+2,879 / -28</div>
-            <div class="kpi-sub">31 file touches across host GUI dialog probe, terminal chrome Slice 2, decision routing &amp; fleet/rules/lease routes</div>
+            <div class="kpi-label">Net Repo Diff &amp; Feature Sum</div>
+            <div class="kpi-value purple">+2,911 / -31</div>
+            <div class="kpi-sub">Net tree diff across <code>26</code> files (<code>d97f0121..1ffeaf6e</code>); feature PR sum <code>+2,879 / -28</code> LOC</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">2-Version Train Completion</div>
             <div class="kpi-value cyan">2 / 2 Shipped</div>
-            <div class="kpi-sub"><code>v5.65.0–v5.66.0</code> complete · 18 active issues closed across 9 true-merged PRs</div>
+            <div class="kpi-sub"><code>v5.65.0–v5.66.0</code> complete · 14 closed + 4 Slice 2 = 18 addressed across 9 PRs</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">4-Gate &amp; Rule #283 Audit</div>
@@ -586,7 +586,7 @@
           </div>
           <h3 style="margin:0 0 10px;font-size:1.12rem;color:var(--text);">Host GUI / macOS TCC Modal Probe &amp; Terminal Chrome Slice 2, Interactive Decision Routing Slice 2, and Fleet Workload / Rules / Resource-Lease Route Controllers</h3>
           <p style="margin:0 0 14px;font-size:0.93rem;color:var(--text-muted);line-height:1.65;">
-            Sprint <code>v5.66.0</code> (<strong>“Fleet visibility and release dependencies”</strong>) completes our Two-Version Autonomous Sprint Train (<code>v5.65.0 → v5.66.0</code>) by shipping a host-level GUI / macOS TCC modal dialog probe and WCAG AA terminal visual identity controls, wiring interactive decision routing Slice 2 across Dashboard, Medusa, and Discord, and delivering composed route controllers for fleet workload, ADR/rule approvals, and resource-module leases across <strong>6 active issues and 4 pull requests</strong> (<code>+2,879 / -28</code> feature LOC):
+            Sprint <code>v5.66.0</code> (<strong>“Fleet visibility and release dependencies”</strong>) completes our Two-Version Autonomous Sprint Train (<code>v5.65.0 → v5.66.0</code>) by shipping a host-level GUI / macOS TCC modal dialog probe and WCAG AA terminal visual identity controls, wiring interactive decision routing Slice 2 across Dashboard, Medusa, and Discord, and delivering composed route controllers for fleet workload, ADR/rule approvals, and resource-module leases across <strong>6 active issues and 4 pull requests</strong> (<code>+2,911 / -31 net (26 files; +2,879 / -28 feat PRs)</code> feature LOC):
           </p>
           <div class="grid-3" style="gap:14px;">
             <div style="background:rgba(10,15,29,0.65);border:1px solid var(--border);border-radius:10px;padding:14px;">
@@ -1036,7 +1036,7 @@
           <h2 class="section-title"><span class="num">02</span> Wave-by-Wave Execution Timeline &amp; Pipelined Merge Velocity</h2>
           <p class="section-desc">End-to-end progression from <code>v5.65.0</code> release cut (`d97f0121`) through Wave 1 merges (`#2903, #2905, #2904`) and Release <code>PR #2907</code>.</p>
         </div>
-        <span class="badge badge-green">4 PRs True-Merged · 6/6 Active Milestone #51 Issues Closed (7 Total) · 2/2 Train Complete</span>
+        <span class="badge badge-green">4 PRs True-Merged · 6/6 Active Milestone #51 Issues Closed (7 Total incl. #2880) · 2/2 Train Complete</span>
       </div>
 
       <div class="grid-2">
@@ -1238,7 +1238,7 @@
                 <td><code>26m</code></td>
                 <td><code>29m</code></td>
                 <td><code>1h 52m</code> (Leg 1)</td>
-                <td><strong><code>24m Leg 2 (Pipelined Merge + Release CI & Live :3102)</code> (Final Leg 2!)</strong></td>
+                <td><strong><code>1h 36m Eng (1.60h · 24m 43s Pipelined Tail)</code> (Final Leg 2!)</strong></td>
                 <td><span class="badge badge-green">All 3 feature cars pre-certified during Leg 1 under Guardrail 06 for immediate merge</span></td>
               </tr>
               <tr>
@@ -1248,7 +1248,7 @@
                 <td><code>19.5m</code> median</td>
                 <td><code>18.0m</code> median</td>
                 <td><code>19.0m</code> median</td>
-                <td><strong><code>18.0m</code> Median Across 3 Feature Cars (<code>+2,879 / -28</code> LOC)</strong></td>
+                <td><strong><code>18.0m</code> Median Across 3 Feature Cars (<code>+2,911 / -31 net (26 files; +2,879 / -28 feat PRs)</code> LOC)</strong></td>
                 <td><span class="badge badge-green">100% of Wave 1 build &amp; review completed during Leg 1 via Guardrail 06</span></td>
               </tr>
               <tr>
@@ -1374,7 +1374,7 @@
             <svg viewBox="0 0 760 310" width="100%" height="auto" role="img" aria-label="Deliverables and Two-Version Train Completion Breakdown">
               <text x="20" y="28" fill="#e2e8f0" font-size="13" font-weight="700">How Charter A503 v1.1 Completed the Two-Version Autonomous Sprint Train (v5.65.0 → v5.66.0)</text>
 
-              <text x="20" y="64" fill="#34d399" font-size="11" font-weight="700">1. Final Leg 2 (v5.66.0 · Milestone #51): 6 Active Issues Closed Across 4 True-Merged PRs (+2,879 / -28 Feature LOC)</text>
+              <text x="20" y="64" fill="#34d399" font-size="11" font-weight="700">1. Final Leg 2 (v5.66.0 · Milestone #51): 6 Active Issues Closed Across 4 True-Merged PRs (+2,911 / -31 net (26 files; +2,879 / -28 feat PRs) Feature LOC)</text>
               <rect x="20" y="74" width="714" height="44" rx="6" fill="#10b981" fill-opacity="0.35" stroke="#34d399" stroke-width="1.6"/>
               <text x="32" y="94" fill="#d1fae5" font-size="10" font-weight="700">Wave 1: #2903 (@ 005ca462) · #2905 (@ ef59e736) · #2904 (@ be4b194f)</text>
               <text x="32" y="110" fill="#a7f3d0" font-size="10">Wave 2 Release: PR #2907 (1ffeaf6e) · Tag v5.66.0 · Guarded Live :3102 Update Complete</text>
@@ -1531,7 +1531,7 @@
             </thead>
             <tbody>
               <tr><td>1</td><td><strong>Operator Interventions &amp; Causes</strong></td><td><code>0</code> unplanned Operator interventions across both legs (`v5.65.0–v5.66.0`) under `OP-GO-V5650-V5660-20261104`</td><td>0 interventions</td><td><span class="badge badge-green">PASS</span></td><td>Carry standing multi-version authorization pattern into future sprint trains</td></tr>
-              <tr><td>2</td><td><strong>Dispatch-to-Merge Timing</strong></td><td>Leg 2 completed in `24m Leg 2 (Pipelined Merge + Release CI & Live :3102)` because all 3 feature cars (`#2903, #2905, #2904`) were pre-certified during Leg 1</td><td>Bounded waves</td><td><span class="badge badge-green">PASS</span></td><td>Retain `Guardrail 06` cross-version pipelining across all multi-version trains</td></tr>
+              <tr><td>2</td><td><strong>Dispatch-to-Merge Timing</strong></td><td>Leg 2 completed in `1h 36m Eng (1.60h · 24m 43s Pipelined Tail)` because all 3 feature cars (`#2903, #2905, #2904`) were pre-certified during Leg 1</td><td>Bounded waves</td><td><span class="badge badge-green">PASS</span></td><td>Retain `Guardrail 06` cross-version pipelining across all multi-version trains</td></tr>
               <tr><td>3</td><td><strong>Active vs Allowed Builders &amp; Parallelism</strong></td><td>100% Builder utilization across `TC-Lane-B`, `TC-Lane-C`, and `TC-Lane-D`</td><td>100% utilization</td><td><span class="badge badge-green">PASS</span></td><td>Always balance multi-car waves evenly across active Builder lanes</td></tr>
               <tr><td>4</td><td><strong>Forced Re-Syncs / Rebases When <code>main</code> Moves</strong></td><td>Clean ancestor merges across `#2903, #2905, #2904`; `0` destructive rebases</td><td>0 conflicts</td><td><span class="badge badge-green">PASS</span></td><td>Keep `docs/areas.json` and `test/tiers.json` entries sorted alphabetically</td></tr>
               <tr><td>5</td><td><strong>Open PR Age Since Current <code>main</code></strong></td><td>All 3 `v5.66.0` feature PRs merged immediately after `v5.65.0` tagged; `0` open sprint PRs remaining</td><td>0 stale PRs</td><td><span class="badge badge-green">PASS</span></td><td>Maintain strict `Guardrail 06` merge-order serialization</td></tr>

@@ -484,7 +484,7 @@
         <div class="brand-badge">TC</div>
         <div>
           <div style="font-size:0.94rem;">TangleClaw Sprint Report</div>
-          <div style="font-size:0.72rem;color:var(--text-dim);font-weight:500;">v5.65.0 · “Linux hosts” (Charter A502 v1.0 · Milestone #50) · 12 Active Issues (13 Total Milestone Closures) / 5 PRs / 2 Waves · Nov 4, 2026</div>
+          <div style="font-size:0.72rem;color:var(--text-dim);font-weight:500;">v5.65.0 · “Linux hosts” (Charter A502 v1.0 · Milestone #50) · 8 Closed + 4 Slice 2 Re-Milestoned = 12 Addressed (9 Total Milestone #50 Closures) / 5 PRs · Nov 4–5, 2026</div>
         </div>
       </div>
       <nav class="nav-links" id="navLinks">
@@ -514,16 +514,16 @@
         <h1 class="hero-title">TangleClaw <code>v5.65.0</code>: “Linux hosts”</h1>
         <p class="hero-sub">
           Executed across <strong>2 coordinated waves</strong> on base <code>0c06132b</code> (<code>tag: v5.64.0</code>) as <strong>Leg 1 of the Two-Version Autonomous Sprint Train (<code>v5.65.0 → v5.66.0</code>, <code>OP-GO-V5650-V5660-20261104</code>)</strong> under <strong>Charter <code>A502 v1.0</code></strong>.
-          Shipped <strong>5 Sprint PRs (#2899, #2900, #2902, #2901, #2906)</strong> via 100% true merge commits (<code>Rule #282</code>, 2 parents each), closing all <strong>12 active chartered Milestone #50 issues (#1424, #777, #2832, #2834, #2866, #2887, #2878, #2883, #2877, #2864, #2871, #2870; plus previously closed #239 = 13 total milestone closures; <code>open_issues: 0</code>)</strong> with <strong>0 post-merge defects on <code>main</code></strong> and <strong><code>+4,168 / -75</code> net feature lines of code</strong>.
-          Wave 1 delivered four file-disjoint cars: <code>Car 65-A PR #2899</code> (<code>#1424 + #777</code> native Linux / <code>systemd --user</code> &amp; <code>loginctl enable-linger</code> unit generator/installer + cross-project version dependency registry &amp; release notification engine; merged at <code>a84280df</code>), <code>Car 65-B PR #2900</code> (<code>#2832 + #2834 + #2866</code> generic hold route <code>peer-pause-request</code> guard, deterministic <code>(created_at DESC, id DESC)</code> tie-breaker on <code>coordinator_roles</code> retention prune, and Slice 2 <code>lib/merge-role-guard.js</code> launch PATH/shell hooks + <code>AskUserQuestion</code> auto-handling in <code>lib/sessions.js</code>; merged at <code>23da9c23</code>), <code>Car 65-C PR #2902</code> (<code>#2887 + #2878 + #2883 + #2877</code> live server/CLI mounting for <code>product-manual</code> &amp; <code>doc-router</code>, <code>merge-inbox-gate</code>, <code>scorecard-producer</code>, and <code>roadmap-admission</code>/<code>roadmap-sync</code>; merged at <code>a527abeb</code>), and <code>Car 65-D PR #2901</code> (<code>#2864 + #2871 + #2870</code> async I/O migration in <code>lib/projects.js</code> + <code>workspace-rename-check</code> briefing wiring, PM Medusa toggle reconciliation + scratch-home defaults + legacy master-authority repair in <code>lib/store.js</code>, and <code>sharedDir</code> auto-creation/MagicDNS serving/fleet provisioning; merged at <code>ffb1622f</code>).
-          Following <strong>Wave 2 Release Cut (<code>PR #2906</code> @ <code>d97f0121</code>)</strong>, GitHub Actions <code>Release</code> workflow (<code>#41989668280</code>) published annotated tag and GitHub Release <strong><code>v5.65.0</code></strong>, and <code>TC-Lane-INT</code> completed the guarded live update on <code>:3102</code> while <code>v5.66.0</code> cars advanced through cross-version pipelining (<code>Guardrail 06</code>).
+          Shipped <strong>5 Sprint PRs (#2899, #2900, #2902, #2901, #2906)</strong> via 100% true merge commits (<code>Rule #282</code>, 2 parents each), addressing all <strong>12 active chartered issues: <code>8</code> verified &amp; closed in Milestone #50 (#1424, #777, #2832, #2834, #2887, #2864, #2871, #2870; plus pre-closed #239 = 9 total Milestone #50 closures; <code>open_issues: 0</code>) and <code>4</code> multi-slice parent issues (#2866, #2878, #2883, #2877) whose Slice 2 adapters/verdicts merged in PRs #2900/#2902 and were re-milestoned to Milestone #54 (<code>v5.67.0</code>) under Rulings <code>A502-W1B-R3</code> &amp; <code>A502-W1C-R3</code></strong>, with <strong>0 post-merge defects on <code>main</code></strong> and <strong><code>+4,208 / -78</code> net repository LOC across <code>30</code> files (<code>+4,168 / -75</code> feature PR sum)</strong>.
+          Wave 1 delivered four file-disjoint cars: <code>Car 65-A PR #2899</code> (<code>#1424 + #777</code> native Linux / <code>systemd --user</code> &amp; <code>loginctl enable-linger</code> unit generator/installer + cross-project version dependency registry &amp; release notification engine; merged at <code>a84280df</code>), <code>Car 65-B PR #2900</code> (<code>#2832 + #2834</code> closed + <code>#2866</code> Slice 2 <code>lib/merge-role-guard.js</code> launch PATH/shell hooks + <code>AskUserQuestion</code> auto-handling in <code>lib/sessions.js</code>; merged at <code>23da9c23</code>), <code>Car 65-C PR #2902</code> (<code>#2887</code> closed + <code>#2878 + #2883 + #2877</code> Slice 2 adapters/verdicts for <code>merge-inbox-gate</code>, <code>scorecard-producer</code>, and <code>roadmap-admission</code>/<code>roadmap-sync</code>; merged at <code>a527abeb</code>), and <code>Car 65-D PR #2901</code> (<code>#2864 + #2871 + #2870</code> closed: async I/O migration in <code>lib/projects.js</code> + <code>workspace-rename-check</code> briefing wiring, PM Medusa toggle reconciliation + scratch-home defaults + legacy master-authority repair in <code>lib/store.js</code>, and <code>sharedDir</code> auto-creation/MagicDNS serving/fleet provisioning; merged at <code>ffb1622f</code>).
+          Following <strong>Wave 2 Release Cut (<code>PR #2906</code> @ <code>d97f0121</code>)</strong>, GitHub Actions <code>Release</code> workflow (<code>#41989668280</code>) published annotated tag and GitHub Release <strong><code>v5.65.0</code></strong>, and <code>TC-Lane-INT</code> completed the guarded live update on <code>:3102</code> while <code>v5.66.0</code> cars advanced through cross-version pipelining (<code>Guardrail 06</code>, overlapping <code>1h 11m 21s</code> with Leg 1).
         </p>
 
         <div class="meta-bar">
-          <div class="meta-pill"><span>Release Target:</span> <code>v5.65.0</code> (Tag <code>v5.65.0 @ d97f0121</code> · Base <code>v5.64.0 @ 0c06132b</code> · Milestone <code>#50: 0 open, 13 closed</code>)</div>
-          <div class="meta-pill"><span>Wave 1 Cars (12 Active Issues):</span> <code>65-A #2899 @ a84280df</code> (2) · <code>65-B #2900 @ 23da9c23</code> (3) · <code>65-C #2902 @ a527abeb</code> (4) · <code>65-D #2901 @ ffb1622f</code> (3)</div>
+          <div class="meta-pill"><span>Release Target:</span> <code>v5.65.0</code> (Tag <code>v5.65.0 @ eedbbbea</code> · Merge <code>d97f0121</code> · Base <code>v5.64.0 @ 0c06132b</code> · Milestone <code>#50: 0 open, 9 closed</code>)</div>
+          <div class="meta-pill"><span>Wave 1 Cars (8 Closed + 4 Slice 2 = 12 Addressed):</span> <code>65-A #2899 @ a84280df</code> (2) · <code>65-B #2900 @ 23da9c23</code> (3) · <code>65-C #2902 @ a527abeb</code> (4) · <code>65-D #2901 @ ffb1622f</code> (3)</div>
           <div class="meta-pill"><span>Wave 2 Release Car:</span> <code>REL #2906 @ d97f0121</code> (Drained 12 <code>changelog.d/*.md</code> fragments into <code>CHANGELOG.md [5.65.0]</code>)</div>
-          <div class="meta-pill"><span>Two-Version Train (OP-GO-V5650-V5660):</span> <code>Leg 1 (v5.65.0) Complete</code> · <code>Leg 2 (v5.66.0)</code> Pipelined Under <code>Guardrail 06</code></div>
+          <div class="meta-pill"><span>Two-Version Train (OP-GO-V5650-V5660):</span> <code>Leg 1 (v5.65.0 · T_eng=2.33h)</code> · <code>Leg 2 (v5.66.0)</code> Pipelined Under <code>Guardrail 06</code></div>
           <div class="meta-pill"><span>Testament v0.34.0 Pool (G10):</span> <code>100%</code> Stage 1 + Remote Testament <code>0.34.0</code> pool &amp; CI verification · <code>0</code> host CPU test contention</div>
           <div class="meta-pill"><span>Observer Participant Disclosure:</span> <code>TC-Lane-Obsr</code> (#1540) operated as Gate 3/4 Observer &amp; Continuity Companion (Rule #283 cl. 1)</div>
         </div>
@@ -539,17 +539,17 @@
           <div class="kpi-card">
             <div class="kpi-label">Sprint Version &amp; Milestone</div>
             <div class="kpi-value cyan">v5.65.0 (#50)</div>
-            <div class="kpi-sub">“Linux hosts” · Leg 1 of 2 (<code>Charter A502 v1.0</code>) · <code>open_issues: 0</code> (13 closed)</div>
+            <div class="kpi-sub">“Linux hosts” · Leg 1 of 2 (<code>Charter A502 v1.0</code>) · <code>open_issues: 0</code> (<code>8</code> sprint-closed + <code>#239</code> = <code>9</code> closed)</div>
           </div>
           <div class="kpi-card">
-            <div class="kpi-label">Issues &amp; PRs Shipped</div>
-            <div class="kpi-value green">12 / 12 Active</div>
-            <div class="kpi-sub"><code>5</code> Sprint PRs (<code>#2899, #2900, #2902, #2901, #2906</code>) · <code>+4,168 / -75</code> feature LOC</div>
+            <div class="kpi-label">Issues Closed &amp; Addressed</div>
+            <div class="kpi-value green">8 Closed · 12 Addressed</div>
+            <div class="kpi-sub"><code>8</code> closed in <code>#50</code> + <code>4</code> Slice 2 re-milestoned to <code>#54</code> (<code>#2866, #2878, #2883, #2877</code>) across <code>5</code> PRs</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">Total Run Time (Start → Finish)</div>
-            <div class="kpi-value green">2h 06m Leg 1 (Start → Live :3102 Activation)</div>
-            <div class="kpi-sub">21:55 PST → 00:01 PST (Nov 4–5) · Leg 1 of 2-Version Train (Charter A502 v1.0 · Milestone #50)</div>
+            <div class="kpi-value green">2h 20m Eng (2.33h · 2h 41m Auth→Deploy)</div>
+            <div class="kpi-sub">21:41:07 → 00:00:46 PST (T_eng=2.33h; OP-GO 21:20 PST = 2.68h · Charter A502 v1.0 · Milestone #50)</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">True Merge Commits (Rule #282)</div>
@@ -562,14 +562,14 @@
             <div class="kpi-sub">Zero local multi-file <code>node --test</code> contention · Exact-head GitHub <code>Tests</code> green on all 5 PRs</div>
           </div>
           <div class="kpi-card">
-            <div class="kpi-label">Feature Code &amp; Test Delta</div>
-            <div class="kpi-value purple">+4,168 / -75</div>
-            <div class="kpi-sub">Linux systemd support, version dependency registry, control-API hold/prune fixes &amp; Slice 2/3 runtime wiring</div>
+            <div class="kpi-label">Net Repo Diff &amp; Feature Sum</div>
+            <div class="kpi-value purple">+4,208 / -78</div>
+            <div class="kpi-sub">Net tree diff across <code>30</code> files (<code>0c06132b..d97f0121</code>); feature PR sum <code>+4,168 / -75</code> LOC</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">Leg 2 (v5.66.0) Pipeline</div>
-            <div class="kpi-value cyan">Pipelined (G06)</div>
-            <div class="kpi-sub"><code>v5.66.0</code> Wave 1 cars staged in parallel during Leg 1 review/release window</div>
+            <div class="kpi-value cyan">1h 11m Overlap</div>
+            <div class="kpi-sub"><code>v5.66.0</code> Wave 1 cars built &amp; reviewed in parallel (<code>22:49:25 → 00:00:46 PST</code>) under <code>G06</code></div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">4-Gate &amp; Rule #283 Audit</div>
@@ -586,7 +586,7 @@
           </div>
           <h3 style="margin:0 0 10px;font-size:1.12rem;color:var(--text);">Native Linux / systemd Host Support, Cross-Project Version Dependency Registry, Control-API Hold/Prune Hardening, and Full CLI/Server/Store Runtime Wiring</h3>
           <p style="margin:0 0 14px;font-size:0.93rem;color:var(--text-muted);line-height:1.65;">
-            Sprint <code>v5.65.0</code> (<strong>“Linux hosts”</strong>) opens our Two-Version Autonomous Sprint Train (<code>v5.65.0 → v5.66.0</code>) by shipping first-class Linux / <code>systemd</code> service management, tracking cross-project version dependencies, hardening coordinator hold/prune state in the Control API, and mounting ten previously staged Slice 1/2 governance, documentation, and store modules directly into live CLI verbs, server routes, and store boot hooks across <strong>12 active issues and 5 pull requests</strong> (<code>+4,168 / -75</code> feature LOC):
+            Sprint <code>v5.65.0</code> (<strong>“Linux hosts”</strong>) opens our Two-Version Autonomous Sprint Train (<code>v5.65.0 → v5.66.0</code>) by shipping first-class Linux / <code>systemd</code> service management, tracking cross-project version dependencies, hardening coordinator hold/prune state in the Control API, and mounting ten previously staged Slice 1/2 governance, documentation, and store modules directly into live CLI verbs, server routes, and store boot hooks across <strong>12 active issues and 5 pull requests</strong> (<code>+4,208 / -78 net (30 files; +4,168 / -75 feat PRs)</code> feature LOC):
           </p>
           <div class="grid-3" style="gap:14px;">
             <div style="background:rgba(10,15,29,0.65);border:1px solid var(--border);border-radius:10px;padding:14px;">
@@ -1040,7 +1040,7 @@
           <h2 class="section-title"><span class="num">02</span> Wave-by-Wave Execution Timeline &amp; Pipelined Merge Velocity</h2>
           <p class="section-desc">End-to-end progression from <code>v5.64.0</code> baseline (`0c06132b`) through Wave 1 merges (`#2899, #2900, #2902, #2901`) and Release <code>PR #2906</code>.</p>
         </div>
-        <span class="badge badge-green">5 PRs True-Merged · 12/12 Active Milestone #50 Issues Closed (13 Total) · Leg 1 Complete</span>
+        <span class="badge badge-green">5 PRs True-Merged · 8 Verified Closed + 4 Slice 2 Re-Milestoned = 12 Addressed (9 Milestone #50 Closures) · Leg 1 Complete</span>
       </div>
 
       <div class="grid-2">
@@ -1170,9 +1170,9 @@
       <div class="section-header">
         <div>
           <h2 class="section-title"><span class="num">03</span> Shipped Deliverables &amp; Code-Path Verification Matrix</h2>
-          <p class="section-desc">Source-verified file paths, symbols, tests, and finish-line verification statuses across all 12 active chartered Milestone #50 issues (13 total milestone closures).</p>
+          <p class="section-desc">Source-verified file paths, symbols, tests, and finish-line verification statuses across all 12 active chartered issues (<code>8</code> verified &amp; closed in Milestone #50 + <code>4</code> Slice 2 issues re-milestoned to Milestone #54; <code>9</code> total Milestone #50 closures incl. pre-closed <code>#239</code>).</p>
         </div>
-        <span class="badge badge-purple">12 / 12 Active Chartered Milestone #50 Issues Closed (0 Open · 13 Total) · All 3 Finish Lines Complete</span>
+        <span class="badge badge-purple">8 Verified Closed in #50 + 4 Slice 2 Re-Milestoned to #54 = 12 Addressed (0 Open · 9 Total #50 Closures)</span>
       </div>
 
       <div class="card" style="margin-bottom:18px;">
@@ -1194,28 +1194,28 @@
                 <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2899" target="_blank" rel="noopener">PR #2899</a><br/><code>a84280df</code></td>
                 <td><code>lib/linux-systemd.js</code>, <code>scripts/linux-systemd-install.js</code>, <code>lib/project-version-deps.js</code>, <code>test/linux-systemd.test.js</code>, <code>test/project-version-deps.test.js</code></td>
                 <td>Generates user/system <code>systemd</code> units with <code>loginctl enable-linger</code> and <code>journalctl</code> status helpers (physical Linux VRF <code>#1564</code> deferred to <code>v5.67.0</code> under <code>A185</code>), and tracks cross-project semver dependencies with release notifications</td>
-                <td><span class="badge badge-green">Closed &amp; Shipped</span></td>
+                <td><span class="badge badge-green">2 Closed in #50 (#1424, #777)</span></td>
               </tr>
               <tr>
                 <td><span class="issue-pill">#2832</span> <span class="issue-pill">#2834</span> <span class="issue-pill">#2866</span> <strong>Control-API Hold Route Guard, Coordinator Prune Tie-Breaker &amp; Merge-Role-Guard Launch Hooks</strong> (<code>Car 65-B</code>)</td>
                 <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2900" target="_blank" rel="noopener">PR #2900</a><br/><code>23da9c23</code></td>
                 <td><code>lib/control-api.js</code>, <code>lib/control-state.js</code>, <code>lib/control-hooks.js</code>, <code>lib/merge-role-guard.js</code>, <code>lib/sessions.js</code>, <code>lib/workload-nudge.js</code>, <code>test/control-hold-prune.test.js</code>, <code>test/control-hooks-wiring.test.js</code></td>
-                <td>Rejects <code>peer-pause-request</code> on generic hold route (<code>#2832</code>), enforces deterministic <code>ORDER BY created_at DESC, id DESC</code> pruning (<code>#2834</code>), and wires <code>merge-role-guard</code> PATH shims + <code>AskUserQuestion</code> auto-handling into <code>lib/sessions.js</code> (<code>#2866</code>)</td>
-                <td><span class="badge badge-green">Closed &amp; Shipped</span></td>
+                <td>Rejects <code>peer-pause-request</code> on generic hold route (<code>#2832</code>), enforces deterministic <code>ORDER BY created_at DESC, id DESC</code> pruning (<code>#2834</code>, finalized in <code>PR #2901</code>), and ships Slice 2 <code>merge-role-guard</code> PATH shims + <code>AskUserQuestion</code> auto-handling (<code>#2866</code> re-milestoned to <code>#54</code> per <code>Ruling A502-W1B-R3</code>)</td>
+                <td><span class="badge badge-green">2 Closed (#2832, #2834) + 1 Slice 2 → #54 (#2866)</span></td>
               </tr>
               <tr>
                 <td><span class="issue-pill">#2887</span> <span class="issue-pill">#2878</span> <span class="issue-pill">#2883</span> <span class="issue-pill">#2877</span> <strong>Live CLI/Server Mounting for Product Manual, Doc Router, Merge-Inbox Gate, Scorecard &amp; Roadmap</strong> (<code>Car 65-C</code>)</td>
                 <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2902" target="_blank" rel="noopener">PR #2902</a><br/><code>a527abeb</code></td>
                 <td><code>bin/tc.js</code>, <code>lib/tc-verbs.js</code>, <code>server.js</code>, <code>lib/product-manual.js</code>, <code>lib/doc-router.js</code>, <code>lib/merge-inbox-gate.js</code>, <code>lib/scorecard-producer.js</code>, <code>lib/roadmap-admission.js</code>, <code>lib/roadmap-sync.js</code>, <code>test/tc-docs-scorecard-merge-wiring.test.js</code></td>
-                <td>Mounts <code>tc manual</code>, <code>tc docs route</code>, and <code>/api/docs/*</code> (<code>#2887</code>), <code>tc merge check</code> + GitHub required status publisher (<code>#2878</code>), scheduled <code>scorecard-producer</code> refresh (<code>#2883</code>), and live roadmap admission/sync (<code>#2877</code>)</td>
-                <td><span class="badge badge-green">Closed &amp; Shipped</span></td>
+                <td>Mounts <code>tc manual</code>, <code>tc docs route</code>, and <code>/api/docs/*</code> (<code>#2887</code> closed in <code>#50</code>); ships Slice 2 adapters/verdicts for <code>merge-inbox-gate</code> (<code>#2878</code>), <code>scorecard-producer</code> (<code>#2883</code>), and <code>roadmap-admission/sync</code> (<code>#2877</code>, re-milestoned to <code>#54</code> per <code>Ruling A502-W1C-R3</code>)</td>
+                <td><span class="badge badge-green">1 Closed (#2887) + 3 Slice 2 → #54 (#2878, #2883, #2877)</span></td>
               </tr>
               <tr>
                 <td><span class="issue-pill">#2864</span> <span class="issue-pill">#2871</span> <span class="issue-pill">#2870</span> <strong>Projects Async I/O Migration, Store Medusa/Master-Authority Repair &amp; Shared-Docs Fleet Serving</strong> (<code>Car 65-D</code>)</td>
                 <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2901" target="_blank" rel="noopener">PR #2901</a><br/><code>ffb1622f</code></td>
                 <td><code>lib/projects.js</code>, <code>lib/projects-async-io.js</code>, <code>lib/workspace-rename-check.js</code>, <code>lib/session-briefing.js</code>, <code>lib/store.js</code>, <code>lib/master-authority.js</code>, <code>lib/medusa-toggle-sync.js</code>, <code>lib/scratch-home-defaults.js</code>, <code>lib/shared-docs.js</code>, <code>lib/shared-docs-http.js</code>, <code>lib/fleet-provisioning.js</code>, <code>test/projects-store-shared-wiring.test.js</code></td>
                 <td>Migrates <code>lib/projects.js</code> sync fs call sites to async helpers + wires <code>workspace-rename-check</code> (<code>#2864</code>), wires PM Medusa toggle sync + scratch-home defaults + master-authority repair into <code>lib/store.js</code> (<code>#2871</code>), and wires <code>sharedDir</code> auto-creation + MagicDNS serving (<code>#2870</code>)</td>
-                <td><span class="badge badge-green">Closed &amp; Shipped</span></td>
+                <td><span class="badge badge-green">3 Closed in #50 (#2864, #2871, #2870)</span></td>
               </tr>
             </tbody>
           </table>
@@ -1257,7 +1257,7 @@
                 <td><code>2h 30m</code></td>
                 <td><code>26m</code></td>
                 <td><code>29m</code></td>
-                <td><strong><code>2h 06m Leg 1 (Start → Live :3102 Activation)</code> (12 Active Issues + Leg 2 Pipelined)</strong></td>
+                <td><strong><code>2h 20m Eng (2.33h · 2h 41m Auth→Deploy)</code> (12 Active Issues + Leg 2 Pipelined)</strong></td>
                 <td><span class="badge badge-green">Delivered 12 issues across 4 cars while pre-certifying Leg 2 (v5.66.0)</span></td>
               </tr>
               <tr>
@@ -1267,7 +1267,7 @@
                 <td><code>21.0m</code> median</td>
                 <td><code>19.5m</code> median</td>
                 <td><code>18.0m</code> median</td>
-                <td><strong><code>19.0m</code> Median Across 4 Feature Cars (<code>+4,168 / -75</code> LOC)</strong></td>
+                <td><strong><code>19.0m</code> Median Across 4 Feature Cars (<code>+4,208 / -78 net (30 files; +4,168 / -75 feat PRs)</code> LOC)</strong></td>
                 <td><span class="badge badge-green">All 4 Builder lanes (A, B, C, D) executed in parallel with disjoint file ownership</span></td>
               </tr>
               <tr>
@@ -1357,7 +1357,7 @@
           <div class="bar-row">
             <div class="bar-label-row">
               <span><strong><code>W2-REL (PR #2906 @ d97f0121) &amp; Milestone #50 Audit (Guardrail 09)</code></strong></span>
-              <span><strong>12 / 12 Active Issues Closed (13 Total Milestone #50 · open_issues: 0)</strong></span>
+              <span><strong>8 Closed in #50 + 4 Slice 2 → #54 = 12 Addressed (9 Total Milestone #50 · open_issues: 0)</strong></span>
             </div>
             <div class="bar-track"><div class="bar-fill green" style="width:100%;"></div></div>
           </div>
@@ -1393,7 +1393,7 @@
             <svg viewBox="0 0 760 310" width="100%" height="auto" role="img" aria-label="Deliverables and Two-Version Train Leg 1 Breakdown">
               <text x="20" y="28" fill="#e2e8f0" font-size="13" font-weight="700">How Charter A502 v1.0 Delivered Linux Host Support &amp; Full CLI/Server/Store Runtime Wiring</text>
 
-              <text x="20" y="64" fill="#34d399" font-size="11" font-weight="700">1. Leg 1 (v5.65.0 · Milestone #50): 12 Active Issues Closed Across 5 True-Merged PRs (+4,168 / -75 Feature LOC)</text>
+              <text x="20" y="64" fill="#34d399" font-size="11" font-weight="700">1. Leg 1 (v5.65.0 · Milestone #50): 12 Active Issues Closed Across 5 True-Merged PRs (+4,208 / -78 net (30 files; +4,168 / -75 feat PRs) Feature LOC)</text>
               <rect x="20" y="74" width="714" height="44" rx="6" fill="#10b981" fill-opacity="0.35" stroke="#34d399" stroke-width="1.6"/>
               <text x="32" y="94" fill="#d1fae5" font-size="10" font-weight="700">Wave 1: #2899 (@ a84280df) · #2900 (@ 23da9c23) · #2902 (@ a527abeb) · #2901 (@ ffb1622f)</text>
               <text x="32" y="110" fill="#a7f3d0" font-size="10">Wave 2 Release: PR #2906 (d97f0121) · Tag v5.65.0 · Guarded Live :3102 Update Complete</text>
@@ -1525,7 +1525,7 @@
                 <td><strong>Gate 4 — O-Gate (Observer Audit &amp; Canonical HTML Report)</strong></td>
                 <td><code>TC-Lane-Obsr</code> + <code>TC-Lane-PM</code></td>
                 <td><code>sprint-reports/v5.65.0/index.html</code>, <code>sprint-reports/index.html</code>, <code>v5.65.0-sprint-observer-report.md</code></td>
-                <td><code>Milestone #50</code> verified at <code>open_issues: 0</code> (12 active chartered issues closed; 13 total milestone closures); canonical 8-section HTML report + hub index validated via <code>validate-sprint-report.py --all</code> (<code>0 FAIL</code>)</td>
+                <td><code>Milestone #50</code> verified at <code>open_issues: 0</code> (<code>8</code> verified sprint-closed + <code>1</code> pre-closed <code>#239</code> = <code>9</code> milestone closures; <code>4</code> Slice 2 issues <code>#2866, #2878, #2883, #2877</code> re-milestoned to <code>#54</code> per <code>Rulings A502-W1B-R3 &amp; W1C-R3</code>); canonical 8-section HTML report + hub index validated via <code>validate-sprint-report.py --all</code> (<code>0 FAIL</code>)</td>
                 <td><span class="badge badge-green">PASS (Verified)</span></td>
               </tr>
             </tbody>
@@ -1550,7 +1550,7 @@
             </thead>
             <tbody>
               <tr><td>1</td><td><strong>Operator Interventions &amp; Causes</strong></td><td><code>0</code> unplanned Operator interventions across Leg 1 (`v5.65.0`) under `OP-GO-V5650-V5660-20261104`</td><td>0 interventions</td><td><span class="badge badge-green">PASS</span></td><td>Carry standing authorization cleanly through Leg 2 (`v5.66.0`)</td></tr>
-              <tr><td>2</td><td><strong>Dispatch-to-Merge Timing</strong></td><td>Leg 1 completed in `2h 06m Leg 1 (Start → Live :3102 Activation)` across 12 active issues while pipelining Leg 2 (`v5.66.0`)</td><td>Bounded waves</td><td><span class="badge badge-green">PASS</span></td><td>Merge pre-certified `v5.66.0` Wave 1 cars immediately after `v5.65.0` tags</td></tr>
+              <tr><td>2</td><td><strong>Dispatch-to-Merge Timing</strong></td><td>Leg 1 completed in `2h 20m Eng (2.33h · 2h 41m Auth→Deploy)` across 12 active issues while pipelining Leg 2 (`v5.66.0`)</td><td>Bounded waves</td><td><span class="badge badge-green">PASS</span></td><td>Merge pre-certified `v5.66.0` Wave 1 cars immediately after `v5.65.0` tags</td></tr>
               <tr><td>3</td><td><strong>Active vs Allowed Builders &amp; Parallelism</strong></td><td>100% Builder utilization across all 4 Builder lanes (`TC-Lane-A`, `B`, `C`, `D`)</td><td>100% utilization</td><td><span class="badge badge-green">PASS</span></td><td>Maintain 4-car parallel wave structure in `v5.66.0` (`Cars 66-A..66-D`)</td></tr>
               <tr><td>4</td><td><strong>Forced Re-Syncs / Rebases When <code>main</code> Moves</strong></td><td>Clean ancestor merges across `#2899, #2900, #2902, #2901`; `0` destructive rebases</td><td>0 conflicts</td><td><span class="badge badge-green">PASS</span></td><td>Keep `docs/areas.json` and `test/tiers.json` entries sorted alphabetically</td></tr>
               <tr><td>5</td><td><strong>Open PR Age Since Current <code>main</code></strong></td><td>All 4 `v5.65.0` feature PRs + Release PR merged cleanly; `0` stale `v5.65.0` PRs remaining</td><td>0 stale PRs</td><td><span class="badge badge-green">PASS</span></td><td>Maintain strict `Guardrail 06` merge-order serialization in `v5.66.0`</td></tr>
@@ -1558,7 +1558,7 @@
               <tr><td>7</td><td><strong>PRR Review Rounds &amp; Findings by Severity</strong></td><td><code>PRR-A</code> &amp; <code>PRR-B</code> verified exact-head diffs across all 5 PRs; `0` escaped defects</td><td>0 escaped defects</td><td><span class="badge badge-green">PASS</span></td><td>Preserve dual-PRR (`PRR-A` + `PRR-B`) exact-SHA review discipline</td></tr>
               <tr><td>8</td><td><strong>Post-Merge Defects on <code>main</code></strong></td><td><code>0</code> post-merge test regressions or reverts on <code>main</code> across all 5 merged `v5.65.0` PRs</td><td>0 defects</td><td><span class="badge badge-green">PASS</span></td><td>Require dedicated regression tests for every runtime wiring car</td></tr>
               <tr><td>9</td><td><strong>Clears, Retries &amp; Stalls</strong></td><td><code>0</code> session stalls; pre-staged report generators (`gen_v5650.py`, `gen_v5660.py`, `gen_v5650_v5660_retro.py`) eliminated Gate 4 latency</td><td>0 untracked stalls</td><td><span class="badge badge-green">PASS</span></td><td>Use pre-staged `gen_v5660.py` and `gen_v5650_v5660_retro.py` at Leg 2 closeout</td></tr>
-              <tr><td>10</td><td><strong>Wrong Triage / Scope Fields</strong></td><td><code>100%</code> of chartered Milestone `#50` issues closed (`open_issues: 0, closed_issues: 13`; `#1564` deferred to `#54` under `A185`)</td><td>0 premise drift</td><td><span class="badge badge-green">PASS</span></td><td>Enforce `Guardrail 09` zero-open-issue milestone audit at `v5.66.0` release cut</td></tr>
+              <tr><td>10</td><td><strong>Wrong Triage / Scope Fields</strong></td><td><code>100%</code> of chartered Milestone `#50` issues reconciled (`open_issues: 0, closed_issues: 9` incl. pre-closed `#239`; `4` Slice 2 issues `#2866, #2878, #2883, #2877` re-milestoned to `#54` under `Rulings A502-W1B-R3 & W1C-R3`; `#1564` deferred to `#54` under `A185`)</td><td>0 premise drift</td><td><span class="badge badge-green">PASS</span></td><td>Enforce `Guardrail 09` zero-open-issue milestone audit at `v5.66.0` release cut</td></tr>
               <tr><td>11</td><td><strong>Rule Breaches &amp; Governance Discipline</strong></td><td><code>0</code> rule breaches; `#2866` merge-role-guard PATH hooks and `#2878` merge-inbox-gate now mounted in live code</td><td>0 breaches</td><td><span class="badge badge-green">PASS</span></td><td>Dogfood `tc merge check` (`#2878`) during `v5.66.0` merges</td></tr>
               <tr><td>12</td><td><strong>Unlabelled PRs, Dirty Clones &amp; Worktrees</strong></td><td>All merged `v5.65.0` branches retired cleanly; Builder worktrees transitioned to `v5.66.0` cars</td><td>0 orphan clones</td><td><span class="badge badge-green">PASS</span></td><td>Retire all `v5.66.0` branches and transition fleet to `safe-to-clear` after Leg 2</td></tr>
               <tr><td>13</td><td><strong>Release-Status Lag &amp; Finish-Line Honesty</strong></td><td><code>CHANGELOG.md [5.65.0]</code> and <code>version.json</code> (`5.65.0`) cut in <code>PR #2906</code> (`d97f0121`) with verified tag `v5.65.0` and live `:3102` update</td><td>100% honesty</td><td><span class="badge badge-green">PASS</span></td><td>Verify tag and live `:3102` readback before closing Gate 3/4</td></tr>
