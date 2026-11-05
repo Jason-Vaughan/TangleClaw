@@ -699,6 +699,7 @@ files = [
   "test/project-version-files.test.js",
   "test/project-version-require-cycle.test.js",
   "test/project-version.test.js",
+  "test/projects-store-shared-wiring.test.js",
   "test/projects.test.js",
   "test/provenance-engine-carriers.test.js",
   "test/provenance-reporting.test.js",

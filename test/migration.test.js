@@ -30,66 +30,66 @@ describe('migration — detectExistingProjects', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('detects project with .tangleclaw/project.json marker', () => {
+  it('detects project with .tangleclaw/project.json marker', async () => {
     const projDir = path.join(projectsDir, 'tc-marked');
     fs.mkdirSync(path.join(projDir, '.tangleclaw'), { recursive: true });
     fs.writeFileSync(path.join(projDir, '.tangleclaw', 'project.json'), '{}');
 
-    const result = projects.detectExistingProjects();
+    const result = await projects.detectExistingProjects();
     const found = result.detected.find(d => d.name === 'tc-marked');
     assert.ok(found, 'should detect project with .tangleclaw config');
     assert.equal(found.hasTangleclawConfig, true);
   });
 
-  it('detects project with a .prawduct governance marker', () => {
+  it('detects project with a .prawduct governance marker', async () => {
     const projDir = path.join(projectsDir, 'prawduct-proj');
     fs.mkdirSync(path.join(projDir, '.prawduct'), { recursive: true });
 
-    const result = projects.detectExistingProjects();
+    const result = await projects.detectExistingProjects();
     const found = result.detected.find(d => d.name === 'prawduct-proj');
     assert.ok(found, 'should detect project with .prawduct marker');
   });
 
-  it('no longer detects a .tilt marker as a project (tilt retired)', () => {
+  it('no longer detects a .tilt marker as a project (tilt retired)', async () => {
     // TiLT was retired (operator-ratified 2026-07-17). The scan surfaces
     // dirs with a TC config or a governance marker; a leftover .tilt
     // dir is neither anymore, so it must not read as an existing project.
     const projDir = path.join(projectsDir, 'tilt-proj');
     fs.mkdirSync(path.join(projDir, '.tilt'), { recursive: true });
 
-    const result = projects.detectExistingProjects();
+    const result = await projects.detectExistingProjects();
     assert.ok(!result.detected.some(d => d.name === 'tilt-proj'),
       'a bare .tilt dir must no longer register as a project marker');
   });
 
-  it('skips already registered projects', () => {
+  it('skips already registered projects', async () => {
     // Create and register a project
     projects.createProject({ name: 'registered-proj', gitInit: false });
 
-    const result = projects.detectExistingProjects();
+    const result = await projects.detectExistingProjects();
     assert.ok(!result.detected.some(d => d.name === 'registered-proj'),
       'should not detect already registered project');
   });
 
-  it('skips hidden directories', () => {
+  it('skips hidden directories', async () => {
     fs.mkdirSync(path.join(projectsDir, '.hidden-project'), { recursive: true });
     fs.mkdirSync(path.join(projectsDir, '.hidden-project', '.tangleclaw'), { recursive: true });
     fs.writeFileSync(path.join(projectsDir, '.hidden-project', '.tangleclaw', 'project.json'), '{}');
 
-    const result = projects.detectExistingProjects();
+    const result = await projects.detectExistingProjects();
     assert.ok(!result.detected.some(d => d.name === '.hidden-project'),
       'should skip hidden directories');
   });
 
-  it('skips non-directory entries', () => {
+  it('skips non-directory entries', async () => {
     fs.writeFileSync(path.join(projectsDir, 'just-a-file.txt'), 'not a project');
 
-    const result = projects.detectExistingProjects();
+    const result = await projects.detectExistingProjects();
     assert.ok(!result.detected.some(d => d.name === 'just-a-file.txt'),
       'should skip regular files');
   });
 
-  it('returns empty array for empty projectsDir', () => {
+  it('returns empty array for empty projectsDir', async () => {
     const emptyDir = path.join(tmpDir, 'empty-projects');
     fs.mkdirSync(emptyDir, { recursive: true });
 
@@ -98,7 +98,7 @@ describe('migration — detectExistingProjects', () => {
     config.projectsDir = emptyDir;
     store.config.save(config);
 
-    const result = projects.detectExistingProjects();
+    const result = await projects.detectExistingProjects();
     assert.deepEqual(result.detected, []);
     assert.deepEqual(result.errors, []);
 
@@ -107,13 +107,13 @@ describe('migration — detectExistingProjects', () => {
     store.config.save(config);
   });
 
-  it('detects project with both .tangleclaw and governance markers', () => {
+  it('detects project with both .tangleclaw and governance markers', async () => {
     const projDir = path.join(projectsDir, 'both-markers');
     fs.mkdirSync(path.join(projDir, '.tangleclaw'), { recursive: true });
     fs.writeFileSync(path.join(projDir, '.tangleclaw', 'project.json'), '{}');
     fs.mkdirSync(path.join(projDir, '.prawduct'), { recursive: true });
 
-    const result = projects.detectExistingProjects();
+    const result = await projects.detectExistingProjects();
     const found = result.detected.find(d => d.name === 'both-markers');
     assert.ok(found, 'should detect project with both markers');
     assert.equal(found.hasTangleclawConfig, true);
@@ -179,32 +179,32 @@ describe('migration — detectExistingProjects', () => {
       }
     }
 
-    it('excludes the running checkout even though it carries both markers', () => {
-      const result = detectIn(scanDir, installDir);
+    it('excludes the running checkout even though it carries both markers', async () => {
+      const result = await detectIn(scanDir, installDir);
       assert.ok(!result.detected.some((d) => d.name === 'TangleClaw'),
         'a caller wired to this must not be handed the tool as a candidate project');
       assert.deepEqual(result.errors, [], 'exclusion is silent, not an error');
     });
 
-    it('detects that same directory when it is NOT the running install', () => {
+    it('detects that same directory when it is NOT the running install', async () => {
       // Isolates the exclusion from the marker check: the identical directory,
       // with the identical markers, must be detected when it is someone else's
       // checkout. Without this, a broken marker check would pass the test above.
       const other = path.join(scanDir, 'not-the-install');
       fs.mkdirSync(path.join(other, '.prawduct'), { recursive: true });
-      const result = detectIn(scanDir, other);
+      const result = await detectIn(scanDir, other);
       assert.ok(result.detected.some((d) => d.name === 'TangleClaw'),
         'the exclusion must key on identity, not on carrying markers');
     });
 
-    it('identifies the install by realpath, not by the path string it was reached through', () => {
+    it('identifies the install by realpath, not by the path string it was reached through', async () => {
       // Reached via a symlinked parent the scanned path is a different string
       // from the install's realpath — the shape macOS produces for /tmp vs
       // /private/tmp. A string compare passes the first test and fails here.
       const linked = path.join(tmpDir, 'linked-scan');
       fs.symlinkSync(scanDir, linked, 'dir');
       try {
-        const result = detectIn(linked, installDir);
+        const result = await detectIn(linked, installDir);
         assert.ok(!result.detected.some((d) => d.name === 'TangleClaw'),
           'identity is the realpath, not the route the operator happened to take');
       } finally {
@@ -212,18 +212,18 @@ describe('migration — detectExistingProjects', () => {
       }
     });
 
-    it('still detects an ordinary marked project sitting beside it', () => {
+    it('still detects an ordinary marked project sitting beside it', async () => {
       // The exclusion must be surgical — a scan that dropped everything, or
       // bailed on the whole directory, would pass the tests above while
       // silently breaking the feature.
       const neighbour = path.join(scanDir, 'innocent-neighbour');
       fs.mkdirSync(path.join(neighbour, '.prawduct'), { recursive: true });
-      const result = detectIn(scanDir, installDir);
+      const result = await detectIn(scanDir, installDir);
       assert.ok(result.detected.some((d) => d.name === 'innocent-neighbour'),
         'only the install is excluded, not the directory it sits in');
     });
 
-    it('survives the default path when nothing is injected', () => {
+    it('survives the default path when nothing is injected', async () => {
       // What this proves and nothing more: the default branch resolves and does
       // not throw. It CANNOT prove the default's VALUE — that would need a real
       // directory whose realpath is the running install inside a scanned temp
@@ -236,7 +236,7 @@ describe('migration — detectExistingProjects', () => {
       config.projectsDir = empty;
       store.config.save(config);
       try {
-        const result = projects.detectExistingProjects();
+        const result = await projects.detectExistingProjects();
         assert.deepEqual(result.detected, [], 'no candidates, and no crash on the default path');
         assert.deepEqual(result.errors, []);
       } finally {

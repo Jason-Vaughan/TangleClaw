@@ -1974,19 +1974,19 @@ describe('projects', () => {
       fs.mkdirSync(path.join(detectDir, '.tangleclaw'), { recursive: true });
       fs.writeFileSync(path.join(detectDir, '.tangleclaw', 'project.json'), '{}');
 
-      const result = projects.detectExistingProjects();
+      const result = await projects.detectExistingProjects();
       assert.ok(result.detected.some((d) => d.name === 'detectable'));
     });
 
     it('skips already registered projects', async () => {
-      const result = projects.detectExistingProjects();
+      const result = await projects.detectExistingProjects();
       // new-project is already registered, should not appear
       assert.ok(!result.detected.some((d) => d.name === 'new-project'));
     });
 
     it('skips hidden directories', async () => {
       fs.mkdirSync(path.join(projectsDir, '.hidden-dir'), { recursive: true });
-      const result = projects.detectExistingProjects();
+      const result = await projects.detectExistingProjects();
       assert.ok(!result.detected.some((d) => d.name === '.hidden-dir'));
     });
   });
