@@ -77,6 +77,21 @@ describe('detectInteractiveDecisionPrompt', () => {
     assert.equal(detectInteractiveDecisionPrompt(lines), null);
   });
 
+  it("I-Gate Round 2 regression (#2905): a repeated '>>> ' REPL prompt after a resolved menu is a live prompt of its own, not a decorative border", () => {
+    const lines = ['Choose deployment:', '1. Stage', '2. Production', '>>> '];
+    assert.equal(detectInteractiveDecisionPrompt(lines), null);
+  });
+
+  it("I-Gate Round 2 regression (#2905): a footer phrase as a mere PREFIX before real output does not count as benign", () => {
+    const lines = [' Pick one:', ' ❯ 1. Option A', '   2. Option B', 'Esc to cancel ignored; deployment finished'];
+    assert.equal(detectInteractiveDecisionPrompt(lines), null);
+  });
+
+  it('a repeated "❯❯❯" prompt glyph is rejected the same way as ">>>"', () => {
+    const lines = ['Choose deployment:', '1. Stage', '2. Production', '❯❯❯ '];
+    assert.equal(detectInteractiveDecisionPrompt(lines), null);
+  });
+
   it('a stale inline (y/n) confirmation followed by real output is rejected, not returned as live', () => {
     const lines = ['Continue? (y/n)', 'yes', 'Deploy finished successfully', '$ '];
     assert.equal(detectInteractiveDecisionPrompt(lines), null);
