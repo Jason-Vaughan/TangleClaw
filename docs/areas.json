@@ -154,6 +154,7 @@
         "lib/transcript.js",
         "lib/session-history-backfill.js",
         "lib/workspace-rename-check.js",
+        "lib/session-briefing.js",
         "lib/continuity.js",
         "lib/master-continuity.js",
         "lib/workload*.js",
