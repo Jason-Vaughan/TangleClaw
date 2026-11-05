@@ -42,26 +42,16 @@ const FLOOR = 4.5;
  *
  * #1265 (Ruling A1265, Car 60-D) remediated all six of these pairs in
  * `public/style.css` -- `--text-muted` and the light theme's own `--danger`
- * override now clear the 4.5:1 floor there, so `style.css`'s entries are
- * deleted per this file's own "Expected" contract above. `session.css` is
- * untouched (out of A1265's authorized file envelope, which names only
- * `public/style.css`) and still carries the original, unremediated values,
- * so its six entries stay exactly as measured.
+ * override now clear the 4.5:1 floor there, so `style.css`'s entries were
+ * deleted per this file's own "Expected" contract above. `#2862` (Ruling
+ * A503-R1, Car 66-A) applies the identical remediation to `session.css`, so
+ * its six entries are deleted here too -- both sheets now carry the same
+ * remediated palette, with none below the floor.
  *
  * Pinned to the exact ratio so the waiver cannot absorb a REGRESSION: making
  * either pair worse fails here, and making it pass means deleting its entry.
  */
 const KNOWN_BELOW_FLOOR = [];
-for (const sheet of ['session.css']) {
-  KNOWN_BELOW_FLOOR.push(
-    { sheet, theme: ':root', token: '--text-muted', surface: '--card-bg', ratio: 4.34 },
-    { sheet, theme: ':root', token: '--text-muted', surface: '--elevated-bg', ratio: 3.89 },
-    { sheet, theme: '[data-theme="light"]', token: '--text-muted', surface: '--elevated-bg', ratio: 4.35 },
-    { sheet, theme: '[data-theme="light"]', token: '--danger', surface: '--bg', ratio: 3.20 },
-    { sheet, theme: '[data-theme="light"]', token: '--danger', surface: '--card-bg', ratio: 3.49 },
-    { sheet, theme: '[data-theme="light"]', token: '--danger', surface: '--elevated-bg', ratio: 2.64 }
-  );
-}
 
 /**
  * The custom properties a theme block declares, as `{ token: '#rrggbb' }`.

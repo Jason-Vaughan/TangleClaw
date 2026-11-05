@@ -135,10 +135,11 @@
     },
     "sessions": {
       "label": "area:sessions",
-      "why": "Session lifecycle in tmux and ttyd, the Project Master, transcripts, continuity, workload receipts and engine error watching.",
+      "why": "Session lifecycle in tmux and ttyd, the Project Master, transcripts, continuity, workload receipts, engine error watching, and host-level causes of an apparently-idle session (#1112: a blocking macOS GUI dialog no pane capture can see).",
       "paths": [
         "lib/routes/sessions.js",
         "lib/sessions.js",
+        "lib/host-gui-dialog-probe.js",
         "lib/store/sessions.js",
         "lib/session-finalize.js",
         "lib/lifecycle-handoff.js",
@@ -191,14 +192,15 @@
     },
     "setup": {
       "label": "area:setup",
-      "why": "Install and ingress: HTTPS setup, certificates, Caddy, provisioning, host and port scanning.",
+      "why": "Install and ingress: HTTPS setup, certificates, Caddy, provisioning, host and port scanning. `lib/host-check.js`/`lib/host-inventory.js` named explicitly, not by a `lib/host-*.js` glob: #1112 (`sessions` area) added `lib/host-gui-dialog-probe.js`, a different sense of \"host\" (the macOS desktop, not network/ingress host scanning) that glob would otherwise also catch.",
       "paths": [
         "lib/routes/setup.js",
         "lib/https-setup.js",
         "lib/remote-ca-installer.js",
         "lib/ingress-provision.js",
         "lib/caddy*.js",
-        "lib/host-*.js",
+        "lib/host-check.js",
+        "lib/host-inventory.js",
         "lib/tailnet-cutover.js",
         "lib/tailscale-ingress.js",
         "lib/port-scanner.js",

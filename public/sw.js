@@ -204,7 +204,14 @@ const NETWORK_FIRST_PATHS = new Set([
   // "changed and not network-first" finding is pre-emptive. Network-first
   // rather than a CACHE_NAME bump: it never touches the shared counter every
   // other in-flight PR could also be bumping.
-  '/remote-ca-assist.js'
+  '/remote-ca-assist.js',
+  // terminal-identity-ui.js and upload-pills-ui.js (#2862, Ruling A503-R1-A)
+  // are not loaded by any page yet -- their <script> mounting is deferred to
+  // Milestone #54 (#1573/#1577) -- so this is the same pre-emptive carve-out
+  // as remote-ca-assist.js above, for the same reason: never touch the
+  // shared CACHE_NAME counter every other in-flight PR could also be bumping.
+  '/terminal-identity-ui.js',
+  '/upload-pills-ui.js'
 ]);
 
 self.addEventListener('install', (event) => {
