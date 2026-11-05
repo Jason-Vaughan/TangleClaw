@@ -189,6 +189,7 @@
       "paths": [
         "lib/routes/setup.js",
         "lib/https-setup.js",
+        "lib/remote-ca-installer.js",
         "lib/ingress-provision.js",
         "lib/caddy*.js",
         "lib/host-*.js",
@@ -296,13 +297,14 @@
     },
     "tooling": {
       "label": "area:tooling",
-      "why": "Repository scripts, release certification, soak harnesses and the Vercel build guard.",
+      "why": "Repository scripts, release certification, soak harnesses, the Vercel build guard and the docs/screenshot parity signal.",
       "paths": [
         "scripts/**",
         "lib/release-certification/**",
         "lib/soak/**",
         "lib/test-results.js",
-        "lib/roadmap-vercel-guard.js"
+        "lib/roadmap-vercel-guard.js",
+        "lib/docs-parity-gate.js"
       ]
     },
     "config": {
