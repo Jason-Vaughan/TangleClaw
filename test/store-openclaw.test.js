@@ -456,10 +456,9 @@ describe('store.openclawConnections', () => {
       }
     });
 
-    it('adds fallback_hosts to an existing v79 store, preserving existing rows verbatim, WITHOUT '
-      + 'bumping CURRENT_SCHEMA_VERSION (#1531, Architect Ruling A505-R4.2)', () => {
+    it('v79→v80 migration adds fallback_hosts, preserving existing rows verbatim (#1531)', () => {
       store.close();
-      const tmpDir3 = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-openclaw-mig-fh-'));
+      const tmpDir3 = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-openclaw-mig-v80-'));
       try {
         const { DatabaseSync } = require('node:sqlite');
         const dbPath = path.join(tmpDir3, 'tangleclaw.db');
@@ -489,7 +488,7 @@ describe('store.openclawConnections', () => {
             created_at        TEXT NOT NULL DEFAULT (datetime('now'))
           );
           INSERT INTO openclaw_connections (id, name, host, ssh_user, ssh_key_path, local_port)
-          VALUES ('row-pre-fh', 'PreFallbackHosts', '10.0.0.5', 'user', '/key', 18790);
+          VALUES ('row-pre80', 'PreV80', '10.0.0.5', 'user', '/key', 18790);
         `);
         seed.close();
 
@@ -498,21 +497,19 @@ describe('store.openclawConnections', () => {
 
         const db = store.getDb();
         const ver = db.prepare('SELECT MAX(version) AS v FROM schema_version').get();
-        assert.equal(ver.v, 79, 'CURRENT_SCHEMA_VERSION stays 79 — Ruling A505-R4.2 explicitly keeps it '
-          + 'unbumped so historical schema-version assertions elsewhere in the suite stay untouched');
         assert.equal(ver.v, store.CURRENT_SCHEMA_VERSION);
         const cols = db.prepare("PRAGMA table_info(openclaw_connections)").all();
-        assert.ok(cols.find((c) => c.name === 'fallback_hosts'), 'fallback_hosts column present after the idempotent add');
+        assert.ok(cols.find((c) => c.name === 'fallback_hosts'), 'post-migration: fallback_hosts column present');
 
-        const preExisting = store.openclawConnections.get('row-pre-fh');
+        const preExisting = store.openclawConnections.get('row-pre80');
         assert.equal(preExisting.host, '10.0.0.5', 'pre-existing row untouched');
-        assert.deepEqual(preExisting.fallbackHosts, [], 'a pre-existing row reads back as an empty list, never null/undefined');
+        assert.deepEqual(preExisting.fallbackHosts, [], 'a pre-v80 row reads back as an empty list, never null/undefined');
 
         const created = store.openclawConnections.create({
-          name: 'PostFallbackHostsAdd', host: '10.0.0.6', sshUser: 'user', sshKeyPath: '/key',
+          name: 'PostV80Migration', host: '10.0.0.6', sshUser: 'user', sshKeyPath: '/key',
           localPort: 18791, fallbackHosts: ['habitat.tail123.ts.net']
         });
-        assert.deepEqual(created.fallbackHosts, ['habitat.tail123.ts.net'], 'fallbackHosts round-trips after the column add');
+        assert.deepEqual(created.fallbackHosts, ['habitat.tail123.ts.net'], 'post-migration: fallbackHosts round-trips');
       } finally {
         try { store.close(); } catch { /* already closed */ }
         fs.rmSync(tmpDir3, { recursive: true, force: true });
@@ -521,7 +518,7 @@ describe('store.openclawConnections', () => {
       }
     });
 
-    it('adding fallback_hosts is idempotent across repeated init() calls', () => {
+    it('v79→v80 migration is idempotent against a store already at v80', () => {
       createConnection();
       store.close();
       store.init();
