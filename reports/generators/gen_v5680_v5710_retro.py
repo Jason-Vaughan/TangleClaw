@@ -49,11 +49,11 @@ CAR67C_HEAD_SHORT = os.environ.get("V5680_CAR68A_HEAD_SHORT", "4132d18d")
 CAR67C_MERGE_SHA = os.environ.get("V5680_CAR68A_MERGE_SHA", "1370777fec27c6334cd5030fb8993a8aa2b2ca8f")
 CAR67C_MERGE_SHORT = CAR67C_MERGE_SHA[:8]
 
-REL_PR = os.environ.get("V5680_REL_PR", "2921")
+REL_PR = os.environ.get("V5680_REL_PR", "2926")
 REL_HEAD_SHORT = os.environ.get("V5680_REL_HEAD_SHORT", "e1ebf418")
-REL_MERGE_SHA = os.environ.get("V5680_REL_MERGE_SHA", "6c446dac04d780c941a91347a091054a9bfbf7e2")
+REL_MERGE_SHA = os.environ.get("V5680_REL_MERGE_SHA", "c8d5d07878129305b24e431c808838cc1e4d392b")
 REL_MERGE_SHORT = REL_MERGE_SHA[:8]
-TAG_SHA_SHORT = os.environ.get("V5680_TAG_SHA_SHORT", "47ade7b2")
+TAG_SHA_SHORT = os.environ.get("V5680_TAG_SHA_SHORT", "c8d5d078")
 REL_RUN_ID = os.environ.get("V5680_REL_RUN_ID", "42187629444")
 BACKUP_SHA = os.environ.get("V5680_BACKUP_SHA", "80403a7c901d4e3852ae3306ea26647418e55b3baaa6ae57c5a56766af347ba9")
 TOTAL_RUNTIME = os.environ.get("V5670_TOTAL_RUNTIME", f"{dur['full_engineering_window_human'].split(' (')[0]} Eng ({t_eng_hrs:.2f}h)")
@@ -61,7 +61,7 @@ TOTAL_RUNTIME_SUB = os.environ.get(
     "V5670_TOTAL_RUNTIME_SUB",
     f"t2 23:02:50 → t7 {rec['timestamps']['t7_pst'].split(' ')[0]} PST (T_eng={t_eng_hrs:.2f}h; {dur['authorization_to_deploy_human'].split(' (')[0]} / {t_auth_hrs:.2f}h Auth→Deploy · Milestone #55)"
 )
-FEATURE_LOC = os.environ.get("V5680_FEATURE_LOC", "+7,140 / -995 net (54 files; +7,076 / -989 feat PRs across Legs 1–2)")
+FEATURE_LOC = os.environ.get("V5680_FEATURE_LOC", "+9,416 / -1,016 net (73 files; +9,335 / -1,022 feat PRs across Legs 1–3)")
 
 html_part1 = f'''<!DOCTYPE html>
 <html lang="en" data-theme="dark">
@@ -673,6 +673,9 @@ html_part3 = f'''
           <li><strong>Finding KR2-01 (Pinning Prior Global Schema Versions in Historical Migration Rewind Helpers · <code>v5.69.0 → v5.70.0</code>):</strong> Historical migration rewind helpers (<code>rewindToV65</code>) must pin explicit literal target versions rather than computing <code>CURRENT_SCHEMA_VERSION - 1</code> so subsequent schema migrations in the same train do not shift historical test baselines (<code>Ruling A505-R2.7</code>).</li>
           <li><strong>Finding KR2-02 (Avoiding <code>*/</code> Glob Sequences Inside CSS Block Comments · <code>v5.69.0 → v5.70.0</code>):</strong> Never embed literal <code>*/</code> path globs inside CSS <code>/* ... */</code> block comments (<code>PR #2917</code> R6 <code>4fcd6cae</code>).</li>
           <li><strong>Finding KR2-03 (Single <code>public/sw.js</code> Owner &amp; UI/Backend Car Separation · <code>v5.69.0 → v5.70.0</code>):</strong> Unifying <code>#1083</code> and <code>#1576</code> into <code>Car 69-C</code> (<code>Ruling A505-R2.6</code>) with <code>KR1-01</code> preflight eliminated UI/SW merge conflicts; fed forward to isolate <code>#2127</code> in <code>v5.70.0</code>.</li>
+          <li><strong>Finding KR3-01 (Two-Way Verb Manifest Parity <code>VERB_ROSTER &lt;-&gt; SUBVERB_MANIFEST</code> · <code>v5.70.0 → v5.71.0</code>):</strong> Adding a top-level <code>tc</code> verb (<code>capture</code> in <code>#1774</code>) requires synchronous updates to <code>SUBVERB_MANIFEST</code> and <code>ROLE_VERB_IDS</code> in <code>lib/operating-primer.js</code> (<code>test/tc-primer.test.js</code>).</li>
+          <li><strong>Finding KR3-02 (Authoritative Roster Identity Over Name/Prefix Heuristics · <code>Ruling A505-R3.10</code> · <code>v5.70.0 → v5.71.0</code>):</strong> Stamping <code>isMaster: true, role: &apos;orchestrator&apos;</code> at the server source (<code>lib/medusa.js#getRoster</code>) eliminated lookalike collision edge cases in <code>PR #2922</code>.</li>
+          <li><strong>Finding KR3-03 (Single-Builder Round Dispatch &amp; Rotated Codex Wakeup · <code>v5.70.0 → v5.71.0</code>):</strong> Dispatch follow-up rounds to a single designated builder lane and pair Medusa dispatches to rotated Codex lanes with <code>POST /api/sessions/:project/command</code>.</li>
         </ul>
       </div>
       <div class="grid-2" style="margin-bottom:18px;">
