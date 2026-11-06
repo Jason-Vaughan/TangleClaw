@@ -18,9 +18,12 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const vm = require('node:vm');
 const { execFileSync } = require('node:child_process');
 const { initRepo } = require('./_temp-repo');
 const { setLevel } = require('../lib/logger');
+const { liftDeclaration } = require('./helpers/lift');
+const { makeDocument, withIdParsingInnerHTML } = require('./_mini-dom');
 
 setLevel('error');
 
@@ -346,5 +349,90 @@ describe('public/governed-wrap-ui.js', () => {
       assert.doesNotMatch(completed, /governed-wrap-progress-failed/);
       assert.match(failed, /governed-wrap-progress-failed/);
     });
+  });
+});
+
+describe('public/session.js call sites for governed-wrap-ui.js (v5.67.0 FEED-FORWARD 01)', () => {
+  const SESSION_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
+  const GOVERNED_WRAP_UI_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'governed-wrap-ui.js'), 'utf8');
+
+  /**
+   * Build a sandbox with the REAL governed-wrap-ui.js loaded, and the REAL
+   * `checkGovernedWrapProgress` + `_governedWrapProgressContainer` lifted
+   * from session.js's own source — a genuine two-file integration, not a
+   * stub standing in for either side.
+   * @param {object} [overrides] - `{api}`.
+   * @returns {{doc: object, check: Function}}
+   */
+  function loadLifted(overrides = {}) {
+    const { doc, ids } = makeDocument(['wrapDrawerBody', 'wrapDrawerStatus']);
+    withIdParsingInnerHTML(ids.wrapDrawerBody, doc);
+    const sandbox = {
+      console,
+      document: doc,
+      projectName: 'proj-1',
+      api: overrides.api || (async () => null),
+      esc: require('./helpers/lift').loadEsc('landing.js')
+    };
+    sandbox.window = sandbox;
+    vm.createContext(sandbox);
+    vm.runInContext(GOVERNED_WRAP_UI_SRC, sandbox);
+    vm.runInContext(
+      'let currentGovernedWrapStream = null;\n'
+      + `${liftDeclaration(SESSION_SRC, 'function _governedWrapProgressContainer(')}\n`
+      + `${liftDeclaration(SESSION_SRC, 'async function checkGovernedWrapProgress(')}\n`
+      + 'globalThis.checkGovernedWrapProgress = checkGovernedWrapProgress;',
+      sandbox
+    );
+    return { doc, check: sandbox.checkGovernedWrapProgress };
+  }
+
+  /**
+   * The mini-dom's `byId` registry is populated only by `makeDocument`'s own
+   * initial ids and by `withIdParsingInnerHTML`'s string-parsing (test/_mini-
+   * dom.js's documented limits) — never by a real `createElement` +
+   * `appendChild`/`insertBefore`, which is exactly how production
+   * `_governedWrapProgressContainer` builds its container. A real browser's
+   * `getElementById` would find it; this walks `childNodes` instead, the one
+   * thing the mini-dom's DOM methods DO maintain correctly.
+   * @param {object} parent
+   * @param {string} id
+   * @returns {object|null}
+   */
+  function findChildById(parent, id) {
+    for (const child of parent.childNodes) {
+      if (child.id === id) return child;
+      const deeper = findChildById(child, id);
+      if (deeper) return deeper;
+    }
+    return null;
+  }
+
+  it('leaves the container hidden and empty when no request is open (the common case)', async () => {
+    const { doc, check } = loadLifted({ api: async () => null });
+    await check();
+    const container = findChildById(doc.body, 'wrapDrawerGovernedProgress');
+    assert.ok(container, 'the container must still be created');
+    assert.equal(container.classList.contains('hidden'), true);
+    assert.equal(container.innerHTML, '');
+  });
+
+  it('leaves the container hidden for a request already at a terminal stage', async () => {
+    const { doc, check } = loadLifted({
+      api: async () => ({ ok: true, request: { id: 'gw-1', state: 'completed' } })
+    });
+    await check();
+    assert.equal(findChildById(doc.body, 'wrapDrawerGovernedProgress').classList.contains('hidden'), true);
+  });
+
+  it('renders the real progress bar for an open, non-terminal request', async () => {
+    const { doc, check } = loadLifted({
+      api: async () => ({ ok: true, request: { id: 'gw-1', state: 'pipeline-running' } })
+    });
+    await check();
+    const container = findChildById(doc.body, 'wrapDrawerGovernedProgress');
+    assert.equal(container.classList.contains('hidden'), false);
+    assert.match(container.innerHTML, /role="progressbar"/);
+    assert.match(container.innerHTML, /aria-valuenow="70"/);
   });
 });
