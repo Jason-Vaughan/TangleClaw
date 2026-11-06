@@ -290,6 +290,15 @@ Exit `3` means the finalize was refused or remains incomplete. Read its exact fa
 
 Only exit `0` means safe. Exit `3` means preserve; exit `4` means unknown. Neither is permission to delete or reset anything.
 
+## Session capture
+
+| Command | What it does |
+| --- | --- |
+| `tc capture <session-name>` | A read-only peek at a session's tmux pane buffer -- the last 80 lines by default. Diagnoses a stall or checks test progress without waking the session or spending a Medusa message. |
+| `tc capture <session-name> --lines <N>` | Same, with up to `N` lines (capped at 500 -- a bound dump cannot crash the capturing agent's own context window). |
+
+Scoped (#1774, Ruling A505-R3.1): permitted for Master, for a project session capturing its own project's pane, or for a project session holding an active `architect`/`project-manager` coordinator role capturing a different session's pane. A plain, non-coordinator session capturing another session's pane is refused (`403 CAPTURE_FORBIDDEN`) -- this was never meant to become a universal read. The server redacts secret-shaped substrings (bearer tokens, GitHub/Anthropic/OpenAI key patterns, the launch-id header) before the text leaves it, and logs a structured audit entry on every attempt, permitted or refused.
+
 ## Exit codes and failure posture
 
 | Exit | Meaning |

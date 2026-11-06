@@ -21,11 +21,12 @@ const os = require('node:os');
 const http = require('node:http');
 const { execFile } = require('node:child_process');
 
-const { setLevel } = require('../lib/logger');
+const { setLevel, setConsoleStream } = require('../lib/logger');
 
 setLevel('error');
 
 const store = require('../lib/store');
+const tmux = require('../lib/tmux');
 const { createServer } = require('../server');
 const {
   VERB_ROSTER,
@@ -39,7 +40,8 @@ const {
   renderRules,
   renderLearnings,
   renderInbox,
-  renderPeerStatus
+  renderPeerStatus,
+  redactCaptureText
 } = require('../lib/tc-verbs');
 
 const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
@@ -876,6 +878,174 @@ describe('tc verb surface against a live server (ambient-awareness Chunk 03)', (
       store.sessions.kill(s.id, 'test teardown');
       const after2 = await request(server, 'GET', '/api/tc/sessions');
       assert.deepEqual(after2.body.sessions, [], 'an ended session leaves the live roster');
+    });
+  });
+
+  describe('GET /api/tc/capture (#1774, Ruling A505-R3.1)', () => {
+    let realCapturePane;
+    let capturedArgs;
+    let targetSessionRow;
+    let otherProject;
+    let roleCounter = 0;
+
+    before(() => {
+      realCapturePane = tmux.capturePane;
+      otherProject = store.projects.create({ name: 'tc-verbs-other', path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-verbs-other-')) });
+    });
+    after(() => { tmux.capturePane = realCapturePane; });
+
+    function stubCapture(lines) {
+      tmux.capturePane = (sessionName, opts) => {
+        capturedArgs = { sessionName, opts };
+        return { lines, alternateScreen: false };
+      };
+    }
+
+    /**
+     * Run `fn` with log output captured at `info`, restoring the quiet
+     * error-level default afterwards (mirrors test/wrap-step-commit-autopr.test.js's
+     * own helper of the same name).
+     * @param {Function} fn - Async body to run
+     * @returns {Promise<string>} Everything written to the console stream
+     */
+    async function captureLogs(fn) {
+      let out = '';
+      setConsoleStream({ write: (s) => { out += s; } });
+      setLevel('info');
+      try {
+        await fn();
+      } finally {
+        setLevel('error');
+        setConsoleStream(null);
+      }
+      return out;
+    }
+
+    it('redactCaptureText redacts Bearer regardless of case (I-Gate Round 1 Finding 2, #5798923613)', () => {
+      assert.equal(redactCaptureText('Authorization: Bearer abc.def'), 'Authorization: [REDACTED]');
+      assert.equal(redactCaptureText('authorization: bearer abc.def'), 'authorization: [REDACTED]');
+      assert.equal(redactCaptureText('AUTHORIZATION: BEARER abc.def'), 'AUTHORIZATION: [REDACTED]');
+      assert.equal(redactCaptureText('no secret here'), 'no secret here');
+    });
+
+    it('400s with no ?session=, and audits the denial', async () => {
+      const out = await captureLogs(async () => {
+        const r = await request(server, 'GET', '/api/tc/capture');
+        assert.equal(r.status, 400);
+        assert.equal(r.body.code, 'CAPTURE_SESSION_REQUIRED');
+      });
+      assert.match(out, /tc_capture_denied/, 'I-Gate Round 1 Finding 3: a malformed request is still an audited attempt');
+      assert.match(out, /CAPTURE_SESSION_REQUIRED/);
+    });
+
+    it('404s for a session name with no active tmux session recorded', async () => {
+      const r = await request(server, 'GET', '/api/tc/capture?session=no-such-pane');
+      assert.equal(r.status, 404);
+      assert.equal(r.body.code, 'CAPTURE_SESSION_NOT_FOUND');
+    });
+
+    it('refuses an operator caller — not one of the three admitted callers', async () => {
+      targetSessionRow = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'pane-self' });
+      try {
+        const r = await request(server, 'GET', '/api/tc/capture?session=pane-self', operatorHeaders(server));
+        assert.equal(r.status, 403);
+        assert.equal(r.body.code, 'CAPTURE_FORBIDDEN');
+      } finally {
+        store.sessions.kill(targetSessionRow.id, 'test teardown');
+      }
+    });
+
+    it('refuses a plain, non-coordinator session capturing a DIFFERENT session\'s pane', async () => {
+      targetSessionRow = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'pane-cross' });
+      const caller = bindProject(otherProject);
+      try {
+        const r = await request(server, 'GET', '/api/tc/capture?session=pane-cross', caller.headers);
+        assert.equal(r.status, 403);
+        assert.equal(r.body.code, 'CAPTURE_FORBIDDEN');
+      } finally {
+        store.sessions.kill(targetSessionRow.id, 'test teardown');
+        store.sessions.kill(caller.sessionId, 'test teardown');
+      }
+    });
+
+    it('permits a project session capturing its OWN pane, redacted and audited', async () => {
+      targetSessionRow = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'pane-own' });
+      const caller = bindProject(project);
+      stubCapture([
+        'plain line',
+        'Authorization: Bearer abc123.def456-ghi',
+        'authorization: bearer abc123.def456-ghi',
+        'ANTHROPIC_API_KEY=sk-not-real-but-shaped-like-one-0000'
+      ]);
+      try {
+        const r = await request(server, 'GET', '/api/tc/capture?session=pane-own&lines=42', caller.headers);
+        assert.equal(r.status, 200);
+        assert.equal(capturedArgs.sessionName, 'pane-own');
+        assert.equal(capturedArgs.opts.lines, 42);
+        assert.deepEqual(r.body.lines, [
+          'plain line',
+          'Authorization: [REDACTED]',
+          'authorization: [REDACTED]',
+          '[REDACTED]'
+        ]);
+        assert.equal(r.body.audit.callerKind, 'project');
+        assert.equal(r.body.audit.callerProjectId, project.id);
+        assert.equal(r.body.audit.targetSession, 'pane-own');
+        assert.equal(r.body.audit.redacted, true);
+        assert.ok(r.body.audit.capturedAt);
+      } finally {
+        store.sessions.kill(targetSessionRow.id, 'test teardown');
+        store.sessions.kill(caller.sessionId, 'test teardown');
+      }
+    });
+
+    it('permits a project session holding an active coordinator role capturing a DIFFERENT session\'s pane', async () => {
+      targetSessionRow = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'pane-coord-target' });
+      const caller = bindProject(otherProject);
+      store.coordinatorRoles.grant({ roleId: `tc-capture-role-${++roleCounter}`, projectId: otherProject.id, role: 'project-manager', note: null, now: new Date().toISOString() });
+      stubCapture(['coordinator can see this']);
+      try {
+        const r = await request(server, 'GET', '/api/tc/capture?session=pane-coord-target', caller.headers);
+        assert.equal(r.status, 200);
+        assert.deepEqual(r.body.lines, ['coordinator can see this']);
+        assert.equal(r.body.audit.callerProjectId, otherProject.id);
+      } finally {
+        store.sessions.kill(targetSessionRow.id, 'test teardown');
+        store.sessions.kill(caller.sessionId, 'test teardown');
+      }
+    });
+
+    it('defaults --lines to 80 and caps it at 500', async () => {
+      targetSessionRow = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'pane-caps' });
+      const caller = bindProject(project);
+      stubCapture(['x']);
+      try {
+        await request(server, 'GET', '/api/tc/capture?session=pane-caps', caller.headers);
+        assert.equal(capturedArgs.opts.lines, 80);
+        await request(server, 'GET', '/api/tc/capture?session=pane-caps&lines=99999', caller.headers);
+        assert.equal(capturedArgs.opts.lines, 500);
+      } finally {
+        store.sessions.kill(targetSessionRow.id, 'test teardown');
+        store.sessions.kill(caller.sessionId, 'test teardown');
+      }
+    });
+
+    it('502s when the real tmux capture throws, with no partial body, and audits it as an error (I-Gate Round 1 Finding 3, #5798923613)', async () => {
+      targetSessionRow = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'pane-throws' });
+      const caller = bindProject(project);
+      tmux.capturePane = () => { throw new Error('tmux session "pane-throws" does not exist'); };
+      try {
+        const out = await captureLogs(async () => {
+          const r = await request(server, 'GET', '/api/tc/capture?session=pane-throws', caller.headers);
+          assert.equal(r.status, 502);
+          assert.equal(r.body.code, 'CAPTURE_FAILED');
+        });
+        assert.match(out, /tc_capture_error/);
+        assert.match(out, /CAPTURE_FAILED/);
+      } finally {
+        store.sessions.kill(targetSessionRow.id, 'test teardown');
+        store.sessions.kill(caller.sessionId, 'test teardown');
+      }
     });
   });
 
