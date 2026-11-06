@@ -1006,10 +1006,69 @@
    *     was in the detail, and this function keeps none of it.
    *
    * @param {{label: string, tone: string, detail: string|null}} baseStatus - From `summarizePipelineStatus`.
-   * @param {{outcome: string}} prStatus - From `GET /wrap/pr-status`.
+   * @param {{outcome: string, docsParity?: {signal?: boolean, reason?: string}}} prStatus - From `GET /wrap/pr-status`.
    * @returns {{label: string, tone: string, detail: string|null}}
    */
   function composeReleaseBanner(baseStatus, prStatus) {
+    return _appendDocsParityNote(_composeReleaseBannerCore(baseStatus, prStatus), prStatus);
+  }
+
+  /**
+   * Append the docs-parity signal (#533, mounted #2886) as one more clause on
+   * the banner's own `detail` text -- never `tone`. The signal is explicitly
+   * non-blocking (#533's acceptance: "don't recreate the wrap-nagging failure
+   * mode"), so it must never be able to turn a green release banner into a
+   * warning; it rides along as information only, the same way #700's
+   * carried-forward pipeline warnings do just above this call.
+   * @param {{label: string, tone: string, detail: string|null}} banner
+   * @param {{docsParity?: {signal?: boolean, reason?: string}}} prStatus
+   * @returns {{label: string, tone: string, detail: string|null}}
+   */
+  function _appendDocsParityNote(banner, prStatus) {
+    const dp = prStatus && prStatus.docsParity;
+    if (!dp || dp.signal !== true) return banner;
+    return { ...banner, detail: [banner.detail, `docs: ${dp.reason}`].filter(Boolean).join(' · ') };
+  }
+
+  /**
+   * Render, or clear, the docs-parity dismissal control (#533, I-Gate R1
+   * Round 2, #2886). The banner's own `detail` text ({@link _appendDocsParityNote})
+   * says a signal fired; this is the actual action — a reason input and a
+   * "Dismiss, with reason" button, visible only while the signal is fired.
+   * Pure render: `session.js` owns the button's click handler (the fetch to
+   * `POST .../docs-parity/dismiss` and the re-probe), the same split
+   * {@link composeReleaseBanner} and `paintWrapStatus` already draw.
+   * @param {object} container - The `#wrapDrawerDocsParity` host.
+   * @param {{signal?: boolean, reason?: string}|null} docsParity - From `GET /wrap/pr-status`.
+   * @param {Function} esc - HTML-escaping function.
+   * @returns {boolean} Whether the control is now shown (so the caller knows whether to bind it).
+   */
+  function renderDocsParityControl(container, docsParity, esc) {
+    if (!container) return false;
+    if (!docsParity || docsParity.signal !== true) {
+      container.classList.add('hidden');
+      container.innerHTML = '';
+      return false;
+    }
+    container.classList.remove('hidden');
+    container.innerHTML = `
+      <span class="wrap-drawer-docs-parity-text">${esc(docsParity.reason || 'This wrap touches a user-facing file with no docs update.')}</span>
+      <input type="text" class="wrap-drawer-docs-parity-reason" id="wrapDrawerDocsParityReason"
+             placeholder="Reason this doesn't need a docs update">
+      <button type="button" class="btn btn-small" id="wrapDrawerDocsParityDismissBtn">Dismiss, with reason</button>
+      <span class="wrap-drawer-docs-parity-error hidden" id="wrapDrawerDocsParityError" role="alert"></span>`;
+    return true;
+  }
+
+  /**
+   * {@link composeReleaseBanner}'s own release/pipeline-status composition,
+   * unchanged from before #2886 -- split out so the docs-parity note above
+   * can wrap every exit path in one place instead of four.
+   * @param {{label: string, tone: string, detail: string|null}} baseStatus - From `summarizePipelineStatus`.
+   * @param {{outcome: string}} prStatus - From `GET /wrap/pr-status`.
+   * @returns {{label: string, tone: string, detail: string|null}}
+   */
+  function _composeReleaseBannerCore(baseStatus, prStatus) {
     const base = baseStatus || {};
     // #700 — a pending release with auto-merge armed needs no operator action;
     // pass the pipeline's own arming knowledge (the probe can't see it) so the
@@ -2433,6 +2492,7 @@
     wrapPrInfo,
     prOutcomeBanner,
     composeReleaseBanner,
+    renderDocsParityControl,
     handoffPublicationNote,
     summarizeSkips,
     decisionWidgetForBlockedStep,

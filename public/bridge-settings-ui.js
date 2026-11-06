@@ -31,7 +31,8 @@
    * @param {string} p - Id prefix.
    * @returns {string}
    */
-  function tcBridgeSettingsUiMarkup(p) {
+  function tcBridgeSettingsUiMarkup(p, projects, esc) {
+    const projectOptions = (projects || []).map((proj) => `<option value="${proj.id}">${esc(proj.name)}</option>`).join('');
     return `
       <section class="bridge-settings-section" aria-label="Reach">
         <div class="bridge-settings-status" id="${p}ReachStatus" role="status"></div>
@@ -45,6 +46,10 @@
       </section>
       <section class="bridge-settings-section" aria-label="Notification policy">
         <div class="bridge-settings-status" id="${p}PolicyStatus" role="status"></div>
+        <label class="bridge-settings-policy-scope-label">
+          Scope:
+          <select id="${p}PolicyScope"><option value="">Global default</option>${projectOptions}</select>
+        </label>
         <ul class="bridge-settings-policy-list" id="${p}PolicyList"></ul>
       </section>
       <section class="bridge-settings-section" aria-label="Watched channels">
@@ -73,6 +78,36 @@
           <input type="checkbox" id="${p}ProjectCheck_${project.id}">
           ${esc(project.name)} ${outOfReach ? '<em>(out of reach)</em>' : ''}
         </label>
+      </li>`;
+  }
+
+  /**
+   * Markup for one notification-policy row -- exported for the same
+   * mini-dom reason {@link tcBridgeChannelItemMarkup} is: the list host's
+   * own innerHTML is replaced wholesale every `loadNotificationPolicy()`.
+   * One toggle button, labelled by the OPPOSITE of the current state
+   * (`answer.enabled`); a "Clear override" button appears only when the
+   * current scope is a project AND that kind's resolution actually came
+   * from a project-level override (`answer.source === 'project'`) -- there
+   * is nothing to clear from the global layer, and clearing a GLOBAL kind
+   * no project has overridden would silently do nothing.
+   * @param {string} p - Id prefix.
+   * @param {string} kind - Event kind.
+   * @param {{enabled: boolean, source: string}|null} answer - A `resolveNotificationPolicy` result, or null if unread.
+   * @param {boolean} scoped - Whether the current scope is a project (not global).
+   * @param {Function} esc - HTML-escaping function.
+   * @returns {string}
+   */
+  function tcBridgeNotificationPolicyItemMarkup(p, kind, answer, scoped, esc) {
+    const stateText = answer ? `${answer.enabled ? 'on' : 'off'} (${esc(answer.source)})` : 'unknown (unread)';
+    const toggleLabel = answer && answer.enabled ? 'Turn off' : 'Turn on';
+    const clearBtn = scoped && answer && answer.source === 'project'
+      ? ` <button type="button" class="btn btn-small" id="${p}PolicyClear_${kind}">Clear override</button>`
+      : '';
+    return `
+      <li class="bridge-settings-policy-row">
+        ${esc(kind)}: ${stateText}
+        <button type="button" class="btn btn-small" id="${p}PolicyToggle_${kind}">${toggleLabel}</button>${clearBtn}
       </li>`;
   }
 
@@ -114,6 +149,10 @@
     const projects = Array.isArray(deps.projects) ? deps.projects : [];
     const eventKinds = Array.isArray(deps.eventKinds) ? deps.eventKinds : [];
     let channels = [];
+    // #2884 I-Gate R2 finding 2: bumped on every loadNotificationPolicy()
+    // call; a call whose reads resolve after a newer one has already
+    // started discards its own answer instead of painting over it.
+    let _policyRequestGen = 0;
 
     /**
      * Render the static shell into the root. Idempotent.
@@ -122,7 +161,16 @@
     function mount() {
       const root = doc.getElementById(deps.rootId);
       if (!root) return false;
-      if (!el('ReachStatus')) root.innerHTML = tcBridgeSettingsUiMarkup(p);
+      if (!el('ReachStatus')) {
+        root.innerHTML = tcBridgeSettingsUiMarkup(p, projects, esc);
+        // The scope <select> is part of the STATIC shell, built once per
+        // mount -- unlike the per-kind toggle/clear buttons below, which are
+        // rebound every `loadNotificationPolicy()` because the dynamic list
+        // host's innerHTML (and everything inside it) is replaced wholesale
+        // each time.
+        const scopeEl = el('PolicyScope');
+        if (scopeEl) scopeEl.addEventListener('change', () => loadNotificationPolicy());
+      }
       return true;
     }
 
@@ -179,19 +227,63 @@
     // ── Notification policy ──
 
     /**
-     * Load the global policy for every named `deps.eventKinds` kind.
+     * Load the policy for every named `deps.eventKinds` kind, at whatever
+     * scope the `${p}PolicyScope` select currently names -- global (the
+     * default, no selector yet mounted) or one project.
+     *
+     * Freshness-guarded (#2884 I-Gate R2 finding 2): the scope this call
+     * reads is captured ONCE, at the start, into `scopeProjectId` -- never
+     * re-read from the live select afterward. `_policyRequestGen` is bumped
+     * on every call and the answer is discarded unless this call is still
+     * the latest one outstanding when its reads return. Without this, an
+     * operator who starts a project-scope read then switches back to
+     * Global before it resolves could have the slower project answer paint
+     * over the newer Global selection -- the list would show "off
+     * (project)" while the selector reads "Global default", and its
+     * toggle would post to the project-scoped route for a kind the
+     * operator believes is the global one.
      * @returns {Promise<void>}
      */
     async function loadNotificationPolicy() {
       if (!deps.api) return;
-      const answers = await Promise.all(eventKinds.map((kind) => deps.api(`/api/bridge/operator/notification-policy/${encodeURIComponent(kind)}`)));
+      const scopeEl = el('PolicyScope');
+      const scopeProjectId = scopeEl && scopeEl.value ? scopeEl.value : '';
+      const qs = scopeProjectId ? `?projectId=${encodeURIComponent(scopeProjectId)}` : '';
+      const gen = ++_policyRequestGen;
+      const answers = await Promise.all(
+        eventKinds.map((kind) => deps.api(`/api/bridge/operator/notification-policy/${encodeURIComponent(kind)}${qs}`))
+      );
+      if (gen !== _policyRequestGen) return; // a newer call has already started; this answer is stale
       const list = el('PolicyList');
       if (list) {
-        list.innerHTML = eventKinds.map((kind, i) => {
-          const a = answers[i];
-          return `<li>${esc(kind)}: ${a ? (a.enabled ? 'on' : 'off') : 'unknown'} (${a ? esc(a.source) : 'unread'})</li>`;
-        }).join('');
+        list.innerHTML = eventKinds.map((kind, i) => tcBridgeNotificationPolicyItemMarkup(p, kind, answers[i], !!scopeProjectId, esc)).join('');
       }
+      _bindPolicyRows(answers, scopeProjectId);
+    }
+
+    /**
+     * Bind each rendered policy row's toggle/clear buttons directly, by the
+     * unique id {@link tcBridgeNotificationPolicyItemMarkup} gave them --
+     * fresh every `loadNotificationPolicy()`, the same reason
+     * {@link _bindChannelRows} rebinds its own list each render.
+     * @param {Array<{enabled: boolean, source: string}|null>} answers - This load's own answers, same order as `eventKinds`.
+     * @param {string} scopeProjectId - The scope select's current value ('' for global).
+     * @returns {void}
+     */
+    function _bindPolicyRows(answers, scopeProjectId) {
+      eventKinds.forEach((kind, i) => {
+        const answer = answers[i];
+        const toggleBtn = el(`PolicyToggle_${kind}`);
+        if (toggleBtn) {
+          toggleBtn.addEventListener('click', () => {
+            const nextEnabled = !(answer && answer.enabled);
+            if (scopeProjectId) setProjectNotificationOverride(Number(scopeProjectId), kind, nextEnabled);
+            else setGlobalNotificationPolicy(kind, nextEnabled);
+          });
+        }
+        const clearBtn = el(`PolicyClear_${kind}`);
+        if (clearBtn) clearBtn.addEventListener('click', () => setProjectNotificationOverride(Number(scopeProjectId), kind, null));
+      });
     }
 
     /**
@@ -218,7 +310,14 @@
     async function setProjectNotificationOverride(projectId, eventKind, enabled) {
       if (!deps.apiMutate) return false;
       const result = await deps.apiMutate(`/api/bridge/operator/notification-policy/project/${encodeURIComponent(projectId)}`, 'POST', { eventKind, enabled });
-      return Boolean(result);
+      if (!result) return false;
+      // #2884 I-Gate R2 finding 1: without this, `_bindPolicyRows`'s
+      // captured `answer.enabled` never updates, so a second click on the
+      // same still-visible "Turn off" button posts `enabled: false` again
+      // instead of toggling back on, and a cleared override's own "Clear"
+      // button stays rendered.
+      await loadNotificationPolicy();
+      return true;
     }
 
     // ── Watched channels ──
@@ -306,6 +405,7 @@
 
   global.tcBridgeSettingsUiMarkup = tcBridgeSettingsUiMarkup;
   global.tcBridgeReachProjectMarkup = tcBridgeReachProjectMarkup;
+  global.tcBridgeNotificationPolicyItemMarkup = tcBridgeNotificationPolicyItemMarkup;
   global.tcBridgeChannelItemMarkup = tcBridgeChannelItemMarkup;
   global.tcCreateBridgeSettingsUi = tcCreateBridgeSettingsUi;
 })(typeof window !== 'undefined' ? window : globalThis);

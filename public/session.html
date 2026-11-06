@@ -593,6 +593,9 @@
          long skip list can never push a decision or the buttons out of reach. -->
     <div class="wrap-drawer-body" id="wrapDrawerBody">
       <div class="wrap-drawer-status" id="wrapDrawerStatus" aria-live="polite"></div>
+      <!-- Docs-parity dismissal control (#533, #2886 I-Gate R1 Round 2): shown
+           only while GET /wrap/pr-status's docsParity.signal is true. -->
+      <div class="wrap-drawer-docs-parity hidden" id="wrapDrawerDocsParity" aria-live="polite"></div>
       <div class="wrap-drawer-planned hidden" id="wrapDrawerPlanned"></div>
       <div class="wrap-drawer-cancelnote hidden" id="wrapDrawerCancelNote" aria-live="polite"></div>
       <div class="wrap-drawer-skiproll hidden" id="wrapDrawerSkipRoll"></div>
@@ -620,5 +623,11 @@
   <script src="/session-history-ui.js"></script>
   <script src="/governed-wrap-ui.js"></script>
   <script src="/chunk-boundary-ui.js"></script>
+  <!-- Not called by anything on this page -- the operator-only Global
+       Settings modal that mounts both lives on index.html -- but loaded
+       here too per the #2884 dispatch's own mount target, "ready before
+       anything calls it" the same way the three scripts above started out. -->
+  <script src="/bridge-step-up.js"></script>
+  <script src="/bridge-settings-ui.js"></script>
 </body>
 </html>

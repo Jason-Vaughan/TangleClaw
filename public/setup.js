@@ -1149,14 +1149,26 @@ function _renderHttpsMkcertBody() {
       </div>`;
   }
   const gen = wizard.httpsGenerated;
-  const steps = (gen.remoteTrust && gen.remoteTrust.steps) || [];
-  let stepsHtml = '';
-  for (const step of steps) {
-    stepsHtml += `
+  // #2886 — prefer the assisted plan (lib/remote-ca-installer.js#planInstall,
+  // rendered by remote-ca-assist.js) once both the fetch succeeded and the
+  // renderer is loaded: it adds the non-privileged stage-ca-file step and
+  // the privilege-boundary wording this inline fallback has never had.
+  // Falls back to the long-standing manual loop over gen.remoteTrust.steps
+  // otherwise, so an install that hasn't picked up either file yet renders
+  // exactly as it always has.
+  let stepsHtml;
+  if (wizard.remoteCaPlan && typeof window.tcRenderRemoteCaPlanSteps === 'function') {
+    stepsHtml = window.tcRenderRemoteCaPlanSteps(wizard.remoteCaPlan);
+  } else {
+    const steps = (gen.remoteTrust && gen.remoteTrust.steps) || [];
+    stepsHtml = '';
+    for (const step of steps) {
+      stepsHtml += `
       <div class="setup-https-trust-step">
         <div class="setup-https-trust-label"><strong>${esc(step.platform)}</strong> — ${esc(step.label)}</div>
         <pre class="setup-https-code"><code>${esc(step.command)}</code></pre>
       </div>`;
+    }
   }
   const noteHtml = gen.remoteTrust && gen.remoteTrust.note
     ? `<p class="setup-text-muted">${esc(gen.remoteTrust.note)}</p>`
@@ -1237,6 +1249,10 @@ function wizardSelectHttpsMode(mode) {
     wizard.httpsCertPath = '';
     wizard.httpsKeyPath = '';
     wizard.httpsRemoteTrustConfirmed = false;
+    // #2886 — the assisted remote CA-trust plan belongs to this generation's
+    // own caRootPath; clear it with everything else so a mode switch can't
+    // render a stale plan against a cert that no longer exists.
+    wizard.remoteCaPlan = null;
   }
   wizard.httpsMode = mode;
   renderHttpsSetup(document.getElementById('setupBody'));
@@ -1263,6 +1279,15 @@ async function wizardGenerateCerts() {
   wizard.httpsGenerated = data;
   wizard.httpsCertPath = data.certPath || '';
   wizard.httpsKeyPath = data.keyPath || '';
+  // #2886 — the assisted remote CA-trust plan, from the caRootPath this
+  // generation just reported. Best-effort: a page that has not loaded
+  // remote-ca-assist.js, or a plan fetch that fails, leaves
+  // wizard.remoteCaPlan null and _renderHttpsMkcertBody falls back to its
+  // own long-standing inline rendering of data.remoteTrust.steps.
+  wizard.remoteCaPlan = null;
+  if (typeof window.tcRenderRemoteCaPlanSteps === 'function' && data.remoteTrust && data.remoteTrust.caRootPath) {
+    wizard.remoteCaPlan = await api(`/api/https/remote-ca-plan?caRootPath=${encodeURIComponent(data.remoteTrust.caRootPath)}`);
+  }
   renderHttpsSetup(document.getElementById('setupBody'));
 }
 

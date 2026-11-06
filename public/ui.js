@@ -3461,6 +3461,40 @@ function isolationOverrideRiskText() {
 let isolationOverrideNotice = null;
 
 /**
+ * The bridge step-up panel instance from the Global Settings modal's most
+ * recent open (#2884) -- rebuilt fresh every `openGlobalSettings()` call,
+ * same as the section's own DOM (`body.innerHTML` replaces it wholesale on
+ * every open, so there is never a prior shell to reuse). Not read back
+ * outside that function; kept module-scope only so a future control
+ * (e.g. a refresh button elsewhere in the modal) has something to call into
+ * without re-threading a local through every helper between here and there.
+ * @type {{mount: Function, load: Function, approve: Function, deny: Function}|null}
+ */
+let bridgeStepUpPanel = null;
+
+/**
+ * This open's bridge settings panel instance (#2884), same lifecycle and
+ * reason as {@link bridgeStepUpPanel} above.
+ * @type {{mount: Function, loadReach: Function, loadNotificationPolicy: Function, loadChannels: Function, dismissNarrowingPrompt: Function, setReachBatch: Function, registerChannelFromForm: Function}|null}
+ */
+let bridgeSettingsPanel = null;
+
+/**
+ * The bridge's own admitted notification event kinds (`lib/bridge-notify.js`'s
+ * `TEMPLATES` object keys) -- there is no API that enumerates them (the
+ * module's own documented reason the dashboard must name the kinds it cares
+ * about), so this list is hand-kept against that file. `work-unblocked` and
+ * `operator-resolved` are real, independently-toggleable policy kinds even
+ * though they alias to another type's storage row (#2141) -- the policy
+ * check happens before that aliasing.
+ * @type {string[]}
+ */
+const BRIDGE_NOTIFICATION_EVENT_KINDS = Object.freeze([
+  'lane-silent', 'work-blocked', 'work-unblocked', 'operator-needed',
+  'operator-resolved', 'fleet-idle', 'gateway-down', 'gateway-recovered'
+]);
+
+/**
  * Whether Project Settings was opened to show the project's launch-isolation
  * override, by the pointer on a refused launch. Read once, when the switch
  * next renders.
@@ -5578,6 +5612,16 @@ function openGlobalSettings() {
       <div class="form-hint">Checking the operator bridge…</div>
     </div>
 
+    <div class="gs-section-label">Bridge step-up approvals</div>
+    <div class="form-group" id="gsBridgeStepUpSection">
+      <div class="form-hint">Checking pending step-up approvals…</div>
+    </div>
+
+    <div class="gs-section-label">Bridge settings</div>
+    <div class="form-group" id="gsBridgeSettingsSection">
+      <div class="form-hint">Checking bridge reach, notifications and channels…</div>
+    </div>
+
     <div class="gs-section-label">Launch isolation override</div>
     <div class="form-group">
       <div class="form-hint">Whether launches start, in every project and for the Project Master, when TangleClaw cannot show them isolated. Each project also has its own, in its Settings.</div>
@@ -5657,6 +5701,40 @@ function openGlobalSettings() {
   // (operator-bridge-panel.js); a page that has not loaded it shows no section.
   if (typeof window.tcMountOperatorBridge === 'function') {
     window.tcMountOperatorBridge(document.getElementById('gsOperatorBridgeSection'), { api, apiMutate });
+  }
+
+  // #2884: bridge step-up approvals + bridge settings (reach/notifications/
+  // channels). Each is its own script (bridge-step-up.js, bridge-settings-
+  // ui.js); a page that has not loaded one shows no section for it, same
+  // guard as the operator bridge panel above. Built fresh on every open,
+  // the same as tcMountOperatorBridge above -- body.innerHTML just replaced
+  // every section's DOM wholesale, so there is no prior instance's shell or
+  // listeners to reuse, only the two factories' own fresh-lookup-by-id
+  // `el()` helpers to recreate against the new nodes.
+  if (typeof window.tcCreateBridgeStepUp === 'function') {
+    bridgeStepUpPanel = window.tcCreateBridgeStepUp({ rootId: 'gsBridgeStepUpSection', prefix: 'gsBsu', api, apiMutate, esc });
+    if (bridgeStepUpPanel.mount()) bridgeStepUpPanel.load();
+  }
+  if (typeof window.tcCreateBridgeSettingsUi === 'function') {
+    bridgeSettingsPanel = window.tcCreateBridgeSettingsUi({
+      rootId: 'gsBridgeSettingsSection', prefix: 'gsBset', api, apiMutate, esc,
+      projects: state.projects.map((proj) => ({ id: proj.id, name: proj.name })),
+      eventKinds: BRIDGE_NOTIFICATION_EVENT_KINDS
+    });
+    if (bridgeSettingsPanel.mount()) {
+      const bsPrefix = 'gsBset';
+      const bindBridgeSettingsBtn = (suffix, fn) => {
+        const btn = document.getElementById(`${bsPrefix}${suffix}`);
+        if (btn) btn.addEventListener('click', fn);
+      };
+      bindBridgeSettingsBtn('ReachOptOutBtn', () => bridgeSettingsPanel.setReachBatch(true));
+      bindBridgeSettingsBtn('ReachOptInBtn', () => bridgeSettingsPanel.setReachBatch(false));
+      bindBridgeSettingsBtn('NarrowingPromptDismiss', () => bridgeSettingsPanel.dismissNarrowingPrompt());
+      bindBridgeSettingsBtn('RegisterChannelBtn', () => bridgeSettingsPanel.registerChannelFromForm());
+      bridgeSettingsPanel.loadReach();
+      bridgeSettingsPanel.loadNotificationPolicy();
+      bridgeSettingsPanel.loadChannels();
+    }
   }
 
   // #2229: the install-wide launch-isolation override. A change's outcome

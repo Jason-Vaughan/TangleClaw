@@ -148,6 +148,7 @@ const openclawHtml = require('./lib/openclaw-html');
 const tunnelMonitor = require('./lib/tunnel-monitor');
 const net = require('node:net');
 const httpsSetup = require('./lib/https-setup');
+const remoteCaInstaller = require('./lib/remote-ca-installer');
 const hostInventory = require('./lib/host-inventory');
 const caddy = require('./lib/caddy');
 const caddyDrift = require('./lib/caddy-drift');
@@ -162,6 +163,9 @@ const deliveryDisposition = require('./lib/medusa-delivery-disposition');
 const launchUnready = require('./lib/launch-unready');
 const workloadNudge = require('./lib/workload-nudge');
 const checkWatch = require('./lib/check-watch');
+// #2885 (#2838 Slice 3): one daemon instance for this process, same factory-
+// instantiated-once-at-require pattern as activityObserver above.
+const lifecycleHandoffDaemon = require('./lib/lifecycle-handoff-daemon').createLifecycleHandoffDaemon();
 const authIdentity = require('./lib/auth-identity');
 const authSession = require('./lib/auth-session');
 const authGate = require('./lib/auth-gate');
@@ -174,6 +178,7 @@ const sessionOwnership = require('./lib/session-ownership');
 const tailscaleIngress = require('./lib/tailscale-ingress');
 const planDocs = require('./lib/plan-docs');
 const scorecardCache = require('./lib/scorecard-cache');
+const scorecardWiring = require('./lib/tc-docs-scorecard-merge-wiring');
 const strandedWraps = require('./lib/stranded-wraps');
 const strandedCheck = require('./lib/stranded-check');
 const serviceToken = require('./lib/service-token');
@@ -3295,6 +3300,32 @@ function _deliveryFacts(row) {
 // message body. Read-only, like the deliveries view above.
 route('GET', '/api/medusa/escalations', (_req, res) => {
   jsonResponse(res, 200, { escalations: medusaWatchdog.listEscalations() });
+});
+
+// GET /api/scorecard (#2883) — this host's local project scorecard, as
+// `readScorecardCache` already answers it for the plan-page render above
+// (`status: 'ok'|'stale'|'missing'|'invalid'|'unreadable'`, `doc`/`reason`).
+// Always 200: a missing or stale cache is an honest status, not an error.
+route('GET', '/api/scorecard', (_req, res) => {
+  jsonResponse(res, 200, scorecardCache.readScorecardCache(scorecardCache.cachePath(store._getBasePath())));
+});
+
+// GET /api/https/remote-ca-plan (#2886) — the assisted remote CA-trust
+// install plan (#400) for a `caRootPath` the Setup Wizard already has from
+// its own `POST /api/setup/generate-cert` response
+// (`lib/routes/setup.js`'s `remoteTrust.caRootPath`, unchanged by this
+// route). `lib/remote-ca-installer.js#planInstall` is pure and reaches
+// nothing itself; this is the thin HTTP mount `#2886` is scoped to.
+// `platform` narrows to one OS's trust-install step when the wizard knows
+// its target; omitted, the plan carries all three (`PLATFORMS`).
+route('GET', '/api/https/remote-ca-plan', (req, res) => {
+  const query = parseQuery(reqUrl(req).search);
+  const caRootPath = typeof query.caRootPath === 'string' ? query.caRootPath : '';
+  if (!caRootPath) {
+    return errorResponse(res, 400, 'Missing required query param: caRootPath', 'BAD_REQUEST');
+  }
+  const platform = remoteCaInstaller.PLATFORMS.includes(query.platform) ? query.platform : undefined;
+  jsonResponse(res, 200, remoteCaInstaller.planInstall({ caRootPath, platform }));
 });
 
 /**
@@ -8934,6 +8965,11 @@ if (require.main === module) {
     throw err;
   });
 
+  // #2883: holds the scheduled scorecard refresh's timer handle (or null,
+  // when disabled) so shutdown can clear it. Declared here, not inside
+  // onListening, so it is in scope for the shutdown function below too.
+  let scorecardRefreshTimer = null;
+
   const onListening = () => {
     // Installed here and not before: until the listener is bound it has no
     // address, the fallback check would be asked about a door that does not
@@ -9032,6 +9068,32 @@ if (require.main === module) {
     // its passes, only while there is a watch to send for, and stopped by
     // `stop()`. It types into nothing.
     checkWatch.start();
+    // Start the lifecycle handoff daemon (#2885, #2838 Slice 3): sweeps every
+    // open handoff on a timer and advances the three steps that need no
+    // caller identity (checkpointed -> wrap_initiated -> terminal_confirmed
+    // -> replacement_launched); the real replacement session's own
+    // reconcile-startup/takeover calls, mounted above in lib/routes/
+    // sessions.js, drive everything past that.
+    lifecycleHandoffDaemon.start();
+    // Arm the scheduled scorecard-cache refresh (#2883). Opt-in and inert
+    // by default (scheduleScorecardRefresh's own contract): no config field
+    // exists for this yet (lib/store.js is out of this car's envelope), so
+    // an operator who wants it sets TANGLECLAW_SCORECARD_SCHEDULE_ENABLED=true;
+    // every existing install's behavior is unchanged. Unref'd here, not
+    // inside the library (its own "caller decides" contract, same as every
+    // other factory/timer this file owns) so this process can still exit
+    // on nothing else pending.
+    if (process.env.TANGLECLAW_SCORECARD_SCHEDULE_ENABLED === 'true') {
+      const scheduled = scorecardWiring.scheduleScorecardRefresh({
+        repoDir: serverInfo.getRepoRoot(), baseDir: store._getBasePath(), enabled: true,
+        onError: (err) => log.warn('Scheduled scorecard refresh failed', { error: err && err.message })
+      });
+      if (scheduled.scheduled) {
+        if (scheduled.timer && scheduled.timer.unref) scheduled.timer.unref();
+        scorecardRefreshTimer = scheduled.timer;
+        log.info('Scorecard refresh scheduled', { intervalMs: scheduled.intervalMs });
+      }
+    }
     // Re-sync Medusa listeners for live sessions (TC#550, MED-2K9P v2 T4) —
     // listeners are in-memory, so without this a server restart silently
     // deregistered every running session from the switchboard.
@@ -9103,6 +9165,8 @@ if (require.main === module) {
     workloadNudge.stop();
     coordinatorRotation.stopRefreshMonitor();
     checkWatch.stop();
+    lifecycleHandoffDaemon.stop();
+    if (scorecardRefreshTimer) clearInterval(scorecardRefreshTimer);
     // Each startupControl adapter's reaper timer (#1825): the timers are unref'd,
     // so this is bookkeeping symmetry with `start`, not what lets the process exit.
     for (const [name, adapter] of Object.entries(startupControl.ADAPTERS)) {
