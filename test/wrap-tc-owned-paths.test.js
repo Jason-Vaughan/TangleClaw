@@ -504,6 +504,33 @@ describe('hands-off repo footprint (#1485, Ruling A505-R3 / R3.2)', () => {
     assert.ok(fs.existsSync(path.join(root, 'CLAUDE.local.md')), 'the operational guide is still delivered outside a Git repository');
   });
 
+  it('fails CLOSED on a real repo whose Git probe reports "not a git repository" because GIT_DIR is wrong, never overwriting a tracked CLAUDE.local.md (I-Gate Round 4, #5799233868)', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-handsoff-gitdir-'));
+    dirs.push(root);
+    initRepo(root, [], { env: ENV });
+    const trackedContent = '# operator committed this on purpose, must not change\n';
+    fs.writeFileSync(path.join(root, 'CLAUDE.local.md'), trackedContent);
+    git(root, 'add', 'CLAUDE.local.md');
+    git(root, 'commit', '-qm', 'tracked CLAUDE.local.md');
+    assert.ok(fs.existsSync(path.join(root, '.git')), 'a real .git marker exists on disk');
+
+    const engineProfile = store.engines.get('claude');
+    const realGitDir = process.env.GIT_DIR;
+    process.env.GIT_DIR = '/nonexistent-git-dir-for-this-test';
+    let result;
+    try {
+      result = engines.writeEngineConfig('claude', root, { repoFootprint: 'hands-off' }, engineProfile);
+    } finally {
+      if (realGitDir === undefined) delete process.env.GIT_DIR;
+      else process.env.GIT_DIR = realGitDir;
+    }
+
+    assert.equal(result.written, false);
+    assert.equal(result.skipped, true);
+    assert.equal(fs.readFileSync(path.join(root, 'CLAUDE.local.md'), 'utf8'), trackedContent);
+    assert.equal(git(root, 'status', '--porcelain', 'CLAUDE.local.md'), '', 'no tracked-file mutation even with a bad GIT_DIR in the environment');
+  });
+
   it('wrap record-only mode: the commit step skips without touching git, and pr-check skips without calling gh', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-handsoff-'));
     dirs.push(root);
