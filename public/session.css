@@ -1767,6 +1767,50 @@ html[data-tc-keyboard] body {
   }
 }
 
+/* ── OpenClaw session header: system resource + health pills (#128) ── */
+.openclaw-header-pills {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0 10px;
+}
+.openclaw-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--elevated-bg);
+  color: var(--text-muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.openclaw-pill.pill-ok {
+  color: var(--primary);
+  background: rgba(139, 195, 74, 0.12);
+}
+.openclaw-pill.pill-warn {
+  color: var(--amber);
+  background: rgba(255, 167, 38, 0.12);
+}
+.openclaw-pill.pill-alarm {
+  color: var(--danger);
+  background: rgba(239, 83, 80, 0.12);
+}
+/* Recent-issue history dot (#128 acceptance #7): red if there was an
+   unhealthy event in the last hour, even if the pill reads clean now — the
+   "pathology happened, recovered, you missed it" case. */
+.health-history-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--danger);
+}
+
 /* ── Sidecar Detail Panel ── */
 .sidecar-panel {
   position: fixed;

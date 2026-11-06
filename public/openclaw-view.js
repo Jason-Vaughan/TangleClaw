@@ -449,6 +449,101 @@ function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// ── OpenClaw session header: system resource + health pills (#128) ──
+//
+// This renders whatever `{ mode, telemetry, health }` shape
+// `lib/openclaw-detect.js#detectRuntimeAndStats` produces — it is a pure DOM
+// update with no fetch/poll loop of its own. Wiring a periodic caller needs
+// an API route, which is out of this car's file envelope (Ruling A505-R4
+// excludes `lib/routes/openclaw.js` and `server.js` from Car 71-C); a later
+// car wires the route and calls this on its own interval.
+
+/** @type {{mode?: string, telemetry?: object, health?: object}|null} Last data rendered, for the click-to-expand handler. */
+let _openclawLastTelemetry = null;
+/** @type {number|null} When the health pill last read warn/alarm, for the 1-hour history dot (#128 acceptance #7). */
+let _openclawLastUnhealthyAt = null;
+
+/**
+ * Render the OpenClaw session header's resource + health pills from a
+ * `detectRuntimeAndStats`-shaped result. Hides the pills container when
+ * there is no health data yet (nothing has probed, or the probe failed with
+ * no usable telemetry) rather than showing a permanently empty pill.
+ * @param {{mode?: string, telemetry?: {cpuPct?: number, memPct?: number}, health?: {level: 'ok'|'warn'|'alarm', resourceSummary: string, healthSummary: string, reasons: string[]}}|null} telemetryData
+ * @returns {void}
+ */
+function renderOpenclawHeaderPills(telemetryData) {
+  const container = document.getElementById('openclawHeaderPills');
+  const resourcePill = document.getElementById('openclawResourcePill');
+  const healthPill = document.getElementById('openclawHealthPill');
+  const healthLabel = document.getElementById('openclawHealthLabel');
+  const historyDot = document.getElementById('openclawHealthHistoryDot');
+  if (!container || !resourcePill || !healthPill || !healthLabel) return;
+
+  if (!telemetryData || !telemetryData.health) {
+    container.hidden = true;
+    return;
+  }
+  _openclawLastTelemetry = telemetryData;
+
+  const { telemetry, health } = telemetryData;
+  container.hidden = false;
+
+  const t = telemetry || {};
+  resourcePill.textContent = (typeof t.cpuPct === 'number' && typeof t.memPct === 'number')
+    ? `CPU ${t.cpuPct.toFixed(0)}% · Mem ${t.memPct.toFixed(0)}%`
+    : (health.resourceSummary || '—');
+  resourcePill.title = health.resourceSummary || resourcePill.textContent;
+
+  // I-Gate Round 1 Finding 2 (#5799301385): 'unverified' (no runtime
+  // metrics measured) gets NO color modifier -- the base .openclaw-pill
+  // is already neutral/muted (the same look #openclawResourcePill falls
+  // back to with no measurement), rather than reusing green 'pill-ok' for
+  // a measurement that never happened.
+  healthPill.classList.remove('pill-ok', 'pill-warn', 'pill-alarm');
+  if (health.level === 'alarm') healthPill.classList.add('pill-alarm');
+  else if (health.level === 'warn') healthPill.classList.add('pill-warn');
+  else if (health.level === 'ok') healthPill.classList.add('pill-ok');
+  healthLabel.textContent = health.level === 'ok' ? 'Healthy' : health.level.toUpperCase();
+  healthPill.title = health.healthSummary || 'no pathology detected';
+
+  if (health.level === 'warn' || health.level === 'alarm') {
+    _openclawLastUnhealthyAt = Date.now();
+  }
+  if (historyDot) {
+    historyDot.hidden = !(_openclawLastUnhealthyAt !== null && (Date.now() - _openclawLastUnhealthyAt) < 3600000);
+  }
+}
+
+/**
+ * Click-to-expand: reuse the existing sidecar panel (rather than a new modal
+ * system, out of scope for this car — see #128's larger "click-expand detail
+ * modal" acceptance criteria) to show the last rendered telemetry/health.
+ * @returns {void}
+ */
+function openOpenclawHealthDetail() {
+  const panel = document.getElementById('sidecarPanel');
+  const backdrop = document.getElementById('sidecarBackdrop');
+  const detail = document.getElementById('sidecarDetail');
+  const nav = document.getElementById('sidecarNav');
+  if (!panel || !detail) return;
+  if (nav) nav.innerHTML = '';
+
+  const t = _openclawLastTelemetry;
+  if (!t || !t.health) {
+    detail.innerHTML = '<div class="sidecar-detail-empty">No OpenClaw health data yet</div>';
+  } else {
+    let html = sidecarField('Mode', escapeHtml(t.mode || 'unknown'));
+    html += sidecarField('Resources', escapeHtml(t.health.resourceSummary || '—'));
+    html += sidecarField('Health', `${escapeHtml(t.health.level.toUpperCase())} — ${escapeHtml(t.health.healthSummary || 'no pathology detected')}`);
+    if (Array.isArray(t.health.reasons) && t.health.reasons.length) {
+      html += sidecarField('Reasons', t.health.reasons.map(escapeHtml).join('<br>'));
+    }
+    detail.innerHTML = html;
+  }
+  panel.classList.add('open');
+  if (backdrop) backdrop.hidden = false;
+}
+
 /**
  * Open the sidecar detail panel.
  * @param {string} [processId] - Process ID to select, or auto-select
@@ -477,18 +572,52 @@ function closeSidecarPanel() {
  */
 async function pollSidecarProcesses() {
   const data = await api(`/api/sidecar/connection/${connId}/processes`);
-  if (!data) return;
+  if (data) {
+    const combined = [...(data.active || []), ...(data.recent || [])];
+    _sidecarProcesses = combined;
+    _sidecarStale = data.stale || false;
 
-  const combined = [...(data.active || []), ...(data.recent || [])];
-  _sidecarProcesses = combined;
-  _sidecarStale = data.stale || false;
+    renderSidecarPills(combined, _sidecarStale);
 
-  renderSidecarPills(combined, _sidecarStale);
+    // Auto-update detail panel if open
+    const panel = document.getElementById('sidecarPanel');
+    if (panel && panel.classList.contains('open')) {
+      renderSidecarDetail();
+    }
 
-  // Auto-update detail panel if open
-  const panel = document.getElementById('sidecarPanel');
-  if (panel && panel.classList.contains('open')) {
-    renderSidecarDetail();
+    // #128, I-Gate Round 1 Finding 1 (Ruling A505-R3.7): this route now
+    // carries the connection's cached telemetry/health on every poll cycle
+    // this function already runs — the real production caller
+    // `renderOpenclawHeaderPills` previously had none.
+    //
+    // I-Gate Round 2 Finding (#5799465132): checking `data.telemetry ||
+    // data.health` meant a FAILED refresh after a healthy reading — where
+    // both legitimately read `null` again — was indistinguishable from "this
+    // route carries nothing" and was skipped, leaving the old green
+    // `Healthy` pill in the DOM forever. Checking for the KEYS themselves
+    // (present on every response once the route supports this, whatever
+    // their value) still renders on a confirmed-unverified reading.
+    if ('telemetry' in data || 'health' in data) {
+      renderOpenclawHeaderPills({
+        telemetry: data.telemetry || null,
+        health: data.health || null,
+        telemetryError: data.telemetryError || null
+      });
+    }
+  }
+
+  // #1185: a tunnel that dies after page load must not keep showing `live`
+  // indefinitely — `init()` only measures the gateway once. Re-probing on
+  // this ALREADY-RUNNING poll signal (rather than a new timer, per #98/#268)
+  // means a dead gateway transitions the dot to `dead` within one cycle.
+  // `probeGateway` never throws (by its own contract), but if a probe
+  // genuinely cannot run for some other reason, `refresh` still ages the
+  // measurement out to `unverified` rather than leaving a stale `live`.
+  try {
+    const health = await tcTunnelState.probeGateway(connId);
+    connectionIndicator.record('health', health);
+  } catch {
+    connectionIndicator.refresh(Date.now());
   }
 }
 
@@ -557,6 +686,12 @@ function initSidecar() {
       }
     });
   }
+
+  // #128: either OpenClaw header pill click-expands into the sidecar panel.
+  const resourcePill = document.getElementById('openclawResourcePill');
+  const healthPill = document.getElementById('openclawHealthPill');
+  if (resourcePill) resourcePill.addEventListener('click', openOpenclawHealthDetail);
+  if (healthPill) healthPill.addEventListener('click', openOpenclawHealthDetail);
 }
 
 init();

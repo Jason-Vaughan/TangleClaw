@@ -28,6 +28,14 @@
       <span class="banner-engine" id="bannerHost"></span>
     </div>
     <div class="sidecar-pills" id="sidecarPills"></div>
+    <!-- #128: system resource + health pills for the wrapped OpenClaw gateway -->
+    <div class="openclaw-header-pills" id="openclawHeaderPills" hidden>
+      <span class="openclaw-pill" id="openclawResourcePill" title="Resource usage not yet available">&mdash;</span>
+      <span class="openclaw-pill pill-ok" id="openclawHealthPill" title="Health not yet checked">
+        <span class="health-history-dot" id="openclawHealthHistoryDot" hidden></span>
+        <span id="openclawHealthLabel">&mdash;</span>
+      </span>
+    </div>
   </header>
 
   <!-- Sidecar detail panel -->

@@ -33,6 +33,15 @@
   const TUNNEL_START_TIMEOUT_MS = 30000;
   /** @type {number} Budget for the pre-flight probe, which is a loopback request through an already-open tunnel. */
   const PROBE_TIMEOUT_MS = 8000;
+  /**
+   * How long a `live` measurement stays trustworthy before `deriveConnectionState`
+   * degrades it to `unverified` (#1185). `init()` measures once; nothing else
+   * re-derives unless the caller re-probes, so an unbounded `live` would keep
+   * reading green indefinitely after the tunnel dies — the same defect class
+   * #1012 removed, just displaced from page-load to some later minute.
+   * @type {number}
+   */
+  const MEASUREMENT_MAX_AGE_MS = 120000;
 
   /**
    * Run one fetch under a hard wall-clock budget, so a request that never
@@ -311,6 +320,34 @@
   }
 
   /**
+   * The ONLY place `deriveConnectionState` can produce `live` — and the one
+   * place #1185's age bound applies. `evidence.measuredAt` absent (every
+   * existing caller/test that predates #1185) means no age is knowable, so
+   * this returns the plain live state unchanged — 100% backward compatible
+   * by construction, not by a flag.
+   * @param {object} e - The evidence object `deriveConnectionState` is reducing.
+   * @param {object} [opts] - `deriveConnectionState`'s own `opts` ({now, maxAgeMs}).
+   * @param {string} who - Pre-formatted connection name for the label, already computed by the caller.
+   * @returns {{level: 'live'|'unverified', label: string, detail: string|null}}
+   */
+  function _ageAwareLiveState(e, opts, who) {
+    const liveState = { level: 'live', label: 'Connected — gateway answering, nothing pending', detail: null };
+    if (typeof e.measuredAt !== 'number') return liveState;
+
+    const now = opts && typeof opts.now === 'number' ? opts.now : Date.now();
+    const maxAgeMs = opts && typeof opts.maxAgeMs === 'number' ? opts.maxAgeMs : MEASUREMENT_MAX_AGE_MS;
+    const age = now - e.measuredAt;
+    if (age <= maxAgeMs) return liveState;
+
+    const minutes = Math.floor(age / 60000);
+    return {
+      level: 'unverified',
+      label: `Connection to ${who} unverified — last checked ${minutes}m ago`,
+      detail: 'stale'
+    };
+  }
+
+  /**
    * Reduce what was actually measured to one indicator state.
    *
    * Three levels, and the middle one is the honest default. `live` is reserved
@@ -330,9 +367,15 @@
    * @param {{ok: boolean, reason: string|null}|null} [evidence.health] - `probeGateway` result.
    * @param {{approved: boolean, code: string, reason: string, count: number}|null} [evidence.approve] - Latest `approve-pending` answer.
    * @param {string} [evidence.connName] - Human name of the connection, for the label.
+   * @param {number} [evidence.measuredAt] - Epoch ms when this evidence was last (re-)measured (#1185).
+   *   Omitted by every caller that does not pass timestamps — backward compatible by construction,
+   *   since the age check below only ever runs when this is actually a number.
+   * @param {object} [opts]
+   * @param {number} [opts.now] - Epoch ms to measure age against. Defaults to `Date.now()`.
+   * @param {number} [opts.maxAgeMs] - Overrides `MEASUREMENT_MAX_AGE_MS` for this call.
    * @returns {{level: 'dead'|'unverified'|'live', label: string, detail: string|null}}
    */
-  function deriveConnectionState(evidence) {
+  function deriveConnectionState(evidence, opts) {
     const e = evidence || {};
     const who = e.connName ? `“${e.connName}”` : 'this connection';
 
@@ -388,7 +431,7 @@
       };
     }
     if (approve.approved === true || approve.code === 'NO_PENDING') {
-      return { level: 'live', label: 'Connected — gateway answering, nothing pending', detail: null };
+      return _ageAwareLiveState(e, opts, who);
     }
     return {
       level: 'unverified',
@@ -439,10 +482,14 @@
    * one that skips the case you care about.
    *
    * @param {Element|(() => Element|null)} target - The indicator element, or a getter for it.
-   * @returns {{record: (key: string, value: *) => object, state: () => object, evidence: object}}
+   * @param {object} [opts]
+   * @param {() => number} [opts.nowFn] - Clock used to stamp `evidence.measuredAt` on a fresh
+   *   `probe`/`health` measurement (#1185). Defaults to `Date.now`; overridable for tests.
+   * @returns {{record: (key: string, value: *) => object, state: () => object, refresh: (now?: number) => object, evidence: object}}
    */
-  function createConnectionIndicator(target) {
-    const evidence = { probe: null, health: null, approve: null, connName: null };
+  function createConnectionIndicator(target, opts) {
+    const evidence = { probe: null, health: null, approve: null, connName: null, measuredAt: null };
+    const nowFn = (opts && typeof opts.nowFn === 'function') ? opts.nowFn : Date.now;
     const resolve = () => (typeof target === 'function' ? target() : target);
     return {
       /**
@@ -464,7 +511,18 @@
       },
       record(key, value) {
         evidence[key] = value;
-        const state = deriveConnectionState(evidence);
+        // #1185: a fresh probe or health measurement is the one thing that
+        // can make the evidence young again — `approve`/`connName` carry no
+        // tunnel-liveness information of their own, so stamping on every key
+        // would let an unrelated `approve` poll paper over a probe that is
+        // actually old.
+        if (key === 'probe' || key === 'health') evidence.measuredAt = nowFn();
+        // The age check must measure against THIS indicator's own clock, not
+        // the global `Date.now` default — otherwise a test (or a future
+        // caller) injecting `nowFn` sees `measuredAt` stamped on one clock
+        // and judged against another, aging out a measurement taken an
+        // instant ago.
+        const state = deriveConnectionState(evidence, { now: nowFn() });
         applyConnectionState(resolve(), state);
         return state;
       },
@@ -472,7 +530,19 @@
        * The state the current evidence reduces to, without re-rendering.
        * @returns {object}
        */
-      state() { return deriveConnectionState(evidence); },
+      state() { return deriveConnectionState(evidence, { now: nowFn() }); },
+      /**
+       * Re-evaluate against `now` and re-render, without taking a new
+       * measurement (#1185) — the one way a `live` dot ages out to
+       * `unverified` on its own, for a caller whose re-probe could not run.
+       * @param {number} [now] - Epoch ms; defaults to `Date.now()`.
+       * @returns {object}
+       */
+      refresh(now) {
+        const state = deriveConnectionState(evidence, { now: typeof now === 'number' ? now : Date.now() });
+        applyConnectionState(resolve(), state);
+        return state;
+      },
       /**
        * A DEEP copy of the evidence, for inspection. Deliberately not the
        * record itself: handing back the live object lets a caller write to it
@@ -498,7 +568,8 @@
     PAIRING_UNCHECKABLE_CODES,
     CONNECTION_STATE_CLASSES,
     TUNNEL_START_TIMEOUT_MS,
-    PROBE_TIMEOUT_MS
+    PROBE_TIMEOUT_MS,
+    MEASUREMENT_MAX_AGE_MS
   };
 
   // Browser: expose on window so /openclaw-view.js can call it.
