@@ -464,6 +464,32 @@ describe('hands-off repo footprint (#1485, Ruling A505-R3 / R3.2)', () => {
     assert.equal(git(root, 'status', '--porcelain', 'CLAUDE.local.md'), '', 'no tracked-file mutation');
   });
 
+  it('fails CLOSED (skips the write) when the git index probe itself cannot run, even for a tracked CLAUDE.local.md (I-Gate Round 2, #5799022282)', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-handsoff-'));
+    dirs.push(root);
+    initRepo(root, [], { env: ENV });
+    const trackedContent = '# operator committed this on purpose, must not change\n';
+    fs.writeFileSync(path.join(root, 'CLAUDE.local.md'), trackedContent);
+    git(root, 'add', 'CLAUDE.local.md');
+    git(root, 'commit', '-qm', 'tracked CLAUDE.local.md');
+
+    const engineProfile = store.engines.get('claude');
+    const realPath = process.env.PATH;
+    process.env.PATH = '';
+    let result;
+    try {
+      result = engines.writeEngineConfig('claude', root, { repoFootprint: 'hands-off' }, engineProfile);
+    } finally {
+      process.env.PATH = realPath;
+    }
+
+    assert.equal(result.written, false);
+    assert.equal(result.skipped, true);
+    assert.match(result.skipReason, /probe itself failed|could not confirm/);
+    assert.equal(fs.readFileSync(path.join(root, 'CLAUDE.local.md'), 'utf8'), trackedContent);
+    assert.equal(git(root, 'status', '--porcelain', 'CLAUDE.local.md'), '', 'no tracked-file mutation even though the probe never ran');
+  });
+
   it('wrap record-only mode: the commit step skips without touching git, and pr-check skips without calling gh', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-handsoff-'));
     dirs.push(root);
