@@ -3573,6 +3573,54 @@
    * live roster actually names without this file knowing the fleet's roster. */
   const MEDUSA_WORKSPACE_ALIAS_RE = /^tc-lane-(.+)-[0-9a-f]{8}$/i;
 
+  /** @type {Set<string>} #2127 — the canonical `@orchestrator` tag and its
+   * deprecated compatibility spellings, lowercased. A browser-side mirror
+   * of `lib/master.js`'s `ORCHESTRATOR_CANONICAL_KEY`/`ORCHESTRATOR_LEGACY_KEY`
+   * (this file has no `require()` of server modules), kept narrow — only
+   * these three tokens ever reach the Master/Orchestrator fallback below;
+   * every other token keeps its existing name/alias-only resolution. */
+  const ORCHESTRATOR_NICKNAME_TOKENS = new Set(['orchestrator', 'master', 'project-master']);
+
+  /**
+   * Whether a roster entry IS the Master/Orchestrator session (#2127,
+   * Ruling A505-R3.10). Authoritative only: `lib/medusa.js#getRoster` stamps
+   * `isMaster: true, role: 'orchestrator'` on the one entry whose `id` is the
+   * server-verified `'master'`-keyed listener's workspace id. Never guesses
+   * from `w.name` (`'Project Master'`/`'orchestrator'`) or an `id` prefix
+   * (`'project-master-'`/`'orchestrator-'`) — either heuristic let a lone
+   * ORDINARY project that merely happens to share that name or id shape
+   * spoof the role when the real Master/Orchestrator was absent from the
+   * roster (I-Gate Round 3, #5799693931 C1).
+   * @param {object} w - One roster entry.
+   * @returns {boolean}
+   */
+  function _isMasterOrOrchestratorEntry(w) {
+    if (!w || !w.id) return false;
+    return w.isMaster === true || w.role === 'orchestrator';
+  }
+
+  /**
+   * Plain name/alias matches for an already-lowercased token, skipping any
+   * `id` already in `seen` (and adding every hit to it).
+   * @param {object[]} roster - `/roster`'s `workspaces` array.
+   * @param {string} lower - The lowercased token text.
+   * @param {Set<string>} seen - Ids already matched; mutated with new hits.
+   * @returns {{workspaceId: string, name: string}[]}
+   */
+  function _matchByNameOrAlias(roster, lower, seen) {
+    const out = [];
+    for (const w of roster) {
+      if (!w || !w.id || seen.has(w.id)) continue;
+      let hit = w.name && String(w.name).toLowerCase() === lower;
+      if (!hit) {
+        const alias = MEDUSA_WORKSPACE_ALIAS_RE.exec(String(w.id));
+        hit = !!(alias && alias[1].toLowerCase() === lower);
+      }
+      if (hit) { seen.add(w.id); out.push({ workspaceId: w.id, name: w.name || w.id }); }
+    }
+    return out;
+  }
+
   /**
    * Resolve one `@token` against the roster: by `workspaceId`, `name`, or
    * short alias (case-insensitive). An exact, full `workspaceId` match is
@@ -3581,6 +3629,22 @@
    * or alias — only name/alias matches can collide (#1576 I-Gate Round 2
    * C2: an offline stale workspace and its live replacement can easily
    * share both).
+   *
+   * `@orchestrator` (canonical) and `@master`/`@project-master` (deprecated
+   * compatibility aliases, #2127 Ruling A505-R3.6/R3.7) resolve ONLY through
+   * the authoritative role check (`_isMasterOrOrchestratorEntry`) once the
+   * real Master/Orchestrator is confirmed present — plain name/alias matches
+   * are unioned in alongside it so a same-named ordinary project still forces
+   * ambiguity rather than being silently preferred or silently ignored. When
+   * NO roster entry carries the authoritative role, these three tokens
+   * resolve to nothing at all — including a lone ordinary project whose
+   * display name or id happens to look like the real thing (`'Project
+   * Master'`/`'project-master-…'`, or literally `'orchestrator'`/`'master'`)
+   * — rather than falling back to that name match (Ruling A505-R3.10,
+   * I-Gate Round 3 #5799693931 C1: the real Orchestrator being offline must
+   * never make an impostor the sole, unambiguous recipient of a
+   * role-directed message). An exact workspace-id match is still the one
+   * thing that short-circuits all of this, same as before.
    * @param {string} token - The tag text, without its `@`.
    * @param {object[]} roster - `/roster`'s `workspaces` array.
    * @returns {{workspaceId: string, name: string}[]} Every matching entry —
@@ -3593,18 +3657,16 @@
         return [{ workspaceId: w.id, name: w.name || w.id }];
       }
     }
-    const matches = [];
     const seen = new Set();
-    for (const w of roster) {
-      if (!w || !w.id || seen.has(w.id)) continue;
-      let hit = w.name && String(w.name).toLowerCase() === lower;
-      if (!hit) {
-        const alias = MEDUSA_WORKSPACE_ALIAS_RE.exec(String(w.id));
-        hit = !!(alias && alias[1].toLowerCase() === lower);
-      }
-      if (hit) { seen.add(w.id); matches.push({ workspaceId: w.id, name: w.name || w.id }); }
+    if (ORCHESTRATOR_NICKNAME_TOKENS.has(lower)) {
+      const masterHits = roster.filter((w) => w && w.id && _isMasterOrOrchestratorEntry(w));
+      if (masterHits.length === 0) return [];
+      const matches = [];
+      for (const w of masterHits) { seen.add(w.id); matches.push({ workspaceId: w.id, name: w.name || w.id }); }
+      matches.push(..._matchByNameOrAlias(roster, lower, seen));
+      return matches;
     }
-    return matches;
+    return _matchByNameOrAlias(roster, lower, seen);
   }
 
   /**

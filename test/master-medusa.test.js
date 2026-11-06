@@ -25,6 +25,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const loadApiHelperGlobals = require('./_api-helper-globals');
 const http = require('node:http');
 const { setLevel } = require('../lib/logger');
 
@@ -68,6 +69,8 @@ const it = _rawIt;
 const store = require('../lib/store');
 const medusa = require('../lib/medusa');
 const master = require('../lib/master');
+const masterAuthority = require('../lib/master-authority');
+const masterContinuity = require('../lib/master-continuity');
 const medusaExchanges = require('../lib/medusa-exchanges');
 const controlApi = require('../lib/control-api');
 const { createServer, _exchangeCaller } = require('../server');
@@ -666,6 +669,22 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
     assert.deepEqual(data.workspaces.map((w) => w.id), ['live-ws']);
   });
 
+  it('lib/medusa.js#getRoster stamps isMaster/role on the Master\'s own entry, never on an ordinary one '
+    + '(#2127, Ruling A505-R3.10)', async () => {
+    startListening();
+    const masterId = master.getMasterMedusaStatus().workspaceId;
+    // A caller OTHER than the Master itself, so the Master's entry is not
+    // self-excluded and this exercises the stamping a non-Master caller sees.
+    const roster = await medusa.getRoster({ sessionId: 'some-unrelated-caller' });
+    const masterEntry = roster.find((w) => w.id === masterId);
+    const liveEntry = roster.find((w) => w.id === 'live-ws');
+    assert.ok(masterEntry, 'the Master\'s own entry must still be present for a non-Master caller');
+    assert.equal(masterEntry.isMaster, true);
+    assert.equal(masterEntry.role, 'orchestrator');
+    assert.equal(liveEntry.isMaster, undefined, 'an ordinary entry must never be stamped');
+    assert.equal(liveEntry.role, undefined);
+  });
+
   it('send works at write, and the Bridge sees the Master as the sender', async () => {
     const ws = startListening();
     const from = JSON.parse(ws.sent[0]).workspaceId;
@@ -1050,5 +1069,243 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
     assert.equal(unbound.status, 403);
     assert.equal(unbound.data.code, 'LAUNCH_BINDING_REQUIRED');
     assert.equal(store.medusaExchanges.get(mine.exchange_id).terminal_at, null);
+  });
+});
+
+describe('Orchestrator role terminology — vocabulary contract and inventory (#2127, Ruling A505-R3)', () => {
+  describe('resolveOrchestratorRoleIdentifier', () => {
+    it('matches every canonical alias as undeprecated', () => {
+      for (const alias of ['Orchestrator', 'orchestrator', '@orchestrator']) {
+        const r = master.resolveOrchestratorRoleIdentifier(alias);
+        assert.equal(r.matched, true, alias);
+        assert.equal(r.canonicalRole, 'Orchestrator');
+        assert.equal(r.canonicalKey, 'orchestrator');
+        assert.equal(r.canonicalHandle, '@orchestrator');
+        assert.equal(r.deprecated, false);
+        assert.equal(r.matchedAlias, alias);
+        assert.equal(r.deprecationNotice, undefined, 'a canonical match carries no deprecation fields');
+      }
+    });
+
+    it('matches every legacy alias as deprecated, resolving to the canonical role', () => {
+      for (const alias of ['Project Master', 'project-master', 'master', '@master']) {
+        const r = master.resolveOrchestratorRoleIdentifier(alias);
+        assert.equal(r.matched, true, alias);
+        assert.equal(r.canonicalRole, 'Orchestrator');
+        assert.equal(r.canonicalKey, 'orchestrator');
+        assert.equal(r.canonicalHandle, '@orchestrator');
+        assert.equal(r.deprecated, true);
+        assert.equal(r.matchedAlias, alias);
+        assert.match(r.deprecationNotice, /deprecated/);
+        assert.match(r.retirementCriteria, /[Nn]ot yet scheduled/);
+      }
+    });
+
+    it('never collides with a Git branch name that merely contains "master" (#2127 scope)', () => {
+      for (const branchy of ['origin/master', 'refs/heads/master', 'master-branch', 'not-master', 'MasterPlan']) {
+        assert.deepEqual(master.resolveOrchestratorRoleIdentifier(branchy), { matched: false }, branchy);
+      }
+    });
+
+    it('reads non-string input as unmatched rather than throwing', () => {
+      for (const input of [undefined, null, 42, {}, [], true]) {
+        assert.deepEqual(master.resolveOrchestratorRoleIdentifier(input), { matched: false });
+      }
+    });
+
+    it('trims whitespace before matching', () => {
+      assert.equal(master.resolveOrchestratorRoleIdentifier('  master  ').matched, true);
+    });
+  });
+
+  describe('ORCHESTRATOR_COMPATIBILITY_INVENTORY', () => {
+    const inventory = master.ORCHESTRATOR_COMPATIBILITY_INVENTORY;
+
+    it('is frozen, top-level and per-row (#2127 Acceptance Criterion 3)', () => {
+      assert.ok(Object.isFrozen(inventory));
+      for (const row of inventory) assert.ok(Object.isFrozen(row), JSON.stringify(row));
+    });
+
+    it('documents every surface the dispatch named, each with a surface, identifier, canonicalReplacement, compatibilityReason and retirementCriteria', () => {
+      const surfaces = inventory.map((row) => row.surface);
+      assert.deepEqual(
+        surfaces.sort(),
+        ['api-route', 'auth-token', 'config', 'medusa-key', 'medusa-name', 'session_rules', 'tmux-session'].sort()
+      );
+      for (const row of inventory) {
+        assert.equal(typeof row.surface, 'string', JSON.stringify(row));
+        assert.equal(typeof row.identifier, 'string', JSON.stringify(row));
+        assert.equal(typeof row.canonicalReplacement, 'string', JSON.stringify(row));
+        assert.ok(row.compatibilityReason.length > 0, JSON.stringify(row));
+        assert.match(row.retirementCriteria, /[Nn]ot yet scheduled/, JSON.stringify(row));
+      }
+    });
+
+    it('names the exact retained identifiers this codebase actually uses, not placeholders', () => {
+      const byIdentifier = new Map(inventory.map((row) => [row.surface, row.identifier]));
+      assert.equal(byIdentifier.get('config'), 'config.master');
+      assert.equal(byIdentifier.get('session_rules'), "session_rules.kind = 'master'");
+      assert.equal(byIdentifier.get('api-route'), '/api/master/*');
+      assert.equal(byIdentifier.get('auth-token'), 'tc_master_ token prefix');
+      assert.equal(byIdentifier.get('tmux-session'), master.MASTER_TMUX_SESSION);
+      assert.equal(byIdentifier.get('medusa-key'), `MASTER_MEDUSA_KEY = '${master.MASTER_MEDUSA_KEY}'`);
+      assert.equal(byIdentifier.get('medusa-name'), `MASTER_MEDUSA_NAME = '${master.MASTER_MEDUSA_NAME}'`);
+    });
+  });
+
+  describe('additive roleTerminology on every status-composition payload', () => {
+    const EXPECTED = {
+      canonicalRole: 'Orchestrator',
+      canonicalKey: 'orchestrator',
+      canonicalHandle: '@orchestrator',
+      legacyRole: 'Project Master',
+      legacyKey: 'master',
+      legacyHandle: '@master',
+      legacyDeprecated: true
+    };
+
+    it('master.ORCHESTRATOR_ROLE_TERMINOLOGY matches the dispatch\'s exact shape, frozen', () => {
+      assert.deepEqual(master.ORCHESTRATOR_ROLE_TERMINOLOGY, EXPECTED);
+      assert.ok(Object.isFrozen(master.ORCHESTRATOR_ROLE_TERMINOLOGY));
+    });
+
+    it('getMasterStatus carries it without disturbing any existing field', () => {
+      const home = tempHome();
+      try {
+        const status = master.getMasterStatus({ home, tmuxLib: fakeTmux({ alive: false }) });
+        assert.deepEqual(status.roleTerminology, EXPECTED);
+        // The fields this Train's own docstring already pins — present
+        // alongside the new one, not replaced by it.
+        assert.equal(typeof status.exists, 'boolean');
+        assert.equal(status.tmuxSession, master.MASTER_TMUX_SESSION);
+        assert.ok(status.settings);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    });
+
+    it('getAuthorityState carries it for every accessLevel, including malformed config', () => {
+      assert.deepEqual(masterAuthority.getAuthorityState(store.config.load()).roleTerminology, EXPECTED);
+      assert.deepEqual(masterAuthority.getAuthorityState(null).roleTerminology, EXPECTED);
+      assert.deepEqual(masterAuthority.getAuthorityState({}).roleTerminology, EXPECTED);
+    });
+
+    it('evaluateContinuityHealth carries it on every branch: disabled, unmeasured and measured', () => {
+      assert.deepEqual(
+        masterContinuity.evaluateContinuityHealth({}, { enabled: false }).roleTerminology, EXPECTED
+      );
+      assert.deepEqual(
+        masterContinuity.evaluateContinuityHealth({}, { enabled: true }).roleTerminology, EXPECTED
+      );
+      assert.deepEqual(
+        masterContinuity.evaluateContinuityHealth({ remainingPercent: 90 }, { enabled: true }).roleTerminology, EXPECTED
+      );
+    });
+  });
+
+  describe('Team Chat @orchestrator / @master routing (public/api-helper.js, Ruling A505-R3.6/R3.7)', () => {
+    const MASTER_ENTRY = { id: 'project-master-abc12345', name: 'Project Master', isMaster: true, role: 'orchestrator' };
+    const PROJECT_ENTRY = { id: 'tc-lane-pm-9d85f3aa', name: 'TC-Lane-PM' };
+
+    function helper() {
+      return loadApiHelperGlobals();
+    }
+
+    /**
+     * `tcParseMedusaNicknameTags` runs inside a `vm` sandbox (a separate
+     * realm from this test file), so the plain objects it RETURNS have a
+     * different `Object.prototype` than a literal written here — `assert
+     * .deepEqual` (strict mode) treats that as a structural mismatch even
+     * when every own-enumerable field matches. Round-tripping through JSON
+     * normalizes the result into THIS realm's plain objects before
+     * comparing, which the pure string-only recipients/unresolved shape
+     * tolerates losslessly.
+     * @param {object} result - `tcParseMedusaNicknameTags`'s return value.
+     * @returns {object}
+     */
+    function norm(result) {
+      return JSON.parse(JSON.stringify(result));
+    }
+
+    it('resolves @orchestrator (canonical) to the Master/Orchestrator roster entry', () => {
+      const result = norm(helper().tcParseMedusaNicknameTags('@orchestrator please look', [MASTER_ENTRY, PROJECT_ENTRY]));
+      assert.deepEqual(result.recipients, [{ tag: 'orchestrator', workspaceId: MASTER_ENTRY.id, name: MASTER_ENTRY.name }]);
+      assert.deepEqual(result.unresolved, []);
+    });
+
+    it('resolves @master (deprecated alias) to the same Master/Orchestrator roster entry', () => {
+      const result = norm(helper().tcParseMedusaNicknameTags('@master please look', [MASTER_ENTRY, PROJECT_ENTRY]));
+      assert.deepEqual(result.recipients, [{ tag: 'master', workspaceId: MASTER_ENTRY.id, name: MASTER_ENTRY.name }]);
+    });
+
+    it('resolves @project-master (deprecated alias) to the same Master/Orchestrator roster entry', () => {
+      const result = norm(helper().tcParseMedusaNicknameTags('@project-master please look', [MASTER_ENTRY, PROJECT_ENTRY]));
+      assert.deepEqual(result.recipients, [{ tag: 'project-master', workspaceId: MASTER_ENTRY.id, name: MASTER_ENTRY.name }]);
+    });
+
+    it('also matches a future canonical "Orchestrator" display name once it carries the authoritative role stamp', () => {
+      const orchestratorEntry = { id: 'orchestrator-deadbeef', name: 'Orchestrator', isMaster: true, role: 'orchestrator' };
+      const r1 = norm(helper().tcParseMedusaNicknameTags('@orchestrator', [orchestratorEntry]));
+      assert.deepEqual(r1.recipients, [{ tag: 'orchestrator', workspaceId: orchestratorEntry.id, name: 'Orchestrator' }]);
+      const r2 = norm(helper().tcParseMedusaNicknameTags('@master', [{ id: 'some-id', name: 'anything', isMaster: true }]));
+      assert.equal(r2.recipients[0].workspaceId, 'some-id');
+      const r3 = norm(helper().tcParseMedusaNicknameTags('@project-master', [{ id: 'other-id', name: 'anything else', role: 'orchestrator' }]));
+      assert.equal(r3.recipients[0].workspaceId, 'other-id', 'role: "orchestrator" alone is authoritative too, not just isMaster');
+    });
+
+    it('leaves @orchestrator/@master unresolved when no roster entry is the Master', () => {
+      const result = norm(helper().tcParseMedusaNicknameTags('@orchestrator @master', [PROJECT_ENTRY]));
+      assert.deepEqual(result.recipients, []);
+      assert.deepEqual(result.unresolved.sort(), ['master', 'orchestrator']);
+    });
+
+    it('refuses as ambiguous, fail-closed, when an ordinary project named "orchestrator" shadows the real '
+      + 'Master/Orchestrator entry — never silently routes to whichever came first (#2127 I-Gate Round 2 C1)', () => {
+      const shadowProject = { id: 'proj-orchestrator-real', name: 'orchestrator' };
+      const result = norm(helper().tcParseMedusaNicknameTags('@orchestrator private', [shadowProject, MASTER_ENTRY]));
+      assert.deepEqual(result.recipients, []);
+      assert.equal(result.ambiguous.length, 1);
+      assert.equal(result.ambiguous[0].tag, 'orchestrator');
+      assert.deepEqual(result.ambiguous[0].candidates.sort(), [MASTER_ENTRY.id, shadowProject.id].sort());
+    });
+
+    it('refuses as ambiguous when an ordinary project named "master" shadows the real Master/Orchestrator '
+      + 'entry (#2127 I-Gate Round 2 C1)', () => {
+      const shadowProject = { id: 'proj-master-real', name: 'master' };
+      const result = norm(helper().tcParseMedusaNicknameTags('@master', [shadowProject, MASTER_ENTRY]));
+      assert.deepEqual(result.recipients, []);
+      assert.equal(result.ambiguous.length, 1);
+      assert.equal(result.ambiguous[0].tag, 'master');
+      assert.deepEqual(result.ambiguous[0].candidates.sort(), [MASTER_ENTRY.id, shadowProject.id].sort());
+    });
+
+    it('fails closed (unresolved, never ambiguous-but-pickable) when the roster carries TWO "Project '
+      + 'Master"-named entries and NEITHER carries the authoritative role stamp — name/id-prefix alone is '
+      + 'no longer proof of the real Orchestrator (#2127, I-Gate Round 3 #5799693931 C1, Ruling A505-R3.10)', () => {
+      const first = { id: 'project-master-11111111', name: 'Project Master' };
+      const second = { id: 'project-master-22222222', name: 'Project Master' };
+      const result = norm(helper().tcParseMedusaNicknameTags('@orchestrator private', [first, second]));
+      assert.deepEqual(result.recipients, []);
+      assert.deepEqual(result.ambiguous, []);
+      assert.deepEqual(result.unresolved, ['orchestrator']);
+    });
+
+    it('fails closed when the real Orchestrator is ABSENT and the only entry present is a lone ordinary '
+      + 'lookalike named/prefixed like it, for all three reserved tags (#2127, I-Gate Round 3 #5799693931 C1, '
+      + 'Ruling A505-R3.10)', () => {
+      const projectMasterLookalike = { id: 'project-master-11111111', name: 'Project Master' };
+      const orchestratorLookalike = { id: 'orchestrator-11111111', name: 'orchestrator' };
+      for (const lookalike of [projectMasterLookalike, orchestratorLookalike]) {
+        const result = norm(helper().tcParseMedusaNicknameTags('@orchestrator @master @project-master', [lookalike]));
+        assert.deepEqual(result.recipients, [], JSON.stringify(lookalike));
+        assert.deepEqual(result.ambiguous, [], JSON.stringify(lookalike));
+        assert.deepEqual(result.unresolved.sort(), ['master', 'orchestrator', 'project-master'], JSON.stringify(lookalike));
+      }
+    });
+
+    it('does not disturb resolution of an ordinary, unrelated nickname', () => {
+      const result = norm(helper().tcParseMedusaNicknameTags('@pm hi', [MASTER_ENTRY, PROJECT_ENTRY]));
+      assert.deepEqual(result.recipients, [{ tag: 'pm', workspaceId: PROJECT_ENTRY.id, name: PROJECT_ENTRY.name }]);
+    });
   });
 });

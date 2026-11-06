@@ -153,10 +153,11 @@ describe('lib/ecosystem-primer (#1122)', () => {
       // `decision`, `merge-gate`, `roadmap`, `usage`, `model` or `help`
       // (#2599/#2598/#2037/#2070/#2878/#2877 — kept out of the
       // budget-constrained primed list every pane carries) is in the list
-      // every pane carries.
+      // every pane carries. `capture` (#1774) joins them: a coordinator's
+      // own diagnostic tool, not something every session needs primed.
       assert.deepEqual(
         verbsFor('unprimed', { switches: ['bridge-candidates'] }).map((v) => v.id),
-        ['help', 'queue', 'check', 'decision', 'merge-gate', 'roadmap', 'usage', 'model']
+        ['help', 'queue', 'check', 'decision', 'merge-gate', 'roadmap', 'usage', 'model', 'capture']
       );
       assert.ok(!verbsFor('pane', { switches: ['bridge-candidates'] }).some((v) => v.id === 'queue'));
       // The line itself follows only the switches it is handed. With none it

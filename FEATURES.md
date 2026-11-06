@@ -17,6 +17,20 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v5.70.0 — Workspace migration and Orchestrator controls
+
+- **Plan and execute workspace-root migration** (#2626) — `lib/tcc-workspace-migration.js#planWorkspaceMigration` reports projects under a TCC-protected root and blockers before any move; `#executeWorkspaceMigration` moves eligible directories, updates stored paths and Git worktree links, and rolls back a failed attempt.
+- **Keep selected project repositories hands-off** (#1485) — `lib/engines.js#writeEngineConfig` uses untracked `CLAUDE.local.md` for the operational guide in `repoFootprint: "hands-off"` mode. `lib/wrap-steps/commit.js` and `lib/wrap-steps/pr-check.js` record skips instead of writing commits or PRs.
+- **Inspect a session pane with `tc capture`** (#1774) — `lib/routes/tc.js` serves the scoped, read-only capture endpoint; `lib/tc-verbs.js` exposes the CLI verb. Capture responses redact credentials and every attempt is audited.
+- **Use Orchestrator vocabulary and Team Chat aliases** (#2127) — `lib/master.js#resolveOrchestratorRoleIdentifier` resolves the canonical role and legacy aliases. `public/api-helper.js#_resolveMedusaNicknameTag` routes `@orchestrator`, `@master`, and `@project-master` through the server-verified Master roster identity; load-bearing internal Master identifiers remain for compatibility.
+
+## v5.69.0 — Medusa coordination and session recovery
+
+- **Broadcast across active switchboards** (#1224) — `lib/medusa.js#broadcastAll` fans an explicitly marked `[BROADCAST scope=all]` message to other active registered workspaces, with a per-sender cooldown; `server.js` mounts the guarded broadcast route for operators and coordinators.
+- **Share Master loop controls and nickname compose** (#1083, #1576) — `public/medusa-loops-ui.js#tcCreateMedusaLoops` is mounted for both project sessions and the Master control bar. `public/api-helper.js` resolves `@nickname` tags against the live roster and sends to matching peers from the inbox compose row.
+- **Announce ready sessions to coordinators** (#1732) — `lib/launch-sequence.js` calls `lib/medusa-startup-announce.js#maybeAnnounceStartup` after READY attestation and listener activation; the project config or environment can disable announcements.
+- **Clear a stalled peer launch with a coordinator grant** (#1713) — `lib/routes/launch-recovery.js` mounts `POST /api/sessions/:project/launch/recovery-clear-peer` for a verified coordinator session from a different project. `lib/store/launch.js` records `peer-cleared` provenance in schema v79.
+
 ## v5.68.0 — Sprint tracking and continuity safeguards
 
 - **Prepare native sprint wave tracking** (#2644) — `lib/native-sprint-tracker.js` validates wave and car assignments, tracks dispatch states, builds report and O-Gate summary models, and syncs a roadmap snapshot with retry. `lib/routes/sprint-wave-routes.js#createSprintWaveRouter` and `public/sprint-wave-ui.js` provide route and browser adapters; they are not mounted in the live server or dashboard yet.
