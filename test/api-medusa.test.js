@@ -2067,6 +2067,65 @@ describe('lib/medusa — broadcastAll (#1224, explicit system-wide broadcast)', 
       assert.deepEqual(second.sentTo, first.sentTo);
       assert.deepEqual(second.failedTo, first.failedTo, 'the coalesced retry must report the SAME failure, not []');
     });
+
+    it('an identical retry arriving WHILE the first call is still in flight awaits the real result, '
+      + 'never the reservation\'s still-empty placeholder (I-Gate Round 2 C2)', async () => {
+      const t0 = 1_000_000;
+      let releaseRoster;
+      const held = new Promise((resolve) => { releaseRoster = resolve; });
+      const fetchImpl = async (url, opts) => {
+        if (url.endsWith('/workspaces')) {
+          await held;
+          return { ok: true, status: 200, json: async () => ({ workspaces: [{ id: 'target-2916-r2' }] }) };
+        }
+        return { ok: true, status: 200, json: async () => ({ success: true, status: 'received', id: 'm-1' }) };
+      };
+      const first = medusa.broadcastAll({
+        callerKind: 'operator', senderId: 'sender-inflight-ok', message: 'same message', nowMs: t0, fetchImpl
+      });
+      // No await between the two: the first call's own synchronous prefix
+      // (through the cooldown reservation) has already run by the time this
+      // line executes, so the retry's own read sees the reservation while
+      // the roster fetch above is still held open.
+      const retry = medusa.broadcastAll({
+        callerKind: 'operator', senderId: 'sender-inflight-ok', message: 'same message', nowMs: t0, fetchImpl
+      });
+      releaseRoster();
+      const [firstResult, retryResult] = await Promise.all([first, retry]);
+      assert.equal(firstResult.coalesced, false);
+      assert.deepEqual(firstResult.sentTo, ['target-2916-r2']);
+      assert.equal(retryResult.coalesced, true);
+      assert.deepEqual(retryResult.sentTo, ['target-2916-r2'], 'the retry must see the REAL delivery, not an empty placeholder');
+      assert.deepEqual(retryResult.failedTo, []);
+    });
+
+    it('an identical retry arriving WHILE the first call is still in flight rejects with the SAME error '
+      + 'when the roster fetch the first call is waiting on fails (I-Gate Round 2 C2)', async () => {
+      const t0 = 1_000_000;
+      let failRoster;
+      const held = new Promise((_resolve, reject) => { failRoster = reject; });
+      const fetchImpl = (url) => (url.endsWith('/workspaces') ? held : Promise.resolve({
+        ok: true, status: 200, json: async () => ({ success: true, status: 'received' })
+      }));
+      const first = medusa.broadcastAll({
+        callerKind: 'operator', senderId: 'sender-inflight-fail', message: 'same message', nowMs: t0, fetchImpl
+      });
+      const retry = medusa.broadcastAll({
+        callerKind: 'operator', senderId: 'sender-inflight-fail', message: 'same message', nowMs: t0, fetchImpl
+      });
+      failRoster(new Error('bridge unreachable'));
+      await assert.rejects(first, (err) => { assert.equal(err.code, 'BROADCAST_ROSTER_FAILED'); return true; });
+      await assert.rejects(retry, (err) => { assert.equal(err.code, 'BROADCAST_ROSTER_FAILED'); return true; });
+      // The failed reservation was released, not left stuck "in flight"
+      // forever — a fresh call for the same sender right after must be
+      // treated as a brand-new attempt, not rate-limited against a dead one.
+      const after = await medusa.broadcastAll({
+        callerKind: 'operator', senderId: 'sender-inflight-fail', message: 'same message', nowMs: t0 + 1,
+        fetchImpl: stubFetch({ workspaces: [{ id: 'ws-a' }] })
+      });
+      assert.equal(after.coalesced, false);
+      assert.deepEqual(after.sentTo, ['ws-a']);
+    });
   });
 });
 
