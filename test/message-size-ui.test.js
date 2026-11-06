@@ -24,6 +24,31 @@ const SESSION_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'sessio
 const LIMIT = 64 * 1024;
 
 /**
+ * Lift `api-helper.js` then `medusa-loops-ui.js` into ONE sandbox — #1083
+ * moved the loop modal's send paths (`launch`/`continueLoop`) out of
+ * session.js into this sibling component, which reads `global.tcMessageSize`/
+ * `tcTooLongText`/`tcApiFailureText` (all published by api-helper.js) rather
+ * than module-level globals, so the per-declaration `lift()` technique below
+ * (built for session.js's bare top-level functions) does not apply to it —
+ * the factory is constructed directly instead, the same convention
+ * `test/medusa-control-component.test.js` uses for this same file.
+ * @returns {object} The sandbox, carrying every `tc*` global both files publish.
+ */
+function loadMedusaLoopsGlobals() {
+  const apiHelperSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
+  const loopsSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'medusa-loops-ui.js'), 'utf8');
+  const sandbox = { console, setTimeout, clearTimeout };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(apiHelperSrc, sandbox);
+  vm.runInContext(loopsSrc, sandbox);
+  return sandbox;
+}
+
+const L = loadMedusaLoopsGlobals();
+
+/**
  * Evaluate lifted session.js functions in a sandbox with the given globals.
  * @param {string[]} decls - Declarations to lift.
  * @param {object} globals - What the functions reach for.
@@ -158,29 +183,31 @@ describe('session.js — send surfaces say why a message was too long (#1514)', 
     assert.equal(input.value, 'long command');
   });
 
-  it('continueMedusaLoop refuses an over-limit message before sending, with the sizes', async () => {
+  it('continueMedusaLoop (tcCreateMedusaLoops#continueLoop, #1083) refuses an over-limit message before sending, with the sizes', async () => {
     const { api, apiMutate, calls } = refusing413(TOO_LARGE);
     const toasts = [];
-    const ctx = lift(['async function continueMedusaLoop('], {
-      api, apiMutate, projectName: 'demo', window: G,
-      sessionState: { medusa: { messageLimitBytes: LIMIT, loops: [] } },
-      showBannerActionToast: (msg, isError) => toasts.push({ msg, isError })
+    const loops = L.tcCreateMedusaLoops({
+      doc: { getElementById: () => null }, ids: L.tcMedusaLoopIds(''),
+      api, apiMutate, apiBase: '/api/sessions/demo/medusa',
+      state: { messageLimitBytes: LIMIT, loops: [] },
+      toast: (msg, isError) => toasts.push({ msg, isError })
     });
-    await ctx.continueMedusaLoop('loop-1', 'f'.repeat(70 * 1024));
+    await loops.continueLoop('loop-1', 'f'.repeat(70 * 1024));
     assert.equal(calls.length, 0, 'nothing is posted');
     assert.equal(toasts.length, 1);
     assert.match(toasts[0].msg, /^Couldn't send feedback: message is 70\.\d KB, limit is 64 KB$/);
   });
 
-  it('continueMedusaLoop renders a server 413 the same way when no limit was known to check against', async () => {
+  it('continueMedusaLoop (tcCreateMedusaLoops#continueLoop, #1083) renders a server 413 the same way when no limit was known to check against', async () => {
     const { api, apiMutate, calls } = refusing413(TOO_LARGE);
     const toasts = [];
-    const ctx = lift(['async function continueMedusaLoop('], {
-      api, apiMutate, projectName: 'demo', window: G,
-      sessionState: { medusa: { loops: [] } },
-      showBannerActionToast: (msg) => toasts.push(msg)
+    const loops = L.tcCreateMedusaLoops({
+      doc: { getElementById: () => null }, ids: L.tcMedusaLoopIds(''),
+      api, apiMutate, apiBase: '/api/sessions/demo/medusa',
+      state: { loops: [] },
+      toast: (msg) => toasts.push(msg)
     });
-    await ctx.continueMedusaLoop('loop-1', 'f'.repeat(70 * 1024));
+    await loops.continueLoop('loop-1', 'f'.repeat(70 * 1024));
     assert.equal(calls.length, 1);
     assert.deepEqual(toasts, ["Couldn't send feedback: message is 70 KB, limit is 64 KB"]);
   });
@@ -206,16 +233,15 @@ describe('session.js — send surfaces say why a message was too long (#1514)', 
     return { document: { getElementById: (id) => els[id] || null }, els };
   }
 
-  const LOOP_FNS = ['async function launchMedusaLoop(', 'function medusaLoopPayload(', 'function renderMedusaSizeLine('];
-
-  it('launchMedusaLoop blocks an over-limit task with the sizes in the modal error, and flags the count', async () => {
+  it('launchMedusaLoop (tcCreateMedusaLoops#launch, #1083) blocks an over-limit task with the sizes in the modal error, and flags the count', async () => {
     const { api, apiMutate, calls } = refusing413(TOO_LARGE);
     const { document, els } = loopModal('t'.repeat(70 * 1024));
-    const ctx = lift(LOOP_FNS, {
-      api, apiMutate, projectName: 'demo', window: G, document,
-      sessionState: { medusa: { messageLimitBytes: LIMIT } }
+    const loops = L.tcCreateMedusaLoops({
+      doc: document, ids: L.tcMedusaLoopIds(''),
+      api, apiMutate, apiBase: '/api/sessions/demo/medusa',
+      state: { messageLimitBytes: LIMIT }
     });
-    await ctx.launchMedusaLoop();
+    await loops.launch();
     assert.equal(calls.length, 0, 'nothing is posted');
     assert.equal(els.medusaLoopError.hidden, false);
     assert.match(els.medusaLoopError.textContent, /^message is 70\.\d KB, limit is 64 KB$/);
@@ -223,14 +249,15 @@ describe('session.js — send surfaces say why a message was too long (#1514)', 
     assert.ok(els.medusaLoopSize.classList.has('is-over'));
   });
 
-  it('launchMedusaLoop posts the body it measured, and renders a server 413 with the sizes', async () => {
+  it('launchMedusaLoop (tcCreateMedusaLoops#launch, #1083) posts the body it measured, and renders a server 413 with the sizes', async () => {
     const { api, apiMutate, calls } = refusing413(TOO_LARGE);
     const { document, els } = loopModal('small task');
-    const ctx = lift(LOOP_FNS, {
-      api, apiMutate, projectName: 'demo', window: G, document,
-      sessionState: { medusa: { messageLimitBytes: LIMIT } }
+    const loops = L.tcCreateMedusaLoops({
+      doc: document, ids: L.tcMedusaLoopIds(''),
+      api, apiMutate, apiBase: '/api/sessions/demo/medusa',
+      state: { messageLimitBytes: LIMIT }
     });
-    await ctx.launchMedusaLoop();
+    await loops.launch();
     assert.equal(calls.length, 1);
     assert.deepEqual(JSON.parse(JSON.stringify(calls[0].payload)), {
       target: 'peer-ws', task: 'small task', doneCriteria: 'done', mode: 'supervised',

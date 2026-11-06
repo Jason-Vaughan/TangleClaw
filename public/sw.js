@@ -115,6 +115,13 @@ const NETWORK_FIRST_PATHS = new Set([
   // network-first so a plain reload always gets the current helper.
   '/shared-controls.css',
   '/api-helper.js',
+  // medusa-loops-ui.js is api-helper.js's own sibling (#1083): both are
+  // called at module top level by session.js/ui.js
+  // (`window.tcCreateMedusaLoops`/`window.tcCreateMasterControlBar`), so a
+  // stale cached copy against a fresh caller is the same version-skew class
+  // wrap-drawer.js is kept network-first to avoid below — keep it in the
+  // same lockstep.
+  '/medusa-loops-ui.js',
   '/session.js',
   // wrap-drawer.js is the pure-helper sibling of session.js: session.js
   // (network-first) calls its helpers directly, so a stale wrap-drawer.js

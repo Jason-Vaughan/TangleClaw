@@ -55,13 +55,16 @@ describe('tcMedusaIds — one id scheme per host, no collisions', () => {
     assert.equal(ids.panel, 'medusaPanel');
     assert.equal(ids.loop, 'medusaLoop');
   });
-  it('a prefixed host gets prefixed ids and NO loop ids', () => {
+  it('a prefixed host gets prefixed ids, including real loop ids (#1083)', () => {
     const ids = G.tcMedusaIds('masterDrawer');
     for (const v of Object.values(ids).filter(Boolean)) assert.ok(v.startsWith('masterDrawer'), v);
     assert.equal(ids.control, 'masterDrawerMedusa', 'the id the bar has always emitted');
-    assert.equal(ids.loop, null);
-    assert.equal(ids.loopsChip, null);
-    assert.equal(ids.loopsPanel, null);
+    // #1083: the Master bar now mounts the loop UI too (`tcCreateMedusaLoops`),
+    // so these three — null before this car, per #996's own deferral comment —
+    // are real, collision-safe ids like every other field here.
+    assert.equal(ids.loop, 'masterDrawerMedusaLoop');
+    assert.equal(ids.loopsChip, 'masterDrawerMedusaLoopsChip');
+    assert.equal(ids.loopsPanel, 'masterDrawerMedusaLoopsPanel');
   });
   it('two hosts on one page share no id', () => {
     const a = new Set(Object.values(G.tcMedusaIds('')).filter(Boolean));
@@ -493,7 +496,12 @@ describe('tcCreateMedusaControl — mount', () => {
     }
     assert.equal(c.mount(), true);
     assert.equal(c.mount(), true);
-    assert.deepEqual(bound, { 'heads.click': 1, 'heads.mouseenter': 1, 'heads.mouseleave': 1, 'badge.click': 1, 'panel.click': 1 });
+    assert.deepEqual(bound, {
+      'heads.click': 1, 'heads.mouseenter': 1, 'heads.mouseleave': 1, 'badge.click': 1,
+      // #1576: panel.click now also routes a nickname-compose Send click;
+      // panel.keydown is new — Enter sends from the compose input.
+      'panel.click': 1, 'panel.keydown': 1
+    });
     assert.ok(w.doc._listeners.keydown, 'Escape bound on the document');
     assert.ok(w.doc._listeners.click, 'outside click bound on the document');
   });
@@ -522,6 +530,457 @@ describe('tcCreateMedusaControl — mount', () => {
     w.el.medusaPanel.hidden = false;
     w.doc._listeners.click({ target: w.el.medusaHeads, composedPath: () => [w.el.medusaHeads, w.el.medusaControl] });
     assert.equal(w.el.medusaPanel.hidden, false);
+  });
+});
+
+/*
+ * #1576 — Team Chat `@nickname` routing, directly on the shared
+ * `tcCreateMedusaControl` component (Ruling A505-R2.4/R2.6: the shared UI
+ * surface, not a separate "Team Chat UI" that does not exist anywhere in
+ * this repo — see this car's PR body for that verification).
+ */
+describe('tcParseMedusaNicknameTags — pure tag parsing + roster resolution (#1576)', () => {
+  const ROSTER = [
+    { id: 'tc-lane-arc-4041e89e', name: 'TC-Lane-Arc', connected: true },
+    { id: 'tc-lane-pm-9d85f3aa', name: 'TC-Lane-PM', connected: true },
+    { id: 'tc-lane-prr-a-11112222', name: 'TC-Lane-PRR-A', connected: false }
+  ];
+
+  // `G.tcParseMedusaNicknameTags` runs in the lifted sandbox (a separate vm
+  // realm): its own plain objects/arrays are not reference-equal to this
+  // file's, so `assert.deepEqual` reports a false mismatch ("same structure
+  // but not reference-equal") unless both sides are normalised through
+  // JSON first — the same cross-realm fix `message-size-ui.test.js` already
+  // uses for a lifted function's own object/array results.
+  const plain = (v) => JSON.parse(JSON.stringify(v));
+
+  it('resolves a tag against the short tc-lane- alias, case-insensitively', () => {
+    const r = G.tcParseMedusaNicknameTags('@ARC please review', ROSTER);
+    assert.deepEqual(plain(r.recipients), [{ tag: 'ARC', workspaceId: 'tc-lane-arc-4041e89e', name: 'TC-Lane-Arc' }]);
+    assert.deepEqual(plain(r.unresolved), []);
+    assert.equal(r.body, '@ARC please review');
+  });
+
+  it('resolves a multi-hyphen alias (prr-a) without splitting on every hyphen', () => {
+    const r = G.tcParseMedusaNicknameTags('@prr-a take a look', ROSTER);
+    assert.deepEqual(plain(r.recipients), [{ tag: 'prr-a', workspaceId: 'tc-lane-prr-a-11112222', name: 'TC-Lane-PRR-A' }]);
+  });
+
+  it('resolves against the full workspaceId or the display name too', () => {
+    assert.equal(G.tcParseMedusaNicknameTags('@tc-lane-pm-9d85f3aa hi', ROSTER).recipients[0].workspaceId, 'tc-lane-pm-9d85f3aa');
+    assert.equal(G.tcParseMedusaNicknameTags('@TC-Lane-PM hi', ROSTER).recipients[0].workspaceId, 'tc-lane-pm-9d85f3aa');
+  });
+
+  it('skips an email-like @ (preceded by a local-part character) — never a tag', () => {
+    const r = G.tcParseMedusaNicknameTags('contact arc@example.com for details', ROSTER);
+    assert.equal(r.recipients.length, 0);
+    assert.equal(r.unresolved.length, 0);
+  });
+
+  it('reports an unmatched tag as unresolved, never silently dropped', () => {
+    const r = G.tcParseMedusaNicknameTags('@ghost are you there', ROSTER);
+    assert.deepEqual(plain(r.unresolved), ['ghost']);
+    assert.equal(r.recipients.length, 0);
+  });
+
+  it('a message with no @tag at all resolves to zero recipients (not an error here — the caller decides)', () => {
+    const r = G.tcParseMedusaNicknameTags('no tag in this one', ROSTER);
+    assert.equal(r.recipients.length, 0);
+    assert.equal(r.unresolved.length, 0);
+  });
+
+  it('dedupes a repeated tag, and two tags resolving to the same workspace, into one recipient', () => {
+    const r = G.tcParseMedusaNicknameTags('@arc @ARC @tc-lane-arc-4041e89e please', ROSTER);
+    assert.equal(r.recipients.length, 1);
+    assert.equal(r.recipients[0].workspaceId, 'tc-lane-arc-4041e89e');
+  });
+
+  it('resolves more than one distinct tag in one message', () => {
+    const r = G.tcParseMedusaNicknameTags('@arc @pm both please look', ROSTER);
+    assert.deepEqual(plain(r.recipients.map((x) => x.workspaceId).sort()), ['tc-lane-arc-4041e89e', 'tc-lane-pm-9d85f3aa']);
+  });
+});
+
+describe('tcCreateMedusaControl#sendTaggedMessage — the impure half (#1576)', () => {
+  const ROSTER = [{ id: 'tc-lane-arc-4041e89e', name: 'TC-Lane-Arc', connected: true }];
+
+  /**
+   * A control plus recording `api`/`apiMutate`, programmed by path.
+   * @param {object} [opts]
+   * @returns {{c: object, apiCalls: object[], mutateCalls: object[]}}
+   */
+  function control(opts = {}) {
+    const ids = G.tcMedusaIds('');
+    const { doc } = makeDocument(Object.values(ids).filter(Boolean));
+    const apiCalls = [];
+    const api = async (url) => {
+      apiCalls.push(url);
+      if (url.endsWith('/roster')) return opts.rosterAnswer !== undefined ? opts.rosterAnswer : { workspaces: ROSTER };
+      return null;
+    };
+    api.lastError = opts.lastError || null;
+    const mutateCalls = [];
+    const apiMutate = async (url, method, body) => {
+      mutateCalls.push({ url, method, body });
+      const key = body && body.to;
+      const answers = opts.sendAnswers || {};
+      const a = answers[key];
+      return typeof a === 'function' ? a() : (a === undefined ? { status: 'received' } : a);
+    };
+    // A live, listening participant by default — the realistic case for
+    // exercising the send path. `tcCreateMedusaControl` itself defaults an
+    // unset `state` to 'off' (the off-state refusal test below passes its
+    // own `state: 'off'` to exercise that path deliberately).
+    const state = Object.assign({ state: 'listening' }, opts.state);
+    const c = G.tcCreateMedusaControl({ doc, api, apiMutate, apiBase: '/api/sessions/p/medusa', ids, state });
+    return { c, apiCalls, mutateCalls };
+  }
+
+  it('refuses MEDUSA_SEND_BLOCKED before ever reading the roster — a read-only Master may not', async () => {
+    const { c, apiCalls } = control({ state: { outbound: { allowed: false, reason: 'read-only access level' } } });
+    const r = await c.sendTaggedMessage('@arc hi');
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'MEDUSA_SEND_BLOCKED');
+    assert.equal(r.reason, 'read-only access level');
+    assert.equal(apiCalls.length, 0);
+  });
+
+  it('refuses MEDUSA_SEND_BLOCKED while the listener is off — lib/medusa.js#sendMessage would '
+    + 'otherwise throw NOT_LISTENING (409); refused here instead of promising a send that cannot succeed', async () => {
+    const { c, apiCalls } = control({ state: { state: 'off' } });
+    const r = await c.sendTaggedMessage('@arc hi');
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'MEDUSA_SEND_BLOCKED');
+    assert.equal(apiCalls.length, 0);
+  });
+
+  it('refuses MEDUSA_ROSTER_FAILED when the roster fetch fails', async () => {
+    const { c, mutateCalls } = control({ rosterAnswer: null });
+    const r = await c.sendTaggedMessage('@arc hi');
+    assert.equal(r.code, 'MEDUSA_ROSTER_FAILED');
+    assert.equal(mutateCalls.length, 0);
+  });
+
+  it('refuses MEDUSA_NICKNAME_UNRESOLVED and sends nothing, for an unmatched tag', async () => {
+    const { c, mutateCalls } = control();
+    const r = await c.sendTaggedMessage('@ghost hi');
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'MEDUSA_NICKNAME_UNRESOLVED');
+    assert.deepEqual(JSON.parse(JSON.stringify(r.unresolved)), ['ghost']);
+    assert.equal(mutateCalls.length, 0);
+  });
+
+  it('refuses MEDUSA_NICKNAME_REQUIRED for a message with no @tag at all', async () => {
+    const { c, mutateCalls } = control();
+    const r = await c.sendTaggedMessage('no tag here');
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'MEDUSA_NICKNAME_REQUIRED');
+    assert.equal(mutateCalls.length, 0);
+  });
+
+  it('sends to the resolved recipient, preserving the @tag text in the body (Discord-style, not stripped)', async () => {
+    const { c, mutateCalls } = control();
+    const r = await c.sendTaggedMessage('@arc please review this');
+    assert.equal(r.ok, true);
+    assert.equal(mutateCalls.length, 1);
+    assert.deepEqual(JSON.parse(JSON.stringify(mutateCalls[0])), {
+      url: '/api/sessions/p/medusa/send', method: 'POST',
+      body: { to: 'tc-lane-arc-4041e89e', message: '@arc please review this' }
+    });
+  });
+
+  it('reports a per-recipient failure without aborting the others, and ok:false overall', async () => {
+    const roster = [
+      { id: 'tc-lane-arc-4041e89e', name: 'Arc' },
+      { id: 'tc-lane-pm-9d85f3aa', name: 'PM' }
+    ];
+    const { c, mutateCalls } = control({
+      rosterAnswer: { workspaces: roster },
+      sendAnswers: { 'tc-lane-arc-4041e89e': { status: 'received' }, 'tc-lane-pm-9d85f3aa': null }
+    });
+    const r = await c.sendTaggedMessage('@arc @pm both please');
+    assert.equal(r.ok, false, 'one recipient failed, so the aggregate is honest about it');
+    assert.equal(mutateCalls.length, 2, 'the failure never aborted the other send');
+    const okCount = r.results.filter((x) => x.ok).length;
+    assert.equal(okCount, 1);
+  });
+});
+
+describe('renderMessages — the nickname-compose row is gated on sendBlocked (#1576)', () => {
+  it('is present when sending is allowed (listening, no access-level block)', () => {
+    const ids = G.tcMedusaIds('');
+    const { doc } = makeDocument(Object.values(ids).filter(Boolean));
+    const c = G.tcCreateMedusaControl({ doc, api: async () => null, apiBase: '/api/sessions/p/medusa', ids, state: { state: 'listening' } });
+    assert.match(c.renderMessages([]), /medusa-nickname-compose/);
+  });
+
+  it('is absent for a read-only Master (outbound.allowed === false) — it would deterministically 403', () => {
+    const ids = G.tcMedusaIds('masterDrawer');
+    const { doc } = makeDocument(Object.values(ids).filter(Boolean));
+    const c = G.tcCreateMedusaControl({
+      doc, api: async () => null, apiBase: '/api/master/medusa', ids,
+      state: { state: 'listening', outbound: { allowed: false, reason: 'read-only' } }
+    });
+    assert.doesNotMatch(c.renderMessages([]), /medusa-nickname-compose/);
+  });
+
+  it('is absent while the listener is off — lib/medusa.js#sendMessage throws NOT_LISTENING (409) '
+    + 'for exactly this case, so offering the row would promise a send that deterministically fails', () => {
+    const ids = G.tcMedusaIds('');
+    const { doc } = makeDocument(Object.values(ids).filter(Boolean));
+    const c = G.tcCreateMedusaControl({ doc, api: async () => null, apiBase: '/api/sessions/p/medusa', ids, state: { state: 'off' } });
+    assert.doesNotMatch(c.renderMessages([]), /medusa-nickname-compose/);
+  });
+});
+
+describe('render — the badge stays reachable at zero unread so the @nickname composer can be opened (#1576 I-Gate Round 2 C1)', () => {
+  it('shows an "@" opener at zero unread when listening and not access-blocked', () => {
+    const ids = G.tcMedusaIds('');
+    const w = world(ids);
+    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
+    c.applyStatus({ state: 'listening', unread: 0 });
+    assert.equal(w.el.medusaBadge.hidden, false, 'zero unread must not make the composer unreachable');
+    assert.equal(w.el.medusaBadge.textContent, '@');
+    assert.match(w.el.medusaBadge.getAttribute('aria-label'), /tagged message/);
+  });
+
+  it('a real unread count still wins over the opener label', () => {
+    const ids = G.tcMedusaIds('');
+    const w = world(ids);
+    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
+    c.applyStatus({ state: 'listening', unread: 3 });
+    assert.equal(w.el.medusaBadge.hidden, false);
+    assert.equal(w.el.medusaBadge.textContent, '3');
+  });
+
+  it('stays hidden at zero unread while the listener is off — nothing to truthfully open yet', () => {
+    const ids = G.tcMedusaIds('');
+    const w = world(ids);
+    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
+    c.applyStatus({ state: 'off', unread: 0 });
+    assert.equal(w.el.medusaBadge.hidden, true);
+  });
+
+  it('stays hidden at zero unread for a read-only Master — the compose row it would open is hidden too', () => {
+    const ids = G.tcMedusaIds('masterDrawer');
+    const w = world(ids);
+    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/master/medusa', ids });
+    c.applyStatus({ state: 'listening', unread: 0, outbound: { allowed: false, reason: 'read-only' } });
+    assert.equal(w.el.masterDrawerMedusaBadge.hidden, true);
+  });
+});
+
+describe('tcParseMedusaNicknameTags / sendTaggedMessage — ambiguous nickname refused, not guessed (#1576 I-Gate Round 2 C2)', () => {
+  const AMBIGUOUS_ROSTER = [
+    { id: 'tc-lane-arc-11111111', name: 'TC-Lane-Arc (old, offline)', connected: false },
+    { id: 'tc-lane-arc-22222222', name: 'TC-Lane-Arc', connected: true }
+  ];
+
+  it('tcParseMedusaNicknameTags reports an alias matching two roster entries as ambiguous, not the first', () => {
+    const r = G.tcParseMedusaNicknameTags('@arc hi', AMBIGUOUS_ROSTER);
+    assert.equal(r.recipients.length, 0, 'never silently picks one');
+    assert.equal(r.ambiguous.length, 1);
+    assert.equal(r.ambiguous[0].tag, 'arc');
+    assert.deepEqual(JSON.parse(JSON.stringify(r.ambiguous[0].candidates)).sort(),
+      ['tc-lane-arc-11111111', 'tc-lane-arc-22222222']);
+  });
+
+  it('an exact, full workspaceId is authoritative even when its alias also matches another entry', () => {
+    const r = G.tcParseMedusaNicknameTags('@tc-lane-arc-22222222 hi', AMBIGUOUS_ROSTER);
+    assert.equal(r.ambiguous.length, 0);
+    assert.equal(r.recipients.length, 1);
+    assert.equal(r.recipients[0].workspaceId, 'tc-lane-arc-22222222');
+  });
+
+  it('sendTaggedMessage refuses MEDUSA_NICKNAME_AMBIGUOUS before sending anything', async () => {
+    const ids = G.tcMedusaIds('');
+    const { doc } = makeDocument(Object.values(ids).filter(Boolean));
+    const mutateCalls = [];
+    const c = G.tcCreateMedusaControl({
+      doc, api: async (url) => (url.endsWith('/roster') ? { workspaces: AMBIGUOUS_ROSTER } : null),
+      apiMutate: async (url, method, body) => { mutateCalls.push({ url, method, body }); return { status: 'received' }; },
+      apiBase: '/api/sessions/p/medusa', ids, state: { state: 'listening' }
+    });
+    const r = await c.sendTaggedMessage('@arc hi');
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'MEDUSA_NICKNAME_AMBIGUOUS');
+    assert.equal(r.ambiguous[0].tag, 'arc');
+    assert.equal(mutateCalls.length, 0);
+  });
+});
+
+describe('sendTaggedMessage — a partial multi-recipient failure retries only the unresolved recipients (#1576 I-Gate Round 2 C2)', () => {
+  it('retrying the SAME text after @arc succeeded / @pm failed resends only to @pm', async () => {
+    const roster = [{ id: 'tc-lane-arc-4041e89e', name: 'Arc' }, { id: 'tc-lane-pm-9d85f3aa', name: 'PM' }];
+    const ids = G.tcMedusaIds('');
+    const { doc } = makeDocument(Object.values(ids).filter(Boolean));
+    let pmShouldFail = true;
+    const mutateCalls = [];
+    const c = G.tcCreateMedusaControl({
+      doc, api: async (url) => (url.endsWith('/roster') ? { workspaces: roster } : null),
+      apiMutate: async (url, method, body) => {
+        mutateCalls.push({ url, method, body });
+        if (body.to === 'tc-lane-pm-9d85f3aa' && pmShouldFail) return null;
+        return { status: 'received' };
+      },
+      apiBase: '/api/sessions/p/medusa', ids, state: { state: 'listening' }
+    });
+
+    const first = await c.sendTaggedMessage('@arc @pm both please');
+    assert.equal(first.ok, false, 'PM failed, so the attempt as a whole is not ok');
+    assert.equal(mutateCalls.length, 2, 'both were attempted the first time');
+
+    pmShouldFail = false;
+    mutateCalls.length = 0;
+    const retry = await c.sendTaggedMessage('@arc @pm both please');
+    assert.equal(retry.ok, true);
+    assert.equal(mutateCalls.length, 1, 'only PM is re-sent — Arc, already delivered, is never posted to twice');
+    assert.equal(mutateCalls[0].body.to, 'tc-lane-pm-9d85f3aa');
+  });
+
+  it('editing the text before retrying starts a fresh attempt — the old delivery tracking does not leak in', async () => {
+    const roster = [{ id: 'tc-lane-arc-4041e89e', name: 'Arc' }];
+    const ids = G.tcMedusaIds('');
+    const { doc } = makeDocument(Object.values(ids).filter(Boolean));
+    const mutateCalls = [];
+    const c = G.tcCreateMedusaControl({
+      doc, api: async (url) => (url.endsWith('/roster') ? { workspaces: roster } : null),
+      apiMutate: async (url, method, body) => { mutateCalls.push({ url, method, body }); return { status: 'received' }; },
+      apiBase: '/api/sessions/p/medusa', ids, state: { state: 'listening' }
+    });
+    await c.sendTaggedMessage('@arc first message');
+    assert.equal(mutateCalls.length, 1);
+    await c.sendTaggedMessage('@arc a different message');
+    assert.equal(mutateCalls.length, 2, 'a genuinely new message to the SAME recipient must still send');
+  });
+});
+
+describe('sendTaggedMessage — single-flight: a concurrent call while one is already in progress never double-posts '
+  + '(#1576 I-Gate Round 3 C2)', () => {
+  it('a second call arriving while the first is still awaiting apiMutate is refused with MEDUSA_SEND_IN_FLIGHT, '
+    + 'and only one POST ever reaches the Bridge', async () => {
+    const roster = [{ id: 'tc-lane-arc-4041e89e', name: 'Arc' }];
+    const ids = G.tcMedusaIds('');
+    const { doc } = makeDocument(Object.values(ids).filter(Boolean));
+    let releaseFirstSend;
+    const held = new Promise((resolve) => { releaseFirstSend = resolve; });
+    const mutateCalls = [];
+    const c = G.tcCreateMedusaControl({
+      doc, api: async (url) => (url.endsWith('/roster') ? { workspaces: roster } : null),
+      apiMutate: async (url, method, body) => {
+        mutateCalls.push({ url, method, body });
+        await held;
+        return { status: 'received' };
+      },
+      apiBase: '/api/sessions/p/medusa', ids, state: { state: 'listening' }
+    });
+
+    const first = c.sendTaggedMessage('@arc hi');
+    // The second call is dispatched without awaiting the first — a quick
+    // double-click or Enter-then-click — while the first is still inside
+    // its own held `apiMutate` call.
+    const second = await c.sendTaggedMessage('@arc hi');
+    assert.equal(second.ok, false);
+    assert.equal(second.code, 'MEDUSA_SEND_IN_FLIGHT');
+    assert.equal(mutateCalls.length, 1, 'the second call never reaches apiMutate at all');
+
+    releaseFirstSend();
+    const firstResult = await first;
+    assert.equal(firstResult.ok, true);
+    assert.equal(mutateCalls.length, 1, 'still exactly one POST — the finding\'s own double-delivery never happens');
+  });
+
+  it('the guard releases once the first call finishes — a THIRD call right after succeeds normally', async () => {
+    const roster = [{ id: 'tc-lane-arc-4041e89e', name: 'Arc' }];
+    const ids = G.tcMedusaIds('');
+    const { doc } = makeDocument(Object.values(ids).filter(Boolean));
+    const mutateCalls = [];
+    const c = G.tcCreateMedusaControl({
+      doc, api: async (url) => (url.endsWith('/roster') ? { workspaces: roster } : null),
+      apiMutate: async (url, method, body) => { mutateCalls.push({ url, method, body }); return { status: 'received' }; },
+      apiBase: '/api/sessions/p/medusa', ids, state: { state: 'listening' }
+    });
+    await c.sendTaggedMessage('@arc first');
+    const after = await c.sendTaggedMessage('@arc second');
+    assert.equal(after.ok, true, 'the in-flight flag must not stick once a call has actually finished');
+    assert.equal(mutateCalls.length, 2);
+  });
+});
+
+describe('_submitTaggedMessage — a draft typed while the first submit is still pending survives it, and a stale '
+  + 'error is cleared on success (#1576 I-Gate Round 4 C2)', () => {
+  /**
+   * A bare panel element holding exactly the two children
+   * `_submitTaggedMessage` reads/writes by class — the composer's real
+   * markup is this flat, so no deeper DOM is needed.
+   * @param {object} doc - The mini-dom document.
+   * @returns {{panelEl: object, input: object, errorEl: object}}
+   */
+  function nicknameRow(doc) {
+    const panelEl = doc.createElement('div');
+    const input = doc.createElement('input');
+    input.className = 'medusa-nickname-input';
+    input.value = '';
+    const errorEl = doc.createElement('div');
+    errorEl.className = 'medusa-nickname-error';
+    errorEl.hidden = true;
+    panelEl.appendChild(input);
+    panelEl.appendChild(errorEl);
+    return { panelEl, input, errorEl };
+  }
+
+  it('a held first submit: editing the field and submitting again is refused, in-flight, without touching '
+    + 'the new draft; the first submit\'s eventual success preserves that draft and clears the stale error', async () => {
+    const roster = [{ id: 'tc-lane-arc-4041e89e', name: 'Arc' }];
+    const ids = G.tcMedusaIds('');
+    const { doc } = makeDocument(Object.values(ids).filter(Boolean));
+    const { panelEl, input, errorEl } = nicknameRow(doc);
+    let releaseFirstSend;
+    const held = new Promise((resolve) => { releaseFirstSend = resolve; });
+    const mutateCalls = [];
+    const c = G.tcCreateMedusaControl({
+      doc, api: async (url) => (url.endsWith('/roster') ? { workspaces: roster } : null),
+      apiMutate: async (url, method, body) => {
+        mutateCalls.push({ url, method, body });
+        await held;
+        return { status: 'received' };
+      },
+      apiBase: '/api/sessions/p/medusa', ids, state: { state: 'listening' }
+    });
+
+    input.value = '@arc first message';
+    const firstSubmit = c._submitTaggedMessage(panelEl);
+
+    // The operator types a NEW draft and hits Send again while the first
+    // is still held open on its POST.
+    input.value = '@arc second, different draft';
+    await c._submitTaggedMessage(panelEl);
+    assert.equal(mutateCalls.length, 1, 'the second submit never reaches apiMutate — refused in-flight');
+    assert.equal(errorEl.hidden, false);
+    assert.match(errorEl.textContent, /already sending/i);
+    assert.equal(input.value, '@arc second, different draft', 'the in-flight refusal must not touch the field at all');
+
+    releaseFirstSend();
+    await firstSubmit;
+    assert.equal(input.value, '@arc second, different draft', 'the first submit\'s success must not erase the NEW draft');
+    assert.equal(errorEl.hidden, true, 'the now-stale "already sending" error must be cleared once nothing is in flight');
+    assert.equal(errorEl.textContent, '');
+  });
+
+  it('a normal (non-overlapping) successful submit still clears the field, exactly as before', async () => {
+    const roster = [{ id: 'tc-lane-arc-4041e89e', name: 'Arc' }];
+    const ids = G.tcMedusaIds('');
+    const { doc } = makeDocument(Object.values(ids).filter(Boolean));
+    const { panelEl, input, errorEl } = nicknameRow(doc);
+    const c = G.tcCreateMedusaControl({
+      doc, api: async (url) => (url.endsWith('/roster') ? { workspaces: roster } : null),
+      apiMutate: async () => ({ status: 'received' }),
+      apiBase: '/api/sessions/p/medusa', ids, state: { state: 'listening' }
+    });
+    input.value = '@arc hi';
+    await c._submitTaggedMessage(panelEl);
+    assert.equal(input.value, '', 'the ordinary case — nothing typed over it in the meantime — still clears');
+    assert.equal(errorEl.hidden, true);
   });
 });
 
@@ -624,5 +1083,307 @@ describe('the live-loop glow must not erase the mark\'s state channel (#556)', (
       classCount(reduced[1]) >= classCount(animated.split('{')[0]),
       `reduced-motion selector (${reduced[1].trim()}) must not be less specific than the rule it suppresses`
     );
+  });
+});
+
+/*
+ * #1083 — the loop setup modal/chip/panel, extracted from `session.js` into
+ * the sibling shared component `public/medusa-loops-ui.js#tcCreateMedusaLoops`
+ * so the Master bar can mount it too. Before this car it was reachable only
+ * from `session.js` — a page script that cannot be require()d (see this
+ * file's own header) — so NONE of what follows existed as automated coverage
+ * previously; it was "tested" only by grepping source, the exact gap #928 R-1
+ * flags as proving nothing about runtime.
+ *
+ * What is pinned:
+ *   1. The id scheme: real, collision-safe ids for a prefixed host (not null
+ *      — the gap #996 deliberately left open, closed here).
+ *   2. Markup: every id the component drives is present, for both subjects.
+ *   3. `canLaunch` gating via `onControlRender`: `outbound.allowed === false`
+ *      (a read-only Master, #1083's own stated requirement) hides the launch
+ *      affordance even while the listener is on — not just the `state === 'off'`
+ *      case the session always had.
+ *   4. The chip's live/ended/error labelling, and escaping of loop/peer text
+ *      the panel renders (cross-session data, same discipline as the base
+ *      control's own inbox panel).
+ *   5. `mount()` binds once; the ➤ button fetches the roster and opens the modal.
+ *   6. `guardPresets` is a real override seam, not a hardcoded value — the
+ *      Master-specific-preset decision #1083's own issue names as open stays
+ *      open; this only pins that a future car has somewhere to put the answer.
+ */
+
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+/**
+ * Lift `api-helper.js` then `medusa-loops-ui.js` into ONE sandbox — the
+ * second file reads `global.tcMedusaIds`/`tcMessageSize`/`tcTooLongText`/
+ * `tcApiFailureText`/`tcEscapeHtml`, all published by the first, exactly the
+ * way they run on a real page (api-helper.js's script tag loads first).
+ * @returns {object} The sandbox, carrying every `tc*` global both files publish.
+ */
+function loadMedusaLoopsGlobals() {
+  const apiHelperSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
+  const loopsSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'medusa-loops-ui.js'), 'utf8');
+  const sandbox = { console, setTimeout, clearTimeout };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(apiHelperSrc, sandbox);
+  vm.runInContext(loopsSrc, sandbox);
+  return sandbox;
+}
+
+const L = loadMedusaLoopsGlobals();
+
+/**
+ * A document holding one loops-UI instance's elements, plus a recording
+ * `api`/`apiMutate` a test programs by path. Mirrors this file's own `world()`
+ * above, extended with the modal's form fields and the loop-UI's own default
+ * resting state (`modal` carries no `.open` class until opened; `loopsChip`/
+ * `loopsPanel` start hidden, same as the base control's).
+ * @param {object} ids - From `tcMedusaLoopIds`.
+ * @param {object} [answers] - path (relative to apiBase) → payload, or a function.
+ * @param {object} [mutateAnswers] - `${method} ${path}` → payload, or a function.
+ * @returns {{doc: object, el: object, calls: object[], mutateCalls: object[],
+ *   api: Function, apiMutate: Function}}
+ */
+function loopsWorld(ids, answers = {}, mutateAnswers = {}) {
+  const { doc, ids: el } = makeDocument(Object.values(ids).filter(Boolean));
+  for (const key of ['loop', 'loopsChip', 'loopsPanel']) if (el[ids[key]]) el[ids[key]].hidden = true;
+  // Unlike `hidden`/`innerHTML`, the mini DOM's `makeElement` declares no
+  // default for `.value` — a real browser's form fields are never `undefined`
+  // (`.value` defaults to `''`), so an untouched field here would crash
+  // `payload()`'s `.trim()` the way no real page ever does.
+  for (const key of ['target', 'task', 'done', 'mode', 'maxRounds', 'maxMinutes']) {
+    if (el[ids[key]]) el[ids[key]].value = '';
+  }
+  doc.addEventListener = (type, fn) => { (doc._listeners || (doc._listeners = {}))[type] = fn; };
+  doc.activeElement = null;
+  const calls = [];
+  const api = async (url, opts) => {
+    calls.push({ url, opts: opts || null });
+    const key = url.replace(/^.*\/medusa\//, '');
+    const a = answers[key];
+    return typeof a === 'function' ? a() : (a === undefined ? null : a);
+  };
+  api.lastError = null;
+  const mutateCalls = [];
+  const apiMutate = async (url, method, body) => {
+    mutateCalls.push({ url, method, body });
+    const key = `${method} ${url.replace(/^.*\/medusa\//, '')}`;
+    const a = mutateAnswers[key];
+    return typeof a === 'function' ? a() : (a === undefined ? null : a);
+  };
+  return { doc, el, calls, mutateCalls, api, apiMutate };
+}
+
+describe('tcMedusaLoopIds — combines the base control ids with the modal\'s own', () => {
+  it('the session keeps its historical unprefixed ids', () => {
+    const ids = L.tcMedusaLoopIds('');
+    assert.equal(ids.loop, 'medusaLoop');
+    assert.equal(ids.loopsChip, 'medusaLoopsChip');
+    assert.equal(ids.loopsPanel, 'medusaLoopsPanel');
+    assert.equal(ids.modal, 'medusaLoopModal');
+    assert.equal(ids.target, 'medusaLoopTarget');
+    assert.equal(ids.launchBtn, 'medusaLoopLaunchBtn');
+  });
+  it('a prefixed host gets every field prefixed, colliding with nothing the session uses', () => {
+    const unprefixed = new Set(Object.values(L.tcMedusaLoopIds('')).filter(Boolean));
+    const ids = L.tcMedusaLoopIds('masterDrawer');
+    for (const v of Object.values(ids).filter(Boolean)) {
+      assert.ok(v.startsWith('masterDrawer'), v);
+      assert.ok(!unprefixed.has(v), `${v} collides with the session's own id`);
+    }
+    assert.equal(ids.modal, 'masterDrawerMedusaLoopModal');
+    assert.equal(ids.maxMinutes, 'masterDrawerMedusaLoopMaxMinutes');
+  });
+});
+
+describe('tcMedusaLoopsControlMarkup / tcMedusaLoopModalMarkup', () => {
+  it('the inline markup carries every id the component mounts on', () => {
+    const ids = L.tcMedusaLoopIds('masterPanel');
+    const html = L.tcMedusaLoopsControlMarkup(ids, 'the Master');
+    for (const key of ['loop', 'loopsChip', 'loopsPanel']) {
+      assert.match(html, new RegExp(`id="${ids[key]}"`), `${key} missing`);
+    }
+    assert.match(html, /aria-label="Set up a loop for the Master"/);
+    assert.doesNotMatch(html, /master-bar-pending|aria-disabled/, 'no pending treatment by default');
+  });
+  it('the modal markup carries every form field id, and escapes a subject with markup-looking text', () => {
+    const ids = L.tcMedusaLoopIds('masterDrawer');
+    const html = L.tcMedusaLoopModalMarkup(ids, 'a Master loop');
+    for (const key of ['modal', 'target', 'rosterStatus', 'task', 'done', 'size', 'mode', 'maxRounds', 'maxMinutes', 'guardHint', 'error', 'cancelBtn', 'launchBtn']) {
+      assert.match(html, new RegExp(`id="${ids[key]}"`), `${key} missing`);
+    }
+    assert.match(html, /class="modal-backdrop"/);
+  });
+});
+
+describe('tcCreateMedusaLoops — onControlRender (#1083 outbound.allowed gating)', () => {
+  it('hides the launch affordance when the listener is off, same as before #1083', () => {
+    const ids = L.tcMedusaLoopIds('');
+    const w = loopsWorld(ids);
+    const loops = L.tcCreateMedusaLoops({ doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/sessions/p/medusa', state: {} });
+    loops.onControlRender({ state: 'off', loops: [] });
+    assert.equal(w.el[ids.loop].hidden, true);
+  });
+  it('shows the launch affordance when listening and outbound is allowed (the default)', () => {
+    const ids = L.tcMedusaLoopIds('');
+    const w = loopsWorld(ids);
+    const loops = L.tcCreateMedusaLoops({ doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/sessions/p/medusa', state: {} });
+    loops.onControlRender({ state: 'listening', loops: [], outbound: { allowed: true, reason: null } });
+    assert.equal(w.el[ids.loop].hidden, false);
+  });
+  it('hides the launch affordance for a listening-but-outbound-blocked participant (a read-only Master, #1083)', () => {
+    const ids = L.tcMedusaLoopIds('masterDrawer');
+    const w = loopsWorld(ids);
+    const loops = L.tcCreateMedusaLoops({ doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/master/medusa', state: {} });
+    loops.onControlRender({ state: 'listening', loops: [], outbound: { allowed: false, reason: 'read-only' } });
+    assert.equal(w.el[ids.loop].hidden, true, 'read-only must not offer a launch that would 403');
+  });
+  it('closing-the-modal side effect: going outbound-blocked while the modal is open closes it', () => {
+    const ids = L.tcMedusaLoopIds('');
+    const w = loopsWorld(ids);
+    const loops = L.tcCreateMedusaLoops({ doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/sessions/p/medusa', state: {} });
+    w.el[ids.modal].classList.add('open');
+    loops.onControlRender({ state: 'listening', loops: [], outbound: { allowed: false, reason: 'read-only' } });
+    assert.ok(!w.el[ids.modal].classList.contains('open'));
+  });
+});
+
+describe('tcCreateMedusaLoops — renderChip', () => {
+  it('stays hidden with no loops and no error', () => {
+    const ids = L.tcMedusaLoopIds('');
+    const w = loopsWorld(ids);
+    const loops = L.tcCreateMedusaLoops({ doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/sessions/p/medusa', state: {} });
+    loops.renderChip({ loops: [], loopsError: null });
+    assert.equal(w.el[ids.loopsChip].hidden, true);
+    assert.equal(w.el[ids.control].classList.contains('has-live-loop'), false);
+  });
+  it('shows a round count for one live loop, and flags has-live-loop on the control', () => {
+    const ids = L.tcMedusaLoopIds('');
+    const w = loopsWorld(ids);
+    const loops = L.tcCreateMedusaLoops({ doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/sessions/p/medusa', state: {} });
+    loops.renderChip({ loops: [{ id: 'l1', state: 'initiated', round: 1, guards: { maxRounds: 10 } }], loopsError: null });
+    assert.equal(w.el[ids.loopsChip].hidden, false);
+    assert.equal(w.el[ids.loopsChip].textContent, '⟳ R1/10');
+    assert.equal(w.el[ids.control].classList.contains('has-live-loop'), true);
+  });
+  it('surfaces a loopsError on the chip without throwing', () => {
+    const ids = L.tcMedusaLoopIds('');
+    const w = loopsWorld(ids);
+    const loops = L.tcCreateMedusaLoops({ doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/sessions/p/medusa', state: {} });
+    loops.renderChip({ loops: [], loopsError: 'bridge down' });
+    assert.equal(w.el[ids.loopsChip].hidden, false);
+    assert.match(w.el[ids.loopsChip].getAttribute('aria-label'), /bridge down/);
+  });
+});
+
+describe('tcCreateMedusaLoops — renderPanel row actions gated on outbound.allowed (#1083 I-Gate Round 1 C2)', () => {
+  const LIVE_LOOP = { id: 'loop-1', role: 'initiator', state: 'responded', round: 2, target: 'peer-ws', guards: { maxRounds: 10 } };
+
+  it('a live initiator loop offers Send feedback / Mark done / Force-done when outbound is allowed (the default)', async () => {
+    const ids = L.tcMedusaLoopIds('');
+    const w = loopsWorld(ids);
+    const state = { loops: [LIVE_LOOP], outbound: { allowed: true, reason: null } };
+    const loops = L.tcCreateMedusaLoops({ doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/sessions/p/medusa', state });
+    loops.mount();
+    w.el[ids.loopsChip].dispatch('click');
+    await new Promise((r) => setTimeout(r, 0));
+    const html = w.el[ids.loopsPanel].innerHTML;
+    assert.match(html, /medusa-loop-continue/);
+    assert.match(html, /medusa-loop-closeout/);
+    assert.match(html, /medusa-force-done/);
+  });
+
+  it('a read-only Master (outbound.allowed === false) gets the reason instead of mutation controls, '
+    + 'but transcript stays available — the three Master routes behind them all 403 (#1083)', async () => {
+    const ids = L.tcMedusaLoopIds('masterDrawer');
+    const w = loopsWorld(ids);
+    const state = { loops: [LIVE_LOOP], outbound: { allowed: false, reason: 'read-only access level' } };
+    const loops = L.tcCreateMedusaLoops({ doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/master/medusa', state });
+    loops.mount();
+    w.el[ids.loopsChip].dispatch('click');
+    await new Promise((r) => setTimeout(r, 0));
+    const html = w.el[ids.loopsPanel].innerHTML;
+    assert.doesNotMatch(html, /medusa-loop-continue/, 'Send feedback must not be offered');
+    assert.doesNotMatch(html, /medusa-loop-closeout/, 'Mark done must not be offered');
+    assert.doesNotMatch(html, /medusa-force-done/, 'Force-done must not be offered');
+    assert.match(html, /read-only access level/, 'the server\'s own reason must be shown');
+    assert.match(html, /medusa-loop-transcript-toggle/, 'read-only affordances (transcript) stay available');
+  });
+});
+
+describe('tcCreateMedusaLoops — mount() binds once; the ➤ button fetches the roster', () => {
+  it('opening the modal fetches the roster and populates the target picker', async () => {
+    const ids = L.tcMedusaLoopIds('');
+    const w = loopsWorld(ids, { roster: { workspaces: [{ id: 'live-ws', name: 'Live', connected: true }] } });
+    const loops = L.tcCreateMedusaLoops({ doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/sessions/p/medusa', state: {} });
+    loops.mount();
+    const fired = w.el[ids.loop].dispatch('click');
+    assert.ok(fired);
+    // The fetch is awaited inside the click handler's own async function, not
+    // by this dispatch — give it a tick to resolve before asserting.
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(w.el[ids.modal].classList.contains('open'), true);
+    assert.match(w.el[ids.target].innerHTML, /Live/);
+    assert.equal(w.calls[0].url, '/api/sessions/p/medusa/roster');
+  });
+  it('a second mount() does not double-bind (two clicks, not a double roster fetch per click)', () => {
+    const ids = L.tcMedusaLoopIds('');
+    const w = loopsWorld(ids, { roster: { workspaces: [] } });
+    const loops = L.tcCreateMedusaLoops({ doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/sessions/p/medusa', state: {} });
+    loops.mount();
+    loops.mount();
+    w.el[ids.loop].dispatch('click');
+    assert.equal(w.calls.length, 1, 'one bind, one fetch per click');
+  });
+});
+
+describe('tcCreateMedusaLoops — guardPresets is a real override seam (#1083), partial-merged per mode', () => {
+  it('defaults to the session\'s historical presets for both maxMinutes and maxRounds', () => {
+    const ids = L.tcMedusaLoopIds('');
+    const w = loopsWorld(ids);
+    const loops = L.tcCreateMedusaLoops({ doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/sessions/p/medusa', state: {} });
+    loops.mount();
+    w.el[ids.mode].value = 'autonomous';
+    w.el[ids.mode].dispatch('change');
+    assert.equal(w.el[ids.maxMinutes].value, String(L.tcMedusaLoopGuardPresets.autonomous.maxMinutes));
+    assert.equal(w.el[ids.maxRounds].value, String(L.tcMedusaLoopGuardPresets.autonomous.maxRounds));
+  });
+  it('an injected guardPresets overrides the default, for a host that has decided its own', () => {
+    const ids = L.tcMedusaLoopIds('masterDrawer');
+    const w = loopsWorld(ids);
+    const loops = L.tcCreateMedusaLoops({
+      doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/master/medusa', state: {},
+      guardPresets: { supervised: { maxMinutes: 5, maxRounds: 2, hint: 'master-specific' }, autonomous: { maxMinutes: 1, maxRounds: 1, hint: 'master-specific' } }
+    });
+    loops.mount();
+    w.el[ids.mode].dispatch('change');
+    assert.equal(w.el[ids.maxMinutes].value, '5');
+    assert.equal(w.el[ids.maxRounds].value, '2');
+    assert.equal(w.el[ids.guardHint].textContent, 'master-specific');
+  });
+  it('Ruling A505-R2.6 — a PARTIAL autonomous-only override (Master\'s ratified 6 rounds / 15 minutes) leaves '
+    + 'supervised at the session default, and never drops autonomous\'s own hint when only the numbers are given', () => {
+    const ids = L.tcMedusaLoopIds('masterPanel');
+    const w = loopsWorld(ids);
+    const loops = L.tcCreateMedusaLoops({
+      doc: w.doc, ids, api: w.api, apiMutate: w.apiMutate, apiBase: '/api/master/medusa', state: {},
+      guardPresets: { autonomous: { maxRounds: 6, maxMinutes: 15 } }
+    });
+    loops.mount();
+    w.el[ids.mode].value = 'autonomous';
+    w.el[ids.mode].dispatch('change');
+    assert.equal(w.el[ids.maxRounds].value, '6');
+    assert.equal(w.el[ids.maxMinutes].value, '15');
+    assert.equal(w.el[ids.guardHint].textContent, L.tcMedusaLoopGuardPresets.autonomous.hint, 'the default hint survives a numbers-only override');
+
+    w.el[ids.mode].value = 'supervised';
+    w.el[ids.mode].dispatch('change');
+    assert.equal(w.el[ids.maxRounds].value, String(L.tcMedusaLoopGuardPresets.supervised.maxRounds), 'supervised is untouched by an autonomous-only override');
+    assert.equal(w.el[ids.maxMinutes].value, String(L.tcMedusaLoopGuardPresets.supervised.maxMinutes));
   });
 });

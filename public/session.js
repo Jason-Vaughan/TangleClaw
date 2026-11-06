@@ -1679,13 +1679,22 @@ let pollTimer = null;
 // The control itself lives in `public/api-helper.js#tcCreateMedusaControl` —
 // the Master control bar mounts the very same one at `/api/master/medusa`, which
 // is the #768 reuse-don't-fork rule made concrete. This page owns only what the
-// component deliberately does not: the loop button, the loops chip and the loops
-// panel, reached through the component's hooks, plus the thin names below that
-// the loop code has always called.
+// component deliberately does not: the loop modal/chip/panel, which since
+// #1083 is ITSELF a sibling shared component — `public/medusa-loops-ui.js#
+// tcCreateMedusaLoops`, mounted on the Master bar too — reached through both
+// components' hooks, plus the thin names below that outside code has always
+// called.
 
+// Forward-declared: `medusaControl`'s own hooks (below) call into
+// `medusaLoops`, which is created afterwards and calls back into
+// `medusaControl.render()` — safe because neither reference is read until a
+// later render/mutation, by which point both are assigned (same pattern
+// `tcCreateMasterControlBar` uses for its own pair of these two components).
+let medusaLoops = null;
 const medusaControl = window.tcCreateMedusaControl({
   doc: document,
   api,
+  apiMutate,
   esc,
   apiBase: `/api/sessions/${encodeURIComponent(projectName)}/medusa`,
   ids: window.tcMedusaIds(''),
@@ -1694,20 +1703,30 @@ const medusaControl = window.tcCreateMedusaControl({
   // object it has always read rather than a copy that could drift from it.
   state: sessionState.medusa,
   hooks: {
-    onRender: (m) => {
-      // Loop launch (outbound) is only meaningful while the listener is on — you
-      // must be registered to be a truthful initiator. Hide it (and any open
-      // setup modal) when off so an off session never offers a launch that
-      // would fail.
-      const loopBtn = document.getElementById('medusaLoop');
-      if (loopBtn) {
-        const canSend = m.state !== 'off';
-        loopBtn.hidden = !canSend;
-        if (!canSend) closeMedusaLoopModal();
-      }
-      renderMedusaLoopsChip(m);
-    },
-    onOpenInbox: closeMedusaLoopModal
+    onRender: (m) => { if (medusaLoops) medusaLoops.onControlRender(m); },
+    onOpenInbox: () => { if (medusaLoops) medusaLoops.closeModal(); }
+  }
+});
+
+medusaLoops = window.tcCreateMedusaLoops({
+  doc: document,
+  api,
+  apiMutate,
+  esc,
+  apiBase: `/api/sessions/${encodeURIComponent(projectName)}/medusa`,
+  ids: window.tcMedusaLoopIds(''),
+  state: sessionState.medusa,
+  renderControl: () => medusaControl.render(),
+  toast: (msg, isError) => showBannerActionToast(msg, isError),
+  flowOutbound: (label, status) => medusaControl.flowOutbound(label, status),
+  hooks: {
+    // Mirrors the historical inline calls in `openMedusaLoopModal`/
+    // `openMedusaLoopsPanel`: close every sibling popover in the Medusa
+    // control cluster first, so this modal/panel and a sibling can never
+    // both be open at once. The permission-requests panel is this page's
+    // own (not part of either shared component), so it stays here.
+    onOpenModal: () => { closeMedusaInbox(); hideMedusaPeers(); },
+    onOpenPanel: () => { closeMedusaInbox(); hideMedusaPeers(); closePermissionRequestsPanel(); }
   }
 });
 
@@ -1817,8 +1836,8 @@ function togglePermissionRequestsPanel() {
   if (!panel.hidden) { closePermissionRequestsPanel(); return; }
   closeMedusaInbox();
   hideMedusaPeers();
-  closeMedusaLoopModal();
-  closeMedusaLoopsPanel();
+  medusaLoops.closeModal();
+  medusaLoops.closePanel();
   panel.hidden = false;
   if (chip) chip.setAttribute('aria-expanded', 'true');
   renderPermissionRequestsPanel(sessionState.permissionRequests);
@@ -1883,577 +1902,6 @@ function hideMedusaPeers() { medusaControl.hidePeers(); }
  * @returns {void}
  */
 function flowMedusaOutbound(label, status) { medusaControl.flowOutbound(label, status); }
-
-
-/** @type {string[]} Loop states in which the Bridge still accepts messages/close (mirrors lib/medusa). */
-const MEDUSA_LIVE_LOOP_STATES = ['initiated', 'responded', 'continue'];
-
-/**
- * Sync the loop-view chip + the live-loop glow to the session's known loops
- * (MED-2K9P v2 T4). The chip is the ALWAYS-TEXT status cue (round count for a
- * single live loop, a count otherwise) so state is never color-only; the glow
- * on the mark is the ambient counterpart. Hidden when no loops are known. If
- * the loops panel is open, its content re-renders on the same poll so the
- * round count / state it shows is live.
- * @param {{state: string, loops: Array<object>, loopsError: (string|null)}} m - Medusa state.
- * @returns {void}
- */
-function renderMedusaLoopsChip(m) {
-  const chip = document.getElementById('medusaLoopsChip');
-  const control = document.getElementById('medusaControl');
-  if (!chip || !control) return;
-  const loops = m.loops || [];
-  const live = loops.filter((l) => MEDUSA_LIVE_LOOP_STATES.includes(l.state));
-
-  control.classList.toggle('has-live-loop', live.length > 0);
-
-  if (!loops.length && !m.loopsError) {
-    chip.hidden = true;
-    const panel = document.getElementById('medusaLoopsPanel');
-    if (panel && !panel.hidden) closeMedusaLoopsPanel();
-    return;
-  }
-  chip.hidden = false;
-  if (m.loopsError) {
-    chip.textContent = '⟳ ?';
-    chip.setAttribute('aria-label', `Session loops unavailable: ${m.loopsError}`);
-  } else if (live.length === 1) {
-    const l = live[0];
-    const max = l.guards && l.guards.maxRounds ? `/${l.guards.maxRounds}` : '';
-    chip.textContent = `⟳ R${l.round}${max}`;
-    chip.setAttribute('aria-label', `Open session loops (1 live loop, round ${l.round}${max ? ` of ${l.guards.maxRounds}` : ''})`);
-  } else if (live.length > 1) {
-    chip.textContent = `⟳ ${live.length}`;
-    chip.setAttribute('aria-label', `Open session loops (${live.length} live loops)`);
-  } else {
-    chip.textContent = `⟳ ${loops.length} ended`;
-    chip.setAttribute('aria-label', `Open session loops (${loops.length} ended)`);
-  }
-
-  const panel = document.getElementById('medusaLoopsPanel');
-  if (panel && !panel.hidden) renderMedusaLoopsPanel();
-}
-
-/**
- * Per-mode wall-clock guard presets for the loop modal (MED-6V3R). The Bridge
- * halts a loop on total elapsed since first delivery — the clock never pauses
- * and never resets per round — so the same knob bounds a different thing in
- * each mode, and one shared preset cannot be honest for both. Kept in sync with
- * `DEFAULT_WALL_SECONDS` in `lib/medusa.js`, which serves API callers that omit
- * the guard; this modal always sends an explicit value.
- * @type {{supervised: {minutes: number, hint: string}, autonomous: {minutes: number, hint: string}}}
- */
-const MEDUSA_LOOP_GUARD_PRESETS = {
-  supervised: {
-    minutes: 480,
-    hint: 'Supervised: rounds only advance when you send, so this drops the loop if you never respond — it is not runaway protection. Max rounds is.'
-  },
-  autonomous: {
-    minutes: 10,
-    hint: 'Autonomous: agents drive every round unattended, so this bounds their work. The clock starts on first delivery and never pauses.'
-  }
-};
-
-/**
- * @type {boolean} True once the operator edits Max minutes. A mode switch then
- * leaves their number alone: silently discarding a deliberate value is the same
- * defect the feedback composer was faulted for (VRF-561).
- */
-let medusaLoopMinutesDirty = false;
-
-/**
- * Sync the wall-clock guard control to the selected judge mode (MED-6V3R) —
- * the preset and the hint both follow the mode, since the guard is runaway
- * protection when autonomous and an abandonment bound when supervised. An
- * operator-edited value is preserved across the switch.
- * @returns {void}
- */
-function syncMedusaLoopGuardMode() {
-  const mode = document.getElementById('medusaLoopMode');
-  const minutes = document.getElementById('medusaLoopMaxMinutes');
-  const hint = document.getElementById('medusaLoopGuardHint');
-  const preset = MEDUSA_LOOP_GUARD_PRESETS[mode && mode.value] || MEDUSA_LOOP_GUARD_PRESETS.supervised;
-  if (hint) hint.textContent = preset.hint;
-  if (minutes && !medusaLoopMinutesDirty) minutes.value = String(preset.minutes);
-}
-
-/**
- * Open the loop setup modal (the ➤ button) — MED-2K9P v2 T3, replacing the
- * deprecated manual compose box. Fetches the live roster into the target
- * picker, resets transient state, and focuses the first field. Toggles closed
- * if already open. Closes the read panel / peers popovers first.
- * @returns {Promise<void>}
- */
-async function openMedusaLoopModal() {
-  const modal = document.getElementById('medusaLoopModal');
-  const loopBtn = document.getElementById('medusaLoop');
-  if (!modal) return;
-  if (modal.classList.contains('open')) { closeMedusaLoopModal(); return; }
-
-  closeMedusaInbox();
-  hideMedusaPeers();
-
-  const select = document.getElementById('medusaLoopTarget');
-  const status = document.getElementById('medusaLoopRosterStatus');
-  const error = document.getElementById('medusaLoopError');
-  if (error) { error.hidden = true; error.textContent = ''; }
-  if (select) { select.innerHTML = ''; select.disabled = true; }
-  if (status) status.textContent = 'Loading sessions…'; // honest loading state, no fake list
-  syncMedusaLoopGuardMode(); // the hint must match the mode the modal actually opens on
-  renderMedusaSizeLine(document.getElementById('medusaLoopSize'), medusaLoopPayload()); // count what is already typed
-
-  modal.classList.add('open');
-  if (loopBtn) loopBtn.setAttribute('aria-expanded', 'true');
-
-  const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/medusa/roster`);
-  // Honesty: a FAILED roster fetch (api() → null, e.g. Bridge unreachable) is NOT
-  // the same as an empty roster. Surface the real error rather than falsely
-  // claiming "no other sessions are online" — the honest-status constraint runs
-  // both directions (carried over from the compose box this modal replaces).
-  if (data === null) {
-    if (status) status.textContent = `Couldn't load sessions: ${api.lastError || 'the message bridge is unreachable'} Reopen to retry.`;
-    return;
-  }
-  renderMedusaLoopTargets(data.workspaces || []);
-}
-
-/**
- * Populate the loop target picker from the roster. All roster-supplied text
- * (names/ids) is escaped — workspace names are cross-session data. An empty
- * roster renders an honest "no other sessions" state with the picker disabled.
- * @param {Array<{id: string, name?: string, connected?: boolean, listener?: {active?: boolean}}>} workspaces - Roster entries.
- * @returns {void}
- */
-function renderMedusaLoopTargets(workspaces) {
-  const select = document.getElementById('medusaLoopTarget');
-  const status = document.getElementById('medusaLoopRosterStatus');
-  if (!select) return;
-  if (!workspaces.length) {
-    select.innerHTML = '';
-    select.disabled = true;
-    if (status) status.textContent = 'No other Medusa sessions are online to loop with.';
-    return;
-  }
-  select.innerHTML = workspaces.map((w) => {
-    const online = w.connected || (w.listener && w.listener.active);
-    const label = esc(w.name || w.id) + (online ? '' : ' (offline)');
-    return `<option value="${esc(w.id)}">${label}</option>`;
-  }).join('');
-  select.disabled = false;
-  if (status) status.textContent = 'Offline targets get the task when they reconnect.';
-  select.focus();
-}
-
-/**
- * The body the loop modal's Launch would POST, read from the form as it stands.
- * One builder for both the live size count and the send, so the count measures
- * exactly what the server's body cap will (#1514).
- * @returns {{target: string, task: string, doneCriteria: string, mode: string, guards: {maxRounds: number, maxWallTimeSeconds: number}}}
- */
-function medusaLoopPayload() {
-  const val = (id) => {
-    const el = document.getElementById(id);
-    return el ? el.value : '';
-  };
-  return {
-    target: val('medusaLoopTarget'),
-    task: val('medusaLoopTask').trim(),
-    doneCriteria: val('medusaLoopDone').trim(),
-    mode: val('medusaLoopMode') || 'supervised',
-    guards: {
-      maxRounds: parseInt(val('medusaLoopMaxRounds'), 10),
-      maxWallTimeSeconds: parseInt(val('medusaLoopMaxMinutes'), 10) * 60
-    }
-  };
-}
-
-/**
- * Paint a compose box's live size line — "12.5 KB of 64 KB", with a warning
- * class near the limit and an error class over it (#1514). Blank until the
- * switchboard status has served the limit: a count against a guessed number
- * would be a second source for it.
- * @param {HTMLElement|null} el - The size line element.
- * @param {object} payload - The body the send would POST.
- * @returns {{bytes: number, limitBytes: (number|null), level: string, text: string}} The measurement.
- */
-function renderMedusaSizeLine(el, payload) {
-  const size = window.tcMessageSize(payload, sessionState.medusa.messageLimitBytes);
-  if (el) {
-    el.textContent = size.text;
-    el.classList.toggle('is-warn', size.level === 'warn');
-    el.classList.toggle('is-over', size.level === 'over');
-  }
-  return size;
-}
-
-/**
- * Launch the loop (the Launch button): validate the form client-side, POST to
- * the loop endpoint, and surface the HONEST result — the loop id plus whether
- * the task notice was delivered live or queued (offline target) — never a
- * blanket "launched". Failure keeps the modal open with the real error so the
- * operator's form input is not lost.
- * @returns {Promise<void>}
- */
-async function launchMedusaLoop() {
-  const select = document.getElementById('medusaLoopTarget');
-  const task = document.getElementById('medusaLoopTask');
-  const done = document.getElementById('medusaLoopDone');
-  const rounds = document.getElementById('medusaLoopMaxRounds');
-  const minutes = document.getElementById('medusaLoopMaxMinutes');
-  const btn = document.getElementById('medusaLoopLaunchBtn');
-  const error = document.getElementById('medusaLoopError');
-  if (!select || !task || !done) return;
-
-  /**
-   * Show an inline validation/launch error (keeps the modal + input intact).
-   * @param {string} msg - Human-readable reason.
-   * @returns {void}
-   */
-  const fail = (msg) => {
-    if (error) { error.textContent = msg; error.hidden = false; }
-  };
-  if (error) { error.hidden = true; error.textContent = ''; }
-
-  const target = select.value;
-  const label = select.options[select.selectedIndex] ? select.options[select.selectedIndex].text.replace(/ \(offline\)$/, '') : target;
-  if (!target) { fail('Pick a session to loop with.'); return; }
-  if (!task.value.trim()) { fail('Describe the task.'); task.focus(); return; }
-  if (!done.value.trim()) { fail('State the done criteria you will judge against.'); done.focus(); return; }
-  const maxRounds = parseInt(rounds && rounds.value, 10);
-  const maxMinutes = parseInt(minutes && minutes.value, 10);
-  if (!Number.isInteger(maxRounds) || maxRounds < 1) { fail('Max rounds must be a positive whole number.'); return; }
-  if (!Number.isInteger(maxMinutes) || maxMinutes < 1) { fail('Max minutes must be a positive whole number.'); return; }
-
-  // The count's builder, with the validated guards — minutes become the
-  // contract's wall-clock seconds.
-  const payload = { ...medusaLoopPayload(), guards: { maxRounds, maxWallTimeSeconds: maxMinutes * 60 } };
-  const size = renderMedusaSizeLine(document.getElementById('medusaLoopSize'), payload);
-  if (size.level === 'over') { fail(window.tcTooLongText(size.bytes, size.limitBytes)); return; }
-
-  if (btn) { btn.disabled = true; btn.textContent = 'Launching…'; }
-  const result = await apiMutate(`/api/sessions/${encodeURIComponent(projectName)}/medusa/loop`, 'POST', payload);
-  if (btn) { btn.disabled = false; btn.textContent = 'Launch loop'; }
-
-  if (result && result.loop) {
-    // Honest outcome (TC#552): the Bridge itself delivers the loopInvite —
-    // durably queued, pushed live when the target is online — and its open
-    // response does not report live-vs-queued, so neither do we. The toast
-    // states exactly what the contract guarantees, no invented "delivered".
-    showBannerActionToast(`Loop opened with ${label} — the Bridge delivers the invite (live, or on their reconnect).`, false);
-    flowMedusaOutbound(label, 'invited');
-    closeMedusaLoopModal();
-  } else {
-    // api() surfaces the server's error message on api.lastError; never claim launched.
-    fail(`Couldn't open loop: ${window.tcApiFailureText(api, 'launch failed')}`);
-  }
-}
-
-/**
- * Close the loop setup modal (Cancel, Escape, launch success, or going off).
- * Safe when already closed. Field values persist until the next open resets
- * the roster; the task/criteria text survives an accidental close.
- * @returns {void}
- */
-function closeMedusaLoopModal() {
-  const modal = document.getElementById('medusaLoopModal');
-  const loopBtn = document.getElementById('medusaLoop');
-  if (modal) modal.classList.remove('open');
-  if (loopBtn) loopBtn.setAttribute('aria-expanded', 'false');
-}
-
-// ── Medusa Loop View (MED-2K9P v2 T4) ──
-
-/** @type {Set<string>} Loop ids whose transcript is expanded in the loops panel. */
-const medusaExpandedTranscripts = new Set();
-
-/** @type {Set<string>} Loop ids whose initiator feedback composer is open (TC#561). */
-const medusaExpandedFeedback = new Set();
-
-/** @type {Map<string, string>} Loop id → in-progress feedback draft, preserved
- * across poll re-renders so typed text is never lost (TC#561). Cleared on send
- * or when the composer is closed. The Map is the source of truth for draft
- * text; the DOM textarea is seeded from it. */
-const medusaFeedbackDrafts = new Map();
-
-/**
- * Open the loops panel (the ⟳ chip click) — the banner's live view of every
- * loop this session knows about. Toggles closed if already open. Content
- * renders from the state the status poll already carries (no extra fetch;
- * each poll re-renders it live while open).
- * @returns {Promise<void>}
- */
-async function openMedusaLoopsPanel() {
-  const panel = document.getElementById('medusaLoopsPanel');
-  if (!panel) return;
-  if (!panel.hidden) { closeMedusaLoopsPanel(); return; }
-  closeMedusaInbox();
-  hideMedusaPeers();
-  closeMedusaLoopModal();
-  closePermissionRequestsPanel();
-  panel.hidden = false;
-  const chip = document.getElementById('medusaLoopsChip');
-  if (chip) chip.setAttribute('aria-expanded', 'true');
-  await renderMedusaLoopsPanel();
-}
-
-/**
- * Close the loops panel (✕, Escape, outside click, or the chip vanishing).
- * Safe when already closed. Transcript expansion state is kept so reopening
- * restores the operator's view.
- * @returns {void}
- */
-function closeMedusaLoopsPanel() {
-  const panel = document.getElementById('medusaLoopsPanel');
-  if (panel) panel.hidden = true;
-  const chip = document.getElementById('medusaLoopsChip');
-  if (chip) chip.setAttribute('aria-expanded', 'false');
-}
-
-/**
- * Human-readable outcome label for a loop, honest to the Bridge's semantics:
- * `halted` is ONLY ever the server's runaway guards (round/wall-clock);
- * force-done lands as `complete` with `closeSignal.reason: 'force-done'` (the
- * Bridge has no external halt transition), so the label comes from the
- * structured closeSignal, never from guesswork.
- * @param {{state: string, closeSignal?: (object|null)}} loop - Bridge loop object.
- * @returns {string}
- */
-function medusaLoopStateLabel(loop) {
-  if (loop.state === 'halted') return 'halted by guard';
-  if (loop.state === 'complete') {
-    const reason = loop.closeSignal && loop.closeSignal.reason;
-    if (reason === 'force-done') return 'ended by force-done';
-    if (reason === 'satisfied') return 'ended — marked done';
-    return 'complete';
-  }
-  return loop.state; // initiated | responded | continue — live protocol states.
-}
-
-/**
- * Render the loops panel: one row per known loop — who with, mode, role, the
- * live state + round count, force-done (initiator side, live states only),
- * and an expandable transcript. The transcript is labeled for what it honestly
- * is: the rounds THIS session observed (its inbound loop messages plus the
- * opening task) — the Bridge retains no full round history to fetch. All
- * Bridge-supplied text (tasks, ids, reasons, message bodies) is escaped:
- * cross-session data is untrusted.
- * @returns {Promise<void>}
- */
-async function renderMedusaLoopsPanel() {
-  const panel = document.getElementById('medusaLoopsPanel');
-  if (!panel) return;
-  // Don't let the status-poll re-render fight the operator's typing (TC#561):
-  // while a feedback textarea is FOCUSED, keep the current DOM this tick (a
-  // re-render would move the caret / drop focus). Key on `document.activeElement`
-  // (the composer actually focused — multi-composer safe, not a first-match
-  // query) scoped to this panel. Draft text itself is never lost regardless of
-  // focus — it lives in `medusaFeedbackDrafts` and re-seeds the textarea on
-  // every render — so a blurred composer re-renders freely and a successful
-  // send (which clears the draft + focus) always refreshes. The guard keys on
-  // focus, NOT residual DOM value, so it can never deadlock.
-  const active = document.activeElement;
-  if (active && active.closest && active.closest('.medusa-loop-feedback-input') && panel.contains(active)) {
-    return;
-  }
-  const m = sessionState.medusa;
-  const loops = m.loops || [];
-
-  const head = '<div class="group-popover-title medusa-panel-head"><span>Session loops</span>'
-    + '<button type="button" class="medusa-panel-close" aria-label="Close session loops">✕</button></div>';
-
-  if (m.loopsError) {
-    panel.innerHTML = `${head}<div class="medusa-msg-empty">Loops unavailable: ${esc(m.loopsError)}</div>`;
-    return;
-  }
-  if (!loops.length) {
-    panel.innerHTML = `${head}<div class="medusa-msg-empty">No loops yet.</div>`;
-    return;
-  }
-
-  // One inbox fetch serves every expanded transcript (local in-memory read).
-  let inbox = null;
-  if (medusaExpandedTranscripts.size > 0) {
-    const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/medusa/messages`);
-    inbox = (data && data.messages) || [];
-  }
-
-  const rows = loops.map((loop) => {
-    const live = MEDUSA_LIVE_LOOP_STATES.includes(loop.state);
-    const other = loop.role === 'initiator' ? loop.target : loop.initiator;
-    const maxRounds = loop.guards && loop.guards.maxRounds;
-    const round = `round ${loop.round}${maxRounds ? `/${maxRounds}` : ''}`;
-    const stateLabel = medusaLoopStateLabel(loop);
-    const expanded = medusaExpandedTranscripts.has(loop.id);
-
-    // The initiator judges only when the target has responded (design §1). The
-    // Bridge accepts a feedback round / posts only in `responded` state, so the
-    // FEEDBACK + satisfied-CLOSEOUT affordances gate on it (TC#561); force-done
-    // (the kill-switch) stays available for any live loop this session owns.
-    const canJudge = loop.role === 'initiator' && loop.state === 'responded';
-    const feedbackOpen = medusaExpandedFeedback.has(loop.id);
-    let actions = '';
-    if (live && loop.role === 'initiator') {
-      if (canJudge) {
-        actions += `<button type="button" class="medusa-loop-continue" data-loop-id="${esc(loop.id)}" aria-expanded="${feedbackOpen ? 'true' : 'false'}">Send feedback</button>`;
-        actions += `<button type="button" class="medusa-loop-closeout" data-loop-id="${esc(loop.id)}">Mark done</button>`;
-      }
-      actions += `<button type="button" class="medusa-force-done" data-loop-id="${esc(loop.id)}">Force-done</button>`;
-    } else if (loop.state === 'halted') {
-      // Guard semantics surfaced: a halted loop cannot be closed (Bridge 400).
-      actions += '<span class="medusa-loop-note">guard-halted — cannot be closed</span>';
-    }
-    actions += `<button type="button" class="medusa-loop-transcript-toggle" data-loop-id="${esc(loop.id)}" aria-expanded="${expanded ? 'true' : 'false'}">${expanded ? 'Hide' : 'Transcript'}</button>`;
-
-    // Inline feedback composer (the FEEDBACK half of the control spine). Labeled
-    // textarea + Send; the message is sent over HTTP as data, never a keystroke.
-    let feedback = '';
-    if (canJudge && feedbackOpen) {
-      const fid = `medusaFeedback-${esc(loop.id)}`;
-      const draft = medusaFeedbackDrafts.get(loop.id) || '';
-      const size = window.tcMessageSize({ message: draft.trim() }, sessionState.medusa.messageLimitBytes);
-      const sizeClass = size.level === 'warn' ? ' is-warn' : (size.level === 'over' ? ' is-over' : '');
-      feedback = '<div class="medusa-loop-feedback">'
-        + `<label class="medusa-loop-feedback-label" for="${fid}">Feedback to continue this loop</label>`
-        + `<textarea id="${fid}" class="medusa-loop-feedback-input" data-loop-id="${esc(loop.id)}" rows="2" placeholder="What should ${esc(other)} do next?">${esc(draft)}</textarea>`
-        + `<button type="button" class="medusa-loop-feedback-send" data-loop-id="${esc(loop.id)}">Send</button>`
-        + `<div class="medusa-size-count${sizeClass}" data-size-for="${esc(loop.id)}" aria-live="polite">${esc(size.text)}</div>`
-        + '</div>';
-    }
-
-    let transcript = '';
-    if (expanded) {
-      const observed = (inbox || []).filter((msg) => msg.loopId === loop.id);
-      const entries = [
-        `<div class="medusa-msg"><div class="medusa-msg-from">task → ${esc(loop.target)}</div><div class="medusa-msg-body">${esc(loop.task || '')}</div></div>`
-      ].concat(observed.map((msg) => `<div class="medusa-msg"><div class="medusa-msg-from">${esc(msg.from || 'unknown')}</div><div class="medusa-msg-body">${esc(msg.message || '')}</div></div>`));
-      transcript = `<div class="medusa-loop-transcript">`
-        + `<div class="medusa-loop-transcript-note">As observed by this session (the Bridge keeps no full history)${observed.length ? '' : ' — no rounds observed here yet'}</div>`
-        + entries.join('')
-        + '</div>';
-    }
-
-    return `<div class="medusa-loop-row is-${esc(loop.state)}">`
-      + `<div class="medusa-loop-who">${loop.role === 'initiator' ? '→' : '←'} ${esc(other)}</div>`
-      + `<div class="medusa-loop-meta">${esc(loop.mode || 'supervised')} · ${esc(stateLabel)} · ${esc(round)}</div>`
-      + `<div class="medusa-loop-actions">${actions}</div>`
-      + feedback
-      + transcript
-      + '</div>';
-  }).join('');
-
-  panel.innerHTML = `${head}${rows}`;
-}
-
-/**
- * Force-done a loop (the kill-switch): confirm, POST, and surface the HONEST
- * outcome — the Bridge records `complete` with a structured force-done
- * closeSignal (only its own guards produce `halted`). A rejection (guard-halted
- * loop, Bridge down) surfaces verbatim — the loop view never pretends a loop
- * ended. State refresh rides the next poll; the local copy updates immediately
- * so the panel doesn't lag the action.
- * @param {string} loopId - The loop to end.
- * @returns {Promise<void>}
- */
-async function forceDoneMedusaLoop(loopId) {
-  const yes = window.confirm('End this loop now? The other session gets a close notice; this cannot be undone.');
-  if (!yes) return;
-  const result = await apiMutate(
-    `/api/sessions/${encodeURIComponent(projectName)}/medusa/loops/${encodeURIComponent(loopId)}/force-done`,
-    'POST',
-    {}
-  );
-  if (result && result.loopState) {
-    const loop = (sessionState.medusa.loops || []).find((l) => l.id === loopId);
-    if (loop) {
-      loop.state = result.loopState;
-      loop.closeSignal = result.closeSignal || loop.closeSignal;
-    }
-    showBannerActionToast('Loop ended (force-done).', false);
-    const live = document.getElementById('medusaLive');
-    if (live) live.textContent = 'Loop ended by force-done';
-    renderMedusaControl();
-  } else {
-    showBannerActionToast(`Couldn't end loop: ${api.lastError || 'the bridge rejected it'}`, true);
-  }
-}
-
-/**
- * Send an initiator FEEDBACK round to continue a supervised loop (TC#561, the
- * FEEDBACK half of the control spine). Validates non-empty text client-side,
- * POSTs the round, and on success closes the composer and optimistically
- * advances the local loop (`responded → continue`, round from the Bridge) so
- * the panel doesn't lag the poll. A rejection surfaces verbatim — never a false
- * "sent".
- * @param {string} loopId - The loop to continue.
- * @param {string} message - The initiator's feedback text for this round.
- * @returns {Promise<void>}
- */
-async function continueMedusaLoop(loopId, message) {
-  const text = (message || '').trim();
-  if (!text) { showBannerActionToast('Enter feedback before sending.', true); return; }
-  const size = window.tcMessageSize({ message: text }, sessionState.medusa.messageLimitBytes);
-  if (size.level === 'over') {
-    showBannerActionToast(`Couldn't send feedback: ${window.tcTooLongText(size.bytes, size.limitBytes)}`, true);
-    return;
-  }
-  const result = await apiMutate(
-    `/api/sessions/${encodeURIComponent(projectName)}/medusa/loops/${encodeURIComponent(loopId)}/continue`,
-    'POST',
-    { message: text }
-  );
-  if (result && result.loopState) {
-    const loop = (sessionState.medusa.loops || []).find((l) => l.id === loopId);
-    if (loop) {
-      loop.state = result.loopState;
-      if (typeof result.round === 'number') loop.round = result.round;
-    }
-    medusaExpandedFeedback.delete(loopId);
-    medusaFeedbackDrafts.delete(loopId);
-    if (result.loopState === 'halted') {
-      // The feedback landed but pushed the round to maxRounds — the Bridge
-      // auto-halted the loop. Say so honestly; it did NOT continue.
-      showBannerActionToast('Feedback sent — loop hit its round cap and halted.', false);
-    } else {
-      showBannerActionToast(result.delivered ? 'Feedback sent — loop continued.' : 'Feedback queued — loop continued.', false);
-    }
-    renderMedusaControl();
-  } else {
-    showBannerActionToast(`Couldn't send feedback: ${window.tcApiFailureText(api, 'the bridge rejected it')}`, true);
-  }
-}
-
-/**
- * Satisfied closeout (TC#561, the CLOSEOUT half of the control spine) — end a
- * loop as *done*, distinct from the force-done kill-switch. Confirms, POSTs the
- * satisfied close, and labels the outcome "marked done" (not "force-done") so
- * the operator's judgment is never mislabeled.
- * @param {string} loopId - The loop to close as satisfied.
- * @returns {Promise<void>}
- */
-async function closeoutMedusaLoop(loopId) {
-  const yes = window.confirm('Mark this loop done? The other session gets a close notice; this cannot be undone.');
-  if (!yes) return;
-  const result = await apiMutate(
-    `/api/sessions/${encodeURIComponent(projectName)}/medusa/loops/${encodeURIComponent(loopId)}/closeout`,
-    'POST',
-    {}
-  );
-  if (result && result.loopState) {
-    const loop = (sessionState.medusa.loops || []).find((l) => l.id === loopId);
-    if (loop) {
-      loop.state = result.loopState;
-      loop.closeSignal = result.closeSignal || loop.closeSignal;
-    }
-    medusaExpandedFeedback.delete(loopId);
-    medusaFeedbackDrafts.delete(loopId);
-    showBannerActionToast('Loop ended — marked done.', false);
-    const live = document.getElementById('medusaLive');
-    if (live) live.textContent = 'Loop ended — marked done';
-    renderMedusaControl();
-  } else {
-    showBannerActionToast(`Couldn't close loop: ${api.lastError || 'the bridge rejected it'}`, true);
-  }
-}
 
 async function pollStatus() {
   const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/status`);
@@ -8280,7 +7728,7 @@ function bindEvents() {
   document.addEventListener('click', (e) => {
     // v2 T4 — the loops panel dismisses on outside click like the inbox/peers
     // popovers, which the shared control now handles for itself in `mount()`.
-    if (!clickHitsSelector(e, '.medusa-control')) closeMedusaLoopsPanel();
+    if (!clickHitsSelector(e, '.medusa-control')) medusaLoops.closePanel();
     // #2352 — same rule, same cluster.
     if (!clickHitsSelector(e, '.medusa-control')) closePermissionRequestsPanel();
   });
@@ -8289,77 +7737,11 @@ function bindEvents() {
   // hover = recent-peers popover (desktop), badge = open inbox, the panel's ✕ /
   // Escape / outside click = close. All bound by the shared component (#996).
   medusaControl.mount();
-  // Loop launch (MED-2K9P v2 T3): the ➤ opens the setup modal (static markup —
-  // direct wiring, no delegation needed); Launch/Cancel + Escape close paths.
-  const medusaLoop = $('medusaLoop');
-  if (medusaLoop) medusaLoop.addEventListener('click', openMedusaLoopModal);
-  const medusaLoopLaunchBtn = $('medusaLoopLaunchBtn');
-  if (medusaLoopLaunchBtn) medusaLoopLaunchBtn.addEventListener('click', launchMedusaLoop);
-  const medusaLoopCancelBtn = $('medusaLoopCancelBtn');
-  if (medusaLoopCancelBtn) medusaLoopCancelBtn.addEventListener('click', closeMedusaLoopModal);
-  // MED-6V3R: the wall-clock guard means something different per mode, so the
-  // preset + hint track the mode — unless the operator has typed their own value.
-  const medusaLoopMode = $('medusaLoopMode');
-  if (medusaLoopMode) medusaLoopMode.addEventListener('change', syncMedusaLoopGuardMode);
-  // Live size count for the loop's task + done criteria (#1514): the operator
-  // sees the message approach the body limit while typing, not after a refusal.
-  for (const id of ['medusaLoopTask', 'medusaLoopDone']) {
-    const field = $(id);
-    if (field) field.addEventListener('input', () => renderMedusaSizeLine($('medusaLoopSize'), medusaLoopPayload()));
-  }
-  const medusaLoopMaxMinutes = $('medusaLoopMaxMinutes');
-  if (medusaLoopMaxMinutes) medusaLoopMaxMinutes.addEventListener('input', () => { medusaLoopMinutesDirty = true; });
-  // Loop view (MED-2K9P v2 T4): the ⟳ chip opens the loops panel; its content
-  // re-renders every poll, so all row controls are delegated.
-  const medusaLoopsChip = $('medusaLoopsChip');
-  if (medusaLoopsChip) medusaLoopsChip.addEventListener('click', openMedusaLoopsPanel);
-  const medusaLoopsPanel = $('medusaLoopsPanel');
-  if (medusaLoopsPanel) {
-    medusaLoopsPanel.addEventListener('click', (e) => {
-      if (e.target.closest('.medusa-panel-close')) { closeMedusaLoopsPanel(); return; }
-      const forceBtn = e.target.closest('.medusa-force-done');
-      if (forceBtn) { forceDoneMedusaLoop(forceBtn.dataset.loopId); return; }
-      const closeoutBtn = e.target.closest('.medusa-loop-closeout');
-      if (closeoutBtn) { closeoutMedusaLoop(closeoutBtn.dataset.loopId); return; }
-      const continueBtn = e.target.closest('.medusa-loop-continue');
-      if (continueBtn) {
-        const id = continueBtn.dataset.loopId;
-        if (medusaExpandedFeedback.has(id)) {
-          medusaExpandedFeedback.delete(id);
-          medusaFeedbackDrafts.delete(id); // closing the composer discards the draft
-        } else {
-          medusaExpandedFeedback.add(id);
-        }
-        renderMedusaLoopsPanel();
-        return;
-      }
-      const sendBtn = e.target.closest('.medusa-loop-feedback-send');
-      if (sendBtn) {
-        const id = sendBtn.dataset.loopId;
-        const ta = document.getElementById(`medusaFeedback-${id}`);
-        continueMedusaLoop(id, ta ? ta.value : '');
-        return;
-      }
-      const toggleBtn = e.target.closest('.medusa-loop-transcript-toggle');
-      if (toggleBtn) {
-        const id = toggleBtn.dataset.loopId;
-        if (medusaExpandedTranscripts.has(id)) medusaExpandedTranscripts.delete(id);
-        else medusaExpandedTranscripts.add(id);
-        renderMedusaLoopsPanel();
-      }
-    });
-    // Persist feedback drafts as they're typed (TC#561) so a poll re-render
-    // re-seeds the textarea from the Map rather than losing in-progress text.
-    medusaLoopsPanel.addEventListener('input', (e) => {
-      const ta = e.target.closest('.medusa-loop-feedback-input');
-      if (ta && ta.dataset.loopId) {
-        medusaFeedbackDrafts.set(ta.dataset.loopId, ta.value);
-        const line = Array.from(medusaLoopsPanel.querySelectorAll('.medusa-size-count'))
-          .find((el) => el.dataset.sizeFor === ta.dataset.loopId);
-        renderMedusaSizeLine(line || null, { message: ta.value.trim() });
-      }
-    });
-  }
+  // Loop setup modal + loops chip/panel (MED-2K9P v2 T3/T4), extracted to the
+  // sibling shared component for #1083 — binds the ➤ button, Launch/Cancel,
+  // the judge-mode/size-count inputs, the ⟳ chip and the panel's delegated
+  // row controls (force-done, closeout, feedback, transcript) in one call.
+  medusaLoops.mount();
   // #2352 — the badge chip opens/closes the pending-permissions panel; its
   // row controls are delegated since the panel's content re-renders every poll.
   const permissionRequestsChip = $('permissionRequestsChip');
@@ -8376,11 +7758,10 @@ function bindEvents() {
   }
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    // The inbox panel's Escape is bound by the shared Medusa control (#996).
-    const loopModal = $('medusaLoopModal');
-    if (loopModal && loopModal.classList.contains('open')) closeMedusaLoopModal();
-    const loopsPanel = $('medusaLoopsPanel');
-    if (loopsPanel && !loopsPanel.hidden) closeMedusaLoopsPanel();
+    // The inbox panel's Escape is bound by the shared Medusa control (#996);
+    // the loop modal/panel's own close methods are already safe when closed.
+    medusaLoops.closeModal();
+    medusaLoops.closePanel();
     const permissionRequestsPanelEsc = $('permissionRequestsPanel');
     if (permissionRequestsPanelEsc && !permissionRequestsPanelEsc.hidden) closePermissionRequestsPanel();
     const catcher = $('pasteCatcher');

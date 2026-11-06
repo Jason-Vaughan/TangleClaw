@@ -25,6 +25,10 @@ const path = require('node:path');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
 const helper = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
+// #1083 — the loop modal/chip/panel moved out of session.js into the sibling
+// shared component `tcCreateMedusaLoops` so the Master bar can mount it too.
+// Same re-pointing discipline this file's own header describes for #996.
+const loopsSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'medusa-loops-ui.js'), 'utf8');
 
 /**
  * Slice a named top-level function's body out of session.js.
@@ -62,6 +66,24 @@ const sessionMount = (() => {
   assert.ok(start >= 0, 'session does not construct the shared control');
   return src.slice(start, src.indexOf('\n});', start));
 })();
+
+/**
+ * Slice a function nested inside `tcCreateMedusaLoops` out of
+ * `public/medusa-loops-ui.js` (#1083) — same convention as `componentFn`
+ * above, for the sibling component the loop UI now lives in.
+ * @param {string} name - Function name.
+ * @returns {string} The body slice.
+ */
+function loopsFn(name) {
+  const comp = loopsSrc.indexOf('function tcCreateMedusaLoops(');
+  assert.ok(comp >= 0, 'tcCreateMedusaLoops not found');
+  const plain = loopsSrc.indexOf(`\n    function ${name}(`, comp);
+  const asyncFn = loopsSrc.indexOf(`\n    async function ${name}(`, comp);
+  const start = plain >= 0 && (asyncFn < 0 || plain < asyncFn) ? plain : asyncFn;
+  assert.ok(start >= 0, `loops component function ${name} not found`);
+  const next = loopsSrc.indexOf('\n    /**', start + 1);
+  return loopsSrc.slice(start, next === -1 ? undefined : next);
+}
 
 describe('Medusa control (MED-2K9P Chunk 02; shared component since #996)', () => {
   it('escapes untrusted inbound message text in the read panel', () => {
@@ -130,7 +152,7 @@ describe('Medusa control (MED-2K9P Chunk 02; shared component since #996)', () =
     it('wires the close button (delegated) and Escape to close the panel', () => {
       const body = componentFn('mount');
       // Delegated because the panel innerHTML is re-rendered on each open.
-      assert.match(body, /\.medusa-panel-close'\)\)\s*closeInbox\(\)/);
+      assert.match(body, /\.medusa-panel-close'\)\)\s*\{?\s*closeInbox\(\)/);
       // Escape closes the open panel.
       assert.match(body, /e\.key !== 'Escape'/);
       assert.match(body, /!p\.hidden\)\s*closeInbox\(\)/);
@@ -213,16 +235,16 @@ describe('Medusa control (MED-2K9P Chunk 02; shared component since #996)', () =
     });
 
     it('escapes untrusted roster names/ids in the target picker (XSS guard)', () => {
-      const body = fnBody('renderMedusaLoopTargets');
-      assert.match(body, /esc\(w\.id\)/);
-      assert.match(body, /esc\(w\.name/);
+      const body = loopsFn('renderTargets');
+      assert.match(body, /escFn\(w\.id\)/);
+      assert.match(body, /escFn\(w\.name/);
       // Nothing raw-interpolates a roster field into the option markup.
       assert.doesNotMatch(body, /\$\{w\.id\}/);
       assert.doesNotMatch(body, /\$\{w\.name\}/);
     });
 
     it('surfaces the honest launch result — the Bridge-delivered invite is stated as such, and failure never claims launched', () => {
-      const body = fnBody('launchMedusaLoop');
+      const body = loopsFn('launch');
       // TC#552: the out-of-band task notice is gone — the toast claims only
       // what the contract guarantees (the Bridge delivers the invite; its open
       // response reports no live-vs-queued, so neither does the UI).
@@ -234,7 +256,7 @@ describe('Medusa control (MED-2K9P Chunk 02; shared component since #996)', () =
     });
 
     it('validates target, task, done criteria, and positive-integer guards client-side before POSTing', () => {
-      const body = fnBody('launchMedusaLoop');
+      const body = loopsFn('launch');
       assert.match(body, /Pick a session/);
       assert.match(body, /Describe the task/);
       assert.match(body, /done criteria/);
@@ -242,28 +264,32 @@ describe('Medusa control (MED-2K9P Chunk 02; shared component since #996)', () =
       assert.match(body, /Number\.isInteger\(maxMinutes\)/);
       // Uses the shared apiMutate JSON path to the loop endpoint, converting
       // operator-facing minutes to the contract's wall-clock seconds.
-      assert.match(body, /apiMutate\([\s\S]*?medusa\/loop/);
+      assert.match(body, /apiMutate\([\s\S]*?\$\{apiBase\}\/loop/);
       assert.match(body, /maxWallTimeSeconds:\s*maxMinutes\s*\*\s*60/);
     });
 
     it('distinguishes a failed roster fetch from an empty roster (never a false "nobody home")', () => {
       // The empty-roster state is honest and disables the picker...
-      const render = fnBody('renderMedusaLoopTargets');
+      const render = loopsFn('renderTargets');
       assert.match(render, /No other Medusa sessions/);
       assert.match(render, /disabled = true/);
-      // ...and openMedusaLoopModal routes a null (failed) fetch to the real error.
-      const open = fnBody('openMedusaLoopModal');
+      // ...and openModal routes a null (failed) fetch to the real error.
+      const open = loopsFn('openModal');
       assert.match(open, /data === null/);
       assert.match(open, /api\.lastError/);
       assert.match(open, /Couldn't load sessions/);
     });
 
     it('gates the loop control on listener state — hidden + closed when off', () => {
-      // The gate lives in the session's onRender hook now: the component owns
-      // the listener state, the page owns the loop affordance that depends on it.
-      assert.match(sessionMount, /m\.state\s*!==\s*'off'/);
-      assert.match(sessionMount, /closeMedusaLoopModal\(\)/);
-      assert.match(sessionMount, /renderMedusaLoopsChip\(m\)/);
+      // The construction hook now just forwards to the sibling component
+      // (#1083); the actual gate lives in that component's own onControlRender.
+      assert.match(sessionMount, /medusaLoops\.onControlRender\(m\)/);
+      const gate = loopsFn('onControlRender');
+      assert.match(gate, /canLaunch\(st\)/);
+      const canLaunch = loopsFn('canLaunch');
+      assert.match(canLaunch, /st\.state\s*!==\s*'off'/);
+      assert.match(gate, /closeModal\(\)/);
+      assert.match(gate, /renderChip\(st\)/);
     });
 
     it('lights the outbound head and announces the send on the aria-live region', () => {
@@ -275,9 +301,22 @@ describe('Medusa control (MED-2K9P Chunk 02; shared component since #996)', () =
     });
 
     it('adds no new UI timer — the modal rides existing plumbing (no-timer rule #98/#268)', () => {
-      for (const name of ['openMedusaLoopModal', 'renderMedusaLoopTargets', 'launchMedusaLoop', 'flowMedusaOutbound', 'closeMedusaLoopModal']) {
-        assert.doesNotMatch(fnBody(name), /setInterval\(|setTimeout\(/, `${name} must not start a timer`);
+      for (const name of ['openModal', 'renderTargets', 'launch', 'closeModal']) {
+        assert.doesNotMatch(loopsFn(name), /setInterval\(|setTimeout\(/, `${name} must not start a timer`);
       }
+      assert.doesNotMatch(fnBody('flowMedusaOutbound'), /setInterval\(|setTimeout\(/, 'flowMedusaOutbound must not start a timer');
+    });
+  });
+
+  // Ruling A505-R2.6 — the Master's ratified autonomous guard preset (#1083
+  // I-Gate Round 1 C2: "the required decision" must actually be wired, not
+  // just an override seam left empty).
+  describe('Master autonomous guard preset is wired (Ruling A505-R2.6)', () => {
+    it('tcCreateMasterControlBar passes the ratified 6 rounds / 15 minutes into tcCreateMedusaLoops', () => {
+      const start = helper.indexOf('medusaLoops = global.tcCreateMedusaLoops({');
+      assert.ok(start >= 0, 'the Master bar must construct the loops component');
+      const body = helper.slice(start, helper.indexOf('\n      });', start));
+      assert.match(body, /guardPresets:\s*\{\s*autonomous:\s*\{\s*maxRounds:\s*6,\s*maxMinutes:\s*15\s*\}\s*\}/);
     });
   });
 });

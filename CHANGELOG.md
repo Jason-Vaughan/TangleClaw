@@ -4,6 +4,37 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.69.0] - 2026-11-06
+
+### Added
+- The Master control bar now offers the same session-loop affordances a project session has — the ➤ setup modal, the ⟳ loops chip, and the loops panel (force-done, feedback, mark-done, transcript) — on both its surfaces (the dashboard panel and the session drawer). Extracted the loop UI out of `session.js` into a sibling shared component (`tcCreateMedusaLoops`, alongside the existing `tcCreateMedusaControl`), so the Master and every session mount the exact same implementation; a read-only Master's launch affordance stays hidden, honoring its access level the same way sending already does (#1083).
+- An operator or a coordinator (the Project Master, or any bound project session acting in that role) can now send a single explicit, system-wide Medusa broadcast — `POST <prefix>/broadcast` fans a message out to every other active, registered switchboard workspace, prefixed `[BROADCAST scope=all]` so recipients can tell it apart from a point-to-point `/send`. Rate-limited per sender (one broadcast every 30s; an identical retry inside that window coalesces into the first result instead of refanning out) (#1224).
+- The Medusa inbox panel now has a compact `@nickname` compose row (both the session banner and the Master control bar): type `@arc your message` and it resolves the tag against the live roster — by workspace id, display name, or this fleet's own short alias (`tc-lane-<role>-<id>` → `@role`) — and sends directly to that peer. An unmatched tag, a message with no `@tag` at all, or this participant's own access level all refuse honestly before anything is sent, and more than one distinct tag in one message fans out to each (#1576).
+- Added delegated peer recovery clearance: `POST /api/sessions/:project/launch/recovery-clear-peer`
+  lets a project-scoped `architect`/`project-manager` coordinator clear a
+  stalled peer launch's required recovery, without the operator. The
+  clearing session must be a verified, active session of a DIFFERENT
+  project holding the active coordinator grant (a fleet lane's coordinator
+  is its own project, never a second session of the lane it coordinates),
+  and may never clear its own project's launch. Fully recorded —
+  `launch_recovery_clearances` now admits `clearance: 'peer-cleared'` with
+  its own `cleared_by_session_id`/`cleared_by_project_id`/`cleared_by_role`/
+  `cleared_by_launch_id`/`reason` provenance, distinct from the row's own
+  (target) `project_id` (schema v79) (#1713).
+- Added an automatic startup announcement on the Medusa switchboard: once a
+  session's launch sequence attests READY and its Medusa listener is
+  active, it sends one `[Startup] <name> (<role>) online — session #<id>,
+  workspace <workspaceId>, ready for switchboard work.` message to every
+  OTHER project's active session that currently holds the `architect`/
+  `project-manager` coordinator grant, so a fleet coordinator can pick up
+  a freshly-launched session without polling (a coordinator is its own
+  project, never a second session of the project it coordinates, so
+  recipients are resolved across projects, not within one). Idempotent
+  per launch sequence, and off via the project's own
+  `startupAnnounceDisabled` config flag or the
+  `TANGLECLAW_STARTUP_ANNOUNCE_DISABLED` env var (#1732).
+
+
 ## [5.68.0] - 2026-11-06
 
 ### Added
