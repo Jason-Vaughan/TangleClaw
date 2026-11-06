@@ -17,6 +17,13 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v5.68.0 — Sprint tracking and continuity safeguards
+
+- **Prepare native sprint wave tracking** (#2644) — `lib/native-sprint-tracker.js` validates wave and car assignments, tracks dispatch states, builds report and O-Gate summary models, and syncs a roadmap snapshot with retry. `lib/routes/sprint-wave-routes.js#createSprintWaveRouter` and `public/sprint-wave-ui.js` provide route and browser adapters; they are not mounted in the live server or dashboard yet.
+- **Preserve relaunch mail obligations** (#2821) — `lib/coordinator-rotation.js#claimRelaunch` records prepare-time message IDs still owed; `#_crossCheck` blocks resume until the successor inbox or receipt accounts for them. As a #2888 feed-forward, `lib/resource-lease-routes.js#handleAcquireLease` now delegates to `acquireLeaseWithPrimer`, attaching the operating primer when that handler is called; the resource lease routes are not mounted in the live server yet.
+- **Connect wrap progress and chunk lookup to the session drawer** (#2735, #2736) — `public/session.js` calls `renderGovernedWrapProgressBar` for the governed-wrap stream and exposes a manual assignment/chunk lookup using `fetchChunkBoundaryStatus` and `renderChunkBoundaryBadge`. The contention fixes retry the real tmux TCC and Master Medusa test paths with clean state between attempts.
+- **Graduate settled Feature Index entries during a pending append** (#748) — `lib/wrap-steps/index-describe.js` now reconciles a staged `features-toc` write after graduating settled entries, so a fresh feature stub does not indefinitely defer older entries.
+
 ## v5.67.0 — Live fleet controls and release surfaces
 
 - **Enforce merge authority and expose the merge gate** (#2866, #2878) — `lib/merge-role-guard.js` installs a launch-time `gh` wrapper; `lib/tc-verbs.js` and `lib/routes/sessions.js` expose durable merge holds and checks through `tc` and HTTP.
