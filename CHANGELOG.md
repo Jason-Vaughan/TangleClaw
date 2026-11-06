@@ -4,6 +4,52 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.71.0] - 2026-11-06
+
+### Added
+- Added live system resource and health pills to the OpenClaw session header. TangleClaw detects whether the wrapped gateway is Dockerized or host-installed and surfaces CPU, memory, disk, and pathology signals (stuck sessions, long lock holds, container health) as a color-coded pill (`pill-ok`/`pill-warn`/`pill-alarm`), with a recent-issue history dot that stays lit for an hour after the last unhealthy reading. `lib/sidecar.js` refreshes and caches SSH telemetry, marks a failed refresh `unverified` instead of retaining stale healthy data, and `GET /api/sidecar/connection/:connId/processes` returns the cached telemetry and health. The existing sidecar poll in `public/openclaw-view.js` feeds that response to `renderOpenclawHeaderPills`; clicking either pill opens detail in the existing sidecar panel (#128).
+- Added update-available tag comparison for OpenClaw connections (`GET /api/openclaw/connections/:id/update-available`), comparing the instance's current image tag against a latest tag (CalVer or semver), honest that a non-version tag like `latest` or `qmd` carries no ordering rather than guessing. Also added an optional `.env` tag-rewrite helper (`POST /api/openclaw/connections/:id/update-tag`) that updates `OPENCLAW_IMAGE`'s tag over SSH after validating both the instance directory and the new tag (#297).
+- Added ordered fallback addresses for OpenClaw connections. A connection can now declare `fallbackHosts: string[]` alongside `host`, in priority order; every SSH consumer (version read, approve-pending, the connection test, tunnel creation, and the tunnel monitor's auto-recreate) resolves the reachable address by probing TCP port 22 on every candidate in parallel and using the highest-priority one that answers, so a connection saved with a LAN IP keeps working once the operator's network changes and a Tailscale/MagicDNS fallback is configured. The resolved route is cached briefly per connection and surfaced on the connection record as `activeHost`/`fallbackUsed`, and forgotten automatically on the next SSH failure so a later call re-probes rather than retrying a dead address (#1531).
+
+### Changed
+- Added an IP-literal audit for OpenClaw connections (`GET /api/openclaw/connections/ip-literal-audit`) and an operator-confirmed migration from an IP-literal `host` to a stable DNS/MagicDNS name (`POST /api/openclaw/connections/:id/migrate-to-magicdns`). The migration never runs unconfirmed, and by default keeps the old IP as the new top-priority fallback host rather than discarding the only other known route to the connection (#363).
+
+### Fixed
+- Fixed two `openclaw-direct` proxy accuracy issues (#254). **Issue B:**
+  `/openclaw-direct/:connId/*` (both the HTTP and WebSocket proxy handlers
+  in `server.js`) now strips stale Cloudflare edge-attribution headers
+  (`cf-connecting-ip`, `true-client-ip`, `cf-ray`, `cf-ipcountry`,
+  `cf-visitor`, `cdn-loop`) before forwarding to OpenClaw's gateway,
+  UNCONDITIONALLY -- not only when the connection's own remote address
+  looks private/Tailscale/LAN. `req.socket.remoteAddress` reads as
+  loopback for both Tailscale and Cloudflare ingress behind local Caddy,
+  so that distinction could never actually gate anything; OpenClaw
+  2026.9.x gateways already refuse (403 `proxy_attribution_required`) ANY
+  attribution header over the loopback SSH tunnel, matching the
+  unconditional strip `lib/routes/openclaw.js` already applies to
+  `x-forwarded-*`/`x-real-ip`/`forwarded` (#1512). Closes the gap where a
+  Tailscale-direct pairing recorded a Cloudflare edge IP
+  (`172.64.146.15`) as its `remoteIp`. **Issue A:** `lib/openclaw-html.js`
+  now injects a small device-identity bootstrap into every
+  `/openclaw-direct/` Control UI page load: a stable id, minted once and
+  persisted in a TangleClaw-namespaced `localStorage` key shared across
+  every `connId` on this TangleClaw origin, exposed via
+  `window.__tangleclawOpenclawDeviceId` and a `<meta
+  name="tc-openclaw-device-id">` tag for OpenClaw's bundle to read if it
+  chooses to -- bridging infrastructure, not a guaranteed fix, since
+  whether a given OpenClaw gateway version reads either is outside this
+  repo's control. The same bootstrap also delivers a verified,
+  already-working continuity path: on a `/openclaw-direct/<connId>/`
+  load it automatically calls TangleClaw's own existing
+  `POST /api/openclaw/connections/:id/approve-pending` route (SSH +
+  `docker exec openclaw devices approve`, same-origin, with the
+  operator's own session cookie) once on load and once more a few
+  seconds later, so switching access paths gets the device pairing
+  approved automatically instead of requiring an operator to run that
+  command by hand. Exposed as `window.__tangleclawApproveOpenclawDevice`
+  for direct invocation.
+- Fixed the OpenClaw connection dot staying green indefinitely after a tunnel or gateway died following page load. The dot's gateway-health measurement is now re-probed on the existing sidecar poll cycle (no new timer) and ages out of `live` into `unverified` after 2 minutes if nothing re-confirms it, so a measurement is never presented as a present-tense fact once it is stale (#1185).
+
 ## [5.70.0] - 2026-11-06
 
 ### Added
