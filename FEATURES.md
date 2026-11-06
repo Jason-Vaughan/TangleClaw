@@ -17,6 +17,13 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v5.70.0 — Workspace migration and Orchestrator controls
+
+- **Plan and execute workspace-root migration** (#2626) — `lib/tcc-workspace-migration.js#planWorkspaceMigration` reports projects under a TCC-protected root and blockers before any move; `#executeWorkspaceMigration` moves eligible directories, updates stored paths and Git worktree links, and rolls back a failed attempt.
+- **Keep selected project repositories hands-off** (#1485) — `lib/engines.js#writeEngineConfig` uses untracked `CLAUDE.local.md` for the operational guide in `repoFootprint: "hands-off"` mode. `lib/wrap-steps/commit.js` and `lib/wrap-steps/pr-check.js` record skips instead of writing commits or PRs.
+- **Inspect a session pane with `tc capture`** (#1774) — `lib/routes/tc.js` serves the scoped, read-only capture endpoint; `lib/tc-verbs.js` exposes the CLI verb. Capture responses redact credentials and every attempt is audited.
+- **Use Orchestrator vocabulary and Team Chat aliases** (#2127) — `lib/master.js#resolveOrchestratorRoleIdentifier` resolves the canonical role and legacy aliases. `public/api-helper.js#_resolveMedusaNicknameTag` routes `@orchestrator`, `@master`, and `@project-master` through the server-verified Master roster identity; load-bearing internal Master identifiers remain for compatibility.
+
 ## v5.69.0 — Medusa coordination and session recovery
 
 - **Broadcast across active switchboards** (#1224) — `lib/medusa.js#broadcastAll` fans an explicitly marked `[BROADCAST scope=all]` message to other active registered workspaces, with a per-sender cooldown; `server.js` mounts the guarded broadcast route for operators and coordinators.

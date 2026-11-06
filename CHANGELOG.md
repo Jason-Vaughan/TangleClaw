@@ -4,6 +4,70 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.70.0] - 2026-11-06
+
+### Added
+- Added a per-project `repoFootprint: "managed" | "hands-off"` mode
+  (default `"managed"`) so an operator can point TangleClaw at a repository
+  it never writes to or commits in. In `"hands-off"` mode, `writeEngineConfig`
+  routes the `claude-md` carrier's content to an untracked `CLAUDE.local.md`
+  instead of the tracked `CLAUDE.md`, seeds `.git/info/exclude` with
+  `.tangleclaw/` and `CLAUDE.local.md` (never touching the tracked
+  `.gitignore`), and skips every other engine's config write entirely. The
+  wrap pipeline runs in record-only mode: `commit` and `pr-check` both skip
+  with a recorded `repoFootprint=hands-off` reason, so nothing this session
+  stages is ever committed, pushed or opened as a PR, and the operator sees
+  the mode from the first frame of the wrap's run-start event (#1485).
+- Added `tc capture <session-name> [--lines <N>]`: a read-only peek at a
+  session's tmux pane buffer (default 80 lines, capped at 500), letting a
+  coordinator diagnose a stall or check progress without waking the session
+  or spending a Medusa message. Scoped authorization (Master, a project
+  session capturing its own pane, or a project session holding an active
+  `architect`/`project-manager` coordinator role capturing a different
+  session's pane; every other caller is refused with `403 CAPTURE_FORBIDDEN`),
+  secret redaction (bearer tokens, GitHub/Anthropic/OpenAI key patterns, the
+  launch-id header are replaced with `[REDACTED]` before the text leaves the
+  server) and a structured audit log entry on every attempt, permitted or
+  denied. `docs/tc-cli-reference.md` documents it alongside `tc start`
+  (#1774).
+- Added a guided workspace-root migration for installs still keeping their projects under a macOS-TCC-protected folder (`~/Documents/Projects` — a brand new install already defaults to the unprotected `~/Projects`). `lib/tcc-workspace-migration.js#planWorkspaceMigration` computes a dry-run plan (every affected project's new path, any blocked by an active session or a target-path collision, and whether `config.json`'s own `projectsDir` needs updating); `executeWorkspaceMigration` moves each directory, updates its stored path, updates `config.json`, and repairs any git worktree links the move disturbed — rolling the whole attempt back to its original state if any step fails (#2626).
+
+### Changed
+- Closed #2127 for v5.x under its own cost-gated Operator decision rule
+  ("if implementing the rename turns out easy/cheap, do it" -- Ruling
+  A505-R3.6/R3.7): `lib/master.js` exports the canonical/legacy vocabulary
+  (`ORCHESTRATOR_CANONICAL_ROLE`/`_KEY`/`_HANDLE` = "Orchestrator" /
+  "orchestrator" / "@orchestrator"; `ORCHESTRATOR_LEGACY_ROLE`/`_KEY`/
+  `_HANDLE` = "Project Master" / "master" / "@master"),
+  `resolveOrchestratorRoleIdentifier` (exact-match, never a Git branch name
+  like `origin/master`), and a frozen `ORCHESTRATOR_COMPATIBILITY_INVENTORY`
+  documenting all 7 retained legacy identifiers (`config.master`,
+  `session_rules.kind='master'`, `/api/master/*`, `tc_master_`,
+  `tangleclaw-master`, `MASTER_MEDUSA_KEY='master'`,
+  `MASTER_MEDUSA_NAME='Project Master'`) with compatibility reason and
+  retirement status. An additive `roleTerminology` block rides on every
+  Master status-composition payload (`getMasterStatus`, `getAuthorityState`,
+  `evaluateContinuityHealth`) with no existing field disturbed. Team Chat
+  `@orchestrator` (canonical) and `@master`/`@project-master` (deprecated
+  compatibility aliases) now resolve live to the Master/Orchestrator
+  session (`public/api-helper.js#_resolveMedusaNicknameTag`) through a
+  server-verified identity, not a display name or id-prefix guess:
+  `lib/medusa.js#getRoster` stamps `isMaster: true, role: 'orchestrator'`
+  on the one roster entry whose id matches the `'master'`-keyed listener's
+  workspace id (Ruling A505-R3.10), and only that stamp -- never
+  `name === 'Project Master'`/`'orchestrator'` or an
+  `id` prefix -- makes a roster entry eligible as the Master/Orchestrator.
+  An ordinary project also matching the token by plain name/alias is
+  unioned in alongside it rather than silently preferred, so a same-named
+  collision still refuses as ambiguous; when NO roster entry carries the
+  authoritative stamp, these three reserved tags resolve to nothing at
+  all, including a lone ordinary project whose name or id merely looks
+  like the real thing (I-Gate Round 3, #5799693931 C1). Destructive
+  renames of the 7 load-bearing internal identifiers above, and
+  the 18 existing `test/master*.test.js` suites' own naming, are formally
+  deferred to the `v6.0` architecture rewrite (Milestone #32) under the
+  same cost-gated rule -- not implemented here.
+
 ## [5.69.0] - 2026-11-06
 
 ### Added
