@@ -363,6 +363,18 @@ describe('resolveReachableHost integration — lib/sessions.js#launchWebuiSessio
   });
 });
 
+/**
+ * Every `u@<host>` target in a generated launch command, in the order they
+ * appear — the candidate order, independent of the exact shell glue
+ * (`||`, or the exit-255-conditional chain I-Gate Round 7 requires) joining
+ * them.
+ * @param {string} cmd
+ * @returns {string[]}
+ */
+function _hostsInOrder(cmd) {
+  return [...cmd.matchAll(/\bu@([^\s"]+)/g)].map((m) => m[1]);
+}
+
 describe('resolveReachableHost integration — _buildLaunchCommand\'s synchronous activeHost read (#1531)', () => {
   const store = require('../lib/store');
   const sessions = require('../lib/sessions');
@@ -414,10 +426,8 @@ describe('resolveReachableHost integration — _buildLaunchCommand\'s synchronou
     remote._resolved.set(conn.id, { activeHost: '203.0.113.9', fallbackUsed: true, resolvedAt: Date.now() });
     const project = { engineId: `openclaw:${conn.id}` };
     const cmd = sessions._buildLaunchCommand({}, project);
-    const parts = cmd.split(' || ');
-    assert.equal(parts.length, 2);
-    assert.match(parts[0], /u@203\.0\.113\.9/, 'the cached route still goes FIRST');
-    assert.match(parts[1], /u@192\.0\.2\.1/, 'but conn.host is still offered as a fallback, not dropped');
+    assert.deepEqual(_hostsInOrder(cmd), ['203.0.113.9', '192.0.2.1'],
+      'the cached route goes FIRST, but conn.host is still offered as a fallback, not dropped');
   });
 
   it('an EXPIRED cached route (past RESOLUTION_TTL_MS) is treated as no route at all — getActiveRoute '
@@ -431,10 +441,8 @@ describe('resolveReachableHost integration — _buildLaunchCommand\'s synchronou
 
     const project = { engineId: `openclaw:${conn.id}` };
     const cmd = sessions._buildLaunchCommand({}, project);
-    const parts = cmd.split(' || ');
-    assert.equal(parts.length, 2);
-    assert.match(parts[0], /u@192\.0\.2\.1/, 'no fresh route cached, so the primary leads, same as a cold cache');
-    assert.match(parts[1], /u@203\.0\.113\.9/);
+    assert.deepEqual(_hostsInOrder(cmd), ['192.0.2.1', '203.0.113.9'],
+      'no fresh route cached, so the primary leads, same as a cold cache');
   });
 
   it('a fresh cached route that has since gone dead is actually bypassed by the chain, for real — '
@@ -482,10 +490,7 @@ describe('resolveReachableHost integration — _buildLaunchCommand\'s synchronou
     remote.invalidateResolvedHost(conn.id); // explicit, even though nothing cached it yet
     const project = { engineId: `openclaw:${conn.id}` };
     const cmd = sessions._buildLaunchCommand({}, project);
-    const parts = cmd.split(' || ');
-    assert.equal(parts.length, 2);
-    assert.match(parts[0], /u@192\.0\.2\.1/);
-    assert.match(parts[1], /u@100\.64\.0\.2/);
+    assert.deepEqual(_hostsInOrder(cmd), ['192.0.2.1', '100.64.0.2']);
   });
 
   it('refuses the launch if ANY candidate host is unsafe, not just the one about to be used', () => {
@@ -536,6 +541,56 @@ describe('resolveReachableHost integration — _buildLaunchCommand\'s synchronou
       assert.doesNotThrow(() => {
         execSync(cmd, { env: { ...process.env, PATH: `${stubDir}:${process.env.PATH}` }, stdio: 'pipe' });
       }, 'the chain must succeed via the fallback host, not hang on or fail with only the dead primary');
+    } finally {
+      fs.rmSync(stubDir, { recursive: true, force: true });
+    }
+  });
+
+  it('a connected host whose remote command exits nonzero is invoked ONLY ONCE — never retried '
+    + 'against the fallback (I-Gate Round 7 C1: OpenSSH exits 255 ONLY on a transport/connection '
+    + 'failure; any other nonzero is the REMOTE COMMAND\'s own status, and a plain || chain cannot '
+    + 'tell the two apart)', () => {
+    const execSync = require('node:child_process').execSync;
+    const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-stub-ssh-'));
+    const stubPath = path.join(stubDir, 'ssh');
+    const logPath = path.join(stubDir, 'invocations.log');
+    fs.writeFileSync(stubPath, [
+      '#!/bin/sh',
+      `echo "$@" >> "${logPath}"`,
+      'for a in "$@"; do',
+      '  case "$a" in',
+      // The primary CONNECTS fine, but the remote `openclaw-cli` itself
+      // reports an application error (exit 1, NOT a connection failure).
+      '    *@192.0.2.1) exit 1 ;;',
+      // The fallback would happily succeed IF it were ever invoked.
+      '    *@100.64.0.2) exit 0 ;;',
+      '  esac',
+      'done',
+      'exit 1',
+      ''
+    ].join('\n'), { mode: 0o755 });
+
+    try {
+      const conn = store.openclawConnections.create({
+        name: 'CmdAppErrorNoRetry', host: '192.0.2.1', sshUser: 'u', sshKeyPath: '~/.ssh/k', instanceDir: '~/openclaw',
+        fallbackHosts: ['100.64.0.2']
+      });
+      const project = { engineId: `openclaw:${conn.id}` };
+      const cmd = sessions._buildLaunchCommand({}, project);
+
+      let caught = null;
+      try {
+        execSync(cmd, { env: { ...process.env, PATH: `${stubDir}:${process.env.PATH}` }, stdio: 'pipe' });
+      } catch (err) {
+        caught = err;
+      }
+      assert.ok(caught, 'the overall launch must exit nonzero, preserving the application error');
+      assert.equal(caught.status, 1, 'the EXACT application exit code must survive, not be swallowed by a retry');
+
+      const log = fs.readFileSync(logPath, 'utf8');
+      const invokedHosts = [...log.matchAll(/u@([^\s]+)/g)].map((m) => m[1]);
+      assert.deepEqual(invokedHosts, ['192.0.2.1'],
+        'the fallback must NEVER be invoked once the primary actually connected and ran the remote command');
     } finally {
       fs.rmSync(stubDir, { recursive: true, force: true });
     }
