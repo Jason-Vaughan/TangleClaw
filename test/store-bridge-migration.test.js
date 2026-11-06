@@ -1324,8 +1324,12 @@ describe('store: a third pinned ingress surface, advisory-channel (v66, #2817-A)
     // BRIDGE_SCHEMA_VERSION -- the two diverged once non-bridge migrations
     // landed between the bridge's last bump and this one, so the stamp here
     // is "every global migration through the one before mine", not "65".
-    const priorGlobalVersion = store.CURRENT_SCHEMA_VERSION - 1;
-    db.exec(`DELETE FROM schema_version WHERE version >= ${store.CURRENT_SCHEMA_VERSION}`);
+    // Pinned to the exact migration (77 -> 78 is this v66 bridge migration),
+    // the same way rewindToV63/rewindToV64 pin 63/64 -- `CURRENT_SCHEMA_VERSION
+    // - 1` drifted the moment a LATER car bumped the global counter further
+    // (v79, #1713), silently skipping 77 -> 78 on `reopen()` (I-Gate R3).
+    const priorGlobalVersion = 77;
+    db.exec(`DELETE FROM schema_version WHERE version >= 78`);
     db.exec(`INSERT INTO schema_version (version) VALUES (${priorGlobalVersion})`);
     db.exec('COMMIT');
     assert.deepEqual(bridgeSchema.bridgeSchemaProblems(db, null, 65), [], 'a sound v65 store');
