@@ -381,6 +381,7 @@ describe('public/session.js call sites for governed-wrap-ui.js (v5.67.0 FEED-FOR
       'let currentGovernedWrapStream = null;\n'
       + `${liftDeclaration(SESSION_SRC, 'function _governedWrapProgressContainer(')}\n`
       + `${liftDeclaration(SESSION_SRC, 'async function checkGovernedWrapProgress(')}\n`
+      + `${liftDeclaration(SESSION_SRC, 'function _governedWrapStageForState(')}\n`
       + 'globalThis.checkGovernedWrapProgress = checkGovernedWrapProgress;',
       sandbox
     );
@@ -419,20 +420,72 @@ describe('public/session.js call sites for governed-wrap-ui.js (v5.67.0 FEED-FOR
 
   it('leaves the container hidden for a request already at a terminal stage', async () => {
     const { doc, check } = loadLifted({
-      api: async () => ({ ok: true, request: { id: 'gw-1', state: 'completed' } })
+      api: async () => ({ ok: true, request: { requestId: 'gw-1', state: 'completed' } })
     });
     await check();
     assert.equal(findChildById(doc.body, 'wrapDrawerGovernedProgress').classList.contains('hidden'), true);
   });
 
-  it('renders the real progress bar for an open, non-terminal request', async () => {
+  for (const state of ['stale', 'expired', 'cancelled']) {
+    it(`leaves the container hidden for a request that ended as "${state}" (never completed, not progress to show)`, async () => {
+      const { doc, check } = loadLifted({
+        api: async () => ({ ok: true, request: { requestId: 'gw-1', state } })
+      });
+      await check();
+      assert.equal(findChildById(doc.body, 'wrapDrawerGovernedProgress').classList.contains('hidden'), true);
+    });
+  }
+
+  it('renders the real progress bar for an open, non-terminal request — using requestId (A-Gate R1), not id', async () => {
     const { doc, check } = loadLifted({
-      api: async () => ({ ok: true, request: { id: 'gw-1', state: 'pipeline-running' } })
+      api: async () => ({ ok: true, request: { requestId: 'gw-1', state: 'executing' } })
     });
     await check();
     const container = findChildById(doc.body, 'wrapDrawerGovernedProgress');
     assert.equal(container.classList.contains('hidden'), false);
+    // "executing" maps to the "pipeline-running" progress stage (A-Gate R1,
+    // mirroring lib/governed-wrap.js#_stageForRequestState), 70%.
     assert.match(container.innerHTML, /role="progressbar"/);
     assert.match(container.innerHTML, /aria-valuenow="70"/);
+  });
+
+  it('renders the preflight stage (20%) for a request still awaiting_decision', async () => {
+    const { doc, check } = loadLifted({
+      api: async () => ({ ok: true, request: { requestId: 'gw-1', state: 'awaiting_decision' } })
+    });
+    await check();
+    assert.match(findChildById(doc.body, 'wrapDrawerGovernedProgress').innerHTML, /aria-valuenow="20"/);
+  });
+
+  for (const state of ['ready', 'needs_operator']) {
+    it(`renders the decision-validated stage (40%) for state "${state}"`, async () => {
+      const { doc, check } = loadLifted({
+        api: async () => ({ ok: true, request: { requestId: 'gw-1', state } })
+      });
+      await check();
+      assert.match(findChildById(doc.body, 'wrapDrawerGovernedProgress').innerHTML, /aria-valuenow="40"/);
+    });
+  }
+
+  it('explicitly names every real STATES value that is NOT terminal-by-default (A-Gate R1 drift guard)', () => {
+    // _governedWrapStageForState duplicates lib/governed-wrap.js's own
+    // private, unexported _stageForRequestState -- same reasoning as the
+    // five-stages check above, aimed at the OTHER duplicated vocabulary
+    // this car's fix introduced. The real function (and this one,
+    // mirroring it) deliberately handles `stale`/`expired`/`cancelled` via
+    // its `default` branch rather than a named case -- covered instead by
+    // this file's own behavioral tests above (all three map to "failed").
+    // A state added to the real STATES enum later, in this non-default
+    // group, with no matching case here, would silently fall through to
+    // "failed" too -- which is what this guards against for THESE states.
+    const libSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'governed-wrap.js'), 'utf8');
+    const statesBlock = libSrc.slice(libSrc.indexOf('const STATES = Object.freeze({'), libSrc.indexOf('});', libSrc.indexOf('const STATES')) + 3);
+    const realStates = [...statesBlock.matchAll(/:\s*'([a-z_]+)'/g)].map((m) => m[1]);
+    assert.ok(realStates.length >= 8, 'sanity: STATES must have been found at all');
+    const explicitlyHandled = realStates.filter((s) => !['stale', 'expired', 'cancelled'].includes(s));
+    assert.ok(explicitlyHandled.length >= 5, 'sanity: most states are not in the default-terminal group');
+    for (const state of explicitlyHandled) {
+      assert.ok(SESSION_SRC.includes(`'${state}'`), `_governedWrapStageForState must name real state "${state}"`);
+    }
   });
 });

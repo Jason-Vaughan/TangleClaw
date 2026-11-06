@@ -5219,20 +5219,51 @@ async function checkGovernedWrapProgress() {
   }
   const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/governed-wrap`);
   const request = data && data.ok ? data.request : null;
-  if (!request || !request.id || request.state === 'completed' || request.state === 'failed') {
+  // `_view` (lib/governed-wrap.js) serializes the id as `requestId`, never `id`.
+  const requestId = request && (request.requestId || request.id);
+  const stage = request ? _governedWrapStageForState(request.state) : null;
+  if (!requestId || stage === 'completed' || stage === 'failed') {
     container.classList.add('hidden');
     container.innerHTML = '';
     return;
   }
   container.classList.remove('hidden');
-  container.innerHTML = window.renderGovernedWrapProgressBar(request.state);
-  const streamUrl = `/api/sessions/${encodeURIComponent(projectName)}/governed-wrap/${encodeURIComponent(request.id)}/stream`;
-  currentGovernedWrapStream = window.startGovernedWrapProgressStream(streamUrl, (stage) => {
-    container.innerHTML = window.renderGovernedWrapProgressBar(stage);
-    if (stage === 'completed' || stage === 'failed') {
+  container.innerHTML = window.renderGovernedWrapProgressBar(stage);
+  const streamUrl = `/api/sessions/${encodeURIComponent(projectName)}/governed-wrap/${encodeURIComponent(requestId)}/stream`;
+  currentGovernedWrapStream = window.startGovernedWrapProgressStream(streamUrl, (streamStage) => {
+    container.innerHTML = window.renderGovernedWrapProgressBar(streamStage);
+    if (streamStage === 'completed' || streamStage === 'failed') {
       if (currentGovernedWrapStream) { currentGovernedWrapStream.close(); currentGovernedWrapStream = null; }
     }
   });
+}
+
+/**
+ * Coarsen a governed-wrap request's own lifecycle state to one of
+ * `GOVERNED_WRAP_PROGRESS_STAGES` (A-Gate Round 1, PR #2913) — mirroring
+ * `lib/governed-wrap.js#_stageForRequestState` exactly, a private,
+ * unexported function. Duplicated here the same way
+ * `public/governed-wrap-ui.js` already duplicates the server's
+ * `PROGRESS_STAGES` values themselves: a browser script cannot `require()`
+ * a `lib/` module, and this car's envelope has no shared-vocabulary file to
+ * hold one instead.
+ * @param {string} state - One of `lib/governed-wrap.js`'s `STATES` values
+ *   (`awaiting_decision`, `ready`, `needs_operator`, `executing`,
+ *   `completed`, `stale`, `expired`, `cancelled`).
+ * @returns {string} One of `GOVERNED_WRAP_PROGRESS_STAGES`.
+ */
+function _governedWrapStageForState(state) {
+  switch (state) {
+    case 'awaiting_decision': return 'preflight';
+    case 'ready':
+    case 'needs_operator': return 'decision-validated';
+    case 'executing': return 'pipeline-running';
+    case 'completed': return 'completed';
+    // stale, expired, cancelled: none of them ever claimed a run, or the run
+    // they claimed is no longer this decision's to report on -- failed, not
+    // completed, because this governed-wrap request itself did not finish.
+    default: return 'failed';
+  }
 }
 
 /**
