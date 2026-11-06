@@ -445,6 +445,25 @@ describe('hands-off repo footprint (#1485, Ruling A505-R3 / R3.2)', () => {
     assert.equal(fs.existsSync(path.join(root, '.codex.yaml')), false);
   });
 
+  it('leaves an already-TRACKED CLAUDE.local.md untouched (I-Gate Round 1 Finding 1, #5798923613)', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-handsoff-'));
+    dirs.push(root);
+    initRepo(root, [], { env: ENV });
+    const trackedContent = '# operator committed this on purpose, must not change\n';
+    fs.writeFileSync(path.join(root, 'CLAUDE.local.md'), trackedContent);
+    git(root, 'add', 'CLAUDE.local.md');
+    git(root, 'commit', '-qm', 'tracked CLAUDE.local.md');
+
+    const engineProfile = store.engines.get('claude');
+    const result = engines.writeEngineConfig('claude', root, { repoFootprint: 'hands-off' }, engineProfile);
+
+    assert.equal(result.written, false);
+    assert.equal(result.skipped, true);
+    assert.match(result.skipReason, /tracked in git/);
+    assert.equal(fs.readFileSync(path.join(root, 'CLAUDE.local.md'), 'utf8'), trackedContent);
+    assert.equal(git(root, 'status', '--porcelain', 'CLAUDE.local.md'), '', 'no tracked-file mutation');
+  });
+
   it('wrap record-only mode: the commit step skips without touching git, and pr-check skips without calling gh', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-handsoff-'));
     dirs.push(root);

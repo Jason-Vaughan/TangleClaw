@@ -21,7 +21,7 @@ const os = require('node:os');
 const http = require('node:http');
 const { execFile } = require('node:child_process');
 
-const { setLevel } = require('../lib/logger');
+const { setLevel, setConsoleStream } = require('../lib/logger');
 
 setLevel('error');
 
@@ -40,7 +40,8 @@ const {
   renderRules,
   renderLearnings,
   renderInbox,
-  renderPeerStatus
+  renderPeerStatus,
+  redactCaptureText
 } = require('../lib/tc-verbs');
 
 const { operatorHeaders, bindProject } = require('./_shared-docs-callers');
@@ -900,10 +901,41 @@ describe('tc verb surface against a live server (ambient-awareness Chunk 03)', (
       };
     }
 
-    it('400s with no ?session=', async () => {
-      const r = await request(server, 'GET', '/api/tc/capture');
-      assert.equal(r.status, 400);
-      assert.equal(r.body.code, 'CAPTURE_SESSION_REQUIRED');
+    /**
+     * Run `fn` with log output captured at `info`, restoring the quiet
+     * error-level default afterwards (mirrors test/wrap-step-commit-autopr.test.js's
+     * own helper of the same name).
+     * @param {Function} fn - Async body to run
+     * @returns {Promise<string>} Everything written to the console stream
+     */
+    async function captureLogs(fn) {
+      let out = '';
+      setConsoleStream({ write: (s) => { out += s; } });
+      setLevel('info');
+      try {
+        await fn();
+      } finally {
+        setLevel('error');
+        setConsoleStream(null);
+      }
+      return out;
+    }
+
+    it('redactCaptureText redacts Bearer regardless of case (I-Gate Round 1 Finding 2, #5798923613)', () => {
+      assert.equal(redactCaptureText('Authorization: Bearer abc.def'), 'Authorization: [REDACTED]');
+      assert.equal(redactCaptureText('authorization: bearer abc.def'), 'authorization: [REDACTED]');
+      assert.equal(redactCaptureText('AUTHORIZATION: BEARER abc.def'), 'AUTHORIZATION: [REDACTED]');
+      assert.equal(redactCaptureText('no secret here'), 'no secret here');
+    });
+
+    it('400s with no ?session=, and audits the denial', async () => {
+      const out = await captureLogs(async () => {
+        const r = await request(server, 'GET', '/api/tc/capture');
+        assert.equal(r.status, 400);
+        assert.equal(r.body.code, 'CAPTURE_SESSION_REQUIRED');
+      });
+      assert.match(out, /tc_capture_denied/, 'I-Gate Round 1 Finding 3: a malformed request is still an audited attempt');
+      assert.match(out, /CAPTURE_SESSION_REQUIRED/);
     });
 
     it('404s for a session name with no active tmux session recorded', async () => {
@@ -939,7 +971,12 @@ describe('tc verb surface against a live server (ambient-awareness Chunk 03)', (
     it('permits a project session capturing its OWN pane, redacted and audited', async () => {
       targetSessionRow = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'pane-own' });
       const caller = bindProject(project);
-      stubCapture(['plain line', 'Authorization: Bearer abc123.def456-ghi', 'ANTHROPIC_API_KEY=sk-not-real-but-shaped-like-one-0000']);
+      stubCapture([
+        'plain line',
+        'Authorization: Bearer abc123.def456-ghi',
+        'authorization: bearer abc123.def456-ghi',
+        'ANTHROPIC_API_KEY=sk-not-real-but-shaped-like-one-0000'
+      ]);
       try {
         const r = await request(server, 'GET', '/api/tc/capture?session=pane-own&lines=42', caller.headers);
         assert.equal(r.status, 200);
@@ -948,6 +985,7 @@ describe('tc verb surface against a live server (ambient-awareness Chunk 03)', (
         assert.deepEqual(r.body.lines, [
           'plain line',
           'Authorization: [REDACTED]',
+          'authorization: [REDACTED]',
           '[REDACTED]'
         ]);
         assert.equal(r.body.audit.callerKind, 'project');
@@ -992,14 +1030,18 @@ describe('tc verb surface against a live server (ambient-awareness Chunk 03)', (
       }
     });
 
-    it('502s when the real tmux capture throws, with no partial body', async () => {
+    it('502s when the real tmux capture throws, with no partial body, and audits it as an error (I-Gate Round 1 Finding 3, #5798923613)', async () => {
       targetSessionRow = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'pane-throws' });
       const caller = bindProject(project);
       tmux.capturePane = () => { throw new Error('tmux session "pane-throws" does not exist'); };
       try {
-        const r = await request(server, 'GET', '/api/tc/capture?session=pane-throws', caller.headers);
-        assert.equal(r.status, 502);
-        assert.equal(r.body.code, 'CAPTURE_FAILED');
+        const out = await captureLogs(async () => {
+          const r = await request(server, 'GET', '/api/tc/capture?session=pane-throws', caller.headers);
+          assert.equal(r.status, 502);
+          assert.equal(r.body.code, 'CAPTURE_FAILED');
+        });
+        assert.match(out, /tc_capture_error/);
+        assert.match(out, /CAPTURE_FAILED/);
       } finally {
         store.sessions.kill(targetSessionRow.id, 'test teardown');
         store.sessions.kill(caller.sessionId, 'test teardown');
