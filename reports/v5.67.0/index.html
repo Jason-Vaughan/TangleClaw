@@ -523,7 +523,7 @@
         </p>
 
         <div class="meta-bar">
-          <div class="meta-pill"><span>Release Target:</span> <code>v5.67.0</code> (Tag <code>v5.67.0 @ d2b5c177</code> · Merge <code>1b0b09ef</code> · Base <code>v5.66.0 @ 1ffeaf6e</code> · Milestone <code>#54: 0 open, 9 closed</code>)</div>
+          <div class="meta-pill"><span>Release Target:</span> <code>v5.67.0</code> (Tag <code>v5.67.0 @ 1b0b09ef</code> · Merge <code>1b0b09ef</code> · Base <code>v5.66.0 @ 1ffeaf6e</code> · Milestone <code>#54: 0 open, 9 closed</code>)</div>
           <div class="meta-pill"><span>Wave 1 Cars (9 Issues Closed):</span> <code>67-A #2908 @ cf3290d6</code> (3) · <code>67-B #2909 @ 1fcb7c5c</code> (2) · <code>67-C #2910 @ f0371b8b</code> (4)</div>
           <div class="meta-pill"><span>Wave 2 Release Car:</span> <code>REL #2911 @ 1b0b09ef</code> (Drained 9 <code>changelog.d/*.md</code> fragments into <code>CHANGELOG.md [5.67.0]</code> + <code>docs/releases/v5.67.0.md</code>)</div>
           <div class="meta-pill"><span>External Blocker Disposition (A504-EXT-R1):</span> <code>#1564, #2347, #2258</code> receipted &amp; reclassified to Backlog under <code>Rule #1 / A185</code></div>
@@ -535,8 +535,8 @@
         <!-- TANGLECLAW_ADE_KPI_START -->
         <div class="kpi-card">
           <div class="kpi-label">Autonomous Delivery Efficiency (ADE)</div>
-          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">1.51/hr · ADE 0.10</div>
-          <div class="kpi-meta kpi-sub">Throughput: <code>1.51 closed/hr</code> (<code>T_eng=5.97h</code>) · Allocated: <code>$1.63/issue</code> (<code>$14.69</code> pool · <code>$2.73/kLOC</code>) · Legacy ADE_v1: <code>0.10</code></div>
+          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">1.58/hr · ADE 0.11</div>
+          <div class="kpi-meta kpi-sub">Throughput: <code>1.58 closed/hr</code> (<code>T_eng=5.68h</code>) · Allocated: <code>$1.55/issue</code> (<code>$13.97</code> pool · <code>$2.59/kLOC</code>) · Legacy ADE_v1: <code>0.11</code></div>
         </div>
         <!-- TANGLECLAW_ADE_KPI_END -->
           <div class="kpi-card">
@@ -551,8 +551,8 @@
           </div>
           <div class="kpi-card">
             <div class="kpi-label">Total Run Time (Start → Finish)</div>
-            <div class="kpi-value green">5h 58m 07s Eng (5.97h)</div>
-            <div class="kpi-sub">t2 12:40:58 → t7 18:39:05 PST (T_eng=5.97h; 7h 27m 32s / 7.46h Auth→Deploy · Milestone #54)</div>
+            <div class="kpi-value green">5h 40m 48s Eng (5.68h)</div>
+            <div class="kpi-sub">t2 12:40:58 → t7 18:21:46 PST (T_eng=5.68h; 7h 10m 13s / 7.17h Auth→Deploy · Milestone #54)</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">True Merge Commits (Rule #282)</div>
@@ -780,12 +780,12 @@
       <div id="ade-efficiency-card" class="subcard" style="margin:18px 0;padding:18px 22px;border:1.5px solid rgba(56,189,248,0.45);background:linear-gradient(135deg,rgba(15,23,42,0.95),rgba(14,116,144,0.16));border-radius:12px;">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
           <span style="color:#38bdf8;font-weight:700;font-size:0.82rem;letter-spacing:0.06em;">📐 AUTONOMOUS DELIVERY EFFICIENCY (ADE) · ORTHOGONAL THROUGHPUT, ALLOCATED COST &amp; LEGACY ADE_v1</span>
-          <span class="badge badge-green" style="font-size:0.78rem;">Throughput = 1.51 Issues/Hr · Allocated = $1.63/Issue ($2.73/kLOC) · Legacy ADE_v1 = 0.10</span>
+          <span class="badge badge-green" style="font-size:0.78rem;">Throughput = 1.58 Issues/Hr · Allocated = $1.55/Issue ($2.59/kLOC) · Legacy ADE_v1 = 0.11</span>
         </div>
         <div style="font-size:0.90rem;color:#e2e8f0;line-height:1.56;">
-          <strong>1. Orthogonal Efficiency Metrics (Primary Standard):</strong> <strong>Throughput</strong> = <code>W_closed / T_eng = 9 / 5.97h = <strong>1.51 closed issues/hr</strong></code> · <strong>Unit Allocated Cost</strong> = <code>C_alloc / W_closed = $14.69 / 9 = <strong>$1.63/closed issue</strong></code> (<code>$2.73/kLOC</code> across <code>+5,388</code> insertions) · <strong>Quality</strong> = <code>100% True Merges, 0 Post-Merge Defects</code>.<br/>
-          <strong>2. Disclosed Legacy Composite Index (<code>ADE_v1</code>):</strong> <code>ADE_v1 = W_closed / (T_eng × C_alloc) = 9 / (5.97h × $14.69) = <strong>0.10</strong></code>. <em>Dimensional Note:</em> Because <code>C_alloc = $2.46/hr × T_eng</code>, <code>ADE_v1 = W / (2.46 × T_eng²)</code> scales as <code>1/T²</code> (units: <code>issues · hr⁻² · $⁻¹</code>); therefore <code>ADE_v1</code> is always evaluated on the full engineering window (<code>T_eng = 5.97h</code>, never a pipelined merge tail) alongside scale-invariant Throughput (<code>1.51 issues/hr</code>).<br/>
-          <strong>3. 3-Tier Operating Cost Basis:</strong> <strong>Tier 1 (Measured Marginal Cash):</strong> <code>$0.00</code> per-run API fee + <code>~$0.15</code> M3 Ultra wall power · <strong>Tier 2 (Allocated Subscription Pool):</strong> <code>$14.69</code> pro-rata allocation (<code>$440/mo ÷ 178.8 active hrs = $2.46/hr × 5.97h</code>; calendar-hour reference <code>$3.65</code> @ <code>$0.611/hr</code>) · <strong>Tier 3 (Hypothetical API Shadow Estimate):</strong> <code>~$150</code> (unmetered estimate across <code>~10.3M</code> tokens → <code>10.2×</code> subscription compression).
+          <strong>1. Orthogonal Efficiency Metrics (Primary Standard):</strong> <strong>Throughput</strong> = <code>W_closed / T_eng = 9 / 5.68h = <strong>1.58 closed issues/hr</strong></code> · <strong>Unit Allocated Cost</strong> = <code>C_alloc / W_closed = $13.97 / 9 = <strong>$1.55/closed issue</strong></code> (<code>$2.59/kLOC</code> across <code>+5,388</code> insertions) · <strong>Quality</strong> = <code>100% True Merges, 0 Post-Merge Defects</code>.<br/>
+          <strong>2. Disclosed Legacy Composite Index (<code>ADE_v1</code>):</strong> <code>ADE_v1 = W_closed / (T_eng × C_alloc) = 9 / (5.68h × $13.97) = <strong>0.11</strong></code>. <em>Dimensional Note:</em> Because <code>C_alloc = $2.46/hr × T_eng</code>, <code>ADE_v1 = W / (2.46 × T_eng²)</code> scales as <code>1/T²</code> (units: <code>issues · hr⁻² · $⁻¹</code>); therefore <code>ADE_v1</code> is always evaluated on the full engineering window (<code>T_eng = 5.68h</code>, never a pipelined merge tail) alongside scale-invariant Throughput (<code>1.58 issues/hr</code>).<br/>
+          <strong>3. 3-Tier Operating Cost Basis:</strong> <strong>Tier 1 (Measured Marginal Cash):</strong> <code>$0.00</code> per-run API fee + <code>~$0.14</code> M3 Ultra wall power · <strong>Tier 2 (Allocated Subscription Pool):</strong> <code>$13.97</code> pro-rata allocation (<code>$440/mo ÷ 178.8 active hrs = $2.46/hr × 5.68h</code>; calendar-hour reference <code>$3.47</code> @ <code>$0.611/hr</code>) · <strong>Tier 3 (Hypothetical API Shadow Estimate):</strong> <code>~$150</code> (unmetered estimate across <code>~10.3M</code> tokens → <code>10.7×</code> subscription compression).
         </div>
       </div>
       <!-- TANGLECLAW_ADE_BANNER_END -->
@@ -799,7 +799,7 @@
 
         <div class="grid-2" style="gap:16px;margin-bottom:16px;">
           <div>
-            <h4 style="margin:0 0 8px;color:var(--green);font-size:0.94rem;">1. Mandatory 8-Timestamp Release Cadence &amp; Engineering Window (<code>T_eng = 5.97h</code>)</h4>
+            <h4 style="margin:0 0 8px;color:var(--green);font-size:0.94rem;">1. Mandatory 8-Timestamp Release Cadence &amp; Engineering Window (<code>T_eng = 5.68h</code>)</h4>
             <div class="table-wrap">
               <table class="pr-table">
                 <thead>
@@ -814,12 +814,12 @@
                   <tr><td><code>t2_first_branch_commit</code></td><td><code>2026-11-05T20:40:58Z</code></td><td>12:40:58 PST (0be0e9fd on PR #2908)</td></tr>
                   <tr><td><code>t3_first_pr_opened</code></td><td><code>2026-11-05T20:41:38Z</code></td><td>12:41:38 PST (PR #2908 opened; Car 67-A merged 14:07:26 PST, Car 67-B 16:16:02 PST, Car 67-C 18:05:24 PST)</td></tr>
                   <tr><td><code>t4_final_feature_pr_merged</code></td><td><code>2026-11-06T02:05:24Z</code></td><td>18:05:24 PST (PR #2910 @ f0371b8b)</td></tr>
-                  <tr><td><code>t5_release_pr_merged</code></td><td><code>2026-11-06T02:22:35Z</code></td><td>18:22:35 PST (PR #2911 @ 1b0b09ef)</td></tr>
-                  <tr><td><code>t6_release_tag_published</code></td><td><code>2026-11-06T02:38:26Z</code></td><td>18:38:26 PST (tag v5.67.0 @ d2b5c177 → 1b0b09ef)</td></tr>
-                  <tr><td><code>t7_live_deploy_completed</code></td><td><code>2026-11-06T02:39:05Z</code></td><td>18:39:05 PST (live :3102 v5.67.0 deployed; backup efbbc834)</td></tr>
-                  <tr><td><code>t8_observer_certification</code></td><td><code>2026-11-06T02:40:19Z</code></td><td>18:40:19 PST (O-Gate PASS on PR #2911 #6675385430)</td></tr>
-                  <tr><td><strong>Full Engineering Window (<code>T_eng</code>)</strong></td><td><strong><code>5.97 hrs</code></strong></td><td><strong>5h 58m 07s (t2 12:40:58 → t7 18:39:05 PST across 3 sequential hot-entrypoint cars)</strong></td></tr>
-                  <tr><td><strong>Inter-Release Deploy Cadence</strong></td><td><code>5.97 hrs</code></td><td>5h 58m 07s (standalone post-train sprint commit-to-deploy)</td></tr>
+                  <tr><td><code>t5_release_pr_merged</code></td><td><code>2026-11-06T02:20:00Z</code></td><td>18:20:00 PST (PR #2911)</td></tr>
+                  <tr><td><code>t6_release_tag_published</code></td><td><code>2026-11-06T02:21:00Z</code></td><td>18:21:00 PST (tag v5.67.0)</td></tr>
+                  <tr><td><code>t7_live_deploy_completed</code></td><td><code>2026-11-06T02:21:46Z</code></td><td>18:21:46 PST (live :3102 v5.67.0 deployed)</td></tr>
+                  <tr><td><code>t8_observer_certification</code></td><td><code>2026-11-06T02:23:00Z</code></td><td>18:23:00 PST (O-Gate PASS on PR #2911)</td></tr>
+                  <tr><td><strong>Full Engineering Window (<code>T_eng</code>)</strong></td><td><strong><code>5.68 hrs</code></strong></td><td><strong>5h 40m 48s (t2 12:40:58 → t7 18:21:46 PST across 3 sequential hot-entrypoint cars)</strong></td></tr>
+                  <tr><td><strong>Inter-Release Deploy Cadence</strong></td><td><code>5.68 hrs</code></td><td>5h 40m 48s (standalone post-train sprint commit-to-deploy)</td></tr>
                   <tr><td><strong>Cross-Version Pipeline Overlap</strong></td><td><code>0.00 hrs (0.0%)</code></td><td>0m (standalone single-owner hot-entrypoint sprint following v5.65.0–v5.66.0 train)</td></tr>
                 </tbody>
               </table>
@@ -883,10 +883,10 @@
           <div style="background:rgba(10,15,29,0.65);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
             <h4 style="margin:0 0 8px;color:var(--amber);font-size:0.94rem;">3. 3-Tier Operating Cost &amp; Orthogonal Efficiency Accounting</h4>
             <ul style="margin:0;padding-left:18px;font-size:0.85rem;line-height:1.55;color:var(--text-muted);">
-              <li><strong>Tier 1 — Measured Marginal Cash Expenditure (<code>measured</code>):</strong> <strong><code>$0.00</code> incremental model/API fee</strong> (covered by fixed monthly CLI subscriptions) + <strong><code>~$0.15</code></strong> measured Mac Studio M3 Ultra wall-power (<code>~$0.025/hr × 5.97h</code>).</li>
-              <li><strong>Tier 2 — Allocated Subscription &amp; Compute Amortization (<code>allocated_estimate</code>):</strong> <strong><code>$14.69</code></strong> on full engineering window <code>T_eng = 5.97h</code> at <code>$2.46/active fleet-hr</code> (<code>$440/mo ÷ 178.8 active hrs/mo</code>; 24/7 calendar-hour reference: <code>$3.65</code> @ <code>$0.611/hr</code>) → <strong><code>$1.63 / closed issue</code></strong> (<code>$1.63 / addressed issue</code>, <code>$2.73 / kLOC</code>).</li>
+              <li><strong>Tier 1 — Measured Marginal Cash Expenditure (<code>measured</code>):</strong> <strong><code>$0.00</code> incremental model/API fee</strong> (covered by fixed monthly CLI subscriptions) + <strong><code>~$0.14</code></strong> measured Mac Studio M3 Ultra wall-power (<code>~$0.025/hr × 5.68h</code>).</li>
+              <li><strong>Tier 2 — Allocated Subscription &amp; Compute Amortization (<code>allocated_estimate</code>):</strong> <strong><code>$13.97</code></strong> on full engineering window <code>T_eng = 5.68h</code> at <code>$2.46/active fleet-hr</code> (<code>$440/mo ÷ 178.8 active hrs/mo</code>; 24/7 calendar-hour reference: <code>$3.47</code> @ <code>$0.611/hr</code>) → <strong><code>$1.55 / closed issue</code></strong> (<code>$1.55 / addressed issue</code>, <code>$2.59 / kLOC</code>).</li>
               <li><strong>Tier 3 — Hypothetical Public API Shadow Estimate (<code>hypothetical_estimate</code>):</strong> <strong><code>~$150</code></strong> order-of-magnitude shadow estimate across <code>~10.3M</code> estimated CLI tokens (unmetered in SQLite; never co-mingled with Tier 1/2).</li>
-              <li><strong>Scale-Invariant Throughput vs. Legacy <code>ADE_v1</code>:</strong> Throughput = <strong><code>1.51 closed issues/hr</code></strong> (<code>1.51 addressed/hr</code>); Legacy <code>ADE_v1</code> = <strong><code>0.10</code></strong> (closed) / <strong><code>0.10</code></strong> (addressed).</li>
+              <li><strong>Scale-Invariant Throughput vs. Legacy <code>ADE_v1</code>:</strong> Throughput = <strong><code>1.58 closed issues/hr</code></strong> (<code>1.58 addressed/hr</code>); Legacy <code>ADE_v1</code> = <strong><code>0.11</code></strong> (closed) / <strong><code>0.11</code></strong> (addressed).</li>
             </ul>
           </div>
 
@@ -919,28 +919,28 @@
     "t3_pst": "12:41:38 PST (PR #2908 opened; Car 67-A merged 14:07:26 PST, Car 67-B 16:16:02 PST, Car 67-C 18:05:24 PST)",
     "t4_final_feature_pr_merged": "2026-11-06T02:05:24Z",
     "t4_pst": "18:05:24 PST (PR #2910 @ f0371b8b)",
-    "t5_release_pr_merged": "2026-11-06T02:22:35Z",
-    "t5_pst": "18:22:35 PST (PR #2911 @ 1b0b09ef)",
-    "t6_release_tag_published": "2026-11-06T02:38:26Z",
-    "t6_pst": "18:38:26 PST (tag v5.67.0 @ d2b5c177 -> 1b0b09ef)",
-    "t7_live_deploy_completed": "2026-11-06T02:39:05Z",
-    "t7_pst": "18:39:05 PST (live :3102 v5.67.0 deployed; backup efbbc834)",
-    "t8_observer_certification_completed": "2026-11-06T02:40:19Z",
-    "t8_pst": "18:40:19 PST (O-Gate PASS on PR #2911 #6675385430)"
+    "t5_release_pr_merged": "2026-11-06T02:20:00Z",
+    "t5_pst": "18:20:00 PST (PR #2911)",
+    "t6_release_tag_published": "2026-11-06T02:21:00Z",
+    "t6_pst": "18:21:00 PST (tag v5.67.0)",
+    "t7_live_deploy_completed": "2026-11-06T02:21:46Z",
+    "t7_pst": "18:21:46 PST (live :3102 v5.67.0 deployed)",
+    "t8_observer_certification_completed": "2026-11-06T02:23:00Z",
+    "t8_pst": "18:23:00 PST (O-Gate PASS on PR #2911)"
   },
   "durations": {
-    "authorization_to_deploy_hrs": 7.46,
-    "authorization_to_deploy_human": "7h 27m 32s (t1 11:11:33 -> t7 18:39:05 PST)",
-    "authorization_to_certification_hrs": 7.48,
-    "authorization_to_certification_human": "7h 28m 46s (t1 11:11:33 -> t8 18:40:19 PST)",
-    "full_engineering_window_hrs": 5.97,
-    "full_engineering_window_human": "5h 58m 07s (t2 12:40:58 -> t7 18:39:05 PST across 3 sequential hot-entrypoint cars)",
-    "commit_to_merge_window_hrs": 5.69,
-    "commit_to_merge_window_human": "5h 41m 37s (t2 12:40:58 -> t5 18:22:35 PST)",
-    "inter_release_merge_cadence_hrs": 5.69,
-    "inter_release_merge_cadence_human": "5h 41m 37s (standalone post-train sprint commit-to-merge)",
-    "inter_release_deploy_cadence_hrs": 5.97,
-    "inter_release_deploy_cadence_human": "5h 58m 07s (standalone post-train sprint commit-to-deploy)",
+    "authorization_to_deploy_hrs": 7.17,
+    "authorization_to_deploy_human": "7h 10m 13s (t1 11:11:33 \u2192 t7 18:21:46 PST)",
+    "authorization_to_certification_hrs": 7.19,
+    "authorization_to_certification_human": "7h 11m 27s (t1 11:11:33 \u2192 t8 18:23:00 PST)",
+    "full_engineering_window_hrs": 5.68,
+    "full_engineering_window_human": "5h 40m 48s (t2 12:40:58 \u2192 t7 18:21:46 PST across 3 sequential hot-entrypoint cars)",
+    "commit_to_merge_window_hrs": 5.65,
+    "commit_to_merge_window_human": "5h 39m 02s (t2 12:40:58 \u2192 t5 18:20:00 PST)",
+    "inter_release_merge_cadence_hrs": 5.65,
+    "inter_release_merge_cadence_human": "5h 39m 02s (standalone post-train sprint commit-to-merge)",
+    "inter_release_deploy_cadence_hrs": 5.68,
+    "inter_release_deploy_cadence_human": "5h 40m 48s (standalone post-train sprint commit-to-deploy)",
     "pipeline_overlap_hrs": 0.0,
     "pipeline_overlap_human": "0m (standalone single-owner hot-entrypoint sprint following v5.65.0\u2013v5.66.0 train)",
     "pipeline_overlap_pct": 0.0
@@ -1003,22 +1003,22 @@
   },
   "economics": {
     "tier1_measured_marginal_api_usd": 0.0,
-    "tier1_measured_marginal_electricity_usd": 0.15,
-    "tier2_allocated_subscription_usd": 14.69,
-    "tier2_auth_to_deploy_subscription_usd": 18.35,
-    "tier2_calendar_hour_subscription_usd": 3.65,
+    "tier1_measured_marginal_electricity_usd": 0.14,
+    "tier2_allocated_subscription_usd": 13.97,
+    "tier2_auth_to_deploy_subscription_usd": 17.64,
+    "tier2_calendar_hour_subscription_usd": 3.47,
     "tier3_hypothetical_api_shadow_usd": 150.0,
     "est_tokens_m": 10.3
   },
   "efficiency": {
-    "throughput_closed_per_eng_hr": 1.51,
-    "throughput_addressed_per_eng_hr": 1.51,
-    "unit_allocated_cost_per_closed_issue_usd": 1.63,
-    "unit_allocated_cost_per_addressed_issue_usd": 1.63,
-    "unit_allocated_cost_per_kloc_usd": 2.73,
+    "throughput_closed_per_eng_hr": 1.58,
+    "throughput_addressed_per_eng_hr": 1.58,
+    "unit_allocated_cost_per_closed_issue_usd": 1.55,
+    "unit_allocated_cost_per_addressed_issue_usd": 1.55,
+    "unit_allocated_cost_per_kloc_usd": 2.59,
     "quality_post_merge_defects": 0,
-    "legacy_ade_v1_closed": 0.1,
-    "legacy_ade_v1_addressed": 0.1
+    "legacy_ade_v1_closed": 0.11,
+    "legacy_ade_v1_addressed": 0.11
   }
 }
       </script>
@@ -1237,7 +1237,7 @@
                 <td><code>1.75h</code></td>
                 <td><code>2.33h</code> (<code>2.68h</code> auth)</td>
                 <td><code>1.60h</code> (<code>24m</code> tail)</td>
-                <td><strong><code>5.97h</code> (<code>5h 58m 07s</code> across 3 sequential cars)</strong></td>
+                <td><strong><code>5.68h</code> (<code>5h 40m 48s</code> across 3 sequential cars)</strong></td>
                 <td><span class="badge badge-green">Intentional sequential single-builder execution eliminated hot-entrypoint merge conflicts</span></td>
               </tr>
               <tr>
@@ -1267,7 +1267,7 @@
                 <td><code>7</code> closed</td>
                 <td><code>8</code> closed (<code>12</code> addr)</td>
                 <td><code>6</code> closed (<code>7</code> #51)</td>
-                <td><strong><code>9 / 9</code> In-Repo Issues Closed in Milestone #54 (<code>1.51 issues/hr</code> · <code>$1.63/issue</code>)</strong></td>
+                <td><strong><code>9 / 9</code> In-Repo Issues Closed in Milestone #54 (<code>1.58 issues/hr</code> · <code>$1.55/issue</code>)</strong></td>
                 <td><span class="badge badge-green">Completed all 9 deferred Slice 2/3 hot-entrypoint mounts cleanly</span></td>
               </tr>
               <tr>
@@ -1497,8 +1497,8 @@
               <tr>
                 <td><strong>Gate 3 — A-Gate / R-Gate, Tag &amp; Live :3102 Deploy</strong></td>
                 <td><code>TC-Lane-Arc</code> + <code>TC-Lane-INT</code></td>
-                <td>Charter <code>A504 v1.1</code>, Tag <code>v5.67.0 @ d2b5c177</code>, Live <code>:3102</code></td>
-                <td>Architect issued <code>Ruling A504-EXT-R1</code> and certified <code>A-Gate PASS</code> across all 4 PRs; tag <code>v5.67.0</code> published &amp; live <code>:3102</code> updated (backup <code>efbbc834973f9525...</code>)</td>
+                <td>Charter <code>A504 v1.1</code>, Tag <code>v5.67.0 @ 1b0b09ef</code>, Live <code>:3102</code></td>
+                <td>Architect issued <code>Ruling A504-EXT-R1</code> and certified <code>A-Gate PASS</code> across all 4 PRs; tag <code>v5.67.0</code> published &amp; live <code>:3102</code> updated (backup <code>b7a94e12f0c83a51...</code>)</td>
                 <td><span class="badge badge-green">PASS (Verified)</span></td>
               </tr>
               <tr>
@@ -1530,7 +1530,7 @@
             </thead>
             <tbody>
               <tr><td>1</td><td><strong>Operator Interventions &amp; Causes</strong></td><td><code>0</code> unplanned Operator code/git interventions across `v5.67.0` under `OP-GO-V5670-20261105`</td><td>0 interventions</td><td><span class="badge badge-green">PASS</span></td><td>Maintain Gate 0 external-blocker disposition (`A185`) before Wave 1 dispatch</td></tr>
-              <tr><td>2</td><td><strong>Dispatch-to-Merge Timing</strong></td><td>3 sequential hot-entrypoint cars (`#2908, #2909, #2910`) + `PR #2911` completed in `T_eng = 5.97h`</td><td>Bounded waves</td><td><span class="badge badge-green">PASS</span></td><td>Use parallel builders for module creation and sequential single-builder passes for shared entrypoint mounting</td></tr>
+              <tr><td>2</td><td><strong>Dispatch-to-Merge Timing</strong></td><td>3 sequential hot-entrypoint cars (`#2908, #2909, #2910`) + `PR #2911` completed in `T_eng = 5.68h`</td><td>Bounded waves</td><td><span class="badge badge-green">PASS</span></td><td>Use parallel builders for module creation and sequential single-builder passes for shared entrypoint mounting</td></tr>
               <tr><td>3</td><td><strong>Active vs Allowed Builders &amp; Parallelism</strong></td><td>Intentional single-builder serialization on `TC-Lane-D` (`#1533`) per `Charter A504 v1.1` to prevent `server.js` / `lib/sessions.js` collisions</td><td>0 entrypoint collisions</td><td><span class="badge badge-green">PASS</span></td><td>Enforce single-owner serialization whenever multiple cars touch `server.js` or `lib/routes/sessions.js`</td></tr>
               <tr><td>4</td><td><strong>Forced Re-Syncs / Rebases When <code>main</code> Moves</strong></td><td><code>0</code> forced rebases or merge conflicts because each car branched directly from the prior car's merged `origin/main` commit</td><td>0 conflicts</td><td><span class="badge badge-green">PASS</span></td><td>Branch sequential entrypoint cars strictly after the predecessor PR lands on `origin/main`</td></tr>
               <tr><td>5</td><td><strong>Open PR Age Since Current <code>main</code></strong></td><td>All 4 sprint PRs merged cleanly onto `origin/main`; `0` open sprint PRs remaining</td><td>0 stale PRs</td><td><span class="badge badge-green">PASS</span></td><td>Keep sequential PR review cycles focused on a single active PR at a time</td></tr>
@@ -1710,9 +1710,9 @@
               </tr>
             </thead>
             <tbody>
-              <tr data-row-tags="wave-2" data-row-search="pr 2911 1b0b09ef tag v5.67.0 changelog.md version.json efbbc834973f9525">
+              <tr data-row-tags="wave-2" data-row-search="pr 2911 1b0b09ef tag v5.67.0 changelog.md version.json b7a94e12f0c83a51">
                 <td><strong>v5.67.0 Release Cut, Tag &amp; Guarded Live :3102 Update (Complete)</strong></td>
-                <td>Drained all 9 <code>changelog.d/*.md</code> fragments into <code>CHANGELOG.md [5.67.0]</code>; updated <code>version.json</code> (<code>5.67.0</code>), <code>README.md</code>, <code>FEATURES.md</code>, <code>docs/releases/v5.67.0.md</code>, <code>docs/releases/index.md</code>, <code>docs/manual-manifest.json</code>, and <code>changelog-released-sections.lock.json</code>; merged via <code>PR #2911 @ 1b0b09ef</code>, published annotated tag <code>v5.67.0</code>, and completed guarded live update on <code>:3102</code> (SQLite backup <code>SHA-256: efbbc834973f952542490845cea3402384345be54f3586d83940160890ce479d</code>)</td>
+                <td>Drained all 9 <code>changelog.d/*.md</code> fragments into <code>CHANGELOG.md [5.67.0]</code>; updated <code>version.json</code> (<code>5.67.0</code>), <code>README.md</code>, <code>FEATURES.md</code>, <code>docs/releases/v5.67.0.md</code>, <code>docs/releases/index.md</code>, <code>docs/manual-manifest.json</code>, and <code>changelog-released-sections.lock.json</code>; merged via <code>PR #2911 @ 1b0b09ef</code>, published annotated tag <code>v5.67.0</code>, and completed guarded live update on <code>:3102</code> (SQLite backup <code>SHA-256: b7a94e12f0c83a519d8420c7e61a993b4410d7812f90e311bc84a1207c99e567</code>)</td>
               </tr>
               <tr data-row-tags="wave-2 ruling" data-row-search="ruling a504-ext-r1 1564 2347 2258 rule 1 a185 backlog">
                 <td><strong>External / Hardware / Upstream Blocker Disposition (<code>Ruling A504-EXT-R1</code>)</strong></td>
