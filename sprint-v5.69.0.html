@@ -478,6 +478,9 @@
   </style>
 </head>
 <body>
+  <div style="position:fixed;inset:0;z-index:0;pointer-events:none;display:flex;align-items:center;justify-content:center;overflow:hidden;" aria-hidden="true">
+    <img src="https://jason-vaughan.github.io/TangleClaw/reports/assets/logo-icon.png" alt="" style="width:min(82vw,860px);height:min(82vw,860px);object-fit:contain;opacity:0.06;user-select:none;-webkit-user-drag:none;" />
+  </div>
   <header class="topnav">
     <div class="topnav-inner">
       <div class="brand">
@@ -1731,7 +1734,7 @@
     </section>
   </main>
 
-  <footer class="footer">
+  <footer class="footer" style="position:relative;z-index:1;">
     <div class="container">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
         <div>
@@ -1740,6 +1743,9 @@
         <div>
           Charter <code>A505 v1.0</code> · Base <code>2b4b39a3</code> (<code>v5.68.0</code>) → Wave 1 (<code>#2916, #2918, #2917</code>) → Release <code>6c446dac</code> (<code>PR #2921</code> / Tag <code>v5.69.0 @ 47ade7b2</code>) · <a href="../" style="color:var(--accent2);">All Sprint Reports</a>
         </div>
+      </div>
+      <div style="margin-top:8px;font-weight:700;text-align:center;">
+        <a href="https://tangleclaw.com" target="_blank" rel="noopener" style="color:var(--accent2);">TangleClaw.com</a> — Many Agents. One Claw.
       </div>
     </div>
   </footer>

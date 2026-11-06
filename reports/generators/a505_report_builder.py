@@ -253,6 +253,9 @@ def build_single_version_report(slug: str) -> str:
   {style_block}
 </head>
 <body>
+  <div style="position:fixed;inset:0;z-index:0;pointer-events:none;display:flex;align-items:center;justify-content:center;overflow:hidden;" aria-hidden="true">
+    <img src="https://jason-vaughan.github.io/TangleClaw/reports/assets/logo-icon.png" alt="" style="width:min(82vw,860px);height:min(82vw,860px);object-fit:contain;opacity:0.06;user-select:none;-webkit-user-drag:none;" />
+  </div>
   <header class="topnav">
     <div class="topnav-inner">
       <div class="brand">
@@ -1083,7 +1086,7 @@ def build_single_version_report(slug: str) -> str:
     </section>
   </main>
 
-  <footer class="footer">
+  <footer class="footer" style="position:relative;z-index:1;">
     <div class="container">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
         <div>
@@ -1092,6 +1095,9 @@ def build_single_version_report(slug: str) -> str:
         <div>
           Charter <code>A505 v1.0</code> · Base <code>{base_sha}</code> (<code>{base_ver}</code>) → Wave 1 (<code>{feat_pr_list_str}</code>) → Release <code>{rel_merge_short}</code> (<code>PR #{rel_pr}</code> / Tag <code>{ver} @ {tag_sha_short}</code>) · <a href="../" style="color:var(--accent2);">All Sprint Reports</a>
         </div>
+      </div>
+      <div style="margin-top:8px;font-weight:700;text-align:center;">
+        <a href="https://tangleclaw.com" target="_blank" rel="noopener" style="color:var(--accent2);">TangleClaw.com</a> — Many Agents. One Claw.
       </div>
     </div>
   </footer>
@@ -1165,6 +1171,9 @@ def build_retro_report() -> str:
   {style_block}
 </head>
 <body>
+  <div style="position:fixed;inset:0;z-index:0;pointer-events:none;display:flex;align-items:center;justify-content:center;overflow:hidden;" aria-hidden="true">
+    <img src="https://jason-vaughan.github.io/TangleClaw/reports/assets/logo-icon.png" alt="" style="width:min(82vw,860px);height:min(82vw,860px);object-fit:contain;opacity:0.06;user-select:none;-webkit-user-drag:none;" />
+  </div>
   <header class="topnav">
     <div class="topnav-inner">
       <div class="brand">
@@ -2203,7 +2212,7 @@ def build_retro_report() -> str:
     </section>
   </main>
 
-  <footer class="footer">
+  <footer class="footer" style="position:relative;z-index:1;">
     <div class="container">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
         <div>
@@ -2212,6 +2221,9 @@ def build_retro_report() -> str:
         <div>
           Charter <code>A505 v1.0</code> · <code>Milestones #55–#58</code> · <code>20/20</code> Issues Closed · <code>16/16</code> True-Merged PRs (<code>#2912–#2927</code>) · <a href="../" style="color:var(--accent2);">All Sprint Reports</a>
         </div>
+      </div>
+      <div style="margin-top:8px;font-weight:700;text-align:center;">
+        <a href="https://tangleclaw.com" target="_blank" rel="noopener" style="color:var(--accent2);">TangleClaw.com</a> — Many Agents. One Claw.
       </div>
     </div>
   </footer>
