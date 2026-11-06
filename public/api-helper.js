@@ -3724,6 +3724,18 @@
     // changes (a new attempt) or once every recipient has succeeded.
     let _taggedAttemptText = null;
     let _taggedAttemptDelivered = new Set();
+    // #1576 I-Gate Round 3 C2: `_taggedAttemptDelivered` is populated only
+    // AFTER `apiMutate` resolves, so a second `sendTaggedMessage` call (a
+    // quick double-click, or Enter followed by a click) arriving while the
+    // first is still awaiting the roster or a POST sees an empty/stale
+    // `_taggedAttemptDelivered` and starts its OWN POST to the same
+    // recipient — a real double delivery, reproduced in the finding by
+    // holding one `apiMutate` response open and calling twice. Single-flight
+    // this per control instance: a call arriving while one is already in
+    // progress is refused outright rather than queued or coalesced, since
+    // nothing here can show the operator two different pending outcomes at
+    // once.
+    let _taggedSendInFlight = false;
 
     const el = (key) => (ids[key] ? doc.getElementById(ids[key]) : null);
 
@@ -4193,6 +4205,11 @@
      * tracks them, keyed by `_taggedAttemptText`, and resets the moment the
      * text changes (a new attempt) or every recipient has succeeded.
      *
+     * Single-flight (#1576 I-Gate Round 3 C2): a call arriving while one is
+     * already in progress on this control instance is refused with
+     * `MEDUSA_SEND_IN_FLIGHT` before touching the roster or posting
+     * anything — never queued, coalesced, or allowed to race the first.
+     *
      * @param {string} text - The operator's typed text, `@tag`s and all.
      * @returns {Promise<{ok: boolean, code?: string, unresolved?: string[],
      *   ambiguous?: {tag: string, candidates: string[]}[],
@@ -4200,54 +4217,62 @@
      *   status?: string, error?: (string|null)}[]}>}
      */
     async function sendTaggedMessage(text) {
-      const blockedReason = _nicknameSendRefusalReason(m);
-      if (blockedReason) {
-        return { ok: false, code: 'MEDUSA_SEND_BLOCKED', reason: blockedReason };
+      if (_taggedSendInFlight) {
+        return { ok: false, code: 'MEDUSA_SEND_IN_FLIGHT' };
       }
-      const data = await deps.api(`${deps.apiBase}/roster`);
-      if (data === null) {
-        return { ok: false, code: 'MEDUSA_ROSTER_FAILED' };
-      }
-      const parsed = tcParseMedusaNicknameTags(text, (data && data.workspaces) || []);
-      if (parsed.ambiguous.length > 0) {
-        return { ok: false, code: 'MEDUSA_NICKNAME_AMBIGUOUS', ambiguous: parsed.ambiguous };
-      }
-      if (parsed.unresolved.length > 0) {
-        return { ok: false, code: 'MEDUSA_NICKNAME_UNRESOLVED', unresolved: parsed.unresolved };
-      }
-      if (parsed.recipients.length === 0) {
-        return { ok: false, code: 'MEDUSA_NICKNAME_REQUIRED' };
-      }
+      _taggedSendInFlight = true;
+      try {
+        const blockedReason = _nicknameSendRefusalReason(m);
+        if (blockedReason) {
+          return { ok: false, code: 'MEDUSA_SEND_BLOCKED', reason: blockedReason };
+        }
+        const data = await deps.api(`${deps.apiBase}/roster`);
+        if (data === null) {
+          return { ok: false, code: 'MEDUSA_ROSTER_FAILED' };
+        }
+        const parsed = tcParseMedusaNicknameTags(text, (data && data.workspaces) || []);
+        if (parsed.ambiguous.length > 0) {
+          return { ok: false, code: 'MEDUSA_NICKNAME_AMBIGUOUS', ambiguous: parsed.ambiguous };
+        }
+        if (parsed.unresolved.length > 0) {
+          return { ok: false, code: 'MEDUSA_NICKNAME_UNRESOLVED', unresolved: parsed.unresolved };
+        }
+        if (parsed.recipients.length === 0) {
+          return { ok: false, code: 'MEDUSA_NICKNAME_REQUIRED' };
+        }
 
-      if (parsed.body !== _taggedAttemptText) {
-        _taggedAttemptText = parsed.body;
-        _taggedAttemptDelivered = new Set();
-      }
-      const apiMutate = deps.apiMutate;
-      const results = [];
-      for (const recipient of parsed.recipients) {
-        if (_taggedAttemptDelivered.has(recipient.workspaceId)) {
-          results.push({ recipient, ok: true, status: 'already-delivered' });
-          continue;
+        if (parsed.body !== _taggedAttemptText) {
+          _taggedAttemptText = parsed.body;
+          _taggedAttemptDelivered = new Set();
         }
-        // eslint-disable-next-line no-await-in-loop -- each send's outcome
-        // drives the NEXT one's outbound-head flow label; nothing here is
-        // parallelizable without losing that per-recipient feedback.
-        const result = await apiMutate(`${deps.apiBase}/send`, 'POST', { to: recipient.workspaceId, message: parsed.body });
-        if (result && result.status) {
-          flowOutbound(recipient.name || recipient.workspaceId, result.status);
-          _taggedAttemptDelivered.add(recipient.workspaceId);
-          results.push({ recipient, ok: true, status: result.status });
-        } else {
-          results.push({ recipient, ok: false, error: (deps.api && deps.api.lastError) || null });
+        const apiMutate = deps.apiMutate;
+        const results = [];
+        for (const recipient of parsed.recipients) {
+          if (_taggedAttemptDelivered.has(recipient.workspaceId)) {
+            results.push({ recipient, ok: true, status: 'already-delivered' });
+            continue;
+          }
+          // eslint-disable-next-line no-await-in-loop -- each send's outcome
+          // drives the NEXT one's outbound-head flow label; nothing here is
+          // parallelizable without losing that per-recipient feedback.
+          const result = await apiMutate(`${deps.apiBase}/send`, 'POST', { to: recipient.workspaceId, message: parsed.body });
+          if (result && result.status) {
+            flowOutbound(recipient.name || recipient.workspaceId, result.status);
+            _taggedAttemptDelivered.add(recipient.workspaceId);
+            results.push({ recipient, ok: true, status: result.status });
+          } else {
+            results.push({ recipient, ok: false, error: (deps.api && deps.api.lastError) || null });
+          }
         }
+        const allOk = results.every((r) => r.ok);
+        // The attempt is over once nothing is left to retry — clear the
+        // tracking so the NEXT distinct message starts with a clean slate
+        // rather than accumulating forever.
+        if (allOk) { _taggedAttemptText = null; _taggedAttemptDelivered = new Set(); }
+        return { ok: allOk, results };
+      } finally {
+        _taggedSendInFlight = false;
       }
-      const allOk = results.every((r) => r.ok);
-      // The attempt is over once nothing is left to retry — clear the
-      // tracking so the NEXT distinct message starts with a clean slate
-      // rather than accumulating forever.
-      if (allOk) { _taggedAttemptText = null; _taggedAttemptDelivered = new Set(); }
-      return { ok: allOk, results };
     }
 
     /**
@@ -4258,6 +4283,7 @@
      * @returns {string}
      */
     function _nicknameRefusalText(result) {
+      if (result.code === 'MEDUSA_SEND_IN_FLIGHT') return 'Already sending — wait for that to finish first.';
       if (result.code === 'MEDUSA_NICKNAME_REQUIRED') return 'Tag at least one @nickname to send to.';
       if (result.code === 'MEDUSA_NICKNAME_AMBIGUOUS') {
         return `More than one match for: ${result.ambiguous.map((a) => `@${a.tag}`).join(', ')} — use the full workspace id.`;

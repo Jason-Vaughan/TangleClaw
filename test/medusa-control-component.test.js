@@ -855,6 +855,58 @@ describe('sendTaggedMessage — a partial multi-recipient failure retries only t
   });
 });
 
+describe('sendTaggedMessage — single-flight: a concurrent call while one is already in progress never double-posts '
+  + '(#1576 I-Gate Round 3 C2)', () => {
+  it('a second call arriving while the first is still awaiting apiMutate is refused with MEDUSA_SEND_IN_FLIGHT, '
+    + 'and only one POST ever reaches the Bridge', async () => {
+    const roster = [{ id: 'tc-lane-arc-4041e89e', name: 'Arc' }];
+    const ids = G.tcMedusaIds('');
+    const { doc } = makeDocument(Object.values(ids).filter(Boolean));
+    let releaseFirstSend;
+    const held = new Promise((resolve) => { releaseFirstSend = resolve; });
+    const mutateCalls = [];
+    const c = G.tcCreateMedusaControl({
+      doc, api: async (url) => (url.endsWith('/roster') ? { workspaces: roster } : null),
+      apiMutate: async (url, method, body) => {
+        mutateCalls.push({ url, method, body });
+        await held;
+        return { status: 'received' };
+      },
+      apiBase: '/api/sessions/p/medusa', ids, state: { state: 'listening' }
+    });
+
+    const first = c.sendTaggedMessage('@arc hi');
+    // The second call is dispatched without awaiting the first — a quick
+    // double-click or Enter-then-click — while the first is still inside
+    // its own held `apiMutate` call.
+    const second = await c.sendTaggedMessage('@arc hi');
+    assert.equal(second.ok, false);
+    assert.equal(second.code, 'MEDUSA_SEND_IN_FLIGHT');
+    assert.equal(mutateCalls.length, 1, 'the second call never reaches apiMutate at all');
+
+    releaseFirstSend();
+    const firstResult = await first;
+    assert.equal(firstResult.ok, true);
+    assert.equal(mutateCalls.length, 1, 'still exactly one POST — the finding\'s own double-delivery never happens');
+  });
+
+  it('the guard releases once the first call finishes — a THIRD call right after succeeds normally', async () => {
+    const roster = [{ id: 'tc-lane-arc-4041e89e', name: 'Arc' }];
+    const ids = G.tcMedusaIds('');
+    const { doc } = makeDocument(Object.values(ids).filter(Boolean));
+    const mutateCalls = [];
+    const c = G.tcCreateMedusaControl({
+      doc, api: async (url) => (url.endsWith('/roster') ? { workspaces: roster } : null),
+      apiMutate: async (url, method, body) => { mutateCalls.push({ url, method, body }); return { status: 'received' }; },
+      apiBase: '/api/sessions/p/medusa', ids, state: { state: 'listening' }
+    });
+    await c.sendTaggedMessage('@arc first');
+    const after = await c.sendTaggedMessage('@arc second');
+    assert.equal(after.ok, true, 'the in-flight flag must not stick once a call has actually finished');
+    assert.equal(mutateCalls.length, 2);
+  });
+});
+
 describe('the Master control bar mounts the shared control (#996)', () => {
   it('emits the control with prefixed ids, no pending treatment, and no reason element', () => {
     const html = G.tcMasterControlBarMarkup('masterDrawer');
