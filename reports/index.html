@@ -253,8 +253,9 @@
       <span>TangleClaw Autonomous Sprint Reports</span>
     </div>
     <div class="nav-links">
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.67.0/">v5.67.0 (Latest)</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.65.0-v5.66.0-retrospective/">v5.65.0–v5.66.0 Retro</a>
-      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.66.0/">v5.66.0 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.66.0/">v5.66.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.65.0/">v5.65.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.62.0-v5.64.0-retrospective/">v5.62.0–v5.64.0 Retro</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.64.0/">v5.64.0</a>
@@ -308,13 +309,13 @@
       <div class="kpi-grid">
         <div class="kpi-card">
           <div class="kpi-label">Published Sprint Reports</div>
-          <div class="kpi-val">36 Releases</div>
-          <div class="kpi-sub"><code>v5.34.0</code>–<code>v5.66.0</code> + <code>v5.65.0–v5.66.0</code>, <code>v5.62.0–v5.64.0</code>, <code>v5.57.0–v5.61.0</code> &amp; <code>v5.54.0–v5.56.0</code> Retrospectives</div>
+          <div class="kpi-val">37 Releases</div>
+          <div class="kpi-sub"><code>v5.34.0</code>–<code>v5.67.0</code> + <code>v5.65.0–v5.66.0</code>, <code>v5.62.0–v5.64.0</code>, <code>v5.57.0–v5.61.0</code> &amp; <code>v5.54.0–v5.56.0</code> Retrospectives</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Cumulative Sprint PRs</div>
-          <div class="kpi-val">332 PRs Merged</div>
-          <div class="kpi-sub"><strong>130 waves</strong> across forty reports · <code>v5.65.0–v5.66.0</code> train delivered 9 PRs &amp; 18 active issues</div>
+          <div class="kpi-val">336 PRs Merged</div>
+          <div class="kpi-sub"><strong>132 waves</strong> across forty-one reports · <code>v5.67.0</code> delivered 4 PRs &amp; 9 closed Milestone #54 issues</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Testament v0.34.0 Pool</div>
@@ -323,13 +324,38 @@
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Latest Release Report</div>
-          <div class="kpi-val" style="color:var(--green);">v5.66.0</div>
-          <div class="kpi-sub">Tag <code>v5.66.0 @ 1ffeaf6e</code> · Milestone <code>#51</code> (<code>0</code> Open)</div>
+          <div class="kpi-val" style="color:var(--green);">v5.67.0</div>
+          <div class="kpi-sub">Tag <code>v5.67.0 @ 98ce6e20</code> · Milestone <code>#54</code> (<code>0</code> Open, <code>9</code> Closed)</div>
         </div>
       </div>
     </section>
 
     <div class="report-list">
+      <!-- v5.67.0 Card -->
+      <article class="report-card">
+        <div class="report-header">
+          <div>
+            <span class="badge badge-green">● Latest Release · Nov 5, 2026</span>
+            <h2 class="report-title"><a href="./v5.67.0/">TangleClaw <code>v5.67.0</code>: “External integrations and hardware verification”</a></h2>
+          </div>
+          <span class="badge badge-cyan">Tag v5.67.0 · 4/4 True Merges &amp; SPRINT_REPORT_CONTRACT v2.0.0 Verified</span>
+        </div>
+        <p style="color:#cbd5e1; margin:0;">
+          Two coordinated waves delivered <strong>4 Sprint PRs (#2908, #2909, #2910, #2911)</strong> under Charter <code>A504 v1.1</code> (<code>OP-GO-V5670-20261105</code>, <code>Ruling A504-EXT-R1</code>) as the Final Planned Release of the Week, closing all <strong>9 active chartered in-repo Milestone #54 issues (<code>#2866, #2877, #2878, #2881, #2888, #2883, #2884, #2885, #2886</code>; <code>open_issues: 0, closed_issues: 9</code>)</strong> with <strong><code>+5,388 / -105</code> net repo LOC across <code>69</code> files (<code>+5,330 / -102</code> feature PR sum)</strong>. Sequential single-builder execution on <code>TC-Lane-D</code> mounted the launch-env <code>gh</code> role guard wrapper, <code>tc roadmap admission|sync</code> CLI, and live <code>/api/sessions/:project/merge-gate/*</code> routes (<code>Car 67-A PR #2908 @ cf3290d6</code>), continuity transcript backfill, governed-wrap SSE progress route, project-scoped chunk-boundary routes, and operating primer launch wiring (<code>Car 67-B PR #2909 @ 1fcb7c5c</code>), and <code>GET /api/scorecard</code> + scheduled refresh, Global Settings Bridge step-up/notification controls, <code>server.js</code> lifecycle-handoff daemon boot, and wrap-drawer docs-parity + Setup Wizard remote-CA mounts (<code>Car 67-C PR #2910 @ f0371b8b</code>), while reclassifying 3 external/hardware/upstream-blocked items (<code>#1564, #2347, #2258</code>) to Backlog under <code>Rule #1 / A185</code>.
+        </p>
+        <div class="meta-pills">
+          <span class="badge badge-green">⏱️ Full Eng Window: 5h 41m (5.68h · 12:41 → 18:22 PST · 3 Sequential Entrypoint Cars)</span>
+          <span class="badge badge-cyan">4/4 True Merges (#2908, #2909, #2910, #2911)</span>
+          <span class="badge badge-purple">Milestone #54: 9/9 In-Repo Issues Closed (0 Open) + 3 A185 Backlog Items</span>
+          <span class="badge badge-amber">Throughput: 1.58 Closed/Hr · $1.55/Issue ($2.59/kLOC) · Legacy ADE_v1 = 0.11</span>
+          <span class="badge badge-green">0 Post-Merge Defects</span>
+        </div>
+        <div class="card-footer">
+          <div class="url-box">https://jason-vaughan.github.io/TangleClaw/reports/v5.67.0/</div>
+          <a class="cta-btn" href="./v5.67.0/">Open Interactive Report →</a>
+        </div>
+      </article>
+
       <!-- v5.65.0-v5.66.0 Retrospective Card -->
       <article class="report-card" style="border-color: rgba(52, 211, 153, 0.55); background: linear-gradient(135deg, rgba(16, 185, 129, 0.10), rgba(15, 23, 42, 0.92));">
         <div class="report-header">
@@ -359,7 +385,7 @@
       <article class="report-card">
         <div class="report-header">
           <div>
-            <span class="badge badge-green">● Latest Release · Nov 5, 2026</span>
+            <span class="badge badge-purple">Sprint Release · Nov 5, 2026</span>
             <h2 class="report-title"><a href="./v5.66.0/">TangleClaw <code>v5.66.0</code>: “Fleet visibility and release dependencies”</a></h2>
           </div>
           <span class="badge badge-cyan">Tag v5.66.0 @ 87e54581 (Merge 1ffeaf6e) · 4/4 True Merges &amp; Testament v0.34.0 Verified</span>
