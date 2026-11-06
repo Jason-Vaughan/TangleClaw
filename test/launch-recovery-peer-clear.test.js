@@ -97,6 +97,7 @@ describe('schema v78→v79: launch_recovery_clearances admits peer-cleared (#171
       assert.equal(row.clearance, 'operator-verified');
       assert.equal(row.cleared_by, 'alice');
       assert.equal(row.cleared_by_session_id, null);
+      assert.equal(row.cleared_by_project_id, null);
       assert.equal(row.cleared_by_role, null);
       assert.equal(row.cleared_by_launch_id, null);
       assert.equal(row.reason, null);
@@ -106,7 +107,7 @@ describe('schema v78→v79: launch_recovery_clearances admits peer-cleared (#171
     }
   });
 
-  it('accepts a well-formed peer-cleared row and rejects one missing cleared_by_session_id', () => {
+  it('accepts a well-formed peer-cleared row and rejects one missing cleared_by_session_id or cleared_by_project_id', () => {
     const dir = seedV78();
     store._setBasePath(dir);
     store.init();
@@ -115,13 +116,17 @@ describe('schema v78→v79: launch_recovery_clearances admits peer-cleared (#171
       assert.doesNotThrow(() => db.prepare(`
         INSERT INTO launch_recovery_clearances
           (project_id, session_id, sequence_id, recovery_revision, clearance,
-           cleared_by_session_id, cleared_by_role, cleared_by_launch_id, reason, preflight, cleared_at)
-        VALUES (1, 200, 6000, 1, 'peer-cleared', 1555, 'project-manager', 'launch-abc', 'stalled', '{}', '2026-01-01T00:00:00Z')
+           cleared_by_session_id, cleared_by_project_id, cleared_by_role, cleared_by_launch_id, reason, preflight, cleared_at)
+        VALUES (1, 200, 6000, 1, 'peer-cleared', 1555, 112, 'project-manager', 'launch-abc', 'stalled', '{}', '2026-01-01T00:00:00Z')
       `).run());
       assert.throws(() => db.prepare(`
         INSERT INTO launch_recovery_clearances (project_id, session_id, sequence_id, recovery_revision, clearance, preflight, cleared_at)
         VALUES (1, 300, 7000, 1, 'peer-cleared', '{}', '2026-01-01T00:00:00Z')
       `).run(), /CHECK constraint failed/);
+      assert.throws(() => db.prepare(`
+        INSERT INTO launch_recovery_clearances (project_id, session_id, sequence_id, recovery_revision, clearance, cleared_by_session_id, cleared_by_launch_id, preflight, cleared_at)
+        VALUES (1, 350, 7500, 1, 'peer-cleared', 1555, 'launch-abc', '{}', '2026-01-01T00:00:00Z')
+      `).run(), /CHECK constraint failed/, 'a peer-cleared row still needs cleared_by_project_id (A505-R2.3), not just the clearing session id');
       assert.throws(() => db.prepare(`
         INSERT INTO launch_recovery_clearances (project_id, session_id, sequence_id, recovery_revision, clearance, cleared_by_role, preflight, cleared_at)
         VALUES (1, 400, 8000, 1, 'peer-cleared', 'not-a-real-role', '{}', '2026-01-01T00:00:00Z')
@@ -153,7 +158,8 @@ describe('store.launchSequences.clearRecoveryAsPeer (#1713)', () => {
     const held = fixture.launchInRecovery(env);
     const cleared = store.launchSequences.clearRecoveryAsPeer(held.sequence.id, {
       sessionId: held.binding.sessionId, recoveryRevision: held.binding.recoveryRevision,
-      clearedBySessionId: 9999, clearedByRole: 'project-manager', clearedByLaunchId: 'launch-xyz', reason: 'peer test'
+      clearedBySessionId: 9999, clearedByProjectId: 112, clearedByRole: 'project-manager',
+      clearedByLaunchId: 'launch-xyz', reason: 'peer test'
     });
     assert.ok(cleared);
     assert.equal(cleared.recovery, 'cleared');
@@ -164,9 +170,11 @@ describe('store.launchSequences.clearRecoveryAsPeer (#1713)', () => {
     assert.equal(audit.clearance, 'peer-cleared');
     assert.equal(audit.cleared_by, null);
     assert.equal(audit.cleared_by_session_id, 9999);
+    assert.equal(audit.cleared_by_project_id, 112);
     assert.equal(audit.cleared_by_role, 'project-manager');
     assert.equal(audit.cleared_by_launch_id, 'launch-xyz');
     assert.equal(audit.reason, 'peer test');
+    assert.notEqual(audit.project_id, audit.cleared_by_project_id, 'the row\'s own project_id (the TARGET) must stay distinct from cleared_by_project_id (the CLEARER)');
   });
 
   it('returns null (binding moved) for a stale recoveryRevision, writing nothing', () => {
@@ -174,7 +182,7 @@ describe('store.launchSequences.clearRecoveryAsPeer (#1713)', () => {
     const before = store.getDb().prepare('SELECT COUNT(*) AS n FROM launch_recovery_clearances').get().n;
     const result = store.launchSequences.clearRecoveryAsPeer(held.sequence.id, {
       sessionId: held.binding.sessionId, recoveryRevision: held.binding.recoveryRevision + 1,
-      clearedBySessionId: 9999, clearedByRole: 'architect', clearedByLaunchId: 'launch-xyz'
+      clearedBySessionId: 9999, clearedByProjectId: 112, clearedByRole: 'architect', clearedByLaunchId: 'launch-xyz'
     });
     assert.equal(result, null);
     assert.equal(store.getDb().prepare('SELECT COUNT(*) AS n FROM launch_recovery_clearances').get().n, before);
@@ -184,15 +192,23 @@ describe('store.launchSequences.clearRecoveryAsPeer (#1713)', () => {
     const held = fixture.launchInRecovery(env);
     assert.throws(() => store.launchSequences.clearRecoveryAsPeer(held.sequence.id, {
       sessionId: held.binding.sessionId, recoveryRevision: held.binding.recoveryRevision,
-      clearedByRole: 'architect', clearedByLaunchId: 'launch-xyz'
+      clearedByProjectId: 112, clearedByRole: 'architect', clearedByLaunchId: 'launch-xyz'
     }), /clearing peer's own session id/);
+  });
+
+  it('throws when clearedByProjectId is not an integer', () => {
+    const held = fixture.launchInRecovery(env);
+    assert.throws(() => store.launchSequences.clearRecoveryAsPeer(held.sequence.id, {
+      sessionId: held.binding.sessionId, recoveryRevision: held.binding.recoveryRevision,
+      clearedBySessionId: 9999, clearedByRole: 'architect', clearedByLaunchId: 'launch-xyz'
+    }), /clearing peer's own project id/);
   });
 
   it('throws when clearedByRole is not a real coordinator role', () => {
     const held = fixture.launchInRecovery(env);
     assert.throws(() => store.launchSequences.clearRecoveryAsPeer(held.sequence.id, {
       sessionId: held.binding.sessionId, recoveryRevision: held.binding.recoveryRevision,
-      clearedBySessionId: 9999, clearedByRole: 'worker', clearedByLaunchId: 'launch-xyz'
+      clearedBySessionId: 9999, clearedByProjectId: 112, clearedByRole: 'worker', clearedByLaunchId: 'launch-xyz'
     }), /clearing peer's role/);
   });
 
@@ -200,7 +216,7 @@ describe('store.launchSequences.clearRecoveryAsPeer (#1713)', () => {
     const held = fixture.launchInRecovery(env);
     assert.throws(() => store.launchSequences.clearRecoveryAsPeer(held.sequence.id, {
       sessionId: held.binding.sessionId, recoveryRevision: held.binding.recoveryRevision,
-      clearedBySessionId: 9999, clearedByRole: 'architect'
+      clearedBySessionId: 9999, clearedByProjectId: 112, clearedByRole: 'architect'
     }), /clearing peer's own launch id/);
   });
 });
@@ -212,7 +228,9 @@ describe('launchRecoveryClear.clearOneLaunchAsPeer (#1713)', () => {
   before(() => { env = fixture.openTempStore('tc-peer-clear-orchestration-'); });
   after(() => env.restore());
 
-  const PEER = { clearedBySessionId: 9999, clearedByRole: 'project-manager', clearedByLaunchId: 'launch-xyz' };
+  const PEER = {
+    clearedBySessionId: 9999, clearedByProjectId: 112, clearedByRole: 'project-manager', clearedByLaunchId: 'launch-xyz'
+  };
 
   it('CLEARED: writes the clearance and logs the activity row with clearance "peer-cleared"', () => {
     const held = fixture.launchInRecovery(env);
@@ -224,6 +242,7 @@ describe('launchRecoveryClear.clearOneLaunchAsPeer (#1713)', () => {
     ).get(held.binding.sessionId);
     const detail = JSON.parse(activityRow.detail);
     assert.equal(detail.clearance, 'peer-cleared');
+    assert.equal(detail.clearedByProjectId, 112);
     assert.equal(detail.clearedByRole, 'project-manager');
   });
 
@@ -327,7 +346,7 @@ describe('launchRecoveryClear.validatePeerClearance (#1713, cross-project)', () 
     const result = launchRecoveryClear.validatePeerClearance({
       targetProject: held.project, targetSessionId: held.binding.sessionId, clearingSessionId: clearer.binding.sessionId
     });
-    assert.deepEqual(result, { ok: true, role: 'project-manager' });
+    assert.deepEqual(result, { ok: true, role: 'project-manager', clearedByProjectId: clearer.project.id });
   });
 });
 
@@ -384,6 +403,7 @@ describe('POST /api/sessions/:project/launch/recovery-clear-peer (#1713)', () =>
     assert.equal(res.data.ok, true);
     assert.equal(res.data.recovery, 'cleared');
     assert.equal(res.data.clearedBySessionId, coordinator.binding.sessionId);
+    assert.equal(res.data.clearedByProjectId, coordinator.project.id);
     assert.equal(res.data.clearedByRole, 'architect');
     assert.equal(res.data.reason, 'peer test');
   });

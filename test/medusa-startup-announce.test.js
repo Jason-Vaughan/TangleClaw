@@ -65,23 +65,60 @@ describe('medusa-startup-announce: markAnnounced / hasAnnounced', () => {
   });
 });
 
-describe('medusa-startup-announce: resolveProjectRecipients', () => {
-  it('excludes the announcing session and skips a peer with no resolvable workspace id', () => {
-    const live = [{ id: 1 }, { id: 2 }, { id: 3 }];
-    const recipients = announce.resolveProjectRecipients(100, 1, {
-      listLiveForProject: () => live,
-      getWorkspaceId: (_projectPath, sessionId) => (sessionId === 2 ? 'ws-2' : null),
-      projectPath: '/tmp/proj'
-    });
-    assert.deepEqual(recipients, ['ws-2']);
+// I-Gate Round 1 (#5798277310) on #1732: TangleClaw admits at most one
+// active session per store.projects row (lib/sessions.js's own guard), and
+// each fleet coordinator (TC-Lane-PM, TC-Lane-Arc) is its own project row,
+// never a second session of the lane it coordinates. So the real audience
+// is CROSS-PROJECT -- every OTHER project holding an active coordinator
+// grant, each contributing its own active session's workspace id -- never
+// same-project (a same-project query always excludes the only session a
+// project ever has: itself). These fixtures model exactly that invariant:
+// one project per entry in `projects`, at most one "active session" each.
+describe('medusa-startup-announce: resolveProjectRecipients (cross-project, #5798277310)', () => {
+  const PROJECTS = [
+    { id: 1, path: '/tmp/builder' }, // the announcing project -- excluded regardless of role
+    { id: 2, path: '/tmp/pm' }, // holds an active project-manager grant
+    { id: 3, path: '/tmp/arch' }, // holds an active architect grant
+    { id: 4, path: '/tmp/plain' } // no coordinator grant at all
+  ];
+  const ROLE_BY_PROJECT = { 1: null, 2: { role: 'project-manager' }, 3: { role: 'architect' }, 4: null };
+  const SESSION_BY_PROJECT = { 1: { id: 10 }, 2: { id: 20 }, 3: { id: 30 }, 4: { id: 40 } };
+  const WORKSPACE_BY_SESSION = { 10: 'ws-builder', 20: 'ws-pm', 30: 'ws-arch', 40: 'ws-plain' };
+
+  const deps = () => ({
+    listProjects: () => PROJECTS,
+    getActiveRoleForProject: (pid) => ROLE_BY_PROJECT[pid] || null,
+    getActiveSessionForProject: (pid) => SESSION_BY_PROJECT[pid] || null,
+    getWorkspaceId: (_path, sessionId) => WORKSPACE_BY_SESSION[sessionId] || null
   });
 
-  it('returns an empty list when no other session is live', () => {
-    const recipients = announce.resolveProjectRecipients(100, 1, {
-      listLiveForProject: () => [{ id: 1 }],
-      getWorkspaceId: () => 'ws-x'
-    });
-    assert.deepEqual(recipients, []);
+  it('resolves every OTHER project holding an active coordinator grant, never the announcing project or a non-coordinator', () => {
+    const recipients = announce.resolveProjectRecipients(1, 10, deps());
+    assert.deepEqual(recipients.sort(), ['ws-arch', 'ws-pm']);
+  });
+
+  it('excludes a coordinator project with no active session for its grant', () => {
+    const d = deps();
+    d.getActiveSessionForProject = (pid) => (pid === 2 ? null : SESSION_BY_PROJECT[pid]);
+    const recipients = announce.resolveProjectRecipients(1, 10, d);
+    assert.deepEqual(recipients, ['ws-arch']);
+  });
+
+  it('skips a coordinator project whose active session has no resolvable workspace id', () => {
+    const d = deps();
+    d.getWorkspaceId = (_path, sessionId) => (sessionId === 30 ? null : WORKSPACE_BY_SESSION[sessionId]);
+    const recipients = announce.resolveProjectRecipients(1, 10, d);
+    assert.deepEqual(recipients, ['ws-pm']);
+  });
+
+  it('returns an empty list when no OTHER project holds an active coordinator grant', () => {
+    const d = deps();
+    d.getActiveRoleForProject = () => null;
+    assert.deepEqual(announce.resolveProjectRecipients(1, 10, d), []);
+  });
+
+  it('uses the real store by default when no deps are injected (smoke only -- a bare require touches no DB)', () => {
+    assert.equal(typeof announce.resolveProjectRecipients, 'function');
   });
 });
 
