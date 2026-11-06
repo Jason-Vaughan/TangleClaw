@@ -2027,6 +2027,46 @@ describe('lib/medusa — broadcastAll (#1224, explicit system-wide broadcast)', 
       assert.equal(r.coalesced, false);
       assert.deepEqual(r.sentTo, ['ws-x']);
     });
+
+    it('two concurrent DIFFERENT-message calls from the same sender at the same nowMs: only one proceeds, '
+      + 'the other is rate-limited, never both (I-Gate Round 1 C2a)', async () => {
+      const t0 = 1_000_000;
+      const calls = [];
+      const fetchImpl = stubFetch({ workspaces: [{ id: 'ws-a' }], calls });
+      // Dispatched without awaiting between them — `broadcastAll`'s own
+      // synchronous prefix (through the cooldown reservation) must run to
+      // completion before either call's first `await`, so the second call
+      // sees the first's reservation rather than racing past it.
+      const p1 = medusa.broadcastAll({ callerKind: 'operator', senderId: 'sender-concurrent-c2a', message: 'first', nowMs: t0, fetchImpl });
+      const p2 = medusa.broadcastAll({ callerKind: 'operator', senderId: 'sender-concurrent-c2a', message: 'second', nowMs: t0, fetchImpl });
+      const results = await Promise.allSettled([p1, p2]);
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
+      assert.equal(fulfilled.length, 1, 'exactly one concurrent call must actually broadcast');
+      assert.equal(rejected.length, 1, 'the other must be refused, never silently also succeed');
+      assert.equal(rejected[0].reason.code, 'BROADCAST_RATE_LIMITED');
+      assert.equal(calls.length, 1, 'the Bridge is fanned out to exactly once, not twice (the race #1224 R-1 reproduced)');
+    });
+
+    it('a coalesced identical retry preserves the first call\'s failedTo — a partial delivery failure is never '
+      + 'concealed as a clean retry (I-Gate Round 1 C2b)', async () => {
+      const t0 = 1_000_000;
+      const fetchImpl = stubFetch({ workspaces: [{ id: 'ws-ok' }, { id: 'ws-bad' }], failIds: new Set(['ws-bad']) });
+      const first = await medusa.broadcastAll({
+        callerKind: 'operator', senderId: 'sender-rl-failedto', message: 'same message', nowMs: t0, fetchImpl
+      });
+      assert.equal(first.coalesced, false);
+      assert.deepEqual(first.sentTo, ['ws-ok']);
+      assert.equal(first.failedTo.length, 1);
+      assert.equal(first.failedTo[0].workspaceId, 'ws-bad');
+
+      const second = await medusa.broadcastAll({
+        callerKind: 'operator', senderId: 'sender-rl-failedto', message: 'same message', nowMs: t0 + 1000, fetchImpl
+      });
+      assert.equal(second.coalesced, true);
+      assert.deepEqual(second.sentTo, first.sentTo);
+      assert.deepEqual(second.failedTo, first.failedTo, 'the coalesced retry must report the SAME failure, not []');
+    });
   });
 });
 
@@ -2816,17 +2856,32 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
       assert.equal(bridge.received.length, 2);
     });
 
-    it('a bound project session broadcasts too, excluded from its own fan-out; a same-window different message is '
-      + 'rate-limited independently of the operator\'s own cooldown above', async () => {
-      const first = await req('/api/sessions/sender/medusa/broadcast', 'POST', { message: 'project broadcast' }, pane.headers);
-      assert.equal(first.status, 200);
-      assert.deepEqual(first.data.sentTo.sort(), ['live-ws', 'offline-ws']);
-      assert.ok(bridge.received.every((call) => call.from === workspaceId));
-      assert.ok(!first.data.sentTo.includes(workspaceId), 'the sender\'s own live workspace never receives its own broadcast');
+    it('refuses a plain, non-coordinator project session — 403 BROADCAST_FORBIDDEN (I-Gate Round 1 C1): '
+      + 'a verified launch alone is not a granted coordinator role', async () => {
+      assert.equal(store.coordinatorRoles.getActiveForProject(project.id), null, 'precondition: no role granted yet');
+      const { status, data } = await req('/api/sessions/sender/medusa/broadcast', 'POST', { message: 'hi all' }, pane.headers);
+      assert.equal(status, 403);
+      assert.equal(data.code, 'BROADCAST_FORBIDDEN');
+      assert.equal(bridge.received.length, 0);
+    });
 
-      const different = await req('/api/sessions/sender/medusa/broadcast', 'POST', { message: 'a different message' }, pane.headers);
-      assert.equal(different.status, 429);
-      assert.equal(different.data.code, 'BROADCAST_RATE_LIMITED');
+    it('a coordinator-granted project session broadcasts too, excluded from its own fan-out; a same-window different '
+      + 'message is rate-limited independently of the operator\'s own cooldown above (I-Gate Round 1 C1)', async () => {
+      const now = new Date().toISOString();
+      store.coordinatorRoles.grant({ roleId: 'role_broadcast_c1', projectId: project.id, role: 'architect', note: null, now });
+      try {
+        const first = await req('/api/sessions/sender/medusa/broadcast', 'POST', { message: 'project broadcast' }, pane.headers);
+        assert.equal(first.status, 200);
+        assert.deepEqual(first.data.sentTo.sort(), ['live-ws', 'offline-ws']);
+        assert.ok(bridge.received.every((call) => call.from === workspaceId));
+        assert.ok(!first.data.sentTo.includes(workspaceId), 'the sender\'s own live workspace never receives its own broadcast');
+
+        const different = await req('/api/sessions/sender/medusa/broadcast', 'POST', { message: 'a different message' }, pane.headers);
+        assert.equal(different.status, 429);
+        assert.equal(different.data.code, 'BROADCAST_RATE_LIMITED');
+      } finally {
+        store.coordinatorRoles.revoke(project.id, new Date().toISOString());
+      }
     });
   });
 });

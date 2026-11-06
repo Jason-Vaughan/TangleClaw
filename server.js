@@ -5853,13 +5853,15 @@ function registerMedusaRoutes(prefix, resolve) {
     // The caller's OWN project (null for operator/master), the same value
     // `/send` passes when it is sending AS that identity.
     if (coordinatorGateRefused(req, res, caller.kind === 'project' ? caller.projectId : null, 'medusa-send')) return;
-    // `project` is a coordinator role too (Architect/ProjectManager, per
-    // this fleet's own governance) — there is no HTTP-level distinction
-    // between that and a plain Builder session, so (as `/send` itself
-    // already treats every live project session the same way) any live
-    // project caller is eligible here; `broadcastAll` still refuses an
-    // `unbound`/`invalid`/`operator-unverifiable` one.
-    const callerKind = (caller.kind === 'master' || caller.kind === 'project') ? 'coordinator' : caller.kind;
+    // `project` is a coordinator role too (Architect/ProjectManager), but
+    // ONLY when that project actually HOLDS one — `resolveControlCaller`
+    // proves the launch, never a role (I-Gate Round 1 C1): a verified
+    // project caller with no granted role is a plain Builder launch and
+    // must fall through to `broadcastAll`'s own `project`-kind refusal, the
+    // same way it already refuses an `unbound`/`invalid`/
+    // `operator-unverifiable` one.
+    const hasCoordinatorRole = caller.kind === 'project' && Boolean(store.coordinatorRoles.getActiveForProject(caller.projectId));
+    const callerKind = (caller.kind === 'master' || hasCoordinatorRole) ? 'coordinator' : caller.kind;
     let senderId = null;
     if (caller.kind === 'master') {
       senderId = medusa.getStatus(master.MASTER_MEDUSA_KEY).workspaceId;
