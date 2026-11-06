@@ -128,6 +128,7 @@ const actions = require('./lib/actions');
 const porthub = require('./lib/porthub');
 const uploads = require('./lib/uploads');
 const continuity = require('./lib/continuity');
+const sessionHistoryBackfill = require('./lib/session-history-backfill');
 const portScanner = require('./lib/port-scanner');
 const modelStatus = require('./lib/model-status');
 const updateChecker = require('./lib/update-checker');
@@ -6214,23 +6215,60 @@ function _isValidSid(sid) {
 }
 
 /**
- * Strip the cold-tier meta envelope to the fields the UI needs, dropping the
- * absolute `source` path (a local `~/.claude` leak). Secret VALUES are never in
- * the meta to begin with (CC-4b records pattern types only).
- * @param {object|null} meta - Parsed `transcript.meta.json`, or null
- * @returns {object|null} UI-safe subset, or null when meta is absent
+ * Strip `ensureSessionTranscript`'s result to the fields the UI needs.
+ * Never leaks a raw filesystem path: unlike the raw cold-tier meta envelope
+ * this function used to take directly, `ensureSessionTranscript`'s own
+ * result never carries one -- `source` here is the enum tag
+ * (`'native-log-backfill'`/`'live-pane-capture'`/`null`), not a path.
+ * `null` for a session nothing was ever captured for, same as before (#2881:
+ * previously this read `continuity.readTranscriptMeta` directly, which
+ * never attempted a backfill and never carried `source`/`engine` at all).
+ * @param {{captured: boolean, source?: (string|null), engine?: string, capturedAt?: string,
+ *   backfilledAt?: string, bytes?: number, lineCount?: number, secretsFlagged?: boolean,
+ *   secretTypes?: string[], scanSkipped?: boolean}|null} result - `ensureSessionTranscript`'s result, or null
+ * @returns {object|null} UI-safe subset, or null when nothing was captured
  */
-function _publicTranscriptMeta(meta) {
-  if (!meta) return null;
+function _publicTranscriptMeta(result) {
+  if (!result || result.captured !== true) return null;
   return {
-    harness: meta.harness || null,
-    capturedAt: meta.capturedAt || null,
-    bytes: meta.bytes || 0,
-    lineCount: meta.lineCount || 0,
-    secretsFlagged: !!meta.secretsFlagged,
-    secretTypes: Array.isArray(meta.secretTypes) ? meta.secretTypes : [],
-    scanSkipped: !!meta.scanSkipped
+    captured: true,
+    harness: result.engine || null,
+    source: result.source || null,
+    capturedAt: result.capturedAt || result.backfilledAt || null,
+    bytes: result.bytes || 0,
+    lineCount: result.lineCount || 0,
+    secretsFlagged: !!result.secretsFlagged,
+    secretTypes: Array.isArray(result.secretTypes) ? result.secretTypes : [],
+    scanSkipped: !!result.scanSkipped
   };
+}
+
+/**
+ * This session's transcript meta, backfilling from the harness's native log
+ * when nothing was captured live (#2881, `lib/session-history-backfill.js#
+ * ensureSessionTranscript`, wired into a real route for the first time
+ * here -- that module's own docstring names this exact route).
+ *
+ * `sid` is `store.sessions`' own numeric session id, stringified
+ * (`lib/wrap-steps/continuity-write.js`'s `const sid = session.id`): resolve
+ * the REAL session row from it, rather than `continuity.listSessions`'s own
+ * differently-shaped session object, which carries no `engineId`/
+ * `startedAt` -- `ensureSessionTranscript`/the harness adapters underneath
+ * need both to window-match a native log by time. A `sid` that is not a
+ * plain integer (legacy data), or that resolves to a session of a
+ * DIFFERENT project (should not happen, checked anyway), reads as no
+ * transcript, the same honest-skip `ensureSessionTranscript` itself returns
+ * for an unsupported harness -- never a crash, never another project's row.
+ * @param {object} project - Project record (`.path`, `.id`)
+ * @param {string} sid
+ * @returns {Promise<object|null>}
+ */
+async function _sessionTranscriptMeta(project, sid) {
+  const numericId = /^[0-9]+$/.test(sid) ? Number(sid) : null;
+  const row = numericId !== null ? store.sessions.get(numericId) : null;
+  if (!row || row.projectId !== project.id) return null;
+  const result = await sessionHistoryBackfill.ensureSessionTranscript(project, row, sid);
+  return _publicTranscriptMeta(result);
 }
 
 // GET /api/continuity/:project/search — global search across this project's
@@ -6284,7 +6322,7 @@ route('GET', '/api/continuity/:project/sessions/:sid', async (req, res, params) 
     sid: String(sid),
     session,
     summary: continuity.readWrapSummary(project.path, sid),
-    transcript: _publicTranscriptMeta(continuity.readTranscriptMeta(project.path, sid)),
+    transcript: await _sessionTranscriptMeta(project, sid),
     // listUploads tags each entry with `session` (the <sid> dir name), not `sid`.
     uploads: uploadList.uploads.filter((u) => String(u.session) === String(sid)),
     // Carried even though this drill-down filters to one session: a directory

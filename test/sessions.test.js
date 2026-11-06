@@ -1311,8 +1311,15 @@ describe('sessions', () => {
         // 3310, was 3100: the #1889 chunk-boundary role projection joined every
         // prime, same tier as Active Learnings — even fully yielded, its own
         // pointer is ~200 more chars that are always present by the time this
-        // scenario checks whether Active Learnings yielded.)
-        const TIGHT_BUDGET = 3310;
+        // scenario checks whether Active Learnings yielded. 3743, was 3310:
+        // the #2888 operating primer (lib/primer-launch-wiring.js#
+        // primerForLaunch) joined every prime too, yieldable at the SAME
+        // early tier (priority 0) as the ecosystem primer and the
+        // chunk-boundary protocol above -- measured against this suite's
+        // own fiProject fixture (which carries more accumulated state by
+        // this point than an isolated repro shows), its own pointer is 433
+        // more chars in the non-yielding floor once it, too, has yielded.
+        const TIGHT_BUDGET = 3743;
         const tight = {
           ...base,
           capabilities: { ...base.capabilities, startupInjection: { maxChars: TIGHT_BUDGET } }
