@@ -1852,6 +1852,184 @@ describe('lib/medusa — sendSystemMessage (#2270)', () => {
   });
 });
 
+describe('lib/medusa — broadcastAll (#1224, explicit system-wide broadcast)', () => {
+  /**
+   * A `fetchImpl` stub serving both the roster read and the per-target
+   * sends — the two real Bridge endpoints `broadcastAll` calls, told apart
+   * by URL the same way the real Bridge's own routes are.
+   * @param {object} opts
+   * @param {Array<{id: string}>} opts.workspaces - Roster to answer with.
+   * @param {Set<string>} [opts.failIds] - Workspace ids whose send fails.
+   * @param {Array} [opts.calls] - Every `{url, body}` this stub was called with, appended in order.
+   * @returns {typeof fetch}
+   */
+  function stubFetch({ workspaces, failIds = new Set(), calls = [] }) {
+    return async (url, opts) => {
+      if (url.endsWith('/workspaces')) {
+        return { ok: true, status: 200, json: async () => ({ workspaces }) };
+      }
+      const body = opts && opts.body ? JSON.parse(opts.body) : null;
+      calls.push({ url, body });
+      if (body && failIds.has(body.to)) {
+        return { ok: false, status: 404, json: async () => ({ error: 'Peer not found' }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, status: 'received', id: `m-${body.to}` }) };
+    };
+  }
+
+  it('refuses a caller that is neither operator nor coordinator, before ever reading the roster', async () => {
+    let rosterRead = false;
+    await assert.rejects(
+      medusa.broadcastAll({
+        callerKind: 'project', message: 'hi everyone',
+        fetchImpl: async (url) => { if (url.endsWith('/workspaces')) rosterRead = true; return { ok: true, json: async () => ({ workspaces: [] }) }; }
+      }),
+      (err) => { assert.equal(err.code, 'BROADCAST_FORBIDDEN'); assert.equal(err.httpStatus, 403); return true; }
+    );
+    assert.equal(rosterRead, false, 'an unauthorized caller must never reach the roster at all');
+  });
+
+  for (const callerKind of ['operator', 'coordinator']) {
+    it(`allows a "${callerKind}" caller through the authorization gate`, async () => {
+      const calls = [];
+      const r = await medusa.broadcastAll({
+        callerKind, senderId: `sender-${callerKind}`, message: 'all hands',
+        fetchImpl: stubFetch({ workspaces: [{ id: 'ws-a' }], calls })
+      });
+      assert.equal(r.ok, true);
+      assert.deepEqual(r.sentTo, ['ws-a']);
+    });
+  }
+
+  it('requires a non-empty message', async () => {
+    await assert.rejects(
+      medusa.broadcastAll({ callerKind: 'operator', message: '   ' }),
+      (err) => { assert.equal(err.code, 'EMPTY_MESSAGE'); assert.equal(err.httpStatus, 400); return true; }
+    );
+  });
+
+  it('sends to every roster workspace, prefixed [BROADCAST scope=all], excluding the sender', async () => {
+    const calls = [];
+    const r = await medusa.broadcastAll({
+      callerKind: 'operator', senderId: 'sender-ws', message: 'deploy at 5pm',
+      fetchImpl: stubFetch({ workspaces: [{ id: 'ws-a' }, { id: 'ws-b' }, { id: 'sender-ws' }], calls })
+    });
+    assert.deepEqual(r.sentTo.sort(), ['ws-a', 'ws-b']);
+    assert.equal(r.failedTo.length, 0);
+    assert.equal(r.scope, 'all');
+    assert.equal(calls.length, 2, 'the sender\'s own workspace must never be sent to');
+    for (const call of calls) {
+      assert.equal(call.body.message, '[BROADCAST scope=all] deploy at 5pm');
+      assert.equal(call.body.from, 'sender-ws');
+    }
+  });
+
+  // #1224 — every test below that reaches a successful (or roster-attempted)
+  // broadcastAll call uses its OWN unique `senderId` (or relies on a
+  // dedicated `nowMs` in the rate-limiting block below): `_broadcastCooldowns`
+  // is module-level state that outlives any one test, so two tests sharing
+  // a sender id (including two tests that both omit it, defaulting to the
+  // same literal `'system'`) would otherwise rate-limit each other on pure
+  // test order, not on anything this file is actually testing.
+
+  it('defaults the sender to "system" when none is given, and still excludes nothing by that name', async () => {
+    const calls = [];
+    const r = await medusa.broadcastAll({
+      callerKind: 'operator', message: 'no sender given, unique-1', nowMs: 2_000_000,
+      fetchImpl: stubFetch({ workspaces: [{ id: 'ws-a' }], calls })
+    });
+    assert.deepEqual(r.sentTo, ['ws-a']);
+    assert.equal(calls[0].body.from, 'system');
+  });
+
+  it('reports a per-target failure without aborting the rest of the fan-out', async () => {
+    const r = await medusa.broadcastAll({
+      callerKind: 'operator', senderId: 'sender-partial-fanout', message: 'partial',
+      fetchImpl: stubFetch({ workspaces: [{ id: 'ws-a' }, { id: 'ws-b' }], failIds: new Set(['ws-a']) })
+    });
+    assert.deepEqual(r.sentTo, ['ws-b']);
+    assert.equal(r.failedTo.length, 1);
+    assert.equal(r.failedTo[0].workspaceId, 'ws-a');
+    assert.match(r.failedTo[0].reason, /Peer not found/);
+  });
+
+  it('maps a roster-read failure to BROADCAST_ROSTER_FAILED, 502', async () => {
+    await assert.rejects(
+      medusa.broadcastAll({
+        callerKind: 'operator', senderId: 'sender-roster-fail', message: 'hi',
+        fetchImpl: async () => { throw new Error('ECONNREFUSED'); }
+      }),
+      (err) => { assert.equal(err.code, 'BROADCAST_ROSTER_FAILED'); assert.equal(err.httpStatus, 502); return true; }
+    );
+  });
+
+  describe('per-sender rate-limiting / coalescing', () => {
+    // Each test below uses its OWN unique senderId: `_broadcastCooldowns` is
+    // module-level state that outlives any one test, so two tests sharing a
+    // sender id would see each other's leftover cooldown entries depending
+    // on execution order, not on anything either test itself sets up.
+    it('refuses a DIFFERENT message from the same sender inside the cooldown window', async () => {
+      const t0 = 1_000_000;
+      await medusa.broadcastAll({
+        callerKind: 'operator', senderId: 'sender-rl-different', message: 'first', nowMs: t0,
+        fetchImpl: stubFetch({ workspaces: [{ id: 'ws-a' }] })
+      });
+      await assert.rejects(
+        medusa.broadcastAll({
+          callerKind: 'operator', senderId: 'sender-rl-different', message: 'second, different', nowMs: t0 + 1000,
+          fetchImpl: stubFetch({ workspaces: [{ id: 'ws-a' }] })
+        }),
+        (err) => { assert.equal(err.code, 'BROADCAST_RATE_LIMITED'); assert.equal(err.httpStatus, 429); return true; }
+      );
+    });
+
+    it('coalesces an IDENTICAL retry inside the cooldown window — no second fan-out', async () => {
+      const t0 = 1_000_000;
+      const calls = [];
+      const first = await medusa.broadcastAll({
+        callerKind: 'operator', senderId: 'sender-rl-coalesce', message: 'same message', nowMs: t0,
+        fetchImpl: stubFetch({ workspaces: [{ id: 'ws-a' }], calls })
+      });
+      const second = await medusa.broadcastAll({
+        callerKind: 'operator', senderId: 'sender-rl-coalesce', message: 'same message', nowMs: t0 + 1000,
+        fetchImpl: stubFetch({ workspaces: [{ id: 'ws-a' }], calls })
+      });
+      assert.equal(first.coalesced, false);
+      assert.equal(second.coalesced, true);
+      assert.deepEqual(second.sentTo, first.sentTo);
+      assert.equal(calls.length, 1, 'the coalesced retry must never re-call the Bridge');
+    });
+
+    it('allows a new broadcast once the cooldown has fully elapsed', async () => {
+      const t0 = 1_000_000;
+      await medusa.broadcastAll({
+        callerKind: 'operator', senderId: 'sender-rl-elapsed', message: 'first', nowMs: t0,
+        fetchImpl: stubFetch({ workspaces: [{ id: 'ws-a' }] })
+      });
+      const r = await medusa.broadcastAll({
+        callerKind: 'operator', senderId: 'sender-rl-elapsed', message: 'second, different', nowMs: t0 + medusa.BROADCAST_COOLDOWN_MS,
+        fetchImpl: stubFetch({ workspaces: [{ id: 'ws-a' }] })
+      });
+      assert.equal(r.coalesced, false);
+      assert.deepEqual(r.sentTo, ['ws-a']);
+    });
+
+    it('rate-limits independently per sender — a different sender is never blocked by another\'s cooldown', async () => {
+      const t0 = 1_000_000;
+      await medusa.broadcastAll({
+        callerKind: 'operator', senderId: 'sender-a', message: 'from a', nowMs: t0,
+        fetchImpl: stubFetch({ workspaces: [{ id: 'ws-x' }] })
+      });
+      const r = await medusa.broadcastAll({
+        callerKind: 'operator', senderId: 'sender-b', message: 'from b', nowMs: t0 + 1000,
+        fetchImpl: stubFetch({ workspaces: [{ id: 'ws-x' }] })
+      });
+      assert.equal(r.coalesced, false);
+      assert.deepEqual(r.sentTo, ['ws-x']);
+    });
+  });
+});
+
 describe('lib/medusa-send: a stale handle to a LOCAL peer resolves up front (#2726)', () => {
   const medusaSend = require('../lib/medusa-send');
   const exchanges = require('../lib/medusa-exchanges');
@@ -2586,6 +2764,69 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
       const ok = await run('z'.repeat(60 * 1024));
       assert.equal(ok.code, 0, ok.stderr);
       assert.match(ok.stdout, /received/);
+    });
+  });
+
+  describe('POST /broadcast (#1224, explicit system-wide broadcast, HTTP layer)', () => {
+    // Every real caller identity this route can resolve a sender from is fixed
+    // for the whole life of this describe block (the operator always resolves
+    // to no senderId → medusa.js's own 'system' default; this one bound
+    // project pane always resolves to the SAME `workspaceId`) — unlike the
+    // lib-level `broadcastAll` tests above, an HTTP test here cannot pick a
+    // fresh senderId per call. `_broadcastCooldowns` is real module state with
+    // a real 30s wall-clock window, so each identity's successful broadcast
+    // and its own follow-up cooldown checks are chained inside ONE `it()`
+    // rather than split across several — splitting them would make a later
+    // test's "first" call collide with an earlier test's already-set cooldown.
+
+    it('refuses a caller presenting no launch headers at all — 403, via the dispatcher\'s own launch-binding '
+      + 'floor (#2233), before this route (or broadcastAll\'s own BROADCAST_FORBIDDEN) is ever reached', async () => {
+      const { status, data } = await req('/api/sessions/sender/medusa/broadcast', 'POST', { message: 'hi all' }, {});
+      assert.equal(status, 403);
+      assert.equal(data.code, 'LAUNCH_BINDING_REQUIRED');
+      assert.equal(bridge.received.length, 0);
+    });
+
+    it('requires a non-empty message — 400 EMPTY_MESSAGE, before the roster is ever read', async () => {
+      const { status, data } = await req('/api/sessions/sender/medusa/broadcast', 'POST', { message: '' }, dashboard());
+      assert.equal(status, 400);
+      assert.equal(data.code, 'EMPTY_MESSAGE');
+      assert.equal(bridge.received.length, 0);
+    });
+
+    it('an operator (the dashboard) broadcasts to every other roster workspace; a same-window retry coalesces, '
+      + 'a same-window different message is rate-limited', async () => {
+      const first = await req('/api/sessions/sender/medusa/broadcast', 'POST', { message: 'operator broadcast' }, dashboard());
+      assert.equal(first.status, 200);
+      assert.deepEqual(first.data.sentTo.sort(), ['live-ws', 'offline-ws']);
+      assert.equal(first.data.failedTo.length, 0);
+      assert.equal(bridge.received.length, 2);
+      for (const call of bridge.received) {
+        assert.equal(call.message, '[BROADCAST scope=all] operator broadcast');
+      }
+
+      const retry = await req('/api/sessions/sender/medusa/broadcast', 'POST', { message: 'operator broadcast' }, dashboard());
+      assert.equal(retry.status, 200);
+      assert.equal(retry.data.coalesced, true);
+      assert.equal(bridge.received.length, 2, 'the coalesced retry fans out nothing new');
+
+      const different = await req('/api/sessions/sender/medusa/broadcast', 'POST', { message: 'a different message' }, dashboard());
+      assert.equal(different.status, 429);
+      assert.equal(different.data.code, 'BROADCAST_RATE_LIMITED');
+      assert.equal(bridge.received.length, 2);
+    });
+
+    it('a bound project session broadcasts too, excluded from its own fan-out; a same-window different message is '
+      + 'rate-limited independently of the operator\'s own cooldown above', async () => {
+      const first = await req('/api/sessions/sender/medusa/broadcast', 'POST', { message: 'project broadcast' }, pane.headers);
+      assert.equal(first.status, 200);
+      assert.deepEqual(first.data.sentTo.sort(), ['live-ws', 'offline-ws']);
+      assert.ok(bridge.received.every((call) => call.from === workspaceId));
+      assert.ok(!first.data.sentTo.includes(workspaceId), 'the sender\'s own live workspace never receives its own broadcast');
+
+      const different = await req('/api/sessions/sender/medusa/broadcast', 'POST', { message: 'a different message' }, pane.headers);
+      assert.equal(different.status, 429);
+      assert.equal(different.data.code, 'BROADCAST_RATE_LIMITED');
     });
   });
 });
