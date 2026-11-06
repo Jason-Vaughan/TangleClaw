@@ -312,6 +312,30 @@ describe('lib/tcc-workspace-migration — guided workspace root migration (#2626
       assert.equal(execCalls.length, 0);
     });
 
+    it('refuses rather than silently replacing a target that appears AFTER planning (I-Gate Round 3 C1, #5799121198)', () => {
+      const p1 = makeProject('late-collision');
+      const plan = migration.planWorkspaceMigration({ home: tmpHome, projects: [p1], activeSessions: [] });
+      assert.equal(plan.ok, true);
+      const toPath = plan.moves[0].toPath;
+      assert.equal(fs.existsSync(toPath), false, 'the plan itself saw no collision');
+
+      // A target appears between planning and execution -- an empty
+      // directory, the exact shape that `fs.renameSync` would otherwise
+      // silently replace on this platform.
+      fs.mkdirSync(toPath, { recursive: true, mode: 0o700 });
+
+      const result = migration.executeWorkspaceMigration(plan, {
+        store, configPath: path.join(tmpDataDir, 'config.json')
+      });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.rolledBack, true);
+      assert.match(result.error, /already exists/);
+      assert.ok(fs.existsSync(p1.path), 'the source directory was never moved');
+      assert.equal(store.projects.get(p1.id).path, p1.path, 'the store row was never changed');
+      assert.equal(fs.statSync(toPath).mode & 0o777, 0o700, 'the collision directory survives untouched, not replaced');
+    });
+
     it('rolls back every already-moved directory and store row when a later step fails mid-flight', () => {
       const p1 = makeProject('first');
       const p2 = makeProject('second');
