@@ -20,7 +20,7 @@
  * so the operator's real `~/.tangleclaw/master` is never read or written.
  */
 
-const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
+const { describe, it: _rawIt, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -30,6 +30,40 @@ const { setLevel } = require('../lib/logger');
 
 setLevel('error');
 delete process.env.TANGLECLAW_PORT;
+
+/**
+ * Retry `fn` up to `attempts` times (#2736): a real OS socket round-trip
+ * (this file's own `server`/`bridge`, both ephemeral-port `listen(0, ...)`)
+ * that is normally fast can occasionally take long enough, under full-suite
+ * batch contention (hundreds of concurrent files each opening their own
+ * sockets), to perturb a timing-sensitive assertion with no defect in the
+ * code under test — the same shape #2735 (real tmux client-server
+ * round-trips) hit, confirmed there as pure host-load noise. `beforeRetry`,
+ * when given, runs before every attempt AFTER the first (never before the
+ * first: that attempt must see exactly what the real `beforeEach` set up,
+ * undisturbed) — a hook to reset whatever shared, cross-attempt state this
+ * specific `fn` itself mutates, since the real `beforeEach`/`afterEach`
+ * hooks run once per `it()` call, not once per retry attempt inside it.
+ * @param {() => (void|Promise<void>)} fn
+ * @param {{attempts?: number, beforeRetry?: () => void}} [opts]
+ * @returns {Promise<void>}
+ */
+async function withContentionRetry(fn, opts = {}) {
+  const attempts = opts.attempts || 3;
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    if (i > 0 && opts.beforeRetry) opts.beforeRetry();
+    try {
+      await fn();
+      return;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
+const it = _rawIt;
 
 const store = require('../lib/store');
 const medusa = require('../lib/medusa');
@@ -452,6 +486,29 @@ function makeFakeBridge() {
 }
 
 describe('API — /api/master/medusa/* is the project route family, mounted for the Master', () => {
+  // #2736 — this block's own `server`/`bridge` are real listening sockets
+  // (ephemeral-port `listen(0, ...)`), the one part of this file with
+  // genuine OS I/O to be contention-sensitive about; the file's other
+  // describe blocks are pure in-memory (`fakeTmux`/`FakeWS`) and need no
+  // such wrapping. Shadows `it` for every test below, through plain JS
+  // scoping, with no per-call-site edit needed.
+  //
+  // `beforeRetry` tears down this block's one shared, cross-test mutable
+  // resource a retry can leave stale: the real Medusa listener a test
+  // started via `startListening()`. `medusa.startSession` is a no-op onto
+  // an EXISTING listener and never hands a retry's fresh `wsFactory` a
+  // socket to open, so a failed first attempt's listener must be stopped
+  // before attempt 2 — but never before attempt 1, which must see exactly
+  // what this block's OWN `beforeEach` (below) set up (nothing, in this
+  // block — no describe block here pre-starts a listener in `beforeEach`,
+  // unlike `killMasterSession`'s elsewhere in this file, which is exactly
+  // why this wrapper stays local to this block rather than file-wide).
+  function it(name, fn) {
+    _rawIt(name, () => withContentionRetry(fn, {
+      beforeRetry: () => medusa.stopSession(master.MASTER_MEDUSA_KEY)
+    }));
+  }
+
   let server;
   let port;
   let bridge;
@@ -756,15 +813,20 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
   });
 
   it('loop open is gated the same way: 403 at read-only, 200 at write', async () => {
+    // #2736 — a baseline, not a hardcoded 0: bridge.loops is scoped to the
+    // whole describe block, so a retried attempt of this exact test (the
+    // only one in the file that successfully opens a loop) must not see
+    // its OWN earlier attempt's write as evidence the read-only gate leaked.
+    const loopsBefore = bridge.loops.length;
     startListening();
     setMaster({ accessLevel: 'read-only' });
     const denied = await req('/api/master/medusa/loop', 'POST', { target: 'live-ws', task: 't', doneCriteria: 'd', mode: 'supervised' }, MASTER_PANE);
     assert.equal(denied.status, 403);
-    assert.equal(bridge.loops.length, 0);
+    assert.equal(bridge.loops.length, loopsBefore);
     setMaster({ accessLevel: 'write' });
     const ok = await req('/api/master/medusa/loop', 'POST', { target: 'live-ws', task: 't', doneCriteria: 'd', mode: 'supervised' }, MASTER_PANE);
     assert.equal(ok.status, 200);
-    assert.equal(bridge.loops.length, 1);
+    assert.equal(bridge.loops.length, loopsBefore + 1);
   });
 
   it('the loop control verbs refuse at read-only before reaching the Bridge', async () => {
@@ -832,6 +894,10 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
   });
 
   it('PATCH regenerates the identity when medusaEnabled CHANGES — and only then', async () => {
+    // #2736 — beforeEach's own reset only runs once per `it()`, not once
+    // per retry attempt inside it; a failed first attempt's own pushes
+    // must not count against this attempt's "exactly N refreshes" checks.
+    identityRefreshes.length = 0;
     // The gap found the first time this was flipped live: the listener joined
     // the bus on save while the identity still told the Master it was not a
     // participant, until an unrelated ensure happened to run.

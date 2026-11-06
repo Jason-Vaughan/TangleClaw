@@ -5095,6 +5095,175 @@ function openWrapDrawer(pipelineResult, runContext) {
   cancelEndedCountdown();
   renderWrapDrawer(pipelineResult, runContext);
   expandWrapDrawer();
+  // v5.67.0 FEED-FORWARD 01 — a governed wrap (lib/governed-wrap.js) is a
+  // cross-session/coordinator-initiated request against this PROJECT, not
+  // necessarily started by this session's own manual wrap run; checked
+  // every time the drawer opens since nothing pushes an event for "one
+  // just started" yet. Guarded by `typeof` (never a direct call) because
+  // several existing tests lift `openWrapDrawer` alone, by source text,
+  // into a sandbox that never defines the rest of this file — safe in the
+  // real page, where every function here loads together.
+  if (typeof checkGovernedWrapProgress === 'function') checkGovernedWrapProgress();
+  // v5.67.0 FEED-FORWARD 01 — the chunk-boundary lookup widget; idempotent
+  // (only builds its DOM once per drawer lifetime, same as the governed-wrap
+  // container above). Same guard, same reason.
+  if (typeof _chunkBoundaryLookupContainer === 'function') _chunkBoundaryLookupContainer();
+}
+
+/**
+ * The container the governed-wrap progress bar renders into, created once
+ * inside the drawer body — not in `session.html` (outside this car's
+ * authorized envelope), so built the same way `history-drawer.js`'s own
+ * dynamically-inserted sections are: an element this file creates and
+ * owns, never a markup change to a file it cannot touch.
+ * @returns {HTMLElement|null}
+ */
+function _governedWrapProgressContainer() {
+  const body = document.getElementById('wrapDrawerBody');
+  if (!body) return null;
+  let el = document.getElementById('wrapDrawerGovernedProgress');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'wrapDrawerGovernedProgress';
+    el.className = 'wrap-drawer-governed-progress hidden';
+    el.setAttribute('aria-live', 'polite');
+    // Right after the status banner and its docs-parity note, ahead of the
+    // step list: a governed wrap in progress is top-of-mind information,
+    // the same reason the docs-parity control sits there.
+    const status = document.getElementById('wrapDrawerStatus');
+    if (status && status.nextSibling) body.insertBefore(el, status.nextSibling);
+    else body.appendChild(el);
+  }
+  return el;
+}
+
+/**
+ * The container the chunk-boundary status lookup renders into, created once
+ * inside the drawer body — same reason and pattern as
+ * {@link _governedWrapProgressContainer}.
+ *
+ * `fetchChunkBoundaryStatus` needs an `assignmentId`/`chunkNumber` pair this
+ * page has no live source for: a session does not carry its own Chunk-
+ * Boundary Protocol identity anywhere this file (or `wrap-drawer.js`) can
+ * read it from, and the route that would need to start exposing one
+ * (`lib/routes/sessions.js`) is outside this car's authorized envelope.
+ * Rather than fabricate that pairing, this is an explicit, operator-entered
+ * lookup — a real call site with real input, not invented data standing in
+ * for a session-identity field that does not exist yet.
+ * @returns {HTMLElement|null}
+ */
+function _chunkBoundaryLookupContainer() {
+  const body = document.getElementById('wrapDrawerBody');
+  if (!body) return null;
+  let el = document.getElementById('wrapDrawerChunkBoundaryLookup');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'wrapDrawerChunkBoundaryLookup';
+    el.className = 'wrap-drawer-chunk-boundary-lookup';
+    el.innerHTML = `
+      <details>
+        <summary>Check a chunk-boundary receipt</summary>
+        <input type="text" id="wrapDrawerCbAssignmentId" placeholder="Assignment id">
+        <input type="number" id="wrapDrawerCbChunkNumber" placeholder="Chunk #" min="1">
+        <button type="button" id="wrapDrawerCbCheckBtn">Check</button>
+        <span id="wrapDrawerCbResult"></span>
+      </details>`;
+    body.appendChild(el);
+    const btn = document.getElementById('wrapDrawerCbCheckBtn');
+    if (btn) btn.addEventListener('click', _checkChunkBoundaryLookup);
+  }
+  return el;
+}
+
+/**
+ * Handle a click on the chunk-boundary lookup's Check button: read the two
+ * operator-entered fields, fetch the real receipt, and render its badge
+ * (#1889/#2070 Slice 3, v5.67.0 FEED-FORWARD 01).
+ * @returns {Promise<void>}
+ */
+async function _checkChunkBoundaryLookup() {
+  const resultEl = document.getElementById('wrapDrawerCbResult');
+  if (!resultEl) return;
+  if (typeof window.fetchChunkBoundaryStatus !== 'function' || typeof window.renderChunkBoundaryBadge !== 'function') return;
+  const assignmentId = (document.getElementById('wrapDrawerCbAssignmentId') || {}).value || '';
+  const chunkNumberRaw = (document.getElementById('wrapDrawerCbChunkNumber') || {}).value || '';
+  const chunkNumber = parseInt(chunkNumberRaw, 10);
+  if (!assignmentId.trim() || !Number.isInteger(chunkNumber) || chunkNumber < 1) {
+    resultEl.textContent = 'Enter an assignment id and a chunk number.';
+    return;
+  }
+  resultEl.textContent = 'Checking…';
+  const statusSurface = await window.fetchChunkBoundaryStatus(projectName, assignmentId.trim(), chunkNumber);
+  resultEl.innerHTML = statusSurface ? window.renderChunkBoundaryBadge(statusSurface) : '';
+  if (!statusSurface) resultEl.textContent = 'No receipt found.';
+}
+
+/**
+ * Check for an open governed-wrap request against this project and, if one
+ * exists and has not reached a terminal stage, render its progress bar and
+ * open its live stream (#2837/#2072 Slice 2, v5.67.0 FEED-FORWARD 01).
+ * Best-effort: a page that has not loaded governed-wrap-ui.js, or a read
+ * that 404s (the common case — no open request), leaves the container
+ * hidden with nothing streamed.
+ * @returns {Promise<void>}
+ */
+async function checkGovernedWrapProgress() {
+  if (currentGovernedWrapStream) {
+    currentGovernedWrapStream.close();
+    currentGovernedWrapStream = null;
+  }
+  const container = _governedWrapProgressContainer();
+  if (!container || typeof window.renderGovernedWrapProgressBar !== 'function'
+    || typeof window.startGovernedWrapProgressStream !== 'function') {
+    return;
+  }
+  const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/governed-wrap`);
+  const request = data && data.ok ? data.request : null;
+  // `_view` (lib/governed-wrap.js) serializes the id as `requestId`, never `id`.
+  const requestId = request && (request.requestId || request.id);
+  const stage = request ? _governedWrapStageForState(request.state) : null;
+  if (!requestId || stage === 'completed' || stage === 'failed') {
+    container.classList.add('hidden');
+    container.innerHTML = '';
+    return;
+  }
+  container.classList.remove('hidden');
+  container.innerHTML = window.renderGovernedWrapProgressBar(stage);
+  const streamUrl = `/api/sessions/${encodeURIComponent(projectName)}/governed-wrap/${encodeURIComponent(requestId)}/stream`;
+  currentGovernedWrapStream = window.startGovernedWrapProgressStream(streamUrl, (streamStage) => {
+    container.innerHTML = window.renderGovernedWrapProgressBar(streamStage);
+    if (streamStage === 'completed' || streamStage === 'failed') {
+      if (currentGovernedWrapStream) { currentGovernedWrapStream.close(); currentGovernedWrapStream = null; }
+    }
+  });
+}
+
+/**
+ * Coarsen a governed-wrap request's own lifecycle state to one of
+ * `GOVERNED_WRAP_PROGRESS_STAGES` (A-Gate Round 1, PR #2913) — mirroring
+ * `lib/governed-wrap.js#_stageForRequestState` exactly, a private,
+ * unexported function. Duplicated here the same way
+ * `public/governed-wrap-ui.js` already duplicates the server's
+ * `PROGRESS_STAGES` values themselves: a browser script cannot `require()`
+ * a `lib/` module, and this car's envelope has no shared-vocabulary file to
+ * hold one instead.
+ * @param {string} state - One of `lib/governed-wrap.js`'s `STATES` values
+ *   (`awaiting_decision`, `ready`, `needs_operator`, `executing`,
+ *   `completed`, `stale`, `expired`, `cancelled`).
+ * @returns {string} One of `GOVERNED_WRAP_PROGRESS_STAGES`.
+ */
+function _governedWrapStageForState(state) {
+  switch (state) {
+    case 'awaiting_decision': return 'preflight';
+    case 'ready':
+    case 'needs_operator': return 'decision-validated';
+    case 'executing': return 'pipeline-running';
+    case 'completed': return 'completed';
+    // stale, expired, cancelled: none of them ever claimed a run, or the run
+    // they claimed is no longer this decision's to report on -- failed, not
+    // completed, because this governed-wrap request itself did not finish.
+    default: return 'failed';
+  }
 }
 
 /**
@@ -6978,6 +7147,17 @@ let currentWrapStream = null;
  * @type {string|null}
  */
 let currentWrapStreamRunId = null;
+
+/**
+ * The open governed-wrap progress stream (`{close}` from
+ * `startGovernedWrapProgressStream`, #2837/#2072 Slice 2), or null when
+ * none is open. Entirely separate from `currentWrapStream` above: a
+ * governed wrap is a cross-session/coordinator-initiated request
+ * (`lib/governed-wrap.js`), not this session's own manual wrap run, so the
+ * two can be live at once with no shared state between them.
+ * @type {{close: () => void}|null}
+ */
+let currentGovernedWrapStream = null;
 
 /**
  * Pending `/wrap/status` poll while the stream is lost, or null.

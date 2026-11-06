@@ -18,9 +18,12 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const vm = require('node:vm');
 const { execFileSync } = require('node:child_process');
 const { initRepo } = require('./_temp-repo');
 const { setLevel } = require('../lib/logger');
+const { liftDeclaration } = require('./helpers/lift');
+const { makeDocument, withIdParsingInnerHTML } = require('./_mini-dom');
 
 setLevel('error');
 
@@ -346,5 +349,143 @@ describe('public/governed-wrap-ui.js', () => {
       assert.doesNotMatch(completed, /governed-wrap-progress-failed/);
       assert.match(failed, /governed-wrap-progress-failed/);
     });
+  });
+});
+
+describe('public/session.js call sites for governed-wrap-ui.js (v5.67.0 FEED-FORWARD 01)', () => {
+  const SESSION_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
+  const GOVERNED_WRAP_UI_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'governed-wrap-ui.js'), 'utf8');
+
+  /**
+   * Build a sandbox with the REAL governed-wrap-ui.js loaded, and the REAL
+   * `checkGovernedWrapProgress` + `_governedWrapProgressContainer` lifted
+   * from session.js's own source — a genuine two-file integration, not a
+   * stub standing in for either side.
+   * @param {object} [overrides] - `{api}`.
+   * @returns {{doc: object, check: Function}}
+   */
+  function loadLifted(overrides = {}) {
+    const { doc, ids } = makeDocument(['wrapDrawerBody', 'wrapDrawerStatus']);
+    withIdParsingInnerHTML(ids.wrapDrawerBody, doc);
+    const sandbox = {
+      console,
+      document: doc,
+      projectName: 'proj-1',
+      api: overrides.api || (async () => null),
+      esc: require('./helpers/lift').loadEsc('landing.js')
+    };
+    sandbox.window = sandbox;
+    vm.createContext(sandbox);
+    vm.runInContext(GOVERNED_WRAP_UI_SRC, sandbox);
+    vm.runInContext(
+      'let currentGovernedWrapStream = null;\n'
+      + `${liftDeclaration(SESSION_SRC, 'function _governedWrapProgressContainer(')}\n`
+      + `${liftDeclaration(SESSION_SRC, 'async function checkGovernedWrapProgress(')}\n`
+      + `${liftDeclaration(SESSION_SRC, 'function _governedWrapStageForState(')}\n`
+      + 'globalThis.checkGovernedWrapProgress = checkGovernedWrapProgress;',
+      sandbox
+    );
+    return { doc, check: sandbox.checkGovernedWrapProgress };
+  }
+
+  /**
+   * The mini-dom's `byId` registry is populated only by `makeDocument`'s own
+   * initial ids and by `withIdParsingInnerHTML`'s string-parsing (test/_mini-
+   * dom.js's documented limits) — never by a real `createElement` +
+   * `appendChild`/`insertBefore`, which is exactly how production
+   * `_governedWrapProgressContainer` builds its container. A real browser's
+   * `getElementById` would find it; this walks `childNodes` instead, the one
+   * thing the mini-dom's DOM methods DO maintain correctly.
+   * @param {object} parent
+   * @param {string} id
+   * @returns {object|null}
+   */
+  function findChildById(parent, id) {
+    for (const child of parent.childNodes) {
+      if (child.id === id) return child;
+      const deeper = findChildById(child, id);
+      if (deeper) return deeper;
+    }
+    return null;
+  }
+
+  it('leaves the container hidden and empty when no request is open (the common case)', async () => {
+    const { doc, check } = loadLifted({ api: async () => null });
+    await check();
+    const container = findChildById(doc.body, 'wrapDrawerGovernedProgress');
+    assert.ok(container, 'the container must still be created');
+    assert.equal(container.classList.contains('hidden'), true);
+    assert.equal(container.innerHTML, '');
+  });
+
+  it('leaves the container hidden for a request already at a terminal stage', async () => {
+    const { doc, check } = loadLifted({
+      api: async () => ({ ok: true, request: { requestId: 'gw-1', state: 'completed' } })
+    });
+    await check();
+    assert.equal(findChildById(doc.body, 'wrapDrawerGovernedProgress').classList.contains('hidden'), true);
+  });
+
+  for (const state of ['stale', 'expired', 'cancelled']) {
+    it(`leaves the container hidden for a request that ended as "${state}" (never completed, not progress to show)`, async () => {
+      const { doc, check } = loadLifted({
+        api: async () => ({ ok: true, request: { requestId: 'gw-1', state } })
+      });
+      await check();
+      assert.equal(findChildById(doc.body, 'wrapDrawerGovernedProgress').classList.contains('hidden'), true);
+    });
+  }
+
+  it('renders the real progress bar for an open, non-terminal request — using requestId (A-Gate R1), not id', async () => {
+    const { doc, check } = loadLifted({
+      api: async () => ({ ok: true, request: { requestId: 'gw-1', state: 'executing' } })
+    });
+    await check();
+    const container = findChildById(doc.body, 'wrapDrawerGovernedProgress');
+    assert.equal(container.classList.contains('hidden'), false);
+    // "executing" maps to the "pipeline-running" progress stage (A-Gate R1,
+    // mirroring lib/governed-wrap.js#_stageForRequestState), 70%.
+    assert.match(container.innerHTML, /role="progressbar"/);
+    assert.match(container.innerHTML, /aria-valuenow="70"/);
+  });
+
+  it('renders the preflight stage (20%) for a request still awaiting_decision', async () => {
+    const { doc, check } = loadLifted({
+      api: async () => ({ ok: true, request: { requestId: 'gw-1', state: 'awaiting_decision' } })
+    });
+    await check();
+    assert.match(findChildById(doc.body, 'wrapDrawerGovernedProgress').innerHTML, /aria-valuenow="20"/);
+  });
+
+  for (const state of ['ready', 'needs_operator']) {
+    it(`renders the decision-validated stage (40%) for state "${state}"`, async () => {
+      const { doc, check } = loadLifted({
+        api: async () => ({ ok: true, request: { requestId: 'gw-1', state } })
+      });
+      await check();
+      assert.match(findChildById(doc.body, 'wrapDrawerGovernedProgress').innerHTML, /aria-valuenow="40"/);
+    });
+  }
+
+  it('explicitly names every real STATES value that is NOT terminal-by-default (A-Gate R1 drift guard)', () => {
+    // _governedWrapStageForState duplicates lib/governed-wrap.js's own
+    // private, unexported _stageForRequestState -- same reasoning as the
+    // five-stages check above, aimed at the OTHER duplicated vocabulary
+    // this car's fix introduced. The real function (and this one,
+    // mirroring it) deliberately handles `stale`/`expired`/`cancelled` via
+    // its `default` branch rather than a named case -- covered instead by
+    // this file's own behavioral tests above (all three map to "failed").
+    // A state added to the real STATES enum later, in this non-default
+    // group, with no matching case here, would silently fall through to
+    // "failed" too -- which is what this guards against for THESE states.
+    const libSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'governed-wrap.js'), 'utf8');
+    const statesBlock = libSrc.slice(libSrc.indexOf('const STATES = Object.freeze({'), libSrc.indexOf('});', libSrc.indexOf('const STATES')) + 3);
+    const realStates = [...statesBlock.matchAll(/:\s*'([a-z_]+)'/g)].map((m) => m[1]);
+    assert.ok(realStates.length >= 8, 'sanity: STATES must have been found at all');
+    const explicitlyHandled = realStates.filter((s) => !['stale', 'expired', 'cancelled'].includes(s));
+    assert.ok(explicitlyHandled.length >= 5, 'sanity: most states are not in the default-terminal group');
+    for (const state of explicitlyHandled) {
+      assert.ok(SESSION_SRC.includes(`'${state}'`), `_governedWrapStageForState must name real state "${state}"`);
+    }
   });
 });
