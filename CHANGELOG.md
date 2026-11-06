@@ -4,6 +4,92 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.67.0] - 2026-11-05
+
+### Added
+- Added `tc roadmap admission|sync` and the standalone
+  `scripts/roadmap-sync-check.js` CLI, mounting `lib/roadmap-admission.js`/
+  `lib/roadmap-sync.js` (via `lib/tc-docs-scorecard-merge-wiring.js`'s
+  already-shipped composing functions) for PM train-dispatch preflight and
+  the external roadmap-board generator to invoke directly, without touching
+  any file outside this repository (#2877).
+- Added `tc merge-gate hold|ack|override|list|show|evaluate|publish-status`
+  and live `/api/sessions/:project/merge-gate/*` routes, mounting
+  `lib/merge-inbox-gate.js`'s durable hold ledger (via
+  `lib/tc-docs-scorecard-merge-wiring.js`'s already-shipped `mergeGate*`
+  adapters) so a merge hold's authority travels across every lane and
+  machine that can reach the live server, and the GitHub required
+  status-check publisher has somewhere real to call (#2878).
+- Mounted `lib/session-history-backfill.js#ensureSessionTranscript` into
+  `GET /api/continuity/:project/sessions/:sid` in `server.js`, so a session's
+  transcript backfills from the harness's native log on read and the
+  Session History drawer badges it `native-log`/`live-capture`
+  (`public/session-history-ui.js#transcriptSourceBadge`, wired into
+  `public/history-drawer.js#openHistorySession`). Mounted
+  `lib/governed-wrap.js#createWrapProgressStream` at
+  `GET /api/sessions/:project/governed-wrap/:requestId/stream` in
+  `lib/routes/wrap.js`, project-scoped and ownership-checked the same way
+  the existing `/decision`/`/cancel` routes are. Loaded
+  `public/governed-wrap-ui.js` and `public/session-history-ui.js` on
+  `public/index.html` and `public/session.html` (#2881).
+- Added `GET /api/scorecard` (this host's local scorecard cache, always 200
+  with an honest `status`), an opt-in `.unref()`'d scheduled refresh timer
+  in `server.js` (`TANGLECLAW_SCORECARD_SCHEDULE_ENABLED=true`, cleanly
+  stopped on shutdown — no config field yet, since `lib/store.js` is out of
+  this car's envelope), and `scripts/scorecard-publish-metrics.js`, a CLI
+  wrapping `lib/tc-docs-scorecard-merge-wiring.js#publishScorecardToMetricsBranch`
+  that refuses to publish a cache that isn't fresh (#2883).
+- Mounted `public/bridge-step-up.js` and `public/bridge-settings-ui.js`
+  (shipped, previously unmounted) into the dashboard's Global Settings
+  modal (`public/ui.js#openGlobalSettings`), beside the existing operator
+  bridge panel: pending step-up approvals, reach opt-out, notification
+  policy, and watched Discord channels, all against `lib/bridge-api.js`'s
+  already-mounted `operator/*` routes. Both scripts are now loaded on
+  `public/index.html`/`public/session.html` and dual-listed in `public/sw.js`
+  (#2884).
+- Wired `lib/lifecycle-handoff-daemon.js#createLifecycleHandoffDaemon`'s
+  start/stop into `server.js`'s boot/shutdown lifecycle, so an open handoff's
+  caller-identity-free steps (checkpointed → wrap_initiated →
+  terminal_confirmed → replacement_launched) now advance on a timer. Swapped
+  `lib/routes/sessions.js`'s `reconcile-startup`/`takeover` routes onto the
+  daemon's own `handleReconcileStartupRequest`/`handleTakeoverRequest`
+  adapters, in place of the looser inline body validation they used before
+  (#2885).
+- Wired the docs/screenshot parity signal (`lib/docs-parity-gate.js#evaluate`,
+  #533) into the wrap drawer's existing PR-status probe: a non-blocking
+  `docs: ...` note on the release banner's detail text when a wrap PR
+  touches a route or UI file with no matching docs touch, dismissible via a
+  new `POST /wrap/docs-parity/dismiss` that durably records the dismissal
+  by appending a `Docs: none <reason>` line to the PR body through `gh pr
+  edit`. Mounted `lib/remote-ca-installer.js#planInstall` as
+  `GET /api/https/remote-ca-plan` and wired it into the Setup Wizard's
+  mkcert step, which now renders the assisted install plan
+  (`public/remote-ca-assist.js`) in place of its own long-standing inline
+  step markup once that script has loaded (#2886).
+- Mounted `lib/chunk-boundary-http.js`'s handlers as
+  `/api/sessions/:project/chunk-boundary*` routes in `lib/routes/sessions.js`
+  (project-scoped and ownership-checked, same discipline as the merge-gate
+  and governed-wrap routes), and added `public/chunk-boundary-ui.js`, a
+  thin browser-side renderer/fetcher over the status surface those routes
+  already attach. Wired `lib/primer-launch-wiring.js#primerForLaunch` into
+  `lib/sessions.js#_collectPrimeSections` (a session's role-specific
+  operating primer, yieldable under budget pressure like the ecosystem
+  primer and chunk-boundary protocol sections) and
+  `#attachOperatingPrimerToLease` into a new `lib/resource-leases.js#
+  acquireLeaseWithPrimer` composition (#2888).
+
+### Fixed
+- Wired `lib/merge-role-guard.js`'s `gh pr merge` role guard into a real
+  launch-env `PATH` wrapper (#2601 Slice 2): every launched session now gets
+  a generated `gh` wrapper ahead of the real `gh` on `PATH`, re-asserted in
+  the launch command body too so it survives shell `rc` processing. A
+  non-Integrator, non-operator lane's `gh pr merge`/`gh api .../merge` is
+  now mechanically blocked at execution time, not just by a git hook `gh`
+  itself never triggers. `evaluateMergeRoleGuard`'s own AskUserQuestion
+  mid-session handling (the #2826 half) was already shipped in Car 65-B
+  (#2866).
+
+
 ## [5.66.0] - 2026-11-05
 
 ### Added

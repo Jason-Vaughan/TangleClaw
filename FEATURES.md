@@ -17,6 +17,14 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v5.67.0 — Live fleet controls and release surfaces
+
+- **Enforce merge authority and expose the merge gate** (#2866, #2878) — `lib/merge-role-guard.js` installs a launch-time `gh` wrapper; `lib/tc-verbs.js` and `lib/routes/sessions.js` expose durable merge holds and checks through `tc` and HTTP.
+- **Check roadmap admission and sync** (#2877) — `tc roadmap admission|sync` and `scripts/roadmap-sync-check.js` let PM dispatch and the roadmap generator check current evidence.
+- **Show session history and governed wrap progress** (#2881) — continuity reads can backfill native transcripts, and project-scoped wrap streams report progress to the dashboard.
+- **Mount chunk-boundary and operating-primer surfaces** (#2888) — session routes and the dashboard show chunk-boundary state; new launches and leases receive the role-specific operating primer.
+- **Refresh the scorecard and complete operator UI wiring** (#2883, #2884, #2885, #2886) — a local scorecard endpoint and optional refresh/publish hooks, bridge settings, lifecycle handoff daemon, docs parity notices, and remote CA plans are wired into live server or UI paths.
+
 ## v5.66.0 — Fleet visibility and session decisions
 
 - **Probe blocking host dialogs** (#1112) — `lib/host-gui-dialog-probe.js` detects macOS permission, Gatekeeper, and crash dialogs and correlates them with stalled sessions. Live stall-surface wiring remains tracked in Milestone #54.
