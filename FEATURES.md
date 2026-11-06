@@ -22,7 +22,7 @@ fails any auto-stub section older than 14 days.
 - **Enforce merge authority and expose the merge gate** (#2866, #2878) — `lib/merge-role-guard.js` installs a launch-time `gh` wrapper; `lib/tc-verbs.js` and `lib/routes/sessions.js` expose durable merge holds and checks through `tc` and HTTP.
 - **Check roadmap admission and sync** (#2877) — `tc roadmap admission|sync` and `scripts/roadmap-sync-check.js` let PM dispatch and the roadmap generator check current evidence.
 - **Badge session transcript sources and prepare wrap progress** (#2881) — continuity reads backfill native transcripts and badge their `native-log` or `live-capture` source in Session History. The project-scoped governed-wrap progress stream and loaded `public/governed-wrap-ui.js` helper are ready for UI call sites.
-- **Prepare chunk-boundary UI and mount the operating primer** (#2888) — project-scoped `/api/sessions/:project/chunk-boundary*` routes and the loaded `public/chunk-boundary-ui.js` helper are ready for UI call sites; new launches and leases receive the role-specific operating primer.
+- **Prepare chunk-boundary UI and mount the operating primer** (#2888) — project-scoped `/api/sessions/:project/chunk-boundary*` routes and the loaded `public/chunk-boundary-ui.js` helper are ready for UI call sites; new session launches receive the role-specific operating primer, and `acquireLeaseWithPrimer` is available to attach it to leases.
 - **Refresh the scorecard and complete operator UI wiring** (#2883, #2884, #2885, #2886) — a local scorecard endpoint and optional refresh/publish hooks, bridge settings, lifecycle handoff daemon, docs parity notices, and remote CA plans are wired into live server or UI paths.
 
 ## v5.66.0 — Fleet visibility and session decisions
