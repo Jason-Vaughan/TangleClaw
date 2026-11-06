@@ -589,8 +589,20 @@ async function pollSidecarProcesses() {
     // carries the connection's cached telemetry/health on every poll cycle
     // this function already runs — the real production caller
     // `renderOpenclawHeaderPills` previously had none.
-    if (data.telemetry || data.health) {
-      renderOpenclawHeaderPills({ telemetry: data.telemetry || null, health: data.health || null });
+    //
+    // I-Gate Round 2 Finding (#5799465132): checking `data.telemetry ||
+    // data.health` meant a FAILED refresh after a healthy reading — where
+    // both legitimately read `null` again — was indistinguishable from "this
+    // route carries nothing" and was skipped, leaving the old green
+    // `Healthy` pill in the DOM forever. Checking for the KEYS themselves
+    // (present on every response once the route supports this, whatever
+    // their value) still renders on a confirmed-unverified reading.
+    if ('telemetry' in data || 'health' in data) {
+      renderOpenclawHeaderPills({
+        telemetry: data.telemetry || null,
+        health: data.health || null,
+        telemetryError: data.telemetryError || null
+      });
     }
   }
 

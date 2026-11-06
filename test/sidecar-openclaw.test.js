@@ -304,8 +304,8 @@ describe('Sidecar telemetry/health wiring (#128, I-Gate Round 1, Ruling A505-R3.
     sidecar._telemetryInFlight.delete(connId);
   });
 
-  it('getTelemetry reads null/null/null before anything has ever been measured', () => {
-    assert.deepEqual(sidecar.getTelemetry(connId), { telemetry: null, health: null, telemetryAt: null });
+  it('getTelemetry reads null/null/null/null before anything has ever been measured', () => {
+    assert.deepEqual(sidecar.getTelemetry(connId), { telemetry: null, health: null, telemetryAt: null, telemetryError: null });
   });
 
   it('GET .../processes includes telemetry:null and health:null when nothing is cached yet', async () => {
@@ -355,10 +355,10 @@ describe('Sidecar telemetry/health wiring (#128, I-Gate Round 1, Ruling A505-R3.
     }
   });
 
-  it('a failed SSH probe never throws into the fire-and-forget caller, and leaves the prior cached reading in place', async () => {
+  it('a REJECTED SSH probe never throws into the fire-and-forget caller, and OVERWRITES a prior healthy reading with unverified (I-Gate Round 2, #5799465132)', async () => {
     const telemetry = { mode: 'host', cpuPct: 5, memPct: 5, memUsedBytes: 100, memLimitBytes: null, stuckSessions: 0, lockHoldMaxMs: 0, lockHoldCount: 0, containerHealthy: null };
     const health = { level: 'ok', resourceSummary: 'CPU 5% · Mem 5%', healthSummary: 'no pathology detected', reasons: [] };
-    sidecar._telemetryCache.set(connId, { telemetry, health, telemetryAt: new Date().toISOString() });
+    sidecar._telemetryCache.set(connId, { telemetry, health, telemetryAt: new Date().toISOString(), telemetryError: null });
 
     sidecar._seams.detectRuntimeAndStats = async () => { throw new Error('ssh stats failed: connection refused'); };
     assert.doesNotThrow(() => sidecar._refreshTelemetry(connId));
@@ -366,6 +366,58 @@ describe('Sidecar telemetry/health wiring (#128, I-Gate Round 1, Ruling A505-R3.
       await new Promise((resolve) => setImmediate(resolve));
     }
 
-    assert.deepEqual(sidecar.getTelemetry(connId).telemetry, telemetry, 'the prior reading survives a failed refresh');
+    const after = sidecar.getTelemetry(connId);
+    assert.equal(after.telemetry, null, 'the stale healthy telemetry must not survive a failed refresh');
+    assert.equal(after.health.level, 'unverified', 'the stale green healthy pill must not survive a failed refresh');
+    assert.equal(after.telemetryError, 'ssh stats failed: connection refused');
+    assert.ok(after.telemetryAt);
+
+    const res = await request(`/api/sidecar/connection/${connId}/processes`);
+    assert.equal(res.data.telemetry, null);
+    assert.equal(res.data.health.level, 'unverified');
+    assert.equal(res.data.telemetryError, 'ssh stats failed: connection refused');
+  });
+
+  it('a RESOLVED failure ({telemetry:null, health:null, error}) also overwrites a prior healthy reading with unverified', async () => {
+    const telemetry = { mode: 'host', cpuPct: 5, memPct: 5, memUsedBytes: 100, memLimitBytes: null, stuckSessions: 0, lockHoldMaxMs: 0, lockHoldCount: 0, containerHealthy: null };
+    const health = { level: 'ok', resourceSummary: 'CPU 5% · Mem 5%', healthSummary: 'no pathology detected', reasons: [] };
+    sidecar._telemetryCache.set(connId, { telemetry, health, telemetryAt: new Date().toISOString(), telemetryError: null });
+
+    sidecar._seams.detectRuntimeAndStats = async () => ({ mode: 'unknown', telemetry: null, health: null, error: 'ssh stats failed: timeout' });
+    sidecar._refreshTelemetry(connId);
+    while (sidecar._telemetryInFlight.has(connId)) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    const after = sidecar.getTelemetry(connId);
+    assert.equal(after.telemetry, null);
+    assert.equal(after.health.level, 'unverified', 'a resolved {telemetry:null, health:null} failure must not read as "nothing changed"');
+    assert.equal(after.telemetryError, 'ssh stats failed: timeout');
+
+    const res = await request(`/api/sidecar/connection/${connId}/processes`);
+    assert.equal(res.data.health.level, 'unverified');
+    assert.equal(res.data.telemetryError, 'ssh stats failed: timeout');
+  });
+
+  it('a successful refresh after a failure clears telemetryError and restores a real health level', async () => {
+    sidecar._seams.detectRuntimeAndStats = async () => { throw new Error('transient'); };
+    sidecar._refreshTelemetry(connId);
+    while (sidecar._telemetryInFlight.has(connId)) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.equal(sidecar.getTelemetry(connId).telemetryError, 'transient');
+
+    const telemetry = { mode: 'host', cpuPct: 1, memPct: 1, memUsedBytes: 1, memLimitBytes: null, stuckSessions: 0, lockHoldMaxMs: 0, lockHoldCount: 0, containerHealthy: null };
+    const health = { level: 'ok', resourceSummary: 'CPU 1% · Mem 1%', healthSummary: 'no pathology detected', reasons: [] };
+    sidecar._seams.detectRuntimeAndStats = async () => ({ mode: 'host', telemetry, health, error: null });
+    sidecar._refreshTelemetry(connId);
+    while (sidecar._telemetryInFlight.has(connId)) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    const after = sidecar.getTelemetry(connId);
+    assert.equal(after.telemetryError, null);
+    assert.equal(after.health.level, 'ok');
+    assert.deepEqual(after.telemetry, telemetry);
   });
 });

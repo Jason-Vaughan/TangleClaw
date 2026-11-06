@@ -237,14 +237,38 @@ describe('OpenClaw UI contracts — connection list data shape', () => {
     assert.match(fnBody, /level === 'ok'\)[\s\S]{0,40}classList\.add\('pill-ok'\)/);
   });
 
-  it('pollSidecarProcesses calls renderOpenclawHeaderPills with the route\'s telemetry/health on every poll (I-Gate Round 1 Finding 1, #5799301385)', async () => {
+  /**
+   * `pollSidecarProcesses`'s full body, as served. Finds the first
+   * UNINDENTED closing brace (`\n}\n`) after the function's start — every
+   * brace nested inside the function's own `if`/`try` blocks is indented,
+   * so this is the function's own closing brace, however many levels of
+   * nesting the body grows to.
+   * @param {string} data - The served `openclaw-view.js` source.
+   * @returns {string}
+   */
+  function pollSidecarProcessesBody(data) {
+    const fnStart = data.indexOf('async function pollSidecarProcesses');
+    const closeMatch = /\n\}\n/.exec(data.slice(fnStart));
+    return data.slice(fnStart, fnStart + closeMatch.index + closeMatch[0].length);
+  }
+
+  it('pollSidecarProcesses calls renderOpenclawHeaderPills with the route\'s telemetry/health/telemetryError on every poll (I-Gate Round 1 Finding 1 / Round 2, #5799301385 / #5799465132)', async () => {
     const { status, data } = await request(server, 'GET', '/openclaw-view.js');
     assert.equal(status, 200);
-    const fnStart = data.indexOf('async function pollSidecarProcesses');
-    const fnEnd = data.indexOf('\n}', data.indexOf('\n}', fnStart) + 1);
-    const fnBody = data.slice(fnStart, fnEnd);
-    assert.match(fnBody, /data\.telemetry\s*\|\|\s*data\.health/);
-    assert.match(fnBody, /renderOpenclawHeaderPills\(\s*\{\s*telemetry:\s*data\.telemetry\s*\|\|\s*null,\s*health:\s*data\.health\s*\|\|\s*null\s*\}\s*\)/);
+    const fnBody = pollSidecarProcessesBody(data);
+    assert.match(fnBody, /renderOpenclawHeaderPills\(\s*\{/);
+    assert.match(fnBody, /telemetry:\s*data\.telemetry\s*\|\|\s*null/);
+    assert.match(fnBody, /health:\s*data\.health\s*\|\|\s*null/);
+    assert.match(fnBody, /telemetryError:\s*data\.telemetryError\s*\|\|\s*null/);
+  });
+
+  it('pollSidecarProcesses checks for the telemetry/health KEYS, not truthiness, so a confirmed-unverified reading ({telemetry:null, health:{level:"unverified"}}) is not skipped (I-Gate Round 2, #5799465132)', async () => {
+    const { status, data } = await request(server, 'GET', '/openclaw-view.js');
+    assert.equal(status, 200);
+    const fnBody = pollSidecarProcessesBody(data);
+    assert.doesNotMatch(fnBody, /if\s*\(\s*data\.telemetry\s*\|\|\s*data\.health\s*\)/,
+      'checking truthiness would skip a confirmed {telemetry:null, health:null-or-falsy} reading, leaving a stale pill');
+    assert.match(fnBody, /'telemetry'\s+in\s+data\s*\|\|\s*'health'\s+in\s+data/);
   });
 
   it('openclaw-view.html carries the #128 header pills markup', async () => {
