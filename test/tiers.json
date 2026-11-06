@@ -665,6 +665,7 @@
     "test/merge-queue-api.test.js",
     "test/migration.test.js",
     "test/model-switch.test.js",
+    "test/native-sprint-tracker.test.js",
     "test/offbox-guard.test.js",
     "test/openclaw-approve.test.js",
     "test/openclaw-engine.test.js",
