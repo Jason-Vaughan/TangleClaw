@@ -253,7 +253,8 @@
       <span>TangleClaw Autonomous Sprint Reports</span>
     </div>
     <div class="nav-links">
-      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.70.0/">v5.70.0 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.71.0/">v5.71.0 (Latest)</a>
+      <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.70.0/">v5.70.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.69.0/">v5.69.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0/">v5.68.0</a>
       <a href="https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0-v5.71.0-retrospective/">v5.68–v5.71 Train</a>
@@ -313,13 +314,13 @@
       <div class="kpi-grid">
         <div class="kpi-card">
           <div class="kpi-label">Published Sprint Reports</div>
-          <div class="kpi-val">40 Releases</div>
-          <div class="kpi-sub"><code>v5.34.0</code>–<code>v5.70.0</code> + <code>v5.68.0–v5.71.0</code>, <code>v5.65.0–v5.66.0</code>, <code>v5.62.0–v5.64.0</code>, <code>v5.57.0–v5.61.0</code> &amp; <code>v5.54.0–v5.56.0</code> Retrospectives</div>
+          <div class="kpi-val">41 Releases</div>
+          <div class="kpi-sub"><code>v5.34.0</code>–<code>v5.71.0</code> + <code>v5.68.0–v5.71.0</code>, <code>v5.65.0–v5.66.0</code>, <code>v5.62.0–v5.64.0</code>, <code>v5.57.0–v5.61.0</code> &amp; <code>v5.54.0–v5.56.0</code> Retrospectives</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Cumulative Sprint PRs</div>
-          <div class="kpi-val">344 PRs Merged</div>
-          <div class="kpi-sub"><strong>138 waves</strong> across forty-five reports · <code>v5.70.0</code> delivered 4 PRs &amp; 4 closed Milestone #57 issues + Kaizen Retro #3</div>
+          <div class="kpi-val">348 PRs Merged</div>
+          <div class="kpi-sub"><strong>140 waves</strong> across forty-six reports · <code>v5.68.0–v5.71.0</code> train delivered 16 PRs &amp; 20/20 closed issues + Kaizen Retros #1–#4</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Testament v0.34.0 Pool</div>
@@ -328,18 +329,43 @@
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Latest Release Report</div>
-          <div class="kpi-val" style="color:var(--green);">v5.70.0</div>
-          <div class="kpi-sub">Tag <code>v5.70.0 @ c8d5d078</code> (Merge <code>c8d5d078</code>) · Milestone <code>#57</code> (<code>0</code> Open)</div>
+          <div class="kpi-val" style="color:var(--green);">v5.71.0</div>
+          <div class="kpi-sub">Tag <code>v5.71.0 @ 3162811a</code> (Merge <code>3162811a</code>) · Milestone <code>#58</code> (<code>0</code> Open)</div>
         </div>
       </div>
     </section>
 
     <div class="report-list">
+      <!-- v5.71.0 Card -->
+      <article class="report-card">
+        <div class="report-header">
+          <div>
+            <span class="badge badge-green">● Latest Release · Nov 6, 2026 (Charter A505 v1.0 Leg 4/4 — Train Complete)</span>
+            <h2 class="report-title"><a href="./v5.71.0/">TangleClaw <code>v5.71.0</code>: “OpenClaw connection resilience, proxy hardening &amp; header telemetry”</a></h2>
+          </div>
+          <span class="badge badge-cyan">Tag v5.71.0 → 3162811a · 4/4 True Merges &amp; Kaizen Retro #4 Verified</span>
+        </div>
+        <p style="color:#cbd5e1; margin:0;">
+          Two coordinated waves delivered <strong>4 Sprint PRs (#2925, #2923, #2924, #2927)</strong> under Charter <code>A505 v1.0</code> (<code>OP-GO-MULTIVERSION-V5680-V5710-20261105</code>) as the 4th and final leg of the 4-version release train (<code>v5.68.0 → v5.69.0 → v5.70.0 → v5.71.0</code>), closing all <strong>6 active chartered Milestone #58 issues (<code>#1531, #363, #254, #297, #1185, #128</code>; <code>open_issues: 0, closed_issues: 6</code>)</strong> with <strong><code>+3,889 / -68</code> net repo LOC across <code>39</code> files (<code>+3,852 / -63</code> feature PR sum across <code>37</code> file touches)</strong>. Shipped <code>openclaw-direct</code> device-pairing continuity with same-origin CSRF bootstrap and Tailscale-direct <code>remoteIp</code> accuracy (<code>Car 71-B PR #2925 @ 5c0da906</code>, <code>#254</code>), OpenClaw connection dot liveness re-derivation and session header resource/health pills + <code>GET /api/sessions/:project/metrics</code> (<code>Car 71-C PR #2923 @ 6b19c061</code>, <code>#1185, #128</code>, <code>Ruling A505-R4.3</code>), and probe-first ordered fallback hosts, MagicDNS host migration, and update-available indicator (<code>Car 71-A PR #2924 @ 39c37fca</code>, <code>#1531, #363, #297</code>), with <strong>Kaizen Retro #4</strong> (`KR4-01`, `KR4-02`, `KR4-03`) completing the 20/20 issue train.
+        </p>
+        <div class="meta-pills">
+          <span class="badge badge-green">⏱️ Full Eng Window: 2h 52m (2.87h · 03:08 → 06:00 PST · 3 Parallel Wave 1 Cars)</span>
+          <span class="badge badge-cyan">4/4 True Merges (#2925, #2923, #2924, #2927)</span>
+          <span class="badge badge-purple">Milestone #58: 6/6 Issues Closed (0 Open) · 20/20 Train Complete</span>
+          <span class="badge badge-amber">Throughput: 2.09 Closed/Hr · $1.18/Issue ($1.82/kLOC) · Legacy ADE_v1 = 0.30</span>
+          <span class="badge badge-green">Kaizen Retro #4 Certified · 0 Post-Merge Defects</span>
+        </div>
+        <div class="card-footer">
+          <div class="url-box">https://jason-vaughan.github.io/TangleClaw/reports/v5.71.0/</div>
+          <a class="cta-btn" href="./v5.71.0/">Open Interactive Report →</a>
+        </div>
+      </article>
+
       <!-- v5.70.0 Card -->
       <article class="report-card">
         <div class="report-header">
           <div>
-            <span class="badge badge-green">● Latest Release · Nov 6, 2026 (Charter A505 v1.0 Leg 3/4)</span>
+            <span class="badge badge-purple">✓ Released · Nov 6, 2026 (Charter A505 v1.0 Leg 3/4)</span>
             <h2 class="report-title"><a href="./v5.70.0/">TangleClaw <code>v5.70.0</code>: “Workspace TCC migration, hands-off repo mode &amp; Orchestrator CLI”</a></h2>
           </div>
           <span class="badge badge-cyan">Tag v5.70.0 → c8d5d078 · 4/4 True Merges &amp; Kaizen Retro #3 Verified</span>
@@ -417,17 +443,17 @@
             <span class="badge badge-amber">🔁 Four-Version Sprint Train &amp; Kaizen Retro · Nov 5–6, 2026</span>
             <h2 class="report-title"><a href="./v5.68.0-v5.71.0-retrospective/">TangleClaw <code>v5.68.0 → v5.71.0</code>: Four-Version Autonomous Sprint Train &amp; Cumulative Kaizen Retro Report</a></h2>
           </div>
-          <span class="badge badge-green">Legs 1–3 (v5.68.0 #55, v5.69.0 #56 &amp; v5.70.0 #57) Complete · 14/14 Closed · Kaizen Retro #1–#3 Active in v5.71.0 (#58)</span>
+          <span class="badge badge-green">All 4 Legs Complete (v5.68.0 #55 · v5.69.0 #56 · v5.70.0 #57 · v5.71.0 #58) · 20/20 Issues Closed · Kaizen Retros #1–#4 Certified</span>
         </div>
         <p style="color:#cbd5e1; margin:0;">
-          Cumulative multi-version synthesis and per-version <strong>Kaizen Retro</strong> ledger across the 4-version Charter <code>A505 v1.0</code> release train (<code>v5.68.0</code> Milestone #55 → <code>v5.69.0</code> Milestone #56 → <code>v5.70.0</code> Milestone #57 → <code>v5.71.0</code> Milestone #58, draining Train 35 and all 19 open Unsorted issues = 20 issues total). Captures Leg 1 (<code>v5.68.0 @ 2b4b39a3</code>, <code>5/5</code> closed in <code>1.42h</code>), Leg 2 (<code>v5.69.0 @ 6c446dac</code>, <code>5/5</code> closed in <code>2.13h</code>), and Leg 3 (<code>v5.70.0 @ c8d5d078</code>, <code>4/4</code> closed in <code>2.73h</code>), plus <strong>Kaizen Retro #1–#3</strong> (`KR1-01..03`, `KR2-01..03`, `KR3-01` two-way verb manifest parity, `KR3-02` authoritative roster identity stamping, `KR3-03` single-builder round dispatch &amp; rotated Codex wakeup) injected into final Leg 4 (`v5.71.0`).
+          Complete 4-version synthesis and per-version <strong>Kaizen Retro</strong> ledger across Charter <code>A505 v1.0</code> (<code>v5.68.0</code> Milestone #55 → <code>v5.69.0</code> Milestone #56 → <code>v5.70.0</code> Milestone #57 → <code>v5.71.0</code> Milestone #58, closing all <strong>20/20 chartered issues</strong> across <strong>16 true-merge PRs</strong> and <strong><code>+13,297 / -1,076</code> net repo LOC across <code>99</code> files</strong>). Captures Leg 1 (<code>v5.68.0 @ 2b4b39a3</code>, <code>5/5</code> closed in <code>1.42h</code>), Leg 2 (<code>v5.69.0 @ 6c446dac</code>, <code>5/5</code> closed in <code>2.13h</code>), Leg 3 (<code>v5.70.0 @ c8d5d078</code>, <code>4/4</code> closed in <code>2.73h</code>), and Leg 4 (<code>v5.71.0 @ 3162811a</code>, <code>6/6</code> closed in <code>2.87h</code>), plus <strong>Kaizen Retros #1–#4</strong> (`KR1-01..03`, `KR2-01..03`, `KR3-01..03`, and `KR4-01` probe-first SSH failover, `KR4-02` `changelog.d/` scope sync, `KR4-03` same-origin proxy CSRF bootstrap).
         </p>
         <div class="meta-pills">
-          <span class="badge badge-green">⏱️ Cumulative Eng Window (Legs 1–3): 6h 12m (6.20h · 23:02 → 05:15 PST)</span>
-          <span class="badge badge-cyan">Legs 1–3: 14/14 Closed in #55–#57 (6 Queued in #58 v5.71.0)</span>
-          <span class="badge badge-purple">12/12 True Merges (+9,416 / -1,016 Net LOC · 73 Files)</span>
-          <span class="badge badge-amber">Throughput: 2.26 Closed/Hr · $1.09/Closed Issue · Legacy ADE_v1 = 0.15</span>
-          <span class="badge badge-green">Kaizen Retro #1–#3 Active · 0 Post-Merge Regressions</span>
+          <span class="badge badge-green">⏱️ Cumulative Eng Window (All 4 Legs): 6h 58m (6.96h · 23:02 → 06:00 PST · 2.58h Overlap)</span>
+          <span class="badge badge-cyan">Milestones #55–#58: 20/20 Issues Closed (0 Open · 0 Deferred)</span>
+          <span class="badge badge-purple">16/16 True Merges (+13,297 / -1,076 Net LOC · 99 Files)</span>
+          <span class="badge badge-amber">Throughput: 2.87 Closed/Hr · $0.86/Closed Issue ($1.29/kLOC) · Legacy ADE_v1 = 0.17</span>
+          <span class="badge badge-green">Kaizen Retros #1–#4 Complete · 0 Post-Merge Regressions</span>
         </div>
         <div class="card-footer">
           <div class="url-box">https://jason-vaughan.github.io/TangleClaw/reports/v5.68.0-v5.71.0-retrospective/</div>

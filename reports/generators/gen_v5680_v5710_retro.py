@@ -49,11 +49,11 @@ CAR67C_HEAD_SHORT = os.environ.get("V5680_CAR68A_HEAD_SHORT", "4132d18d")
 CAR67C_MERGE_SHA = os.environ.get("V5680_CAR68A_MERGE_SHA", "1370777fec27c6334cd5030fb8993a8aa2b2ca8f")
 CAR67C_MERGE_SHORT = CAR67C_MERGE_SHA[:8]
 
-REL_PR = os.environ.get("V5680_REL_PR", "2926")
+REL_PR = os.environ.get("V5680_REL_PR", "2927")
 REL_HEAD_SHORT = os.environ.get("V5680_REL_HEAD_SHORT", "e1ebf418")
-REL_MERGE_SHA = os.environ.get("V5680_REL_MERGE_SHA", "c8d5d07878129305b24e431c808838cc1e4d392b")
+REL_MERGE_SHA = os.environ.get("V5680_REL_MERGE_SHA", "3162811af43714b6d83ef4a43e6602adaead2785")
 REL_MERGE_SHORT = REL_MERGE_SHA[:8]
-TAG_SHA_SHORT = os.environ.get("V5680_TAG_SHA_SHORT", "c8d5d078")
+TAG_SHA_SHORT = os.environ.get("V5680_TAG_SHA_SHORT", "3162811a")
 REL_RUN_ID = os.environ.get("V5680_REL_RUN_ID", "42187629444")
 BACKUP_SHA = os.environ.get("V5680_BACKUP_SHA", "80403a7c901d4e3852ae3306ea26647418e55b3baaa6ae57c5a56766af347ba9")
 TOTAL_RUNTIME = os.environ.get("V5670_TOTAL_RUNTIME", f"{dur['full_engineering_window_human'].split(' (')[0]} Eng ({t_eng_hrs:.2f}h)")
@@ -61,7 +61,7 @@ TOTAL_RUNTIME_SUB = os.environ.get(
     "V5670_TOTAL_RUNTIME_SUB",
     f"t2 23:02:50 → t7 {rec['timestamps']['t7_pst'].split(' ')[0]} PST (T_eng={t_eng_hrs:.2f}h; {dur['authorization_to_deploy_human'].split(' (')[0]} / {t_auth_hrs:.2f}h Auth→Deploy · Milestone #55)"
 )
-FEATURE_LOC = os.environ.get("V5680_FEATURE_LOC", "+9,416 / -1,016 net (73 files; +9,335 / -1,022 feat PRs across Legs 1–3)")
+FEATURE_LOC = os.environ.get("V5680_FEATURE_LOC", "+13,297 / -1,076 net (99 files; +13,187 / -1,085 feat PRs across All 4 Releases)")
 
 html_part1 = f'''<!DOCTYPE html>
 <html lang="en" data-theme="dark">
@@ -676,6 +676,9 @@ html_part3 = f'''
           <li><strong>Finding KR3-01 (Two-Way Verb Manifest Parity <code>VERB_ROSTER &lt;-&gt; SUBVERB_MANIFEST</code> · <code>v5.70.0 → v5.71.0</code>):</strong> Adding a top-level <code>tc</code> verb (<code>capture</code> in <code>#1774</code>) requires synchronous updates to <code>SUBVERB_MANIFEST</code> and <code>ROLE_VERB_IDS</code> in <code>lib/operating-primer.js</code> (<code>test/tc-primer.test.js</code>).</li>
           <li><strong>Finding KR3-02 (Authoritative Roster Identity Over Name/Prefix Heuristics · <code>Ruling A505-R3.10</code> · <code>v5.70.0 → v5.71.0</code>):</strong> Stamping <code>isMaster: true, role: &apos;orchestrator&apos;</code> at the server source (<code>lib/medusa.js#getRoster</code>) eliminated lookalike collision edge cases in <code>PR #2922</code>.</li>
           <li><strong>Finding KR3-03 (Single-Builder Round Dispatch &amp; Rotated Codex Wakeup · <code>v5.70.0 → v5.71.0</code>):</strong> Dispatch follow-up rounds to a single designated builder lane and pair Medusa dispatches to rotated Codex lanes with <code>POST /api/sessions/:project/command</code>.</li>
+          <li><strong>Finding KR4-01 (Probe-First Interactive SSH Failover · <code>#1531 / PR #2924 R7 → R8</code>):</strong> Selecting the reachable target first via a lightweight <code>ssh -o ConnectTimeout=5 ... true</code> probe loop before invoking <code>openclaw-cli</code> once on the winning host decouples transport reachability (<code>255</code>) from application exit status.</li>
+          <li><strong>Finding KR4-02 (Synchronize <code>changelog.d/</code> Fragments When Review Rounds Expand Scope · <code>#128 / PR #2923 R2 → PR #2927 R2</code>):</strong> Update Builder <code>changelog.d/</code> fragments in the same review round when an Architect Ruling expands endpoint scope so Release PRs never compile stale Round 1 caveats.</li>
+          <li><strong>Finding KR4-03 (Same-Origin CSRF Bootstrap on Injected Proxy HTML · <code>#254 / PR #2925 R1 → R3</code>):</strong> Injected <code>&lt;head&gt;</code> bootstrap scripts inside <code>/openclaw-direct/</code> must read the <code>tc_csrf</code> cookie and attach <code>X-CSRF-Token</code> for <code>authGate.evaluate()</code> compliance.</li>
         </ul>
       </div>
       <div class="grid-2" style="margin-bottom:18px;">

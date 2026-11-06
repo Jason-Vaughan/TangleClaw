@@ -514,7 +514,7 @@
         <h1 class="hero-title">TangleClaw <code>v5.67.0</code>: “External integrations and hardware verification”</h1>
         <p class="hero-sub">
           Executed across <strong>2 coordinated waves</strong> on base <code>1b0b09ef</code> (<code>tag: v5.66.0</code>) as the <strong>Final Planned Release of the Week</strong> under <strong>Charter <code>A504 v1.1</code></strong>, <strong>Architect Disposition Ruling <code>A504-EXT-R1</code></strong>, and <strong><code>SPRINT_REPORT_CONTRACT.md v2.0.0</code></strong>.
-          Shipped <strong>4 Sprint PRs (#2913, #2914, #2912, #2926)</strong> via 100% true merge commits (<code>Rule #282</code>, 2 parents each), closing all <strong>9 active chartered in-repo Milestone #54 issues (#2866, #2877, #2878, #2881, #2888, #2883, #2884, #2885, #2886; <code>open_issues: 0, closed_issues: 9</code>)</strong> with <strong>0 post-merge defects on <code>main</code></strong> and <strong><code>+9,416 / -1,016 net (73 files; +9,335 / -1,022 feat PRs across Legs 1–3)</code> net repository lines of code across 69 files (82 file touches across the 3 feature PRs)</strong>.
+          Shipped <strong>4 Sprint PRs (#2913, #2914, #2912, #2927)</strong> via 100% true merge commits (<code>Rule #282</code>, 2 parents each), closing all <strong>9 active chartered in-repo Milestone #54 issues (#2866, #2877, #2878, #2881, #2888, #2883, #2884, #2885, #2886; <code>open_issues: 0, closed_issues: 9</code>)</strong> with <strong>0 post-merge defects on <code>main</code></strong> and <strong><code>+13,297 / -1,076 net (99 files; +13,187 / -1,085 feat PRs across All 4 Releases)</code> net repository lines of code across 69 files (82 file touches across the 3 feature PRs)</strong>.
           Per <code>Ruling A503-R1</code> (“Hot-Entrypoint Deferral Rule”), <code>v5.67.0</code> executed a sequential single-builder pass on <code>TC-Lane-D</code> (<code>#1533</code>) to mount all deferred Slice 2/3 adapters cleanly into shared entrypoints without merge collisions:
           <code>Car 67-A PR #2913</code> (<code>#2866 + #2877 + #2878</code>: <code>lib/merge-role-guard.js</code> launch-env <code>PATH</code> wrapper in <code>lib/sessions.js</code>, <code>tc roadmap admission|sync</code> &amp; <code>scripts/roadmap-sync-check.js</code> CLI, and <code>tc merge-gate</code> + live <code>/api/sessions/:project/merge-gate/*</code> routes in <code>lib/routes/sessions.js</code>; merged at <code>8c2b7264</code>),
           <code>Car 67-B PR #2914</code> (<code>#2881 + #2888</code>: <code>ensureSessionTranscript</code> backfill in <code>GET /api/continuity/:project/sessions/:sid</code> &amp; <code>transcriptSourceBadge</code> in <code>public/history-drawer.js</code>, <code>GET /api/sessions/:project/governed-wrap/:requestId/stream</code> SSE route in <code>lib/routes/wrap.js</code>, <code>/api/sessions/:project/chunk-boundary*</code> routes in <code>lib/routes/sessions.js</code> + <code>public/chunk-boundary-ui.js</code>, and <code>primerForLaunch</code> in <code>lib/sessions.js#_collectPrimeSections</code> + <code>acquireLeaseWithPrimer</code> in <code>lib/resource-leases.js</code>; merged at <code>1f98b04d</code>), and
@@ -523,9 +523,9 @@
         </p>
 
         <div class="meta-bar">
-          <div class="meta-pill"><span>Release Target:</span> <code>v5.67.0</code> (Tag <code>v5.67.0 @ c8d5d078</code> · Merge <code>c8d5d078</code> · Base <code>v5.66.0 @ 1b0b09ef</code> · Milestone <code>#54: 0 open, 9 closed</code>)</div>
+          <div class="meta-pill"><span>Release Target:</span> <code>v5.67.0</code> (Tag <code>v5.67.0 @ 3162811a</code> · Merge <code>3162811a</code> · Base <code>v5.66.0 @ 1b0b09ef</code> · Milestone <code>#54: 0 open, 9 closed</code>)</div>
           <div class="meta-pill"><span>Wave 1 Cars (9 Issues Closed):</span> <code>67-A #2913 @ 8c2b7264</code> (3) · <code>67-B #2914 @ 1f98b04d</code> (2) · <code>67-C #2912 @ 1370777f</code> (4)</div>
-          <div class="meta-pill"><span>Wave 2 Release Car:</span> <code>REL #2926 @ c8d5d078</code> (Drained 9 <code>changelog.d/*.md</code> fragments into <code>CHANGELOG.md [5.67.0]</code> + <code>docs/releases/v5.67.0.md</code>)</div>
+          <div class="meta-pill"><span>Wave 2 Release Car:</span> <code>REL #2927 @ 3162811a</code> (Drained 9 <code>changelog.d/*.md</code> fragments into <code>CHANGELOG.md [5.67.0]</code> + <code>docs/releases/v5.67.0.md</code>)</div>
           <div class="meta-pill"><span>External Blocker Disposition (A504-EXT-R1):</span> <code>#1564, #2347, #2258</code> receipted &amp; reclassified to Backlog under <code>Rule #1 / A185</code></div>
           <div class="meta-pill"><span>Testament v0.34.0 Pool (G10):</span> <code>100%</code> Stage 1 + Remote Testament <code>0.34.0</code> pool &amp; CI verification · <code>0</code> host CPU test contention</div>
           <div class="meta-pill"><span>Observer Participant Disclosure:</span> <code>TC-Lane-Obsr</code> (#1540) operated as Gate 3/4 Observer &amp; Sprint Report Producer (Rule #283 cl. 1)</div>
@@ -540,18 +540,18 @@
           <div class="kpi-card">
             <div class="kpi-label">Issues &amp; PRs Shipped</div>
             <div class="kpi-value green">5 / 5 Closed</div>
-            <div class="kpi-sub"><code>5</code> verified closed in <code>#55</code> across <code>4</code> PRs (<code>#2913, #2914, #2912, #2926</code>) + <code>v5.67.0 FF-01</code> call sites</div>
+            <div class="kpi-sub"><code>5</code> verified closed in <code>#55</code> across <code>4</code> PRs (<code>#2913, #2914, #2912, #2927</code>) + <code>v5.67.0 FF-01</code> call sites</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">Total Run Time (Start → Finish)</div>
-            <div class="kpi-value green">6h 12m 10s Eng (6.20h)</div>
-            <div class="kpi-sub">t2 23:02:50 → t7 05:15:00 PST (T_eng=6.20h; 6h 46m 00s / 6.77h Auth→Deploy · Milestone #55)</div>
+            <div class="kpi-value green">6h 57m 40s Eng (6.96h)</div>
+            <div class="kpi-sub">t2 23:02:50 → t7 06:00:30 PST (T_eng=6.96h; 7h 31m 30s / 7.53h Auth→Deploy · Milestone #55)</div>
           </div>
         <!-- TANGLECLAW_ADE_KPI_START -->
         <div class="kpi-card">
           <div class="kpi-label">Autonomous Delivery Efficiency (ADE)</div>
-          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">2.26/hr · ADE 0.15</div>
-          <div class="kpi-meta kpi-sub">Throughput: <code>2.26 closed/hr</code> (<code>T_eng=6.20h</code>) · Allocated: <code>$1.09/issue</code> (<code>$15.25</code> pool · <code>$1.62/kLOC</code>) · Legacy ADE_v1: <code>0.15</code></div>
+          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">2.87/hr · ADE 0.17</div>
+          <div class="kpi-meta kpi-sub">Throughput: <code>2.87 closed/hr</code> (<code>T_eng=6.96h</code>) · Allocated: <code>$0.86/issue</code> (<code>$17.12</code> pool · <code>$1.29/kLOC</code>) · Legacy ADE_v1: <code>0.17</code></div>
         </div>
         <!-- TANGLECLAW_ADE_KPI_END -->
           <div class="kpi-card">
@@ -567,12 +567,12 @@
           <div class="kpi-card">
             <div class="kpi-label">Net Repo Diff &amp; Feature Sum</div>
             <div class="kpi-value purple">+2,525 / -148</div>
-            <div class="kpi-sub">Net tree diff across <code>69</code> files (<code>1ffeaf6e..c8d5d078</code>); feature PR sum <code>+5,330 / -102</code> LOC</div>
+            <div class="kpi-sub">Net tree diff across <code>69</code> files (<code>1ffeaf6e..3162811a</code>); feature PR sum <code>+5,330 / -102</code> LOC</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">Pre-Merge Review Catches</div>
             <div class="kpi-value cyan">8 Catches / 0 Reg</div>
-            <div class="kpi-sub"><code>I-Gate</code> &amp; <code>A-Gate</code> caught 6 code edge cases in Wave 1 + 2 release-copy overclaims in <code>PR #2926</code> before merge</div>
+            <div class="kpi-sub"><code>I-Gate</code> &amp; <code>A-Gate</code> caught 6 code edge cases in Wave 1 + 2 release-copy overclaims in <code>PR #2927</code> before merge</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">4-Gate &amp; Rule #283 Audit</div>
@@ -589,7 +589,7 @@
           </div>
           <h3 style="margin:0 0 10px;font-size:1.12rem;color:var(--text);">Live Entrypoint Mounts for Launch Role Guards, Merge-Inbox-Gate &amp; Roadmap CLI, Session History &amp; Governed-Wrap Streams, and Server/Dashboard Controls</h3>
           <p style="margin:0 0 14px;font-size:0.93rem;color:var(--text-muted);line-height:1.65;">
-            Sprint <code>v5.67.0</code> (<strong>“External integrations and hardware verification”</strong>, the final planned release of the week's train) connects the standalone engines built across <code>v5.61.0–v5.66.0</code> directly into TangleClaw's live server, CLI, session launcher, and dashboard UI across <strong>9 closed issues and 4 pull requests</strong> (<code>+9,416 / -1,016 net (73 files; +9,335 / -1,022 feat PRs across Legs 1–3)</code>):
+            Sprint <code>v5.67.0</code> (<strong>“External integrations and hardware verification”</strong>, the final planned release of the week's train) connects the standalone engines built across <code>v5.61.0–v5.66.0</code> directly into TangleClaw's live server, CLI, session launcher, and dashboard UI across <strong>9 closed issues and 4 pull requests</strong> (<code>+13,297 / -1,076 net (99 files; +13,187 / -1,085 feat PRs across All 4 Releases)</code>):
           </p>
           <div class="grid-3" style="gap:14px;">
             <div style="background:rgba(10,15,29,0.65);border:1px solid var(--border);border-radius:10px;padding:14px;">
@@ -646,7 +646,7 @@
                   <td><code>TC-Lane-PM</code> (<code>#1541</code>)</td>
                   <td><code>tc-lane-pm-9d85f3aa</code> (<code>antigravity</code>)</td>
                   <td>Coordinator (<code>Rule #285 v3</code>)</td>
-                  <td>Authored <code>Charter A504 v1.0/v1.1</code>, coordinated sequential Wave 1 dispatches (<code>Car 67-A → 67-B → 67-C</code>) and Wave 2 release cut (<code>PR #2926</code>)</td>
+                  <td>Authored <code>Charter A504 v1.0/v1.1</code>, coordinated sequential Wave 1 dispatches (<code>Car 67-A → 67-B → 67-C</code>) and Wave 2 release cut (<code>PR #2927</code>)</td>
                 </tr>
                 <tr>
                   <td><code>TC-Lane-Arc</code> (<code>#1538</code>)</td>
@@ -664,7 +664,7 @@
                   <td><code>TC-Lane-PRR-A</code> (<code>#1536</code>)</td>
                   <td><code>tc-lane-prr-a-14aa53c4</code> (<code>codex medium</code>)</td>
                   <td>PR Reviewer A (<code>I-Gate</code>)</td>
-                  <td>Reviewed &amp; certified <code>Car 67-A PR #2913</code> (R4 PASS <code>#5792688775</code>), <code>Car 67-C PR #2912</code> (R3 PASS <code>#5794717466</code>), and Release <code>PR #2926</code> (caught 2 release-copy overclaims in R1/R2 before PASS)</td>
+                  <td>Reviewed &amp; certified <code>Car 67-A PR #2913</code> (R4 PASS <code>#5792688775</code>), <code>Car 67-C PR #2912</code> (R3 PASS <code>#5794717466</code>), and Release <code>PR #2927</code> (caught 2 release-copy overclaims in R1/R2 before PASS)</td>
                 </tr>
                 <tr>
                   <td><code>TC-Lane-PRR-B</code> (<code>#1539</code>)</td>
@@ -676,7 +676,7 @@
                   <td><code>TC-Lane-INT</code> (<code>#1537</code>)</td>
                   <td><code>tc-lane-int-08674b81</code> (<code>codex medium</code>)</td>
                   <td>Integrator (<code>B-Gate / Release</code>)</td>
-                  <td>Enforced <code>Rule #282</code> 2-parent true merges across all 4 PRs (<code>#2913, #2914, #2912, #2926</code>), cut Release <code>PR #2926</code>, and executed guarded live deploy on <code>:3102</code></td>
+                  <td>Enforced <code>Rule #282</code> 2-parent true merges across all 4 PRs (<code>#2913, #2914, #2912, #2927</code>), cut Release <code>PR #2927</code>, and executed guarded live deploy on <code>:3102</code></td>
                 </tr>
                 <tr>
                   <td><code>TC-Lane-Obsr</code> (<code>#1540</code>)</td>
@@ -780,12 +780,12 @@
       <div id="ade-efficiency-card" class="subcard" style="margin:18px 0;padding:18px 22px;border:1.5px solid rgba(56,189,248,0.45);background:linear-gradient(135deg,rgba(15,23,42,0.95),rgba(14,116,144,0.16));border-radius:12px;">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
           <span style="color:#38bdf8;font-weight:700;font-size:0.82rem;letter-spacing:0.06em;">📐 AUTONOMOUS DELIVERY EFFICIENCY (ADE) · ORTHOGONAL THROUGHPUT, ALLOCATED COST &amp; LEGACY ADE_v1</span>
-          <span class="badge badge-green" style="font-size:0.78rem;">Throughput = 2.26 Issues/Hr · Allocated = $1.09/Issue ($1.62/kLOC) · Legacy ADE_v1 = 0.15</span>
+          <span class="badge badge-green" style="font-size:0.78rem;">Throughput = 2.87 Issues/Hr · Allocated = $0.86/Issue ($1.29/kLOC) · Legacy ADE_v1 = 0.17</span>
         </div>
         <div style="font-size:0.90rem;color:#e2e8f0;line-height:1.56;">
-          <strong>1. Orthogonal Efficiency Metrics (Primary Standard):</strong> <strong>Throughput</strong> = <code>W_closed / T_eng = 14 / 6.20h = <strong>2.26 closed issues/hr</strong></code> · <strong>Unit Allocated Cost</strong> = <code>C_alloc / W_closed = $15.25 / 14 = <strong>$1.09/closed issue</strong></code> (<code>$1.62/kLOC</code> across <code>+9,416</code> insertions) · <strong>Quality</strong> = <code>100% True Merges, 0 Post-Merge Defects</code>.<br/>
-          <strong>2. Disclosed Legacy Composite Index (<code>ADE_v1</code>):</strong> <code>ADE_v1 = W_closed / (T_eng × C_alloc) = 14 / (6.20h × $15.25) = <strong>0.15</strong></code>. <em>Dimensional Note:</em> Because <code>C_alloc = $2.46/hr × T_eng</code>, <code>ADE_v1 = W / (2.46 × T_eng²)</code> scales as <code>1/T²</code> (units: <code>issues · hr⁻² · $⁻¹</code>); therefore <code>ADE_v1</code> is always evaluated on the full engineering window (<code>T_eng = 6.20h</code>, never a pipelined merge tail) alongside scale-invariant Throughput (<code>2.26 issues/hr</code>).<br/>
-          <strong>3. 3-Tier Operating Cost Basis:</strong> <strong>Tier 1 (Measured Marginal Cash):</strong> <code>$0.00</code> per-run API fee + <code>~$0.16</code> M3 Ultra wall power · <strong>Tier 2 (Allocated Subscription Pool):</strong> <code>$15.25</code> pro-rata allocation (<code>$440/mo ÷ 178.8 active hrs = $2.46/hr × 6.20h</code>; calendar-hour reference <code>$3.79</code> @ <code>$0.611/hr</code>) · <strong>Tier 3 (Hypothetical API Shadow Estimate):</strong> <code>~$220</code> (unmetered estimate across <code>~15.1M</code> tokens → <code>14.4×</code> subscription compression).
+          <strong>1. Orthogonal Efficiency Metrics (Primary Standard):</strong> <strong>Throughput</strong> = <code>W_closed / T_eng = 20 / 6.96h = <strong>2.87 closed issues/hr</strong></code> · <strong>Unit Allocated Cost</strong> = <code>C_alloc / W_closed = $17.12 / 20 = <strong>$0.86/closed issue</strong></code> (<code>$1.29/kLOC</code> across <code>+13,297</code> insertions) · <strong>Quality</strong> = <code>100% True Merges, 0 Post-Merge Defects</code>.<br/>
+          <strong>2. Disclosed Legacy Composite Index (<code>ADE_v1</code>):</strong> <code>ADE_v1 = W_closed / (T_eng × C_alloc) = 20 / (6.96h × $17.12) = <strong>0.17</strong></code>. <em>Dimensional Note:</em> Because <code>C_alloc = $2.46/hr × T_eng</code>, <code>ADE_v1 = W / (2.46 × T_eng²)</code> scales as <code>1/T²</code> (units: <code>issues · hr⁻² · $⁻¹</code>); therefore <code>ADE_v1</code> is always evaluated on the full engineering window (<code>T_eng = 6.96h</code>, never a pipelined merge tail) alongside scale-invariant Throughput (<code>2.87 issues/hr</code>).<br/>
+          <strong>3. 3-Tier Operating Cost Basis:</strong> <strong>Tier 1 (Measured Marginal Cash):</strong> <code>$0.00</code> per-run API fee + <code>~$0.17</code> M3 Ultra wall power · <strong>Tier 2 (Allocated Subscription Pool):</strong> <code>$17.12</code> pro-rata allocation (<code>$440/mo ÷ 178.8 active hrs = $2.46/hr × 6.96h</code>; calendar-hour reference <code>$4.25</code> @ <code>$0.611/hr</code>) · <strong>Tier 3 (Hypothetical API Shadow Estimate):</strong> <code>~$315</code> (unmetered estimate across <code>~21.6M</code> tokens → <code>18.4×</code> subscription compression).
         </div>
       </div>
       <!-- TANGLECLAW_ADE_BANNER_END -->
@@ -799,7 +799,7 @@
 
         <div class="grid-2" style="gap:16px;margin-bottom:16px;">
           <div>
-            <h4 style="margin:0 0 8px;color:var(--green);font-size:0.94rem;">1. Mandatory 8-Timestamp Release Cadence &amp; Engineering Window (<code>T_eng = 6.20h</code>)</h4>
+            <h4 style="margin:0 0 8px;color:var(--green);font-size:0.94rem;">1. Mandatory 8-Timestamp Release Cadence &amp; Engineering Window (<code>T_eng = 6.96h</code>)</h4>
             <div class="table-wrap">
               <table class="pr-table">
                 <thead>
@@ -812,15 +812,15 @@
                 <tbody>
                   <tr><td><code>t1_first_activity</code></td><td><code>2026-11-06T06:29:00Z</code></td><td>22:29:00 PST (Nov 5 · Charter A505 v1.0 & OP-GO-MULTIVERSION-V5680-V5710-20261105)</td></tr>
                   <tr><td><code>t2_first_branch_commit</code></td><td><code>2026-11-06T07:02:50Z</code></td><td>23:02:50 PST (ec6f3993 on PR #2912 · Leg 1 start)</td></tr>
-                  <tr><td><code>t3_first_pr_opened</code></td><td><code>2026-11-06T07:05:11Z</code></td><td>23:05:11 PST (PR #2912 opened; Legs 1–3 Cars 68-A..70-C merged)</td></tr>
-                  <tr><td><code>t4_final_feature_pr_merged</code></td><td><code>2026-11-06T12:26:31Z</code></td><td>04:26:31 PST (Nov 6 · PR #2922 @ 876e090e)</td></tr>
-                  <tr><td><code>t5_release_pr_merged</code></td><td><code>2026-11-06T13:12:33Z</code></td><td>05:12:33 PST (PR #2926 @ c8d5d078)</td></tr>
-                  <tr><td><code>t6_release_tag_published</code></td><td><code>2026-11-06T13:13:00Z</code></td><td>05:13:00 PST (tag v5.70.0 → c8d5d078)</td></tr>
-                  <tr><td><code>t7_live_deploy_completed</code></td><td><code>2026-11-06T13:15:00Z</code></td><td>05:15:00 PST (v5.70.0 @ c8d5d078 release cut & runtime handoff)</td></tr>
-                  <tr><td><code>t8_observer_certification</code></td><td><code>2026-11-06T13:20:00Z</code></td><td>05:20:00 PST (O-Gate PASS on PRs #2915, #2921, #2926)</td></tr>
-                  <tr><td><strong>Full Engineering Window (<code>T_eng</code>)</strong></td><td><strong><code>6.20 hrs</code></strong></td><td><strong>6h 12m 10s (t2 23:02:50 → t7 05:15:00 PST cumulative across Legs 1–3; 1.42h + 2.13h + 2.73h = 6.28h gross)</strong></td></tr>
-                  <tr><td><strong>Inter-Release Deploy Cadence</strong></td><td><code>2.07 hrs</code></td><td>2h 04m 03s mean deploy cadence across Legs 1–3 (1.42h, 2.53h, 2.25h)</td></tr>
-                  <tr><td><strong>Cross-Version Pipeline Overlap</strong></td><td><code>0.47 hrs (7.6%)</code></td><td>28m 20s cross-version pipeline overlap between v5.69.0 Wave 2 and v5.70.0 Wave 1</td></tr>
+                  <tr><td><code>t3_first_pr_opened</code></td><td><code>2026-11-06T07:05:11Z</code></td><td>23:05:11 PST (PR #2912 opened; all 12 feature PRs & 4 release PRs across Legs 1–4 merged)</td></tr>
+                  <tr><td><code>t4_final_feature_pr_merged</code></td><td><code>2026-11-06T13:47:26Z</code></td><td>05:47:26 PST (Nov 6 · PR #2924 @ 39c37fca)</td></tr>
+                  <tr><td><code>t5_release_pr_merged</code></td><td><code>2026-11-06T13:58:36Z</code></td><td>05:58:36 PST (PR #2927 @ 3162811a)</td></tr>
+                  <tr><td><code>t6_release_tag_published</code></td><td><code>2026-11-06T13:59:00Z</code></td><td>05:59:00 PST (tag v5.71.0 → 3162811a)</td></tr>
+                  <tr><td><code>t7_live_deploy_completed</code></td><td><code>2026-11-06T14:00:30Z</code></td><td>06:00:30 PST (v5.71.0 @ 3162811a release cut & runtime handoff)</td></tr>
+                  <tr><td><code>t8_observer_certification</code></td><td><code>2026-11-06T14:05:00Z</code></td><td>06:05:00 PST (O-Gate PASS across PRs #2915, #2921, #2926, #2927)</td></tr>
+                  <tr><td><strong>Full Engineering Window (<code>T_eng</code>)</strong></td><td><strong><code>6.96 hrs</code></strong></td><td><strong>6h 57m 40s (t2 23:02:50 → t7 06:00:30 PST cumulative wall-clock; 1.42h + 2.13h + 2.73h + 2.87h = 9.15h gross)</strong></td></tr>
+                  <tr><td><strong>Inter-Release Deploy Cadence</strong></td><td><code>1.74 hrs</code></td><td>1h 44m 25s mean deploy cadence across 4 releases (1.42h, 2.53h, 2.25h, 0.76h)</td></tr>
+                  <tr><td><strong>Cross-Version Pipeline Overlap</strong></td><td><code>2.58 hrs (28.2%)</code></td><td>2h 34m 46s total cross-version pipeline overlap (0.47h Leg 2→3 + 2.11h Leg 3→4)</td></tr>
                 </tbody>
               </table>
             </div>
@@ -840,18 +840,18 @@
                 <tbody>
                   <tr>
                     <td><strong>State A — Implemented (Branch + Tests)</strong></td>
-                    <td><code>14</code></td>
-                    <td>All 14 active chartered issues implemented with unit tests</td>
+                    <td><code>20</code></td>
+                    <td>All 20 active chartered issues implemented with unit tests</td>
                   </tr>
                   <tr>
                     <td><strong>State B — Integrated (<code>--merge</code> on <code>main</code>)</strong></td>
-                    <td><code>14</code></td>
-                    <td>Merged across 12 true-merge PRs (<code>#2913, #2914, #2912, #2915, #2916, #2918, #2917, #2921, #2920, #2919, #2922, #2926</code>; net diff <code>+9,416 / -1016</code> LOC across <code>73</code> files)</td>
+                    <td><code>20</code></td>
+                    <td>Merged across 16 true-merge PRs (<code>#2913, #2914, #2912, #2915, #2916, #2918, #2917, #2921, #2920, #2919, #2922, #2926, #2925, #2923, #2924, #2927</code>; net diff <code>+13,297 / -1076</code> LOC across <code>99</code> files)</td>
                   </tr>
                   <tr>
                     <td><strong>State C — Verified &amp; Closed in Milestone (<code>W_closed</code>)</strong></td>
-                    <td><strong><code>14</code></strong></td>
-                    <td><code>#2644, #2821, #748, #2735, #2736, #1224, #1732, #1713, #1083, #1576, #2626, #1485, #1774, #2127</code> (CI + Testament 0.34.0 + I-Gate + A-Gate + live <code>:3102</code>)</td>
+                    <td><strong><code>20</code></strong></td>
+                    <td><code>#2644, #2821, #748, #2735, #2736, #1224, #1732, #1713, #1083, #1576, #2626, #1485, #1774, #2127, #1531, #363, #254, #297, #1185, #128</code> (CI + Testament 0.34.0 + I-Gate + A-Gate + live <code>:3102</code>)</td>
                   </tr>
                   <tr>
                     <td><strong>State D — Externally Accepted</strong></td>
@@ -861,17 +861,17 @@
                   <tr>
                     <td><strong>Partial Slice 2 Shipped &amp; Re-Milestoned (<code>W_partial</code>)</strong></td>
                     <td><code>0</code></td>
-                    <td>Legs 1–3 (v5.68.0 #55, v5.69.0 #56 & v5.70.0 #57) closed 14/14 chartered issues. Final Leg 4 (v5.71.0 #58: 6 issues) queued in Charter A505 v1.0.</td>
+                    <td>All 20/20 chartered issues across Milestones #55 (v5.68.0: 5), #56 (v5.69.0: 5), #57 (v5.70.0: 4), and #58 (v5.71.0: 6) closed with 0 deferrals and 4 per-version Kaizen Retros certified.</td>
                   </tr>
                   <tr>
                     <td><strong>Pre-Closed in Milestone + Sprint Closed = Milestone Total</strong></td>
-                    <td><code>0 + 14 = 14</code></td>
-                    <td>Pre-closed <code>0 (none)</code> + <code>14</code> sprint-closed = <strong><code>14</code> closed / <code>0</code> open</strong></td>
+                    <td><code>0 + 20 = 20</code></td>
+                    <td>Pre-closed <code>0 (none)</code> + <code>20</code> sprint-closed = <strong><code>20</code> closed / <code>0</code> open</strong></td>
                   </tr>
                   <tr>
-                    <td><strong>Final Charter A505 v1.0 Train Leg (<code>v5.71.0 #58</code>)</strong></td>
-                    <td><code>6</code></td>
-                    <td><code>#1531, #363, #254, #297, #1185, #128</code> — Charter A505 v1.0 4-version train: Leg 1 v5.68.0 (#55, 5/5), Leg 2 v5.69.0 (#56, 5/5), and Leg 3 v5.70.0 (#57, 4/4) complete; final Leg 4 v5.71.0 (#58, 6 issues) executes with Kaizen Retro #1–#3 feed-forward.</td>
+                    <td><strong>Deferred from Charter A505 v1.0 Train (<code>v5.68.0–v5.71.0</code>)</strong></td>
+                    <td><code>0</code></td>
+                    <td><code></code> — 0 issues deferred across Milestones #55–#58 (20/20 closed, 0 open). All 4 legs (v5.68.0, v5.69.0, v5.70.0, v5.71.0) and Kaizen Retros #1–#4 completed 100%.</td>
                   </tr>
                 </tbody>
               </table>
@@ -883,17 +883,17 @@
           <div style="background:rgba(10,15,29,0.65);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
             <h4 style="margin:0 0 8px;color:var(--amber);font-size:0.94rem;">3. 3-Tier Operating Cost &amp; Orthogonal Efficiency Accounting</h4>
             <ul style="margin:0;padding-left:18px;font-size:0.85rem;line-height:1.55;color:var(--text-muted);">
-              <li><strong>Tier 1 — Measured Marginal Cash Expenditure (<code>measured</code>):</strong> <strong><code>$0.00</code> incremental model/API fee</strong> (covered by fixed monthly CLI subscriptions) + <strong><code>~$0.16</code></strong> measured Mac Studio M3 Ultra wall-power (<code>~$0.025/hr × 6.20h</code>).</li>
-              <li><strong>Tier 2 — Allocated Subscription &amp; Compute Amortization (<code>allocated_estimate</code>):</strong> <strong><code>$15.25</code></strong> on full engineering window <code>T_eng = 6.20h</code> at <code>$2.46/active fleet-hr</code> (<code>$440/mo ÷ 178.8 active hrs/mo</code>; 24/7 calendar-hour reference: <code>$3.79</code> @ <code>$0.611/hr</code>) → <strong><code>$1.09 / closed issue</code></strong> (<code>$1.09 / addressed issue</code>, <code>$1.62 / kLOC</code>).</li>
-              <li><strong>Tier 3 — Hypothetical Public API Shadow Estimate (<code>hypothetical_estimate</code>):</strong> <strong><code>~$220</code></strong> order-of-magnitude shadow estimate across <code>~15.1M</code> estimated CLI tokens (unmetered in SQLite; never co-mingled with Tier 1/2).</li>
-              <li><strong>Scale-Invariant Throughput vs. Legacy <code>ADE_v1</code>:</strong> Throughput = <strong><code>2.26 closed issues/hr</code></strong> (<code>2.26 addressed/hr</code>); Legacy <code>ADE_v1</code> = <strong><code>0.15</code></strong> (closed) / <strong><code>0.15</code></strong> (addressed).</li>
+              <li><strong>Tier 1 — Measured Marginal Cash Expenditure (<code>measured</code>):</strong> <strong><code>$0.00</code> incremental model/API fee</strong> (covered by fixed monthly CLI subscriptions) + <strong><code>~$0.17</code></strong> measured Mac Studio M3 Ultra wall-power (<code>~$0.025/hr × 6.96h</code>).</li>
+              <li><strong>Tier 2 — Allocated Subscription &amp; Compute Amortization (<code>allocated_estimate</code>):</strong> <strong><code>$17.12</code></strong> on full engineering window <code>T_eng = 6.96h</code> at <code>$2.46/active fleet-hr</code> (<code>$440/mo ÷ 178.8 active hrs/mo</code>; 24/7 calendar-hour reference: <code>$4.25</code> @ <code>$0.611/hr</code>) → <strong><code>$0.86 / closed issue</code></strong> (<code>$0.86 / addressed issue</code>, <code>$1.29 / kLOC</code>).</li>
+              <li><strong>Tier 3 — Hypothetical Public API Shadow Estimate (<code>hypothetical_estimate</code>):</strong> <strong><code>~$315</code></strong> order-of-magnitude shadow estimate across <code>~21.6M</code> estimated CLI tokens (unmetered in SQLite; never co-mingled with Tier 1/2).</li>
+              <li><strong>Scale-Invariant Throughput vs. Legacy <code>ADE_v1</code>:</strong> Throughput = <strong><code>2.87 closed issues/hr</code></strong> (<code>2.87 addressed/hr</code>); Legacy <code>ADE_v1</code> = <strong><code>0.17</code></strong> (closed) / <strong><code>0.17</code></strong> (addressed).</li>
             </ul>
           </div>
 
           <div style="background:rgba(10,15,29,0.65);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
             <h4 style="margin:0 0 8px;color:var(--accent2);font-size:0.94rem;">4. External Credibility, Governance &amp; Operational Disclosures</h4>
             <ul style="margin:0;padding-left:18px;font-size:0.85rem;line-height:1.55;color:var(--text-muted);">
-              <li><strong>Autonomous Code Execution vs. Operator Governance:</strong> <code>0</code> human code edits, conflict resolutions, test runs, or deploy commands across all 12 PRs. The Operator provided standing authorization <code>OP-GO-MULTIVERSION-V5680-V5710-20261105</code> and approved Gate 0 / architectural deferral boundaries (<code>A185</code>, <code>Ruling A503-R1</code>).</li>
+              <li><strong>Autonomous Code Execution vs. Operator Governance:</strong> <code>0</code> human code edits, conflict resolutions, test runs, or deploy commands across all 16 PRs. The Operator provided standing authorization <code>OP-GO-MULTIVERSION-V5680-V5710-20261105</code> and approved Gate 0 / architectural deferral boundaries (<code>A185</code>, <code>Ruling A503-R1</code>).</li>
               <li><strong>Single GitHub Account Attribution Disclosure:</strong> While <code>TC-Lane-A..D</code>, <code>TC-Lane-PRR-A/B</code>, <code>TC-Lane-Arc</code>, <code>TC-Lane-INT</code>, <code>TC-Lane-PM</code>, and <code>TC-Lane-Obsr</code> run in isolated <code>tmux</code> sessions and worktrees across distinct models/engines, all GitHub API commits, reviews, and merges authenticate via the Operator's <code>Jason-Vaughan</code> <code>gh</code> CLI token; role identity is verified via structured review stamps and SQLite audit logs.</li>
               <li><strong>Known In-Run Operational Limitation Disclosed:</strong> <code>TC-Lane-A</code> and <code>TC-Lane-C</code> experienced <code>pane-no-prompt</code> Medusa nudge holds when interactive <code>AskUserQuestion</code> prompts were open in their panes (<code>medusaEscalations: count 2</code>); mitigated via <code>#2866</code> auto-handling hooks and <code>#2828</code> interactive decision routing Slice 2.</li>
               <li><strong>Scope of “Self-Improvement” Claims:</strong> All self-improvement in this train refers strictly to <strong>operational, runtime, and governance rule/code evolution</strong> (shipping TangleClaw's own hooks, guards, and decision routes and codifying process guardrails), <em>not</em> autonomous model-weight training.</li>
@@ -908,7 +908,7 @@
   "title": "v5.68.0 \u2192 v5.71.0: Four-Version Autonomous Sprint Train & Kaizen Retrospective",
   "charter": "Charter A505 v1.0",
   "standing_auth": "OP-GO-MULTIVERSION-V5680-V5710-20261105",
-  "milestone_number": 57,
+  "milestone_number": 58,
   "milestone_title": "Milestones #55 (v5.68.0) \u2192 #56 (v5.69.0) \u2192 #57 (v5.70.0) \u2192 #58 (v5.71.0)",
   "timestamps": {
     "t1_first_activity": "2026-11-06T06:29:00Z",
@@ -916,40 +916,40 @@
     "t2_first_branch_commit": "2026-11-06T07:02:50Z",
     "t2_pst": "23:02:50 PST (ec6f3993 on PR #2912 \u00b7 Leg 1 start)",
     "t3_first_pr_opened": "2026-11-06T07:05:11Z",
-    "t3_pst": "23:05:11 PST (PR #2912 opened; Legs 1\u20133 Cars 68-A..70-C merged)",
-    "t4_final_feature_pr_merged": "2026-11-06T12:26:31Z",
-    "t4_pst": "04:26:31 PST (Nov 6 \u00b7 PR #2922 @ 876e090e)",
-    "t5_release_pr_merged": "2026-11-06T13:12:33Z",
-    "t5_pst": "05:12:33 PST (PR #2926 @ c8d5d078)",
-    "t6_release_tag_published": "2026-11-06T13:13:00Z",
-    "t6_pst": "05:13:00 PST (tag v5.70.0 \u2192 c8d5d078)",
-    "t7_live_deploy_completed": "2026-11-06T13:15:00Z",
-    "t7_pst": "05:15:00 PST (v5.70.0 @ c8d5d078 release cut & runtime handoff)",
-    "t8_observer_certification_completed": "2026-11-06T13:20:00Z",
-    "t8_pst": "05:20:00 PST (O-Gate PASS on PRs #2915, #2921, #2926)"
+    "t3_pst": "23:05:11 PST (PR #2912 opened; all 12 feature PRs & 4 release PRs across Legs 1\u20134 merged)",
+    "t4_final_feature_pr_merged": "2026-11-06T13:47:26Z",
+    "t4_pst": "05:47:26 PST (Nov 6 \u00b7 PR #2924 @ 39c37fca)",
+    "t5_release_pr_merged": "2026-11-06T13:58:36Z",
+    "t5_pst": "05:58:36 PST (PR #2927 @ 3162811a)",
+    "t6_release_tag_published": "2026-11-06T13:59:00Z",
+    "t6_pst": "05:59:00 PST (tag v5.71.0 \u2192 3162811a)",
+    "t7_live_deploy_completed": "2026-11-06T14:00:30Z",
+    "t7_pst": "06:00:30 PST (v5.71.0 @ 3162811a release cut & runtime handoff)",
+    "t8_observer_certification_completed": "2026-11-06T14:05:00Z",
+    "t8_pst": "06:05:00 PST (O-Gate PASS across PRs #2915, #2921, #2926, #2927)"
   },
   "durations": {
-    "authorization_to_deploy_hrs": 6.77,
-    "authorization_to_deploy_human": "6h 46m 00s (t1 22:29:00 \u2192 t7 05:15:00 PST across Legs 1\u20133)",
-    "authorization_to_certification_hrs": 6.85,
-    "authorization_to_certification_human": "6h 51m 00s (t1 22:29:00 \u2192 t8 05:20:00 PST across Legs 1\u20133)",
-    "full_engineering_window_hrs": 6.2,
-    "full_engineering_window_human": "6h 12m 10s (t2 23:02:50 \u2192 t7 05:15:00 PST cumulative across Legs 1\u20133; 1.42h + 2.13h + 2.73h = 6.28h gross)",
-    "commit_to_merge_window_hrs": 6.16,
-    "commit_to_merge_window_human": "6h 09m 43s (t2 23:02:50 \u2192 t5 05:12:33 PST)",
-    "inter_release_merge_cadence_hrs": 2.05,
-    "inter_release_merge_cadence_human": "2h 03m 14s mean merge cadence across Legs 1\u20133 (1.38h, 2.55h, 2.23h)",
-    "inter_release_deploy_cadence_hrs": 2.07,
-    "inter_release_deploy_cadence_human": "2h 04m 03s mean deploy cadence across Legs 1\u20133 (1.42h, 2.53h, 2.25h)",
-    "pipeline_overlap_hrs": 0.47,
-    "pipeline_overlap_human": "28m 20s cross-version pipeline overlap between v5.69.0 Wave 2 and v5.70.0 Wave 1",
-    "pipeline_overlap_pct": 7.6
+    "authorization_to_deploy_hrs": 7.53,
+    "authorization_to_deploy_human": "7h 31m 30s (t1 22:29:00 \u2192 t7 06:00:30 PST across all 4 releases)",
+    "authorization_to_certification_hrs": 7.6,
+    "authorization_to_certification_human": "7h 36m 00s (t1 22:29:00 \u2192 t8 06:05:00 PST across all 4 releases)",
+    "full_engineering_window_hrs": 6.96,
+    "full_engineering_window_human": "6h 57m 40s (t2 23:02:50 \u2192 t7 06:00:30 PST cumulative wall-clock; 1.42h + 2.13h + 2.73h + 2.87h = 9.15h gross)",
+    "commit_to_merge_window_hrs": 6.93,
+    "commit_to_merge_window_human": "6h 55m 46s (t2 23:02:50 \u2192 t5 05:58:36 PST)",
+    "inter_release_merge_cadence_hrs": 1.73,
+    "inter_release_merge_cadence_human": "1h 43m 56s mean merge cadence across 4 releases (1.38h, 2.55h, 2.23h, 0.77h)",
+    "inter_release_deploy_cadence_hrs": 1.74,
+    "inter_release_deploy_cadence_human": "1h 44m 25s mean deploy cadence across 4 releases (1.42h, 2.53h, 2.25h, 0.76h)",
+    "pipeline_overlap_hrs": 2.58,
+    "pipeline_overlap_human": "2h 34m 46s total cross-version pipeline overlap (0.47h Leg 2\u21923 + 2.11h Leg 3\u21924)",
+    "pipeline_overlap_pct": 28.2
   },
   "completion": {
-    "chartered_active_issues": 14,
-    "state_a_implemented_issues": 14,
-    "state_b_integrated_issues": 14,
-    "state_c_verified_closed_issues": 14,
+    "chartered_active_issues": 20,
+    "state_a_implemented_issues": 20,
+    "state_b_integrated_issues": 20,
+    "state_c_verified_closed_issues": 20,
     "state_c_issue_ids": [
       2644,
       2821,
@@ -964,19 +964,7 @@
       2626,
       1485,
       1774,
-      2127
-    ],
-    "state_d_externally_accepted_issues": 0,
-    "partial_slice_re_milestoned_issues": 0,
-    "partial_slice_issue_ids": [],
-    "partial_slice_ruling": "Legs 1\u20133 (v5.68.0 #55, v5.69.0 #56 & v5.70.0 #57) closed 14/14 chartered issues. Final Leg 4 (v5.71.0 #58: 6 issues) queued in Charter A505 v1.0.",
-    "pre_closed_milestone_issues": 0,
-    "pre_closed_issue_ids": [],
-    "milestone_closed_total": 14,
-    "milestone_open_total": 0,
-    "deferred_label": "Final Charter A505 v1.0 Train Leg (<code>v5.71.0 #58</code>)",
-    "deferred_to_future_milestone_issues": 6,
-    "deferred_issue_ids": [
+      2127,
       1531,
       363,
       254,
@@ -984,7 +972,18 @@
       1185,
       128
     ],
-    "deferred_ruling": "Charter A505 v1.0 4-version train: Leg 1 v5.68.0 (#55, 5/5), Leg 2 v5.69.0 (#56, 5/5), and Leg 3 v5.70.0 (#57, 4/4) complete; final Leg 4 v5.71.0 (#58, 6 issues) executes with Kaizen Retro #1\u2013#3 feed-forward."
+    "state_d_externally_accepted_issues": 0,
+    "partial_slice_re_milestoned_issues": 0,
+    "partial_slice_issue_ids": [],
+    "partial_slice_ruling": "All 20/20 chartered issues across Milestones #55 (v5.68.0: 5), #56 (v5.69.0: 5), #57 (v5.70.0: 4), and #58 (v5.71.0: 6) closed with 0 deferrals and 4 per-version Kaizen Retros certified.",
+    "pre_closed_milestone_issues": 0,
+    "pre_closed_issue_ids": [],
+    "milestone_closed_total": 20,
+    "milestone_open_total": 0,
+    "deferred_label": "Deferred from Charter A505 v1.0 Train (<code>v5.68.0\u2013v5.71.0</code>)",
+    "deferred_to_future_milestone_issues": 0,
+    "deferred_issue_ids": [],
+    "deferred_ruling": "0 issues deferred across Milestones #55\u2013#58 (20/20 closed, 0 open). All 4 legs (v5.68.0, v5.69.0, v5.70.0, v5.71.0) and Kaizen Retros #1\u2013#4 completed 100%."
   },
   "diff": {
     "prs_merged": [
@@ -999,7 +998,11 @@
       2920,
       2919,
       2922,
-      2926
+      2926,
+      2925,
+      2923,
+      2924,
+      2927
     ],
     "feature_prs": [
       2913,
@@ -1010,39 +1013,43 @@
       2917,
       2920,
       2919,
-      2922
+      2922,
+      2925,
+      2923,
+      2924
     ],
     "release_prs": [
       2915,
       2921,
-      2926
+      2926,
+      2927
     ],
-    "true_merge_count": 12,
-    "net_repo_files": 73,
-    "net_repo_insertions": 9416,
-    "net_repo_deletions": 1016,
-    "feature_pr_files_sum": 87,
-    "feature_pr_insertions": 9335,
-    "feature_pr_deletions": 1022
+    "true_merge_count": 16,
+    "net_repo_files": 99,
+    "net_repo_insertions": 13297,
+    "net_repo_deletions": 1076,
+    "feature_pr_files_sum": 124,
+    "feature_pr_insertions": 13187,
+    "feature_pr_deletions": 1085
   },
   "economics": {
     "tier1_measured_marginal_api_usd": 0.0,
-    "tier1_measured_marginal_electricity_usd": 0.16,
-    "tier2_allocated_subscription_usd": 15.25,
-    "tier2_auth_to_deploy_subscription_usd": 16.65,
-    "tier2_calendar_hour_subscription_usd": 3.79,
-    "tier3_hypothetical_api_shadow_usd": 220.0,
-    "est_tokens_m": 15.1
+    "tier1_measured_marginal_electricity_usd": 0.17,
+    "tier2_allocated_subscription_usd": 17.12,
+    "tier2_auth_to_deploy_subscription_usd": 18.52,
+    "tier2_calendar_hour_subscription_usd": 4.25,
+    "tier3_hypothetical_api_shadow_usd": 315.0,
+    "est_tokens_m": 21.6
   },
   "efficiency": {
-    "throughput_closed_per_eng_hr": 2.26,
-    "throughput_addressed_per_eng_hr": 2.26,
-    "unit_allocated_cost_per_closed_issue_usd": 1.09,
-    "unit_allocated_cost_per_addressed_issue_usd": 1.09,
-    "unit_allocated_cost_per_kloc_usd": 1.62,
+    "throughput_closed_per_eng_hr": 2.87,
+    "throughput_addressed_per_eng_hr": 2.87,
+    "unit_allocated_cost_per_closed_issue_usd": 0.86,
+    "unit_allocated_cost_per_addressed_issue_usd": 0.86,
+    "unit_allocated_cost_per_kloc_usd": 1.29,
     "quality_post_merge_defects": 0,
-    "legacy_ade_v1_closed": 0.15,
-    "legacy_ade_v1_addressed": 0.15
+    "legacy_ade_v1_closed": 0.17,
+    "legacy_ade_v1_addressed": 0.17
   }
 }
       </script>
@@ -1050,7 +1057,7 @@
       <div class="section-header">
         <div>
           <h2 class="section-title"><span class="num">02</span> Wave-by-Wave Execution Timeline &amp; Sequential Entrypoint Velocity</h2>
-          <p class="section-desc">End-to-end progression from <code>v5.66.0</code> baseline (`1b0b09ef`) through sequential Wave 1 merges (`#2913, #2914, #2912`) and Release <code>PR #2926</code>.</p>
+          <p class="section-desc">End-to-end progression from <code>v5.66.0</code> baseline (`1b0b09ef`) through sequential Wave 1 merges (`#2913, #2914, #2912`) and Release <code>PR #2927</code>.</p>
         </div>
         <span class="badge badge-green">4 PRs True-Merged · 9/9 Active Milestone #54 Issues Closed (open_issues: 0) · 3 A185 Backlog Items Receipted</span>
       </div>
@@ -1100,15 +1107,15 @@
 
               <!-- Row 5: Wave 2 Release Cut & Live Deploy -->
               <text x="14" y="252" fill="#34d399" font-size="11" font-weight="700">W2-REL &amp; Deploy</text>
-              <text x="14" y="266" fill="#94a3b8" font-size="9">PR #2926 + v5.67.0</text>
+              <text x="14" y="266" fill="#94a3b8" font-size="9">PR #2927 + v5.67.0</text>
               <rect x="530" y="236" width="195" height="28" rx="6" fill="#10b981" fill-opacity="0.45" stroke="#34d399" stroke-width="1.8"/>
-              <text x="300" y="290" fill="#34d399" font-size="10" font-weight="600">PR #2926 (c8d5d078) → Tag v5.67.0 → Live :3102 &amp; O-Gate PASS</text>
+              <text x="300" y="290" fill="#34d399" font-size="10" font-weight="600">PR #2927 (3162811a) → Tag v5.67.0 → Live :3102 &amp; O-Gate PASS</text>
             </svg>
           </div>
         </div>
 
         <div class="card">
-          <h3>Wave Progression &amp; True-Merge Commit Chain (<code>1b0b09ef</code> → <code>c8d5d078</code>)</h3>
+          <h3>Wave Progression &amp; True-Merge Commit Chain (<code>1b0b09ef</code> → <code>3162811a</code>)</h3>
           <div class="table-wrap">
             <table class="pr-table">
               <thead>
@@ -1156,7 +1163,7 @@
                 </tr>
                 <tr>
                   <td><strong><code>W2-REL</code></strong></td>
-                  <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2926" target="_blank" rel="noopener">PR #2926</a> (<code>c8d5d078</code>)</td>
+                  <td><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2927" target="_blank" rel="noopener">PR #2927</a> (<code>3162811a</code>)</td>
                   <td><code>e1ebf418</code></td>
                   <td><code>Wave 2</code></td>
                   <td><code>18</code> files (<code>+137 / -82</code>)</td>
@@ -1261,7 +1268,7 @@
                 <td><code>1.75h</code></td>
                 <td><code>2.33h</code> (<code>2.68h</code> auth)</td>
                 <td><code>1.60h</code> (<code>24m</code> tail)</td>
-                <td><strong><code>6.20h</code> (<code>6h 12m 10s</code> across 3 sequential cars)</strong></td>
+                <td><strong><code>6.96h</code> (<code>6h 57m 40s</code> across 3 sequential cars)</strong></td>
                 <td><span class="badge badge-green">Intentional sequential single-builder execution eliminated hot-entrypoint merge conflicts</span></td>
               </tr>
               <tr>
@@ -1334,6 +1341,9 @@
           <li><strong>Finding KR3-01 (Two-Way Verb Manifest Parity <code>VERB_ROSTER &lt;-&gt; SUBVERB_MANIFEST</code> · <code>v5.70.0 → v5.71.0</code>):</strong> Adding a top-level <code>tc</code> verb (<code>capture</code> in <code>#1774</code>) requires synchronous updates to <code>SUBVERB_MANIFEST</code> and <code>ROLE_VERB_IDS</code> in <code>lib/operating-primer.js</code> (<code>test/tc-primer.test.js</code>).</li>
           <li><strong>Finding KR3-02 (Authoritative Roster Identity Over Name/Prefix Heuristics · <code>Ruling A505-R3.10</code> · <code>v5.70.0 → v5.71.0</code>):</strong> Stamping <code>isMaster: true, role: &apos;orchestrator&apos;</code> at the server source (<code>lib/medusa.js#getRoster</code>) eliminated lookalike collision edge cases in <code>PR #2922</code>.</li>
           <li><strong>Finding KR3-03 (Single-Builder Round Dispatch &amp; Rotated Codex Wakeup · <code>v5.70.0 → v5.71.0</code>):</strong> Dispatch follow-up rounds to a single designated builder lane and pair Medusa dispatches to rotated Codex lanes with <code>POST /api/sessions/:project/command</code>.</li>
+          <li><strong>Finding KR4-01 (Probe-First Interactive SSH Failover · <code>#1531 / PR #2924 R7 → R8</code>):</strong> Selecting the reachable target first via a lightweight <code>ssh -o ConnectTimeout=5 ... true</code> probe loop before invoking <code>openclaw-cli</code> once on the winning host decouples transport reachability (<code>255</code>) from application exit status.</li>
+          <li><strong>Finding KR4-02 (Synchronize <code>changelog.d/</code> Fragments When Review Rounds Expand Scope · <code>#128 / PR #2923 R2 → PR #2927 R2</code>):</strong> Update Builder <code>changelog.d/</code> fragments in the same review round when an Architect Ruling expands endpoint scope so Release PRs never compile stale Round 1 caveats.</li>
+          <li><strong>Finding KR4-03 (Same-Origin CSRF Bootstrap on Injected Proxy HTML · <code>#254 / PR #2925 R1 → R3</code>):</strong> Injected <code>&lt;head&gt;</code> bootstrap scripts inside <code>/openclaw-direct/</code> must read the <code>tc_csrf</code> cookie and attach <code>X-CSRF-Token</code> for <code>authGate.evaluate()</code> compliance.</li>
         </ul>
       </div>
       <div class="grid-2" style="margin-bottom:18px;">
@@ -1377,7 +1387,7 @@
 
           <div class="bar-row">
             <div class="bar-label-row">
-              <span><strong><code>W2-REL (PR #2926 @ c8d5d078) &amp; Milestone #54 Audit (Guardrail 09)</code></strong></span>
+              <span><strong><code>W2-REL (PR #2927 @ 3162811a) &amp; Milestone #54 Audit (Guardrail 09)</code></strong></span>
               <span><strong>9 / 9 In-Repo Issues Closed (open_issues: 0, closed_issues: 9)</strong></span>
             </div>
             <div class="bar-track"><div class="bar-fill green" style="width:100%;"></div></div>
@@ -1417,7 +1427,7 @@
               <text x="20" y="64" fill="#34d399" font-size="11" font-weight="700">1. Wave 1 Sequential Hot-Entrypoint Cars (9 In-Repo Issues Closed · +5,330 / -102 Feature PR LOC)</text>
               <rect x="20" y="74" width="714" height="44" rx="6" fill="#10b981" fill-opacity="0.35" stroke="#34d399" stroke-width="1.6"/>
               <text x="32" y="94" fill="#d1fae5" font-size="10" font-weight="700">Car 67-A #2913 (@ 8c2b7264: #2866, #2877, #2878) · Car 67-B #2914 (@ 1f98b04d: #2881, #2888)</text>
-              <text x="32" y="110" fill="#a7f3d0" font-size="10">Car 67-C #2912 (@ 1370777f: #2883, #2884, #2885, #2886) · Wave 2 Release PR #2926 (@ c8d5d078)</text>
+              <text x="32" y="110" fill="#a7f3d0" font-size="10">Car 67-C #2912 (@ 1370777f: #2883, #2884, #2885, #2886) · Wave 2 Release PR #2927 (@ 3162811a)</text>
 
               <text x="20" y="154" fill="#38bdf8" font-size="11" font-weight="700">2. Gate 0 External / Hardware Blocker Disposition Under Ruling A504-EXT-R1 (Rule #1 / A185)</text>
               <rect x="20" y="164" width="714" height="44" rx="6" fill="#0284c7" fill-opacity="0.30" stroke="#38bdf8"/>
@@ -1524,21 +1534,21 @@
               <tr>
                 <td><strong>Gate 1 — I-Gate (PRR Code &amp; Contract Review)</strong></td>
                 <td><code>TC-Lane-PRR-A</code> + <code>TC-Lane-PRR-B</code></td>
-                <td>All 3 Feature PRs (<code>#2913, #2914, #2912</code>) + Release <code>PR #2926</code></td>
-                <td>100% exact-head PRR <code>PASS</code> verdicts verified prior to merge (<code>#2913</code> R4 <code>#5792688775</code>, <code>#2914</code> R2 <code>#5793860999</code>, <code>#2912</code> R3 <code>#5794717466</code> + Release <code>PR #2926</code>)</td>
+                <td>All 3 Feature PRs (<code>#2913, #2914, #2912</code>) + Release <code>PR #2927</code></td>
+                <td>100% exact-head PRR <code>PASS</code> verdicts verified prior to merge (<code>#2913</code> R4 <code>#5792688775</code>, <code>#2914</code> R2 <code>#5793860999</code>, <code>#2912</code> R3 <code>#5794717466</code> + Release <code>PR #2927</code>)</td>
                 <td><span class="badge badge-green">PASS (4/4 PRs)</span></td>
               </tr>
               <tr>
                 <td><strong>Gate 2 — B-Gate (Integrator CI &amp; True-Merge Gate)</strong></td>
                 <td><code>TC-Lane-INT</code></td>
-                <td><code>origin/main @ c8d5d078</code>, <code>CHANGELOG.md [5.67.0]</code>, <code>version.json</code></td>
+                <td><code>origin/main @ 3162811a</code>, <code>CHANGELOG.md [5.67.0]</code>, <code>version.json</code></td>
                 <td>All 4 PRs merged via <code>gh pr merge --merge</code> (<code>Rule #282</code>, 2 parents each) with exact-head GitHub Actions <code>Tests</code> green</td>
                 <td><span class="badge badge-green">PASS (Verified)</span></td>
               </tr>
               <tr>
                 <td><strong>Gate 3 — A-Gate / R-Gate, Tag &amp; Live :3102 Deploy</strong></td>
                 <td><code>TC-Lane-Arc</code> + <code>TC-Lane-INT</code></td>
-                <td>Charter <code>A504 v1.1</code>, Tag <code>v5.67.0 @ c8d5d078</code>, Live <code>:3102</code></td>
+                <td>Charter <code>A504 v1.1</code>, Tag <code>v5.67.0 @ 3162811a</code>, Live <code>:3102</code></td>
                 <td>Architect issued <code>Ruling A504-EXT-R1</code> and certified <code>A-Gate PASS</code> across all 4 PRs; tag <code>v5.67.0</code> published &amp; live <code>:3102</code> updated (backup <code>80403a7c901d4e38...</code>)</td>
                 <td><span class="badge badge-green">PASS (Verified)</span></td>
               </tr>
@@ -1571,19 +1581,19 @@
             </thead>
             <tbody>
               <tr><td>1</td><td><strong>Operator Interventions &amp; Causes</strong></td><td><code>0</code> unplanned Operator code/git interventions across `v5.67.0` under `OP-GO-V5670-20261105`</td><td>0 interventions</td><td><span class="badge badge-green">PASS</span></td><td>Maintain Gate 0 external-blocker disposition (`A185`) before Wave 1 dispatch</td></tr>
-              <tr><td>2</td><td><strong>Dispatch-to-Merge Timing</strong></td><td>3 sequential hot-entrypoint cars (`#2908, #2909, #2910`) + `PR #2911` completed in `T_eng = 6.20h`</td><td>Bounded waves</td><td><span class="badge badge-green">PASS</span></td><td>Use parallel builders for module creation and sequential single-builder passes for shared entrypoint mounting</td></tr>
+              <tr><td>2</td><td><strong>Dispatch-to-Merge Timing</strong></td><td>3 sequential hot-entrypoint cars (`#2908, #2909, #2910`) + `PR #2911` completed in `T_eng = 6.96h`</td><td>Bounded waves</td><td><span class="badge badge-green">PASS</span></td><td>Use parallel builders for module creation and sequential single-builder passes for shared entrypoint mounting</td></tr>
               <tr><td>3</td><td><strong>Active vs Allowed Builders &amp; Parallelism</strong></td><td>Intentional single-builder serialization on `TC-Lane-D` (`#1533`) per `Charter A504 v1.1` to prevent `server.js` / `lib/sessions.js` collisions</td><td>0 entrypoint collisions</td><td><span class="badge badge-green">PASS</span></td><td>Enforce single-owner serialization whenever multiple cars touch `server.js` or `lib/routes/sessions.js`</td></tr>
               <tr><td>4</td><td><strong>Forced Re-Syncs / Rebases When <code>main</code> Moves</strong></td><td><code>0</code> forced rebases or merge conflicts because each car branched directly from the prior car's merged `origin/main` commit</td><td>0 conflicts</td><td><span class="badge badge-green">PASS</span></td><td>Branch sequential entrypoint cars strictly after the predecessor PR lands on `origin/main`</td></tr>
               <tr><td>5</td><td><strong>Open PR Age Since Current <code>main</code></strong></td><td>All 4 sprint PRs merged cleanly onto `origin/main`; `0` open sprint PRs remaining</td><td>0 stale PRs</td><td><span class="badge badge-green">PASS</span></td><td>Keep sequential PR review cycles focused on a single active PR at a time</td></tr>
-              <tr><td>6</td><td><strong>CI Red After Ready (<code>#2595</code> Pre-Push Hook)</strong></td><td><code>100%</code> exact-head GitHub Actions <code>Tests</code> green across all 4 merged PRs (`#2913, #2914, #2912, #2926`)</td><td>0 red at merge</td><td><span class="badge badge-green">PASS</span></td><td>Retain Stage 1 + Remote Testament 0.34.0 pre-push verification</td></tr>
+              <tr><td>6</td><td><strong>CI Red After Ready (<code>#2595</code> Pre-Push Hook)</strong></td><td><code>100%</code> exact-head GitHub Actions <code>Tests</code> green across all 4 merged PRs (`#2913, #2914, #2912, #2927`)</td><td>0 red at merge</td><td><span class="badge badge-green">PASS</span></td><td>Retain Stage 1 + Remote Testament 0.34.0 pre-push verification</td></tr>
               <tr><td>7</td><td><strong>PRR Review Rounds &amp; Findings by Severity</strong></td><td><code>PRR-A</code> &amp; <code>PRR-B</code> caught 6 code refinements in Wave 1 (`#2908` R1–R3, `#2909` R1, `#2910` R1–R2) and 2 release-copy refinements in `#2911` (R1–R2); `0` escaped defects</td><td>0 escaped defects</td><td><span class="badge badge-green">PASS</span></td><td>Verify public `FEATURES.md` and release-note claims against live call sites during `W2-REL` review</td></tr>
               <tr><td>8</td><td><strong>Post-Merge Defects on <code>main</code></strong></td><td><code>0</code> post-merge test regressions or reverts on <code>main</code> across all 4 merged `v5.67.0` PRs</td><td>0 defects</td><td><span class="badge badge-green">PASS</span></td><td>Require dedicated regression tests for every multi-round PRR refinement</td></tr>
               <tr><td>9</td><td><strong>Clears, Retries &amp; Stalls</strong></td><td><code>0</code> untracked session stalls; launch-env `gh` role guard wrapper (`#2866`) now mechanically enforces merge role discipline</td><td>0 untracked stalls</td><td><span class="badge badge-green">PASS</span></td><td>Monitor `~/.tangleclaw/logs/merge-role-guard-blocked.jsonl` in future sprints</td></tr>
               <tr><td>10</td><td><strong>Wrong Triage / Scope Fields</strong></td><td><code>100%</code> of actionable Milestone `#54` issues closed (`9/9`); 3 external/hardware items (`#1564, #2347, #2258`) receipted &amp; moved to Backlog under `A504-EXT-R1`</td><td>0 premise drift</td><td><span class="badge badge-green">PASS</span></td><td>Always record external/hardware reclassifications in the 4-State Completion Table</td></tr>
               <tr><td>11</td><td><strong>Rule Breaches &amp; Governance Discipline</strong></td><td><code>0</code> rule breaches; 100% adherence to `Rule #1`, `Rule #273`, `Rule #282` true merges, and `SPRINT_REPORT_CONTRACT v2.0.0`</td><td>0 breaches</td><td><span class="badge badge-green">PASS</span></td><td>Run `tc roadmap admission` preflight before future train dispatches</td></tr>
               <tr><td>12</td><td><strong>Unlabelled PRs, Dirty Clones &amp; Worktrees</strong></td><td>All merged `v5.67.0` branches retired cleanly; all fleet worktrees synced to `origin/main`</td><td>0 orphan clones</td><td><span class="badge badge-green">PASS</span></td><td>Transition all lanes to `complete / safe-to-clear` at release closeout</td></tr>
-              <tr><td>13</td><td><strong>Release-Status Lag &amp; Finish-Line Honesty</strong></td><td><code>CHANGELOG.md [5.67.0]</code>, <code>docs/releases/v5.67.0.md</code>, and <code>version.json</code> (`5.67.0`) cut in <code>PR #2926</code> (`c8d5d078`) with verified tag `v5.67.0` and live `:3102` update</td><td>100% honesty</td><td><span class="badge badge-green">PASS</span></td><td>Ensure `FEATURES.md` and `docs/releases/*.md` distinguish mounted UI callers from prepared helper functions</td></tr>
-              <tr><td>14</td><td><strong>Conflict Resolution Time</strong></td><td><code>0m</code> conflict resolution time across `#2913, #2914, #2912, #2926`</td><td>&lt; 5m sync time</td><td><span class="badge badge-green">PASS</span></td><td>Preserve sequential single-builder execution for high-fan-in entrypoint passes</td></tr>
+              <tr><td>13</td><td><strong>Release-Status Lag &amp; Finish-Line Honesty</strong></td><td><code>CHANGELOG.md [5.67.0]</code>, <code>docs/releases/v5.67.0.md</code>, and <code>version.json</code> (`5.67.0`) cut in <code>PR #2927</code> (`3162811a`) with verified tag `v5.67.0` and live `:3102` update</td><td>100% honesty</td><td><span class="badge badge-green">PASS</span></td><td>Ensure `FEATURES.md` and `docs/releases/*.md` distinguish mounted UI callers from prepared helper functions</td></tr>
+              <tr><td>14</td><td><strong>Conflict Resolution Time</strong></td><td><code>0m</code> conflict resolution time across `#2913, #2914, #2912, #2927`</td><td>&lt; 5m sync time</td><td><span class="badge badge-green">PASS</span></td><td>Preserve sequential single-builder execution for high-fan-in entrypoint passes</td></tr>
               <tr><td>15</td><td><strong>Wakes, Tokens &amp; Turns by Role &amp; Model</strong></td><td>REST `gh api` polling and local `git` inspection avoided GraphQL rate limits throughout `v5.67.0`</td><td>0 API lockouts</td><td><span class="badge badge-green">PASS</span></td><td>Continue REST `gh api` + local `git` inspection pattern</td></tr>
               <tr><td>16</td><td><strong>4 End-of-Sprint Maintenance Gates</strong></td><td>All 4 Maintenance Gates (I-Gate PRR, B-Gate True Merge, A/R-Gate + Tag `v5.67.0` + Live `:3102`, O-Gate Canonical v2.0.0 HTML Report + Validator) green</td><td>4 / 4 Gates green</td><td><span class="badge badge-green">PASS</span></td><td>Run `validate-sprint-report.py --all` and `test_validate_sprint_report.py` on every release</td></tr>
             </tbody>
@@ -1607,7 +1617,7 @@
           <div style="display:flex;flex-wrap:wrap;gap:6px;">
             <button class="filter-btn active" data-filter="all" onclick="filterWaves('all', this)">All (4)</button>
             <button class="filter-btn" data-filter="wave-1" onclick="filterWaves('wave-1', this)">Wave 1 (3 Cars)</button>
-            <button class="filter-btn" data-filter="wave-2" onclick="filterWaves('wave-2', this)">Wave 2 Release (#2926)</button>
+            <button class="filter-btn" data-filter="wave-2" onclick="filterWaves('wave-2', this)">Wave 2 Release (#2927)</button>
             <button class="filter-btn" data-filter="guard" onclick="filterWaves('guard', this)">Merge Role Guard (#2866)</button>
             <button class="filter-btn" data-filter="roadmap" onclick="filterWaves('roadmap', this)">Roadmap &amp; Merge-Gate (#2877, #2878)</button>
             <button class="filter-btn" data-filter="history" onclick="filterWaves('history', this)">History &amp; Wrap Stream (#2881)</button>
@@ -1729,12 +1739,12 @@
       </div>
 
       <!-- WAVE CARD 4: W2-REL & Ruling A504-EXT-R1 -->
-      <div class="wave-card" data-tags="all wave-2 ruling" data-search="w2-rel pr 2926 c8d5d078 v5.67.0 changelog.md version.json ruling a504-ext-r1 milestone 54 1564 2347 2258">
+      <div class="wave-card" data-tags="all wave-2 ruling" data-search="w2-rel pr 2927 3162811a v5.67.0 changelog.md version.json ruling a504-ext-r1 milestone 54 1564 2347 2258">
         <div class="wave-header">
           <div>
-            <div class="wave-num">WAVE 2 · RELEASE CUT PR #2926, LIVE :3102 UPDATE &amp; A504-EXT-R1 DISPOSITION (TC-Lane-INT + Arc + Obsr)</div>
-            <h3 class="wave-title"><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2926" target="_blank" rel="noopener">PR #2926</a> — Release <code>v5.67.0</code> Cut (<code>c8d5d078</code>), Tag Publication, Live Deploy &amp; Week's Train Closeout</h3>
-            <div class="wave-window">True Merge Commit <code>c8d5d07878129305b24e431c808838cc1e4d392b</code> (Head <code>e1ebf418</code>) · Release Workflow <code>#42187629444</code></div>
+            <div class="wave-num">WAVE 2 · RELEASE CUT PR #2927, LIVE :3102 UPDATE &amp; A504-EXT-R1 DISPOSITION (TC-Lane-INT + Arc + Obsr)</div>
+            <h3 class="wave-title"><a class="pr-link" href="https://github.com/Jason-Vaughan/TangleClaw/pull/2927" target="_blank" rel="noopener">PR #2927</a> — Release <code>v5.67.0</code> Cut (<code>3162811a</code>), Tag Publication, Live Deploy &amp; Week's Train Closeout</h3>
+            <div class="wave-window">True Merge Commit <code>3162811af43714b6d83ef4a43e6602adaead2785</code> (Head <code>e1ebf418</code>) · Release Workflow <code>#42187629444</code></div>
           </div>
           <div class="wave-meta">
             <span class="badge badge-green">RELEASED v5.67.0</span>
@@ -1751,9 +1761,9 @@
               </tr>
             </thead>
             <tbody>
-              <tr data-row-tags="wave-2" data-row-search="pr 2926 c8d5d078 tag v5.67.0 changelog.md version.json 80403a7c901d4e38">
+              <tr data-row-tags="wave-2" data-row-search="pr 2927 3162811a tag v5.67.0 changelog.md version.json 80403a7c901d4e38">
                 <td><strong>v5.67.0 Release Cut, Tag &amp; Guarded Live :3102 Update (Complete)</strong></td>
-                <td>Drained all 9 <code>changelog.d/*.md</code> fragments into <code>CHANGELOG.md [5.67.0]</code>; updated <code>version.json</code> (<code>5.67.0</code>), <code>README.md</code>, <code>FEATURES.md</code>, <code>docs/releases/v5.67.0.md</code>, <code>docs/releases/index.md</code>, <code>docs/manual-manifest.json</code>, and <code>changelog-released-sections.lock.json</code>; merged via <code>PR #2926 @ c8d5d078</code>, published annotated tag <code>v5.67.0</code>, and completed guarded live update on <code>:3102</code> (SQLite backup <code>SHA-256: 80403a7c901d4e3852ae3306ea26647418e55b3baaa6ae57c5a56766af347ba9</code>)</td>
+                <td>Drained all 9 <code>changelog.d/*.md</code> fragments into <code>CHANGELOG.md [5.67.0]</code>; updated <code>version.json</code> (<code>5.67.0</code>), <code>README.md</code>, <code>FEATURES.md</code>, <code>docs/releases/v5.67.0.md</code>, <code>docs/releases/index.md</code>, <code>docs/manual-manifest.json</code>, and <code>changelog-released-sections.lock.json</code>; merged via <code>PR #2927 @ 3162811a</code>, published annotated tag <code>v5.67.0</code>, and completed guarded live update on <code>:3102</code> (SQLite backup <code>SHA-256: 80403a7c901d4e3852ae3306ea26647418e55b3baaa6ae57c5a56766af347ba9</code>)</td>
               </tr>
               <tr data-row-tags="wave-2 ruling" data-row-search="ruling a504-ext-r1 1564 2347 2258 rule 1 a185 backlog">
                 <td><strong>External / Hardware / Upstream Blocker Disposition (<code>Ruling A504-EXT-R1</code>)</strong></td>
@@ -1834,7 +1844,7 @@
           <strong>TangleClaw Sprint v5.67.0 Executive Engineering &amp; Telemetry Report</strong> · Generated by <code>TC-Lane-Obsr</code> (#1540) &amp; <code>TC-Lane-PM</code> (#1541) (In-Test Sprint Participant · Rule #283)
         </div>
         <div>
-          Charter <code>A504 v1.1</code> · Base <code>1b0b09ef</code> (<code>v5.66.0</code>) → Wave 1 (<code>#2913, #2914, #2912</code>) → Release <code>c8d5d078</code> (<code>PR #2926</code> / Tag <code>v5.67.0</code>) · <a href="../" style="color:var(--accent2);">All Sprint Reports</a>
+          Charter <code>A504 v1.1</code> · Base <code>1b0b09ef</code> (<code>v5.66.0</code>) → Wave 1 (<code>#2913, #2914, #2912</code>) → Release <code>3162811a</code> (<code>PR #2927</code> / Tag <code>v5.67.0</code>) · <a href="../" style="color:var(--accent2);">All Sprint Reports</a>
         </div>
       </div>
     </div>
