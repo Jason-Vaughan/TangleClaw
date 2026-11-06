@@ -117,6 +117,37 @@ describe('store.openclawConnections', () => {
       createConnection();
       assert.throws(() => createConnection(), { code: 'CONFLICT' });
     });
+
+    it('defaults fallbackHosts to [] and round-trips a real list, in priority order (#1531)', () => {
+      const created = createConnection({});
+      assert.deepEqual(created.fallbackHosts, []);
+      const withFallback = createConnection({
+        name: 'WithFallback', fallbackHosts: ['habitat.tail123.ts.net', 'kobold.tail123.ts.net']
+      });
+      assert.deepEqual(withFallback.fallbackHosts, ['habitat.tail123.ts.net', 'kobold.tail123.ts.net']);
+      const fetched = store.openclawConnections.get(withFallback.id);
+      assert.deepEqual(fetched.fallbackHosts, ['habitat.tail123.ts.net', 'kobold.tail123.ts.net']);
+    });
+
+    it('trims, drops blanks, and dedupes fallbackHosts against the primary host', () => {
+      const conn = createConnection({
+        name: 'Deduped', host: '192.168.20.10',
+        fallbackHosts: ['  habitat.tail123.ts.net  ', '', '192.168.20.10', 'habitat.tail123.ts.net']
+      });
+      assert.deepEqual(conn.fallbackHosts, ['habitat.tail123.ts.net']);
+    });
+
+    it('rejects an unsafe fallbackHosts entry, BAD_REQUEST, before the row is ever written', () => {
+      assert.throws(
+        () => createConnection({ name: 'Unsafe', fallbackHosts: ['ok-host', 'a; rm -rf /'] }),
+        { code: 'BAD_REQUEST' }
+      );
+      assert.equal(store.openclawConnections.list().find((c) => c.name === 'Unsafe'), undefined);
+    });
+
+    it('rejects a non-array fallbackHosts', () => {
+      assert.throws(() => createConnection({ fallbackHosts: 'not-an-array' }), { code: 'BAD_REQUEST' });
+    });
   });
 
   describe('get', () => {
@@ -205,6 +236,103 @@ describe('store.openclawConnections', () => {
       assert.throws(
         () => store.openclawConnections.update(b.id, { name: 'A' }),
         { code: 'CONFLICT' }
+      );
+    });
+
+    it('updates fallbackHosts, re-validated and re-deduped against whichever host is primary (#1531)', () => {
+      const conn = createConnection();
+      const updated = store.openclawConnections.update(conn.id, {
+        fallbackHosts: ['habitat.tail123.ts.net', '198.51.100.10'] // 198.51.100.10 is this row's own host
+      });
+      assert.deepEqual(updated.fallbackHosts, ['habitat.tail123.ts.net'], 'deduped against the UNCHANGED existing host');
+    });
+
+    it('re-validates fallbackHosts against a host ALSO being changed in the same call', () => {
+      const conn = createConnection({ host: '10.0.0.5' });
+      const updated = store.openclawConnections.update(conn.id, {
+        host: '10.0.0.9',
+        fallbackHosts: ['10.0.0.9', '10.0.0.5'] // 10.0.0.9 is the NEW host, must dedupe against it, not the old one
+      });
+      assert.deepEqual(updated.fallbackHosts, ['10.0.0.5']);
+    });
+
+    it('clearing fallbackHosts to [] is a real clear, not a no-op', () => {
+      const conn = createConnection({ fallbackHosts: ['habitat.tail123.ts.net'] });
+      assert.deepEqual(conn.fallbackHosts, ['habitat.tail123.ts.net']);
+      const cleared = store.openclawConnections.update(conn.id, { fallbackHosts: [] });
+      assert.deepEqual(cleared.fallbackHosts, []);
+    });
+
+    it('rejects an unsafe fallbackHosts entry on update too', () => {
+      const conn = createConnection();
+      assert.throws(
+        () => store.openclawConnections.update(conn.id, { fallbackHosts: ['a; rm -rf /'] }),
+        { code: 'BAD_REQUEST' }
+      );
+    });
+  });
+
+  describe('migrateHostToMagicDns (#363)', () => {
+    it('refuses without explicit confirmation, CONFIRMATION_REQUIRED', () => {
+      const conn = createConnection();
+      assert.throws(
+        () => store.openclawConnections.migrateHostToMagicDns(conn.id, { magicDnsHost: 'habitat.tail123.ts.net' }),
+        { code: 'CONFIRMATION_REQUIRED' }
+      );
+      // Refused BEFORE anything changed.
+      assert.equal(store.openclawConnections.get(conn.id).host, conn.host);
+    });
+
+    it('rewrites host and keeps the old IP as the top-priority fallback by default', () => {
+      const conn = createConnection({ host: '192.168.20.10' });
+      const migrated = store.openclawConnections.migrateHostToMagicDns(conn.id, {
+        magicDnsHost: 'habitat.tail123.ts.net', confirmed: true
+      });
+      assert.equal(migrated.host, 'habitat.tail123.ts.net');
+      assert.deepEqual(migrated.fallbackHosts, ['192.168.20.10']);
+    });
+
+    it('discards the old host when keepOldHostAsFallback is false', () => {
+      const conn = createConnection({ host: '192.168.20.10' });
+      const migrated = store.openclawConnections.migrateHostToMagicDns(conn.id, {
+        magicDnsHost: 'habitat.tail123.ts.net', keepOldHostAsFallback: false, confirmed: true
+      });
+      assert.equal(migrated.host, 'habitat.tail123.ts.net');
+      assert.deepEqual(migrated.fallbackHosts, []);
+    });
+
+    it('preserves OTHER existing fallback hosts alongside the demoted primary', () => {
+      const conn = createConnection({ host: '192.168.20.10', fallbackHosts: ['kobold.tail123.ts.net'] });
+      const migrated = store.openclawConnections.migrateHostToMagicDns(conn.id, {
+        magicDnsHost: 'habitat.tail123.ts.net', confirmed: true
+      });
+      assert.deepEqual(migrated.fallbackHosts, ['192.168.20.10', 'kobold.tail123.ts.net']);
+    });
+
+    it('refuses a magicDnsHost that is itself an IP literal — this migration exists to move away from one', () => {
+      const conn = createConnection();
+      assert.throws(
+        () => store.openclawConnections.migrateHostToMagicDns(conn.id, { magicDnsHost: '10.0.0.9', confirmed: true }),
+        { code: 'BAD_REQUEST' }
+      );
+    });
+
+    it('refuses a missing or unsafe magicDnsHost', () => {
+      const conn = createConnection();
+      assert.throws(
+        () => store.openclawConnections.migrateHostToMagicDns(conn.id, { confirmed: true }),
+        { code: 'BAD_REQUEST' }
+      );
+      assert.throws(
+        () => store.openclawConnections.migrateHostToMagicDns(conn.id, { magicDnsHost: 'a; rm -rf /', confirmed: true }),
+        { code: 'BAD_REQUEST' }
+      );
+    });
+
+    it('throws NOT_FOUND for a non-existent connection', () => {
+      assert.throws(
+        () => store.openclawConnections.migrateHostToMagicDns('nonexistent', { magicDnsHost: 'habitat.tail123.ts.net', confirmed: true }),
+        { code: 'NOT_FOUND' }
       );
     });
   });
@@ -326,6 +454,77 @@ describe('store.openclawConnections', () => {
         store._setBasePath(tmpDir);
         store.init();
       }
+    });
+
+    it('v79→v80 migration adds fallback_hosts, preserving existing rows verbatim (#1531)', () => {
+      store.close();
+      const tmpDir3 = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-openclaw-mig-v80-'));
+      try {
+        const { DatabaseSync } = require('node:sqlite');
+        const dbPath = path.join(tmpDir3, 'tangleclaw.db');
+        const seed = new DatabaseSync(dbPath);
+        seed.exec(`
+          CREATE TABLE schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+          );
+          INSERT INTO schema_version (version) VALUES (79);
+          CREATE TABLE openclaw_connections (
+            id                TEXT PRIMARY KEY,
+            name              TEXT NOT NULL UNIQUE,
+            host              TEXT NOT NULL,
+            port              INTEGER NOT NULL DEFAULT 18789,
+            ssh_user          TEXT NOT NULL,
+            ssh_key_path      TEXT NOT NULL,
+            gateway_token     TEXT,
+            cli_command       TEXT DEFAULT 'openclaw-cli',
+            local_port        INTEGER NOT NULL DEFAULT 18789,
+            available_as_engine INTEGER NOT NULL DEFAULT 0,
+            default_mode      TEXT NOT NULL DEFAULT 'ssh',
+            audit_secret      TEXT,
+            bridge_port       INTEGER,
+            bridge_token      TEXT,
+            instance_dir      TEXT,
+            created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+          );
+          INSERT INTO openclaw_connections (id, name, host, ssh_user, ssh_key_path, local_port)
+          VALUES ('row-pre80', 'PreV80', '10.0.0.5', 'user', '/key', 18790);
+        `);
+        seed.close();
+
+        store._setBasePath(tmpDir3);
+        store.init();
+
+        const db = store.getDb();
+        const ver = db.prepare('SELECT MAX(version) AS v FROM schema_version').get();
+        assert.equal(ver.v, store.CURRENT_SCHEMA_VERSION);
+        const cols = db.prepare("PRAGMA table_info(openclaw_connections)").all();
+        assert.ok(cols.find((c) => c.name === 'fallback_hosts'), 'post-migration: fallback_hosts column present');
+
+        const preExisting = store.openclawConnections.get('row-pre80');
+        assert.equal(preExisting.host, '10.0.0.5', 'pre-existing row untouched');
+        assert.deepEqual(preExisting.fallbackHosts, [], 'a pre-v80 row reads back as an empty list, never null/undefined');
+
+        const created = store.openclawConnections.create({
+          name: 'PostV80Migration', host: '10.0.0.6', sshUser: 'user', sshKeyPath: '/key',
+          localPort: 18791, fallbackHosts: ['habitat.tail123.ts.net']
+        });
+        assert.deepEqual(created.fallbackHosts, ['habitat.tail123.ts.net'], 'post-migration: fallbackHosts round-trips');
+      } finally {
+        try { store.close(); } catch { /* already closed */ }
+        fs.rmSync(tmpDir3, { recursive: true, force: true });
+        store._setBasePath(tmpDir);
+        store.init();
+      }
+    });
+
+    it('v79→v80 migration is idempotent against a store already at v80', () => {
+      createConnection();
+      store.close();
+      store.init();
+      assert.doesNotThrow(() => store.init());
+      const cols = store.getDb().prepare("PRAGMA table_info(openclaw_connections)").all();
+      assert.equal(cols.filter((c) => c.name === 'fallback_hosts').length, 1, 'exactly one column, not re-added');
     });
 
     it('should have bridge_port column after migration', () => {

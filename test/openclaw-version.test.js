@@ -225,5 +225,143 @@ describe('openclaw-version (#296)', () => {
       assert.equal(ocv._cache.get('c1').version, 'new', 'only the post-invalidate read is cached');
       assert.equal(ocv._inflight.size, 0);
     });
+
+    it('uses the resolved fallback host, not conn.host, when fallbackHosts is set (#1531)', async () => {
+      const remote = require('../lib/openclaw-remote');
+      const origProbe = remote._internal.probePort;
+      remote._internal.probePort = (host) => Promise.resolve(host === 'h2');
+      let seenCmd = null;
+      ocv._internal.execAsync = async (cmd) => { seenCmd = cmd; return { stdout: 'OPENCLAW_IMAGE=openclaw:edge' }; };
+      try {
+        const r = await ocv.fetchVersion(conn({ id: 'c-fb', host: 'h1', fallbackHosts: ['h2'] }));
+        assert.equal(r.version, 'edge');
+        assert.match(seenCmd, /u@h2/, 'the ssh command targets the RESOLVED host, not conn.host');
+      } finally {
+        remote._internal.probePort = origProbe;
+        remote._resolved.delete('c-fb');
+      }
+    });
+
+    it('invalidates the resolved route on an ssh failure, so the next call re-probes (#1531)', async () => {
+      const remote = require('../lib/openclaw-remote');
+      const origProbe = remote._internal.probePort;
+      remote._internal.probePort = (host) => Promise.resolve(host === 'h2');
+      ocv._internal.execAsync = async () => { throw Object.assign(new Error('boom'), { stderr: 'no route' }); };
+      try {
+        await ocv.fetchVersion(conn({ id: 'c-inv', host: 'h1', fallbackHosts: ['h2'] }));
+        assert.equal(remote.getActiveRoute('c-inv'), null, 'the failed route was forgotten, not left cached');
+      } finally {
+        remote._internal.probePort = origProbe;
+        remote._resolved.delete('c-inv');
+      }
+    });
+
+    it('invalidate(connId) also forgets the resolved route (connection edited)', async () => {
+      const remote = require('../lib/openclaw-remote');
+      remote._resolved.set('c-edit', { activeHost: 'h2', fallbackUsed: true, resolvedAt: Date.now() });
+      ocv.invalidate('c-edit');
+      assert.equal(remote.getActiveRoute('c-edit'), null);
+    });
+  });
+
+  describe('compareOpenclawTags (#297)', () => {
+    it('detects an available update for CalVer tags', () => {
+      assert.deepEqual(
+        ocv.compareOpenclawTags('2026.5.27', '2026.5.28'),
+        { comparable: true, updateAvailable: true, currentTag: '2026.5.27', latestTag: '2026.5.28' }
+      );
+    });
+    it('detects no update when current is already latest', () => {
+      const r = ocv.compareOpenclawTags('2026.5.28', '2026.5.28');
+      assert.equal(r.comparable, true);
+      assert.equal(r.updateAvailable, false);
+    });
+    it('detects an available update for semver tags, with or without a leading v', () => {
+      assert.equal(ocv.compareOpenclawTags('v5.70.0', 'v5.71.0').updateAvailable, true);
+      assert.equal(ocv.compareOpenclawTags('5.70.0', '5.71.0').updateAvailable, true);
+    });
+    it('never reports an update when latest is actually OLDER (a rollback tag)', () => {
+      const r = ocv.compareOpenclawTags('2026.5.28', '2026.5.27');
+      assert.equal(r.comparable, true);
+      assert.equal(r.updateAvailable, false);
+    });
+    it('is honest about non-version tags: comparable false, never a guessed updateAvailable', () => {
+      for (const [cur, lat] of [['latest', '2026.5.28'], ['2026.5.28', 'latest'], ['qmd', 'edge']]) {
+        const r = ocv.compareOpenclawTags(cur, lat);
+        assert.equal(r.comparable, false);
+        assert.equal(r.updateAvailable, false);
+      }
+    });
+  });
+
+  describe('checkUpdateAvailable (#297)', () => {
+    const conn = (over = {}) => ({ id: 'cu1', host: 'h', sshUser: 'u', sshKeyPath: '~/.ssh/k', instanceDir: '~/openclaw', ...over });
+    beforeEach(() => { ocv._cache.clear(); ocv._inflight.clear(); });
+    afterEach(() => { ocv._internal.execAsync = execAsync; ocv._cache.clear(); ocv._inflight.clear(); });
+
+    it('combines the current (SSH-read) version with an explicit latestTag', async () => {
+      ocv._internal.execAsync = async () => ({ stdout: 'OPENCLAW_IMAGE=openclaw:2026.5.27' });
+      const r = await ocv.checkUpdateAvailable(conn(), { latestTag: '2026.5.28' });
+      assert.equal(r.currentVersion, '2026.5.27');
+      assert.equal(r.latestVersion, '2026.5.28');
+      assert.equal(r.updateAvailable, true);
+      assert.equal(r.comparable, true);
+      assert.equal(r.canRewriteEnv, true, 'instanceDir is shape-safe');
+    });
+
+    it('fetches the latest tag via fetchLatestTagImpl when latestTag is not given', async () => {
+      ocv._internal.execAsync = async () => ({ stdout: 'OPENCLAW_IMAGE=openclaw:2026.5.27' });
+      const r = await ocv.checkUpdateAvailable(conn(), { fetchLatestTagImpl: async () => '2026.5.28' });
+      assert.equal(r.latestVersion, '2026.5.28');
+      assert.equal(r.updateAvailable, true);
+    });
+
+    it('surfaces a fetchLatestTagImpl failure without throwing', async () => {
+      ocv._internal.execAsync = async () => ({ stdout: 'OPENCLAW_IMAGE=openclaw:2026.5.27' });
+      const r = await ocv.checkUpdateAvailable(conn(), { fetchLatestTagImpl: async () => { throw new Error('registry unreachable'); } });
+      assert.equal(r.comparable, false);
+      assert.equal(r.updateAvailable, false);
+      assert.match(r.error, /registry unreachable/);
+    });
+
+    it('is not comparable when the current version could not be read at all', async () => {
+      ocv._internal.execAsync = async () => { throw Object.assign(new Error('boom'), { stderr: 'unreachable' }); };
+      const r = await ocv.checkUpdateAvailable(conn(), { latestTag: '2026.5.28' });
+      assert.equal(r.currentVersion, null);
+      assert.equal(r.comparable, false);
+      assert.equal(r.updateAvailable, false);
+    });
+
+    it('canRewriteEnv is false when the connection has no instanceDir', async () => {
+      ocv._internal.execAsync = async () => ({ stdout: 'OPENCLAW_IMAGE=openclaw:2026.5.27' });
+      const r = await ocv.checkUpdateAvailable(conn({ id: 'cu2', instanceDir: null }), { latestTag: '2026.5.28' });
+      assert.equal(r.canRewriteEnv, false);
+    });
+  });
+
+  describe('buildEnvTagUpdateScript (#297)', () => {
+    it('builds a script preserving the registry/image path, rewriting only the tag', () => {
+      const r = ocv.buildEnvTagUpdateScript('~/openclaw', '2026.5.28');
+      assert.equal(r.ok, true);
+      assert.match(r.script, /OPENCLAW_IMAGE=.*\):\(/);
+      assert.match(r.script, /2026\.5\.28/);
+      assert.match(r.script, /~\/openclaw\/\.env/);
+    });
+    it('refuses an unsafe instanceDir without building a command', () => {
+      const r = ocv.buildEnvTagUpdateScript('~/oc; rm -rf /', '2026.5.28');
+      assert.equal(r.ok, false);
+      assert.equal(r.script, null);
+      assert.match(r.error, /instanceDir/);
+    });
+    it('refuses an unsafe newTag without building a command', () => {
+      const r = ocv.buildEnvTagUpdateScript('~/openclaw', 'bad$(whoami)');
+      assert.equal(r.ok, false);
+      assert.equal(r.script, null);
+      assert.match(r.error, /newTag/);
+    });
+    it('isSafeTag accepts docker-shaped tags and rejects shell metacharacters', () => {
+      for (const ok of ['2026.5.28', 'v5.71.0', 'qmd', 'edge-rc1']) assert.equal(ocv.isSafeTag(ok), true, ok);
+      for (const bad of ['', 'a;b', 'a b', '$(x)', '`x`']) assert.equal(ocv.isSafeTag(bad), false, bad);
+    });
   });
 });
