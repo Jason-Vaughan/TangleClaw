@@ -733,6 +733,128 @@ describe('renderMessages — the nickname-compose row is gated on sendBlocked (#
   });
 });
 
+describe('render — the badge stays reachable at zero unread so the @nickname composer can be opened (#1576 I-Gate Round 2 C1)', () => {
+  it('shows an "@" opener at zero unread when listening and not access-blocked', () => {
+    const ids = G.tcMedusaIds('');
+    const w = world(ids);
+    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
+    c.applyStatus({ state: 'listening', unread: 0 });
+    assert.equal(w.el.medusaBadge.hidden, false, 'zero unread must not make the composer unreachable');
+    assert.equal(w.el.medusaBadge.textContent, '@');
+    assert.match(w.el.medusaBadge.getAttribute('aria-label'), /tagged message/);
+  });
+
+  it('a real unread count still wins over the opener label', () => {
+    const ids = G.tcMedusaIds('');
+    const w = world(ids);
+    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
+    c.applyStatus({ state: 'listening', unread: 3 });
+    assert.equal(w.el.medusaBadge.hidden, false);
+    assert.equal(w.el.medusaBadge.textContent, '3');
+  });
+
+  it('stays hidden at zero unread while the listener is off — nothing to truthfully open yet', () => {
+    const ids = G.tcMedusaIds('');
+    const w = world(ids);
+    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
+    c.applyStatus({ state: 'off', unread: 0 });
+    assert.equal(w.el.medusaBadge.hidden, true);
+  });
+
+  it('stays hidden at zero unread for a read-only Master — the compose row it would open is hidden too', () => {
+    const ids = G.tcMedusaIds('masterDrawer');
+    const w = world(ids);
+    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/master/medusa', ids });
+    c.applyStatus({ state: 'listening', unread: 0, outbound: { allowed: false, reason: 'read-only' } });
+    assert.equal(w.el.masterDrawerMedusaBadge.hidden, true);
+  });
+});
+
+describe('tcParseMedusaNicknameTags / sendTaggedMessage — ambiguous nickname refused, not guessed (#1576 I-Gate Round 2 C2)', () => {
+  const AMBIGUOUS_ROSTER = [
+    { id: 'tc-lane-arc-11111111', name: 'TC-Lane-Arc (old, offline)', connected: false },
+    { id: 'tc-lane-arc-22222222', name: 'TC-Lane-Arc', connected: true }
+  ];
+
+  it('tcParseMedusaNicknameTags reports an alias matching two roster entries as ambiguous, not the first', () => {
+    const r = G.tcParseMedusaNicknameTags('@arc hi', AMBIGUOUS_ROSTER);
+    assert.equal(r.recipients.length, 0, 'never silently picks one');
+    assert.equal(r.ambiguous.length, 1);
+    assert.equal(r.ambiguous[0].tag, 'arc');
+    assert.deepEqual(JSON.parse(JSON.stringify(r.ambiguous[0].candidates)).sort(),
+      ['tc-lane-arc-11111111', 'tc-lane-arc-22222222']);
+  });
+
+  it('an exact, full workspaceId is authoritative even when its alias also matches another entry', () => {
+    const r = G.tcParseMedusaNicknameTags('@tc-lane-arc-22222222 hi', AMBIGUOUS_ROSTER);
+    assert.equal(r.ambiguous.length, 0);
+    assert.equal(r.recipients.length, 1);
+    assert.equal(r.recipients[0].workspaceId, 'tc-lane-arc-22222222');
+  });
+
+  it('sendTaggedMessage refuses MEDUSA_NICKNAME_AMBIGUOUS before sending anything', async () => {
+    const ids = G.tcMedusaIds('');
+    const { doc } = makeDocument(Object.values(ids).filter(Boolean));
+    const mutateCalls = [];
+    const c = G.tcCreateMedusaControl({
+      doc, api: async (url) => (url.endsWith('/roster') ? { workspaces: AMBIGUOUS_ROSTER } : null),
+      apiMutate: async (url, method, body) => { mutateCalls.push({ url, method, body }); return { status: 'received' }; },
+      apiBase: '/api/sessions/p/medusa', ids, state: { state: 'listening' }
+    });
+    const r = await c.sendTaggedMessage('@arc hi');
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'MEDUSA_NICKNAME_AMBIGUOUS');
+    assert.equal(r.ambiguous[0].tag, 'arc');
+    assert.equal(mutateCalls.length, 0);
+  });
+});
+
+describe('sendTaggedMessage — a partial multi-recipient failure retries only the unresolved recipients (#1576 I-Gate Round 2 C2)', () => {
+  it('retrying the SAME text after @arc succeeded / @pm failed resends only to @pm', async () => {
+    const roster = [{ id: 'tc-lane-arc-4041e89e', name: 'Arc' }, { id: 'tc-lane-pm-9d85f3aa', name: 'PM' }];
+    const ids = G.tcMedusaIds('');
+    const { doc } = makeDocument(Object.values(ids).filter(Boolean));
+    let pmShouldFail = true;
+    const mutateCalls = [];
+    const c = G.tcCreateMedusaControl({
+      doc, api: async (url) => (url.endsWith('/roster') ? { workspaces: roster } : null),
+      apiMutate: async (url, method, body) => {
+        mutateCalls.push({ url, method, body });
+        if (body.to === 'tc-lane-pm-9d85f3aa' && pmShouldFail) return null;
+        return { status: 'received' };
+      },
+      apiBase: '/api/sessions/p/medusa', ids, state: { state: 'listening' }
+    });
+
+    const first = await c.sendTaggedMessage('@arc @pm both please');
+    assert.equal(first.ok, false, 'PM failed, so the attempt as a whole is not ok');
+    assert.equal(mutateCalls.length, 2, 'both were attempted the first time');
+
+    pmShouldFail = false;
+    mutateCalls.length = 0;
+    const retry = await c.sendTaggedMessage('@arc @pm both please');
+    assert.equal(retry.ok, true);
+    assert.equal(mutateCalls.length, 1, 'only PM is re-sent — Arc, already delivered, is never posted to twice');
+    assert.equal(mutateCalls[0].body.to, 'tc-lane-pm-9d85f3aa');
+  });
+
+  it('editing the text before retrying starts a fresh attempt — the old delivery tracking does not leak in', async () => {
+    const roster = [{ id: 'tc-lane-arc-4041e89e', name: 'Arc' }];
+    const ids = G.tcMedusaIds('');
+    const { doc } = makeDocument(Object.values(ids).filter(Boolean));
+    const mutateCalls = [];
+    const c = G.tcCreateMedusaControl({
+      doc, api: async (url) => (url.endsWith('/roster') ? { workspaces: roster } : null),
+      apiMutate: async (url, method, body) => { mutateCalls.push({ url, method, body }); return { status: 'received' }; },
+      apiBase: '/api/sessions/p/medusa', ids, state: { state: 'listening' }
+    });
+    await c.sendTaggedMessage('@arc first message');
+    assert.equal(mutateCalls.length, 1);
+    await c.sendTaggedMessage('@arc a different message');
+    assert.equal(mutateCalls.length, 2, 'a genuinely new message to the SAME recipient must still send');
+  });
+});
+
 describe('the Master control bar mounts the shared control (#996)', () => {
   it('emits the control with prefixed ids, no pending treatment, and no reason element', () => {
     const html = G.tcMasterControlBarMarkup('masterDrawer');

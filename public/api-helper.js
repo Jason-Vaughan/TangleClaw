@@ -3574,23 +3574,37 @@
   const MEDUSA_WORKSPACE_ALIAS_RE = /^tc-lane-(.+)-[0-9a-f]{8}$/i;
 
   /**
-   * Resolve one `@token` against a roster entry's `workspaceId`, `name`, or
-   * short alias (case-insensitive).
+   * Resolve one `@token` against the roster: by `workspaceId`, `name`, or
+   * short alias (case-insensitive). An exact, full `workspaceId` match is
+   * authoritative and always unique (ids are unique by construction) even
+   * when some OTHER roster entry also happens to share this token as a name
+   * or alias — only name/alias matches can collide (#1576 I-Gate Round 2
+   * C2: an offline stale workspace and its live replacement can easily
+   * share both).
    * @param {string} token - The tag text, without its `@`.
    * @param {object[]} roster - `/roster`'s `workspaces` array.
-   * @returns {{workspaceId: string, name: string}|null}
+   * @returns {{workspaceId: string, name: string}[]} Every matching entry —
+   *   empty (unresolved), one (resolved), or more than one (ambiguous).
    */
   function _resolveMedusaNicknameTag(token, roster) {
     const lower = token.toLowerCase();
     for (const w of roster) {
-      if (!w || !w.id) continue;
-      const id = String(w.id);
-      if (id.toLowerCase() === lower) return { workspaceId: w.id, name: w.name || w.id };
-      if (w.name && String(w.name).toLowerCase() === lower) return { workspaceId: w.id, name: w.name };
-      const alias = MEDUSA_WORKSPACE_ALIAS_RE.exec(id);
-      if (alias && alias[1].toLowerCase() === lower) return { workspaceId: w.id, name: w.name || w.id };
+      if (w && w.id && String(w.id).toLowerCase() === lower) {
+        return [{ workspaceId: w.id, name: w.name || w.id }];
+      }
     }
-    return null;
+    const matches = [];
+    const seen = new Set();
+    for (const w of roster) {
+      if (!w || !w.id || seen.has(w.id)) continue;
+      let hit = w.name && String(w.name).toLowerCase() === lower;
+      if (!hit) {
+        const alias = MEDUSA_WORKSPACE_ALIAS_RE.exec(String(w.id));
+        hit = !!(alias && alias[1].toLowerCase() === lower);
+      }
+      if (hit) { seen.add(w.id); matches.push({ workspaceId: w.id, name: w.name || w.id }); }
+    }
+    return matches;
   }
 
   /**
@@ -3601,12 +3615,15 @@
    * result implies.
    *
    * A duplicate tag, or two distinct tags resolving to the same workspace, is
-   * folded into one recipient — never sent to twice.
+   * folded into one recipient — never sent to twice. A tag matching more than
+   * one roster entry by name/alias (#1576 I-Gate Round 2 C2) is never
+   * guessed at — it is reported in `ambiguous` instead of `recipients`.
    *
    * @param {string} input - The operator's typed text.
    * @param {object[]} roster - `/roster`'s `workspaces` array.
    * @returns {{recipients: {tag: string, workspaceId: string, name: string}[],
-   *   unresolved: string[], body: string}}
+   *   unresolved: string[], ambiguous: {tag: string, candidates: string[]}[],
+   *   body: string}}
    */
   function tcParseMedusaNicknameTags(input, roster) {
     const text = typeof input === 'string' ? input : '';
@@ -3615,6 +3632,7 @@
     const seenWorkspaces = new Set();
     const recipients = [];
     const unresolved = [];
+    const ambiguous = [];
     let match;
     MEDUSA_NICKNAME_TAG_RE.lastIndex = 0;
     while ((match = MEDUSA_NICKNAME_TAG_RE.exec(text)) !== null) {
@@ -3622,13 +3640,15 @@
       const key = token.toLowerCase();
       if (seenTags.has(key)) continue;
       seenTags.add(key);
-      const found = _resolveMedusaNicknameTag(token, list);
-      if (!found) { unresolved.push(token); continue; }
+      const matches = _resolveMedusaNicknameTag(token, list);
+      if (matches.length === 0) { unresolved.push(token); continue; }
+      if (matches.length > 1) { ambiguous.push({ tag: token, candidates: matches.map((m) => m.workspaceId) }); continue; }
+      const found = matches[0];
       if (seenWorkspaces.has(found.workspaceId)) continue;
       seenWorkspaces.add(found.workspaceId);
       recipients.push({ tag: token, workspaceId: found.workspaceId, name: found.name });
     }
-    return { recipients, unresolved, body: text.trim() };
+    return { recipients, unresolved, ambiguous, body: text.trim() };
   }
 
   /**
@@ -3696,6 +3716,14 @@
     if (m.loopsError === undefined) m.loopsError = null;
     if (m.outbound === undefined) m.outbound = { allowed: true, reason: null };
     let bound = false;
+    // #1576 I-Gate Round 2 C2b: which recipients the CURRENT compose attempt
+    // has already delivered to, keyed by the exact text that attempt sent —
+    // so retrying after a partial multi-recipient failure (keeping the text,
+    // clicking Send again) re-sends only to the ones that failed, never
+    // duplicating a delivery that already succeeded. Reset whenever the text
+    // changes (a new attempt) or once every recipient has succeeded.
+    let _taggedAttemptText = null;
+    let _taggedAttemptDelivered = new Set();
 
     const el = (key) => (ids[key] ? doc.getElementById(ids[key]) : null);
 
@@ -3883,6 +3911,17 @@
           badge.textContent = String(m.unread);
           badge.hidden = false;
           badge.setAttribute('aria-label', `Open Medusa inbox (${m.unread} unread)`);
+        } else if (!_nicknameSendRefusalReason(m)) {
+          // #1576 I-Gate Round 2 C1: the badge is the ONLY control bound to
+          // `openInbox`, and the @nickname composer lives inside that panel
+          // — hiding the badge at zero unread made the composer unreachable
+          // for a participant with no mail waiting. Stays visible, relabeled,
+          // whenever this participant could truthfully use it; still hidden
+          // when it could not (off listener, blocked access level — the same
+          // gate the compose row itself is hidden under).
+          badge.textContent = '@';
+          badge.hidden = false;
+          badge.setAttribute('aria-label', 'Open Medusa inbox to send a tagged message');
         } else {
           badge.hidden = true;
         }
@@ -4144,12 +4183,19 @@
      * Team Chat routing `tcParseMedusaNicknameTags` parses: fetches the live
      * roster, resolves every tag, and dispatches one `POST <apiBase>/send`
      * per resolved recipient (deduplicated — never twice to the same
-     * workspace). Refuses honestly rather than guessing: an unresolved tag,
-     * no tag at all, or this participant's own access level all stop before
-     * any send is attempted.
+     * workspace in one call). Refuses honestly rather than guessing: an
+     * unresolved or ambiguous tag, no tag at all, or this participant's own
+     * access level all stop before any send is attempted.
+     *
+     * Retrying the SAME text after a partial multi-recipient failure
+     * (#1576 I-Gate Round 2 C2) sends only to the recipients that have not
+     * already succeeded for this exact attempt — `_taggedAttemptDelivered`
+     * tracks them, keyed by `_taggedAttemptText`, and resets the moment the
+     * text changes (a new attempt) or every recipient has succeeded.
      *
      * @param {string} text - The operator's typed text, `@tag`s and all.
      * @returns {Promise<{ok: boolean, code?: string, unresolved?: string[],
+     *   ambiguous?: {tag: string, candidates: string[]}[],
      *   reason?: (string|null), results?: {recipient: object, ok: boolean,
      *   status?: string, error?: (string|null)}[]}>}
      */
@@ -4163,27 +4209,45 @@
         return { ok: false, code: 'MEDUSA_ROSTER_FAILED' };
       }
       const parsed = tcParseMedusaNicknameTags(text, (data && data.workspaces) || []);
+      if (parsed.ambiguous.length > 0) {
+        return { ok: false, code: 'MEDUSA_NICKNAME_AMBIGUOUS', ambiguous: parsed.ambiguous };
+      }
       if (parsed.unresolved.length > 0) {
         return { ok: false, code: 'MEDUSA_NICKNAME_UNRESOLVED', unresolved: parsed.unresolved };
       }
       if (parsed.recipients.length === 0) {
         return { ok: false, code: 'MEDUSA_NICKNAME_REQUIRED' };
       }
+
+      if (parsed.body !== _taggedAttemptText) {
+        _taggedAttemptText = parsed.body;
+        _taggedAttemptDelivered = new Set();
+      }
       const apiMutate = deps.apiMutate;
       const results = [];
       for (const recipient of parsed.recipients) {
+        if (_taggedAttemptDelivered.has(recipient.workspaceId)) {
+          results.push({ recipient, ok: true, status: 'already-delivered' });
+          continue;
+        }
         // eslint-disable-next-line no-await-in-loop -- each send's outcome
         // drives the NEXT one's outbound-head flow label; nothing here is
         // parallelizable without losing that per-recipient feedback.
         const result = await apiMutate(`${deps.apiBase}/send`, 'POST', { to: recipient.workspaceId, message: parsed.body });
         if (result && result.status) {
           flowOutbound(recipient.name || recipient.workspaceId, result.status);
+          _taggedAttemptDelivered.add(recipient.workspaceId);
           results.push({ recipient, ok: true, status: result.status });
         } else {
           results.push({ recipient, ok: false, error: (deps.api && deps.api.lastError) || null });
         }
       }
-      return { ok: results.every((r) => r.ok), results };
+      const allOk = results.every((r) => r.ok);
+      // The attempt is over once nothing is left to retry — clear the
+      // tracking so the NEXT distinct message starts with a clean slate
+      // rather than accumulating forever.
+      if (allOk) { _taggedAttemptText = null; _taggedAttemptDelivered = new Set(); }
+      return { ok: allOk, results };
     }
 
     /**
@@ -4195,6 +4259,9 @@
      */
     function _nicknameRefusalText(result) {
       if (result.code === 'MEDUSA_NICKNAME_REQUIRED') return 'Tag at least one @nickname to send to.';
+      if (result.code === 'MEDUSA_NICKNAME_AMBIGUOUS') {
+        return `More than one match for: ${result.ambiguous.map((a) => `@${a.tag}`).join(', ')} — use the full workspace id.`;
+      }
       if (result.code === 'MEDUSA_NICKNAME_UNRESOLVED') {
         return `Couldn't match: ${result.unresolved.map((t) => `@${t}`).join(', ')}`;
       }
