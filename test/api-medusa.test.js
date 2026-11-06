@@ -2126,6 +2126,82 @@ describe('lib/medusa — broadcastAll (#1224, explicit system-wide broadcast)', 
       assert.equal(after.coalesced, false);
       assert.deepEqual(after.sentTo, ['ws-a']);
     });
+
+    it('a late-failing broadcast does not erase a NEWER reservation that replaced it after the cooldown '
+      + 'window elapsed (I-Gate Round 3 C2)', async () => {
+      const t0 = 1_000_000;
+      let failFirstRoster;
+      const heldFirst = new Promise((_resolve, reject) => { failFirstRoster = reject; });
+      const fetchImpl1 = (url) => (url.endsWith('/workspaces') ? heldFirst : Promise.resolve({
+        ok: true, status: 200, json: async () => ({ success: true, status: 'received' })
+      }));
+      const first = medusa.broadcastAll({
+        callerKind: 'operator', senderId: 'sender-identity-fail', message: 'first message', nowMs: t0, fetchImpl: fetchImpl1
+      });
+
+      // The first reservation is now 30s stale, so this is a brand-new,
+      // immediately-successful attempt — it creates a SECOND reservation
+      // for the same sender while the first call is still stuck on its
+      // held roster fetch.
+      const second = await medusa.broadcastAll({
+        callerKind: 'operator', senderId: 'sender-identity-fail', message: 'second message',
+        nowMs: t0 + medusa.BROADCAST_COOLDOWN_MS, fetchImpl: stubFetch({ workspaces: [{ id: 'ws-a' }] })
+      });
+      assert.equal(second.coalesced, false);
+
+      // Only now does the first call's long-held roster fetch fail.
+      failFirstRoster(new Error('late failure'));
+      await assert.rejects(first, (err) => { assert.equal(err.code, 'BROADCAST_ROSTER_FAILED'); return true; });
+
+      // A third, DIFFERENT message right after `second` must still be
+      // rate-limited against `second`'s reservation — if the first call's
+      // late failure deleted it, this would wrongly proceed instead
+      // (the exact race I-Gate Round 3 reproduced).
+      await assert.rejects(
+        medusa.broadcastAll({
+          callerKind: 'operator', senderId: 'sender-identity-fail', message: 'third, different',
+          nowMs: t0 + medusa.BROADCAST_COOLDOWN_MS + 1, fetchImpl: stubFetch({ workspaces: [{ id: 'ws-a' }] })
+        }),
+        (err) => { assert.equal(err.code, 'BROADCAST_RATE_LIMITED'); return true; }
+      );
+    });
+
+    it('a late-succeeding broadcast does not overwrite a NEWER reservation\'s record with its own, older '
+      + 'result (I-Gate Round 3 C2)', async () => {
+      const t0 = 1_000_000;
+      let releaseFirstRoster;
+      const heldFirst = new Promise((resolve) => { releaseFirstRoster = resolve; });
+      const fetchImpl1 = async (url) => {
+        if (url.endsWith('/workspaces')) {
+          await heldFirst;
+          return { ok: true, status: 200, json: async () => ({ workspaces: [{ id: 'ws-old' }] }) };
+        }
+        return { ok: true, status: 200, json: async () => ({ success: true, status: 'received' }) };
+      };
+      const first = medusa.broadcastAll({
+        callerKind: 'operator', senderId: 'sender-identity-success', message: 'first message', nowMs: t0, fetchImpl: fetchImpl1
+      });
+
+      const second = await medusa.broadcastAll({
+        callerKind: 'operator', senderId: 'sender-identity-success', message: 'second message',
+        nowMs: t0 + medusa.BROADCAST_COOLDOWN_MS, fetchImpl: stubFetch({ workspaces: [{ id: 'ws-a' }] })
+      });
+      assert.equal(second.coalesced, false);
+
+      releaseFirstRoster();
+      const firstResult = await first;
+      assert.deepEqual(firstResult.sentTo, ['ws-old'], 'the first call still gets ITS OWN honest result');
+
+      // An identical retry of `second`'s own message, right after, must
+      // coalesce against `second`'s reservation — not get rate-limited, and
+      // not silently pick up the first call's older, now-irrelevant result.
+      const third = await medusa.broadcastAll({
+        callerKind: 'operator', senderId: 'sender-identity-success', message: 'second message',
+        nowMs: t0 + medusa.BROADCAST_COOLDOWN_MS + 1, fetchImpl: stubFetch({ workspaces: [{ id: 'ws-a' }] })
+      });
+      assert.equal(third.coalesced, true);
+      assert.deepEqual(third.sentTo, ['ws-a'], 'coalesced against the newer reservation, not overwritten by the late first');
+    });
   });
 });
 
