@@ -188,6 +188,20 @@ describe('openclaw-remote invalidateResolvedHost / getActiveRoute (#1531)', () =
     assert.equal(remote.getActiveRoute(undefined), null);
   });
 
+  it('getActiveRoute honors RESOLUTION_TTL_MS itself — a past-TTL entry reads as null and is '
+    + 'deleted, not handed back stale (I-Gate Round 4 C1)', () => {
+    remote._resolved.set('c12', { activeHost: 'h2', fallbackUsed: true, resolvedAt: Date.now() - 120_000 });
+    assert.equal(remote.getActiveRoute('c12'), null);
+    // Deleted, not merely masked: a direct read of the underlying map confirms it.
+    assert.equal(remote._resolved.has('c12'), false);
+  });
+
+  it('getActiveRoute still returns a route within its TTL', () => {
+    remote._resolved.set('c13', { activeHost: 'h2', fallbackUsed: true, resolvedAt: Date.now() - 1000 });
+    const route = remote.getActiveRoute('c13');
+    assert.equal(route.activeHost, 'h2');
+  });
+
   it('invalidateResolvedHost clears the cache, forcing the next call to re-probe', async () => {
     let calls = 0;
     await remote.resolveReachableHost(
@@ -374,16 +388,89 @@ describe('resolveReachableHost integration — _buildLaunchCommand\'s synchronou
     assert.match(cmd, /u@192\.0\.2\.1/);
   });
 
-  it('uses the resolver\'s cached activeHost once one is recorded for this connection', () => {
+  it('never chains at all when the connection has NO fallbackHosts — a single plain command, '
+    + 'unchanged from before this feature existed', () => {
+    // No manual cache entry here on purpose: a no-fallbackHosts connection
+    // can never actually have one in practice — resolveReachableHost's own
+    // fast path never writes to the cache when fallbackHosts is empty, and
+    // store.openclawConnections.update() invalidates any pre-existing entry
+    // on every edit (including one that removes fallbackHosts).
     const conn = store.openclawConnections.create({
-      name: 'CmdWithRoute', host: '192.0.2.1', sshUser: 'u', sshKeyPath: '~/.ssh/k', instanceDir: '~/openclaw',
+      name: 'CmdWithRouteNoFallback', host: '192.0.2.1', sshUser: 'u', sshKeyPath: '~/.ssh/k', instanceDir: '~/openclaw'
+    });
+    const project = { engineId: `openclaw:${conn.id}` };
+    const cmd = sessions._buildLaunchCommand({}, project);
+    assert.match(cmd, /^ssh -t -i "[^"]+" u@192\.0\.2\.1 "openclaw-cli"$/);
+    assert.doesNotMatch(cmd, /\|\|/, 'no fallbackHosts at all means no chain, ever');
+  });
+
+  it('a FRESH cached route with fallbackHosts STILL chains — activeHost first, the rest behind it '
+    + '(I-Gate Round 4 C1: a cached host can die inside its own TTL, so caching must never reduce '
+    + 'the candidates offered, only their order)', () => {
+    const conn = store.openclawConnections.create({
+      name: 'CmdFreshRouteWithFallback', host: '192.0.2.1', sshUser: 'u', sshKeyPath: '~/.ssh/k', instanceDir: '~/openclaw',
       fallbackHosts: ['203.0.113.9']
     });
     remote._resolved.set(conn.id, { activeHost: '203.0.113.9', fallbackUsed: true, resolvedAt: Date.now() });
     const project = { engineId: `openclaw:${conn.id}` };
     const cmd = sessions._buildLaunchCommand({}, project);
-    assert.match(cmd, /u@203\.0\.113\.9/);
-    assert.doesNotMatch(cmd, /192\.0\.2\.1/);
+    const parts = cmd.split(' || ');
+    assert.equal(parts.length, 2);
+    assert.match(parts[0], /u@203\.0\.113\.9/, 'the cached route still goes FIRST');
+    assert.match(parts[1], /u@192\.0\.2\.1/, 'but conn.host is still offered as a fallback, not dropped');
+  });
+
+  it('an EXPIRED cached route (past RESOLUTION_TTL_MS) is treated as no route at all — getActiveRoute '
+    + 'returns null, and the launch command chains primary + fallback in their original order', () => {
+    const conn = store.openclawConnections.create({
+      name: 'CmdExpiredRoute', host: '192.0.2.1', sshUser: 'u', sshKeyPath: '~/.ssh/k', instanceDir: '~/openclaw',
+      fallbackHosts: ['203.0.113.9']
+    });
+    remote._resolved.set(conn.id, { activeHost: '203.0.113.9', fallbackUsed: true, resolvedAt: Date.now() - 120_000 });
+    assert.equal(remote.getActiveRoute(conn.id), null, 'the TTL check itself must report this route as gone');
+
+    const project = { engineId: `openclaw:${conn.id}` };
+    const cmd = sessions._buildLaunchCommand({}, project);
+    const parts = cmd.split(' || ');
+    assert.equal(parts.length, 2);
+    assert.match(parts[0], /u@192\.0\.2\.1/, 'no fresh route cached, so the primary leads, same as a cold cache');
+    assert.match(parts[1], /u@203\.0\.113\.9/);
+  });
+
+  it('a fresh cached route that has since gone dead is actually bypassed by the chain, for real — '
+    + 'executed through a real shell with a stub ssh binary, not just asserted on the command string', () => {
+    const execSync = require('node:child_process').execSync;
+    const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-stub-ssh-'));
+    const stubPath = path.join(stubDir, 'ssh');
+    fs.writeFileSync(stubPath, [
+      '#!/bin/sh',
+      'for a in "$@"; do',
+      '  case "$a" in',
+      // The CACHED host now fails (it died inside its own TTL window);
+      // the ORIGINAL primary, offered as the chain's second candidate,
+      // answers instead.
+      '    *@203.0.113.9) exit 255 ;;',
+      '    *@192.0.2.1) exit 0 ;;',
+      '  esac',
+      'done',
+      'exit 1',
+      ''
+    ].join('\n'), { mode: 0o755 });
+
+    try {
+      const conn = store.openclawConnections.create({
+        name: 'CmdFreshRouteDead', host: '192.0.2.1', sshUser: 'u', sshKeyPath: '~/.ssh/k', instanceDir: '~/openclaw',
+        fallbackHosts: ['203.0.113.9']
+      });
+      remote._resolved.set(conn.id, { activeHost: '203.0.113.9', fallbackUsed: true, resolvedAt: Date.now() });
+      const project = { engineId: `openclaw:${conn.id}` };
+      const cmd = sessions._buildLaunchCommand({}, project);
+      assert.doesNotThrow(() => {
+        execSync(cmd, { env: { ...process.env, PATH: `${stubDir}:${process.env.PATH}` }, stdio: 'pipe' });
+      }, 'the chain must succeed by falling through to the original primary once the cached host fails');
+    } finally {
+      fs.rmSync(stubDir, { recursive: true, force: true });
+    }
   });
 
   it('a COLD cache with fallbackHosts emits an ordered ||-chain trying every candidate, '
