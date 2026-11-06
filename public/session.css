@@ -569,7 +569,7 @@ html[data-tc-keyboard] body {
 /* .group-popover*, .medusa-heads, .medusa-msg*, .medusa-panel-head/-close moved to
    shared-controls.css (#996): the Master control bar renders the same inbox
    panel on the dashboard, which does not load this sheet. Every
-   .medusa-loop-*/.medusa-force-done/.medusa-size-count rule that used to live
+   .medusa-loop-*, .medusa-force-done, and .medusa-size-count rule that used to live
    here moved there too (#1083 I-Gate Round 1 C2): the Master bar renders the
    same loop markup on the dashboard, which never loaded this sheet, so those
    controls rendered unstyled there. */
