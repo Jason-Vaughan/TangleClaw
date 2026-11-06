@@ -12,6 +12,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const rl = require('../lib/resource-leases');
+const resourceLeaseRoutes = require('../lib/resource-lease-routes');
 
 const NOW = '2026-10-27T08:00:00.000Z';
 const MINUTE = 60 * 1000;
@@ -464,5 +465,71 @@ describe('resource-leases: acquireLeaseWithPrimer (#2888)', () => {
       assert.equal(r.ok, true);
       assert.equal(r.lease.operatingPrimerRole, 'reviewer');
     });
+  });
+});
+
+// v5.67.0 FEED-FORWARD 01: the call-site wiring acquireLeaseWithPrimer itself
+// (#2888) documented as not yet given to any real caller -- wired directly
+// into handleAcquireLease per Architect direction (A-Gate R1 on PR #2914),
+// with handleAcquireLeaseWithPrimer kept as an alias of the same function.
+describe('resource-lease-routes: handleAcquireLease / handleAcquireLeaseWithPrimer (v5.67.0 FEED-FORWARD 01)', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const os = require('node:os');
+  const store = require('../lib/store');
+
+  let tmpDir;
+  let project;
+
+  function withStore(fn) {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-resource-lease-routes-primer-'));
+    store._setBasePath(tmpDir);
+    store.init();
+    const dir = path.join(tmpDir, 'proj');
+    fs.mkdirSync(dir);
+    project = store.projects.create({ name: 'rl-routes-primer-proj', path: dir, engine: 'claude' });
+    try {
+      fn();
+    } finally {
+      store.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }
+
+  it('handleAcquireLease now delegates to the real acquireLeaseWithPrimer, carrying the primer fields through', () => {
+    withStore(() => {
+      const result = resourceLeaseRoutes.handleAcquireLease(
+        { resourceId: 'res1', holderSessionId: 's1', holderProjectId: 'p1', mode: 'exclusive', ttlMs: 60000, existingLeases: [], now: NOW },
+        { projectId: project.id, roleHint: 'reviewer' }
+      );
+      assert.equal(result.ok, true);
+      assert.equal(result.lease.resourceId, 'res1');
+      assert.equal(result.lease.operatingPrimerRole, 'reviewer');
+      assert.ok(typeof result.lease.operatingPrimer === 'string' && result.lease.operatingPrimer.length > 0);
+    });
+  });
+
+  it('handleAcquireLease still attaches a primer (defaulting to worker) when primerInput is omitted entirely', () => {
+    withStore(() => {
+      const result = resourceLeaseRoutes.handleAcquireLease({
+        resourceId: 'res2', holderSessionId: 's1', holderProjectId: 'p1', mode: 'exclusive', ttlMs: 60000, existingLeases: [], now: NOW
+      });
+      assert.equal(result.ok, true);
+      assert.equal(result.lease.operatingPrimerRole, 'worker');
+      assert.ok(typeof result.lease.operatingPrimer === 'string' && result.lease.operatingPrimer.length > 0);
+    });
+  });
+
+  it('propagates a refusal from acquireLease unchanged, with no primer fields attached', () => {
+    withStore(() => {
+      const result = resourceLeaseRoutes.handleAcquireLease({}, { projectId: project.id });
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'RESOURCE_LEASE_INVALID');
+      assert.equal(result.lease, undefined);
+    });
+  });
+
+  it('handleAcquireLeaseWithPrimer is the SAME function as handleAcquireLease, not a separate delegate', () => {
+    assert.equal(resourceLeaseRoutes.handleAcquireLeaseWithPrimer, resourceLeaseRoutes.handleAcquireLease);
   });
 });

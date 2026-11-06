@@ -285,14 +285,36 @@ checks are:
   Prepare also refuses a switchboard coordinator whose listener is down
   (`409 ROTATION_LISTENER_DOWN`). Only a coordinator that runs without the switchboard, with nothing
   recorded, is not held for a listener.
-  **In `relaunch` mode this check only ever asks the successor's own inbox**, under the fresh
-  Medusa workspace id its launch mints — never the prior session's, which is torn down (and its
-  workspace id retired) when that session ends. Hub mail queued for the prior workspace id has no
-  path to the successor's new one, so this check cannot see it: it reports "nothing unhandled" for
-  a relaunch regardless of whether the prepare-time messages were ever actually read. This is a
-  real limitation, not a hypothetical — the check is still worth having for `resume` without a
-  relaunch, where the session and workspace id never change — but a relaunch's prepare-time inbox
-  interval is not currently a reliable signal of unhandled pre-rotation mail;
+  **In `relaunch` mode this check asks the successor's own inbox, AND a persisted snapshot taken
+  at `claimRelaunch`** (Architect Ruling A505-R1.3, #2821). The successor's inbox, under the fresh
+  Medusa workspace id its launch mints, is never the prior session's directly — that session's
+  workspace id is retired when it ends, and Hub mail queued for it has no redelivery path to the
+  successor's new one (#2821's own original finding). That alone would make a live-inbox-only
+  check structurally vacuous for relaunch mode — but every normal session end
+  (`lib/sessions.js`'s `_teardownMedusa`) captures the ending session's still-unhandled inbox for
+  the SAME project first (#1806, `lib/medusa.js#_captureCarriedMail`), and the successor's own
+  launch (which `claimRelaunch` triggers to bind it) seeds its fresh listener with exactly that
+  carried-forward mail before it starts (`#claimCarriedMail` / `MedusaListener#seedCarriedMail`),
+  preserving each message's own `id` — the same id `inboxIds` recorded at `prepare` time. So by
+  the time `resume` runs, the successor's inbox USUALLY already holds whatever the predecessor
+  left undrained, under the SAME ids, and the live-inbox check reads it correctly with no
+  reconciliation of its own.
+  `claimRelaunch` ALSO snapshots, right before it rebinds `rotation.sessionId` to the successor,
+  which `inboxIds` are still present in `d.messages(rotation.sessionId)` — but at that point the
+  OLD session has already proven ended (`claimRelaunch`'s own `_boundSessionEnded` precondition),
+  and every end path tears its listener down synchronously as part of that SAME transition, so
+  this live read is itself always empty in practice; it exists as a documented attempt, not a
+  working check. The branch that actually does work is its fallback: when the live read is empty,
+  every `inboxIds` entry is persisted as presumptively still owed (`drift.unhandledAtRelaunch`,
+  carried across resume attempts the same way `drift.relaunch` is). `_crossCheck` then treats an
+  id as unhandled when it is EITHER still in the successor's live inbox (the #1806 path above) OR
+  still in `drift.unhandledAtRelaunch` and not named in the receipt's own
+  `reconciled.medusa.handled` — a second, independent path that still catches it even on a project
+  or scenario where #1806's carry-forward does not land anything in the successor's inbox.
+  `test/wrap-ends-session.test.js`'s "`Medusa mail carried forward through a wrap that ends the
+  session (#1806)`" suite proves the carry-forward mechanism itself against the real `lib/medusa.js`
+  and `lib/sessions.js`; `test/coordinator-rotation.test.js`'s relaunch-mode resume tests cover both
+  paths independently, and the receipt-based clearing of the persisted snapshot;
 - `control.stateGeneration` is the lane's current control generation, or `null` when there is no
   assignment;
 - for a relaunch, the successor's own launch sequence has been attested READY. Until then the
