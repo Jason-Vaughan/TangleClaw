@@ -7538,58 +7538,48 @@ function _refuseInboundIdentity(req, where) {
 }
 
 // Cloudflare's own edge-attribution headers (#254 Issue B) — distinct from
-// `_isClientAttributionHeader` in lib/routes/openclaw.js, which already
-// strips `forwarded`/`x-real-ip`/`x-forwarded-*` from every OpenClaw proxy
-// request unconditionally. These six are never touched by that filter, so
-// whatever sits in front of this server (a local Caddy/cloudflared sidecar)
-// can leave a STALE Cloudflare edge IP on a request that genuinely arrived
-// over Tailscale or LAN, and OpenClaw's own gateway reads `cf-connecting-ip`
-// as the pairing record's `remoteIp` with no TangleClaw-side filtering today.
+// `_isClientAttributionHeader` in lib/routes/openclaw.js (#1512), which
+// already strips `forwarded`/`x-real-ip`/`x-forwarded-*` from every
+// OpenClaw proxy request UNCONDITIONALLY, because OpenClaw 2026.9.x
+// actively REFUSES (`403 proxy_attribution_required`) any request arriving
+// over the loopback SSH tunnel that carries ANY client-attribution header
+// at all — genuine or not. These six are never touched by that filter, so
+// whatever sits in front of this server (a local Caddy/cloudflared
+// sidecar) can leave a STALE Cloudflare edge IP on a request that
+// genuinely arrived over Tailscale or LAN, reaching OpenClaw's gateway as
+// the pairing record's `remoteIp` with no TangleClaw-side filtering today.
+//
+// I-Gate Round 1 Finding 2 (#5799591957), Ruling A505-R4.5: the FIRST
+// version of this fix stripped these headers only when the connection's
+// OWN remote address looked private/Tailscale — reasoning that a genuinely
+// Cloudflare-fronted request should keep its real headers. Two things make
+// that conditional wrong here: (1) behind local Caddy, `req.socket
+// .remoteAddress` reads as LOOPBACK for BOTH Tailscale-direct and
+// Cloudflare-tunnel ingress, so the condition cannot actually distinguish
+// them; (2) `_openclawProxyHeaders`/`_openclawWsRequestLines` in the
+// EXCLUDED `lib/routes/openclaw.js` already strip `x-forwarded-*`/
+// `x-real-ip`/`forwarded` unconditionally regardless of what reaches them,
+// so "forward the real IP instead" is not an available fix from this file
+// at all — matching that same unconditional policy for the Cloudflare
+// names too is the only consistent answer: OpenClaw never gets ANY
+// attribution header over this tunnel, stale or genuine.
 const OPENCLAW_DIRECT_CF_HEADERS = Object.freeze([
   'cf-connecting-ip', 'true-client-ip', 'cf-ray', 'cf-ipcountry', 'cf-visitor', 'cdn-loop'
 ]);
 
 /**
- * Whether `remoteAddress` is a private, loopback or Tailscale/CGNAT address
- * — the shape every genuinely direct or Tailscale connection has. Cloudflare's
- * edge never connects FROM one of these, so a request whose own TCP peer is
- * one of these ranges cannot itself be a real Cloudflare hop; any `cf-*`
- * header riding along with it is necessarily stale (#254).
- * @param {string} remoteAddress - `req.socket.remoteAddress`.
- * @returns {boolean}
- */
-function _isPrivateOrTailscaleAddress(remoteAddress) {
-  if (typeof remoteAddress !== 'string' || !remoteAddress) return false;
-  const addr = remoteAddress.replace(/^::ffff:/i, ''); // IPv4-mapped IPv6
-  if (addr === '127.0.0.1' || addr === '::1') return true;
-  const octets = addr.split('.').map(Number);
-  if (octets.length === 4 && octets.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)) {
-    const [a, b] = octets;
-    if (a === 10) return true; // RFC1918
-    if (a === 172 && b >= 16 && b <= 31) return true; // RFC1918
-    if (a === 192 && b === 168) return true; // RFC1918
-    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT, incl. Tailscale's 100.64.0.0/10
-    if (a === 169 && b === 254) return true; // link-local
-    return false;
-  }
-  // IPv6 link-local (fe80::/10) and unique local (fc00::/7).
-  return /^fe80:/i.test(addr) || /^f[cd][0-9a-f]{2}:/i.test(addr);
-}
-
-/**
- * Strip stale Cloudflare edge-attribution headers from an inbound
+ * Strip Cloudflare edge-attribution headers from an inbound
  * `/openclaw-direct/` request before it reaches OpenClaw's gateway (#254
- * Issue B), so a Tailscale-direct or LAN-direct connection never reports a
- * Cloudflare edge IP as its pairing record's `remoteIp`. A connection whose
- * OWN remote address is not private/Tailscale is left untouched — that
- * request may genuinely have arrived via Cloudflare, and its real headers
- * must survive.
+ * Issue B) — UNCONDITIONALLY, matching `_isClientAttributionHeader`'s own
+ * unconditional strip of `forwarded`/`x-real-ip`/`x-forwarded-*` for the
+ * identical reason (#1512): OpenClaw 2026.9.x refuses ANY attribution
+ * header reaching it over the loopback SSH tunnel, so none of these six
+ * may ever reach it either, genuine Cloudflare traffic included.
  * @param {object} headers - The inbound request's headers; never mutated.
- * @param {string} remoteAddress - `req.socket.remoteAddress` for this connection.
  * @returns {object} A new headers object — the same reference when nothing needed stripping.
  */
-function _sanitizeOpenclawDirectHeaders(headers, remoteAddress) {
-  if (!headers || !_isPrivateOrTailscaleAddress(remoteAddress)) return headers;
+function _sanitizeOpenclawDirectHeaders(headers) {
+  if (!headers) return headers;
   let out = headers;
   let copied = false;
   for (const key of Object.keys(headers)) {
@@ -7737,9 +7727,9 @@ function handleUpgrade(req, socket, head) {
       const targetUrl = '/' + subPath + (urlObj.search || '');
 
       const net = require('node:net');
-      // #254 Issue B — sanitized before this connection's own request is
-      // built, using THIS inbound socket's remote address.
-      const sanitizedHeaders = _sanitizeOpenclawDirectHeaders(req.headers, req.socket && req.socket.remoteAddress);
+      // #254 Issue B — sanitized, unconditionally, before this connection's
+      // own request is built.
+      const sanitizedHeaders = _sanitizeOpenclawDirectHeaders(req.headers);
       const proxySocket = net.connect(resolved.localPort, '127.0.0.1', () => {
         const reqHeaders = _openclawWsRequestLines(
           sanitizedHeaders, targetUrl, resolved.localPort, resolved.conn.gatewayToken
@@ -8362,9 +8352,8 @@ async function handleRequest(req, res) {
       const subPath = parts.slice(3).join('/');
       const targetPath = '/' + subPath + (req.url.includes('?') ? '?' + req.url.split('?')[1] : '');
 
-      // #254 Issue B — same sanitization as the WS proxy above, using this
-      // HTTP request's own remote address.
-      const sanitizedHeaders = _sanitizeOpenclawDirectHeaders(req.headers, req.socket && req.socket.remoteAddress);
+      // #254 Issue B — same unconditional sanitization as the WS proxy above.
+      const sanitizedHeaders = _sanitizeOpenclawDirectHeaders(req.headers);
       const proxyReq = http.request({
         hostname: '127.0.0.1',
         port: resolved.localPort,
@@ -9324,4 +9313,4 @@ if (require.main === module) {
 }
 
 
-module.exports = { _routePatterns, createServer, _recoveryGateProbeFor, _operatorProofOf, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers, _activityObserver: activityObserver, _exchangeCaller: exchangeCaller, _checkPublicAssets, _setPublicDir, _resetTailscaleOriginCacheForTest, _sanitizeOpenclawDirectHeaders, _isPrivateOrTailscaleAddress, OPENCLAW_DIRECT_CF_HEADERS };
+module.exports = { _routePatterns, createServer, _recoveryGateProbeFor, _operatorProofOf, serverProtocol, _setInstallPriorUse, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers, _activityObserver: activityObserver, _exchangeCaller: exchangeCaller, _checkPublicAssets, _setPublicDir, _resetTailscaleOriginCacheForTest, _sanitizeOpenclawDirectHeaders, OPENCLAW_DIRECT_CF_HEADERS };

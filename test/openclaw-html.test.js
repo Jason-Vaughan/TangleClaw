@@ -12,6 +12,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');
+const vm = require('node:vm');
 const { PassThrough } = require('node:stream');
 const html = require('../lib/openclaw-html');
 
@@ -131,6 +132,108 @@ describe('injectDeviceIdentityBootstrap (#254 Issue A)', () => {
   it('non-string input passes through unchanged', () => {
     assert.equal(html.injectDeviceIdentityBootstrap(null), null);
     assert.equal(html.injectDeviceIdentityBootstrap(undefined), undefined);
+  });
+});
+
+/**
+ * Pull the injected bootstrap's inline script body out of the rewritten page.
+ * @param {string} out - The page returned by `injectDeviceIdentityBootstrap`.
+ * @returns {string} The JS source between `<script>` and `</script>`.
+ */
+function extractBootstrapScript(out) {
+  const m = /<script>([\s\S]*)<\/script>/.exec(out);
+  assert.ok(m, 'bootstrap script tag must be present');
+  return m[1];
+}
+
+/**
+ * Execute an injected bootstrap script's source in a mock-DOM `vm` sandbox, the
+ * way a browser running this script actually would — a VM context, not a
+ * static-source assertion, so this exercises the real control flow (the
+ * immediate call, the retry timer, the exposed global) rather than just the
+ * string that produces it.
+ * @param {string} scriptBody - The JS source between `<script>` and `</script>`.
+ * @param {{storage?: Map<string,string>}} [opts] - `storage` shares one
+ *   mock `localStorage` across calls, modeling same-origin persistence.
+ * @returns {{fetchCalls: Array<{url:string, opts:object}>, timers: Array<{fn:Function, ms:number}>, sandbox: object}}
+ */
+function runBootstrapScript(scriptBody, opts = {}) {
+  const storage = opts.storage || new Map();
+  const fetchCalls = [];
+  const timers = [];
+  const sandbox = {
+    localStorage: {
+      getItem: (k) => (storage.has(k) ? storage.get(k) : null),
+      setItem: (k, v) => storage.set(k, String(v))
+    },
+    document: {
+      head: { appendChild() {} },
+      createElement: () => ({})
+    },
+    window: {},
+    fetch: (url, fetchOpts) => {
+      fetchCalls.push({ url, opts: fetchOpts });
+      return Promise.resolve({ ok: true });
+    },
+    setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }
+  };
+  sandbox.window.crypto = { randomUUID: () => 'mock-uuid-1234' };
+  const context = vm.createContext(sandbox);
+  vm.runInContext(scriptBody, context);
+  return { fetchCalls, timers, sandbox };
+}
+
+describe('_deviceIdentityBootstrapScript execution (#254 Issue A, I-Gate Round 1 #5799591957, Ruling A505-R4.5)', () => {
+  const CONN_ID = '03e71f59-458e-43e1-9c8c-3dbb98d16c8b';
+  const DIRECT_PREFIX = `/openclaw-direct/${CONN_ID}`;
+
+  it('loading /openclaw-direct/<connId>/ invokes POST .../approve-pending immediately, then once more after the retry delay', () => {
+    const out = html.injectDeviceIdentityBootstrap('<html><head></head></html>', DIRECT_PREFIX);
+    const { fetchCalls, timers } = runBootstrapScript(extractBootstrapScript(out));
+
+    assert.equal(fetchCalls.length, 1, 'calls once immediately on load');
+    assert.equal(fetchCalls[0].url, `/api/openclaw/connections/${CONN_ID}/approve-pending`);
+    assert.equal(fetchCalls[0].opts.method, 'POST');
+    assert.equal(fetchCalls[0].opts.credentials, 'same-origin');
+
+    assert.equal(timers.length, 1, 'schedules exactly one retry');
+    assert.equal(timers[0].ms, html.APPROVE_PENDING_RETRY_DELAY_MS);
+    timers[0].fn();
+    assert.equal(fetchCalls.length, 2, 'the retry fires the same approval call again');
+    assert.equal(fetchCalls[1].url, fetchCalls[0].url);
+  });
+
+  it('exposes the approval function on window so a caller can invoke it directly without waiting for the timer', () => {
+    const out = html.injectDeviceIdentityBootstrap('<html><head></head></html>', DIRECT_PREFIX);
+    const { fetchCalls, sandbox } = runBootstrapScript(extractBootstrapScript(out));
+    assert.equal(fetchCalls.length, 1);
+    assert.equal(typeof sandbox.window[html.APPROVE_PENDING_GLOBAL], 'function');
+    sandbox.window[html.APPROVE_PENDING_GLOBAL]();
+    assert.equal(fetchCalls.length, 2, 'the exposed global invokes the same approval call');
+  });
+
+  it('a non-/openclaw-direct/ load (no connId) injects no approval call at all', () => {
+    const out = html.injectDeviceIdentityBootstrap('<html><head></head></html>', '/openclaw/some-project');
+    const { fetchCalls, sandbox } = runBootstrapScript(extractBootstrapScript(out));
+    assert.equal(fetchCalls.length, 0, 'no connId, no approval call');
+    assert.equal(sandbox.window[html.APPROVE_PENDING_GLOBAL], undefined);
+  });
+
+  it('persists the same device identity across two /openclaw-direct/ page loads sharing one localStorage (same-origin)', () => {
+    const storage = new Map();
+    const firstOut = html.injectDeviceIdentityBootstrap('<html><head></head></html>', DIRECT_PREFIX);
+    const first = runBootstrapScript(extractBootstrapScript(firstOut), { storage });
+    const firstId = first.sandbox.window[html.DEVICE_IDENTITY_GLOBAL];
+    assert.ok(firstId, 'an id must be minted on first load');
+
+    // A different connId is a different proxy prefix but the SAME TangleClaw
+    // origin, so it shares the same localStorage here (#254 Issue A).
+    const OTHER_CONN_ID = 'b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e';
+    const secondOut = html.injectDeviceIdentityBootstrap('<html><head></head></html>', `/openclaw-direct/${OTHER_CONN_ID}`);
+    const second = runBootstrapScript(extractBootstrapScript(secondOut), { storage });
+
+    assert.equal(second.sandbox.window[html.DEVICE_IDENTITY_GLOBAL], firstId,
+      'the SAME localStorage-backed id persists across different connIds sharing one origin');
   });
 });
 
