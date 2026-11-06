@@ -327,7 +327,7 @@ describe('#1012 wiring — openclaw-view.js actually uses the helpers', () => {
  */
 
 const { probeGateway, deriveConnectionState, applyConnectionState, createConnectionIndicator,
-  CONNECTION_STATE_CLASSES, PAIRING_UNCHECKABLE_CODES } = require('../public/openclaw-tunnel-state.js');
+  CONNECTION_STATE_CLASSES, PAIRING_UNCHECKABLE_CODES, MEASUREMENT_MAX_AGE_MS } = require('../public/openclaw-tunnel-state.js');
 
 /** Minimal Response double: only what probeGateway reads. */
 function jsonRes(status, body, throwOnJson) {
@@ -501,6 +501,126 @@ describe('#1012 deriveConnectionState — green means verified', () => {
     const s = deriveConnectionState({ probe: up, health: healthy,
       approve: { approved: false, code: 'X', count: 3, reason: null } });
     assert.ok(!s.label.includes('undefined'));
+  });
+});
+
+describe('#1185 deriveConnectionState — a live measurement ages out', () => {
+  const up = { reachable: true, reason: null };
+  const healthy = { answered: true, ok: true, reason: null };
+  const noPending = { approved: false, code: 'NO_PENDING', count: 0, reason: 'no pending pairing requests' };
+
+  it('stays live with no measuredAt at all — every existing caller/test, unchanged', () => {
+    const s = deriveConnectionState({ probe: up, health: healthy, approve: noPending });
+    assert.equal(s.level, 'live');
+  });
+
+  it('with measuredAt present but opts omitted, age is judged against the REAL current clock', () => {
+    // #1185's backward-compat guarantee is keyed on `evidence.measuredAt`
+    // being absent, not on `opts` being absent — a caller that stamps
+    // measuredAt but passes no opts still gets judged against Date.now().
+    const s = deriveConnectionState({ probe: up, health: healthy, approve: noPending, measuredAt: Date.now() });
+    assert.equal(s.level, 'live', 'measured an instant ago, so it must still read live with no opts at all');
+
+    const old = deriveConnectionState({ probe: up, health: healthy, approve: noPending, measuredAt: 0 });
+    assert.equal(old.level, 'unverified', 'measuredAt=0 is ancient against the real clock, even with opts omitted entirely');
+  });
+
+  it('stays live when measuredAt is within MEASUREMENT_MAX_AGE_MS of opts.now', () => {
+    const now = 10_000_000;
+    const s = deriveConnectionState(
+      { probe: up, health: healthy, approve: noPending, measuredAt: now - (MEASUREMENT_MAX_AGE_MS - 1) },
+      { now }
+    );
+    assert.equal(s.level, 'live');
+  });
+
+  it('degrades to unverified, with an age-explicit label and detail "stale", once past the max age', () => {
+    const now = 10_000_000;
+    const measuredAt = now - (MEASUREMENT_MAX_AGE_MS + 60_000); // 1 extra minute past the bound
+    const s = deriveConnectionState(
+      { probe: up, health: healthy, approve: noPending, connName: 'Kobold', measuredAt },
+      { now }
+    );
+    assert.equal(s.level, 'unverified');
+    assert.equal(s.detail, 'stale');
+    assert.match(s.label, /Kobold/);
+    assert.match(s.label, /\dm ago/);
+  });
+
+  it('respects an overridden opts.maxAgeMs instead of the default', () => {
+    const now = 10_000_000;
+    const s = deriveConnectionState(
+      { probe: up, health: healthy, approve: noPending, measuredAt: now - 5000 },
+      { now, maxAgeMs: 1000 }
+    );
+    assert.equal(s.level, 'unverified', 'aged out under the tighter override, though it would still be fresh at the default');
+  });
+
+  it('never degrades a non-live state — the age check only ever applies to the one live return site', () => {
+    const now = 10_000_000;
+    const s = deriveConnectionState({ probe: { reachable: false, reason: 'x' }, measuredAt: now - 999_999_999 }, { now });
+    assert.equal(s.level, 'dead');
+  });
+});
+
+describe('#1185 createConnectionIndicator — stamps measuredAt, and refresh() ages out', () => {
+  function fakeEl() {
+    const classes = new Set(['checking']);
+    return { classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c), has: (c) => classes.has(c) }, title: '', attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } };
+  }
+  const up = { reachable: true, reason: null };
+  const healthy = { answered: true, ok: true, reason: null };
+  const noPending = { approved: false, code: 'NO_PENDING', count: 0, reason: 'no pending pairing requests' };
+
+  it('stamps measuredAt on a probe and a health record, using the injected nowFn', () => {
+    let now = 1000;
+    const ind = createConnectionIndicator(fakeEl(), { nowFn: () => now });
+    ind.record('probe', up);
+    now = 2000;
+    ind.record('health', healthy);
+    assert.equal(ind.snapshot().measuredAt, 2000, 'the LATEST probe/health record wins');
+  });
+
+  it('does not stamp measuredAt on an approve or connName record', () => {
+    let now = 1000;
+    const ind = createConnectionIndicator(fakeEl(), { nowFn: () => now });
+    ind.record('connName', 'Kobold');
+    now = 999_999;
+    ind.record('approve', noPending);
+    assert.equal(ind.snapshot().measuredAt, null, 'approve/connName carry no tunnel-liveness information of their own');
+  });
+
+  it('record() without an injected nowFn still stamps a real, current timestamp', () => {
+    const ind = createConnectionIndicator(fakeEl());
+    const before = Date.now();
+    ind.record('probe', up);
+    const snap = ind.snapshot();
+    assert.ok(typeof snap.measuredAt === 'number' && snap.measuredAt >= before);
+  });
+
+  it('refresh(now) re-renders the live dot as unverified once the measurement is old, with NO new probe', () => {
+    let now = 1000;
+    const el = fakeEl();
+    const ind = createConnectionIndicator(el, { nowFn: () => now });
+    ind.record('probe', up);
+    ind.record('health', healthy);
+    const live = ind.record('approve', noPending);
+    assert.equal(live.level, 'live');
+    assert.ok(el.classList.has('live'));
+
+    const refreshed = ind.refresh(now + MEASUREMENT_MAX_AGE_MS + 1);
+    assert.equal(refreshed.level, 'unverified');
+    assert.ok(el.classList.has('unverified'));
+    assert.ok(!el.classList.has('live'), 'refresh must clear the stale live class, same contract as record()');
+  });
+
+  it('refresh() with no argument defaults to a real current timestamp', () => {
+    const ind = createConnectionIndicator(fakeEl());
+    ind.record('probe', up);
+    ind.record('health', healthy);
+    ind.record('approve', noPending);
+    const s = ind.refresh();
+    assert.equal(s.level, 'live', 'measured just now, so refresh() with no args must not age it out');
   });
 });
 

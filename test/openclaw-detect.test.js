@@ -107,6 +107,133 @@ describe('openclaw-detect (#306-followup)', () => {
     });
   });
 
+  describe('DEFAULT_HEALTH_THRESHOLDS (#128)', () => {
+    it('matches the documented defaults, frozen', () => {
+      assert.deepEqual(detect.DEFAULT_HEALTH_THRESHOLDS, { warnCpuPct: 60, alarmCpuPct: 90, warnMemPct: 80, alarmMemPct: 95 });
+      assert.ok(Object.isFrozen(detect.DEFAULT_HEALTH_THRESHOLDS));
+    });
+  });
+
+  describe('parseRuntimeTelemetry (#128)', () => {
+    it('parses a docker-mode probe, including human-unit memUsage into bytes', () => {
+      const t = detect.parseRuntimeTelemetry(
+        'mode=docker\ncpuPct=12.50\nmemPct=19.53\nmemUsage=104.9MiB / 536.9MiB\ncontainerHealthy=true\n'
+        + 'stuckSessions=0\nlockHoldCount=0\nlockHoldMaxMs=\n'
+      );
+      assert.equal(t.mode, 'docker');
+      assert.equal(t.cpuPct, 12.5);
+      assert.equal(t.memPct, 19.53);
+      assert.equal(t.memUsedBytes, Math.round(104.9 * 1024 * 1024));
+      assert.equal(t.memLimitBytes, Math.round(536.9 * 1024 * 1024));
+      assert.equal(t.containerHealthy, true);
+      assert.equal(t.lockHoldMaxMs, 0, 'a blank field falls back to 0, not NaN');
+    });
+
+    it('parses a host-mode probe, where memUsedBytes arrives as a direct number', () => {
+      const t = detect.parseRuntimeTelemetry('mode=host\ncpuPct=3.20\nmemPct=1.10\nmemUsedBytes=1048576\n');
+      assert.equal(t.mode, 'host');
+      assert.equal(t.cpuPct, 3.2);
+      assert.equal(t.memUsedBytes, 1048576);
+      assert.equal(t.memLimitBytes, null, 'host mode has no container limit');
+      assert.equal(t.containerHealthy, null, 'host mode never reports a container health status');
+    });
+
+    it('is never-throw: empty, garbled, or non-string input yields mode unknown with null/0 fields', () => {
+      for (const bad of ['', 'garbage with no equals signs', null, undefined, 42]) {
+        const t = detect.parseRuntimeTelemetry(bad);
+        assert.equal(t.mode, 'unknown');
+        assert.equal(t.cpuPct, null);
+        assert.equal(t.stuckSessions, 0);
+      }
+    });
+
+    it('reports an unhealthy container distinctly from a healthy one', () => {
+      assert.equal(detect.parseRuntimeTelemetry('mode=docker\ncontainerHealthy=false\n').containerHealthy, false);
+      assert.equal(detect.parseRuntimeTelemetry('mode=docker\ncontainerHealthy=true\n').containerHealthy, true);
+    });
+  });
+
+  describe('evaluateOpenclawHealth (#128 acceptance #5)', () => {
+    const base = { cpuPct: 10, memPct: 10, stuckSessions: 0, lockHoldCount: 0, containerHealthy: true };
+
+    it('is ok when every signal is clean', () => {
+      const h = detect.evaluateOpenclawHealth(base);
+      assert.equal(h.level, 'ok');
+      assert.equal(h.healthSummary, 'no pathology detected');
+    });
+
+    it('warns on cpuPct > 60, memPct > 80, or stuckSessions > 0 — each independently', () => {
+      assert.equal(detect.evaluateOpenclawHealth({ ...base, cpuPct: 61 }).level, 'warn');
+      assert.equal(detect.evaluateOpenclawHealth({ ...base, memPct: 81 }).level, 'warn');
+      assert.equal(detect.evaluateOpenclawHealth({ ...base, stuckSessions: 1 }).level, 'warn');
+    });
+
+    it('alarms on cpuPct > 90, memPct > 95, lockHoldCount > 0, or containerHealthy:false — each independently', () => {
+      assert.equal(detect.evaluateOpenclawHealth({ ...base, cpuPct: 91 }).level, 'alarm');
+      assert.equal(detect.evaluateOpenclawHealth({ ...base, memPct: 96 }).level, 'alarm');
+      assert.equal(detect.evaluateOpenclawHealth({ ...base, lockHoldCount: 1 }).level, 'alarm');
+      assert.equal(detect.evaluateOpenclawHealth({ ...base, containerHealthy: false }).level, 'alarm');
+    });
+
+    it('alarm wins over warn when both would independently apply', () => {
+      // cpuPct 91 alarms; memPct 81 would only warn — the worse one must win.
+      const h = detect.evaluateOpenclawHealth({ ...base, cpuPct: 91, memPct: 81 });
+      assert.equal(h.level, 'alarm');
+      assert.match(h.healthSummary, /CPU 91/);
+      assert.doesNotMatch(h.healthSummary, /memory 81/, 'the warn-only reason must not also appear once alarm wins');
+    });
+
+    it('respects custom thresholds over the defaults', () => {
+      const h = detect.evaluateOpenclawHealth({ ...base, cpuPct: 50 }, { warnCpuPct: 40, alarmCpuPct: 70, warnMemPct: 80, alarmMemPct: 95 });
+      assert.equal(h.level, 'warn');
+    });
+  });
+
+  describe('detectRuntimeAndStats (#128)', () => {
+    const orig = detect._internal.exec;
+    afterEach(() => { detect._internal.exec = orig; });
+
+    it('refuses an unsafe target without running ssh', async () => {
+      let ran = false;
+      detect._internal.exec = () => { ran = true; return ''; };
+      const r = await detect.detectRuntimeAndStats({ ...GOOD, host: 'h;evil' });
+      assert.equal(r.mode, 'unknown');
+      assert.match(r.error, /host/);
+      assert.equal(ran, false, 'ssh must not run for an unsafe target');
+    });
+
+    it('feeds RUNTIME_STATS_SCRIPT over stdin and returns parsed telemetry + health', async () => {
+      let seenInput = null;
+      detect._internal.exec = (cmd, opts) => {
+        seenInput = opts.input;
+        return 'mode=docker\ncpuPct=12.5\nmemPct=19.53\ncontainerHealthy=true\nstuckSessions=0\nlockHoldCount=0\nlockHoldMaxMs=0\n';
+      };
+      const r = await detect.detectRuntimeAndStats(GOOD);
+      assert.equal(r.mode, 'docker');
+      assert.equal(r.error, null);
+      assert.equal(r.telemetry.cpuPct, 12.5);
+      assert.equal(r.health.level, 'ok');
+      assert.equal(seenInput, detect.RUNTIME_STATS_SCRIPT, 'script is passed via stdin, not interpolated');
+    });
+
+    it('surfaces an ssh failure as an error without throwing', async () => {
+      detect._internal.exec = () => { const e = new Error('boom'); e.stderr = 'Permission denied'; throw e; };
+      const r = await detect.detectRuntimeAndStats(GOOD);
+      assert.equal(r.mode, 'unknown');
+      assert.equal(r.telemetry, null);
+      assert.match(r.error, /ssh stats failed: Permission denied/);
+    });
+  });
+
+  describe('RUNTIME_STATS_SCRIPT (#128)', () => {
+    it('detects both branches and bounds the log scan — no unbounded tail', () => {
+      assert.match(detect.RUNTIME_STATS_SCRIPT, /docker stats --no-stream/);
+      assert.match(detect.RUNTIME_STATS_SCRIPT, /ps -o pcpu=,pmem=,rss=/);
+      assert.match(detect.RUNTIME_STATS_SCRIPT, /--since 5m/);
+      assert.doesNotMatch(detect.RUNTIME_STATS_SCRIPT, /grep -r/);
+    });
+  });
+
   describe('frontend wiring (public/ui.js + index.html)', () => {
     let ui, html;
     before(() => {

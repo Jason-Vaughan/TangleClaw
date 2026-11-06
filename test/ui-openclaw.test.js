@@ -206,6 +206,37 @@ describe('OpenClaw UI contracts — connection list data shape', () => {
     const { status } = await request(server, 'GET', '/landing.js');
     assert.equal(status, 200);
   });
+
+  it('openclaw-view.js defines the #1185/#128 functions this car adds', async () => {
+    const { status, data } = await request(server, 'GET', '/openclaw-view.js');
+    assert.equal(status, 200);
+    assert.match(data, /function renderOpenclawHeaderPills\(/);
+    assert.match(data, /function openOpenclawHealthDetail\(/);
+    // #1185: the gateway re-probe must run on the EXISTING sidecar poll
+    // signal, not a new timer (#98/#268) — assert it is wired INTO
+    // pollSidecarProcesses rather than merely existing somewhere in the file.
+    const fnStart = data.indexOf('async function pollSidecarProcesses');
+    const fnEnd = data.indexOf('\n}', fnStart);
+    const fnBody = data.slice(fnStart, fnEnd);
+    assert.match(fnBody, /tcTunnelState\.probeGateway\(connId\)/);
+    assert.match(fnBody, /connectionIndicator\.record\('health'/);
+    assert.match(fnBody, /connectionIndicator\.refresh\(/);
+  });
+
+  it('openclaw-view.html carries the #128 header pills markup', async () => {
+    const { status, data } = await request(server, 'GET', '/openclaw-view.html');
+    assert.equal(status, 200);
+    assert.match(data, /id="openclawHeaderPills"/);
+    assert.match(data, /id="openclawResourcePill"/);
+    assert.match(data, /id="openclawHealthPill"/);
+    assert.match(data, /id="openclawHealthHistoryDot"/);
+  });
+
+  it('openclaw-view/:connId serves the same page carrying the header pills markup', async () => {
+    const { status, data } = await request(server, 'GET', '/openclaw-view/some-connection-id');
+    assert.equal(status, 200);
+    assert.match(data, /id="openclawHeaderPills"/);
+  });
 });
 
 describe('OpenClaw UI contracts — test endpoint shape', () => {
