@@ -494,8 +494,15 @@ function renderOpenclawHeaderPills(telemetryData) {
     : (health.resourceSummary || '—');
   resourcePill.title = health.resourceSummary || resourcePill.textContent;
 
+  // I-Gate Round 1 Finding 2 (#5799301385): 'unverified' (no runtime
+  // metrics measured) gets NO color modifier -- the base .openclaw-pill
+  // is already neutral/muted (the same look #openclawResourcePill falls
+  // back to with no measurement), rather than reusing green 'pill-ok' for
+  // a measurement that never happened.
   healthPill.classList.remove('pill-ok', 'pill-warn', 'pill-alarm');
-  healthPill.classList.add(health.level === 'alarm' ? 'pill-alarm' : (health.level === 'warn' ? 'pill-warn' : 'pill-ok'));
+  if (health.level === 'alarm') healthPill.classList.add('pill-alarm');
+  else if (health.level === 'warn') healthPill.classList.add('pill-warn');
+  else if (health.level === 'ok') healthPill.classList.add('pill-ok');
   healthLabel.textContent = health.level === 'ok' ? 'Healthy' : health.level.toUpperCase();
   healthPill.title = health.healthSummary || 'no pathology detected';
 
@@ -576,6 +583,14 @@ async function pollSidecarProcesses() {
     const panel = document.getElementById('sidecarPanel');
     if (panel && panel.classList.contains('open')) {
       renderSidecarDetail();
+    }
+
+    // #128, I-Gate Round 1 Finding 1 (Ruling A505-R3.7): this route now
+    // carries the connection's cached telemetry/health on every poll cycle
+    // this function already runs — the real production caller
+    // `renderOpenclawHeaderPills` previously had none.
+    if (data.telemetry || data.health) {
+      renderOpenclawHeaderPills({ telemetry: data.telemetry || null, health: data.health || null });
     }
   }
 

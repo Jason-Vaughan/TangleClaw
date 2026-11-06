@@ -223,6 +223,30 @@ describe('OpenClaw UI contracts — connection list data shape', () => {
     assert.match(fnBody, /connectionIndicator\.refresh\(/);
   });
 
+  it('renderOpenclawHeaderPills never falls back to pill-ok for an unrecognized/unverified health level (I-Gate Round 1 Finding 2, #5799301385)', async () => {
+    const { status, data } = await request(server, 'GET', '/openclaw-view.js');
+    assert.equal(status, 200);
+    const fnStart = data.indexOf('function renderOpenclawHeaderPills');
+    const fnEnd = data.indexOf('\n}', fnStart);
+    const fnBody = data.slice(fnStart, fnEnd);
+    // The old shape — a ternary chain whose final else always added
+    // 'pill-ok' — rendered a green pill for ANY level that was not
+    // 'alarm'/'warn', including the new 'unverified'. The fixed shape
+    // checks each level explicitly and adds no class at all otherwise.
+    assert.doesNotMatch(fnBody, /:\s*'pill-ok'\)\s*;/, 'no unconditional pill-ok fallback');
+    assert.match(fnBody, /level === 'ok'\)[\s\S]{0,40}classList\.add\('pill-ok'\)/);
+  });
+
+  it('pollSidecarProcesses calls renderOpenclawHeaderPills with the route\'s telemetry/health on every poll (I-Gate Round 1 Finding 1, #5799301385)', async () => {
+    const { status, data } = await request(server, 'GET', '/openclaw-view.js');
+    assert.equal(status, 200);
+    const fnStart = data.indexOf('async function pollSidecarProcesses');
+    const fnEnd = data.indexOf('\n}', data.indexOf('\n}', fnStart) + 1);
+    const fnBody = data.slice(fnStart, fnEnd);
+    assert.match(fnBody, /data\.telemetry\s*\|\|\s*data\.health/);
+    assert.match(fnBody, /renderOpenclawHeaderPills\(\s*\{\s*telemetry:\s*data\.telemetry\s*\|\|\s*null,\s*health:\s*data\.health\s*\|\|\s*null\s*\}\s*\)/);
+  });
+
   it('openclaw-view.html carries the #128 header pills markup', async () => {
     const { status, data } = await request(server, 'GET', '/openclaw-view.html');
     assert.equal(status, 200);

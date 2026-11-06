@@ -49,6 +49,16 @@ function request(urlPath) {
 
 // ── Setup/Teardown ──
 
+// Every connection this file creates uses a non-routable TEST-NET-2 host
+// (198.51.100.10) -- hitting the connection-based polling route now also
+// triggers lib/sidecar.js's fire-and-forget telemetry refresh (#128,
+// Ruling A505-R3.7), which would otherwise open a real `ssh` attempt per
+// test and wait out its connect timeout in the background. Stubbed once,
+// file-wide, to a safe default; individual tests override it further for
+// their own assertions and restore this default in their own cleanup.
+const _realDetectRuntimeAndStats = sidecar._seams.detectRuntimeAndStats;
+sidecar._seams.detectRuntimeAndStats = async () => ({ mode: 'unknown', telemetry: null, health: null, error: 'stubbed in tests' });
+
 before(async () => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-sidecar-oc-'));
   const projectsDir = path.join(testDir, 'projects');
@@ -74,6 +84,7 @@ before(async () => {
 
 after(async () => {
   sidecar.stopAllPolling();
+  sidecar._seams.detectRuntimeAndStats = _realDetectRuntimeAndStats;
   await new Promise((resolve) => server.close(resolve));
   store.close();
   fs.rmSync(testDir, { recursive: true, force: true });
@@ -266,5 +277,95 @@ describe('Sidecar in openclaw-view — connection-based polling API', () => {
     assert.equal(res.data.stale, true);
 
     sidecar._cache.delete(connId);
+  });
+});
+
+describe('Sidecar telemetry/health wiring (#128, I-Gate Round 1, Ruling A505-R3.7)', () => {
+  let connId;
+  let realDetect;
+
+  before(() => {
+    const conn = store.openclawConnections.create({
+      name: 'OcViewTelemetryTest',
+      host: '198.51.100.11',
+      port: 18789,
+      sshUser: 'test',
+      sshKeyPath: '~/.ssh/test',
+      localPort: 19996,
+      availableAsEngine: false
+    });
+    connId = conn.id;
+    realDetect = sidecar._seams.detectRuntimeAndStats;
+  });
+
+  after(() => {
+    sidecar._seams.detectRuntimeAndStats = realDetect;
+    sidecar._telemetryCache.delete(connId);
+    sidecar._telemetryInFlight.delete(connId);
+  });
+
+  it('getTelemetry reads null/null/null before anything has ever been measured', () => {
+    assert.deepEqual(sidecar.getTelemetry(connId), { telemetry: null, health: null, telemetryAt: null });
+  });
+
+  it('GET .../processes includes telemetry:null and health:null when nothing is cached yet', async () => {
+    const res = await request(`/api/sidecar/connection/${connId}/processes`);
+    assert.equal(res.status, 200);
+    assert.equal(res.data.telemetry, null);
+    assert.equal(res.data.health, null);
+  });
+
+  it('_refreshTelemetry populates the cache from a successful SSH probe, and getTelemetry/the route both surface it', async () => {
+    const telemetry = { mode: 'host', cpuPct: 12, memPct: 30, memUsedBytes: 1048576, memLimitBytes: null, stuckSessions: 0, lockHoldMaxMs: 0, lockHoldCount: 0, containerHealthy: null };
+    const health = { level: 'ok', resourceSummary: 'CPU 12% · Mem 30%', healthSummary: 'no pathology detected', reasons: [] };
+    sidecar._seams.detectRuntimeAndStats = async () => ({ mode: 'host', telemetry, health, error: null });
+
+    sidecar._refreshTelemetry(connId);
+    // The refresh is fire-and-forget; wait for the in-flight guard to clear,
+    // which only happens once the stubbed promise above has settled.
+    while (sidecar._telemetryInFlight.has(connId)) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    assert.deepEqual(sidecar.getTelemetry(connId).telemetry, telemetry);
+    assert.deepEqual(sidecar.getTelemetry(connId).health, health);
+    assert.ok(sidecar.getTelemetry(connId).telemetryAt);
+
+    const res = await request(`/api/sidecar/connection/${connId}/processes`);
+    assert.deepEqual(res.data.telemetry, telemetry);
+    assert.deepEqual(res.data.health, health);
+  });
+
+  it('never starts a second SSH probe for the same connection while one is already in flight', async () => {
+    let calls = 0;
+    let resolveFirst;
+    sidecar._seams.detectRuntimeAndStats = () => new Promise((resolve) => {
+      calls++;
+      resolveFirst = () => resolve({ mode: 'unknown', telemetry: null, health: null, error: null });
+    });
+
+    sidecar._refreshTelemetry(connId);
+    assert.equal(sidecar._telemetryInFlight.has(connId), true);
+    sidecar._refreshTelemetry(connId); // must be a no-op: one is already in flight
+    assert.equal(calls, 1);
+
+    resolveFirst();
+    while (sidecar._telemetryInFlight.has(connId)) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  });
+
+  it('a failed SSH probe never throws into the fire-and-forget caller, and leaves the prior cached reading in place', async () => {
+    const telemetry = { mode: 'host', cpuPct: 5, memPct: 5, memUsedBytes: 100, memLimitBytes: null, stuckSessions: 0, lockHoldMaxMs: 0, lockHoldCount: 0, containerHealthy: null };
+    const health = { level: 'ok', resourceSummary: 'CPU 5% · Mem 5%', healthSummary: 'no pathology detected', reasons: [] };
+    sidecar._telemetryCache.set(connId, { telemetry, health, telemetryAt: new Date().toISOString() });
+
+    sidecar._seams.detectRuntimeAndStats = async () => { throw new Error('ssh stats failed: connection refused'); };
+    assert.doesNotThrow(() => sidecar._refreshTelemetry(connId));
+    while (sidecar._telemetryInFlight.has(connId)) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    assert.deepEqual(sidecar.getTelemetry(connId).telemetry, telemetry, 'the prior reading survives a failed refresh');
   });
 });

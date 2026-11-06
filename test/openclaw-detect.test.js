@@ -187,6 +187,33 @@ describe('openclaw-detect (#306-followup)', () => {
       const h = detect.evaluateOpenclawHealth({ ...base, cpuPct: 50 }, { warnCpuPct: 40, alarmCpuPct: 70, warnMemPct: 80, alarmMemPct: 95 });
       assert.equal(h.level, 'warn');
     });
+
+    it('is unverified, never ok, when no process was found (mode=host with no metrics) (I-Gate Round 1 Finding 2, #5799301385)', () => {
+      const h = detect.evaluateOpenclawHealth(detect.parseRuntimeTelemetry('mode=host\n'));
+      assert.equal(h.level, 'unverified');
+      assert.equal(h.resourceSummary, 'unavailable');
+      assert.equal(h.healthSummary, 'telemetry unavailable');
+      assert.deepEqual(h.reasons, ['no runtime metrics measured']);
+    });
+
+    it('is unverified, never ok, when Docker stats emitted no metric lines (mode=docker with no metrics)', () => {
+      const h = detect.evaluateOpenclawHealth(detect.parseRuntimeTelemetry('mode=docker\n'));
+      assert.equal(h.level, 'unverified');
+    });
+
+    it('is unverified for a null/undefined telemetry argument', () => {
+      assert.equal(detect.evaluateOpenclawHealth(null).level, 'unverified');
+      assert.equal(detect.evaluateOpenclawHealth(undefined).level, 'unverified');
+    });
+
+    it('is unverified for mode=unknown even if a stray metric field were present', () => {
+      assert.equal(detect.evaluateOpenclawHealth({ mode: 'unknown', cpuPct: 5, memPct: 5, memUsedBytes: 100 }).level, 'unverified');
+    });
+
+    it('is NOT unverified once at least one real metric is present', () => {
+      assert.equal(detect.evaluateOpenclawHealth(detect.parseRuntimeTelemetry('mode=host\ncpuPct=3.2\n')).level, 'ok');
+      assert.equal(detect.evaluateOpenclawHealth(detect.parseRuntimeTelemetry('mode=host\nmemUsedBytes=1048576\n')).level, 'ok');
+    });
   });
 
   describe('detectRuntimeAndStats (#128)', () => {
