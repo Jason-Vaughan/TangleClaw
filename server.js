@@ -5821,6 +5821,62 @@ function registerMedusaRoutes(prefix, resolve) {
     jsonResponse(res, out.status, out.body);
   }, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES, gatedAction: 'medusa-send' });
 
+  // POST <prefix>/broadcast — an explicit, system-wide broadcast to every
+  // other active, registered switchboard workspace (#1224), distinct from
+  // `/send`'s point-to-point delivery. Restricted to an operator or the
+  // Project Master (this system's one fleet-coordinating entity); a plain
+  // project session, even a live one, may not broadcast.
+  // `lib/medusa.js#broadcastAll` enforces that authorization gate itself
+  // (Car 69-B's one authorized place to hold that policy) and the
+  // per-sender rate-limit/coalescing — this route's only job is resolving
+  // WHO is calling, honestly, never from anything the body claims.
+  //
+  // Unlike every other route this function registers, this one does not
+  // depend on `resolve(params)`: a broadcast's sender identity and
+  // authorization come from the VERIFIED CALLER (`resolveControlCaller`),
+  // never from the URL's own `:project`/mount target, since a fleet-wide
+  // action is not scoped to one project's or the Master's own session the
+  // way every sibling route here is — reachable identically from either
+  // mount this function is registered on.
+  //
+  // `gatedAction: 'medusa-send'`, not a new `'medusa-broadcast'` value:
+  // `lib/coordinator-rotation.js#GATED_ACTIONS` is a closed, hardcoded set
+  // (confirmed: `coordinator-rotation: medusa-broadcast is not a gated
+  // action`, thrown by its own `gate()`), and that file is outside Car
+  // 69-B's authorized envelope. A broadcast IS a send, from this specific
+  // gate's own point of view — "does this coordinator's bound thread still
+  // apply to this message-sending mutation" — and `'medusa-send'`'s one
+  // special case (an `inReplyTo` already inside the coordinator's own
+  // interval) never fires here since this route passes no `inReplyTo`.
+  route('POST', `${prefix}/broadcast`, async (req, res, _params, body) => {
+    const caller = resolveControlCaller(req);
+    // The caller's OWN project (null for operator/master), the same value
+    // `/send` passes when it is sending AS that identity.
+    if (coordinatorGateRefused(req, res, caller.kind === 'project' ? caller.projectId : null, 'medusa-send')) return;
+    // `project` is a coordinator role too (Architect/ProjectManager), but
+    // ONLY when that project actually HOLDS one — `resolveControlCaller`
+    // proves the launch, never a role (I-Gate Round 1 C1): a verified
+    // project caller with no granted role is a plain Builder launch and
+    // must fall through to `broadcastAll`'s own `project`-kind refusal, the
+    // same way it already refuses an `unbound`/`invalid`/
+    // `operator-unverifiable` one.
+    const hasCoordinatorRole = caller.kind === 'project' && Boolean(store.coordinatorRoles.getActiveForProject(caller.projectId));
+    const callerKind = (caller.kind === 'master' || hasCoordinatorRole) ? 'coordinator' : caller.kind;
+    let senderId = null;
+    if (caller.kind === 'master') {
+      senderId = medusa.getStatus(master.MASTER_MEDUSA_KEY).workspaceId;
+    } else if (caller.kind === 'project') {
+      const access = sharedDocsAccess.resolveAccess(req);
+      senderId = access.sessionId != null ? medusa.getStatus(access.sessionId).workspaceId : null;
+    }
+    try {
+      const result = await medusa.broadcastAll({ senderId, callerKind, message: body && body.message });
+      jsonResponse(res, 200, result);
+    } catch (err) {
+      errorResponse(res, err.httpStatus || 500, err.message, err.code || 'BROADCAST_FAILED');
+    }
+  }, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES, gatedAction: 'medusa-send' });
+
   // GET <prefix>/exchanges — this participant's Medusa exchanges (#1839):
   // `?direction=sent` (default) or `received`, `?open=1` for unfinished only.
   // `?role=recipient`/`sender` alias `direction`; `?role=all` (#2137) merges
