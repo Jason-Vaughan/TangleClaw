@@ -8,7 +8,11 @@ const assert = require('node:assert/strict');
 const { exec } = require('node:child_process');
 const { promisify } = require('node:util');
 const execAsync = promisify(exec);
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
 const { setLevel } = require('../lib/logger');
+const { liftDeclaration } = require('./helpers/lift');
 
 setLevel('error');
 
@@ -337,6 +341,80 @@ describe('openclaw-version (#296)', () => {
       const r = await ocv.checkUpdateAvailable(conn({ id: 'cu2', instanceDir: null }), { latestTag: '2026.5.28' });
       assert.equal(r.canRewriteEnv, false);
     });
+
+    it('falls through to the real default GHCR fetcher when neither latestTag nor fetchLatestTagImpl is given', async () => {
+      const origFetch = ocv._internal.fetchImpl;
+      ocv._internal.execAsync = async () => ({ stdout: 'OPENCLAW_IMAGE=openclaw:2026.5.27' });
+      ocv._internal.fetchImpl = async (url) => {
+        if (url.includes('/token')) return { ok: true, json: async () => ({ token: 'tok' }) };
+        if (url.includes('/tags/list')) return { ok: true, json: async () => ({ tags: ['2026.5.27', '2026.5.28'] }) };
+        return { ok: false };
+      };
+      try {
+        const r = await ocv.checkUpdateAvailable(conn({ id: 'cu3' }));
+        assert.equal(r.latestVersion, '2026.5.28');
+        assert.equal(r.updateAvailable, true);
+      } finally {
+        ocv._internal.fetchImpl = origFetch;
+      }
+    });
+  });
+
+  describe('_fetchLatestGhcrTag (#297)', () => {
+    const origFetch = ocv._internal.fetchImpl;
+    afterEach(() => { ocv._internal.fetchImpl = origFetch; });
+
+    it('picks the highest comparable tag, ignoring non-version tags like latest/qmd', async () => {
+      ocv._internal.fetchImpl = async (url) => {
+        if (url.includes('/token')) return { ok: true, json: async () => ({ token: 'tok' }) };
+        if (url.includes('/tags/list')) return { ok: true, json: async () => ({ tags: ['2026.5.27', 'latest', '2026.5.28', 'qmd'] }) };
+        return { ok: false };
+      };
+      assert.equal(await ocv._fetchLatestGhcrTag(), '2026.5.28');
+    });
+
+    it('requests the token endpoint first, then the tags endpoint with the bearer token', async () => {
+      const calls = [];
+      ocv._internal.fetchImpl = async (url, opts) => {
+        calls.push({ url, headers: opts && opts.headers });
+        if (url.includes('/token')) return { ok: true, json: async () => ({ token: 'secret-tok' }) };
+        return { ok: true, json: async () => ({ tags: ['2026.5.28'] }) };
+      };
+      await ocv._fetchLatestGhcrTag();
+      assert.equal(calls.length, 2);
+      assert.match(calls[0].url, /ghcr\.io\/token/);
+      assert.match(calls[1].url, /ghcr\.io\/v2\/openclaw\/openclaw\/tags\/list/);
+      assert.equal(calls[1].headers.Authorization, 'Bearer secret-tok');
+    });
+
+    it('resolves null, never throws, when the token request fails', async () => {
+      ocv._internal.fetchImpl = async () => ({ ok: false });
+      assert.equal(await ocv._fetchLatestGhcrTag(), null);
+    });
+
+    it('resolves null when the tags request fails', async () => {
+      ocv._internal.fetchImpl = async (url) => (url.includes('/token')
+        ? { ok: true, json: async () => ({ token: 'tok' }) }
+        : { ok: false });
+      assert.equal(await ocv._fetchLatestGhcrTag(), null);
+    });
+
+    it('resolves null on a malformed token body (no token field)', async () => {
+      ocv._internal.fetchImpl = async () => ({ ok: true, json: async () => ({}) });
+      assert.equal(await ocv._fetchLatestGhcrTag(), null);
+    });
+
+    it('resolves null when tags is missing or not an array, rather than throwing', async () => {
+      ocv._internal.fetchImpl = async (url) => (url.includes('/token')
+        ? { ok: true, json: async () => ({ token: 'tok' }) }
+        : { ok: true, json: async () => ({ tags: 'not-an-array' }) });
+      assert.equal(await ocv._fetchLatestGhcrTag(), null);
+    });
+
+    it('resolves null (never rejects) on a network error or timeout', async () => {
+      ocv._internal.fetchImpl = async () => { throw new Error('fetch failed'); };
+      assert.equal(await ocv._fetchLatestGhcrTag(), null);
+    });
   });
 
   describe('buildEnvTagUpdateScript (#297)', () => {
@@ -362,6 +440,98 @@ describe('openclaw-version (#296)', () => {
     it('isSafeTag accepts docker-shaped tags and rejects shell metacharacters', () => {
       for (const ok of ['2026.5.28', 'v5.71.0', 'qmd', 'edge-rc1']) assert.equal(ocv.isSafeTag(ok), true, ok);
       for (const bad of ['', 'a;b', 'a b', '$(x)', '`x`']) assert.equal(ocv.isSafeTag(bad), false, bad);
+    });
+  });
+
+  describe('public/landing.js — _checkOpenclawUpdatesAvailable badge (#297)', () => {
+    // public/landing.js is a browser script, not a module — lift the
+    // function out of its source text and run it in a vm sandbox with a
+    // minimal fake DOM/api/state, the same pattern test/tcc-folders.test.js's
+    // wizardCheck() uses.
+    const landingSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
+
+    /**
+     * Run `_checkOpenclawUpdatesAvailable` against a fake DOM/api/state.
+     * @param {object[]} connections - `state.openclawConnections`.
+     * @param {(url: string) => Promise<object|null>} apiImpl - Fake `api()`.
+     * @returns {Promise<{toggles: Map<string, object>}>} Each toggle element the sandbox created.
+     */
+    async function run(connections, apiImpl) {
+      const toggles = new Map();
+      /** A minimal fake toggle element: enough of the DOM API the real function uses. */
+      function fakeToggle(connId) {
+        const badges = [];
+        return {
+          dataset: { foldKey: connId },
+          querySelector: (sel) => (sel === '.oc-update-badge' ? (badges[0] || null) : null),
+          appendChild: (el) => { badges.push(el); },
+          _badges: badges
+        };
+      }
+      for (const conn of connections) toggles.set(conn.id, fakeToggle(conn.id));
+
+      const ctx = {
+        state: { openclawConnections: connections },
+        api: apiImpl,
+        document: {
+          querySelector: (sel) => {
+            const m = sel.match(/data-fold-key="([^"]+)"/);
+            return m ? (toggles.get(m[1]) || null) : null;
+          },
+          createElement: () => ({ style: {}, className: '', title: '', textContent: '' })
+        }
+      };
+      vm.createContext(ctx);
+      vm.runInContext(liftDeclaration(landingSrc, 'async function _checkOpenclawUpdatesAvailable('), ctx);
+      await ctx._checkOpenclawUpdatesAvailable();
+      return { toggles };
+    }
+
+    it('appends a visible badge when an update is available', async () => {
+      const conn = { id: 'conn-1', instanceDir: '~/openclaw' };
+      const { toggles } = await run([conn], async (url) => {
+        assert.match(url, /\/api\/openclaw\/connections\/conn-1\/update-available/);
+        return { updateAvailable: true, latestVersion: '2026.5.28' };
+      });
+      const badges = toggles.get('conn-1')._badges;
+      assert.equal(badges.length, 1);
+      assert.match(badges[0].textContent, /2026\.5\.28/);
+      assert.match(badges[0].title, /Update available/);
+    });
+
+    it('appends no badge when no update is available', async () => {
+      const conn = { id: 'conn-2', instanceDir: '~/openclaw' };
+      const { toggles } = await run([conn], async () => ({ updateAvailable: false, latestVersion: null }));
+      assert.equal(toggles.get('conn-2')._badges.length, 0);
+    });
+
+    it('skips a connection with no instanceDir — never calls the API for it', async () => {
+      const conn = { id: 'conn-3', instanceDir: null };
+      let called = false;
+      await run([conn], async () => { called = true; return { updateAvailable: true, latestVersion: 'x' }; });
+      assert.equal(called, false);
+    });
+
+    it('tolerates api() itself returning null, without throwing', async () => {
+      const conn = { id: 'conn-4', instanceDir: '~/openclaw' };
+      const { toggles } = await run([conn], async () => null);
+      assert.equal(toggles.get('conn-4')._badges.length, 0);
+    });
+
+    it('never appends a second badge if called twice against the same (unre-rendered) toggle', async () => {
+      const conn = { id: 'conn-5', instanceDir: '~/openclaw' };
+      const toggle = { dataset: { foldKey: 'conn-5' }, _badges: [{ className: 'oc-update-badge' }] };
+      toggle.querySelector = (sel) => (sel === '.oc-update-badge' ? toggle._badges[0] : null);
+      toggle.appendChild = (el) => { toggle._badges.push(el); };
+      const ctx = {
+        state: { openclawConnections: [conn] },
+        api: async () => ({ updateAvailable: true, latestVersion: '2026.5.28' }),
+        document: { querySelector: () => toggle, createElement: () => ({ style: {}, className: '', title: '', textContent: '' }) }
+      };
+      vm.createContext(ctx);
+      vm.runInContext(liftDeclaration(landingSrc, 'async function _checkOpenclawUpdatesAvailable('), ctx);
+      await ctx._checkOpenclawUpdatesAvailable();
+      assert.equal(toggle._badges.length, 1, 'the existing badge check must stop a second one being appended');
     });
   });
 });

@@ -1883,6 +1883,39 @@ async function loadOpenclawConnections() {
   await Promise.all(statusPromises);
 
   renderKeepingFoldFocus(document.getElementById('openclawPanel'), renderOpenclawConnections);
+  _checkOpenclawUpdatesAvailable();
+}
+
+/**
+ * Fetch update-available for every OpenClaw connection with an `instanceDir`
+ * set (the same precondition the version read itself needs), and show a
+ * small badge beside its toggle row when a newer image tag exists (#297).
+ *
+ * Runs AFTER `renderOpenclawConnections` (`public/ui.js`) has drawn this
+ * cycle's panel, and appends to the DOM it produced rather than changing
+ * that function's own template string — `public/ui.js` is outside this
+ * car's file envelope (Ruling A505-R4.2/R4.5 authorize `public/landing.js`
+ * only). Never awaited by the caller: a slow or offline update check must
+ * not hold up the connections panel itself.
+ * @returns {Promise<void>}
+ */
+async function _checkOpenclawUpdatesAvailable() {
+  const withInstanceDir = (state.openclawConnections || []).filter((c) => c && c.instanceDir);
+  await Promise.all(withInstanceDir.map(async (conn) => {
+    const data = await api(`/api/openclaw/connections/${conn.id}/update-available`);
+    if (!data || !data.updateAvailable) return;
+    const toggle = document.querySelector(`.oc-item-toggle[data-fold-key="${conn.id}"]`);
+    if (!toggle || toggle.querySelector('.oc-update-badge')) return;
+    const badge = document.createElement('span');
+    badge.className = 'oc-update-badge';
+    badge.title = `Update available: ${data.latestVersion}`;
+    badge.textContent = `Update: ${data.latestVersion}`;
+    // Inline styles, not a stylesheet rule: public/style.css is outside this
+    // car's file envelope too.
+    badge.style.cssText = 'display:inline-block;margin-left:6px;padding:1px 6px;'
+      + 'border-radius:10px;font-size:10px;font-weight:600;background:#2d5a2d;color:#8BC34A;';
+    toggle.appendChild(badge);
+  }));
 }
 
 /**

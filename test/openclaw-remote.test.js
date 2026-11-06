@@ -7,10 +7,16 @@
  * (lib/exec-timeout.js), so a stub would only assert our own assumptions.
  */
 
-const { describe, it, afterEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const remote = require('../lib/openclaw-remote');
 const { wasTimedOut } = require('../lib/exec-timeout');
+const { setLevel } = require('../lib/logger');
+
+setLevel('error');
 
 describe('openclaw-remote runShell (#1529)', () => {
   it('writes input to stdin and resolves stdout', async () => {
@@ -254,5 +260,222 @@ describe('openclaw-remote runFile (#1529)', () => {
       remote._runFile('sleep', ['5'], { timeout: 100 }),
       (err) => wasTimedOut(err) && typeof err.code !== 'number' && err.message === 'timed out after 100ms'
     );
+  });
+});
+
+describe('resolveReachableHost integration — lib/sessions.js#launchWebuiSession (#1531)', () => {
+  const store = require('../lib/store');
+  const tunnel = require('../lib/tunnel');
+  let tmpDir, projectsDir, sessions, projectCounter = 0;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-oc-remote-sessions-'));
+    store._setBasePath(tmpDir);
+    store.init();
+    projectsDir = path.join(tmpDir, 'projects');
+    fs.mkdirSync(projectsDir, { recursive: true });
+    const config = store.config.load();
+    config.projectsDir = projectsDir;
+    store.config.save(config);
+    sessions = require('../lib/sessions');
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  let originalTunnel;
+  let originalProbe;
+  const ensureCalls = [];
+  beforeEach(() => {
+    ensureCalls.length = 0;
+    originalTunnel = { detectTunnel: tunnel.detectTunnel, ensureTunnel: tunnel.ensureTunnel };
+    originalProbe = remote._internal.probePort;
+    tunnel.detectTunnel = async () => ({ active: false, pid: null });
+    tunnel.ensureTunnel = async (projectName, config) => { ensureCalls.push(config); return { ok: true }; };
+  });
+  afterEach(() => {
+    Object.assign(tunnel, originalTunnel);
+    remote._internal.probePort = originalProbe;
+    remote._resolved.clear();
+  });
+
+  /** A fresh OpenClaw connection + project pair, never colliding with another test's. */
+  function makeConnAndProject(overrides = {}) {
+    projectCounter += 1;
+    const conn = store.openclawConnections.create({
+      name: `Fallback-${projectCounter}`,
+      host: '192.0.2.1', // TEST-NET-1 (RFC 5737), never routable — primary never answers
+      sshUser: 'u', sshKeyPath: '~/.ssh/k', localPort: 20000 + projectCounter, defaultMode: 'webui',
+      ...overrides
+    });
+    const projDir = path.join(projectsDir, `fb-proj-${projectCounter}`);
+    fs.mkdirSync(projDir, { recursive: true });
+    const project = store.projects.create({ name: `fb-proj-${projectCounter}`, path: projDir, engine: `openclaw:${conn.id}` });
+    return { conn, project };
+  }
+
+  it('wires fallbackHosts/connId into ensureTunnel\'s config, so a rebuild can use the resolver', async () => {
+    const { conn, project } = makeConnAndProject({ fallbackHosts: ['203.0.113.5'] });
+    const result = await sessions.launchWebuiSession(project.name, conn, `openclaw:${conn.id}`, store.engines.get('openclaw'), project);
+    assert.equal(result.error, null);
+    assert.equal(ensureCalls.length, 1);
+    assert.deepEqual(ensureCalls[0].fallbackHosts, ['203.0.113.5']);
+    assert.equal(ensureCalls[0].connId, conn.id);
+    store.sessions.kill(result.session.id, 'test cleanup');
+  });
+
+  it('detectTunnel resolves the fallback-up host when the primary does not answer port 22', async () => {
+    remote._internal.probePort = (host) => Promise.resolve(host === '203.0.113.5');
+    const { conn, project } = makeConnAndProject({ fallbackHosts: ['203.0.113.5'] });
+    let seenHost = null;
+    tunnel.detectTunnel = async (port, host) => { seenHost = host; return { active: false, pid: null }; };
+    const result = await sessions.launchWebuiSession(project.name, conn, `openclaw:${conn.id}`, store.engines.get('openclaw'), project);
+    assert.equal(result.error, null);
+    assert.equal(seenHost, '203.0.113.5', 'detectTunnel was called with the RESOLVED fallback host, not the dead primary');
+    store.sessions.kill(result.session.id, 'test cleanup');
+  });
+
+  it('a connection with no fallbackHosts is unaffected — same host passed through, no probing', async () => {
+    let probed = false;
+    remote._internal.probePort = () => { probed = true; return Promise.resolve(true); };
+    const { conn, project } = makeConnAndProject({ fallbackHosts: [] });
+    const result = await sessions.launchWebuiSession(project.name, conn, `openclaw:${conn.id}`, store.engines.get('openclaw'), project);
+    assert.equal(result.error, null);
+    assert.equal(probed, false);
+    assert.deepEqual(ensureCalls[0].fallbackHosts, []);
+    store.sessions.kill(result.session.id, 'test cleanup');
+  });
+});
+
+describe('resolveReachableHost integration — _buildLaunchCommand\'s synchronous activeHost read (#1531)', () => {
+  const store = require('../lib/store');
+  const sessions = require('../lib/sessions');
+  let tmpDir;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-oc-remote-cmd-'));
+    store._setBasePath(tmpDir);
+    store.init();
+  });
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+  afterEach(() => { remote._resolved.clear(); });
+
+  it('uses conn.host when nothing has resolved a route yet', () => {
+    const conn = store.openclawConnections.create({
+      name: 'CmdNoRoute', host: '192.0.2.1', sshUser: 'u', sshKeyPath: '~/.ssh/k', instanceDir: '~/openclaw'
+    });
+    const project = { engineId: `openclaw:${conn.id}` };
+    const cmd = sessions._buildLaunchCommand({}, project);
+    assert.match(cmd, /u@192\.0\.2\.1/);
+  });
+
+  it('uses the resolver\'s cached activeHost once one is recorded for this connection', () => {
+    const conn = store.openclawConnections.create({
+      name: 'CmdWithRoute', host: '192.0.2.1', sshUser: 'u', sshKeyPath: '~/.ssh/k', instanceDir: '~/openclaw',
+      fallbackHosts: ['203.0.113.9']
+    });
+    remote._resolved.set(conn.id, { activeHost: '203.0.113.9', fallbackUsed: true, resolvedAt: Date.now() });
+    const project = { engineId: `openclaw:${conn.id}` };
+    const cmd = sessions._buildLaunchCommand({}, project);
+    assert.match(cmd, /u@203\.0\.113\.9/);
+    assert.doesNotMatch(cmd, /192\.0\.2\.1/);
+  });
+});
+
+describe('resolveReachableHost integration — POST /api/openclaw/test (#1531)', () => {
+  const { createServer } = require('../server');
+  const http = require('node:http');
+  const store = require('../lib/store');
+  const { operatorHeaders } = require('./_shared-docs-callers');
+  let tmpDir, server, baseUrl;
+
+  before(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-oc-remote-testroute-'));
+    store._setBasePath(tmpDir);
+    store.init();
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    baseUrl = `http://127.0.0.1:${server.address().port}`;
+  });
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  let originalRunShell, originalProbe;
+  beforeEach(() => {
+    originalRunShell = remote._internal.runShell;
+    originalProbe = remote._internal.probePort;
+  });
+  afterEach(() => {
+    remote._internal.runShell = originalRunShell;
+    remote._internal.probePort = originalProbe;
+    remote._resolved.clear();
+  });
+
+  /**
+   * POST a JSON body to the running server.
+   * @param {string} urlPath
+   * @param {object} body
+   * @returns {Promise<{status: number, data: object}>}
+   */
+  function post(urlPath, body) {
+    return new Promise((resolve, reject) => {
+      const req = http.request(`${baseUrl}${urlPath}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...operatorHeaders(server) }
+      }, (res) => {
+        let raw = ''; res.on('data', (c) => raw += c);
+        res.on('end', () => { let data; try { data = JSON.parse(raw); } catch { data = raw; } resolve({ status: res.statusCode, data }); });
+      });
+      req.on('error', reject);
+      req.write(JSON.stringify(body));
+      req.end();
+    });
+  }
+
+  it('the ssh probe targets the resolved fallback host, not the dead primary', async () => {
+    remote._internal.probePort = (host) => Promise.resolve(host === '203.0.113.7');
+    // Two shell calls happen (the ssh probe, then the curl healthz probe) --
+    // capture all of them and find the ssh one, rather than the last one.
+    const cmds = [];
+    remote._internal.runShell = async (cmd) => { cmds.push(cmd); return { stdout: 'ok\n', stderr: '' }; };
+    const { status, data } = await post('/api/openclaw/test', {
+      host: '192.0.2.1', sshUser: 'u', sshKeyPath: '~/.ssh/k', fallbackHosts: ['203.0.113.7']
+    });
+    assert.equal(status, 200);
+    assert.equal(data.ssh, true);
+    const sshCmd = cmds.find((c) => c.startsWith('ssh'));
+    assert.match(sshCmd, /u@203\.0\.113\.7/);
+  });
+
+  it('refuses an unsafe fallbackHosts entry before any probe or ssh runs', async () => {
+    let ran = false;
+    remote._internal.probePort = () => { ran = true; return Promise.resolve(true); };
+    const { status, data } = await post('/api/openclaw/test', {
+      host: '192.0.2.1', sshUser: 'u', sshKeyPath: '~/.ssh/k', fallbackHosts: ['a; rm -rf /']
+    });
+    assert.equal(status, 400);
+    assert.equal(data.code, 'BAD_REQUEST');
+    assert.equal(ran, false);
+  });
+
+  it('a request with no fallbackHosts and no id behaves exactly as before — no probing', async () => {
+    let probed = false;
+    remote._internal.probePort = () => { probed = true; return Promise.resolve(true); };
+    const cmds = [];
+    remote._internal.runShell = async (cmd) => { cmds.push(cmd); return { stdout: 'ok\n', stderr: '' }; };
+    const { status, data } = await post('/api/openclaw/test', { host: '192.0.2.1', sshUser: 'u', sshKeyPath: '~/.ssh/k' });
+    assert.equal(status, 200);
+    assert.equal(data.ssh, true);
+    assert.equal(probed, false);
+    const sshCmd = cmds.find((c) => c.startsWith('ssh'));
+    assert.match(sshCmd, /u@192\.0\.2\.1/);
   });
 });
