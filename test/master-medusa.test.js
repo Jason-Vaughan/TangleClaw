@@ -669,6 +669,22 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
     assert.deepEqual(data.workspaces.map((w) => w.id), ['live-ws']);
   });
 
+  it('lib/medusa.js#getRoster stamps isMaster/role on the Master\'s own entry, never on an ordinary one '
+    + '(#2127, Ruling A505-R3.10)', async () => {
+    startListening();
+    const masterId = master.getMasterMedusaStatus().workspaceId;
+    // A caller OTHER than the Master itself, so the Master's entry is not
+    // self-excluded and this exercises the stamping a non-Master caller sees.
+    const roster = await medusa.getRoster({ sessionId: 'some-unrelated-caller' });
+    const masterEntry = roster.find((w) => w.id === masterId);
+    const liveEntry = roster.find((w) => w.id === 'live-ws');
+    assert.ok(masterEntry, 'the Master\'s own entry must still be present for a non-Master caller');
+    assert.equal(masterEntry.isMaster, true);
+    assert.equal(masterEntry.role, 'orchestrator');
+    assert.equal(liveEntry.isMaster, undefined, 'an ordinary entry must never be stamped');
+    assert.equal(liveEntry.role, undefined);
+  });
+
   it('send works at write, and the Bridge sees the Master as the sender', async () => {
     const ws = startListening();
     const from = JSON.parse(ws.sent[0]).workspaceId;
@@ -1188,7 +1204,7 @@ describe('Orchestrator role terminology — vocabulary contract and inventory (#
   });
 
   describe('Team Chat @orchestrator / @master routing (public/api-helper.js, Ruling A505-R3.6/R3.7)', () => {
-    const MASTER_ENTRY = { id: 'project-master-abc12345', name: 'Project Master' };
+    const MASTER_ENTRY = { id: 'project-master-abc12345', name: 'Project Master', isMaster: true, role: 'orchestrator' };
     const PROJECT_ENTRY = { id: 'tc-lane-pm-9d85f3aa', name: 'TC-Lane-PM' };
 
     function helper() {
@@ -1227,12 +1243,14 @@ describe('Orchestrator role terminology — vocabulary contract and inventory (#
       assert.deepEqual(result.recipients, [{ tag: 'project-master', workspaceId: MASTER_ENTRY.id, name: MASTER_ENTRY.name }]);
     });
 
-    it('also matches a future canonical "Orchestrator" display name / "orchestrator-" workspace id', () => {
-      const orchestratorEntry = { id: 'orchestrator-deadbeef', name: 'Orchestrator' };
+    it('also matches a future canonical "Orchestrator" display name once it carries the authoritative role stamp', () => {
+      const orchestratorEntry = { id: 'orchestrator-deadbeef', name: 'Orchestrator', isMaster: true, role: 'orchestrator' };
       const r1 = norm(helper().tcParseMedusaNicknameTags('@orchestrator', [orchestratorEntry]));
       assert.deepEqual(r1.recipients, [{ tag: 'orchestrator', workspaceId: orchestratorEntry.id, name: 'Orchestrator' }]);
       const r2 = norm(helper().tcParseMedusaNicknameTags('@master', [{ id: 'some-id', name: 'anything', isMaster: true }]));
       assert.equal(r2.recipients[0].workspaceId, 'some-id');
+      const r3 = norm(helper().tcParseMedusaNicknameTags('@project-master', [{ id: 'other-id', name: 'anything else', role: 'orchestrator' }]));
+      assert.equal(r3.recipients[0].workspaceId, 'other-id', 'role: "orchestrator" alone is authoritative too, not just isMaster');
     });
 
     it('leaves @orchestrator/@master unresolved when no roster entry is the Master', () => {
@@ -1261,15 +1279,28 @@ describe('Orchestrator role terminology — vocabulary contract and inventory (#
       assert.deepEqual(result.ambiguous[0].candidates.sort(), [MASTER_ENTRY.id, shadowProject.id].sort());
     });
 
-    it('refuses as ambiguous when the roster carries TWO "Project Master"-named entries — a valid ordinary '
-      + 'project name, so roster order alone must never pick the recipient (#2127 I-Gate Round 2 C1)', () => {
+    it('fails closed (unresolved, never ambiguous-but-pickable) when the roster carries TWO "Project '
+      + 'Master"-named entries and NEITHER carries the authoritative role stamp — name/id-prefix alone is '
+      + 'no longer proof of the real Orchestrator (#2127, I-Gate Round 3 #5799693931 C1, Ruling A505-R3.10)', () => {
       const first = { id: 'project-master-11111111', name: 'Project Master' };
       const second = { id: 'project-master-22222222', name: 'Project Master' };
       const result = norm(helper().tcParseMedusaNicknameTags('@orchestrator private', [first, second]));
       assert.deepEqual(result.recipients, []);
-      assert.equal(result.ambiguous.length, 1);
-      assert.equal(result.ambiguous[0].tag, 'orchestrator');
-      assert.deepEqual(result.ambiguous[0].candidates.sort(), [first.id, second.id].sort());
+      assert.deepEqual(result.ambiguous, []);
+      assert.deepEqual(result.unresolved, ['orchestrator']);
+    });
+
+    it('fails closed when the real Orchestrator is ABSENT and the only entry present is a lone ordinary '
+      + 'lookalike named/prefixed like it, for all three reserved tags (#2127, I-Gate Round 3 #5799693931 C1, '
+      + 'Ruling A505-R3.10)', () => {
+      const projectMasterLookalike = { id: 'project-master-11111111', name: 'Project Master' };
+      const orchestratorLookalike = { id: 'orchestrator-11111111', name: 'orchestrator' };
+      for (const lookalike of [projectMasterLookalike, orchestratorLookalike]) {
+        const result = norm(helper().tcParseMedusaNicknameTags('@orchestrator @master @project-master', [lookalike]));
+        assert.deepEqual(result.recipients, [], JSON.stringify(lookalike));
+        assert.deepEqual(result.ambiguous, [], JSON.stringify(lookalike));
+        assert.deepEqual(result.unresolved.sort(), ['master', 'orchestrator', 'project-master'], JSON.stringify(lookalike));
+      }
     });
 
     it('does not disturb resolution of an ordinary, unrelated nickname', () => {
