@@ -21,6 +21,7 @@ setLevel('error');
 const store = require('../lib/store');
 const serviceToken = require('../lib/service-token');
 const masterAuthority = require('../lib/master-authority');
+const { ORCHESTRATOR_ROLE_TERMINOLOGY } = require('../lib/master');
 
 describe('lib/master-authority.js', () => {
   let tmpDir;
@@ -89,7 +90,9 @@ describe('lib/master-authority.js', () => {
     it('defaults to read-only / read-only / generation 0 for a fresh config', () => {
       const config = store.config.load();
       assert.deepEqual(masterAuthority.getAuthorityState(config), {
-        accessLevel: 'read-only', toggleState: 'read-only', generation: 0, updatedAt: null, updatedBy: null
+        accessLevel: 'read-only', toggleState: 'read-only', generation: 0, updatedAt: null, updatedBy: null,
+        // #2127 — additive; see lib/master.js#ORCHESTRATOR_ROLE_TERMINOLOGY.
+        roleTerminology: ORCHESTRATOR_ROLE_TERMINOLOGY
       });
     });
 

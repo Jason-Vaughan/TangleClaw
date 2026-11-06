@@ -68,6 +68,8 @@ const it = _rawIt;
 const store = require('../lib/store');
 const medusa = require('../lib/medusa');
 const master = require('../lib/master');
+const masterAuthority = require('../lib/master-authority');
+const masterContinuity = require('../lib/master-continuity');
 const medusaExchanges = require('../lib/medusa-exchanges');
 const controlApi = require('../lib/control-api');
 const { createServer, _exchangeCaller } = require('../server');
@@ -1050,5 +1052,137 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
     assert.equal(unbound.status, 403);
     assert.equal(unbound.data.code, 'LAUNCH_BINDING_REQUIRED');
     assert.equal(store.medusaExchanges.get(mine.exchange_id).terminal_at, null);
+  });
+});
+
+describe('Orchestrator role terminology — vocabulary contract and inventory (#2127, Ruling A505-R3)', () => {
+  describe('resolveOrchestratorRoleIdentifier', () => {
+    it('matches every canonical alias as undeprecated', () => {
+      for (const alias of ['Orchestrator', 'orchestrator', '@orchestrator']) {
+        const r = master.resolveOrchestratorRoleIdentifier(alias);
+        assert.equal(r.matched, true, alias);
+        assert.equal(r.canonicalRole, 'Orchestrator');
+        assert.equal(r.canonicalKey, 'orchestrator');
+        assert.equal(r.canonicalHandle, '@orchestrator');
+        assert.equal(r.deprecated, false);
+        assert.equal(r.matchedAlias, alias);
+        assert.equal(r.deprecationNotice, undefined, 'a canonical match carries no deprecation fields');
+      }
+    });
+
+    it('matches every legacy alias as deprecated, resolving to the canonical role', () => {
+      for (const alias of ['Project Master', 'project-master', 'master', '@master']) {
+        const r = master.resolveOrchestratorRoleIdentifier(alias);
+        assert.equal(r.matched, true, alias);
+        assert.equal(r.canonicalRole, 'Orchestrator');
+        assert.equal(r.canonicalKey, 'orchestrator');
+        assert.equal(r.canonicalHandle, '@orchestrator');
+        assert.equal(r.deprecated, true);
+        assert.equal(r.matchedAlias, alias);
+        assert.match(r.deprecationNotice, /deprecated/);
+        assert.match(r.retirementCriteria, /[Nn]ot yet scheduled/);
+      }
+    });
+
+    it('never collides with a Git branch name that merely contains "master" (#2127 scope)', () => {
+      for (const branchy of ['origin/master', 'refs/heads/master', 'master-branch', 'not-master', 'MasterPlan']) {
+        assert.deepEqual(master.resolveOrchestratorRoleIdentifier(branchy), { matched: false }, branchy);
+      }
+    });
+
+    it('reads non-string input as unmatched rather than throwing', () => {
+      for (const input of [undefined, null, 42, {}, [], true]) {
+        assert.deepEqual(master.resolveOrchestratorRoleIdentifier(input), { matched: false });
+      }
+    });
+
+    it('trims whitespace before matching', () => {
+      assert.equal(master.resolveOrchestratorRoleIdentifier('  master  ').matched, true);
+    });
+  });
+
+  describe('ORCHESTRATOR_COMPATIBILITY_INVENTORY', () => {
+    const inventory = master.ORCHESTRATOR_COMPATIBILITY_INVENTORY;
+
+    it('is frozen, top-level and per-row (#2127 Acceptance Criterion 3)', () => {
+      assert.ok(Object.isFrozen(inventory));
+      for (const row of inventory) assert.ok(Object.isFrozen(row), JSON.stringify(row));
+    });
+
+    it('documents every surface the dispatch named, each with a surface, identifier, canonicalReplacement, compatibilityReason and retirementCriteria', () => {
+      const surfaces = inventory.map((row) => row.surface);
+      assert.deepEqual(
+        surfaces.sort(),
+        ['api-route', 'auth-token', 'config', 'medusa-key', 'medusa-name', 'session_rules', 'tmux-session'].sort()
+      );
+      for (const row of inventory) {
+        assert.equal(typeof row.surface, 'string', JSON.stringify(row));
+        assert.equal(typeof row.identifier, 'string', JSON.stringify(row));
+        assert.equal(typeof row.canonicalReplacement, 'string', JSON.stringify(row));
+        assert.ok(row.compatibilityReason.length > 0, JSON.stringify(row));
+        assert.match(row.retirementCriteria, /[Nn]ot yet scheduled/, JSON.stringify(row));
+      }
+    });
+
+    it('names the exact retained identifiers this codebase actually uses, not placeholders', () => {
+      const byIdentifier = new Map(inventory.map((row) => [row.surface, row.identifier]));
+      assert.equal(byIdentifier.get('config'), 'config.master');
+      assert.equal(byIdentifier.get('session_rules'), "session_rules.kind = 'master'");
+      assert.equal(byIdentifier.get('api-route'), '/api/master/*');
+      assert.equal(byIdentifier.get('auth-token'), 'tc_master_ token prefix');
+      assert.equal(byIdentifier.get('tmux-session'), master.MASTER_TMUX_SESSION);
+      assert.equal(byIdentifier.get('medusa-key'), `MASTER_MEDUSA_KEY = '${master.MASTER_MEDUSA_KEY}'`);
+      assert.equal(byIdentifier.get('medusa-name'), `MASTER_MEDUSA_NAME = '${master.MASTER_MEDUSA_NAME}'`);
+    });
+  });
+
+  describe('additive roleTerminology on every status-composition payload', () => {
+    const EXPECTED = {
+      canonicalRole: 'Orchestrator',
+      canonicalKey: 'orchestrator',
+      canonicalHandle: '@orchestrator',
+      legacyRole: 'Project Master',
+      legacyKey: 'master',
+      legacyHandle: '@master',
+      legacyDeprecated: true
+    };
+
+    it('master.ORCHESTRATOR_ROLE_TERMINOLOGY matches the dispatch\'s exact shape, frozen', () => {
+      assert.deepEqual(master.ORCHESTRATOR_ROLE_TERMINOLOGY, EXPECTED);
+      assert.ok(Object.isFrozen(master.ORCHESTRATOR_ROLE_TERMINOLOGY));
+    });
+
+    it('getMasterStatus carries it without disturbing any existing field', () => {
+      const home = tempHome();
+      try {
+        const status = master.getMasterStatus({ home, tmuxLib: fakeTmux({ alive: false }) });
+        assert.deepEqual(status.roleTerminology, EXPECTED);
+        // The fields this Train's own docstring already pins — present
+        // alongside the new one, not replaced by it.
+        assert.equal(typeof status.exists, 'boolean');
+        assert.equal(status.tmuxSession, master.MASTER_TMUX_SESSION);
+        assert.ok(status.settings);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    });
+
+    it('getAuthorityState carries it for every accessLevel, including malformed config', () => {
+      assert.deepEqual(masterAuthority.getAuthorityState(store.config.load()).roleTerminology, EXPECTED);
+      assert.deepEqual(masterAuthority.getAuthorityState(null).roleTerminology, EXPECTED);
+      assert.deepEqual(masterAuthority.getAuthorityState({}).roleTerminology, EXPECTED);
+    });
+
+    it('evaluateContinuityHealth carries it on every branch: disabled, unmeasured and measured', () => {
+      assert.deepEqual(
+        masterContinuity.evaluateContinuityHealth({}, { enabled: false }).roleTerminology, EXPECTED
+      );
+      assert.deepEqual(
+        masterContinuity.evaluateContinuityHealth({}, { enabled: true }).roleTerminology, EXPECTED
+      );
+      assert.deepEqual(
+        masterContinuity.evaluateContinuityHealth({ remainingPercent: 90 }, { enabled: true }).roleTerminology, EXPECTED
+      );
+    });
   });
 });
