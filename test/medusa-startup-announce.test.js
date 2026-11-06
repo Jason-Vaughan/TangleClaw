@@ -120,6 +120,37 @@ describe('medusa-startup-announce: resolveProjectRecipients (cross-project, #579
   it('uses the real store by default when no deps are injected (smoke only -- a bare require touches no DB)', () => {
     assert.equal(typeof announce.resolveProjectRecipients, 'function');
   });
+
+  // I-Gate Round 2 (#5798507488): a pre-filter slice(0, MAX_PROJECT_SESSIONS)
+  // on the RAW project list, applied before filtering by active coordinator
+  // role, silently drops a real coordinator sitting past the cap in
+  // project-id order -- 100 plain (non-coordinator) projects followed by one
+  // genuine PM at project id 101 used to resolve to [] (`no-recipients`)
+  // even though that PM is live and opted in. The cap must apply to the
+  // RESOLVED recipient list, never the input project list.
+  it('resolves a coordinator sitting past the first 100 projects in list order (#5798507488)', () => {
+    const manyProjects = [{ id: 0, path: '/tmp/builder' }];
+    const manyRoles = { 0: null };
+    const manySessions = { 0: { id: 10 } };
+    const manyWorkspaces = { 10: 'ws-builder' };
+    for (let i = 1; i <= 100; i++) {
+      manyProjects.push({ id: i, path: `/tmp/plain-${i}` });
+      manyRoles[i] = null;
+    }
+    manyProjects.push({ id: 101, path: '/tmp/pm' });
+    manyRoles[101] = { role: 'project-manager' };
+    manySessions[101] = { id: 2101 };
+    manyWorkspaces[2101] = 'ws-pm-101';
+
+    const d = {
+      listProjects: () => manyProjects,
+      getActiveRoleForProject: (pid) => manyRoles[pid] || null,
+      getActiveSessionForProject: (pid) => manySessions[pid] || null,
+      getWorkspaceId: (_path, sessionId) => manyWorkspaces[sessionId] || null
+    };
+    const recipients = announce.resolveProjectRecipients(0, 10, d);
+    assert.deepEqual(recipients, ['ws-pm-101']);
+  });
 });
 
 describe('medusa-startup-announce: maybeAnnounceStartup', () => {
