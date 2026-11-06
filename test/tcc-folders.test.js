@@ -163,6 +163,24 @@ describe('lib/tcc-workspace-migration — guided workspace root migration (#2626
       assert.equal(plan.configUpdate, null);
     });
 
+    it('populates the config update for the REAL legacy store.config.load() shape — the tilde form '
+      + '"~/Documents/Projects", including when a keyless/blank config falls back to it (#2626 I-Gate R1 C1-a)', () => {
+      const p1 = makeProject('legacy');
+      // store.config.load() returns exactly this string both when
+      // projectsDir is explicitly '~/Documents/Projects' AND when the file
+      // is keyless/blank (lib/store.js's LEGACY_PROJECTS_DIR fallback) --
+      // one plan call covers both, since the planner only ever sees this
+      // already-resolved config object.
+      const plan = migration.planWorkspaceMigration({
+        home: tmpHome, projects: [p1], activeSessions: [], config: { projectsDir: '~/Documents/Projects' }
+      });
+      assert.ok(plan.configUpdate, 'a real legacy tilde-form projectsDir must still populate the config update');
+      assert.deepEqual(plan.configUpdate, {
+        fromProjectsDir: path.join(tmpHome, 'Documents', 'Projects'),
+        toProjectsDir: path.join(tmpHome, 'Projects')
+      });
+    });
+
     it('ignores a project outside sourceRoot entirely — not this migration\'s concern', () => {
       const outside = store.projects.create({
         name: 'elsewhere', path: fs.mkdtempSync(path.join(os.tmpdir(), 'tcc-migrate-outside-')), engine: 'claude'
@@ -350,6 +368,39 @@ describe('lib/tcc-workspace-migration — guided workspace root migration (#2626
       assert.equal(result.rolledBack, true);
       assert.ok(fs.existsSync(p1.path), 'the move itself was rolled back along with the config failure');
       assert.equal(store.projects.get(p1.id).path, p1.path);
+    });
+
+    it('restores config.json too when a LATER step (git worktree repair) fails — the config write already '
+      + 'happened before repair runs (#2626 I-Gate R1 C1-b)', () => {
+      const p1 = makeProject('epsilon');
+      // A linked worktree, so _hasWorktreeLink is true and repair actually runs.
+      fs.writeFileSync(path.join(p1.path, '.git'), 'gitdir: /somewhere/else/.git/worktrees/epsilon\n');
+
+      const configPath = path.join(tmpDataDir, 'config.json');
+      const originalConfigRaw = JSON.stringify({ projectsDir: path.join(tmpHome, 'Documents', 'Projects') }, null, 2);
+      fs.writeFileSync(configPath, originalConfigRaw);
+
+      const plan = migration.planWorkspaceMigration({
+        home: tmpHome, projects: [p1], activeSessions: [],
+        config: { projectsDir: path.join(tmpHome, 'Documents', 'Projects') }
+      });
+      assert.ok(plan.configUpdate);
+
+      const result = migration.executeWorkspaceMigration(plan, {
+        store, configPath,
+        execFileSyncImpl: () => { throw new Error('simulated git worktree repair failure'); }
+      });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.rolledBack, true);
+      assert.match(result.error, /simulated git worktree repair failure/);
+
+      // All three together, or the "whole attempt" rollback promise is false.
+      assert.ok(fs.existsSync(p1.path), 'the directory is back at its original path');
+      assert.ok(!fs.existsSync(path.join(tmpHome, 'Projects', 'epsilon')), 'and gone from the target');
+      assert.equal(store.projects.get(p1.id).path, p1.path, 'the store row reverted too');
+      assert.equal(fs.readFileSync(configPath, 'utf8'), originalConfigRaw,
+        'config.json must be back to its EXACT original bytes, not left pointing at the new root');
     });
   });
 });
