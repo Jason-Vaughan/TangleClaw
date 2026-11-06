@@ -15,6 +15,7 @@ const zlib = require('node:zlib');
 const vm = require('node:vm');
 const { PassThrough } = require('node:stream');
 const html = require('../lib/openclaw-html');
+const authGate = require('../lib/auth-gate');
 
 const fixture = (name) => fs.readFileSync(path.join(__dirname, 'fixtures', name), 'utf8');
 const NEW = fixture('openclaw-control-ui-2026.9.4.html');
@@ -153,8 +154,9 @@ function extractBootstrapScript(out) {
  * immediate call, the retry timer, the exposed global) rather than just the
  * string that produces it.
  * @param {string} scriptBody - The JS source between `<script>` and `</script>`.
- * @param {{storage?: Map<string,string>}} [opts] - `storage` shares one
- *   mock `localStorage` across calls, modeling same-origin persistence.
+ * @param {{storage?: Map<string,string>, cookie?: string}} [opts] - `storage` shares one
+ *   mock `localStorage` across calls, modeling same-origin persistence; `cookie` sets
+ *   `document.cookie` (#254 I-Gate Round 2 — the CSRF header read).
  * @returns {{fetchCalls: Array<{url:string, opts:object}>, timers: Array<{fn:Function, ms:number}>, sandbox: object}}
  */
 function runBootstrapScript(scriptBody, opts = {}) {
@@ -168,7 +170,8 @@ function runBootstrapScript(scriptBody, opts = {}) {
     },
     document: {
       head: { appendChild() {} },
-      createElement: () => ({})
+      createElement: () => ({}),
+      cookie: opts.cookie || ''
     },
     window: {},
     fetch: (url, fetchOpts) => {
@@ -234,6 +237,68 @@ describe('_deviceIdentityBootstrapScript execution (#254 Issue A, I-Gate Round 1
 
     assert.equal(second.sandbox.window[html.DEVICE_IDENTITY_GLOBAL], firstId,
       'the SAME localStorage-backed id persists across different connIds sharing one origin');
+  });
+
+  it('reads the tc_csrf cookie and sends it as X-CSRF-Token on the approval POST (#254 I-Gate Round 2)', () => {
+    const out = html.injectDeviceIdentityBootstrap('<html><head></head></html>', DIRECT_PREFIX);
+    const { fetchCalls } = runBootstrapScript(extractBootstrapScript(out), {
+      cookie: 'other=1; tc_csrf=real-csrf-token; foo=bar'
+    });
+    assert.equal(fetchCalls.length, 1);
+    // The script runs in a separate vm realm, so its {} literal has a
+    // different Object.prototype than this file's -- round-trip through
+    // JSON first, same normalization test/master-medusa.test.js's norm()
+    // uses for the same reason.
+    assert.deepEqual(JSON.parse(JSON.stringify(fetchCalls[0].opts.headers)), { 'X-CSRF-Token': 'real-csrf-token' });
+  });
+
+  it('decodes a URL-encoded tc_csrf cookie value', () => {
+    const out = html.injectDeviceIdentityBootstrap('<html><head></head></html>', DIRECT_PREFIX);
+    const encoded = encodeURIComponent('token/with+special=chars');
+    const { fetchCalls } = runBootstrapScript(extractBootstrapScript(out), { cookie: `tc_csrf=${encoded}` });
+    assert.equal(fetchCalls[0].opts.headers['X-CSRF-Token'], 'token/with+special=chars');
+  });
+
+  it('sends no X-CSRF-Token header when there is no tc_csrf cookie at all — same as before this fix', () => {
+    const out = html.injectDeviceIdentityBootstrap('<html><head></head></html>', DIRECT_PREFIX);
+    const { fetchCalls } = runBootstrapScript(extractBootstrapScript(out), { cookie: 'other=1' });
+    assert.deepEqual(JSON.parse(JSON.stringify(fetchCalls[0].opts.headers)), {});
+  });
+
+  it('the X-CSRF-Token this script sends is actually accepted by lib/auth-gate.js#evaluate, not just well-formed', () => {
+    // The real failure mode this fix closes: a syntactically plausible header
+    // that the real gate still refuses. Run the captured header through the
+    // real evaluate() the signed-in front door uses, not an assertion about
+    // the header's shape alone.
+    const out = html.injectDeviceIdentityBootstrap('<html><head></head></html>', DIRECT_PREFIX);
+    const { fetchCalls } = runBootstrapScript(extractBootstrapScript(out), {
+      cookie: 'tc_csrf=real-csrf-token'
+    });
+    const submittedCsrf = fetchCalls[0].opts.headers['X-CSRF-Token'];
+
+    const result = authGate.evaluate({
+      method: 'POST',
+      rawUrl: fetchCalls[0].url,
+      pathname: fetchCalls[0].url,
+      gateState: authGate.GATE_STATES.ARMED,
+      session: { csrfToken: 'real-csrf-token' },
+      submittedCsrf,
+      machineClient: false
+    });
+    assert.deepEqual(result, { action: 'allow' });
+  });
+
+  it('WITHOUT this fix the same gate call refuses — proves the fix is load-bearing, not redundant', () => {
+    const result = authGate.evaluate({
+      method: 'POST',
+      rawUrl: `/api/openclaw/connections/${CONN_ID}/approve-pending`,
+      pathname: `/api/openclaw/connections/${CONN_ID}/approve-pending`,
+      gateState: authGate.GATE_STATES.ARMED,
+      session: { csrfToken: 'real-csrf-token' },
+      submittedCsrf: null, // what the pre-fix script sent: no header at all
+      machineClient: false
+    });
+    assert.deepEqual(result, { action: 'refuse-csrf' });
   });
 });
 
