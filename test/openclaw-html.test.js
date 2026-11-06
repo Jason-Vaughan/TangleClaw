@@ -12,8 +12,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');
+const vm = require('node:vm');
 const { PassThrough } = require('node:stream');
 const html = require('../lib/openclaw-html');
+const authGate = require('../lib/auth-gate');
 
 const fixture = (name) => fs.readFileSync(path.join(__dirname, 'fixtures', name), 'utf8');
 const NEW = fixture('openclaw-control-ui-2026.9.4.html');
@@ -93,6 +95,213 @@ describe('rewriteControlUiHtml (#1534)', () => {
   });
 });
 
+describe('injectDeviceIdentityBootstrap (#254 Issue A)', () => {
+  it('injects right after <head> when one exists', () => {
+    const out = html.injectDeviceIdentityBootstrap('<html><head><title>t</title></head><body></body></html>');
+    assert.match(out, /<head><script>.*__tangleclawOpenclawDeviceId.*<\/script><title>t<\/title><\/head>/);
+  });
+
+  it('falls back to right after <html ...> when there is no <head>', () => {
+    const out = html.injectDeviceIdentityBootstrap('<html lang="en"><body>hi</body></html>');
+    assert.match(out, /<html lang="en"><script>.*__tangleclawOpenclawDeviceId/);
+  });
+
+  it('is a no-op when there is neither <head> nor <html>', () => {
+    const text = 'not a page at all';
+    assert.equal(html.injectDeviceIdentityBootstrap(text), text);
+  });
+
+  it('is idempotent — does not inject a second copy into an already-bootstrapped page', () => {
+    const once = html.injectDeviceIdentityBootstrap('<html><head></head></html>');
+    const twice = html.injectDeviceIdentityBootstrap(once);
+    assert.equal(twice, once);
+    assert.equal((once.match(/__tangleclawOpenclawDeviceId/g) || []).length, 1);
+  });
+
+  it('is wrapped in try/catch so a browser with storage disabled cannot break the page', () => {
+    const out = html.injectDeviceIdentityBootstrap('<html><head></head></html>');
+    assert.match(out, /try\{.*catch\(e\)\{\}/);
+  });
+
+  it('mints and persists under the exported storage key, exposes the exported global and meta names', () => {
+    const out = html.injectDeviceIdentityBootstrap('<html><head></head></html>');
+    assert.ok(out.includes(JSON.stringify(html.DEVICE_IDENTITY_STORAGE_KEY)));
+    assert.ok(out.includes(JSON.stringify(html.DEVICE_IDENTITY_GLOBAL)));
+    assert.ok(out.includes(JSON.stringify(html.DEVICE_IDENTITY_META_NAME)));
+  });
+
+  it('non-string input passes through unchanged', () => {
+    assert.equal(html.injectDeviceIdentityBootstrap(null), null);
+    assert.equal(html.injectDeviceIdentityBootstrap(undefined), undefined);
+  });
+});
+
+/**
+ * Pull the injected bootstrap's inline script body out of the rewritten page.
+ * @param {string} out - The page returned by `injectDeviceIdentityBootstrap`.
+ * @returns {string} The JS source between `<script>` and `</script>`.
+ */
+function extractBootstrapScript(out) {
+  const m = /<script>([\s\S]*)<\/script>/.exec(out);
+  assert.ok(m, 'bootstrap script tag must be present');
+  return m[1];
+}
+
+/**
+ * Execute an injected bootstrap script's source in a mock-DOM `vm` sandbox, the
+ * way a browser running this script actually would — a VM context, not a
+ * static-source assertion, so this exercises the real control flow (the
+ * immediate call, the retry timer, the exposed global) rather than just the
+ * string that produces it.
+ * @param {string} scriptBody - The JS source between `<script>` and `</script>`.
+ * @param {{storage?: Map<string,string>, cookie?: string}} [opts] - `storage` shares one
+ *   mock `localStorage` across calls, modeling same-origin persistence; `cookie` sets
+ *   `document.cookie` (#254 I-Gate Round 2 — the CSRF header read).
+ * @returns {{fetchCalls: Array<{url:string, opts:object}>, timers: Array<{fn:Function, ms:number}>, sandbox: object}}
+ */
+function runBootstrapScript(scriptBody, opts = {}) {
+  const storage = opts.storage || new Map();
+  const fetchCalls = [];
+  const timers = [];
+  const sandbox = {
+    localStorage: {
+      getItem: (k) => (storage.has(k) ? storage.get(k) : null),
+      setItem: (k, v) => storage.set(k, String(v))
+    },
+    document: {
+      head: { appendChild() {} },
+      createElement: () => ({}),
+      cookie: opts.cookie || ''
+    },
+    window: {},
+    fetch: (url, fetchOpts) => {
+      fetchCalls.push({ url, opts: fetchOpts });
+      return Promise.resolve({ ok: true });
+    },
+    setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }
+  };
+  sandbox.window.crypto = { randomUUID: () => 'mock-uuid-1234' };
+  const context = vm.createContext(sandbox);
+  vm.runInContext(scriptBody, context);
+  return { fetchCalls, timers, sandbox };
+}
+
+describe('_deviceIdentityBootstrapScript execution (#254 Issue A, I-Gate Round 1 #5799591957, Ruling A505-R4.5)', () => {
+  const CONN_ID = '03e71f59-458e-43e1-9c8c-3dbb98d16c8b';
+  const DIRECT_PREFIX = `/openclaw-direct/${CONN_ID}`;
+
+  it('loading /openclaw-direct/<connId>/ invokes POST .../approve-pending immediately, then once more after the retry delay', () => {
+    const out = html.injectDeviceIdentityBootstrap('<html><head></head></html>', DIRECT_PREFIX);
+    const { fetchCalls, timers } = runBootstrapScript(extractBootstrapScript(out));
+
+    assert.equal(fetchCalls.length, 1, 'calls once immediately on load');
+    assert.equal(fetchCalls[0].url, `/api/openclaw/connections/${CONN_ID}/approve-pending`);
+    assert.equal(fetchCalls[0].opts.method, 'POST');
+    assert.equal(fetchCalls[0].opts.credentials, 'same-origin');
+
+    assert.equal(timers.length, 1, 'schedules exactly one retry');
+    assert.equal(timers[0].ms, html.APPROVE_PENDING_RETRY_DELAY_MS);
+    timers[0].fn();
+    assert.equal(fetchCalls.length, 2, 'the retry fires the same approval call again');
+    assert.equal(fetchCalls[1].url, fetchCalls[0].url);
+  });
+
+  it('exposes the approval function on window so a caller can invoke it directly without waiting for the timer', () => {
+    const out = html.injectDeviceIdentityBootstrap('<html><head></head></html>', DIRECT_PREFIX);
+    const { fetchCalls, sandbox } = runBootstrapScript(extractBootstrapScript(out));
+    assert.equal(fetchCalls.length, 1);
+    assert.equal(typeof sandbox.window[html.APPROVE_PENDING_GLOBAL], 'function');
+    sandbox.window[html.APPROVE_PENDING_GLOBAL]();
+    assert.equal(fetchCalls.length, 2, 'the exposed global invokes the same approval call');
+  });
+
+  it('a non-/openclaw-direct/ load (no connId) injects no approval call at all', () => {
+    const out = html.injectDeviceIdentityBootstrap('<html><head></head></html>', '/openclaw/some-project');
+    const { fetchCalls, sandbox } = runBootstrapScript(extractBootstrapScript(out));
+    assert.equal(fetchCalls.length, 0, 'no connId, no approval call');
+    assert.equal(sandbox.window[html.APPROVE_PENDING_GLOBAL], undefined);
+  });
+
+  it('persists the same device identity across two /openclaw-direct/ page loads sharing one localStorage (same-origin)', () => {
+    const storage = new Map();
+    const firstOut = html.injectDeviceIdentityBootstrap('<html><head></head></html>', DIRECT_PREFIX);
+    const first = runBootstrapScript(extractBootstrapScript(firstOut), { storage });
+    const firstId = first.sandbox.window[html.DEVICE_IDENTITY_GLOBAL];
+    assert.ok(firstId, 'an id must be minted on first load');
+
+    // A different connId is a different proxy prefix but the SAME TangleClaw
+    // origin, so it shares the same localStorage here (#254 Issue A).
+    const OTHER_CONN_ID = 'b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e';
+    const secondOut = html.injectDeviceIdentityBootstrap('<html><head></head></html>', `/openclaw-direct/${OTHER_CONN_ID}`);
+    const second = runBootstrapScript(extractBootstrapScript(secondOut), { storage });
+
+    assert.equal(second.sandbox.window[html.DEVICE_IDENTITY_GLOBAL], firstId,
+      'the SAME localStorage-backed id persists across different connIds sharing one origin');
+  });
+
+  it('reads the tc_csrf cookie and sends it as X-CSRF-Token on the approval POST (#254 I-Gate Round 2)', () => {
+    const out = html.injectDeviceIdentityBootstrap('<html><head></head></html>', DIRECT_PREFIX);
+    const { fetchCalls } = runBootstrapScript(extractBootstrapScript(out), {
+      cookie: 'other=1; tc_csrf=real-csrf-token; foo=bar'
+    });
+    assert.equal(fetchCalls.length, 1);
+    // The script runs in a separate vm realm, so its {} literal has a
+    // different Object.prototype than this file's -- round-trip through
+    // JSON first, same normalization test/master-medusa.test.js's norm()
+    // uses for the same reason.
+    assert.deepEqual(JSON.parse(JSON.stringify(fetchCalls[0].opts.headers)), { 'X-CSRF-Token': 'real-csrf-token' });
+  });
+
+  it('decodes a URL-encoded tc_csrf cookie value', () => {
+    const out = html.injectDeviceIdentityBootstrap('<html><head></head></html>', DIRECT_PREFIX);
+    const encoded = encodeURIComponent('token/with+special=chars');
+    const { fetchCalls } = runBootstrapScript(extractBootstrapScript(out), { cookie: `tc_csrf=${encoded}` });
+    assert.equal(fetchCalls[0].opts.headers['X-CSRF-Token'], 'token/with+special=chars');
+  });
+
+  it('sends no X-CSRF-Token header when there is no tc_csrf cookie at all — same as before this fix', () => {
+    const out = html.injectDeviceIdentityBootstrap('<html><head></head></html>', DIRECT_PREFIX);
+    const { fetchCalls } = runBootstrapScript(extractBootstrapScript(out), { cookie: 'other=1' });
+    assert.deepEqual(JSON.parse(JSON.stringify(fetchCalls[0].opts.headers)), {});
+  });
+
+  it('the X-CSRF-Token this script sends is actually accepted by lib/auth-gate.js#evaluate, not just well-formed', () => {
+    // The real failure mode this fix closes: a syntactically plausible header
+    // that the real gate still refuses. Run the captured header through the
+    // real evaluate() the signed-in front door uses, not an assertion about
+    // the header's shape alone.
+    const out = html.injectDeviceIdentityBootstrap('<html><head></head></html>', DIRECT_PREFIX);
+    const { fetchCalls } = runBootstrapScript(extractBootstrapScript(out), {
+      cookie: 'tc_csrf=real-csrf-token'
+    });
+    const submittedCsrf = fetchCalls[0].opts.headers['X-CSRF-Token'];
+
+    const result = authGate.evaluate({
+      method: 'POST',
+      rawUrl: fetchCalls[0].url,
+      pathname: fetchCalls[0].url,
+      gateState: authGate.GATE_STATES.ARMED,
+      session: { csrfToken: 'real-csrf-token' },
+      submittedCsrf,
+      machineClient: false
+    });
+    assert.deepEqual(result, { action: 'allow' });
+  });
+
+  it('WITHOUT this fix the same gate call refuses — proves the fix is load-bearing, not redundant', () => {
+    const result = authGate.evaluate({
+      method: 'POST',
+      rawUrl: `/api/openclaw/connections/${CONN_ID}/approve-pending`,
+      pathname: `/api/openclaw/connections/${CONN_ID}/approve-pending`,
+      gateState: authGate.GATE_STATES.ARMED,
+      session: { csrfToken: 'real-csrf-token' },
+      submittedCsrf: null, // what the pre-fix script sent: no header at all
+      machineClient: false
+    });
+    assert.deepEqual(result, { action: 'refuse-csrf' });
+  });
+});
+
 describe('shouldRewrite (#1534)', () => {
   const HTML = { 'content-type': 'text/html; charset=utf-8' };
   it('rewrites only a successful GET of an HTML page', () => {
@@ -123,7 +332,7 @@ function relay(chunks, headers, opts = {}) {
     const done = () => resolve({ status: res.status, headers: res.sent, body: Buffer.concat(got), reasons, destroyed: res.destroyed });
     res.on('finish', done);
     res.on('close', done);
-    html.relayRewrittenHtml(upstream, res, 200, headers, PREFIX, (r) => reasons.push(r));
+    html.relayRewrittenHtml(upstream, res, 200, headers, opts.prefix || PREFIX, (r) => reasons.push(r));
     for (const c of chunks) upstream.write(c);
     if (opts.cutOff === 'close') upstream.destroy();
     else if (opts.cutOff) upstream.emit('aborted');
@@ -157,10 +366,21 @@ describe('relayRewrittenHtml (#1534)', () => {
     assert.ok(r.body.toString('utf8').includes(`data-openclaw-control-ui-base-path="${PREFIX}"`));
   });
 
-  it('passes a page with nothing to rewrite through exactly as sent', async () => {
+  it('still injects the #254 device-identity bootstrap on an /openclaw-direct/ page with nothing else to rewrite', async () => {
     const packed = zlib.brotliCompressSync(Buffer.from(OLD));
     const headers = { ...base, 'content-encoding': 'br', 'content-length': String(packed.length) };
     const r = await relay([packed], headers);
+    const text = r.body.toString('utf8');
+    assert.match(text, /__tangleclawOpenclawDeviceId/, 'the bootstrap is injected even with nothing else to rewrite');
+    assert.notDeepEqual(r.body, packed, 'the bytes changed, so they cannot still be the original compressed buffer');
+    assert.equal(r.headers['content-encoding'], undefined, 'sent uncompressed once the bytes changed');
+    assert.equal(r.headers.etag, undefined, 'the old ETag must not be reused once the bytes changed');
+  });
+
+  it('passes a page with nothing to rewrite through exactly as sent under a NON-direct prefix (the #254 bootstrap is scoped to /openclaw-direct/ only)', async () => {
+    const packed = zlib.brotliCompressSync(Buffer.from(OLD));
+    const headers = { ...base, 'content-encoding': 'br', 'content-length': String(packed.length) };
+    const r = await relay([packed], headers, { prefix: '/openclaw/some-project' });
     assert.deepEqual(r.body, packed, 'compressed bytes untouched');
     assert.deepEqual(r.headers, headers, 'headers untouched, ETag included');
   });

@@ -29,7 +29,7 @@ const os = require('node:os');
 const { PassThrough } = require('node:stream');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
-const { handleRequest } = require('../server');
+const { handleRequest, _sanitizeOpenclawDirectHeaders, OPENCLAW_DIRECT_CF_HEADERS } = require('../server');
 
 setLevel('error');
 
@@ -141,5 +141,85 @@ describe('/openclaw-direct/<connId> redirects to the slashed form (#1012)', () =
       res.statusCode, 404,
       'if this ever stops 404ing, the resolve-by-segment-2 hazard changed and this guard needs rereading'
     );
+  });
+});
+
+describe('_sanitizeOpenclawDirectHeaders (#254 Issue B, I-Gate Round 1 Finding 2, #5799591957, Ruling A505-R4.5)', () => {
+  const cfHeaders = {
+    'cf-connecting-ip': '172.64.146.15',
+    'true-client-ip': '172.64.146.15',
+    'cf-ray': '8a1b2c3d4e5f6789-SJC',
+    'cf-ipcountry': 'US',
+    'cf-visitor': '{"scheme":"https"}',
+    'cdn-loop': 'cloudflare',
+    host: 'example.com',
+    authorization: 'Bearer real-gateway-token'
+  };
+
+  it('strips every named Cloudflare header UNCONDITIONALLY — no remoteAddress parameter, no exception for a connection that might genuinely be Cloudflare', () => {
+    const out = _sanitizeOpenclawDirectHeaders(cfHeaders);
+    for (const h of OPENCLAW_DIRECT_CF_HEADERS) assert.equal(out[h], undefined, h);
+    assert.equal(out.host, 'example.com', 'unrelated headers survive');
+    assert.equal(out.authorization, 'Bearer real-gateway-token', 'unrelated headers survive');
+  });
+
+  it('never mutates the original headers object', () => {
+    const before = { ...cfHeaders };
+    _sanitizeOpenclawDirectHeaders(cfHeaders);
+    assert.deepEqual(cfHeaders, before);
+  });
+
+  it('is a no-op (same reference back) for headers with none of the named Cloudflare keys', () => {
+    const plain = { host: 'x', authorization: 'Bearer y' };
+    const out = _sanitizeOpenclawDirectHeaders(plain);
+    assert.equal(out, plain);
+  });
+
+  it('is a no-op for a nullish headers argument', () => {
+    assert.equal(_sanitizeOpenclawDirectHeaders(null), null);
+    assert.equal(_sanitizeOpenclawDirectHeaders(undefined), undefined);
+  });
+});
+
+describe('end-to-end: _sanitizeOpenclawDirectHeaders -> the excluded-file header builders strip BOTH header families (I-Gate Round 1 Finding 2, #5799591957)', () => {
+  const openclawRoutes = require('../lib/routes/openclaw');
+  const rawHeaders = {
+    'cf-connecting-ip': '172.64.146.15',
+    'true-client-ip': '172.64.146.15',
+    'cf-ray': '8a1b2c3d4e5f6789-SJC',
+    'cf-ipcountry': 'US',
+    'cf-visitor': '{"scheme":"https"}',
+    'cdn-loop': 'cloudflare',
+    'x-forwarded-for': '100.74.90.65',
+    'x-real-ip': '100.74.90.65',
+    forwarded: 'for=100.74.90.65',
+    host: 'original-host-to-be-overwritten.example',
+    authorization: 'Bearer client-supplied-must-not-survive'
+  };
+
+  function assertNoAttributionHeaders(headerLines) {
+    const lower = headerLines.map((h) => h.toLowerCase());
+    for (const h of OPENCLAW_DIRECT_CF_HEADERS) {
+      assert.ok(!lower.some((l) => l.startsWith(`${h}:`)), `must not carry ${h}`);
+    }
+    for (const h of ['x-forwarded-for', 'x-real-ip', 'forwarded']) {
+      assert.ok(!lower.some((l) => l.startsWith(`${h}:`)), `must not carry ${h}`);
+    }
+  }
+
+  it('the final HTTP upstream headers (via _openclawProxyHeaders) carry neither Cloudflare nor x-forwarded-*/x-real-ip/forwarded', () => {
+    const sanitized = _sanitizeOpenclawDirectHeaders(rawHeaders);
+    const upstream = openclawRoutes._openclawProxyHeaders(sanitized, 4000, 'gateway-token');
+    assertNoAttributionHeaders(Object.entries(upstream).map(([k, v]) => `${k}: ${v}`));
+    assert.equal(upstream.host, '127.0.0.1:4000');
+    assert.equal(upstream.authorization, 'Bearer gateway-token');
+  });
+
+  it('the final WS request lines (via _openclawWsRequestLines) carry neither Cloudflare nor x-forwarded-*/x-real-ip/forwarded', () => {
+    const sanitized = _sanitizeOpenclawDirectHeaders(rawHeaders);
+    const lines = openclawRoutes._openclawWsRequestLines(sanitized, '/chat', 4000, 'gateway-token');
+    assertNoAttributionHeaders(lines);
+    assert.ok(lines.some((l) => l.toLowerCase() === 'host: 127.0.0.1:4000'));
+    assert.ok(lines.some((l) => l.toLowerCase() === 'authorization: bearer gateway-token'));
   });
 });
