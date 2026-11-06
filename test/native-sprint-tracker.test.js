@@ -104,9 +104,10 @@ describe('native-sprint-tracker: validateWaveDisjointness', () => {
     assert.equal(tracker.validateWaveDisjointness(cars, { maxIssuesPerCar: 2 }).ok, true);
   });
 
-  it('reports scope drift from an injected lsFiles both ways', () => {
+  it('with lsFilesScope "car" (lsFiles already scoped to this car), reports scope drift both ways', () => {
     const cars = [{ id: 'car-a', files: ['lib/declared-only.js', 'lib/both.js'] }];
     const result = tracker.validateWaveDisjointness(cars, {
+      lsFilesScope: 'car',
       lsFiles: () => ['lib/both.js', 'lib/actual-only.js']
     });
     assert.equal(result.ok, false);
@@ -115,11 +116,36 @@ describe('native-sprint-tracker: validateWaveDisjointness', () => {
     }]);
   });
 
+  it('with the default lsFilesScope "repo" (lsFiles answers the WHOLE worktree), only declaredOnly is ever reported -- never the rest of the repo as actualOnly', () => {
+    const cars = [{ id: 'car-a', files: ['lib/declared-only.js', 'lib/both.js'] }];
+    const result = tracker.validateWaveDisjointness(cars, {
+      // A repo-wide listing: car-a's own files plus 1,000+ unrelated paths,
+      // standing in for a real `git ls-files` across an entire worktree.
+      lsFiles: () => ['lib/both.js', ...Array.from({ length: 1000 }, (_, i) => `lib/unrelated-${i}.js`)]
+    });
+    assert.equal(result.ok, false, 'declaredOnly alone still fails the check');
+    assert.deepEqual(result.scopeDrift, [{
+      carId: 'car-a', declaredOnly: ['lib/declared-only.js'], actualOnly: []
+    }]);
+  });
+
   it('skips the scope-drift check for a car whose lsFiles cannot verify (returns null)', () => {
     const cars = [{ id: 'car-a', files: ['lib/a.js'] }];
     const result = tracker.validateWaveDisjointness(cars, { lsFiles: () => null });
     assert.deepEqual(result.scopeDrift, []);
     assert.equal(result.ok, true);
+  });
+
+  it('REAL CHECKOUT (I-Gate Round 1): gitLsFilesAt(process.cwd()) as lsFiles, repo scope, a valid multi-car wave passes ok:true', () => {
+    const actualFiles = tracker.gitLsFilesAt(process.cwd());
+    assert.ok(Array.isArray(actualFiles) && actualFiles.length > 100,
+      'this test must run inside the real repo checkout for the assertion below to mean anything');
+    const cars = [
+      { id: 'car-68-a', issues: ['#2644'], files: ['lib/native-sprint-tracker.js', 'lib/routes/sprint-wave-routes.js', 'public/sprint-wave-ui.js'] },
+      { id: 'car-68-b', issues: ['#2821', '#748'], files: ['lib/coordinator-rotation.js', 'lib/wrap-steps/features-toc.js', 'lib/wrap-steps/index-describe.js'] }
+    ];
+    const result = tracker.validateWaveDisjointness(cars, { lsFiles: () => actualFiles });
+    assert.deepEqual(result, { ok: true, collisions: [], oversizedCars: [], scopeDrift: [] });
   });
 
   it('throws on a non-array input', () => {
