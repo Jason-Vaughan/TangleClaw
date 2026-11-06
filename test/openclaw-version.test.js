@@ -537,6 +537,15 @@ describe('openclaw-version (#296)', () => {
       assert.match(badges[0].title, /Update available/);
     });
 
+    it('qualifies the version with "or newer" — never promises the exact polled tag as a bare '
+      + 'install target (test/update-beacon.test.js\'s #994 cross-site check)', async () => {
+      const conn = { id: 'conn-qualifier', instanceDir: '~/openclaw' };
+      const { toggles } = await run([conn], async () => ({ updateAvailable: true, latestVersion: '2026.5.28' }));
+      const badge = toggles.get('conn-qualifier')._badges[0];
+      assert.match(badge.title, /or newer/);
+      assert.match(badge.textContent, /or newer/);
+    });
+
     it('appends no badge when no update is available', async () => {
       const conn = { id: 'conn-2', instanceDir: '~/openclaw' };
       const { toggles } = await run([conn], async () => ({ updateAvailable: false, latestVersion: null }));

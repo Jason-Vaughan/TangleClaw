@@ -1908,8 +1908,13 @@ async function _checkOpenclawUpdatesAvailable() {
     if (!toggle || toggle.querySelector('.oc-update-badge')) return;
     const badge = document.createElement('span');
     badge.className = 'oc-update-badge';
-    badge.title = `Update available: ${data.latestVersion}`;
-    badge.textContent = `Update: ${data.latestVersion}`;
+    // "or newer" (#994): the polled tag is a fact about GHCR at the moment
+    // this fetched, not a promise about what an operator gets if they act on
+    // it later — same qualifier every other site that renders latestVersion
+    // already carries (public/update-beacon.js, public/session.js, and this
+    // same file's own update-available hint a few hundred lines up).
+    badge.title = `Update available: v${data.latestVersion} or newer`;
+    badge.textContent = `Update: v${data.latestVersion} or newer`;
     // Inline styles, not a stylesheet rule: public/style.css is outside this
     // car's file envelope too.
     badge.style.cssText = 'display:inline-block;margin-left:6px;padding:1px 6px;'
