@@ -469,12 +469,10 @@ describe('resource-leases: acquireLeaseWithPrimer (#2888)', () => {
 });
 
 // v5.67.0 FEED-FORWARD 01: the call-site wiring acquireLeaseWithPrimer itself
-// (#2888) documented as not yet given to any real caller -- a SEPARATE
-// handler from the existing handleAcquireLease (lib/resource-lease-routes.js's
-// own module doc explains why: handleAcquireLease stays byte-for-byte as
-// test/fleet-settings-resource-routes.test.js (#2856, outside this car's file
-// envelope) already exercises it).
-describe('resource-lease-routes: handleAcquireLeaseWithPrimer (v5.67.0 FEED-FORWARD 01)', () => {
+// (#2888) documented as not yet given to any real caller -- wired directly
+// into handleAcquireLease per Architect direction (A-Gate R1 on PR #2914),
+// with handleAcquireLeaseWithPrimer kept as an alias of the same function.
+describe('resource-lease-routes: handleAcquireLease / handleAcquireLeaseWithPrimer (v5.67.0 FEED-FORWARD 01)', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const os = require('node:os');
@@ -498,9 +496,9 @@ describe('resource-lease-routes: handleAcquireLeaseWithPrimer (v5.67.0 FEED-FORW
     }
   }
 
-  it('delegates to the real acquireLeaseWithPrimer, carrying the primer fields through', () => {
+  it('handleAcquireLease now delegates to the real acquireLeaseWithPrimer, carrying the primer fields through', () => {
     withStore(() => {
-      const result = resourceLeaseRoutes.handleAcquireLeaseWithPrimer(
+      const result = resourceLeaseRoutes.handleAcquireLease(
         { resourceId: 'res1', holderSessionId: 's1', holderProjectId: 'p1', mode: 'exclusive', ttlMs: 60000, existingLeases: [], now: NOW },
         { projectId: project.id, roleHint: 'reviewer' }
       );
@@ -511,23 +509,27 @@ describe('resource-lease-routes: handleAcquireLeaseWithPrimer (v5.67.0 FEED-FORW
     });
   });
 
+  it('handleAcquireLease still attaches a primer (defaulting to worker) when primerInput is omitted entirely', () => {
+    withStore(() => {
+      const result = resourceLeaseRoutes.handleAcquireLease({
+        resourceId: 'res2', holderSessionId: 's1', holderProjectId: 'p1', mode: 'exclusive', ttlMs: 60000, existingLeases: [], now: NOW
+      });
+      assert.equal(result.ok, true);
+      assert.equal(result.lease.operatingPrimerRole, 'worker');
+      assert.ok(typeof result.lease.operatingPrimer === 'string' && result.lease.operatingPrimer.length > 0);
+    });
+  });
+
   it('propagates a refusal from acquireLease unchanged, with no primer fields attached', () => {
     withStore(() => {
-      const result = resourceLeaseRoutes.handleAcquireLeaseWithPrimer({}, { projectId: project.id });
+      const result = resourceLeaseRoutes.handleAcquireLease({}, { projectId: project.id });
       assert.equal(result.ok, false);
       assert.equal(result.code, 'RESOURCE_LEASE_INVALID');
       assert.equal(result.lease, undefined);
     });
   });
 
-  it('never attaches a primer to the plain handleAcquireLease -- the two handlers stay independent', () => {
-    withStore(() => {
-      const plain = resourceLeaseRoutes.handleAcquireLease({
-        resourceId: 'res2', holderSessionId: 's1', holderProjectId: 'p1', mode: 'exclusive', ttlMs: 60000, existingLeases: [], now: NOW
-      });
-      assert.equal(plain.ok, true);
-      assert.equal(plain.lease.operatingPrimerRole, undefined);
-      assert.equal(plain.lease.operatingPrimer, undefined);
-    });
+  it('handleAcquireLeaseWithPrimer is the SAME function as handleAcquireLease, not a separate delegate', () => {
+    assert.equal(resourceLeaseRoutes.handleAcquireLeaseWithPrimer, resourceLeaseRoutes.handleAcquireLease);
   });
 });
