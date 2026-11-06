@@ -404,6 +404,14 @@
       "paths": [
         "lib/linux-systemd.js"
       ]
+    },
+    "sprint-tracking": {
+      "label": "area:sprint-tracking",
+      "why": "Native sprint wave tracking (#2644, Car 68-A, Train 35): wave-matrix and file-disjoint car bundle validation, the live lane/PR dispatch-state tracker, the interactive sprint report/O-Gate summary model, the resilient roadmap sync helper, and its thin not-yet-mounted HTTP adapter. `public/sprint-wave-ui.js`'s browser view helpers are not listed here: `dashboard-ux`'s `public/**` already owns every file under `public/`. Distinct from `roadmap` (train dependency admission over the separate roadmap-board repo) and `fleet-views` (read-only dashboard projections, not dispatch state): this area models the wave/car/lane/PR lifecycle itself. Owned by no other family.",
+      "paths": [
+        "lib/native-sprint-tracker.js",
+        "lib/routes/sprint-wave-routes.js"
+      ]
     }
   },
   "shared": {

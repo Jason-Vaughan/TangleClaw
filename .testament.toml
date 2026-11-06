@@ -145,6 +145,7 @@ files = [
   "test/message-size-ui.test.js",
   "test/mobile-toolbar-layout.test.js",
   "test/model-status.test.js",
+  "test/native-sprint-tracker.test.js",
   "test/next-markdown.test.js",
   "test/open-install-token.test.js",
   "test/openclaw-bridge-port-row.test.js",
