@@ -304,6 +304,155 @@ def validate_canonical_metrics_payload(version: str, content: str, enforce_regis
                 f"[{version}] Embedded #tc-canonical-metrics JSON diverges from authoritative DETAILED_SPRINT_RECORDS['{version}']."
             )
 
+    # 8. Semantic Provenance, Release Identity & Deliverable Correspondence (v2.1.0 — A505 Guardrail)
+    errors.extend(validate_semantic_provenance_and_deliverables(version, content, rec))
+
+    return errors
+
+
+def _extract_section(content: str, sec_id: str) -> str:
+    m = re.search(rf'<section[^>]+id="{re.escape(sec_id)}"[^>]*>(.*?)</section>', content, re.S)
+    return m.group(1) if m else ""
+
+
+def validate_semantic_provenance_and_deliverables(version: str, content: str, rec: dict) -> list[str]:
+    """
+    Enforce section-level release identity and deliverable correspondence so that copy-pasted
+    prior-release executive summaries, hero titles, milestones, charters, PR lists, or post-mortems
+    can never pass validation.
+    """
+    errors = []
+    rec_version = str(rec.get("version", version))
+    ms_num = str(rec.get("milestone_number", ""))
+    charter_str = str(rec.get("charter", ""))
+    charter_codes = sorted(set(re.findall(r"(A\d{3})", charter_str)))
+
+    title_m = re.search(r"<title>(.*?)</title>", content, re.S)
+    title_txt = title_m.group(1) if title_m else ""
+    meta_m = re.search(r'<meta\s+name="description"\s+content="([^"]*)"', content, re.I)
+    meta_txt = meta_m.group(1) if meta_m else ""
+    og_title_m = re.search(r'<meta\s+property="og:title"\s+content="([^"]*)"', content, re.I)
+    og_title_txt = og_title_m.group(1) if og_title_m else ""
+    eyebrow_m = re.search(r'<div[^>]+class="eyebrow"[^>]*>(.*?)</div>', content, re.S)
+    eyebrow_txt = eyebrow_m.group(1) if eyebrow_m else ""
+    hero_title_m = re.search(r'<h1[^>]+class="hero-title"[^>]*>(.*?)</h1>', content, re.S)
+    hero_title_txt = hero_title_m.group(1) if hero_title_m else ""
+
+    overview_sec = _extract_section(content, "overview")
+    arch_sec = _extract_section(content, "architecture")
+    vel_sec = _extract_section(content, "velocity")
+    deliv_sec = _extract_section(content, "deliverables")
+    pm_sec = _extract_section(content, "postmortem")
+    waves_sec = _extract_section(content, "waves")
+
+    # Strip explicit historical reconciliation blocks before scanning for forbidden prior-release claims
+    pm_sec_clean = re.sub(
+        r"<!-- RECONCILIATION_DISCLOSURE_START -->.*?<!-- RECONCILIATION_DISCLOSURE_END -->",
+        "",
+        pm_sec,
+        flags=re.S,
+    )
+
+    # 8a. Hero title, eyebrow, and title/og:title must declare the report's own version, milestone, and charter
+    is_retro = "retrospective" in version.lower() or "–" in rec_version or "-" in rec_version
+    expected_ver_token = "v5.68.0" if is_retro and "v5.68.0" in rec_version else (
+        "v5.65.0" if is_retro and "v5.65.0" in rec_version else rec_version
+    )
+    if expected_ver_token not in hero_title_txt:
+        errors.append(
+            f"[{version}] Hero <h1 class=\"hero-title\"> does not declare expected version '{expected_ver_token}' "
+            f"(found: '{re.sub(r'<[^>]+>', '', hero_title_txt).strip()[:100]}')."
+        )
+    if expected_ver_token not in title_txt or expected_ver_token not in og_title_txt:
+        errors.append(
+            f"[{version}] <title> or <meta property=\"og:title\"> does not declare expected version '{expected_ver_token}'."
+        )
+
+    if ms_num and not is_retro:
+        if f"Milestone #{ms_num}" not in eyebrow_txt and f"Milestone #{ms_num}" not in overview_sec:
+            errors.append(
+                f"[{version}] Hero #overview / .eyebrow is missing authoritative 'Milestone #{ms_num}'."
+            )
+        # Reject foreign Milestone numbers in hero title, eyebrow, or meta description
+        foreign_ms = [m for m in re.findall(r"Milestone\s*#(\d+)", eyebrow_txt + " " + hero_title_txt + " " + meta_txt) if m != ms_num]
+        if foreign_ms:
+            errors.append(
+                f"[{version}] Hero header / meta description references foreign Milestone(s) #{sorted(set(foreign_ms))} "
+                f"instead of authoritative Milestone #{ms_num}."
+            )
+
+    if charter_codes:
+        if not any(c in eyebrow_txt or c in overview_sec for c in charter_codes):
+            errors.append(
+                f"[{version}] Hero #overview / .eyebrow is missing authoritative Charter {charter_codes}."
+            )
+        foreign_charters = [
+            c for c in re.findall(r"\b(A50[0-9])\b", eyebrow_txt + " " + hero_title_txt + " " + meta_txt)
+            if c not in charter_codes
+        ]
+        if foreign_charters:
+            errors.append(
+                f"[{version}] Hero header / meta description references foreign Charter(s) {sorted(set(foreign_charters))} "
+                f"instead of authoritative Charter {charter_codes}."
+            )
+
+    # 8b. Prohibit template-cloned v5.67.0 / Charter A504 / Milestone #54 narrative contamination in A505+ reports
+    if "A505" in charter_codes or parse_version_tuple(version) >= (5, 68, 0):
+        non_longitudinal_body = "\n".join([title_txt, meta_txt, overview_sec, arch_sec, vel_sec, deliv_sec, pm_sec_clean, waves_sec])
+        forbidden_tokens = [
+            ("Charter A504", "stale v5.67.0 Charter A504 reference"),
+            ("A504-EXT-R1", "stale v5.67.0 Ruling A504-EXT-R1 reference"),
+            ("Milestone #54", "stale v5.67.0 Milestone #54 reference"),
+            ("Sprint 35 Closeout & Governance Hardening", "stale v5.67.0 hero subtitle"),
+        ]
+        for tok, desc in forbidden_tokens:
+            if tok in non_longitudinal_body:
+                errors.append(
+                    f"[{version}] Template contamination detected: found {desc} ('{tok}') inside non-longitudinal report sections."
+                )
+        # Also forbid claiming v5.67.0 inside title, meta, eyebrow, hero title, or deliverables/waves (except labeled FF-01 feed-forward in v5.68.0)
+        strict_identity_zones = "\n".join([title_txt, meta_txt, eyebrow_txt, hero_title_txt])
+        if "v5.67.0" in strict_identity_zones:
+            errors.append(
+                f"[{version}] Template contamination detected: found foreign version 'v5.67.0' inside title, meta, or hero header."
+            )
+        if version != "v5.68.0" and "v5.67.0" in (deliv_sec + "\n" + waves_sec):
+            errors.append(
+                f"[{version}] Template contamination detected: found foreign version 'v5.67.0' inside #deliverables or #waves."
+            )
+        # Forbid v5.67.0 PR numbers (#2908-#2911) in #overview, #velocity, #deliverables, or #waves
+        for stale_pr in [2908, 2909, 2910, 2911]:
+            if re.search(rf"#{stale_pr}\b", overview_sec + "\n" + vel_sec + "\n" + deliv_sec + "\n" + waves_sec):
+                errors.append(
+                    f"[{version}] Template contamination detected: found foreign v5.67.0 PR #{stale_pr} inside #overview, #velocity, #deliverables, or #waves."
+                )
+
+    # 8c. Deliverable & Wave PR/Issue Correspondence: every merged PR and State C closed issue in JSON must appear in HTML
+    prs_merged = rec.get("diff", {}).get("prs_merged", [])
+    c_ids = rec.get("completion", {}).get("state_c_issue_ids", [])
+
+    for pr_num in prs_merged:
+        pr_pat = rf"#{pr_num}\b"
+        if not re.search(pr_pat, vel_sec) and not re.search(pr_pat, deliv_sec):
+            errors.append(
+                f"[{version}] Authoritative merged PR #{pr_num} (from #tc-canonical-metrics) is missing from #velocity and #deliverables."
+            )
+        if not re.search(pr_pat, waves_sec):
+            errors.append(
+                f"[{version}] Authoritative merged PR #{pr_num} (from #tc-canonical-metrics) is missing from #waves."
+            )
+
+    for iss_num in c_ids:
+        iss_pat = rf"#{iss_num}\b"
+        if not re.search(iss_pat, deliv_sec) and not re.search(iss_pat, overview_sec):
+            errors.append(
+                f"[{version}] Authoritative State C closed issue #{iss_num} (from #tc-canonical-metrics) is missing from #overview and #deliverables."
+            )
+        if not re.search(iss_pat, waves_sec):
+            errors.append(
+                f"[{version}] Authoritative State C closed issue #{iss_num} (from #tc-canonical-metrics) is missing from #waves."
+            )
+
     return errors
 
 
@@ -563,31 +712,59 @@ def extract_embedded_json(path: str) -> dict | None:
 
 
 def validate_train_consistency(reports_dir: str) -> list[str]:
-    """Verify cross-report mathematical consistency between v5.65.0, v5.66.0, and v5.65.0-v5.66.0-retrospective."""
+    """Verify cross-report mathematical consistency across both v5.65.0-v5.66.0 and v5.68.0-v5.71.0 trains."""
     errors = []
-    r65 = extract_embedded_json(os.path.join(reports_dir, "v5.65.0", "index.html"))
-    r66 = extract_embedded_json(os.path.join(reports_dir, "v5.66.0", "index.html"))
-    r_retro = extract_embedded_json(os.path.join(reports_dir, "v5.65.0-v5.66.0-retrospective", "index.html"))
-    if not (r65 and r66 and r_retro):
-        return ["[train consistency] Missing embedded #tc-canonical-metrics JSON in v5.65.0, v5.66.0, or retrospective."]
+    trains = [
+        ("v5.65.0-v5.66.0", ["v5.65.0", "v5.66.0"], "v5.65.0-v5.66.0-retrospective"),
+        ("v5.68.0-v5.71.0", ["v5.68.0", "v5.69.0", "v5.70.0", "v5.71.0"], "v5.68.0-v5.71.0-retrospective"),
+    ]
+    for train_label, leg_slugs, retro_slug in trains:
+        leg_recs = [extract_embedded_json(os.path.join(reports_dir, s, "index.html")) for s in leg_slugs]
+        r_retro = extract_embedded_json(os.path.join(reports_dir, retro_slug, "index.html"))
+        if not all(leg_recs) or not r_retro:
+            errors.append(
+                f"[train consistency {train_label}] Missing embedded #tc-canonical-metrics JSON in one or more leg reports ({leg_slugs}) or {retro_slug}."
+            )
+            continue
 
-    if set(r65["diff"]["prs_merged"] + r66["diff"]["prs_merged"]) != set(r_retro["diff"]["prs_merged"]):
-        errors.append("[train consistency] Retrospective prs_merged does not equal union of v5.65.0 and v5.66.0 PRs.")
-    if (
-        r65["completion"]["state_c_verified_closed_issues"] + r66["completion"]["state_c_verified_closed_issues"]
-        != r_retro["completion"]["state_c_verified_closed_issues"]
-    ):
-        errors.append("[train consistency] Retrospective state_c_verified_closed_issues != sum of v5.65.0 and v5.66.0.")
-    if (
-        r65["completion"]["chartered_active_issues"] + r66["completion"]["chartered_active_issues"]
-        != r_retro["completion"]["chartered_active_issues"]
-    ):
-        errors.append("[train consistency] Retrospective chartered_active_issues != sum of v5.65.0 and v5.66.0.")
-    if (
-        r65["completion"]["milestone_closed_total"] + r66["completion"]["milestone_closed_total"]
-        != r_retro["completion"]["milestone_closed_total"]
-    ):
-        errors.append("[train consistency] Retrospective milestone_closed_total != sum of v5.65.0 and v5.66.0.")
+        union_prs = []
+        union_feat_prs = []
+        union_rel_prs = []
+        union_c_ids = []
+        for r in leg_recs:
+            union_prs.extend(r["diff"]["prs_merged"])
+            union_feat_prs.extend(r["diff"]["feature_prs"])
+            union_rel_prs.extend(r["diff"]["release_prs"])
+            union_c_ids.extend(r["completion"]["state_c_issue_ids"])
+
+        if set(union_prs) != set(r_retro["diff"]["prs_merged"]):
+            errors.append(
+                f"[train consistency {train_label}] Retrospective prs_merged does not equal union of leg PRs {leg_slugs}."
+            )
+        if set(union_feat_prs) != set(r_retro["diff"]["feature_prs"]):
+            errors.append(
+                f"[train consistency {train_label}] Retrospective feature_prs does not equal union of leg feature_prs."
+            )
+        if set(union_rel_prs) != set(r_retro["diff"]["release_prs"]):
+            errors.append(
+                f"[train consistency {train_label}] Retrospective release_prs does not equal union of leg release_prs."
+            )
+        if set(union_c_ids) != set(r_retro["completion"]["state_c_issue_ids"]):
+            errors.append(
+                f"[train consistency {train_label}] Retrospective state_c_issue_ids does not equal union of leg state_c_issue_ids."
+            )
+        if sum(r["completion"]["state_c_verified_closed_issues"] for r in leg_recs) != r_retro["completion"]["state_c_verified_closed_issues"]:
+            errors.append(
+                f"[train consistency {train_label}] Retrospective state_c_verified_closed_issues != sum of {leg_slugs}."
+            )
+        if sum(r["completion"]["chartered_active_issues"] for r in leg_recs) != r_retro["completion"]["chartered_active_issues"]:
+            errors.append(
+                f"[train consistency {train_label}] Retrospective chartered_active_issues != sum of {leg_slugs}."
+            )
+        if sum(r["completion"]["milestone_closed_total"] for r in leg_recs) != r_retro["completion"]["milestone_closed_total"]:
+            errors.append(
+                f"[train consistency {train_label}] Retrospective milestone_closed_total != sum of {leg_slugs}."
+            )
     return errors
 
 

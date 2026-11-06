@@ -54,17 +54,29 @@ class TestValidateSprintReport(unittest.TestCase):
         cls.v5650_path = os.path.join(REPORTS_DIR, "v5.65.0", "index.html")
         cls.v5660_path = os.path.join(REPORTS_DIR, "v5.66.0", "index.html")
         cls.retro_path = os.path.join(REPORTS_DIR, "v5.65.0-v5.66.0-retrospective", "index.html")
+        cls.v5680_path = os.path.join(REPORTS_DIR, "v5.68.0", "index.html")
+        cls.v5690_path = os.path.join(REPORTS_DIR, "v5.69.0", "index.html")
+        cls.v5700_path = os.path.join(REPORTS_DIR, "v5.70.0", "index.html")
+        cls.v5710_path = os.path.join(REPORTS_DIR, "v5.71.0", "index.html")
+        cls.a505_retro_path = os.path.join(REPORTS_DIR, "v5.68.0-v5.71.0-retrospective", "index.html")
         cls.v5650_html = pathlib.Path(cls.v5650_path).read_text(encoding="utf-8")
         cls.v5660_html = pathlib.Path(cls.v5660_path).read_text(encoding="utf-8")
         cls.retro_html = pathlib.Path(cls.retro_path).read_text(encoding="utf-8")
+        cls.v5710_html = pathlib.Path(cls.v5710_path).read_text(encoding="utf-8")
         cls.v5650_json = validator.extract_embedded_json(cls.v5650_path)
         cls.v5660_json = validator.extract_embedded_json(cls.v5660_path)
         cls.retro_json = validator.extract_embedded_json(cls.retro_path)
+        cls.v5710_json = validator.extract_embedded_json(cls.v5710_path)
 
     def test_01_canonical_v5650_v5660_retro_and_hub_pass(self):
         self.assertEqual(validator.validate_report(self.v5650_path, "v5.65.0"), [])
         self.assertEqual(validator.validate_report(self.v5660_path, "v5.66.0"), [])
         self.assertEqual(validator.validate_report(self.retro_path, "v5.65.0-v5.66.0-retrospective"), [])
+        self.assertEqual(validator.validate_report(self.v5680_path, "v5.68.0"), [])
+        self.assertEqual(validator.validate_report(self.v5690_path, "v5.69.0"), [])
+        self.assertEqual(validator.validate_report(self.v5700_path, "v5.70.0"), [])
+        self.assertEqual(validator.validate_report(self.v5710_path, "v5.71.0"), [])
+        self.assertEqual(validator.validate_report(self.a505_retro_path, "v5.68.0-v5.71.0-retrospective"), [])
         self.assertEqual(validator.validate_train_consistency(REPORTS_DIR), [])
         self.assertEqual(validator.validate_hub_index(REPORTS_DIR), [])
 
@@ -146,6 +158,45 @@ class TestValidateSprintReport(unittest.TestCase):
         errs = validator.validate_report_content(mut_html, "v5.66.0", enforce_registry_match=False)
         self.assertTrue(any("Timestamp chronology violation" in e for e in errs), f"Expected chronology error, got {errs}")
         self.assertTrue(any("Rendered #ade-efficiency-card banner text does not match canonical JSON" in e for e in errs), f"Expected banner/JSON mismatch error, got {errs}")
+
+    def test_11_rejects_stale_v5670_narrative_in_v5710_report(self):
+        mut_html = self.v5710_html.replace(
+            '<h1 class="hero-title">TangleClaw <code>v5.71.0</code>:',
+            '<h1 class="hero-title">TangleClaw <code>v5.67.0</code>:',
+        ).replace("Charter A505 v1.0", "Charter A504 v1.1 (Ruling A504-EXT-R1)", 1)
+        errs = validator.validate_report_content(mut_html, "v5.71.0", enforce_registry_match=False)
+        self.assertTrue(
+            any("does not declare expected version 'v5.71.0'" in e for e in errs),
+            f"Expected hero version mismatch error, got {errs}",
+        )
+        self.assertTrue(
+            any("Template contamination detected" in e for e in errs),
+            f"Expected template contamination error, got {errs}",
+        )
+
+    def test_12_rejects_wrong_milestone_identifier_in_v5710_report(self):
+        mut_html = self.v5710_html.replace("MILESTONE #58", "MILESTONE #54").replace("Milestone #58", "Milestone #54")
+        errs = validator.validate_report_content(mut_html, "v5.71.0", enforce_registry_match=False)
+        self.assertTrue(
+            any("Milestone #54" in e or "foreign Milestone" in e or "missing authoritative 'Milestone #58'" in e for e in errs),
+            f"Expected wrong milestone error, got {errs}",
+        )
+
+    def test_13_rejects_foreign_pr_and_missing_deliverable_references_in_v5710_report(self):
+        mut_html = self.v5710_html.replace("#2924", "#2908").replace("#1531", "#99999")
+        errs = validator.validate_report_content(mut_html, "v5.71.0", enforce_registry_match=False)
+        self.assertTrue(
+            any("foreign v5.67.0 PR #2908" in e for e in errs),
+            f"Expected foreign PR #2908 contamination error, got {errs}",
+        )
+        self.assertTrue(
+            any("Authoritative merged PR #2924" in e for e in errs),
+            f"Expected missing PR #2924 error, got {errs}",
+        )
+        self.assertTrue(
+            any("Authoritative State C closed issue #1531" in e for e in errs),
+            f"Expected missing issue #1531 error, got {errs}",
+        )
 
 
 if __name__ == "__main__":

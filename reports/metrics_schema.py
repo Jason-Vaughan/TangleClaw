@@ -1092,6 +1092,61 @@ def render_canonical_governance_and_metrics_cards(slug: str) -> str:
 
     json_payload = json.dumps(rec, indent=2)
 
+    if slug in {"v5.68.0", "v5.69.0", "v5.70.0", "v5.71.0", "v5.68.0-v5.71.0-retrospective"}:
+        if slug == "v5.68.0":
+            human_disclosure = (
+                f'<strong>Autonomous Code Execution vs. Audited Operator Interactions:</strong> '
+                f'<code>0</code> human code edits, commits, PR reviews, conflict resolutions, or deploy commands across all {len(diff["prs_merged"])} PRs. '
+                f'After issuing standing multi-version authorization <code>{rec["standing_auth"]}</code> at <code>06:26:23Z</code> (<code>22:26:23 PST</code>), '
+                f'the Operator provided 1 early UI session-start assist at <code>06:38–06:49Z</code> (starting offline <code>TC-Lane-B</code> <code>#1555</code>) '
+                f'and 3 brief reporting/terminology messages at <code>07:03–07:09Z</code> (endorsing per-version <em>Kaizen Retro</em> reports); '
+                f'from <code>07:17:41Z</code> onward, execution ran 100% unattended.'
+            )
+            anomaly_disclosure = (
+                '<strong>Known In-Run Operational Anomalies Disclosed:</strong> '
+                '(1) At Leg 1 startup (<code>06:26Z</code>), <code>TC-Lane-B</code> was offline and <code>TC-Lane-A/C</code> were in reviewer mode with open interactive prompts; '
+                '<code>TC-Lane-PM</code> reassigned <code>Car 68-A</code> &amp; <code>Car 68-B</code> to freshly launched <code>TC-Lane-B</code> (<code>#1555</code>) and <code>Car 68-C</code> to <code>TC-Lane-D</code> (<code>#1533</code>). '
+                '(2) <code>PR #2912</code> R2 tripped <code>scripts/cache-bump-guard.js</code> on <code>public/sw.js</code>, remediated in R3 under <code>Ruling A505-R1.4</code> and codified as <code>Kaizen Retro #1 Finding KR1-01</code>.'
+            )
+        elif slug == "v5.68.0-v5.71.0-retrospective":
+            human_disclosure = (
+                f'<strong>Autonomous Code Execution vs. Complete Human-Intervention Audit:</strong> '
+                f'<code>0</code> human engineering interventions (<code>0</code> code edits, <code>0</code> commits, <code>0</code> PR reviews, <code>0</code> merges) across all {len(diff["prs_merged"])} PRs and 20 closed issues. '
+                f'Following the initial inquiry (<code>06:21:20Z</code>) and standing multi-version GO (<code>06:26:23Z</code> / <code>{rec["standing_auth"]}</code>), '
+                f'human interaction was limited to 1 early Leg 1 UI launch of offline <code>TC-Lane-B</code> (<code>#1555</code> at <code>06:38–06:49Z</code>), '
+                f'3 reporting/Kaizen terminology messages (<code>07:03–07:09Z</code>), and 1 unrelated historical question (<code>07:17:41Z</code>), '
+                f'followed by <strong>7h 00m (<code>07:17:41Z → 14:17:44Z</code>) of 100% unattended overnight execution</strong> across <code>v5.68.0</code> closeout and all of <code>v5.69.0</code>, <code>v5.70.0</code>, and <code>v5.71.0</code>.'
+            )
+            anomaly_disclosure = (
+                '<strong>Known In-Run Operational Anomalies &amp; Autonomous Recovery Disclosed:</strong> '
+                '(1) Builder lane reassignment during Leg 1 startup (<code>TC-Lane-B #1555</code> &amp; <code>TC-Lane-D #1533</code>); '
+                '(2) <code>public/sw.js</code> <code>cache-bump-guard</code> CI catch on <code>PR #2912</code> R2 → codified as <code>KR1-01</code> (<code>0</code> recurrences in <code>v5.69.0–v5.71.0</code>); '
+                '(3) Cross-car SQLite schema <code>v78 → v79</code> migration rewind drift on <code>PR #2918</code> → resolved under <code>Ruling A505-R2.7</code> &amp; codified as <code>KR2-01</code>; '
+                '(4) Rotated Codex review/integrator thread wakeups mitigated via dual Medusa + <code>POST /api/sessions/:project/command</code> nudges (<code>KR3-03</code>).'
+            )
+        else:
+            human_disclosure = (
+                f'<strong>100% Unattended Overnight Execution Window:</strong> '
+                f'<code>0</code> human engineering, governance, or troubleshooting inputs of any kind occurred during the entire <code>{slug}</code> lifecycle '
+                f'(executed inside the 7h 00m unattended overnight window <code>07:17:41Z → 14:17:44Z</code> under standing authorization <code>{rec["standing_auth"]}</code> and <code>{rec["charter"]}</code>).'
+            )
+            anomaly_disclosure = (
+                f'<strong>In-Run Autonomous Coordination &amp; Kaizen Mitigation Disclosed:</strong> '
+                f'All multi-round <code>I-Gate</code> (<code>TC-Lane-PRR-A/B</code>) and <code>A-Gate</code> (<code>TC-Lane-Arc</code>) findings across the {len(diff["prs_merged"])} <code>{slug}</code> PRs '
+                f'were resolved autonomously by Builder lanes with formal Architect Scope Rulings and fed forward via per-version <em>Kaizen Retro</em> guardrails.'
+            )
+    else:
+        human_disclosure = (
+            f'<strong>Autonomous Code Execution vs. Operator Governance:</strong> '
+            f'<code>0</code> human code edits, conflict resolutions, test runs, or deploy commands across all {len(diff["prs_merged"])} PRs. '
+            f'The Operator provided standing authorization <code>{rec["standing_auth"]}</code> and approved Gate 0 / architectural deferral boundaries (<code>A185</code>, <code>Ruling A503-R1</code>).'
+        )
+        anomaly_disclosure = (
+            '<strong>Known In-Run Operational Limitation Disclosed:</strong> '
+            '<code>TC-Lane-A</code> and <code>TC-Lane-C</code> experienced <code>pane-no-prompt</code> Medusa nudge holds when interactive <code>AskUserQuestion</code> prompts were open in their panes '
+            '(<code>medusaEscalations: count 2</code>); mitigated via <code>#2866</code> auto-handling hooks and <code>#2828</code> interactive decision routing Slice 2.'
+        )
+
     return f'''
       <!-- TANGLECLAW_CANONICAL_METRICS_START -->
       <div class="card" id="canonical-timing-and-cost-audit" style="margin-top:18px;margin-bottom:18px;border:1px solid rgba(56,189,248,0.4);">
@@ -1174,7 +1229,7 @@ def render_canonical_governance_and_metrics_cards(slug: str) -> str:
                   <tr>
                     <td><strong>{comp.get("deferred_label", "Deferred to Milestone #54 (<code>v5.67.0</code>)")}</strong></td>
                     <td><code>{comp["deferred_to_future_milestone_issues"]}</code></td>
-                    <td><code>{", ".join("#" + str(i) for i in comp["deferred_issue_ids"])}</code> — {comp["deferred_ruling"]}</td>
+                    <td>{("<code>" + ", ".join("#" + str(i) for i in comp["deferred_issue_ids"]) + "</code> — " + comp["deferred_ruling"]) if comp["deferred_issue_ids"] else comp["deferred_ruling"]}</td>
                   </tr>
                 </tbody>
               </table>
@@ -1196,10 +1251,10 @@ def render_canonical_governance_and_metrics_cards(slug: str) -> str:
           <div style="background:rgba(10,15,29,0.65);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
             <h4 style="margin:0 0 8px;color:var(--accent2);font-size:0.94rem;">4. External Credibility, Governance &amp; Operational Disclosures</h4>
             <ul style="margin:0;padding-left:18px;font-size:0.85rem;line-height:1.55;color:var(--text-muted);">
-              <li><strong>Autonomous Code Execution vs. Operator Governance:</strong> <code>0</code> human code edits, conflict resolutions, test runs, or deploy commands across all {len(diff["prs_merged"])} PRs. The Operator provided standing authorization <code>{rec["standing_auth"]}</code> and approved Gate 0 / architectural deferral boundaries (<code>A185</code>, <code>Ruling A503-R1</code>).</li>
+              <li>{human_disclosure}</li>
               <li><strong>Single GitHub Account Attribution Disclosure:</strong> While <code>TC-Lane-A..D</code>, <code>TC-Lane-PRR-A/B</code>, <code>TC-Lane-Arc</code>, <code>TC-Lane-INT</code>, <code>TC-Lane-PM</code>, and <code>TC-Lane-Obsr</code> run in isolated <code>tmux</code> sessions and worktrees across distinct models/engines, all GitHub API commits, reviews, and merges authenticate via the Operator's <code>Jason-Vaughan</code> <code>gh</code> CLI token; role identity is verified via structured review stamps and SQLite audit logs.</li>
-              <li><strong>Known In-Run Operational Limitation Disclosed:</strong> <code>TC-Lane-A</code> and <code>TC-Lane-C</code> experienced <code>pane-no-prompt</code> Medusa nudge holds when interactive <code>AskUserQuestion</code> prompts were open in their panes (<code>medusaEscalations: count 2</code>); mitigated via <code>#2866</code> auto-handling hooks and <code>#2828</code> interactive decision routing Slice 2.</li>
-              <li><strong>Scope of “Self-Improvement” Claims:</strong> All self-improvement in this train refers strictly to <strong>operational, runtime, and governance rule/code evolution</strong> (shipping TangleClaw's own hooks, guards, and decision routes and codifying process guardrails), <em>not</em> autonomous model-weight training.</li>
+              <li>{anomaly_disclosure}</li>
+              <li><strong>Scope of “Self-Improvement” Claims:</strong> All self-improvement in this train refers strictly to <strong>operational, runtime, and governance rule/code evolution</strong> (codifying per-version <em>Kaizen Retro</em> findings into subsequent car scopes, preflight checks, and tests), <em>not</em> autonomous model-weight training.</li>
             </ul>
           </div>
         </div>
