@@ -807,6 +807,48 @@ describe('tcParseMedusaNicknameTags / sendTaggedMessage — ambiguous nickname r
     assert.equal(r.ambiguous[0].tag, 'arc');
     assert.equal(mutateCalls.length, 0);
   });
+
+  it('sendTaggedMessage refuses MEDUSA_NICKNAME_AMBIGUOUS, 0 /send requests, when an ordinary project named '
+    + '"orchestrator" shadows the real Master/Orchestrator entry (#2127 I-Gate Round 2 C1)', async () => {
+    const shadowRoster = [
+      { id: 'proj-orchestrator-real', name: 'orchestrator' },
+      { id: 'project-master-abc12345', name: 'Project Master' }
+    ];
+    const ids = G.tcMedusaIds('');
+    const { doc } = makeDocument(Object.values(ids).filter(Boolean));
+    const mutateCalls = [];
+    const c = G.tcCreateMedusaControl({
+      doc, api: async (url) => (url.endsWith('/roster') ? { workspaces: shadowRoster } : null),
+      apiMutate: async (url, method, body) => { mutateCalls.push({ url, method, body }); return { status: 'received' }; },
+      apiBase: '/api/sessions/p/medusa', ids, state: { state: 'listening' }
+    });
+    const r = await c.sendTaggedMessage('@orchestrator private');
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'MEDUSA_NICKNAME_AMBIGUOUS');
+    assert.equal(r.ambiguous[0].tag, 'orchestrator');
+    assert.equal(mutateCalls.length, 0, 'no /send request for an ambiguous role tag');
+  });
+
+  it('sendTaggedMessage refuses MEDUSA_NICKNAME_AMBIGUOUS, 0 /send requests, when the roster carries TWO '
+    + '"Project Master"-named entries (#2127 I-Gate Round 2 C1)', async () => {
+    const duplicateMasterRoster = [
+      { id: 'project-master-11111111', name: 'Project Master' },
+      { id: 'project-master-22222222', name: 'Project Master' }
+    ];
+    const ids = G.tcMedusaIds('');
+    const { doc } = makeDocument(Object.values(ids).filter(Boolean));
+    const mutateCalls = [];
+    const c = G.tcCreateMedusaControl({
+      doc, api: async (url) => (url.endsWith('/roster') ? { workspaces: duplicateMasterRoster } : null),
+      apiMutate: async (url, method, body) => { mutateCalls.push({ url, method, body }); return { status: 'received' }; },
+      apiBase: '/api/sessions/p/medusa', ids, state: { state: 'listening' }
+    });
+    const r = await c.sendTaggedMessage('@orchestrator private');
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'MEDUSA_NICKNAME_AMBIGUOUS');
+    assert.equal(r.ambiguous[0].tag, 'orchestrator');
+    assert.equal(mutateCalls.length, 0, 'no /send request when two Project Master entries collide');
+  });
 });
 
 describe('sendTaggedMessage — a partial multi-recipient failure retries only the unresolved recipients (#1576 I-Gate Round 2 C2)', () => {

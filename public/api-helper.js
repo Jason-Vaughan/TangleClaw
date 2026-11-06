@@ -3613,11 +3613,14 @@
    * share both).
    *
    * `@orchestrator` (canonical) and `@master`/`@project-master` (deprecated
-   * compatibility aliases, #2127 Ruling A505-R3.6/R3.7) fall through to the
-   * Master/Orchestrator roster entry ONLY when nothing else already
-   * matched — a real project happening to be named "master" still wins,
-   * the same precedence an exact workspace-id match already has over a
-   * name/alias one.
+   * compatibility aliases, #2127 Ruling A505-R3.6/R3.7) ALSO match every
+   * Master/Orchestrator roster entry, alongside whatever plain name/alias
+   * matches already matched — never silently preferring one over the other
+   * (I-Gate Round 2 C1: an ordinary project literally named "orchestrator",
+   * or two roster entries both named "Project Master", must refuse as
+   * ambiguous rather than silently pick whichever came first). An exact
+   * workspace-id match is still the one thing that short-circuits all of
+   * this, same as before.
    * @param {string} token - The tag text, without its `@`.
    * @param {object[]} roster - `/roster`'s `workspaces` array.
    * @returns {{workspaceId: string, name: string}[]} Every matching entry —
@@ -3641,10 +3644,11 @@
       }
       if (hit) { seen.add(w.id); matches.push({ workspaceId: w.id, name: w.name || w.id }); }
     }
-    if (matches.length === 0 && ORCHESTRATOR_NICKNAME_TOKENS.has(lower)) {
+    if (ORCHESTRATOR_NICKNAME_TOKENS.has(lower)) {
       for (const w of roster) {
         if (w && w.id && !seen.has(w.id) && _isMasterOrOrchestratorEntry(w)) {
-          return [{ workspaceId: w.id, name: w.name || w.id }];
+          seen.add(w.id);
+          matches.push({ workspaceId: w.id, name: w.name || w.id });
         }
       }
     }

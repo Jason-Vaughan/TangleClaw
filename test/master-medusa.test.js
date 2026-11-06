@@ -1241,10 +1241,35 @@ describe('Orchestrator role terminology — vocabulary contract and inventory (#
       assert.deepEqual(result.unresolved.sort(), ['master', 'orchestrator']);
     });
 
-    it('a REAL project or workspace already matching the token wins over the Master/Orchestrator fallback', () => {
-      const realProjectNamedMaster = { id: 'proj-master-real', name: 'master' };
-      const result = norm(helper().tcParseMedusaNicknameTags('@master', [realProjectNamedMaster, MASTER_ENTRY]));
-      assert.deepEqual(result.recipients, [{ tag: 'master', workspaceId: realProjectNamedMaster.id, name: 'master' }]);
+    it('refuses as ambiguous, fail-closed, when an ordinary project named "orchestrator" shadows the real '
+      + 'Master/Orchestrator entry — never silently routes to whichever came first (#2127 I-Gate Round 2 C1)', () => {
+      const shadowProject = { id: 'proj-orchestrator-real', name: 'orchestrator' };
+      const result = norm(helper().tcParseMedusaNicknameTags('@orchestrator private', [shadowProject, MASTER_ENTRY]));
+      assert.deepEqual(result.recipients, []);
+      assert.equal(result.ambiguous.length, 1);
+      assert.equal(result.ambiguous[0].tag, 'orchestrator');
+      assert.deepEqual(result.ambiguous[0].candidates.sort(), [MASTER_ENTRY.id, shadowProject.id].sort());
+    });
+
+    it('refuses as ambiguous when an ordinary project named "master" shadows the real Master/Orchestrator '
+      + 'entry (#2127 I-Gate Round 2 C1)', () => {
+      const shadowProject = { id: 'proj-master-real', name: 'master' };
+      const result = norm(helper().tcParseMedusaNicknameTags('@master', [shadowProject, MASTER_ENTRY]));
+      assert.deepEqual(result.recipients, []);
+      assert.equal(result.ambiguous.length, 1);
+      assert.equal(result.ambiguous[0].tag, 'master');
+      assert.deepEqual(result.ambiguous[0].candidates.sort(), [MASTER_ENTRY.id, shadowProject.id].sort());
+    });
+
+    it('refuses as ambiguous when the roster carries TWO "Project Master"-named entries — a valid ordinary '
+      + 'project name, so roster order alone must never pick the recipient (#2127 I-Gate Round 2 C1)', () => {
+      const first = { id: 'project-master-11111111', name: 'Project Master' };
+      const second = { id: 'project-master-22222222', name: 'Project Master' };
+      const result = norm(helper().tcParseMedusaNicknameTags('@orchestrator private', [first, second]));
+      assert.deepEqual(result.recipients, []);
+      assert.equal(result.ambiguous.length, 1);
+      assert.equal(result.ambiguous[0].tag, 'orchestrator');
+      assert.deepEqual(result.ambiguous[0].candidates.sort(), [first.id, second.id].sort());
     });
 
     it('does not disturb resolution of an ordinary, unrelated nickname', () => {
