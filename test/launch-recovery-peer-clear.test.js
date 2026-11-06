@@ -101,11 +101,7 @@ describe('schema v78→v79: launch_recovery_clearances admits peer-cleared (#171
       assert.equal(row.cleared_by_role, null);
       assert.equal(row.cleared_by_launch_id, null);
       assert.equal(row.reason, null);
-      // Dynamic, not a hardcoded 79: this migration landing at exactly v79 is
-      // this test's OWN concern; a later car's own migration (e.g. #1531's
-      // v80) still runs `store.init()` all the way to CURRENT_SCHEMA_VERSION,
-      // which this equality pin would otherwise fail on every such bump.
-      assert.ok(store.getDb().prepare('SELECT MAX(version) AS v FROM schema_version').get().v >= 79);
+      assert.equal(store.getDb().prepare('SELECT MAX(version) AS v FROM schema_version').get().v, 79);
     } finally {
       store.close();
     }
