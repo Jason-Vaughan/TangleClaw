@@ -17,6 +17,13 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v5.69.0 — Medusa coordination and session recovery
+
+- **Broadcast across active switchboards** (#1224) — `lib/medusa.js#broadcastAll` fans an explicitly marked `[BROADCAST scope=all]` message to other active registered workspaces, with a per-sender cooldown; `server.js` mounts the guarded broadcast route for operators and coordinators.
+- **Share Master loop controls and nickname compose** (#1083, #1576) — `public/medusa-loops-ui.js#tcCreateMedusaLoops` is mounted for both project sessions and the Master control bar. `public/api-helper.js` resolves `@nickname` tags against the live roster and sends to matching peers from the inbox compose row.
+- **Announce ready sessions to coordinators** (#1732) — `lib/launch-sequence.js` calls `lib/medusa-startup-announce.js#maybeAnnounceStartup` after READY attestation and listener activation; the project config or environment can disable announcements.
+- **Clear a stalled peer launch with a coordinator grant** (#1713) — `lib/routes/launch-recovery.js` mounts `POST /api/sessions/:project/launch/recovery-clear-peer` for a verified coordinator session from a different project. `lib/store/launch.js` records `peer-cleared` provenance in schema v79.
+
 ## v5.68.0 — Sprint tracking and continuity safeguards
 
 - **Prepare native sprint wave tracking** (#2644) — `lib/native-sprint-tracker.js` validates wave and car assignments, tracks dispatch states, builds report and O-Gate summary models, and syncs a roadmap snapshot with retry. `lib/routes/sprint-wave-routes.js#createSprintWaveRouter` and `public/sprint-wave-ui.js` provide route and browser adapters; they are not mounted in the live server or dashboard yet.
