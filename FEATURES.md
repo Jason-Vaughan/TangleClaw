@@ -17,6 +17,15 @@ fold them into the sections above promptly — test/features-index.test.js
 fails any auto-stub section older than 14 days.
 -->
 
+## v5.71.0 — OpenClaw connection resilience and visibility
+
+- **Use ordered fallback hosts for OpenClaw** (#1531) — `lib/openclaw-remote.js#resolveReachableHost` probes configured SSH addresses, chooses the highest-priority reachable host, caches the route briefly, and invalidates it after an SSH failure. Connection records expose `activeHost` and `fallbackUsed`.
+- **Audit IP hosts and migrate to MagicDNS** (#363) — `lib/ssh-target-safety.js#auditIpLiteralConnections` identifies IP-literal connection hosts. `POST /api/openclaw/connections/:id/migrate-to-magicdns` requires operator confirmation and retains the prior IP as a fallback by default.
+- **Show OpenClaw update availability** (#297) — `lib/openclaw-version.js#checkUpdateAvailable` compares versioned image tags, and `GET /api/openclaw/connections/:id/update-available` exposes the result. An optional `POST /api/openclaw/connections/:id/update-tag` helper changes a validated `.env` image tag over SSH.
+- **Refresh connection liveness** (#1185) — `public/openclaw-tunnel-state.js#deriveConnectionState` treats an old gateway measurement as unverified. The existing sidecar poll in `public/openclaw-view.js` re-probes the gateway without adding a timer.
+- **Prepare header health pills** (#128) — `lib/openclaw-detect.js#detectRuntimeAndStats` gathers bounded resource and health telemetry; `public/openclaw-view.js#renderOpenclawHeaderPills` renders it when supplied. A live polling route is still needed to feed the renderer.
+- **Harden direct proxy identity handling** (#254) — `server.js#_sanitizeOpenclawDirectHeaders` removes Cloudflare attribution headers before forwarding to OpenClaw. `lib/openclaw-html.js#injectDeviceIdentityBootstrap` supplies a stable browser identity bridge and calls the existing device approval route on direct page loads.
+
 ## v5.70.0 — Workspace migration and Orchestrator controls
 
 - **Plan and execute workspace-root migration** (#2626) — `lib/tcc-workspace-migration.js#planWorkspaceMigration` reports projects under a TCC-protected root and blockers before any move; `#executeWorkspaceMigration` moves eligible directories, updates stored paths and Git worktree links, and rolls back a failed attempt.
