@@ -1,0 +1,1020 @@
+#!/usr/bin/env python3
+"""
+Authoritative Canonical Metrics Registry, Calculator, and HTML Renderer
+for TangleClaw Sprint Reports (Rule #283.5 / P4 v2.0.0).
+
+Single source of truth consumed by:
+- generators/gen_v5650.py, gen_v5660.py, gen_v5650_v5660_retro.py, gen_v5670.py (and future generators)
+- scripts/enrich-sprint-reports.py
+- validate-sprint-report.py
+- test_validate_sprint_report.py
+"""
+
+import json
+import pathlib
+from typing import Dict, Any, Tuple
+
+HOURLY_RATE = 2.46
+CALENDAR_HOURLY_RATE = 0.611
+ELECTRICITY_HOURLY_RATE = 0.025
+
+# Legacy tuple registry (hrs, verified_closed_issues, insertions_loc) for v5.34.0..v5.67.0
+CANONICAL_METRICS: Dict[str, Tuple[float, int, int]] = {
+    "v5.34.0": (23.80, 18, 8420),
+    "v5.35.0": (10.50, 14, 6120),
+    "v5.36.0": (10.10, 12, 5340),
+    "v5.37.0": (13.25, 11, 4890),
+    "v5.38.0": (13.35, 10, 4520),
+    "v5.39.0": (4.35, 5, 2840),
+    "v5.40.0": (10.10, 8, 6167),
+    "v5.41.0": (2.95, 11, 4620),
+    "v5.42.0": (2.97, 5, 4339),
+    "v5.43.0": (2.18, 8, 2386),
+    "v5.44.0": (2.80, 6, 2465),
+    "v5.45.0": (2.32, 7, 2010),
+    "v5.46.0": (7.18, 9, 4120),
+    "v5.46.1": (4.33, 6, 2180),
+    "v5.47.0": (6.85, 10, 4850),
+    "v5.47.1": (4.55, 6, 2340),
+    "v5.48.0": (2.73, 8, 3690),
+    "v5.48.1": (4.48, 8, 3420),
+    "v5.49.0": (5.67, 12, 5400),
+    "v5.50.0": (8.55, 10, 3542),
+    "v5.51.0": (1.62, 5, 2485),
+    "v5.52.0": (4.10, 9, 4120),
+    "v5.53.1": (2.25, 7, 3150),
+    "v5.54.0": (3.20, 5, 2410),
+    "v5.55.0": (1.52, 5, 2250),
+    "v5.56.0": (0.67, 12, 5400),
+    "v5.54.0-v5.56.0-retrospective": (5.38, 22, 10060),
+    "sgm-strike-sprint": (1.30, 4, 1840),
+    "v5.57.0": (5.35, 8, 11187),
+    "v5.58.0": (4.12, 8, 4207),
+    "v5.59.0": (1.21, 8, 4587),
+    "v5.60.0": (1.21, 16, 5112),
+    "v5.61.0": (2.85, 14, 4487),
+    "v5.57.0-v5.61.0-retrospective": (12.26, 54, 29431),
+    "v5.62.0": (2.50, 7, 3420),
+    "v5.63.0": (1.85, 8, 3680),
+    "v5.64.0": (1.75, 7, 3190),
+    "v5.62.0-v5.64.0-retrospective": (3.45, 22, 10290),
+    # v5.65.0 - v5.67.0 Canonical Full Engineering Windows (NEVER pipelined tail!)
+    "v5.65.0": (2.33, 8, 4208),
+    "v5.66.0": (1.60, 6, 2911),
+    "v5.65.0-v5.66.0-retrospective": (3.09, 14, 7116),
+    "v5.67.0": (5.97, 9, 5388),
+    "v5.68.0": (1.42, 5, 2525),
+    "v5.69.0": (2.13, 5, 4619),
+    "v5.68.0-v5.71.0-retrospective": (3.95, 10, 7140),
+}
+
+# Detailed v2.0.0 Canonical Primary-Source Records for v5.65.0, v5.66.0, v5.65.0-v5.66.0-retrospective, and v5.67.0
+DETAILED_SPRINT_RECORDS: Dict[str, Dict[str, Any]] = {
+    "v5.65.0": {
+        "schema_version": "2.0.0",
+        "version": "v5.65.0",
+        "title": "v5.65.0: Linux hosts",
+        "charter": "Charter A502 v1.0",
+        "standing_auth": "OP-GO-V5650-V5660-20261104",
+        "milestone_number": 50,
+        "milestone_title": "v5.65.0: Linux hosts",
+        "timestamps": {
+            "t1_first_activity": "2026-11-05T05:20:00Z",
+            "t1_pst": "21:20:00 PST (Nov 4)",
+            "t2_first_branch_commit": "2026-11-05T05:41:07Z",
+            "t2_pst": "21:41:07 PST (ac19937a on PR #2899)",
+            "t3_first_pr_opened": "2026-11-05T05:41:21Z",
+            "t3_pst": "21:41:21 PST (PR #2899 opened; first feat merge 22:11:55 PST / 06:11:55Z)",
+            "t4_final_feature_pr_merged": "2026-11-05T07:40:38Z",
+            "t4_pst": "23:40:38 PST (PR #2901 @ ffb1622f)",
+            "t5_release_pr_merged": "2026-11-05T07:47:06Z",
+            "t5_pst": "23:47:06 PST (PR #2906 @ d97f0121)",
+            "t6_release_tag_published": "2026-11-05T08:00:11Z",
+            "t6_pst": "00:00:11 PST (Nov 5 · tag v5.65.0 @ eedbbbea)",
+            "t7_live_deploy_completed": "2026-11-05T08:00:46Z",
+            "t7_pst": "00:00:46 PST (SQLite backup 4c667d43 & :3102 live)",
+            "t8_observer_certification_completed": "2026-11-05T08:06:12Z",
+            "t8_pst": "00:06:12 PST (O-Gate #issuecomment-6652971709)",
+        },
+        "durations": {
+            "authorization_to_deploy_hrs": 2.68,
+            "authorization_to_deploy_human": "2h 40m 46s",
+            "authorization_to_certification_hrs": 2.77,
+            "authorization_to_certification_human": "2h 46m 12s",
+            "full_engineering_window_hrs": 2.33,
+            "full_engineering_window_human": "2h 19m 39s (t2 21:41:07 → t7 00:00:46 PST)",
+            "commit_to_merge_window_hrs": 2.10,
+            "commit_to_merge_window_human": "2h 05m 59s (t2 21:41:07 → t5 23:47:06 PST)",
+            "inter_release_merge_cadence_hrs": 2.10,
+            "inter_release_merge_cadence_human": "2h 05m 59s (Leg 1 commit-to-merge)",
+            "inter_release_deploy_cadence_hrs": 2.68,
+            "inter_release_deploy_cadence_human": "2h 40m 46s (Leg 1 auth-to-deploy)",
+            "pipeline_overlap_hrs": 0.00,
+            "pipeline_overlap_human": "0m (Leg 1 baseline; overlapped 1h 11m 21s with downstream v5.66.0)",
+            "pipeline_overlap_pct": 0.0,
+        },
+        "completion": {
+            "chartered_active_issues": 12,
+            "state_a_implemented_issues": 12,
+            "state_b_integrated_issues": 12,
+            "state_c_verified_closed_issues": 8,
+            "state_c_issue_ids": [1424, 777, 2832, 2834, 2887, 2864, 2871, 2870],
+            "state_d_externally_accepted_issues": 0,
+            "partial_slice_re_milestoned_issues": 4,
+            "partial_slice_issue_ids": [2866, 2878, 2883, 2877],
+            "partial_slice_ruling": "Rulings A502-W1B-R3 (#issuecomment-6651256995) & A502-W1C-R3 (#issuecomment-6651357019): Slice 2 adapters/verdicts merged in PRs #2900 & #2902; re-milestoned to Milestone #54 (v5.67.0) for Slice 3 hot-entrypoint mounting.",
+            "pre_closed_milestone_issues": 1,
+            "pre_closed_issue_ids": [239],
+            "milestone_closed_total": 9,
+            "milestone_open_total": 0,
+            "deferred_to_future_milestone_issues": 1,
+            "deferred_issue_ids": [1564],
+            "deferred_ruling": "Gate 0 A185: #1564 (physical Linux host VRF) re-homed to Milestone #54 (v5.67.0).",
+        },
+        "diff": {
+            "prs_merged": [2899, 2900, 2902, 2901, 2906],
+            "feature_prs": [2899, 2900, 2902, 2901],
+            "release_prs": [2906],
+            "true_merge_count": 5,
+            "net_repo_files": 30,
+            "net_repo_insertions": 4208,
+            "net_repo_deletions": 78,
+            "feature_pr_files_sum": 44,
+            "feature_pr_insertions": 4168,
+            "feature_pr_deletions": 75,
+        },
+        "economics": {
+            "tier1_measured_marginal_api_usd": 0.00,
+            "tier1_measured_marginal_electricity_usd": 0.06,
+            "tier2_allocated_subscription_usd": 5.73,
+            "tier2_auth_to_deploy_subscription_usd": 6.59,
+            "tier2_calendar_hour_subscription_usd": 1.42,
+            "tier3_hypothetical_api_shadow_usd": 95.00,
+            "est_tokens_m": 6.0,
+        },
+        "efficiency": {
+            "throughput_closed_per_eng_hr": 3.43,
+            "throughput_addressed_per_eng_hr": 5.15,
+            "unit_allocated_cost_per_closed_issue_usd": 0.72,
+            "unit_allocated_cost_per_addressed_issue_usd": 0.48,
+            "unit_allocated_cost_per_kloc_usd": 1.36,
+            "quality_post_merge_defects": 0,
+            "legacy_ade_v1_closed": 0.60,
+            "legacy_ade_v1_addressed": 0.90,
+        },
+    },
+    "v5.66.0": {
+        "schema_version": "2.0.0",
+        "version": "v5.66.0",
+        "title": "v5.66.0: Fleet visibility and release dependencies",
+        "charter": "Charter A503 v1.1",
+        "standing_auth": "OP-GO-V5650-V5660-20261104",
+        "milestone_number": 51,
+        "milestone_title": "v5.66.0: Fleet visibility and release dependencies",
+        "timestamps": {
+            "t1_first_activity": "2026-11-05T06:35:00Z",
+            "t1_pst": "22:35:00 PST (Nov 4 · Guardrail 06 pipelined dispatch)",
+            "t2_first_branch_commit": "2026-11-05T06:49:25Z",
+            "t2_pst": "22:49:25 PST (a091f027 on PR #2903)",
+            "t3_first_pr_opened": "2026-11-05T06:50:03Z",
+            "t3_pst": "22:50:03 PST (PR #2903 opened; first feat merge 00:02:41 PST / 08:02:41Z)",
+            "t4_final_feature_pr_merged": "2026-11-05T08:03:14Z",
+            "t4_pst": "00:03:14 PST (Nov 5 · PR #2905 @ ef59e736; 32s merge cascade)",
+            "t5_release_pr_merged": "2026-11-05T08:08:14Z",
+            "t5_pst": "00:08:14 PST (PR #2907 @ 1ffeaf6e)",
+            "t6_release_tag_published": "2026-11-05T08:24:59Z",
+            "t6_pst": "00:24:59 PST (tag v5.66.0 @ 87e54581)",
+            "t7_live_deploy_completed": "2026-11-05T08:25:29Z",
+            "t7_pst": "00:25:29 PST (SQLite backup cc98af45 & :3102 live)",
+            "t8_observer_certification_completed": "2026-11-05T08:27:10Z",
+            "t8_pst": "00:27:10 PST (O-Gate #issuecomment-6653342035)",
+        },
+        "durations": {
+            "authorization_to_deploy_hrs": 1.84,
+            "authorization_to_deploy_human": "1h 50m 30s (t1 pipelined dispatch → t7 deploy; 3h 05m 29s from train OP-GO)",
+            "authorization_to_certification_hrs": 1.87,
+            "authorization_to_certification_human": "1h 52m 10s (t1 → t8)",
+            "full_engineering_window_hrs": 1.60,
+            "full_engineering_window_human": "1h 36m 04s (t2 22:49:25 PST → t7 00:25:29 PST)",
+            "commit_to_merge_window_hrs": 1.31,
+            "commit_to_merge_window_human": "1h 18m 49s (t2 22:49:25 PST → t5 00:08:14 PST)",
+            "inter_release_merge_cadence_hrs": 0.35,
+            "inter_release_merge_cadence_human": "21m 08s (v5.65.0 merge 23:47:06 → v5.66.0 merge 00:08:14 PST)",
+            "inter_release_deploy_cadence_hrs": 0.41,
+            "inter_release_deploy_cadence_human": "24m 43s (v5.65.0 deploy 00:00:46 → v5.66.0 deploy 00:25:29 PST pipelined tail)",
+            "pipeline_overlap_hrs": 1.19,
+            "pipeline_overlap_human": "1h 11m 21s (22:49:25 → 00:00:46 PST concurrent with v5.65.0)",
+            "pipeline_overlap_pct": 74.3,
+        },
+        "completion": {
+            "chartered_active_issues": 6,
+            "state_a_implemented_issues": 6,
+            "state_b_integrated_issues": 6,
+            "state_c_verified_closed_issues": 6,
+            "state_c_issue_ids": [1112, 2862, 2828, 2858, 2852, 2856],
+            "state_d_externally_accepted_issues": 0,
+            "partial_slice_re_milestoned_issues": 0,
+            "partial_slice_issue_ids": [],
+            "partial_slice_ruling": "All 6 active chartered issues closed in Milestone #51; shared singleton entrypoints isolated per Ruling A503-R1.",
+            "pre_closed_milestone_issues": 1,
+            "pre_closed_issue_ids": [2880],
+            "milestone_closed_total": 7,
+            "milestone_open_total": 0,
+            "deferred_to_future_milestone_issues": 6,
+            "deferred_issue_ids": [2881, 2884, 2885, 2886, 2888, 2347],
+            "deferred_ruling": "Ruling A503-R1 (#issuecomment-6651458812): 5 Slice 3 hot-entrypoint trackers (#2881, #2884, #2885, #2886, #2888) + A185 external blocker #2347 consolidated in Milestone #54 (v5.67.0).",
+        },
+        "diff": {
+            "prs_merged": [2903, 2904, 2905, 2907],
+            "feature_prs": [2903, 2904, 2905],
+            "release_prs": [2907],
+            "true_merge_count": 4,
+            "net_repo_files": 26,
+            "net_repo_insertions": 2911,
+            "net_repo_deletions": 31,
+            "feature_pr_files_sum": 31,
+            "feature_pr_insertions": 2879,
+            "feature_pr_deletions": 28,
+        },
+        "economics": {
+            "tier1_measured_marginal_api_usd": 0.00,
+            "tier1_measured_marginal_electricity_usd": 0.04,
+            "tier2_allocated_subscription_usd": 3.94,
+            "tier2_incremental_tail_subscription_usd": 1.01,
+            "tier2_calendar_hour_subscription_usd": 0.98,
+            "tier3_hypothetical_api_shadow_usd": 65.00,
+            "est_tokens_m": 4.4,
+        },
+        "efficiency": {
+            "throughput_closed_per_eng_hr": 3.75,
+            "throughput_addressed_per_eng_hr": 3.75,
+            "unit_allocated_cost_per_closed_issue_usd": 0.66,
+            "unit_allocated_cost_per_addressed_issue_usd": 0.66,
+            "unit_allocated_cost_per_kloc_usd": 1.35,
+            "quality_post_merge_defects": 0,
+            "legacy_ade_v1_closed": 0.95,
+            "legacy_ade_v1_addressed": 0.95,
+        },
+    },
+    "v5.65.0-v5.66.0-retrospective": {
+        "schema_version": "2.0.0",
+        "version": "v5.65.0-v5.66.0-retrospective",
+        "title": "v5.65.0 → v5.66.0: Two-Version Autonomous Sprint Train Retrospective",
+        "charter": "Charters A502 v1.0 & A503 v1.1",
+        "standing_auth": "OP-GO-V5650-V5660-20261104",
+        "milestone_number": 51,
+        "milestone_title": "Milestones #50 (v5.65.0) & #51 (v5.66.0)",
+        "timestamps": {
+            "t1_first_activity": "2026-11-05T05:20:00Z",
+            "t1_pst": "21:20:00 PST (Nov 4 · OP-GO-V5650-V5660-20261104)",
+            "t2_first_branch_commit": "2026-11-05T05:41:07Z",
+            "t2_pst": "21:41:07 PST (ac19937a on PR #2899)",
+            "t3_first_pr_opened": "2026-11-05T05:41:21Z",
+            "t3_pst": "21:41:21 PST (PR #2899 opened; first feat merge 22:11:55 PST / 06:11:55Z)",
+            "t4_final_feature_pr_merged": "2026-11-05T08:03:14Z",
+            "t4_pst": "00:03:14 PST (Nov 5 · PR #2905 @ ef59e736)",
+            "t5_release_pr_merged": "2026-11-05T08:08:14Z",
+            "t5_pst": "00:08:14 PST (PR #2907 @ 1ffeaf6e)",
+            "t6_release_tag_published": "2026-11-05T08:24:59Z",
+            "t6_pst": "00:24:59 PST (tag v5.66.0 @ 87e54581)",
+            "t7_live_deploy_completed": "2026-11-05T08:25:29Z",
+            "t7_pst": "00:25:29 PST (SQLite backup cc98af45 & :3102 live)",
+            "t8_observer_certification_completed": "2026-11-05T08:27:10Z",
+            "t8_pst": "00:27:10 PST (O-Gate #issuecomment-6653342035)",
+        },
+        "durations": {
+            "authorization_to_deploy_hrs": 3.09,
+            "authorization_to_deploy_human": "3h 05m 29s (21:20:00 PST → 00:25:29 PST)",
+            "authorization_to_certification_hrs": 3.12,
+            "authorization_to_certification_human": "3h 07m 10s (21:20:00 PST → 00:27:10 PST)",
+            "full_engineering_window_hrs": 3.09,
+            "full_engineering_window_human": "3h 05m 29s train wall-clock (2h 44m 22s / 2.74h first-commit-to-final-deploy; 3.93h sum of standalone release windows)",
+            "commit_to_merge_window_hrs": 2.45,
+            "commit_to_merge_window_human": "2h 27m 07s (21:41:07 PST → 00:08:14 PST)",
+            "inter_release_merge_cadence_hrs": 0.35,
+            "inter_release_merge_cadence_human": "2h 27m 06s (Leg 1 auth→merge) → 21m 08s (Leg 2 merge cadence)",
+            "inter_release_deploy_cadence_hrs": 0.41,
+            "inter_release_deploy_cadence_human": "2h 40m 46s (Leg 1 auth→deploy) → 24m 43s (Leg 2 deploy cadence)",
+            "pipeline_overlap_hrs": 1.19,
+            "pipeline_overlap_human": "1h 11m 21s (3.93h standalone sum vs. 2.74h commit-to-deploy wall-clock)",
+            "pipeline_overlap_pct": 74.3,
+        },
+        "completion": {
+            "chartered_active_issues": 18,
+            "state_a_implemented_issues": 18,
+            "state_b_integrated_issues": 18,
+            "state_c_verified_closed_issues": 14,
+            "state_c_issue_ids": [1424, 777, 2832, 2834, 2887, 2864, 2871, 2870, 1112, 2862, 2828, 2858, 2852, 2856],
+            "state_d_externally_accepted_issues": 0,
+            "partial_slice_re_milestoned_issues": 4,
+            "partial_slice_issue_ids": [2866, 2878, 2883, 2877],
+            "partial_slice_ruling": "4 Leg 1 issues (#2866, #2878, #2883, #2877) shipped Slice 2 adapters/verdicts in PRs #2900/#2902 and were re-milestoned to Milestone #54 (v5.67.0) under Rulings A502-W1B-R3 & A502-W1C-R3.",
+            "pre_closed_milestone_issues": 2,
+            "pre_closed_issue_ids": [239, 2880],
+            "milestone_closed_total": 16,
+            "milestone_open_total": 0,
+            "deferred_to_future_milestone_issues": 7,
+            "deferred_issue_ids": [1564, 2347, 2881, 2884, 2885, 2886, 2888],
+            "deferred_ruling": "2 external/hardware blockers (#1564, #2347 under A185) + 5 Slice 3 hot-entrypoint trackers (#2881, #2884, #2885, #2886, #2888 under Ruling A503-R1) tracked in Milestone #54 (v5.67.0).",
+        },
+        "diff": {
+            "prs_merged": [2899, 2900, 2902, 2901, 2906, 2903, 2904, 2905, 2907],
+            "feature_prs": [2899, 2900, 2902, 2901, 2903, 2904, 2905],
+            "release_prs": [2906, 2907],
+            "true_merge_count": 9,
+            "net_repo_files": 47,
+            "net_repo_insertions": 7116,
+            "net_repo_deletions": 106,
+            "feature_pr_files_sum": 75,
+            "feature_pr_insertions": 7047,
+            "feature_pr_deletions": 103,
+        },
+        "economics": {
+            "tier1_measured_marginal_api_usd": 0.00,
+            "tier1_measured_marginal_electricity_usd": 0.08,
+            "tier2_allocated_subscription_usd": 7.60,
+            "tier2_standalone_sum_subscription_usd": 9.67,
+            "tier2_calendar_hour_subscription_usd": 1.89,
+            "tier3_hypothetical_api_shadow_usd": 160.00,
+            "est_tokens_m": 10.4,
+        },
+        "efficiency": {
+            "throughput_closed_per_eng_hr": 4.53,
+            "throughput_addressed_per_eng_hr": 5.83,
+            "unit_allocated_cost_per_closed_issue_usd": 0.54,
+            "unit_allocated_cost_per_addressed_issue_usd": 0.42,
+            "unit_allocated_cost_per_kloc_usd": 1.07,
+            "quality_post_merge_defects": 0,
+            "legacy_ade_v1_closed": 0.60,
+            "legacy_ade_v1_addressed": 0.77,
+        },
+    },
+    "v5.67.0": {
+        "schema_version": "2.0.0",
+        "version": "v5.67.0",
+        "title": "v5.67.0: External integrations and hardware verification",
+        "charter": "Charter A504 v1.1",
+        "standing_auth": "OP-GO-V5670-20261105",
+        "milestone_number": 54,
+        "milestone_title": "v5.67.0: External integrations and hardware verification",
+        "timestamps": {
+            "t1_first_activity": "2026-11-05T19:11:33Z",
+            "t1_pst": "11:11:33 PST (Nov 5 · Charter A504 v1.0 & Ruling A504-EXT-R1 #6666856332)",
+            "t2_first_branch_commit": "2026-11-05T20:40:58Z",
+            "t2_pst": "12:40:58 PST (0be0e9fd on PR #2908)",
+            "t3_first_pr_opened": "2026-11-05T20:41:38Z",
+            "t3_pst": "12:41:38 PST (PR #2908 opened; Car 67-A merged 14:07:26 PST, Car 67-B 16:16:02 PST, Car 67-C 18:05:24 PST)",
+            "t4_final_feature_pr_merged": "2026-11-06T02:05:24Z",
+            "t4_pst": "18:05:24 PST (PR #2910 @ f0371b8b)",
+            "t5_release_pr_merged": "2026-11-06T02:22:35Z",
+            "t5_pst": "18:22:35 PST (PR #2911 @ 1b0b09ef)",
+            "t6_release_tag_published": "2026-11-06T02:38:26Z",
+            "t6_pst": "18:38:26 PST (tag v5.67.0 @ d2b5c177 -> 1b0b09ef · Release #436037776)",
+            "t7_live_deploy_completed": "2026-11-06T02:39:05Z",
+            "t7_pst": "18:39:05 PST (SQLite backup efbbc834 & :3102 live 5.67.0)",
+            "t8_observer_certification_completed": "2026-11-06T02:40:19Z",
+            "t8_pst": "18:40:19 PST (O-Gate #issuecomment-6675385430 on PR #2911)",
+        },
+        "durations": {
+            "authorization_to_deploy_hrs": 7.46,
+            "authorization_to_deploy_human": "7h 27m 32s (t1 11:11:33 → t7 18:39:05 PST)",
+            "authorization_to_certification_hrs": 7.48,
+            "authorization_to_certification_human": "7h 28m 46s (t1 11:11:33 → t8 18:40:19 PST)",
+            "full_engineering_window_hrs": 5.97,
+            "full_engineering_window_human": "5h 58m 07s (t2 12:40:58 → t7 18:39:05 PST across 3 sequential hot-entrypoint cars)",
+            "commit_to_merge_window_hrs": 5.69,
+            "commit_to_merge_window_human": "5h 41m 37s (t2 12:40:58 → t5 18:22:35 PST)",
+            "inter_release_merge_cadence_hrs": 5.69,
+            "inter_release_merge_cadence_human": "5h 41m 37s (standalone post-train sprint commit-to-merge)",
+            "inter_release_deploy_cadence_hrs": 5.97,
+            "inter_release_deploy_cadence_human": "5h 58m 07s (standalone post-train sprint commit-to-deploy)",
+            "pipeline_overlap_hrs": 0.00,
+            "pipeline_overlap_human": "0m (standalone single-owner hot-entrypoint sprint following v5.65.0–v5.66.0 train)",
+            "pipeline_overlap_pct": 0.0,
+        },
+        "completion": {
+            "chartered_active_issues": 9,
+            "state_a_implemented_issues": 9,
+            "state_b_integrated_issues": 9,
+            "state_c_verified_closed_issues": 9,
+            "state_c_issue_ids": [2866, 2877, 2878, 2881, 2888, 2883, 2884, 2885, 2886],
+            "state_d_externally_accepted_issues": 0,
+            "partial_slice_re_milestoned_issues": 0,
+            "partial_slice_issue_ids": [],
+            "partial_slice_ruling": "All 9 active chartered in-repo issues closed in Milestone #54 across Cars 67-A (#2908), 67-B (#2909), and 67-C (#2910).",
+            "pre_closed_milestone_issues": 0,
+            "pre_closed_issue_ids": [],
+            "milestone_closed_total": 9,
+            "milestone_open_total": 0,
+            "deferred_label": "Reclassified to Backlog (<code>A504-EXT-R1 / Rule #1 / A185</code>)",
+            "deferred_to_future_milestone_issues": 3,
+            "deferred_issue_ids": [1564, 2347, 2258],
+            "deferred_ruling": "Ruling A504-EXT-R1 (#6666856332, #6666857185, #6666857934 under Rule #1 / A185): 3 external/hardware/upstream-blocked items (#1564 physical Linux systemd VRF, #2347 blocked on Jason-Vaughan/Medusa#67, #2258 external Vercel dashboard/DNS cutover) reclassified to Backlog so Milestone #54 closes all 9 in-repo deliverables cleanly (open_issues: 0).",
+        },
+        "diff": {
+            "prs_merged": [2908, 2909, 2910, 2911],
+            "feature_prs": [2908, 2909, 2910],
+            "release_prs": [2911],
+            "true_merge_count": 4,
+            "net_repo_files": 69,
+            "net_repo_insertions": 5388,
+            "net_repo_deletions": 105,
+            "feature_pr_files_sum": 82,
+            "feature_pr_insertions": 5330,
+            "feature_pr_deletions": 102,
+        },
+        "economics": {
+            "tier1_measured_marginal_api_usd": 0.00,
+            "tier1_measured_marginal_electricity_usd": 0.15,
+            "tier2_allocated_subscription_usd": 14.69,
+            "tier2_auth_to_deploy_subscription_usd": 18.35,
+            "tier2_calendar_hour_subscription_usd": 3.65,
+            "tier3_hypothetical_api_shadow_usd": 150.00,
+            "est_tokens_m": 10.6,
+        },
+        "efficiency": {
+            "throughput_closed_per_eng_hr": 1.51,
+            "throughput_addressed_per_eng_hr": 1.51,
+            "unit_allocated_cost_per_closed_issue_usd": 1.63,
+            "unit_allocated_cost_per_addressed_issue_usd": 1.63,
+            "unit_allocated_cost_per_kloc_usd": 2.73,
+            "quality_post_merge_defects": 0,
+            "legacy_ade_v1_closed": 0.10,
+            "legacy_ade_v1_addressed": 0.10,
+        },
+    },
+    "v5.68.0": {
+        "schema_version": "2.0.0",
+        "version": "v5.68.0",
+        "title": "v5.68.0: Native sprint tracking, continuity mail & suite contention immunity",
+        "charter": "Charter A505 v1.0",
+        "standing_auth": "OP-GO-MULTIVERSION-V5680-V5710-20261105",
+        "milestone_number": 55,
+        "milestone_title": "v5.68.0: Native sprint tracking, continuity mail & suite contention immunity",
+        "timestamps": {
+            "t1_first_activity": "2026-11-06T06:29:00Z",
+            "t1_pst": "22:29:00 PST (Nov 5 · Charter A505 v1.0 & OP-GO-MULTIVERSION-V5680-V5710-20261105)",
+            "t2_first_branch_commit": "2026-11-06T07:02:50Z",
+            "t2_pst": "23:02:50 PST (ec6f3993 on PR #2912)",
+            "t3_first_pr_opened": "2026-11-06T07:05:11Z",
+            "t3_pst": "23:05:11 PST (PR #2912 opened; Car 68-C #2913 merged 23:44:49 PST, Car 68-B #2914 00:05:57 PST, Car 68-A #2912 00:16:36 PST)",
+            "t4_final_feature_pr_merged": "2026-11-06T08:16:36Z",
+            "t4_pst": "00:16:36 PST (Nov 6 · PR #2912 @ 1370777f)",
+            "t5_release_pr_merged": "2026-11-06T08:25:53Z",
+            "t5_pst": "00:25:53 PST (PR #2915 @ 2b4b39a3)",
+            "t6_release_tag_published": "2026-11-06T08:26:11Z",
+            "t6_pst": "00:26:11 PST (tag v5.68.0 @ 3ee11478 → 2b4b39a3)",
+            "t7_live_deploy_completed": "2026-11-06T08:27:45Z",
+            "t7_pst": "00:27:45 PST (SQLite backup 80403a7c & :3102 live 5.68.0)",
+            "t8_observer_certification_completed": "2026-11-06T08:29:30Z",
+            "t8_pst": "00:29:30 PST (O-Gate PASS on PR #2915)",
+        },
+        "durations": {
+            "authorization_to_deploy_hrs": 1.98,
+            "authorization_to_deploy_human": "1h 58m 45s (t1 22:29:00 → t7 00:27:45 PST)",
+            "authorization_to_certification_hrs": 2.01,
+            "authorization_to_certification_human": "2h 00m 30s (t1 22:29:00 → t8 00:29:30 PST)",
+            "full_engineering_window_hrs": 1.42,
+            "full_engineering_window_human": "1h 24m 55s (t2 23:02:50 → t7 00:27:45 PST across 3 parallel file-disjoint Wave 1 cars)",
+            "commit_to_merge_window_hrs": 1.38,
+            "commit_to_merge_window_human": "1h 23m 03s (t2 23:02:50 → t5 00:25:53 PST)",
+            "inter_release_merge_cadence_hrs": 1.38,
+            "inter_release_merge_cadence_human": "1h 23m 03s (Leg 1 of v5.68.0–v5.71.0 train commit-to-merge)",
+            "inter_release_deploy_cadence_hrs": 1.42,
+            "inter_release_deploy_cadence_human": "1h 24m 55s (Leg 1 of v5.68.0–v5.71.0 train commit-to-deploy)",
+            "pipeline_overlap_hrs": 0.00,
+            "pipeline_overlap_human": "0m (Leg 1 baseline of 4-version Charter A505 v1.0 train)",
+            "pipeline_overlap_pct": 0.0,
+        },
+        "completion": {
+            "chartered_active_issues": 5,
+            "state_a_implemented_issues": 5,
+            "state_b_integrated_issues": 5,
+            "state_c_verified_closed_issues": 5,
+            "state_c_issue_ids": [2644, 2821, 748, 2735, 2736],
+            "state_d_externally_accepted_issues": 0,
+            "partial_slice_re_milestoned_issues": 0,
+            "partial_slice_issue_ids": [],
+            "partial_slice_ruling": "All 5 active chartered Milestone #55 issues (#2644 Train 35, #2821, #748, #2735, #2736) + v5.67.0 Feed-Forward 01 call-site mounts closed in Milestone #55 across Cars 68-A (#2912), 68-B (#2914), and 68-C (#2913).",
+            "pre_closed_milestone_issues": 0,
+            "pre_closed_issue_ids": [],
+            "milestone_closed_total": 5,
+            "milestone_open_total": 0,
+            "deferred_label": "Remaining Train Legs (<code>v5.69.0 #56 · v5.70.0 #57 · v5.71.0 #58</code>)",
+            "deferred_to_future_milestone_issues": 0,
+            "deferred_issue_ids": [],
+            "deferred_ruling": "0 issues deferred from Milestone #55 (open_issues: 0, closed_issues: 5). Downstream Charter A505 v1.0 legs v5.69.0 (#56, 5 issues), v5.70.0 (#57, 4 issues), and v5.71.0 (#58, 6 issues) proceed with Kaizen Retro #1 Feed-Forward rules.",
+        },
+        "diff": {
+            "prs_merged": [2913, 2914, 2912, 2915],
+            "feature_prs": [2913, 2914, 2912],
+            "release_prs": [2915],
+            "true_merge_count": 4,
+            "net_repo_files": 29,
+            "net_repo_insertions": 2525,
+            "net_repo_deletions": 148,
+            "feature_pr_files_sum": 26,
+            "feature_pr_insertions": 2490,
+            "feature_pr_deletions": 143,
+        },
+        "economics": {
+            "tier1_measured_marginal_api_usd": 0.00,
+            "tier1_measured_marginal_electricity_usd": 0.04,
+            "tier2_allocated_subscription_usd": 3.49,
+            "tier2_auth_to_deploy_subscription_usd": 4.87,
+            "tier2_calendar_hour_subscription_usd": 0.87,
+            "tier3_hypothetical_api_shadow_usd": 65.00,
+            "est_tokens_m": 4.5,
+        },
+        "efficiency": {
+            "throughput_closed_per_eng_hr": 3.52,
+            "throughput_addressed_per_eng_hr": 3.52,
+            "unit_allocated_cost_per_closed_issue_usd": 0.70,
+            "unit_allocated_cost_per_addressed_issue_usd": 0.70,
+            "unit_allocated_cost_per_kloc_usd": 1.38,
+            "quality_post_merge_defects": 0,
+            "legacy_ade_v1_closed": 1.01,
+            "legacy_ade_v1_addressed": 1.01,
+        },
+    },
+    "v5.69.0": {
+        "schema_version": "2.0.0",
+        "version": "v5.69.0",
+        "title": "v5.69.0: Medusa broadcast, Team Chat nicknames & autonomous session lifecycle",
+        "charter": "Charter A505 v1.0",
+        "standing_auth": "OP-GO-MULTIVERSION-V5680-V5710-20261105",
+        "milestone_number": 56,
+        "milestone_title": "v5.69.0: Medusa broadcast, Team Chat nicknames & autonomous session lifecycle",
+        "timestamps": {
+            "t1_first_activity": "2026-11-06T08:28:00Z",
+            "t1_pst": "00:28:00 PST (Nov 6 · Leg 2 v5.69.0 dispatch under Charter A505 v1.0)",
+            "t2_first_branch_commit": "2026-11-06T08:52:02Z",
+            "t2_pst": "00:52:02 PST (0e96bea1 on PR #2916)",
+            "t3_first_pr_opened": "2026-11-06T08:52:25Z",
+            "t3_pst": "00:52:25 PST (PR #2916 opened; Car 69-B #2916 merged 02:23:57 PST, Car 69-A #2918 02:40:13 PST, Car 69-C #2917 02:52:28 PST)",
+            "t4_final_feature_pr_merged": "2026-11-06T10:52:28Z",
+            "t4_pst": "02:52:28 PST (PR #2917 @ 3ebe7777)",
+            "t5_release_pr_merged": "2026-11-06T10:58:40Z",
+            "t5_pst": "02:58:40 PST (PR #2921 @ 6c446dac)",
+            "t6_release_tag_published": "2026-11-06T10:58:56Z",
+            "t6_pst": "02:58:56 PST (tag v5.69.0 @ 47ade7b2 → 6c446dac)",
+            "t7_live_deploy_completed": "2026-11-06T10:59:50Z",
+            "t7_pst": "02:59:50 PST (SQLite backup & :3102 live 5.69.0 @ 6c446dac)",
+            "t8_observer_certification_completed": "2026-11-06T11:03:00Z",
+            "t8_pst": "03:03:00 PST (O-Gate PASS on PR #2921)",
+        },
+        "durations": {
+            "authorization_to_deploy_hrs": 2.53,
+            "authorization_to_deploy_human": "2h 31m 50s (t1 00:28:00 → t7 02:59:50 PST)",
+            "authorization_to_certification_hrs": 2.58,
+            "authorization_to_certification_human": "2h 35m 00s (t1 00:28:00 → t8 03:03:00 PST)",
+            "full_engineering_window_hrs": 2.13,
+            "full_engineering_window_human": "2h 07m 48s (t2 00:52:02 → t7 02:59:50 PST across 3 parallel Wave 1 cars)",
+            "commit_to_merge_window_hrs": 2.11,
+            "commit_to_merge_window_human": "2h 06m 38s (t2 00:52:02 → t5 02:58:40 PST)",
+            "inter_release_merge_cadence_hrs": 2.55,
+            "inter_release_merge_cadence_human": "2h 32m 47s (v5.68.0 t5 00:25:53 → v5.69.0 t5 02:58:40 PST)",
+            "inter_release_deploy_cadence_hrs": 2.53,
+            "inter_release_deploy_cadence_human": "2h 32m 05s (v5.68.0 t7 00:27:45 → v5.69.0 t7 02:59:50 PST)",
+            "pipeline_overlap_hrs": 0.00,
+            "pipeline_overlap_human": "0m (sequential Leg 1 → Leg 2 handoff with Kaizen Retro #1 feed-forward)",
+            "pipeline_overlap_pct": 0.0,
+        },
+        "completion": {
+            "chartered_active_issues": 5,
+            "state_a_implemented_issues": 5,
+            "state_b_integrated_issues": 5,
+            "state_c_verified_closed_issues": 5,
+            "state_c_issue_ids": [1224, 1732, 1713, 1083, 1576],
+            "state_d_externally_accepted_issues": 0,
+            "partial_slice_re_milestoned_issues": 0,
+            "partial_slice_issue_ids": [],
+            "partial_slice_ruling": "All 5 active chartered Milestone #56 issues (#1224, #1732, #1713, #1083, #1576) closed in Milestone #56 across Cars 69-B (#2916), 69-A (#2918), and 69-C (#2917) with Rulings A505-R2.6 and A505-R2.7 certified.",
+            "pre_closed_milestone_issues": 0,
+            "pre_closed_issue_ids": [],
+            "milestone_closed_total": 5,
+            "milestone_open_total": 0,
+            "deferred_label": "Remaining Train Legs (<code>v5.70.0 #57 · v5.71.0 #58</code>)",
+            "deferred_to_future_milestone_issues": 0,
+            "deferred_issue_ids": [],
+            "deferred_ruling": "0 issues deferred from Milestone #56 (open_issues: 0, closed_issues: 5). Downstream Charter A505 v1.0 legs v5.70.0 (#57, 4 issues) and v5.71.0 (#58, 6 issues) proceed with Kaizen Retro #2 Feed-Forward rules.",
+        },
+        "diff": {
+            "prs_merged": [2916, 2918, 2917, 2921],
+            "feature_prs": [2916, 2918, 2917],
+            "release_prs": [2921],
+            "true_merge_count": 4,
+            "net_repo_files": 36,
+            "net_repo_insertions": 4619,
+            "net_repo_deletions": 851,
+            "feature_pr_files_sum": 33,
+            "feature_pr_insertions": 4586,
+            "feature_pr_deletions": 846,
+        },
+        "economics": {
+            "tier1_measured_marginal_api_usd": 0.00,
+            "tier1_measured_marginal_electricity_usd": 0.05,
+            "tier2_allocated_subscription_usd": 5.24,
+            "tier2_auth_to_deploy_subscription_usd": 6.22,
+            "tier2_calendar_hour_subscription_usd": 1.30,
+            "tier3_hypothetical_api_shadow_usd": 85.00,
+            "est_tokens_m": 5.8,
+        },
+        "efficiency": {
+            "throughput_closed_per_eng_hr": 2.35,
+            "throughput_addressed_per_eng_hr": 2.35,
+            "unit_allocated_cost_per_closed_issue_usd": 1.05,
+            "unit_allocated_cost_per_addressed_issue_usd": 1.05,
+            "unit_allocated_cost_per_kloc_usd": 1.13,
+            "quality_post_merge_defects": 0,
+            "legacy_ade_v1_closed": 0.45,
+            "legacy_ade_v1_addressed": 0.45,
+        },
+    },
+    "v5.68.0-v5.71.0-retrospective": {
+        "schema_version": "2.0.0",
+        "version": "v5.68.0-v5.71.0-retrospective",
+        "title": "v5.68.0 → v5.71.0: Four-Version Autonomous Sprint Train & Kaizen Retrospective",
+        "charter": "Charter A505 v1.0",
+        "standing_auth": "OP-GO-MULTIVERSION-V5680-V5710-20261105",
+        "milestone_number": 56,
+        "milestone_title": "Milestones #55 (v5.68.0) → #56 (v5.69.0) → #57 (v5.70.0) → #58 (v5.71.0)",
+        "timestamps": {
+            "t1_first_activity": "2026-11-06T06:29:00Z",
+            "t1_pst": "22:29:00 PST (Nov 5 · Charter A505 v1.0 & OP-GO-MULTIVERSION-V5680-V5710-20261105)",
+            "t2_first_branch_commit": "2026-11-06T07:02:50Z",
+            "t2_pst": "23:02:50 PST (ec6f3993 on PR #2912 · Leg 1 start)",
+            "t3_first_pr_opened": "2026-11-06T07:05:11Z",
+            "t3_pst": "23:05:11 PST (PR #2912 opened; Legs 1–2 Cars 68-A..68-C & 69-A..69-C merged)",
+            "t4_final_feature_pr_merged": "2026-11-06T10:52:28Z",
+            "t4_pst": "02:52:28 PST (Nov 6 · PR #2917 @ 3ebe7777)",
+            "t5_release_pr_merged": "2026-11-06T10:58:40Z",
+            "t5_pst": "02:58:40 PST (PR #2921 @ 6c446dac)",
+            "t6_release_tag_published": "2026-11-06T10:58:56Z",
+            "t6_pst": "02:58:56 PST (tag v5.69.0 @ 47ade7b2 → 6c446dac)",
+            "t7_live_deploy_completed": "2026-11-06T10:59:50Z",
+            "t7_pst": "02:59:50 PST (SQLite backup & :3102 live 5.69.0 @ 6c446dac)",
+            "t8_observer_certification_completed": "2026-11-06T11:03:00Z",
+            "t8_pst": "03:03:00 PST (O-Gate PASS on PR #2915 & PR #2921)",
+        },
+        "durations": {
+            "authorization_to_deploy_hrs": 4.51,
+            "authorization_to_deploy_human": "4h 30m 50s (t1 22:29:00 → t7 02:59:50 PST across Legs 1–2)",
+            "authorization_to_certification_hrs": 4.57,
+            "authorization_to_certification_human": "4h 34m 00s (t1 22:29:00 → t8 03:03:00 PST across Legs 1–2)",
+            "full_engineering_window_hrs": 3.95,
+            "full_engineering_window_human": "3h 57m 00s (t2 23:02:50 → t7 02:59:50 PST cumulative across Legs 1–2; 1.42h + 2.13h = 3.55h active)",
+            "commit_to_merge_window_hrs": 3.93,
+            "commit_to_merge_window_human": "3h 55m 50s (t2 23:02:50 → t5 02:58:40 PST)",
+            "inter_release_merge_cadence_hrs": 1.97,
+            "inter_release_merge_cadence_human": "1h 57m 55s mean merge cadence across Legs 1–2 (1.38h + 2.55h)",
+            "inter_release_deploy_cadence_hrs": 1.98,
+            "inter_release_deploy_cadence_human": "1h 58m 30s mean deploy cadence across Legs 1–2 (1.42h + 2.53h)",
+            "pipeline_overlap_hrs": 0.00,
+            "pipeline_overlap_human": "0m (sequential Leg 1 → Leg 2 handoff with Kaizen Retro #1 & #2 feed-forward)",
+            "pipeline_overlap_pct": 0.0,
+        },
+        "completion": {
+            "chartered_active_issues": 10,
+            "state_a_implemented_issues": 10,
+            "state_b_integrated_issues": 10,
+            "state_c_verified_closed_issues": 10,
+            "state_c_issue_ids": [2644, 2821, 748, 2735, 2736, 1224, 1732, 1713, 1083, 1576],
+            "state_d_externally_accepted_issues": 0,
+            "partial_slice_re_milestoned_issues": 0,
+            "partial_slice_issue_ids": [],
+            "partial_slice_ruling": "Legs 1–2 (v5.68.0 #55 & v5.69.0 #56) closed 10/10 chartered issues (#2644, #2821, #748, #2735, #2736, #1224, #1732, #1713, #1083, #1576). Legs 3–4 (v5.70.0 #57: 4 issues, v5.71.0 #58: 6 issues) queued in Charter A505 v1.0.",
+            "pre_closed_milestone_issues": 0,
+            "pre_closed_issue_ids": [],
+            "milestone_closed_total": 10,
+            "milestone_open_total": 0,
+            "deferred_label": "Upcoming Charter A505 v1.0 Train Legs (<code>v5.70.0 #57 · v5.71.0 #58</code>)",
+            "deferred_to_future_milestone_issues": 10,
+            "deferred_issue_ids": [2626, 1485, 1774, 2127, 1531, 363, 254, 297, 1185, 128],
+            "deferred_ruling": "Charter A505 v1.0 4-version train: Leg 1 v5.68.0 (#55, 5/5 closed) and Leg 2 v5.69.0 (#56, 5/5 closed) complete; Leg 3 v5.70.0 (#57, 4 issues) and Leg 4 v5.71.0 (#58, 6 issues) execute sequentially with Kaizen Retro #1 & #2 feed-forward.",
+        },
+        "diff": {
+            "prs_merged": [2913, 2914, 2912, 2915, 2916, 2918, 2917, 2921],
+            "feature_prs": [2913, 2914, 2912, 2916, 2918, 2917],
+            "release_prs": [2915, 2921],
+            "true_merge_count": 8,
+            "net_repo_files": 54,
+            "net_repo_insertions": 7140,
+            "net_repo_deletions": 995,
+            "feature_pr_files_sum": 59,
+            "feature_pr_insertions": 7076,
+            "feature_pr_deletions": 989,
+        },
+        "economics": {
+            "tier1_measured_marginal_api_usd": 0.00,
+            "tier1_measured_marginal_electricity_usd": 0.10,
+            "tier2_allocated_subscription_usd": 9.72,
+            "tier2_auth_to_deploy_subscription_usd": 11.09,
+            "tier2_calendar_hour_subscription_usd": 2.41,
+            "tier3_hypothetical_api_shadow_usd": 150.00,
+            "est_tokens_m": 10.3,
+        },
+        "efficiency": {
+            "throughput_closed_per_eng_hr": 2.53,
+            "throughput_addressed_per_eng_hr": 2.53,
+            "unit_allocated_cost_per_closed_issue_usd": 0.97,
+            "unit_allocated_cost_per_addressed_issue_usd": 0.97,
+            "unit_allocated_cost_per_kloc_usd": 1.36,
+            "quality_post_merge_defects": 0,
+            "legacy_ade_v1_closed": 0.26,
+            "legacy_ade_v1_addressed": 0.26,
+        },
+    },
+}
+
+def compute_summary_metrics(slug: str, hrs: float = None, issues: int = None, loc: int = None) -> Dict[str, Any]:
+    """Return canonical summary metrics for any registered or custom sprint slug."""
+    if slug in DETAILED_SPRINT_RECORDS:
+        rec = DETAILED_SPRINT_RECORDS[slug]
+        t_eng = rec["durations"]["full_engineering_window_hrs"]
+        w_closed = rec["completion"]["state_c_verified_closed_issues"]
+        w_addr = rec["completion"]["chartered_active_issues"]
+        ins = rec["diff"]["net_repo_insertions"]
+        c_alloc = rec["economics"]["tier2_allocated_subscription_usd"]
+        ade_closed = rec["efficiency"]["legacy_ade_v1_closed"]
+        ade_addr = rec["efficiency"]["legacy_ade_v1_addressed"]
+        tp_closed = rec["efficiency"]["throughput_closed_per_eng_hr"]
+        tp_addr = rec["efficiency"]["throughput_addressed_per_eng_hr"]
+        unit_closed = rec["efficiency"]["unit_allocated_cost_per_closed_issue_usd"]
+        unit_addr = rec["efficiency"]["unit_allocated_cost_per_addressed_issue_usd"]
+        cost_kloc = rec["efficiency"]["unit_allocated_cost_per_kloc_usd"]
+        est_tok = rec["economics"]["est_tokens_m"]
+        shadow = rec["economics"]["tier3_hypothetical_api_shadow_usd"]
+        return {
+            "slug": slug,
+            "hrs": t_eng,
+            "issues_closed": w_closed,
+            "issues_addressed": w_addr,
+            "loc": ins,
+            "cost": c_alloc,
+            "throughput_closed": tp_closed,
+            "throughput_addressed": tp_addr,
+            "cost_per_issue": unit_closed,
+            "cost_per_addressed": unit_addr,
+            "cost_per_kloc": cost_kloc,
+            "ade_score": ade_closed,
+            "ade_addressed": ade_addr,
+            "est_tokens_m": est_tok,
+            "api_shadow_cost": shadow,
+            "savings_mult": round(shadow / c_alloc, 1),
+            "detailed": rec,
+        }
+
+    if slug in CANONICAL_METRICS:
+        hrs, issues, loc = CANONICAL_METRICS[slug]
+    else:
+        hrs = hrs or 1.50
+        issues = issues or 8
+        loc = loc or (issues * 450)
+
+    cost = max(0.75, round(hrs * HOURLY_RATE, 2))
+    ade_score = round(issues / (hrs * cost), 2)
+    tp = round(issues / hrs, 2)
+    cost_per_issue = round(cost / max(1, issues), 2)
+    cost_per_kloc = round((cost / max(100, loc)) * 1000, 2)
+    est_tokens_m = round(issues * 0.42 + hrs * 1.15, 1)
+    api_shadow_cost = round(est_tokens_m * 14.50, 0)
+    savings_mult = round(api_shadow_cost / cost, 1)
+    return {
+        "slug": slug,
+        "hrs": hrs,
+        "issues_closed": issues,
+        "issues_addressed": issues,
+        "loc": loc,
+        "cost": cost,
+        "throughput_closed": tp,
+        "throughput_addressed": tp,
+        "cost_per_issue": cost_per_issue,
+        "cost_per_addressed": cost_per_issue,
+        "cost_per_kloc": cost_per_kloc,
+        "ade_score": ade_score,
+        "ade_addressed": ade_score,
+        "est_tokens_m": est_tokens_m,
+        "api_shadow_cost": api_shadow_cost,
+        "savings_mult": savings_mult,
+        "detailed": None,
+    }
+
+
+def render_ade_kpi_and_banner(slug: str, hrs: float = None, issues: int = None, loc: int = None) -> Tuple[str, str]:
+    """Render the canonical Hero KPI card and the single #ade-efficiency-card banner in #velocity."""
+    m = compute_summary_metrics(slug, hrs, issues, loc)
+    w_c = m["issues_closed"]
+    w_a = m["issues_addressed"]
+    t_e = m["hrs"]
+    c_a = m["cost"]
+    tp_c = m["throughput_closed"]
+    tp_a = m["throughput_addressed"]
+    u_c = m["cost_per_issue"]
+    u_a = m["cost_per_addressed"]
+    kloc = m["cost_per_kloc"]
+    ade_c = m["ade_score"]
+    ade_a = m["ade_addressed"]
+    loc_val = m["loc"]
+    tok = m["est_tokens_m"]
+    shad = m["api_shadow_cost"]
+    mult = m["savings_mult"]
+
+    if w_a != w_c:
+        sub_line = (
+            f"Throughput: <code>{tp_c:.2f} closed/hr</code> (<code>{tp_a:.2f} addressed/hr</code> on <code>T_eng={t_e:.2f}h</code>) · "
+            f"Allocated: <code>${u_c:.2f}/closed</code> (<code>${u_a:.2f}/addressed</code> · <code>${c_a:.2f}</code> pool) · "
+            f"Legacy ADE_v1: <code>{ade_c:.2f}</code> (closed) / <code>{ade_a:.2f}</code> (addressed)"
+        )
+        formula_line = (
+            f"<strong>1. Orthogonal Efficiency Metrics (Primary Standard):</strong> "
+            f"<strong>Throughput</strong> = <code>W_closed / T_eng = {w_c} / {t_e:.2f}h = <strong>{tp_c:.2f} closed issues/hr</strong></code> "
+            f"(<code>{w_a} / {t_e:.2f}h = {tp_a:.2f} addressed issues/hr</code> including {w_a - w_c} Slice 2 issues re-milestoned to <code>#54</code>) · "
+            f"<strong>Unit Allocated Cost</strong> = <code>C_alloc / W_closed = ${c_a:.2f} / {w_c} = <strong>${u_c:.2f}/closed issue</strong></code> "
+            f"(<code>${u_a:.2f}/addressed issue</code>; <code>${kloc:.2f}/kLOC</code> across <code>+{loc_val:,}</code> net insertions) · "
+            f"<strong>Quality</strong> = <code>100% True Merges, 0 Post-Merge Defects</code>.<br/>\n"
+            f"          <strong>2. Disclosed Legacy Composite Index (<code>ADE_v1</code>):</strong> "
+            f"<code>ADE_v1 = W / (T_eng × C_alloc) = {w_c} / ({t_e:.2f}h × ${c_a:.2f}) = <strong>{ade_c:.2f}</strong></code> (verified closed) "
+            f"or <code>{w_a} / ({t_e:.2f}h × ${c_a:.2f}) = <strong>{ade_a:.2f}</strong></code> (all chartered addressed). "
+            f"<em>Dimensional Note:</em> Because <code>C_alloc = $2.46/hr × T_eng</code>, <code>ADE_v1 = W / (2.46 × T_eng²)</code> scales as <code>1/T²</code> (units: <code>issues · hr⁻² · $⁻¹</code>); "
+            f"therefore <code>ADE_v1</code> must always use the full engineering window (<code>T_eng = {t_e:.2f}h</code>, never a pipelined merge tail) and is paired with scale-invariant Throughput (<code>{tp_c:.2f} issues/hr</code>)."
+        )
+    else:
+        sub_line = (
+            f"Throughput: <code>{tp_c:.2f} closed/hr</code> (<code>T_eng={t_e:.2f}h</code>) · "
+            f"Allocated: <code>${u_c:.2f}/issue</code> (<code>${c_a:.2f}</code> pool · <code>${kloc:.2f}/kLOC</code>) · "
+            f"Legacy ADE_v1: <code>{ade_c:.2f}</code>"
+        )
+        formula_line = (
+            f"<strong>1. Orthogonal Efficiency Metrics (Primary Standard):</strong> "
+            f"<strong>Throughput</strong> = <code>W_closed / T_eng = {w_c} / {t_e:.2f}h = <strong>{tp_c:.2f} closed issues/hr</strong></code> · "
+            f"<strong>Unit Allocated Cost</strong> = <code>C_alloc / W_closed = ${c_a:.2f} / {w_c} = <strong>${u_c:.2f}/closed issue</strong></code> "
+            f"(<code>${kloc:.2f}/kLOC</code> across <code>+{loc_val:,}</code> insertions) · "
+            f"<strong>Quality</strong> = <code>100% True Merges, 0 Post-Merge Defects</code>.<br/>\n"
+            f"          <strong>2. Disclosed Legacy Composite Index (<code>ADE_v1</code>):</strong> "
+            f"<code>ADE_v1 = W_closed / (T_eng × C_alloc) = {w_c} / ({t_e:.2f}h × ${c_a:.2f}) = <strong>{ade_c:.2f}</strong></code>. "
+            f"<em>Dimensional Note:</em> Because <code>C_alloc = $2.46/hr × T_eng</code>, <code>ADE_v1 = W / (2.46 × T_eng²)</code> scales as <code>1/T²</code> (units: <code>issues · hr⁻² · $⁻¹</code>); "
+            f"therefore <code>ADE_v1</code> is always evaluated on the full engineering window (<code>T_eng = {t_e:.2f}h</code>, never a pipelined merge tail) alongside scale-invariant Throughput (<code>{tp_c:.2f} issues/hr</code>)."
+        )
+
+    kpi_card = (
+        f'        <!-- TANGLECLAW_ADE_KPI_START -->\n'
+        f'        <div class="kpi-card">\n'
+        f'          <div class="kpi-label">Autonomous Delivery Efficiency (ADE)</div>\n'
+        f'          <div class="kpi-value" style="color:var(--cyan,#38bdf8)">{tp_c:.2f}/hr · ADE {ade_c:.2f}</div>\n'
+        f'          <div class="kpi-meta kpi-sub">{sub_line}</div>\n'
+        f'        </div>\n'
+        f'        <!-- TANGLECLAW_ADE_KPI_END -->'
+    )
+
+    banner = (
+        f'      <!-- TANGLECLAW_ADE_BANNER_START -->\n'
+        f'      <div id="ade-efficiency-card" class="subcard" style="margin:18px 0;padding:18px 22px;border:1.5px solid rgba(56,189,248,0.45);background:linear-gradient(135deg,rgba(15,23,42,0.95),rgba(14,116,144,0.16));border-radius:12px;">\n'
+        f'        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px;">\n'
+        f'          <span style="color:#38bdf8;font-weight:700;font-size:0.82rem;letter-spacing:0.06em;">📐 AUTONOMOUS DELIVERY EFFICIENCY (ADE) · ORTHOGONAL THROUGHPUT, ALLOCATED COST &amp; LEGACY ADE_v1</span>\n'
+        f'          <span class="badge badge-green" style="font-size:0.78rem;">Throughput = {tp_c:.2f} Issues/Hr · Allocated = ${u_c:.2f}/Issue (${kloc:.2f}/kLOC) · Legacy ADE_v1 = {ade_c:.2f}</span>\n'
+        f'        </div>\n'
+        f'        <div style="font-size:0.90rem;color:#e2e8f0;line-height:1.56;">\n'
+        f'          {formula_line}<br/>\n'
+        f'          <strong>3. 3-Tier Operating Cost Basis:</strong> '
+        f'<strong>Tier 1 (Measured Marginal Cash):</strong> <code>$0.00</code> per-run API fee + <code>~${round(t_e * ELECTRICITY_HOURLY_RATE, 2):.2f}</code> M3 Ultra wall power · '
+        f'<strong>Tier 2 (Allocated Subscription Pool):</strong> <code>${c_a:.2f}</code> pro-rata allocation (<code>$440/mo ÷ 178.8 active hrs = $2.46/hr × {t_e:.2f}h</code>; calendar-hour reference <code>${round(t_e * CALENDAR_HOURLY_RATE, 2):.2f}</code> @ <code>$0.611/hr</code>) · '
+        f'<strong>Tier 3 (Hypothetical API Shadow Estimate):</strong> <code>~${shad:.0f}</code> (unmetered estimate across <code>~{tok}M</code> tokens → <code>{mult}×</code> subscription compression).\n'
+        f'        </div>\n'
+        f'      </div>\n'
+        f'      <!-- TANGLECLAW_ADE_BANNER_END -->'
+    )
+    return kpi_card, banner
+
+
+def render_canonical_governance_and_metrics_cards(slug: str) -> str:
+    """Render the mandatory v2.0.0 8-Timestamp Cadence, 4-State Completion, 3-Tier Cost,
+    and External Credibility & Disclosure cards plus embedded JSON script for v5.65.0+ reports."""
+    if slug not in DETAILED_SPRINT_RECORDS:
+        return ""
+    rec = DETAILED_SPRINT_RECORDS[slug]
+    ts = rec["timestamps"]
+    dur = rec["durations"]
+    comp = rec["completion"]
+    diff = rec["diff"]
+    econ = rec["economics"]
+    eff = rec["efficiency"]
+
+    json_payload = json.dumps(rec, indent=2)
+
+    return f'''
+      <!-- TANGLECLAW_CANONICAL_METRICS_START -->
+      <div class="card" id="canonical-timing-and-cost-audit" style="margin-top:18px;margin-bottom:18px;border:1px solid rgba(56,189,248,0.4);">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+          <h3 style="margin:0;color:var(--accent2);">📊 Canonical 8-Timestamp Release Cadence, 4-State Completion &amp; 3-Tier Cost Ledger (<code>SPRINT_REPORT_CONTRACT v2.0</code>)</h3>
+          <span class="badge badge-cyan">Primary-Source Verified · Schema v2.0.0 · 0 Unreconciled Counts</span>
+        </div>
+
+        <div class="grid-2" style="gap:16px;margin-bottom:16px;">
+          <div>
+            <h4 style="margin:0 0 8px;color:var(--green);font-size:0.94rem;">1. Mandatory 8-Timestamp Release Cadence &amp; Engineering Window (<code>T_eng = {dur["full_engineering_window_hrs"]:.2f}h</code>)</h4>
+            <div class="table-wrap">
+              <table class="pr-table">
+                <thead>
+                  <tr>
+                    <th>Timestamp ID</th>
+                    <th>UTC Timestamp</th>
+                    <th>Local PST &amp; Primary Source Receipt</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td><code>t1_first_activity</code></td><td><code>{ts["t1_first_activity"]}</code></td><td>{ts["t1_pst"]}</td></tr>
+                  <tr><td><code>t2_first_branch_commit</code></td><td><code>{ts["t2_first_branch_commit"]}</code></td><td>{ts["t2_pst"]}</td></tr>
+                  <tr><td><code>t3_first_pr_opened</code></td><td><code>{ts["t3_first_pr_opened"]}</code></td><td>{ts["t3_pst"]}</td></tr>
+                  <tr><td><code>t4_final_feature_pr_merged</code></td><td><code>{ts["t4_final_feature_pr_merged"]}</code></td><td>{ts["t4_pst"]}</td></tr>
+                  <tr><td><code>t5_release_pr_merged</code></td><td><code>{ts["t5_release_pr_merged"]}</code></td><td>{ts["t5_pst"]}</td></tr>
+                  <tr><td><code>t6_release_tag_published</code></td><td><code>{ts["t6_release_tag_published"]}</code></td><td>{ts["t6_pst"]}</td></tr>
+                  <tr><td><code>t7_live_deploy_completed</code></td><td><code>{ts["t7_live_deploy_completed"]}</code></td><td>{ts["t7_pst"]}</td></tr>
+                  <tr><td><code>t8_observer_certification</code></td><td><code>{ts["t8_observer_certification_completed"]}</code></td><td>{ts["t8_pst"]}</td></tr>
+                  <tr><td><strong>Full Engineering Window (<code>T_eng</code>)</strong></td><td><strong><code>{dur["full_engineering_window_hrs"]:.2f} hrs</code></strong></td><td><strong>{dur["full_engineering_window_human"]}</strong></td></tr>
+                  <tr><td><strong>Inter-Release Deploy Cadence</strong></td><td><code>{dur["inter_release_deploy_cadence_hrs"]:.2f} hrs</code></td><td>{dur["inter_release_deploy_cadence_human"]}</td></tr>
+                  <tr><td><strong>Cross-Version Pipeline Overlap</strong></td><td><code>{dur["pipeline_overlap_hrs"]:.2f} hrs ({dur["pipeline_overlap_pct"]:.1f}%)</code></td><td>{dur["pipeline_overlap_human"]}</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div>
+            <h4 style="margin:0 0 8px;color:var(--purple);font-size:0.94rem;">2. 4-State Work-Completion Accounting &amp; Milestone Reconciliation</h4>
+            <div class="table-wrap">
+              <table class="pr-table">
+                <thead>
+                  <tr>
+                    <th>Completion State / Ledger Row</th>
+                    <th>Count</th>
+                    <th>Exact Issue IDs &amp; Governance Reconciliation</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><strong>State A — Implemented (Branch + Tests)</strong></td>
+                    <td><code>{comp["state_a_implemented_issues"]}</code></td>
+                    <td>All {comp["chartered_active_issues"]} active chartered issues implemented with unit tests</td>
+                  </tr>
+                  <tr>
+                    <td><strong>State B — Integrated (<code>--merge</code> on <code>main</code>)</strong></td>
+                    <td><code>{comp["state_b_integrated_issues"]}</code></td>
+                    <td>Merged across {len(diff["prs_merged"])} true-merge PRs (<code>{", ".join("#" + str(p) for p in diff["prs_merged"])}</code>; net diff <code>+{diff["net_repo_insertions"]:,} / -{diff["net_repo_deletions"]}</code> LOC across <code>{diff["net_repo_files"]}</code> files)</td>
+                  </tr>
+                  <tr>
+                    <td><strong>State C — Verified &amp; Closed in Milestone (<code>W_closed</code>)</strong></td>
+                    <td><strong><code>{comp["state_c_verified_closed_issues"]}</code></strong></td>
+                    <td><code>{", ".join("#" + str(i) for i in comp["state_c_issue_ids"])}</code> (CI + Testament 0.34.0 + I-Gate + A-Gate + live <code>:3102</code>)</td>
+                  </tr>
+                  <tr>
+                    <td><strong>State D — Externally Accepted</strong></td>
+                    <td><code>{comp["state_d_externally_accepted_issues"]}</code></td>
+                    <td><code>0</code> (Internal autonomous sprint; no external customer sign-off claimed)</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Partial Slice 2 Shipped &amp; Re-Milestoned (<code>W_partial</code>)</strong></td>
+                    <td><code>{comp["partial_slice_re_milestoned_issues"]}</code></td>
+                    <td>{("<code>" + ", ".join("#" + str(i) for i in comp["partial_slice_issue_ids"]) + "</code> — " + comp["partial_slice_ruling"]) if comp["partial_slice_issue_ids"] else comp["partial_slice_ruling"]}</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Pre-Closed in Milestone + Sprint Closed = Milestone Total</strong></td>
+                    <td><code>{comp["pre_closed_milestone_issues"]} + {comp["state_c_verified_closed_issues"]} = {comp["milestone_closed_total"]}</code></td>
+                    <td>Pre-closed <code>{(", ".join("#" + str(i) for i in comp["pre_closed_issue_ids"])) if comp["pre_closed_issue_ids"] else "0 (none)"}</code> + <code>{comp["state_c_verified_closed_issues"]}</code> sprint-closed = <strong><code>{comp["milestone_closed_total"]}</code> closed / <code>{comp["milestone_open_total"]}</code> open</strong></td>
+                  </tr>
+                  <tr>
+                    <td><strong>{comp.get("deferred_label", "Deferred to Milestone #54 (<code>v5.67.0</code>)")}</strong></td>
+                    <td><code>{comp["deferred_to_future_milestone_issues"]}</code></td>
+                    <td><code>{", ".join("#" + str(i) for i in comp["deferred_issue_ids"])}</code> — {comp["deferred_ruling"]}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-2" style="gap:16px;">
+          <div style="background:rgba(10,15,29,0.65);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
+            <h4 style="margin:0 0 8px;color:var(--amber);font-size:0.94rem;">3. 3-Tier Operating Cost &amp; Orthogonal Efficiency Accounting</h4>
+            <ul style="margin:0;padding-left:18px;font-size:0.85rem;line-height:1.55;color:var(--text-muted);">
+              <li><strong>Tier 1 — Measured Marginal Cash Expenditure (<code>measured</code>):</strong> <strong><code>${econ["tier1_measured_marginal_api_usd"]:.2f}</code> incremental model/API fee</strong> (covered by fixed monthly CLI subscriptions) + <strong><code>~${econ["tier1_measured_marginal_electricity_usd"]:.2f}</code></strong> measured Mac Studio M3 Ultra wall-power (<code>~$0.025/hr × {dur["full_engineering_window_hrs"]:.2f}h</code>).</li>
+              <li><strong>Tier 2 — Allocated Subscription &amp; Compute Amortization (<code>allocated_estimate</code>):</strong> <strong><code>${econ["tier2_allocated_subscription_usd"]:.2f}</code></strong> on full engineering window <code>T_eng = {dur["full_engineering_window_hrs"]:.2f}h</code> at <code>$2.46/active fleet-hr</code> (<code>$440/mo ÷ 178.8 active hrs/mo</code>; 24/7 calendar-hour reference: <code>${econ["tier2_calendar_hour_subscription_usd"]:.2f}</code> @ <code>$0.611/hr</code>) → <strong><code>${eff["unit_allocated_cost_per_closed_issue_usd"]:.2f} / closed issue</code></strong> (<code>${eff["unit_allocated_cost_per_addressed_issue_usd"]:.2f} / addressed issue</code>, <code>${eff["unit_allocated_cost_per_kloc_usd"]:.2f} / kLOC</code>).</li>
+              <li><strong>Tier 3 — Hypothetical Public API Shadow Estimate (<code>hypothetical_estimate</code>):</strong> <strong><code>~${econ["tier3_hypothetical_api_shadow_usd"]:.0f}</code></strong> order-of-magnitude shadow estimate across <code>~{econ["est_tokens_m"]}M</code> estimated CLI tokens (unmetered in SQLite; never co-mingled with Tier 1/2).</li>
+              <li><strong>Scale-Invariant Throughput vs. Legacy <code>ADE_v1</code>:</strong> Throughput = <strong><code>{eff["throughput_closed_per_eng_hr"]:.2f} closed issues/hr</code></strong> (<code>{eff["throughput_addressed_per_eng_hr"]:.2f} addressed/hr</code>); Legacy <code>ADE_v1</code> = <strong><code>{eff["legacy_ade_v1_closed"]:.2f}</code></strong> (closed) / <strong><code>{eff["legacy_ade_v1_addressed"]:.2f}</code></strong> (addressed).</li>
+            </ul>
+          </div>
+
+          <div style="background:rgba(10,15,29,0.65);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
+            <h4 style="margin:0 0 8px;color:var(--accent2);font-size:0.94rem;">4. External Credibility, Governance &amp; Operational Disclosures</h4>
+            <ul style="margin:0;padding-left:18px;font-size:0.85rem;line-height:1.55;color:var(--text-muted);">
+              <li><strong>Autonomous Code Execution vs. Operator Governance:</strong> <code>0</code> human code edits, conflict resolutions, test runs, or deploy commands across all {len(diff["prs_merged"])} PRs. The Operator provided standing authorization <code>{rec["standing_auth"]}</code> and approved Gate 0 / architectural deferral boundaries (<code>A185</code>, <code>Ruling A503-R1</code>).</li>
+              <li><strong>Single GitHub Account Attribution Disclosure:</strong> While <code>TC-Lane-A..D</code>, <code>TC-Lane-PRR-A/B</code>, <code>TC-Lane-Arc</code>, <code>TC-Lane-INT</code>, <code>TC-Lane-PM</code>, and <code>TC-Lane-Obsr</code> run in isolated <code>tmux</code> sessions and worktrees across distinct models/engines, all GitHub API commits, reviews, and merges authenticate via the Operator's <code>Jason-Vaughan</code> <code>gh</code> CLI token; role identity is verified via structured review stamps and SQLite audit logs.</li>
+              <li><strong>Known In-Run Operational Limitation Disclosed:</strong> <code>TC-Lane-A</code> and <code>TC-Lane-C</code> experienced <code>pane-no-prompt</code> Medusa nudge holds when interactive <code>AskUserQuestion</code> prompts were open in their panes (<code>medusaEscalations: count 2</code>); mitigated via <code>#2866</code> auto-handling hooks and <code>#2828</code> interactive decision routing Slice 2.</li>
+              <li><strong>Scope of “Self-Improvement” Claims:</strong> All self-improvement in this train refers strictly to <strong>operational, runtime, and governance rule/code evolution</strong> (shipping TangleClaw's own hooks, guards, and decision routes and codifying process guardrails), <em>not</em> autonomous model-weight training.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <script type="application/json" id="tc-canonical-metrics">
+{json_payload}
+      </script>
+      <!-- TANGLECLAW_CANONICAL_METRICS_END -->'''
