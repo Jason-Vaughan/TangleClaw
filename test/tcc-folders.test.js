@@ -402,5 +402,54 @@ describe('lib/tcc-workspace-migration — guided workspace root migration (#2626
       assert.equal(fs.readFileSync(configPath, 'utf8'), originalConfigRaw,
         'config.json must be back to its EXACT original bytes, not left pointing at the new root');
     });
+
+    it('compensates an EARLIER worktree whose repair already succeeded when a LATER one throws — rollback must '
+      + 'repair it back, not just move its directory back (#2626 I-Gate R2 C1)', () => {
+      const p1 = makeProject('zeta');
+      const p2 = makeProject('eta');
+      // Both are linked worktrees, so both get a repair call during execute —
+      // the first one succeeds before the second one throws.
+      fs.writeFileSync(path.join(p1.path, '.git'), 'gitdir: /somewhere/else/.git/worktrees/zeta\n');
+      fs.writeFileSync(path.join(p2.path, '.git'), 'gitdir: /somewhere/else/.git/worktrees/eta\n');
+
+      const plan = migration.planWorkspaceMigration({ home: tmpHome, projects: [p1, p2], activeSessions: [] });
+      assert.equal(plan.ok, true);
+      assert.equal(plan.moves.length, 2);
+
+      let callCount = 0;
+      const execCalls = [];
+      const result = migration.executeWorkspaceMigration(plan, {
+        store, configPath: path.join(tmpDataDir, 'config.json'),
+        execFileSyncImpl: (cmd, args) => {
+          execCalls.push({ cmd, args });
+          callCount += 1;
+          if (callCount === 2) throw new Error('simulated second worktree repair failure');
+          return '';
+        }
+      });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.rolledBack, true);
+      assert.match(result.error, /simulated second worktree repair failure/);
+
+      // Both directories back at their original paths, same as any rollback.
+      assert.ok(fs.existsSync(p1.path), 'zeta is back at its original path');
+      assert.ok(fs.existsSync(p2.path), 'eta is back at its original path');
+      assert.ok(!fs.existsSync(path.join(tmpHome, 'Projects', 'zeta')));
+      assert.ok(!fs.existsSync(path.join(tmpHome, 'Projects', 'eta')));
+      assert.equal(store.projects.get(p1.id).path, p1.path);
+      assert.equal(store.projects.get(p2.id).path, p2.path);
+
+      // zeta's repair succeeded (call 1) before eta's threw (call 2) — the
+      // rollback must issue a THIRD, compensating repair for zeta, at its
+      // restored fromPath, so the main repository's own worktree record
+      // points back there instead of the now-absent toPath. eta's own
+      // repair never succeeded, so it needs no compensation.
+      assert.equal(execCalls.length, 3, 'two attempted repairs plus one compensating repair for zeta');
+      assert.deepEqual(execCalls[0].args, ['-C', path.join(tmpHome, 'Projects', 'zeta'), 'worktree', 'repair']);
+      assert.deepEqual(execCalls[1].args, ['-C', path.join(tmpHome, 'Projects', 'eta'), 'worktree', 'repair']);
+      assert.deepEqual(execCalls[2].args, ['-C', p1.path, 'worktree', 'repair'],
+        'the compensating repair runs at zeta\'s restored fromPath, not its reverted-away toPath');
+    });
   });
 });
