@@ -29,7 +29,7 @@ const os = require('node:os');
 const { PassThrough } = require('node:stream');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
-const { handleRequest } = require('../server');
+const { handleRequest, _sanitizeOpenclawDirectHeaders, _isPrivateOrTailscaleAddress, OPENCLAW_DIRECT_CF_HEADERS } = require('../server');
 
 setLevel('error');
 
@@ -141,5 +141,80 @@ describe('/openclaw-direct/<connId> redirects to the slashed form (#1012)', () =
       res.statusCode, 404,
       'if this ever stops 404ing, the resolve-by-segment-2 hazard changed and this guard needs rereading'
     );
+  });
+});
+
+describe('_isPrivateOrTailscaleAddress (#254 Issue B)', () => {
+  it('reads a Tailscale CGNAT address as private', () => {
+    assert.equal(_isPrivateOrTailscaleAddress('100.74.90.65'), true);
+  });
+
+  it('reads RFC1918 LAN ranges and loopback as private', () => {
+    assert.equal(_isPrivateOrTailscaleAddress('10.0.0.5'), true);
+    assert.equal(_isPrivateOrTailscaleAddress('172.20.1.1'), true);
+    assert.equal(_isPrivateOrTailscaleAddress('192.168.1.5'), true);
+    assert.equal(_isPrivateOrTailscaleAddress('127.0.0.1'), true);
+    assert.equal(_isPrivateOrTailscaleAddress('::1'), true);
+  });
+
+  it('reads an IPv4-mapped IPv6 Tailscale address as private too', () => {
+    assert.equal(_isPrivateOrTailscaleAddress('::ffff:100.74.90.65'), true);
+  });
+
+  it('reads a real Cloudflare edge IP as NOT private', () => {
+    assert.equal(_isPrivateOrTailscaleAddress('172.64.146.15'), false);
+  });
+
+  it('reads an ordinary public IP as NOT private', () => {
+    assert.equal(_isPrivateOrTailscaleAddress('8.8.8.8'), false);
+  });
+
+  it('reads absent/malformed input as NOT private — never the direction that would strip real headers', () => {
+    assert.equal(_isPrivateOrTailscaleAddress(undefined), false);
+    assert.equal(_isPrivateOrTailscaleAddress(''), false);
+    assert.equal(_isPrivateOrTailscaleAddress('not-an-ip'), false);
+  });
+});
+
+describe('_sanitizeOpenclawDirectHeaders (#254 Issue B)', () => {
+  const cfHeaders = {
+    'cf-connecting-ip': '172.64.146.15',
+    'true-client-ip': '172.64.146.15',
+    'cf-ray': '8a1b2c3d4e5f6789-SJC',
+    'cf-ipcountry': 'US',
+    'cf-visitor': '{"scheme":"https"}',
+    'cdn-loop': 'cloudflare',
+    host: 'example.com',
+    authorization: 'Bearer real-gateway-token'
+  };
+
+  it('strips every named Cloudflare header when the connection is Tailscale-direct', () => {
+    const out = _sanitizeOpenclawDirectHeaders(cfHeaders, '100.74.90.65');
+    for (const h of OPENCLAW_DIRECT_CF_HEADERS) assert.equal(out[h], undefined, h);
+    assert.equal(out.host, 'example.com', 'unrelated headers survive');
+    assert.equal(out.authorization, 'Bearer real-gateway-token', 'unrelated headers survive');
+  });
+
+  it('strips on a LAN-direct connection too', () => {
+    const out = _sanitizeOpenclawDirectHeaders(cfHeaders, '192.168.1.50');
+    assert.equal(out['cf-connecting-ip'], undefined);
+  });
+
+  it('leaves the headers untouched when the connection is NOT private/Tailscale — it may genuinely be Cloudflare', () => {
+    const out = _sanitizeOpenclawDirectHeaders(cfHeaders, '203.0.113.7');
+    assert.equal(out['cf-connecting-ip'], '172.64.146.15');
+    assert.equal(out, cfHeaders, 'returns the SAME reference when nothing needed stripping');
+  });
+
+  it('never mutates the original headers object', () => {
+    const before = { ...cfHeaders };
+    _sanitizeOpenclawDirectHeaders(cfHeaders, '100.74.90.65');
+    assert.deepEqual(cfHeaders, before);
+  });
+
+  it('is a no-op for headers with none of the named Cloudflare keys', () => {
+    const plain = { host: 'x', authorization: 'Bearer y' };
+    const out = _sanitizeOpenclawDirectHeaders(plain, '100.74.90.65');
+    assert.deepEqual(out, plain);
   });
 });

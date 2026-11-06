@@ -93,6 +93,47 @@ describe('rewriteControlUiHtml (#1534)', () => {
   });
 });
 
+describe('injectDeviceIdentityBootstrap (#254 Issue A)', () => {
+  it('injects right after <head> when one exists', () => {
+    const out = html.injectDeviceIdentityBootstrap('<html><head><title>t</title></head><body></body></html>');
+    assert.match(out, /<head><script>.*__tangleclawOpenclawDeviceId.*<\/script><title>t<\/title><\/head>/);
+  });
+
+  it('falls back to right after <html ...> when there is no <head>', () => {
+    const out = html.injectDeviceIdentityBootstrap('<html lang="en"><body>hi</body></html>');
+    assert.match(out, /<html lang="en"><script>.*__tangleclawOpenclawDeviceId/);
+  });
+
+  it('is a no-op when there is neither <head> nor <html>', () => {
+    const text = 'not a page at all';
+    assert.equal(html.injectDeviceIdentityBootstrap(text), text);
+  });
+
+  it('is idempotent — does not inject a second copy into an already-bootstrapped page', () => {
+    const once = html.injectDeviceIdentityBootstrap('<html><head></head></html>');
+    const twice = html.injectDeviceIdentityBootstrap(once);
+    assert.equal(twice, once);
+    assert.equal((once.match(/__tangleclawOpenclawDeviceId/g) || []).length, 1);
+  });
+
+  it('is wrapped in try/catch so a browser with storage disabled cannot break the page', () => {
+    const out = html.injectDeviceIdentityBootstrap('<html><head></head></html>');
+    assert.match(out, /try\{.*catch\(e\)\{\}/);
+  });
+
+  it('mints and persists under the exported storage key, exposes the exported global and meta names', () => {
+    const out = html.injectDeviceIdentityBootstrap('<html><head></head></html>');
+    assert.ok(out.includes(JSON.stringify(html.DEVICE_IDENTITY_STORAGE_KEY)));
+    assert.ok(out.includes(JSON.stringify(html.DEVICE_IDENTITY_GLOBAL)));
+    assert.ok(out.includes(JSON.stringify(html.DEVICE_IDENTITY_META_NAME)));
+  });
+
+  it('non-string input passes through unchanged', () => {
+    assert.equal(html.injectDeviceIdentityBootstrap(null), null);
+    assert.equal(html.injectDeviceIdentityBootstrap(undefined), undefined);
+  });
+});
+
 describe('shouldRewrite (#1534)', () => {
   const HTML = { 'content-type': 'text/html; charset=utf-8' };
   it('rewrites only a successful GET of an HTML page', () => {
@@ -123,7 +164,7 @@ function relay(chunks, headers, opts = {}) {
     const done = () => resolve({ status: res.status, headers: res.sent, body: Buffer.concat(got), reasons, destroyed: res.destroyed });
     res.on('finish', done);
     res.on('close', done);
-    html.relayRewrittenHtml(upstream, res, 200, headers, PREFIX, (r) => reasons.push(r));
+    html.relayRewrittenHtml(upstream, res, 200, headers, opts.prefix || PREFIX, (r) => reasons.push(r));
     for (const c of chunks) upstream.write(c);
     if (opts.cutOff === 'close') upstream.destroy();
     else if (opts.cutOff) upstream.emit('aborted');
@@ -157,10 +198,21 @@ describe('relayRewrittenHtml (#1534)', () => {
     assert.ok(r.body.toString('utf8').includes(`data-openclaw-control-ui-base-path="${PREFIX}"`));
   });
 
-  it('passes a page with nothing to rewrite through exactly as sent', async () => {
+  it('still injects the #254 device-identity bootstrap on an /openclaw-direct/ page with nothing else to rewrite', async () => {
     const packed = zlib.brotliCompressSync(Buffer.from(OLD));
     const headers = { ...base, 'content-encoding': 'br', 'content-length': String(packed.length) };
     const r = await relay([packed], headers);
+    const text = r.body.toString('utf8');
+    assert.match(text, /__tangleclawOpenclawDeviceId/, 'the bootstrap is injected even with nothing else to rewrite');
+    assert.notDeepEqual(r.body, packed, 'the bytes changed, so they cannot still be the original compressed buffer');
+    assert.equal(r.headers['content-encoding'], undefined, 'sent uncompressed once the bytes changed');
+    assert.equal(r.headers.etag, undefined, 'the old ETag must not be reused once the bytes changed');
+  });
+
+  it('passes a page with nothing to rewrite through exactly as sent under a NON-direct prefix (the #254 bootstrap is scoped to /openclaw-direct/ only)', async () => {
+    const packed = zlib.brotliCompressSync(Buffer.from(OLD));
+    const headers = { ...base, 'content-encoding': 'br', 'content-length': String(packed.length) };
+    const r = await relay([packed], headers, { prefix: '/openclaw/some-project' });
     assert.deepEqual(r.body, packed, 'compressed bytes untouched');
     assert.deepEqual(r.headers, headers, 'headers untouched, ETag included');
   });
