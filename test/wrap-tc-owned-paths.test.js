@@ -9,7 +9,7 @@
  * failure declines rather than guesses.
  */
 
-const { describe, it, after, beforeEach } = require('node:test');
+const { describe, it, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -23,6 +23,9 @@ const tcOwned = require('../lib/wrap-steps/_tc-owned-paths');
 const engines = require('../lib/engines');
 const { DEFAULT_PROJECT_CONFIG } = require('../lib/project-config');
 const { initRepo } = require('./_temp-repo');
+const store = require('../lib/store');
+const commitStep = require('../lib/wrap-steps/commit');
+const prCheckStep = require('../lib/wrap-steps/pr-check');
 
 const ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 const dirs = [];
@@ -372,5 +375,103 @@ describe('project.json', () => {
   it('invalid JSON is not TangleClaw\'s', () => {
     const { root, dirty } = repoWith({ [P]: json(base) }, { [P]: '{' });
     assert.equal(tcOwned.judge(root, dirty).has(P), false);
+  });
+});
+
+describe('hands-off repo footprint (#1485, Ruling A505-R3 / R3.2)', () => {
+  let storeDir;
+  before(() => {
+    storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-handsoff-store-'));
+    store._setBasePath(storeDir);
+    store.init();
+  });
+  after(() => {
+    store.close();
+    fs.rmSync(storeDir, { recursive: true, force: true });
+  });
+
+  it('isHandsOffRepo reads the one predicate every writer shares', () => {
+    assert.equal(engines.isHandsOffRepo({ repoFootprint: 'hands-off' }), true);
+    assert.equal(engines.isHandsOffRepo({ repoFootprint: 'managed' }), false);
+    assert.equal(engines.isHandsOffRepo({}), false);
+    assert.equal(engines.isHandsOffRepo(null), false);
+    assert.equal(engines.isHandsOffRepo(undefined), false);
+  });
+
+  it('writeEngineConfig routes the claude-md carrier to CLAUDE.local.md, leaves CLAUDE.md and .gitignore untouched, and seeds .git/info/exclude', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-handsoff-'));
+    dirs.push(root);
+    initRepo(root, [], { env: ENV });
+    fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# operator-owned, must not change\n');
+    fs.writeFileSync(path.join(root, '.gitignore'), 'node_modules/\n');
+    git(root, 'add', '-A');
+    git(root, 'commit', '-qm', 'base');
+
+    const engineProfile = store.engines.get('claude');
+    const result = engines.writeEngineConfig('claude', root, { repoFootprint: 'hands-off' }, engineProfile);
+
+    assert.equal(result.written, true);
+    assert.equal(result.configFilePath, path.join(root, engines.HANDS_OFF_CARRIER_FILENAME));
+    assert.equal(fs.readFileSync(path.join(root, 'CLAUDE.md'), 'utf8'), '# operator-owned, must not change\n');
+    assert.equal(fs.readFileSync(path.join(root, '.gitignore'), 'utf8'), 'node_modules/\n');
+    assert.ok(fs.existsSync(path.join(root, 'CLAUDE.local.md')));
+    const exclude = fs.readFileSync(path.join(root, '.git', 'info', 'exclude'), 'utf8');
+    assert.ok(exclude.includes('.tangleclaw/'), exclude);
+    assert.ok(exclude.includes('CLAUDE.local.md'), exclude);
+  });
+
+  it('re-running writeEngineConfig in hands-off mode does not duplicate the exclude lines', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-handsoff-'));
+    dirs.push(root);
+    initRepo(root, [], { env: ENV });
+    const engineProfile = store.engines.get('claude');
+    const cfg = { repoFootprint: 'hands-off' };
+    engines.writeEngineConfig('claude', root, cfg, engineProfile);
+    engines.writeEngineConfig('claude', root, cfg, engineProfile);
+    const exclude = fs.readFileSync(path.join(root, '.git', 'info', 'exclude'), 'utf8');
+    assert.equal(exclude.split('\n').filter((l) => l === '.tangleclaw/').length, 1);
+    assert.equal(exclude.split('\n').filter((l) => l === 'CLAUDE.local.md').length, 1);
+  });
+
+  it('a non-claude-md engine is skipped entirely in hands-off mode, with no file written', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-handsoff-'));
+    dirs.push(root);
+    initRepo(root, [], { env: ENV });
+    const codexProfile = store.engines.get('codex');
+    const result = engines.writeEngineConfig('codex', root, { repoFootprint: 'hands-off' }, codexProfile);
+    assert.equal(result.written, false);
+    assert.equal(result.skipped, true);
+    assert.equal(result.skipReason, 'repoFootprint=hands-off');
+    assert.equal(fs.existsSync(path.join(root, '.codex.yaml')), false);
+  });
+
+  it('wrap record-only mode: the commit step skips without touching git, and pr-check skips without calling gh', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-handsoff-'));
+    dirs.push(root);
+    initRepo(root, [], { env: ENV });
+    fs.mkdirSync(path.join(root, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.tangleclaw', 'project.json'), JSON.stringify({ repoFootprint: 'hands-off' }));
+    fs.writeFileSync(path.join(root, 'README.md'), 'init\n');
+    git(root, 'add', '-A');
+    git(root, 'commit', '-qm', 'base');
+    fs.writeFileSync(path.join(root, 'README.md'), 'changed\n'); // dirty, to prove the commit step leaves it alone
+
+    const project = store.projects.create({ name: `handsoff-${path.basename(root)}`, path: root });
+
+    const commitResult = await commitStep.run({
+      project, session: null, step: { id: 'commit', kind: 'commit', blocker: true },
+      previousResults: [], staged: {}, options: {}
+    });
+    assert.equal(commitResult.status, 'skipped');
+    assert.equal(commitResult.output.reason, 'repoFootprint=hands-off');
+    assert.equal(commitResult.output.commitSha, null);
+    // Nothing was committed: the dirty file is still dirty.
+    assert.ok(git(root, 'status', '--porcelain').includes('README.md'));
+
+    const prResult = await prCheckStep.run({
+      project, step: { id: 'open-pr-check', kind: 'pr-check' }, staged: {}, options: {}
+    });
+    assert.equal(prResult.status, 'skipped');
+    assert.equal(prResult.output.reason, 'repoFootprint=hands-off');
   });
 });
