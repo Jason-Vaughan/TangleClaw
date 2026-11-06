@@ -429,19 +429,69 @@ describe('wrap-step index-describe (#426)', () => {
       }
     });
 
-    it('defers FEATURES.md when features-toc staged an append this wrap (clobber-avoidance)', async () => {
+    it('graduates FEATURES.md concurrently with a pending features-toc append, reconciling the staged write rather than deferring (#748)', async () => {
       fs.writeFileSync(featPath(),
-        '# Feature Index\n\n## TODO (auto-stubbed 2026-07-02)\n\n- **TBD** — `lib/a.js`. <!-- describe -->\n');
+        '# Feature Index\n\n## TODO (auto-stubbed 2026-07-02)\n\n- **TBD** — touched in this session: `lib/a.js`. <!-- describe -->\n');
+      const orig = aiContent.run;
+      let called = false;
+      // The AI graduates the SETTLED block already on disk -- the pending
+      // append's own new block does not exist on disk yet (only staged).
+      aiContent.run = async () => {
+        called = true;
+        fs.writeFileSync(featPath(),
+          '# Feature Index\n\n## CLI / Tooling\n\n- **A helper** — does A. `lib/a.js`\n');
+        return { ok: true, status: 'done', output: {}, blockers: [] };
+      };
+      try {
+        const staged = {
+          'features-toc:append': {
+            primingPath: featPath(),
+            newContent: 'STALE PRE-EDIT SNAPSHOT -- must not reach the eventual flush',
+            changed: true, featuresToc: true, created: false,
+            addedCount: 1, addedFiles: ['lib/new.js'], prunedCount: 0, prunedFiles: [],
+            danglingHandwritten: [], todoDate: '2026-07-05'
+          }
+        };
+        const result = await indexDescribe.run({ project: createdProject, session: SESSION, staged });
+        assert.equal(called, true, 'must graduate the settled block even with a pending append -- #748');
+        assert.equal(result.output.graduatedCount, 1);
+        // The staged write is rebuilt from the EDITED content, carrying both
+        // this wrap's graduation and features-toc's own pending append --
+        // never the stale pre-edit snapshot `run()` first captured.
+        const rebuilt = staged['features-toc:append'].newContent;
+        assert.doesNotMatch(rebuilt, /STALE PRE-EDIT SNAPSHOT/);
+        assert.match(rebuilt, /## CLI \/ Tooling/);
+        assert.match(rebuilt, /A helper/);
+        assert.match(rebuilt, /## TODO \(auto-stubbed 2026-07-05\)/);
+        assert.match(rebuilt, /lib\/new\.js/);
+        // Every other staged field survives untouched.
+        assert.equal(staged['features-toc:append'].addedCount, 1);
+        assert.equal(staged['features-toc:append'].todoDate, '2026-07-05');
+      } finally {
+        aiContent.run = orig;
+      }
+    });
+
+    it('still defers PROJECT-MAP.md (describe mode) with a pending project-map:refresh staged write — #748 only changes graduate mode', async () => {
+      const projMapPath = path.join(projectPath, 'PROJECT-MAP.md');
+      store.projectConfig.save(projectPath, {
+        engine: 'claude', methodology: 'minimal', featureIndexEnabled: false, projectMapEnabled: true
+      });
+      fs.writeFileSync(projMapPath, '# Project Map\n\n- `lib/` — <!-- describe -->\n');
       const orig = aiContent.run;
       let called = false;
       aiContent.run = async () => { called = true; return { ok: true, status: 'done', output: {}, blockers: [] }; };
       try {
-        const staged = { 'features-toc:append': { featuresToc: true, addedCount: 1 } };
+        const staged = { 'project-map:refresh': { projectMap: true } };
         const result = await indexDescribe.run({ project: createdProject, session: SESSION, staged });
         assert.equal(result.status, 'skipped');
-        assert.equal(called, false, 'must not graduate a file with a pending staged append');
+        assert.equal(called, false, 'describe mode must still defer with a pending staged write');
       } finally {
         aiContent.run = orig;
+        fs.rmSync(projMapPath, { force: true });
+        store.projectConfig.save(projectPath, {
+          engine: 'claude', methodology: 'minimal', featureIndexEnabled: true, projectMapEnabled: false
+        });
       }
     });
 
