@@ -2,6 +2,19 @@
   "schema": "tc.manual-manifest/v1",
   "pages": [
     {
+      "id": "release-notes",
+      "path": "docs/releases/index.md",
+      "title": "Release notes",
+      "audience": ["human", "nhe"],
+      "surfaces": ["docs/releases/**"],
+      "sectionDepth": 2,
+      "sections": [
+        { "anchor": "release-notes", "heading": "Release notes" },
+        { "anchor": "current-release", "heading": "Current release" },
+        { "anchor": "recent-releases", "heading": "Recent releases" }
+      ]
+    },
+    {
       "id": "user-guide",
       "path": "docs/user-guide.md",
       "title": "TangleClaw User Guide",
