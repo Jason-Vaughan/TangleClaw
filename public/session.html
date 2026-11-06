@@ -620,5 +620,11 @@
   <script src="/session-history-ui.js"></script>
   <script src="/governed-wrap-ui.js"></script>
   <script src="/chunk-boundary-ui.js"></script>
+  <!-- Not called by anything on this page -- the operator-only Global
+       Settings modal that mounts both lives on index.html -- but loaded
+       here too per the #2884 dispatch's own mount target, "ready before
+       anything calls it" the same way the three scripts above started out. -->
+  <script src="/bridge-step-up.js"></script>
+  <script src="/bridge-settings-ui.js"></script>
 </body>
 </html>

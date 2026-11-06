@@ -77,6 +77,17 @@ const STATIC_ASSETS = [
   '/session-history-ui.js',
   '/governed-wrap-ui.js',
   '/chunk-boundary-ui.js',
+  // bridge-step-up.js and bridge-settings-ui.js (#2842, #2843) are now
+  // mounted into the Global Settings modal (#2884) -- precached here for
+  // offline coherence of '/' and session.html, network-first below (where
+  // both already were, pre-emptively) so neither page ever serves a stale
+  // copy of an authorization-approval or settings module.
+  '/bridge-step-up.js',
+  '/bridge-settings-ui.js',
+  // remote-ca-assist.js (#400) is now mounted into the Setup Wizard
+  // (#2886) -- precached here for offline coherence of '/', network-first
+  // below (where it already was, pre-emptively).
+  '/remote-ca-assist.js',
   '/manifest.json'
 ];
 
@@ -191,11 +202,12 @@ const NETWORK_FIRST_PATHS = new Set([
   // off (#2031). A stale copy behind an active worker is the wrong thing to be
   // holding when the operator needs the kill switch.
   '/operator-bridge-panel.js',
-  // bridge-step-up.js and bridge-settings-ui.js (#2842, #2843) are new, not
-  // yet mounted into any page -- same reasoning as every other bridge
-  // control surface here: a stale copy of an authorization-approval or
-  // settings module behind an active worker is the wrong thing to be
-  // holding once a future car mounts either one.
+  // bridge-step-up.js and bridge-settings-ui.js (#2842, #2843) are now
+  // mounted into the Global Settings modal (#2884) -- same reasoning as
+  // every other bridge control surface here: a stale copy of an
+  // authorization-approval or settings module behind an active worker is
+  // the wrong thing to be holding. Also dual-listed in STATIC_ASSETS above,
+  // now that a page actually calls them.
   '/bridge-step-up.js',
   '/bridge-settings-ui.js',
   // fleet-recovery-panel.js sends an operator's clear of several launches
@@ -212,11 +224,10 @@ const NETWORK_FIRST_PATHS = new Set([
   // reinstalls the worker for every browser and behind the basic_auth gate is
   // what produced the repeating credential prompt in #710.
   '/reconnect-policy.js',
-  // remote-ca-assist.js (#400) is not loaded by any page yet — the Setup
-  // Wizard wiring is a tracked follow-up (#2886) — so cache-bump-guard's
-  // "changed and not network-first" finding is pre-emptive. Network-first
-  // rather than a CACHE_NAME bump: it never touches the shared counter every
-  // other in-flight PR could also be bumping.
+  // remote-ca-assist.js (#400) is now mounted into the Setup Wizard (#2886).
+  // Network-first rather than a CACHE_NAME bump: it never touches the shared
+  // counter every other in-flight PR could also be bumping. Also dual-listed
+  // in STATIC_ASSETS above, now that a page actually calls it.
   '/remote-ca-assist.js',
   // terminal-identity-ui.js and upload-pills-ui.js (#2862, Ruling A503-R1-A)
   // are not loaded by any page yet -- their <script> mounting is deferred to

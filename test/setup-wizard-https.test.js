@@ -337,6 +337,51 @@ describe('Setup wizard — HTTPS step (frontend)', () => {
       await ctx.renderHttpsSetup(body);
       assert.match(body.innerHTML, /value="skip"/, 'the way past must still be there');
     });
+
+    describe('remote CA-trust plan rendering (#2886)', () => {
+      /** A generated-mkcert wizard state, as wizardGenerateCerts would leave it. */
+      function generatedCtx(overrides) {
+        const ctx = loadSetup(overrides);
+        ctx.wizard.httpsCheckLoaded = true;
+        ctx.wizard.httpsMode = 'mkcert';
+        ctx.wizard.httpsGenerated = {
+          certPath: '/certs/cert.pem', keyPath: '/certs/key.pem',
+          remoteTrust: { caRootPath: '/ca', steps: [{ platform: 'macOS', label: 'Trust it', command: 'security add-trusted-cert' }] }
+        };
+        return ctx;
+      }
+
+      it('renders via the plan renderer once both the plan and the script are present', async () => {
+        const ctx = generatedCtx();
+        ctx.tcRenderRemoteCaPlanSteps = (plan) => `<p class="plan-marker">${plan.rootCaPath}</p>`;
+        ctx.wizard.remoteCaPlan = { caRootPath: '/ca', rootCaPath: '/ca/rootCA.pem', steps: [{ kind: 'stage-ca-file' }] };
+        const body = ctx.document.getElementById('setupBody');
+        await ctx.renderHttpsSetup(body);
+        assert.match(body.innerHTML, /plan-marker">\/ca\/rootCA\.pem/);
+        // The legacy inline loop's own step markup must not ALSO render —
+        // one renderer wins, not both stacked.
+        assert.doesNotMatch(body.innerHTML, /security add-trusted-cert/);
+      });
+
+      it('falls back to the inline legacy rendering when there is no fetched plan yet', async () => {
+        const ctx = generatedCtx();
+        ctx.tcRenderRemoteCaPlanSteps = () => '<p class="plan-marker">unused</p>';
+        // wizard.remoteCaPlan deliberately left unset (null by default).
+        const body = ctx.document.getElementById('setupBody');
+        await ctx.renderHttpsSetup(body);
+        assert.doesNotMatch(body.innerHTML, /plan-marker/);
+        assert.match(body.innerHTML, /security add-trusted-cert/);
+      });
+
+      it('falls back to the inline legacy rendering when the renderer script is not loaded', async () => {
+        const ctx = generatedCtx();
+        ctx.wizard.remoteCaPlan = { caRootPath: '/ca', rootCaPath: '/ca/rootCA.pem', steps: [] };
+        // tcRenderRemoteCaPlanSteps deliberately left undefined.
+        const body = ctx.document.getElementById('setupBody');
+        await ctx.renderHttpsSetup(body);
+        assert.match(body.innerHTML, /security add-trusted-cert/);
+      });
+    });
   });
 
   describe('wizardSelectHttpsMode', () => {
@@ -416,6 +461,54 @@ describe('Setup wizard — HTTPS step (frontend)', () => {
       await ctx.wizardGenerateCerts();
       const errEl = ctx.__elements.get('setupHttpsError');
       assert.equal(errEl.textContent, 'Certificate generation failed.');
+    });
+
+    describe('remote CA-trust plan (#2886)', () => {
+      const genCertResponse = {
+        ok: true, certPath: '/certs/cert.pem', keyPath: '/certs/key.pem',
+        remoteTrust: { caRootPath: '/ca', rootCaPath: '/ca/rootCA.pem', steps: [], note: 'n' }
+      };
+
+      it('fetches the plan when the renderer is loaded, from the generation\'s own caRootPath', async () => {
+        const apiCalls = [];
+        const ctx = loadSetup({
+          apiMutate: async (url) => (url === '/api/setup/generate-cert' ? genCertResponse : null),
+          api: async (url) => { apiCalls.push(url); return { caRootPath: '/ca', rootCaPath: '/ca/rootCA.pem', steps: [{ kind: 'stage-ca-file' }] }; }
+        });
+        ctx.tcRenderRemoteCaPlanSteps = () => '<p>plan</p>';
+        ctx.wizard.httpsMode = 'mkcert';
+        ctx.wizard.httpsCheckLoaded = true;
+        await ctx.wizardGenerateCerts();
+        assert.deepEqual(apiCalls, ['/api/https/remote-ca-plan?caRootPath=%2Fca']);
+        assert.ok(ctx.wizard.remoteCaPlan);
+        assert.equal(ctx.wizard.remoteCaPlan.caRootPath, '/ca');
+      });
+
+      it('never fetches the plan when the renderer is not loaded', async () => {
+        let called = false;
+        const ctx = loadSetup({
+          apiMutate: async (url) => (url === '/api/setup/generate-cert' ? genCertResponse : null),
+          api: async () => { called = true; return {}; }
+        });
+        // tcRenderRemoteCaPlanSteps deliberately left undefined.
+        ctx.wizard.httpsMode = 'mkcert';
+        ctx.wizard.httpsCheckLoaded = true;
+        await ctx.wizardGenerateCerts();
+        assert.equal(called, false);
+        assert.equal(ctx.wizard.remoteCaPlan, null);
+      });
+
+      it('leaves remoteCaPlan null, rather than throwing, when the plan fetch fails', async () => {
+        const ctx = loadSetup({
+          apiMutate: async (url) => (url === '/api/setup/generate-cert' ? genCertResponse : null),
+          api: async () => null
+        });
+        ctx.tcRenderRemoteCaPlanSteps = () => '<p>plan</p>';
+        ctx.wizard.httpsMode = 'mkcert';
+        ctx.wizard.httpsCheckLoaded = true;
+        await ctx.wizardGenerateCerts();
+        assert.equal(ctx.wizard.remoteCaPlan, null);
+      });
     });
   });
 

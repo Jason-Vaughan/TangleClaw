@@ -80,6 +80,14 @@ mirrored rule stays as written because it is correct everywhere else.
   (#1172, `lib/wrap-steps/pr-merge.js`'s `resolveWrapMergeMethod`). This repo's own
   `wrapAutoPrEnabled` is off, so its PRs are never opened or merged by that close-loop in the first
   place; they are opened and merged directly, per Rule #282 above.
+- **TangleClaw surfaces doc drift automatically, non-blocking, at wrap time** — a product
+  behavior this repo's own code now ships, not a mirrored rule, so it lives here rather than in
+  the Global Rules section below. When a session's wrap PR touches a route (`server.js`,
+  `lib/routes/**`) or a UI file (`public/**`) with no matching `README.md`/`docs/**` touch and no
+  `Docs: none <reason>` line in the PR body, the wrap drawer's release banner carries a `docs:
+  ...` note (`lib/docs-parity-gate.js`, #533, mounted #2886). It never blocks or fails a wrap —
+  add the doc touch, or add the escape line to the PR body, and the note clears on the next
+  "Refresh status".
 
 # Global Rules
 

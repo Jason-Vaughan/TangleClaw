@@ -849,6 +849,10 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
   <script src="/update-beacon.js"></script>
   <script src="/health-panel.js"></script>
   <script src="/operator-bridge-panel.js"></script>
+  <!-- Loaded before ui.js: openGlobalSettings() mounts both into the Global
+       Settings modal, beside the operator bridge panel above (#2884). -->
+  <script src="/bridge-step-up.js"></script>
+  <script src="/bridge-settings-ui.js"></script>
   <script src="/fleet-recovery-panel.js"></script>
   <script src="/sw-register.js"></script>
   <script src="/landing.js"></script>
@@ -860,6 +864,9 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
   <script src="/history-drawer.js"></script>
   <script src="/governed-wrap-ui.js"></script>
   <script src="/chunk-boundary-ui.js"></script>
+  <!-- Loaded before setup.js: wizardGenerateCerts/_renderHttpsMkcertBody call
+       tcRenderRemoteCaPlanSteps, guarded (#2886). -->
+  <script src="/remote-ca-assist.js"></script>
   <script src="/setup.js"></script>
 </body>
 </html>

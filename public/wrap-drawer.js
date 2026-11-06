@@ -1006,10 +1006,39 @@
    *     was in the detail, and this function keeps none of it.
    *
    * @param {{label: string, tone: string, detail: string|null}} baseStatus - From `summarizePipelineStatus`.
-   * @param {{outcome: string}} prStatus - From `GET /wrap/pr-status`.
+   * @param {{outcome: string, docsParity?: {signal?: boolean, reason?: string}}} prStatus - From `GET /wrap/pr-status`.
    * @returns {{label: string, tone: string, detail: string|null}}
    */
   function composeReleaseBanner(baseStatus, prStatus) {
+    return _appendDocsParityNote(_composeReleaseBannerCore(baseStatus, prStatus), prStatus);
+  }
+
+  /**
+   * Append the docs-parity signal (#533, mounted #2886) as one more clause on
+   * the banner's own `detail` text -- never `tone`. The signal is explicitly
+   * non-blocking (#533's acceptance: "don't recreate the wrap-nagging failure
+   * mode"), so it must never be able to turn a green release banner into a
+   * warning; it rides along as information only, the same way #700's
+   * carried-forward pipeline warnings do just above this call.
+   * @param {{label: string, tone: string, detail: string|null}} banner
+   * @param {{docsParity?: {signal?: boolean, reason?: string}}} prStatus
+   * @returns {{label: string, tone: string, detail: string|null}}
+   */
+  function _appendDocsParityNote(banner, prStatus) {
+    const dp = prStatus && prStatus.docsParity;
+    if (!dp || dp.signal !== true) return banner;
+    return { ...banner, detail: [banner.detail, `docs: ${dp.reason}`].filter(Boolean).join(' · ') };
+  }
+
+  /**
+   * {@link composeReleaseBanner}'s own release/pipeline-status composition,
+   * unchanged from before #2886 -- split out so the docs-parity note above
+   * can wrap every exit path in one place instead of four.
+   * @param {{label: string, tone: string, detail: string|null}} baseStatus - From `summarizePipelineStatus`.
+   * @param {{outcome: string}} prStatus - From `GET /wrap/pr-status`.
+   * @returns {{label: string, tone: string, detail: string|null}}
+   */
+  function _composeReleaseBannerCore(baseStatus, prStatus) {
     const base = baseStatus || {};
     // #700 — a pending release with auto-merge armed needs no operator action;
     // pass the pipeline's own arming knowledge (the probe can't see it) so the
