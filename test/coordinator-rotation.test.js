@@ -1424,12 +1424,17 @@ describe('coordinator context rotation (#2032)', () => {
       assert.equal(done.status, 200, JSON.stringify(done.body));
     });
 
-    it('relaunch-mode resume cannot see pre-rotation mail left under the old session\'s inbox — a known limitation, now documented and tested rather than silent (#2034 item 3)', async () => {
+    /**
+     * Shared setup for both relaunch-mode undrained-mail tests below: two
+     * messages sit in the OLD session's inbox before the coordinator ever
+     * prepares a rotation (`prepare()` records their ids into
+     * `rotation.inboxIds`), the old session ends, and the operator claims
+     * the relaunch. Returns everything the caller needs to drive `resume`.
+     * @returns {Promise<{r: object, successorAccess: object}>}
+     */
+    async function relaunchWithOldInboxUndrained() {
       await serve();
       channel();
-      // Two messages sit in the OLD session's inbox before the coordinator
-      // ever prepares a rotation -- prepare() records their ids into
-      // rotation.inboxIds as what the resumed context must prove drained.
       sessionInboxes.set(session.id, [{ id: 'msg-old-1' }, { id: 'msg-old-2' }]);
       const rot = (await prepare({ mode: 'relaunch' })).body.rotation;
       assert.deepEqual(rot.inboxIds, ['msg-old-1', 'msg-old-2']);
@@ -1440,14 +1445,6 @@ describe('coordinator context rotation (#2032)', () => {
       assert.equal(claimed.body.rotation.sessionId, successor.id, 'the rotation is now bound to a DIFFERENT session id than the one the mail sat under');
       const r = await rotation.drive(rot.rotationId, { attempts: 5, deps: deps() });
       assert.equal(r.state, 'reconciling', JSON.stringify(r));
-
-      // The successor's own (freshly-minted-workspace) listener has its own,
-      // separate inbox -- empty here, modeling that Hub mail queued for the
-      // OLD workspace id has no path to the successor's NEW one. The old
-      // session's inbox (still set above) is left exactly as it was: nobody
-      // drained it, and nothing in this flow ever looks at it again.
-      sessionInboxes.set(successor.id, []);
-
       const successorAccess = { kind: 'project', projectId: project.id, sessionId: successor.id, launchId: r.launchId };
       const nowMs = clockMs + 60000;
       store.workloadReceipts.append({
@@ -1455,20 +1452,46 @@ describe('coordinator context rotation (#2032)', () => {
         summary: 'reconciling', wait_kind: null, wait_detail: null, refs_json: '[]', branch: null, head_sha: null, source: 'tc-cli',
         received_at: new Date(nowMs).toISOString()
       }, { minIntervalMs: 0, nowMs });
+      store.getDb().prepare('UPDATE launch_sequences SET ready_at = ? WHERE launch_id = ?').run(new Date(clockMs).toISOString(), r.launchId);
+      return { r, successorAccess };
+    }
+
+    it('relaunch-mode resume refuses on pre-rotation mail the successor inherited through carry-forward (#2821, #1806)', async () => {
+      const { r, successorAccess } = await relaunchWithOldInboxUndrained();
+      // #1806 (`lib/medusa.js#_captureCarriedMail` / `#claimCarriedMail` /
+      // `MedusaListener#seedCarriedMail`, proven against the real modules in
+      // `test/wrap-ends-session.test.js`) seeds the successor's fresh
+      // listener with whatever the predecessor left unhandled, under the
+      // SAME message ids -- modeled here exactly that way, not left empty:
+      // the old session's own inbox is what the successor's now holds too.
+      sessionInboxes.set(successor.id, sessionInboxes.get(session.id));
+
       const text = server.calls('turn/start').at(-1).params.input[0].text;
       const nonceNow = /Resume nonce[^`]*`([^`]+)`/.exec(text)[1];
       const body = { rotationId: r.rotationId, attemptKey: r.attemptKey, generation: r.generation, resumeNonce: nonceNow, receipt: receipt(rotation.view(r)) };
-      store.getDb().prepare('UPDATE launch_sequences SET ready_at = ? WHERE launch_id = ?').run(new Date(clockMs).toISOString(), r.launchId);
 
-      // This is the limitation itself: resume succeeds -- the cross-check
-      // reports no unhandled mail -- even though the two messages recorded at
-      // prepare are still, as far as this fixture's model goes, sitting
-      // undrained under the old session's inbox. The check only ever asks
-      // the CURRENT (successor) session, which structurally cannot see them.
+      const refused = await rotation.resume({ access: successorAccess, threadId: SUCCESSOR_THREAD, body }, deps());
+      assert.equal(refused.status, 409, JSON.stringify(refused.body));
+      assert.equal(refused.body.code, 'ROTATION_EVIDENCE_MISSING');
+      assert.deepEqual(refused.body.missing.map((m) => m.fact), ['medusa']);
+      assert.match(refused.body.error, /msg-old-1/);
+      assert.match(refused.body.error, /msg-old-2/);
+    });
+
+    it('relaunch-mode resume succeeds once the carried-forward mail is handled under the successor\'s own id (#2821, #1806)', async () => {
+      const { r, successorAccess } = await relaunchWithOldInboxUndrained();
+      // Same carry-forward as above, but the successor (or whatever reads
+      // its inbox before resume) has handled both -- `MedusaListener#
+      // markHandled` matches on the message body's own id, same as the real
+      // carried entries do (they carry no envelope id of their own).
+      sessionInboxes.set(successor.id, []);
+
+      const text = server.calls('turn/start').at(-1).params.input[0].text;
+      const nonceNow = /Resume nonce[^`]*`([^`]+)`/.exec(text)[1];
+      const body = { rotationId: r.rotationId, attemptKey: r.attemptKey, generation: r.generation, resumeNonce: nonceNow, receipt: receipt(rotation.view(r)) };
+
       const done = await rotation.resume({ access: successorAccess, threadId: SUCCESSOR_THREAD, body }, deps());
       assert.equal(done.status, 200, JSON.stringify(done.body));
-      assert.deepEqual(sessionInboxes.get(session.id).map((m) => m.id), ['msg-old-1', 'msg-old-2'],
-        'the old inbox was never consulted, let alone drained, by this resume');
     });
 
     it('a successor whose channel has not recorded its thread is never bound by inference from a visible thread (A16)', async () => {
