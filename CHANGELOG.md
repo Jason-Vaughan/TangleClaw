@@ -4,6 +4,57 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.68.0] - 2026-11-06
+
+### Added
+- Native sprint wave tracking: wave-matrix and file-disjoint car bundle
+  validation, a live lane/PR dispatch-state tracker, an interactive sprint
+  report and O-Gate summary model (Hero KPIs, chart data series, and a
+  post-mortem guardrail ledger), and a resilient roadmap sync helper with
+  exponential backoff and an atomic last-good snapshot
+  (`lib/native-sprint-tracker.js`, `lib/routes/sprint-wave-routes.js`,
+  `public/sprint-wave-ui.js`) (#2644).
+
+### Fixed
+- Fixed Feature Index graduation starving on projects that ship a feature
+  every session: the `#568` staged-write clobber guard was evaluated
+  per-file, so a fresh `features-toc` append deferred graduation of the
+  file's settled TODO blocks too, even though the append never touches
+  them. `index-describe` now graduates settled blocks concurrently with a
+  pending append and reconciles the staged write from the edited content
+  afterward, so the eventual commit flush carries both changes instead of
+  clobbering the graduation (#748).
+- Hardened `test/tmux-tcc.test.js` against full-suite batch contention:
+  the real client-server round-trip against an already-running
+  TCC-authorized tmux server (and the plain, unshimmed default-server
+  probe) can occasionally exceed `probeTccReadable`'s internal timeout
+  budget under heavy host-wide CPU/process contention alone, with no
+  defect in the code under test. Retried (`withContentionRetry`) with
+  each attempt starting from a clean, idempotent precondition — including
+  `startAuthorizedAnchor` becoming idempotent itself — rather than tuning
+  a timeout this test file has no envelope to change (#2735).
+- Hardened `test/master-medusa.test.js`'s real-HTTP-server API tests
+  against full-suite batch contention with a scoped `withContentionRetry`
+  (the file's other, purely in-memory describe blocks needed no such
+  wrapping), resetting the shared Medusa listener between retry attempts
+  since `afterEach` only runs once per test, not once per attempt. Fixed
+  two retry-unsafe absolute-count assertions (a describe-block-scoped
+  `identityRefreshes`/`loops` array) to capture a baseline instead, so a
+  retried attempt never counts a failed earlier attempt's own side
+  effects against itself (#2736).
+- Fixed coordinator-rotation relaunch resume's undrained-mail check, which
+  previously could never see pre-rotation mail left under the old session's
+  inbox once a relaunch rebound the rotation to a new successor session and
+  workspace id. The successor's own launch already seeds its fresh listener
+  with that carried-forward mail (#1806), under the same message ids, so
+  the existing live-inbox check reads it correctly for that path; `claimRelaunch`
+  now also persists a snapshot of which prepare-time messages are still
+  owed (`drift.unhandledAtRelaunch`), cleared only by that carry-forward or
+  by the resume receipt explicitly naming them handled, so the check still
+  catches undrained mail even on a path #1806's carry-forward does not
+  reach (#2821).
+
+
 ## [5.67.0] - 2026-11-05
 
 ### Added
