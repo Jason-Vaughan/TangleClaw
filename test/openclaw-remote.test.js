@@ -385,6 +385,74 @@ describe('resolveReachableHost integration — _buildLaunchCommand\'s synchronou
     assert.match(cmd, /u@203\.0\.113\.9/);
     assert.doesNotMatch(cmd, /192\.0\.2\.1/);
   });
+
+  it('a COLD cache with fallbackHosts emits an ordered ||-chain trying every candidate, '
+    + 'not just the dead primary (I-Gate Round 3 C1)', () => {
+    const conn = store.openclawConnections.create({
+      name: 'CmdColdCache', host: '192.0.2.1', sshUser: 'u', sshKeyPath: '~/.ssh/k', instanceDir: '~/openclaw',
+      fallbackHosts: ['100.64.0.2']
+    });
+    remote.invalidateResolvedHost(conn.id); // explicit, even though nothing cached it yet
+    const project = { engineId: `openclaw:${conn.id}` };
+    const cmd = sessions._buildLaunchCommand({}, project);
+    const parts = cmd.split(' || ');
+    assert.equal(parts.length, 2);
+    assert.match(parts[0], /u@192\.0\.2\.1/);
+    assert.match(parts[1], /u@100\.64\.0\.2/);
+  });
+
+  it('refuses the launch if ANY candidate host is unsafe, not just the one about to be used', () => {
+    const conn = store.openclawConnections.get(
+      store.openclawConnections.create({
+        name: 'CmdUnsafeFallback', host: '192.0.2.1', sshUser: 'u', sshKeyPath: '~/.ssh/k', instanceDir: '~/openclaw'
+      }).id
+    );
+    // fallbackHosts is normally validated at write time; reach past that to
+    // prove this function's OWN defense-in-depth check, not the store's.
+    const db = store.getDb();
+    db.prepare('UPDATE openclaw_connections SET fallback_hosts = ? WHERE id = ?')
+      .run(JSON.stringify(['a; rm -rf /']), conn.id);
+    const project = { engineId: `openclaw:${conn.id}` };
+    assert.equal(sessions._buildLaunchCommand({}, project), undefined);
+  });
+
+  it('a fresh (cold-cache) interactive launch actually connects to the fallback host when the '
+    + 'primary refuses — executed for real, not just asserted on the command string', () => {
+    const execSync = require('node:child_process').execSync;
+    // A stub `ssh` on PATH: exits 255 (connection refused) for the primary,
+    // 0 (connected) for the fallback — exactly ssh's own exit code for a
+    // refused connection vs. a successful one.
+    const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-stub-ssh-'));
+    const stubPath = path.join(stubDir, 'ssh');
+    fs.writeFileSync(stubPath, [
+      '#!/bin/sh',
+      'for a in "$@"; do',
+      '  case "$a" in',
+      '    *@192.0.2.1) exit 255 ;;',
+      '    *@100.64.0.2) exit 0 ;;',
+      '  esac',
+      'done',
+      'exit 1',
+      ''
+    ].join('\n'), { mode: 0o755 });
+
+    try {
+      const conn = store.openclawConnections.create({
+        name: 'CmdColdCacheExec', host: '192.0.2.1', sshUser: 'u', sshKeyPath: '~/.ssh/k', instanceDir: '~/openclaw',
+        fallbackHosts: ['100.64.0.2']
+      });
+      const project = { engineId: `openclaw:${conn.id}` };
+      const cmd = sessions._buildLaunchCommand({}, project);
+      // The real shell evaluates the || chain: 255 (primary) is non-zero, so
+      // it falls through to the fallback, which exits 0 — the WHOLE chain
+      // succeeds only because the fallback actually got tried and answered.
+      assert.doesNotThrow(() => {
+        execSync(cmd, { env: { ...process.env, PATH: `${stubDir}:${process.env.PATH}` }, stdio: 'pipe' });
+      }, 'the chain must succeed via the fallback host, not hang on or fail with only the dead primary');
+    } finally {
+      fs.rmSync(stubDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('resolveReachableHost integration — POST /api/openclaw/test (#1531)', () => {

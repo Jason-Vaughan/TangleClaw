@@ -358,6 +358,25 @@ describe('openclaw-version (#296)', () => {
         ocv._internal.fetchImpl = origFetch;
       }
     });
+
+    it('still reports comparable:true/updateAvailable:true via the default fetcher when GHCR lists '
+      + '"latest" FIRST (I-Gate Round 3 C1)', async () => {
+      const origFetch = ocv._internal.fetchImpl;
+      ocv._internal.execAsync = async () => ({ stdout: 'OPENCLAW_IMAGE=openclaw:2026.5.27' });
+      ocv._internal.fetchImpl = async (url) => {
+        if (url.includes('/token')) return { ok: true, json: async () => ({ token: 'tok' }) };
+        if (url.includes('/tags/list')) return { ok: true, json: async () => ({ tags: ['latest', 'edge', '2026.5.27', '2026.5.28', 'main'] }) };
+        return { ok: false };
+      };
+      try {
+        const r = await ocv.checkUpdateAvailable(conn({ id: 'cu4' }));
+        assert.equal(r.latestVersion, '2026.5.28');
+        assert.equal(r.comparable, true);
+        assert.equal(r.updateAvailable, true);
+      } finally {
+        ocv._internal.fetchImpl = origFetch;
+      }
+    });
   });
 
   describe('_fetchLatestGhcrTag (#297)', () => {
@@ -371,6 +390,25 @@ describe('openclaw-version (#296)', () => {
         return { ok: false };
       };
       assert.equal(await ocv._fetchLatestGhcrTag(), '2026.5.28');
+    });
+
+    it('a non-version tag FIRST must not become "best" and suppress every real comparison '
+      + '(I-Gate Round 3 C1)', async () => {
+      ocv._internal.fetchImpl = async (url) => {
+        if (url.includes('/token')) return { ok: true, json: async () => ({ token: 'tok' }) };
+        if (url.includes('/tags/list')) return { ok: true, json: async () => ({ tags: ['latest', 'edge', '2026.5.27', '2026.5.28', 'main'] }) };
+        return { ok: false };
+      };
+      assert.equal(await ocv._fetchLatestGhcrTag(), '2026.5.28');
+    });
+
+    it('returns null when every tag is a non-version tag', async () => {
+      ocv._internal.fetchImpl = async (url) => {
+        if (url.includes('/token')) return { ok: true, json: async () => ({ token: 'tok' }) };
+        if (url.includes('/tags/list')) return { ok: true, json: async () => ({ tags: ['latest', 'edge', 'main'] }) };
+        return { ok: false };
+      };
+      assert.equal(await ocv._fetchLatestGhcrTag(), null);
     });
 
     it('requests the token endpoint first, then the tags endpoint with the bearer token', async () => {
