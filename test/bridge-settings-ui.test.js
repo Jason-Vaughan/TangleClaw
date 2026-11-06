@@ -173,4 +173,95 @@ describe('bridge-settings-ui.js notification policy -- live controls (#2884 I-Ga
     assert.equal(doc.getElementById('bsPolicyClear_fleet-idle'), null);
     assert.equal(doc.getElementById('bsPolicyClear_gateway-down'), null);
   });
+
+  it('a second click on the project toggle posts the OPPOSITE of the reloaded state, not a repeat of the first (#2884 I-Gate R2 finding 1)', async () => {
+    // A tiny real backend: fleet-idle starts ON for project 1, and the
+    // mutate route actually flips it, the same as the live server would.
+    const mutateCalls = [];
+    let fleetIdleEnabled = true;
+    const { doc, ui } = mountedWithClickablePolicyList({
+      api: async () => ({ enabled: fleetIdleEnabled, source: 'project' }),
+      apiMutate: async (p, m, b) => {
+        mutateCalls.push([p, m, b]);
+        fleetIdleEnabled = b.enabled;
+        return { enabled: fleetIdleEnabled, source: 'project' };
+      }
+    });
+    doc.getElementById('bsPolicyScope').value = '1';
+    await ui.loadNotificationPolicy();
+
+    // First click: on -> off.
+    doc.getElementById('bsPolicyToggle_fleet-idle').dispatch('click');
+    await settle();
+    assert.equal(mutateCalls.length, 1);
+    assert.equal(mutateCalls[0][2].enabled, false);
+    // Without a reload after setProjectNotificationOverride, the button's
+    // bound handler still closes over the ORIGINAL (stale) answer and the
+    // SAME visible button posts `false` again here too -- the reload is
+    // what makes it post the true opposite of what the server now holds.
+    assert.match(doc.getElementById('bsPolicyList').innerHTML, /id="bsPolicyToggle_fleet-idle">Turn on</,
+      'the re-rendered row must reflect the now-off state');
+
+    // Second click on the (freshly rendered) button: off -> on.
+    doc.getElementById('bsPolicyToggle_fleet-idle').dispatch('click');
+    await settle();
+    assert.equal(mutateCalls.length, 2);
+    assert.equal(mutateCalls[1][2].enabled, true, 'the second click must toggle back on, not repeat false');
+  });
+
+  it('clicking Clear override removes its own button once the list reloads (#2884 I-Gate R2 finding 1)', async () => {
+    let source = 'project';
+    const { doc, ui } = mountedWithClickablePolicyList({
+      api: async () => ({ enabled: true, source }),
+      apiMutate: async () => { source = 'default'; return { enabled: true, source: 'default' }; }
+    });
+    doc.getElementById('bsPolicyScope').value = '1';
+    await ui.loadNotificationPolicy();
+    assert.ok(doc.getElementById('bsPolicyClear_fleet-idle'));
+
+    doc.getElementById('bsPolicyClear_fleet-idle').dispatch('click');
+    await settle();
+
+    // Via the list's own raw markup, not doc.getElementById: the mini-dom
+    // never forgets a once-seen id (test/_mini-dom.js's own documented
+    // limit), so a stale reference from the FIRST render would still
+    // answer truthy even though the id is genuinely absent from the
+    // reloaded markup.
+    assert.doesNotMatch(doc.getElementById('bsPolicyList').innerHTML, /bsPolicyClear_fleet-idle/,
+      'a cleared override has nothing left to clear, so its own button must be gone after the reload');
+  });
+
+  it('a slower project-scope read resolving after a faster Global one does not paint over the newer selection (#2884 I-Gate R2 finding 2)', async () => {
+    const projectCall = {};
+    projectCall.promise = new Promise((resolve) => { projectCall.resolve = resolve; });
+    const { doc, ui } = mountedWithClickablePolicyList({
+      api: async (p) => {
+        if (p.includes('projectId=1')) return projectCall.promise;
+        return { enabled: false, source: 'global' };
+      }
+    });
+
+    // Start the project-scope read (deliberately left unresolved)...
+    const scopeSelect = doc.getElementById('bsPolicyScope');
+    scopeSelect.value = '1';
+    const loadA = ui.loadNotificationPolicy();
+
+    // ...then switch back to Global before it answers, same as an operator
+    // clicking the select twice in quick succession.
+    scopeSelect.value = '';
+    const loadB = ui.loadNotificationPolicy();
+    await loadB;
+
+    assert.match(doc.getElementById('bsPolicyList').innerHTML, /off \(global\)/,
+      'the newer Global read must have painted the list');
+
+    // Only now does the slower, STALE project read resolve.
+    projectCall.resolve({ enabled: true, source: 'project' });
+    await loadA;
+    await settle();
+
+    assert.match(doc.getElementById('bsPolicyList').innerHTML, /off \(global\)/,
+      'the stale project answer must be discarded, not overwrite the current Global render');
+    assert.doesNotMatch(doc.getElementById('bsPolicyList').innerHTML, /\(project\)/);
+  });
 });

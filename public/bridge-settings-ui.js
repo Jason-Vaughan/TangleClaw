@@ -149,6 +149,10 @@
     const projects = Array.isArray(deps.projects) ? deps.projects : [];
     const eventKinds = Array.isArray(deps.eventKinds) ? deps.eventKinds : [];
     let channels = [];
+    // #2884 I-Gate R2 finding 2: bumped on every loadNotificationPolicy()
+    // call; a call whose reads resolve after a newer one has already
+    // started discards its own answer instead of painting over it.
+    let _policyRequestGen = 0;
 
     /**
      * Render the static shell into the root. Idempotent.
@@ -226,6 +230,18 @@
      * Load the policy for every named `deps.eventKinds` kind, at whatever
      * scope the `${p}PolicyScope` select currently names -- global (the
      * default, no selector yet mounted) or one project.
+     *
+     * Freshness-guarded (#2884 I-Gate R2 finding 2): the scope this call
+     * reads is captured ONCE, at the start, into `scopeProjectId` -- never
+     * re-read from the live select afterward. `_policyRequestGen` is bumped
+     * on every call and the answer is discarded unless this call is still
+     * the latest one outstanding when its reads return. Without this, an
+     * operator who starts a project-scope read then switches back to
+     * Global before it resolves could have the slower project answer paint
+     * over the newer Global selection -- the list would show "off
+     * (project)" while the selector reads "Global default", and its
+     * toggle would post to the project-scoped route for a kind the
+     * operator believes is the global one.
      * @returns {Promise<void>}
      */
     async function loadNotificationPolicy() {
@@ -233,9 +249,11 @@
       const scopeEl = el('PolicyScope');
       const scopeProjectId = scopeEl && scopeEl.value ? scopeEl.value : '';
       const qs = scopeProjectId ? `?projectId=${encodeURIComponent(scopeProjectId)}` : '';
+      const gen = ++_policyRequestGen;
       const answers = await Promise.all(
         eventKinds.map((kind) => deps.api(`/api/bridge/operator/notification-policy/${encodeURIComponent(kind)}${qs}`))
       );
+      if (gen !== _policyRequestGen) return; // a newer call has already started; this answer is stale
       const list = el('PolicyList');
       if (list) {
         list.innerHTML = eventKinds.map((kind, i) => tcBridgeNotificationPolicyItemMarkup(p, kind, answers[i], !!scopeProjectId, esc)).join('');
@@ -292,7 +310,14 @@
     async function setProjectNotificationOverride(projectId, eventKind, enabled) {
       if (!deps.apiMutate) return false;
       const result = await deps.apiMutate(`/api/bridge/operator/notification-policy/project/${encodeURIComponent(projectId)}`, 'POST', { eventKind, enabled });
-      return Boolean(result);
+      if (!result) return false;
+      // #2884 I-Gate R2 finding 1: without this, `_bindPolicyRows`'s
+      // captured `answer.enabled` never updates, so a second click on the
+      // same still-visible "Turn off" button posts `enabled: false` again
+      // instead of toggling back on, and a cleared override's own "Clear"
+      // button stays rendered.
+      await loadNotificationPolicy();
+      return true;
     }
 
     // ── Watched channels ──
