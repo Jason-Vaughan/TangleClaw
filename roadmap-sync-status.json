@@ -1,12 +1,1 @@
-{
-  "state": "ok",
-  "component": "all",
-  "message": "The internal and sanitized public roadmap artifacts refreshed successfully.",
-  "checkedAt": "2026-11-06T08:33:45.000000+00:00",
-  "snapshot": "2026-11-06 00:33:45 PST",
-  "generatedAt": "2026-11-06T14:05:00Z",
-  "latestRelease": "v5.71.0",
-  "currentTarget": null,
-  "plannedVersions": 0,
-  "releasedVersions": 42
-}
+{"state":"ok","component":"all","message":"The internal and sanitized public roadmap artifacts refreshed successfully.","checkedAt":"2026-11-06T14:08:41.541007+00:00","snapshot":"2026-11-06 06:08:41 PST"}
