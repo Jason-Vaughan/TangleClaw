@@ -807,6 +807,68 @@ describe('tcParseMedusaNicknameTags / sendTaggedMessage — ambiguous nickname r
     assert.equal(r.ambiguous[0].tag, 'arc');
     assert.equal(mutateCalls.length, 0);
   });
+
+  it('sendTaggedMessage refuses MEDUSA_NICKNAME_AMBIGUOUS, 0 /send requests, when an ordinary project named '
+    + '"orchestrator" shadows the real Master/Orchestrator entry (#2127 I-Gate Round 2 C1)', async () => {
+    const shadowRoster = [
+      { id: 'proj-orchestrator-real', name: 'orchestrator' },
+      { id: 'project-master-abc12345', name: 'Project Master', isMaster: true, role: 'orchestrator' }
+    ];
+    const ids = G.tcMedusaIds('');
+    const { doc } = makeDocument(Object.values(ids).filter(Boolean));
+    const mutateCalls = [];
+    const c = G.tcCreateMedusaControl({
+      doc, api: async (url) => (url.endsWith('/roster') ? { workspaces: shadowRoster } : null),
+      apiMutate: async (url, method, body) => { mutateCalls.push({ url, method, body }); return { status: 'received' }; },
+      apiBase: '/api/sessions/p/medusa', ids, state: { state: 'listening' }
+    });
+    const r = await c.sendTaggedMessage('@orchestrator private');
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'MEDUSA_NICKNAME_AMBIGUOUS');
+    assert.equal(r.ambiguous[0].tag, 'orchestrator');
+    assert.equal(mutateCalls.length, 0, 'no /send request for an ambiguous role tag');
+  });
+
+  it('sendTaggedMessage refuses MEDUSA_NICKNAME_UNRESOLVED, 0 /send requests, when the roster carries TWO '
+    + '"Project Master"-named entries and NEITHER carries the authoritative role stamp — name/id-prefix alone '
+    + 'is no longer proof of the real Orchestrator (#2127, I-Gate Round 3 #5799693931 C1, Ruling A505-R3.10)', async () => {
+    const duplicateMasterRoster = [
+      { id: 'project-master-11111111', name: 'Project Master' },
+      { id: 'project-master-22222222', name: 'Project Master' }
+    ];
+    const ids = G.tcMedusaIds('');
+    const { doc } = makeDocument(Object.values(ids).filter(Boolean));
+    const mutateCalls = [];
+    const c = G.tcCreateMedusaControl({
+      doc, api: async (url) => (url.endsWith('/roster') ? { workspaces: duplicateMasterRoster } : null),
+      apiMutate: async (url, method, body) => { mutateCalls.push({ url, method, body }); return { status: 'received' }; },
+      apiBase: '/api/sessions/p/medusa', ids, state: { state: 'listening' }
+    });
+    const r = await c.sendTaggedMessage('@orchestrator private');
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'MEDUSA_NICKNAME_UNRESOLVED');
+    assert.deepEqual(JSON.parse(JSON.stringify(r.unresolved)), ['orchestrator']);
+    assert.equal(mutateCalls.length, 0, 'no /send request when neither Project Master entry is the verified Orchestrator');
+  });
+
+  it('sendTaggedMessage refuses MEDUSA_NICKNAME_UNRESOLVED, 0 /send requests, when the real Orchestrator is '
+    + 'ABSENT and the only entry present is a lone ordinary lookalike (#2127, I-Gate Round 3 #5799693931 C1, '
+    + 'Ruling A505-R3.10)', async () => {
+    const loneLookalikeRoster = [{ id: 'project-master-11111111', name: 'Project Master' }];
+    const ids = G.tcMedusaIds('');
+    const { doc } = makeDocument(Object.values(ids).filter(Boolean));
+    const mutateCalls = [];
+    const c = G.tcCreateMedusaControl({
+      doc, api: async (url) => (url.endsWith('/roster') ? { workspaces: loneLookalikeRoster } : null),
+      apiMutate: async (url, method, body) => { mutateCalls.push({ url, method, body }); return { status: 'received' }; },
+      apiBase: '/api/sessions/p/medusa', ids, state: { state: 'listening' }
+    });
+    const r = await c.sendTaggedMessage('@master private');
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'MEDUSA_NICKNAME_UNRESOLVED');
+    assert.deepEqual(JSON.parse(JSON.stringify(r.unresolved)), ['master']);
+    assert.equal(mutateCalls.length, 0, 'the lone impostor must never be the sole, unambiguous recipient');
+  });
 });
 
 describe('sendTaggedMessage — a partial multi-recipient failure retries only the unresolved recipients (#1576 I-Gate Round 2 C2)', () => {
