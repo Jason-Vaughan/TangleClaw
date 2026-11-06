@@ -490,6 +490,20 @@ describe('hands-off repo footprint (#1485, Ruling A505-R3 / R3.2)', () => {
     assert.equal(git(root, 'status', '--porcelain', 'CLAUDE.local.md'), '', 'no tracked-file mutation even though the probe never ran');
   });
 
+  it('writes CLAUDE.local.md in a confirmed non-Git directory, where nothing can ever be tracked (I-Gate Round 3, #5799167326)', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-handsoff-nongit-'));
+    dirs.push(root);
+    // Deliberately no initRepo(): this directory has no .git at all.
+    assert.equal(fs.existsSync(path.join(root, '.git')), false);
+
+    const engineProfile = store.engines.get('claude');
+    const result = engines.writeEngineConfig('claude', root, { repoFootprint: 'hands-off' }, engineProfile);
+
+    assert.equal(result.written, true);
+    assert.equal(result.configFilePath, path.join(root, 'CLAUDE.local.md'));
+    assert.ok(fs.existsSync(path.join(root, 'CLAUDE.local.md')), 'the operational guide is still delivered outside a Git repository');
+  });
+
   it('wrap record-only mode: the commit step skips without touching git, and pr-check skips without calling gh', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-handsoff-'));
     dirs.push(root);
