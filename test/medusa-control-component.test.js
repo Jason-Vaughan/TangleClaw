@@ -907,6 +907,83 @@ describe('sendTaggedMessage — single-flight: a concurrent call while one is al
   });
 });
 
+describe('_submitTaggedMessage — a draft typed while the first submit is still pending survives it, and a stale '
+  + 'error is cleared on success (#1576 I-Gate Round 4 C2)', () => {
+  /**
+   * A bare panel element holding exactly the two children
+   * `_submitTaggedMessage` reads/writes by class — the composer's real
+   * markup is this flat, so no deeper DOM is needed.
+   * @param {object} doc - The mini-dom document.
+   * @returns {{panelEl: object, input: object, errorEl: object}}
+   */
+  function nicknameRow(doc) {
+    const panelEl = doc.createElement('div');
+    const input = doc.createElement('input');
+    input.className = 'medusa-nickname-input';
+    input.value = '';
+    const errorEl = doc.createElement('div');
+    errorEl.className = 'medusa-nickname-error';
+    errorEl.hidden = true;
+    panelEl.appendChild(input);
+    panelEl.appendChild(errorEl);
+    return { panelEl, input, errorEl };
+  }
+
+  it('a held first submit: editing the field and submitting again is refused, in-flight, without touching '
+    + 'the new draft; the first submit\'s eventual success preserves that draft and clears the stale error', async () => {
+    const roster = [{ id: 'tc-lane-arc-4041e89e', name: 'Arc' }];
+    const ids = G.tcMedusaIds('');
+    const { doc } = makeDocument(Object.values(ids).filter(Boolean));
+    const { panelEl, input, errorEl } = nicknameRow(doc);
+    let releaseFirstSend;
+    const held = new Promise((resolve) => { releaseFirstSend = resolve; });
+    const mutateCalls = [];
+    const c = G.tcCreateMedusaControl({
+      doc, api: async (url) => (url.endsWith('/roster') ? { workspaces: roster } : null),
+      apiMutate: async (url, method, body) => {
+        mutateCalls.push({ url, method, body });
+        await held;
+        return { status: 'received' };
+      },
+      apiBase: '/api/sessions/p/medusa', ids, state: { state: 'listening' }
+    });
+
+    input.value = '@arc first message';
+    const firstSubmit = c._submitTaggedMessage(panelEl);
+
+    // The operator types a NEW draft and hits Send again while the first
+    // is still held open on its POST.
+    input.value = '@arc second, different draft';
+    await c._submitTaggedMessage(panelEl);
+    assert.equal(mutateCalls.length, 1, 'the second submit never reaches apiMutate — refused in-flight');
+    assert.equal(errorEl.hidden, false);
+    assert.match(errorEl.textContent, /already sending/i);
+    assert.equal(input.value, '@arc second, different draft', 'the in-flight refusal must not touch the field at all');
+
+    releaseFirstSend();
+    await firstSubmit;
+    assert.equal(input.value, '@arc second, different draft', 'the first submit\'s success must not erase the NEW draft');
+    assert.equal(errorEl.hidden, true, 'the now-stale "already sending" error must be cleared once nothing is in flight');
+    assert.equal(errorEl.textContent, '');
+  });
+
+  it('a normal (non-overlapping) successful submit still clears the field, exactly as before', async () => {
+    const roster = [{ id: 'tc-lane-arc-4041e89e', name: 'Arc' }];
+    const ids = G.tcMedusaIds('');
+    const { doc } = makeDocument(Object.values(ids).filter(Boolean));
+    const { panelEl, input, errorEl } = nicknameRow(doc);
+    const c = G.tcCreateMedusaControl({
+      doc, api: async (url) => (url.endsWith('/roster') ? { workspaces: roster } : null),
+      apiMutate: async () => ({ status: 'received' }),
+      apiBase: '/api/sessions/p/medusa', ids, state: { state: 'listening' }
+    });
+    input.value = '@arc hi';
+    await c._submitTaggedMessage(panelEl);
+    assert.equal(input.value, '', 'the ordinary case — nothing typed over it in the meantime — still clears');
+    assert.equal(errorEl.hidden, true);
+  });
+});
+
 describe('the Master control bar mounts the shared control (#996)', () => {
   it('emits the control with prefixed ids, no pending treatment, and no reason element', () => {
     const html = G.tcMasterControlBarMarkup('masterDrawer');

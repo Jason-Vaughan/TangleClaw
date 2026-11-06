@@ -4310,11 +4310,24 @@
       const input = panelEl.querySelector('.medusa-nickname-input');
       const errorEl = panelEl.querySelector('.medusa-nickname-error');
       if (!input) return;
-      const text = input.value;
+      // #1576 I-Gate Round 4 C2: captured BEFORE the await, not read again
+      // after — the composer stays editable while this call is pending, so
+      // the operator can type a genuinely NEW draft (and even get refused
+      // with MEDUSA_SEND_IN_FLIGHT from a second submit) before this one
+      // finishes. `input.value` by then may no longer be what THIS call sent.
+      const submittedText = input.value;
       if (errorEl) { errorEl.hidden = true; errorEl.textContent = ''; }
-      const result = await sendTaggedMessage(text);
+      const result = await sendTaggedMessage(submittedText);
       if (result.ok) {
-        input.value = '';
+        // This attempt succeeded — any error on screen is stale, whether it
+        // was this call's own (there was none) or a concurrent second
+        // submit's MEDUSA_SEND_IN_FLIGHT (there is nothing in flight once
+        // this resolves). Clear it either way.
+        if (errorEl) { errorEl.hidden = true; errorEl.textContent = ''; }
+        // Only clear the field if the operator has not since typed a new
+        // draft over the text THIS call actually sent — never erase work
+        // in progress that this result says nothing about.
+        if (input.value === submittedText) input.value = '';
       } else if (errorEl) {
         errorEl.textContent = _nicknameRefusalText(result);
         errorEl.hidden = false;
@@ -4378,7 +4391,12 @@
 
     return {
       state: m, mount, render, poll, applyStatus, toggle, openInbox, closeInbox,
-      showPeers, hidePeers, flowInbound, flowOutbound, stateLabel, helpText, renderMessages, sendTaggedMessage
+      showPeers, hidePeers, flowInbound, flowOutbound, stateLabel, helpText, renderMessages, sendTaggedMessage,
+      // Exposed for the same reason `sendTaggedMessage` is (#1576 I-Gate
+      // Round 4): a test drives the UI-glue function directly — the
+      // held-request/edit/second-submit sequence this fixes needs to
+      // exercise the DOM-reading/writing half, not just the send itself.
+      _submitTaggedMessage
     };
   }
 
